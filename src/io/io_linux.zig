@@ -2,7 +2,7 @@ const std = @import("std");
 const assert = bun.assert;
 const Platform = bun.analytics.GenerateHeader.GeneratePlatform;
 const os = struct {
-    pub usingnamespace std.os;
+    pub usingnamespace std.posix;
     pub const EPERM = 1;
     pub const ENOENT = 2;
     pub const ESRCH = 3;
@@ -147,7 +147,7 @@ pub const Waker = struct {
     fd: bun.FileDescriptor,
 
     pub fn init() !Waker {
-        return initWithFileDescriptor(bun.toFD(try std.os.eventfd(0, 0)));
+        return initWithFileDescriptor(bun.toFD(try std.posix.eventfd(0, 0)));
     }
 
     pub fn getFd(this: *const Waker) bun.FileDescriptor {
@@ -160,12 +160,12 @@ pub const Waker = struct {
 
     pub fn wait(this: Waker) void {
         var bytes: usize = 0;
-        _ = std.os.read(this.fd.cast(), @as(*[8]u8, @ptrCast(&bytes))) catch 0;
+        _ = std.posix.read(this.fd.cast(), @as(*[8]u8, @ptrCast(&bytes))) catch 0;
     }
 
     pub fn wake(this: *const Waker) void {
         var bytes: usize = 1;
-        _ = std.os.write(
+        _ = std.posix.write(
             this.fd.cast(),
             @as(*[8]u8, @ptrCast(&bytes)),
         ) catch 0;

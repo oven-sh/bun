@@ -2,7 +2,7 @@
 # this script is the magic script to configure your devenv for making a patch to WebKit
 # once you are done with the patch you can run this again with --undo
 # you can also run this with --danger-reset to force reset the submodule (danger)
-set -euo pipefail
+set -exo pipefail
 
 cd "$(dirname "$0")/.."
 

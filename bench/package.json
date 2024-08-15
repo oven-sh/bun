@@ -3,6 +3,7 @@
   "dependencies": {
     "@babel/core": "^7.16.10",
     "@babel/preset-react": "^7.16.7",
+    "@babel/standalone": "^7.24.7",
     "@swc/core": "^1.2.133",
     "benchmark": "^2.1.4",
     "braces": "^3.0.2",

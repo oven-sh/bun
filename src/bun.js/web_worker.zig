@@ -23,7 +23,7 @@ pub const WebWorker = struct {
     /// Already resolved.
     specifier: []const u8 = "",
     store_fd: bool = false,
-    arena: bun.MimallocArena = undefined,
+    arena: ?bun.MimallocArena = null,
     name: [:0]const u8 = "Worker",
     cpp_worker: *anyopaque,
     mini: bool = false,
@@ -54,11 +54,11 @@ pub const WebWorker = struct {
     }
 
     pub fn hasRequestedTerminate(this: *const WebWorker) bool {
-        return this.requested_terminate.load(.Monotonic);
+        return this.requested_terminate.load(.monotonic);
     }
 
     pub fn setRequestedTerminate(this: *WebWorker) bool {
-        return this.requested_terminate.swap(true, .Release);
+        return this.requested_terminate.swap(true, .release);
     }
 
     export fn WebWorker__updatePtr(worker: *WebWorker, ptr: *anyopaque) bool {
@@ -101,8 +101,6 @@ pub const WebWorker = struct {
         defer parent.bundler.setLog(prev_log);
         defer temp_log.deinit();
 
-        var resolved_entry_point: bun.resolver.Result = undefined;
-
         const path = brk: {
             const str = spec_slice.slice();
             if (parent.standalone_module_graph) |graph| {
@@ -120,13 +118,13 @@ pub const WebWorker = struct {
                 }
             }
 
-            resolved_entry_point = parent.bundler.resolveEntryPoint(str) catch {
+            var resolved_entry_point: bun.resolver.Result = parent.bundler.resolveEntryPoint(str) catch {
                 const out = temp_log.toJS(parent.global, bun.default_allocator, "Error resolving Worker entry point").toBunString(parent.global);
                 error_message.* = out;
                 return null;
             };
 
-            const entry_path = resolved_entry_point.path() orelse {
+            const entry_path: *bun.fs.Path = resolved_entry_point.path() orelse {
                 error_message.* = bun.String.static("Worker entry point is missing");
                 return null;
             };
@@ -177,21 +175,22 @@ pub const WebWorker = struct {
         }
 
         if (this.hasRequestedTerminate()) {
-            this.deinit();
+            this.exitAndDeinit();
             return;
         }
 
-        assert(this.status.load(.Acquire) == .start);
+        assert(this.status.load(.acquire) == .start);
         assert(this.vm == null);
+
         this.arena = try bun.MimallocArena.init();
         var vm = try JSC.VirtualMachine.initWorker(this, .{
-            .allocator = this.arena.allocator(),
+            .allocator = this.arena.?.allocator(),
             .args = this.parent.bundler.options.transform_options,
             .store_fd = this.store_fd,
             .graph = this.parent.standalone_module_graph,
         });
-        vm.allocator = this.arena.allocator();
-        vm.arena = &this.arena;
+        vm.allocator = this.arena.?.allocator();
+        vm.arena = &this.arena.?;
 
         var b = &vm.bundler;
 
@@ -206,7 +205,17 @@ pub const WebWorker = struct {
             return;
         };
 
-        vm.loadExtraEnv();
+        // TODO: we may have to clone other parts of vm state. this will be more
+        // important when implementing vm.deinit()
+        const map = try vm.allocator.create(bun.DotEnv.Map);
+        map.* = try vm.bundler.env.map.cloneWithAllocator(vm.allocator);
+
+        const loader = try vm.allocator.create(bun.DotEnv.Loader);
+        loader.* = bun.DotEnv.Loader.init(map, vm.allocator);
+
+        vm.bundler.env = loader;
+
+        vm.loadExtraEnvAndSourceCodePrinter();
         vm.is_main_thread = false;
         JSC.VirtualMachine.is_main_thread_vm = false;
         vm.onUnhandledRejection = onUnhandledRejection;
@@ -283,7 +292,7 @@ pub const WebWorker = struct {
     fn setStatus(this: *WebWorker, status: Status) void {
         log("[{d}] status: {s}", .{ this.execution_context_id, @tagName(status) });
 
-        this.status.store(status, .Release);
+        this.status.store(status, .release);
     }
 
     fn unhandledError(this: *WebWorker, _: anyerror) void {
@@ -294,7 +303,7 @@ pub const WebWorker = struct {
         log("[{d}] spin start", .{this.execution_context_id});
 
         var vm = this.vm.?;
-        assert(this.status.load(.Acquire) == .start);
+        assert(this.status.load(.acquire) == .start);
         this.setStatus(.starting);
 
         var promise = vm.loadEntryPointForWebWorker(this.specifier) catch {
@@ -372,7 +381,7 @@ pub const WebWorker = struct {
     /// Request a terminate (Called from main thread from worker.terminate(), or inside worker in process.exit())
     /// The termination will actually happen after the next tick of the worker's loop.
     pub fn requestTerminate(this: *WebWorker) callconv(.C) void {
-        if (this.status.load(.Acquire) == .terminated) {
+        if (this.status.load(.acquire) == .terminated) {
             return;
         }
         if (this.setRequestedTerminate()) {
@@ -410,13 +419,15 @@ pub const WebWorker = struct {
         var arena = this.arena;
 
         WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);
+        bun.uws.onThreadExit();
         this.deinit();
 
         if (vm_to_deinit) |vm| {
             vm.deinit(); // NOTE: deinit here isn't implemented, so freeing workers will leak the vm.
         }
-
-        arena.deinit();
+        if (arena) |*arena_| {
+            arena_.deinit();
+        }
         bun.exitThread();
     }
 

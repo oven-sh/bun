@@ -410,9 +410,9 @@ describe("fast-glob e2e tests", async () => {
         ? fg.globSync(pattern, { cwd: testCwd, absolute: true })
         : Array.from(new Glob(pattern).scanSync({ cwd: testCwd, followSymlinks: true, absolute: true }));
 
-      entries = entries.sort().map(entry => entry.slice(absoluteCwd.length + 1));
+      entries = entries.sort().map(entry => entry.slice(testCwd.length + 1));
       entries = prepareEntries(entries);
-      expect(entries.map(stripAbsoluteDir)).toMatchSnapshot(`absolute: ${pattern}`);
+      expect(entries).toMatchSnapshot(`absolute: ${pattern}`);
     });
   });
 

@@ -22,10 +22,10 @@ bun upgrade
 - [Linux, arm64](https://www.npmjs.com/package/@oven/bun-linux-aarch64)
 - [Linux, x64](https://www.npmjs.com/package/@oven/bun-linux-x64)
 - [Linux, x64 (without AVX2 instructions)](https://www.npmjs.com/package/@oven/bun-linux-x64-baseline)
-- [Windows (using Windows Subsystem for Linux, aka. "WSL")](https://relatablecode.com/how-to-set-up-bun-on-a-windows-machine)
+- [Windows](https://www.npmjs.com/package/@oven/bun-windows-x64)
+- [Windows (without AVX2 instructions)](https://www.npmjs.com/package/@oven/bun-windows-x64-baseline)
 
 ### Future Platforms
 
-- [Windows](https://github.com/oven-sh/bun/issues/43)
 - Unix-like variants such as FreeBSD, OpenBSD, etc.
 - Android and iOS

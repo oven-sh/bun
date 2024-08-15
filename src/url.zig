@@ -130,7 +130,7 @@ pub const URL = struct {
     }
 
     pub fn hasValidPort(this: *const URL) bool {
-        return (this.getPort() orelse 0) > 1;
+        return (this.getPort() orelse 0) > 0;
     }
 
     pub fn isEmpty(this: *const URL) bool {
@@ -980,7 +980,7 @@ pub const FormData = struct {
     pub fn jsFunctionFromMultipartData(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) callconv(JSC.conv) JSC.JSValue {
         JSC.markBinding(@src());
 
         const args_ = callframe.arguments(2);

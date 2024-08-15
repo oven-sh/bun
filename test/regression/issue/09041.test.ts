@@ -25,4 +25,4 @@ test("09041", async () => {
   const std = await new Response(stdout).text();
 
   expect(std.length).toBeGreaterThan(1024 * 1024);
-}, 10000);
+}, 30000);

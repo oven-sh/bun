@@ -27,11 +27,11 @@ pub const LinuxMemFdAllocator = struct {
     pub usingnamespace bun.New(LinuxMemFdAllocator);
 
     pub fn ref(this: *LinuxMemFdAllocator) void {
-        _ = this.ref_count.fetchAdd(1, .Monotonic);
+        _ = this.ref_count.fetchAdd(1, .monotonic);
     }
 
     pub fn deref(this: *LinuxMemFdAllocator) void {
-        if (this.ref_count.fetchSub(1, .Monotonic) == 1) {
+        if (this.ref_count.fetchSub(1, .monotonic) == 1) {
             _ = bun.sys.close(this.fd);
             this.destroy();
         }
@@ -82,17 +82,20 @@ pub const LinuxMemFdAllocator = struct {
         };
     };
 
-    pub fn alloc(this: *LinuxMemFdAllocator, len: usize, offset: usize, flags: u32) bun.JSC.Maybe(bun.JSC.WebCore.Blob.ByteStore) {
+    pub fn alloc(this: *LinuxMemFdAllocator, len: usize, offset: usize, flags: std.posix.MAP) bun.JSC.Maybe(bun.JSC.WebCore.Blob.ByteStore) {
         var size = len;
 
         // size rounded up to nearest page
         size += (size + std.mem.page_size - 1) & std.mem.page_size;
 
+        var flags_mut = flags;
+        flags_mut.TYPE = .SHARED;
+
         switch (bun.sys.mmap(
             null,
             @min(size, this.size),
-            std.os.PROT.READ | std.os.PROT.WRITE,
-            std.os.MAP.SHARED | flags,
+            std.posix.PROT.READ | std.posix.PROT.WRITE,
+            flags_mut,
             this.fd,
             offset,
         )) {
@@ -131,26 +134,14 @@ pub const LinuxMemFdAllocator = struct {
             unreachable;
         }
 
-        const rc = brk: {
-            var label_buf: [128]u8 = undefined;
-            const label = std.fmt.bufPrintZ(&label_buf, "memfd-num-{d}", .{memfd_counter.fetchAdd(1, .Monotonic)}) catch "";
+        var label_buf: [128]u8 = undefined;
+        const label = std.fmt.bufPrintZ(&label_buf, "memfd-num-{d}", .{memfd_counter.fetchAdd(1, .monotonic)}) catch "";
 
-            // Using huge pages was slower.
-            const code = std.os.linux.memfd_create(label.ptr, std.os.linux.MFD.CLOEXEC | 0);
-
-            bun.sys.syslog("memfd_create({s}) = {d}", .{ label, code });
-            break :brk code;
+        // Using huge pages was slower.
+        const fd = switch (bun.sys.memfd_create(label, std.os.linux.MFD.CLOEXEC)) {
+            .err => |err| return .{ .err = bun.sys.Error.fromCode(err.getErrno(), .open) },
+            .result => |fd| fd,
         };
-
-        switch (std.os.linux.getErrno(rc)) {
-            .SUCCESS => {},
-            else => |errno| {
-                bun.sys.syslog("Failed to create memfd: {s}", .{@tagName(errno)});
-                return .{ .err = bun.sys.Error.fromCode(errno, .open) };
-            },
-        }
-
-        const fd = bun.toFD(rc);
 
         if (bytes.len > 0)
             // Hint at the size of the file
@@ -189,7 +180,7 @@ pub const LinuxMemFdAllocator = struct {
             .size = bytes.len,
         });
 
-        switch (linux_memfd_allocator.alloc(bytes.len, 0, 0)) {
+        switch (linux_memfd_allocator.alloc(bytes.len, 0, .{ .TYPE = .SHARED })) {
             .result => |res| {
                 return .{ .result = res };
             },

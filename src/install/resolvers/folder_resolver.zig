@@ -187,7 +187,12 @@ pub const FolderResolution = union(Tag) {
             );
         } else {
             const source = brk: {
-                var file = bun.sys.File.from(try bun.sys.openatA(bun.FD.cwd(), abs, std.os.O.RDONLY, 0).unwrap());
+                var file = bun.sys.File.from(try bun.sys.openatA(
+                    bun.FD.cwd(),
+                    abs,
+                    bun.O.RDONLY,
+                    0,
+                ).unwrap());
                 defer file.close();
 
                 {

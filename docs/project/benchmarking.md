@@ -171,6 +171,8 @@ Once imported, you should see something like this:
 
 {% image alt="Viewing heap snapshot in Safari" src="https://user-images.githubusercontent.com/709451/204429337-b0d8935f-3509-4071-b991-217794d1fb27.png" caption="Viewing heap snapshot in Safari Dev Tools" /%}
 
+> The [web debugger](https://bun.sh/docs/runtime/debugger#inspect) also offers the timeline feature which allows you to track and examine the memory usage of the running debug session.
+
 ### Native heap stats
 
 Bun uses mimalloc for the other heap. To report a summary of non-JavaScript memory usage, set the `MIMALLOC_SHOW_STATS=1` environment variable. and stats will print on exit.

@@ -1,4 +1,4 @@
-pub const is_bindgen = @import("std").meta.globalOption("bindgen", bool) orelse false;
+pub const is_bindgen = false;
 const bun = @import("root").bun;
 const Api = bun.ApiSchema;
 const std = @import("std");
@@ -35,6 +35,7 @@ pub const InternalLoopData = extern struct {
     last_write_failed: i32,
     head: ?*SocketContext,
     iterator: ?*SocketContext,
+    closed_context_head: ?*SocketContext,
     recv_buf: [*]u8,
     send_buf: [*]u8,
     ssl_data: ?*anyopaque,
@@ -82,11 +83,48 @@ pub const InternalLoopData = extern struct {
 pub const InternalSocket = union(enum) {
     done: *Socket,
     connecting: *ConnectingSocket,
+    detached: void,
+    pub fn isDetached(this: InternalSocket) bool {
+        return this == .detached;
+    }  
+    pub fn detach(this: *InternalSocket) void {
+        this.* = .detached;
+    }
+    pub fn close(this: InternalSocket, comptime is_ssl: bool, code: CloseCode) void {
+        switch (this) {
+            .detached => {},
+            .done => |socket| {
+                debug("us_socket_close({d})", .{@intFromPtr(socket)});
+                _ = us_socket_close(
+                    comptime @intFromBool(is_ssl),
+                    socket,
+                    code,
+                    null,
+                );
+            },
+            .connecting => |socket| {
+                debug("us_connecting_socket_close({d})", .{@intFromPtr(socket)});
+                _ = us_connecting_socket_close(
+                    comptime @intFromBool(is_ssl),
+                    socket,
+                );
+            },
+        }
+    }
+
+    pub fn isClosed(this: InternalSocket, comptime is_ssl: bool) bool {
+        return switch (this) {
+            .done => |socket| us_socket_is_closed(@intFromBool(is_ssl), socket) > 0,
+            .connecting => |socket| us_connecting_socket_is_closed(@intFromBool(is_ssl), socket) > 0,
+            .detached => true,
+        };
+    }
 
     pub fn get(this: @This()) ?*Socket {
         return switch (this) {
             .done => this.done,
             .connecting => null,
+            .detached => null,
         };
     }
 
@@ -94,11 +132,15 @@ pub const InternalSocket = union(enum) {
         return switch (this) {
             .done => switch (other) {
                 .done => this.done == other.done,
-                .connecting => false,
+                .connecting, .detached => false,
             },
             .connecting => switch (other) {
-                .done => false,
+                .done, .detached => false,
                 .connecting => this.connecting == other.connecting,
+            },
+            .detached => switch (other) {
+                .detached => true,
+                .done, .connecting => false,
             },
         };
     }
@@ -109,7 +151,13 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         const ssl_int: i32 = @intFromBool(is_ssl);
         socket: InternalSocket,
         const ThisSocket = @This();
-
+        pub const detached: NewSocketHandler(is_ssl) = NewSocketHandler(is_ssl){ .socket = .{ .detached = {} } };
+        pub fn detach(this: *ThisSocket) void {
+            this.socket.detach();
+        }
+        pub fn isDetached(this: ThisSocket) bool {
+            return this.socket.isDetached();
+        }
         pub fn verifyError(this: ThisSocket) us_bun_verify_error_t {
             const socket = this.socket.get() orelse return std.mem.zeroes(us_bun_verify_error_t);
             const ssl_error: us_bun_verify_error_t = uws.us_socket_verify_error(comptime ssl_int, socket);
@@ -125,6 +173,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             switch (this.socket) {
                 .done => |socket| us_socket_timeout(comptime ssl_int, socket, seconds),
                 .connecting => |socket| us_connecting_socket_timeout(comptime ssl_int, socket, seconds),
+                .detached => {},
             }
         }
 
@@ -148,6 +197,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         us_connecting_socket_long_timeout(comptime ssl_int, socket, 0);
                     }
                 },
+                .detached => {},
             }
         }
 
@@ -161,19 +211,23 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     us_connecting_socket_timeout(comptime ssl_int, socket, 0);
                     us_connecting_socket_long_timeout(comptime ssl_int, socket, minutes);
                 },
+                .detached => {},
             }
         }
 
         pub fn startTLS(this: ThisSocket, is_client: bool) void {
-            const socket = this.socket.get() orelse @panic("socket is not open");
+            const socket = this.socket.get() orelse return;
             _ = us_socket_open(comptime ssl_int, socket, @intFromBool(is_client), null, 0);
         }
 
-        pub fn ssl(this: ThisSocket) *BoringSSL.SSL {
+        pub fn ssl(this: ThisSocket) ?*BoringSSL.SSL {
             if (comptime is_ssl) {
-                return @as(*BoringSSL.SSL, @ptrCast(this.getNativeHandle()));
+                if(this.getNativeHandle()) |handle| {
+                    return @as(*BoringSSL.SSL, @ptrCast(handle));
+                }
+                return null;
             }
-            @panic("socket is not a TLS socket");
+            return null;
         }
 
         // Note: this assumes that the socket is non-TLS and will be adopted and wrapped with a new TLS context
@@ -200,7 +254,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     }
 
                     if (comptime deref_) {
-                        return (TLSSocket.from(socket)).ext(ContextType).*;
+                        return (TLSSocket.from(socket)).ext(ContextType).?.*;
                     }
 
                     return (TLSSocket.from(socket)).ext(ContextType);
@@ -260,7 +314,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 }
                 pub fn on_connect_error(socket: *Socket, code: i32) callconv(.C) ?*Socket {
                     Fields.onConnectError(
-                        TLSSocket.from(socket).ext(ContextType).*,
+                        TLSSocket.from(socket).ext(ContextType).?.*,
                         TLSSocket.from(socket),
                         code,
                     );
@@ -299,7 +353,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 .on_long_timeout = SocketHandler.on_long_timeout,
             };
 
-            const this_socket = this.socket.get() orelse @panic("socket is not open");
+            const this_socket = this.socket.get() orelse return null;
 
             const socket = us_socket_wrap_with_tls(ssl_int, this_socket, options, events, socket_ext_size) orelse return null;
             return NewSocketHandler(true).from(socket);
@@ -309,6 +363,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             return @ptrCast(switch (this.socket) {
                 .done => |socket| us_socket_get_native_handle(comptime ssl_int, socket),
                 .connecting => |socket| us_connecting_socket_get_native_handle(comptime ssl_int, socket),
+                .detached => null,
             } orelse return null);
         }
 
@@ -332,7 +387,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             us_socket_sendfile_needs_more(socket);
         }
 
-        pub fn ext(this: ThisSocket, comptime ContextType: type) *ContextType {
+        pub fn ext(this: ThisSocket, comptime ContextType: type) ?*ContextType {
             const alignment = if (ContextType == *anyopaque)
                 @sizeOf(usize)
             else
@@ -341,6 +396,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             const ptr = switch (this.socket) {
                 .done => |sock| us_socket_ext(comptime ssl_int, sock),
                 .connecting => |sock| us_connecting_socket_ext(comptime ssl_int, sock),
+                .detached => return null,
             };
 
             return @as(*align(alignment) ContextType, @ptrCast(@alignCast(ptr)));
@@ -351,6 +407,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             switch (this.socket) {
                 .done => |socket| return us_socket_context(comptime ssl_int, socket),
                 .connecting => |socket| return us_connecting_socket_context(comptime ssl_int, socket),
+                .detached => return null,
             }
         }
 
@@ -405,6 +462,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         socket,
                     );
                 },
+                .detached => {},
             }
         }
 
@@ -424,6 +482,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         socket,
                     );
                 },
+                .detached => {},
             }
         }
 
@@ -441,6 +500,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         socket,
                     ) > 0;
                 },
+                .detached => return true,
             }
         }
 
@@ -466,44 +526,16 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         socket,
                     );
                 },
+                .detached => return 0,
             }
         }
 
         pub fn isClosed(this: ThisSocket) bool {
-            switch (this.socket) {
-                .done => |socket| {
-                    return us_socket_is_closed(
-                        comptime ssl_int,
-                        socket,
-                    ) > 0;
-                },
-                .connecting => |socket| {
-                    return us_connecting_socket_is_closed(
-                        comptime ssl_int,
-                        socket,
-                    ) > 0;
-                },
-            }
+            return this.socket.isClosed(comptime is_ssl);
         }
 
         pub fn close(this: ThisSocket, code: CloseCode) void {
-            // debug("us_socket_close({d})", .{@intFromPtr(this.socket)});
-            switch (this.socket) {
-                .done => |socket| {
-                    _ = us_socket_close(
-                        comptime ssl_int,
-                        socket,
-                        code,
-                        null,
-                    );
-                },
-                .connecting => |socket| {
-                    _ = us_connecting_socket_close(
-                        comptime ssl_int,
-                        socket,
-                    );
-                },
-            }
+            return this.socket.close(comptime is_ssl, code);
         }
         pub fn localPort(this: ThisSocket) i32 {
             const socket = this.socket.get() orelse return 0;
@@ -557,8 +589,8 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         /// # Returns
         /// This function returns a slice of the buffer on success, or null on failure.
         pub fn localAddressText(this: ThisSocket, buf: []u8, is_ipv6: *bool) ?[]const u8 {
-            const addr_v4_len = @sizeOf(std.meta.FieldType(std.os.sockaddr.in, .addr));
-            const addr_v6_len = @sizeOf(std.meta.FieldType(std.os.sockaddr.in6, .addr));
+            const addr_v4_len = @sizeOf(std.meta.FieldType(std.posix.sockaddr.in, .addr));
+            const addr_v6_len = @sizeOf(std.meta.FieldType(std.posix.sockaddr.in6, .addr));
 
             var sa_buf: [addr_v6_len + 1]u8 = undefined;
             const binary = this.localAddressBinary(&sa_buf) orelse return null;
@@ -567,10 +599,10 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 
             var ret: ?[*:0]const u8 = null;
             if (addr_len == addr_v4_len) {
-                ret = bun.c_ares.ares_inet_ntop(std.os.AF.INET, &sa_buf, buf.ptr, @as(u32, @intCast(buf.len)));
+                ret = bun.c_ares.ares_inet_ntop(std.posix.AF.INET, &sa_buf, buf.ptr, @as(u32, @intCast(buf.len)));
                 is_ipv6.* = false;
             } else if (addr_len == addr_v6_len) {
-                ret = bun.c_ares.ares_inet_ntop(std.os.AF.INET6, &sa_buf, buf.ptr, @as(u32, @intCast(buf.len)));
+                ret = bun.c_ares.ares_inet_ntop(std.posix.AF.INET6, &sa_buf, buf.ptr, @as(u32, @intCast(buf.len)));
                 is_ipv6.* = true;
             }
 
@@ -642,8 +674,9 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         ) ?ThisSocket {
             const socket_ = ThisSocket{ .socket = .{ .done = us_socket_from_fd(ctx, @sizeOf(*anyopaque), bun.socketcast(handle)) orelse return null } };
 
-            const holder = socket_.ext(*anyopaque);
-            holder.* = this;
+            if(socket_.ext(*anyopaque)) |holder| {
+                holder.* = this;
+            }
 
             if (comptime socket_field_name) |field| {
                 @field(this, field) = socket_;
@@ -679,8 +712,9 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 return error.FailedToOpenSocket;
 
             const socket_ = ThisSocket{ .socket = .{ .done = socket } };
-            const holder = socket_.ext(*anyopaque);
-            holder.* = ctx;
+            if(socket_.ext(*anyopaque)) |holder| {
+                holder.* = ctx;
+            }
             return socket_;
         }
 
@@ -721,9 +755,9 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 ThisSocket{
                     .socket = .{ .connecting = @ptrCast(socket_ptr) },
                 };
-
-            const holder = socket.ext(*anyopaque);
-            holder.* = ptr;
+            if(socket.ext(*anyopaque)) |holder| {
+                holder.* = ptr;
+            }
             return socket;
         }
 
@@ -751,7 +785,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     }
 
                     if (comptime deref_) {
-                        return (SocketHandlerType.from(socket)).ext(ContextType).*;
+                        return (SocketHandlerType.from(socket)).ext(ContextType).?.*;
                     }
 
                     return (SocketHandlerType.from(socket)).ext(ContextType);
@@ -806,7 +840,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     const val = if (comptime ContextType == anyopaque)
                         us_connecting_socket_ext(comptime ssl_int, socket)
                     else if (comptime deref_)
-                        SocketHandlerType.fromConnecting(socket).ext(ContextType).*
+                        SocketHandlerType.fromConnecting(socket).ext(ContextType).?.*
                     else
                         SocketHandlerType.fromConnecting(socket).ext(ContextType);
                     Fields.onConnectError(
@@ -820,7 +854,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     const val = if (comptime ContextType == anyopaque)
                         us_socket_ext(comptime ssl_int, socket)
                     else if (comptime deref_)
-                        SocketHandlerType.from(socket).ext(ContextType).*
+                        SocketHandlerType.from(socket).ext(ContextType).?.*
                     else
                         SocketHandlerType.from(socket).ext(ContextType);
                     Fields.onConnectError(
@@ -883,7 +917,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     }
 
                     if (comptime deref_) {
-                        return (ThisSocket.from(socket)).ext(ContextType).*;
+                        return (ThisSocket.from(socket)).ext(ContextType).?.*;
                     }
 
                     return (ThisSocket.from(socket)).ext(ContextType);
@@ -945,7 +979,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     const val = if (comptime ContextType == anyopaque)
                         us_connecting_socket_ext(comptime ssl_int, socket)
                     else if (comptime deref_)
-                        ThisSocket.fromConnecting(socket).ext(ContextType).*
+                        ThisSocket.fromConnecting(socket).ext(ContextType).?.*
                     else
                         ThisSocket.fromConnecting(socket).ext(ContextType);
                     Fields.onConnectError(
@@ -959,14 +993,14 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     const val = if (comptime ContextType == anyopaque)
                         us_socket_ext(comptime ssl_int, socket)
                     else if (comptime deref_)
-                        ThisSocket.from(socket).ext(ContextType).*
+                        ThisSocket.from(socket).ext(ContextType).?.*
                     else
                         ThisSocket.from(socket).ext(ContextType);
 
                     // We close immediately in this case
                     // uSockets doesn't know if this is a TLS socket or not.
-                    // So we have to do that logic in here.
-                    ThisSocket.from(socket).close(.failure);
+                    // So we need to close it like a TCP socket.
+                    NewSocketHandler(false).from(socket).close(.failure);
 
                     Fields.onConnectError(
                         val,
@@ -1033,14 +1067,14 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             const new_socket = us_socket_context_adopt_socket(comptime ssl_int, socket_ctx, socket, -1) orelse return false;
             bun.assert(new_socket == socket);
             var adopted = ThisSocket.from(new_socket);
-            const holder = adopted.ext(*anyopaque);
-            holder.* = ctx;
+            if(adopted.ext(*anyopaque)) |holder| {
+                holder.* = ctx;
+            }
             @field(ctx, socket_field_name) = adopted;
             return true;
         }
     };
 }
-
 pub const SocketTCP = NewSocketHandler(false);
 pub const SocketTLS = NewSocketHandler(true);
 
@@ -1087,7 +1121,7 @@ pub const Timer = opaque {
 
 pub const SocketContext = opaque {
     pub fn getNativeHandle(this: *SocketContext, comptime ssl: bool) *anyopaque {
-        return us_socket_context_get_native_handle(comptime @as(i32, @intFromBool(ssl)), this).?;
+        return us_socket_context_get_native_handle(@intFromBool(ssl), this).?;
     }
 
     fn _deinit_ssl(this: *SocketContext) void {
@@ -1144,10 +1178,7 @@ pub const SocketContext = opaque {
     }
 
     fn getLoop(this: *SocketContext, ssl: bool) ?*Loop {
-        if (ssl) {
-            return us_socket_context_loop(@as(i32, 1), this);
-        }
-        return us_socket_context_loop(@as(i32, 0), this);
+        return us_socket_context_loop(@intFromBool(ssl), this);
     }
 
     /// closes and deinit the SocketContexts
@@ -1165,7 +1196,7 @@ pub const SocketContext = opaque {
 
     pub fn close(this: *SocketContext, ssl: bool) void {
         debug("us_socket_context_close({d})", .{@intFromPtr(this)});
-        us_socket_context_close(@as(i32, @intFromBool(ssl)), this);
+        us_socket_context_close(@intFromBool(ssl), this);
     }
 
     pub fn ext(this: *SocketContext, ssl: bool, comptime ContextType: type) ?*ContextType {
@@ -1205,7 +1236,7 @@ pub const PosixLoop = extern struct {
 
     const EventType = switch (Environment.os) {
         .linux => std.os.linux.epoll_event,
-        .mac => std.os.system.kevent64_s,
+        .mac => std.posix.system.kevent64_s,
         // TODO:
         .windows => *anyopaque,
         else => @compileError("Unsupported OS"),
@@ -1410,6 +1441,8 @@ pub extern fn us_create_socket_context(ssl: i32, loop: ?*Loop, ext_size: i32, op
 pub extern fn us_create_bun_socket_context(ssl: i32, loop: ?*Loop, ext_size: i32, options: us_bun_socket_context_options_t) ?*SocketContext;
 pub extern fn us_bun_socket_context_add_server_name(ssl: i32, context: ?*SocketContext, hostname_pattern: [*c]const u8, options: us_bun_socket_context_options_t, ?*anyopaque) void;
 pub extern fn us_socket_context_free(ssl: i32, context: ?*SocketContext) void;
+pub extern fn us_socket_context_ref(ssl: i32, context: ?*SocketContext) void;
+pub extern fn us_socket_context_unref(ssl: i32, context: ?*SocketContext) void;
 extern fn us_socket_context_on_open(ssl: i32, context: ?*SocketContext, on_open: *const fn (*Socket, i32, [*c]u8, i32) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_on_close(ssl: i32, context: ?*SocketContext, on_close: *const fn (*Socket, i32, ?*anyopaque) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_on_data(ssl: i32, context: ?*SocketContext, on_data: *const fn (*Socket, [*c]u8, i32) callconv(.C) ?*Socket) void;
@@ -1474,7 +1507,7 @@ pub const Poll = opaque {
         return us_poll_ext(self).?;
     }
 
-    pub fn fd(self: *Poll) std.os.fd_t {
+    pub fn fd(self: *Poll) std.posix.fd_t {
         return us_poll_fd(self);
     }
 
@@ -1516,7 +1549,7 @@ pub const Poll = opaque {
     extern fn us_poll_stop(p: ?*Poll, loop: ?*Loop) void;
     extern fn us_poll_events(p: ?*Poll) i32;
     extern fn us_poll_ext(p: ?*Poll) ?*anyopaque;
-    extern fn us_poll_fd(p: ?*Poll) std.os.fd_t;
+    extern fn us_poll_fd(p: ?*Poll) std.posix.fd_t;
     extern fn us_poll_resize(p: ?*Poll, loop: ?*Loop, ext_size: c_uint) ?*Poll;
 };
 
@@ -2231,6 +2264,9 @@ pub fn NewApp(comptime ssl: bool) type {
             pub fn endWithoutBody(res: *Response, close_connection: bool) void {
                 uws_res_end_without_body(ssl_flag, res.downcast(), close_connection);
             }
+            pub fn endSendFile(res: *Response, write_offset: u64, close_connection: bool) void {
+                uws_res_end_sendfile(ssl_flag, res.downcast(), write_offset, close_connection);
+            }
             pub fn write(res: *Response, data: []const u8) bool {
                 return uws_res_write(ssl_flag, res.downcast(), data.ptr, data.len);
             }
@@ -2642,6 +2678,7 @@ extern fn uws_res_write_status(ssl: i32, res: *uws_res, status: [*c]const u8, le
 extern fn uws_res_write_header(ssl: i32, res: *uws_res, key: [*c]const u8, key_length: usize, value: [*c]const u8, value_length: usize) void;
 extern fn uws_res_write_header_int(ssl: i32, res: *uws_res, key: [*c]const u8, key_length: usize, value: u64) void;
 extern fn uws_res_end_without_body(ssl: i32, res: *uws_res, close_connection: bool) void;
+extern fn uws_res_end_sendfile(ssl: i32, res: *uws_res, write_offset: u64, close_connection: bool) void;
 extern fn uws_res_write(ssl: i32, res: *uws_res, data: [*c]const u8, length: usize) bool;
 extern fn uws_res_get_write_offset(ssl: i32, res: *uws_res) u64;
 extern fn uws_res_override_write_offset(ssl: i32, res: *uws_res, u64) void;
@@ -2673,7 +2710,7 @@ pub const LIBUS_RECV_BUFFER_LENGTH = 524288;
 pub const LIBUS_TIMEOUT_GRANULARITY = @as(i32, 4);
 pub const LIBUS_RECV_BUFFER_PADDING = @as(i32, 32);
 pub const LIBUS_EXT_ALIGNMENT = @as(i32, 16);
-pub const LIBUS_SOCKET_DESCRIPTOR = std.os.socket_t;
+pub const LIBUS_SOCKET_DESCRIPTOR = std.posix.socket_t;
 
 pub const _COMPRESSOR_MASK: i32 = 255;
 pub const _DECOMPRESSOR_MASK: i32 = 3840;
@@ -2914,6 +2951,108 @@ pub fn newSocketFromPair(ctx: *SocketContext, ext_size: c_int, fds: *[2]LIBUS_SO
 
 extern fn us_socket_get_error(ssl_flag: c_int, socket: *Socket) c_int;
 
+pub const AnySocket = union(enum) {
+    SocketTCP: SocketTCP,
+    SocketTLS: SocketTLS,
+
+    pub fn setTimeout(this: AnySocket, seconds: c_uint) void {
+        switch (this) {
+            .SocketTCP => this.SocketTCP.setTimeout(seconds),
+            .SocketTLS => this.SocketTLS.setTimeout(seconds),
+        }
+    }
+
+    pub fn shutdown(this: AnySocket) void {
+        debug("us_socket_shutdown({d})", .{@intFromPtr(this.socket())});
+        return us_socket_shutdown(
+            @intFromBool(this.isSSL()),
+            this.socket(),
+        );
+    }
+    pub fn shutdownRead(this: AnySocket) void {
+        debug("us_socket_shutdown_read({d})", .{@intFromPtr(this.socket())});
+        return us_socket_shutdown_read(
+            @intFromBool(this.isSSL()),
+            this.socket(),
+        );
+    }
+    pub fn isShutdown(this: AnySocket) bool {
+        return switch (this) {
+            .SocketTCP => this.SocketTCP.isShutdown(),
+            .SocketTLS => this.SocketTLS.isShutdown(),
+        };
+    }
+    pub fn isClosed(this: AnySocket) bool {
+        return switch (this) {
+            inline else => |s| s.isClosed(),
+        };
+    }
+    pub fn close(this: AnySocket) void {
+        switch (this) {
+            inline else => |s| s.close(.normal),
+        }
+    }
+
+    pub fn terminate(this: AnySocket) void {
+        switch (this) {
+            inline else => |s| s.close(.failure),
+        }
+    }
+
+    pub fn write(this: AnySocket, data: []const u8, msg_more: bool) i32 {
+        return switch (this) {
+            .SocketTCP => return this.SocketTCP.write(data, msg_more),
+            .SocketTLS => return this.SocketTLS.write(data, msg_more),
+        };
+    }
+
+    pub fn getNativeHandle(this: AnySocket) ?*anyopaque {
+        return switch (this.socket()) {
+            .done => |sock| us_socket_get_native_handle(
+                @intFromBool(this.isSSL()),
+                sock,
+            ).?,
+            else => null,
+        };
+    }
+
+    pub fn localPort(this: AnySocket) i32 {
+        return us_socket_local_port(
+            @intFromBool(this.isSSL()),
+            this.socket(),
+        );
+    }
+
+    pub fn isSSL(this: AnySocket) bool {
+        return switch (this) {
+            .SocketTCP => false,
+            .SocketTLS => true,
+        };
+    }
+
+    pub fn socket(this: AnySocket) InternalSocket {
+        return switch (this) {
+            .SocketTCP => this.SocketTCP.socket,
+            .SocketTLS => this.SocketTLS.socket,
+        };
+    }
+
+    pub fn ext(this: AnySocket, comptime ContextType: type) ?*ContextType {
+        const ptr = us_socket_ext(
+            this.isSSL(),
+            this.socket(),
+        ) orelse return null;
+
+        return @ptrCast(@alignCast(ptr));
+    }
+    pub fn context(this: AnySocket) *SocketContext {
+        return us_socket_context(
+            this.isSSL(),
+            this.socket(),
+        ).?;
+    }
+};
+
 pub const udp = struct {
     pub const Socket = opaque {
         const This = @This();
@@ -2974,7 +3113,7 @@ pub const udp = struct {
     pub const PacketBuffer = opaque {
         const This = @This();
 
-        pub fn getPeer(this: *This, index: c_int) *std.os.sockaddr.storage {
+        pub fn getPeer(this: *This, index: c_int) *std.posix.sockaddr.storage {
             return us_udp_packet_buffer_peer(this, index);
         }
 
@@ -2985,7 +3124,12 @@ pub const udp = struct {
         }
     };
 
-    extern fn us_udp_packet_buffer_peer(buf: ?*PacketBuffer, index: c_int) *std.os.sockaddr.storage;
+    extern fn us_udp_packet_buffer_peer(buf: ?*PacketBuffer, index: c_int) *std.posix.sockaddr.storage;
     extern fn us_udp_packet_buffer_payload(buf: ?*PacketBuffer, index: c_int) [*]u8;
     extern fn us_udp_packet_buffer_payload_length(buf: ?*PacketBuffer, index: c_int) c_int;
 };
+
+extern fn bun_clear_loop_at_thread_exit() void;
+pub fn onThreadExit() void {
+    bun_clear_loop_at_thread_exit();
+}

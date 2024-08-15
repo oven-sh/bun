@@ -15,7 +15,7 @@ To _containerize_ our application, we define a `Dockerfile`. This file contains 
 ```docker#Dockerfile
 # use the official Bun image
 # see all versions at https://hub.docker.com/r/oven/bun/tags
-FROM oven/bun:1 as base
+FROM oven/bun:1 AS base
 WORKDIR /usr/src/app
 
 # install dependencies into temp directory

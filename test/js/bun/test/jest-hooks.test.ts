@@ -223,4 +223,29 @@ describe("test jest hooks in bun-test", () => {
       expect(afterEachCalled).toBe(1);
     });
   });
+
+  describe("beforeEach, afterEach with test.todo()", () => {
+    let beforeEachCalled = 0;
+    let afterEachCalled = 0;
+
+    beforeEach(() => {
+      beforeEachCalled++;
+    });
+
+    afterEach(() => {
+      afterEachCalled++;
+    });
+
+    it.todo("TODO test");
+
+    it("should have not called beforeEach or afterEach for test.todo", () => {
+      expect(beforeEachCalled).toEqual(1); // Called once just before this test
+      expect(afterEachCalled).toEqual(0);
+    });
+
+    it("should have called afterEach for previous test", () => {
+      expect(beforeEachCalled).toEqual(2); // Called once just before this test
+      expect(afterEachCalled).toEqual(1);
+    });
+  });
 });

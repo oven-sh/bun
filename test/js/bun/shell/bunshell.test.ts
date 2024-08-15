@@ -7,13 +7,28 @@
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, rm, stat } from "fs/promises";
-import { bunEnv, bunExe, isWindows, runWithErrorPromise, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv as __bunEnv, bunExe, isWindows, runWithErrorPromise, tempDirWithFiles, tmpdirSync } from "harness";
 import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
 
+export const bunEnv: NodeJS.ProcessEnv = {
+  ...process.env,
+  GITHUB_ACTIONS: "false",
+  BUN_DEBUG_QUIET_LOGS: "1",
+  NO_COLOR: "1",
+  FORCE_COLOR: undefined,
+  TZ: "Etc/UTC",
+  CI: "1",
+  BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
+  BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
+  BUN_GARBAGE_COLLECTOR_LEVEL: process.env.BUN_GARBAGE_COLLECTOR_LEVEL || "0",
+  // windows doesn't set this, but we do to match posix compatibility
+  PWD: (process.env.PWD || process.cwd()).replaceAll("\\", "/"),
+};
+
 $.env(bunEnv);
-$.cwd(process.cwd());
+$.cwd(process.cwd().replaceAll("\\", "/"));
 $.nothrow();
 
 let temp_dir: string;
@@ -739,7 +754,7 @@ booga"
 
     test("cd -", async () => {
       const { stdout } = await $`cd ${temp_dir} && pwd && cd - && pwd`;
-      expect(stdout.toString()).toEqual(`${temp_dir}\n${process.cwd()}\n`);
+      expect(stdout.toString()).toEqual(`${temp_dir}\n${process.cwd().replaceAll("\\", "/")}\n`);
     });
   });
 

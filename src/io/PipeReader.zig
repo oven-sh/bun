@@ -399,6 +399,7 @@ pub fn WindowsPipeReader(
             }
             var this: *This = bun.cast(*This, fs.data);
             fs.deinit();
+            if (this.flags.is_done) return;
 
             switch (nread_int) {
                 // 0 actually means EOF too

@@ -8,6 +8,7 @@
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/PropertyNameArray.h"
+#include "wtf/Assertions.h"
 #include "wtf/FastMalloc.h"
 #include "headers-handwritten.h"
 

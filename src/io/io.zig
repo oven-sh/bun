@@ -8,7 +8,7 @@ const JSC = bun.JSC;
 
 const log = bun.Output.scoped(.loop, false);
 
-const os = std.os;
+const posix = std.posix;
 const assert = bun.assert;
 
 pub const Source = @import("./source.zig").Source;
@@ -18,47 +18,50 @@ pub const Loop = struct {
     waker: bun.Async.Waker,
     epoll_fd: if (Environment.isLinux) bun.FileDescriptor else u0 = if (Environment.isLinux) .zero else 0,
 
-    cached_now: os.timespec = .{
+    cached_now: posix.timespec = .{
         .tv_nsec = 0,
         .tv_sec = 0,
     },
     active: usize = 0,
 
     var loop: Loop = undefined;
-    var has_loaded_loop: bool = false;
+
+    fn load() void {
+        loop = Loop{
+            .waker = bun.Async.Waker.init() catch @panic("failed to initialize waker"),
+        };
+        if (comptime Environment.isLinux) {
+            loop.epoll_fd = bun.toFD(std.posix.epoll_create1(std.os.linux.EPOLL.CLOEXEC | 0) catch @panic("Failed to create epoll file descriptor"));
+
+            {
+                var epoll = std.mem.zeroes(std.os.linux.epoll_event);
+                epoll.events = std.os.linux.EPOLL.IN | std.os.linux.EPOLL.ERR | std.os.linux.EPOLL.HUP;
+                epoll.data.ptr = @intFromPtr(&loop);
+                const rc = std.os.linux.epoll_ctl(loop.epoll_fd.cast(), std.os.linux.EPOLL.CTL_ADD, loop.waker.getFd().cast(), &epoll);
+
+                switch (bun.C.getErrno(rc)) {
+                    .SUCCESS => {},
+                    else => |err| bun.Output.panic("Failed to wait on epoll {s}", .{@tagName(err)}),
+                }
+            }
+        }
+        var thread = std.Thread.spawn(.{
+            .allocator = bun.default_allocator,
+
+            // smaller thread, since it's not doing much.
+            .stack_size = 1024 * 1024 * 2,
+        }, onSpawnIOThread, .{}) catch @panic("Failed to spawn IO watcher thread");
+        thread.detach();
+    }
+    var once = std.once(load);
 
     pub fn get() *Loop {
         if (Environment.isWindows) {
             @panic("Do not use this API on windows");
         }
 
-        if (!@atomicRmw(bool, &has_loaded_loop, std.builtin.AtomicRmwOp.Xchg, true, .Monotonic)) {
-            loop = Loop{
-                .waker = bun.Async.Waker.init() catch @panic("failed to initialize waker"),
-            };
-            if (comptime Environment.isLinux) {
-                loop.epoll_fd = bun.toFD(std.os.epoll_create1(std.os.linux.EPOLL.CLOEXEC | 0) catch @panic("Failed to create epoll file descriptor"));
+        once.call();
 
-                {
-                    var epoll = std.mem.zeroes(std.os.linux.epoll_event);
-                    epoll.events = std.os.linux.EPOLL.IN | std.os.linux.EPOLL.ERR | std.os.linux.EPOLL.HUP;
-                    epoll.data.ptr = @intFromPtr(&loop);
-                    const rc = std.os.linux.epoll_ctl(loop.epoll_fd.cast(), std.os.linux.EPOLL.CTL_ADD, loop.waker.getFd().cast(), &epoll);
-
-                    switch (std.os.linux.getErrno(rc)) {
-                        .SUCCESS => {},
-                        else => |err| bun.Output.panic("Failed to wait on epoll {s}", .{@tagName(err)}),
-                    }
-                }
-            }
-            var thread = std.Thread.spawn(.{
-                .allocator = bun.default_allocator,
-
-                // smaller thread, since it's not doing much.
-                .stack_size = 1024 * 1024 * 2,
-            }, onSpawnIOThread, .{}) catch @panic("Failed to spawn IO watcher thread");
-            thread.detach();
-        }
         return &loop;
     }
 
@@ -123,8 +126,14 @@ pub const Loop = struct {
                             }
                         },
                         .close => |close| {
-                            close.poll.unregisterWithFd(this.pollfd(), close.fd);
-                            this.active -= 1;
+                            log("close({}, registered={any})", .{ close.fd, close.poll.flags.contains(.registered) });
+                            // Only remove from the interest list if it was previously registered.
+                            // Otherwise, epoll gets confused.
+                            // This state can happen if polling for readable/writable previously failed.
+                            if (close.poll.flags.contains(.was_ever_registered)) {
+                                close.poll.unregisterWithFd(this.pollfd(), close.fd);
+                                this.active -= 1;
+                            }
                             close.onDone(close.ctx);
                         },
                     }
@@ -140,7 +149,7 @@ pub const Loop = struct {
                 std.math.maxInt(i32),
             );
 
-            switch (std.os.linux.getErrno(rc)) {
+            switch (bun.C.getErrno(rc)) {
                 .INTR => continue,
                 .SUCCESS => {},
                 else => |e| bun.Output.panic("epoll_wait: {s}", .{@tagName(e)}),
@@ -248,7 +257,7 @@ pub const Loop = struct {
 
             const change_count = events_list.items.len;
 
-            const rc = os.system.kevent64(
+            const rc = posix.system.kevent64(
                 this.pollfd().cast(),
                 events_list.items.ptr,
                 @intCast(change_count),
@@ -261,7 +270,7 @@ pub const Loop = struct {
                 null,
             );
 
-            switch (std.c.getErrno(rc)) {
+            switch (bun.C.getErrno(rc)) {
                 .INTR => continue,
                 .SUCCESS => {},
                 else => |e| bun.Output.panic("kevent64 failed: {s}", .{@tagName(e)}),
@@ -270,7 +279,7 @@ pub const Loop = struct {
             this.updateNow();
 
             assert(rc <= events_list.capacity);
-            const current_events: []std.os.darwin.kevent64_s = events_list.items.ptr[0..@intCast(rc)];
+            const current_events: []std.posix.system.kevent64_s = events_list.items.ptr[0..@intCast(rc)];
 
             for (current_events) |event| {
                 Poll.onUpdateKQueue(event);
@@ -283,7 +292,7 @@ pub const Loop = struct {
     }
 
     extern "C" fn clock_gettime_monotonic(sec: *i64, nsec: *i64) c_int;
-    pub fn updateTimespec(timespec: *os.timespec) void {
+    pub fn updateTimespec(timespec: *posix.timespec) void {
         if (comptime Environment.isLinux) {
             const rc = linux.clock_gettime(linux.CLOCK.MONOTONIC, timespec);
             assert(rc == 0);
@@ -297,12 +306,12 @@ pub const Loop = struct {
             timespec.tv_sec = @intCast(tv_sec);
             timespec.tv_nsec = @intCast(tv_nsec);
         } else {
-            std.os.clock_gettime(std.os.CLOCK.MONOTONIC, timespec) catch {};
+            std.posix.clock_gettime(std.posix.CLOCK.MONOTONIC, timespec) catch {};
         }
     }
 };
 
-const EventType = if (Environment.isLinux) linux.epoll_event else std.os.system.kevent64_s;
+const EventType = if (Environment.isLinux) linux.epoll_event else std.posix.system.kevent64_s;
 
 pub const Request = struct {
     next: ?*Request = null,
@@ -435,26 +444,26 @@ pub const Poll = struct {
         pub const Set = std.EnumSet(Flags);
         pub const Struct = std.enums.EnumFieldStruct(Flags, bool, false);
 
-        pub fn fromKQueueEvent(kqueue_event: std.os.system.kevent64_s) Flags.Set {
+        pub fn fromKQueueEvent(kqueue_event: std.posix.system.kevent64_s) Flags.Set {
             var flags = Flags.Set{};
-            if (kqueue_event.filter == std.os.system.EVFILT_READ) {
+            if (kqueue_event.filter == std.posix.system.EVFILT_READ) {
                 flags.insert(Flags.readable);
                 log("readable", .{});
-                if (kqueue_event.flags & std.os.system.EV_EOF != 0) {
+                if (kqueue_event.flags & std.posix.system.EV_EOF != 0) {
                     flags.insert(Flags.hup);
                     log("hup", .{});
                 }
-            } else if (kqueue_event.filter == std.os.system.EVFILT_WRITE) {
+            } else if (kqueue_event.filter == std.posix.system.EVFILT_WRITE) {
                 flags.insert(Flags.writable);
                 log("writable", .{});
-                if (kqueue_event.flags & std.os.system.EV_EOF != 0) {
+                if (kqueue_event.flags & std.posix.system.EV_EOF != 0) {
                     flags.insert(Flags.hup);
                     log("hup", .{});
                 }
-            } else if (kqueue_event.filter == std.os.system.EVFILT_PROC) {
+            } else if (kqueue_event.filter == std.posix.system.EVFILT_PROC) {
                 log("proc", .{});
                 flags.insert(Flags.process);
-            } else if (kqueue_event.filter == std.os.system.EVFILT_MACHPORT) {
+            } else if (kqueue_event.filter == std.posix.system.EVFILT_MACHPORT) {
                 log("machport", .{});
                 flags.insert(Flags.machport);
             }
@@ -487,7 +496,7 @@ pub const Poll = struct {
             tag: Pollable.Tag,
             poll: *Poll,
             fd: bun.FileDescriptor,
-            kqueue_event: *std.os.system.kevent64_s,
+            kqueue_event: *std.posix.system.kevent64_s,
         ) void {
             log("register({s}, {})", .{ @tagName(action), fd });
             defer {
@@ -512,12 +521,12 @@ pub const Poll = struct {
                 }
             }
 
-            const one_shot_flag = std.os.system.EV_ONESHOT;
+            const one_shot_flag = std.posix.system.EV_ONESHOT;
 
             kqueue_event.* = switch (comptime action) {
                 .readable => .{
                     .ident = @as(u64, @intCast(fd.int())),
-                    .filter = std.os.system.EVFILT_READ,
+                    .filter = std.posix.system.EVFILT_READ,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(tag, poll).ptr()),
@@ -526,7 +535,7 @@ pub const Poll = struct {
                 },
                 .writable => .{
                     .ident = @as(u64, @intCast(fd.int())),
-                    .filter = std.os.system.EVFILT_WRITE,
+                    .filter = std.posix.system.EVFILT_WRITE,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(tag, poll).ptr()),
@@ -535,7 +544,7 @@ pub const Poll = struct {
                 },
                 .cancel => if (poll.flags.contains(.poll_readable)) .{
                     .ident = @as(u64, @intCast(fd.int())),
-                    .filter = std.os.system.EVFILT_READ,
+                    .filter = std.posix.system.EVFILT_READ,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(tag, poll).ptr()),
@@ -543,7 +552,7 @@ pub const Poll = struct {
                     .ext = .{ poll.generation_number, 0 },
                 } else if (poll.flags.contains(.poll_writable)) .{
                     .ident = @as(u64, @intCast(fd.int())),
-                    .filter = std.os.system.EVFILT_WRITE,
+                    .filter = std.posix.system.EVFILT_WRITE,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(tag, poll).ptr()),
@@ -563,12 +572,11 @@ pub const Poll = struct {
             fd.cast(),
             null,
         );
-        this.flags.remove(.was_ever_registered);
         this.flags.remove(.registered);
     }
 
     pub fn onUpdateKQueue(
-        event: std.os.system.kevent64_s,
+        event: std.posix.system.kevent64_s,
     ) void {
         if (event.filter == std.c.EVFILT_MACHPORT)
             return;
@@ -581,7 +589,7 @@ pub const Poll = struct {
             .empty => {},
 
             inline else => |t| {
-                var this: *Pollable.Tag.Type(t) = @fieldParentPtr(Pollable.Tag.Type(t), "io_poll", poll);
+                var this: *Pollable.Tag.Type(t) = @alignCast(@fieldParentPtr("io_poll", poll));
                 if (event.flags == std.c.EV_ERROR) {
                     log("error({d}) = {d}", .{ event.ident, event.data });
                     this.onIOError(bun.sys.Error.fromCode(@enumFromInt(event.data), .kevent));
@@ -603,9 +611,9 @@ pub const Poll = struct {
             .empty => {},
 
             inline else => |t| {
-                var this: *Pollable.Tag.Type(t) = @fieldParentPtr(Pollable.Tag.Type(t), "io_poll", poll);
+                var this: *Pollable.Tag.Type(t) = @alignCast(@fieldParentPtr("io_poll", poll));
                 if (event.events & linux.EPOLL.ERR != 0) {
-                    const errno = std.os.linux.getErrno(event.events);
+                    const errno = bun.C.getErrno(event.events);
                     log("error() = {s}", .{@tagName(errno)});
                     this.onIOError(bun.sys.Error.fromCode(errno, .epoll_ctl));
                 } else {
@@ -641,7 +649,7 @@ pub const Poll = struct {
 
             var event = linux.epoll_event{ .events = flags, .data = .{ .u64 = @intFromPtr(Pollable.init(tag, this).ptr()) } };
 
-            const op: u32 = if (this.flags.contains(.registered) or this.flags.contains(.needs_rearm)) linux.EPOLL.CTL_MOD else linux.EPOLL.CTL_ADD;
+            const op: u32 = if (this.flags.contains(.was_ever_registered) or this.flags.contains(.needs_rearm)) linux.EPOLL.CTL_MOD else linux.EPOLL.CTL_ADD;
 
             const ctl = linux.epoll_ctl(
                 watcher_fd.cast(),
@@ -649,11 +657,15 @@ pub const Poll = struct {
                 fd.cast(),
                 &event,
             );
-            this.flags.insert(.registered);
-            this.flags.insert(.was_ever_registered);
+
             if (JSC.Maybe(void).errnoSys(ctl, .epoll_ctl)) |errno| {
                 return errno;
             }
+            // Only mark if it successfully registered.
+            // If it failed to register, we don't want to unregister it later if
+            // it never had done so in the first place.
+            this.flags.insert(.registered);
+            this.flags.insert(.was_ever_registered);
         } else {
             @compileError("epoll not supported on this platform");
         }

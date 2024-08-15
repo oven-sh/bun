@@ -9,28 +9,35 @@ import { tmpdirSync } from "harness";
 import * as stream from "node:stream";
 
 describe("zlib", () => {
-  it("should be able to deflate and inflate", () => {
-    const data = new TextEncoder().encode("Hello World!".repeat(1));
-    const compressed = deflateSync(data);
-    const decompressed = inflateSync(compressed);
-    expect(decompressed.join("")).toBe(data.join(""));
-  });
+  for (let library of ["zlib", "libdeflate"]) {
+    for (let outputLibrary of ["zlib", "libdeflate"]) {
+      describe(`${library} -> ${outputLibrary}`, () => {
+        it("should be able to deflate and inflate", () => {
+          const data = new TextEncoder().encode("Hello World!".repeat(1));
+          const compressed = deflateSync(data, { library });
+          console.log(compressed);
+          const decompressed = inflateSync(compressed, { library: outputLibrary });
+          expect(decompressed.join("")).toBe(data.join(""));
+        });
 
-  it("should be able to gzip and gunzip", () => {
-    const data = new TextEncoder().encode("Hello World!".repeat(1));
-    const compressed = gzipSync(data);
-    const decompressed = gunzipSync(compressed);
-    expect(decompressed.join("")).toBe(data.join(""));
-  });
+        it("should be able to gzip and gunzip", () => {
+          const data = new TextEncoder().encode("Hello World!".repeat(1));
+          const compressed = gzipSync(data, { library });
+          const decompressed = gunzipSync(compressed, { library: outputLibrary });
+          expect(decompressed.join("")).toBe(data.join(""));
+        });
+      });
+    }
+  }
 
   it("should throw on invalid raw deflate data", () => {
     const data = new TextEncoder().encode("Hello World!".repeat(1));
-    expect(() => inflateSync(data)).toThrow(new Error("invalid stored block lengths"));
+    expect(() => inflateSync(data, { library: "zlib" })).toThrow(new Error("invalid stored block lengths"));
   });
 
   it("should throw on invalid gzip data", () => {
     const data = new TextEncoder().encode("Hello World!".repeat(1));
-    expect(() => gunzipSync(data)).toThrow(new Error("incorrect header check"));
+    expect(() => gunzipSync(data, { library: "zlib" })).toThrow(new Error("incorrect header check"));
   });
 });
 

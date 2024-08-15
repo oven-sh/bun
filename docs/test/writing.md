@@ -306,6 +306,30 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 ---
 
 - ✅
+- [`.toContainAllKeys()`](https://jest-extended.jestcommunity.dev/docs/matchers/Object#tocontainallkeyskeys)
+
+---
+
+- ✅
+- [`.toContainValue()`](https://jest-extended.jestcommunity.dev/docs/matchers/Object#tocontainvaluevalue)
+
+---
+
+- ✅
+- [`.toContainValues()`](https://jest-extended.jestcommunity.dev/docs/matchers/Object#tocontainvaluesvalues)
+
+---
+
+- ✅
+- [`.toContainAllValues()`](https://jest-extended.jestcommunity.dev/docs/matchers/Object#tocontainallvaluesvalues)
+
+---
+- ✅
+- [`.toContainAnyValues()`](https://jest-extended.jestcommunity.dev/docs/matchers/Object#tocontainanyvaluesvalues)
+
+---
+
+- ✅
 - [`.toStrictEqual()`](https://jestjs.io/docs/expect#tostrictequalvalue)
 
 ---

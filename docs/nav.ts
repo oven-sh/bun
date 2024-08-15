@@ -193,6 +193,13 @@ export default {
     page("install/overrides", "Overrides and resolutions", {
       description: "Specify version ranges for nested dependencies",
     }),
+    page("install/patch", "Patch dependencies", {
+      description:
+        "Patch dependencies in your project to fix bugs or add features without vendoring the entire package.",
+    }),
+    page("install/npmrc", ".npmrc support", {
+      description: "Bun supports loading some configuration options from .npmrc",
+    }),
     // page("install/utilities", "Utilities", {
     //   description: "Use `bun pm` to introspect your global module cache or project dependency tree.",
     // }),
@@ -280,8 +287,11 @@ export default {
 
     divider("API"),
     page("api/http", "HTTP server", {
-      description: `Bun implements Web-standard fetch, plus a Bun-native API for building fast HTTP servers.`,
+      description: `Bun implements a fast HTTP server built on Request/Response objects, along with supporting node:http APIs.`,
     }), // "`Bun.serve`"),
+    page("api/fetch", "HTTP client", {
+      description: `Bun implements Web-standard fetch with some Bun-native extensions.`,
+    }), // "fetch"),
     page("api/websockets", "WebSockets", {
       description: `Bun supports server-side WebSockets with on-the-fly compression, TLS support, and a Bun-native pubsub API.`,
     }), // "`Bun.serve`"),

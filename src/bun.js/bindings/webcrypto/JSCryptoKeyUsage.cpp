@@ -80,9 +80,9 @@ template<> std::optional<CryptoKeyUsage> parseEnumeration<CryptoKeyUsage>(JSGlob
     return std::nullopt;
 }
 
-template<> const char* expectedEnumerationValues<CryptoKeyUsage>()
+template<> ASCIILiteral expectedEnumerationValues<CryptoKeyUsage>()
 {
-    return "\"encrypt\", \"decrypt\", \"sign\", \"verify\", \"deriveKey\", \"deriveBits\", \"wrapKey\", \"unwrapKey\"";
+    return "\"encrypt\", \"decrypt\", \"sign\", \"verify\", \"deriveKey\", \"deriveBits\", \"wrapKey\", \"unwrapKey\""_s;
 }
 
 } // namespace WebCore

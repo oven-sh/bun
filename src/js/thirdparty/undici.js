@@ -7,19 +7,22 @@ const ObjectCreate = Object.create;
 const kEmptyObject = ObjectCreate(null);
 
 var fetch = Bun.fetch;
-var Response = globalThis.Response;
-var Headers = globalThis.Headers;
-var Request = globalThis.Request;
-var URLSearchParams = globalThis.URLSearchParams;
-var URL = globalThis.URL;
-class File extends Blob {}
+const bindings = $cpp("Undici.cpp", "createUndiciInternalBinding");
+const Response = bindings[0];
+const Request = bindings[1];
+const Headers = bindings[2];
+const FormData = bindings[3];
+const File = bindings[4];
+const URL = bindings[5];
+const AbortSignal = bindings[6];
+const URLSearchParams = bindings[7];
+
 class FileReader extends EventTarget {
   constructor() {
     throw new Error("Not implemented yet!");
   }
 }
 
-var FormData = globalThis.FormData;
 function notImplemented() {
   throw new Error("Not implemented in bun");
 }
@@ -301,28 +304,28 @@ Undici.buildConnector =
 Undici.fetch = fetch;
 
 export default {
+  Agent,
+  BalancedPool,
+  Client,
+  connect,
+  Dispatcher,
   fetch,
-  Response,
-  Headers,
-  Request,
-  URLSearchParams,
-  URL,
   File,
   FileReader,
   FormData,
-  request,
-  stream,
-  pipeline,
-  connect,
-  upgrade,
-  MockClient,
-  MockPool,
+  Headers,
   MockAgent,
+  MockClient,
   mockErrors,
-  Dispatcher,
+  MockPool,
+  pipeline,
   Pool,
-  BalancedPool,
-  Client,
-  Agent,
+  request,
+  Request,
+  Response,
+  stream,
   Undici,
+  upgrade,
+  URL,
+  URLSearchParams,
 };

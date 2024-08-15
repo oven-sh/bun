@@ -5,6 +5,10 @@ pub const SIMDUTFResult = extern struct {
     status: Status,
     count: usize = 0,
 
+    pub fn isSuccessful(this: *const SIMDUTFResult) bool {
+        return this.status == Status.success;
+    }
+
     pub const Status = enum(i32) {
         success = 0,
         /// Any byte must have fewer than 5 header bits.
@@ -77,6 +81,7 @@ pub extern fn simdutf__convert_utf16le_to_utf32_with_errors(buf: [*]const u16, l
 pub extern fn simdutf__convert_utf16be_to_utf32_with_errors(buf: [*]const u16, len: usize, utf32_buffer: [*]u32) SIMDUTFResult;
 pub extern fn simdutf__convert_valid_utf16le_to_utf32(buf: [*]const u16, len: usize, utf32_buffer: [*]u32) usize;
 pub extern fn simdutf__convert_valid_utf16be_to_utf32(buf: [*]const u16, len: usize, utf32_buffer: [*]u32) usize;
+pub extern fn simdutf__convert_latin1_to_utf8(buf: [*]const u8, len: usize, utf8_buffer: [*]u8) usize;
 pub extern fn simdutf__change_endianness_utf16(buf: [*]const u16, length: usize, output: [*]u16) void;
 pub extern fn simdutf__count_utf16le(buf: [*]const u16, length: usize) usize;
 pub extern fn simdutf__count_utf16be(buf: [*]const u16, length: usize) usize;
@@ -89,6 +94,7 @@ pub extern fn simdutf__utf16_length_from_utf8(input: [*]const u8, length: usize)
 pub extern fn simdutf__utf8_length_from_utf32(input: [*c]const c_uint, length: usize) usize;
 pub extern fn simdutf__utf16_length_from_utf32(input: [*c]const c_uint, length: usize) usize;
 pub extern fn simdutf__utf32_length_from_utf8(input: [*]const u8, length: usize) usize;
+pub extern fn simdutf__utf8_length_from_latin1(input: [*]const u8, length: usize) usize;
 
 pub const validate = struct {
     pub const with_errors = struct {
@@ -122,6 +128,14 @@ pub const validate = struct {
 };
 
 pub const convert = struct {
+    pub const latin1 = struct {
+        pub const to = struct {
+            pub fn utf8(input: []const u8, output: []u8) usize {
+                return simdutf__convert_latin1_to_utf8(input.ptr, input.len, output.ptr);
+            }
+        };
+    };
+
     pub const utf8 = struct {
         pub const to = struct {
             pub const utf16 = struct {
@@ -257,6 +271,10 @@ pub const length = struct {
                 }
             };
 
+            pub fn latin1(input: []const u8) usize {
+                return simdutf__utf8_length_from_latin1(input.ptr, input.len);
+            }
+
             pub fn utf32(input: []const u32) usize {
                 JSC.markBinding(@src());
                 return simdutf__utf8_length_from_utf32(input.ptr, input.len);
@@ -362,5 +380,23 @@ pub const trim = struct {
 
     pub fn utf8(buf: []const u8) []const u8 {
         return buf[0..utf8_len(buf)];
+    }
+};
+
+pub const base64 = struct {
+    extern fn simdutf__base64_encode(input: [*]const u8, length: usize, output: [*]u8, is_urlsafe: c_int) usize;
+    extern fn simdutf__base64_decode_from_binary(input: [*]const u8, length: usize, output: [*]u8, outlen: usize, is_urlsafe: c_int) SIMDUTFResult;
+    extern fn simdutf__base64_decode_from_binary16(input: [*]const u16, length: usize, output: [*]u8, outlen: usize, is_urlsafe: c_int) SIMDUTFResult;
+
+    pub fn encode(input: []const u8, output: []u8, is_urlsafe: bool) usize {
+        return simdutf__base64_encode(input.ptr, input.len, output.ptr, @intFromBool(is_urlsafe));
+    }
+
+    pub fn decode(input: []const u8, output: []u8, is_urlsafe: bool) SIMDUTFResult {
+        return simdutf__base64_decode_from_binary(input.ptr, input.len, output.ptr, output.len, @intFromBool(is_urlsafe));
+    }
+
+    pub fn decode16(input: []const u16, output: []u8, is_urlsafe: bool) SIMDUTFResult {
+        return simdutf__base64_decode_from_binary16(input.ptr, input.len, output.ptr, output.len, @intFromBool(is_urlsafe));
     }
 };

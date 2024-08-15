@@ -45,18 +45,22 @@ describe("jest-extended", () => {
       new Uint8Array(),
       new Object(),
       Buffer.from(""),
-      ...(isBun ? [Bun.file("/tmp/empty.txt")] : []),
       new Headers(),
       new URLSearchParams(),
       new FormData(),
       (function* () {})(),
     ];
+    if (isBun) {
+      const { join } = require("path");
+      const { tmpdir } = require("os");
+      const { mkdtempSync, writeFileSync } = require("fs");
+      const tmpDir = mkdtempSync(join(tmpdir(), "jest-extended-"));
+      const tmpFile = join(tmpDir, "empty.txt");
+      values.push(Bun.file(tmpFile));
+      writeFileSync(tmpFile, "");
+    }
     for (const value of values) {
       test(label(value), () => {
-        if (value && typeof value === "object" && value instanceof Blob) {
-          require("fs").writeFileSync("/tmp/empty.txt", "");
-        }
-
         expect(value).toBeEmpty();
       });
     }

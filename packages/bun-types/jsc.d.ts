@@ -78,21 +78,7 @@ declare module "bun:jsc" {
    */
   function setTimeZone(timeZone: string): string;
 
-  /**
-   * Run JavaScriptCore's sampling profiler for a particular function
-   *
-   * This is pretty low-level.
-   *
-   * Things to know:
-   * - LLint means "Low Level Interpreter", which is the interpreter that runs before any JIT compilation
-   * - Baseline is the first JIT compilation tier. It's the least optimized, but the fastest to compile
-   * - DFG means "Data Flow Graph", which is the second JIT compilation tier. It has some optimizations, but is slower to compile
-   * - FTL means "Faster Than Light", which is the third JIT compilation tier. It has the most optimizations, but is the slowest to compile
-   */
-  function profile(
-    callback: CallableFunction,
-    sampleInterval?: number,
-  ): {
+  interface SamplingProfile {
     /**
      * A formatted summary of the top functions
      *
@@ -183,7 +169,24 @@ declare module "bun:jsc" {
      * Stack traces of the top functions
      */
     stackTraces: string[];
-  };
+  }
+
+  /**
+   * Run JavaScriptCore's sampling profiler for a particular function
+   *
+   * This is pretty low-level.
+   *
+   * Things to know:
+   * - LLint means "Low Level Interpreter", which is the interpreter that runs before any JIT compilation
+   * - Baseline is the first JIT compilation tier. It's the least optimized, but the fastest to compile
+   * - DFG means "Data Flow Graph", which is the second JIT compilation tier. It has some optimizations, but is slower to compile
+   * - FTL means "Faster Than Light", which is the third JIT compilation tier. It has the most optimizations, but is the slowest to compile
+   */
+  function profile<T extends (...args: any[]) => any>(
+    callback: T,
+    sampleInterval?: number,
+    ...args: Parameters<T>
+  ): ReturnType<T> extends Promise<infer U> ? Promise<SamplingProfile> : SamplingProfile;
 
   /**
    * This returns objects which native code has explicitly protected from being

@@ -97,7 +97,7 @@ String convertEnumerationToString(SubtleCrypto::KeyFormat);
 template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, SubtleCrypto::KeyFormat);
 
 template<> std::optional<SubtleCrypto::KeyFormat> parseEnumeration<SubtleCrypto::KeyFormat>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> const char* expectedEnumerationValues<SubtleCrypto::KeyFormat>();
+template<> ASCIILiteral expectedEnumerationValues<SubtleCrypto::KeyFormat>();
 
 } // namespace WebCore
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "bun:test";
 import type { Server, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
-import { bunEnv, bunExe, nodeExe } from "harness";
+import { bunEnv, bunExe, forceGuardMalloc, nodeExe } from "harness";
 import { isIP } from "node:net";
 import path from "node:path";
 
@@ -61,6 +61,21 @@ const binaryTypes = [
 
 let servers: Server[] = [];
 let clients: Subprocess[] = [];
+
+it("should work fine if you repeatedly call methods on closed websockets", async () => {
+  let env = { ...bunEnv };
+  forceGuardMalloc(env);
+
+  const { exited } = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "websocket-server-fixture.js")],
+    env,
+    stderr: "inherit",
+    stdout: "inherit",
+    stdin: "inherit",
+  });
+
+  expect(await exited).toBe(0);
+});
 
 afterEach(() => {
   for (const server of servers) {

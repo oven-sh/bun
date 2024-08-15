@@ -16,7 +16,7 @@ await proc.exited;
 The second argument accepts a configuration object.
 
 ```ts
-const proc = Bun.spawn("echo", ["Hello, world!"], {
+const proc = Bun.spawn(["echo", "Hello, world!"], {
   cwd: "/tmp",
   env: { FOO: "bar" },
   onExit(proc, exitCode, signalCode, error) {

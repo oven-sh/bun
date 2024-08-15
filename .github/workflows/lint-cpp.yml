@@ -14,10 +14,11 @@ on:
         type: string
         description: The workflow ID to download artifacts (skips the build step)
   pull_request:
-    paths-ignore:
-      - .vscode/**/*
-      - docs/**/*
-      - examples/**/*
+    paths:
+      - ".github/workflows/lint-cpp.yml"
+      - "**/*.cpp"
+      - "src/deps/**/*"
+      - "CMakeLists.txt"
 
 jobs:
   lint-cpp:

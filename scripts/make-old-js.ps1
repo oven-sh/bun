@@ -5,11 +5,20 @@ $npm_client = "npm"
 $root = Join-Path (Split-Path -Path $MyInvocation.MyCommand.Definition -Parent) "..\"
 
 # search for .cmd or .exe 
-$esbuild = Join-Path $root "node_modules\.bin\esbuild.cmd"
-if (!(Test-Path $esbuild)) {
-    $esbuild = Join-Path $root "node_modules\.bin\esbuild.exe"
+function Get-Esbuild-Path {
+  param(
+      $Path
+  )
+
+  $Result = Join-Path $Path "node_modules\.bin\esbuild.cmd"
+  if (Test-Path $Result) {
+      return $Result
+  }
+
+  return Join-Path $Path "node_modules\.bin\esbuild.exe"
 }
 
+$esbuild = Get-Esbuild-Path $root
 
 $env:NODE_ENV = "production"
 
@@ -34,5 +43,5 @@ Pop-Location
 # node-fallbacks
 Push-Location src\node-fallbacks
 & ${npm_client} install
-& ${esbuild} --bundle @(Get-Item .\*.js) --outdir=out --format=esm --minify --platform=browser
+& (Get-Esbuild-Path (Get-Location)) --bundle @(Get-Item .\*.js) --outdir=out --format=esm --minify --platform=browser
 Pop-Location

@@ -2,8 +2,13 @@
 const types = require("node:util/types");
 /** @type {import('node-inspect-extracted')} */
 const utl = require("internal/util/inspect");
+const { ERR_INVALID_ARG_TYPE, ERR_OUT_OF_RANGE } = require("internal/errors");
 
-var cjs_exports = {};
+const internalErrorName = $newZigFunction("node_util_binding.zig", "internalErrorName", 1);
+
+const NumberIsSafeInteger = Number.isSafeInteger;
+
+var cjs_exports;
 
 function isBuffer(value) {
   return Buffer.isBuffer(value);
@@ -280,7 +285,68 @@ function styleText(format, text) {
   return `\u001b[${formatCodes[0]}m${text}\u001b[${formatCodes[1]}m`;
 }
 
-export default Object.assign(cjs_exports, {
+function getSystemErrorName(err: any) {
+  if (typeof err !== "number") throw ERR_INVALID_ARG_TYPE("err", "number", err);
+  if (err >= 0 || !NumberIsSafeInteger(err)) throw ERR_OUT_OF_RANGE("err", "a negative integer", err);
+  return internalErrorName(err);
+}
+
+let lazyAbortedRegistry: FinalizationRegistry<{
+  ref: WeakRef<AbortSignal>;
+  unregisterToken: (...args: any[]) => void;
+}>;
+function onAbortedCallback(resolveFn: Function) {
+  lazyAbortedRegistry.unregister(resolveFn);
+
+  resolveFn();
+}
+
+function aborted(signal: AbortSignal, resource: object) {
+  if (!$isObject(signal) || !(signal instanceof AbortSignal)) {
+    throw ERR_INVALID_ARG_TYPE("signal", "AbortSignal", signal);
+  }
+
+  if (!$isObject(resource)) {
+    throw ERR_INVALID_ARG_TYPE("resource", "object", resource);
+  }
+
+  if (signal.aborted) {
+    return Promise.resolve();
+  }
+
+  const { promise, resolve } = $newPromiseCapability(Promise);
+  const unregisterToken = onAbortedCallback.bind(undefined, resolve);
+  signal.addEventListener(
+    "abort",
+    // Do not leak the current scope into the listener.
+    // Instead, create a new function.
+    unregisterToken,
+    { once: true },
+  );
+
+  if (!lazyAbortedRegistry) {
+    lazyAbortedRegistry = new FinalizationRegistry(({ ref, unregisterToken }) => {
+      const signal = ref.deref();
+      if (signal) signal.removeEventListener("abort", unregisterToken);
+    });
+  }
+
+  // When the resource is garbage collected, clear the listener from the
+  // AbortSignal so we do not cause the AbortSignal itself to leak (AbortSignal
+  // keeps alive until it is signaled).
+  lazyAbortedRegistry.register(
+    resource,
+    {
+      ref: new WeakRef(signal),
+      unregisterToken,
+    },
+    unregisterToken,
+  );
+
+  return promise;
+}
+
+cjs_exports = {
   format,
   formatWithOptions,
   stripVTControlCharacters,
@@ -315,4 +381,8 @@ export default Object.assign(cjs_exports, {
   TextEncoder,
   parseArgs,
   styleText,
-});
+  getSystemErrorName,
+  aborted,
+};
+
+export default cjs_exports;

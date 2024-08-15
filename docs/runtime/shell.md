@@ -418,7 +418,7 @@ For cross-platform compatibility, Bun Shell implements a set of builtin commands
 
 **Not** implemented yet, but planned:
 
-- See https://github.com/oven-sh/bun/issues/9716 for the full list.
+- See [Issue #9716](https://github.com/oven-sh/bun/issues/9716) for the full list.
 
 ## Utilities
 

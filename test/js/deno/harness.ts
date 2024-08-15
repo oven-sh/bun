@@ -22,7 +22,7 @@ type Options = {
  *   assert(true);
  * });
  */
-export function createDenoTest(path: string) {
+export function createDenoTest(path: string, defaultTimeout = 5000) {
   const { expect, test, beforeAll, afterAll } = Bun.jest(path);
 
   let server: Server;
@@ -53,7 +53,7 @@ export function createDenoTest(path: string) {
 
   const denoTest = (arg0: Fn | Options, arg1?: Fn) => {
     if (typeof arg0 === "function") {
-      test(arg0.name, arg0);
+      test(arg0.name, arg0, defaultTimeout);
     } else if (typeof arg1 === "function") {
       if (
         arg0?.ignore === true ||

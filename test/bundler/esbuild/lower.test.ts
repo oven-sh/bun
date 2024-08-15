@@ -1,13 +1,12 @@
-import { itBundled, testForFile } from "../expectBundled";
-var { describe, test, expect } = testForFile(import.meta.path);
+import { itBundled } from "../expectBundled";
+import { describe } from "bun:test";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_lower_test.go
 
 // For debug, all files are written to $TEMP/bun-bundle-tests/lower
 
-describe("bundler", () => {
-  return;
+describe.todo("bundler", () => {
   itBundled("lower/LowerOptionalCatchNameCollisionNoBundle", {
     // GENERATED
     files: {

@@ -6,8 +6,8 @@
 #include <JavaScriptCore/Strong.h>
 #include "helpers.h"
 
-extern "C" JSC_DECLARE_HOST_FUNCTION(jsFunctionBunPlugin);
-extern "C" JSC_DECLARE_HOST_FUNCTION(jsFunctionBunPluginClear);
+BUN_DECLARE_HOST_FUNCTION(jsFunctionBunPlugin);
+BUN_DECLARE_HOST_FUNCTION(jsFunctionBunPluginClear);
 
 namespace Zig {
 

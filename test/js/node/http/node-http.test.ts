@@ -25,7 +25,7 @@ import { unlinkSync } from "node:fs";
 import { PassThrough } from "node:stream";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock } = createTest(import.meta.path);
 import { bunExe } from "bun:harness";
-import { bunEnv, disableAggressiveGCScope, tmpdirSync } from "harness";
+import { bunEnv, disableAggressiveGCScope, tmpdirSync, randomPort } from "harness";
 import * as stream from "node:stream";
 import * as zlib from "node:zlib";
 
@@ -156,6 +156,28 @@ describe("node:http", () => {
       });
       await promise;
       server.close();
+    });
+
+    it("should use the provided port", async () => {
+      const server = http.createServer(() => {});
+      const random_port = randomPort();
+      server.listen(random_port);
+      const { port } = server.address();
+      expect(port).toEqual(random_port);
+      server.close();
+    });
+
+    it("should assign a random port when undefined", async () => {
+      const server1 = http.createServer(() => {});
+      const server2 = http.createServer(() => {});
+      server1.listen(undefined);
+      server2.listen(undefined);
+      const { port: port1 } = server1.address();
+      const { port: port2 } = server2.address();
+      expect(port1).not.toEqual(port2);
+      expect(port1).toBeWithin(1024, 65535);
+      server1.close();
+      server2.close();
     });
 
     it("option method should be uppercase (#7250)", async () => {
@@ -1808,68 +1830,16 @@ if (process.platform !== "win32") {
   });
 }
 
-it("#10177 response.write with non-ascii latin1 should not cause duplicated character or segfault", done => {
-  // x = ascii
-  // á = latin1 supplementary character
-  // 📙 = emoji
-  // 👍🏽 = its a grapheme of 👍 🟤
-  // "\u{1F600}" = utf16
-  const chars = ["x", "á", "📙", "👍🏽", "\u{1F600}"];
-
-  // 128 = small than waterMark, 256 = waterMark, 1024 = large than waterMark
-  // 8Kb = small than cork buffer
-  // 16Kb = cork buffer
-  // 32Kb = large than cork buffer
-  const start_size = 128;
-  const increment_step = 1024;
-  const end_size = 32 * 1024;
-  let expected = "";
-
-  function finish(err) {
-    server.closeAllConnections();
-    Bun.gc(true);
-    done(err);
-  }
-  const server = require("http")
-    .createServer((_, response) => {
-      response.write(expected);
-      response.write("");
-      response.end();
-    })
-    .listen(0, "localhost", async (err, hostname, port) => {
-      expect(err).toBeFalsy();
-      expect(port).toBeGreaterThan(0);
-
-      for (const char of chars) {
-        for (let size = start_size; size <= end_size; size += increment_step) {
-          expected = char + Buffer.alloc(size, "-").toString("utf8") + "x";
-
-          try {
-            const url = `http://${hostname}:${port}`;
-            const count = 20;
-            const all = [];
-            const batchSize = 20;
-            while (all.length < count) {
-              const batch = Array.from({ length: batchSize }, () => fetch(url).then(a => a.text()));
-
-              all.push(...(await Promise.all(batch)));
-            }
-
-            using _ = disableAggressiveGCScope();
-            for (const result of all) {
-              expect(result).toBe(expected);
-            }
-          } catch (err) {
-            return finish(err);
-          }
-        }
-
-        // still always run GC at the end here.
-        Bun.gc(true);
-      }
-      finish();
-    });
-}, 20_000);
+it("#10177 response.write with non-ascii latin1 should not cause duplicated character or segfault", () => {
+  // this can cause a segfault so we run it in a separate process
+  const { exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), "run", path.join(import.meta.dir, "node-http-response-write-encode-fixture.js")],
+    env: bunEnv,
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  expect(exitCode).toBe(0);
+}, 60_000);
 
 it("#11425 http no payload limit", done => {
   const server = Server((req, res) => {
@@ -1921,38 +1891,54 @@ it("should emit events in the right order", async () => {
 
 it("destroy should end download", async () => {
   // just simulate some file that will take forever to download
-  const payload = Buffer.from("X".repeat(16 * 1024));
-
-  using server = Bun.serve({
-    port: 0,
-    async fetch(req) {
-      let running = true;
-      req.signal.onabort = () => (running = false);
-      return new Response(async function* () {
-        while (running) {
-          yield payload;
-          await Bun.sleep(10);
-        }
-      });
-    },
-  });
-  {
-    let chunks = 0;
-
-    const { promise, resolve } = Promise.withResolvers();
-    const req = request(server.url, res => {
-      res.on("data", () => {
-        process.nextTick(resolve);
-        chunks++;
-      });
+  const payload = Buffer.alloc(128 * 1024, "X");
+  for (let i = 0; i < 5; i++) {
+    let sendedByteLength = 0;
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        let running = true;
+        req.signal.onabort = () => (running = false);
+        return new Response(async function* () {
+          while (running) {
+            sendedByteLength += payload.byteLength;
+            yield payload;
+            await Bun.sleep(10);
+          }
+        });
+      },
     });
-    req.end();
-    // wait for the first chunk
-    await promise;
-    // should stop the download
-    req.destroy();
-    await Bun.sleep(200);
-    expect(chunks).toBeLessThanOrEqual(3);
+
+    async function run() {
+      let receivedByteLength = 0;
+      let { promise, resolve } = Promise.withResolvers();
+      const req = request(server.url, res => {
+        res.on("data", data => {
+          receivedByteLength += data.length;
+          if (resolve) {
+            resolve();
+            resolve = null;
+          }
+        });
+      });
+      req.end();
+      await promise;
+      req.destroy();
+      await Bun.sleep(10);
+      const initialByteLength = receivedByteLength;
+      // we should receive the same amount of data we sent
+      expect(initialByteLength).toBeLessThanOrEqual(sendedByteLength);
+      await Bun.sleep(10);
+      // we should not receive more data after destroy
+      expect(initialByteLength).toBe(receivedByteLength);
+      await Bun.sleep(10);
+    }
+
+    const runCount = 50;
+    const runs = Array.from({ length: runCount }, run);
+    await Promise.all(runs);
+    Bun.gc(true);
+    await Bun.sleep(10);
   }
 });
 
@@ -2152,3 +2138,117 @@ it("should error with faulty args", async () => {
   }
   server.close();
 });
+
+it("should mark complete true", async () => {
+  const { promise: serve, resolve: resolveServe } = Promise.withResolvers();
+  const server = createServer(async (req, res) => {
+    let count = 0;
+    let data = "";
+    req.on("data", chunk => {
+      data += chunk.toString();
+    });
+    while (!req.complete) {
+      await Bun.sleep(100);
+      count++;
+      if (count > 10) {
+        res.writeHead(500, { "Content-Type": "text/plain" });
+        res.end("Request timeout");
+        return;
+      }
+    }
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end(data);
+  });
+
+  server.listen(0, () => {
+    resolveServe(`http://localhost:${server.address().port}`);
+  });
+
+  const url = await serve;
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Hotel 1",
+        price: 100,
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('{"name":"Hotel 1","price":100}');
+  } finally {
+    server.close();
+  }
+});
+
+it("should propagate exception in sync data handler", async () => {
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), "run", path.join(import.meta.dir, "node-http-error-in-data-handler-fixture.1.js")],
+    stdout: "pipe",
+    stderr: "inherit",
+    env: bunEnv,
+  });
+
+  expect(stdout.toString()).toContain("Test passed");
+  expect(exitCode).toBe(0);
+});
+
+it("should propagate exception in async data handler", async () => {
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), "run", path.join(import.meta.dir, "node-http-error-in-data-handler-fixture.2.js")],
+    stdout: "pipe",
+    stderr: "inherit",
+    env: bunEnv,
+  });
+
+  expect(stdout.toString()).toContain("Test passed");
+  expect(exitCode).toBe(0);
+});
+// This test is disabled because it can OOM the CI
+it.skip("should be able to stream huge amounts of data", async () => {
+  const buf = Buffer.alloc(1024 * 1024 * 256);
+  const CONTENT_LENGTH = 3 * 1024 * 1024 * 1024;
+  let received = 0;
+  let written = 0;
+  const { promise: listen, resolve: resolveListen } = Promise.withResolvers();
+  const server = http
+    .createServer((req, res) => {
+      res.writeHead(200, {
+        "Content-Type": "text/plain",
+        "Content-Length": CONTENT_LENGTH,
+      });
+      function commit() {
+        if (written < CONTENT_LENGTH) {
+          written += buf.byteLength;
+          res.write(buf, commit);
+        } else {
+          res.end();
+        }
+      }
+
+      commit();
+    })
+    .listen(0, "localhost", resolveListen);
+  await listen;
+
+  try {
+    const response = await fetch(`http://localhost:${server.address().port}`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/plain");
+    const reader = response.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      received += value ? value.byteLength : 0;
+      if (done) {
+        break;
+      }
+    }
+    expect(written).toBe(CONTENT_LENGTH);
+    expect(received).toBe(CONTENT_LENGTH);
+  } finally {
+    server.close();
+  }
+}, 30_000);

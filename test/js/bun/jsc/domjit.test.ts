@@ -106,12 +106,17 @@ describe("DOMJIT", () => {
   describe("in NodeVM", () => {
     const code = `
     const buf = new Uint8Array(4);
+    const encoder = new TextEncoder();
     for (let iter of [100000]) {
       for (let i = 0; i < iter; i++) {
         performance.now();
       }
       for (let i = 0; i < iter; i++) {
         new TextEncoder().encode("test");
+      }
+      const str = "a".repeat(1030);
+      for (let i = 0; i < 1000000; i++) {
+        const result = encoder.encode(str);
       }
       for (let i = 0; i < iter; i++) {
         new TextEncoder().encodeInto("test", buf);

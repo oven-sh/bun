@@ -135,6 +135,7 @@ for (const { input, output, description } of testCases) {
     const chunkArray = await Bun.readableStreamToArray(outputStream);
     expect(chunkArray.length, "number of chunks should match").toBe(output.length);
     for (let i = 0; i < output.length; ++i) {
+      expect(chunkArray[i]).toBeInstanceOf(Uint8Array);
       expect(chunkArray[i].length).toBe(output[i].length);
       for (let j = 0; j < output[i].length; ++j) {
         expect(chunkArray[i][j]).toBe(output[i][j]);

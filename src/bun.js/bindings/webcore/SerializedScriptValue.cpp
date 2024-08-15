@@ -2263,6 +2263,10 @@ private:
         case CryptoAlgorithmIdentifier::Ed25519:
             write(CryptoAlgorithmIdentifierTag::ED25519);
             break;
+        case CryptoAlgorithmIdentifier::None: {
+            RELEASE_ASSERT_NOT_REACHED();
+            break;
+        }
         }
     }
 

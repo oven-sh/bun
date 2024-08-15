@@ -357,7 +357,10 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::SHA_384:
         case CryptoAlgorithmIdentifier::SHA_512:
             return Exception { NotSupportedError };
+        case CryptoAlgorithmIdentifier::None:
+            return Exception { NotSupportedError };
         }
+
         break;
     case Operations::WrapKey:
     case Operations::UnwrapKey:

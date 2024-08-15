@@ -132,7 +132,7 @@ static const JSC::DOMJIT::Signature DOMJITSignatureFor${fnName}(${DOMJITName(fnN
   );
 }
 
-function DOMJITFunctionDefinition(jsClassName, fnName, symName, { args }) {
+function DOMJITFunctionDefinition(jsClassName, fnName, symName, { args }, fn) {
   const argNames = args.map((arg, i) => `${argTypeName(arg)} arg${i}`);
   const formattedArgs = argNames.length > 0 ? `, ${argNames.join(", ")}` : "";
   const retArgs = argNames.length > 0 ? `, ${args.map((b, i) => "arg" + i).join(", ")}` : "";
@@ -147,6 +147,24 @@ JSC_DEFINE_JIT_OPERATION(${DOMJITName(
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     IGNORE_WARNINGS_END
     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+#ifdef BUN_DEBUG
+    ${jsClassName}* wrapper = reinterpret_cast<${jsClassName}*>(thisValue);
+    JSC::EncodedJSValue result = ${DOMJITName(symName)}(wrapper->wrapped(), lexicalGlobalObject${retArgs});
+    JSValue decoded = JSValue::decode(result);
+    if (wrapper->m_${fn}_expectedResultType) {
+        if (decoded.isCell() && !decoded.isEmpty()) {
+          ASSERT_WITH_MESSAGE(wrapper->m_${fn}_expectedResultType.value().has_value(), "DOMJIT function return type changed!");
+          ASSERT_WITH_MESSAGE(wrapper->m_${fn}_expectedResultType.value().value() == decoded.asCell()->type(), "DOMJIT function return type changed!");
+        } else {
+          ASSERT_WITH_MESSAGE(!wrapper->m_${fn}_expectedResultType.value().has_value(), "DOMJIT function return type changed!");
+        }
+    } else if (!decoded.isEmpty()) {
+        wrapper->m_${fn}_expectedResultType = decoded.isCell()
+          ? std::optional<JSC::JSType>(decoded.asCell()->type())
+          : std::optional<JSC::JSType>(std::nullopt);
+    }
+    return { result };
+#endif
     return {${DOMJITName(symName)}(reinterpret_cast<${jsClassName}*>(thisValue)->wrapped(), lexicalGlobalObject${retArgs})};
 }
 `.trim();
@@ -852,6 +870,7 @@ function renderDecls(symbolName, typeName, proto, supportsObjectCreate = false) 
             symbolName(typeName, name),
             symbolName(typeName, proto[name].fn),
             proto[name].DOMJIT,
+            proto[name].fn,
           ),
         );
       }
@@ -1088,6 +1107,7 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObjec
     }
 
     if ("fn" in proto[name]) {
+      const fn = proto[name].fn;
       rows.push(`
 JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -1113,9 +1133,28 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
       lastFileName = fileName;
     }
 
-    JSC::EncodedJSValue result = ${symbolName(typeName, proto[name].fn)}(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+    JSC::EncodedJSValue result = ${symbolName(typeName, fn)}(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 
     ASSERT_WITH_MESSAGE(!JSValue::decode(result).isEmpty() or DECLARE_CATCH_SCOPE(vm).exception() != 0, \"${typeName}.${proto[name].fn} returned an empty value without an exception\");
+
+    ${
+      !proto[name].DOMJIT
+        ? ""
+        : `
+    JSValue decoded = JSValue::decode(result);
+    if (thisObject->m_${fn}_expectedResultType) {
+      if (decoded.isCell() && !decoded.isEmpty()) {
+        ASSERT_WITH_MESSAGE(thisObject->m_${fn}_expectedResultType.value().has_value(), "DOMJIT function return type changed!");
+        ASSERT_WITH_MESSAGE(thisObject->m_${fn}_expectedResultType.value().value() == decoded.asCell()->type(), "DOMJIT function return type changed!");
+      } else {
+        ASSERT_WITH_MESSAGE(!thisObject->m_${fn}_expectedResultType.value().has_value(), "DOMJIT function return type changed!");
+      }
+    } else if (!decoded.isEmpty()) {
+      thisObject->m_${fn}_expectedResultType = decoded.isCell()
+        ? std::optional<JSC::JSType>(decoded.asCell()->type())
+        : std::optional<JSC::JSType>(std::nullopt);
+    }`
+    }
 
     return result;
 #endif
@@ -1264,6 +1303,8 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
           })
           .join("\n")}
 
+        ${domJITTypeCheckFields(proto, klass)}
+
         ${weakOwner}
 
         ${DECLARE_VISIT_CHILDREN}
@@ -1273,6 +1314,22 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
     };
     ${suffix}
   `.trim();
+}
+
+function domJITTypeCheckFields(proto, klass) {
+  var output = "";
+  for (const name in proto) {
+    const { DOMJIT, fn } = proto[name];
+    if (!DOMJIT) continue;
+    output += `std::optional<std::optional<JSC::JSType>> m_${fn}_expectedResultType = std::nullopt;\n`;
+  }
+
+  for (const name in klass) {
+    const { DOMJIT, fn } = klass[name];
+    if (!DOMJIT) continue;
+    output += `std::optional<std::optional<JSC::JSType>> m_${fn}_expectedResultType = std::nullopt;\n`;
+  }
+  return output;
 }
 
 function generateClassImpl(typeName, obj: ClassDefinition) {

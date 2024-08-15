@@ -1340,7 +1340,7 @@ pub const FileSystemFlags = enum(Mode) {
     pub fn fromJS(ctx: JSC.C.JSContextRef, val: JSC.JSValue, exception: JSC.C.ExceptionRef) ?FileSystemFlags {
         if (val.isNumber()) {
             if (!val.isInt32()) {
-                exception.* = ctx.ERR_OUT_OF_RANGE("The value of \"mode\" is out of range. It must be an integer. Received {d}", .{val.toInt64()}).toJS().asObjectRef();
+                exception.* = ctx.ERR_OUT_OF_RANGE("The value of \"flags\" is out of range. It must be an integer. Received {d}", .{val.toInt64()}).toJS().asObjectRef();
                 return null;
             }
             const number = val.coerce(i32, ctx);

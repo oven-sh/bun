@@ -516,6 +516,7 @@ pub const TextEncoderStreamEncoder = struct {
             len: u3,
 
             pub const replacement: @This() = .{ .bytes = .{ 0xef, 0xbf, 0xbd, 0 }, .len = 3 };
+            pub const empty: @This() = .{ .bytes = .{ 0, 0, 0, 0 }, .len = 0 };
 
             pub fn fromSequence(seq: [4]u8, length: u3) @This() {
                 return .{ .bytes = seq, .len = length };
@@ -524,7 +525,7 @@ pub const TextEncoderStreamEncoder = struct {
 
         var remain = input;
 
-        const prepend: ?Prepend = prepend: {
+        const prepend: Prepend = prepend: {
             if (this.pending_lead_surrogate) |lead| {
                 this.pending_lead_surrogate = null;
                 const maybe_trail = remain[0];
@@ -538,7 +539,7 @@ pub const TextEncoderStreamEncoder = struct {
 
                     remain = remain[1..];
                     if (remain.len == 0) {
-                        return ArrayBuffer.createBuffer(
+                        return ArrayBuffer.createUint8Array(
                             globalObject,
                             sequence[0..converted.utf8Width()],
                         );
@@ -549,46 +550,113 @@ pub const TextEncoderStreamEncoder = struct {
 
                 break :prepend Prepend.replacement;
             }
-            break :prepend null;
+
+            break :prepend Prepend.empty;
         };
 
-        const length = bun.simdutf.length.utf8.from.utf16.le(remain);
+        bun.debugAssert(remain.len != 0);
 
-        var buf = std.ArrayList(u8).initCapacity(
-            bun.default_allocator,
-            length + @as(usize, if (prepend) |pre| pre.len else 0),
-        ) catch {
-            globalObject.throwOutOfMemory();
-            return .zero;
-        };
+        const last_token = remain[remain.len - 1];
+        if (strings.u16IsLead(last_token)) {
 
-        if (prepend) |*pre| {
-            buf.appendSliceAssumeCapacity(pre.bytes[0..pre.len]);
+            // if last unit is high surrogate, exclude from simdutf conversion to avoid error
+            remain = remain[0 .. remain.len - 1];
+            this.pending_lead_surrogate = last_token;
+
+            if (remain.len == 0) {
+                if (prepend.len == 0) {
+                    return .undefined;
+                }
+
+                return ArrayBuffer.createUint8Array(
+                    globalObject,
+                    prepend.bytes[0..prepend.len],
+                );
+            }
         }
 
-        const result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(remain, buf.unusedCapacitySlice());
+        bun.debugAssert(remain.len != 0);
 
-        switch (result.status) {
-            else => {
-                // Slow path: there was invalid UTF-16, so we need to convert it without simdutf.
-                const lead_surrogate = strings.toUTF8ListWithTypeBun(&buf, []const u16, remain, true) catch {
-                    buf.deinit();
+        const buf, const exact_size = buf: {
+            const max_length = ((remain.len + 1) * 3) + prepend.len;
+            if (max_length < @sizeOf(JSC.RareData.TextEncoderStreamBuffer)) {
+                break :buf .{
+                    globalObject.bunVM().rareData().textEncoderStreamBuffer(),
+                    false,
+                };
+            }
+
+            const length = bun.simdutf.length.utf8.from.utf16.le(remain) + prepend.len;
+
+            break :buf .{
+                bun.default_allocator.alloc(u8, length) catch {
+                    globalObject.throwOutOfMemory();
+                    return .zero;
+                },
+                true,
+            };
+        };
+
+        const count = bun.simdutf.convert.utf16.to.utf8.le(remain, buf);
+
+        if (count == 0) {
+            var arr = if (exact_size)
+                std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, buf)
+            else
+                std.ArrayList(u8).init(bun.default_allocator);
+            arr.items.len = 0;
+
+            if (prepend.len != 0) {
+                arr.appendSlice(prepend.bytes[0..prepend.len]) catch {
+                    globalObject.throwOutOfMemory();
+                    return .zero;
+                };
+            }
+
+            _ = strings.toUTF8ListWithTypeBun(&arr, []const u16, remain, false) catch {
+                arr.deinit();
+                globalObject.throwOutOfMemory();
+                return .zero;
+            };
+
+            const result_bytes = result_bytes: {
+
+                // very unlikely
+                if (arr.capacity == arr.items.len) break :result_bytes arr.items;
+                defer arr.deinit();
+
+                const owned = bun.default_allocator.alloc(u8, arr.items.len) catch {
                     globalObject.throwOutOfMemory();
                     return .zero;
                 };
 
-                if (lead_surrogate) |pending_lead| {
-                    this.pending_lead_surrogate = pending_lead;
-                    if (buf.items.len == 0) return .undefined;
-                }
+                @memcpy(owned, arr.items);
 
-                return JSC.JSUint8Array.fromBytes(globalObject, buf.items);
-            },
-            .success => {
-                buf.items.len += result.count;
-                return JSC.JSUint8Array.fromBytes(globalObject, buf.items);
-            },
+                break :result_bytes owned;
+            };
+
+            return JSC.JSUint8Array.fromBytes(globalObject, result_bytes);
         }
+
+        const result_bytes = if (exact_size) buf else result_bytes: {
+            const owned = bun.default_allocator.alloc(u8, count + prepend.len) catch {
+                globalObject.throwOutOfMemory();
+                return .zero;
+            };
+
+            var remain_owned = owned;
+
+            if (prepend.len != 0) {
+                @memcpy(remain_owned[0..prepend.len], prepend.bytes[0..prepend.len]);
+                remain_owned = remain_owned[prepend.len..];
+            }
+
+            @memcpy(remain_owned, buf[0..count]);
+
+            break :result_bytes owned;
+        };
+
+        return JSC.JSUint8Array.fromBytes(globalObject, result_bytes);
     }
 
     pub fn flush(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, _: *JSC.CallFrame) JSValue {
@@ -603,7 +671,7 @@ pub const TextEncoderStreamEncoder = struct {
         return if (this.pending_lead_surrogate == null)
             .undefined
         else
-            JSC.ArrayBuffer.createBuffer(globalObject, &.{ 0xef, 0xbf, 0xbd });
+            JSC.ArrayBuffer.createUint8Array(globalObject, &.{ 0xef, 0xbf, 0xbd });
     }
 };
 

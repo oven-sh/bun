@@ -56,6 +56,7 @@ pub extern fn simdutf__convert_utf8_to_utf16le(buf: [*]const u8, len: usize, utf
 pub extern fn simdutf__convert_utf8_to_utf16be(buf: [*]const u8, len: usize, utf16_output: [*]u16) usize;
 pub extern fn simdutf__convert_utf8_to_utf16le_with_errors(buf: [*]const u8, len: usize, utf16_output: [*]u16) SIMDUTFResult;
 pub extern fn simdutf__convert_utf8_to_utf16be_with_errors(buf: [*]const u8, len: usize, utf16_output: [*]u16) SIMDUTFResult;
+pub extern fn simdutf__convert_valid_utf8_to_utf16le(buf: [*]const u8, len: usize, utf16_buffer: [*]u16) usize;
 pub extern fn simdutf__convert_valid_utf8_to_utf16be(buf: [*]const u8, len: usize, utf16_buffer: [*]u16) usize;
 pub extern fn simdutf__convert_utf8_to_utf32(buf: [*]const u8, len: usize, utf32_output: [*]u32) usize;
 pub extern fn simdutf__convert_utf8_to_utf32_with_errors(buf: [*]const u8, len: usize, utf32_output: [*]u32) SIMDUTFResult;
@@ -167,11 +168,58 @@ pub const convert = struct {
                 };
 
                 pub fn le(input: []const u8, output: []u32) usize {
-                    return simdutf__convert_valid_utf8_to_utf32(input.ptr, input.len, output.ptr);
+                    return simdutf__convert_utf8_to_utf32(input.ptr, input.len, output.ptr);
                 }
                 pub fn be(input: []const u8, output: []u32) usize {
+                    return simdutf__convert_utf8_to_utf32(input.ptr, input.len, output.ptr);
+                }
+            };
+        };
+    };
+
+    pub const valid = struct {
+        pub const utf16 = struct {
+            pub const to = struct {
+                pub const utf8 = struct {
+                    pub fn le(input: []const u16, output: []u8) usize {
+                        return simdutf__convert_valid_utf16le_to_utf8(input.ptr, input.len, output.ptr);
+                    }
+                    pub fn be(input: []const u16, output: []u8) usize {
+                        return simdutf__convert_valid_utf16be_to_utf8(input.ptr, input.len, output.ptr);
+                    }
+                };
+            };
+        };
+
+        pub const utf8 = struct {
+            pub const to = struct {
+                pub const utf16 = struct {
+                    pub fn le(input: []const u8, output: []u16) usize {
+                        return simdutf__convert_valid_utf8_to_utf16le(input.ptr, input.len, output.ptr);
+                    }
+                    pub fn be(input: []const u8, output: []u16) usize {
+                        return simdutf__convert_valid_utf8_to_utf16be(input.ptr, input.len, output.ptr);
+                    }
+                };
+                pub fn utf32(input: []const u8, output: []u32) usize {
                     return simdutf__convert_valid_utf8_to_utf32(input.ptr, input.len, output.ptr);
                 }
+            };
+        };
+
+        pub const utf32 = struct {
+            pub const to = struct {
+                pub fn utf8(input: []const u32, output: []u8) usize {
+                    return simdutf__convert_valid_utf32_to_utf8(input.ptr, input.len, output.ptr);
+                }
+                pub const utf16 = struct {
+                    pub fn le(input: []const u32, output: []u16) usize {
+                        return simdutf__convert_valid_utf32_to_utf16le(input.ptr, input.len, output.ptr);
+                    }
+                    pub fn be(input: []const u32, output: []u16) usize {
+                        return simdutf__convert_valid_utf32_to_utf16be(input.ptr, input.len, output.ptr);
+                    }
+                };
             };
         };
     };
@@ -189,10 +237,10 @@ pub const convert = struct {
                 };
 
                 pub fn le(input: []const u16, output: []u8) usize {
-                    return simdutf__convert_valid_utf16le_to_utf8(input.ptr, input.len, output.ptr);
+                    return simdutf__convert_utf16le_to_utf8(input.ptr, input.len, output.ptr);
                 }
                 pub fn be(input: []const u16, output: []u8) usize {
-                    return simdutf__convert_valid_utf16be_to_utf8(input.ptr, input.len, output.ptr);
+                    return simdutf__convert_utf16be_to_utf8(input.ptr, input.len, output.ptr);
                 }
             };
 
@@ -207,10 +255,10 @@ pub const convert = struct {
                 };
 
                 pub fn le(input: []const u16, output: []u32) usize {
-                    return simdutf__convert_valid_utf16le_to_utf32(input.ptr, input.len, output.ptr);
+                    return simdutf__convert_utf16le_to_utf32(input.ptr, input.len, output.ptr);
                 }
                 pub fn be(input: []const u16, output: []u32) usize {
-                    return simdutf__convert_valid_utf16be_to_utf32(input.ptr, input.len, output.ptr);
+                    return simdutf__convert_utf16be_to_utf32(input.ptr, input.len, output.ptr);
                 }
             };
         };
@@ -229,10 +277,10 @@ pub const convert = struct {
                 };
 
                 pub fn le(input: []const u32, output: []u8) usize {
-                    return simdutf__convert_valid_utf32_to_utf8(input.ptr, input.len, output.ptr);
+                    return simdutf__convert_utf32_to_utf8(input.ptr, input.len, output.ptr);
                 }
                 pub fn be(input: []const u32, output: []u8) usize {
-                    return simdutf__convert_valid_utf32_to_utf8(input.ptr, input.len, output.ptr);
+                    return simdutf__convert_utf32_to_utf8(input.ptr, input.len, output.ptr);
                 }
             };
 
@@ -247,10 +295,10 @@ pub const convert = struct {
                 };
 
                 pub fn le(input: []const u32, output: []u16) usize {
-                    return simdutf__convert_valid_utf32_to_utf16le(input.ptr, input.len, output.ptr);
+                    return simdutf__convert_utf32_to_utf16le(input.ptr, input.len, output.ptr);
                 }
                 pub fn be(input: []const u32, output: []u16) usize {
-                    return simdutf__convert_valid_utf32_to_utf16be(input.ptr, input.len, output.ptr);
+                    return simdutf__convert_utf32_to_utf16be(input.ptr, input.len, output.ptr);
                 }
             };
         };

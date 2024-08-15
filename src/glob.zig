@@ -1039,7 +1039,7 @@ pub fn GlobWalker_(
         }
 
         pub fn convertUtf8ToCodepoints(codepoints: []u32, pattern: []const u8) void {
-            _ = bun.simdutf.convert.utf8.to.utf32.le(pattern, codepoints);
+            _ = bun.simdutf.convert.valid.utf8.to.utf32(pattern, codepoints);
         }
 
         pub fn debugPatternComopnents(this: *GlobWalker) void {

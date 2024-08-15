@@ -1005,7 +1005,7 @@ function emitErrorAndCloseNextTick(self, error) {
 function emitListeningNextTick(self, onListen) {
   if (typeof onListen === "function") {
     try {
-      onListen();
+      onListen.$call(self);
     } catch (err) {
       self.emit("error", err);
     }

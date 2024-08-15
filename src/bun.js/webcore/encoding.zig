@@ -17,6 +17,7 @@ const strings = bun.strings;
 const string = bun.string;
 const FeatureFlags = bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
+const JSUint8Array = JSC.JSUint8Array;
 const Properties = @import("../base.zig").Properties;
 
 const castObj = @import("../base.zig").castObj;
@@ -450,7 +451,7 @@ pub const TextEncoderStreamEncoder = struct {
     fn encodeLatin1(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, input: []const u8) JSValue {
         log("encodeLatin1: \"{s}\"", .{input});
 
-        if (input.len == 0) return .undefined;
+        if (input.len == 0) return JSUint8Array.createEmpty(globalObject);
 
         const prepend_replacement_len: usize = prepend_replacement: {
             if (this.pending_lead_surrogate != null) {
@@ -509,7 +510,7 @@ pub const TextEncoderStreamEncoder = struct {
     fn encodeUTF16(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, input: []const u16) JSValue {
         log("encodeUTF16: \"{}\"", .{bun.fmt.utf16(input)});
 
-        if (input.len == 0) return .undefined;
+        if (input.len == 0) return JSUint8Array.createEmpty(globalObject);
 
         const Prepend = struct {
             bytes: [4]u8,
@@ -538,7 +539,7 @@ pub const TextEncoderStreamEncoder = struct {
 
                     remain = remain[1..];
                     if (remain.len == 0) {
-                        return ArrayBuffer.createBuffer(
+                        return JSUint8Array.fromBytesCopy(
                             globalObject,
                             sequence[0..converted.utf8Width()],
                         );
@@ -579,7 +580,7 @@ pub const TextEncoderStreamEncoder = struct {
 
                 if (lead_surrogate) |pending_lead| {
                     this.pending_lead_surrogate = pending_lead;
-                    if (buf.items.len == 0) return .undefined;
+                    if (buf.items.len == 0) return JSUint8Array.createEmpty(globalObject);
                 }
 
                 return JSC.JSUint8Array.fromBytes(globalObject, buf.items);
@@ -601,9 +602,9 @@ pub const TextEncoderStreamEncoder = struct {
 
     fn flushBody(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject) JSValue {
         return if (this.pending_lead_surrogate == null)
-            .undefined
+            JSUint8Array.createEmpty(globalObject)
         else
-            JSC.ArrayBuffer.createBuffer(globalObject, &.{ 0xef, 0xbf, 0xbd });
+            JSUint8Array.fromBytesCopy(globalObject, &.{ 0xef, 0xbf, 0xbd });
     }
 };
 

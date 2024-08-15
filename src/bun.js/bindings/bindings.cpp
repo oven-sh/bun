@@ -2,6 +2,7 @@
 
 #include "root.h"
 
+#include "JavaScriptCore/Exception.h"
 #include "ErrorCode+List.h"
 #include "ErrorCode.h"
 #include "JavaScriptCore/ThrowScope.h"
@@ -2985,7 +2986,7 @@ JSC__JSValue ZigString__toExternalValue(const ZigString* arg0, JSC__JSGlobalObje
 
 VirtualMachine* JSC__JSGlobalObject__bunVM(JSC__JSGlobalObject* arg0)
 {
-    return reinterpret_cast<VirtualMachine*>(reinterpret_cast<Zig::GlobalObject*>(arg0)->bunVM());
+    return reinterpret_cast<VirtualMachine*>(WebCore::clientData(arg0->vm())->bunVM);
 }
 
 JSC__JSValue ZigString__toValueGC(const ZigString* arg0, JSC__JSGlobalObject* arg1)
@@ -5069,8 +5070,19 @@ void JSC__VM__throwError(JSC__VM* vm_, JSC__JSGlobalObject* arg1, JSC__JSValue e
     JSValue value = JSValue::decode(encodedValue);
     scope.assertNoException(); // can't throw an exception when there's already one.
     ASSERT(!value.isEmpty()); // can't throw an empty value.
-    JSC::JSObject* error = value.getObject();
-    JSC::Exception* exception = JSC::Exception::create(vm, error);
+
+    // This case can happen if we did not call .toError() on a JSValue.
+    if (value.isCell()) {
+        JSC::JSCell* cell = value.asCell();
+        if (cell->type() == JSC::CellType && cell->inherits<JSC::Exception>()) {
+            scope.throwException(arg1, jsCast<JSC::Exception*>(value));
+            return;
+        }
+    }
+
+    // Do not call .getObject() on it.
+    // https://github.com/oven-sh/bun/issues/13311
+    JSC::Exception* exception = JSC::Exception::create(vm, value);
     scope.throwException(arg1, exception);
 }
 

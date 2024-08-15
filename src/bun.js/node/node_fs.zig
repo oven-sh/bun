@@ -2500,6 +2500,7 @@ pub const Arguments = struct {
 
                     if (val.getIfPropertyExists(ctx.ptr(), "mode")) |mode_| {
                         mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse mode;
+                        if (exception.* != null) return null;
                     }
                 }
             }
@@ -2736,18 +2737,23 @@ pub const Arguments = struct {
                 if (val.isObject()) {
                     if (val.getTruthy(ctx.ptr(), "flags")) |flags_| {
                         flags = FileSystemFlags.fromJS(ctx, flags_, exception) orelse flags;
+                        if (exception.* != null) return null;
                     }
 
                     if (val.getTruthy(ctx.ptr(), "mode")) |mode_| {
                         mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse mode;
+                        if (exception.* != null) return null;
                     }
                 } else if (!val.isEmpty()) {
-                    if (!val.isUndefinedOrNull())
+                    if (!val.isUndefinedOrNull()) {
                         // error is handled below
                         flags = FileSystemFlags.fromJS(ctx, val, exception) orelse flags;
+                        if (exception.* != null) return null;
+                    }
 
                     if (arguments.nextEat()) |next| {
                         mode = JSC.Node.modeFromJS(ctx, next, exception) orelse mode;
+                        if (exception.* != null) return null;
                     }
                 }
             }

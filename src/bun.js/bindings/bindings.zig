@@ -1712,6 +1712,15 @@ pub const JSUint8Array = opaque {
     pub fn fromBytes(globalThis: *JSGlobalObject, bytes: []u8) JSC.JSValue {
         return JSUint8Array__fromDefaultAllocator(globalThis, bytes.ptr, bytes.len);
     }
+
+    extern fn Bun__createUint8ArrayForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize, buffer: bool) JSValue;
+    pub fn fromBytesCopy(globalThis: *JSGlobalObject, bytes: []const u8) JSValue {
+        return Bun__createUint8ArrayForCopy(globalThis, bytes.ptr, bytes.len, false);
+    }
+
+    pub fn createEmpty(globalThis: *JSGlobalObject) JSValue {
+        return Bun__createUint8ArrayForCopy(globalThis, null, 0, false);
+    }
 };
 
 pub const JSCell = extern struct {
@@ -2910,7 +2919,7 @@ pub const JSGlobalObject = opaque {
     ) JSValue {
         const ty_str = value.jsTypeString(this).toSlice(this, bun.default_allocator);
         defer ty_str.deinit();
-        this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be of type {s}. Received {s}", .{ field, typename, ty_str.slice() }).throw();
+        this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be of type {s}. Received {}", .{ field, typename, bun.fmt.quote(ty_str.slice()) }).throw();
         return .zero;
     }
 

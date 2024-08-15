@@ -593,6 +593,15 @@ describe("ServerWebSocket", () => {
     let count = 0;
     return {
       open(ws) {
+        expect(() => ws.cork()).toThrow();
+        expect(() => ws.cork(undefined)).toThrow();
+        expect(() => ws.cork({})).toThrow();
+        expect(() =>
+          ws.cork(() => {
+            throw new Error("boom");
+          }),
+        ).toThrow();
+
         setTimeout(() => {
           ws.cork(() => {
             ws.send("1");

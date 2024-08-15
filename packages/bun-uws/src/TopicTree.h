@@ -79,9 +79,14 @@ template <typename T, typename B>
 struct TopicTree {
 
     enum IteratorFlags {
+        // To appease clang-analyzer
         NONE = 0,
+
         LAST = 1,
-        FIRST = 2
+        FIRST = 2,
+
+        // To appease clang-analyzer
+        FIRST_AND_LAST = FIRST | LAST
     };
 
     /* Whomever is iterating this topic is locked to not modify its own list */

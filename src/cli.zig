@@ -2389,8 +2389,8 @@ pub const Command = struct {
                         \\<b><red>Note<r>: If executing this from a shell, make sure to escape the string!
                         \\
                         \\<b>Examples<d>:<r>
-                        \\  <b>bunx exec "echo hi"<r>
-                        \\  <b>bunx exec "echo \"hey friends\"!"<r>
+                        \\  <b>bun exec "echo hi"<r>
+                        \\  <b>bun exec "echo \"hey friends\"!"<r>
                         \\
                     , .{});
                     Output.flush();

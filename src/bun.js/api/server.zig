@@ -4667,9 +4667,8 @@ pub const ServerWebSocket = struct {
 
         const result = corker.result;
 
-        // This case is more common.
-        if (result.toError()) |err| {
-            globalThis.throwValue(err);
+        if (result.isAnyError()) {
+            globalThis.throwValue(result);
             return JSValue.jsUndefined();
         }
 

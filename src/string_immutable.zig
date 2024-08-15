@@ -578,6 +578,41 @@ pub fn startsWith(self: string, str: string) bool {
     return eqlLong(self[0..str.len], str, false);
 }
 
+/// Transliterated from:
+/// https://github.com/rust-lang/rust/blob/91376f416222a238227c84a848d168835ede2cc3/library/core/src/str/mod.rs#L188
+pub fn isOnCharBoundary(self: string, idx: usize) bool {
+    // 0 is always ok.
+    // Test for 0 explicitly so that it can optimize out the check
+    // easily and skip reading string data for that case.
+    // Note that optimizing `self.get(..idx)` relies on this.
+    if (idx == 0) {
+        return true;
+    }
+
+    // For `idx >= self.len` we have two options:
+    //
+    // - idx == self.len
+    //   Empty strings are valid, so return true
+    // - idx > self.len
+    //   In this case return false
+    //
+    // The check is placed exactly here, because it improves generated
+    // code on higher opt-levels. See PR #84751 for more details.
+    // TODO(zack) this code is optimized for Rust's `self.as_bytes().get(idx)` function, don'
+    if (idx >= self.len) return idx == self.len;
+
+    return isUtf8CharBoundary(self[idx]);
+}
+
+pub fn isUtf8CharBoundary(c: u8) bool {
+    // This is bit magic equivalent to: b < 128 || b >= 192
+    return @as(i8, @intCast(c)) >= -0x40;
+}
+
+pub fn startsWithCaseInsensitiveAscii(self: string, prefix: string) bool {
+    return string.len >= prefix.len and eqlCaseInsensitiveASCII(self[0..prefix.len], prefix, false);
+}
+
 pub fn startsWithGeneric(comptime T: type, self: []const T, str: []const T) bool {
     if (str.len > self.len) {
         return false;

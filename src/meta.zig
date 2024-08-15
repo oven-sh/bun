@@ -74,3 +74,59 @@ pub fn Item(comptime T: type) type {
         else => return std.meta.Child(T),
     }
 }
+
+/// Returns .{a, ...args_}
+pub fn ConcatArgs1(
+    comptime func: anytype,
+    comptime a: anytype,
+    comptime args_: anytype,
+) std.meta.ArgsTuple(@TypeOf(func)) {
+    var args: std.meta.ArgsTuple(@TypeOf(func)) = undefined;
+    args[0] = a;
+
+    inline for (args_, 1..) |arg, i| {
+        args[i] = arg;
+    }
+
+    return args;
+}
+
+/// Returns .{a, b, ...args_}
+pub inline fn ConcatArgs2(
+    comptime func: anytype,
+    a: anytype,
+    b: anytype,
+    args_: anytype,
+) std.meta.ArgsTuple(@TypeOf(func)) {
+    var args: std.meta.ArgsTuple(@TypeOf(func)) = undefined;
+    args[0] = a;
+    args[1] = b;
+
+    inline for (args_, 2..) |arg, i| {
+        args[i] = arg;
+    }
+
+    return args;
+}
+
+/// Returns .{a, b, c, d, ...args_}
+pub inline fn ConcatArgs4(
+    comptime func: anytype,
+    a: anytype,
+    b: anytype,
+    c: anytype,
+    d: anytype,
+    args_: anytype,
+) std.meta.ArgsTuple(@TypeOf(func)) {
+    var args: std.meta.ArgsTuple(@TypeOf(func)) = undefined;
+    args[0] = a;
+    args[1] = b;
+    args[2] = c;
+    args[3] = d;
+
+    inline for (args_, 4..) |arg, i| {
+        args[i] = arg;
+    }
+
+    return args;
+}

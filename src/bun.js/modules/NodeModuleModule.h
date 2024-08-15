@@ -334,7 +334,6 @@ struct Parent {
 
 Parent getParent(VM&vm, JSGlobalObject* global, JSValue maybe_parent) {
   Parent value { nullptr, nullptr };
-  if (!maybe_parent.isCell()) {
     return value;
   }
   

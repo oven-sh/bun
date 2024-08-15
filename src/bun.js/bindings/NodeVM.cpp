@@ -1,7 +1,7 @@
-
 #include "root.h"
 #include "JavaScriptCore/ExecutableInfo.h"
 
+#include "BunClientData.h"
 #include "NodeVM.h"
 #include "JavaScriptCore/JSObjectInlines.h"
 #include "wtf/text/ExternalStringImpl.h"
@@ -55,7 +55,7 @@ public:
             }
             JSObject* options = asObject(optionsArg);
 
-            if (JSValue filenameOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "filename"_s))) {
+            if (JSValue filenameOpt = options->getIfPropertyExists(globalObject, builtinNames(vm).filenamePublicName())) {
                 if (filenameOpt.isString()) {
                     opts.filename = filenameOpt.toWTFString(globalObject);
                     any = true;

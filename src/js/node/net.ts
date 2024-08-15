@@ -453,7 +453,6 @@ const Socket = (function (InternalSocket) {
       connection[bunSocketInternal] = null;
       connection.unref();
       connection.destroy();
-      process.nextTick(closeNT, connection);
     }
 
     connect(...args) {
@@ -696,7 +695,7 @@ const Socket = (function (InternalSocket) {
       const socket = this[bunSocketInternal];
       if (!socket) {
         this.#unrefOnConnected = false;
-        return;
+        return this;
       }
       socket.ref();
       return this;
@@ -735,7 +734,7 @@ const Socket = (function (InternalSocket) {
       const socket = this[bunSocketInternal];
       if (!socket) {
         this.#unrefOnConnected = true;
-        return;
+        return this;
       }
       socket.unref();
       return this;
@@ -1058,7 +1057,7 @@ function emitErrorAndCloseNextTick(self, error) {
 function emitListeningNextTick(self, onListen) {
   if (typeof onListen === "function") {
     try {
-      onListen();
+      onListen.$call(self);
     } catch (err) {
       self.emit("error", err);
     }

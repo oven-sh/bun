@@ -8,6 +8,7 @@
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSString.h"
+#include "JavaScriptCore/MathCommon.h"
 #include "JavaScriptCore/Protect.h"
 #include "JavaScriptCore/PutPropertySlot.h"
 #include "ScriptExecutionContext.h"
@@ -201,8 +202,12 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
     object->putDirect(vm, JSC::Identifier::fromString(vm, "icu"_s), JSValue(JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(U_ICU_VERSION)))), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "unicode"_s), JSValue(JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(U_UNICODE_VERSION)))), 0);
 
+#define STRINGIFY_IMPL(x) #x
+#define STRINGIFY(x) STRINGIFY_IMPL(x)
     object->putDirect(vm, JSC::Identifier::fromString(vm, "modules"_s),
-        JSC::JSValue(JSC::jsString(vm, makeString("115"_s))));
+        JSC::JSValue(JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(STRINGIFY(REPORTED_NODEJS_ABI_VERSION))))));
+#undef STRINGIFY
+#undef STRINGIFY_IMPL
 
     return object;
 }
@@ -293,7 +298,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
-    globalObject->pendingNapiModule = exports;
+    globalObject->m_pendingNapiModuleAndExports[0].set(vm, globalObject, moduleObject);
+    globalObject->m_pendingNapiModuleAndExports[1].set(vm, globalObject, exports);
+
     Strong<JSC::Unknown> strongExports;
 
     if (exports.isCell()) {
@@ -357,9 +364,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     }
 
     if (callCountAtStart != globalObject->napiModuleRegisterCallCount) {
-        JSValue resultValue = globalObject->pendingNapiModule;
-        globalObject->pendingNapiModule = JSValue {};
+        JSValue resultValue = globalObject->m_pendingNapiModuleAndExports[0].get();
         globalObject->napiModuleRegisterCallCount = 0;
+        globalObject->m_pendingNapiModuleAndExports[0].clear();
+        globalObject->m_pendingNapiModuleAndExports[1].clear();
 
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -379,6 +387,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
 #define dlsym GetProcAddress
 #endif
 
+    // TODO(@190n) look for node_register_module_vXYZ according to BuildOptions.reported_nodejs_version
+    // (bun/src/env.zig:36) and the table at https://github.com/nodejs/node/blob/main/doc/abi_version_registry.json
     napi_register_module_v1 = reinterpret_cast<JSC::EncodedJSValue (*)(JSC::JSGlobalObject*,
         JSC::EncodedJSValue)>(
         dlsym(handle, "napi_register_module_v1"));
@@ -401,6 +411,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     JSC::JSValue resultValue = JSValue::decode(napi_register_module_v1(globalObject, exportsValue));
 
     RETURN_IF_EXCEPTION(scope, {});
+
+    globalObject->m_pendingNapiModuleAndExports[0].clear();
+    globalObject->m_pendingNapiModuleAndExports[1].clear();
 
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_api.cc#L734-L742
     // https://github.com/oven-sh/bun/issues/1288
@@ -1804,6 +1817,7 @@ static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
     JSC::JSObject* variables = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "v8_enable_i8n_support"_s),
         JSC::jsNumber(1), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "enable_lto"_s), JSC::jsBoolean(false), 0);
     config->putDirect(vm, JSC::Identifier::fromString(vm, "target_defaults"_s), JSC::constructEmptyObject(globalObject), 0);
     config->putDirect(vm, JSC::Identifier::fromString(vm, "variables"_s), variables, 0);
 
@@ -2366,12 +2380,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage,
     if (callFrame->argumentCount() > 0) {
         JSValue comparatorValue = callFrame->argument(0);
         if (!comparatorValue.isUndefined()) {
-            if (UNLIKELY(!comparatorValue.isObject())) {
+            JSC::JSObject* comparator = comparatorValue.getObject();
+            if (UNLIKELY(!comparator)) {
                 throwTypeError(globalObject, throwScope, "Expected an object as the first argument"_s);
                 return JSC::JSValue::encode(JSC::jsUndefined());
             }
 
-            JSC::JSObject* comparator = comparatorValue.getObject();
             JSValue userValue;
             JSValue systemValue;
 
@@ -2387,17 +2401,27 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage,
             }
 
             if (UNLIKELY(!userValue || !userValue.isNumber())) {
-                throwTypeError(globalObject, throwScope, "Expected a number for the user property"_s);
+                throwTypeError(globalObject, throwScope, "Expected a number for the 'user' property"_s);
                 return JSC::JSValue::encode(JSC::jsUndefined());
             }
 
             if (UNLIKELY(!systemValue || !systemValue.isNumber())) {
-                throwTypeError(globalObject, throwScope, "Expected a number for the system property"_s);
+                throwTypeError(globalObject, throwScope, "Expected a number for the 'system' property"_s);
                 return JSC::JSValue::encode(JSC::jsUndefined());
             }
 
-            double userComparator = userValue.asNumber();
-            double systemComparator = systemValue.asNumber();
+            double userComparator = userValue.toNumber(globalObject);
+            double systemComparator = systemValue.toNumber(globalObject);
+
+            if (userComparator > JSC::maxSafeInteger() || userComparator < 0 || std::isnan(userComparator)) {
+                throwRangeError(globalObject, throwScope, "The 'user' property must be a number between 0 and 2^53"_s);
+                return JSC::JSValue::encode(JSC::jsUndefined());
+            }
+
+            if (systemComparator > JSC::maxSafeInteger() || systemComparator < 0 || std::isnan(systemComparator)) {
+                throwRangeError(globalObject, throwScope, "The 'system' property must be a number between 0 and 2^53"_s);
+                return JSC::JSValue::encode(JSC::jsUndefined());
+            }
 
             user -= userComparator;
             system -= systemComparator;
@@ -2407,8 +2431,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage,
     JSC::JSObject* result = JSC::constructEmptyObject(vm, cpuUsageStructure);
     RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
 
-    result->putDirectOffset(vm, 0, JSC::jsNumber(user));
-    result->putDirectOffset(vm, 1, JSC::jsNumber(system));
+    result->putDirectOffset(vm, 0, JSC::jsDoubleNumber(user));
+    result->putDirectOffset(vm, 1, JSC::jsDoubleNumber(system));
 
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(result));
 }

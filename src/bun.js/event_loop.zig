@@ -82,7 +82,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         }
 
         pub fn deinit(this: *This) void {
-            this.promise.strong.deinit();
+            this.promise.deinit();
             this.destroy();
         }
     };

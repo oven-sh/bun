@@ -932,7 +932,7 @@ pub const ZigString = extern struct {
         return shim.cppFn("toRangeErrorInstance", .{ this, global });
     }
 
-    pub fn fromFmt(comptime fmt: []const u8, args: anytype) ZigString {
+    pub fn fromFmt(comptime fmt: [:0]const u8, args: anytype) ZigString {
         if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
             var buf = bun.MutableString.init2048(bun.default_allocator) catch unreachable;
             buf.writer().print(fmt, args) catch return ZigString.static(fmt).*;
@@ -6612,7 +6612,7 @@ pub const DeferredError = struct {
 
     pub const Kind = enum { plainerror, typeerror, rangeerror };
 
-    pub fn from(kind: Kind, code: JSC.Node.ErrorCode, comptime fmt: []const u8, args: anytype) DeferredError {
+    pub fn from(kind: Kind, code: JSC.Node.ErrorCode, comptime fmt: [:0]const u8, args: anytype) DeferredError {
         return .{
             .kind = kind,
             .code = code,
@@ -6627,7 +6627,7 @@ pub const DeferredError = struct {
             .typeerror => this.msg.toTypeErrorInstance(globalThis),
             .rangeerror => this.msg.toRangeErrorInstance(globalThis),
         };
-        err.put(globalThis, ZigString.static("code"), ZigString.init(@tagName(this.code)).toValue(globalThis));
+        err.put(globalThis, ZigString.static("code"), ZigString.init(@tagName(this.code)).toJS(globalThis));
         return err;
     }
 };

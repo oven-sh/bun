@@ -6,10 +6,10 @@ const BufferModule = require("node:buffer");
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const ObjectDefineProperty = Object.defineProperty;
 
-const createBrotliEncoder = $zig("node_zlib_binding.zig", "createBrotliEncoder");
-const createBrotliDecoder = $zig("node_zlib_binding.zig", "createBrotliDecoder");
-const createDeflateEncoder = $zig("node_zlib_binding.zig", "createDeflateEncoder");
-const createDeflateDecoder = $zig("node_zlib_binding.zig", "createDeflateDecoder");
+const createBrotliEncoder = $newZigFunction("node_zlib_binding.zig", "createBrotliEncoder", 3);
+const createBrotliDecoder = $newZigFunction("node_zlib_binding.zig", "createBrotliDecoder", 3);
+const createDeflateEncoder = $newZigFunction("node_zlib_binding.zig", "createDeflateEncoder", 3);
+const createDeflateDecoder = $newZigFunction("node_zlib_binding.zig", "createDeflateDecoder", 3);
 
 const maxOutputLengthDefault = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModule.kMaxLength;
 

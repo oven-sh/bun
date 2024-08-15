@@ -19,16 +19,16 @@ pub const DeflateEncoder = struct {
     maxOutputLength: usize,
 
     freelist: Queue = Queue.init(bun.default_allocator),
-    freelist_write_lock: bun.Lock = bun.Lock.init(),
+    freelist_write_lock: bun.Lock = .{},
 
     input: Queue = Queue.init(bun.default_allocator),
-    input_lock: bun.Lock = bun.Lock.init(),
+    input_lock: bun.Lock = .{},
 
     has_called_end: bool = false,
     callback_value: JSC.Strong = .{},
 
     output: std.ArrayListUnmanaged(u8) = .{},
-    output_lock: bun.Lock = bun.Lock.init(),
+    output_lock: bun.Lock = .{},
 
     has_pending_activity: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     pending_encode_job_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
@@ -114,7 +114,7 @@ pub const DeflateEncoder = struct {
             return .zero;
         };
 
-        _ = this.has_pending_activity.fetchAdd(1, .Monotonic);
+        _ = this.has_pending_activity.fetchAdd(1, .monotonic);
         if (is_last)
             this.has_called_end = true;
 
@@ -162,7 +162,7 @@ pub const DeflateEncoder = struct {
             return .zero;
         };
 
-        _ = this.has_pending_activity.fetchAdd(1, .Monotonic);
+        _ = this.has_pending_activity.fetchAdd(1, .monotonic);
         if (is_last)
             this.has_called_end = true;
 
@@ -185,11 +185,12 @@ pub const DeflateEncoder = struct {
     pub fn runFromJSThread(this: *@This()) void {
         this.poll_ref.unref(this.globalThis.bunVM());
 
-        defer _ = this.has_pending_activity.fetchSub(1, .Monotonic);
+        defer _ = this.has_pending_activity.fetchSub(1, .monotonic);
         this.drainFreelist();
 
         const result = this.callback_value.get().?.call(
             this.globalThis,
+            .undefined,
             if (this.write_failure != null)
                 &.{this.write_failure.?.toError(this.globalThis)}
             else
@@ -202,7 +203,7 @@ pub const DeflateEncoder = struct {
     }
 
     pub fn hasPendingActivity(this: *@This()) callconv(.C) bool {
-        return this.has_pending_activity.load(.Monotonic) > 0;
+        return this.has_pending_activity.load(.monotonic) > 0;
     }
 
     fn drainFreelist(this: *DeflateEncoder) void {
@@ -231,19 +232,19 @@ pub const DeflateEncoder = struct {
         pub usingnamespace bun.New(@This());
 
         pub fn runTask(this: *JSC.WorkPoolTask) void {
-            var job: *EncodeJob = @fieldParentPtr(EncodeJob, "task", this);
+            var job: *EncodeJob = @fieldParentPtr("task", this);
             job.run();
             job.destroy();
         }
 
         pub fn run(this: *EncodeJob) void {
             defer {
-                _ = this.encoder.has_pending_activity.fetchSub(1, .Monotonic);
+                _ = this.encoder.has_pending_activity.fetchSub(1, .monotonic);
             }
 
             var any = false;
 
-            if (this.encoder.pending_encode_job_count.fetchAdd(1, .Monotonic) >= 0) {
+            if (this.encoder.pending_encode_job_count.fetchAdd(1, .monotonic) >= 0) {
                 const is_last = this.encoder.has_called_end;
                 outer: while (true) {
                     this.encoder.input_lock.lock();
@@ -273,13 +274,13 @@ pub const DeflateEncoder = struct {
                         var writer = this.encoder.stream.writer(Writer{ .encoder = this.encoder });
                         writer.writeAll(input.slice()) catch {
                             any = true;
-                            _ = this.encoder.pending_encode_job_count.fetchSub(1, .Monotonic);
+                            _ = this.encoder.pending_encode_job_count.fetchSub(1, .monotonic);
                             this.encoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "DeflateError", .{}); // TODO propogate better error
                             break :outer;
                         };
                         if (this.encoder.output.items.len > this.encoder.maxOutputLength) {
                             any = true;
-                            _ = this.encoder.pending_encode_job_count.fetchSub(1, .Monotonic);
+                            _ = this.encoder.pending_encode_job_count.fetchSub(1, .monotonic);
                             this.encoder.write_failure = JSC.DeferredError.from(.rangeerror, .ERR_BUFFER_TOO_LARGE, "Cannot create a Buffer larger than {d} bytes", .{this.encoder.maxOutputLength});
                             break :outer;
                         }
@@ -287,7 +288,7 @@ pub const DeflateEncoder = struct {
 
                     any = any or pending.len > 0;
 
-                    if (this.encoder.pending_encode_job_count.fetchSub(1, .Monotonic) == 0)
+                    if (this.encoder.pending_encode_job_count.fetchSub(1, .monotonic) == 0)
                         break;
                 }
 
@@ -297,12 +298,12 @@ pub const DeflateEncoder = struct {
                     defer this.encoder.output_lock.unlock();
 
                     this.encoder.stream.end(output) catch {
-                        _ = this.encoder.pending_encode_job_count.fetchSub(1, .Monotonic);
+                        _ = this.encoder.pending_encode_job_count.fetchSub(1, .monotonic);
                         this.encoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "DeflateError", .{}); // TODO propogate better error
                         return;
                     };
                     if (this.encoder.output.items.len > this.encoder.maxOutputLength) {
-                        _ = this.encoder.pending_encode_job_count.fetchSub(1, .Monotonic);
+                        _ = this.encoder.pending_encode_job_count.fetchSub(1, .monotonic);
                         this.encoder.write_failure = JSC.DeferredError.from(.rangeerror, .ERR_BUFFER_TOO_LARGE, "Cannot create a Buffer larger than {d} bytes", .{this.encoder.maxOutputLength});
                         return;
                     }
@@ -311,7 +312,7 @@ pub const DeflateEncoder = struct {
 
             if (this.is_async and any) {
                 var vm = this.encoder.globalThis.bunVMConcurrently();
-                _ = this.encoder.has_pending_activity.fetchAdd(1, .Monotonic);
+                _ = this.encoder.has_pending_activity.fetchAdd(1, .monotonic);
                 this.encoder.poll_ref.refConcurrently(vm);
                 vm.enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(this.encoder)));
             }
@@ -340,16 +341,16 @@ pub const DeflateDecoder = struct {
     maxOutputLength: usize,
 
     freelist: Queue = Queue.init(bun.default_allocator),
-    freelist_write_lock: bun.Lock = bun.Lock.init(),
+    freelist_write_lock: bun.Lock = .{},
 
     input: Queue = Queue.init(bun.default_allocator),
-    input_lock: bun.Lock = bun.Lock.init(),
+    input_lock: bun.Lock = .{},
 
     has_called_end: bool = false,
     callback_value: JSC.Strong = .{},
 
     output: std.ArrayListUnmanaged(u8) = .{},
-    output_lock: bun.Lock = bun.Lock.init(),
+    output_lock: bun.Lock = .{},
 
     has_pending_activity: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     pending_encode_job_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
@@ -432,7 +433,7 @@ pub const DeflateDecoder = struct {
             return .zero;
         };
 
-        _ = this.has_pending_activity.fetchAdd(1, .Monotonic);
+        _ = this.has_pending_activity.fetchAdd(1, .monotonic);
         if (is_last)
             this.has_called_end = true;
 
@@ -480,7 +481,7 @@ pub const DeflateDecoder = struct {
             return .zero;
         };
 
-        _ = this.has_pending_activity.fetchAdd(1, .Monotonic);
+        _ = this.has_pending_activity.fetchAdd(1, .monotonic);
         if (is_last)
             this.has_called_end = true;
 
@@ -503,11 +504,12 @@ pub const DeflateDecoder = struct {
     pub fn runFromJSThread(this: *@This()) void {
         this.poll_ref.unref(this.globalThis.bunVM());
 
-        defer _ = this.has_pending_activity.fetchSub(1, .Monotonic);
+        defer _ = this.has_pending_activity.fetchSub(1, .monotonic);
         this.drainFreelist();
 
         const result = this.callback_value.get().?.call(
             this.globalThis,
+            .undefined,
             if (this.write_failure != null)
                 &.{this.write_failure.?.toError(this.globalThis)}
             else
@@ -520,7 +522,7 @@ pub const DeflateDecoder = struct {
     }
 
     pub fn hasPendingActivity(this: *@This()) callconv(.C) bool {
-        return this.has_pending_activity.load(.Monotonic) > 0;
+        return this.has_pending_activity.load(.monotonic) > 0;
     }
 
     fn drainFreelist(this: *DeflateDecoder) void {
@@ -549,19 +551,19 @@ pub const DeflateDecoder = struct {
         pub usingnamespace bun.New(@This());
 
         pub fn runTask(this: *JSC.WorkPoolTask) void {
-            var job: *DecodeJob = @fieldParentPtr(DecodeJob, "task", this);
+            var job: *DecodeJob = @fieldParentPtr("task", this);
             job.run();
             job.destroy();
         }
 
         pub fn run(this: *DecodeJob) void {
             defer {
-                _ = this.decoder.has_pending_activity.fetchSub(1, .Monotonic);
+                _ = this.decoder.has_pending_activity.fetchSub(1, .monotonic);
             }
 
             var any = false;
 
-            if (this.decoder.pending_encode_job_count.fetchAdd(1, .Monotonic) >= 0) outer: {
+            if (this.decoder.pending_encode_job_count.fetchAdd(1, .monotonic) >= 0) outer: {
                 const is_last = this.decoder.has_called_end;
                 while (true) {
                     this.decoder.input_lock.lock();
@@ -591,7 +593,7 @@ pub const DeflateDecoder = struct {
                         var writer = this.decoder.stream.writer(Writer{ .decoder = this.decoder });
                         writer.writeAll(input.slice()) catch {
                             any = true;
-                            _ = this.decoder.pending_encode_job_count.fetchSub(1, .Monotonic);
+                            _ = this.decoder.pending_encode_job_count.fetchSub(1, .monotonic);
                             this.decoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "DeflateError", .{}); // TODO propogate better error
                             break :outer;
                         };
@@ -599,7 +601,7 @@ pub const DeflateDecoder = struct {
 
                     any = any or pending.len > 0;
 
-                    if (this.decoder.pending_encode_job_count.fetchSub(1, .Monotonic) == 0)
+                    if (this.decoder.pending_encode_job_count.fetchSub(1, .monotonic) == 0)
                         break;
                 }
 
@@ -610,13 +612,13 @@ pub const DeflateDecoder = struct {
 
                     this.decoder.stream.end(output) catch {
                         any = true;
-                        _ = this.decoder.pending_encode_job_count.fetchSub(1, .Monotonic);
+                        _ = this.decoder.pending_encode_job_count.fetchSub(1, .monotonic);
                         this.decoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "DeflateError", .{}); // TODO propogate better error
                         break :outer;
                     };
                     if (output.items.len > this.decoder.maxOutputLength) {
                         any = true;
-                        _ = this.decoder.pending_encode_job_count.fetchSub(1, .Monotonic);
+                        _ = this.decoder.pending_encode_job_count.fetchSub(1, .monotonic);
                         this.decoder.write_failure = JSC.DeferredError.from(.rangeerror, .ERR_BUFFER_TOO_LARGE, "Cannot create a Buffer larger than {d} bytes", .{this.decoder.maxOutputLength});
                         break :outer;
                     }
@@ -625,7 +627,7 @@ pub const DeflateDecoder = struct {
 
             if (this.is_async and any) {
                 var vm = this.decoder.globalThis.bunVMConcurrently();
-                _ = this.decoder.has_pending_activity.fetchAdd(1, .Monotonic);
+                _ = this.decoder.has_pending_activity.fetchAdd(1, .monotonic);
                 this.decoder.poll_ref.refConcurrently(vm);
                 vm.enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(this.decoder)));
             }

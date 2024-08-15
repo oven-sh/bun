@@ -2909,7 +2909,7 @@ pub const JSGlobalObject = opaque {
     ) JSValue {
         const ty_str = value.jsTypeString(this).toSlice(this, bun.default_allocator);
         defer ty_str.deinit();
-        this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be of type {s}. Received {s}", .{ field, typename, ty_str.slice() }).throw();
+        this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be of type \"{s}\". Received {}", .{ field, typename, bun.fmt.quote(ty_str.slice()) }).throw();
         return .zero;
     }
 

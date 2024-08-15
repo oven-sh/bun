@@ -4665,16 +4665,11 @@ pub const ServerWebSocket = struct {
         };
         this.websocket().cork(&corker, Corker.run);
 
-        // This case shouldn't happen, but could in theory with a Proxy.
-        if (globalThis.hasException()) {
-            return .zero;
-        }
-
         const result = corker.result;
 
-        // // This case is more common.
-        if (result.isAnyError()) {
-            globalThis.throwValue(result);
+        // This case is more common.
+        if (result.toError()) |err| {
+            globalThis.throwValue(err);
             return JSValue.jsUndefined();
         }
 

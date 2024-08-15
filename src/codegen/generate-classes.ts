@@ -1317,7 +1317,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
 }
 
 function domJITTypeCheckFields(proto, klass) {
-  var output = "";
+  var output = "#ifdef BUN_DEBUG\n";
   for (const name in proto) {
     const { DOMJIT, fn } = proto[name];
     if (!DOMJIT) continue;
@@ -1329,6 +1329,7 @@ function domJITTypeCheckFields(proto, klass) {
     if (!DOMJIT) continue;
     output += `std::optional<std::optional<JSC::JSType>> m_${fn}_expectedResultType = std::nullopt;\n`;
   }
+  output += "#endif\n";
   return output;
 }
 

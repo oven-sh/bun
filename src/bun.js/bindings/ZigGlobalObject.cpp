@@ -1719,10 +1719,12 @@ extern "C" JSC__JSValue Bun__allocUint8ArrayForCopy(JSC::JSGlobalObject* globalO
 
 extern "C" JSC__JSValue Bun__createUint8ArrayForCopy(JSC::JSGlobalObject* globalObject, const void* ptr, size_t len, bool isBuffer)
 {
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     JSC::JSUint8Array* array = JSC::JSUint8Array::createUninitialized(
         globalObject,
-        isBuffer ? reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSBufferSubclassStructure() : globalObject->m_typedArrayUint8.get(globalObject),
+        isBuffer ? reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSBufferSubclassStructure() : globalObject->typedArrayStructure(TypeUint8, false),
         len);
 
     if (UNLIKELY(!array)) {

@@ -2224,7 +2224,7 @@ pub const Crypto = struct {
             };
 
             pub fn deinit(this: *HashJob) void {
-                this.promise.strong.deinit();
+                this.promise.deinit();
                 bun.default_allocator.free(this.password);
                 this.destroy();
             }
@@ -2463,7 +2463,7 @@ pub const Crypto = struct {
             };
 
             pub fn deinit(this: *VerifyJob) void {
-                this.promise.strong.deinit();
+                this.promise.deinit();
                 bun.default_allocator.free(this.password);
                 bun.default_allocator.free(this.prev_hash);
                 this.destroy();
@@ -3720,6 +3720,7 @@ const HashObject = struct {
                             .Uint16Array,
                             .Int32Array,
                             .Uint32Array,
+                            .Float16Array,
                             .Float32Array,
                             .Float64Array,
                             .BigInt64Array,

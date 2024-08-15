@@ -1,4 +1,4 @@
-import { gc as bunGC, unsafe, which } from "bun";
+import { gc as bunGC, spawnSync, unsafe, which } from "bun";
 import { describe, test, expect, afterAll, beforeAll } from "bun:test";
 import { readlink, readFile, writeFile } from "fs/promises";
 import { isAbsolute, join, dirname } from "path";
@@ -100,7 +100,7 @@ export async function expectMaxObjectTypeCount(
     await Bun.sleep(wait);
     gc();
   }
-  expect(heapStats().objectTypeCounts[type]).toBeLessThanOrEqual(count);
+  expect(heapStats().objectTypeCounts[type] || 0).toBeLessThanOrEqual(count);
 }
 
 // we must ensure that finalizers are run
@@ -296,6 +296,7 @@ const binaryTypes = {
   "int8array": Int8Array,
   "int16array": Int16Array,
   "int32array": Int32Array,
+  "float16array": Float16Array,
   "float32array": Float32Array,
   "float64array": Float64Array,
 } as const;
@@ -1174,6 +1175,17 @@ export function isMacOSVersionAtLeast(minVersion: number): boolean {
   return parseFloat(macOSVersion) >= minVersion;
 }
 
+export function readableStreamFromArray(array) {
+  return new ReadableStream({
+    pull(controller) {
+      for (let entry of array) {
+        controller.enqueue(entry);
+      }
+      controller.close();
+    },
+  });
+}
+
 let hasGuardMalloc = -1;
 export function forceGuardMalloc(env) {
   if (process.platform !== "darwin") {
@@ -1206,4 +1218,49 @@ export function fileDescriptorLeakChecker() {
       }
     },
   };
+}
+
+/**
+ * Gets a secret from the environment.
+ *
+ * In Buildkite, secrets must be retrieved using the `buildkite-agent secret get` command
+ * and are not available as an environment variable.
+ */
+export function getSecret(name: string): string | undefined {
+  let value = process.env[name]?.trim();
+
+  // When not running in CI, allow the secret to be missing.
+  if (!isCI) {
+    return value;
+  }
+
+  // In Buildkite, secrets must be retrieved using the `buildkite-agent secret get` command
+  if (!value && isBuildKite) {
+    const { exitCode, stdout } = spawnSync({
+      cmd: ["buildkite-agent", "secret", "get", name],
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    if (exitCode === 0) {
+      value = stdout.toString().trim();
+    }
+  }
+
+  // Throw an error if the secret is not found, so the test fails in CI.
+  if (!value) {
+    let hint;
+    if (isBuildKite) {
+      hint = `Create a secret with the name "${name}" in the Buildkite UI.
+https://buildkite.com/docs/pipelines/security/secrets/buildkite-secrets`;
+    } else {
+      hint = `Define an environment variable with the name "${name}".`;
+    }
+
+    throw new Error(`Secret not found: ${name}\n${hint}`);
+  }
+
+  // Set the secret in the environment so that it can be used in tests.
+  process.env[name] = value;
+
+  return value;
 }

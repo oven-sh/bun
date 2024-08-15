@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
-set -eo pipefail
+set -euo pipefail
 source "$(dirname -- "${BASH_SOURCE[0]}")/env.sh"
+
+RELEASE="${RELEASE:-0}"
+CI="${CI:-}"
+BUILT_ANY=0
+SUBMODULES=
+CACHE_DIR=
+CACHE=0
+BUN_DEPS_CACHE_DIR="${BUN_DEPS_CACHE_DIR:-}"
 
 if [[ "$CI" ]]; then
     $(dirname -- "${BASH_SOURCE[0]}")/update-submodules.sh
@@ -23,17 +31,12 @@ while getopts "f" opt; do
     esac
 done
 
-BUILT_ANY=0
-SUBMODULES=
-CACHE_DIR=
-CACHE=0
-
 if [ "$RELEASE" == "1" ]; then
-  FORCE=1
+    FORCE=1
 elif [ -n "$BUN_DEPS_CACHE_DIR" ]; then
-  CACHE_DIR="$BUN_DEPS_CACHE_DIR"
-  CACHE=1
-  SUBMODULES="$(git submodule status)"
+    CACHE_DIR="$BUN_DEPS_CACHE_DIR"
+    CACHE=1
+    SUBMODULES="$(git submodule status)"
 fi
 
 dep() {

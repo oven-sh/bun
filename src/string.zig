@@ -92,7 +92,7 @@ pub const WTFStringImplStruct = extern struct {
         if (this.is8Bit()) {
             return ZigString.init(this.latin1Slice());
         } else {
-            return ZigString.init16(this.utf16Slice());
+            return ZigString.initUTF16(this.utf16Slice());
         }
     }
 
@@ -645,7 +645,7 @@ pub const String = extern struct {
     /// Max WTFStringImpl length.
     /// **Not** in bytes. In characters.
     pub inline fn max_length() usize {
-        return JSC.synthetic_allocation_limit;
+        return JSC.string_allocation_limit;
     }
 
     /// If the allocation fails, this will free the bytes and return a dead string.
@@ -666,6 +666,10 @@ pub const String = extern struct {
 
     pub fn fromUTF8(value: []const u8) String {
         return String.init(ZigString.initUTF8(value));
+    }
+
+    pub fn fromUTF16(value: []const u16) String {
+        return String.init(ZigString.initUTF16(value));
     }
 
     pub fn fromBytes(value: []const u8) String {
@@ -906,7 +910,7 @@ pub const String = extern struct {
                 if (this.value.WTFStringImpl.is8Bit()) {
                     return String.init(ZigString.init(this.value.WTFStringImpl.latin1Slice()[start_index..end_index]));
                 } else {
-                    return String.init(ZigString.init16(this.value.WTFStringImpl.utf16Slice()[start_index..end_index]));
+                    return String.init(ZigString.initUTF16(this.value.WTFStringImpl.utf16Slice()[start_index..end_index]));
                 }
             },
             else => return this,

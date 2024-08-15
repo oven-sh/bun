@@ -119,17 +119,17 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     /// On Windows, it is always a mistake, as the integer is bitcast of a tagged packed struct.
     ///
     /// TODO(@paperdave): remove this API.
-    pub inline fn int(self: FileDescriptor) std.posix.fd_t {
+    pub fn int(self: FileDescriptor) std.posix.fd_t {
         if (Environment.isWindows)
             @compileError("FileDescriptor.int() is not allowed on Windows.");
         return @intFromEnum(self);
     }
 
-    pub inline fn writeTo(fd: FileDescriptor, writer: anytype, endian: std.builtin.Endian) !void {
+    pub fn writeTo(fd: FileDescriptor, writer: anytype, endian: std.builtin.Endian) !void {
         try writer.writeInt(FileDescriptorInt, @intFromEnum(fd), endian);
     }
 
-    pub inline fn readFrom(reader: anytype, endian: std.builtin.Endian) !FileDescriptor {
+    pub fn readFrom(reader: anytype, endian: std.builtin.Endian) !FileDescriptor {
         return @enumFromInt(try reader.readInt(FileDescriptorInt, endian));
     }
 
@@ -139,35 +139,35 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     /// to Windows' *HANDLE, and casts the types for proper usage.
     ///
     /// This may be needed in places where a FileDescriptor is given to `std` or `kernel32` apis
-    pub inline fn cast(fd: FileDescriptor) std.posix.fd_t {
+    pub fn cast(fd: FileDescriptor) std.posix.fd_t {
         if (!Environment.isWindows) return fd.int();
         // if not having this check, the cast may crash zig compiler?
         if (@inComptime() and fd == invalid_fd) return FDImpl.invalid.system();
-        return FDImpl.decode(fd).system();
+        return fd.impl().system();
     }
 
-    pub inline fn asDir(fd: FileDescriptor) std.fs.Dir {
+    pub fn asDir(fd: FileDescriptor) std.fs.Dir {
         return std.fs.Dir{ .fd = fd.cast() };
     }
 
-    pub inline fn asFile(fd: FileDescriptor) std.fs.File {
+    pub fn asFile(fd: FileDescriptor) std.fs.File {
         return std.fs.File{ .handle = fd.cast() };
     }
 
     pub fn format(fd: FileDescriptor, comptime fmt_: string, options_: std.fmt.FormatOptions, writer: anytype) !void {
-        try FDImpl.format(FDImpl.decode(fd), fmt_, options_, writer);
+        try FDImpl.format(fd.impl(), fmt_, options_, writer);
     }
 
     pub fn assertValid(fd: FileDescriptor) void {
-        FDImpl.decode(fd).assertValid();
+        fd.impl().assertValid();
     }
 
     pub fn isValid(fd: FileDescriptor) bool {
-        return FDImpl.decode(fd).isValid();
+        return fd.impl().isValid();
     }
 
     pub fn assertKind(fd: FileDescriptor, kind: FDImpl.Kind) void {
-        assert(FDImpl.decode(fd).kind == kind);
+        assert(fd.impl().kind == kind);
     }
 
     pub fn cwd() FileDescriptor {
@@ -193,7 +193,7 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
 
     pub fn isStdio(fd: FileDescriptor) bool {
         // fd.assertValid();
-        const decoded = FDImpl.decode(fd);
+        const decoded = fd.impl();
         return switch (Environment.os) {
             else => decoded.value.as_system < 3,
             .windows => switch (decoded.kind) {
@@ -207,6 +207,10 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
 
     pub fn toJS(value: FileDescriptor, global: *JSC.JSGlobalObject) JSC.JSValue {
         return FDImpl.decode(value).toJS(global);
+    }
+
+    pub fn impl(fd: FileDescriptor) FDImpl {
+        return FDImpl.decode(fd);
     }
 };
 
@@ -3330,7 +3334,7 @@ noinline fn assertionFailureWithLocation(src: std.builtin.SourceLocation) noretu
     });
 }
 
-pub inline fn debugAssert(cheap_value_only_plz: bool) void {
+pub fn debugAssert(cheap_value_only_plz: bool) callconv(callconv_inline) void {
     if (comptime !Environment.isDebug) {
         return;
     }
@@ -3363,7 +3367,7 @@ pub fn assertWithLocation(value: bool, src: std.builtin.SourceLocation) callconv
 }
 
 /// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
-pub inline fn assert_eql(a: anytype, b: anytype) void {
+pub fn assert_eql(a: anytype, b: anytype) callconv(callconv_inline) void {
     if (@inComptime()) {
         if (a != b) {
             @compileLog(a);
@@ -3375,7 +3379,7 @@ pub inline fn assert_eql(a: anytype, b: anytype) void {
 }
 
 /// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
-pub inline fn assert_neql(a: anytype, b: anytype) void {
+pub fn assert_neql(a: anytype, b: anytype) callconv(callconv_inline) void {
     return assert(a != b);
 }
 

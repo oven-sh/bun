@@ -452,6 +452,7 @@ pub const StringOrBuffer = union(enum) {
             .Int32Array,
             .Uint32Array,
             .Float32Array,
+            .Float16Array,
             .Float64Array,
             .BigInt64Array,
             .BigUint64Array,
@@ -975,7 +976,7 @@ pub const VectorArrayBuffer = struct {
         var bufferlist = std.ArrayList(bun.PlatformIOVec).init(allocator);
         var i: usize = 0;
         const len = val.getLength(globalObject);
-        bufferlist.ensureTotalCapacityPrecise(len) catch @panic("Failed to allocate memory for ArrayBuffer[]");
+        bufferlist.ensureTotalCapacityPrecise(len) catch bun.outOfMemory();
 
         while (i < len) {
             const element = val.getIndex(globalObject, @as(u32, @truncate(i)));
@@ -991,7 +992,7 @@ pub const VectorArrayBuffer = struct {
             };
 
             const buf = array_buffer.byteSlice();
-            bufferlist.append(bun.platformIOVecCreate(buf)) catch @panic("Failed to allocate memory for ArrayBuffer[]");
+            bufferlist.append(bun.platformIOVecCreate(buf)) catch bun.outOfMemory();
             i += 1;
         }
 

@@ -25,7 +25,7 @@ class GlobalObject;
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-function"
 
-extern "C" size_t Bun__syntheticAllocationLimit;
+extern "C" size_t Bun__stringSyntheticAllocationLimit;
 
 namespace Zig {
 
@@ -86,7 +86,7 @@ static const WTF::String toString(ZigString str)
 
     if (UNLIKELY(isTaggedExternalPtr(str.ptr))) {
         // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
-        if (UNLIKELY(str.len > Bun__syntheticAllocationLimit)) {
+        if (UNLIKELY(str.len > Bun__stringSyntheticAllocationLimit)) {
             free_global_string(nullptr, reinterpret_cast<void*>(const_cast<unsigned char*>(untag(str.ptr))), static_cast<unsigned>(str.len));
             return {};
         }
@@ -98,7 +98,7 @@ static const WTF::String toString(ZigString str)
     }
 
     // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
-    if (UNLIKELY(str.len > Bun__syntheticAllocationLimit)) {
+    if (UNLIKELY(str.len > Bun__stringSyntheticAllocationLimit)) {
         return {};
     }
 
@@ -128,7 +128,7 @@ static const WTF::String toString(ZigString str, StringPointer ptr)
     }
 
     // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
-    if (UNLIKELY(str.len > Bun__syntheticAllocationLimit)) {
+    if (UNLIKELY(str.len > Bun__stringSyntheticAllocationLimit)) {
         return {};
     }
 
@@ -148,7 +148,7 @@ static const WTF::String toStringCopy(ZigString str, StringPointer ptr)
     }
 
     // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
-    if (UNLIKELY(str.len > Bun__syntheticAllocationLimit)) {
+    if (UNLIKELY(str.len > Bun__stringSyntheticAllocationLimit)) {
         return {};
     }
 

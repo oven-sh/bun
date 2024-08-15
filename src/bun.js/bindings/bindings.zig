@@ -137,7 +137,7 @@ pub const ZigString = extern struct {
 
     pub fn dupeForJS(utf8: []const u8, allocator: std.mem.Allocator) !ZigString {
         if (try strings.toUTF16Alloc(allocator, utf8, false, false)) |utf16| {
-            var out = ZigString.init16(utf16);
+            var out = ZigString.initUTF16(utf16);
             out.mark();
             out.markUTF16();
             return out;
@@ -629,8 +629,8 @@ pub const ZigString = extern struct {
         return shim.cppFn("toAtomicValue", .{ this, globalThis });
     }
 
-    pub fn init16(slice_: []const u16) ZigString {
-        var out = ZigString{ ._unsafe_ptr_do_not_use = std.mem.sliceAsBytes(slice_).ptr, .len = slice_.len };
+    pub fn initUTF16(items: []const u16) ZigString {
+        var out = ZigString{ ._unsafe_ptr_do_not_use = @ptrCast(items), .len = items.len };
         out.markUTF16();
         return out;
     }
@@ -1704,6 +1704,12 @@ pub const JSUint8Array = opaque {
 
     pub fn slice(this: *JSUint8Array) []u8 {
         return this.ptr()[0..this.len()];
+    }
+
+    extern fn JSUint8Array__fromDefaultAllocator(*JSC.JSGlobalObject, ptr: [*]u8, len: usize) JSC.JSValue;
+    /// *bytes* must come from bun.default_allocator
+    pub fn fromBytes(globalThis: *JSGlobalObject, bytes: []u8) JSC.JSValue {
+        return JSUint8Array__fromDefaultAllocator(globalThis, bytes.ptr, bytes.len);
     }
 };
 
@@ -3424,40 +3430,41 @@ pub const JSValue = enum(JSValueReprInt) {
         Uint16Array = 43,
         Int32Array = 44,
         Uint32Array = 45,
-        Float32Array = 46,
-        Float64Array = 47,
-        BigInt64Array = 48,
-        BigUint64Array = 49,
-        DataView = 50,
-        GlobalObject = 51,
-        GlobalLexicalEnvironment = 52,
-        LexicalEnvironment = 53,
-        ModuleEnvironment = 54,
-        StrictEvalActivation = 55,
-        WithScope = 56,
-        ModuleNamespaceObject = 57,
-        ShadowRealm = 58,
-        RegExpObject = 59,
-        JSDate = 60,
-        ProxyObject = 61,
-        JSGenerator = 62,
-        JSAsyncGenerator = 63,
-        JSArrayIterator = 64,
-        JSMapIterator = 65,
-        JSSetIterator = 66,
-        JSStringIterator = 67,
-        JSPromise = 68,
-        JSMap = 69,
-        JSSet = 70,
-        JSWeakMap = 71,
-        JSWeakSet = 72,
-        WebAssemblyModule = 73,
-        WebAssemblyInstance = 74,
-        WebAssemblyGCObject = 75,
-        StringObject = 76,
-        DerivedStringObject = 77,
+        Float16Array = 46,
+        Float32Array = 47,
+        Float64Array = 48,
+        BigInt64Array = 49,
+        BigUint64Array = 50,
+        DataView = 51,
+        GlobalObject = 52,
+        GlobalLexicalEnvironment = 53,
+        LexicalEnvironment = 54,
+        ModuleEnvironment = 55,
+        StrictEvalActivation = 56,
+        WithScope = 57,
+        ModuleNamespaceObject = 58,
+        ShadowRealm = 59,
+        RegExpObject = 60,
+        JSDate = 61,
+        ProxyObject = 62,
+        JSGenerator = 63,
+        JSAsyncGenerator = 64,
+        JSArrayIterator = 65,
+        JSMapIterator = 66,
+        JSSetIterator = 67,
+        JSStringIterator = 68,
+        JSPromise = 69,
+        JSMap = 70,
+        JSSet = 71,
+        JSWeakMap = 72,
+        JSWeakSet = 73,
+        WebAssemblyModule = 74,
+        WebAssemblyInstance = 75,
+        WebAssemblyGCObject = 76,
+        StringObject = 77,
+        DerivedStringObject = 78,
 
-        InternalFieldTuple,
+        InternalFieldTuple = 79,
 
         MaxJS = 0b11111111,
         Event = 0b11101111,
@@ -3484,6 +3491,7 @@ pub const JSValue = enum(JSValueReprInt) {
                 .Event,
                 .FinalObject,
                 .Float32Array,
+                .Float16Array,
                 .Float64Array,
                 .GlobalObject,
                 .Int16Array,
@@ -3540,6 +3548,7 @@ pub const JSValue = enum(JSValueReprInt) {
                 .BigInt64Array,
                 .BigUint64Array,
                 .Float32Array,
+                .Float16Array,
                 .Float64Array,
                 .Int16Array,
                 .Int32Array,
@@ -3635,6 +3644,7 @@ pub const JSValue = enum(JSValueReprInt) {
                 .BigInt64Array,
                 .BigUint64Array,
                 .Float32Array,
+                .Float16Array,
                 .Float64Array,
                 .Int16Array,
                 .Int32Array,
@@ -3676,6 +3686,7 @@ pub const JSValue = enum(JSValueReprInt) {
                 .BigInt64Array,
                 .BigUint64Array,
                 .Float32Array,
+                .Float16Array,
                 .Float64Array,
                 .Int16Array,
                 .Int32Array,

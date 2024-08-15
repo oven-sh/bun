@@ -147,7 +147,7 @@ JSC_DEFINE_JIT_OPERATION(${DOMJITName(
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     IGNORE_WARNINGS_END
     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-#ifdef BUN_DEBUG
+#if BUN_DEBUG
     ${jsClassName}* wrapper = reinterpret_cast<${jsClassName}*>(thisValue);
     JSC::EncodedJSValue result = ${DOMJITName(symName)}(wrapper->wrapped(), lexicalGlobalObject${retArgs});
     JSValue decoded = JSValue::decode(result);
@@ -1124,7 +1124,7 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
 
   JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
 
-#if defined(BUN_DEBUG) && BUN_DEBUG
+#if BUN_DEBUG
     /** View the file name of the JS file that called this function
      * from a debugger */
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
@@ -1134,7 +1134,7 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
       lastFileName = fileName;
     }
 
-    JSC::EncodedJSValue result = ${symbolName(typeName, fn)}(thisObject->wrapped(), lexicalGlobalObject, callFrame, callFrame${proto[name].passThis ? ", JSValue::encode(thisObject)" : ""});
+    JSC::EncodedJSValue result = ${symbolName(typeName, fn)}(thisObject->wrapped(), lexicalGlobalObject, callFrame${proto[name].passThis ? ", JSValue::encode(thisObject)" : ""});
 
     ASSERT_WITH_MESSAGE(!JSValue::decode(result).isEmpty() or DECLARE_CATCH_SCOPE(vm).exception() != 0, \"${typeName}.${proto[name].fn} returned an empty value without an exception\");
 
@@ -1318,7 +1318,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
 }
 
 function domJITTypeCheckFields(proto, klass) {
-  var output = "#ifdef BUN_DEBUG\n";
+  var output = "#if BUN_DEBUG\n";
   for (const name in proto) {
     const { DOMJIT, fn } = proto[name];
     if (!DOMJIT) continue;

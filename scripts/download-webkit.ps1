@@ -24,7 +24,7 @@ try {
   Write-Host "-- Downloading WebKit"
   if (!(Test-Path $TarPath)) {
     try {
-      Invoke-WebRequest $Url -OutFile $TarPath
+      Invoke-WebRequest $Url -OutFile $TarPath -MaximumRetryCount 3 -RetryIntervalSec 1
     } catch {
       Write-Error "Failed to fetch WebKit from: $Url"
       throw $_

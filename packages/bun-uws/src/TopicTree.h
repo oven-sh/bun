@@ -79,6 +79,7 @@ template <typename T, typename B>
 struct TopicTree {
 
     enum IteratorFlags {
+        NONE = 0,
         LAST = 1,
         FIRST = 2
     };
@@ -120,10 +121,10 @@ private:
         for (int i = 0; i < numMessageIndices; i++) {
             T &outgoingMessage = outgoingMessages[s->messageIndices[i]];
 
-            int flags = (i == numMessageIndices - 1) ? LAST : 0;
+            int flags = (i == numMessageIndices - 1) ? LAST : NONE;
 
             /* Returning true will stop drainage short (such as when backpressure is too high) */
-            if (cb(s, outgoingMessage, (IteratorFlags)(flags | (i == 0 ? FIRST : 0)))) {
+            if (cb(s, outgoingMessage, (IteratorFlags)(flags | (i == 0 ? FIRST : NONE)))) {
                 break;
             }
         }

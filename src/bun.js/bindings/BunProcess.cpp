@@ -8,6 +8,7 @@
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSString.h"
+#include "JavaScriptCore/MathCommon.h"
 #include "JavaScriptCore/Protect.h"
 #include "JavaScriptCore/PutPropertySlot.h"
 #include "ScriptExecutionContext.h"
@@ -2290,12 +2291,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage,
     if (callFrame->argumentCount() > 0) {
         JSValue comparatorValue = callFrame->argument(0);
         if (!comparatorValue.isUndefined()) {
-            if (UNLIKELY(!comparatorValue.isObject())) {
+            JSC::JSObject* comparator = comparatorValue.getObject();
+            if (UNLIKELY(!comparator)) {
                 throwTypeError(globalObject, throwScope, "Expected an object as the first argument"_s);
                 return JSC::JSValue::encode(JSC::jsUndefined());
             }
 
-            JSC::JSObject* comparator = comparatorValue.getObject();
             JSValue userValue;
             JSValue systemValue;
 
@@ -2311,17 +2312,27 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage,
             }
 
             if (UNLIKELY(!userValue || !userValue.isNumber())) {
-                throwTypeError(globalObject, throwScope, "Expected a number for the user property"_s);
+                throwTypeError(globalObject, throwScope, "Expected a number for the 'user' property"_s);
                 return JSC::JSValue::encode(JSC::jsUndefined());
             }
 
             if (UNLIKELY(!systemValue || !systemValue.isNumber())) {
-                throwTypeError(globalObject, throwScope, "Expected a number for the system property"_s);
+                throwTypeError(globalObject, throwScope, "Expected a number for the 'system' property"_s);
                 return JSC::JSValue::encode(JSC::jsUndefined());
             }
 
-            double userComparator = userValue.asNumber();
-            double systemComparator = systemValue.asNumber();
+            double userComparator = userValue.toNumber(globalObject);
+            double systemComparator = systemValue.toNumber(globalObject);
+
+            if (userComparator > JSC::maxSafeInteger() || userComparator < 0 || std::isnan(userComparator)) {
+                throwRangeError(globalObject, throwScope, "The 'user' property must be a number between 0 and 2^53"_s);
+                return JSC::JSValue::encode(JSC::jsUndefined());
+            }
+
+            if (systemComparator > JSC::maxSafeInteger() || systemComparator < 0 || std::isnan(systemComparator)) {
+                throwRangeError(globalObject, throwScope, "The 'system' property must be a number between 0 and 2^53"_s);
+                return JSC::JSValue::encode(JSC::jsUndefined());
+            }
 
             user -= userComparator;
             system -= systemComparator;
@@ -2331,8 +2342,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage,
     JSC::JSObject* result = JSC::constructEmptyObject(vm, cpuUsageStructure);
     RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
 
-    result->putDirectOffset(vm, 0, JSC::jsNumber(user));
-    result->putDirectOffset(vm, 1, JSC::jsNumber(system));
+    result->putDirectOffset(vm, 0, JSC::jsDoubleNumber(user));
+    result->putDirectOffset(vm, 1, JSC::jsDoubleNumber(system));
 
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(result));
 }

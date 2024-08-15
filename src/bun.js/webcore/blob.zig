@@ -2480,7 +2480,7 @@ pub const Blob = struct {
                 this.read_write_loop.close();
                 this.destination_file_store.deref();
                 this.source_file_store.deref();
-                this.promise.strong.deinit();
+                this.promise.deinit();
                 this.io_request.deinit();
                 this.destroy();
             }
@@ -3421,6 +3421,7 @@ pub const Blob = struct {
                 };
             };
             var sink = JSC.WebCore.FileSink.init(fd, this.globalThis.bunVM().eventLoop());
+            sink.writer.owns_fd = pathlike != .fd;
 
             if (is_stdout_or_stderr) {
                 switch (sink.writer.startSync(fd, false)) {

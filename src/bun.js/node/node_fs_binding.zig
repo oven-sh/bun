@@ -89,11 +89,7 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
     comptime if (function.params.len != 3) @compileError("Expected 3 arguments");
     const Arguments = comptime function.params[1].type.?;
     const NodeBindingClosure = struct {
-        pub fn bind(
-            _: *JSC.Node.NodeJSFS,
-            globalObject: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) JSC.JSValue {
+        pub fn bind(this: *JSC.Node.NodeJSFS, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
             var arguments = callframe.arguments(8);
 
             var slice = ArgumentsSlice.init(globalObject.bunVM(), arguments.slice());
@@ -123,7 +119,7 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
 
             const Task = @field(JSC.Node.Async, @tagName(FunctionEnum));
             if (comptime FunctionEnum == .cp) {
-                return Task.create(globalObject, args, globalObject.bunVM(), slice.arena);
+                return Task.create(globalObject, this, args, globalObject.bunVM(), slice.arena);
             } else {
                 if (comptime FunctionEnum == .readdir) {
                     if (args.recursive) {
@@ -131,7 +127,7 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
                     }
                 }
 
-                return Task.create(globalObject, args, globalObject.bunVM());
+                return Task.create(globalObject, this, args, globalObject.bunVM());
             }
         }
     };

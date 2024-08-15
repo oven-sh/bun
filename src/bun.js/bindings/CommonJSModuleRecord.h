@@ -1,7 +1,8 @@
 #pragma once
+#include "root.h"
+
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/JSString.h"
-#include "root.h"
 #include "headers-handwritten.h"
 #include "wtf/NakedPtr.h"
 

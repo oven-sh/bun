@@ -24,6 +24,19 @@ const DashedIdent = css.css_values.ident.DashedIdent;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 
+pub fn ValidQueryCondition(comptime T: type) void {
+    //   fn parse_feature<'t>(input: &mut Parser<'i, 't>) -> Result<Self, ParseError<'i, ParserError<'i>>>;
+    _ = T.parseFeature;
+    //   fn create_negation(condition: Box<Self>) -> Self;
+    _ = T.createNegation;
+    //   fn create_operation(operator: Operator, conditions: Vec<Self>) -> Self;
+    _ = T.createOperation;
+    //   fn parse_style_query<'t>(input: &mut Parser<'i, 't>) -> Result<Self, ParseError<'i, ParserError<'i>>> {
+    _ = T.parseStyleQuery;
+    //   fn needs_parens(&self, parent_operator: Option<Operator>, targets: &Targets) -> bool;
+    _ = T.needsParens;
+}
+
 /// A [media query list](https://drafts.csswg.org/mediaqueries/#mq-list).
 pub const MediaList = struct {
     /// The list of media queries.
@@ -147,7 +160,7 @@ pub const MediaQuery = struct {
                 //
                 // Otherwise, we'd serialize media queries like "(min-width:
                 // 40px)" in "all (min-width: 40px)", which is unexpected.
-                if (this.qualifier.is_some() or this.condition.is_none()) {
+                if (this.qualifier != null or this.condition != null) {
                     try dest.writeStr("all");
                 }
             },
@@ -236,6 +249,19 @@ pub const MediaType = union(enum) {
     }
 };
 
+pub fn operationToCss(comptime QueryCondition: type, operator: Operator, conditions: *const ArrayList(QueryCondition), comptime W: type, dest: *Printer(W)) PrintErr!void {
+    ValidQueryCondition(QueryCondition);
+    const first = &conditions.items[0];
+    try toCssWithParensIfNeeded(first, W, dest, first.needsParens(operator, &dest.targets));
+    if (conditions.items.len == 1) return;
+    for (conditions.items[1..]) |*item| {
+        try dest.writeChar(' ');
+        try operator.toCss(W, dest);
+        try dest.writeChar(' ');
+        try toCssWithParensIfNeeded(item, W, dest, item.needsParens(operator, &dest.targets));
+    }
+}
+
 /// Represents a media condition.
 ///
 /// Implements QueryCondition interface.
@@ -246,6 +272,23 @@ pub const MediaCondition = struct {
         operator: Operator,
         conditions: ArrayList(MediaCondition),
     },
+
+    const This = @This();
+
+    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        switch (this.*) {
+            .feature => |*f| {
+                try f.toCss(W, dest);
+            },
+            .not => |*c| {
+                try dest.writeStr("not ");
+                try toCssWithParensIfNeeded(c, W, dest, c.needsParens(null, &dest.targets));
+            },
+            .operation => |operation| {
+                operationToCss(operation.operator, &operation.conditions, W, dest);
+            },
+        }
+    }
 
     /// QueryCondition.parseFeature
     pub fn parseFeature(input: *css.Parser) Error!MediaCondition {

@@ -2,6 +2,7 @@
 
 set -euo pipefail
 
+export CI=${CI:-0}
 export USE_LTO=${USE_LTO:-0}
 export FORCE_PIC=${FORCE_PIC:-}
 UNAME_OS="$(uname -s)"

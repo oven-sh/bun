@@ -24,6 +24,7 @@ pub const NamespaceRule = css_rules.namespace.NamespaceRule;
 pub const UnknownAtRule = css_rules.unknown.UnknownAtRule;
 pub const ImportRule = css_rules.import.ImportRule;
 pub const StyleRule = css_rules.style.StyleRule;
+pub const StyleContext = css_rules.StyleContext;
 
 const media_query = @import("./media_query.zig");
 pub const MediaList = media_query.MediaList;
@@ -32,7 +33,9 @@ pub const css_values = @import("./values/values.zig");
 pub const DashedIdent = css_values.ident.DashedIdent;
 pub const DashedIdentFns = css_values.ident.DashedIdentFns;
 pub const CSSString = css_values.string.CSSString;
+pub const CSSStringFns = css_values.string.CSSStringFns;
 pub const Ident = css_values.ident.Ident;
+pub const IdentFns = css_values.ident.IdentFns;
 pub const CustomIdent = css_values.ident.CustomIdent;
 pub const CustomIdentFns = css_values.ident.CustomIdentFns;
 
@@ -85,6 +88,10 @@ pub fn Bitflags(comptime T: type) type {
     return struct {
         pub inline fn empty() T {
             return @bitCast(0);
+        }
+
+        pub inline fn intersects(lhs: T, rhs: T) bool {
+            return asBits(lhs) & asBits(rhs) != 0;
         }
 
         pub inline fn fromName(comptime name: []const u8) T {
@@ -4427,10 +4434,12 @@ pub const to_css = struct {
     pub fn string(allocator: Allocator, comptime T: type, this: *T, options: PrinterOptions) PrintErr![]const u8 {
         var s = ArrayList(u8){};
         const writer = s.writer(allocator);
-        var printer = Printer(@TypeOf(writer)).new(allocator, writer, options);
+        const W = @TypeOf(writer);
+        var printer = Printer(W).new(allocator, writer, options);
         defer printer.deinit();
         switch (T) {
-            else => try this.toCss(printer),
+            CSSString => try CSSStringFns.toCss(W, printer),
+            else => try this.toCss(W, printer),
         }
         return s;
     }

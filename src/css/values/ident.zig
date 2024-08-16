@@ -64,15 +64,13 @@ pub const DashedIdentFns = struct {
 pub const Ident = []const u8;
 
 pub const IdentFns = struct {
-    pub fn parse(input: *css.Parser) Error!This {
+    pub fn parse(input: *css.Parser) Error![]const u8 {
         _ = input; // autofix
 
         @compileError(css.todo_stuff.depth);
     }
 
-    const This = @This();
-
-    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const []const u8, comptime W: type, dest: *Printer(W)) PrintErr!void {
         _ = this; // autofix
         _ = dest; // autofix
         @compileError(css.todo_stuff.depth);

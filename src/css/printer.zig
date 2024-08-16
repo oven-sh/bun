@@ -126,11 +126,13 @@ pub fn Printer(comptime Writer: type) type {
         col: u32 = 0,
         minify: bool,
         targets: Targets,
+        vendor_prefix: css.VendorPrefix,
         css_module: ?css.CssModule,
         dependencies: ?ArrayList(css.Dependency),
         remove_imports: bool,
         PseudoClasses: ?PseudoClasses,
         indentation_buf: std.ArrayList(u8),
+        ctx: ?*const css.StyleContext,
         // TODO: finish the fields
 
         const This = @This();
@@ -225,6 +227,10 @@ pub fn Printer(comptime Writer: type) type {
             };
         }
 
+        pub fn context(this: *const Printer) ?*const css.StyleContext {
+            return this.ctx;
+        }
+
         /// Writes a raw string to the underlying destination.
         ///
         /// NOTE: Is is assumed that the string does not contain any newline characters.
@@ -238,6 +244,16 @@ pub fn Printer(comptime Writer: type) type {
             _ = this; // autofix
             _ = fmt; // autofix
             _ = args; // autofix
+            @compileError(css.todo_stuff.depth);
+        }
+
+        /// Writes a CSS identifier to the underlying destination, escaping it
+        /// as appropriate. If the `css_modules` option was enabled, then a hash
+        /// is added, and the mapping is added to the CSS module.
+        pub fn writeIdent(this: *This, ident: []const u8, handle_css_module: bool) !void {
+            _ = this; // autofix
+            _ = ident; // autofix
+            _ = handle_css_module; // autofix
             @compileError(css.todo_stuff.depth);
         }
 

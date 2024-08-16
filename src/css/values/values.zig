@@ -74,7 +74,7 @@ pub const ident = struct {
 };
 
 pub const string = struct {
-    pub usingnamespace @import("./string.zig");
+    pub usingnamespace @import("./css_string.zig");
 };
 
 pub const color = struct {

@@ -5,6 +5,7 @@ const logger = bun.logger;
 const Log = logger.Log;
 
 pub const css = @import("./css_parser.zig");
+const CSSString = css.CSSString;
 pub const Error = css.Error;
 
 pub const Printer = css.Printer;
@@ -32,8 +33,26 @@ pub const impl = struct {
 };
 
 pub const api = struct {
+    /// NOTE rust source does a very annoying thing
+    /// GenericComponent, GenericSelector, and GenericSelectorList are all in `selectors/parser.rs` (respectively they are Component<T>, Selector<T>, and SelectorList<T>. `selectors/` directory contains the code from `servo/rust-selectors`
+    ///
+    /// lightningcss uses these by doing this:
+    /// ```rs
+    /// pub type SelectorList<'i> = parcel_selectors::SelectorList<'i, Selectors>;
+    /// pub type Selector<'i> = parcel_selectors::parser::Selector<'i, Selectors>;
+    ///pub type Component<'i> = parcel_selectors::parser::Component<'i, Selectors>;
+    /// ```
+    ///
+    /// BUT rust allows you to implement traits on type declarations like this.
+    /// So there are basically TWO `ToCss` implementations for `Component` and `Selector`
+    pub const Component = GenericComponent(impl.Selectors);
     pub const Selector = GenericSelector(impl.Selectors);
     pub const SelectorList = GenericSelectorList(impl.Selectors);
+
+    pub const ToCssCtx = enum {
+        lightning,
+        servo,
+    };
 
     /// The definition of whitespace per CSS Selectors Level 3 § 4.
     pub const SELECTOR_WHITESPACE: []const u8 = &u8{ ' ', '\t', '\n', '\r', 0x0C };
@@ -215,6 +234,12 @@ pub const api = struct {
                 local_name_lower: Impl.SelectorImpl.LocalName,
                 operation: ParsedAttrSelectorOperation(Impl.SelectorImpl.AttrValue),
                 never_matches: bool,
+
+                pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+                    _ = this; // autofix
+                    _ = dest; // autofix
+                    @compileError(css.todo_stuff.depth);
+                }
             };
         }
 
@@ -244,6 +269,20 @@ pub const api = struct {
             prefix,
             substring,
             suffix,
+
+            const This = @This();
+            pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+                // https://drafts.csswg.org/cssom/#serializing-selectors
+                // See "attribute selector".
+                try dest.writeStr(switch (this.*) {
+                    .equal => "=",
+                    .includes => "~=",
+                    .dash_match => "|=",
+                    .prefix => "^=",
+                    .substring => "*=",
+                    .suffix => "$=",
+                });
+            }
         };
 
         pub const AttrSelectorOperation = enum {
@@ -263,7 +302,7 @@ pub const api = struct {
             // No flags were specified and HTML says this is a case-sensitive attribute.
             case_sensitive,
             // No flags were specified and HTML says this is a case-insensitive attribute.
-            ascii_case_insensitive_if_in_html_element,
+            ascii_case_insensitive_if_in_html_element_in_html_document,
         };
     };
 
@@ -868,6 +907,12 @@ pub const api = struct {
             /// The arguments of the pseudo class function.
             arguments: css.TokenList,
         },
+
+        pub fn toCss(this: *const PseudoClass, comptime W: type, dest: *Printer(W)) PrintErr!void {
+            _ = this; // autofix
+            _ = dest; // autofix
+            @compileError(css.todo_stuff.depth);
+        }
     };
 
     /// A [webkit scrollbar](https://webkit.org/blog/363/styling-scrollbars/) pseudo class.
@@ -1323,7 +1368,7 @@ pub const api = struct {
             pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
                 _ = this; // autofix
                 _ = dest; // autofix
-                @compileError(css.todo_stuff.depth);
+                @compileError("Do not call this! Use `serializer.serializeSelectorList()` or `tocss_servo.toCss_SelectorList()` instead.");
             }
 
             pub fn parse(
@@ -1476,6 +1521,12 @@ pub const api = struct {
 
             const This = @This();
 
+            pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+                _ = this; // autofix
+                _ = dest; // autofix
+                @compileError("Do not call this! Use `serializer.serializeSelector()` or `tocss_servo.toCss_Selector()` instead.");
+            }
+
             pub fn fromComponent(component: GenericComponent(Impl)) This {
                 var builder = SelectorBuilder(Impl).default();
                 if (component.asCombinator()) |combinator| {
@@ -1499,6 +1550,27 @@ pub const api = struct {
                 var state = SelectorParsingState.empty();
                 return parse_selector(Impl, parser, input, &state, .none);
             }
+
+            /// Returns an iterator over the sequence of simple selectors and
+            /// combinators, in parse order (from left to right), starting from
+            /// `offset`.
+            pub fn iterRawParseOrderFrom(this: *const This, offset: usize) RawParseOrderFromIter {
+                return RawParseOrderFromIter{
+                    .slice = this.components.items[0 .. this.components.len - offset],
+                };
+            }
+
+            const RawParseOrderFromIter = struct {
+                slice: []const GenericComponent(Impl),
+                i: usize = 0,
+
+                pub fn next(this: *@This()) ?GenericComponent(Impl) {
+                    if (!(this.i < this.slice.len)) return null;
+                    const result = this.slice[this.slice.len - 1 - this.i];
+                    this.i += 1;
+                    return result;
+                }
+            };
         };
     }
 
@@ -1563,7 +1635,7 @@ pub const api = struct {
             slotted: GenericSelector(Impl),
             /// The `::part` pseudo-element.
             ///   https://drafts.csswg.org/css-shadow-parts/#part
-            part: []GenericSelector(Impl.SelectorImpl.Identifier),
+            part: []Impl.SelectorImpl.Identifier,
             /// The `:host` pseudo-class:
             ///
             /// https://drafts.csswg.org/css-scoping/#host-selector
@@ -1631,6 +1703,12 @@ pub const api = struct {
             /// Returns true if this is a combinator.
             pub fn isCombinator(this: *This) bool {
                 return this.* == .combinator;
+            }
+
+            pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+                _ = this; // autofix
+                _ = dest; // autofix
+                @compileError("Do not call this! Use `serializer.serializeComponent()` or `tocss_servo.toCss_Component()` instead.");
             }
         };
     }
@@ -1836,6 +1914,15 @@ pub const api = struct {
         /// https://www.w3.org/TR/2014/WD-css-scoping-1-20140403/#deep-combinator
         /// And still supported as an alias for >>> by Vue.
         deep,
+
+        pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+            _ = dest; // autofix
+            switch (this.*) {
+                .combinator => |c| {
+                    _ = c; // autofix
+                },
+            }
+        }
     };
 
     pub const SelectorParseErrorKind = union(enum) {
@@ -1947,6 +2034,12 @@ pub const api = struct {
             _ = this; // autofix
             // Be lienient.
             return true;
+        }
+
+        pub fn toCss(this: *const PseudoElement, comptime W: type, dest: *Printer(W)) PrintErr!void {
+            _ = this; // autofix
+            _ = dest; // autofix
+            @compileError(css.todo_stuff.depth);
         }
     };
 
@@ -2831,6 +2924,12 @@ pub const api = struct {
         return struct {
             name: Impl.SelectorImpl.LocalName,
             lower_name: Impl.SelectorImpl.LocalName,
+
+            pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+                _ = this; // autofix
+                _ = dest; // autofix
+                @compileError(css.todo_stuff.depth);
+            }
         };
     }
 
@@ -2883,3 +2982,797 @@ pub const api = struct {
         }
     }
 };
+
+pub const serialize = struct {
+    pub fn serializeSelectorList(
+        list: []const api.Selector,
+        comptime W: type,
+        dest: *Printer(W),
+        context: ?*const css.StyleContext,
+        is_relative: bool,
+    ) PrintErr!void {
+        var first = true;
+        for (list) |*selector| {
+            if (!first) {
+                try dest.delim(',', false);
+            }
+            first = false;
+            try serializeSelector(selector, W, dest, context, is_relative);
+        }
+    }
+
+    pub fn serializeSelector(
+        selector: *const api.Selector,
+        comptime W: type,
+        dest: *css.Printer(W),
+        context: ?*const css.StyleContext,
+        is_relative: bool,
+    ) PrintErr!void {
+        const CombinatorIter = struct {
+            sel: *const api.Selector,
+            i: usize = 0,
+
+            /// Original source has this iterator defined like so:
+            /// ```rs
+            /// selector
+            ///   .iter_raw_match_order() // just returns an iterator
+            ///   .rev() // reverses the iterator
+            ///   .filter_map(|x| x.as_combinator()) // returns only entries which are combinators
+            /// ```
+            pub fn next(this: *@This()) ?api.Combinator {
+                while (this.i < this.sel.components.items.len) {
+                    defer this.i += 1;
+                    const combinator = this.sel.components.items[this.sel.components.items.len - 1 - this.i].asCombinator() orelse continue;
+                    return combinator;
+                }
+                return null;
+            }
+        };
+        const CompoundSelectorIter = struct {
+            sel: *const api.Selector,
+            i: usize = 0,
+
+            /// Original source has this iterator defined like so:
+            /// ```rs
+            /// selector
+            ///  .iter_raw_match_order()
+            ///  .as_slice()
+            ///  .split(|x| x.is_combinator()) // splits the slice into subslices by elements that match over the predicate
+            ///  .rev() // reverse
+            /// ```
+            ///
+            /// To explain .split() let's imagine we have a list of numbers and the predicate is `|x| x % 3 == 0`:
+            /// arr = [10, 40, 33, 20]
+            /// The first slice returned by the iterator would be = [10, 40]
+            /// The next slice returned by the iterator would be = [20]
+            /// Then none
+            pub fn next(this: *@This()) ?[]const api.Component {
+                while (this.i < this.sel.components.items.len) {
+                    var j = this.i;
+                    while (j < this.sel.components.items.len and this.sel.components.items[j].isCombinator()) {
+                        j += 1;
+                    }
+                    const start = this.i;
+                    const end = j;
+                    if (start == end) {
+                        this.i += 1;
+                        continue;
+                    }
+                    const slice = this.sel.components.items[start..end];
+                    this.i = end;
+                    return slice;
+                }
+                return null;
+            }
+        };
+
+        // Compound selectors invert the order of their contents, so we need to
+        // undo that during serialization.
+        //
+        // This two-iterator strategy involves walking over the selector twice.
+        // We could do something more clever, but selector serialization probably
+        // isn't hot enough to justify it, and the stringification likely
+        // dominates anyway.
+        //
+        // NB: A parse-order iterator is a Rev<>, which doesn't expose as_slice(),
+        // which we need for |split|. So we split by combinators on a match-order
+        // sequence and then reverse.
+        var combinators = CombinatorIter{ .sel = selector };
+        const compound_selectors = CompoundSelectorIter{ .sel = selector };
+        const should_compile_nesting = dest.targets.shouldCompile(css.compat.Feature.nesting, .nesting);
+
+        var first = true;
+        var combinators_exhausted = false;
+        while (compound_selectors.next()) |_compound_| {
+            bun.debugAssert(!combinators_exhausted);
+            var compound = _compound_;
+
+            // Skip implicit :scope in relative selectors (e.g. :has(:scope > foo) -> :has(> foo))
+            if (is_relative and compound.len >= 1 and compound[0] == .scope) {
+                if (combinators.next()) |combinator| {
+                    // todo_stuff.depth
+                    try combinator.toCss(W, dest);
+                }
+                compound = compound[1..];
+                is_relative = false;
+            }
+
+            // https://drafts.csswg.org/cssom/#serializing-selectors
+            if (compound.len == 0) continue;
+
+            const has_leading_nesting = first and compound[0] == .nesting;
+            const first_index = if (has_leading_nesting) 1 else 0;
+            first = false;
+
+            // 1. If there is only one simple selector in the compound selectors
+            //    which is a universal selector, append the result of
+            //    serializing the universal selector to s.
+            //
+            // Check if `!compound.empty()` first--this can happen if we have
+            // something like `... > ::before`, because we store `>` and `::`
+            // both as combinators internally.
+            //
+            // If we are in this case, after we have serialized the universal
+            // selector, we skip Step 2 and continue with the algorithm.
+            const can_elide_namespace, const first_non_namespace = if (first_index >= compound.len)
+                .{ true, first_index }
+            else switch (compound[0]) {
+                .explicit_any_namespace, .explicit_no_namespace, .namespace => .{ false, first_index + 1 },
+                .default_namespace => .{ true, first_index + 1 },
+            };
+            var perform_step_2 = true;
+            const next_combinator = combinators.next();
+            if (first_non_namespace == compound.len - 1) {
+                // We have to be careful here, because if there is a
+                // pseudo element "combinator" there isn't really just
+                // the one simple selector. Technically this compound
+                // selector contains the pseudo element selector as well
+                // -- Combinator::PseudoElement, just like
+                // Combinator::SlotAssignment, don't exist in the
+                // spec.
+                if (next_combinator == .pseudo_element and compound[first_non_namespace] == .slot_assignment) {
+                    // do nothing
+                } else if (compound[first_non_namespace] == .explicit_universal_type) {
+                    // Iterate over everything so we serialize the namespace
+                    // too.
+                    const swap_nesting = has_leading_nesting and should_compile_nesting;
+                    const slice = if (swap_nesting) brk: {
+                        // Swap nesting and type selector (e.g. &div -> div&).
+                        break :brk compound[@min(1, compound.len)..];
+                    } else compound;
+
+                    for (slice) |simple| {
+                        // todo_stuff.depth
+                        try serializeComponent(simple, W, dest, context);
+                    }
+
+                    if (swap_nesting) {
+                        try serializeNesting(W, dest, context, false);
+                    }
+
+                    // Skip step 2, which is an "otherwise".
+                    perform_step_2 = false;
+                } else {
+                    // do nothing
+                }
+            }
+
+            // 2. Otherwise, for each simple selector in the compound selectors
+            //    that is not a universal selector of which the namespace prefix
+            //    maps to a namespace that is not the default namespace
+            //    serialize the simple selector and append the result to s.
+            //
+            // See https://github.com/w3c/csswg-drafts/issues/1606, which is
+            // proposing to change this to match up with the behavior asserted
+            // in cssom/serialize-namespaced-type-selectors.html, which the
+            // following code tries to match.
+            if (perform_step_2) {
+                const iter = compound;
+                var i: usize = 0;
+                if (has_leading_nesting and
+                    should_compile_nesting and
+                    isTypeSelector(if (first_non_namespace < compound.len) compound[first_non_namespace] else null))
+                {
+                    // Swap nesting and type selector (e.g. &div -> div&).
+                    // This ensures that the compiled selector is valid. e.g. (div.foo is valid, .foodiv is not).
+                    const nesting = iter[i];
+                    i += 1;
+                    const local = iter[i];
+                    i += 1;
+                    try serializeComponent(local, W, dest, context);
+
+                    // Also check the next item in case of namespaces.
+                    if (first_non_namespace > first_index) {
+                        const local2 = iter[i];
+                        i += 1;
+                        try serializeComponent(local2, W, dest, context);
+                    }
+
+                    try serializeComponent(nesting, W, dest, context);
+                } else if (has_leading_nesting and should_compile_nesting) {
+                    // Nesting selector may serialize differently if it is leading, due to type selectors.
+                    i += 1;
+                    try serializeNesting(W, dest, context, true);
+                }
+
+                if (i < compound.len) {
+                    for (iter[i..]) |*simple| {
+                        if (simple.* == .explicit_universal_type) {
+                            // Can't have a namespace followed by a pseudo-element
+                            // selector followed by a universal selector in the same
+                            // compound selector, so we don't have to worry about the
+                            // real namespace being in a different `compound`.
+                            if (can_elide_namespace) {
+                                continue;
+                            }
+                        }
+                        try serializeComponent(simple, W, dest, context);
+                    }
+                }
+            }
+
+            // 3. If this is not the last part of the chain of the selector
+            //    append a single SPACE (U+0020), followed by the combinator
+            //    ">", "+", "~", ">>", "||", as appropriate, followed by another
+            //    single SPACE (U+0020) if the combinator was not whitespace, to
+            //    s.
+            if (next_combinator) |c| {
+                try c.toCss(dest);
+            } else {
+                combinators_exhausted = true;
+            }
+
+            // 4. If this is the last part of the chain of the selector and
+            //    there is a pseudo-element, append "::" followed by the name of
+            //    the pseudo-element, to s.
+            //
+            // (we handle this above)
+        }
+    }
+
+    fn serializeComponent(
+        component: *api.Component,
+        comptime W: type,
+        dest: *css.Printer(W),
+        context: ?*const css.StyleContext,
+    ) PrintErr!void {
+        switch (component.*) {
+            .combinator => |c| return try c.toCss(W, dest),
+            .attribute_in_no_namespace => |*v| {
+                try dest.writeChar('[');
+                try css.css_values.ident.IdentFns.toCss(&v.local_name, W, dest);
+                try v.operator.toCss(W, dest);
+
+                if (dest.minify) {
+                    // PERF: should we put a scratch buffer in the printer
+                    // Serialize as both an identifier and a string and choose the shorter one.
+                    var id = std.ArrayList(u8).init(@compileError(css.todo_stuff.think_about_allocator));
+                    const writer = id.writer();
+                    css.serializer.serializeIdentifier(v.value, W, writer);
+
+                    const s = try css.to_css.string(
+                        @compileError(css.todo_stuff.think_about_allocator),
+                        CSSString,
+                        &v.value,
+                        css.PrinterOptions{},
+                    );
+
+                    if (id.items.len > 0 and id.items.len < s.len) {
+                        try dest.writeStr(id.items);
+                    } else {
+                        try dest.writeStr(s);
+                    }
+                } else {
+                    try css.CSSStringFns.toCss(&v.value, W, dest);
+                }
+
+                switch (v.case_sensitivity) {
+                    .case_sensitive, .ascii_case_insensitive_if_in_html_element_in_html_document => {},
+                    .ascii_case_insensitive => try dest.writeStr(" i"),
+                    .explicit_case_sensitive => try dest.writeStr(" s"),
+                }
+                try dest.writeChar(']');
+            },
+            .is, .where, .negation, .any => {
+                switch (component.*) {
+                    .where => try dest.writeStr(":where("),
+                    .is => |selectors| {
+                        // If there's only one simple selector, serialize it directly.
+                        if (shouldUnwrapIs(selectors)) {
+                            try serializeSelector(&selectors[0], W, dest, context, false);
+                            return;
+                        }
+
+                        const vp = dest.vendor_prefix;
+                        if (vp.intersects(css.VendorPrefix{ .webkit = true, .moz = true })) {
+                            try dest.writeChar(':');
+                            try vp.toCss(W, dest);
+                            try dest.writeStr("any(");
+                        } else {
+                            try dest.writeStr(":is(");
+                        }
+                    },
+                    .negation => {
+                        try dest.writeStr(":not(");
+                    },
+                    .any => |v| {
+                        const vp = dest.vendor_prefix.bitwiseOr(v.vendor_prefix);
+                        if (vp.intersects(css.VendorPrefix{ .webkit = true, .mox = true })) {
+                            try dest.writeChar(':');
+                            try vp.toCss(W, dest);
+                            try dest.writeStr("any(");
+                        } else {
+                            try dest.writeStr(":is(");
+                        }
+                    },
+                    else => unreachable,
+                }
+                try serializeSelectorList(switch (component.*) {
+                    .where, .is, .negation => |list| list,
+                    .any => |v| v.selectors,
+                    else => unreachable,
+                }, W, dest, context, false);
+                try dest.writeStr(")");
+            },
+            .has => |list| {
+                try dest.writeStr(":has(");
+                try serializeSelectorList(list, W, dest, context, true);
+                try dest.writeStr(")");
+            },
+            .non_ts_pseudo_class => |pseudo| {
+                try serializePseudoClass(pseudo, W, dest, context);
+            },
+            .pseudo_element => |pseudo| {
+                try serializePseudoElement(pseudo, W, dest, context);
+            },
+            .nesting => {
+                try serializeNesting(W, dest, context, false);
+            },
+            .class => |class| {
+                try dest.writeChar('.');
+                try dest.writeIdent(class, true);
+            },
+            .id => |id| {
+                try dest.writeChar('#');
+                try dest.writeIdent(id, true);
+            },
+            .host => |selector| {
+                try dest.writeStr(":host");
+                if (selector) |*sel| {
+                    try dest.writeChar('(');
+                    try sel.toCss(W, dest);
+                    try dest.writeChar(')');
+                }
+            },
+            .slotted => |selector| {
+                try dest.writeStr("::slotted(");
+                try selector.toCss(W, dest);
+                try dest.writeChar(')');
+            },
+            .nth => |nth_data| {
+                try nth_data.writeStart(W, dest, nth_data.isFunction());
+                if (nth_data.isFunction()) {
+                    try nth_data.writeAffine(W, dest);
+                    try dest.writeChar(')');
+                }
+            },
+
+            else => {
+                try tocss_servo.toCss_Component(component, W, dest);
+            },
+        }
+    }
+
+    fn serializePseudoClass(
+        pseudo_class: *const api.PseudoClass,
+        comptime W: type,
+        dest: *Printer(W),
+        context: ?*css.StyleContext,
+    ) PrintErr!void {
+        _ = pseudo_class; // autofix
+        _ = dest; // autofix
+        _ = context; // autofix
+        @compileError(css.todo_stuff.depth);
+    }
+
+    fn serializePseudoElement(
+        pseudo_element: *const api.PseudoElement,
+        comptime W: type,
+        dest: *Printer(W),
+        context: ?*css.StyleContext,
+    ) PrintErr!void {
+        _ = pseudo_element; // autofix
+        _ = dest; // autofix
+        _ = context; // autofix
+        @compileError(css.todo_stuff.depth);
+    }
+
+    fn serializeNesting(
+        comptime W: type,
+        dest: *Printer(W),
+        context: ?*css.StyleContext,
+        first: bool,
+    ) PrintErr!void {
+        _ = first; // autofix
+        _ = dest; // autofix
+        _ = context; // autofix
+        @compileError(css.todo_stuff.depth);
+    }
+};
+
+const tocss_servo = struct {
+    pub fn toCss_SelectorList(
+        selectors: []const api.Selector,
+        comptime W: type,
+        dest: *css.Printer(W),
+    ) PrintErr!void {
+        var first = true;
+        for (selectors) |*selector| {
+            if (!first) {
+                try dest.writeStr(", ");
+            }
+            first = false;
+            try tocss_servo.toCss_Selector(selector, W, dest);
+        }
+    }
+
+    pub fn toCss_Selector(
+        selector: *const api.Selector,
+        comptime W: type,
+        dest: *css.Printer(W),
+    ) PrintErr!void {
+        const CombinatorIter = struct {
+            sel: *const api.Selector,
+            i: usize = 0,
+
+            /// Original source has this iterator defined like so:
+            /// ```rs
+            /// selector
+            ///   .iter_raw_match_order() // just returns an iterator
+            ///   .rev() // reverses the iterator
+            ///   .filter_map(|x| x.as_combinator()) // returns only entries which are combinators
+            /// ```
+            pub fn next(this: *@This()) ?api.Combinator {
+                while (this.i < this.sel.components.items.len) {
+                    defer this.i += 1;
+                    const combinator = this.sel.components.items[this.sel.components.items.len - 1 - this.i].asCombinator() orelse continue;
+                    return combinator;
+                }
+                return null;
+            }
+        };
+        const CompoundSelectorIter = struct {
+            sel: *const api.Selector,
+            i: usize = 0,
+
+            /// Original source has this iterator defined like so:
+            /// ```rs
+            /// selector
+            ///  .iter_raw_match_order()
+            ///  .as_slice()
+            ///  .split(|x| x.is_combinator()) // splits the slice into subslices by elements that match over the predicate
+            ///  .rev() // reverse
+            /// ```
+            ///
+            /// To explain .split() let's imagine we have a list of numbers and the predicate is `|x| x % 3 == 0`:
+            /// arr = [10, 40, 33, 20]
+            /// The first slice returned by the iterator would be = [10, 40]
+            /// The next slice returned by the iterator would be = [20]
+            /// Then none
+            pub fn next(this: *@This()) ?[]const api.Component {
+                while (this.i < this.sel.components.items.len) {
+                    var j = this.i;
+                    while (j < this.sel.components.items.len and this.sel.components.items[j].isCombinator()) {
+                        j += 1;
+                    }
+                    const start = this.i;
+                    const end = j;
+                    if (start == end) {
+                        this.i += 1;
+                        continue;
+                    }
+                    const slice = this.sel.components.items[start..end];
+                    this.i = end;
+                    return slice;
+                }
+                return null;
+            }
+        };
+
+        // Compound selectors invert the order of their contents, so we need to
+        // undo that during serialization.
+        //
+        // This two-iterator strategy involves walking over the selector twice.
+        // We could do something more clever, but selector serialization probably
+        // isn't hot enough to justify it, and the stringification likely
+        // dominates anyway.
+        //
+        // NB: A parse-order iterator is a Rev<>, which doesn't expose as_slice(),
+        // which we need for |split|. So we split by combinators on a match-order
+        // sequence and then reverse.
+        var combinators = CombinatorIter{ .sel = selector };
+        const compound_selectors = CompoundSelectorIter{ .sel = selector };
+
+        var combinators_exhausted = false;
+        while (compound_selectors.next()) |compound| {
+            bun.debugAssert(!combinators_exhausted);
+
+            // https://drafts.csswg.org/cssom/#serializing-selectors
+            if (compound.len == 0) continue;
+
+            // 1. If there is only one simple selector in the compound selectors
+            //    which is a universal selector, append the result of
+            //    serializing the universal selector to s.
+            //
+            // Check if `!compound.empty()` first--this can happen if we have
+            // something like `... > ::before`, because we store `>` and `::`
+            // both as combinators internally.
+            //
+            // If we are in this case, after we have serialized the universal
+            // selector, we skip Step 2 and continue with the algorithm.
+            const can_elide_namespace, const first_non_namespace = if (0 >= compound.len)
+                .{ true, 0 }
+            else switch (compound[0]) {
+                .explicit_any_namespace, .explicit_no_namespace, .namespace => .{ false, 1 },
+                .default_namespace => .{ true, 1 },
+            };
+            var perform_step_2 = true;
+            const next_combinator = combinators.next();
+            if (first_non_namespace == compound.len - 1) {
+                // We have to be careful here, because if there is a
+                // pseudo element "combinator" there isn't really just
+                // the one simple selector. Technically this compound
+                // selector contains the pseudo element selector as well
+                // -- Combinator::PseudoElement, just like
+                // Combinator::SlotAssignment, don't exist in the
+                // spec.
+                if (next_combinator == .pseudo_element and compound[first_non_namespace] == .slot_assignment) {
+                    // do nothing
+                } else if (compound[first_non_namespace] == .explicit_universal_type) {
+                    // Iterate over everything so we serialize the namespace
+                    // too.
+                    for (compound) |*simple| {
+                        // todo_stuff.depth
+                        try tocss_servo.toCss_Component(simple, W, dest);
+                    }
+                    // Skip step 2, which is an "otherwise".
+                    perform_step_2 = false;
+                } else {
+                    // do nothing
+                }
+            }
+
+            // 2. Otherwise, for each simple selector in the compound selectors
+            //    that is not a universal selector of which the namespace prefix
+            //    maps to a namespace that is not the default namespace
+            //    serialize the simple selector and append the result to s.
+            //
+            // See https://github.com/w3c/csswg-drafts/issues/1606, which is
+            // proposing to change this to match up with the behavior asserted
+            // in cssom/serialize-namespaced-type-selectors.html, which the
+            // following code tries to match.
+            if (perform_step_2) {
+                for (compound) |*simple| {
+                    if (simple.* == .explicit_universal_type) {
+                        // Can't have a namespace followed by a pseudo-element
+                        // selector followed by a universal selector in the same
+                        // compound selector, so we don't have to worry about the
+                        // real namespace being in a different `compound`.
+                        if (can_elide_namespace) {
+                            continue;
+                        }
+                    }
+                    try tocss_servo.toCss_Component(simple, W, dest);
+                }
+            }
+
+            // 3. If this is not the last part of the chain of the selector
+            //    append a single SPACE (U+0020), followed by the combinator
+            //    ">", "+", "~", ">>", "||", as appropriate, followed by another
+            //    single SPACE (U+0020) if the combinator was not whitespace, to
+            //    s.
+            if (next_combinator) |c| {
+                try c.toCss(dest);
+            } else {
+                combinators_exhausted = true;
+            }
+
+            // 4. If this is the last part of the chain of the selector and
+            //    there is a pseudo-element, append "::" followed by the name of
+            //    the pseudo-element, to s.
+            //
+            // (we handle this above)
+        }
+    }
+
+    pub fn toCss_Component(
+        component: *const api.Component,
+        comptime W: type,
+        dest: *Printer(W),
+    ) PrintErr!void {
+        switch (component.*) {
+            .combinator => |c| try c.toCss(W, dest),
+            .slotted => |selector| {
+                try dest.writeStr("::slotted(");
+                try tocss_servo.toCss_Selector(selector, W, dest);
+                try dest.writeChar(')');
+            },
+            .part => |part_names| {
+                try dest.writeStr("::part(");
+                for (part_names, 0..) |name, i| {
+                    if (i != 0) {
+                        try dest.writeChar(' ');
+                    }
+                    try css.IdentFns.toCss(&name, W, dest);
+                }
+                try dest.writeChar(')');
+            },
+            .pseudo_element => |*p| {
+                try p.toCss(W, dest);
+            },
+            .id => |s| {
+                try dest.writeChar('#');
+                try css.IdentFns.toCss(&s, W, dest);
+            },
+            .class => |s| {
+                try dest.writeChar('.');
+                try css.IdentFns.toCss(&s, W, dest);
+            },
+            .local_name => |local_name| {
+                try local_name.toCss(W, dest);
+            },
+            .explicit_universal_type => {
+                try dest.writeChar('*');
+            },
+            .default_namespace => return,
+
+            .explicit_no_namespace => {
+                try dest.writeChar('|');
+            },
+            .explicit_any_namespace => {
+                try dest.writeStr("*|");
+            },
+            .namespace => |ns| {
+                try css.IdentFns.toCss(&ns.prefix, W, dest);
+                try try dest.writeChar('|');
+            },
+            .attribute_in_no_namespace_exists => |v| {
+                try dest.writeChar('[');
+                try css.IdentFns.toCss(&v.local_name, W, dest);
+                try dest.writeChar(']');
+            },
+            .attribute_in_no_namespace => |v| {
+                try dest.writeChar('[');
+                try css.IdentFns.toCss(&v.local_name, W, dest);
+                try v.operator.toCss(W, dest);
+                try css.CSSStringFns.toCss(&v.value, W, dest);
+                switch (v.case_sensitivity) {
+                    .case_sensitive, .ascii_case_insensitive_if_in_html_element_in_html_document => {},
+                    .ascii_case_insensitive => try dest.writeStr(" i"),
+                    .explicit_case_sensitive => try dest.writeStr(" s"),
+                }
+                try dest.writeChar(']');
+            },
+            .attribute_other => |attr_selector| {
+                attr_selector.toCss(W, dest);
+            },
+            // Pseudo-classes
+            .root => {
+                try dest.writeStr(":root");
+            },
+            .empty => {
+                try dest.writeStr(":empty");
+            },
+            .scope => {
+                try dest.writeStr(":scope");
+            },
+            .host => |selector| {
+                try dest.writeStr(":host");
+                if (selector) |*sel| {
+                    try dest.writeChar('(');
+                    try tocss_servo.toCss_Selector(sel, W, dest);
+                    try dest.writeChar(')');
+                }
+            },
+            .nth => |nth_data| {
+                try nth_data.writeStart(W, dest, nth_data.isFunction());
+                if (nth_data.isFunction()) {
+                    try nth_data.writeAffine(W, dest);
+                    try dest.writeChar(')');
+                }
+            },
+            .nth_of => |nth_of_data| {
+                const nth_data = nth_of_data.nthData();
+                try nth_data.writeStart(W, dest, true);
+                // A selector must be a function to hold An+B notation
+                bun.debugAssert(nth_data.is_function);
+                try nth_data.writeAffine(W, dest);
+                // Only :nth-child or :nth-last-child can be of a selector list
+                bun.debugAssert(nth_data.ty == .child or nth_data.ty == .last_child);
+                // The selector list should not be empty
+                bun.debugAssert(nth_of_data.selectors.len != 0);
+                try dest.writeStr(" of ");
+                try tocss_servo.toCss_SelectorList(nth_of_data.selectors, W, dest);
+                dest.writeChar(')');
+            },
+            .is, .where, .negation, .has, .any => {
+                switch (component.*) {
+                    .where => try dest.writeStr(":where("),
+                    .is => try dest.writeStr(":is("),
+                    .not => try dest.writeStr(":not("),
+                    .has => try dest.writeStr(":has("),
+                    .any => |v| {
+                        try dest.writeChar(':');
+                        try v.vendor_prefix.toCss(W, dest);
+                        dest.writeStr("any(");
+                    },
+                    else => unreachable,
+                }
+                try tocss_servo.toCss_SelectorList(
+                    switch (component.*) {
+                        .where, .is, .not, .has => |list| list,
+                        .any => |v| v.selectors,
+                        else => unreachable,
+                    },
+                    W,
+                    dest,
+                );
+                try dest.writeStr(")");
+            },
+            .non_ts_pseudo_class => |*pseudo| {
+                try pseudo.toCss(W, dest);
+            },
+            .nesting => try dest.writeChar('&'),
+        }
+    }
+
+    pub fn toCss_PseudoElement(
+        pseudo_element: *const api.PseudoElement,
+        comptime W: type,
+        dest: *Printer(W),
+    ) PrintErr!void {
+        _ = pseudo_element; // autofix
+        _ = dest; // autofix
+        @compileError(css.todo_stuff.depth);
+    }
+};
+
+pub fn shouldUnwrapIs(selectors: []const api.Selector) bool {
+    if (selectors.len == 1) {
+        const first = selectors[0];
+        if (!hasTypeSelector(first) and isSimple(first)) return true;
+    }
+
+    return false;
+}
+
+fn hasTypeSelector(selector: *const api.Selector) bool {
+    var iter = selector.iterRawParseOrderFrom(0);
+    const first = iter.next();
+    if (isNamespace(first)) return isTypeSelector(iter.next());
+    return isTypeSelector(first);
+}
+
+fn isNamespace(component: ?*const api.Component) bool {
+    if (component) |c| return switch (c.*) {
+        .explicit_any_namespace, .explicit_no_namespace, .namespace, .default_namespace => true,
+        else => false,
+    };
+    return false;
+}
+
+fn isTypeSelector(component: ?*const api.Component) bool {
+    if (component) |c| return switch (c.*) {
+        .local_name, .explicit_universal_type => true,
+        else => false,
+    };
+    return false;
+}
+
+fn isSimple(selector: *const api.Selector) bool {
+    var iter = selector.iterRawParseOrderFrom(0);
+    while (iter.next()) |component| {
+        if (component.isCombinator()) return true;
+    }
+    return false;
+}

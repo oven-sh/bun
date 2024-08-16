@@ -127,6 +127,7 @@ pub const BrotliEncoder = struct {
     pub fn deinit(this: *BrotliEncoder) void {
         this.callback_value.deinit();
         this.freelist.deinit();
+        this.output.deinit(bun.default_allocator);
         this.stream.deinit();
         this.input.deinit();
         this.destroy();

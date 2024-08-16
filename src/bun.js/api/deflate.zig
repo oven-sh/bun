@@ -88,6 +88,7 @@ pub const DeflateEncoder = struct {
 
     pub fn deinit(this: *@This()) void {
         this.input.deinit();
+        this.output.deinit(bun.default_allocator);
         this.callback_value.deinit();
         this.destroy();
     }
@@ -361,7 +362,6 @@ pub const DeflateDecoder = struct {
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) ?*@This() {
         _ = callframe;
         globalThis.throw("DeflateDecoder is not constructable", .{});
-
         return null;
     }
 
@@ -407,6 +407,7 @@ pub const DeflateDecoder = struct {
 
     pub fn deinit(this: *@This()) void {
         this.input.deinit();
+        this.output.deinit(bun.default_allocator);
         this.callback_value.deinit();
         this.destroy();
     }

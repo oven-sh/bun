@@ -14,6 +14,19 @@ const Url = css.css_values.url.Url;
 const Size2D = css.css_values.size.Size2D;
 const fontprops = css.css_properties.font;
 
+pub const import = @import("./import.zig");
+pub const layer = @import("./layer.zig");
+
+pub const Location = struct {
+    /// The index of the source file within the source map.
+    source_index: u32,
+    /// The line number, starting at 0.
+    line: u32,
+    /// The column number within a line, starting at 1 for first the character of the line.
+    /// Column numbers are counted in UTF-16 code units.
+    column: u32,
+};
+
 pub fn CssRule(comptime Rule: type) type {
     return union(enum) {
         /// A `@media` rule.
@@ -141,64 +154,6 @@ pub fn CssRuleList(comptime AtRule: type) type {
         }
     };
 }
-
-pub const layer = struct {
-    pub const LayerName = struct {
-        v: ArrayList([]const u8) = .{},
-
-        pub fn parse(input: *css.Parser) Error!LayerName {
-            _ = input; // autofix
-            @compileError(css.todo_stuff.depth);
-        }
-
-        pub fn toCss(this: *const LayerName, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
-            _ = this; // autofix
-            _ = dest; // autofix
-            @compileError(css.todo_stuff.depth);
-        }
-    };
-
-    /// A [@layer block](https://drafts.csswg.org/css-cascade-5/#layer-block) rule.
-    pub fn LayerBlockRule(comptime R: type) type {
-        return struct {
-            /// PERF: null pointer optimizaiton, nullable
-            /// The name of the layer to declare, or `None` to declare an anonymous layer.
-            name: ?LayerName,
-            /// The rules within the `@layer` rule.
-            rules: css.CssRuleList(R),
-            /// The location of the rule in the source file.
-            loc: Location,
-
-            const This = @This();
-
-            pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
-                _ = this; // autofix
-                _ = dest; // autofix
-                @compileError(css.todo_stuff.depth);
-            }
-        };
-    }
-
-    /// A [@layer statement](https://drafts.csswg.org/css-cascade-5/#layer-empty) rule.
-    ///
-    /// See also [LayerBlockRule](LayerBlockRule).
-    pub const LayerStatementRule = struct {
-        /// The layer names to declare.
-        names: ArrayList(LayerName),
-        /// The location of the rule in the source file.
-        loc: Location,
-
-        const This = @This();
-
-        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            // #[cfg(feature = "sourcemap")]
-            // dest.add_mapping(self.loc);
-            try dest.writeStr("@layer ");
-            css.to_css.fromList(LayerName, &this.names, W, dest);
-            try dest.writeChar(';');
-        }
-    };
-};
 
 pub const supports = struct {
     /// A [`<supports-condition>`](https://drafts.csswg.org/css-conditional-3/#typedef-supports-condition),
@@ -1472,89 +1427,4 @@ pub const nesting = struct {
             }
         };
     }
-};
-
-pub const Location = struct {
-    /// The index of the source file within the source map.
-    source_index: u32,
-    /// The line number, starting at 0.
-    line: u32,
-    /// The column number within a line, starting at 1 for first the character of the line.
-    /// Column numbers are counted in UTF-16 code units.
-    column: u32,
-};
-
-pub const import = struct {
-    /// A [@import](https://drafts.csswg.org/css-cascade/#at-import) rule.
-    pub const ImportRule = struct {
-        /// The url to import.
-        url: []const u8,
-
-        /// An optional cascade layer name, or `None` for an anonymous layer.
-        layer: ?struct {
-            /// PERF: null pointer optimizaiton, nullable
-            v: ?layer.LayerName,
-        },
-
-        /// An optional `supports()` condition.
-        supports: ?supports.SupportsCondition,
-
-        /// A media query.
-        media: css.MediaList,
-
-        /// The location of the rule in the source file.
-        loc: Location,
-
-        const This = @This();
-
-        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            const dep = if (dest.dependencies != null) dependencies.ImportDependency.new(
-                @compileError(css.todo_stuff.think_about_allocator),
-                dest.filename(),
-            ) else null;
-
-            // #[cfg(feature = "sourcemap")]
-            // dest.add_mapping(self.loc);
-
-            try dest.writeStr("@import ");
-            if (dep) |d| {
-                try css.serializer.serializeString(dep.placeholder, W, dest);
-
-                if (dest.dependencies) |*deps| {
-                    deps.append(
-                        @compileError(css.todo_stuff.think_about_allocator),
-                        Dependency{ .import = d },
-                    ) catch unreachable;
-                }
-            } else {
-                try css.serializer.serializeString(this.url, W, dest);
-            }
-
-            if (this.layer) |*lyr| {
-                try dest.writeStr(" layer");
-                if (lyr.v) |l| {
-                    try dest.writeChar('(');
-                    try l.toCss(W, dest);
-                    try dest.writeChar(')');
-                }
-            }
-
-            if (this.supports) |*sup| {
-                try dest.writeStr(" supports");
-                if (sup.* == .declaration) {
-                    try sup.toCss(W, dest);
-                } else {
-                    try dest.writeChar('(');
-                    try sup.toCss(W, dest);
-                    try dest.writeChar(')');
-                }
-            }
-
-            if (this.media.media_queries.items.len > 0) {
-                try dest.writeChar(' ');
-                try this.media.toCss(W, dest);
-            }
-            try dest.writeStr(";");
-        }
-    };
 };

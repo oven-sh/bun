@@ -4411,6 +4411,13 @@ pub const serializer = struct {
         _ = dest; // autofix
         @compileError(todo_stuff.depth);
     }
+
+    /// Write a CSS identifier, escaping characters as necessary.
+    pub fn serializeIdentifier(value: []const u8, comptime W: type, dest: *W) PrintErr!void {
+        _ = value; // autofix
+        _ = dest; // autofix
+        @compileError(todo_stuff.depth);
+    }
 };
 
 pub const to_css = struct {

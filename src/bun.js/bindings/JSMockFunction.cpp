@@ -25,6 +25,7 @@
 #include <JavaScriptCore/JSModuleEnvironment.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include "BunPlugin.h"
+#include "AsyncContextFrame.h"
 #include "ErrorCode.h"
 
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsUseFakeTimers);
@@ -338,6 +339,7 @@ public:
             if (this->spyAttributes & SpyAttributeESModuleNamespace) {
                 if (auto* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(target)) {
                     moduleNamespaceObject->overrideExportValue(moduleNamespaceObject->globalObject(), this->spyIdentifier, implValue);
+                }
             } else {
                 target->putDirect(this->vm(), this->spyIdentifier, implValue, this->spyAttributes);
             }
@@ -843,14 +845,15 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
 
             setReturnValue(createMockResult(vm, globalObject, "incomplete"_s, jsUndefined()));
 
-            WTF::NakedPtr<JSC::Exception> exception;
+            auto catchScope = DECLARE_CATCH_SCOPE(vm);
 
-            JSValue returnValue = call(globalObject, result, callData, thisValue, args, exception);
+            JSValue returnValue = Bun::call(globalObject, result, callData, thisValue, args);
 
-            if (auto* exc = exception.get()) {
+            if (auto* exc = catchScope.exception()) {
                 if (auto* returnValuesArray = fn->returnValues.get()) {
                     returnValuesArray->putDirectIndex(globalObject, returnValueIndex, createMockResult(vm, globalObject, "throw"_s, exc->value()));
                     fn->returnValues.set(vm, fn, returnValuesArray);
+                    catchScope.clearException();
                     JSC::throwException(globalObject, scope, exc);
                     return {};
                 }

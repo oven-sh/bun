@@ -4165,12 +4165,11 @@ pub const ServerWebSocket = struct {
         if (this.isClosed() or vm.isShuttingDown())
             return;
 
-        // we should not call drain if we dont have this_value
-        if (handler.onDrain != .zero and !this.this_value.isEmptyOrUndefinedOrNull()) {
+        if (handler.onDrain != .zero) {
             const globalObject = handler.globalObject;
 
             var corker = Corker{
-                .args = &[_]JSC.JSValue{this.this_value},
+                .args = &[_]JSC.JSValue{this.getThisValue()},
                 .globalObject = globalObject,
                 .callback = handler.onDrain,
             };
@@ -4222,7 +4221,7 @@ pub const ServerWebSocket = struct {
         const result = cb.call(
             globalThis,
             .undefined,
-            &[_]JSC.JSValue{ this.this_value, this.binaryToJS(globalThis, data) },
+            &[_]JSC.JSValue{ this.getThisValue(), this.binaryToJS(globalThis, data) },
         );
 
         if (result.toError()) |err| {
@@ -4251,7 +4250,7 @@ pub const ServerWebSocket = struct {
         const result = cb.call(
             globalThis,
             .undefined,
-            &[_]JSC.JSValue{ this.this_value, this.binaryToJS(globalThis, data) },
+            &[_]JSC.JSValue{ this.getThisValue(), this.binaryToJS(globalThis, data) },
         );
 
         if (result.toError()) |err| {
@@ -4284,7 +4283,7 @@ pub const ServerWebSocket = struct {
             const result = handler.onClose.call(
                 globalObject,
                 .undefined,
-                &[_]JSC.JSValue{ this.this_value, JSValue.jsNumber(code), str.toJS(globalObject) },
+                &[_]JSC.JSValue{ this.getThisValue(), JSValue.jsNumber(code), str.toJS(globalObject) },
             );
 
             if (result.toError()) |err| {

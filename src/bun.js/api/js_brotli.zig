@@ -115,6 +115,7 @@ pub const BrotliEncoder = struct {
                 }
             }
         }
+        if (globalThis.hasException()) return .zero;
 
         const out = this.toJS(globalThis);
         BrotliEncoder.callbackSetCached(out, globalThis, callback);
@@ -452,6 +453,7 @@ pub const BrotliDecoder = struct {
                 }
             }
         }
+        if (globalThis.hasException()) return .zero;
 
         const out = this.toJS(globalThis);
         @This().callbackSetCached(out, globalThis, callback);

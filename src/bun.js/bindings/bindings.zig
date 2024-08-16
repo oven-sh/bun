@@ -3318,6 +3318,7 @@ pub const JSGlobalObject = opaque {
             }
             return @intCast(level_i32);
         }
+        if (this.hasException()) return null;
         return default;
     }
 
@@ -3338,6 +3339,7 @@ pub const JSGlobalObject = opaque {
             }
             return @intCast(level_i32);
         }
+        if (this.hasException()) return null;
         return default;
     }
 
@@ -3363,6 +3365,7 @@ pub const JSGlobalObject = opaque {
             }
             return @intCast(level_int);
         }
+        if (this.hasException()) return null;
         return default;
     }
 

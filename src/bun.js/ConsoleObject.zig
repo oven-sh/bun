@@ -633,8 +633,8 @@ pub fn writeTrace(comptime Writer: type, writer: Writer, global: *JSGlobalObject
     var source_code_slice: ?ZigString.Slice = null;
     defer if (source_code_slice) |slice| slice.deinit();
 
-    var err = ZigString.init("trace output").toErrorInstance(global);
-    err.toZigException(global, exception);
+    const err = ZigString.init("trace output").toErrorInstance(global);
+    // remapZigException will call .toZigException() on the ErrorInstance.
     vm.remapZigException(
         exception,
         err,

@@ -4165,7 +4165,8 @@ pub const ServerWebSocket = struct {
         if (this.isClosed() or vm.isShuttingDown())
             return;
 
-        if (handler.onDrain != .zero) {
+        // we should not call drain if we dont have this_value
+        if (handler.onDrain != .zero and this.this_value.isEmptyOrUndefinedOrNull()) {
             const globalObject = handler.globalObject;
 
             var corker = Corker{

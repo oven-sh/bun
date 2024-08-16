@@ -2090,8 +2090,10 @@ pub const Fetch = struct {
             break :brk null;
         };
         const request: ?*Request = brk: {
-            if (first_arg.asDirect(Request)) |request_| {
-                break :brk request_;
+            if (first_arg.isCell()) {
+                if (first_arg.asDirect(Request)) |request_| {
+                    break :brk request_;
+                }
             }
 
             break :brk null;

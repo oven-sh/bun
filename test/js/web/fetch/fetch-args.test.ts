@@ -1,3 +1,4 @@
+import { TCPSocketListener } from "bun";
 import { beforeAll, describe, expect, it, test, afterAll } from "bun:test";
 
 let server;
@@ -22,7 +23,7 @@ test("fetch(request subclass with headers)", async () => {
       this.headers.set("hello", "world");
     }
   }
-  const myRequest = new MyRequest(server!.url);
+  const myRequest = new MyRequest(server!.url + "/");
   const { headers } = await fetch(myRequest);
 
   expect(headers.get("hello")).toBe("world");
@@ -71,11 +72,35 @@ test("fetch(RequestSubclass, undefined)", async () => {
 });
 
 describe("does not send a request when", () => {
+  let requestCount = 0;
+  let server: TCPSocketListener | undefined;
+  let url: string;
+
+  beforeAll(async () => {
+    server = Bun.listen({
+      port: 0,
+      hostname: "127.0.0.1",
+      socket: {
+        open(socket) {
+          requestCount++;
+          socket.terminate();
+        },
+        data(socket, data) {
+          socket.terminate();
+        },
+      },
+    });
+  });
+  afterAll(() => {
+    server!.stop(true);
+    url = "http://" + server!.hostname + ":" + server!.port;
+  });
+
   test("Invalid headers", async () => {
     const prevCount = requestCount;
     expect(
       async () =>
-        await fetch(server!.url, {
+        await fetch(url, {
           headers: {
             "😀smile ": "😀",
           },
@@ -96,7 +121,7 @@ describe("does not send a request when", () => {
 
   test("Invalid redirect", async () => {
     const prevCount = requestCount;
-    expect(async () => await fetch(server!.url, { redirect: "😀" })).toThrow();
+    expect(async () => await fetch(url, { redirect: "😀" })).toThrow();
     // Give it a chance to possibly send the request.
     await Bun.sleep(2);
     expect(requestCount).toBe(prevCount);
@@ -104,7 +129,7 @@ describe("does not send a request when", () => {
 
   test("proxy and unix", async () => {
     const prevCount = requestCount;
-    expect(async () => await fetch(server!.url, { proxy: "http://example.com", unix: "/tmp/abc.sock" })).toThrow();
+    expect(async () => await fetch(url, { proxy: url, unix: "/tmp/abc.sock" })).toThrow();
     // Give it a chance to possibly send the request.
     await Bun.sleep(2);
     expect(requestCount).toBe(prevCount);
@@ -112,7 +137,7 @@ describe("does not send a request when", () => {
 
   test("Invalid ca in tls", async () => {
     const prevCount = requestCount;
-    expect(async () => await fetch("https://badssl.com", { tls: { ca: 123 } })).toThrow();
+    expect(async () => await fetch(url, { tls: { ca: 123 } })).toThrow();
     // Give it a chance to possibly send the request.
     await Bun.sleep(2);
     expect(requestCount).toBe(prevCount);
@@ -133,12 +158,27 @@ describe("does not send a request when", () => {
     "verbose",
   ];
 
+  test(`ReadableStream body throws`, async () => {
+    const prevCount = requestCount;
+    expect(
+      async () =>
+        await fetch(url, {
+          body: async function* () {
+            throw new Error("boom");
+          },
+        }),
+    ).toThrow();
+    // Give it a chance to possibly send the request.
+    await Bun.sleep(2);
+    expect(requestCount).toBe(prevCount);
+  });
+
   for (const propertyName of propertyNamesToThrow) {
     test(`get "${propertyName}" throws (url, 1st arg)`, async () => {
       const prevCount = requestCount;
       expect(
         async () =>
-          await fetch(server!.url, {
+          await fetch(url, {
             get [propertyName]() {
               throw new Error("boom");
             },
@@ -154,7 +194,7 @@ describe("does not send a request when", () => {
       expect(
         async () =>
           await fetch({
-            url: "http://example.com",
+            url,
             get [propertyName]() {
               throw new Error("boom");
             },
@@ -169,7 +209,7 @@ describe("does not send a request when", () => {
       const prevCount = requestCount;
       expect(
         async () =>
-          await fetch(new Request("http://example.com"), {
+          await fetch(new Request(url), {
             get [propertyName]() {
               throw new Error("boom");
             },

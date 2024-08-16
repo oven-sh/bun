@@ -266,8 +266,8 @@ pub const BrotliEncoder = struct {
     pub fn encode(this: *BrotliEncoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
         const arguments = callframe.arguments(3);
 
-        if (arguments.len < 2) {
-            globalThis.throwNotEnoughArguments("BrotliEncoder.encode", 2, arguments.len);
+        if (arguments.len < 3) {
+            globalThis.throwNotEnoughArguments("BrotliEncoder.encode", 3, arguments.len);
             return .zero;
         }
 
@@ -310,8 +310,8 @@ pub const BrotliEncoder = struct {
     pub fn encodeSync(this: *BrotliEncoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
         const arguments = callframe.arguments(3);
 
-        if (arguments.len < 2) {
-            globalThis.throwNotEnoughArguments("BrotliEncoder.encode", 2, arguments.len);
+        if (arguments.len < 3) {
+            globalThis.throwNotEnoughArguments("BrotliEncoder.encode", 3, arguments.len);
             return .zero;
         }
 
@@ -495,8 +495,8 @@ pub const BrotliDecoder = struct {
     pub fn decode(this: *BrotliDecoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
         const arguments = callframe.arguments(3);
 
-        if (arguments.len < 2) {
-            globalThis.throwNotEnoughArguments("BrotliEncoder.decode", 2, arguments.len);
+        if (arguments.len < 3) {
+            globalThis.throwNotEnoughArguments("BrotliEncoder.decode", 3, arguments.len);
             return .zero;
         }
 
@@ -539,8 +539,8 @@ pub const BrotliDecoder = struct {
     pub fn decodeSync(this: *BrotliDecoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
         const arguments = callframe.arguments(3);
 
-        if (arguments.len < 2) {
-            globalThis.throwNotEnoughArguments("BrotliEncoder.decode", 2, arguments.len);
+        if (arguments.len < 3) {
+            globalThis.throwNotEnoughArguments("BrotliEncoder.decode", 3, arguments.len);
             return .zero;
         }
 

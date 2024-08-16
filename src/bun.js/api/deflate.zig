@@ -95,8 +95,8 @@ pub const DeflateEncoder = struct {
     pub fn encodeSync(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         const arguments = callframe.arguments(3);
 
-        if (arguments.len < 2) {
-            globalThis.throwNotEnoughArguments("DeflateEncoder.encode", 2, arguments.len);
+        if (arguments.len < 3) {
+            globalThis.throwNotEnoughArguments("DeflateEncoder.encode", 3, arguments.len);
             return .zero;
         }
 
@@ -143,8 +143,8 @@ pub const DeflateEncoder = struct {
     pub fn encode(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         const arguments = callframe.arguments(3);
 
-        if (arguments.len < 2) {
-            globalThis.throwNotEnoughArguments("DeflateEncoder.encode", 2, arguments.len);
+        if (arguments.len < 3) {
+            globalThis.throwNotEnoughArguments("DeflateEncoder.encode", 3, arguments.len);
             return .zero;
         }
 
@@ -414,8 +414,8 @@ pub const DeflateDecoder = struct {
     pub fn decodeSync(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         const arguments = callframe.arguments(3);
 
-        if (arguments.len < 2) {
-            globalThis.throwNotEnoughArguments("DeflateDecoder.encode", 2, arguments.len);
+        if (arguments.len < 3) {
+            globalThis.throwNotEnoughArguments("DeflateDecoder.encode", 3, arguments.len);
             return .zero;
         }
 

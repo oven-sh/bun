@@ -24,6 +24,10 @@ public:
             return Local<T>(buffer->createHandle(value.asCell(), &Map::object_map));
         } else if (value.isInt32()) {
             return Local<T>(buffer->createSmiHandle(value.asInt32()));
+        } else if (value.isNumber()) {
+            double numeric_value = value.asNumber();
+            void* double_reinterpreted_to_pointer = *reinterpret_cast<void**>(&numeric_value);
+            return Local<T>(buffer->createHandle(double_reinterpreted_to_pointer, &Map::heap_number_map));
         } else if (value.isUndefined()) {
             return Local<T>(isolate->globalInternals()->undefinedSlot());
         } else if (value.isNull()) {

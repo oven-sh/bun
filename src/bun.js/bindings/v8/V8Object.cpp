@@ -62,10 +62,10 @@ Maybe<bool> Object::Set(Local<Context> context, Local<Value> key, Local<Value> v
 
 void Object::SetInternalField(int index, Local<Data> data)
 {
-    auto fields = getInternalFieldsContainer(this);
-    if (fields && index >= 0 && index < fields->size()) {
-        fields->at(index) = InternalFieldObject::InternalField(data->localToJSValue(Isolate::GetCurrent()->globalInternals()));
-    }
+    auto* fields = getInternalFieldsContainer(this);
+    RELEASE_ASSERT(fields, "object has no internal fields");
+    RELEASE_ASSERT(index >= 0 && index < fields->size(), "internal field index is out of bounds");
+    fields->at(index) = data->localToJSValue(Isolate::GetCurrent()->globalInternals());
 }
 
 Local<Data> Object::GetInternalField(int index)
@@ -80,14 +80,9 @@ Local<Data> Object::SlowGetInternalField(int index)
     HandleScope* handleScope = Isolate::fromGlobalObject(JSC::jsDynamicCast<Zig::GlobalObject*>(js_object->globalObject()))->currentHandleScope();
     if (fields && index >= 0 && index < fields->size()) {
         auto& field = fields->at(index);
-        if (field.is_js_value) {
-            return handleScope->createLocal<Data>(field.data.js_value);
-        } else {
-            V8_UNIMPLEMENTED();
-        }
+        return handleScope->createLocal<Data>(field);
     }
-    // TODO handle undefined/null the way v8 does
-    return Local<Data>();
+    return handleScope->createLocal<Data>(JSC::jsUndefined());
 }
 
 }

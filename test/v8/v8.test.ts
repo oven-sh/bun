@@ -119,10 +119,10 @@ describe("Number", () => {
     checkSameOutput("test_v8_number_int", []);
   });
   // non-i32 v8::Number is not implemented yet
-  it.skip("can create large integer", () => {
+  it("can create large integer", () => {
     checkSameOutput("test_v8_number_large_int", []);
   });
-  it.skip("can create fraction", () => {
+  it("can create fraction", () => {
     checkSameOutput("test_v8_number_fraction", []);
   });
 });
@@ -132,14 +132,19 @@ describe("String", () => {
     checkSameOutput("test_v8_string_ascii", []);
   });
   // non-ASCII strings are not implemented yet
-  it.skip("can create and read back strings with UTF-8 characters", () => {
+  it("can create and read back strings with UTF-8 characters", () => {
     checkSameOutput("test_v8_string_utf8", []);
   });
-  it.skip("handles replacement correctly in strings with invalid UTF-8 sequences", () => {
+  it("handles replacement correctly in strings with invalid UTF-8 sequences", () => {
     checkSameOutput("test_v8_string_invalid_utf8", []);
   });
   it("can create strings from null-terminated Latin-1 data", () => {
     checkSameOutput("test_v8_string_latin1", []);
+  });
+  describe("WriteUtf8", () => {
+    it("truncates the string correctly", () => {
+      checkSameOutput("test_v8_string_write_utf8", []);
+    });
   });
 });
 

@@ -40,38 +40,40 @@ MaybeLocal<String> String::NewFromOneByte(Isolate* isolate, const uint8_t* data,
     return MaybeLocal<String>(isolate->globalInternals()->currentHandleScope()->createLocal<String>(jsString));
 }
 
+extern "C" size_t TextEncoder__encodeInto8(const LChar* stringPtr, size_t stringLen, void* ptr, size_t len);
+extern "C" size_t TextEncoder__encodeInto16(const UChar* stringPtr, size_t stringLen, void* ptr, size_t len);
+
 int String::WriteUtf8(Isolate* isolate, char* buffer, int length, int* nchars_ref, int options) const
 {
     RELEASE_ASSERT(options == 0);
     auto jsString = localToObjectPointer<JSString>();
     WTF::String string = jsString->getString(isolate->globalObject());
 
-    // TODO(@190n) handle 16 bit strings
-    if (!string.is8Bit()) {
-        V8_UNIMPLEMENTED();
-    }
-    auto span = string.span8();
+    size_t unsigned_length = length < 0 ? SIZE_MAX : length;
 
-    int to_copy = length;
-    bool terminate = true;
-    if (to_copy < 0) {
-        to_copy = span.size();
-    } else if (to_copy > span.size()) {
-        to_copy = span.size();
-    } else if (length < span.size()) {
-        to_copy = length;
-        terminate = false;
+    uint64_t result = string.is8Bit() ? TextEncoder__encodeInto8(string.span8().data(), string.span8().size(), buffer, unsigned_length)
+                                      : TextEncoder__encodeInto16(string.span16().data(), string.span16().size(), buffer, unsigned_length);
+    uint32_t read = static_cast<uint32_t>(result);
+    uint32_t written = static_cast<uint32_t>(result >> 32);
+
+    if (written < length && read == string.length()) {
+        buffer[written] = 0;
+        written++;
     }
-    // TODO(@190n) span.data() is latin1 not utf8, but this is okay as long as the only way to make
-    // a v8 string is NewFromUtf8. that's because NewFromUtf8 will use either all ASCII or all UTF-16.
-    memcpy(buffer, span.data(), to_copy);
-    if (terminate) {
-        buffer[to_copy] = 0;
+    if (read < string.length() && U16_IS_SURROGATE(string[read]) && written + 3 <= length) {
+        // encode unpaired surrogate
+        UChar surrogate = string[read];
+        buffer[written + 0] = 0xe0 | (surrogate >> 12);
+        buffer[written + 1] = 0x80 | ((surrogate >> 6) & 0x3f);
+        buffer[written + 2] = 0x80 | (surrogate & 0x3f);
+        written += 3;
+        read += 1;
     }
     if (nchars_ref) {
-        *nchars_ref = to_copy;
+        *nchars_ref = read;
     }
-    return terminate ? to_copy + 1 : to_copy;
+
+    return written;
 }
 
 int String::Length() const

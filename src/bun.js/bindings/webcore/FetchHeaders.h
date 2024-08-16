@@ -59,6 +59,7 @@ public:
     ExceptionOr<String> get(const String&) const;
     ExceptionOr<bool> has(const String&) const;
     ExceptionOr<void> set(const String& name, const String& value);
+    ExceptionOr<void> set(const HTTPHeaderName name, const String& value);
 
     ExceptionOr<void> fill(const Init&);
     ExceptionOr<void> fill(const FetchHeaders&);

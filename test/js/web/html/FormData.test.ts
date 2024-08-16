@@ -355,7 +355,15 @@ describe("FormData", () => {
           return fetch(...(args as FetchURLArgs));
         }
       }
-      for (let headers of [{} as {}, undefined, { headers: { X: "Y" } }]) {
+      for (let headers of [
+        {} as {},
+        undefined,
+        new Headers(),
+        new Headers({ x: "y" }),
+        new Headers([["x", "y"]]),
+        { X: "Y" },
+        { headers: { X: "Y" } },
+      ]) {
         describe("headers: " + Bun.inspect(headers).replaceAll(/([\n ])/gim, ""), () => {
           it("send on HTTP server with FormData & Blob (roundtrip)", async () => {
             let contentType = "";

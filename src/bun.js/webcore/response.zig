@@ -608,10 +608,8 @@ pub const Response = struct {
                 // fast path: it's a Request object or a Response object
                 // we can skip calling JS getters
                 if (response_init.asDirect(Request)) |req| {
-                    if (req.getFetchHeaders()) |headers| {
-                        if (!headers.isEmpty()) {
-                            result.headers = headers.cloneThis(globalThis);
-                        }
+                    if (req.getFetchHeadersUnlessEmpty()) |headers| {
+                        result.headers = headers.cloneThis(globalThis);
                     }
 
                     result.method = req.method;
@@ -2627,6 +2625,10 @@ pub const Fetch = struct {
                     if (options.fastGet(globalThis, .headers)) |headers_value| {
                         if (!headers_value.isUndefined()) {
                             if (headers_value.as(FetchHeaders)) |headers__| {
+                                if (headers__.isEmpty()) {
+                                    break :brk null;
+                                }
+
                                 break :brk headers__;
                             }
 
@@ -2657,6 +2659,10 @@ pub const Fetch = struct {
                     if (options.fastGet(globalThis, .headers)) |headers_value| {
                         if (!headers_value.isUndefined()) {
                             if (headers_value.as(FetchHeaders)) |headers__| {
+                                if (headers__.isEmpty()) {
+                                    break :brk null;
+                                }
+
                                 break :brk headers__;
                             }
 

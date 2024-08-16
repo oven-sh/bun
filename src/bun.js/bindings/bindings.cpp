@@ -1602,6 +1602,7 @@ WebCore__FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC__JSGlobalObject* 
     // in that case, let's also free the headers to make memory leaks harder.
     if (throwScope.exception()) {
         delete headers;
+        headers->deref();
         return nullptr;
     }
 

@@ -648,13 +648,8 @@ pub const Request = struct {
             }
 
             if (!fields.contains(.method) or !fields.contains(.headers)) {
+                if (globalThis.hasException()) return null;
                 if (Response.Init.init(globalThis, value) catch null) |response_init| {
-                    if (!explicit_check or (explicit_check and value.fastGet(globalThis, .method) != null)) {
-                        if (!fields.contains(.method)) {
-                            req.method = response_init.method;
-                            fields.insert(.method);
-                        }
-                    }
                     if (!explicit_check or (explicit_check and value.fastGet(globalThis, .headers) != null)) {
                         if (response_init.headers) |headers| {
                             if (!fields.contains(.headers)) {
@@ -665,15 +660,28 @@ pub const Request = struct {
                             }
                         }
                     }
+
+                    if (globalThis.hasException()) return null;
+
+                    if (!explicit_check or (explicit_check and value.fastGet(globalThis, .method) != null)) {
+                        if (!fields.contains(.method)) {
+                            req.method = response_init.method;
+                            fields.insert(.method);
+                        }
+                    }
+                    if (globalThis.hasException()) return null;
                 }
 
                 if (globalThis.hasException()) return null;
             }
         }
+
+        if (globalThis.hasException()) {
+            return null;
+        }
+
         if (req.url.isEmpty()) {
-            if (!globalThis.hasException()) {
-                globalThis.throw("Failed to construct 'Request': url is required.", .{});
-            }
+            globalThis.throw("Failed to construct 'Request': url is required.", .{});
             return null;
         }
 

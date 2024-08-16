@@ -75,9 +75,9 @@ beforeAll(() => {
     throw new Error("build failed");
   }
 
-  // build code using node
+  // build code using node (since `bun install` neither uses nor has a --bun flag)
   const nodeInstall = spawnSync({
-    cmd: ["npm", "install", "--verbose", "--foreground-scripts"],
+    cmd: [bunExe(), "install"],
     cwd: join(__dirname, "v8-module-node"),
     env: bunEnv,
     stdin: "inherit",

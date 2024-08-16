@@ -80,10 +80,13 @@ pub const BrotliEncoder = struct {
 
         _ = globalThis.checkMinOrGetDefault(opts, "chunkSize", u32, 64, 1024 * 14) orelse return .zero;
         const maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)) orelse return .zero;
+        const flush = globalThis.checkRangesOrGetDefault(opts, "flush", u8, 0, 6, 0) orelse return .zero;
+        const finishFlush = globalThis.checkRangesOrGetDefault(opts, "finishFlush", u8, 0, 6, 2) orelse return .zero;
+        const fullFlush = globalThis.checkRangesOrGetDefault(opts, "fullFlush", u8, 0, 6, 1) orelse return .zero;
 
         var this: *BrotliEncoder = BrotliEncoder.new(.{
             .globalThis = globalThis,
-            .stream = brotli.BrotliCompressionStream.init() catch {
+            .stream = brotli.BrotliCompressionStream.init(@enumFromInt(flush), @enumFromInt(finishFlush), @enumFromInt(fullFlush)) catch {
                 globalThis.throw("Failed to create BrotliEncoder", .{});
                 return .zero;
             },

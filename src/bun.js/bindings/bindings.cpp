@@ -4286,6 +4286,7 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
         // Usage of toStringView (non-owning) is safe as we ref the provider.
         provider->ref();
         // ASSERT(*referenced_source_provider == nullptr);
+        ASSERT(*referenced_source_provider == nullptr);
         *referenced_source_provider = provider;
         source_lines[0] = Bun::toStringView(sourceString.substring(lineStart, lineEnd - lineStart));
         source_line_numbers[0] = location.line();

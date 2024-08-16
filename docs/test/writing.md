@@ -394,7 +394,7 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ---
 
-- ✅
+- ❌
 - [`.stringMatching()`](https://jestjs.io/docs/expect#expectstringmatchingstring--regexp)
 
 ---

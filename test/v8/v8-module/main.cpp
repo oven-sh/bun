@@ -295,6 +295,32 @@ void test_v8_string_invalid_utf8(const FunctionCallbackInfo<Value> &info) {
   perform_string_test(info, mixed_sequence, 9, 15, replaced_sequence);
 }
 
+void test_v8_string_write_utf8(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+
+  const unsigned char utf8_data_unsigned[] = {
+      'h', 'i', 240, 159, 143, 179, 239, 184, 143,  226,  128, 141,
+      226, 154, 167, 239, 184, 143, 'h', 'i', 0xc3, 0xa9, 0};
+  const char *utf8_data = reinterpret_cast<const char *>(utf8_data_unsigned);
+
+  constexpr int buf_size = sizeof(utf8_data_unsigned) + 3;
+  char buf[buf_size] = {0};
+  Local<String> s = String::NewFromUtf8(isolate, utf8_data).ToLocalChecked();
+  for (int i = buf_size; i >= 0; i--) {
+    memset(buf, 0xaa, buf_size);
+    int nchars;
+    int retval = s->WriteUtf8(isolate, buf, i, &nchars);
+    printf("buffer size = %2d, nchars = %2d, returned = %2d, data =", i, nchars,
+           retval);
+    for (int j = 0; j < buf_size; j++) {
+      printf("%c%02x", j == i ? '|' : ' ',
+             reinterpret_cast<unsigned char *>(buf)[j]);
+    }
+    printf("\n");
+  }
+  return ok(info);
+}
+
 void test_v8_external(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
   int x = 5;
@@ -446,6 +472,8 @@ void initialize(Local<Object> exports) {
   NODE_SET_METHOD(exports, "test_v8_string_utf8", test_v8_string_utf8);
   NODE_SET_METHOD(exports, "test_v8_string_invalid_utf8",
                   test_v8_string_invalid_utf8);
+  NODE_SET_METHOD(exports, "test_v8_string_write_utf8",
+                  test_v8_string_write_utf8);
   NODE_SET_METHOD(exports, "test_v8_external", test_v8_external);
   NODE_SET_METHOD(exports, "test_v8_object", test_v8_object);
   NODE_SET_METHOD(exports, "test_v8_array_new", test_v8_array_new);

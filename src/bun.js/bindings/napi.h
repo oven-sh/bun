@@ -80,7 +80,10 @@ public:
     JSC::JSValue value() const
     {
         if (refCount == 0) {
-            if (!weakValueRef.isSet()) {
+            // isSet() can return true even if the value was cleared
+            // so we must check if the value is clear
+            // if the value is unset, isClear() will return true
+            if (weakValueRef.isClear()) {
                 return JSC::JSValue {};
             }
 
@@ -157,13 +160,13 @@ public:
         return Structure::create(vm, globalObject, prototype, TypeInfo(JSFunctionType, StructureFlags), info());
     }
 
-    FFIFunction constructor()
+    CFFIFunction constructor()
     {
         return m_constructor;
     }
 
     void* dataPtr = nullptr;
-    FFIFunction m_constructor = nullptr;
+    CFFIFunction m_constructor = nullptr;
     NapiRef* napiRef = nullptr;
 
 private:

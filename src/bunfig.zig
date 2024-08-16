@@ -21,6 +21,7 @@ const Npm = @import("./install/npm.zig");
 const PackageManager = @import("./install/install.zig").PackageManager;
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 const resolver = @import("./resolver/resolver.zig");
+const TestCommand = @import("./cli/test_command.zig").TestCommand;
 pub const MacroImportReplacementMap = bun.StringArrayHashMap(string);
 pub const MacroMap = bun.StringArrayHashMapUnmanaged(MacroImportReplacementMap);
 pub const BundlePackageOverride = bun.StringArrayHashMapUnmanaged(options.BundleOverride);
@@ -42,7 +43,7 @@ pub const Bunfig = struct {
         &.{ "online", OfflineMode.online },
     });
 
-    const Parser = struct {
+    pub const Parser = struct {
         json: js_ast.Expr,
         source: *const logger.Source,
         log: *logger.Log,
@@ -52,6 +53,11 @@ pub const Bunfig = struct {
 
         fn addError(this: *Parser, loc: logger.Loc, comptime text: string) !void {
             this.log.addError(this.source, loc, text) catch unreachable;
+            return error.@"Invalid Bunfig";
+        }
+
+        fn addErrorFormat(this: *Parser, loc: logger.Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
+            this.log.addErrorFmt(this.source, loc, allocator, text, args) catch unreachable;
             return error.@"Invalid Bunfig";
         }
 
@@ -252,6 +258,41 @@ pub const Bunfig = struct {
                         this.ctx.test_options.coverage.enabled = expr.data.e_boolean.value;
                     }
 
+                    if (test_.get("coverageReporter")) |expr| brk: {
+                        this.ctx.test_options.coverage.reporters = .{ .text = false, .lcov = false };
+                        if (expr.data == .e_string) {
+                            const item_str = expr.asString(bun.default_allocator) orelse "";
+                            if (bun.strings.eqlComptime(item_str, "text")) {
+                                this.ctx.test_options.coverage.reporters.text = true;
+                            } else if (bun.strings.eqlComptime(item_str, "lcov")) {
+                                this.ctx.test_options.coverage.reporters.lcov = true;
+                            } else {
+                                try this.addErrorFormat(expr.loc, allocator, "Invalid coverage reporter \"{s}\"", .{item_str});
+                            }
+
+                            break :brk;
+                        }
+
+                        try this.expect(expr, .e_array);
+                        const items = expr.data.e_array.items.slice();
+                        for (items) |item| {
+                            try this.expectString(item);
+                            const item_str = item.asString(bun.default_allocator) orelse "";
+                            if (bun.strings.eqlComptime(item_str, "text")) {
+                                this.ctx.test_options.coverage.reporters.text = true;
+                            } else if (bun.strings.eqlComptime(item_str, "lcov")) {
+                                this.ctx.test_options.coverage.reporters.lcov = true;
+                            } else {
+                                try this.addErrorFormat(item.loc, allocator, "Invalid coverage reporter \"{s}\"", .{item_str});
+                            }
+                        }
+                    }
+
+                    if (test_.get("coverageDir")) |expr| {
+                        try this.expectString(expr);
+                        this.ctx.test_options.coverage.reports_directory = try expr.data.e_string.string(allocator);
+                    }
+
                     if (test_.get("coverageThreshold")) |expr| outer: {
                         if (expr.data == .e_number) {
                             this.ctx.test_options.coverage.fractions.functions = expr.data.e_number.value;
@@ -341,39 +382,20 @@ pub const Bunfig = struct {
                     }
 
                     if (_bun.get("scopes")) |scopes| {
-                        var registry_map = install.scoped orelse std.mem.zeroes(Api.NpmRegistryMap);
+                        var registry_map = install.scoped orelse Api.NpmRegistryMap{};
                         try this.expect(scopes, .e_object);
-                        const count = scopes.data.e_object.properties.len + registry_map.registries.len;
 
-                        var registries = try std.ArrayListUnmanaged(Api.NpmRegistry).initCapacity(this.allocator, count);
-                        registries.appendSliceAssumeCapacity(registry_map.registries);
-
-                        var names = try std.ArrayListUnmanaged(string).initCapacity(this.allocator, count);
-                        names.appendSliceAssumeCapacity(registry_map.scopes);
+                        try registry_map.scopes.ensureUnusedCapacity(this.allocator, scopes.data.e_object.properties.len);
 
                         for (scopes.data.e_object.properties.slice()) |prop| {
                             const name_ = prop.key.?.asString(this.allocator) orelse continue;
                             const value = prop.value orelse continue;
                             if (name_.len == 0) continue;
                             const name = if (name_[0] == '@') name_[1..] else name_;
-                            var index = names.items.len;
-                            for (names.items, 0..) |comparator, i| {
-                                if (strings.eql(name, comparator)) {
-                                    index = i;
-                                    break;
-                                }
-                            }
-
-                            if (index == names.items.len) {
-                                names.items.len += 1;
-                                registries.items.len += 1;
-                            }
-                            names.items[index] = name;
-                            registries.items[index] = try this.parseRegistry(value);
+                            const registry = try this.parseRegistry(value);
+                            try registry_map.scopes.put(this.allocator, name, registry);
                         }
 
-                        registry_map.registries = registries.items;
-                        registry_map.scopes = names.items;
                         install.scoped = registry_map;
                     }
 

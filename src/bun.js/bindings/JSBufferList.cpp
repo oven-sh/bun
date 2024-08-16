@@ -27,10 +27,6 @@ static JSC_DEFINE_CUSTOM_GETTER(JSBufferList_getLength, (JSC::JSGlobalObject * g
 void JSBufferList::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
-
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "length"_s),
-        JSC::CustomGetterSetter::create(vm, JSBufferList_getLength, nullptr),
-        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 }
 
 JSC::JSValue JSBufferList::concat(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, size_t n)
@@ -49,7 +45,8 @@ JSC::JSValue JSBufferList::concat(JSC::VM& vm, JSC::JSGlobalObject* lexicalGloba
             return throwTypeError(lexicalGlobalObject, throwScope, "concat can only be called when all buffers are Uint8Array"_s);
         }
         if (UNLIKELY(array->byteLength() > n)) {
-            return throwRangeError(lexicalGlobalObject, throwScope, "specified size too small to fit all buffers"_s);
+            throwNodeRangeError(lexicalGlobalObject, throwScope, "specified size too small to fit all buffers"_s);
+            return {};
         }
         RELEASE_AND_RETURN(throwScope, array);
     }
@@ -68,7 +65,8 @@ JSC::JSValue JSBufferList::concat(JSC::VM& vm, JSC::JSGlobalObject* lexicalGloba
         }
         const size_t length = array->byteLength();
         if (UNLIKELY(i + length > n)) {
-            return throwRangeError(lexicalGlobalObject, throwScope, "specified size too small to fit all buffers"_s);
+            throwNodeRangeError(lexicalGlobalObject, throwScope, "specified size too small to fit all buffers"_s);
+            return {};
         }
         if (UNLIKELY(!uint8Array->setFromTypedArray(lexicalGlobalObject, i, array, 0, length, JSC::CopyType::Unobservable))) {
             return throwOutOfMemoryError(lexicalGlobalObject, throwScope);
@@ -126,7 +124,7 @@ JSC::JSValue JSBufferList::_getString(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
     size_t n = total;
 
     if (n == len) {
-        m_deque.removeFirst();
+        this->removeFirst();
         RELEASE_AND_RETURN(throwScope, str);
     }
     if (n < len) {
@@ -152,7 +150,7 @@ JSC::JSValue JSBufferList::_getString(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
         }
         if (!ropeBuilder.append(str))
             return throwOutOfMemoryError(lexicalGlobalObject, throwScope);
-        m_deque.removeFirst();
+        this->removeFirst();
         if (n == len)
             break;
         n -= len;
@@ -178,7 +176,7 @@ JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
     size_t n = total;
 
     if (n == len) {
-        m_deque.removeFirst();
+        this->removeFirst();
         RELEASE_AND_RETURN(throwScope, array);
     }
     if (n < len) {
@@ -219,7 +217,7 @@ JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
         if (UNLIKELY(!uint8Array->setFromTypedArray(lexicalGlobalObject, offset, array, 0, len, JSC::CopyType::Unobservable))) {
             return throwOutOfMemoryError(lexicalGlobalObject, throwScope);
         }
-        m_deque.removeFirst();
+        this->removeFirst();
         if (n == len) {
             offset += len;
             break;
@@ -253,8 +251,10 @@ void JSBufferList::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSBufferList* buffer = jsCast<JSBufferList*>(cell);
     ASSERT_GC_OBJECT_INHERITS(buffer, info());
     Base::visitChildren(buffer, visitor);
+    buffer->lock();
     for (auto& val : buffer->m_deque)
         visitor.append(val);
+    buffer->unlock();
 }
 DEFINE_VISIT_CHILDREN(JSBufferList);
 
@@ -409,6 +409,7 @@ static const HashTableValue JSBufferListPrototypeTableValues[]
           { "concat"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferListPrototypeFunction_concat, 1 } },
           { "join"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferListPrototypeFunction_join, 1 } },
           { "consume"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferListPrototypeFunction_consume, 2 } },
+          { "length"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, JSBufferList_getLength, 0 } },
       };
 
 void JSBufferListPrototype::finishCreation(VM& vm, JSC::JSGlobalObject* globalThis)
@@ -447,7 +448,6 @@ void JSBufferListConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* 
 }
 
 const ClassInfo JSBufferListConstructor::s_info = { "BufferList"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBufferListConstructor) };
-
 
 JSValue getBufferList(Zig::GlobalObject* globalObject)
 {

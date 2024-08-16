@@ -1,6 +1,12 @@
+#pragma once
+
+#include "root.h"
+
 #include "../bindings/JSBuffer.h"
+#include "JavaScriptCore/PageCount.h"
 #include "_NativeModule.h"
-#include "simdutf.h"
+#include "wtf/SIMDUTF.h"
+#include <limits>
 
 namespace Zig {
 using namespace WebCore;
@@ -121,6 +127,8 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isAscii,
       JSValue::encode(jsBoolean(simdutf::validate_ascii(ptr, byteLength))));
 }
 
+BUN_DECLARE_HOST_FUNCTION(jsFunctionResolveObjectURL);
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNotImplemented,
                          (JSGlobalObject * globalObject,
                           CallFrame *callFrame)) {
@@ -159,18 +167,18 @@ DEFINE_NATIVE_MODULE(NodeBuffer) {
       JSC::jsNumber(50));
 
   put(JSC::Identifier::fromString(vm, "kMaxLength"_s),
-      JSC::jsNumber(4294967296LL));
+      JSC::jsNumber(MAX_ARRAY_BUFFER_SIZE));
 
   put(JSC::Identifier::fromString(vm, "kStringMaxLength"_s),
-      JSC::jsNumber(536870888));
+      JSC::jsNumber(std::numeric_limits<unsigned>().max()));
 
   JSC::JSObject *constants = JSC::constructEmptyObject(
       lexicalGlobalObject, globalObject->objectPrototype(), 2);
   constants->putDirect(vm, JSC::Identifier::fromString(vm, "MAX_LENGTH"_s),
-                       JSC::jsNumber(4294967296LL));
+                       JSC::jsNumber(MAX_ARRAY_BUFFER_SIZE));
   constants->putDirect(vm,
                        JSC::Identifier::fromString(vm, "MAX_STRING_LENGTH"_s),
-                       JSC::jsNumber(536870888));
+                       JSC::jsNumber(std::numeric_limits<unsigned>().max()));
 
   put(JSC::Identifier::fromString(vm, "constants"_s), constants);
 
@@ -192,7 +200,8 @@ DEFINE_NATIVE_MODULE(NodeBuffer) {
 
   auto *resolveObjectURL =
       InternalFunction::createFunctionThatMasqueradesAsUndefined(
-          vm, globalObject, 1, "resolveObjectURL"_s, jsFunctionNotImplemented);
+          vm, globalObject, 1, "resolveObjectURL"_s,
+          jsFunctionResolveObjectURL);
 
   put(JSC::Identifier::fromString(vm, "resolveObjectURL"_s), resolveObjectURL);
 

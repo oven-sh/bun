@@ -74,7 +74,7 @@ pub const Flags = packed struct(u16) {
     }
 };
 
-pub const embedded_executable_data = @embedFile("./bun_shim_impl.exe");
+pub const embedded_executable_data = @embedFile("bun_shim_impl.exe");
 
 fn wU8(comptime s: []const u8) []const u8 {
     const str = std.unicode.utf8ToUtf16LeStringLiteral(s);
@@ -101,7 +101,7 @@ pub const Shebang = struct {
         run_with_powershell,
     };
 
-    const BunExtensions = std.ComptimeStringMap(ExtensionType, .{
+    const BunExtensions = std.StaticStringMap(ExtensionType).initComptime(.{
         .{ wU8(".js"), .run_with_bun },
         .{ wU8(".mjs"), .run_with_bun },
         .{ wU8(".cjs"), .run_with_bun },

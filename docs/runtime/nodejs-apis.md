@@ -153,7 +153,7 @@ Some methods are not optimized yet.
 
 ### [`node:util`](https://nodejs.org/api/util.html)
 
-🟡 Missing `MIMEParams` `MIMEType` `aborted` `debug` `getSystemErrorMap` `getSystemErrorName` `transferableAbortController` `transferableAbortSignal` `stripVTControlCharacters`
+🟡 Missing `MIMEParams` `MIMEType` `aborted` `debug` `getSystemErrorMap` `transferableAbortController` `transferableAbortSignal` `stripVTControlCharacters`
 
 ### [`node:v8`](https://nodejs.org/api/v8.html)
 
@@ -169,7 +169,7 @@ Some methods are not optimized yet.
 
 ### [`node:worker_threads`](https://nodejs.org/api/worker_threads.html)
 
-🟡 `Worker` doesn't support the following options: `eval` `stdin` `stdout` `stderr` `trackedUnmanagedFds` `resourceLimits`. Missing `markAsUntransferable` `moveMessagePortToContext` `getHeapSnapshot`.
+🟡 `Worker` doesn't support the following options: `stdin` `stdout` `stderr` `trackedUnmanagedFds` `resourceLimits`. Missing `markAsUntransferable` `moveMessagePortToContext` `getHeapSnapshot`.
 
 ### [`node:zlib`](https://nodejs.org/api/zlib.html)
 
@@ -193,7 +193,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`Buffer`](https://nodejs.org/api/buffer.html#class-buffer)
 
-🟡 Incomplete implementation of `base64` and `base64url` encodings.
+🟢 Fully implemented.
 
 ### [`ByteLengthQueuingStrategy`](https://developer.mozilla.org/en-US/docs/Web/API/ByteLengthQueuingStrategy)
 
@@ -413,7 +413,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`TextDecoderStream`](https://developer.mozilla.org/en-US/docs/Web/API/TextDecoderStream)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`TextEncoder`](https://developer.mozilla.org/en-US/docs/Web/API/TextEncoder)
 
@@ -421,7 +421,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`TextEncoderStream`](https://developer.mozilla.org/en-US/docs/Web/API/TextEncoderStream)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`TransformStream`](https://developer.mozilla.org/en-US/docs/Web/API/TransformStream)
 
@@ -433,7 +433,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL)
 
-🟡 `URL.createObjectURL` is missing. See [Issue #3925](https://github.com/oven-sh/bun/issues/3925)
+🟢 Fully implemented.
 
 ### [`URLSearchParams`](https://developer.mozilla.org/en-US/docs/Web/API/URLSearchParams)
 

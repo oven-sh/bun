@@ -1,6 +1,6 @@
 const std = @import("std");
 const os = struct {
-    pub usingnamespace std.os;
+    pub usingnamespace std.posix;
     pub const EINTR = 4;
     pub const EAGAIN = 35;
     pub const EBADF = 9;
@@ -28,7 +28,7 @@ const assert = bun.assert;
 const c = std.c;
 const bun = @import("root").bun;
 pub const darwin = struct {
-    pub usingnamespace os.darwin;
+    pub usingnamespace c;
     pub extern "c" fn @"recvfrom$NOCANCEL"(sockfd: c.fd_t, noalias buf: *anyopaque, len: usize, flags: u32, noalias src_addr: ?*c.sockaddr, noalias addrlen: ?*c.socklen_t) isize;
     pub extern "c" fn @"sendto$NOCANCEL"(sockfd: c.fd_t, buf: *const anyopaque, len: usize, flags: u32, dest_addr: ?*const c.sockaddr, addrlen: c.socklen_t) isize;
     pub extern "c" fn @"fcntl$NOCANCEL"(fd: c.fd_t, cmd: c_int, ...) c_int;
@@ -42,11 +42,11 @@ pub const darwin = struct {
     pub extern "c" fn @"openat$NOCANCEL"(fd: c.fd_t, path: [*:0]const u8, oflag: c_uint, ...) c_int;
     pub extern "c" fn @"read$NOCANCEL"(fd: c.fd_t, buf: [*]u8, nbyte: usize) isize;
     pub extern "c" fn @"pread$NOCANCEL"(fd: c.fd_t, buf: [*]u8, nbyte: usize, offset: c.off_t) isize;
-    pub extern "c" fn @"preadv$NOCANCEL"(fd: c.fd_t, uf: [*]std.os.iovec, count: i32, offset: c.off_t) isize;
-    pub extern "c" fn @"readv$NOCANCEL"(fd: c.fd_t, uf: [*]std.os.iovec, count: i32) isize;
+    pub extern "c" fn @"preadv$NOCANCEL"(fd: c.fd_t, uf: [*]std.posix.iovec, count: i32, offset: c.off_t) isize;
+    pub extern "c" fn @"readv$NOCANCEL"(fd: c.fd_t, uf: [*]std.posix.iovec, count: i32) isize;
     pub extern "c" fn @"write$NOCANCEL"(fd: c.fd_t, buf: [*]const u8, nbyte: usize) isize;
-    pub extern "c" fn @"writev$NOCANCEL"(fd: c.fd_t, buf: [*]const std.os.iovec_const, count: i32) isize;
-    pub extern "c" fn @"pwritev$NOCANCEL"(fd: c.fd_t, buf: [*]const std.os.iovec_const, count: i32, offset: c.off_t) isize;
+    pub extern "c" fn @"writev$NOCANCEL"(fd: c.fd_t, buf: [*]const std.posix.iovec_const, count: i32) isize;
+    pub extern "c" fn @"pwritev$NOCANCEL"(fd: c.fd_t, buf: [*]const std.posix.iovec_const, count: i32, offset: c.off_t) isize;
 };
 const IO = @This();
 
@@ -55,7 +55,7 @@ pub fn init(_: u12, _: u32, waker: Waker) !IO {
         .waker = waker,
     };
 }
-const Kevent64 = std.os.system.kevent64_s;
+const Kevent64 = std.posix.system.kevent64_s;
 pub const Waker = struct {
     kq: os.fd_t,
     machport: *anyopaque = undefined,
@@ -82,7 +82,7 @@ pub const Waker = struct {
         bun.JSC.markBinding(@src());
         var events = zeroed;
 
-        _ = std.os.system.kevent64(
+        _ = std.posix.system.kevent64(
             this.kq,
             &events,
             0,
@@ -105,7 +105,7 @@ pub const Waker = struct {
     ) bool;
 
     pub fn init() !Waker {
-        return initWithFileDescriptor(bun.default_allocator, try std.os.kqueue());
+        return initWithFileDescriptor(bun.default_allocator, try std.posix.kqueue());
     }
 
     pub fn initWithFileDescriptor(allocator: std.mem.Allocator, kq: i32) !Waker {
@@ -139,7 +139,7 @@ pub const Waker = struct {
 //         events[0].data = 0;
 //         events[0].fflags = c.NOTE_TRIGGER;
 //         events[0].udata = 0;
-//         const errno = std.os.system.kevent64(
+//         const errno = std.posix.system.kevent64(
 //             this.kq,
 //             &events,
 //             1,
@@ -150,7 +150,7 @@ pub const Waker = struct {
 //         );
 
 //         if (errno < 0) {
-//             return asError(std.c.getErrno(errno));
+//             return asError(bun.C.getErrno(errno));
 //         }
 //     }
 
@@ -164,7 +164,7 @@ pub const Waker = struct {
 //         events[0].data = 0;
 //         events[0].udata = 0;
 
-//         const errno = std.os.system.kevent64(
+//         const errno = std.posix.system.kevent64(
 //             this.kq,
 //             &events,
 //             1,
@@ -174,7 +174,7 @@ pub const Waker = struct {
 //             null,
 //         );
 //         if (errno < 0) {
-//             return asError(std.c.getErrno(errno));
+//             return asError(bun.C.getErrno(errno));
 //         }
 
 //         return @as(u64, @intCast(errno));
@@ -191,7 +191,7 @@ pub const Waker = struct {
 //         events[0].data = 0;
 //         events[0].udata = 0;
 //         var timespec = default_timespec;
-//         const errno = std.os.system.kevent64(
+//         const errno = std.posix.system.kevent64(
 //             kq,
 //             &events,
 //             1,

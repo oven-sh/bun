@@ -54,7 +54,12 @@ pub fn detectAndLoadOtherLockfile(
         @memcpy(buf[dirname.len .. dirname.len + npm_lockfile_name.len], npm_lockfile_name);
         buf[dirname.len + npm_lockfile_name.len] = 0;
         var timer = std.time.Timer.start() catch unreachable;
-        const lockfile = bun.sys.openat(bun.FD.cwd(), buf[0 .. dirname.len + npm_lockfile_name.len :0], std.os.O.RDONLY, 0).unwrap() catch break :npm;
+        const lockfile = bun.sys.openat(
+            bun.FD.cwd(),
+            buf[0 .. dirname.len + npm_lockfile_name.len :0],
+            bun.O.RDONLY,
+            0,
+        ).unwrap() catch break :npm;
         defer _ = bun.sys.close(lockfile);
         var lockfile_path_buf: bun.PathBuffer = undefined;
         const lockfile_path = bun.getFdPathZ(lockfile, &lockfile_path_buf) catch break :npm;
@@ -92,9 +97,9 @@ pub fn detectAndLoadOtherLockfile(
     return LoadFromDiskResult{ .not_found = {} };
 }
 
-const ResolvedURLsMap = std.StringHashMapUnmanaged(string);
+const ResolvedURLsMap = bun.StringHashMapUnmanaged(string);
 
-const IdMap = std.StringHashMapUnmanaged(IdMapValue);
+const IdMap = bun.StringHashMapUnmanaged(IdMapValue);
 const IdMapValue = struct {
     /// index into the old package-lock.json package entries.
     old_json_index: u32,
@@ -697,7 +702,7 @@ pub fn migrateNPMLockfile(
             }
             if (expr.data != .e_array) return error.InvalidNPMLockfile;
             const arr: *E.Array = expr.data.e_array;
-            var map = std.StringArrayHashMapUnmanaged(void){};
+            var map = bun.StringArrayHashMapUnmanaged(void){};
             try map.ensureTotalCapacity(allocator, arr.items.len);
             for (arr.items.slice()) |item| {
                 map.putAssumeCapacity(item.asString(allocator) orelse return error.InvalidNPMLockfile, {});

@@ -1,4 +1,4 @@
-import { gc as bunGC, unsafe, which } from "bun";
+import { gc as bunGC, spawnSync, unsafe, which } from "bun";
 import { describe, test, expect, afterAll, beforeAll } from "bun:test";
 import { readlink, readFile, writeFile } from "fs/promises";
 import { isAbsolute, join, dirname } from "path";
@@ -8,6 +8,8 @@ import { heapStats } from "bun:jsc";
 
 type Awaitable<T> = T | Promise<T>;
 
+export const BREAKING_CHANGES_BUN_1_2 = false;
+
 export const isMacOS = process.platform === "darwin";
 export const isLinux = process.platform === "linux";
 export const isPosix = isMacOS || isLinux;
@@ -15,6 +17,7 @@ export const isWindows = process.platform === "win32";
 export const isIntelMacOS = isMacOS && process.arch === "x64";
 export const isDebug = Bun.version.includes("debug");
 export const isCI = process.env.CI !== undefined;
+export const isBuildKite = process.env.BUILDKITE === "true";
 
 export const bunEnv: NodeJS.ProcessEnv = {
   ...process.env,
@@ -45,6 +48,12 @@ for (let key in bunEnv) {
 
 delete bunEnv.NODE_ENV;
 
+if (isDebug) {
+  // This makes debug build memory leak tests more reliable.
+  // The code for dumping out the debug build transpiled source code has leaks.
+  bunEnv.BUN_DEBUG_NO_DUMP = "1";
+}
+
 export function bunExe() {
   if (isWindows) return process.execPath.replaceAll("\\", "/");
   return process.execPath;
@@ -52,6 +61,10 @@ export function bunExe() {
 
 export function nodeExe(): string | null {
   return which("node") || null;
+}
+
+export function shellExe(): string {
+  return isWindows ? "pwsh" : "bash";
 }
 
 export function gc(force = true) {
@@ -87,7 +100,7 @@ export async function expectMaxObjectTypeCount(
     await Bun.sleep(wait);
     gc();
   }
-  expect(heapStats().objectTypeCounts[type]).toBeLessThanOrEqual(count);
+  expect(heapStats().objectTypeCounts[type] || 0).toBeLessThanOrEqual(count);
 }
 
 // we must ensure that finalizers are run
@@ -135,9 +148,11 @@ export function tempDirWithFiles(basename: string, files: DirectoryTree): string
       const joined = join(base, name);
       if (name.includes("/")) {
         const dir = dirname(name);
-        fs.mkdirSync(join(base, dir), { recursive: true });
+        if (dir !== name && dir !== ".") {
+          fs.mkdirSync(join(base, dir), { recursive: true });
+        }
       }
-      if (typeof contents === "object" && contents && !Buffer.isBuffer(contents)) {
+      if (typeof contents === "object" && contents && typeof contents?.byteLength === "undefined") {
         fs.mkdirSync(joined);
         makeTree(joined, contents);
         continue;
@@ -281,6 +296,7 @@ const binaryTypes = {
   "int8array": Int8Array,
   "int16array": Int16Array,
   "int32array": Int32Array,
+  "float16array": Float16Array,
   "float32array": Float32Array,
   "float64array": Float64Array,
 } as const;
@@ -350,21 +366,21 @@ expect.extend({
       }
     }
   },
-  toRun(cmds: string[], optionalStdout?: string) {
+  toRun(cmds: string[], optionalStdout?: string, expectedCode: number = 0) {
     const result = Bun.spawnSync({
       cmd: [bunExe(), ...cmds],
       env: bunEnv,
       stdio: ["inherit", "pipe", "inherit"],
     });
 
-    if (result.exitCode !== 0) {
+    if (result.exitCode !== expectedCode) {
       return {
         pass: false,
         message: () => `Command ${cmds.join(" ")} failed:` + "\n" + result.stdout.toString("utf-8"),
       };
     }
 
-    if (optionalStdout) {
+    if (optionalStdout != null) {
       return {
         pass: result.stdout.toString("utf-8") === optionalStdout,
         message: () =>
@@ -376,6 +392,43 @@ expect.extend({
       pass: true,
       message: () => `Expected ${cmds.join(" ")} to fail`,
     };
+  },
+  toThrowWithCode(fn: CallableFunction, cls: CallableFunction, code: string) {
+    try {
+      fn();
+      return {
+        pass: false,
+        message: () => `Received function did not throw`,
+      };
+    } catch (e) {
+      // expect(e).toBeInstanceOf(cls);
+      if (!(e instanceof cls)) {
+        return {
+          pass: false,
+          message: () => `Expected error to be instanceof ${cls.name}; got ${e.__proto__.constructor.name}`,
+        };
+      }
+
+      // expect(e).toHaveProperty("code");
+      if (!("code" in e)) {
+        return {
+          pass: false,
+          message: () => `Expected error to have property 'code'; got ${e}`,
+        };
+      }
+
+      // expect(e.code).toEqual(code);
+      if (e.code !== code) {
+        return {
+          pass: false,
+          message: () => `Expected error to have code '${code}'; got ${e.code}`,
+        };
+      }
+
+      return {
+        pass: true,
+      };
+    }
   },
 });
 
@@ -416,7 +469,7 @@ export async function toMatchNodeModulesAt(lockfile: any, root: string) {
             return {
               pass: false,
               message: () => `
-Expected at ${join(path, treeDep.name)}: ${JSON.stringify({ name: treePkg.name, version: treePkg.resolution.value })}       
+Expected at ${join(path, treeDep.name)}: ${JSON.stringify({ name: treePkg.name, version: treePkg.resolution.value })}
 Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
             };
           }
@@ -574,6 +627,17 @@ declare global {
      * **INTERNAL USE ONLY, NOT An API IN BUN**
      */
     toUnixString(): string;
+  }
+
+  interface String {
+    /**
+     * **INTERNAL USE ONLY, NOT An API IN BUN**
+     */
+    isLatin1(): boolean;
+    /**
+     * **INTERNAL USE ONLY, NOT An API IN BUN**
+     */
+    isUTF16(): boolean;
   }
 }
 
@@ -882,9 +946,21 @@ export function tmpdirSync(pattern: string = "bun.test.") {
   return fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), pattern));
 }
 
-export async function runBunInstall(env: NodeJS.ProcessEnv, cwd: string) {
+export async function runBunInstall(
+  env: NodeJS.ProcessEnv,
+  cwd: string,
+  options?: {
+    allowWarnings?: boolean;
+    allowErrors?: boolean;
+    expectedExitCode?: number;
+    savesLockfile?: boolean;
+    production?: boolean;
+  },
+) {
+  const production = options?.production ?? false;
+  const args = production ? [bunExe(), "install", "--production"] : [bunExe(), "install"];
   const { stdout, stderr, exited } = Bun.spawn({
-    cmd: [bunExe(), "install"],
+    cmd: args,
     cwd,
     stdout: "pipe",
     stdin: "ignore",
@@ -893,13 +969,19 @@ export async function runBunInstall(env: NodeJS.ProcessEnv, cwd: string) {
   });
   expect(stdout).toBeDefined();
   expect(stderr).toBeDefined();
-  let err = await new Response(stderr).text();
+  let err = (await new Response(stderr).text()).replace(/warn: Slow filesystem/g, "");
   expect(err).not.toContain("panic:");
-  expect(err).not.toContain("error:");
-  expect(err).not.toContain("warn:");
-  expect(err).toContain("Saved lockfile");
+  if (!options?.allowErrors) {
+    expect(err).not.toContain("error:");
+  }
+  if (!options?.allowWarnings) {
+    expect(err).not.toContain("warn:");
+  }
+  if ((options?.savesLockfile ?? true) && !production) {
+    expect(err).toContain("Saved lockfile");
+  }
   let out = await new Response(stdout).text();
-  expect(await exited).toBe(0);
+  expect(await exited).toBe(options?.expectedExitCode ?? 0);
   return { out, err, exited };
 }
 
@@ -950,4 +1032,235 @@ export function disableAggressiveGCScope() {
       Bun.unsafe.gcAggressionLevel(gc);
     },
   };
+}
+
+String.prototype.isLatin1 = function () {
+  return require("bun:internal-for-testing").jscInternals.isLatin1String(this);
+};
+
+String.prototype.isUTF16 = function () {
+  return require("bun:internal-for-testing").jscInternals.isUTF16String(this);
+};
+
+expect.extend({
+  toBeLatin1String(actual: unknown) {
+    if ((actual as string).isLatin1()) {
+      return {
+        pass: true,
+        message: () => `Expected ${actual} to be a Latin1 string`,
+      };
+    }
+
+    return {
+      pass: false,
+      message: () => `Expected ${actual} to be a Latin1 string`,
+    };
+  },
+  toBeUTF16String(actual: unknown) {
+    if ((actual as string).isUTF16()) {
+      return {
+        pass: true,
+        message: () => `Expected ${actual} to be a UTF16 string`,
+      };
+    }
+
+    return {
+      pass: false,
+      message: () => `Expected ${actual} to be a UTF16 string`,
+    };
+  },
+});
+
+interface BunHarnessTestMatchers {
+  toBeLatin1String(): void;
+  toBeUTF16String(): void;
+  toHaveTestTimedOutAfter(expected: number): void;
+  toBeBinaryType(expected: keyof typeof binaryTypes): void;
+  toRun(optionalStdout?: string, expectedCode?: number): void;
+  toThrowWithCode(cls: CallableFunction, code: string): void;
+}
+
+declare module "bun:test" {
+  interface Matchers<T> extends BunHarnessTestMatchers {}
+  interface AsymmetricMatchers extends BunHarnessTestMatchers {}
+}
+
+/**
+ * Set `NODE_TLS_REJECT_UNAUTHORIZED` for a scope.
+ */
+export function rejectUnauthorizedScope(value: boolean) {
+  const original_rejectUnauthorized = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = value ? "1" : "0";
+  return {
+    [Symbol.dispose]() {
+      process.env.NODE_TLS_REJECT_UNAUTHORIZED = original_rejectUnauthorized;
+    },
+  };
+}
+
+let networkInterfaces: any;
+
+function isIP(type: "IPv4" | "IPv6") {
+  if (!networkInterfaces) {
+    networkInterfaces = os.networkInterfaces();
+  }
+  for (const networkInterface of Object.values(networkInterfaces)) {
+    for (const { family } of networkInterface as any[]) {
+      if (family === type) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+export function isIPv6() {
+  // FIXME: AWS instances on Linux for Buildkite are not setup with IPv6
+  if (isBuildKite && isLinux) {
+    return false;
+  }
+  return isIP("IPv6");
+}
+
+export function isIPv4() {
+  return isIP("IPv4");
+}
+
+let glibcVersion: string | undefined;
+
+export function getGlibcVersion() {
+  if (glibcVersion || !isLinux) {
+    return glibcVersion;
+  }
+  try {
+    const { header } = process.report!.getReport() as any;
+    const { glibcVersionRuntime: version } = header;
+    if (typeof version === "string") {
+      return (glibcVersion = version);
+    }
+  } catch (error) {
+    console.warn("Failed to detect glibc version", error);
+  }
+}
+
+export function isGlibcVersionAtLeast(version: string): boolean {
+  const glibcVersion = getGlibcVersion();
+  if (!glibcVersion) {
+    return false;
+  }
+  return Bun.semver.satisfies(glibcVersion, `>=${version}`);
+}
+
+let macOSVersion: string | undefined;
+
+export function getMacOSVersion(): string | undefined {
+  if (macOSVersion || !isMacOS) {
+    return macOSVersion;
+  }
+  try {
+    const { stdout } = Bun.spawnSync({
+      cmd: ["sw_vers", "-productVersion"],
+    });
+    return (macOSVersion = stdout.toString().trim());
+  } catch (error) {
+    console.warn("Failed to detect macOS version:", error);
+  }
+}
+
+export function isMacOSVersionAtLeast(minVersion: number): boolean {
+  const macOSVersion = getMacOSVersion();
+  if (!macOSVersion) {
+    return false;
+  }
+  return parseFloat(macOSVersion) >= minVersion;
+}
+
+export function readableStreamFromArray(array) {
+  return new ReadableStream({
+    pull(controller) {
+      for (let entry of array) {
+        controller.enqueue(entry);
+      }
+      controller.close();
+    },
+  });
+}
+
+let hasGuardMalloc = -1;
+export function forceGuardMalloc(env) {
+  if (process.platform !== "darwin") {
+    return;
+  }
+
+  if (hasGuardMalloc === -1) {
+    hasGuardMalloc = Number(fs.existsSync("/usr/lib/libgmalloc.dylib"));
+  }
+
+  if (hasGuardMalloc === 1) {
+    env.DYLD_INSERT_LIBRARIES = "/usr/lib/libgmalloc.dylib";
+    env.MALLOC_PROTECT_BEFORE = "1";
+    env.MallocScribble = "1";
+    env.MallocGuardEdges = "1";
+    env.MALLOC_FILL_SPACE = "1";
+    env.MALLOC_STRICT_SIZE = "1";
+  } else {
+    console.warn("Guard malloc is not available on this platform for some reason.");
+  }
+}
+
+export function fileDescriptorLeakChecker() {
+  const initial = getMaxFD();
+  return {
+    [Symbol.dispose]() {
+      const current = getMaxFD();
+      if (current > initial) {
+        throw new Error(`File descriptor leak detected: ${current} (current) > ${initial} (initial)`);
+      }
+    },
+  };
+}
+
+/**
+ * Gets a secret from the environment.
+ *
+ * In Buildkite, secrets must be retrieved using the `buildkite-agent secret get` command
+ * and are not available as an environment variable.
+ */
+export function getSecret(name: string): string | undefined {
+  let value = process.env[name]?.trim();
+
+  // When not running in CI, allow the secret to be missing.
+  if (!isCI) {
+    return value;
+  }
+
+  // In Buildkite, secrets must be retrieved using the `buildkite-agent secret get` command
+  if (!value && isBuildKite) {
+    const { exitCode, stdout } = spawnSync({
+      cmd: ["buildkite-agent", "secret", "get", name],
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    if (exitCode === 0) {
+      value = stdout.toString().trim();
+    }
+  }
+
+  // Throw an error if the secret is not found, so the test fails in CI.
+  if (!value) {
+    let hint;
+    if (isBuildKite) {
+      hint = `Create a secret with the name "${name}" in the Buildkite UI.
+https://buildkite.com/docs/pipelines/security/secrets/buildkite-secrets`;
+    } else {
+      hint = `Define an environment variable with the name "${name}".`;
+    }
+
+    throw new Error(`Secret not found: ${name}\n${hint}`);
+  }
+
+  // Set the secret in the environment so that it can be used in tests.
+  process.env[name] = value;
+
+  return value;
 }

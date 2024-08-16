@@ -37,9 +37,8 @@ fn globIgnoreFn(val: []const u8) bool {
 const GlobWalker = Glob.GlobWalker_(globIgnoreFn, Glob.DirEntryAccessor, false);
 
 pub fn getCandidatePackagePatterns(allocator: std.mem.Allocator, log: *bun.logger.Log, out_patterns: *std.ArrayList([]u8), workdir_: []const u8, root_buf: *bun.PathBuffer) ![]const u8 {
-    bun.JSAst.Expr.Data.Store.create(bun.default_allocator);
-    bun.JSAst.Stmt.Data.Store.create(bun.default_allocator);
-
+    bun.JSAst.Expr.Data.Store.create();
+    bun.JSAst.Stmt.Data.Store.create();
     defer {
         bun.JSAst.Expr.Data.Store.reset();
         bun.JSAst.Stmt.Data.Store.reset();

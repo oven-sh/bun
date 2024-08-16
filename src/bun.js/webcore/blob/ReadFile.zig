@@ -94,7 +94,7 @@ pub const ReadFile = struct {
     pub usingnamespace FileCloserMixin(ReadFile);
 
     pub fn update(this: *ReadFile) void {
-        switch (this.state.load(.Monotonic)) {
+        switch (this.state.load(.monotonic)) {
             .closing => {
                 this.onFinish();
             },
@@ -149,7 +149,7 @@ pub const ReadFile = struct {
     pub const io_tag = io.Poll.Tag.ReadFile;
 
     pub fn onReadable(request: *io.Request) void {
-        var this: *ReadFile = @fieldParentPtr(ReadFile, "io_request", request);
+        var this: *ReadFile = @fieldParentPtr("io_request", request);
         this.onReady();
     }
 
@@ -185,7 +185,7 @@ pub const ReadFile = struct {
     pub fn onRequestReadable(request: *io.Request) io.Action {
         bloblog("ReadFile.onRequestReadable", .{});
         request.scheduled = false;
-        var this: *ReadFile = @fieldParentPtr(ReadFile, "io_request", request);
+        var this: *ReadFile = @alignCast(@fieldParentPtr("io_request", request));
         return io.Action{
             .readable = .{
                 .onError = @ptrCast(&onIOError),
@@ -200,7 +200,7 @@ pub const ReadFile = struct {
     pub fn waitForReadable(this: *ReadFile) void {
         bloblog("ReadFile.waitForReadable", .{});
         this.close_after_io = true;
-        @atomicStore(@TypeOf(this.io_request.callback), &this.io_request.callback, &onRequestReadable, .SeqCst);
+        @atomicStore(@TypeOf(this.io_request.callback), &this.io_request.callback, &onRequestReadable, .seq_cst);
         if (!this.io_request.scheduled)
             io.Loop.get().schedule(&this.io_request);
     }
@@ -213,7 +213,7 @@ pub const ReadFile = struct {
 
     pub fn doRead(this: *ReadFile, buffer: []u8, read_len: *usize, retry: *bool) bool {
         const result: JSC.Maybe(usize) = brk: {
-            if (std.os.S.ISSOCK(this.file_store.mode)) {
+            if (std.posix.S.ISSOCK(this.file_store.mode)) {
                 break :brk bun.sys.recvNonBlock(this.opened_fd, buffer);
             }
 
@@ -440,13 +440,13 @@ pub const ReadFile = struct {
     }
 
     fn doReadLoopTask(task: *JSC.WorkPoolTask) void {
-        var this: *ReadFile = @fieldParentPtr(ReadFile, "task", task);
+        var this: *ReadFile = @alignCast(@fieldParentPtr("task", task));
 
         this.update();
     }
 
     fn doReadLoop(this: *ReadFile) void {
-        while (this.state.load(.Monotonic) == .running) {
+        while (this.state.load(.monotonic) == .running) {
             // we hold a 64 KB stack buffer incase the amount of data to
             // be read is greater than the reported amount
             //

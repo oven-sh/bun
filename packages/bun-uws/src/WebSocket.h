@@ -109,7 +109,7 @@ public:
         /* Special path for long sends of non-compressed, non-SSL messages */
         if (message.length() >= 16 * 1024 && !compress && !SSL && !webSocketData->subscriber && getBufferedAmount() == 0 && Super::getLoopData()->corkOffset == 0) {
             char header[10];
-            int header_length = (int) protocol::formatMessage<isServer>(header, nullptr, 0, opCode, message.length(), compress, fin);
+            int header_length = (int) protocol::formatMessage<isServer>(header, "", 0, opCode, message.length(), compress, fin);
             int written = us_socket_write2(0, (struct us_socket_t *)this, header, header_length, message.data(), (int) message.length());
         
             if (written != header_length + (int) message.length()) {

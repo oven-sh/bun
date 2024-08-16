@@ -1,4 +1,5 @@
-const content = "Bun".repeat(15360000);
+// String.prototype.repeat is really slow in debug builds.
+const content = Buffer.alloc(3 * 15360000, "Bun").toString();
 
 const server = Bun.serve({
   port: 0,
@@ -10,7 +11,7 @@ const server = Bun.serve({
 
 const formData = new FormData();
 formData.append("name", content);
-const result = await fetch(`http://${server.hostname}:${server.port}`, {
+const result = await fetch(server.url, {
   method: "POST",
   body: formData,
 }).then(res => res.text());

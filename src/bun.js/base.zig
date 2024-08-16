@@ -187,17 +187,7 @@ pub fn createError(
     }
 }
 
-pub fn throwTypeError(
-    code: JSC.Node.ErrorCode,
-    comptime fmt: string,
-    args: anytype,
-    ctx: js.JSContextRef,
-    exception: ExceptionValueRef,
-) void {
-    exception.* = toTypeError(code, fmt, args, ctx).asObjectRef();
-}
-
-pub fn toTypeErrorWithCode(
+fn toTypeErrorWithCode(
     code: []const u8,
     comptime fmt: string,
     args: anytype,
@@ -219,31 +209,31 @@ pub fn toTypeErrorWithCode(
 }
 
 pub fn toTypeError(
-    code: JSC.Node.ErrorCode,
-    comptime fmt: string,
+    code: JSC.Error,
+    comptime fmt: [:0]const u8,
     args: anytype,
     ctx: js.JSContextRef,
 ) JSC.JSValue {
-    return toTypeErrorWithCode(@tagName(code), fmt, args, ctx);
+    return code.fmt(ctx, fmt, args);
 }
 
 pub fn throwInvalidArguments(
-    comptime fmt: string,
+    comptime fmt: [:0]const u8,
     args: anytype,
     ctx: js.JSContextRef,
     exception: ExceptionValueRef,
 ) void {
     @setCold(true);
-    return throwTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE, fmt, args, ctx, exception);
+    exception.* = JSC.Error.ERR_INVALID_ARG_TYPE.fmt(ctx, fmt, args).asObjectRef();
 }
 
 pub fn toInvalidArguments(
-    comptime fmt: string,
+    comptime fmt: [:0]const u8,
     args: anytype,
     ctx: js.JSContextRef,
 ) JSC.JSValue {
     @setCold(true);
-    return toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE, fmt, args, ctx);
+    return JSC.Error.ERR_INVALID_ARG_TYPE.fmt(ctx, fmt, args);
 }
 
 pub fn getAllocator(_: js.JSContextRef) std.mem.Allocator {
@@ -261,9 +251,9 @@ pub const JSStringList = std.ArrayList(js.JSStringRef);
 
 pub const ArrayBuffer = extern struct {
     ptr: [*]u8 = undefined,
-    offset: u32 = 0,
-    len: u32 = 0,
-    byte_len: u32 = 0,
+    offset: usize = 0,
+    len: usize = 0,
+    byte_len: usize = 0,
     typed_array_type: JSC.JSValue.JSType = .Cell,
     value: JSC.JSValue = JSC.JSValue.zero,
     shared: bool = false,
@@ -342,7 +332,14 @@ pub const ArrayBuffer = extern struct {
             return result;
         }
 
-        const result = bun.sys.mmap(null, @intCast(@max(size, 0)), std.os.PROT.READ | std.os.PROT.WRITE, std.os.MAP.SHARED | 0, fd, 0);
+        const result = bun.sys.mmap(
+            null,
+            @intCast(@max(size, 0)),
+            std.posix.PROT.READ | std.posix.PROT.WRITE,
+            .{ .TYPE = .SHARED },
+            fd,
+            0,
+        );
         _ = bun.sys.close(fd);
 
         switch (result) {
@@ -406,6 +403,21 @@ pub const ArrayBuffer = extern struct {
     pub fn createBuffer(globalThis: *JSC.JSGlobalObject, bytes: []const u8) JSValue {
         JSC.markBinding(@src());
         return Bun__createUint8ArrayForCopy(globalThis, bytes.ptr, bytes.len, true);
+    }
+
+    pub fn createUint8Array(globalThis: *JSC.JSGlobalObject, bytes: []const u8) JSValue {
+        JSC.markBinding(@src());
+        return Bun__createUint8ArrayForCopy(globalThis, bytes.ptr, bytes.len, false);
+    }
+
+    extern "C" fn Bun__allocUint8ArrayForCopy(*JSC.JSGlobalObject, usize, **anyopaque) JSValue;
+    pub fn allocBuffer(globalThis: *JSC.JSGlobalObject, len: usize) struct { JSValue, []u8 } {
+        var ptr: [*]u8 = undefined;
+        const buffer = Bun__allocUint8ArrayForCopy(globalThis, len, @ptrCast(&ptr));
+        if (buffer.isEmpty()) {
+            return .{ buffer, &.{} };
+        }
+        return .{ buffer, ptr[0..len] };
     }
 
     extern "C" fn Bun__createUint8ArrayForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize, buffer: bool) JSValue;
@@ -764,6 +776,7 @@ const TestScope = Test.TestScope;
 const NodeFS = JSC.Node.NodeFS;
 const TextEncoder = WebCore.TextEncoder;
 const TextDecoder = WebCore.TextDecoder;
+const TextEncoderStreamEncoder = WebCore.TextEncoderStreamEncoder;
 const HTMLRewriter = JSC.Cloudflare.HTMLRewriter;
 const Element = JSC.Cloudflare.Element;
 const Comment = JSC.Cloudflare.Comment;
@@ -924,7 +937,6 @@ pub fn DOMCall(
     comptime class_name: string,
     comptime Container: type,
     comptime functionName: string,
-    comptime ResultType: type,
     comptime dom_effect: DOMEffect,
 ) type {
     return extern struct {
@@ -942,7 +954,7 @@ pub fn DOMCall(
             thisValue: JSC.JSValue,
             arguments_ptr: [*]const JSC.JSValue,
             arguments_len: usize,
-        ) callconv(.C) JSValue {
+        ) callconv(JSC.conv) JSValue {
             return @field(Container, functionName)(
                 globalObject,
                 thisValue,
@@ -954,215 +966,18 @@ pub fn DOMCall(
         pub const Fastpath = @TypeOf(fastpath);
         pub const Arguments = std.meta.ArgsTuple(Fastpath);
 
-        pub const Export = shim.exportFunctions(.{
-            .slowpath = slowpath,
-            .fastpath = fastpath,
-        });
-
         pub fn put(globalObject: *JSC.JSGlobalObject, value: JSValue) void {
             shim.cppFn("put", .{ globalObject, value });
         }
 
         pub const effect = dom_effect;
 
-        pub fn printGenerateDOMJITSignature(comptime Writer: type, writer: Writer) !void {
-            const signatureName = "DOMJIT_" ++ shim.name ++ "_signature";
-            const slowPathName = Export[0].symbol_name;
-            const fastPathName = Export[1].symbol_name;
-            const Fields: []const std.builtin.Type.StructField = std.meta.fields(Arguments);
-
-            const options = .{
-                .name = functionName,
-                .exportName = name ++ "__put",
-                .signatureName = signatureName,
-                .IDLResultName = DOMCallResultType(ResultType),
-                .fastPathName = fastPathName,
-                .slowPathName = slowPathName,
-                .argumentsCount = Fields.len - 2,
-            };
-            {
-                const fmt =
-                    \\extern "C" JSC_DECLARE_HOST_FUNCTION({[slowPathName]s}Wrapper);
-                    \\extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL({[fastPathName]s}Wrapper, EncodedJSValue, (JSC::JSGlobalObject* lexicalGlobalObject, void* thisValue
-                ;
-                try writer.print(fmt, .{ .fastPathName = options.fastPathName, .slowPathName = options.slowPathName });
-            }
-            {
-                switch (Fields.len - 2) {
-                    0 => {
-                        try writer.writeAll("));\n");
-                    },
-                    1 => {
-                        try writer.writeAll(", ");
-                        try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[2].type));
-                        try writer.writeAll("));\n");
-                    },
-                    2 => {
-                        try writer.writeAll(", ");
-                        try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[2].type));
-                        try writer.writeAll(", ");
-                        try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[3].type));
-                        try writer.writeAll("));\n");
-                    },
-                    else => @compileError("Must be <= 3 arguments"),
-                }
-            }
-
-            {
-                const fmt =
-                    \\
-                    \\JSC_DEFINE_JIT_OPERATION({[fastPathName]s}Wrapper, EncodedJSValue, (JSC::JSGlobalObject* lexicalGlobalObject, void* thisValue
-                ;
-                try writer.print(fmt, .{ .fastPathName = options.fastPathName });
-            }
-            {
-                switch (Fields.len - 2) {
-                    0 => {
-                        try writer.writeAll(")) {\n");
-                    },
-                    1 => {
-                        try writer.writeAll(", ");
-                        try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[2].type));
-                        try writer.writeAll(" arg1)) {\n");
-                    },
-                    2 => {
-                        try writer.writeAll(", ");
-                        try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[2].type));
-                        try writer.writeAll(" arg1, ");
-                        try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[3].type));
-                        try writer.writeAll(" arg2)) {\n");
-                    },
-                    else => @compileError("Must be <= 3 arguments"),
-                }
-                {
-                    const fmt =
-                        \\VM& vm = JSC::getVM(lexicalGlobalObject);
-                        \\IGNORE_WARNINGS_BEGIN("frame-address")
-                        \\CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-                        \\IGNORE_WARNINGS_END
-                        \\JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-                        \\return {[fastPathName]s}(lexicalGlobalObject, thisValue
-                    ;
-                    try writer.print(fmt, .{ .fastPathName = options.fastPathName });
-                }
-                {
-                    switch (Fields.len - 2) {
-                        0 => {
-                            try writer.writeAll(");\n}\n");
-                        },
-                        1 => {
-                            try writer.writeAll(", arg1);\n}\n");
-                        },
-                        2 => {
-                            try writer.writeAll(", arg1, arg2);\n}\n");
-                        },
-                        else => @compileError("Must be <= 3 arguments"),
-                    }
-                }
-            }
-
-            {
-                const fmt =
-                    \\JSC_DEFINE_HOST_FUNCTION({[slowPathName]s}Wrapper, (JSC::JSGlobalObject *globalObject, JSC::CallFrame* frame)) {{
-                    \\    return {[slowPathName]s}(globalObject, JSValue::encode(frame->thisValue()), reinterpret_cast<JSC::EncodedJSValue*>(frame->addressOfArgumentsStart()), frame->argumentCount());
-                    \\}}
-                    \\
-                    \\extern "C" void {[exportName]s}(JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value) {{
-                    \\  JSC::JSObject *thisObject = JSC::jsCast<JSC::JSObject *>(JSC::JSValue::decode(value));
-                    \\  static const JSC::DOMJIT::Signature {[signatureName]s}(
-                    \\    {[fastPathName]s}Wrapper,
-                    \\    thisObject->classInfo(),
-                    \\
-                ;
-
-                try writer.print(fmt, .{
-                    .slowPathName = options.slowPathName,
-                    .exportName = options.exportName,
-                    .fastPathName = options.fastPathName,
-                    .signatureName = options.signatureName,
-                });
-            }
-            if (effect.isPure()) {
-                try writer.writeAll("JSC::DOMJIT::Effect::forPure(),\n  ");
-            } else if (effect.writes[0] == DOMEffect.pure.writes[0]) {
-                try writer.print(
-                    "JSC::DOMJIT::Effect::forReadKinds(JSC::DFG::AbstractHeapKind::{s}, JSC::DFG::AbstractHeapKind::{s}, JSC::DFG::AbstractHeapKind::{s}, JSC::DFG::AbstractHeapKind::{s}),\n  ",
-                    .{
-                        @tagName(effect.reads[0]),
-                        @tagName(effect.reads[1]),
-                        @tagName(effect.reads[2]),
-                        @tagName(effect.reads[3]),
-                    },
-                );
-            } else if (effect.reads[0] == DOMEffect.pure.reads[0]) {
-                try writer.print(
-                    "JSC::DOMJIT::Effect::forWriteKinds(JSC::DFG::AbstractHeapKind::{s}, JSC::DFG::AbstractHeapKind::{s}, JSC::DFG::AbstractHeapKind::{s}, JSC::DFG::AbstractHeapKind::{s}),\n  ",
-                    .{
-                        @tagName(effect.writes[0]),
-                        @tagName(effect.writes[1]),
-                        @tagName(effect.writes[2]),
-                        @tagName(effect.writes[3]),
-                    },
-                );
-            } else {
-                try writer.writeAll("JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),\n  ");
-            }
-
-            {
-                try writer.writeAll(DOMCallResultType(ResultType));
-            }
-
-            switch (Fields.len - 2) {
-                0 => {},
-                1 => {
-                    try writer.writeAll(",\n  ");
-                    try writer.writeAll(DOMCallArgumentType(Fields[2].type));
-                    try writer.writeAll("\n  ");
-                },
-                2 => {
-                    try writer.writeAll(",\n  ");
-                    try writer.writeAll(DOMCallArgumentType(Fields[2].type));
-                    try writer.writeAll(",\n  ");
-                    try writer.writeAll(DOMCallArgumentType(Fields[3].type));
-                    try writer.writeAll("\n  ");
-                },
-                else => @compileError("Must be <= 3 arguments"),
-            }
-
-            try writer.writeAll(");\n  ");
-
-            {
-                const fmt =
-                    \\                JSFunction* function = JSFunction::create(
-                    \\                    globalObject->vm(),
-                    \\                    globalObject,
-                    \\                    {[argumentsCount]d},
-                    \\                    String("{[name]s}"_s),
-                    \\                    {[slowPathName]s}Wrapper, ImplementationVisibility::Public, NoIntrinsic, {[slowPathName]s}Wrapper,
-                    \\                    &{[signatureName]s}
-                    \\                );
-                    \\           thisObject->putDirect(
-                    \\             globalObject->vm(),
-                    \\             Identifier::fromString(globalObject->vm(), "{[name]s}"_s),
-                    \\             function
-                    \\           );
-                    \\}}
-                ;
-                try writer.print(fmt, .{
-                    .argumentsCount = options.argumentsCount,
-                    .name = options.name,
-                    .slowPathName = options.slowPathName,
-                    .signatureName = options.signatureName,
-                });
-            }
-        }
-
         pub const Extern = [_][]const u8{"put"};
 
         comptime {
             if (!JSC.is_bindgen) {
-                @export(slowpath, .{ .name = Export[0].symbol_name });
-                @export(fastpath, .{ .name = Export[1].symbol_name });
+                @export(slowpath, .{ .name = shim.symbolName("slowpath") });
+                @export(fastpath, .{ .name = shim.symbolName("fastpath") });
             } else {
                 _ = slowpath;
                 _ = fastpath;
@@ -1172,7 +987,7 @@ pub fn DOMCall(
 }
 
 pub fn InstanceMethodType(comptime Container: type) type {
-    return fn (instance: *Container, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue;
+    return fn (instance: *Container, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue;
 }
 
 pub fn wrapInstanceMethod(
@@ -1190,7 +1005,7 @@ pub fn wrapInstanceMethod(
             this: *Container,
             globalThis: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(.C) JSC.JSValue {
+        ) callconv(JSC.conv) JSC.JSValue {
             const arguments = callframe.arguments(FunctionTypeInfo.params.len);
             var iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
             var args: Args = undefined;
@@ -1344,7 +1159,7 @@ pub fn wrapInstanceMethod(
                 }
             }
 
-            return @call(.auto, @field(Container, name), args);
+            return @call(.always_inline, @field(Container, name), args);
         }
     }.method;
 }
@@ -1363,7 +1178,7 @@ pub fn wrapStaticMethod(
         pub fn method(
             globalThis: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(.C) JSC.JSValue {
+        ) callconv(JSC.conv) JSC.JSValue {
             const arguments = callframe.arguments(FunctionTypeInfo.params.len);
             var iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
             var args: Args = undefined;
@@ -1497,7 +1312,7 @@ pub fn wrapStaticMethod(
 
             defer iter.deinit();
 
-            return @call(.auto, @field(Container, name), args);
+            return @call(.always_inline, @field(Container, name), args);
         }
     }.method;
 }
@@ -1529,7 +1344,7 @@ pub const Strong = @import("./Strong.zig").Strong;
 pub const Weak = @import("./Weak.zig").Weak;
 pub const WeakRefType = @import("./Weak.zig").WeakRefType;
 
-pub const BinaryType = enum {
+pub const BinaryType = enum(u4) {
     Buffer,
     ArrayBuffer,
     Uint8Array,
@@ -1538,6 +1353,7 @@ pub const BinaryType = enum {
     Int8Array,
     Int16Array,
     Int32Array,
+    Float16Array,
     Float32Array,
     Float64Array,
     // DataView,
@@ -1548,6 +1364,7 @@ pub const BinaryType = enum {
             .Buffer => .Uint8Array,
             // .DataView => .DataView,
             .Float32Array => .Float32Array,
+            .Float16Array => .Float16Array,
             .Float64Array => .Float64Array,
             .Int16Array => .Int16Array,
             .Int32Array => .Int32Array,
@@ -1569,6 +1386,7 @@ pub const BinaryType = enum {
             .{ "Buffer", .Buffer },
             // .{ "DataView", .DataView },
             .{ "Float32Array", .Float32Array },
+            .{ "Float16Array", .Float16Array },
             .{ "Float64Array", .Float64Array },
             .{ "Int16Array", .Int16Array },
             .{ "Int32Array", .Int32Array },
@@ -1579,6 +1397,7 @@ pub const BinaryType = enum {
             .{ "arraybuffer", .ArrayBuffer },
             .{ "buffer", .Buffer },
             // .{ "dataview", .DataView },
+            .{ "float16array", .Float16Array },
             .{ "float32array", .Float32Array },
             .{ "float64array", .Float64Array },
             .{ "int16array", .Int16Array },
@@ -1611,7 +1430,7 @@ pub const BinaryType = enum {
             .Uint8Array => return JSC.ArrayBuffer.create(globalThis, bytes, .Uint8Array),
 
             // These aren't documented, but they are supported
-            .Uint16Array, .Uint32Array, .Int8Array, .Int16Array, .Int32Array, .Float32Array, .Float64Array => {
+            .Uint16Array, .Uint32Array, .Int8Array, .Int16Array, .Int32Array, .Float16Array, .Float32Array, .Float64Array => {
                 const buffer = JSC.ArrayBuffer.create(globalThis, bytes, .ArrayBuffer);
                 return JSC.JSValue.c(JSC.C.JSObjectMakeTypedArrayWithArrayBuffer(globalThis, this.toTypedArrayType(), buffer.asObjectRef(), null));
             },
@@ -1662,21 +1481,21 @@ pub const MemoryReportingAllocator = struct {
 
     fn alloc(this: *MemoryReportingAllocator, n: usize, log2_ptr_align: u8, return_address: usize) ?[*]u8 {
         const result = this.child_allocator.rawAlloc(n, log2_ptr_align, return_address) orelse return null;
-        _ = this.memory_cost.fetchAdd(n, .Monotonic);
+        _ = this.memory_cost.fetchAdd(n, .monotonic);
         if (comptime Environment.allow_assert)
             log("malloc({d}) = {d}", .{ n, this.memory_cost.raw });
         return result;
     }
 
     pub fn discard(this: *MemoryReportingAllocator, buf: []const u8) void {
-        _ = this.memory_cost.fetchSub(buf.len, .Monotonic);
+        _ = this.memory_cost.fetchSub(buf.len, .monotonic);
         if (comptime Environment.allow_assert)
             log("discard({d}) = {d}", .{ buf.len, this.memory_cost.raw });
     }
 
     fn resize(this: *MemoryReportingAllocator, buf: []u8, buf_align: u8, new_len: usize, ret_addr: usize) bool {
         if (this.child_allocator.rawResize(buf, buf_align, new_len, ret_addr)) {
-            _ = this.memory_cost.fetchAdd(new_len -| buf.len, .Monotonic);
+            _ = this.memory_cost.fetchAdd(new_len -| buf.len, .monotonic);
             if (comptime Environment.allow_assert)
                 log("resize() = {d}", .{this.memory_cost.raw});
             return true;
@@ -1688,11 +1507,12 @@ pub const MemoryReportingAllocator = struct {
     fn free(this: *MemoryReportingAllocator, buf: []u8, buf_align: u8, ret_addr: usize) void {
         this.child_allocator.rawFree(buf, buf_align, ret_addr);
 
-        const prev = this.memory_cost.fetchSub(buf.len, .Monotonic);
-        _ = prev;
         if (comptime Environment.allow_assert) {
             // check for overflow, racily
-            // bun.assert(prev > this.memory_cost.load(.Monotonic));
+            const prev = this.memory_cost.fetchSub(buf.len, .monotonic);
+            _ = prev;
+            // bun.assert(prev > this.memory_cost.load(.monotonic));
+
             log("free({d}) = {d}", .{ buf.len, this.memory_cost.raw });
         }
     }
@@ -1713,7 +1533,7 @@ pub const MemoryReportingAllocator = struct {
     }
 
     pub fn report(this: *MemoryReportingAllocator, vm: *JSC.VM) void {
-        const mem = this.memory_cost.load(.Monotonic);
+        const mem = this.memory_cost.load(.monotonic);
         if (mem > 0) {
             vm.reportExtraMemory(mem);
             if (comptime Environment.allow_assert)
@@ -1726,7 +1546,7 @@ pub const MemoryReportingAllocator = struct {
             return;
         }
 
-        const memory_cost = this.memory_cost.load(.Monotonic);
+        const memory_cost = this.memory_cost.load(.monotonic);
         if (memory_cost > 0) {
             Output.panic("MemoryReportingAllocator still has {d} bytes allocated", .{memory_cost});
         }

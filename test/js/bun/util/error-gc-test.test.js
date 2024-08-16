@@ -1,5 +1,7 @@
 import { test, expect } from "bun:test";
 import { readFileSync } from "fs";
+import { tmpdirSync } from "harness";
+import { join } from "path";
 // This test checks that printing stack traces increments and decrements
 // reference-counted strings
 test("error gc test", () => {
@@ -47,10 +49,10 @@ test("error gc test #3", () => {
 // - it crashes
 // - The test failure message gets a non-sensical error
 test("error gc test #4", () => {
+  const tmp = tmpdirSync();
   for (let i = 0; i < 1000; i++) {
-    let path =
-      // Use a long-enough string for it to be obvious if we leak memory
-      "/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/ii/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/ii/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i";
+    // Use a long-enough string for it to be obvious if we leak memory
+    let path = join(tmp, join("does", "not", "exist").repeat(10));
     try {
       readFileSync(path);
       throw new Error("unreachable");

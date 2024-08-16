@@ -1,4 +1,5 @@
 #include "root.h"
+#include "JSDOMGlobalObjectInlines.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/GlobalObjectMethodTable.h>
 #include "helpers.h"
@@ -259,10 +260,11 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPAssignHeaders, (JSGlobalObject * globalObject, Ca
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue requestValue = callFrame->argument(0);
-    JSObject* objectValue = callFrame->argument(1).getObject();
-
-    JSC::InternalFieldTuple* tuple = JSC::InternalFieldTuple::create(vm, globalObject->m_internalFieldTupleStructure.get());
+    // This is an internal binding.
+    JSValue requestValue = callFrame->uncheckedArgument(0);
+    JSObject* objectValue = callFrame->uncheckedArgument(1).getObject();
+    JSC::InternalFieldTuple* tuple = jsCast<JSC::InternalFieldTuple*>(callFrame->uncheckedArgument(2));
+    ASSERT(callFrame->argumentCount() == 3);
 
     JSValue headersValue = JSValue();
     JSValue urlValue = JSValue();
@@ -409,13 +411,28 @@ JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
     VM& vm = globalObject->vm();
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setHeader"_s)),
-        JSC::JSFunction::create(vm, globalObject, 3, "setHeader"_s, jsHTTPSetHeader, ImplementationVisibility::Public), NoIntrinsic);
+        JSC::JSFunction::create(vm, globalObject, 3, "setHeader"_s, jsHTTPSetHeader, ImplementationVisibility::Public), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "getHeader"_s)),
-        JSC::JSFunction::create(vm, globalObject, 2, "getHeader"_s, jsHTTPGetHeader, ImplementationVisibility::Public), NoIntrinsic);
+        JSC::JSFunction::create(vm, globalObject, 2, "getHeader"_s, jsHTTPGetHeader, ImplementationVisibility::Public), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "assignHeaders"_s)),
-        JSC::JSFunction::create(vm, globalObject, 2, "assignHeaders"_s, jsHTTPAssignHeaders, ImplementationVisibility::Public), NoIntrinsic);
+        JSC::JSFunction::create(vm, globalObject, 2, "assignHeaders"_s, jsHTTPAssignHeaders, ImplementationVisibility::Public), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "Response"_s)),
+        globalObject->JSResponseConstructor(), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "Request"_s)),
+        globalObject->JSRequestConstructor(), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "Blob"_s)),
+        globalObject->JSBlobConstructor(), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "Headers"_s)),
+        WebCore::JSFetchHeaders::getConstructor(vm, globalObject), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "headersTuple"_s)),
+        JSC::InternalFieldTuple::create(vm, globalObject->m_internalFieldTupleStructure.get()), 0);
     return obj;
 }
 

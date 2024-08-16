@@ -29,6 +29,7 @@ export type Field =
   | ({
       fn: string;
       length?: number;
+      passThis?: boolean;
       DOMJIT?: {
         returns: string;
         args?: [string, string] | [string, string, string] | [string] | [];

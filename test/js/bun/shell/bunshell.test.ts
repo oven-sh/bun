@@ -7,13 +7,28 @@
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, rm, stat } from "fs/promises";
-import { bunEnv, bunExe, isWindows, runWithErrorPromise, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv as __bunEnv, bunExe, isWindows, runWithErrorPromise, tempDirWithFiles, tmpdirSync } from "harness";
 import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
 
+export const bunEnv: NodeJS.ProcessEnv = {
+  ...process.env,
+  GITHUB_ACTIONS: "false",
+  BUN_DEBUG_QUIET_LOGS: "1",
+  NO_COLOR: "1",
+  FORCE_COLOR: undefined,
+  TZ: "Etc/UTC",
+  CI: "1",
+  BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
+  BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
+  BUN_GARBAGE_COLLECTOR_LEVEL: process.env.BUN_GARBAGE_COLLECTOR_LEVEL || "0",
+  // windows doesn't set this, but we do to match posix compatibility
+  PWD: (process.env.PWD || process.cwd()).replaceAll("\\", "/"),
+};
+
 $.env(bunEnv);
-$.cwd(process.cwd());
+$.cwd(process.cwd().replaceAll("\\", "/"));
 $.nothrow();
 
 let temp_dir: string;
@@ -113,6 +128,10 @@ describe("bunshell", () => {
       `"hello" "lol" "nice"lkasjf;jdfla<>SKDJFLKSF`,
       `"\\"hello\\" \\"lol\\" \\"nice\\"lkasjf;jdfla<>SKDJFLKSF"`,
     );
+    escapeTest("✔", "✔");
+    escapeTest("lmao=✔", '"lmao=✔"');
+    escapeTest("元気かい、兄弟", "元気かい、兄弟");
+    escapeTest("d元気かい、兄弟", "d元気かい、兄弟");
 
     describe("wrapped in quotes", async () => {
       const url = "http://www.example.com?candy_name=M&M";
@@ -391,6 +410,12 @@ describe("bunshell", () => {
     const haha = "noice";
     const { stdout } = await $`echo $(echo noice)`;
     expect(stdout.toString()).toEqual(`noice\n`);
+  });
+
+  describe("empty_expansion", () => {
+    TestBuilder.command`$(exit 0) && echo hi`.stdout("hi\n").runAsTest("empty command subst");
+    TestBuilder.command`$(exit 1) && echo hi`.exitCode(1).runAsTest("empty command subst 2");
+    TestBuilder.command`FOO="" $FOO`.runAsTest("empty var");
   });
 
   describe("tilde_expansion", () => {
@@ -729,7 +754,7 @@ booga"
 
     test("cd -", async () => {
       const { stdout } = await $`cd ${temp_dir} && pwd && cd - && pwd`;
-      expect(stdout.toString()).toEqual(`${temp_dir}\n${process.cwd()}\n`);
+      expect(stdout.toString()).toEqual(`${temp_dir}\n${process.cwd().replaceAll("\\", "/")}\n`);
     });
   });
 
@@ -791,7 +816,7 @@ ${temp_dir}`
     TestBuilder.command`echo ${"|"}`.stdout("|\n").runAsTest("pipe");
     TestBuilder.command`echo ${"="}`.stdout("=\n").runAsTest("equals");
     TestBuilder.command`echo ${";"}`.stdout(";\n").runAsTest("semicolon");
-    TestBuilder.command`echo ${"\n"}`.stdout("\n\n").runAsTest("newline");
+    TestBuilder.command`echo ${"\n"}`.stdout("\n").runAsTest("newline");
     TestBuilder.command`echo ${"{"}`.stdout("{\n").runAsTest("left_brace");
     TestBuilder.command`echo ${"}"}`.stdout("}\n").runAsTest("right_brace");
     TestBuilder.command`echo ${","}`.stdout(",\n").runAsTest("comma");

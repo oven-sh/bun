@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "bun:test";
 import type { Server, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
-import { bunEnv, bunExe, nodeExe } from "harness";
+import { bunEnv, bunExe, forceGuardMalloc, nodeExe } from "harness";
 import { isIP } from "node:net";
 import path from "node:path";
 
@@ -62,6 +62,21 @@ const binaryTypes = [
 let servers: Server[] = [];
 let clients: Subprocess[] = [];
 
+it("should work fine if you repeatedly call methods on closed websockets", async () => {
+  let env = { ...bunEnv };
+  forceGuardMalloc(env);
+
+  const { exited } = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "websocket-server-fixture.js")],
+    env,
+    stderr: "inherit",
+    stdout: "inherit",
+    stdin: "inherit",
+  });
+
+  expect(await exited).toBe(0);
+});
+
 afterEach(() => {
   for (const server of servers) {
     server.stop(true);
@@ -72,6 +87,20 @@ afterEach(() => {
 });
 
 describe("Server", () => {
+  test("subscribe", done => ({
+    open(ws) {
+      expect(() => ws.subscribe("")).toThrow("subscribe requires a non-empty topic name");
+      ws.subscribe("topic");
+      expect(ws.isSubscribed("topic")).toBeTrue();
+      ws.unsubscribe("topic");
+      expect(ws.isSubscribed("topic")).toBeFalse();
+      ws.close();
+    },
+    close(ws, code, reason) {
+      done();
+    },
+  }));
+
   describe("websocket", () => {
     test("open", done => ({
       open(ws) {
@@ -564,6 +593,15 @@ describe("ServerWebSocket", () => {
     let count = 0;
     return {
       open(ws) {
+        expect(() => ws.cork()).toThrow();
+        expect(() => ws.cork(undefined)).toThrow();
+        expect(() => ws.cork({})).toThrow();
+        expect(() =>
+          ws.cork(() => {
+            throw new Error("boom");
+          }),
+        ).toThrow();
+
         setTimeout(() => {
           ws.cork(() => {
             ws.send("1");

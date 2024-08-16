@@ -1,5 +1,6 @@
+import type { ServerWebSocket, Server, Socket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunExe, bunEnv } from "harness";
+import { bunExe, bunEnv, rejectUnauthorizedScope } from "harness";
 import path from "path";
 
 describe("Server", () => {
@@ -395,7 +396,7 @@ describe("Server", () => {
     const url = `${server.hostname}:${server.port}`;
 
     try {
-      // should fail
+      // This should fail because it's "http://" and not "https://"
       await fetch(`http://${url}`, { tls: { rejectUnauthorized: false } });
       expect.unreachable();
     } catch (err: any) {
@@ -403,7 +404,26 @@ describe("Server", () => {
     }
 
     {
-      const result = await fetch(`https://${url}`, { tls: { rejectUnauthorized: false } }).then(res => res.text());
+      const result = await fetch(server.url, { tls: { rejectUnauthorized: false } }).then(res => res.text());
+      expect(result).toBe("Hello");
+    }
+
+    // Test that HTTPS keep-alive doesn't cause it to re-use the connection on
+    // the next attempt, when the next attempt has reject unauthorized enabled
+    {
+      expect(
+        async () => await fetch(server.url, { tls: { rejectUnauthorized: true } }).then(res => res.text()),
+      ).toThrow("self signed certificate");
+    }
+
+    {
+      using _ = rejectUnauthorizedScope(true);
+      expect(async () => await fetch(server.url).then(res => res.text())).toThrow("self signed certificate");
+    }
+
+    {
+      using _ = rejectUnauthorizedScope(false);
+      const result = await fetch(server.url).then(res => res.text());
       expect(result).toBe("Hello");
     }
   });
@@ -472,3 +492,185 @@ test("Bun does not crash when given invalid config", async () => {
     }).toThrow();
   }
 });
+
+test("Bun should be able to handle utf16 inside Content-Type header #11316", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch() {
+      const fileSuffix = "测试.html".match(/\.([a-z0-9]*)$/i)?.[1];
+
+      expect(fileSuffix).toBeUTF16String();
+
+      return new Response("Hello World!\n", {
+        headers: {
+          "Content-Type": `text/${fileSuffix}`,
+        },
+      });
+    },
+  });
+
+  const result = await fetch(server.url);
+  expect(result.status).toBe(200);
+  expect(result.headers.get("Content-Type")).toBe("text/html");
+});
+
+test("should be able to async upgrade using custom protocol", async () => {
+  const { promise, resolve } = Promise.withResolvers<{ code: number; reason: string } | boolean>();
+  using server = Bun.serve<unknown>({
+    async fetch(req: Request, server: Server) {
+      await Bun.sleep(1);
+
+      if (server.upgrade(req)) return;
+    },
+    websocket: {
+      close(ws: ServerWebSocket<unknown>, code: number, reason: string): void | Promise<void> {
+        resolve({ code, reason });
+      },
+      message(ws: ServerWebSocket<unknown>, data: string): void | Promise<void> {
+        ws.send("world");
+      },
+    },
+  });
+
+  const ws = new WebSocket(server.url.href, "ocpp1.6");
+  ws.onopen = () => {
+    ws.send("hello");
+  };
+  ws.onmessage = e => {
+    console.log(e.data);
+    resolve(true);
+  };
+
+  expect(await promise).toBe(true);
+});
+
+test("should be able to abrubtly close a upload request", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  const { promise: promise2, resolve: resolve2 } = Promise.withResolvers();
+  using server = Bun.serve({
+    port: 0,
+    hostname: "localhost",
+    maxRequestBodySize: 1024 * 1024 * 1024 * 16,
+    async fetch(req) {
+      let total_size = 0;
+      req.signal.addEventListener("abort", resolve);
+      try {
+        for await (const chunk of req.body as ReadableStream) {
+          total_size += chunk.length;
+          if (total_size > 1024 * 1024 * 1024) {
+            return new Response("too big", { status: 413 });
+          }
+        }
+      } catch (e) {
+        expect((e as Error)?.name).toBe("AbortError");
+      } finally {
+        resolve2();
+      }
+
+      return new Response("Received " + total_size);
+    },
+  });
+  // ~100KB
+  const chunk = Buffer.alloc(1024 * 100, "a");
+  // ~1GB
+  const MAX_PAYLOAD = 1024 * 1024 * 1024;
+  const request = Buffer.from(
+    `POST / HTTP/1.1\r\nHost: ${server.hostname}:${server.port}\r\nContent-Length: ${MAX_PAYLOAD}\r\n\r\n`,
+  );
+
+  type SocketInfo = { state: number; pending: Buffer | null };
+  function tryWritePending(socket: Socket<SocketInfo>) {
+    if (socket.data.pending === null) {
+      // first write
+      socket.data.pending = request;
+    }
+    const data = socket.data.pending as Buffer;
+    const written = socket.write(data);
+    if (written < data.byteLength) {
+      // partial write
+      socket.data.pending = data.slice(0, written);
+      return false;
+    }
+
+    // full write got to next state
+    if (socket.data.state === 0) {
+      // request sent -> send chunk
+      socket.data.pending = chunk;
+    } else {
+      // chunk sent -> delay shutdown
+      setTimeout(() => socket.shutdown(), 100);
+    }
+    socket.data.state++;
+    socket.flush();
+    return true;
+  }
+
+  function trySend(socket: Socket<SocketInfo>) {
+    while (socket.data.state < 2) {
+      if (!tryWritePending(socket)) {
+        return;
+      }
+    }
+    return;
+  }
+  await Bun.connect({
+    hostname: server.hostname,
+    port: server.port,
+    data: {
+      state: 0,
+      pending: null,
+    } as SocketInfo,
+    socket: {
+      open: trySend,
+      drain: trySend,
+      data(socket, data) {},
+    },
+  });
+  await Promise.all([promise, promise2]);
+  expect().pass();
+});
+
+// This test is disabled because it can OOM the CI
+test.skip("should be able to stream huge amounts of data", async () => {
+  const buf = Buffer.alloc(1024 * 1024 * 256);
+  const CONTENT_LENGTH = 3 * 1024 * 1024 * 1024;
+  let received = 0;
+  let written = 0;
+  using server = Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(controller) {
+            while (written < CONTENT_LENGTH) {
+              written += buf.byteLength;
+              await controller.write(buf);
+            }
+            controller.close();
+          },
+        }),
+        {
+          headers: {
+            "Content-Type": "text/plain",
+            "Content-Length": CONTENT_LENGTH.toString(),
+          },
+        },
+      );
+    },
+  });
+
+  const response = await fetch(server.url);
+  expect(response.status).toBe(200);
+  expect(response.headers.get("content-type")).toBe("text/plain");
+  const reader = (response.body as ReadableStream).getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    received += value ? value.byteLength : 0;
+    if (done) {
+      break;
+    }
+  }
+  expect(written).toBe(CONTENT_LENGTH);
+  expect(received).toBe(CONTENT_LENGTH);
+}, 30_000);

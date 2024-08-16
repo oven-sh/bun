@@ -8,6 +8,7 @@ const Debugger = JSC.Debugger;
 const Environment = bun.Environment;
 const Async = @import("async");
 const uv = bun.windows.libuv;
+const StatWatcherScheduler = @import("../node/node_fs_stat_watcher.zig").StatWatcherScheduler;
 const Timer = @This();
 
 /// TimeoutMap is map of i32 to nullable Timeout structs
@@ -53,7 +54,7 @@ pub const All = struct {
         timer.state = .ACTIVE;
 
         if (Environment.isWindows) {
-            this.ensureUVTimer(@fieldParentPtr(JSC.VirtualMachine, "timer", this));
+            this.ensureUVTimer(@alignCast(@fieldParentPtr("timer", this)));
         }
     }
 
@@ -90,14 +91,14 @@ pub const All = struct {
     }
 
     pub fn onUVTimer(uv_timer_t: *uv.Timer) callconv(.C) void {
-        const all = @fieldParentPtr(All, "uv_timer", uv_timer_t);
-        const vm = @fieldParentPtr(JSC.VirtualMachine, "timer", all);
+        const all: *All = @fieldParentPtr("uv_timer", uv_timer_t);
+        const vm: *VirtualMachine = @alignCast(@fieldParentPtr("timer", all));
         all.drainTimers(vm);
         all.ensureUVTimer(vm);
     }
 
     pub fn incrementTimerRef(this: *All, delta: i32) void {
-        const vm = @fieldParentPtr(JSC.VirtualMachine, "timer", this);
+        const vm: *JSC.VirtualMachine = @alignCast(@fieldParentPtr("timer", this));
 
         const old = this.active_timer_count;
         const new = old + delta;
@@ -297,7 +298,10 @@ pub const All = struct {
                     // It would be a weird situation, security-wise, if we were to let
                     // the user cancel a timer that was of a different type.
                     if (entry.value.tag == .TimerObject) {
-                        break :brk @fieldParentPtr(TimerObject, "event_loop_timer", entry.value);
+                        break :brk @as(
+                            *TimerObject,
+                            @fieldParentPtr("event_loop_timer", entry.value),
+                        );
                     }
                 }
 
@@ -546,7 +550,7 @@ pub const TimerObject = struct {
         return .{ timer, timer_js };
     }
 
-    pub fn doRef(this: *TimerObject, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn doRef(this: *TimerObject, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         const this_value = callframe.this();
         this_value.ensureStillAlive();
 
@@ -560,7 +564,7 @@ pub const TimerObject = struct {
         return this_value;
     }
 
-    pub fn doRefresh(this: *TimerObject, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn doRefresh(this: *TimerObject, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         const this_value = callframe.this();
 
         // setImmediate does not support refreshing and we do not support refreshing after cleanup
@@ -574,7 +578,7 @@ pub const TimerObject = struct {
         return this_value;
     }
 
-    pub fn doUnref(this: *TimerObject, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn doUnref(this: *TimerObject, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         const this_value = callframe.this();
         this_value.ensureStillAlive();
 
@@ -639,10 +643,10 @@ pub const TimerObject = struct {
         }
     }
 
-    pub fn hasRef(this: *TimerObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn hasRef(this: *TimerObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
         return JSValue.jsBoolean(this.is_keeping_event_loop_alive);
     }
-    pub fn toPrimitive(this: *TimerObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn toPrimitive(this: *TimerObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
         if (!this.has_accessed_primitive) {
             this.has_accessed_primitive = true;
             const vm = VirtualMachine.get();
@@ -651,7 +655,7 @@ pub const TimerObject = struct {
         return JSValue.jsNumber(this.id);
     }
 
-    pub fn finalize(this: *TimerObject) callconv(.C) void {
+    pub fn finalize(this: *TimerObject) void {
         this.strong_this.deinit();
         this.deref();
     }
@@ -665,7 +669,19 @@ pub const TimerObject = struct {
         }
 
         if (this.has_accessed_primitive) {
-            _ = vm.timer.maps.get(this.kind).orderedRemove(this.id);
+            const map = vm.timer.maps.get(this.kind);
+            if (map.orderedRemove(this.id)) {
+                // If this array gets large, let's shrink it down
+                // Array keys are i32
+                // Values are 1 ptr
+                // Therefore, 12 bytes per entry
+                // So if you created 21,000 timers and accessed them by ID, you'd be using 252KB
+                const allocated_bytes = map.capacity() * @sizeOf(TimeoutMap.Data);
+                const used_bytes = map.count() * @sizeOf(TimeoutMap.Data);
+                if (allocated_bytes - used_bytes > 256 * 1024) {
+                    map.shrinkAndFree(bun.default_allocator, map.count() + 8);
+                }
+            }
         }
 
         this.setEnableKeepingEventLoopAlive(vm, false);
@@ -712,12 +728,14 @@ pub const EventLoopTimer = struct {
         TimerCallback,
         TimerObject,
         TestRunner,
+        StatWatcherScheduler,
 
         pub fn Type(comptime T: Tag) type {
             return switch (T) {
                 .TimerCallback => TimerCallback,
                 .TimerObject => TimerObject,
                 .TestRunner => JSC.Jest.TestRunner,
+                .StatWatcherScheduler => StatWatcherScheduler,
             };
         }
     };
@@ -746,8 +764,8 @@ pub const EventLoopTimer = struct {
         const order = a.next.order(&b.next);
         if (order == .eq) {
             if (a.tag == .TimerObject and b.tag == .TimerObject) {
-                const a_timer = @fieldParentPtr(TimerObject, "event_loop_timer", a);
-                const b_timer = @fieldParentPtr(TimerObject, "event_loop_timer", b);
+                const a_timer: *const TimerObject = @fieldParentPtr("event_loop_timer", a);
+                const b_timer: *const TimerObject = @fieldParentPtr("event_loop_timer", b);
                 return a_timer.id < b_timer.id;
             }
 
@@ -771,9 +789,12 @@ pub const EventLoopTimer = struct {
     pub fn fire(this: *EventLoopTimer, now: *const timespec, vm: *VirtualMachine) Arm {
         switch (this.tag) {
             inline else => |t| {
-                var container: *t.Type() = @fieldParentPtr(t.Type(), "event_loop_timer", this);
+                var container: *t.Type() = @alignCast(@fieldParentPtr("event_loop_timer", this));
                 if (comptime t.Type() == TimerObject) {
                     return container.fire(now, vm);
+                }
+                if (comptime t.Type() == StatWatcherScheduler) {
+                    return container.timerCallback();
                 }
 
                 if (comptime t.Type() == JSC.Jest.TestRunner) {

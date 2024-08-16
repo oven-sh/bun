@@ -42,7 +42,6 @@
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -103,8 +102,7 @@ template<> void JSPerformanceMeasureDOMConstructor::initializeProperties(VM& vm,
 
 /* Hash table for prototype */
 
-static const HashTableValue JSPerformanceMeasurePrototypeTableValues[] =
-{
+static const HashTableValue JSPerformanceMeasurePrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformanceMeasureConstructor, 0 } },
     { "detail"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformanceMeasure_detail, 0 } },
 };
@@ -144,7 +142,7 @@ JSValue JSPerformanceMeasure::getConstructor(VM& vm, const JSGlobalObject* globa
     return getDOMConstructor<JSPerformanceMeasureDOMConstructor, DOMConstructorID::PerformanceMeasure>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceMeasureConstructor, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceMeasureConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -162,24 +160,24 @@ static inline JSValue jsPerformanceMeasure_detailGetter(JSGlobalObject& lexicalG
         return cachedValue;
     auto& impl = thisObject.wrapped();
     JSValue result = toJS<IDLAny>(lexicalGlobalObject, throwScope, impl.detail(*jsCast<JSDOMGlobalObject*>(&lexicalGlobalObject)));
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     thisObject.m_detail.set(JSC::getVM(&lexicalGlobalObject), &thisObject, result);
     return result;
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceMeasure_detail, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceMeasure_detail, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSPerformanceMeasure>::get<jsPerformanceMeasure_detailGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
 
 JSC::GCClient::IsoSubspace* JSPerformanceMeasure::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSPerformanceMeasure, UseCustomHeapCellType::No>(vm,
-        [] (auto& spaces) { return spaces.m_clientSubspaceForPerformanceMeasure.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForPerformanceMeasure = std::forward<decltype(space)>(space); },
-        [] (auto& spaces) { return spaces.m_subspaceForPerformanceMeasure.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_subspaceForPerformanceMeasure = std::forward<decltype(space)>(space); }
-    );
+    return WebCore::subspaceForImpl<JSPerformanceMeasure, UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForPerformanceMeasure.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPerformanceMeasure = std::forward<decltype(space)>(space); },
+        [](auto& spaces) { return spaces.m_subspaceForPerformanceMeasure.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForPerformanceMeasure = std::forward<decltype(space)>(space); });
 }
 
 template<typename Visitor>
@@ -198,9 +196,8 @@ void JSPerformanceMeasure::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = jsCast<JSPerformanceMeasure*>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, "url "_s + thisObject->scriptExecutionContext()->url().string());
+        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
 }
-
 
 }

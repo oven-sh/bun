@@ -17,7 +17,7 @@ import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { builtinModules } from "node:module";
 import { define } from "./replacements";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
-import { getJS2NativeCPP, getJS2NativeZig } from "./js2native-generator";
+import { getJS2NativeCPP, getJS2NativeZig } from "./generate-js2native";
 
 const BASE = path.join(import.meta.dir, "../js");
 const debug = process.argv[2] === "--debug=ON";

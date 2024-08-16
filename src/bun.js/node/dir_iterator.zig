@@ -7,14 +7,14 @@
 
 const builtin = @import("builtin");
 const std = @import("std");
-const os = std.os;
+const posix = std.posix;
 
 const Dir = std.fs.Dir;
 const JSC = bun.JSC;
 const PathString = JSC.PathString;
 const bun = @import("root").bun;
 
-const IteratorError = error{ AccessDenied, SystemResources } || os.UnexpectedError;
+const IteratorError = error{ AccessDenied, SystemResources } || posix.UnexpectedError;
 const mem = std.mem;
 const strings = bun.strings;
 const Maybe = JSC.Maybe;
@@ -56,12 +56,13 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
             buf: [8192]u8, // TODO align(@alignOf(os.system.dirent)),
             index: usize,
             end_index: usize,
+            received_eof: bool = false,
 
             const Self = @This();
 
             pub const Error = IteratorError;
 
-            fn fd(self: *Self) os.fd_t {
+            fn fd(self: *Self) posix.fd_t {
                 return self.dir.fd;
             }
 
@@ -77,7 +78,23 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
             fn nextDarwin(self: *Self) Result {
                 start_over: while (true) {
                     if (self.index >= self.end_index) {
-                        const rc = os.system.__getdirentries64(
+                        if (self.received_eof) {
+                            return .{ .result = null };
+                        }
+
+                        // getdirentries64() writes to the last 4 bytes of the
+                        // buffer to indicate EOF. If that value is not zero, we
+                        // have reached the end of the directory and we can skip
+                        // the extra syscall.
+                        // https://github.com/apple-oss-distributions/xnu/blob/94d3b452840153a99b38a3a9659680b2a006908e/bsd/vfs/vfs_syscalls.c#L10444-L10470
+                        const GETDIRENTRIES64_EXTENDED_BUFSIZE = 1024;
+                        comptime bun.assert(@sizeOf(@TypeOf(self.buf)) >= GETDIRENTRIES64_EXTENDED_BUFSIZE);
+                        self.received_eof = false;
+                        // Always zero the bytes where the flag will be written
+                        // so we don't confuse garbage with EOF.
+                        self.buf[self.buf.len - 4 ..][0..4].* = .{ 0, 0, 0, 0 };
+
+                        const rc = posix.system.__getdirentries64(
                             self.dir.fd,
                             &self.buf,
                             self.buf.len,
@@ -85,7 +102,11 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         );
 
                         if (rc < 1) {
-                            if (rc == 0) return Result{ .result = null };
+                            if (rc == 0) {
+                                self.received_eof = true;
+                                return Result{ .result = null };
+                            }
+
                             if (Result.errnoSys(rc, .getdirentries64)) |err| {
                                 return err;
                             }
@@ -93,26 +114,27 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
 
                         self.index = 0;
                         self.end_index = @as(usize, @intCast(rc));
+                        self.received_eof = self.end_index <= (self.buf.len - 4) and @as(u32, @bitCast(self.buf[self.buf.len - 4 ..][0..4].*)) == 1;
                     }
-                    const darwin_entry = @as(*align(1) os.system.dirent, @ptrCast(&self.buf[self.index]));
-                    const next_index = self.index + darwin_entry.reclen();
+                    const darwin_entry = @as(*align(1) posix.system.dirent, @ptrCast(&self.buf[self.index]));
+                    const next_index = self.index + darwin_entry.reclen;
                     self.index = next_index;
 
-                    const name = @as([*]u8, @ptrCast(&darwin_entry.d_name))[0..darwin_entry.d_namlen];
+                    const name = @as([*]u8, @ptrCast(&darwin_entry.name))[0..darwin_entry.namlen];
 
-                    if (strings.eqlComptime(name, ".") or strings.eqlComptime(name, "..") or (darwin_entry.d_ino == 0)) {
+                    if (strings.eqlComptime(name, ".") or strings.eqlComptime(name, "..") or (darwin_entry.ino == 0)) {
                         continue :start_over;
                     }
 
-                    const entry_kind = switch (darwin_entry.d_type) {
-                        os.DT.BLK => Entry.Kind.block_device,
-                        os.DT.CHR => Entry.Kind.character_device,
-                        os.DT.DIR => Entry.Kind.directory,
-                        os.DT.FIFO => Entry.Kind.named_pipe,
-                        os.DT.LNK => Entry.Kind.sym_link,
-                        os.DT.REG => Entry.Kind.file,
-                        os.DT.SOCK => Entry.Kind.unix_domain_socket,
-                        os.DT.WHT => Entry.Kind.whiteout,
+                    const entry_kind = switch (darwin_entry.type) {
+                        posix.DT.BLK => Entry.Kind.block_device,
+                        posix.DT.CHR => Entry.Kind.character_device,
+                        posix.DT.DIR => Entry.Kind.directory,
+                        posix.DT.FIFO => Entry.Kind.named_pipe,
+                        posix.DT.LNK => Entry.Kind.sym_link,
+                        posix.DT.REG => Entry.Kind.file,
+                        posix.DT.SOCK => Entry.Kind.unix_domain_socket,
+                        posix.DT.WHT => Entry.Kind.whiteout,
                         else => Entry.Kind.unknown,
                     };
                     return .{
@@ -133,11 +155,11 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
             end_index: usize,
 
             const Self = @This();
-            const linux = os.linux;
+            const linux = std.os.linux;
 
             pub const Error = IteratorError;
 
-            fn fd(self: *Self) os.fd_t {
+            fn fd(self: *Self) posix.fd_t {
                 return self.dir.fd;
             }
 
@@ -153,17 +175,17 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         self.end_index = rc;
                     }
                     const linux_entry = @as(*align(1) linux.dirent64, @ptrCast(&self.buf[self.index]));
-                    const next_index = self.index + linux_entry.reclen();
+                    const next_index = self.index + linux_entry.reclen;
                     self.index = next_index;
 
-                    const name = mem.sliceTo(@as([*:0]u8, @ptrCast(&linux_entry.d_name)), 0);
+                    const name = mem.sliceTo(@as([*:0]u8, @ptrCast(&linux_entry.name)), 0);
 
                     // skip . and .. entries
                     if (strings.eqlComptime(name, ".") or strings.eqlComptime(name, "..")) {
                         continue :start_over;
                     }
 
-                    const entry_kind = switch (linux_entry.d_type) {
+                    const entry_kind = switch (linux_entry.type) {
                         linux.DT.BLK => Entry.Kind.block_device,
                         linux.DT.CHR => Entry.Kind.character_device,
                         linux.DT.DIR => Entry.Kind.directory,
@@ -206,7 +228,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
 
             const ResultT = if (use_windows_ospath) ResultW else Result;
 
-            fn fd(self: *Self) os.fd_t {
+            fn fd(self: *Self) posix.fd_t {
                 return self.dir.fd;
             }
 
@@ -214,7 +236,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
             /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
             pub fn next(self: *Self) ResultT {
                 while (true) {
-                    const w = os.windows;
+                    const w = std.os.windows;
                     if (self.index >= self.end_index) {
                         var io: w.IO_STATUS_BLOCK = undefined;
                         if (self.first) {
@@ -345,7 +367,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
 
             pub const Error = IteratorError;
 
-            fn fd(self: *Self) os.fd_t {
+            fn fd(self: *Self) posix.fd_t {
                 return self.dir.fd;
             }
 
@@ -355,7 +377,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                 // We intentinally use fd_readdir even when linked with libc,
                 // since its implementation is exactly the same as below,
                 // and we avoid the code complexity here.
-                const w = os.wasi;
+                const w = posix.wasi;
                 start_over: while (true) {
                     if (self.index >= self.end_index) {
                         var bufused: usize = undefined;
@@ -366,7 +388,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                             .NOTDIR => unreachable,
                             .INVAL => unreachable,
                             .NOTCAPABLE => return error.AccessDenied,
-                            else => |err| return os.unexpectedErrno(err),
+                            else => |err| return posix.unexpectedErrno(err),
                         }
                         if (bufused == 0) return null;
                         self.index = 0;
@@ -419,7 +441,7 @@ pub fn NewWrappedIterator(comptime path_type: PathType) type {
             return self.iter.next();
         }
 
-        pub inline fn fd(self: *Self) os.fd_t {
+        pub inline fn fd(self: *Self) posix.fd_t {
             return self.iter.fd();
         }
 
@@ -458,7 +480,7 @@ pub fn NewWrappedIterator(comptime path_type: PathType) type {
                     },
                     .wasi => IteratorType{
                         .dir = dir,
-                        .cookie = os.wasi.DIRCOOKIE_START,
+                        .cookie = posix.wasi.DIRCOOKIE_START,
                         .index = 0,
                         .end_index = 0,
                         .buf = undefined,

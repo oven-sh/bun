@@ -170,7 +170,7 @@ pub const SyscallAccessor = struct {
     };
 
     pub fn open(path: [:0]const u8) !Maybe(Handle) {
-        return switch (Syscall.open(path, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+        return switch (Syscall.open(path, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
             .err => |err| .{ .err = err },
             .result => |fd| .{ .result = Handle{ .value = fd } },
         };
@@ -185,7 +185,7 @@ pub const SyscallAccessor = struct {
     }
 
     pub fn openat(handle: Handle, path: [:0]const u8) !Maybe(Handle) {
-        return switch (Syscall.openat(handle.value, path, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+        return switch (Syscall.openat(handle.value, path, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
             .err => |err| .{ .err = err },
             .result => |fd| .{ .result = Handle{ .value = fd } },
         };

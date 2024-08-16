@@ -7,34 +7,36 @@ import { bunExe, bunEnv, tmpdirSync } from "harness";
 
 let watchee: Subprocess;
 
-it("should watch files", async () => {
-  const cwd = tmpdirSync();
-  const path = join(cwd, "watchee.js");
+for (const dir of ["dir", "©️"]) {
+  it(`should watch files ${dir === "dir" ? "" : "(non-ascii path)"}`, async () => {
+    const cwd = join(tmpdirSync(), dir);
+    const path = join(cwd, "watchee.js");
 
-  const updateFile = (i: number) => {
-    writeFileSync(path, `console.log(${i});`);
-  };
+    const updateFile = async (i: number) => {
+      await Bun.write(path, `console.log(${i}, __dirname);`);
+    };
 
-  let i = 0;
-  updateFile(i);
-  watchee = spawn({
-    cwd,
-    cmd: [bunExe(), "--watch", "watchee.js"],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "inherit",
-    stdin: "ignore",
+    let i = 0;
+    await updateFile(i);
+    watchee = spawn({
+      cwd,
+      cmd: [bunExe(), "--watch", "watchee.js"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+
+    for await (const line of watchee.stdout) {
+      if (i == 10) break;
+      var str = new TextDecoder().decode(line);
+      expect(str).toContain(`${i} ${cwd}`);
+      i++;
+      await updateFile(i);
+    }
+    rmSync(path);
   });
-
-  for await (const line of watchee.stdout) {
-    if (i == 10) break;
-    var str = new TextDecoder().decode(line);
-    expect(str).toContain(`${i}`);
-    i++;
-    updateFile(i);
-  }
-  rmSync(path);
-});
+}
 
 afterEach(() => {
   watchee?.kill();

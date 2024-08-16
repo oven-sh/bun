@@ -247,7 +247,7 @@ bash)
 
     commands=(
         "export $install_env=$quoted_install_dir"
-        "export PATH=$bin_env:\$PATH"
+        "export PATH=\"$bin_env:\$PATH\""
     )
 
     bash_configs=(

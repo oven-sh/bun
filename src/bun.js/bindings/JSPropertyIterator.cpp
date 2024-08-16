@@ -8,6 +8,7 @@
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/PropertyNameArray.h"
+#include "wtf/Assertions.h"
 #include "wtf/FastMalloc.h"
 #include "headers-handwritten.h"
 
@@ -23,7 +24,7 @@ public:
     }
 
     RefPtr<JSC::PropertyNameArrayData> properties;
-    JSC::VM& vm;
+    Ref<JSC::VM> vm;
     static JSPropertyIterator* create(JSC::VM& vm, RefPtr<JSC::PropertyNameArrayData> data)
     {
         return new JSPropertyIterator(vm, data);

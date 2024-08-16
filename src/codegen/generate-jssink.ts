@@ -713,7 +713,7 @@ void ${className}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     if (void* wrapped = thisObject->wrapped()) {
         analyzer.setWrappedObjectForCell(cell, wrapped);
         // if (thisObject->scriptExecutionContext())
-        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+        //     analyzer.setLabelForCell(cell, makeString("url ", thisObject->scriptExecutionContext()->url().string()));
     }
     Base::analyzeHeap(cell, analyzer);
 }
@@ -724,7 +724,7 @@ void ${controller}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     if (void* wrapped = thisObject->wrapped()) {
         analyzer.setWrappedObjectForCell(cell, wrapped);
         // if (thisObject->scriptExecutionContext())
-        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+        //     analyzer.setLabelForCell(cell, makeString("url ", thisObject->scriptExecutionContext()->url().string()));
     }
     Base::analyzeHeap(cell, analyzer);
 }

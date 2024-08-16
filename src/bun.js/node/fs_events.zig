@@ -107,8 +107,8 @@ pub const kFSEventsSystem: c_int =
     kFSEventStreamEventFlagUnmount |
     kFSEventStreamEventFlagRootChanged;
 
-var fsevents_mutex: Mutex = Mutex.init();
-var fsevents_default_loop_mutex: Mutex = Mutex.init();
+var fsevents_mutex: Mutex = .{};
+var fsevents_default_loop_mutex: Mutex = .{};
 var fsevents_default_loop: ?*FSEventsLoop = null;
 
 fn dlsym(handle: ?*anyopaque, comptime Type: type, comptime symbol: [:0]const u8) ?Type {
@@ -331,7 +331,7 @@ pub const FSEventsLoop = struct {
             return error.FailedToCreateCoreFoudationSourceLoop;
         }
 
-        const fs_loop = FSEventsLoop{ .sem = Semaphore.init(0), .mutex = Mutex.init(), .signal_source = signal_source };
+        const fs_loop = FSEventsLoop{ .sem = Semaphore.init(0), .mutex = .{}, .signal_source = signal_source };
 
         this.* = fs_loop;
         this.thread = try std.Thread.spawn(.{}, FSEventsLoop.CFThreadLoop, .{this});
@@ -374,23 +374,19 @@ pub const FSEventsLoop = struct {
                         path = path[handle_path.len..];
 
                         // Ignore events with path equal to directory itself
-                        if (path.len <= 1 and is_file) {
+                        if (path.len <= 1 and !is_file) {
                             continue;
                         }
-                        if (path.len == 0) {
-                            // Since we're using fsevents to watch the file itself, path == handle_path, and we now need to get the basename of the file back
-                            while (path.len > 0) {
-                                if (bun.strings.startsWithChar(path, '/')) {
-                                    path = path[1..];
-                                    break;
-                                } else {
-                                    path = path[1..];
-                                }
-                            }
 
+                        if (path.len == 0) {
+                            // Since we're using fsevents to watch the file itself handle_path == path, and we now need to get the basename of the file back
+                            const basename = bun.strings.lastIndexOfChar(handle_path, '/') orelse handle_path.len;
+                            path = handle_path[basename..];
                             // Created and Removed seem to be always set, but don't make sense
                             flags &= ~kFSEventsRenamed;
-                        } else {
+                        }
+
+                        if (bun.strings.startsWithChar(path, '/')) {
                             // Skip forward slash
                             path = path[1..];
                         }

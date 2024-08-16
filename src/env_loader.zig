@@ -38,7 +38,7 @@ pub const Loader = struct {
     @".env": ?logger.Source = null,
 
     // only populated with files specified explicitely (e.g. --env-file arg)
-    custom_files_loaded: std.StringArrayHashMap(logger.Source),
+    custom_files_loaded: bun.StringArrayHashMap(logger.Source),
 
     quiet: bool = false,
 
@@ -112,6 +112,9 @@ pub const Loader = struct {
         }
     }
 
+    /// Checks whether `NODE_TLS_REJECT_UNAUTHORIZED` is set to `0` or `false`.
+    ///
+    /// **Prefer VirtualMachine.getTLSRejectUnauthorized()** for JavaScript, as individual workers could have different settings.
     pub fn getTLSRejectUnauthorized(this: *Loader) bool {
         if (this.reject_unauthorized) |reject_unauthorized| {
             return reject_unauthorized;
@@ -448,7 +451,7 @@ pub const Loader = struct {
         return Loader{
             .map = map,
             .allocator = allocator,
-            .custom_files_loaded = std.StringArrayHashMap(logger.Source).init(allocator),
+            .custom_files_loaded = bun.StringArrayHashMap(logger.Source).init(allocator),
         };
     }
 
@@ -1085,7 +1088,7 @@ const Parser = struct {
 };
 
 pub const Map = struct {
-    const HashTableValue = struct {
+    pub const HashTableValue = struct {
         value: string,
         conditional: bool,
     };
@@ -1093,7 +1096,7 @@ pub const Map = struct {
     // An issue with this exact implementation is unicode characters can technically appear in these
     // keys, and we use a simple toLowercase function that only applies to ascii, so this will make
     // some strings collide.
-    const HashTable = (if (Environment.isWindows) bun.CaseInsensitiveASCIIStringArrayHashMap else bun.StringArrayHashMap)(HashTableValue);
+    pub const HashTable = (if (Environment.isWindows) bun.CaseInsensitiveASCIIStringArrayHashMap else bun.StringArrayHashMap)(HashTableValue);
 
     const GetOrPutResult = HashTable.GetOrPutResult;
 
@@ -1267,7 +1270,11 @@ pub const Map = struct {
     }
 
     pub fn remove(this: *Map, key: string) void {
-        this.map.remove(key);
+        _ = this.map.swapRemove(key);
+    }
+
+    pub fn cloneWithAllocator(this: *const Map, new_allocator: std.mem.Allocator) !Map {
+        return .{ .map = try this.map.cloneWithAllocator(new_allocator) };
     }
 };
 

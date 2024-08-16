@@ -18,7 +18,17 @@ export function fmtCPPCharArray(str: string, nullTerminated: boolean = true) {
       .join(",") +
     (nullTerminated ? ",0" : "") +
     "}";
-  return [chars, normalized.length + (nullTerminated ? 1 : 0)];
+  return [chars, normalized.length + (nullTerminated ? 1 : 0)] as const;
+}
+
+export function addCPPCharArray(str: string, nullTerminated: boolean = true) {
+  const normalized = str.trim() + "\n";
+  return (
+    normalized
+      .split("")
+      .map(a => a.charCodeAt(0))
+      .join(",") + (nullTerminated ? ",0" : "")
+  );
 }
 
 export function declareASCIILiteral(name: string, value: string) {
@@ -65,19 +75,24 @@ export function checkAscii(str: string) {
 
 export function writeIfNotChanged(file: string, contents: string) {
   if (Array.isArray(contents)) contents = contents.join("");
+  contents = contents.replaceAll("\r\n", "\n").trim() + "\n";
 
-  if (fs.existsSync(file)) {
+  try {
     const oldContents = fs.readFileSync(file, "utf8");
     if (oldContents === contents) {
       return;
     }
-  }
+  } catch (e) {}
 
   try {
     fs.writeFileSync(file, contents);
   } catch (error) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, contents);
+  }
+
+  if (fs.readFileSync(file, "utf8") !== contents) {
+    throw new Error(`Failed to write file ${file}`);
   }
 }
 
@@ -104,4 +119,14 @@ export function pathToUpperSnakeCase(filepath: string) {
     .split(/[-_./\\]/g)
     .join("_")
     .toUpperCase();
+}
+
+export function camelCase(string: string) {
+  return string
+    .split(/[\s_]/)
+    .map((e, i) => (i ? e.charAt(0).toUpperCase() + e.slice(1).toLowerCase() : e.toLowerCase()));
+}
+
+export function pascalCase(string: string) {
+  return string.split(/[\s_]/).map((e, i) => (i ? e.charAt(0).toUpperCase() + e.slice(1) : e.toLowerCase()));
 }

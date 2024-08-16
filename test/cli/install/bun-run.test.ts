@@ -1,6 +1,6 @@
 import { file, spawn, spawnSync } from "bun";
 import { afterEach, beforeEach, expect, it, describe } from "bun:test";
-import { bunEnv, bunExe, bunEnv as env, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, bunEnv as env, isWindows, tempDirWithFiles, tmpdirSync } from "harness";
 import { rm, writeFile, exists, mkdir } from "fs/promises";
 import { join } from "path";
 import { readdirSorted } from "./dummy.registry";
@@ -279,8 +279,8 @@ console.log(minify("print(6 * 7)").code);
   expect(err1).toBe("");
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("uglify-js");
-  expect(await readdirSorted(join(run_dir, ".cache", "uglify-js"))).toEqual(["3.17.4"]);
-  expect(await exists(join(run_dir, ".cache", "uglify-js", "3.17.4", "package.json"))).toBeTrue();
+  expect(await readdirSorted(join(run_dir, ".cache", "uglify-js"))).toEqual(["3.17.4@@@1"]);
+  expect(await exists(join(run_dir, ".cache", "uglify-js", "3.17.4@@@1", "package.json"))).toBeTrue();
   const out1 = await new Response(stdout1).text();
   expect(out1.split(/\r?\n/)).toEqual(["print(42);", ""]);
   expect(await exited1).toBe(0);
@@ -304,7 +304,7 @@ console.log(minify("print(6 * 7)").code);
   expect(err2).toBe("");
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("uglify-js");
-  expect(await readdirSorted(join(run_dir, ".cache", "uglify-js"))).toEqual(["3.17.4"]);
+  expect(await readdirSorted(join(run_dir, ".cache", "uglify-js"))).toEqual(["3.17.4@@@1"]);
   const out2 = await new Response(stdout2).text();
   expect(out2.split(/\r?\n/)).toEqual(["print(42);", ""]);
   expect(await exited2).toBe(0);
@@ -343,9 +343,9 @@ for (const entry of await decompress(Buffer.from(buffer))) {
   expect(err1).toBe("");
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("decompress");
-  expect(await readdirSorted(join(run_dir, ".cache", "decompress"))).toEqual(["4.2.1"]);
-  expect(await exists(join(run_dir, ".cache", "decompress", "4.2.1", "package.json"))).toBeTrue();
-  expect(await file(join(run_dir, ".cache", "decompress", "4.2.1", "index.js")).text()).toContain(
+  expect(await readdirSorted(join(run_dir, ".cache", "decompress"))).toEqual(["4.2.1@@@1"]);
+  expect(await exists(join(run_dir, ".cache", "decompress", "4.2.1@@@1", "package.json"))).toBeTrue();
+  expect(await file(join(run_dir, ".cache", "decompress", "4.2.1@@@1", "index.js")).text()).toContain(
     "\nmodule.exports = ",
   );
   const out1 = await new Response(stdout1).text();
@@ -376,9 +376,9 @@ for (const entry of await decompress(Buffer.from(buffer))) {
   if (err2) throw new Error(err2);
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("decompress");
-  expect(await readdirSorted(join(run_dir, ".cache", "decompress"))).toEqual(["4.2.1"]);
-  expect(await exists(join(run_dir, ".cache", "decompress", "4.2.1", "package.json"))).toBeTrue();
-  expect(await file(join(run_dir, ".cache", "decompress", "4.2.1", "index.js")).text()).toContain(
+  expect(await readdirSorted(join(run_dir, ".cache", "decompress"))).toEqual(["4.2.1@@@1"]);
+  expect(await exists(join(run_dir, ".cache", "decompress", "4.2.1@@@1", "package.json"))).toBeTrue();
+  expect(await file(join(run_dir, ".cache", "decompress", "4.2.1@@@1", "index.js")).text()).toContain(
     "\nmodule.exports = ",
   );
   const out2 = await new Response(stdout2).text();
@@ -436,4 +436,42 @@ it("should show the correct working directory when run with --cwd", async () => 
   // The exit code will not be 1 if it panics.
   expect(await res.exited).toBe(0);
   expect(await Bun.readableStreamToText(res.stdout)).toMatch(/subdir/);
+});
+
+it("DCE annotations are respected", () => {
+  const dir = tempDirWithFiles("test", {
+    "index.ts": `
+      /* @__PURE__ */ console.log("Hello, world!");
+    `,
+  });
+
+  const { stdout, stderr, exitCode } = spawnSync({
+    cmd: [bunExe(), "run", "index.ts"],
+    cwd: dir,
+    env: bunEnv,
+  });
+
+  expect(exitCode).toBe(0);
+
+  expect(stderr.toString()).toBe("");
+  expect(stdout.toString()).toBe("");
+});
+
+it("--ignore-dce-annotations ignores DCE annotations", () => {
+  const dir = tempDirWithFiles("test", {
+    "index.ts": `
+      /* @__PURE__ */ console.log("Hello, world!");
+    `,
+  });
+
+  const { stdout, stderr, exitCode } = spawnSync({
+    cmd: [bunExe(), "--ignore-dce-annotations", "run", "index.ts"],
+    cwd: dir,
+    env: bunEnv,
+  });
+
+  expect(exitCode).toBe(0);
+
+  expect(stderr.toString()).toBe("");
+  expect(stdout.toString()).toBe("Hello, world!\n");
 });

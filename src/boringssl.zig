@@ -90,10 +90,10 @@ pub fn canonicalizeIP(addr_str: []const u8, outIP: *[INET6_ADDRSTRLEN + 1]u8) ?[
     bun.copy(u8, outIP, addr_str);
     outIP[addr_str.len] = 0;
 
-    var af: c_int = std.os.AF.INET;
+    var af: c_int = std.posix.AF.INET;
     // get the standard text representation of the IP
     if (c_ares.ares_inet_pton(af, outIP, &ip_std_text) <= 0) {
-        af = std.os.AF.INET6;
+        af = std.posix.AF.INET6;
         if (c_ares.ares_inet_pton(af, outIP, &ip_std_text) <= 0) {
             return null;
         }
@@ -110,7 +110,7 @@ pub fn canonicalizeIP(addr_str: []const u8, outIP: *[INET6_ADDRSTRLEN + 1]u8) ?[
 /// converts ASN1_OCTET_STRING to canonicalized IP string
 /// return null when the IP is invalid
 pub fn ip2String(ip: *boring.ASN1_OCTET_STRING, outIP: *[INET6_ADDRSTRLEN + 1]u8) ?[]const u8 {
-    const af: c_int = if (ip.length == 4) std.os.AF.INET else std.os.AF.INET6;
+    const af: c_int = if (ip.length == 4) std.posix.AF.INET else std.posix.AF.INET6;
     if (c_ares.ares_inet_ntop(af, ip.data, outIP, outIP.len) == null) {
         return null;
     }

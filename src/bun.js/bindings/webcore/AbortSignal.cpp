@@ -32,15 +32,18 @@
 #include "Event.h"
 #include "EventNames.h"
 #include "JSDOMException.h"
+#include "JavaScriptCore/JSCJSValue.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreOpaqueRoot.h"
+#include "wtf/DebugHeap.h"
+#include "wtf/FastMalloc.h"
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/JSCast.h>
 #include <wtf/IsoMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_ISO_ALLOCATED_IMPL(AbortSignal);
+DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(AbortSignal);
 
 Ref<AbortSignal> AbortSignal::create(ScriptExecutionContext* context)
 {
@@ -110,6 +113,20 @@ AbortSignal::AbortSignal(ScriptExecutionContext* context, Aborted aborted, JSC::
 
 AbortSignal::~AbortSignal() = default;
 
+JSValue AbortSignal::jsReason(JSC::JSGlobalObject& globalObject)
+{
+    JSValue existingValue = m_reason.getValue(jsUndefined());
+    if (existingValue.isUndefined()) {
+        if (m_commonReason != CommonAbortReason::None) {
+            existingValue = toJS(&globalObject, m_commonReason);
+            m_commonReason = CommonAbortReason::None;
+            m_reason.setWeakly(existingValue);
+        }
+    }
+
+    return existingValue;
+}
+
 void AbortSignal::addSourceSignal(AbortSignal& signal)
 {
     if (signal.isDependent()) {
@@ -156,6 +173,20 @@ void AbortSignal::signalAbort(JSC::JSValue reason)
 
     // 5. Fire an event named abort at signal.
     dispatchEvent(Event::create(eventNames().abortEvent, Event::CanBubble::No, Event::IsCancelable::No));
+
+    // 6. For each dependent signal of signal, call signal's signalAbort method with reason.
+    for (Ref dependentSignal : std::exchange(m_dependentSignals, {}))
+        dependentSignal->signalAbort(reason);
+}
+
+void AbortSignal::signalAbort(JSC::JSGlobalObject* globalObject, CommonAbortReason reason)
+{
+    // 1. If signal's aborted flag is set, then return.
+    if (m_aborted)
+        return;
+
+    m_commonReason = reason;
+    signalAbort(toJS(globalObject, reason));
 }
 
 void AbortSignal::cleanNativeBindings(void* ref)
@@ -177,7 +208,7 @@ void AbortSignal::signalFollow(AbortSignal& signal)
         return;
 
     if (signal.aborted()) {
-        signalAbort(signal.reason().getValue());
+        signalAbort(signal.jsReason(*scriptExecutionContext()->jsGlobalObject()));
         return;
     }
 
@@ -197,7 +228,8 @@ void AbortSignal::eventListenersDidChange()
 uint32_t AbortSignal::addAbortAlgorithmToSignal(AbortSignal& signal, Ref<AbortAlgorithm>&& algorithm)
 {
     if (signal.aborted()) {
-        algorithm->handleEvent(signal.m_reason.getValue());
+        // TODO: Null check.
+        algorithm->handleEvent(signal.jsReason(*signal.scriptExecutionContext()->jsGlobalObject()));
         return 0;
     }
     return signal.addAlgorithm([algorithm = WTFMove(algorithm)](JSC::JSValue value) mutable {

@@ -68,11 +68,11 @@ const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const bunSocketInternal = Symbol.for("::bunnetsocketinternal::");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 
-function closeNT(self) {
-  self.emit("close");
-}
 function endNT(socket, callback, err) {
   socket.end();
+  callback(err);
+}
+function closeNT(callback, err) {
   callback(err);
 }
 
@@ -109,7 +109,7 @@ const Socket = (function (InternalSocket) {
         queue.push(buffer);
       },
       drain: Socket.#Drain,
-      end: Socket.#Close,
+      end: Socket.#End,
       error(socket, error) {
         const self = socket.data;
         if (!self) return;
@@ -187,17 +187,37 @@ const Socket = (function (InternalSocket) {
       binaryType: "buffer",
     };
 
+    static #End(socket) {
+      const self = socket.data;
+      if (!self) return;
+      self.#ended = true;
+      const queue = self.#readQueue;
+      if (queue.isEmpty()) {
+        if (self.push(null)) {
+          return;
+        }
+      }
+      queue.push(null);
+    }
     static #Close(socket) {
       const self = socket.data;
       if (!self || self.#closed) return;
       self.#closed = true;
       //socket cannot be used after close
       self[bunSocketInternal] = null;
-      const queue = self.#readQueue;
-      if (queue.isEmpty()) {
-        if (self.push(null)) return;
+      const finalCallback = self.#final_callback;
+      if (finalCallback) {
+        self.#final_callback = null;
+        finalCallback();
+        return;
       }
-      queue.push(null);
+      if (!self.#ended) {
+        const queue = self.#readQueue;
+        if (queue.isEmpty()) {
+          if (self.push(null)) return;
+        }
+        queue.push(null);
+      }
     }
 
     static #Drain(socket) {
@@ -322,6 +342,8 @@ const Socket = (function (InternalSocket) {
     bytesRead = 0;
     bytesWritten = 0;
     #closed = false;
+    #ended = false;
+    #final_callback = null;
     connecting = false;
     localAddress = "127.0.0.1";
     #readQueue = $createFIFO();
@@ -419,7 +441,6 @@ const Socket = (function (InternalSocket) {
       connection[bunSocketInternal] = null;
       connection.unref();
       connection.destroy();
-      process.nextTick(closeNT, connection);
     }
 
     connect(...args) {
@@ -609,14 +630,21 @@ const Socket = (function (InternalSocket) {
     }
 
     _destroy(err, callback) {
-      const socket = this[bunSocketInternal];
-      socket && process.nextTick(endNT, socket, callback, err);
+      process.nextTick(closeNT, callback, err);
     }
 
     _final(callback) {
-      this[bunSocketInternal]?.end();
-      callback();
-      process.nextTick(closeNT, this);
+      const socket = this[bunSocketInternal];
+      // already closed call destroy
+      if (!socket) return callback();
+
+      if (this.allowHalfOpen) {
+        // wait socket close event
+        this.#final_callback = callback;
+      } else {
+        // emit FIN not allowing half open
+        process.nextTick(endNT, socket, callback);
+      }
     }
 
     get localFamily() {
@@ -655,9 +683,10 @@ const Socket = (function (InternalSocket) {
       const socket = this[bunSocketInternal];
       if (!socket) {
         this.#unrefOnConnected = false;
-        return;
+        return this;
       }
       socket.ref();
+      return this;
     }
 
     get remoteAddress() {
@@ -693,9 +722,10 @@ const Socket = (function (InternalSocket) {
       const socket = this[bunSocketInternal];
       if (!socket) {
         this.#unrefOnConnected = true;
-        return;
+        return this;
       }
       socket.unref();
+      return this;
     }
 
     _write(chunk, encoding, callback) {
@@ -975,7 +1005,7 @@ function emitErrorAndCloseNextTick(self, error) {
 function emitListeningNextTick(self, onListen) {
   if (typeof onListen === "function") {
     try {
-      onListen();
+      onListen.$call(self);
     } catch (err) {
       self.emit("error", err);
     }

@@ -309,7 +309,7 @@ describe("FormData", () => {
       },
     });
 
-    const reqBody = new Request(`http://${server.hostname}:${server.port}`, {
+    const reqBody = new Request(server.url, {
       body: '--foo\r\nContent-Disposition: form-data; name="foo"; filename="bar"\r\n\r\nbaz\r\n--foo--\r\n\r\n',
       headers: {
         "Content-Type": "multipart/form-data; boundary=foo",
@@ -332,7 +332,7 @@ describe("FormData", () => {
       },
     });
 
-    const reqBody = new Request(`http://${server.hostname}:${server.port}`, {
+    const reqBody = new Request(server.url, {
       body: '--foo\r\nContent-Disposition: form-data; name="foo"; filename="bar"\r\n\r\nbaz\r\n--foo--\r\n\r\n',
       headers: {
         "Content-Type": "multipart/form-data; boundary=foo",
@@ -355,7 +355,15 @@ describe("FormData", () => {
           return fetch(...(args as FetchURLArgs));
         }
       }
-      for (let headers of [{} as {}, undefined, { headers: { X: "Y" } }]) {
+      for (let headers of [
+        {} as {},
+        undefined,
+        new Headers(),
+        new Headers({ x: "y" }),
+        new Headers([["x", "y"]]),
+        { X: "Y" },
+        { headers: { X: "Y" } },
+      ]) {
         describe("headers: " + Bun.inspect(headers).replaceAll(/([\n ])/gim, ""), () => {
           it("send on HTTP server with FormData & Blob (roundtrip)", async () => {
             let contentType = "";
@@ -375,7 +383,7 @@ describe("FormData", () => {
 
             // @ts-ignore
             const reqBody: FetchURLArgs = [
-              `http://${server.hostname}:${server.port}`,
+              server.url,
               {
                 body: form,
                 headers,
@@ -407,7 +415,7 @@ describe("FormData", () => {
             form.append("bar", "baz");
 
             const reqBody = [
-              `http://${server.hostname}:${server.port}`,
+              server.url,
               {
                 body: form,
 
@@ -441,7 +449,7 @@ describe("FormData", () => {
 
             // @ts-ignore
             const reqBody = [
-              `http://${server.hostname}:${server.port}`,
+              server.url,
               {
                 body: form,
 

@@ -23,7 +23,7 @@ pub const Mode = enum {
     /// This must match the behavior of node.js, and supports bun <--> node.js/etc communication.
     json,
 
-    const Map = std.ComptimeStringMap(Mode, .{
+    const Map = bun.ComptimeStringMap(Mode, .{
         .{ "advanced", .advanced },
         .{ "json", .json },
     });
@@ -83,7 +83,7 @@ const advanced = struct {
 
         log("Received IPC message type {d} ({s}) len {d}", .{
             @intFromEnum(message_type),
-            std.enums.tagName(IPCMessageType, message_type) orelse "unknown",
+            bun.tagName(IPCMessageType, message_type) orelse "unknown",
             message_len,
         });
 
@@ -392,43 +392,52 @@ const NamedPipeIPCData = struct {
         }
     }
 
-    pub fn configureServer(this: *NamedPipeIPCData, comptime Context: type, instance: *Context, named_pipe: []const u8) JSC.Maybe(void) {
+    pub fn configureServer(this: *NamedPipeIPCData, comptime Context: type, instance: *Context, ipc_pipe: *uv.Pipe) JSC.Maybe(void) {
         log("configureServer", .{});
-        const ipc_pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory();
         this.server = ipc_pipe;
-        ipc_pipe.data = this;
-        if (ipc_pipe.init(uv.Loop.get(), false).asErr()) |err| {
-            bun.default_allocator.destroy(ipc_pipe);
-            this.server = null;
-            return .{ .err = err };
-        }
         ipc_pipe.data = @ptrCast(instance);
         this.onClose = .{
             .callback = @ptrCast(&NewNamedPipeIPCHandler(Context).onClose),
             .context = @ptrCast(instance),
         };
-        if (ipc_pipe.listenNamedPipe(named_pipe, 0, instance, NewNamedPipeIPCHandler(Context).onNewClientConnect).asErr()) |err| {
-            bun.default_allocator.destroy(ipc_pipe);
-            this.server = null;
-            return .{ .err = err };
-        }
-
-        ipc_pipe.setPendingInstancesCount(1);
-
+        this.connected = true;
         ipc_pipe.unref();
 
+        const startPipeResult = this.writer.startWithPipe(ipc_pipe);
+        if (startPipeResult == .err) {
+            this.close();
+            return startPipeResult;
+        }
+
+        const stream = this.writer.getStream() orelse {
+            this.close();
+            return JSC.Maybe(void).errno(bun.C.E.PIPE, .pipe);
+        };
+
+        const readStartResult = stream.readStart(instance, NewNamedPipeIPCHandler(Context).onReadAlloc, NewNamedPipeIPCHandler(Context).onReadError, NewNamedPipeIPCHandler(Context).onRead);
+        if (readStartResult == .err) {
+            this.close();
+            return readStartResult;
+        }
         return .{ .result = {} };
     }
 
-    pub fn configureClient(this: *NamedPipeIPCData, comptime Context: type, instance: *Context, named_pipe: []const u8) !void {
+    pub fn configureClient(this: *NamedPipeIPCData, comptime Context: type, instance: *Context, pipe_fd: bun.FileDescriptor) !void {
         log("configureClient", .{});
         const ipc_pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory();
         ipc_pipe.init(uv.Loop.get(), true).unwrap() catch |err| {
             bun.default_allocator.destroy(ipc_pipe);
             return err;
         };
-        this.writer.startWithPipe(ipc_pipe).unwrap() catch |err| {
+        ipc_pipe.open(pipe_fd).unwrap() catch |err| {
             bun.default_allocator.destroy(ipc_pipe);
+            return err;
+        };
+        ipc_pipe.unref();
+        this.connected = true;
+
+        this.writer.startWithPipe(ipc_pipe).unwrap() catch |err| {
+            this.close();
             return err;
         };
         this.connect_req.data = @ptrCast(instance);
@@ -436,7 +445,16 @@ const NamedPipeIPCData = struct {
             .callback = @ptrCast(&NewNamedPipeIPCHandler(Context).onClose),
             .context = @ptrCast(instance),
         };
-        try ipc_pipe.connect(&this.connect_req, named_pipe, instance, NewNamedPipeIPCHandler(Context).onConnect).unwrap();
+
+        const stream = this.writer.getStream() orelse {
+            this.close();
+            return error.FailedToConnectIPC;
+        };
+
+        stream.readStart(instance, NewNamedPipeIPCHandler(Context).onReadAlloc, NewNamedPipeIPCHandler(Context).onReadError, NewNamedPipeIPCHandler(Context).onRead).unwrap() catch |err| {
+            this.close();
+            return err;
+        };
     }
 
     fn deinit(this: *NamedPipeIPCData) void {
@@ -719,30 +737,6 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
 
         pub fn onClose(this: *Context) void {
             this.handleIPCClose();
-        }
-
-        fn onConnect(this: *Context, status: uv.ReturnCode) void {
-            const ipc = this.ipc();
-
-            log("onConnect {d}", .{status.int()});
-            ipc.connected = true;
-
-            if (status.errEnum()) |_| {
-                Output.printErrorln("Failed to connect IPC pipe", .{});
-                return;
-            }
-            const stream = ipc.writer.getStream() orelse {
-                ipc.close();
-                Output.printErrorln("Failed to connect IPC pipe", .{});
-                return;
-            };
-
-            stream.readStart(this, onReadAlloc, onReadError, onRead).unwrap() catch {
-                ipc.close();
-                Output.printErrorln("Failed to connect IPC pipe", .{});
-                return;
-            };
-            _ = ipc.writer.flush();
         }
     };
 }

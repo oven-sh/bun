@@ -549,7 +549,7 @@ pub const Msg = struct {
         }
     }
 
-    pub fn formatNoWriter(msg: *const Msg, comptime formatterFunc: @TypeOf(Global.panic)) void {
+    pub fn formatNoWriter(msg: *const Msg, comptime formatterFunc: @TypeOf(Output.panic)) void {
         formatterFunc("\n\n{s}: {s}\n{s}\n{s}:{}:{} ({d})", .{
             msg.kind.string(),
             msg.data.text,
@@ -717,7 +717,7 @@ pub const Log = struct {
 
         const count = @as(u16, @intCast(@min(msgs.len, errors_stack.len)));
         switch (count) {
-            0 => return JSC.JSValue.jsUndefined(),
+            0 => return .undefined,
             1 => {
                 const msg = msgs[0];
                 return switch (msg.metadata) {
@@ -1002,6 +1002,10 @@ pub const Log = struct {
             .data = try rangeData(source, r, allocPrint(allocator, fmt, args) catch unreachable).cloneLineText(log.clone_line_text, log.msgs.allocator),
             .notes = notes,
         });
+    }
+
+    pub fn addErrorFmtNoLoc(log: *Log, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
+        try log.addErrorFmt(null, Loc.Empty, allocator, text, args);
     }
 
     pub fn addErrorFmt(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {

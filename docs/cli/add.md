@@ -35,6 +35,10 @@ $ bun add --optional lodash
 
 ## `--exact`
 
+{% callout %}
+**Alias** — `-E`
+{% /callout %}
+
 To add a package and pin to the resolved version, use `--exact`. This will resolve the version of the package and add it to your `package.json` with an exact version number instead of a version range.
 
 ```bash
@@ -117,11 +121,15 @@ Bun reads this field and will run lifecycle scripts for `my-trusted-package`.
 
 ## Git dependencies
 
-To add a dependency from a git repository:
+To add a dependency from a public or private git repository:
 
 ```bash
 $ bun add git@github.com:moment/moment.git
 ```
+
+{% callout %}
+**Note** — To install private repositories, your system needs the appropriate SSH credentials to access the repository.
+{% /callout %}
 
 Bun supports a variety of protocols, including [`github`](https://docs.npmjs.com/cli/v9/configuring-npm/package-json#github-urls), [`git`](https://docs.npmjs.com/cli/v9/configuring-npm/package-json#git-urls-as-dependencies), `git+ssh`, `git+https`, and many more.
 

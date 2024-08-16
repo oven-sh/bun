@@ -3,7 +3,7 @@ const std = @import("std");
 const CompressionFramework = struct {
     var handle: ?*anyopaque = null;
     pub fn load() !void {
-        handle = std.os.darwin.dlopen("libcompression.dylib", 1);
+        handle = std.posix.darwin.dlopen("libcompression.dylib", 1);
 
         if (handle == null)
             return error.@"failed to load Compression.framework";
@@ -247,7 +247,7 @@ pub fn main() anyerror!void {
 
     if (algorithm == null or operation == null) {
         try std.io.getStdErr().writer().print("to compress: {s} ./file ./out.{{br,gz,lz4,lzfse}}\nto decompress: {s} ./out.{{br,gz,lz4,lzfse}} ./out\n", .{ argv0, argv0 });
-        std.os.exit(1);
+        std.posix.exit(1);
     }
 
     var output_file: std.fs.File = undefined;

@@ -20,11 +20,8 @@ try {
   Run clang-cl -DTCC_TARGET_PE -DTCC_TARGET_X86_64 config.h -DC2STR -o c2str.exe conftest.c
   Run .\c2str.exe .\include\tccdefs.h tccdefs_.h
 
-  $Baseline = $env:BUN_DEV_ENV_SET -eq "Baseline=True"
-
-  # TODO: -MT
-  Run clang-cl @($env:CFLAGS -split ' ') libtcc.c -o tcc.obj "-DTCC_TARGET_PE" "-DTCC_TARGET_X86_64" "-O2" "-W2" "-Zi" "-MD" "-GS-" "-c"
-  Run lib "tcc.obj" "-OUT:tcc.lib"
+  Run clang-cl @($env:CFLAGS -split ' ') libtcc.c -o tcc.obj "-DTCC_TARGET_PE" "-DTCC_TARGET_X86_64" "-O2" "-W2" "-Zi" "-MD" "-GS-" "-c" "-MT"
+  Run llvm-lib "tcc.obj" "-OUT:tcc.lib"
 
   Copy-Item tcc.obj $BUN_DEPS_OUT_DIR/tcc.lib
 

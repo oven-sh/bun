@@ -66,10 +66,6 @@ export default [
         },
         length: 2,
       },
-      randomInt: {
-        fn: "randomInt",
-        length: 2,
-      },
       scryptSync: {
         fn: "doScryptSync",
         length: 2,

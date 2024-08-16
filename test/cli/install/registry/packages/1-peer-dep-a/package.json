@@ -1,0 +1,41 @@
+{
+	"name": "1-peer-dep-a",
+	"versions": {
+		"1.0.0": {
+			"name": "1-peer-dep-a",
+			"version": "1.0.0",
+			"peerDependencies": {
+				"no-deps": "1.0.0"
+			},
+			"_id": "1-peer-dep-a@1.0.0",
+			"_nodeVersion": "22.2.0",
+			"_npmVersion": "10.8.1",
+			"dist": {
+				"integrity": "sha512-3/umyUbtshrpVD5PsBcJ+1ol0+WeRK/hh2xX2Y0nGEBXyxoHtTJLeEK6+OVp0+FaFBRrjysrcRYu3c/HR68a2Q==",
+				"shasum": "f7f30c5cd2b8cfaf5486feac117bc5bdbe37a07d",
+				"tarball": "http://localhost:4873/1-peer-dep-a/-/1-peer-dep-a-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-06-10T02:08:02.190Z",
+		"created": "2024-06-10T02:08:02.190Z",
+		"1.0.0": "2024-06-10T02:08:02.190Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"1-peer-dep-a-1.0.0.tgz": {
+			"shasum": "f7f30c5cd2b8cfaf5486feac117bc5bdbe37a07d",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "1-peer-dep-a",
+	"readme": "ERROR: No README data found!"
+}

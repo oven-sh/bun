@@ -37,6 +37,8 @@ public:
 
     ~Process();
 
+    bool m_isExitCodeObservable = false;
+
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject,
@@ -71,11 +73,13 @@ public:
 
     void finishCreation(JSC::VM& vm);
 
-    inline void setUncaughtExceptionCaptureCallback(JSC::JSValue callback) {
+    inline void setUncaughtExceptionCaptureCallback(JSC::JSValue callback)
+    {
         m_uncaughtExceptionCaptureCallback.set(vm(), this, callback);
     }
 
-    inline JSC::JSValue getUncaughtExceptionCaptureCallback() {
+    inline JSC::JSValue getUncaughtExceptionCaptureCallback()
+    {
         return m_uncaughtExceptionCaptureCallback.get();
     }
 

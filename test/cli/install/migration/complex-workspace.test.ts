@@ -76,9 +76,7 @@ validate("node_modules/svelte", "4.1.2");
 validate("packages/second/node_modules/svelte", "4.1.0");
 validate("packages/with-postinstall/node_modules/svelte", "3.50.0");
 // validate("packages/body-parser/node_modules/svelte", "0.2.0", "public-install-test");
-// NOTE: bun hoists this dependency higher than npm
-// npm places this in node_modules/express
-validate("packages/second/node_modules/express", "1.0.0", "svelte");
+validate("node_modules/express", "1.0.0", "svelte");
 
 // install test
 // validate("node_modules/install-test", "0.3.0", "publicinstalltest");
@@ -95,9 +93,7 @@ mustNotExist("packages/second/node_modules/hello/version.txt");
 
 // body parser
 validate("node_modules/body-parser", "200.0.0");
-// NOTE: bun hoists this dependency higher than npm
-// npm places this in node_modules/not-body-parser
-validate("packages/second/node_modules/not-body-parser", "200.0.0", "body-parser");
+validate("node_modules/not-body-parser", "200.0.0", "body-parser");
 // NOTE: bun install doesnt properly handle npm aliased dependencies
 // validate("packages/second/node_modules/connect", "200.0.0", "body-parser");
 validate("packages/second/node_modules/body-parser", "3.21.2", "express");

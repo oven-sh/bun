@@ -71,7 +71,6 @@ const Config = @import("../config.zig");
 const URL = @import("../../url.zig").URL;
 const VirtualMachine = JSC.VirtualMachine;
 const IOTask = JSC.IOTask;
-const ComptimeStringMap = @import("../../comptime_string_map.zig").ComptimeStringMap;
 
 const TCC = @import("../../tcc.zig");
 
@@ -146,7 +145,7 @@ pub const FFI = struct {
     ) callconv(.C) JSValue {
         JSC.markBinding(@src());
         if (this.closed) {
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
         this.closed = true;
         if (this.dylib) |*dylib| {
@@ -161,7 +160,7 @@ pub const FFI = struct {
         }
         this.functions.deinit(allocator);
 
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
 
     pub fn printCallback(global: *JSGlobalObject, object: JSC.JSValue) JSValue {
@@ -186,7 +185,7 @@ pub const FFI = struct {
         function.printCallbackSourceCode(null, null, &writer) catch {
             return ZigString.init("Error while printing code").toErrorInstance(global);
         };
-        return ZigString.init(arraylist.items).toValueGC(global);
+        return ZigString.init(arraylist.items).toJS(global);
     }
 
     pub fn print(global: *JSGlobalObject, object: JSC.JSValue, is_callback_val: ?JSC.JSValue) JSValue {
@@ -327,7 +326,7 @@ pub const FFI = struct {
                 break :brk std.DynLib.open(backup_name) catch {
                     // Then, if that fails, report an error.
                     const system_error = JSC.SystemError{
-                        .code = bun.String.createUTF8(@tagName(JSC.Node.ErrorCode.ERR_DLOPEN_FAILED)),
+                        .code = bun.String.createUTF8(@tagName(.ERR_DLOPEN_FAILED)),
                         .message = bun.String.createUTF8("Failed to open library. This is usually caused by a missing library or an invalid library path."),
                         .syscall = bun.String.createUTF8("dlopen"),
                     };
@@ -425,7 +424,7 @@ pub const FFI = struct {
         return js_object;
     }
 
-    pub fn getSymbols(_: *FFI, _: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+    pub fn getSymbols(_: *FFI, _: *JSC.JSGlobalObject) JSC.JSValue {
         // This shouldn't be called. The cachedValue is what should be called.
         return .undefined;
     }
@@ -569,7 +568,7 @@ pub const FFI = struct {
                 defer type_name.deinit();
                 abi_types.appendAssumeCapacity(ABIType.label.get(type_name.slice()) orelse {
                     abi_types.clearAndFree(allocator);
-                    return JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE, "Unknown type {s}", .{type_name.slice()}, global);
+                    return JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "Unknown type {s}", .{type_name.slice()}, global);
                 });
             }
         }
@@ -601,7 +600,7 @@ pub const FFI = struct {
             defer ret_slice.deinit();
             return_type = ABIType.label.get(ret_slice.slice()) orelse {
                 abi_types.clearAndFree(allocator);
-                return JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE, "Unknown return type {s}", .{ret_slice.slice()}, global);
+                return JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "Unknown return type {s}", .{ret_slice.slice()}, global);
             };
         }
 
@@ -649,7 +648,7 @@ pub const FFI = struct {
             const value = symbols_iter.value;
 
             if (value.isEmptyOrUndefinedOrNull()) {
-                return JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE, "Expected an object for key \"{any}\"", .{prop}, global);
+                return JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "Expected an object for key \"{any}\"", .{prop}, global);
             }
 
             var function: Function = .{};
@@ -959,12 +958,12 @@ pub const FFI = struct {
             const ffi_wrapper = Bun__createFFICallbackFunction(js_context, js_function);
             try this.printCallbackSourceCode(js_context, ffi_wrapper, &source_code_writer);
 
-            if (comptime Environment.allow_assert and Environment.isPosix) {
+            if (comptime Environment.isDebug and Environment.isPosix) {
                 debug_write: {
-                    const fd = std.os.open("/tmp/bun-ffi-callback-source.c", std.os.O.WRONLY | std.os.O.CREAT, 0o644) catch break :debug_write;
-                    _ = std.os.write(fd, source_code.items) catch break :debug_write;
-                    std.os.ftruncate(fd, source_code.items.len) catch break :debug_write;
-                    std.os.close(fd);
+                    const fd = std.posix.open("/tmp/bun-ffi-callback-source.c", .{ .CREAT = true, .ACCMODE = .WRONLY }, 0o644) catch break :debug_write;
+                    _ = std.posix.write(fd, source_code.items) catch break :debug_write;
+                    std.posix.ftruncate(fd, source_code.items.len) catch break :debug_write;
+                    std.posix.close(fd);
                 }
             }
 
@@ -1416,7 +1415,7 @@ pub const FFI = struct {
             .{ "callback", ABIType.function },
             .{ "fn", ABIType.function },
         };
-        pub const label = ComptimeStringMap(ABIType, map);
+        pub const label = bun.ComptimeStringMap(ABIType, map);
         const EnumMapFormatter = struct {
             name: []const u8,
             entry: ABIType,

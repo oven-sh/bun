@@ -66,7 +66,9 @@ pub const index: Index = if (Environment.isDebug) Index.initFill(&.{"OOMWorkArou
                 break;
             }
         }
-        array.set(@as(FirstLetter, @enumFromInt(i)), &record);
+
+        const cloned = record;
+        array.set(@as(FirstLetter, @enumFromInt(i)), &cloned);
 
         @setEvalBranchQuota(999999);
         i = next_i;

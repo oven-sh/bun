@@ -12,7 +12,7 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const Which = @import("../which.zig");
 const Output = bun.Output;
 const PosixSpawn = @import("../bun.js/api/bun/spawn.zig").PosixSpawn;
-const os = std.os;
+const posix = std.posix;
 
 pub const OutKind = enum {
     stdout,
@@ -27,4 +27,4 @@ pub const OutKind = enum {
 
 pub const Stdio = bun.spawn.Stdio;
 
-pub const WatchFd = if (Environment.isLinux) std.os.fd_t else i32;
+pub const WatchFd = if (Environment.isLinux) posix.fd_t else i32;

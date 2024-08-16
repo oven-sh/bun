@@ -55,7 +55,7 @@ update_repo_if_needed() {
     zig_version_previous=$(grep 'recommended_zig_version = "' "build.zig" | cut -d'"' -f2)
 
     for file in ${files[@]}; do
-      sed -i '' 's/'"${zig_version_previous}"'/'"${zig_version}"'/g' "$file"
+      sed -i 's/'"${zig_version_previous}"'/'"${zig_version}"'/g' "$file"
     done
 
     printf "Zig was updated to ${zig_version}. Please commit new files."

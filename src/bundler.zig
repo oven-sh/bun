@@ -439,11 +439,10 @@ pub const Bundler = struct {
         opts: Api.TransformOptions,
         env_loader_: ?*DotEnv.Loader,
     ) !Bundler {
-        js_ast.Expr.Data.Store.create(allocator);
-        js_ast.Stmt.Data.Store.create(allocator);
-        const fs = try Fs.FileSystem.init(
-            opts.absolute_working_dir,
-        );
+        js_ast.Expr.Data.Store.create();
+        js_ast.Stmt.Data.Store.create();
+
+        const fs = try Fs.FileSystem.init(opts.absolute_working_dir);
         const bundle_options = try options.BundleOptions.fromApi(
             allocator,
             fs,
@@ -576,8 +575,8 @@ pub const Bundler = struct {
 
         this.options.jsx.setProduction(this.env.isProduction());
 
-        js_ast.Expr.Data.Store.create(this.allocator);
-        js_ast.Stmt.Data.Store.create(this.allocator);
+        js_ast.Expr.Data.Store.create();
+        js_ast.Stmt.Data.Store.create();
 
         defer js_ast.Expr.Data.Store.reset();
         defer js_ast.Stmt.Data.Store.reset();
@@ -640,7 +639,7 @@ pub const Bundler = struct {
                 framework.resolved = true;
                 this.options.framework = framework.*;
             } else if (!framework.resolved) {
-                Global.panic("directly passing framework path is not implemented yet!", .{});
+                Output.panic("directly passing framework path is not implemented yet!", .{});
             }
         }
     }
@@ -1145,6 +1144,7 @@ pub const Bundler = struct {
                     .minify_identifiers = bundler.options.minify_identifiers,
                     .transform_only = bundler.options.transform_only,
                     .runtime_transpiler_cache = runtime_transpiler_cache,
+                    .print_dce_annotations = bundler.options.emit_dce_annotations,
                 },
                 enable_source_map,
             ),
@@ -1168,6 +1168,7 @@ pub const Bundler = struct {
                     .transform_only = bundler.options.transform_only,
                     .import_meta_ref = ast.import_meta_ref,
                     .runtime_transpiler_cache = runtime_transpiler_cache,
+                    .print_dce_annotations = bundler.options.emit_dce_annotations,
                 },
                 enable_source_map,
             ),
@@ -1200,6 +1201,8 @@ pub const Bundler = struct {
                         .inline_require_and_import_errors = false,
                         .import_meta_ref = ast.import_meta_ref,
                         .runtime_transpiler_cache = runtime_transpiler_cache,
+                        .target = bundler.options.target,
+                        .print_dce_annotations = bundler.options.emit_dce_annotations,
                     },
                     enable_source_map,
                 ),
@@ -1235,6 +1238,18 @@ pub const Bundler = struct {
         comptime format: js_printer.Format,
         handler: js_printer.SourceMapHandler,
     ) !usize {
+        if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS")) {
+            return bundler.printWithSourceMapMaybe(
+                result.ast,
+                &result.source,
+                Writer,
+                writer,
+                format,
+                false,
+                handler,
+                result.runtime_transpiler_cache,
+            );
+        }
         return bundler.printWithSourceMapMaybe(
             result.ast,
             &result.source,
@@ -1389,11 +1404,12 @@ pub const Bundler = struct {
                 opts.features.allow_runtime = bundler.options.allow_runtime;
                 opts.features.set_breakpoint_on_first_line = this_parse.set_breakpoint_on_first_line;
                 opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();
-                opts.features.should_fold_typescript_constant_expressions = loader.isTypeScript() or target.isBun() or bundler.options.minify_syntax;
                 opts.features.use_import_meta_require = target.isBun();
                 opts.features.no_macros = bundler.options.no_macros;
                 opts.features.runtime_transpiler_cache = this_parse.runtime_transpiler_cache;
                 opts.transform_only = bundler.options.transform_only;
+
+                opts.ignore_dce_annotations = bundler.options.ignore_dce_annotations;
 
                 // @bun annotation
                 opts.features.dont_bundle_twice = this_parse.dont_bundle_twice;
@@ -1651,7 +1667,7 @@ pub const Bundler = struct {
                 }
             },
             .css => {},
-            else => Global.panic("Unsupported loader {s} for path: {s}", .{ @tagName(loader), source.path.text }),
+            else => Output.panic("Unsupported loader {s} for path: {s}", .{ @tagName(loader), source.path.text }),
         }
 
         return null;

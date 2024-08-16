@@ -400,56 +400,6 @@ export function writeBigUInt64BE(this: BufferExt, value, offset) {
   return offset + 8;
 }
 
-export function utf8Write(this: BufferExt, text, offset, length) {
-  return this.write(text, offset, length, "utf8");
-}
-export function ucs2Write(this: BufferExt, text, offset, length) {
-  return this.write(text, offset, length, "ucs2");
-}
-export function utf16leWrite(this: BufferExt, text, offset, length) {
-  return this.write(text, offset, length, "utf16le");
-}
-export function latin1Write(this: BufferExt, text, offset, length) {
-  return this.write(text, offset, length, "latin1");
-}
-export function asciiWrite(this: BufferExt, text, offset, length) {
-  return this.write(text, offset, length, "ascii");
-}
-export function base64Write(this: BufferExt, text, offset, length) {
-  return this.write(text, offset, length, "base64");
-}
-export function base64urlWrite(this: BufferExt, text, offset, length) {
-  return this.write(text, offset, length, "base64url");
-}
-export function hexWrite(this: BufferExt, text, offset, length) {
-  return this.write(text, offset, length, "hex");
-}
-
-export function utf8Slice(this: BufferExt, start, end) {
-  return this.toString("utf8", start, end);
-}
-export function ucs2Slice(this: BufferExt, start, end) {
-  return this.toString("ucs2", start, end);
-}
-export function utf16leSlice(this: BufferExt, start, end) {
-  return this.toString("utf16le", start, end);
-}
-export function latin1Slice(this: BufferExt, start, end) {
-  return this.toString("latin1", start, end);
-}
-export function asciiSlice(this: BufferExt, start, end) {
-  return this.toString("ascii", start, end);
-}
-export function base64Slice(this: BufferExt, start, end) {
-  return this.toString("base64", start, end);
-}
-export function base64urlSlice(this: BufferExt, start, end) {
-  return this.toString("base64url", start, end);
-}
-export function hexSlice(this: BufferExt, start, end) {
-  return this.toString("hex", start, end);
-}
-
 export function toJSON(this: BufferExt) {
   const type = "Buffer";
   const data = Array.from(this);

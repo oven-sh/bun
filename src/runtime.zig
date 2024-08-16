@@ -199,13 +199,12 @@ pub const Fallback = struct {
 pub const Runtime = struct {
     pub const source_code = @embedFile("./runtime.out.js");
 
-    pub const version_hash = @import("build_options").runtime_js_version;
-    var version_hash_int: u32 = 0;
+    pub const hash = brk: {
+        @setEvalBranchQuota(source_code.len * 50);
+        break :brk bun.Wyhash11.hash(0, source_code);
+    };
     pub fn versionHash() u32 {
-        if (version_hash_int == 0) {
-            version_hash_int = @as(u32, @truncate(version_hash));
-        }
-        return version_hash_int;
+        return @truncate(hash);
     }
 
     pub const Features = struct {
@@ -245,7 +244,6 @@ pub const Runtime = struct {
         jsx_optimization_hoist: bool = false,
 
         trim_unused_imports: bool = false,
-        should_fold_typescript_constant_expressions: bool = false,
 
         /// Use `import.meta.require()` instead of require()?
         /// This is only supported in Bun.
@@ -287,7 +285,6 @@ pub const Runtime = struct {
             .dead_code_elimination,
             .set_breakpoint_on_first_line,
             .trim_unused_imports,
-            .should_fold_typescript_constant_expressions,
             .use_import_meta_require,
             .dont_bundle_twice,
             .commonjs_at_runtime,

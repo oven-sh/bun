@@ -424,12 +424,18 @@ function on(emitter, event, options = {}) {
   return iterator();
 }
 
-const toStringTag = Symbol.toStringTag;
+const getEventListenersForEventTarget = $newCppFunction(
+  "JSEventTargetNode.cpp",
+  "jsFunctionNodeEventsGetEventListeners",
+  1,
+);
+
 function getEventListeners(emitter, type) {
-  if (emitter?.[toStringTag] === "EventTarget") {
-    throwNotImplemented("getEventListeners with an EventTarget", 2678);
+  if ($isCallable(emitter?.listeners)) {
+    return emitter.listeners(type);
   }
-  return emitter.listeners(type);
+
+  return getEventListenersForEventTarget(emitter, type);
 }
 
 function setMaxListeners(n, ...eventTargets) {

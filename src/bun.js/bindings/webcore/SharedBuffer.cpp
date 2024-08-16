@@ -550,7 +550,7 @@ const uint8_t* DataSegment::data() const
 #if USE(GSTREAMER)
         [](const RefPtr<GstMappedOwnedBuffer>& data) -> const uint8_t* { return data->data(); },
 #endif
-        [](const FileSystem::MappedFileData& data) -> const uint8_t* { return static_cast<const uint8_t*>(data.data()); },
+        [](const FileSystem::MappedFileData& data) -> const uint8_t* { return static_cast<const uint8_t*>(data.span().data()); },
         [](const Provider& provider) -> const uint8_t* { return provider.data(); });
     return std::visit(visitor, m_immutableData);
 }
@@ -573,7 +573,7 @@ size_t DataSegment::size() const
 #if USE(GSTREAMER)
         [](const RefPtr<GstMappedOwnedBuffer>& data) -> size_t { return data->size(); },
 #endif
-        [](const FileSystem::MappedFileData& data) -> size_t { return data.size(); },
+        [](const FileSystem::MappedFileData& data) -> size_t { return data.span().size(); },
         [](const Provider& provider) -> size_t { return provider.size(); });
     return std::visit(visitor, m_immutableData);
 }
@@ -610,7 +610,7 @@ void SharedBufferBuilder::initialize(Ref<FragmentedSharedBuffer>&& buffer)
 
 RefPtr<ArrayBuffer> SharedBufferBuilder::tryCreateArrayBuffer() const
 {
-    return m_buffer ? m_buffer->tryCreateArrayBuffer() : ArrayBuffer::tryCreate(nullptr, 0);
+    return m_buffer ? m_buffer->tryCreateArrayBuffer() : ArrayBuffer::tryCreate({});
 }
 
 Ref<FragmentedSharedBuffer> SharedBufferBuilder::take()
@@ -626,7 +626,7 @@ Ref<SharedBuffer> SharedBufferBuilder::takeAsContiguous()
 RefPtr<ArrayBuffer> SharedBufferBuilder::takeAsArrayBuffer()
 {
     if (!m_buffer)
-        return ArrayBuffer::tryCreate(nullptr, 0);
+        return ArrayBuffer::tryCreate({});
     return take()->tryCreateArrayBuffer();
 }
 

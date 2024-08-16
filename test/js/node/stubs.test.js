@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 const weirdInternalSpecifiers = [
   "_http_agent",
@@ -97,4 +97,19 @@ for (let specifier of specifiers) {
 test("you can import bun:test", async () => {
   const bunTest1 = await import("bun:test" + String(""));
   const bunTest2 = require("bun:test" + String(""));
+});
+
+describe("v8.getHeapStatistics", () => {
+  const stats = require("v8").getHeapStatistics();
+
+  for (let key in stats) {
+    test(key, () => {
+      if (key === "does_zap_garbage" || key === "number_of_detached_contexts") {
+        expect(stats[key]).toBe(0);
+        return;
+      }
+      expect(stats[key]).toBeNumber();
+      expect(stats[key]).toBePositive();
+    });
+  }
 });

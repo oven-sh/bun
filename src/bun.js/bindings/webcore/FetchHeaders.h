@@ -35,8 +35,10 @@
 #include <wtf/Vector.h>
 
 namespace WebCore {
-
+DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(FetchHeaders);
 class FetchHeaders : public RefCounted<FetchHeaders> {
+    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(FetchHeaders);
+
 public:
     enum class Guard {
         None,
@@ -57,6 +59,7 @@ public:
     ExceptionOr<String> get(const String&) const;
     ExceptionOr<bool> has(const String&) const;
     ExceptionOr<void> set(const String& name, const String& value);
+    ExceptionOr<void> set(const HTTPHeaderName name, const String& value);
 
     ExceptionOr<void> fill(const Init&);
     ExceptionOr<void> fill(const FetchHeaders&);
@@ -84,6 +87,7 @@ public:
     class Iterator {
     public:
         explicit Iterator(FetchHeaders&);
+        Iterator(FetchHeaders&, bool lowerCaseKeys);
         std::optional<KeyValuePair<String, String>> next();
 
     private:
@@ -92,8 +96,12 @@ public:
         Vector<String> m_keys;
         uint64_t m_updateCounter { 0 };
         size_t m_cookieIndex { 0 };
+        bool m_lowerCaseKeys { true };
     };
-    Iterator createIterator() { return Iterator { *this }; }
+    Iterator createIterator(bool lowerCaseKeys = true)
+    {
+        return Iterator(*this, lowerCaseKeys);
+    }
 
     void setInternalHeaders(HTTPHeaderMap&& headers) { m_headers = WTFMove(headers); }
     const HTTPHeaderMap& internalHeaders() const { return m_headers; }

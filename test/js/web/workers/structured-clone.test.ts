@@ -166,6 +166,28 @@ describe("structured clone", () => {
       expect(cloned.lastModified).toBe(blob.lastModified);
       expect(cloned.name).toBe(blob.name);
     });
+    describe("dom file", async () => {
+      test("without lastModified", async () => {
+        const file = new File(["hi"], "example.txt", { type: "text/plain" });
+        expect(file.lastModified).toBeGreaterThan(0);
+        expect(file.name).toBe("example.txt");
+        expect(file.size).toBe(2);
+        const cloned = structuredClone(file);
+        expect(cloned.lastModified).toBe(file.lastModified);
+        expect(cloned.name).toBe(file.name);
+        expect(cloned.size).toBe(file.size);
+      });
+      test("with lastModified", async () => {
+        const file = new File(["hi"], "example.txt", { type: "text/plain", lastModified: 123 });
+        expect(file.lastModified).toBe(123);
+        expect(file.name).toBe("example.txt");
+        expect(file.size).toBe(2);
+        const cloned = structuredClone(file);
+        expect(cloned.lastModified).toBe(123);
+        expect(cloned.name).toBe(file.name);
+        expect(cloned.size).toBe(file.size);
+      });
+    });
     test("unpaired high surrogate (invalid utf-8)", async () => {
       const blob = createBlob(encode_cesu8([0xd800]));
       const cloned = structuredClone(blob);

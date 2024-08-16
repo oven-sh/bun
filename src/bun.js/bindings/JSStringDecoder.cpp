@@ -458,7 +458,7 @@ static JSC_DEFINE_CUSTOM_GETTER(jsStringDecoder_lastChar, (JSGlobalObject * lexi
     }
     JSStringDecoder* thisObject = jsCast<JSStringDecoder*>(stringDecoderValue);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto buffer = ArrayBuffer::createFromBytes(thisObject->m_lastChar, 4, nullptr);
+    auto buffer = ArrayBuffer::create({ thisObject->m_lastChar, 4 });
     auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     JSC::JSUint8Array* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(buffer), 0, 4);
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));

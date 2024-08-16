@@ -47,6 +47,8 @@ void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct
     loop->data.parent_ptr = 0;
     loop->data.parent_tag = 0;
 
+    loop->data.closed_context_head = 0;
+
     loop->data.wakeup_async = us_internal_create_async(loop, 1, 0);
     us_internal_async_set(loop->data.wakeup_async, (void (*)(struct us_internal_async *)) wakeup_cb);
 }
@@ -234,6 +236,15 @@ void us_internal_free_closed_sockets(struct us_loop_t *loop) {
     loop->data.closed_connecting_head = 0;
 }
 
+void us_internal_free_closed_contexts(struct us_loop_t *loop) {
+    for (struct us_socket_context_t *ctx = loop->data.closed_context_head; ctx; ) {
+        struct us_socket_context_t *next = ctx->next;
+        us_free(ctx);
+        ctx = next;
+    }
+    loop->data.closed_context_head = 0;
+}
+
 void sweep_timer_cb(struct us_internal_callback_t *cb) {
     us_internal_timer_sweep(cb->loop);
 }
@@ -253,6 +264,7 @@ void us_internal_loop_pre(struct us_loop_t *loop) {
 void us_internal_loop_post(struct us_loop_t *loop) {
     us_internal_handle_dns_results(loop);
     us_internal_free_closed_sockets(loop);
+    us_internal_free_closed_contexts(loop);
     loop->data.post_cb(loop);
 }
 
@@ -356,7 +368,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                         s->context->loop->data.low_prio_budget--; /* Still having budget for this iteration - do normal processing */
                     } else {
                         us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
-                        us_internal_socket_context_unlink_socket(s->context, s);
+                        us_socket_context_ref(0,  s->context);
+                        us_internal_socket_context_unlink_socket(0, s->context, s);
 
                         /* Link this socket to the low-priority queue - we use a LIFO queue, to prioritize newer clients that are
                          * maybe not already timeouted - sounds unfair, but works better in real-life with smaller client-timeouts
@@ -411,7 +424,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                         if (us_socket_is_shut_down(0, s)) {
                             /* We got FIN back after sending it */
                             /* Todo: We should give "CLEAN SHUTDOWN" as reason here */
-                            s = us_socket_close(0, s, 0, NULL);
+                            s = us_socket_close(0, s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
+                            return;
                         } else {
                             /* We got FIN, so stop polling for readable */
                             us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
@@ -419,7 +433,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                         }
                     } else if (length == LIBUS_SOCKET_ERROR && !bsd_would_block()) {
                         /* Todo: decide also here what kind of reason we should give */
-                        s = us_socket_close(0, s, 0, NULL);
+                        s = us_socket_close(0, s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
                         return;
                     }
 

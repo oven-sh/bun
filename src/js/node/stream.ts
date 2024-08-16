@@ -27,6 +27,7 @@ const kPaused = Symbol("kPaused");
 // END moved from require_readable
 
 const StringDecoder = require("node:string_decoder").StringDecoder;
+const transferToNativeReadable = $newCppFunction("ReadableStream.cpp", "jsFunctionTransferToNativeReadableStream", 1);
 
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
@@ -5720,7 +5721,7 @@ function createNativeStreamReadable(Readable) {
       ProcessNextTick(() => {
         this.push(null);
       });
-      return view?.byteLength ?? 0 > 0 ? view : undefined;
+      return (view?.byteLength ?? 0 > 0) ? view : undefined;
     } else if ($isTypedArrayView(result)) {
       if (result.byteLength >= this[highWaterMark] && !this[hasResized] && !isClosed) {
         this[_adjustHighWaterMark]();
@@ -5819,9 +5820,13 @@ function getNativeReadableStream(Readable, stream, options) {
   $assert(typeof ptr === "object", "Invalid native ptr");
 
   const NativeReadable = getNativeReadableStreamPrototype(type, Readable);
-  stream.$bunNativePtr = -1;
-  stream.$bunNativeType = 0;
-  stream.$disturbed = true;
+  // https://github.com/oven-sh/bun/pull/12801
+  // https://github.com/oven-sh/bun/issues/9555
+  // There may be a ReadableStream.Strong handle to the ReadableStream.
+  // We can't update those handles to point to the NativeReadable from JS
+  // So we instead mark it as no longer usable, and create a new NativeReadable
+  transferToNativeReadable(stream);
+
   return new NativeReadable(ptr, options);
 }
 

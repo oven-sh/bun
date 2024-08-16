@@ -60,7 +60,7 @@ Visual Studio can be installed graphically using the wizard or through WinGet:
 
 After Visual Studio, you need the following:
 
-- LLVM 16
+- LLVM 18.1.8
 - Go
 - Rust
 - NASM
@@ -78,14 +78,14 @@ After Visual Studio, you need the following:
 
 ```ps1#WinGet
 ## Select "Add LLVM to the system PATH for all users" in the LLVM installer
-> winget install -i LLVM.LLVM -v 16.0.6 && winget install GoLang.Go Rustlang.Rustup NASM.NASM StrawberryPerl.StrawberryPerl RubyInstallerTeam.Ruby.3.2 OpenJS.NodeJS.LTS
+> winget install -i LLVM.LLVM -v 18.1.8 && winget install GoLang.Go Rustlang.Rustup NASM.NASM StrawberryPerl.StrawberryPerl RubyInstallerTeam.Ruby.3.2 OpenJS.NodeJS.LTS
 ```
 
 ```ps1#Scoop
 > irm https://get.scoop.sh | iex
 > scoop install nodejs-lts go rust nasm ruby perl
 # scoop seems to be buggy if you install llvm and the rest at the same time
-> scoop install llvm@16.0.6
+> scoop install llvm@18.1.8
 ```
 
 {% /codetabs %}

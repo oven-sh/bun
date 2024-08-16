@@ -1,0 +1,4 @@
+command script import src/deps/zig/tools/lldb_pretty_printers.py
+command script import src/bun.js/WebKit/Tools/lldb/lldb_webkit.py
+
+# type summary add --summary-string "${var} | inner=${var[0-30]}, source=${var[33-64]}, tag=${var[31-32]}" "unsigned long"

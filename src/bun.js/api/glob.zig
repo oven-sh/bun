@@ -174,7 +174,7 @@ pub const WalkTask = struct {
         pub fn toJSC(this: Err, globalThis: *JSGlobalObject) JSValue {
             return switch (this) {
                 .syscall => |err| err.toJSC(globalThis),
-                .unknown => |err| ZigString.fromBytes(@errorName(err)).toValueGC(globalThis),
+                .unknown => |err| ZigString.fromBytes(@errorName(err)).toJS(globalThis),
             };
         }
     };
@@ -259,7 +259,7 @@ fn makeGlobWalker(
 
     if (cwd != null) {
         var globWalker = alloc.create(GlobWalker) catch {
-            globalThis.throw("Out of memory", .{});
+            globalThis.throwOutOfMemory();
             return null;
         };
 
@@ -275,7 +275,7 @@ fn makeGlobWalker(
             error_on_broken_symlinks,
             only_files,
         ) catch {
-            globalThis.throw("Out of memory", .{});
+            globalThis.throwOutOfMemory();
             return null;
         }) {
             .err => |err| {
@@ -287,7 +287,7 @@ fn makeGlobWalker(
         return globWalker;
     }
     var globWalker = alloc.create(GlobWalker) catch {
-        globalThis.throw("Out of memory", .{});
+        globalThis.throwOutOfMemory();
         return null;
     };
 
@@ -301,7 +301,7 @@ fn makeGlobWalker(
         error_on_broken_symlinks,
         only_files,
     ) catch {
-        globalThis.throw("Out of memory", .{});
+        globalThis.throwOutOfMemory();
         return null;
     }) {
         .err => |err| {
@@ -317,7 +317,7 @@ fn makeGlobWalker(
 pub fn constructor(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) callconv(.C) ?*Glob {
+) ?*Glob {
     const alloc = getAllocator(globalThis);
 
     const arguments_ = callframe.arguments(1);
@@ -370,21 +370,21 @@ pub fn finalize(
 }
 
 pub fn hasPendingActivity(this: *Glob) callconv(.C) bool {
-    @fence(.SeqCst);
-    return this.has_pending_activity.load(.SeqCst) > 0;
+    @fence(.seq_cst);
+    return this.has_pending_activity.load(.seq_cst) > 0;
 }
 
 fn incrPendingActivityFlag(has_pending_activity: *std.atomic.Value(usize)) void {
-    @fence(.SeqCst);
-    _ = has_pending_activity.fetchAdd(1, .SeqCst);
+    @fence(.seq_cst);
+    _ = has_pending_activity.fetchAdd(1, .seq_cst);
 }
 
 fn decrPendingActivityFlag(has_pending_activity: *std.atomic.Value(usize)) void {
-    @fence(.SeqCst);
-    _ = has_pending_activity.fetchSub(1, .SeqCst);
+    @fence(.seq_cst);
+    _ = has_pending_activity.fetchSub(1, .seq_cst);
 }
 
-pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
     const alloc = getAllocator(globalThis);
 
     const arguments_ = callframe.arguments(1);
@@ -400,7 +400,7 @@ pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFram
     incrPendingActivityFlag(&this.has_pending_activity);
     var task = WalkTask.create(globalThis, alloc, globWalker, &this.has_pending_activity) catch {
         decrPendingActivityFlag(&this.has_pending_activity);
-        globalThis.throw("Out of memory", .{});
+        globalThis.throwOutOfMemory();
         return .undefined;
     };
     task.schedule();
@@ -408,7 +408,7 @@ pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFram
     return task.promise.value();
 }
 
-pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
     const alloc = getAllocator(globalThis);
 
     const arguments_ = callframe.arguments(1);
@@ -423,7 +423,7 @@ pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.Call
     defer globWalker.deinit(true);
 
     switch (globWalker.walk() catch {
-        globalThis.throw("Out of memory", .{});
+        globalThis.throwOutOfMemory();
         return .undefined;
     }) {
         .err => |err| {
@@ -438,7 +438,7 @@ pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.Call
     return matchedPaths;
 }
 
-pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
     const alloc = getAllocator(globalThis);
     var arena = Arena.init(alloc);
     defer arena.deinit();
@@ -448,12 +448,12 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame
     defer arguments.deinit();
     const str_arg = arguments.nextEat() orelse {
         globalThis.throw("Glob.matchString: expected 1 arguments, got 0", .{});
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     };
 
     if (!str_arg.isString()) {
         globalThis.throw("Glob.matchString: first argument is not a string", .{});
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
 
     var str = str_arg.toSlice(globalThis, arena.allocator());

@@ -553,7 +553,7 @@ pub const SlicedString = struct {
     slice: string,
 
     pub inline fn init(buf: string, slice: string) SlicedString {
-        if (Environment.allow_assert) {
+        if (Environment.allow_assert and !@inComptime()) {
             if (@intFromPtr(buf.ptr) > @intFromPtr(slice.ptr)) {
                 @panic("SlicedString.init buf is not in front of slice");
             }
@@ -607,6 +607,10 @@ pub const Version = extern struct {
 
     pub fn isZero(this: Version) bool {
         return this.patch == 0 and this.minor == 0 and this.major == 0;
+    }
+
+    pub fn parseUTF8(slice: []const u8) ParseResult {
+        return parse(.{ .buf = slice, .slice = slice });
     }
 
     pub fn cloneInto(this: Version, slice: []const u8, buf: *[]u8) Version {
@@ -870,6 +874,19 @@ pub const Version = extern struct {
             '-', '+', '.', 'A'...'Z', 'a'...'z', '0'...'9' => true,
             else => false,
         };
+    }
+
+    pub fn isTaggedVersionOnly(input: []const u8) bool {
+        const version = strings.trim(input, &strings.whitespace_chars);
+
+        // first needs to be a-z
+        if (version.len == 0 or !std.ascii.isAlphabetic(version[0])) return false;
+
+        for (1..version.len) |i| {
+            if (!std.ascii.isAlphanumeric(version[i])) return false;
+        }
+
+        return true;
     }
 
     pub fn orderWithoutTag(
@@ -2484,7 +2501,7 @@ pub const SemverObject = struct {
     pub fn order(
         globalThis: *JSC.JSGlobalObject,
         callFrame: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var stack_fallback = std.heap.stackFallback(512, arena.allocator());
@@ -2536,7 +2553,7 @@ pub const SemverObject = struct {
     pub fn satisfies(
         globalThis: *JSC.JSGlobalObject,
         callFrame: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var stack_fallback = std.heap.stackFallback(512, arena.allocator());

@@ -1,7 +1,7 @@
 There are four parts to the CI build:
 
 - Dependencies: should be cached across builds as much as possible, it depends on git submodule hashes
-- Zig Object: depends on \*.zig and potentially src/js
+- Zig Object: depends on \*.zig and src/js
 - C++ Object: depends on \*.cpp and src/js
 - Linking: depends on the above three
 
@@ -15,7 +15,7 @@ BUN_DEPS_OUT_DIR="/optional/out/dir" bash ./scripts/all-dependencies.sh
 
 ## Zig Object
 
-This does not have a dependency on WebKit or any of the dependencies at all. It can be compiled without checking out submodules, but you will need to have bun install run. It can be very easily cross compiled.
+This does not have a dependency on WebKit or any of the dependencies at all. It can be compiled without checking out submodules, but you will need to have bun install run. It can be very easily cross compiled. Note that the zig object is always `bun-zig.o`.
 
 ```sh
 BUN_REPO=/path/to/oven-sh/bun
@@ -27,9 +27,9 @@ cmake $BUN_REPO \
   -DCMAKE_BUILD_TYPE=Release \
   -DCPU_TARGET="native" \
   -DZIG_TARGET="native" \
-  -DBUN_ZIG_OBJ="./bun-zig.o"
+  -DBUN_ZIG_OBJ_DIR="./build"
 
-ninja ./bun-zig.o
+ninja ./build/bun-zig.o
 # -> bun-zig.o
 ```
 
@@ -60,12 +60,12 @@ cmake $BUN_REPO \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUN_LINK_ONLY=1 \
-  -DBUN_ZIG_OBJ="/path/to/bun-zig.o" \
+  -DBUN_ZIG_OBJ_DIR="/path/to/bun-zig-dir" \
   -DBUN_CPP_ARCHIVE="/path/to/bun-cpp-objects.a"
 
 ninja
 
-# optiona:
+# optional:
 #   -DBUN_DEPS_OUT_DIR=... custom deps dir, use this to cache the built deps between rebuilds
 #   -DWEBKIT_DIR=... same thing, but it's probably fast enough to pull from github releases
 

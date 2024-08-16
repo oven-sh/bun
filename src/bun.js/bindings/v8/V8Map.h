@@ -15,6 +15,9 @@ enum class InstanceType : uint16_t {
     // because then V8 will try to access internal fields directly instead of calling
     // SlowGetInternalField
     Object = 0x80,
+    // a number that doesn't fit in int32_t and is stored on the heap (for us, in the
+    // HandleScopeBuffer)
+    HeapNumber = 0x82,
 };
 
 // V8's description of the structure of an object
@@ -41,6 +44,8 @@ struct Map {
     static const Map boolean_map;
     // the map used by strings
     static const Map string_map;
+    // the map used by heap numbers
+    static const Map heap_number_map;
 
     Map(InstanceType instance_type_)
         : meta_map(const_cast<Map*>(&map_map))

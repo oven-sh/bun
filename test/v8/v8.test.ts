@@ -119,10 +119,10 @@ describe("Number", () => {
     checkSameOutput("test_v8_number_int", []);
   });
   // non-i32 v8::Number is not implemented yet
-  it.skip("can create large integer", () => {
+  it("can create large integer", () => {
     checkSameOutput("test_v8_number_large_int", []);
   });
-  it.skip("can create fraction", () => {
+  it("can create fraction", () => {
     checkSameOutput("test_v8_number_fraction", []);
   });
 });

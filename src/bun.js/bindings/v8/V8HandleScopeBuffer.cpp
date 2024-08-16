@@ -30,7 +30,7 @@ void HandleScopeBuffer::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     for (int i = 0; i < thisObject->size; i++) {
         auto& handle = thisObject->storage[i];
         if (handle.isCell()) {
-            JSCell::visitChildren(reinterpret_cast<JSCell*>(handle.ptr), visitor);
+            JSCell::visitChildren(reinterpret_cast<JSCell*>(handle.object.ptr), visitor);
         }
     }
 }

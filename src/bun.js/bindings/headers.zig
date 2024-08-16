@@ -112,9 +112,8 @@ pub extern fn WebCore__FetchHeaders__cloneThis(arg0: ?*bindings.FetchHeaders, ar
 pub extern fn WebCore__FetchHeaders__copyTo(arg0: ?*bindings.FetchHeaders, arg1: [*c]StringPointer, arg2: [*c]StringPointer, arg3: [*c]u8) void;
 pub extern fn WebCore__FetchHeaders__count(arg0: ?*bindings.FetchHeaders, arg1: [*c]u32, arg2: [*c]u32) void;
 pub extern fn WebCore__FetchHeaders__createEmpty(...) ?*bindings.FetchHeaders;
-pub extern fn WebCore__FetchHeaders__createFromJS(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) ?*bindings.FetchHeaders;
 pub extern fn WebCore__FetchHeaders__createFromPicoHeaders_(arg0: ?*const anyopaque) ?*bindings.FetchHeaders;
-pub extern fn WebCore__FetchHeaders__createFromUWS(arg0: *bindings.JSGlobalObject, arg1: ?*anyopaque) ?*bindings.FetchHeaders;
+pub extern fn WebCore__FetchHeaders__createFromUWS(arg1: ?*anyopaque) ?*bindings.FetchHeaders;
 pub extern fn WebCore__FetchHeaders__createValue(arg0: *bindings.JSGlobalObject, arg1: [*c]StringPointer, arg2: [*c]StringPointer, arg3: [*c]const ZigString, arg4: u32) JSC__JSValue;
 pub extern fn WebCore__FetchHeaders__deref(arg0: ?*bindings.FetchHeaders) void;
 pub extern fn WebCore__FetchHeaders__fastGet_(arg0: ?*bindings.FetchHeaders, arg1: u8, arg2: [*c]ZigString) void;

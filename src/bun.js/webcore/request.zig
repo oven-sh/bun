@@ -703,7 +703,7 @@ pub const Request = struct {
             req.body.value.Blob.content_type.len > 0 and
             !req._headers.?.fastHas(.ContentType))
         {
-            req._headers.?.put("content-type", req.body.value.Blob.content_type, globalThis);
+            req._headers.?.put(.ContentType, req.body.value.Blob.content_type, globalThis);
         }
 
         req.calculateEstimatedByteSize();
@@ -777,7 +777,7 @@ pub const Request = struct {
 
         if (this.request_context.getRequest()) |req| {
             // we have a request context, so we can get the headers from it
-            this._headers = FetchHeaders.createFromUWS(globalThis, req);
+            this._headers = FetchHeaders.createFromUWS(req);
         } else {
             // we don't have a request context, so we need to create an empty headers object
             this._headers = FetchHeaders.createEmpty();
@@ -785,12 +785,29 @@ pub const Request = struct {
             if (this.body.value == .Blob) {
                 const content_type = this.body.value.Blob.content_type;
                 if (content_type.len > 0) {
-                    this._headers.?.put("content-type", content_type, globalThis);
+                    this._headers.?.put(.ContentType, content_type, globalThis);
                 }
             }
         }
 
         return this._headers.?;
+    }
+
+    pub fn getFetchHeadersUnlessEmpty(
+        this: *Request,
+    ) ?*FetchHeaders {
+        if (this._headers == null) {
+            if (this.request_context.getRequest()) |req| {
+                // we have a request context, so we can get the headers from it
+                this._headers = FetchHeaders.createFromUWS(req);
+            }
+        }
+
+        const headers = this._headers orelse return null;
+        if (headers.isEmpty()) {
+            return null;
+        }
+        return headers;
     }
 
     /// Returns the headers of the request. This will not look at the request contex to get the headers.
@@ -811,7 +828,7 @@ pub const Request = struct {
     pub fn cloneHeaders(this: *Request, globalThis: *JSGlobalObject) ?*FetchHeaders {
         if (this._headers == null) {
             if (this.request_context.getRequest()) |uws_req| {
-                this._headers = FetchHeaders.createFromUWS(globalThis, uws_req);
+                this._headers = FetchHeaders.createFromUWS(uws_req);
             }
         }
 

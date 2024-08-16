@@ -449,7 +449,41 @@ void print_values_from_js(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
-void initialize(Local<Object> exports) {
+class GlobalTestWrapper {
+public:
+  static void set(const FunctionCallbackInfo<Value> &info);
+  static void get(const FunctionCallbackInfo<Value> &info);
+  static void cleanup(void *unused);
+
+private:
+  static Global<Value> value;
+};
+
+Global<Value> GlobalTestWrapper::value;
+
+void GlobalTestWrapper::set(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  if (value.IsEmpty()) {
+    info.GetReturnValue().Set(Undefined(isolate));
+  } else {
+    info.GetReturnValue().Set(value.Get(isolate));
+  }
+  value.Reset(isolate, info[0]);
+}
+
+void GlobalTestWrapper::get(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  if (value.IsEmpty()) {
+    info.GetReturnValue().Set(Undefined(isolate));
+  } else {
+    info.GetReturnValue().Set(value.Get(isolate));
+  }
+}
+
+void GlobalTestWrapper::cleanup(void *unused) { value.Reset(); }
+
+void initialize(Local<Object> exports, Local<Value> module,
+                Local<Context> context) {
   NODE_SET_METHOD(exports, "test_v8_native_call", test_v8_native_call);
   NODE_SET_METHOD(exports, "test_v8_primitives", test_v8_primitives);
   NODE_SET_METHOD(exports, "test_v8_number_int", test_v8_number_int);
@@ -466,8 +500,13 @@ void initialize(Local<Object> exports) {
   NODE_SET_METHOD(exports, "test_v8_array_new", test_v8_array_new);
   NODE_SET_METHOD(exports, "test_v8_object_template", test_v8_object_template);
   NODE_SET_METHOD(exports, "print_values_from_js", print_values_from_js);
+  NODE_SET_METHOD(exports, "global_get", GlobalTestWrapper::get);
+  NODE_SET_METHOD(exports, "global_set", GlobalTestWrapper::set);
+
+  node::AddEnvironmentCleanupHook(context->GetIsolate(),
+                                  GlobalTestWrapper::cleanup, nullptr);
 }
 
-NODE_MODULE(NODE_GYP_MODULE_NAME, initialize)
+NODE_MODULE_CONTEXT_AWARE(NODE_GYP_MODULE_NAME, initialize)
 
 } // namespace v8tests

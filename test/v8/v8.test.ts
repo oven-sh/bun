@@ -187,6 +187,12 @@ describe("error handling", () => {
   });
 });
 
+describe("Global", () => {
+  it("can create, modify, and read the value from global handles", () => {
+    checkSameOutput("test_v8_global", []);
+  });
+});
+
 afterAll(() => {
   fs.rmSync(join(__dirname, "v8-module-node"), { recursive: true, force: true });
   fs.rmSync(join(__dirname, "v8-module-debug"), { recursive: true, force: true });
@@ -242,9 +248,10 @@ function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, jsArgs:
     env: bunEnv,
   });
   const errs = exec.stderr.toString();
+  const crashMsg = `test ${testName} crashed under ${Runtime[runtime]} in ${BuildMode[buildMode]} mode`;
   if (errs !== "") {
-    throw new Error(errs);
+    throw new Error(`${crashMsg}: ${errs}`);
   }
-  expect(exec.success, `test ${testName} crashed under ${Runtime[runtime]} in ${BuildMode[buildMode]} mode`).toBeTrue();
+  expect(exec.success, crashMsg).toBeTrue();
   return exec.stdout.toString();
 }

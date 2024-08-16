@@ -1,5 +1,5 @@
 import { it, expect, test, beforeAll, describe, afterAll } from "bun:test";
-import { bunExe, bunEnv } from "harness";
+import { bunExe, bunEnv, tmpdirSync } from "harness";
 import { spawnSync } from "bun";
 import { join } from "path";
 import fs from "node:fs";
@@ -19,18 +19,28 @@ if (process.platform == "win32") {
   bunEnv.__FAKE_PLATFORM__ = "linux";
 }
 
+const srcDir = join(__dirname, "v8-module");
+const directories = {
+  bunRelease: "",
+  bunDebug: "",
+  node: "",
+};
+
 beforeAll(() => {
-  // set up a clean directory for the version built with node and the version built in debug mode
-  fs.rmSync(join(__dirname, "v8-module-node"), { recursive: true, force: true });
-  fs.rmSync(join(__dirname, "v8-module-debug"), { recursive: true, force: true });
-  fs.cpSync(join(__dirname, "v8-module"), join(__dirname, "v8-module-node"), { recursive: true });
-  fs.cpSync(join(__dirname, "v8-module"), join(__dirname, "v8-module-debug"), { recursive: true });
+  // set up clean directories for our 3 builds
+  directories.bunRelease = tmpdirSync();
+  directories.bunDebug = tmpdirSync();
+  directories.node = tmpdirSync();
+
+  fs.cpSync(srcDir, directories.bunRelease, { recursive: true });
+  fs.cpSync(srcDir, directories.bunDebug, { recursive: true });
+  fs.cpSync(srcDir, directories.node, { recursive: true });
 
   // build code using bun
   // we install/build with separate commands so that we can use --bun to run node-gyp
   const bunInstall = spawnSync({
     cmd: [bunExe(), "install", "--ignore-scripts"],
-    cwd: join(__dirname, "v8-module"),
+    cwd: directories.bunRelease,
     env: bunEnv,
     stdin: "inherit",
     stdout: "inherit",
@@ -41,7 +51,7 @@ beforeAll(() => {
   }
   const bunBuild = spawnSync({
     cmd: [bunExe(), "x", "--bun", "node-gyp", "rebuild"],
-    cwd: join(__dirname, "v8-module"),
+    cwd: directories.bunRelease,
     env: bunEnv,
     stdin: "inherit",
     stdout: "inherit",
@@ -54,7 +64,7 @@ beforeAll(() => {
   // build code using bun, in debug mode
   const bunDebugInstall = spawnSync({
     cmd: [bunExe(), "install", "--verbose", "--ignore-scripts"],
-    cwd: join(__dirname, "v8-module-debug"),
+    cwd: directories.bunDebug,
     env: bunEnv,
     stdin: "inherit",
     stdout: "inherit",
@@ -65,7 +75,7 @@ beforeAll(() => {
   }
   const bunDebugBuild = spawnSync({
     cmd: [bunExe(), "x", "--bun", "node-gyp", "rebuild", "--debug"],
-    cwd: join(__dirname, "v8-module-debug"),
+    cwd: directories.bunDebug,
     env: bunEnv,
     stdin: "inherit",
     stdout: "inherit",
@@ -78,7 +88,7 @@ beforeAll(() => {
   // build code using node (since `bun install` neither uses nor has a --bun flag)
   const nodeInstall = spawnSync({
     cmd: [bunExe(), "install"],
-    cwd: join(__dirname, "v8-module-node"),
+    cwd: directories.node,
     env: bunEnv,
     stdin: "inherit",
     stdout: "inherit",
@@ -91,7 +101,7 @@ beforeAll(() => {
   // build invalid modules
   const invalidModulesBuild = spawnSync({
     cmd: [bunExe(), "install"],
-    cwd: join(__dirname, "bad-modules"),
+    cwd: directories.node,
     env: bunEnv,
     stdin: "inherit",
     stdout: "inherit",
@@ -190,8 +200,9 @@ describe("error handling", () => {
 });
 
 afterAll(() => {
-  fs.rmSync(join(__dirname, "v8-module-node"), { recursive: true, force: true });
-  fs.rmSync(join(__dirname, "v8-module-debug"), { recursive: true, force: true });
+  fs.rmSync(directories.bunRelease, { recursive: true, force: true });
+  fs.rmSync(directories.bunDebug, { recursive: true, force: true });
+  fs.rmSync(directories.node, { recursive: true, force: true });
 });
 
 enum Runtime {
@@ -225,22 +236,21 @@ function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, jsArgs:
     assert(buildMode == BuildMode.release);
   }
   const baseDir =
-    runtime == Runtime.node ? "v8-module-node" : buildMode == BuildMode.debug ? "v8-module-debug" : "v8-module";
+    runtime == Runtime.node
+      ? directories.node
+      : buildMode == BuildMode.debug
+        ? directories.bunDebug
+        : directories.bunRelease;
   const exe = runtime == Runtime.node ? "node" : bunExe();
 
-  const cmd = [
-    exe,
-    join(__dirname, baseDir, "main.js"),
-    testName,
-    JSON.stringify(jsArgs),
-    JSON.stringify(thisValue ?? null),
-  ];
+  const cmd = [exe, join(baseDir, "main.js"), testName, JSON.stringify(jsArgs), JSON.stringify(thisValue ?? null)];
   if (buildMode == BuildMode.debug) {
     cmd.push("debug");
   }
 
   const exec = spawnSync({
     cmd,
+    cwd: baseDir,
     env: bunEnv,
   });
   const errs = exec.stderr.toString();

@@ -57,7 +57,7 @@ public:
 
             ObjectLayout* v8_object = reinterpret_cast<ObjectLayout*>(raw_ptr);
             if (v8_object->map.getPtr<Map>()->instance_type == InstanceType::HeapNumber) {
-                return JSC::jsNumber(*reinterpret_cast<double*>(&v8_object->ptr));
+                return JSC::jsDoubleNumber(*reinterpret_cast<double*>(&v8_object->ptr));
             } else {
                 return JSC::JSValue(reinterpret_cast<JSC::JSCell*>(v8_object->ptr));
             }

@@ -203,4 +203,5 @@
     __ZNK2v85Value8IsStringEv;
     __ZN2v87Boolean3NewEPNS_7IsolateEb;
     __ZN2v86Object16GetInternalFieldEi;
+    __ZN2v87Context10GetIsolateEv;
 };

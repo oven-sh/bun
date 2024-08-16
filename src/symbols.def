@@ -616,3 +616,4 @@ EXPORTS
   ?IsString@Value@v8@@QEBA_NXZ
   ?New@Boolean@v8@@SA?AV?$Local@VBoolean@v8@@@2@PEAVIsolate@2@_N@Z
   ?GetInternalField@Object@v8@@QEAA?AV?$Local@VData@v8@@@2@H@Z
+  ?GetIsolate@Context@v8@@QEAAPEAVIsolate@2@XZ

@@ -7,7 +7,7 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
 const JSC::ClassInfo HandleScopeBuffer::s_info = {
     "HandleScopeBuffer"_s,
-    &Base::s_info,
+    nullptr,
     nullptr,
     nullptr,
     CREATE_METHOD_TABLE(HandleScopeBuffer)

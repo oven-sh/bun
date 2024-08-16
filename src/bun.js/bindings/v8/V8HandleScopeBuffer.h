@@ -9,15 +9,15 @@ namespace v8 {
 
 // An array used by HandleScope to store the items. Must keep pointer stability when resized, since
 // v8::Locals point inside this array.
-class HandleScopeBuffer : public JSC::JSNonFinalObject {
+class HandleScopeBuffer : public JSC::JSCell {
 public:
-    using Base = JSC::JSNonFinalObject;
+    using Base = JSC::JSCell;
 
     static HandleScopeBuffer* create(JSC::VM& vm, JSC::Structure* structure);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
     {
-        return JSC::Structure::create(vm, globalObject, JSC::jsNull(), JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), 0, 0);
+        return JSC::Structure::create(vm, globalObject, JSC::jsNull(), JSC::TypeInfo(JSC::CellType, StructureFlags), info(), 0, 0);
     }
 
     template<typename, JSC::SubspaceAccess mode>

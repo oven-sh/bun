@@ -190,6 +190,11 @@ const json = struct {
         return &.{};
     }
 
+    // In order to not have to do a property lookup json messages sent from Bun will have a single u8 prepended to them
+    // to be able to distinguish whether it is a regular json message or an internal one for cluster ipc communication.
+    // 1 is regular
+    // 2 is internal
+
     pub fn decodeIPCMessage(
         data: []const u8,
         globalThis: *JSC.JSGlobalObject,
@@ -327,7 +332,7 @@ const SocketIPCData = struct {
     incoming: bun.ByteList = .{}, // Maybe we should use StreamBuffer here as well
     outgoing: bun.io.StreamBuffer = .{},
     has_written_version: if (Environment.allow_assert) u1 else u0 = 0,
-    iimh: node_cluster_binding.InternalMsgHolder = .{},
+    internal_msg_queue: node_cluster_binding.InternalMsgHolder = .{},
 
     pub fn writeVersionPacket(this: *SocketIPCData) void {
         if (Environment.allow_assert) {
@@ -417,7 +422,7 @@ const NamedPipeIPCData = struct {
     server: ?*uv.Pipe = null,
     onClose: ?CloseHandler = null,
     has_written_version: if (Environment.allow_assert) u1 else u0 = 0,
-    iimh: node_cluster_binding.InternalMsgHolder = .{},
+    internal_msg_queue: node_cluster_binding.InternalMsgHolder = .{},
 
     const CloseHandler = struct {
         callback: *const fn (*anyopaque) void,

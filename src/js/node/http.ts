@@ -158,10 +158,11 @@ var FakeSocket = class Socket extends Duplex {
   }
 
   _destroy(err, callback) {
-    if (!this[kInternalSocketData]) return; // sometimes 'this' is Socket not FakeSocket
-    this[kInternalSocketData][0][connectionsSymbol]--;
-    if (!this[kInternalSocketData][1]["req"][kAutoDestroyed]) this[kInternalSocketData][1].end();
-    this[kInternalSocketData][0]._emitCloseIfDrained();
+    const socketData = this[kInternalSocketData];
+    if (!socketData) return; // sometimes 'this' is Socket not FakeSocket
+    socketData[0][connectionsSymbol]--;
+    if (!socketData[1]["req"][kAutoDestroyed]) socketData[1].end();
+    socketData[0]._emitCloseIfDrained();
   }
 
   _final(callback) {}
@@ -465,6 +466,7 @@ Server.prototype = {
   },
 
   _emitCloseIfDrained() {
+    $assert(this[connectionsSymbol] >= 0); // this will trigger when zero but should never be negative
     if (this[serverSymbol] || this[connectionsSymbol] > 0) {
       return;
     }
@@ -679,10 +681,7 @@ Server.prototype = {
 
           server[connectionsSymbol]++;
           var { promise, resolve: resolveFunction, reject: rejectFunction } = $newPromiseCapability(GlobalPromise);
-          return promise.finally(() => {
-            server[connectionsSymbol]--;
-            server._emitCloseIfDrained();
-          });
+          return promise;
         },
       });
       isHTTPS = this[serverSymbol].protocol === "https";

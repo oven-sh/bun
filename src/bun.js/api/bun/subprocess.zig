@@ -2320,7 +2320,7 @@ pub const Subprocess = struct {
         IPClog("Subprocess#handleIPCClose", .{});
         this.updateHasPendingActivity();
         const ok = this.ipc_data != null;
-        if (ok) this.ipc().iimh.deinit();
+        if (ok) this.ipc().internal_msg_queue.deinit();
         this.ipc_data = null;
 
         const vm = this.globalThis.bunVM();

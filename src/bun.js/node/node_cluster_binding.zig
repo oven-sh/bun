@@ -7,7 +7,7 @@ const Output = bun.Output;
 const ZigString = JSC.ZigString;
 const log = Output.scoped(.IPC, false);
 
-extern fn Bun__Process__queueNextTick1(*JSC.ZigGlobalObject, JSC.JSValue, JSC.JSValue) void;
+extern fn Bun__Process__queueNextTick1(*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue) void;
 extern fn Process__emitErrorEvent(global: *JSC.JSGlobalObject, value: JSC.JSValue) void;
 
 pub var child_singleton: InternalMsgHolder = .{};
@@ -43,6 +43,7 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
         child_singleton.callbacks.put(bun.default_allocator, child_singleton.seq, JSC.Strong.create(callback, globalThis)) catch bun.outOfMemory();
     }
 
+    // sequence number for InternalMsgHolder
     message.put(globalThis, ZigString.static("seq"), JSC.JSValue.jsNumber(child_singleton.seq));
     child_singleton.seq +%= 1;
 
@@ -52,7 +53,6 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
 
     const ipc_instance = vm.getIPCInstance().?;
     const process_queueNextTick1 = Bun__Process__queueNextTick1;
-    const zigGlobal: *JSC.ZigGlobalObject = @ptrCast(globalThis);
 
     const S = struct {
         fn impl(globalThis_: *JSC.JSGlobalObject, callframe_: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
@@ -72,7 +72,7 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
         if (S.value == null) {
             S.value = JSC.JSFunction.create(globalThis, "", S.impl, 1, .{});
         }
-        process_queueNextTick1(zigGlobal, S.value.?, ex);
+        process_queueNextTick1(globalThis, S.value.?, ex);
     }
 
     return .true;
@@ -97,6 +97,9 @@ pub fn handleInternalMessageChild(globalThis: *JSC.JSGlobalObject, message: JSC.
 //
 //
 
+/// Queue for messages sent between parent and child processes in an IPC environment. node:cluster sends json serialized messages
+/// to describe different events it performs. It will send a message with an incrementing sequence number and then call a callback
+/// when a message is recieved with an 'ack' property of the same sequence number.
 pub const InternalMsgHolder = struct {
     seq: i32 = 0,
     callbacks: std.AutoArrayHashMapUnmanaged(i32, JSC.Strong) = .{},
@@ -196,11 +199,12 @@ pub fn sendHelperPrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
         ));
     }
     if (callback.isFunction()) {
-        ipc_data.iimh.callbacks.put(bun.default_allocator, ipc_data.iimh.seq, JSC.Strong.create(callback, globalThis)) catch bun.outOfMemory();
+        ipc_data.internal_msg_queue.callbacks.put(bun.default_allocator, ipc_data.internal_msg_queue.seq, JSC.Strong.create(callback, globalThis)) catch bun.outOfMemory();
     }
 
-    message.put(globalThis, ZigString.static("seq"), JSC.JSValue.jsNumber(ipc_data.iimh.seq));
-    ipc_data.iimh.seq +%= 1;
+    // sequence number for InternalMsgHolder
+    message.put(globalThis, ZigString.static("seq"), JSC.JSValue.jsNumber(ipc_data.internal_msg_queue.seq));
+    ipc_data.internal_msg_queue.seq +%= 1;
 
     // similar code as bun.JSC.Subprocess.doSend
     var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
@@ -217,8 +221,8 @@ pub fn onInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC
     const arguments = callframe.arguments(3).ptr;
     const subprocess = arguments[0].as(bun.JSC.Subprocess).?;
     const ipc_data = subprocess.ipc();
-    ipc_data.iimh.worker = JSC.Strong.create(arguments[1], globalThis);
-    ipc_data.iimh.cb = JSC.Strong.create(arguments[2], globalThis);
+    ipc_data.internal_msg_queue.worker = JSC.Strong.create(arguments[1], globalThis);
+    ipc_data.internal_msg_queue.cb = JSC.Strong.create(arguments[2], globalThis);
     return .undefined;
 }
 
@@ -228,12 +232,12 @@ pub fn handleInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, subprocess:
     if (message.get(globalThis, "ack")) |p| {
         if (!p.isUndefined()) {
             const ack = p.toInt32();
-            if (ipc_data.iimh.callbacks.getEntry(ack)) |entry| {
+            if (ipc_data.internal_msg_queue.callbacks.getEntry(ack)) |entry| {
                 var cbstrong = entry.value_ptr.*;
                 defer cbstrong.clear();
-                _ = ipc_data.iimh.callbacks.swapRemove(ack);
+                _ = ipc_data.internal_msg_queue.callbacks.swapRemove(ack);
                 const cb = cbstrong.get().?;
-                _ = cb.call(globalThis, ipc_data.iimh.worker.get().?, &.{
+                _ = cb.call(globalThis, ipc_data.internal_msg_queue.worker.get().?, &.{
                     message,
                     .null, // handle
                 });
@@ -241,8 +245,8 @@ pub fn handleInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, subprocess:
             }
         }
     }
-    const cb = ipc_data.iimh.cb.get().?;
-    _ = cb.call(globalThis, ipc_data.iimh.worker.get().?, &.{
+    const cb = ipc_data.internal_msg_queue.cb.get().?;
+    _ = cb.call(globalThis, ipc_data.internal_msg_queue.worker.get().?, &.{
         message,
         .null, // handle
     });

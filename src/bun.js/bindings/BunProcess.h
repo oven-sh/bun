@@ -2,10 +2,13 @@
 
 #include "root.h"
 
-#include "ZigGlobalObject.h"
 #include "BunBuiltinNames.h"
 #include "BunClientData.h"
 #include "JSEventEmitter.h"
+
+namespace Zig {
+class GlobalObject;
+}
 
 namespace Bun {
 

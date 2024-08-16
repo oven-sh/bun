@@ -62,10 +62,8 @@ cluster.setupPrimary = function (options) {
 
   initialized = true;
   schedulingPolicy = cluster.schedulingPolicy; // Freeze policy.
-  console.assert(
-    schedulingPolicy === SCHED_NONE || schedulingPolicy === SCHED_RR,
-    `Bad cluster.schedulingPolicy: ${schedulingPolicy}`,
-  );
+  if (!(schedulingPolicy === SCHED_NONE || schedulingPolicy === SCHED_RR))
+    throw new Error(`Bad cluster.schedulingPolicy: ${schedulingPolicy}`);
 
   process.nextTick(setupSettingsNT, settings);
 };
@@ -102,17 +100,17 @@ function createWorkerProcess(id, env) {
 }
 
 function removeWorker(worker) {
-  console.assert(worker);
+  if (!worker) throw new Error("ERR_INTERNAL_ASSERTION");
   delete cluster.workers[worker.id];
 
   if (ObjectKeys(cluster.workers).length === 0) {
-    console.assert(handles.size === 0, "Resource leak detected.");
+    if (!(handles.size === 0)) throw new Error("Resource leak detected.");
     intercom.emit("disconnect");
   }
 }
 
 function removeHandlesForWorker(worker) {
-  console.assert(worker);
+  if (!worker) throw new Error("ERR_INTERNAL_ASSERTION");
 
   handles.forEach((handle, key) => {
     if (handle.remove(worker)) handles.delete(key);

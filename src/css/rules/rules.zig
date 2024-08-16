@@ -17,6 +17,7 @@ const fontprops = css.css_properties.font;
 pub const import = @import("./import.zig");
 pub const layer = @import("./layer.zig");
 pub const style = @import("./style.zig");
+pub const keyframes = @import("./keyframes.zig");
 
 pub fn CssRule(comptime Rule: type) type {
     return union(enum) {
@@ -372,127 +373,6 @@ pub const media = struct {
             }
         };
     }
-};
-
-pub const keyframes = struct {
-    pub const KeyframesListParser = struct {
-        const This = @This();
-
-        pub const DeclarationParser = struct {
-            pub const Declaration = Keyframe;
-
-            fn parseValue(this: *This, name: []const u8, input: *css.Parser) Error!Declaration {
-                _ = this; // autofix
-                _ = name; // autofix
-                _ = input; // autofix
-                @compileError(css.todo_stuff.depth);
-            }
-        };
-    };
-    pub const KeyframesName = union(enum) {
-        ident: css.css_values.ident.CustomIdent,
-        custom: []const u8,
-
-        const This = @This();
-
-        pub fn parse(input: *css.Parser) Error!KeyframesName {
-            _ = input; // autofix
-            @compileError(css.todo_stuff.depth);
-        }
-
-        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            _ = this; // autofix
-            _ = dest; // autofix
-            @compileError(css.todo_stuff.depth);
-        }
-    };
-
-    pub const KeyframeSelector = union(enum) {
-        /// An explicit percentage.
-        percentage: css.css_values.percentage.Percentage,
-        /// The `from` keyword. Equivalent to 0%.
-        from,
-        /// The `to` keyword. Equivalent to 100%.
-        to,
-    };
-
-    /// An individual keyframe within an `@keyframes` rule.
-    ///
-    /// See [KeyframesRule](KeyframesRule).
-    pub const Keyframe = struct {
-        /// A list of keyframe selectors to associate with the declarations in this keyframe.
-        selectors: ArrayList(KeyframeSelector),
-        /// The declarations for this keyframe.
-        declarations: css.DeclarationBlock,
-
-        const This = @This();
-
-        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            _ = this; // autofix
-            _ = dest; // autofix
-            @compileError(css.todo_stuff.depth);
-        }
-    };
-
-    pub const KeyframesRule = struct {
-        /// The animation name.
-        /// <keyframes-name> = <custom-ident> | <string>
-        name: KeyframesName,
-        /// A list of keyframes in the animation.
-        keyframes: ArrayList(Keyframe),
-        /// A vendor prefix for the rule, e.g. `@-webkit-keyframes`.
-        vendor_prefix: css.VendorPrefix,
-        /// The location of the rule in the source file.
-        loc: Location,
-
-        const This = @This();
-
-        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            // #[cfg(feature = "sourcemap")]
-            // dest.add_mapping(self.loc);
-
-            var first_rule = true;
-
-            const PREFIXES = .{ "webkit", "moz", "ms", "o", "none" };
-
-            inline for (PREFIXES) |prefix_name| {
-                const prefix = css.VendorPrefix.fromName(prefix_name);
-
-                if (this.vendor_prefix.contains(prefix)) {
-                    if (first_rule) {
-                        first_rule = false;
-                    } else {
-                        if (!dest.minify) {
-                            try dest.writeChar('\n'); // no indent
-                        }
-                        try dest.newline();
-                    }
-
-                    try dest.writeChar('@');
-                    try prefix.toCss(W, dest);
-                    try dest.writeStr("keyframes ");
-                    try this.name.toCss(W, dest);
-                    try dest.whitespace();
-                    try dest.writeChar('{');
-                    dest.indent();
-
-                    var first = true;
-                    for (this.keyframes.items) |*keyframe| {
-                        if (first) {
-                            first = false;
-                        } else if (!dest.minify) {
-                            try dest.writeChar('\n'); // no indent
-                        }
-                        try dest.newline();
-                        try keyframe.toCss(W, dest);
-                    }
-                    dest.dedent();
-                    try dest.newline();
-                    try dest.writeChar('}');
-                }
-            }
-        }
-    };
 };
 
 pub const page = struct {

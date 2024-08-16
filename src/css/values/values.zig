@@ -228,6 +228,12 @@ pub const percentage = struct {
             const percent = try input.expectPercentage();
             return Percentage{ .v = percent };
         }
+
+        pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+            _ = this; // autofix
+            _ = dest; // autofix
+            @compileError(css.todo_stuff.depth);
+        }
     };
 
     pub fn DimensionPercentage(comptime D: type) type {

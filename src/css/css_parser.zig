@@ -248,6 +248,16 @@ pub fn DefineLengthUnits(comptime T: type) type {
     };
 }
 
+pub fn DeriveParse(comptime T: type) type {
+    return struct {
+        pub fn parse(input: *Parser) Error!T {
+            // to implement this, we need to cargo expand the derive macro
+            _ = input; // autofix
+            @compileError(todo_stuff.depth);
+        }
+    };
+}
+
 pub fn DefineEnumProperty(comptime T: type) type {
     const fields: []const std.builtin.Type.EnumField = std.meta.fields(T);
 

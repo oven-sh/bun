@@ -130,7 +130,7 @@ pub fn Printer(comptime Writer: type) type {
         css_module: ?css.CssModule,
         dependencies: ?ArrayList(css.Dependency),
         remove_imports: bool,
-        PseudoClasses: ?PseudoClasses,
+        pseudo_classes: ?PseudoClasses,
         indentation_buf: std.ArrayList(u8),
         ctx: ?*const css.StyleContext,
         // TODO: finish the fields

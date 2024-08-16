@@ -137,6 +137,16 @@ pub const TokenList = struct {
         }
     }
 
+    pub fn toCssRaw(this: *const TokenList, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        for (this.v.items) |*token_or_value| {
+            if (token_or_value.* == .token) {
+                try token_or_value.token.toCss(W, dest);
+            } else {
+                @compileError(css.todo_stuff.errors);
+            }
+        }
+    }
+
     pub fn writeWhitespaceIfNeeded(
         this: *const This,
         i: usize,

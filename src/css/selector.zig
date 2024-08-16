@@ -236,9 +236,34 @@ pub const api = struct {
                 never_matches: bool,
 
                 pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
-                    _ = this; // autofix
-                    _ = dest; // autofix
-                    @compileError(css.todo_stuff.depth);
+                    try dest.writeChar('[');
+                    if (this.namespace) |nsp| switch (nsp) {
+                        .specific => |v| {
+                            try css.IdentFns.toCss(&v.prefix, W, dest);
+                            try dest.writeChar('|');
+                        },
+                        .any => {
+                            try dest.writeStr("*|");
+                        },
+                    };
+                    try css.IdentFns.toCss(&this.local_name, W, dest);
+                    switch (this.operation) {
+                        .exists => {},
+                        .with_value => |v| {
+                            try v.operator.toCss(W, dest);
+                            try v.expected_value.toCss(dest);
+                            switch (v.case_sensitivity) {
+                                .case_sensitive, .ascii_case_insensitive_if_in_html_element_in_html_document => {},
+                                .ascii_case_insensitive => {
+                                    try dest.writeChar(" i");
+                                },
+                                .explicit_case_sensitive => {
+                                    try dest.writeStr(" s");
+                                },
+                            }
+                        },
+                    }
+                    try dest.writeChar(']');
                 }
             };
         }
@@ -909,9 +934,12 @@ pub const api = struct {
         },
 
         pub fn toCss(this: *const PseudoClass, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            _ = this; // autofix
-            _ = dest; // autofix
-            @compileError(css.todo_stuff.depth);
+            var s = std.ArrayList(u8){};
+            const writer = s.writer();
+            const W2 = @TypeOf(writer);
+            var printer = Printer(W2).new(@compileError(css.todo_stuff.think_about_allocator), css.PrinterOptions{});
+            try serialize.serializePseudoClass(this, W2, &printer, null);
+            try dest.writeStr(s.items);
         }
     };
 
@@ -1916,12 +1944,9 @@ pub const api = struct {
         deep,
 
         pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+            _ = this; // autofix
             _ = dest; // autofix
-            switch (this.*) {
-                .combinator => |c| {
-                    _ = c; // autofix
-                },
-            }
+            @compileError("Do not call this! Use `serializer.serializeCombinator()` or `tocss_servo.toCss_Combinator()` instead.");
         }
     };
 
@@ -2037,9 +2062,12 @@ pub const api = struct {
         }
 
         pub fn toCss(this: *const PseudoElement, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            _ = this; // autofix
-            _ = dest; // autofix
-            @compileError(css.todo_stuff.depth);
+            var s = std.ArrayList(u8){};
+            const writer = s.writer();
+            const W2 = @TypeOf(writer);
+            var printer = Printer(W2).new(@compileError(css.todo_stuff.think_about_allocator), css.PrinterOptions{});
+            try serialize.serializePseudoElement(this, W2, &printer, null);
+            try dest.writeStr(s.items);
         }
     };
 
@@ -2926,9 +2954,7 @@ pub const api = struct {
             lower_name: Impl.SelectorImpl.LocalName,
 
             pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
-                _ = this; // autofix
-                _ = dest; // autofix
-                @compileError(css.todo_stuff.depth);
+                try css.IdentFns.toCss(&this.name, W, dest);
             }
         };
     }
@@ -3089,9 +3115,8 @@ pub const serialize = struct {
 
             // Skip implicit :scope in relative selectors (e.g. :has(:scope > foo) -> :has(> foo))
             if (is_relative and compound.len >= 1 and compound[0] == .scope) {
-                if (combinators.next()) |combinator| {
-                    // todo_stuff.depth
-                    try combinator.toCss(W, dest);
+                if (combinators.next()) |*combinator| {
+                    try serializeCombinator(combinator, W, dest);
                 }
                 compound = compound[1..];
                 is_relative = false;
@@ -3142,7 +3167,6 @@ pub const serialize = struct {
                     } else compound;
 
                     for (slice) |simple| {
-                        // todo_stuff.depth
                         try serializeComponent(simple, W, dest, context);
                     }
 
@@ -3217,7 +3241,7 @@ pub const serialize = struct {
             //    single SPACE (U+0020) if the combinator was not whitespace, to
             //    s.
             if (next_combinator) |c| {
-                try c.toCss(dest);
+                try serializeCombinator(&c, W, dest);
             } else {
                 combinators_exhausted = true;
             }
@@ -3237,7 +3261,7 @@ pub const serialize = struct {
         context: ?*const css.StyleContext,
     ) PrintErr!void {
         switch (component.*) {
-            .combinator => |c| return try c.toCss(W, dest),
+            .combinator => |c| return try serializeCombinator(&c, W, dest),
             .attribute_in_no_namespace => |*v| {
                 try dest.writeChar('[');
                 try css.css_values.ident.IdentFns.toCss(&v.local_name, W, dest);
@@ -3363,16 +3387,204 @@ pub const serialize = struct {
         }
     }
 
+    fn serializeCombinator(
+        combinator: *api.Combinator,
+        comptime W: type,
+        dest: *Printer(W),
+    ) PrintErr!void {
+        switch (combinator.*) {
+            .child => try dest.delim('>', true),
+            .descendant => try dest.writeStr(" "),
+            .next_sibling => try dest.delim('+', true),
+            .later_sibling => try dest.delim('~', true),
+            .deep => try dest.writeStr(" /deep/ "),
+            .deep_descendant => {
+                try dest.whitespace();
+                try dest.writeStr(">>>");
+                try dest.whitespace();
+            },
+            .pseudo_element, .part, .slot_assign => return,
+        }
+    }
+
     fn serializePseudoClass(
         pseudo_class: *const api.PseudoClass,
         comptime W: type,
         dest: *Printer(W),
         context: ?*css.StyleContext,
     ) PrintErr!void {
-        _ = pseudo_class; // autofix
-        _ = dest; // autofix
-        _ = context; // autofix
-        @compileError(css.todo_stuff.depth);
+        switch (pseudo_class.*) {
+            .lang => {
+                try dest.writeStr(":lang(");
+                var first = true;
+                for (pseudo_class.lang.languages.items) |lang| {
+                    if (first) {
+                        first = false;
+                    } else {
+                        try dest.delim(',', false);
+                    }
+                    try css.serializer.serializeIdentifier(lang, W, dest);
+                }
+                return dest.writeStr(")");
+            },
+            .dir => {
+                const dir = pseudo_class.dir.direction;
+                try dest.writeStr(":dir(");
+                try dir.toCss(W, dest);
+                return try dest.writeStr(")");
+            },
+            else => {},
+        }
+
+        const Helpers = struct {
+            pub inline fn writePrefixed(
+                d: *Printer(W),
+                prefix: css.VendorPrefix,
+                comptime val: []const u8,
+            ) PrintErr!void {
+                try d.writeChar(':');
+                // If the printer has a vendor prefix override, use that.
+                const vp = if (!dest.vendor_prefix.isEmpty())
+                    dest.vendor_prefix.bitwiseOr(prefix).orNone()
+                else
+                    prefix;
+
+                try vp.toCss(W, d);
+                try d.writeStr(val);
+            }
+            pub inline fn pseudo(
+                d: *Printer(W),
+                comptime key: []const u8,
+                comptime s: []const u8,
+            ) PrintErr!void {
+                const _class = if (dest.pseudo_classes) |*pseudo_classes| @field(pseudo_classes, key) else null;
+
+                if (_class) |class| {
+                    try d.writeChar('.');
+                    try d.writeIdent(class, true);
+                } else {
+                    try d.writeStr(s);
+                }
+            }
+        };
+
+        switch (pseudo_class.*) {
+            // https://drafts.csswg.org/selectors-4/#useraction-pseudos
+            .hover => Helpers.pseudo(dest, "hover", ":hover"),
+            .active => Helpers.pseudo(dest, "active", ":active"),
+            .focus => Helpers.pseudo(dest, "focus", ":focus"),
+            .focus_visible => Helpers.pseudo(dest, "focus-visible", ":focus-visible"),
+            .focus_within => Helpers.pseudo(dest, "focus-within", ":focus-within"),
+
+            // https://drafts.csswg.org/selectors-4/#time-pseudos
+            .current => try dest.writeStr(":current"),
+            .past => try dest.writeStr(":past"),
+            .future => try dest.writeStr(":future"),
+
+            // https://drafts.csswg.org/selectors-4/#resource-pseudos
+            .playing => try dest.writeStr(":playing"),
+            .paused => try dest.writeStr(":paused"),
+            .seeking => try dest.writeStr(":seeking"),
+            .buffering => try dest.writeStr(":buffering"),
+            .stalled => try dest.writeStr(":stalled"),
+            .muted => try dest.writeStr(":muted"),
+            .volume_locked => try dest.writeStr(":volume-locked"),
+
+            // https://fullscreen.spec.whatwg.org/#:fullscreen-pseudo-class
+            .fullscreen => |prefix| {
+                try dest.writeChar(':');
+                const vp = if (!dest.vendor_prefix.isEmpty())
+                    dest.vendor_prefix.bitwiseAnd(prefix).orNone()
+                else
+                    prefix;
+                try vp.toCss(W, dest);
+                if (vp.webkit or vp.moz) {
+                    try dest.writeStr("full-screen");
+                } else {
+                    try dest.writeStr("fullscreen");
+                }
+            },
+
+            // https://drafts.csswg.org/selectors/#display-state-pseudos
+            .open => try dest.writeStr(":open"),
+            .closed => try dest.writeStr(":closed"),
+            .modal => try dest.writeStr(":modal"),
+            .picture_in_picture => try dest.writeStr(":picture-in-picture"),
+
+            // https://html.spec.whatwg.org/multipage/semantics-other.html#selector-popover-open
+            .popover_open => try dest.writeStr(":popover-open"),
+
+            // https://drafts.csswg.org/selectors-4/#the-defined-pseudo
+            .defined => try dest.writeStr(":defined"),
+
+            // https://drafts.csswg.org/selectors-4/#location
+            .any_link => |prefix| Helpers.writePrefixed(dest, prefix, "any-link"),
+            .link => try dest.writeStr(":link"),
+            .local_link => try dest.writeStr(":local-link"),
+            .target => try dest.writeStr(":target"),
+            .target_within => try dest.writeStr(":target-within"),
+            .visited => try dest.writeStr(":visited"),
+
+            // https://drafts.csswg.org/selectors-4/#input-pseudos
+            .enabled => try dest.writeStr(":enabled"),
+            .disabled => try dest.writeStr(":disabled"),
+            .read_only => |prefix| Helpers.writePrefixed(dest, prefix, "read-only"),
+            .read_write => |prefix| Helpers.writePrefixed(dest, prefix, "read-write"),
+            .placeholder_shown => |prefix| Helpers.writePrefixed(dest, prefix, "placeholder-shown"),
+            .default => try dest.writeStr(":default"),
+            .checked => try dest.writeStr(":checked"),
+            .indeterminate => try dest.writeStr(":indeterminate"),
+            .blank => try dest.writeStr(":blank"),
+            .valid => try dest.writeStr(":valid"),
+            .invalid => try dest.writeStr(":invalid"),
+            .in_range => try dest.writeStr(":in-range"),
+            .out_of_range => try dest.writeStr(":out-of-range"),
+            .required => try dest.writeStr(":required"),
+            .optional => try dest.writeStr(":optional"),
+            .user_valid => try dest.writeStr(":user-valid"),
+            .user_invalid => try dest.writeStr(":user-invalid"),
+
+            // https://html.spec.whatwg.org/multipage/semantics-other.html#selector-autofill
+            .autofill => |prefix| Helpers.writePrefixed(dest, prefix, "autofill"),
+
+            .local => |selector| serializeSelector(selector, dest, context, false),
+            .global => |selector| {
+                const css_module = std.mem.take(&dest.css_module);
+                try serializeSelector(selector, dest, context, false);
+                dest.css_module = css_module;
+            },
+
+            // https://webkit.org/blog/363/styling-scrollbars/
+            .webkit_scrollbar => |s| {
+                try dest.writeStr(switch (s) {
+                    .horizontal => ":horizontal",
+                    .vertical => ":vertical",
+                    .decrement => ":decrement",
+                    .increment => ":increment",
+                    .start => ":start",
+                    .end => ":end",
+                    .double_button => ":double-button",
+                    .single_button => ":single-button",
+                    .no_button => ":no-button",
+                    .corner_present => ":corner-present",
+                    .window_inactive => ":window-inactive",
+                });
+            },
+
+            .lang => unreachable,
+            .dir => unreachable,
+            .custom => |name| {
+                try dest.writeChar(':');
+                return dest.writeStr(name);
+            },
+            .custom_function => |v| {
+                try dest.writeChar(':');
+                try dest.writeStr(v.name);
+                try dest.writeChar('(');
+                try v.arguments.toCssRaw(W, dest);
+                try dest.writeChar(')');
+            },
+        }
     }
 
     fn serializePseudoElement(
@@ -3381,10 +3593,122 @@ pub const serialize = struct {
         dest: *Printer(W),
         context: ?*css.StyleContext,
     ) PrintErr!void {
-        _ = pseudo_element; // autofix
-        _ = dest; // autofix
-        _ = context; // autofix
-        @compileError(css.todo_stuff.depth);
+        const Helpers = struct {
+            pub fn writePrefix(d: *Printer(W), prefix: css.VendorPrefix) PrintErr!css.VendorPrefix {
+                try d.writeStr("::");
+                // If the printer has a vendor prefix override, use that.
+                const vp = if (!d.vendor_prefix.isEmpty()) dest.vendor_prefix.bitwiseAnd(prefix).orNone() else prefix;
+                try vp.toCss(W, d);
+                return vp;
+            }
+
+            pub fn writePrefixed(d: *Printer(W), prefix: css.VendorPrefix, comptime val: []const u8) PrintErr!void {
+                _ = writePrefix(d, prefix);
+                try d.writeStr(val);
+            }
+        };
+        // switch (pseudo_element.*) {
+        //     // CSS2 pseudo elements support a single colon syntax in addition
+        //     // to the more correct double colon for other pseudo elements.
+        //     // We use that here because it's supported everywhere and is shorter.
+        //     .after => try dest.writeStr(":after"),
+        //     .before => try dest.writeStr(":before"),
+        //     .marker => try dest.writeStr(":first-letter"),
+        //     .selection => |prefix| Helpers.writePrefixed(dest, prefix, "selection"),
+        //     .cue => dest.writeStr("::cue"),
+        //     .cue_region => dest.writeStr("::cue-region"),
+        //     .cue_function => |v| {
+        //         dest.writeStr("::cue(");
+        //         try serializeSelector(v.selector, W, dest, context, false);
+        //         try dest.writeChar(')');
+        //     },
+        // }
+        switch (pseudo_element.*) {
+            // CSS2 pseudo elements support a single colon syntax in addition
+            // to the more correct double colon for other pseudo elements.
+            // We use that here because it's supported everywhere and is shorter.
+            .after => try dest.writeStr(":after"),
+            .before => try dest.writeStr(":before"),
+            .first_line => try dest.writeStr(":first-line"),
+            .first_letter => try dest.writeStr(":first-letter"),
+            .marker => try dest.writeStr("::marker"),
+            .selection => |prefix| Helpers.writePrefixed(dest, prefix, "selection"),
+            .cue => try dest.writeStr("::cue"),
+            .cue_region => try dest.writeStr("::cue-region"),
+            .cue_function => |v| {
+                try dest.writeStr("::cue(");
+                try serializeSelector(v.selector, dest, context, false);
+                try dest.writeChar(')');
+            },
+            .cue_region_function => |v| {
+                try dest.writeStr("::cue-region(");
+                try serializeSelector(v.selector, dest, context, false);
+                try dest.writeChar(')');
+            },
+            .placeholder => |prefix| {
+                const vp = try Helpers.writePrefix(prefix);
+                if (vp.webkit or vp.ms) {
+                    try dest.writeStr("input-placeholder");
+                } else {
+                    try dest.writeStr("placeholder");
+                }
+            },
+            .backdrop => |prefix| Helpers.writePrefixed(dest, prefix, "backdrop"),
+            .file_selector_button => |prefix| {
+                const vp = try Helpers.writePrefix(prefix);
+                if (vp.webkit) {
+                    try dest.writeStr("file-upload-button");
+                } else if (vp.ms) {
+                    try dest.writeStr("browse");
+                } else {
+                    try dest.writeStr("file-selector-button");
+                }
+            },
+            .webkit_scrollbar => |s| {
+                try dest.writeStr(switch (s) {
+                    .scrollbar => "::-webkit-scrollbar",
+                    .button => "::-webkit-scrollbar-button",
+                    .track => "::-webkit-scrollbar-track",
+                    .track_piece => "::-webkit-scrollbar-track-piece",
+                    .thumb => "::-webkit-scrollbar-thumb",
+                    .corner => "::-webkit-scrollbar-corner",
+                    .resizer => "::-webkit-resizer",
+                });
+            },
+            .view_transition => try dest.writeStr("::view-transition"),
+            .view_transition_group => |v| {
+                try dest.writeStr("::view-transition-group(");
+                try v.part_name.toCss(dest);
+                try dest.writeChar(')');
+            },
+            .view_transition_image_pair => |v| {
+                try dest.writeStr("::view-transition-image-pair(");
+                try v.part_name.toCss(dest);
+                try dest.writeChar(')');
+            },
+            .view_transition_old => |v| {
+                try dest.writeStr("::view-transition-old(");
+                try v.part_name.toCss(dest);
+                try dest.writeChar(')');
+            },
+            .view_transition_new => |v| {
+                try dest.writeStr("::view-transition-new(");
+                try v.part_name.toCss(dest);
+                try dest.writeChar(')');
+            },
+            .custom => |val| {
+                try dest.writeStr("::");
+                return dest.writeStr(val);
+            },
+            .custom_function => |v| {
+                const name = v.name;
+                try dest.writeStr("::");
+                try dest.writeStr(name);
+                try dest.writeChar('(');
+                try v.arguments.toCssRaw(dest);
+                try dest.writeChar(')');
+            },
+        }
     }
 
     fn serializeNesting(
@@ -3393,10 +3717,30 @@ pub const serialize = struct {
         context: ?*css.StyleContext,
         first: bool,
     ) PrintErr!void {
-        _ = first; // autofix
-        _ = dest; // autofix
-        _ = context; // autofix
-        @compileError(css.todo_stuff.depth);
+        if (context) |ctx| {
+            // If there's only one simple selector, just serialize it directly.
+            // Otherwise, use an :is() pseudo class.
+            // Type selectors are only allowed at the start of a compound selector,
+            // so use :is() if that is not the case.
+            if (ctx.selectors.v.items.len == 1 and
+                (first or (!hasTypeSelector(&ctx.selectors.v[0]) and
+                isSimple(&ctx.selectors.v[0]))))
+            {
+                try serializeSelector(&ctx.selectors.v.items[0], W, dest, ctx.parent, false);
+            } else {
+                try dest.writeStr(":is(");
+                try serializeSelectorList(ctx.selectors.items, W, dest, ctx.parent, false);
+                try dest.writeChar(')');
+            }
+        } else {
+            // If there is no context, we are at the root if nesting is supported. This is equivalent to :scope.
+            // Otherwise, if nesting is supported, serialize the nesting selector directly.
+            if (dest.targets.shouldCompile(css.compat.Feature.nesting, .nesting)) {
+                try dest.writeStr(":scope");
+            } else {
+                try dest.writeChar('&');
+            }
+        }
     }
 };
 
@@ -3532,7 +3876,6 @@ const tocss_servo = struct {
                     // Iterate over everything so we serialize the namespace
                     // too.
                     for (compound) |*simple| {
-                        // todo_stuff.depth
                         try tocss_servo.toCss_Component(simple, W, dest);
                     }
                     // Skip step 2, which is an "otherwise".
@@ -3572,7 +3915,7 @@ const tocss_servo = struct {
             //    single SPACE (U+0020) if the combinator was not whitespace, to
             //    s.
             if (next_combinator) |c| {
-                try c.toCss(dest);
+                try toCss_Combinator(&c, W, dest);
             } else {
                 combinators_exhausted = true;
             }
@@ -3591,7 +3934,7 @@ const tocss_servo = struct {
         dest: *Printer(W),
     ) PrintErr!void {
         switch (component.*) {
-            .combinator => |c| try c.toCss(W, dest),
+            .combinator => |c| try toCss_Combinator(&c, W, dest),
             .slotted => |selector| {
                 try dest.writeStr("::slotted(");
                 try tocss_servo.toCss_Selector(selector, W, dest);
@@ -3726,14 +4069,33 @@ const tocss_servo = struct {
         }
     }
 
+    fn toCss_Combinator(
+        combinator: *api.Combinator,
+        comptime W: type,
+        dest: *Printer(W),
+    ) PrintErr!void {
+        switch (combinator.*) {
+            .child => try dest.writeStr(" > "),
+            .descendant => try dest.writeStr(" "),
+            .next_sibling => try dest.writeStr(" + "),
+            .later_sibling => try dest.writeStr(" ~ "),
+            .deep => try dest.writeStr(" /deep/ "),
+            .deep_descendant => {
+                try dest.writeStr(" >>> ");
+            },
+            .pseudo_element, .part, .slot_assign => return,
+        }
+    }
+
     pub fn toCss_PseudoElement(
         pseudo_element: *const api.PseudoElement,
         comptime W: type,
         dest: *Printer(W),
     ) PrintErr!void {
-        _ = pseudo_element; // autofix
-        _ = dest; // autofix
-        @compileError(css.todo_stuff.depth);
+        switch (pseudo_element.*) {
+            .before => try dest.writeStr("::before"),
+            .after => try dest.writeStr("::after"),
+        }
     }
 };
 

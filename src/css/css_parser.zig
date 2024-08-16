@@ -104,6 +104,10 @@ pub fn Bitflags(comptime T: type) type {
             return @bitCast(@as(IntType, @bitCast(lhs)) | @as(IntType, @bitCast(rhs)));
         }
 
+        pub fn bitwiseAnd(lhs: T, rhs: T) T {
+            return asBits(lhs) & asBits(rhs);
+        }
+
         pub fn insert(this: T, other: T) T {
             return bitwiseOr(this, other);
         }

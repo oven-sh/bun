@@ -243,7 +243,7 @@ pub const Response = struct {
             if (this.body.value == .Blob) {
                 const content_type = this.body.value.Blob.content_type;
                 if (content_type.len > 0) {
-                    this.init.headers.?.put("content-type", content_type, globalThis);
+                    this.init.headers.?.put(.ContentType, content_type, globalThis);
                 }
             }
         }
@@ -403,7 +403,7 @@ pub const Response = struct {
         }
 
         var headers_ref = response.getOrCreateHeaders(globalThis);
-        headers_ref.putDefault("content-type", MimeType.json.value, globalThis);
+        headers_ref.putDefault(.ContentType, MimeType.json.value, globalThis);
         did_succeed = true;
         return bun.new(Response, response).toJS(globalThis);
     }
@@ -464,7 +464,7 @@ pub const Response = struct {
 
         response.init.headers = response.getOrCreateHeaders(globalThis);
         var headers_ref = response.init.headers.?;
-        headers_ref.put("location", url_string_slice.slice(), globalThis);
+        headers_ref.put(.Location, url_string_slice.slice(), globalThis);
         const ptr = bun.new(Response, response);
 
         return ptr.toJS(globalThis);
@@ -570,7 +570,7 @@ pub const Response = struct {
             response.body.value.Blob.content_type.len > 0 and
             !response.init.headers.?.fastHas(.ContentType))
         {
-            response.init.headers.?.put("content-type", response.body.value.Blob.content_type, globalThis);
+            response.init.headers.?.put(.ContentType, response.body.value.Blob.content_type, globalThis);
         }
 
         response.calculateEstimatedByteSize();
@@ -2227,7 +2227,7 @@ pub const Fetch = struct {
 
             inline for (0..2) |i| {
                 if (objects_to_try[i] != .zero) {
-                    if (objects_to_try[i].get(globalThis, "decompression")) |decompression_value| {
+                    if (objects_to_try[i].get(globalThis, "decompress")) |decompression_value| {
                         if (decompression_value.isBoolean()) {
                             break :extract_disable_decompression !decompression_value.asBoolean();
                         } else if (decompression_value.isNumber()) {
@@ -2555,6 +2555,57 @@ pub const Fetch = struct {
             return .zero;
         }
 
+        // We do this 2nd to last instead of last so that if it's a FormData
+        // object, we can still insert the boundary.
+        //
+        // body: BodyInit | null | undefined;
+        //
+        body = extract_body: {
+            if (options_object) |options| {
+                if (options.fastGet(globalThis, .body)) |body__| {
+                    if (!body__.isUndefined()) {
+                        if (Body.Value.fromJS(ctx.ptr(), body__)) |body_const| {
+                            var body_value = body_const;
+                            break :extract_body body_value.useAsAnyBlob();
+                        }
+                    }
+                }
+
+                if (globalThis.hasException()) {
+                    is_error = true;
+                    return .zero;
+                }
+            }
+
+            if (request) |req| {
+                if (req.body.value == .Used or (req.body.value == .Locked and req.body.value.Locked.isDisturbed(Request, globalThis, first_arg))) {
+                    globalThis.ERR_BODY_ALREADY_USED("Request body already used", .{}).throw();
+                    is_error = true;
+                    return .zero;
+                }
+
+                break :extract_body req.body.value.useAsAnyBlob();
+            }
+
+            if (request_init_object) |req| {
+                if (req.fastGet(globalThis, .body)) |body__| {
+                    if (!body__.isUndefined()) {
+                        if (Body.Value.fromJS(ctx.ptr(), body__)) |body_const| {
+                            var body_value = body_const;
+                            break :extract_body body_value.useAsAnyBlob();
+                        }
+                    }
+                }
+            }
+
+            break :extract_body null;
+        } orelse AnyBlob{ .Blob = .{} };
+
+        if (globalThis.hasException()) {
+            is_error = true;
+            return .zero;
+        }
+
         // headers: Headers | undefined;
         headers = extract_headers: {
             var fetch_headers_to_deref: ?*JSC.FetchHeaders = null;
@@ -2564,7 +2615,7 @@ pub const Fetch = struct {
                 }
             }
 
-            const fetch_headers = brk: {
+            const fetch_headers: ?*JSC.FetchHeaders = brk: {
                 if (options_object) |options| {
                     if (options.fastGet(globalThis, .headers)) |headers_value| {
                         if (!headers_value.isUndefined()) {
@@ -2588,7 +2639,11 @@ pub const Fetch = struct {
                 }
 
                 if (request) |req| {
-                    break :brk req.ensureFetchHeaders(globalThis);
+                    if (req.getFetchHeadersUnlessEmpty()) |head| {
+                        break :brk head;
+                    }
+
+                    break :brk null;
                 }
 
                 if (request_init_object) |options| {
@@ -2646,45 +2701,6 @@ pub const Fetch = struct {
             const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_proxy_unix, .{}, ctx);
             return JSPromise.rejectedPromiseValue(globalThis, err);
         }
-
-        // Do this last to avoid consuming the body if there's an error above.
-        //
-        // body: BodyInit | null | undefined;
-        //
-        body = extract_body: {
-            if (options_object) |options| {
-                if (options.fastGet(globalThis, .body)) |body__| {
-                    if (!body__.isUndefined()) {
-                        if (Body.Value.fromJS(ctx.ptr(), body__)) |body_const| {
-                            var body_value = body_const;
-                            break :extract_body body_value.useAsAnyBlob();
-                        }
-                    }
-                }
-
-                if (globalThis.hasException()) {
-                    is_error = true;
-                    return .zero;
-                }
-            }
-
-            if (request) |req| {
-                break :extract_body req.body.value.useAsAnyBlob();
-            }
-
-            if (request_init_object) |req| {
-                if (req.fastGet(globalThis, .body)) |body__| {
-                    if (!body__.isUndefined()) {
-                        if (Body.Value.fromJS(ctx.ptr(), body__)) |body_const| {
-                            var body_value = body_const;
-                            break :extract_body body_value.useAsAnyBlob();
-                        }
-                    }
-                }
-            }
-
-            break :extract_body null;
-        } orelse AnyBlob{ .Blob = .{} };
 
         if (globalThis.hasException()) {
             is_error = true;

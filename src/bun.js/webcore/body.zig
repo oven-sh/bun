@@ -1131,10 +1131,7 @@ pub fn BodyMixin(comptime Type: type) type {
         }
 
         fn handleBodyAlreadyUsed(globalObject: *JSC.JSGlobalObject) JSValue {
-            return JSC.JSPromise.rejectedPromiseValue(
-                globalObject,
-                ZigString.static("Body already used").toErrorInstance(globalObject),
-            );
+            return globalObject.ERR_BODY_ALREADY_USED("Body already used", .{}).reject();
         }
 
         pub fn getArrayBuffer(

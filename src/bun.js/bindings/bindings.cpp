@@ -1558,23 +1558,53 @@ WebCore__FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC__JSGlobalObject* 
     EnsureStillAliveScope argument0 = JSC::JSValue::decode(argument0_);
 
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
+    throwScope.assertNoException();
+
     // Note that we use IDLDOMString here rather than IDLByteString: while headers
     //  should be ASCII only, we want the headers->fill implementation to discover
     //  and error on invalid names and values
     using TargetType = IDLUnion<IDLSequence<IDLSequence<IDLDOMString>>, IDLRecord<IDLDOMString, IDLDOMString>>;
     using Converter = std::optional<Converter<TargetType>::ReturnType>;
+
     auto init = argument0.value().isUndefined() ? Converter() : Converter(convert<TargetType>(*lexicalGlobalObject, argument0.value()));
     RETURN_IF_EXCEPTION(throwScope, nullptr);
 
+    // if the headers are empty, return null
+    if (!init) {
+        return nullptr;
+    }
+
+    // [["", ""]] should be considered empty and return null
+    if (std::holds_alternative<Vector<Vector<String>>>(init.value())) {
+        const auto& sequence = std::get<Vector<Vector<String>>>(init.value());
+
+        if (sequence.size() == 0) {
+            return nullptr;
+        }
+    } else {
+        // {} should be considered empty and return null
+        const auto& record = std::get<Vector<KeyValuePair<String, String>>>(init.value());
+        if (record.size() == 0) {
+            return nullptr;
+        }
+    }
+
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
     headers->relaxAdoptionRequirement();
-    if (init) {
-        // `fill` doesn't set an exception on the VM if it fails, it returns an
-        //  ExceptionOr<void>.  So we need to check for the exception and, if set,
-        //  translate it to JSValue and throw it.
-        WebCore::propagateException(*lexicalGlobalObject, throwScope,
-            headers->fill(WTFMove(init.value())));
+
+    // `fill` doesn't set an exception on the VM if it fails, it returns an
+    //  ExceptionOr<void>.  So we need to check for the exception and, if set,
+    //  translate it to JSValue and throw it.
+    WebCore::propagateException(*lexicalGlobalObject, throwScope,
+        headers->fill(WTFMove(init.value())));
+
+    // If there's an exception, it will be thrown by the above call to fill().
+    // in that case, let's also free the headers to make memory leaks harder.
+    if (throwScope.exception()) {
+        headers->deref();
+        return nullptr;
     }
+
     return headers;
 }
 
@@ -1737,7 +1767,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
     }
     return headers;
 }
-WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(JSC__JSGlobalObject* arg0, void* arg1)
+WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
 {
     uWS::HttpRequest req = *reinterpret_cast<uWS::HttpRequest*>(arg1);
 
@@ -1810,11 +1840,12 @@ bool WebCore__FetchHeaders__has(WebCore__FetchHeaders* headers, const ZigString*
     } else
         return result.releaseReturnValue();
 }
-void WebCore__FetchHeaders__put_(WebCore__FetchHeaders* headers, const ZigString* arg1, const ZigString* arg2, JSC__JSGlobalObject* global)
+extern "C" void WebCore__FetchHeaders__put(WebCore__FetchHeaders* headers, HTTPHeaderName name, const ZigString* arg2, JSC__JSGlobalObject* global)
 {
     auto throwScope = DECLARE_THROW_SCOPE(global->vm());
+    throwScope.assertNoException(); // can't throw an exception when there's already one.
     WebCore::propagateException(*global, throwScope,
-        headers->set(Zig::toString(*arg1), Zig::toStringCopy(*arg2)));
+        headers->set(name, Zig::toStringCopy(*arg2)));
 }
 void WebCore__FetchHeaders__remove(WebCore__FetchHeaders* headers, const ZigString* arg1, JSC__JSGlobalObject* global)
 {

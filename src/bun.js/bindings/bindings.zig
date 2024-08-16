@@ -1170,22 +1170,29 @@ pub const FetchHeaders = opaque {
         });
     }
 
+    extern "C" fn WebCore__FetchHeaders__createFromJS(*JSC.JSGlobalObject, JSValue) ?*FetchHeaders;
+    /// Construct a `Headers` object from a JSValue.
+    ///
+    /// This can be:
+    /// -  Array<[String, String]>
+    /// -  Record<String, String>.
+    ///
+    /// Throws an exception if invalid.
+    ///
+    /// If empty, returns null.
     pub fn createFromJS(
         global: *JSGlobalObject,
         value: JSValue,
     ) ?*FetchHeaders {
-        return shim.cppFn("createFromJS", .{
-            global,
-            value,
-        });
+        return WebCore__FetchHeaders__createFromJS(global, value);
     }
 
-    pub fn putDefault(this: *FetchHeaders, name_: []const u8, value: []const u8, global: *JSGlobalObject) void {
-        if (this.has(&ZigString.init(name_), global)) {
+    pub fn putDefault(this: *FetchHeaders, name_: HTTPHeaderName, value: []const u8, global: *JSGlobalObject) void {
+        if (this.fastHas(name_)) {
             return;
         }
 
-        this.put_(&ZigString.init(name_), &ZigString.init(value), global);
+        this.put(name_, value, global);
     }
 
     pub fn from(
@@ -1211,11 +1218,9 @@ pub const FetchHeaders = opaque {
     }
 
     pub fn createFromUWS(
-        global: *JSGlobalObject,
         uws_request: *anyopaque,
     ) *FetchHeaders {
         return shim.cppFn("createFromUWS", .{
-            global,
             uws_request,
         });
     }
@@ -1273,27 +1278,15 @@ pub const FetchHeaders = opaque {
         });
     }
 
-    pub fn put_(
-        this: *FetchHeaders,
-        name_: *const ZigString,
-        value: *const ZigString,
-        global: *JSGlobalObject,
-    ) void {
-        return shim.cppFn("put_", .{
-            this,
-            name_,
-            value,
-            global,
-        });
-    }
+    extern fn WebCore__FetchHeaders__put(this: *FetchHeaders, name_: HTTPHeaderName, value: *const ZigString, global: *JSGlobalObject) void;
 
     pub fn put(
         this: *FetchHeaders,
-        name_: []const u8,
+        name_: HTTPHeaderName,
         value: []const u8,
         global: *JSGlobalObject,
     ) void {
-        this.put_(&ZigString.init(name_), &ZigString.init(value), global);
+        WebCore__FetchHeaders__put(this, name_, &ZigString.init(value), global);
     }
 
     pub fn get_(
@@ -3982,7 +3975,7 @@ pub const JSValue = enum(JSValueReprInt) {
     /// If the object is a subclass of the type or has mutated the structure, return null.
     /// Note: this may return null for direct instances of the type if the user adds properties to the object.
     pub fn asDirect(value: JSValue, comptime ZigType: type) ?*ZigType {
-        bun.assert(value.isCell()); // you must have already checked this.
+        bun.debugAssert(value.isCell()); // you must have already checked this.
 
         return ZigType.fromJSDirect(value);
     }

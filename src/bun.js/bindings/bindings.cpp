@@ -1601,7 +1601,6 @@ WebCore__FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC__JSGlobalObject* 
     // If there's an exception, it will be thrown by the above call to fill().
     // in that case, let's also free the headers to make memory leaks harder.
     if (throwScope.exception()) {
-        delete headers;
         headers->deref();
         return nullptr;
     }

@@ -955,6 +955,7 @@ declare global {
     ref(): Timer;
     unref(): Timer;
     hasRef(): boolean;
+    refresh(): Timer
 
     [Symbol.toPrimitive](): number;
   }

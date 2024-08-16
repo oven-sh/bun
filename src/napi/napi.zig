@@ -1745,6 +1745,7 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn _ZN2v87Boolean3NewEPNS_7IsolateEb() *anyopaque;
     pub extern fn _ZN2v86Object16GetInternalFieldEi() *anyopaque;
     pub extern fn _ZN2v87Context10GetIsolateEv() *anyopaque;
+    pub extern fn _ZN2v86String14NewFromOneByteEPNS_7IsolateEPKhNS_13NewStringTypeEi() *anyopaque;
 } else struct {
     // MSVC name mangling is different than it is on unix.
     // To make this easier to deal with, I have provided a script to generate the list of functions.
@@ -1802,6 +1803,7 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"?New@Boolean@v8@@SA?AV?$Local@VBoolean@v8@@@2@PEAVIsolate@2@_N@Z"() *anyopaque;
     pub extern fn @"?GetInternalField@Object@v8@@QEAA?AV?$Local@VData@v8@@@2@H@Z"() *anyopaque;
     pub extern fn @"?GetIsolate@Context@v8@@QEAAPEAVIsolate@2@XZ"() *anyopaque;
+    pub extern fn @"?NewFromOneByte@String@v8@@SA?AV?$MaybeLocal@VString@v8@@@2@PEAVIsolate@2@PEBEW4NewStringType@2@H@Z"() *anyopaque;
 };
 
 pub fn fixDeadCodeElimination() void {

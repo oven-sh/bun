@@ -138,6 +138,9 @@ describe("String", () => {
   it.skip("handles replacement correctly in strings with invalid UTF-8 sequences", () => {
     checkSameOutput("test_v8_string_invalid_utf8", []);
   });
+  it("can create strings from null-terminated Latin-1 data", () => {
+    checkSameOutput("test_v8_string_latin1", []);
+  });
 });
 
 describe("External", () => {

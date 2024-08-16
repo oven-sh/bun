@@ -3,7 +3,6 @@
 #include "V8HandleScope.h"
 
 using JSC::JSString;
-using JSC::JSValue;
 
 namespace v8 {
 
@@ -27,6 +26,16 @@ MaybeLocal<String> String::NewFromUtf8(Isolate* isolate, char const* data, NewSt
     // ReplacingInvalidSequences matches how v8 behaves here
     auto string = WTF::String::fromUTF8ReplacingInvalidSequences(span);
     RELEASE_ASSERT(!string.isNull());
+    JSString* jsString = JSC::jsString(isolate->vm(), string);
+    return MaybeLocal<String>(isolate->globalInternals()->currentHandleScope()->createLocal<String>(jsString));
+}
+
+MaybeLocal<String> String::NewFromOneByte(Isolate* isolate, const uint8_t* data, NewStringType type, int length)
+{
+    (void)type;
+    RELEASE_ASSERT(length < 0, "Non-inferred string length in v8::String::NewFromOneByte is not implemented");
+
+    auto string = WTF::String::fromLatin1(reinterpret_cast<const char*>(data));
     JSString* jsString = JSC::jsString(isolate->vm(), string);
     return MaybeLocal<String>(isolate->globalInternals()->currentHandleScope()->createLocal<String>(jsString));
 }

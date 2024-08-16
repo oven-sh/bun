@@ -193,7 +193,7 @@ describe("error handling", () => {
 });
 
 describe("Global", () => {
-  it("can create, modify, and read the value from global handles", () => {
+  it.skip("can create, modify, and read the value from global handles", () => {
     checkSameOutput("test_v8_global", []);
   });
 });

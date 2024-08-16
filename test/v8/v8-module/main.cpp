@@ -303,7 +303,7 @@ void test_v8_string_write_utf8(const FunctionCallbackInfo<Value> &info) {
       226, 154, 167, 239, 184, 143, 'h', 'i', 0xc3, 0xa9, 0};
   const char *utf8_data = reinterpret_cast<const char *>(utf8_data_unsigned);
 
-  constexpr size_t buf_size = sizeof(utf8_data_unsigned) + 3;
+  constexpr int buf_size = sizeof(utf8_data_unsigned) + 3;
   char buf[buf_size] = {0};
   Local<String> s = String::NewFromUtf8(isolate, utf8_data).ToLocalChecked();
   for (int i = buf_size; i >= 0; i--) {

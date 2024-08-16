@@ -1535,3 +1535,5 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsMockFn, (JSC::JSGlobalObject * lexicalGlobalO
 
     return JSValue::encode(thisObject);
 }
+
+#undef CHECK_THIS

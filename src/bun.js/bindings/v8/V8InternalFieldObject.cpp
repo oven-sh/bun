@@ -22,4 +22,20 @@ InternalFieldObject* InternalFieldObject::create(JSC::VM& vm, JSC::Structure* st
     return object;
 }
 
+template<typename Visitor>
+void InternalFieldObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    InternalFieldObject* thisObject = jsCast<InternalFieldObject*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    for (auto& value : thisObject->fields) {
+        if (value.isCell()) {
+            JSCell::visitChildren(value.asCell(), visitor);
+        }
+    }
+}
+
+DEFINE_VISIT_CHILDREN(InternalFieldObject);
+
 }

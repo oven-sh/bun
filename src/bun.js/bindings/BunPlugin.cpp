@@ -28,7 +28,8 @@
 #include "BunClientData.h"
 #include "CommonJSModuleRecord.h"
 #include "isBuiltinModule.h"
-#include "v8/v8.h"
+
+extern "C" Zig::GlobalObject* Bun__getDefaultGlobalObject();
 
 namespace Zig {
 

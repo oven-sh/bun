@@ -24,17 +24,20 @@ const directories = {
   bunRelease: "",
   bunDebug: "",
   node: "",
+  badModules: "",
 };
 
 beforeAll(() => {
-  // set up clean directories for our 3 builds
+  // set up clean directories for our 4 builds
   directories.bunRelease = tmpdirSync();
   directories.bunDebug = tmpdirSync();
   directories.node = tmpdirSync();
+  directories.badModules = tmpdirSync();
 
   fs.cpSync(srcDir, directories.bunRelease, { recursive: true });
   fs.cpSync(srcDir, directories.bunDebug, { recursive: true });
   fs.cpSync(srcDir, directories.node, { recursive: true });
+  fs.cpSync(join(__dirname, "bad-modules"), directories.badModules, { recursive: true });
 
   // build code using bun
   // we install/build with separate commands so that we can use --bun to run node-gyp
@@ -98,16 +101,16 @@ beforeAll(() => {
     throw new Error("build failed");
   }
 
-  // build invalid modules
-  const invalidModulesBuild = spawnSync({
+  // build bad modules (these should not depend strongly on the runtime version)
+  const badModulesBuild = spawnSync({
     cmd: [bunExe(), "install"],
-    cwd: directories.node,
+    cwd: directories.badModules,
     env: bunEnv,
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",
   });
-  if (!invalidModulesBuild.success) {
+  if (!badModulesBuild.success) {
     throw new Error("build failed");
   }
 });
@@ -187,13 +190,13 @@ describe("Function", () => {
 
 describe("error handling", () => {
   it("throws an error for modules built using the wrong ABI version", () => {
-    expect(() => require("./bad-modules/build/Release/mismatched_abi_version.node")).toThrow(
+    expect(() => require(join(directories.badModules, "build/Release/mismatched_abi_version.node"))).toThrow(
       "The module 'mismatched_abi_version' was compiled against a different Node.js ABI version using NODE_MODULE_VERSION 42.",
     );
   });
 
   it("throws an error for modules with no entrypoint", () => {
-    expect(() => require("./bad-modules/build/Release/no_entrypoint.node")).toThrow(
+    expect(() => require(join(directories.badModules, "build/Release/no_entrypoint.node"))).toThrow(
       "The module 'no_entrypoint' has no declared entry point.",
     );
   });
@@ -203,6 +206,7 @@ afterAll(() => {
   fs.rmSync(directories.bunRelease, { recursive: true, force: true });
   fs.rmSync(directories.bunDebug, { recursive: true, force: true });
   fs.rmSync(directories.node, { recursive: true, force: true });
+  fs.rmSync(directories.badModules, { recursive: true, force: true });
 });
 
 enum Runtime {

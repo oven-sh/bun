@@ -2098,10 +2098,12 @@ pub const Fetch = struct {
 
             break :brk null;
         };
-        const url_str_optional = if (first_arg.isString() or first_arg.as(JSC.DOMURL) != null or first_arg.isBuffer(globalThis))
-            StringOrURL.fromJS(first_arg, globalThis)
-        else
-            null;
+        // If it's NOT a Request or a subclass of Request, treat the first argument as a URL.
+        const url_str_optional = if (first_arg.as(Request) == null) StringOrURL.fromJS(first_arg, globalThis) else null;
+        if (globalThis.hasException()) {
+            is_error = true;
+            return .zero;
+        }
 
         const request_init_object: ?JSValue = brk: {
             if (request != null) break :brk null;
@@ -2132,9 +2134,14 @@ pub const Fetch = struct {
         };
         defer url_str.deref();
 
-        if (url_str.isEmpty()) {
-            const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
+        if (globalThis.hasException()) {
             is_error = true;
+            return .zero;
+        }
+
+        if (url_str.isEmpty()) {
+            is_error = true;
+            const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
             return JSPromise.rejectedPromiseValue(globalThis, err);
         }
 

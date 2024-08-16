@@ -1,5 +1,5 @@
 import { TCPSocketListener } from "bun";
-import { beforeAll, describe, expect, it, test, afterAll } from "bun:test";
+import { beforeAll, describe, expect, it, test, afterAll, mock, spyOn } from "bun:test";
 
 let server;
 let requestCount = 0;
@@ -56,6 +56,21 @@ test("fetch(url, RequestSubclass)", async () => {
   const { headers } = await fetch(server.url, myRequest);
 
   expect(headers.get("hello")).toBe("world");
+});
+
+test("fetch({toString throwing}, {headers} isn't accessed)", async () => {
+  const obj = {
+    headers: null,
+  };
+  const mocked = spyOn(obj, "headers");
+  const str = {
+    toString: mock(() => {
+      throw new Error("bad2");
+    }),
+  };
+  expect(async () => await fetch(str, obj)).toThrow("bad2");
+  expect(mocked).not.toHaveBeenCalled();
+  expect(str.toString).toHaveBeenCalledTimes(1);
 });
 
 test("fetch(RequestSubclass, undefined)", async () => {

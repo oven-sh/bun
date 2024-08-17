@@ -404,6 +404,7 @@ private:
 
         /* Handle FIN, HTTP does not support half-closed sockets, so simply close */
         us_socket_context_on_end(SSL, getSocketContext(), [](us_socket_t *s) {
+            ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
 
             /* We do not care for half closed sockets */
             AsyncSocket<SSL> *asyncSocket = (AsyncSocket<SSL> *) s;

@@ -192,9 +192,10 @@ public:
             /* Fallback is to use the backpressure as buffer */
             backPressure.resize(ourCorkOffset + existingBackpressure + size);
 
-            /* And copy corkbuffer in front */
-            memcpy((char *) backPressure.data() + existingBackpressure, loopData->getCorkBuffer(), ourCorkOffset);
-
+            if(ourCorkOffset > 0) {
+                /* And copy corkbuffer in front */
+                memcpy((char *) backPressure.data() + existingBackpressure, loopData->getCorkBuffer(), ourCorkOffset);
+            }
             return {(char *) backPressure.data() + ourCorkOffset + existingBackpressure, SendBufferAttribute::NEEDS_DRAIN};
         }
     }

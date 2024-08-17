@@ -325,6 +325,14 @@ void GlobalTestWrapper::get(const FunctionCallbackInfo<Value> &info) {
 
 void GlobalTestWrapper::cleanup(void *unused) { value.Reset(); }
 
+void test_many_v8_locals(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  for (int i = 0; i < 1000; i++) {
+    Local<Number> num = Number::New(isolate, i);
+    (void)num;
+  }
+}
+
 void initialize(Local<Object> exports, Local<Value> module,
                 Local<Context> context) {
   NODE_SET_METHOD(exports, "test_v8_native_call", test_v8_native_call);
@@ -347,6 +355,7 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "print_values_from_js", print_values_from_js);
   NODE_SET_METHOD(exports, "global_get", GlobalTestWrapper::get);
   NODE_SET_METHOD(exports, "global_set", GlobalTestWrapper::set);
+  NODE_SET_METHOD(exports, "test_many_v8_locals", test_many_v8_locals);
 
   node::AddEnvironmentCleanupHook(context->GetIsolate(),
                                   GlobalTestWrapper::cleanup, nullptr);

@@ -198,6 +198,12 @@ describe("Global", () => {
   });
 });
 
+describe("HandleScope", () => {
+  it("can hold a lot of locals", () => {
+    checkSameOutput("test_many_v8_locals", []);
+  });
+});
+
 afterAll(() => {
   fs.rmSync(join(__dirname, "v8-module-node"), { recursive: true, force: true });
   fs.rmSync(join(__dirname, "v8-module-debug"), { recursive: true, force: true });

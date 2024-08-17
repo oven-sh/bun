@@ -61,6 +61,7 @@ pub const DeflateEncoder = struct {
         const maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)) orelse return .zero;
         const flush = globalThis.checkRangesOrGetDefault(opts, "flush", u8, 0, 6, 0) orelse return .zero;
         const finishFlush = globalThis.checkRangesOrGetDefault(opts, "finishFlush", u8, 0, 6, 4) orelse return .zero;
+        const fullFlush = globalThis.checkRangesOrGetDefault(opts, "fullFlush", u8, 0, 6, 3) orelse return .zero;
 
         var this: *DeflateEncoder = DeflateEncoder.new(.{
             .globalThis = globalThis,
@@ -68,6 +69,7 @@ pub const DeflateEncoder = struct {
             .stream = .{
                 .flush = @enumFromInt(flush),
                 .finishFlush = @enumFromInt(finishFlush),
+                .fullFlush = @enumFromInt(fullFlush),
             },
         });
         this.stream.init(level, windowBits, memLevel, strategy) catch {
@@ -379,6 +381,7 @@ pub const DeflateDecoder = struct {
         const maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)) orelse return .zero;
         const flush = globalThis.checkRangesOrGetDefault(opts, "flush", u8, 0, 6, 0) orelse return .zero;
         const finishFlush = globalThis.checkRangesOrGetDefault(opts, "finishFlush", u8, 0, 6, 4) orelse return .zero;
+        const fullFlush = globalThis.checkRangesOrGetDefault(opts, "fullFlush", u8, 0, 6, 3) orelse return .zero;
 
         var this: *DeflateDecoder = DeflateDecoder.new(.{
             .globalThis = globalThis,
@@ -386,6 +389,7 @@ pub const DeflateDecoder = struct {
             .stream = .{
                 .flush = @enumFromInt(flush),
                 .finishFlush = @enumFromInt(finishFlush),
+                .fullFlush = @enumFromInt(fullFlush),
             },
         });
         this.stream.init() catch {

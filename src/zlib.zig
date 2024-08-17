@@ -914,6 +914,7 @@ pub const ZlibCompressorStreaming = struct {
     state: z_stream = std.mem.zeroes(z_stream),
     flush: FlushValue = .NoFlush,
     finishFlush: FlushValue = .Finish,
+    fullFlush: FlushValue = .FullFlush,
 
     pub fn init(this: *ZlibCompressorStreaming, level: u8, windowBits: c_int, memLevel: c_int, strategy: c_int) !void {
         const ret_code = deflateInit2_(&this.state, level, 8, windowBits, memLevel, strategy, zlibVersion(), @sizeOf(z_stream));
@@ -988,6 +989,7 @@ pub const ZlibDecompressorStreaming = struct {
     state: z_stream = std.mem.zeroes(z_stream),
     flush: FlushValue = .NoFlush,
     finishFlush: FlushValue = .Finish,
+    fullFlush: FlushValue = .FullFlush,
 
     pub fn init(this: *ZlibDecompressorStreaming) !void {
         const ret_code = inflateInit_(&this.state, zlibVersion(), @sizeOf(z_stream));

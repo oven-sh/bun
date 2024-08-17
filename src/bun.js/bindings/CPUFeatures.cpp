@@ -313,11 +313,13 @@ static uint8_t aarch64_cpu_features()
     features.crc32 = __builtin_cpu_supports("crc32");
     features.atomics = __builtin_cpu_supports("atomics");
     features.sve = __builtin_cpu_supports("sve");
-#endif
 
     uint8_t features_bits = 0;
     memcpy(&features_bits, &features, sizeof(features));
     return features_bits;
+#else
+#pragma error "TODO: Add support for this CPU"
+#endif
 }
 
 #endif

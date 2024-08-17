@@ -226,7 +226,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 #ifdef BUN_DEBUG
         JSC::Options::showPrivateScriptsInStackTraces() = true;
 #endif
-        JSC::Options::useSetMethods() = true;
 
         if (LIKELY(envc > 0)) {
             while (envc--) {

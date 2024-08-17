@@ -97,3 +97,25 @@ export const setSyntheticAllocationLimitForTesting: (limit: number) => number = 
   "Bun__setSyntheticAllocationLimitForTesting",
   1,
 );
+
+export interface X86CPUFeature {
+  sse42: boolean;
+  avx: boolean;
+  avx2: boolean;
+  avx512: boolean;
+}
+
+export interface AArch64CPUFeature {
+  neon: boolean;
+  sve: boolean;
+  fp: boolean;
+  aes: boolean;
+  crc32: boolean;
+  atomics: boolean;
+}
+
+export const getCPUFeatures: () => X86CPUFeature | AArch64CPUFeature = $newCppFunction(
+  "CPUFeatures.cpp",
+  "jsFunctionGetCPUFeatures",
+  0,
+);

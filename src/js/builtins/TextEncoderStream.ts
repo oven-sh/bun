@@ -29,13 +29,12 @@ export function initializeTextEncoderStream() {
   };
   const transformAlgorithm = chunk => {
     const encoder = $getByIdDirectPrivate(this, "textEncoderStreamEncoder");
-    let buffer;
     try {
-      buffer = encoder.encode(chunk);
+      var buffer = encoder.encode(chunk);
     } catch (e) {
       return Promise.$reject(e);
     }
-    if (buffer) {
+    if (buffer.length) {
       const transformStream = $getByIdDirectPrivate(this, "textEncoderStreamTransform");
       const controller = $getByIdDirectPrivate(transformStream, "controller");
       $transformStreamDefaultControllerEnqueue(controller, buffer);
@@ -45,7 +44,7 @@ export function initializeTextEncoderStream() {
   const flushAlgorithm = () => {
     const encoder = $getByIdDirectPrivate(this, "textEncoderStreamEncoder");
     const buffer = encoder.flush();
-    if (buffer) {
+    if (buffer.length) {
       const transformStream = $getByIdDirectPrivate(this, "textEncoderStreamTransform");
       const controller = $getByIdDirectPrivate(transformStream, "controller");
       $transformStreamDefaultControllerEnqueue(controller, buffer);

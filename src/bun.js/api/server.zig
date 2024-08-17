@@ -2585,7 +2585,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             // we have to clone the request headers here since they will soon belong to a different request
             if (!request_object.hasFetchHeaders()) {
-                request_object.setFetchHeaders(JSC.FetchHeaders.createFromUWS(ctx.server.?.globalThis, req));
+                request_object.setFetchHeaders(JSC.FetchHeaders.createFromUWS(req));
             }
 
             // This object dies after the stack frame is popped
@@ -4169,7 +4169,7 @@ pub const ServerWebSocket = struct {
             const globalObject = handler.globalObject;
 
             var corker = Corker{
-                .args = &[_]JSC.JSValue{this.this_value},
+                .args = &[_]JSC.JSValue{this.getThisValue()},
                 .globalObject = globalObject,
                 .callback = handler.onDrain,
             };
@@ -4221,7 +4221,7 @@ pub const ServerWebSocket = struct {
         const result = cb.call(
             globalThis,
             .undefined,
-            &[_]JSC.JSValue{ this.this_value, this.binaryToJS(globalThis, data) },
+            &[_]JSC.JSValue{ this.getThisValue(), this.binaryToJS(globalThis, data) },
         );
 
         if (result.toError()) |err| {
@@ -4250,7 +4250,7 @@ pub const ServerWebSocket = struct {
         const result = cb.call(
             globalThis,
             .undefined,
-            &[_]JSC.JSValue{ this.this_value, this.binaryToJS(globalThis, data) },
+            &[_]JSC.JSValue{ this.getThisValue(), this.binaryToJS(globalThis, data) },
         );
 
         if (result.toError()) |err| {
@@ -4283,7 +4283,7 @@ pub const ServerWebSocket = struct {
             const result = handler.onClose.call(
                 globalObject,
                 .undefined,
-                &[_]JSC.JSValue{ this.this_value, JSValue.jsNumber(code), str.toJS(globalObject) },
+                &[_]JSC.JSValue{ this.getThisValue(), JSValue.jsNumber(code), str.toJS(globalObject) },
             );
 
             if (result.toError()) |err| {
@@ -5498,6 +5498,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         data_value = headers_value;
                     }
 
+                    if (globalThis.hasException()) {
+                        return JSValue.jsUndefined();
+                    }
+
                     if (opts.fastGet(globalThis, .headers)) |headers_value| {
                         if (headers_value.isEmptyOrUndefinedOrNull()) {
                             break :getter;
@@ -5512,9 +5516,15 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                             }
                             break :brk null;
                         } orelse {
-                            JSC.throwInvalidArguments("upgrade options.headers must be a Headers or an object", .{}, globalThis, exception);
+                            if (!globalThis.hasException()) {
+                                JSC.throwInvalidArguments("upgrade options.headers must be a Headers or an object", .{}, globalThis, exception);
+                            }
                             return JSValue.jsUndefined();
                         };
+
+                        if (globalThis.hasException()) {
+                            return JSValue.jsUndefined();
+                        }
 
                         if (fetch_headers_to_use.fastGet(.SecWebSocketProtocol)) |protocol| {
                             sec_websocket_protocol = protocol;
@@ -5528,6 +5538,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         // we must write the status first so that 200 OK isn't written
                         resp.writeStatus("101 Switching Protocols");
                         fetch_headers_to_use.toUWSResponse(comptime ssl_enabled, resp);
+                    }
+
+                    if (globalThis.hasException()) {
+                        return JSValue.jsUndefined();
                     }
                 }
             }

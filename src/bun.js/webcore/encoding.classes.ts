@@ -51,6 +51,11 @@ export default [
       flush: {
         fn: "flush",
         length: 0,
+
+        DOMJIT: {
+          returns: "JSUint8Array",
+          args: [],
+        },
       },
     },
   }),

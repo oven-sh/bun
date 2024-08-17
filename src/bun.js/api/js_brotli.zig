@@ -429,6 +429,9 @@ pub const BrotliDecoder = struct {
 
         _ = globalThis.checkMinOrGetDefault(opts, "chunkSize", u32, 64, 1024 * 14) orelse return .zero;
         const maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)) orelse return .zero;
+        const flush = globalThis.checkRangesOrGetDefault(opts, "flush", u8, 0, 6, 0) orelse return .zero;
+        const finishFlush = globalThis.checkRangesOrGetDefault(opts, "finishFlush", u8, 0, 6, 2) orelse return .zero;
+        const fullFlush = globalThis.checkRangesOrGetDefault(opts, "fullFlush", u8, 0, 6, 1) orelse return .zero;
 
         var this: *BrotliDecoder = BrotliDecoder.new(.{
             .globalThis = globalThis,
@@ -439,6 +442,9 @@ pub const BrotliDecoder = struct {
             globalThis.throw("Failed to create BrotliDecoder", .{});
             return .zero;
         };
+        _ = flush;
+        _ = finishFlush;
+        _ = fullFlush;
 
         if (opts.get(globalThis, "params")) |params| {
             inline for (std.meta.fields(bun.brotli.c.BrotliDecoderParameter)) |f| {

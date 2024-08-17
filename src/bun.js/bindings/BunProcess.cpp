@@ -1936,7 +1936,7 @@ static JSValue constructProcessSend(VM& vm, JSObject* processObject)
 JSC_DEFINE_HOST_FUNCTION(processDisonnectFinish, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     Bun__closeChildIPC(globalObject);
-    return {};
+    return JSC::JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(Bun__Process__disconnect, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -1994,7 +1994,6 @@ static JSValue constructProcessChannel(VM& vm, JSObject* processObject)
     } else {
         return jsUndefined();
     }
-    return {};
 }
 
 #if OS(WINDOWS)

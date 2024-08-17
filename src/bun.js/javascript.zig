@@ -462,22 +462,17 @@ pub export fn Bun__Process__send(
             VirtualMachine.Process__emitErrorEvent(globalThis, ex);
             return .undefined;
         }
-        var value: ?JSC.JSValue = null;
     };
-
-    const process_queueNextTick1 = Bun__Process__queueNextTick1;
 
     const vm = globalObject.bunVM();
     const zigGlobal: *JSC.ZigGlobalObject = @ptrCast(globalObject);
     const ipc_instance = vm.getIPCInstance() orelse {
         const ex = globalObject.ERR_IPC_CHANNEL_CLOSED("Channel closed.", .{}).toJS();
         if (callback.isFunction()) {
-            process_queueNextTick1(zigGlobal, callback, ex);
+            Bun__Process__queueNextTick1(zigGlobal, callback, ex);
         } else {
-            if (S.value == null) {
-                S.value = JSC.JSFunction.create(globalObject, "", S.impl, 1, .{});
-            }
-            process_queueNextTick1(zigGlobal, S.value.?, ex);
+            const fnvalue = JSC.JSFunction.create(globalObject, "", S.impl, 1, .{});
+            Bun__Process__queueNextTick1(zigGlobal, fnvalue, ex);
         }
         return .false;
     };
@@ -497,18 +492,16 @@ pub export fn Bun__Process__send(
 
     if (good) {
         if (callback.isFunction()) {
-            process_queueNextTick1(zigGlobal, callback, .zero);
+            Bun__Process__queueNextTick1(zigGlobal, callback, .zero);
         }
     } else {
         const ex = globalObject.createTypeErrorInstance("process.send() failed", .{});
         ex.put(globalObject, ZigString.static("syscall"), ZigString.static("write").toJS(globalObject));
         if (callback.isFunction()) {
-            process_queueNextTick1(zigGlobal, callback, ex);
+            Bun__Process__queueNextTick1(zigGlobal, callback, ex);
         } else {
-            if (S.value == null) {
-                S.value = JSC.JSFunction.create(globalObject, "", S.impl, 1, .{});
-            }
-            process_queueNextTick1(zigGlobal, S.value.?, ex);
+            const fnvalue = JSC.JSFunction.create(globalObject, "", S.impl, 1, .{});
+            Bun__Process__queueNextTick1(zigGlobal, fnvalue, ex);
         }
     }
 

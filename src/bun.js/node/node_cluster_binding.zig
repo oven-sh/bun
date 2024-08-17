@@ -52,7 +52,6 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
     if (Environment.isDebug) log("child: {}", .{message.toFmt(&formatter)});
 
     const ipc_instance = vm.getIPCInstance().?;
-    const process_queueNextTick1 = Bun__Process__queueNextTick1;
 
     const S = struct {
         fn impl(globalThis_: *JSC.JSGlobalObject, callframe_: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
@@ -61,7 +60,6 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
             Process__emitErrorEvent(globalThis_, ex);
             return .undefined;
         }
-        var value: ?JSC.JSValue = null;
     };
 
     const good = ipc_instance.data.serializeAndSendInternal(globalThis, message);
@@ -69,10 +67,9 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
     if (!good) {
         const ex = globalThis.createTypeErrorInstance("sendInternal() failed", .{});
         ex.put(globalThis, ZigString.static("syscall"), ZigString.static("write").toJS(globalThis));
-        if (S.value == null) {
-            S.value = JSC.JSFunction.create(globalThis, "", S.impl, 1, .{});
-        }
-        process_queueNextTick1(globalThis, S.value.?, ex);
+        const fnvalue = JSC.JSFunction.create(globalThis, "", S.impl, 1, .{});
+        Bun__Process__queueNextTick1(globalThis, fnvalue, ex);
+        return .false;
     }
 
     return .true;
@@ -212,7 +209,7 @@ pub fn sendHelperPrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
 
     _ = handle;
     const success = ipc_data.serializeAndSendInternal(globalThis, message);
-    if (!success) return .zero;
+    if (!success) return .false;
 
     return .true;
 }

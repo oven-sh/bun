@@ -1,5 +1,5 @@
-/** Avoid using the IsProcessorFeaturePresent API on Windows **
-/** It seems to return false on AWS. */
+/* Avoid using the IsProcessorFeaturePresent API on Windows */
+/* It seems to return false on AWS. */
 
 /* From
 https://github.com/endorno/pytorch/blob/master/torch/lib/TH/generic/simd/simd.h
@@ -347,12 +347,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionGetCPUFeatures, (JSC::JSGlobalObject * global
     object->putDirect(vm, JSC::Identifier::fromString(vm, "avx"_s), JSC::jsBoolean(cpu.avx));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "avx512"_s), JSC::jsBoolean(cpu.avx512));
 #elif CPU(ARM64)
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "neon"_s), JSC::jsBoolean(features.neon));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "sve"_s), JSC::jsBoolean(features.sve));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "fp"_s), JSC::jsBoolean(features.fp));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "aes"_s), JSC::jsBoolean(features.aes));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "crc32"_s), JSC::jsBoolean(features.crc32));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "atomics"_s), JSC::jsBoolean(features.atomics));
+    Aarch64CPUFeatures cpu;
+    memcpy(&cpu, &features, sizeof(cpu));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "neon"_s), JSC::jsBoolean(cpu.neon));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "sve"_s), JSC::jsBoolean(cpu.sve));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "fp"_s), JSC::jsBoolean(cpu.fp));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "aes"_s), JSC::jsBoolean(cpu.aes));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "crc32"_s), JSC::jsBoolean(cpu.crc32));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "atomics"_s), JSC::jsBoolean(cpu.atomics));
 #endif
 
     return JSC::JSValue::encode(object);

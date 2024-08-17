@@ -69,7 +69,6 @@ public:
 
     void setCorkedSocket(void *corkedSocket, bool ssl) {
         this->corkedSocket = corkedSocket;
-        this->corkOffset = 0;
         this->corkedSocketIsSSL = ssl;
     }
 
@@ -79,6 +78,10 @@ public:
 
     bool isCorked() {
         return this->corkOffset && this->corkedSocket;
+    }
+
+    bool canCork() {
+        return this->corkedSocket == nullptr;
     }
 
     bool isCorkedWith(void* socket) {

@@ -134,7 +134,7 @@ public:
 
     /* Cork this socket. Only one socket may ever be corked per-loop at any given time */
     void cork() {
-        auto corked = getLoopData()->getCorkedSocket();
+        auto* corked = getLoopData()->getCorkedSocket();
         /* Extra check for invalid corking of others */
         if (getLoopData()->isCorked() && corked != this) {
             // We uncork the other socket early instead of terminating the program
@@ -152,12 +152,12 @@ public:
 
     /* Returns wheter we are corked or not */
     bool isCorked() {
-        return getLoopData()->getCorkedSocket() == this;
+        return getLoopData()->isCorkedWith(this);
     }
 
     /* Returns whether we could cork (it is free) */
     bool canCork() {
-        return getLoopData()->getCorkedSocket() == nullptr;
+        return getLoopData()->canCork();
     }
 
     /* Returns a suitable buffer for temporary assemblation of send data */
@@ -344,7 +344,7 @@ public:
             if (offset) {
                 /* Corked data is already accounted for via its write call */
                 auto [written, failed] = write(loopData->getCorkBuffer(), (int) offset, false, length);
-                
+
                 if (failed && optionally) {
                     /* We do not need to care for buffering here, write does that */
                     return {0, true};

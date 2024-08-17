@@ -33,6 +33,8 @@ const BuildOptions = if (isTest) struct {
     pub const is_canary = false;
     pub const base_path = "/tmp";
     pub const canary_revision = 0;
+    pub const build_id = 0;
+    pub const pull_request = 0;
     pub const reported_nodejs_version = "22.3.0";
 } else @import("root").build_options;
 
@@ -44,6 +46,9 @@ pub const git_sha_short = if (BuildOptions.sha.len > 0) BuildOptions.sha[0..9] e
 pub const git_sha_shorter = if (BuildOptions.sha.len > 0) BuildOptions.sha[0..6] else "";
 pub const is_canary = BuildOptions.is_canary;
 pub const canary_revision = if (is_canary) BuildOptions.canary_revision else "";
+pub const build_id = BuildOptions.build_id;
+pub const pull_request = BuildOptions.pull_request;
+pub const is_pull_request = pull_request > 0;
 pub const dump_source = isDebug and !isTest;
 pub const base_path = BuildOptions.base_path ++ "/";
 pub const enable_logs = BuildOptions.enable_logs or isDebug;

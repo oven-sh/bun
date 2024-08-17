@@ -43,6 +43,8 @@ const BunBuildOptions = struct {
 
     version: Version,
     canary_revision: ?u32,
+    build_id: u32,
+    pull_request: u32,
     sha: []const u8,
     enable_logs: bool = false,
     tracy_callstack_depth: u16,
@@ -68,6 +70,8 @@ const BunBuildOptions = struct {
         opts.addOption([]const u8, "base_path", b.pathFromRoot("."));
         opts.addOption(u32, "canary_revision", this.canary_revision orelse 0);
         opts.addOption(bool, "is_canary", this.canary_revision != null);
+        opts.addOption(u32, "build_id", this.build_id);
+        opts.addOption(u32, "pull_request", this.pull_request);
         opts.addOption(Version, "version", this.version);
         opts.addOption([:0]const u8, "sha", b.allocator.dupeZ(u8, this.sha) catch @panic("OOM"));
         opts.addOption(bool, "baseline", this.isBaseline());
@@ -200,6 +204,9 @@ pub fn build(b: *Build) !void {
             break :canary if (rev == 0) null else rev;
         },
 
+        .build_id = b.option(u32, "build_id", "The build ID (e.g. build number from CI)") orelse 0,
+        .pull_request = b.option(u32, "pull_request", "The pull request number, if a pull request") orelse 0,
+
         .reported_nodejs_version = try Version.parse(
             b.option([]const u8, "reported_nodejs_version", "Reported Node.js version") orelse
                 "0.0.0-unset",
@@ -207,8 +214,8 @@ pub fn build(b: *Build) !void {
 
         .sha = sha: {
             const sha = b.option([]const u8, "sha", "Force the git sha") orelse
-                b.graph.env_map.get("GITHUB_SHA") orelse
-                b.graph.env_map.get("GIT_SHA") orelse fetch_sha: {
+                b.graph.env_map.get("GIT_SHA") orelse
+                b.graph.env_map.get("GITHUB_SHA") orelse fetch_sha: {
                 const result = std.process.Child.run(.{
                     .allocator = b.allocator,
                     .argv = &.{
@@ -319,6 +326,8 @@ pub inline fn addMultiCheck(
                 .optimize = mode,
 
                 .canary_revision = root_build_options.canary_revision,
+                .build_id = root_build_options.build_id,
+                .pull_request = root_build_options.pull_request,
                 .sha = root_build_options.sha,
                 .tracy_callstack_depth = root_build_options.tracy_callstack_depth,
                 .version = root_build_options.version,

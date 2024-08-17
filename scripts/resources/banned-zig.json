@@ -1,0 +1,17 @@
+{
+  " != undefined": "this is undefined behavior",
+  " == undefined": "this is undefined behavior",
+  "@import(\"root\").bun.": "only import 'bun' once",
+  "std.debug.assert": "use bun.assert instead",
+  "std.debug.dumpStackTrace": "use bun.handleErrorReturnTrace or bun.crash_handler.dumpStackTrace instead",
+  "std.debug.print": "do not commit this",
+  "std.mem.indexOfAny(u8": "use `bun.strings.indexOfAny` instead",
+  "undefined != ": "this is undefined behavior",
+  "undefined == ": "this is undefined behavior",
+  "bun.toFD(std.fs.cwd().fd)": "use `bun.FD.cwd()` instead",
+  "std.StringArrayHashMapUnmanaged(": "use `bun.StringArrayHashMapUnmanaged` since it has a faster `eql`",
+  "std.StringArrayHashMap(": "use `bun.StringArrayHashMap` since it has a faster `eql`",
+  "std.StringHashMapUnmanaged(": "use `bun.StringHashMapUnmanaged` since it has a faster `eql`",
+  "std.StringHashMap(": "use `bun.StringHashMap` since it has a faster `eql`",
+  "std.enums.tagName(": "use `bun.tagName` instead"
+}

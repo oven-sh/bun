@@ -1,0 +1,90 @@
+# An image to build Bun on Linux.
+#
+# This is used by `scripts/build.mjs` to build Bun
+# when the host machine does not meet the system requirements.
+#
+# For example, when the glibc version is newer than 2.27, or
+# if you want to build on macOS and target Linux.
+#
+# This is not used in CI.
+
+ARG DEBIAN_RELEASE=bullseye
+ARG NODE_VERSION=22
+ARG BUN_VERSION=1.1.14
+ARG LLVM_VERSION=16
+ARG RUST_VERSION=1.80
+
+FROM node:${NODE_VERSION}-${DEBIAN_RELEASE} as nodebin
+FROM oven/bun:${BUN_VERSION} as bunbin
+
+FROM bitnami/minideb:${DEBIAN_RELEASE}
+
+ARG LLVM_VERSION
+ENV DEBIAN_FRONTEND=noninteractive
+ENV LC_CTYPE=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
+
+RUN install_packages \
+      ca-certificates \
+      curl \
+      gnupg \
+    && echo "deb https://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-${LLVM_VERSION} main" > /etc/apt/sources.list.d/llvm.list \
+    && echo "deb-src https://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-${LLVM_VERSION} main" >> /etc/apt/sources.list.d/llvm.list \
+    && curl -fsSL "https://apt.llvm.org/llvm-snapshot.gpg.key" | apt-key add - \
+    && echo "deb https://apt.kitware.com/ubuntu/ focal main" > /etc/apt/sources.list.d/kitware.list \
+    && curl -fsSL "https://apt.kitware.com/keys/kitware-archive-latest.asc" | apt-key add - \
+    && install_packages \
+      wget \
+      bash \
+      software-properties-common \
+      build-essential \
+      autoconf \
+      automake \
+      libtool \
+      pkg-config \
+      clang-${LLVM_VERSION} \
+      lld-${LLVM_VERSION} \
+      lldb-${LLVM_VERSION} \
+      clangd-${LLVM_VERSION} \
+      libc++-${LLVM_VERSION}-dev \
+      libc++abi-${LLVM_VERSION}-dev \
+      llvm-${LLVM_VERSION}-runtime \
+      llvm-${LLVM_VERSION}-dev \
+      make \
+      cmake \
+      ccache \
+      ninja-build \
+      file \
+      libc-dev \
+      libxml2 \
+      libxml2-dev \
+      xz-utils \
+      git \
+      tar \
+      rsync \
+      gzip \
+      unzip \
+      perl \
+      python3 \
+      golang \
+    && for f in /usr/lib/llvm-${LLVM_VERSION}/bin/*; do ln -sf "$f" /usr/bin; done \
+    && ln -sf /usr/bin/clang-${LLVM_VERSION} /usr/bin/clang \
+    && ln -sf /usr/bin/clang++-${LLVM_VERSION} /usr/bin/clang++ \
+    && ln -sf /usr/bin/lld-${LLVM_VERSION} /usr/bin/lld \
+    && ln -sf /usr/bin/lldb-${LLVM_VERSION} /usr/bin/lldb \
+    && ln -sf /usr/bin/clangd-${LLVM_VERSION} /usr/bin/clangd \
+    && ln -sf /usr/bin/llvm-ar-${LLVM_VERSION} /usr/bin/llvm-ar \
+    && ln -sf /usr/bin/ld.lld /usr/bin/ld \
+    && ln -sf /usr/bin/llvm-ranlib-${LLVM_VERSION} /usr/bin/ranlib \
+    && ln -sf /usr/bin/clang /usr/bin/cc \
+    && ln -sf /usr/bin/clang /usr/bin/c89 \
+    && ln -sf /usr/bin/clang /usr/bin/c99 \
+    && ln -sf /usr/bin/clang++ /usr/bin/c++ \
+    && ln -sf /usr/bin/clang++ /usr/bin/g++ \
+    && ln -sf /usr/bin/llvm-ar /usr/bin/ar \
+    && ln -sf /usr/bin/clang /usr/bin/gcc \
+    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
+    && for f in $HOME/.cargo/bin/*; do ln -sf "$f" /usr/bin; done
+
+COPY --from=nodebin /usr/local/bin/node /usr/bin/node
+COPY --from=bunbin /usr/local/bin/bun /usr/bin/bun

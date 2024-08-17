@@ -98,33 +98,31 @@ const { values: options, positionals: filters } = parseArgs({
 
 async function printInfo() {
   console.log("Timestamp:", new Date());
+  console.log("Shard:", options["shard"], "/", options["max-shards"]);
+
   console.log("OS:", getOsPrettyText(), getOsEmoji());
   console.log("Arch:", getArchText(), getArchEmoji());
   if (isLinux) {
     console.log("Glibc:", getGlibcVersion());
   }
+
   console.log("Hostname:", getHostname());
-  if (isCI) {
-    console.log("CI:", getCI());
-    console.log("Shard:", options["shard"], "/", options["max-shards"]);
-    console.log("Build URL:", getBuildUrl());
-    console.log("Environment:", process.env);
-    if (isCloud) {
-      console.log("Public IP:", await getPublicIp());
-      console.log("Cloud:", getCloud());
-    }
-    const tailscaleIp = await getTailscaleIp();
-    if (tailscaleIp) {
-      console.log("Tailscale IP:", tailscaleIp);
-    }
+  const tailscaleIp = getTailscaleIp();
+  if (tailscaleIp) {
+    console.log("Tailscale IP:", tailscaleIp);
   }
-  console.log("Cwd:", cwd);
-  console.log("Tmpdir:", tmpPath);
+
+  console.log("CI:", getCI());
+  console.log("Build URL:", getBuildUrl());
   console.log("Commit:", gitSha);
   console.log("Ref:", gitRef);
   if (pullRequest) {
     console.log("Pull Request:", pullRequest);
   }
+
+  console.log("Cwd:", cwd);
+  console.log("Tmpdir:", tmpPath);
+  console.log("Environment:", process.env);
 }
 
 /**
@@ -905,10 +903,21 @@ function getRelevantTests(cwd) {
     filteredTests.push(...Array.from(smokeTests));
     console.log("Smoking tests:", filteredTests.length, "/", availableTests.length);
   } else if (maxShards > 1) {
-    const firstTest = shardId * Math.ceil(availableTests.length / maxShards);
-    const lastTest = Math.min(firstTest + Math.ceil(availableTests.length / maxShards), availableTests.length);
-    filteredTests.push(...availableTests.slice(firstTest, lastTest));
-    console.log("Sharding tests:", firstTest, "...", lastTest, "/", availableTests.length);
+    for (let i = 0; i < availableTests.length; i++) {
+      if (i % maxShards === shardId) {
+        filteredTests.push(availableTests[i]);
+      }
+    }
+    console.log(
+      "Sharding tests:",
+      shardId,
+      "/",
+      maxShards,
+      "with tests",
+      filteredTests.length,
+      "/",
+      availableTests.length,
+    );
   } else {
     filteredTests.push(...availableTests);
   }
@@ -1693,51 +1702,23 @@ function getExitCode(outcome) {
 }
 
 /**
- * @returns {Promise<Date | undefined>}
- */
-async function getDoomsdayDate() {
-  try {
-    const response = await fetch("http://169.254.169.254/latest/meta-data/spot/instance-action");
-    if (response.ok) {
-      const { time } = await response.json();
-      return new Date(time);
-    }
-  } catch {
-    // Ignore
-  }
-}
-
-/**
- * @param {string} signal
- */
-async function beforeExit(signal) {
-  const endOfWorld = await getDoomsdayDate();
-  if (endOfWorld) {
-    const timeMin = 10 * 1000;
-    const timeLeft = Math.max(0, date.getTime() - Date.now());
-    if (timeLeft > timeMin) {
-      setTimeout(() => onExit(signal), timeLeft - timeMin);
-      return;
-    }
-  }
-  onExit(signal);
-}
-
-/**
  * @param {string} signal
  */
 async function onExit(signal) {
-  const label = `${getAnsi("red")}Received ${signal}, exiting...${getAnsi("reset")}`;
+  const label = `${getAnsi("red")}Received ${signal}, canceling...${getAnsi("reset")}`;
   await runTask(label, () => {
     process.exit(getExitCode("cancel"));
   });
 }
 
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-  process.on(signal, () => beforeExit(signal));
+  process.on(signal, () => onExit(signal));
 }
 
-await runTask("Environment", printInfo);
+if (isCI) {
+  await runTask("Environment", printInfo);
+}
+
 const results = await runTests();
 const ok = results.every(({ ok }) => ok);
 process.exit(getExitCode(ok ? "pass" : "fail"));

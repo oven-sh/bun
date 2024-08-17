@@ -82,10 +82,6 @@ using namespace JSC;
 #define setProcessObjectInternalsMainModuleCodeGenerator processObjectInternalsSetMainModuleCodeGenerator
 #define setProcessObjectMainModuleCodeGenerator setMainModuleCodeGenerator
 
-#if !defined(BUN_WEBKIT_VERSION)
-#define BUN_WEBKIT_VERSION "unknown"
-#endif
-
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
 using JSValue = JSC::JSValue;

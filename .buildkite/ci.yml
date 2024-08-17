@@ -6,60 +6,66 @@
 #
 # Changes to this file will be automatically uploaded on the next run
 # for a particular commit.
-#
-# Future tests machines to be added:
-# - macOS 12
-# - Windows Server 2016 & 2019
-# - Amazon Linux 2 & 2023
-# - CentOS / RHEL / Fedora / other Linux distros
-# - Docker containers
-# - Rasberry Pi?
 steps:
+  # Lint
+  - key: "bun-lint"
+    group: ":broom:"
+    steps:
+      - key: "bun-lint-zig"
+        label: ":broom: lint - zig"
+        agents:
+          queue: "build-linux"
+          os: "linux"
+        command:
+          - "./scripts/lint.mjs"
+        soft_fail:
+          - exit_status: 1
+
   # macOS aarch64
-  - key: "darwin-aarch64"
+  - key: "bun-darwin-aarch64"
     group: ":darwin: aarch64"
     steps:
-      - key: "darwin-aarch64-build-deps"
+      - key: "bun-darwin-aarch64-build-deps"
         label: ":darwin: aarch64 - build-deps"
         agents:
           queue: "build-darwin"
           os: "darwin"
           arch: "aarch64"
         command:
-          - "./.buildkite/scripts/build-deps.sh"
+          - "./scripts/build.mjs bun-deps"
 
-      - key: "darwin-aarch64-build-zig"
+      - key: "bun-darwin-aarch64-build-zig"
         label: ":darwin: aarch64 - build-zig"
         agents:
           queue: "build-darwin"
           os: "darwin"
           arch: "aarch64"
         command:
-          - "./.buildkite/scripts/build-zig.sh darwin aarch64"
+          - "./scripts/build.mjs bun-zig --cross-compile"
 
-      - key: "darwin-aarch64-build-cpp"
+      - key: "bun-darwin-aarch64-build-cpp"
         label: ":darwin: aarch64 - build-cpp"
         agents:
           queue: "build-darwin"
           os: "darwin"
           arch: "aarch64"
         command:
-          - "./.buildkite/scripts/build-cpp.sh"
+          - "./scripts/build.mjs bun-cpp"
 
-      - key: "darwin-aarch64-build-bun"
+      - key: "bun-darwin-aarch64-build-bun"
         label: ":darwin: aarch64 - build-bun"
         depends_on:
-          - "darwin-aarch64-build-deps"
-          - "darwin-aarch64-build-zig"
-          - "darwin-aarch64-build-cpp"
+          - "bun-darwin-aarch64-build-deps"
+          - "bun-darwin-aarch64-build-zig"
+          - "bun-darwin-aarch64-build-cpp"
         agents:
           queue: "build-darwin"
           os: "darwin"
           arch: "aarch64"
         command:
-          - "./.buildkite/scripts/build-bun.sh"
+          - "./scripts/build.mjs bun-link"
 
-      - key: "darwin-aarch64-test-macos-14"
+      - key: "bun-darwin-aarch64-test-macos-14"
         label: ":darwin: 14 aarch64 - test-bun"
         if: "build.branch != 'main'"
         parallelism: 3
@@ -78,16 +84,16 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "darwin-aarch64-build-bun"
+          - "bun-darwin-aarch64-build-bun"
         agents:
           queue: "test-darwin"
           os: "darwin"
           arch: "aarch64"
           release: "14"
         command:
-          - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun"
+          - "./scripts/runner.node.mjs --step bun-darwin-aarch64-build-bun"
 
-      - key: "darwin-aarch64-test-macos-13"
+      - key: "bun-darwin-aarch64-test-macos-13"
         label: ":darwin: 13 aarch64 - test-bun"
         if: "build.branch != 'main'"
         parallelism: 3
@@ -106,60 +112,60 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "darwin-aarch64-build-bun"
+          - "bun-darwin-aarch64-build-bun"
         agents:
           queue: "test-darwin"
           os: "darwin"
           arch: "aarch64"
           release: "13"
         command:
-          - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun"
+          - "./scripts/runner.node.mjs --step bun-darwin-aarch64-build-bun"
 
   # macOS x64
-  - key: "darwin-x64"
+  - key: "bun-darwin-x64"
     group: ":darwin: x64"
     steps:
-      - key: "darwin-x64-build-deps"
+      - key: "bun-darwin-x64-build-deps"
         label: ":darwin: x64 - build-deps"
         agents:
           queue: "build-darwin"
           os: "darwin"
           arch: "x64"
         command:
-          - "./.buildkite/scripts/build-deps.sh"
+          - "./scripts/build.mjs bun-deps"
 
-      - key: "darwin-x64-build-zig"
+      - key: "bun-darwin-x64-build-zig"
         label: ":darwin: x64 - build-zig"
         agents:
           queue: "build-darwin"
           os: "darwin"
           arch: "aarch64"
         command:
-          - "./.buildkite/scripts/build-zig.sh darwin x64"
+          - "./scripts/build.mjs bun-zig --cross-compile"
 
-      - key: "darwin-x64-build-cpp"
+      - key: "bun-darwin-x64-build-cpp"
         label: ":darwin: x64 - build-cpp"
         agents:
           queue: "build-darwin"
           os: "darwin"
           arch: "x64"
         command:
-          - "./.buildkite/scripts/build-cpp.sh"
+          - "./scripts/build.mjs bun-cpp"
 
-      - key: "darwin-x64-build-bun"
+      - key: "bun-darwin-x64-build-bun"
         label: ":darwin: x64 - build-bun"
         depends_on:
-          - "darwin-x64-build-deps"
-          - "darwin-x64-build-zig"
-          - "darwin-x64-build-cpp"
+          - "bun-darwin-x64-build-deps"
+          - "bun-darwin-x64-build-zig"
+          - "bun-darwin-x64-build-cpp"
         agents:
           queue: "build-darwin"
           os: "darwin"
           arch: "x64"
         command:
-          - "./.buildkite/scripts/build-bun.sh"
+          - "./scripts/build.mjs bun-link"
 
-      - key: "darwin-x64-test-macos-14"
+      - key: "bun-darwin-x64-test-macos-14"
         label: ":darwin: 14 x64 - test-bun"
         if: "build.branch != 'main'"
         parallelism: 2
@@ -178,16 +184,16 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "darwin-x64-build-bun"
+          - "bun-darwin-x64-build-bun"
         agents:
           queue: "test-darwin"
           os: "darwin"
           arch: "x64"
           release: "14"
         command:
-          - "./scripts/runner.node.mjs --step darwin-x64-build-bun"
+          - "./scripts/runner.node.mjs --step bun-darwin-x64-build-bun"
 
-      - key: "darwin-x64-test-macos-13"
+      - key: "bun-darwin-x64-test-macos-13"
         label: ":darwin: 13 x64 - test-bun"
         if: "build.branch != 'main'"
         parallelism: 2
@@ -206,63 +212,63 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "darwin-x64-build-bun"
+          - "bun-darwin-x64-build-bun"
         agents:
           queue: "test-darwin"
           os: "darwin"
           arch: "x64"
           release: "13"
         command:
-          - "./scripts/runner.node.mjs --step darwin-x64-build-bun"
+          - "./scripts/runner.node.mjs --step bun-darwin-x64-build-bun"
 
   # Linux aarch64
-  - key: "linux-aarch64"
+  - key: "bun-linux-aarch64"
     group: ":linux: aarch64"
     steps:
-      - key: "linux-aarch64-build-deps"
+      - key: "bun-linux-aarch64-build-deps"
         label: ":linux: aarch64 - build-deps"
         agents:
           queue: "build-linux"
           os: "linux"
           arch: "aarch64"
         command:
-          - "./.buildkite/scripts/build-deps.sh"
+          - "./scripts/build.mjs bun-deps"
 
-      - key: "linux-aarch64-build-zig"
+      - key: "bun-linux-aarch64-build-zig"
         label: ":linux: aarch64 - build-zig"
         agents:
           queue: "build-darwin"
           os: "darwin"
           arch: "aarch64"
         command:
-          - "./.buildkite/scripts/build-zig.sh linux aarch64"
+          - "./scripts/build.mjs bun-zig --cross-compile"
 
-      - key: "linux-aarch64-build-cpp"
+      - key: "bun-linux-aarch64-build-cpp"
         label: ":linux: aarch64 - build-cpp"
         agents:
           queue: "build-linux"
           os: "linux"
           arch: "aarch64"
         command:
-          - "./.buildkite/scripts/build-cpp.sh"
+          - "./scripts/build.mjs bun-cpp"
 
-      - key: "linux-aarch64-build-bun"
+      - key: "bun-linux-aarch64-build-bun"
         label: ":linux: aarch64 - build-bun"
         depends_on:
-          - "linux-aarch64-build-deps"
-          - "linux-aarch64-build-zig"
-          - "linux-aarch64-build-cpp"
+          - "bun-linux-aarch64-build-deps"
+          - "bun-linux-aarch64-build-zig"
+          - "bun-linux-aarch64-build-cpp"
         agents:
           queue: "build-linux"
           os: "linux"
           arch: "aarch64"
         command:
-          - "./.buildkite/scripts/build-bun.sh"
+          - "./scripts/build.mjs bun-link"
 
-      - key: "linux-aarch64-test-debian-12"
+      - key: "bun-linux-aarch64-test-debian-12"
         label: ":debian: 12 aarch64 - test-bun"
         if: "build.branch != 'main'"
-        parallelism: 5
+        parallelism: 10
         soft_fail:
           - exit_status: 2
         retry:
@@ -278,7 +284,7 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "linux-aarch64-build-bun"
+          - "bun-linux-aarch64-build-bun"
         agents:
           robobun: "true"
           os: "linux"
@@ -286,12 +292,12 @@ steps:
           distro: "debian"
           release: "12"
         command:
-          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun"
+          - "./scripts/runner.node.mjs --step bun-linux-aarch64-build-bun"
 
-      - key: "linux-aarch64-test-ubuntu-2204"
+      - key: "bun-linux-aarch64-test-ubuntu-2204"
         label: ":ubuntu: 22.04 aarch64 - test-bun"
         if: "build.branch != 'main'"
-        parallelism: 5
+        parallelism: 10
         soft_fail:
           - exit_status: 2
         retry:
@@ -307,7 +313,7 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "linux-aarch64-build-bun"
+          - "bun-linux-aarch64-build-bun"
         agents:
           robobun: "true"
           os: "linux"
@@ -315,12 +321,12 @@ steps:
           distro: "ubuntu"
           release: "22.04"
         command:
-          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun"
+          - "./scripts/runner.node.mjs --step bun-linux-aarch64-build-bun"
 
-      - key: "linux-aarch64-test-ubuntu-2004"
+      - key: "bun-linux-aarch64-test-ubuntu-2004"
         label: ":ubuntu: 20.04 aarch64 - test-bun"
         if: "build.branch != 'main'"
-        parallelism: 5
+        parallelism: 10
         soft_fail:
           - exit_status: 2
         retry:
@@ -336,7 +342,7 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "linux-aarch64-build-bun"
+          - "bun-linux-aarch64-build-bun"
         agents:
           robobun: "true"
           os: "linux"
@@ -344,56 +350,56 @@ steps:
           distro: "ubuntu"
           release: "20.04"
         command:
-          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun"
+          - "./scripts/runner.node.mjs --step bun-linux-aarch64-build-bun"
 
   # Linux x64
-  - key: "linux-x64"
+  - key: "bun-linux-x64"
     group: ":linux: x64"
     steps:
-      - key: "linux-x64-build-deps"
+      - key: "bun-linux-x64-build-deps"
         label: ":linux: x64 - build-deps"
         agents:
           queue: "build-linux"
           os: "linux"
           arch: "x64"
         command:
-          - "./.buildkite/scripts/build-deps.sh"
+          - "./scripts/build.mjs bun-deps"
 
-      - key: "linux-x64-build-zig"
+      - key: "bun-linux-x64-build-zig"
         label: ":linux: x64 - build-zig"
         agents:
           queue: "build-darwin"
           os: "darwin"
           arch: "aarch64"
         command:
-          - "./.buildkite/scripts/build-zig.sh linux x64"
+          - "./scripts/build.mjs bun-zig --cross-compile"
 
-      - key: "linux-x64-build-cpp"
+      - key: "bun-linux-x64-build-cpp"
         label: ":linux: x64 - build-cpp"
         agents:
           queue: "build-linux"
           os: "linux"
           arch: "x64"
         command:
-          - "./.buildkite/scripts/build-cpp.sh"
+          - "./scripts/build.mjs bun-cpp"
 
-      - key: "linux-x64-build-bun"
+      - key: "bun-linux-x64-build-bun"
         label: ":linux: x64 - build-bun"
         depends_on:
-          - "linux-x64-build-deps"
-          - "linux-x64-build-zig"
-          - "linux-x64-build-cpp"
+          - "bun-linux-x64-build-deps"
+          - "bun-linux-x64-build-zig"
+          - "bun-linux-x64-build-cpp"
         agents:
           queue: "build-linux"
           os: "linux"
           arch: "x64"
         command:
-          - "./.buildkite/scripts/build-bun.sh"
+          - "./scripts/build.mjs bun-link"
 
-      - key: "linux-x64-test-debian-12"
+      - key: "bun-linux-x64-test-debian-12"
         label: ":debian: 12 x64 - test-bun"
         if: "build.branch != 'main'"
-        parallelism: 5
+        parallelism: 10
         soft_fail:
           - exit_status: 2
         retry:
@@ -409,7 +415,7 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "linux-x64-build-bun"
+          - "bun-linux-x64-build-bun"
         agents:
           robobun: "true"
           os: "linux"
@@ -417,12 +423,12 @@ steps:
           distro: "debian"
           release: "12"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-build-bun"
+          - "./scripts/runner.node.mjs --step bun-linux-x64-build-bun"
 
-      - key: "linux-x64-test-ubuntu-2204"
+      - key: "bun-linux-x64-test-ubuntu-2204"
         label: ":ubuntu: 22.04 x64 - test-bun"
         if: "build.branch != 'main'"
-        parallelism: 5
+        parallelism: 10
         soft_fail:
           - exit_status: 2
         retry:
@@ -438,7 +444,7 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "linux-x64-build-bun"
+          - "bun-linux-x64-build-bun"
         agents:
           robobun: "true"
           os: "linux"
@@ -446,12 +452,12 @@ steps:
           distro: "ubuntu"
           release: "22.04"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-build-bun"
+          - "./scripts/runner.node.mjs --step bun-linux-x64-build-bun"
 
-      - key: "linux-x64-test-ubuntu-2004"
+      - key: "bun-linux-x64-test-ubuntu-2004"
         label: ":ubuntu: 20.04 x64 - test-bun"
         if: "build.branch != 'main'"
-        parallelism: 5
+        parallelism: 10
         soft_fail:
           - exit_status: 2
         retry:
@@ -467,7 +473,7 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "linux-x64-build-bun"
+          - "bun-linux-x64-build-bun"
         agents:
           robobun: "true"
           os: "linux"
@@ -475,56 +481,56 @@ steps:
           distro: "ubuntu"
           release: "20.04"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-build-bun"
+          - "./scripts/runner.node.mjs --step bun-linux-x64-build-bun"
 
   # Linux x64-baseline
-  - key: "linux-x64-baseline"
+  - key: "bun-linux-x64-baseline"
     group: ":linux: x64-baseline"
     steps:
-      - key: "linux-x64-baseline-build-deps"
+      - key: "bun-linux-x64-baseline-build-deps"
         label: ":linux: x64-baseline - build-deps"
         agents:
           queue: "build-linux"
           os: "linux"
           arch: "x64"
         command:
-          - "./.buildkite/scripts/build-deps.sh"
+          - "./scripts/build.mjs bun-deps --baseline"
 
-      - key: "linux-x64-baseline-build-zig"
+      - key: "bun-linux-x64-baseline-build-zig"
         label: ":linux: x64-baseline - build-zig"
         agents:
           queue: "build-darwin"
           os: "darwin"
           arch: "aarch64"
         command:
-          - "./.buildkite/scripts/build-zig.sh linux x64"
+          - "./scripts/build.mjs bun-zig --cross-compile"
 
-      - key: "linux-x64-baseline-build-cpp"
+      - key: "bun-linux-x64-baseline-build-cpp"
         label: ":linux: x64-baseline - build-cpp"
         agents:
           queue: "build-linux"
           os: "linux"
           arch: "x64"
         command:
-          - "./.buildkite/scripts/build-cpp.sh"
+          - "./scripts/build.mjs bun-cpp"
 
-      - key: "linux-x64-baseline-build-bun"
+      - key: "bun-linux-x64-baseline-build-bun"
         label: ":linux: x64-baseline - build-bun"
         depends_on:
-          - "linux-x64-baseline-build-deps"
-          - "linux-x64-baseline-build-zig"
-          - "linux-x64-baseline-build-cpp"
+          - "bun-linux-x64-baseline-build-deps"
+          - "bun-linux-x64-baseline-build-zig"
+          - "bun-linux-x64-baseline-build-cpp"
         agents:
           queue: "build-linux"
           os: "linux"
           arch: "x64"
         command:
-          - "./.buildkite/scripts/build-bun.sh"
+          - "./scripts/build.mjs bun-link --baseline"
 
-      - key: "linux-x64-baseline-test-debian-12"
+      - key: "bun-linux-x64-baseline-test-debian-12"
         label: ":debian: 12 x64-baseline - test-bun"
         if: "build.branch != 'main'"
-        parallelism: 5
+        parallelism: 10
         soft_fail:
           - exit_status: 2
         retry:
@@ -540,7 +546,7 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "linux-x64-baseline-build-bun"
+          - "bun-linux-x64-baseline-build-bun"
         agents:
           robobun: "true"
           os: "linux"
@@ -548,12 +554,12 @@ steps:
           distro: "debian"
           release: "12"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun"
+          - "./scripts/runner.node.mjs --step bun-linux-x64-baseline-build-bun"
 
-      - key: "linux-x64-baseline-test-ubuntu-2204"
+      - key: "bun-linux-x64-baseline-test-ubuntu-2204"
         label: ":ubuntu: 22.04 x64-baseline - test-bun"
         if: "build.branch != 'main'"
-        parallelism: 5
+        parallelism: 10
         soft_fail:
           - exit_status: 2
         retry:
@@ -569,7 +575,7 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "linux-x64-baseline-build-bun"
+          - "bun-linux-x64-baseline-build-bun"
         agents:
           robobun: "true"
           os: "linux"
@@ -577,12 +583,12 @@ steps:
           distro: "ubuntu"
           release: "22.04"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun"
+          - "./scripts/runner.node.mjs --step bun-linux-x64-baseline-build-bun"
 
-      - key: "linux-x64-baseline-test-ubuntu-2004"
+      - key: "bun-linux-x64-baseline-test-ubuntu-2004"
         label: ":ubuntu: 20.04 x64-baseline - test-bun"
         if: "build.branch != 'main'"
-        parallelism: 5
+        parallelism: 10
         soft_fail:
           - exit_status: 2
         retry:
@@ -598,7 +604,7 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "linux-x64-baseline-build-bun"
+          - "bun-linux-x64-baseline-build-bun"
         agents:
           robobun: "true"
           os: "linux"
@@ -606,69 +612,55 @@ steps:
           distro: "ubuntu"
           release: "20.04"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun"
+          - "./scripts/runner.node.mjs --step bun-linux-x64-baseline-build-bun"
 
   # Windows x64
-  - key: "windows-x64"
+  - key: "bun-windows-x64"
     group: ":windows: x64"
     steps:
-      - key: "windows-x64-build-deps"
+      - key: "bun-windows-x64-build-deps"
         label: ":windows: x64 - build-deps"
         agents:
           queue: "build-windows"
           os: "windows"
           arch: "x64"
-        artifact_paths:
-          - "build\\bun-deps\\*.lib"
         env:
           CCACHE_DISABLE: "1"
         command:
-          - ".\\scripts\\all-dependencies.ps1"
+          - ".\\scripts\\build.ps1 bun-deps"
 
-      - key: "windows-x64-build-zig"
+      - key: "bun-windows-x64-build-zig"
         label: ":windows: x64 - build-zig"
         agents:
           queue: "build-darwin"
-          os: "darwin" # cross-compile on Linux or Darwin
+          os: "darwin"
           arch: "aarch64"
         command:
-          - "./.buildkite/scripts/build-zig.sh windows x64"
+          - "./scripts/build.mjs bun-zig --cross-compile"
 
-      - key: "windows-x64-build-cpp"
+      - key: "bun-windows-x64-build-cpp"
         label: ":windows: x64 - build-cpp"
         agents:
           queue: "build-windows"
           os: "windows"
           arch: "x64"
-        artifact_paths:
-          # HACK: See scripts/build-bun-cpp.ps1
-          # - "build\\bun-cpp-objects.a"
-          - "build\\bun-cpp-objects.a.*"
-        env:
-          CCACHE_DISABLE: "1"
         command:
-          - ".\\scripts\\build-bun-cpp.ps1"
+          - ".\\scripts\\build.ps1 bun-cpp"
 
-      - key: "windows-x64-build-bun"
+      - key: "bun-windows-x64-build-bun"
         label: ":windows: x64 - build-bun"
         depends_on:
-          - "windows-x64-build-deps"
-          - "windows-x64-build-zig"
-          - "windows-x64-build-cpp"
+          - "bun-windows-x64-build-deps"
+          - "bun-windows-x64-build-zig"
+          - "bun-windows-x64-build-cpp"
         agents:
           queue: "build-windows"
           os: "windows"
           arch: "x64"
-        artifact_paths:
-          - "bun-windows-x64.zip"
-          - "bun-windows-x64-profile.zip"
-          - "features.json"
-        env:
-          CCACHE_DISABLE: "1"
         command:
-          - ".\\scripts\\buildkite-link-bun.ps1"
+          - ".\\scripts\\build.ps1 bun-link"
 
-      - key: "windows-x64-test-bun"
+      - key: "bun-windows-x64-test-bun"
         label: ":windows: x64 - test-bun"
         if: "build.branch != 'main'"
         parallelism: 10
@@ -685,78 +677,59 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "windows-x64-build-bun"
+          - "bun-windows-x64-build-bun"
         agents:
           robobun: "true"
           os: "windows"
           arch: "x64"
         command:
-          - "node .\\scripts\\runner.node.mjs --step windows-x64-build-bun"
+          - "node .\\scripts\\runner.node.mjs --step bun-windows-x64-build-bun"
 
   # Windows x64-baseline
-  - key: "windows-x64-baseline"
+  - key: "bun-windows-x64-baseline"
     group: ":windows: x64-baseline"
     steps:
-      - key: "windows-x64-baseline-build-deps"
+      - key: "bun-windows-x64-baseline-build-deps"
         label: ":windows: x64-baseline - build-deps"
         agents:
           queue: "build-windows"
           os: "windows"
           arch: "x64"
-        artifact_paths:
-          - "build\\bun-deps\\*.lib"
-        env:
-          CCACHE_DISABLE: "1"
-          USE_BASELINE_BUILD: "1"
         command:
-          - ".\\scripts\\all-dependencies.ps1"
+          - ".\\scripts\\build.ps1 bun-deps --baseline"
 
-      - key: "windows-x64-baseline-build-zig"
+      - key: "bun-windows-x64-baseline-build-zig"
         label: ":windows: x64-baseline - build-zig"
         agents:
           queue: "build-darwin"
-          os: "darwin" # cross-compile on Linux or Darwin
+          os: "darwin"
           arch: "aarch64"
         command:
-          - "./.buildkite/scripts/build-zig.sh windows x64"
+          - "./scripts/build.mjs bun-zig --cross-compile"
 
-      - key: "windows-x64-baseline-build-cpp"
+      - key: "bun-windows-x64-baseline-build-cpp"
         label: ":windows: x64-baseline - build-cpp"
         agents:
           queue: "build-windows"
           os: "windows"
           arch: "x64"
-        artifact_paths:
-          # HACK: See scripts/build-bun-cpp.ps1
-          # - "build\\bun-cpp-objects.a"
-          - "build\\bun-cpp-objects.a.*"
-        env:
-          CCACHE_DISABLE: "1"
-          USE_BASELINE_BUILD: "1"
         command:
-          - ".\\scripts\\build-bun-cpp.ps1"
+          - ".\\scripts\\build.ps1 bun-cpp --baseline"
 
-      - key: "windows-x64-baseline-build-bun"
+      - key: "bun-windows-x64-baseline-build-bun"
         label: ":windows: x64-baseline - build-bun"
         depends_on:
-          - "windows-x64-baseline-build-deps"
-          - "windows-x64-baseline-build-zig"
-          - "windows-x64-baseline-build-cpp"
+          - "bun-windows-x64-baseline-build-deps"
+          - "bun-windows-x64-baseline-build-zig"
+          - "bun-windows-x64-baseline-build-cpp"
         agents:
           queue: "build-windows"
           os: "windows"
           arch: "x64"
-        artifact_paths:
-          - "bun-windows-x64-baseline.zip"
-          - "bun-windows-x64-baseline-profile.zip"
-          - "features.json"
-        env:
-          CCACHE_DISABLE: "1"
-          USE_BASELINE_BUILD: "1"
         command:
-          - ".\\scripts\\buildkite-link-bun.ps1 -Baseline $$True"
+          - ".\\scripts\\build.ps1 bun-link --baseline"
 
-      - key: "windows-x64-baseline-test-bun"
+      - key: "bun-windows-x64-baseline-test-bun"
         label: ":windows: x64-baseline - test-bun"
         if: "build.branch != 'main'"
         parallelism: 10
@@ -773,10 +746,10 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "windows-x64-baseline-build-bun"
+          - "bun-windows-x64-baseline-build-bun"
         agents:
           robobun: "true"
           os: "windows"
           arch: "x64"
         command:
-          - "node .\\scripts\\runner.node.mjs --step windows-x64-baseline-build-bun"
+          - "node .\\scripts\\runner.node.mjs --step bun-windows-x64-baseline-build-bun"

@@ -1,15 +1,21 @@
-**/*.a
-**/*.o
-**/.next
-**/CMakeCache.txt
-**/node_modules
-.git
-examples
-node_modules
-packages/**/bun
-packages/**/bun-profile
-src/bun.js/WebKit
-src/bun.js/WebKit/LayoutTests
-zig-build
-zig-cache
-zig-out
+# Ignore everything
+*
+
+# Allow source files
+!/src
+!/packages/bun-usockets
+!/packages/bun-uws
+!/packages/bun-error
+!/completions
+
+# Exclude source files
+/src/bun.js/WebKit
+
+# Allow build files
+!/scripts
+!/CMakeLists.txt
+!/Makefile
+!/build.zig
+!/package.json
+!/bun.lockb
+!LATEST

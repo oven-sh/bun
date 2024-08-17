@@ -20,6 +20,8 @@ else
 /// like "1.0.0-canary.12"
 pub const package_json_version_with_canary = if (Environment.isDebug)
     version_string ++ "-debug"
+else if (Environment.is_pull_request)
+    std.fmt.comptimePrint("{s}-pr.{d}", .{ version_string, Environment.pull_request })
 else if (Environment.is_canary)
     std.fmt.comptimePrint("{s}-canary.{d}", .{ version_string, Environment.canary_revision })
 else
@@ -30,6 +32,8 @@ pub const package_json_version_with_sha = if (Environment.git_sha.len == 0)
     package_json_version
 else if (Environment.isDebug)
     std.fmt.comptimePrint("{s} ({s})", .{ version_string, Environment.git_sha[0..@min(Environment.git_sha.len, 8)] })
+else if (Environment.is_pull_request)
+    std.fmt.comptimePrint("{s}-pr.{d} ({s})", .{ version_string, Environment.pull_request, Environment.git_sha[0..@min(Environment.git_sha.len, 8)] })
 else if (Environment.is_canary)
     std.fmt.comptimePrint("{s}-canary.{d} ({s})", .{ version_string, Environment.canary_revision, Environment.git_sha[0..@min(Environment.git_sha.len, 8)] })
 else
@@ -41,6 +45,8 @@ pub const package_json_version_with_revision = if (Environment.git_sha.len == 0)
     package_json_version
 else if (Environment.isDebug)
     std.fmt.comptimePrint(version_string ++ "-debug+{s}", .{Environment.git_sha_short})
+else if (Environment.is_pull_request)
+    std.fmt.comptimePrint(version_string ++ "-pr.{d}+{s}", .{ Environment.pull_request, Environment.git_sha_short })
 else if (Environment.is_canary)
     std.fmt.comptimePrint(version_string ++ "-canary.{d}+{s}", .{ Environment.canary_revision, Environment.git_sha_short })
 else if (Environment.isTest)
@@ -54,7 +60,7 @@ pub const os_name = Environment.os.nameString();
 // Bun v1.0.0-debug (Linux x64)
 // Bun v1.0.0-canary.0+44e09bb7f (Linux x64)
 pub const unhandled_error_bun_version_string = "Bun v" ++
-    (if (Environment.is_canary) package_json_version_with_revision else package_json_version) ++
+    (if (Environment.is_canary or Environment.is_pull_request) package_json_version_with_revision else package_json_version) ++
     " (" ++ Environment.os.displayString() ++ " " ++ arch_name ++
     (if (Environment.baseline) " baseline)" else ")");
 

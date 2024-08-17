@@ -168,8 +168,11 @@ describe("spawn()", () => {
   it("should allow us to set env", async () => {
     async function getChildEnv(env: any): Promise<object> {
       const result: string = await new Promise(resolve => {
-        const child = spawn(bunExe(), ["-e", "process.stdout.write(JSON.stringify(process.env))"], { env });
-        child.stdout.on("data", data => {
+        const child = spawn(bunExe(), ["-e", "process.send(JSON.stringify(process.env))"], {
+          env,
+          stdio: ["pipe", "pipe", "pipe", "ipc"],
+        });
+        child.on("message", data => {
           resolve(data.toString());
         });
       });

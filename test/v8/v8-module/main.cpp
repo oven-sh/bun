@@ -327,9 +327,13 @@ void GlobalTestWrapper::cleanup(void *unused) { value.Reset(); }
 
 void test_many_v8_locals(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
+  Local<Number> nums[1000];
   for (int i = 0; i < 1000; i++) {
-    Local<Number> num = Number::New(isolate, i);
-    (void)num;
+    nums[i] = Number::New(isolate, (double)i + 0.5);
+  }
+  // try accessing them all to make sure the pointers are stable
+  for (int i = 0; i < 1000; i++) {
+    LOG_EXPR(nums[i]->Value());
   }
 }
 

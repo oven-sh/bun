@@ -42,11 +42,8 @@ public:
     friend class EscapableHandleScopeBase;
 
 private:
-    // TODO make resizable
-    static constexpr int capacity = 64;
-
-    Handle storage[capacity];
-    int size = 0;
+    WTF::Lock gc_lock;
+    WTF::SegmentedVector<Handle, 16> storage;
 
     Handle& createUninitializedHandle();
 

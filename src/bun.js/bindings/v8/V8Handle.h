@@ -52,7 +52,11 @@ struct Handle {
         return *this;
     }
 
-    Handle() {}
+    Handle()
+        : to_v8_object(0)
+        , object({ .map = nullptr, .ptr = nullptr })
+    {
+    }
 
     bool isCell() const
     {

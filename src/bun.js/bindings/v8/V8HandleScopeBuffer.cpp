@@ -27,8 +27,9 @@ void HandleScopeBuffer::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    for (int i = 0; i < thisObject->size; i++) {
-        auto& handle = thisObject->storage[i];
+    WTF::Locker locker { thisObject->gc_lock };
+
+    for (auto& handle : thisObject->storage) {
         if (handle.isCell()) {
             JSCell::visitChildren(reinterpret_cast<JSCell*>(handle.object.ptr), visitor);
         }
@@ -39,10 +40,9 @@ DEFINE_VISIT_CHILDREN(HandleScopeBuffer);
 
 Handle& HandleScopeBuffer::createUninitializedHandle()
 {
-    RELEASE_ASSERT(size < capacity - 1);
-    int index = size;
-    size++;
-    return storage[index];
+    WTF::Locker locker { gc_lock };
+    storage.append(Handle {});
+    return storage.last();
 }
 
 TaggedPointer* HandleScopeBuffer::createHandle(void* ptr, const Map* map)

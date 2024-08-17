@@ -1,8 +1,8 @@
 import { it, expect, test, beforeAll, describe, afterAll } from "bun:test";
 import { bunExe, bunEnv, tmpdirSync } from "harness";
-import { spawnSync } from "bun";
+import { spawn, spawnSync } from "bun";
 import { join } from "path";
-import fs from "node:fs";
+import fs from "node:fs/promises";
 import assert from "node:assert";
 
 // clang-cl does not work on Windows with node-gyp 10.2.0, so we should not let that affect the
@@ -27,92 +27,50 @@ const directories = {
   badModules: "",
 };
 
-beforeAll(() => {
+async function build(srcDir: string, tmpDir: string, runtime: Runtime, buildMode: BuildMode): Promise<void> {
+  await fs.cp(srcDir, tmpDir, { recursive: true });
+  const install = spawn({
+    cmd: runtime == Runtime.bun ? [bunExe(), "install", "--ignore-scripts"] : [bunExe(), "install"],
+    cwd: tmpDir,
+    env: bunEnv,
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  await install.exited;
+  if (install.exitCode != 0) {
+    throw new Error("build failed");
+  }
+
+  if (runtime == Runtime.bun) {
+    const build = spawn({
+      cmd: [bunExe(), "x", "--bun", "node-gyp", "rebuild", buildMode == BuildMode.debug ? "--debug" : "--release"],
+      cwd: tmpDir,
+      env: bunEnv,
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    await build.exited;
+    if (build.exitCode != 0) {
+      throw new Error("build failed");
+    }
+  }
+}
+
+beforeAll(async () => {
   // set up clean directories for our 4 builds
   directories.bunRelease = tmpdirSync();
   directories.bunDebug = tmpdirSync();
   directories.node = tmpdirSync();
   directories.badModules = tmpdirSync();
 
-  fs.cpSync(srcDir, directories.bunRelease, { recursive: true });
-  fs.cpSync(srcDir, directories.bunDebug, { recursive: true });
-  fs.cpSync(srcDir, directories.node, { recursive: true });
-  fs.cpSync(join(__dirname, "bad-modules"), directories.badModules, { recursive: true });
-
-  // build code using bun
-  // we install/build with separate commands so that we can use --bun to run node-gyp
-  const bunInstall = spawnSync({
-    cmd: [bunExe(), "install", "--ignore-scripts"],
-    cwd: directories.bunRelease,
-    env: bunEnv,
-    stdin: "inherit",
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  if (!bunInstall.success) {
-    throw new Error("build failed");
-  }
-  const bunBuild = spawnSync({
-    cmd: [bunExe(), "x", "--bun", "node-gyp", "rebuild"],
-    cwd: directories.bunRelease,
-    env: bunEnv,
-    stdin: "inherit",
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  if (!bunBuild.success) {
-    throw new Error("build failed");
-  }
-
-  // build code using bun, in debug mode
-  const bunDebugInstall = spawnSync({
-    cmd: [bunExe(), "install", "--verbose", "--ignore-scripts"],
-    cwd: directories.bunDebug,
-    env: bunEnv,
-    stdin: "inherit",
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  if (!bunDebugInstall.success) {
-    throw new Error("build failed");
-  }
-  const bunDebugBuild = spawnSync({
-    cmd: [bunExe(), "x", "--bun", "node-gyp", "rebuild", "--debug"],
-    cwd: directories.bunDebug,
-    env: bunEnv,
-    stdin: "inherit",
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  if (!bunDebugBuild.success) {
-    throw new Error("build failed");
-  }
-
-  // build code using node (since `bun install` neither uses nor has a --bun flag)
-  const nodeInstall = spawnSync({
-    cmd: [bunExe(), "install"],
-    cwd: directories.node,
-    env: bunEnv,
-    stdin: "inherit",
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  if (!nodeInstall.success) {
-    throw new Error("build failed");
-  }
-
-  // build bad modules (these should not depend strongly on the runtime version)
-  const badModulesBuild = spawnSync({
-    cmd: [bunExe(), "install"],
-    cwd: directories.badModules,
-    env: bunEnv,
-    stdin: "inherit",
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  if (!badModulesBuild.success) {
-    throw new Error("build failed");
-  }
+  await Promise.all([
+    build(srcDir, directories.bunRelease, Runtime.bun, BuildMode.release),
+    build(srcDir, directories.bunDebug, Runtime.bun, BuildMode.debug),
+    build(srcDir, directories.node, Runtime.node, BuildMode.release),
+    build(join(__dirname, "bad-modules"), directories.badModules, Runtime.node, BuildMode.release),
+  ]);
 });
 
 describe("module lifecycle", () => {
@@ -202,11 +160,13 @@ describe("error handling", () => {
   });
 });
 
-afterAll(() => {
-  fs.rmSync(directories.bunRelease, { recursive: true, force: true });
-  fs.rmSync(directories.bunDebug, { recursive: true, force: true });
-  fs.rmSync(directories.node, { recursive: true, force: true });
-  fs.rmSync(directories.badModules, { recursive: true, force: true });
+afterAll(async () => {
+  await Promise.all([
+    fs.rm(directories.bunRelease, { recursive: true, force: true }),
+    fs.rm(directories.bunDebug, { recursive: true, force: true }),
+    fs.rm(directories.node, { recursive: true, force: true }),
+    fs.rm(directories.badModules, { recursive: true, force: true }),
+  ]);
 });
 
 enum Runtime {

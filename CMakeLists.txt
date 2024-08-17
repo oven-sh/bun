@@ -1603,7 +1603,6 @@ if(NOT WIN32)
     endif()
 else()
     target_link_libraries(${bun} PRIVATE
-        "${WEBKIT_LIB_DIR}/WTF.lib"
         "${WEBKIT_LIB_DIR}/JavaScriptCore.lib"
         "${WEBKIT_LIB_DIR}/sicudt.lib"
         "${WEBKIT_LIB_DIR}/sicuin.lib"

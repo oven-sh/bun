@@ -28,6 +28,7 @@ const {
 
 let cluster;
 const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild", 3);
+const getBunServerAllClosedPromise = $newZigFunction("node_http_binding.zig", "getBunServerAllClosedPromise", 1);
 
 // TODO: make this more robust.
 function isAbortError(err) {
@@ -160,9 +161,7 @@ var FakeSocket = class Socket extends Duplex {
   _destroy(err, callback) {
     const socketData = this[kInternalSocketData];
     if (!socketData) return; // sometimes 'this' is Socket not FakeSocket
-    socketData[0][connectionsSymbol]--;
     if (!socketData[1]["req"][kAutoDestroyed]) socketData[1].end();
-    socketData[0]._emitCloseIfDrained();
   }
 
   _final(callback) {}
@@ -343,7 +342,6 @@ function emitListeningNextTick(self, hostname, port) {
 var tlsSymbol = Symbol("tls");
 var isTlsSymbol = Symbol("is_tls");
 var optionsSymbol = Symbol("options");
-const connectionsSymbol = Symbol("connections");
 
 function Server(options, callback) {
   if (!(this instanceof Server)) return new Server(options, callback);
@@ -352,7 +350,6 @@ function Server(options, callback) {
   this.listening = false;
   this._unref = false;
   this[kInternalSocketData] = undefined;
-  this[connectionsSymbol] = 0;
 
   if (typeof options === "function") {
     callback = options;
@@ -445,7 +442,6 @@ Server.prototype = {
     }
     this[serverSymbol] = undefined;
     server.stop(true);
-    this._emitCloseIfDrained();
   },
 
   closeIdleConnections() {
@@ -462,17 +458,6 @@ Server.prototype = {
     this[serverSymbol] = undefined;
     if (typeof optionalCallback === "function") this.once("close", optionalCallback);
     server.stop();
-    this._emitCloseIfDrained();
-  },
-
-  _emitCloseIfDrained() {
-    $assert(this[connectionsSymbol] >= 0); // this will trigger when zero but should never be negative
-    if (this[serverSymbol] || this[connectionsSymbol] > 0) {
-      return;
-    }
-    process.nextTick(() => {
-      this.emit("close");
-    });
   },
 
   [Symbol.asyncDispose]() {
@@ -605,16 +590,13 @@ Server.prototype = {
         // Bindings to be used for WS Server
         websocket: {
           open(ws) {
-            server[connectionsSymbol]++;
             ws.data.open(ws);
           },
           message(ws, message) {
             ws.data.message(ws, message);
           },
           close(ws, code, reason) {
-            server[connectionsSymbol]--;
             ws.data.close(ws, code, reason);
-            server._emitCloseIfDrained();
           },
           drain(ws) {
             ws.data.drain(ws);
@@ -679,10 +661,16 @@ Server.prototype = {
             return pendingResponse;
           }
 
-          server[connectionsSymbol]++;
           var { promise, resolve: resolveFunction, reject: rejectFunction } = $newPromiseCapability(GlobalPromise);
           return promise;
         },
+      });
+      // XXX: should this be turned into a bun.Server callback?
+      // node:http.Server#close only disables new connections, and the 'close' event is only emitted once all existing connections have closed.
+      getBunServerAllClosedPromise(this[serverSymbol]).then(() => {
+        process.nextTick(() => {
+          this.emit("close");
+        });
       });
       isHTTPS = this[serverSymbol].protocol === "https";
 

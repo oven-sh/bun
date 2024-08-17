@@ -402,6 +402,8 @@ const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.
 const ProcessMiniEventLoopWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessMiniEventLoopQueue.ResultTask else opaque {};
 const ShellAsyncSubprocessDone = bun.shell.Interpreter.Cmd.ShellAsyncSubprocessDone;
 const RuntimeTranspilerStore = JSC.RuntimeTranspilerStore;
+const SeverAllConnectionsClosedTask = @import("./api/server.zig").SeverAllConnectionsClosedTask;
+
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
@@ -481,6 +483,7 @@ pub const Task = TaggedPointerUnion(.{
 
     ProcessWaiterThreadTask,
     RuntimeTranspilerStore,
+    SeverAllConnectionsClosedTask,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
@@ -1230,6 +1233,10 @@ pub const EventLoop = struct {
                 @field(Task.Tag, typeBaseName(@typeName(TimerObject))) => {
                     var any: *TimerObject = task.get(TimerObject).?;
                     any.runImmediateTask(this.virtual_machine);
+                },
+                @field(Task.Tag, typeBaseName(@typeName(SeverAllConnectionsClosedTask))) => {
+                    var any: *SeverAllConnectionsClosedTask = task.get(SeverAllConnectionsClosedTask).?;
+                    any.runFromJSThread();
                 },
 
                 else => if (Environment.allow_assert) {

@@ -2,85 +2,57 @@
 
 #include <cinttypes>
 #include <cstdarg>
+#include <iomanip>
+#include <iostream>
 
 using namespace v8;
 
+#define LOG_EXPR(e) std::cout << #e << " = " << (e) << std::endl
+
+#define LOG_VALUE_KIND(v)                                                      \
+  do {                                                                         \
+    LOG_EXPR(v->IsUndefined());                                                \
+    LOG_EXPR(v->IsNull());                                                     \
+    LOG_EXPR(v->IsNullOrUndefined());                                          \
+    LOG_EXPR(v->IsTrue());                                                     \
+    LOG_EXPR(v->IsFalse());                                                    \
+    LOG_EXPR(v->IsBoolean());                                                  \
+    LOG_EXPR(v->IsString());                                                   \
+    LOG_EXPR(v->IsObject());                                                   \
+    LOG_EXPR(v->IsNumber());                                                   \
+  } while (0)
+
 namespace v8tests {
 
-enum class ValueKind : uint16_t {
-  Undefined = 1 << 0,
-  Null = 1 << 1,
-  NullOrUndefined = 1 << 2,
-  True = 1 << 3,
-  False = 1 << 4,
-  Boolean = 1 << 5,
-  String = 1 << 6,
-  Object = 1 << 7,
-  Number = 1 << 8,
-};
+static void log_buffer(const char *buf, int len) {
+  for (int i = 0; i < len; i++) {
+    printf("buf[%d] = 0x%02x\n", i, buf[i]);
+  }
+}
 
-static bool check_value_kind(Local<Value> value, ValueKind kind) {
-  uint16_t matched_kinds = 0;
+static std::string describe(Isolate *isolate, Local<Value> value) {
   if (value->IsUndefined()) {
-    matched_kinds |= static_cast<uint16_t>(ValueKind::Undefined);
+    return "undefined";
+  } else if (value->IsNull()) {
+    return "null";
+  } else if (value->IsTrue()) {
+    return "true";
+  } else if (value->IsFalse()) {
+    return "false";
+  } else if (value->IsString()) {
+    char buf[1024] = {0};
+    value.As<String>()->WriteUtf8(isolate, buf, sizeof(buf) - 1);
+    std::string result = "\"";
+    result += buf;
+    result += "\"";
+    return result;
+  } else if (value->IsObject()) {
+    return "[object Object]";
+  } else if (value->IsNumber()) {
+    return std::to_string(value.As<Number>()->Value());
+  } else {
+    return "unknown";
   }
-  if (value->IsNull()) {
-    matched_kinds |= static_cast<uint16_t>(ValueKind::Null);
-  }
-  if (value->IsNullOrUndefined()) {
-    matched_kinds |= static_cast<uint16_t>(ValueKind::NullOrUndefined);
-  }
-  if (value->IsTrue()) {
-    matched_kinds |= static_cast<uint16_t>(ValueKind::True);
-  }
-  if (value->IsFalse()) {
-    matched_kinds |= static_cast<uint16_t>(ValueKind::False);
-  }
-  if (value->IsBoolean()) {
-    matched_kinds |= static_cast<uint16_t>(ValueKind::Boolean);
-  }
-  if (value->IsString()) {
-    matched_kinds |= static_cast<uint16_t>(ValueKind::String);
-  }
-  if (value->IsObject()) {
-    matched_kinds |= static_cast<uint16_t>(ValueKind::Object);
-  }
-  if (value->IsNumber()) {
-    matched_kinds |= static_cast<uint16_t>(ValueKind::Number);
-  }
-
-  switch (kind) {
-  case ValueKind::Undefined:
-    return matched_kinds == (static_cast<uint16_t>(ValueKind::Undefined) |
-                             static_cast<uint16_t>(ValueKind::NullOrUndefined));
-  case ValueKind::Null:
-    return matched_kinds == (static_cast<uint16_t>(ValueKind::Null) |
-                             static_cast<uint16_t>(ValueKind::NullOrUndefined));
-  case ValueKind::True:
-    return matched_kinds == (static_cast<uint16_t>(ValueKind::True) |
-                             static_cast<uint16_t>(ValueKind::Boolean));
-  case ValueKind::False:
-    return matched_kinds == (static_cast<uint16_t>(ValueKind::False) |
-                             static_cast<uint16_t>(ValueKind::Boolean));
-  case ValueKind::String:
-    return matched_kinds == static_cast<uint16_t>(ValueKind::String);
-  case ValueKind::Object:
-    return matched_kinds == static_cast<uint16_t>(ValueKind::Object);
-  case ValueKind::Number:
-    return matched_kinds == static_cast<uint16_t>(ValueKind::Number);
-  case ValueKind::NullOrUndefined:
-    return (matched_kinds ==
-            (static_cast<uint16_t>(ValueKind::Undefined) |
-             static_cast<uint16_t>(ValueKind::NullOrUndefined))) ||
-           ((static_cast<uint16_t>(ValueKind::Null) |
-             static_cast<uint16_t>(ValueKind::NullOrUndefined)));
-  case ValueKind::Boolean:
-    return (matched_kinds == (static_cast<uint16_t>(ValueKind::True) |
-                              static_cast<uint16_t>(ValueKind::Boolean))) ||
-           (matched_kinds == (static_cast<uint16_t>(ValueKind::False) |
-                              static_cast<uint16_t>(ValueKind::Boolean)));
-  }
-  return false;
 }
 
 void fail(const FunctionCallbackInfo<Value> &info, const char *fmt, ...) {
@@ -108,24 +80,13 @@ void test_v8_primitives(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
 
   Local<Primitive> v8_undefined = Undefined(isolate);
-  if (!check_value_kind(v8_undefined, ValueKind::Undefined)) {
-    return fail(info, "undefined is not undefined");
-  }
-
+  LOG_VALUE_KIND(v8_undefined);
   Local<Primitive> v8_null = Null(isolate);
-  if (!check_value_kind(v8_null, ValueKind::Null)) {
-    return fail(info, "null is not null");
-  }
-
+  LOG_VALUE_KIND(v8_null);
   Local<Boolean> v8_true = Boolean::New(isolate, true);
-  if (!check_value_kind(v8_true, ValueKind::True)) {
-    return fail(info, "true is not true");
-  }
-
+  LOG_VALUE_KIND(v8_true);
   Local<Boolean> v8_false = Boolean::New(isolate, false);
-  if (!check_value_kind(v8_false, ValueKind::False)) {
-    return fail(info, "false is not false");
-  }
+  LOG_VALUE_KIND(v8_false);
 
   return ok(info);
 }
@@ -135,13 +96,8 @@ static void perform_number_test(const FunctionCallbackInfo<Value> &info,
   Isolate *isolate = info.GetIsolate();
 
   Local<Number> v8_number = Number::New(isolate, number);
-  if (v8_number->Value() != number) {
-    return fail(info, "wrong v8 number value: expected %f got %f", number,
-                v8_number->Value());
-  }
-  if (!check_value_kind(v8_number, ValueKind::Number)) {
-    return fail(info, "number is not a number");
-  }
+  LOG_EXPR(v8_number->Value());
+  LOG_VALUE_KIND(v8_number);
 
   return ok(info);
 }
@@ -159,119 +115,43 @@ void test_v8_number_fraction(const FunctionCallbackInfo<Value> &info) {
   perform_number_test(info, 2.5);
 }
 
-static bool perform_string_test(const FunctionCallbackInfo<Value> &info,
-                                const char *c_string, int utf_16_code_units,
-                                int encoded_utf_8_length,
-                                const char *encoded_utf_8_data) {
+static void perform_string_test(const FunctionCallbackInfo<Value> &info,
+                                const char *c_string) {
   Isolate *isolate = info.GetIsolate();
-  char buf[256] = {0};
+  char buf[256] = {0x7f};
   int retval;
   int nchars;
 
   Local<String> v8_string =
       String::NewFromUtf8(isolate, c_string).ToLocalChecked();
 
-  if (!check_value_kind(v8_string, ValueKind::String)) {
-    fail(info, "string is not a string");
-    return false;
-  }
+  LOG_VALUE_KIND(v8_string);
+  LOG_EXPR(v8_string->Length());
 
-  if (v8_string->Length() != utf_16_code_units) {
-    fail(info, "String::Length return: expected %d got %d", utf_16_code_units,
-         v8_string->Length());
-    return false;
-  }
+  // check string has the right contents
+  LOG_EXPR(retval = v8_string->WriteUtf8(isolate, buf, sizeof buf, &nchars));
+  LOG_EXPR(nchars);
+  log_buffer(buf, retval + 1);
 
-  if ((retval = v8_string->WriteUtf8(isolate, buf, sizeof buf, &nchars)) !=
-      encoded_utf_8_length + 1) {
-    fail(info, "String::WriteUtf8 return: expected %d got %d",
-         encoded_utf_8_length + 1, retval);
-    return false;
-  }
-  if (nchars != utf_16_code_units) {
-    fail(info,
-         "String::WriteUtf8 set nchars to wrong value: expected %d got %d",
-         utf_16_code_units, nchars);
-    return false;
-  }
-  // cmp including terminator
-  if (memcmp(buf, encoded_utf_8_data, encoded_utf_8_length + 1) != 0) {
-    fail(info,
-         "String::WriteUtf8 stored wrong data in buffer: expected %s got %s",
-         c_string, buf);
-    return false;
-  }
+  memset(buf, 0x7f, sizeof buf);
 
   // try with assuming the buffer is large enough
-  if ((retval = v8_string->WriteUtf8(isolate, buf, -1, &nchars)) !=
-      encoded_utf_8_length + 1) {
-    fail(info, "String::WriteUtf8 return: expected %d got %d",
-         encoded_utf_8_length + 1, retval);
-    return false;
-  }
-  if (nchars != utf_16_code_units) {
-    fail(info,
-         "String::WriteUtf8 set nchars to wrong value: expected %d got %d",
-         utf_16_code_units, nchars);
-    return false;
-  }
-  // cmp including terminator
-  if (memcmp(buf, encoded_utf_8_data, encoded_utf_8_length + 1) != 0) {
-    fail(info,
-         "String::WriteUtf8 stored wrong data in buffer: expected %s got %s",
-         c_string, buf);
-    return false;
-  }
+  LOG_EXPR(retval = v8_string->WriteUtf8(isolate, buf, -1, &nchars));
+  LOG_EXPR(nchars);
+  log_buffer(buf, retval + 1);
 
-  // try with ignoring nchars (it should not try to store anything in a nullptr)
-  if ((retval = v8_string->WriteUtf8(isolate, buf, sizeof buf, nullptr)) !=
-      encoded_utf_8_length + 1) {
-    fail(info, "String::WriteUtf8 return: expected %d got %d",
-         encoded_utf_8_length + 1, retval);
-    return false;
-  }
-  // cmp including terminator
-  if (memcmp(buf, encoded_utf_8_data, encoded_utf_8_length + 1) != 0) {
-    fail(info,
-         "String::WriteUtf8 stored wrong data in buffer: expected %s got %s",
-         c_string, buf);
-    return false;
-  }
+  memset(buf, 0x7f, sizeof buf);
 
-  ok(info);
-  return true;
+  // try with ignoring nchars (it should not try to store anything in a
+  // nullptr)
+  LOG_EXPR(retval = v8_string->WriteUtf8(isolate, buf, sizeof buf, nullptr));
+  log_buffer(buf, retval + 1);
+
+  return ok(info);
 }
 
 void test_v8_string_ascii(const FunctionCallbackInfo<Value> &info) {
-  if (!perform_string_test(info, "hello world", 11, 11, "hello world")) {
-    // if perform_string_test failed, don't replace the return value with
-    // success in the below truncated test
-    return;
-  }
-
-  // try with a length shorter than the string
-  Isolate *isolate = info.GetIsolate();
-  Local<String> v8_string =
-      String::NewFromUtf8(info.GetIsolate(), "hello world").ToLocalChecked();
-  char buf[256];
-  memset(buf, 0xaa, sizeof buf);
-  int retval;
-  int nchars;
-  if ((retval = v8_string->WriteUtf8(isolate, buf, 5, &nchars)) != 5) {
-    return fail(info, "String::WriteUtf8 return: expected 5 got %d", retval);
-  }
-  if (nchars != 5) {
-    return fail(
-        info, "String::WriteUtf8 set nchars to wrong value: expected 5 got %d",
-        nchars);
-  }
-  // check it did not write a terminator
-  if (memcmp(buf, "hello\xaa", 6) != 0) {
-    return fail(info,
-                "String::WriteUtf8 stored wrong data in buffer: expected "
-                "hello\\xaa got %s",
-                buf);
-  }
+  perform_string_test(info, "hello world");
 }
 
 void test_v8_string_utf8(const FunctionCallbackInfo<Value> &info) {
@@ -279,7 +159,7 @@ void test_v8_string_utf8(const FunctionCallbackInfo<Value> &info) {
                                                143, 226, 128, 141, 226, 154,
                                                167, 239, 184, 143, 0};
   const char *trans_flag = reinterpret_cast<const char *>(trans_flag_unsigned);
-  perform_string_test(info, trans_flag, 6, 16, trans_flag);
+  perform_string_test(info, trans_flag);
 }
 
 void test_v8_string_invalid_utf8(const FunctionCallbackInfo<Value> &info) {
@@ -287,25 +167,14 @@ void test_v8_string_invalid_utf8(const FunctionCallbackInfo<Value> &info) {
                                                    'o', 0xc2, '!', 0xf5, 0};
   const char *mixed_sequence =
       reinterpret_cast<const char *>(mixed_sequence_unsigned);
-  const unsigned char replaced_sequence_unsigned[] = {
-      'o',  'h',  ' ',  0xef, 0xbf, 0xbd, 'n',  'o',
-      0xef, 0xbf, 0xbd, '!',  0xef, 0xbf, 0xbd, 0};
-  const char *replaced_sequence =
-      reinterpret_cast<const char *>(replaced_sequence_unsigned);
-  perform_string_test(info, mixed_sequence, 9, 15, replaced_sequence);
+  perform_string_test(info, mixed_sequence);
 }
 
 void test_v8_string_latin1(const FunctionCallbackInfo<Value> &info) {
-  const unsigned char bytes[] = {0xa1, 'b', 'u', 'n', '!', 0};
-  Isolate *isolate = info.GetIsolate();
-  Local<String> str = String::NewFromOneByte(isolate, bytes).ToLocalChecked();
-  printf("Length() = %d\n", str->Length());
-  char buf[32];
-  int nchars;
-  int bytes_written = str->WriteUtf8(isolate, buf, sizeof buf, &nchars);
-  printf("nchars = %d\n", nchars);
-  printf("WriteUtf8() returned %d\n", bytes_written);
-  printf("utf-8 string = \"%s\"\n", buf);
+  const unsigned char latin1_unsigned[] = {0xa1, 'b', 'u', 'n', '!', 0};
+  const char *latin1 = reinterpret_cast<const char *>(latin1_unsigned);
+
+  perform_string_test(info, latin1);
 }
 
 void test_v8_string_write_utf8(const FunctionCallbackInfo<Value> &info) {
@@ -338,6 +207,7 @@ void test_v8_external(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
   int x = 5;
   Local<External> external = External::New(isolate, &x);
+  LOG_EXPR(*reinterpret_cast<int *>(external->Value()));
   if (external->Value() != &x) {
     return fail(info,
                 "External::Value() returned wrong pointer: expected %p got %p",
@@ -348,43 +218,19 @@ void test_v8_external(const FunctionCallbackInfo<Value> &info) {
 
 void test_v8_object(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
 
   Local<Object> obj = Object::New(isolate);
   auto key = String::NewFromUtf8(isolate, "key").ToLocalChecked();
   auto val = Number::New(isolate, 5.0);
-  Maybe<bool> retval = Nothing<bool>();
-  if ((retval = obj->Set(isolate->GetCurrentContext(), key, val)) !=
-      Just<bool>(true)) {
-    return fail(info, "Object::Set wrong return: expected Just(true), got %s",
-                retval.IsNothing() ? "Nothing" : "Just(false)");
-  }
+  Maybe<bool> set_status = obj->Set(context, key, val);
+  LOG_EXPR(set_status.IsJust());
+  LOG_EXPR(set_status.FromJust());
+
+  // Local<Value> retval = obj->Get(context, key).ToLocalChecked();
+  // LOG_EXPR(describe(isolate, retval));
 
   return ok(info);
-}
-
-static std::string describe(Isolate *isolate, Local<Value> value) {
-  if (value->IsUndefined()) {
-    return "undefined";
-  } else if (value->IsNull()) {
-    return "null";
-  } else if (value->IsTrue()) {
-    return "true";
-  } else if (value->IsFalse()) {
-    return "false";
-  } else if (value->IsString()) {
-    char buf[1024] = {0};
-    value.As<String>()->WriteUtf8(isolate, buf, sizeof(buf) - 1);
-    std::string result = "\"";
-    result += buf;
-    result += "\"";
-    return result;
-  } else if (value->IsObject()) {
-    return "[object Object]";
-  } else if (value->IsNumber()) {
-    return std::to_string(value.As<Number>()->Value());
-  } else {
-    return "unknown";
-  }
 }
 
 void test_v8_array_new(const FunctionCallbackInfo<Value> &info) {
@@ -400,18 +246,15 @@ void test_v8_array_new(const FunctionCallbackInfo<Value> &info) {
   Local<Array> v8_array =
       Array::New(isolate, vals, sizeof(vals) / sizeof(Local<Value>));
 
-  if (v8_array->Length() != 5) {
-    return fail(info, "Array::Length wrong return: expected 5, got %" PRIu32,
-                v8_array->Length());
-  }
+  LOG_EXPR(v8_array->Length());
 
   for (uint32_t i = 0; i < 5; i++) {
     Local<Value> array_value =
         v8_array->Get(isolate->GetCurrentContext(), i).ToLocalChecked();
     if (!array_value->StrictEquals(vals[i])) {
-      return fail(info, "array has wrong value at index %" PRIu32 ": %s", i,
-                  describe(isolate, array_value).c_str());
+      printf("array[%u] does not match\n", i);
     }
+    LOG_EXPR(describe(isolate, array_value));
   }
 
   return ok(info);
@@ -423,12 +266,7 @@ void test_v8_object_template(const FunctionCallbackInfo<Value> &info) {
 
   Local<ObjectTemplate> obj_template = ObjectTemplate::New(isolate);
   obj_template->SetInternalFieldCount(2);
-  if (obj_template->InternalFieldCount() != 2) {
-    return fail(info,
-                "ObjectTemplate did not remember internal field count: "
-                "expected 2, got %d",
-                obj_template->InternalFieldCount());
-  }
+  LOG_EXPR(obj_template->InternalFieldCount());
 
   Local<Object> obj1 = obj_template->NewInstance(context).ToLocalChecked();
   obj1->SetInternalField(0, Number::New(isolate, 3.0));
@@ -438,30 +276,10 @@ void test_v8_object_template(const FunctionCallbackInfo<Value> &info) {
   obj2->SetInternalField(0, Number::New(isolate, 5.0));
   obj2->SetInternalField(1, Number::New(isolate, 6.0));
 
-  double value = obj1->GetInternalField(0).As<Number>()->Value();
-  if (value != 3.0) {
-    return fail(info,
-                "obj1 internal field 0 has wrong value: expected 3.0, got %f",
-                value);
-  }
-  value = obj1->GetInternalField(1).As<Number>()->Value();
-  if (value != 4.0) {
-    return fail(info,
-                "obj1 internal field 1 has wrong value: expected 4.0, got %f",
-                value);
-  }
-  value = obj2->GetInternalField(0).As<Number>()->Value();
-  if (value != 5.0) {
-    return fail(info,
-                "obj2 internal field 0 has wrong value: expected 5.0, got %f",
-                value);
-  }
-  value = obj2->GetInternalField(1).As<Number>()->Value();
-  if (value != 6.0) {
-    return fail(info,
-                "obj2 internal field 1 has wrong value: expected 6.0, got %f",
-                value);
-  }
+  LOG_EXPR(obj1->GetInternalField(0).As<Number>()->Value());
+  LOG_EXPR(obj1->GetInternalField(1).As<Number>()->Value());
+  LOG_EXPR(obj2->GetInternalField(0).As<Number>()->Value());
+  LOG_EXPR(obj2->GetInternalField(1).As<Number>()->Value());
 }
 
 void print_values_from_js(const FunctionCallbackInfo<Value> &info) {

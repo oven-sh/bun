@@ -5972,8 +5972,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             if (this.pending_requests == 0 and this.listener == null and !this.hasActiveWebSockets() and !this.flags.has_handled_all_closed_promise) {
                 const event_loop = vm.eventLoop();
-                event_loop.enter();
-                defer event_loop.exit();
 
                 // use a flag here instead of `this.all_closed_promise.get().isHandled(vm)` to prevent the race condition of this block being called
                 // again before the task has run.
@@ -5984,7 +5982,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     .promise = this.all_closed_promise,
                     .tracker = JSC.AsyncTaskTracker.init(vm),
                 });
-                task.ref.ref(vm);
                 event_loop.enqueueTask(JSC.Task.init(task));
             }
             if (this.pending_requests == 0 and this.listener == null and this.flags.has_js_deinited and !this.hasActiveWebSockets()) {
@@ -6593,7 +6590,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 pub const SeverAllConnectionsClosedTask = struct {
     globalObject: *JSC.JSGlobalObject,
     promise: JSC.JSPromise.Strong,
-    ref: bun.Async.KeepAlive = .{},
     tracker: JSC.AsyncTaskTracker,
 
     pub usingnamespace bun.New(@This());
@@ -6612,7 +6608,6 @@ pub const SeverAllConnectionsClosedTask = struct {
         tracker.willDispatch(globalObject);
         defer tracker.didDispatch(globalObject);
 
-        this.ref.unref(this.globalObject.bunVM());
         this.destroy();
 
         promise.resolve(globalObject, .undefined);

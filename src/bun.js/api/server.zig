@@ -5977,7 +5977,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 // again before the task has run.
                 this.flags.has_handled_all_closed_promise = true;
 
-                const task = SeverAllConnectionsClosedTask.new(.{
+                const task = ServerAllConnectionsClosedTask.new(.{
                     .globalObject = this.globalThis,
                     .promise = this.all_closed_promise,
                     .tracker = JSC.AsyncTaskTracker.init(vm),
@@ -6586,16 +6586,16 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
     };
 }
 
-pub const SeverAllConnectionsClosedTask = struct {
+pub const ServerAllConnectionsClosedTask = struct {
     globalObject: *JSC.JSGlobalObject,
     promise: JSC.JSPromise.Strong,
     tracker: JSC.AsyncTaskTracker,
 
     pub usingnamespace bun.New(@This());
 
-    pub fn runFromJSThread(this: *SeverAllConnectionsClosedTask) void {
+    pub fn runFromJSThread(this: *ServerAllConnectionsClosedTask) void {
         const httplog = Output.scoped(.Server, false);
-        httplog("SeverAllConnectionsClosedTask runFromJSThread", .{});
+        httplog("ServerAllConnectionsClosedTask runFromJSThread", .{});
 
         const globalObject = this.globalObject;
 

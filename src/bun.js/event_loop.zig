@@ -402,7 +402,7 @@ const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.
 const ProcessMiniEventLoopWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessMiniEventLoopQueue.ResultTask else opaque {};
 const ShellAsyncSubprocessDone = bun.shell.Interpreter.Cmd.ShellAsyncSubprocessDone;
 const RuntimeTranspilerStore = JSC.RuntimeTranspilerStore;
-const SeverAllConnectionsClosedTask = @import("./api/server.zig").SeverAllConnectionsClosedTask;
+const ServerAllConnectionsClosedTask = @import("./api/server.zig").ServerAllConnectionsClosedTask;
 
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
@@ -483,7 +483,7 @@ pub const Task = TaggedPointerUnion(.{
 
     ProcessWaiterThreadTask,
     RuntimeTranspilerStore,
-    SeverAllConnectionsClosedTask,
+    ServerAllConnectionsClosedTask,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
@@ -1234,8 +1234,8 @@ pub const EventLoop = struct {
                     var any: *TimerObject = task.get(TimerObject).?;
                     any.runImmediateTask(this.virtual_machine);
                 },
-                @field(Task.Tag, typeBaseName(@typeName(SeverAllConnectionsClosedTask))) => {
-                    var any: *SeverAllConnectionsClosedTask = task.get(SeverAllConnectionsClosedTask).?;
+                @field(Task.Tag, typeBaseName(@typeName(ServerAllConnectionsClosedTask))) => {
+                    var any: *ServerAllConnectionsClosedTask = task.get(ServerAllConnectionsClosedTask).?;
                     any.runFromJSThread();
                 },
 

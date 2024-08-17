@@ -789,7 +789,6 @@ fn NewSocketIPCHandler(comptime Context: type) type {
 
 /// Used on Windows
 fn NewNamedPipeIPCHandler(comptime Context: type) type {
-    const uv = bun.windows.libuv;
     return struct {
         fn onReadAlloc(this: *Context, suggested_size: usize) []u8 {
             const ipc = this.ipc();
@@ -860,47 +859,6 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                     ipc.incoming.len = 0;
                     return;
                 }
-            }
-        }
-
-        pub fn onNewClientConnect(this: *Context, status: uv.ReturnCode) void {
-            const ipc = this.ipc();
-            log("NewNamedPipeIPCHandler#onNewClientConnect {d}", .{status.int()});
-            if (status.errEnum()) |_| {
-                Output.printErrorln("Failed to connect IPC pipe", .{});
-                return;
-            }
-            const server = ipc.server orelse {
-                Output.printErrorln("Failed to connect IPC pipe", .{});
-                return;
-            };
-            var client = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory();
-            client.init(uv.Loop.get(), true).unwrap() catch {
-                bun.default_allocator.destroy(client);
-                Output.printErrorln("Failed to connect IPC pipe", .{});
-                return;
-            };
-
-            ipc.writer.startWithPipe(client).unwrap() catch {
-                bun.default_allocator.destroy(client);
-                Output.printErrorln("Failed to start IPC pipe", .{});
-                return;
-            };
-
-            switch (server.accept(client)) {
-                .err => {
-                    ipc.close();
-                    return;
-                },
-                .result => {
-                    client.setBlocking(false);
-                    ipc.connected = true;
-                    client.readStart(this, onReadAlloc, onReadError, onRead).unwrap() catch {
-                        ipc.close();
-                        Output.printErrorln("Failed to connect IPC pipe", .{});
-                        return;
-                    };
-                },
             }
         }
 

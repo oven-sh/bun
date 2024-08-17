@@ -3889,7 +3889,7 @@ var require_writable = __commonJS({
       return writeOrBuffer(stream, state, chunk, encoding, cb);
     }
     Writable.prototype.write = function (chunk, encoding, cb) {
-      if (encoding != null && typeof encoding === "function") {
+      if ($isCallable(encoding)) {
         cb = encoding;
         encoding = null;
       }
@@ -4820,8 +4820,7 @@ var require_transform = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/transform.js"(exports, module) {
     "use strict";
     var { ObjectSetPrototypeOf, Symbol: Symbol2 } = require_primordials();
-    var { ERR_METHOD_NOT_IMPLEMENTED, ERR_INVALID_ARG_TYPE } = require_errors().codes;
-    var { Stream } = require_legacy();
+    var { ERR_METHOD_NOT_IMPLEMENTED } = require_errors().codes;
     function Transform(options) {
       if (!(this instanceof Transform)) return new Transform(options);
 
@@ -4882,13 +4881,6 @@ var require_transform = __commonJS({
       throw new ERR_METHOD_NOT_IMPLEMENTED("_transform()");
     };
     Transform.prototype._write = function (chunk, encoding, callback) {
-      if (typeof chunk === "string") {
-      } else if (chunk instanceof Buffer) {
-      } else if (Stream._isUint8Array(chunk)) {
-      } else {
-        throw new ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "Uint8Array"], chunk);
-      }
-
       const rState = this._readableState;
       const wState = this._writableState;
       const length = rState.length;

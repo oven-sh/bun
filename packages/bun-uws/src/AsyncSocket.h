@@ -130,13 +130,14 @@ public:
     void uncorkWithoutSending() {
         if (isCorked()) {
             getLoopData()->corkedSocket = nullptr;
+            getLoopData()->corkOffset = 0;
         }
     }
 
     /* Cork this socket. Only one socket may ever be corked per-loop at any given time */
     void cork() {
         /* Extra check for invalid corking of others */
-        if (getLoopData()->corkOffset && getLoopData()->corkedSocket != this) {
+        if (getLoopData()->corkOffset && getLoopData()->corkedSocket && getLoopData()->corkedSocket != this) {
             // We uncork the other socket early instead of terminating the program
             // is unlikely to be cause any issues and is better than crashing
             if(getLoopData()->corkedSocketIsSSL) {

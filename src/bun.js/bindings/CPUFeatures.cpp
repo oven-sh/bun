@@ -347,12 +347,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionGetCPUFeatures, (JSC::JSGlobalObject * global
     object->putDirect(vm, JSC::Identifier::fromString(vm, "avx"_s), JSC::jsBoolean(cpu.avx));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "avx512"_s), JSC::jsBoolean(cpu.avx512));
 #elif CPU(ARM64)
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "neon"_s), JSC::jsBoolean(features & AArch64CPUFeature::neon));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "sve"_s), JSC::jsBoolean(features & AArch64CPUFeature::sve));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "fp"_s), JSC::jsBoolean(features & AArch64CPUFeature::fp));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "aes"_s), JSC::jsBoolean(features & AArch64CPUFeature::aes));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "crc32"_s), JSC::jsBoolean(features & AArch64CPUFeature::crc32));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "atomics"_s), JSC::jsBoolean(features & AArch64CPUFeature::atomics));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "neon"_s), JSC::jsBoolean(features.neon));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "sve"_s), JSC::jsBoolean(features.sve));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "fp"_s), JSC::jsBoolean(features.fp));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "aes"_s), JSC::jsBoolean(features.aes));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "crc32"_s), JSC::jsBoolean(features.crc32));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "atomics"_s), JSC::jsBoolean(features.atomics));
 #endif
 
     return JSC::JSValue::encode(object);

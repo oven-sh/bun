@@ -6044,7 +6044,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             this.config.deinit();
             this.app.destroy();
-            this.all_closed_promise.deinit();
             this.destroy();
         }
 
@@ -6607,6 +6606,7 @@ pub const ServerAllConnectionsClosedTask = struct {
         tracker.willDispatch(globalObject);
         defer tracker.didDispatch(globalObject);
 
+        this.promise.deinit();
         this.destroy();
 
         promise.resolve(globalObject, .undefined);

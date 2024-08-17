@@ -249,7 +249,10 @@ public:
     }
 
     DECLARE_INFO;
+
     DECLARE_VISIT_CHILDREN;
+    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
     JSC::LazyProperty<JSMockFunction, JSObject> mock;
     // three pointers to implementation objects
@@ -295,7 +298,10 @@ public:
                 this->putDirect(vm, vm.propertyNames->length, (lengthJSValue), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
             }
         } else if (auto* fn = jsDynamicCast<JSMockFunction*>(value)) {
-            nameToUse = fn->get(global, vm.propertyNames->name).toWTFString(global);
+            JSValue nameValue = fn->get(global, vm.propertyNames->name);
+            if (!catcher.exception()) {
+                nameToUse = nameValue.toWTFString(global);
+            }
         } else if (auto* fn = jsDynamicCast<InternalFunction*>(value)) {
             nameToUse = fn->name();
         } else {
@@ -331,6 +337,7 @@ public:
         this->instances.clear();
         this->returnValues.clear();
         this->contexts.clear();
+        this->invocationCallOrder.clear();
 
         if (this->mock.isInitialized()) {
             this->initMock();
@@ -437,11 +444,10 @@ public:
 };
 
 template<typename Visitor>
-void JSMockFunction::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+void JSMockFunction::visitAdditionalChildren(Visitor& visitor)
 {
-    JSMockFunction* fn = jsCast<JSMockFunction*>(cell);
+    JSMockFunction* fn = this;
     ASSERT_GC_OBJECT_INHERITS(fn, info());
-    Base::visitChildren(fn, visitor);
 
     visitor.append(fn->implementation);
     visitor.append(fn->tail);
@@ -454,14 +460,34 @@ void JSMockFunction::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(fn->spyOriginal);
     fn->mock.visit(visitor);
 }
+
+template<typename Visitor>
+void JSMockFunction::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSMockFunction* fn = jsCast<JSMockFunction*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(fn, info());
+    Base::visitChildren(fn, visitor);
+    fn->visitAdditionalChildren<Visitor>(visitor);
+}
+
+template<typename Visitor>
+void JSMockFunction::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSMockFunction* thisObject = jsCast<JSMockFunction*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
 DEFINE_VISIT_CHILDREN(JSMockFunction);
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSMockFunction);
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSMockFunction);
 
 static void pushImpl(JSMockFunction* fn, JSGlobalObject* jsGlobalObject, JSMockImplementation::Kind kind, JSValue value)
 {
     Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(jsGlobalObject);
     auto& vm = globalObject->vm();
 
-    if (auto* current = tryJSDynamicCast<JSMockImplementation*>(fn->fallbackImplmentation.get())) {
+    if (auto* current = tryJSDynamicCast<JSMockImplementation*, Unknown>(fn->fallbackImplmentation)) {
         current->underlyingValue.set(vm, current, value);
         current->kind = kind;
         return;
@@ -469,7 +495,7 @@ static void pushImpl(JSMockFunction* fn, JSGlobalObject* jsGlobalObject, JSMockI
 
     JSMockImplementation* impl = JSMockImplementation::create(globalObject, globalObject->mockModule.mockImplementationStructure.getInitializedOnMainThread(globalObject), kind, value, false);
     fn->fallbackImplmentation.set(vm, fn, impl);
-    if (auto* tail = tryJSDynamicCast<JSMockImplementation*>(fn->tail.get())) {
+    if (auto* tail = tryJSDynamicCast<JSMockImplementation*, Unknown>(fn->tail)) {
         tail->nextValueOrSentinel.set(vm, tail, impl);
     } else {
         fn->implementation.set(vm, fn, impl);
@@ -483,10 +509,10 @@ static void pushImplOnce(JSMockFunction* fn, JSGlobalObject* jsGlobalObject, JSM
 
     JSMockImplementation* impl = JSMockImplementation::create(globalObject, globalObject->mockModule.mockImplementationStructure.getInitializedOnMainThread(globalObject), kind, value, true);
 
-    if (!fn->implementation.get()) {
+    if (!fn->implementation) {
         fn->implementation.set(vm, fn, impl);
     }
-    if (auto* tail = tryJSDynamicCast<JSMockImplementation*>(fn->tail.get())) {
+    if (auto* tail = tryJSDynamicCast<JSMockImplementation*, Unknown>(fn->tail)) {
         tail->nextValueOrSentinel.set(vm, tail, impl);
     } else {
         fn->implementation.set(vm, fn, impl);
@@ -1264,29 +1290,6 @@ void MockWithImplementationCleanupData::visitChildrenImpl(JSCell* cell, Visitor&
 }
 
 DEFINE_VISIT_CHILDREN(MockWithImplementationCleanupData);
-
-template<typename Visitor>
-void MockWithImplementationCleanupData::visitAdditionalChildren(Visitor& visitor)
-{
-    MockWithImplementationCleanupData* thisObject = this;
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-
-    for (unsigned i = 0; i < numberOfInternalFields; i++) {
-        visitor.append(thisObject->internalField(i));
-    }
-}
-
-DEFINE_VISIT_ADDITIONAL_CHILDREN(MockWithImplementationCleanupData);
-
-DEFINE_VISIT_OUTPUT_CONSTRAINTS(MockWithImplementationCleanupData);
-
-template<typename Visitor>
-void MockWithImplementationCleanupData::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
-{
-    MockWithImplementationCleanupData* thisObject = jsCast<MockWithImplementationCleanupData*>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    thisObject->visitAdditionalChildren<Visitor>(visitor);
-}
 
 MockWithImplementationCleanupData* MockWithImplementationCleanupData::create(JSC::JSGlobalObject* globalObject, JSMockFunction* fn, JSValue impl, JSValue tail, JSValue fallback)
 {

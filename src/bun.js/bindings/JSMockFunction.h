@@ -63,10 +63,6 @@ public:
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;
-    DECLARE_VISIT_OUTPUT_CONSTRAINTS;
-
-    template<typename Visitor>
-    void visitAdditionalChildren(Visitor&);
 
     MockWithImplementationCleanupData(JSC::VM&, JSC::Structure*);
     void finishCreation(JSC::VM&, JSMockFunction* fn, JSValue impl, JSValue tail, JSValue fallback);

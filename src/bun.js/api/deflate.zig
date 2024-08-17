@@ -76,7 +76,6 @@ pub const DeflateEncoder = struct {
         };
 
         const out = this.toJS(globalThis);
-        DeflateEncoder.callbackSetCached(out, globalThis, callback);
         this.callback_value.set(globalThis, callback);
 
         return out;
@@ -395,7 +394,6 @@ pub const DeflateDecoder = struct {
         };
 
         const out = this.toJS(globalThis);
-        DeflateDecoder.callbackSetCached(out, globalThis, callback);
         this.callback_value.set(globalThis, callback);
 
         return out;

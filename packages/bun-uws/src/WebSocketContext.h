@@ -252,7 +252,7 @@ private:
 
         /* Handle socket disconnections */
         us_socket_context_on_close(SSL, getSocketContext(), [](auto *s, int code, void *reason) {
-            (AsyncSocket<SSL>s)->uncorkWithoutSending();
+            ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
 
             /* For whatever reason, if we already have emitted close event, do not emit it again */
             WebSocketData *webSocketData = (WebSocketData *) (us_socket_ext(SSL, s));

@@ -113,7 +113,7 @@ private:
 
         /* Handle socket disconnections */
         us_socket_context_on_close(SSL, getSocketContext(), [](us_socket_t *s, int /*code*/, void */*reason*/) {
-            (AsyncSocket<SSL>s)->uncorkWithoutSending();
+            ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
 
            
             /* Get socket ext */

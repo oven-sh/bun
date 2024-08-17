@@ -580,7 +580,7 @@ pub const BrotliDecoder = struct {
             this.input.writeItem(input_to_queue) catch bun.outOfMemory();
         }
         task.run();
-        if (!is_last) {
+        if (!is_last and this.output.items.len == 0) {
             return .undefined;
         }
         if (this.write_failure != null) {

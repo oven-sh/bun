@@ -130,7 +130,7 @@ pub const DeflateEncoder = struct {
             this.input.writeItem(input_to_queue) catch unreachable;
         }
         task.run();
-        if (!is_last) {
+        if (!is_last and this.output.items.len == 0) {
             return .undefined;
         }
         if (this.write_failure != null) {
@@ -448,7 +448,7 @@ pub const DeflateDecoder = struct {
             this.input.writeItem(input_to_queue) catch unreachable;
         }
         task.run();
-        if (!is_last) {
+        if (!is_last and this.output.items.len == 0) {
             return .undefined;
         }
         if (this.write_failure != null) {

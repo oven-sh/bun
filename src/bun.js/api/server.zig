@@ -5307,7 +5307,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         config: ServerConfig = ServerConfig{},
         pending_requests: usize = 0,
         request_pool_allocator: *RequestContext.RequestContextStackAllocator = undefined,
-        all_closed_promise: JSC.JSPromise.Strong,
+        all_closed_promise: JSC.JSPromise.Strong = .{},
 
         listen_callback: JSC.AnyTask = undefined,
         allocator: std.mem.Allocator,
@@ -5970,7 +5970,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             const vm = this.globalThis.bunVM();
 
-            if (this.pending_requests == 0 and this.listener == null and !this.hasActiveWebSockets() and !this.flags.has_handled_all_closed_promise) {
+            if (this.pending_requests == 0 and this.listener == null and !this.hasActiveWebSockets() and !this.flags.has_handled_all_closed_promise and this.all_closed_promise.strong.has()) {
                 const event_loop = vm.eventLoop();
 
                 // use a flag here instead of `this.all_closed_promise.get().isHandled(vm)` to prevent the race condition of this block being called
@@ -6055,7 +6055,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 .base_url_string_for_joining = bun.default_allocator.dupe(u8, strings.trim(config.base_url.href, "/")) catch unreachable,
                 .vm = JSC.VirtualMachine.get(),
                 .allocator = Arena.getThreadlocalDefault(),
-                .all_closed_promise = JSC.JSPromise.Strong.init(globalThis),
             });
 
             if (RequestContext.pool == null) {

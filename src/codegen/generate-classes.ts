@@ -1113,13 +1113,13 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObjec
 JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
   auto& vm = lexicalGlobalObject->vm();
+  auto scope = DECLARE_THROW_SCOPE(vm);
 
   ${className(typeName)}* thisObject = jsDynamicCast<${className(typeName)}*>(callFrame->thisValue());
 
   if (UNLIKELY(!thisObject)) {
-      auto throwScope = DECLARE_THROW_SCOPE(vm);
-      throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof ${typeName}"_s);
-      return JSValue::encode({});
+      scope.throwException(lexicalGlobalObject, Bun::createInvalidThisError(lexicalGlobalObject, callFrame->thisValue(), "${typeName}"_s));
+      return {};
   }
 
   JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -2032,6 +2032,8 @@ const GENERATED_CLASSES_IMPL_HEADER_PRE = `
 
 #include "JSDOMConvertBufferSource.h"
 #include "ZigGeneratedClasses.h"
+#include "ErrorCode+List.h"
+#include "ErrorCode.h"
 
 #if !OS(WINDOWS)
 #define JSC_CALLCONV "C"
@@ -2047,6 +2049,7 @@ namespace WebCore {
 
 using namespace JSC;
 using namespace Zig;
+
 `;
 
 const GENERATED_CLASSES_IMPL_FOOTER = `

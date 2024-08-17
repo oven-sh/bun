@@ -117,7 +117,7 @@ public:
 
     /* Immediately close socket */
     us_socket_t *close() {
-        this->uncork(nullptr, 0, true);
+        this->uncork();
         return us_socket_close(SSL, (us_socket_t *) this, 0, nullptr);
     }
 

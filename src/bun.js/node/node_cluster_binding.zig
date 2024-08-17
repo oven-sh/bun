@@ -127,6 +127,8 @@ pub const InternalMsgHolder = struct {
         const cb = this.cb.get().?;
         const worker = this.worker.get().?;
 
+        const event_loop = globalThis.bunVM().eventLoop();
+
         if (message.get(globalThis, "ack")) |p| {
             if (!p.isUndefined()) {
                 const ack = p.toInt32();
@@ -135,7 +137,7 @@ pub const InternalMsgHolder = struct {
                     if (cbstrong.get()) |callback| {
                         defer cbstrong.deinit();
                         _ = this.callbacks.swapRemove(ack);
-                        _ = callback.call(globalThis, this.worker.get().?, &.{
+                        event_loop.runCallback(callback, globalThis, this.worker.get().?, &.{
                             message,
                             .null, // handle
                         });
@@ -145,7 +147,7 @@ pub const InternalMsgHolder = struct {
                 }
             }
         }
-        _ = cb.call(globalThis, worker, &.{
+        event_loop.runCallback(cb, globalThis, worker, &.{
             message,
             .null, // handle
         });
@@ -226,6 +228,8 @@ pub fn onInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC
 pub fn handleInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, subprocess: *JSC.Subprocess, message: JSC.JSValue) void {
     const ipc_data = subprocess.ipc();
 
+    const event_loop = globalThis.bunVM().eventLoop();
+
     if (message.get(globalThis, "ack")) |p| {
         if (!p.isUndefined()) {
             const ack = p.toInt32();
@@ -234,7 +238,7 @@ pub fn handleInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, subprocess:
                 defer cbstrong.clear();
                 _ = ipc_data.internal_msg_queue.callbacks.swapRemove(ack);
                 const cb = cbstrong.get().?;
-                _ = cb.call(globalThis, ipc_data.internal_msg_queue.worker.get().?, &.{
+                event_loop.runCallback(cb, globalThis, ipc_data.internal_msg_queue.worker.get().?, &.{
                     message,
                     .null, // handle
                 });
@@ -243,7 +247,7 @@ pub fn handleInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, subprocess:
         }
     }
     const cb = ipc_data.internal_msg_queue.cb.get().?;
-    _ = cb.call(globalThis, ipc_data.internal_msg_queue.worker.get().?, &.{
+    event_loop.runCallback(cb, globalThis, ipc_data.internal_msg_queue.worker.get().?, &.{
         message,
         .null, // handle
     });

@@ -2323,18 +2323,10 @@ pub const Subprocess = struct {
         if (ok) this.ipc().internal_msg_queue.deinit();
         this.ipc_data = null;
 
-        const vm = this.globalThis.bunVM();
-        const event_loop = vm.eventLoop();
-        event_loop.enter();
-        defer event_loop.exit();
-
         const this_jsvalue = this.this_jsvalue;
         this_jsvalue.ensureStillAlive();
         if (this.on_disconnect_callback.trySwap()) |callback| {
-            _ = callback.call(this.globalThis, this_jsvalue, &.{
-                JSValue.jsBoolean(ok),
-            });
-            vm.drainMicrotasks();
+            this.globalThis.bunVM().eventLoop().runCallback(callback, this.globalThis, this_jsvalue, &.{JSValue.jsBoolean(ok)});
         }
     }
 

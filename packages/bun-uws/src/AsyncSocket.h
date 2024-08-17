@@ -336,8 +336,7 @@ public:
     /* It does NOT count bytes written from cork buffer (they are already accounted for in the write call responsible for its corking)! */
     std::pair<int, bool> uncork(const char *src = nullptr, int length = 0, bool optionally = false) {
         LoopData *loopData = getLoopData();
-        auto* corked = loopData->getCorkedSocket();
-        if (corked == this) {
+        if (loopData->isCorkedWith(this)) {
             auto offset = loopData->getCorkOffset();
             loopData->cleanCorkedSocket();
 

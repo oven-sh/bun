@@ -314,8 +314,25 @@ pub const IO = struct {
             comptime fmt_: []const u8,
             args: anytype,
         ) void {
-            if (bun.Environment.allow_assert) assert(this.* == .fd);
-            this.fd.writer.enqueueFmtBltn(ptr, this.fd.captured, kind, fmt_, args);
+            switch (this.* == .fd) {
+                .fd => this.fd.writer.enqueueFmtBltn(ptr, this.fd.captured, kind, fmt_, args),
+                else => {
+                    panicInvalidIO(
+                        "`IO.OutKind.enqueue` was called on an output kind which does not require IO ({s}). Please check .needsIO() first before calling this function",
+                        .{@tagName(this.*)},
+                        "`IO.OutKind.enqueue` was called on an output kind which does not require IO ({s}), this is a bug in the implementation of the Bun shell. Please file a GitHub issue at https://github.com/oven-sh/bun/issues/new",
+                        .{@tagName(this.*)},
+                    );
+                },
+            }
+        }
+
+        fn panicInvalidIO(comptime debug_msg: []const u8, debug_args: anytype, comptime runtime_msg: []const u8, runtime_args: anytype) void {
+            @setCold(true);
+            if (bun.Environment.isDebug) {
+                bun.Output.panic(debug_msg, debug_args);
+            }
+            bun.Output.panic(runtime_msg, runtime_args);
         }
 
         fn close(this: OutKind) void {
@@ -5340,6 +5357,14 @@ pub const Interpreter = struct {
                     };
                 }
 
+                /// You must check that `.needsIO() == true` before calling this!
+                /// e.g.
+                ///
+                /// ```zig
+                /// if (this.stderr.neesdIO()) {
+                ///   this.bltn.stderr.enqueueFmtBltn(this, .cd, fmt, args);
+                /// }
+                /// ```
                 pub fn enqueueFmtBltn(
                     this: *@This(),
                     ptr: anytype,
@@ -5347,13 +5372,39 @@ pub const Interpreter = struct {
                     comptime fmt_: []const u8,
                     args: anytype,
                 ) void {
-                    if (bun.Environment.allow_assert) assert(this.* == .fd);
-                    this.fd.writer.enqueueFmtBltn(ptr, this.fd.captured, kind, fmt_, args);
+                    switch (this.*) {
+                        .fd => this.fd.writer.enqueueFmtBltn(ptr, this.fd.captured, kind, fmt_, args),
+                        else => {
+                            panicInvalidIO(
+                                "`BuiltinIO.Output.enqueueFmtBltn` was called on an output kind which does not require IO ({s}). Please check .needsIO() first before calling this function",
+                                .{@tagName(this.*)},
+                                "`BuiltinIO.Output.enqueueFmtBltn` was called on an output kind which does not require IO ({s}), this is a bug in the implementation of the Bun shell. Please file a GitHub issue at https://github.com/oven-sh/bun/issues/new",
+                                .{@tagName(this.*)},
+                            );
+                        },
+                    }
                 }
 
                 pub fn enqueue(this: *@This(), ptr: anytype, buf: []const u8) void {
-                    if (bun.Environment.allow_assert) assert(this.* == .fd);
-                    this.fd.writer.enqueue(ptr, this.fd.captured, buf);
+                    switch (this.*) {
+                        .fd => this.fd.writer.enqueue(ptr, this.fd.captured, buf),
+                        else => {
+                            panicInvalidIO(
+                                "`BuiltinIO.Output.enqueue` was called on an output kind which does not require IO ({s}). Please check .needsIO() first before calling this function",
+                                .{@tagName(this.*)},
+                                "`BuiltinIO.Output.enqueue` was called on an output kind which does not require IO ({s}), this is a bug in the implementation of the Bun shell. Please file a GitHub issue at https://github.com/oven-sh/bun/issues/new",
+                                .{@tagName(this.*)},
+                            );
+                        },
+                    }
+                }
+
+                fn panicInvalidIO(comptime debug_msg: []const u8, debug_args: anytype, comptime runtime_msg: []const u8, runtime_args: anytype) void {
+                    @setCold(true);
+                    if (bun.Environment.isDebug) {
+                        bun.Output.panic(debug_msg, debug_args);
+                    }
+                    bun.Output.panic(runtime_msg, runtime_args);
                 }
             };
 
@@ -7287,7 +7338,14 @@ pub const Interpreter = struct {
 
             fn writeStderrNonBlocking(this: *Cd, comptime fmt: []const u8, args: anytype) void {
                 this.state = .waiting_write_stderr;
-                this.bltn.stderr.enqueueFmtBltn(this, .cd, fmt, args);
+                if (this.bltn.stderr.needsIO()) {
+                    this.bltn.stderr.enqueueFmtBltn(this, .cd, fmt, args);
+                } else {
+                    const buf = this.bltn.fmtErrorArena(.cd, fmt, args);
+                    _ = this.bltn.writeNoIO(.stderr, buf);
+                    this.state = .done;
+                    this.bltn.done(1);
+                }
             }
 
             pub fn start(this: *Cd) Maybe(void) {

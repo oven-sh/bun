@@ -668,7 +668,7 @@ Server.prototype = {
           return promise;
         },
       });
-      getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.$bind(this));
+      getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
       isHTTPS = this[serverSymbol].protocol === "https";
 
       if (this?._unref) {
@@ -2211,8 +2211,8 @@ function request(url, options, cb) {
 function emitCloseServer(self: Server) {
   self.emit("close");
 }
-function emitCloseNTServer(self: Server) {
-  process.nextTick(emitCloseServer, self);
+function emitCloseNTServer(this: Server) {
+  process.nextTick(emitCloseServer, this);
 }
 
 /**

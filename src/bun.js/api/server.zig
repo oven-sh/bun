@@ -849,7 +849,7 @@ pub const ServerConfig = struct {
             },
             .development = true,
 
-            // If this is not a node:cluster primary, let's default to SO_REUSEPORT.
+            // If this is a node:cluster child, let's default to SO_REUSEPORT.
             // That way you don't have to remember to set reusePort: true in Bun.serve() when using node:cluster.
             .reuse_port = env.get("NODE_UNIQUE_ID") != null,
         };

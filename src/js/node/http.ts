@@ -668,13 +668,7 @@ Server.prototype = {
           return promise;
         },
       });
-      // XXX: should this be turned into a bun.Server callback?
-      // node:http.Server#close only disables new connections, and the 'close' event is only emitted once all existing connections have closed.
-      getBunServerAllClosedPromise(this[serverSymbol]).then(() => {
-        process.nextTick(() => {
-          this.emit("close");
-        });
-      });
+      getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.$bind(this));
       isHTTPS = this[serverSymbol].protocol === "https";
 
       if (this?._unref) {
@@ -2212,6 +2206,13 @@ function _writeHead(statusCode, reason, obj, response) {
  */
 function request(url, options, cb) {
   return new ClientRequest(url, options, cb);
+}
+
+function emitCloseServer(self: Server) {
+  self.emit("close");
+}
+function emitCloseNTServer(self: Server) {
+  process.nextTick(emitCloseServer, self);
 }
 
 /**

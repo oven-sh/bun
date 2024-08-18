@@ -1384,10 +1384,11 @@ pub fn WindowsStreamingWriter(
                 return;
             }
 
-            this.is_done = true;
             this.closed_without_reporting = false;
-            if (this.hasPendingData()) _ = this.flush();
-            if (!this.owns_fd) return;
+            if (!this.owns_fd) {
+                this.is_done = true;
+                return;
+            }
             this.close();
         }
     };

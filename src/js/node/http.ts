@@ -94,8 +94,8 @@ var _defaultHTTPSAgent;
 var kInternalRequest = Symbol("kInternalRequest");
 const kInternalSocketData = Symbol.for("::bunternal::");
 const kfakeSocket = Symbol("kfakeSocket");
-
 const kEmptyBuffer = Buffer.alloc(0);
+const socketMap = new Map(); // keep track of active sockets so we can handle socket events correctly
 
 function isValidTLSArray(obj) {
   if (typeof obj === "string" || isTypedArray(obj) || obj instanceof ArrayBuffer || obj instanceof Blob) return true;
@@ -135,6 +135,8 @@ var FakeSocket = class Socket extends Duplex {
   isServer = false;
 
   #address;
+  #id = 0;
+
   address() {
     // Call server.requestIP() without doing any propety getter twice.
     var internalData;
@@ -147,6 +149,13 @@ var FakeSocket = class Socket extends Duplex {
 
   connect(port, host, connectListener) {
     return this;
+  }
+
+  end() {
+    if (socketMap.has(this.#id)) {
+      socketMap.delete(this.#id);
+      this.emit("close");
+    }
   }
 
   _destroy(err, callback) {}
@@ -209,6 +218,10 @@ var FakeSocket = class Socket extends Duplex {
   set remoteFamily(val) {
     // initialize the object so that other properties wouldn't be lost
     this.address().family = val;
+  }
+
+  set id(v) {
+    this.#id = v;
   }
 
   resetAndDestroy() {}
@@ -570,11 +583,28 @@ Server.prototype = {
 
           const http_res = new ResponseClass(http_req, reply);
 
+          // tried this initially with _server.address() and it adds too much overhead = 156k rps v 133k rps
+          // this is 147k rps
+          /*
+          with these changes, bun is 66k rps and 140 MB RSS on the test provided for the issue
+          node is 22k rps and 220 MB RSS
+          */
+          const socketId = _server.requestSocketId(req);
+          //          http_req.socket.id = socketId;
+          if (!socketMap.has(socketId)) {
+            const socket = new FakeSocket();
+            socket.id = socketId;
+            socketMap.set(socketId, socket);
+            server.emit("connection", socket);
+            http_req.socket = socket;
+          } else {
+            http_req.socket = socketMap.get(socketId);
+          }
           http_req.socket[kInternalSocketData] = [_server, http_res, req];
-          server.emit("connection", http_req.socket);
 
           const rejectFn = err => reject(err);
           http_req.once("error", rejectFn);
+          // question: why is this here twice?
           http_res.once("error", rejectFn);
 
           if (upgrade) {
@@ -705,6 +735,7 @@ function IncomingMessage(req, defaultIncomingOpts) {
   this._dumped = false;
   this[noBodySymbol] = false;
   this[abortedSymbol] = false;
+  this.socket = null;
   Readable.$call(this);
   var { type = "request", [kInternalRequest]: nodeReq } = defaultIncomingOpts || {};
 
@@ -857,12 +888,6 @@ IncomingMessage.prototype = {
   setTimeout(msecs, callback) {
     // noop
     return this;
-  },
-  get socket() {
-    return (this[fakeSocketSymbol] ??= new FakeSocket());
-  },
-  set socket(value) {
-    this[fakeSocketSymbol] = value;
   },
 };
 $setPrototypeDirect.$call(IncomingMessage.prototype, Readable.prototype);

@@ -12,6 +12,8 @@ const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 
+const node_cluster_binding = @import("./node/node_cluster_binding.zig");
+
 pub const log = Output.scoped(.IPC, false);
 
 /// Mode of Inter-Process Communication.
@@ -36,6 +38,7 @@ pub const Mode = enum {
 pub const DecodedIPCMessage = union(enum) {
     version: u32,
     data: JSValue,
+    internal: JSValue,
 };
 
 pub const DecodeIPCMessageResult = struct {
@@ -64,6 +67,7 @@ const advanced = struct {
     pub const IPCMessageType = enum(u8) {
         Version = 1,
         SerializedMessage = 2,
+        SerializedInternalMessage = 3,
         _,
     };
 
@@ -112,7 +116,25 @@ const advanced = struct {
                     .message = .{ .data = deserialized },
                 };
             },
-            else => {
+            .SerializedInternalMessage => {
+                if (data.len < (header_length + message_len)) {
+                    log("Not enough bytes to decode IPC message body of len {d}, have {d} bytes", .{ message_len, data.len });
+                    return IPCDecodeError.NotEnoughBytes;
+                }
+
+                const message = data[header_length .. header_length + message_len];
+                const deserialized = JSValue.deserialize(message, global);
+
+                if (deserialized == .zero) {
+                    return IPCDecodeError.InvalidFormat;
+                }
+
+                return .{
+                    .bytes_consumed = header_length + message_len,
+                    .message = .{ .internal = deserialized },
+                };
+            },
+            _ => {
                 return IPCDecodeError.InvalidFormat;
             },
         }
@@ -139,6 +161,24 @@ const advanced = struct {
 
         return payload_length;
     }
+
+    pub fn serializeInternal(_: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue) !usize {
+        const serialized = value.serialize(global) orelse
+            return IPCSerializationError.SerializationFailed;
+        defer serialized.deinit();
+
+        const size: u32 = @intCast(serialized.data.len);
+
+        const payload_length: usize = @sizeOf(IPCMessageType) + @sizeOf(u32) + size;
+
+        try writer.ensureUnusedCapacity(payload_length);
+
+        writer.writeTypeAsBytesAssumeCapacity(IPCMessageType, .SerializedInternalMessage);
+        writer.writeTypeAsBytesAssumeCapacity(u32, size);
+        writer.writeAssumeCapacity(serialized.data);
+
+        return payload_length;
+    }
 };
 
 const json = struct {
@@ -150,12 +190,28 @@ const json = struct {
         return &.{};
     }
 
+    // In order to not have to do a property lookup json messages sent from Bun will have a single u8 prepended to them
+    // to be able to distinguish whether it is a regular json message or an internal one for cluster ipc communication.
+    // 1 is regular
+    // 2 is internal
+
     pub fn decodeIPCMessage(
         data: []const u8,
         globalThis: *JSC.JSGlobalObject,
     ) IPCDecodeError!DecodeIPCMessageResult {
         if (bun.strings.indexOfChar(data, '\n')) |idx| {
-            const json_data = data[0..idx];
+            var kind = data[0];
+            var json_data = data[1..idx];
+
+            switch (kind) {
+                1, 2 => {},
+                else => {
+                    // if the message being recieved is from a node process then it wont have the leading marker byte
+                    // assume full message will be json
+                    kind = 1;
+                    json_data = data[0..idx];
+                },
+            }
 
             const is_ascii = bun.strings.isAllASCII(json_data);
             var was_ascii_string_freed = false;
@@ -176,9 +232,16 @@ const json = struct {
 
             const deserialized = str.toJSByParseJSON(globalThis);
 
-            return .{
-                .bytes_consumed = idx + 1,
-                .message = .{ .data = deserialized },
+            return switch (kind) {
+                1 => .{
+                    .bytes_consumed = idx + 1,
+                    .message = .{ .data = deserialized },
+                },
+                2 => .{
+                    .bytes_consumed = idx + 1,
+                    .message = .{ .internal = deserialized },
+                },
+                else => @panic("invalid ipc json message kind this is a bug in Bun."),
             };
         }
         return IPCDecodeError.NotEnoughBytes;
@@ -197,12 +260,35 @@ const json = struct {
 
         const slice = str.slice();
 
-        try writer.ensureUnusedCapacity(slice.len + 1);
+        try writer.ensureUnusedCapacity(1 + slice.len + 1);
 
+        writer.writeAssumeCapacity(&.{1});
         writer.writeAssumeCapacity(slice);
         writer.writeAssumeCapacity("\n");
 
-        return slice.len + 1;
+        return 1 + slice.len + 1;
+    }
+
+    pub fn serializeInternal(_: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue) !usize {
+        var out: bun.String = undefined;
+        value.jsonStringify(global, 0, &out);
+        defer out.deref();
+
+        if (out.tag == .Dead) return IPCSerializationError.SerializationFailed;
+
+        // TODO: it would be cool to have a 'toUTF8Into' which can write directly into 'ipc_data.outgoing.list'
+        const str = out.toUTF8(bun.default_allocator);
+        defer str.deinit();
+
+        const slice = str.slice();
+
+        try writer.ensureUnusedCapacity(1 + slice.len + 1);
+
+        writer.writeAssumeCapacity(&.{2});
+        writer.writeAssumeCapacity(slice);
+        writer.writeAssumeCapacity("\n");
+
+        return 1 + slice.len + 1;
     }
 };
 
@@ -228,6 +314,14 @@ pub fn serialize(data: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, v
     };
 }
 
+/// Given a writer interface, serialize and write a value.
+/// Returns true if the value was written, false if it was not.
+pub fn serializeInternal(data: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue) !usize {
+    return switch (data.mode) {
+        inline else => |t| @field(@This(), @tagName(t)).serializeInternal(data, writer, global, value),
+    };
+}
+
 pub const Socket = uws.NewSocketHandler(false);
 
 /// Used on POSIX
@@ -237,8 +331,8 @@ const SocketIPCData = struct {
 
     incoming: bun.ByteList = .{}, // Maybe we should use StreamBuffer here as well
     outgoing: bun.io.StreamBuffer = .{},
-
     has_written_version: if (Environment.allow_assert) u1 else u0 = 0,
+    internal_msg_queue: node_cluster_binding.InternalMsgHolder = .{},
 
     pub fn writeVersionPacket(this: *SocketIPCData) void {
         if (Environment.allow_assert) {
@@ -264,8 +358,7 @@ const SocketIPCData = struct {
         // TODO: probably we should not direct access ipc_data.outgoing.list.items here
         const start_offset = ipc_data.outgoing.list.items.len;
 
-        const payload_length = serialize(ipc_data, &ipc_data.outgoing, global, value) catch
-            return false;
+        const payload_length = serialize(ipc_data, &ipc_data.outgoing, global, value) catch return false;
 
         bun.assert(ipc_data.outgoing.list.items.len == start_offset + payload_length);
 
@@ -281,6 +374,35 @@ const SocketIPCData = struct {
 
         return true;
     }
+
+    pub fn serializeAndSendInternal(ipc_data: *SocketIPCData, global: *JSGlobalObject, value: JSValue) bool {
+        if (Environment.allow_assert) {
+            bun.assert(ipc_data.has_written_version == 1);
+        }
+
+        // TODO: probably we should not direct access ipc_data.outgoing.list.items here
+        const start_offset = ipc_data.outgoing.list.items.len;
+
+        const payload_length = serializeInternal(ipc_data, &ipc_data.outgoing, global, value) catch return false;
+
+        bun.assert(ipc_data.outgoing.list.items.len == start_offset + payload_length);
+
+        if (start_offset == 0) {
+            bun.assert(ipc_data.outgoing.cursor == 0);
+            const n = ipc_data.socket.write(ipc_data.outgoing.list.items.ptr[start_offset..payload_length], false);
+            if (n == payload_length) {
+                ipc_data.outgoing.reset();
+            } else if (n > 0) {
+                ipc_data.outgoing.cursor = @intCast(n);
+            }
+        }
+
+        return true;
+    }
+
+    pub fn close(this: *SocketIPCData) void {
+        this.socket.close(.normal);
+    }
 };
 
 /// Used on Windows
@@ -294,11 +416,13 @@ const NamedPipeIPCData = struct {
 
     incoming: bun.ByteList = .{}, // Maybe we should use IPCBuffer here as well
     connected: bool = false,
+    disconnected: bool = false,
+    has_sended_first_message: bool = false,
     connect_req: uv.uv_connect_t = std.mem.zeroes(uv.uv_connect_t),
     server: ?*uv.Pipe = null,
     onClose: ?CloseHandler = null,
-
     has_written_version: if (Environment.allow_assert) u1 else u0 = 0,
+    internal_msg_queue: node_cluster_binding.InternalMsgHolder = .{},
 
     const CloseHandler = struct {
         callback: *const fn (*anyopaque) void,
@@ -314,16 +438,17 @@ const NamedPipeIPCData = struct {
     }
 
     fn onClientClose(this: *NamedPipeIPCData) void {
-        log("onClisentClose", .{});
+        log("onClientClose", .{});
         this.connected = false;
         if (this.server) |server| {
             // we must close the server too
             server.close(onServerClose);
         } else {
             if (this.onClose) |handler| {
+                this.onClose = null;
+                handler.callback(handler.context);
                 // deinit dont free the instance of IPCData we should call it before the onClose callback actually frees it
                 this.deinit();
-                handler.callback(handler.context);
             }
         }
     }
@@ -338,9 +463,10 @@ const NamedPipeIPCData = struct {
             return;
         }
         if (this.onClose) |handler| {
+            this.onClose = null;
+            handler.callback(handler.context);
             // deinit dont free the instance of IPCData we should call it before the onClose callback actually frees it
             this.deinit();
-            handler.callback(handler.context);
         }
     }
 
@@ -366,11 +492,37 @@ const NamedPipeIPCData = struct {
         if (Environment.allow_assert) {
             bun.assert(this.has_written_version == 1);
         }
+        if (this.disconnected) {
+            return false;
+        }
 
         const start_offset = this.writer.outgoing.list.items.len;
 
-        const payload_length: usize = serialize(this, &this.writer.outgoing, global, value) catch
+        const payload_length: usize = serialize(this, &this.writer.outgoing, global, value) catch return false;
+
+        bun.assert(this.writer.outgoing.list.items.len == start_offset + payload_length);
+
+        if (start_offset == 0) {
+            bun.assert(this.writer.outgoing.cursor == 0);
+            if (this.connected) {
+                _ = this.writer.flush();
+            }
+        }
+
+        return true;
+    }
+
+    pub fn serializeAndSendInternal(this: *NamedPipeIPCData, global: *JSGlobalObject, value: JSValue) bool {
+        if (Environment.allow_assert) {
+            bun.assert(this.has_written_version == 1);
+        }
+        if (this.disconnected) {
             return false;
+        }
+
+        const start_offset = this.writer.outgoing.list.items.len;
+
+        const payload_length: usize = serializeInternal(this, &this.writer.outgoing, global, value) catch return false;
 
         bun.assert(this.writer.outgoing.list.items.len == start_offset + payload_length);
 
@@ -385,10 +537,20 @@ const NamedPipeIPCData = struct {
     }
 
     pub fn close(this: *NamedPipeIPCData) void {
+        log("NamedPipeIPCData#close", .{});
         if (this.server) |server| {
             server.close(onServerClose);
         } else {
+            this.disconnected = true;
+            JSC.VirtualMachine.get().enqueueTask(JSC.ManagedTask.New(NamedPipeIPCData, closeTask).init(this));
+        }
+    }
+
+    pub fn closeTask(this: *NamedPipeIPCData) void {
+        log("NamedPipeIPCData#closeTask", .{});
+        if (this.disconnected) {
             this.writer.close();
+            this.onClientClose();
         }
     }
 
@@ -493,7 +655,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             _: ?*anyopaque,
         ) void {
             // Note: uSockets has already freed the underlying socket, so calling Socket.close() can segfault
-            log("onClose\n", .{});
+            log("NewSocketIPCHandler#onClose\n", .{});
             this.handleIPCClose();
         }
 
@@ -627,7 +789,6 @@ fn NewSocketIPCHandler(comptime Context: type) type {
 
 /// Used on Windows
 fn NewNamedPipeIPCHandler(comptime Context: type) type {
-    const uv = bun.windows.libuv;
     return struct {
         fn onReadAlloc(this: *Context, suggested_size: usize) []u8 {
             const ipc = this.ipc();
@@ -636,19 +797,26 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                 ipc.incoming.ensureUnusedCapacity(bun.default_allocator, suggested_size) catch bun.outOfMemory();
                 available = ipc.incoming.available();
             }
-            log("onReadAlloc {d}", .{suggested_size});
+            log("NewNamedPipeIPCHandler#onReadAlloc {d}", .{suggested_size});
             return available.ptr[0..suggested_size];
         }
 
         fn onReadError(this: *Context, err: bun.C.E) void {
-            log("onReadError {}", .{err});
+            log("NewNamedPipeIPCHandler#onReadError {}", .{err});
             this.ipc().close();
+            onClose(this);
         }
 
         fn onRead(this: *Context, buffer: []const u8) void {
             const ipc = this.ipc();
+            if (!ipc.has_sended_first_message) {
+                // the server will wait to send the first flush (aka the version) after receiving the first message (which is the client version)
+                // this works like a handshake to ensure that both ends are listening to the messages
+                _ = ipc.writer.flush();
+                ipc.has_sended_first_message = true;
+            }
 
-            log("onRead {d}", .{buffer.len});
+            log("NewNamedPipeIPCHandler#onRead {d}", .{buffer.len});
             ipc.incoming.len += @as(u32, @truncate(buffer.len));
             var slice = ipc.incoming.slice();
 
@@ -694,48 +862,8 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
             }
         }
 
-        pub fn onNewClientConnect(this: *Context, status: uv.ReturnCode) void {
-            const ipc = this.ipc();
-            log("onNewClientConnect {d}", .{status.int()});
-            if (status.errEnum()) |_| {
-                Output.printErrorln("Failed to connect IPC pipe", .{});
-                return;
-            }
-            const server = ipc.server orelse {
-                Output.printErrorln("Failed to connect IPC pipe", .{});
-                return;
-            };
-            var client = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory();
-            client.init(uv.Loop.get(), true).unwrap() catch {
-                bun.default_allocator.destroy(client);
-                Output.printErrorln("Failed to connect IPC pipe", .{});
-                return;
-            };
-
-            ipc.writer.startWithPipe(client).unwrap() catch {
-                bun.default_allocator.destroy(client);
-                Output.printErrorln("Failed to start IPC pipe", .{});
-                return;
-            };
-
-            switch (server.accept(client)) {
-                .err => {
-                    ipc.close();
-                    return;
-                },
-                .result => {
-                    ipc.connected = true;
-                    client.readStart(this, onReadAlloc, onReadError, onRead).unwrap() catch {
-                        ipc.close();
-                        Output.printErrorln("Failed to connect IPC pipe", .{});
-                        return;
-                    };
-                    _ = ipc.writer.flush();
-                },
-            }
-        }
-
         pub fn onClose(this: *Context) void {
+            log("NewNamedPipeIPCHandler#onClose\n", .{});
             this.handleIPCClose();
         }
     };

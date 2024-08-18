@@ -433,11 +433,7 @@ pub export fn Bun__Process__send(
     callFrame: *JSC.CallFrame,
 ) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    const arguments = callFrame.arguments(4).ptr;
-    var message = arguments[0];
-    var handle = arguments[1];
-    var options_ = arguments[2];
-    var callback = arguments[3];
+    var message, var handle, var options_, var callback = callFrame.arguments(4).ptr;
 
     if (message == .zero) message = .undefined;
     if (handle == .zero) handle = .undefined;

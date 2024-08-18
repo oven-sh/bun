@@ -511,8 +511,11 @@ Server.prototype = {
       port = 0;
     }
 
-    if (typeof port === "string" && !Number.isNaN(parseInt(port))) {
-      port = parseInt(port);
+    if (typeof port === "string") {
+      const portNumber = parseInt(port);
+      if (!Number.isNaN(portNumber)) {
+        port = portNumber;
+      }
     }
 
     if ($isCallable(arguments[arguments.length - 1])) {

@@ -89,6 +89,7 @@ const SendfileContext = struct {
 };
 const linux = std.os.linux;
 const Async = bun.Async;
+const httplog = Output.scoped(.Server, false);
 
 const BlobFileContentResult = struct {
     data: [:0]const u8,
@@ -5296,8 +5297,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
         pub const App = uws.NewApp(ssl_enabled);
 
-        const httplog = Output.scoped(.Server, false);
-
         listener: ?*App.ListenSocket = null,
         thisObject: JSC.JSValue = JSC.JSValue.zero,
         app: *App = undefined,
@@ -5982,6 +5981,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     .promise = this.all_closed_promise,
                     .tracker = JSC.AsyncTaskTracker.init(vm),
                 });
+                this.all_closed_promise = .{};
                 event_loop.enqueueTask(JSC.Task.init(task));
             }
             if (this.pending_requests == 0 and this.listener == null and this.flags.has_js_deinited and !this.hasActiveWebSockets()) {
@@ -6592,24 +6592,22 @@ pub const ServerAllConnectionsClosedTask = struct {
 
     pub usingnamespace bun.New(@This());
 
-    pub fn runFromJSThread(this: *ServerAllConnectionsClosedTask) void {
-        const httplog = Output.scoped(.Server, false);
+    pub fn runFromJSThread(this: *ServerAllConnectionsClosedTask, vm: *JSC.VirtualMachine) void {
         httplog("ServerAllConnectionsClosedTask runFromJSThread", .{});
 
         const globalObject = this.globalObject;
-
-        var promise_value = this.promise.value();
-        var promise = this.promise.get();
-        promise_value.ensureStillAlive();
-
         const tracker = this.tracker;
         tracker.willDispatch(globalObject);
         defer tracker.didDispatch(globalObject);
 
-        this.promise.deinit();
+        var promise = this.promise;
         this.destroy();
 
-        promise.resolve(globalObject, .undefined);
+        if (!vm.isShuttingDown()) {
+            promise.resolve(globalObject, .undefined);
+        } else {
+            promise.deinit();
+        }
     }
 };
 

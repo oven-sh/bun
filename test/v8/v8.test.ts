@@ -132,11 +132,16 @@ describe("String", () => {
     checkSameOutput("test_v8_string_ascii", []);
   });
   // non-ASCII strings are not implemented yet
-  it.skip("can create and read back strings with UTF-8 characters", () => {
+  it("can create and read back strings with UTF-8 characters", () => {
     checkSameOutput("test_v8_string_utf8", []);
   });
-  it.skip("handles replacement correctly in strings with invalid UTF-8 sequences", () => {
+  it("handles replacement correctly in strings with invalid UTF-8 sequences", () => {
     checkSameOutput("test_v8_string_invalid_utf8", []);
+  });
+  describe("WriteUtf8", () => {
+    it("truncates the string correctly", () => {
+      checkSameOutput("test_v8_string_write_utf8", []);
+    });
   });
 });
 

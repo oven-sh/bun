@@ -5304,7 +5304,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
         listener: ?*App.ListenSocket = null,
         thisObject: JSC.JSValue = JSC.JSValue.zero,
-        app: *App = undefined,
+        app: ?*App = null,
         vm: *JSC.VirtualMachine = undefined,
         globalThis: *JSGlobalObject,
         base_url_string_for_joining: string = "",
@@ -5362,10 +5362,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
 
         pub fn publish(this: *ThisServer, globalThis: *JSC.JSGlobalObject, topic: ZigString, message_value: JSValue, compress_value: ?JSValue, exception: JSC.C.ExceptionRef) JSValue {
-            if (this.config.websocket == null)
+            if (this.config.websocket == null or this.app == null)
                 return JSValue.jsNumber(0);
 
-            const app = this.app;
+            const app = this.app.?;
 
             if (topic.len == 0) {
                 httplog("publish() topic invalid", .{});
@@ -5606,11 +5606,13 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     if (this.config.websocket) |old_ws| {
                         old_ws.unprotect();
                     } else {
-                        this.app.ws("/*", this, 0, ServerWebSocket.behavior(
-                            ThisServer,
-                            ssl_enabled,
-                            ws.toBehavior(),
-                        ));
+                        if (this.app) |app| {
+                            app.ws("/*", this, 0, ServerWebSocket.behavior(
+                                ThisServer,
+                                ssl_enabled,
+                                ws.toBehavior(),
+                            ));
+                        }
                     }
 
                     ws.globalObject = globalThis;
@@ -6011,7 +6013,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 listener.close();
             } else if (!this.flags.terminated) {
                 this.flags.terminated = true;
-                this.app.close();
+                if (this.app) |app| {
+                    app.close();
+                }
             }
         }
 
@@ -6034,7 +6038,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             if (!this.flags.terminated) {
                 this.flags.terminated = true;
-                this.app.close();
+                if (this.app) |app| app.close();
             }
 
             const task = bun.default_allocator.create(JSC.AnyTask) catch unreachable;
@@ -6048,7 +6052,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.cached_protocol.deref();
 
             this.config.deinit();
-            this.app.destroy();
+            if (this.app) |app| {
+                this.app = null;
+                app.destroy();
+            }
             this.destroy();
         }
 
@@ -6058,7 +6065,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 .config = config,
                 .base_url_string_for_joining = bun.default_allocator.dupe(u8, strings.trim(config.base_url.href, "/")) catch unreachable,
                 .vm = JSC.VirtualMachine.get(),
-                .allocator = Arena.getThreadlocalDefault(),
+                .allocator = bun.default_allocator,
             });
 
             if (RequestContext.pool == null) {
@@ -6484,28 +6491,30 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
 
         fn setRoutes(this: *ThisServer) void {
-            if (this.config.websocket) |*websocket| {
-                websocket.globalObject = this.globalThis;
-                websocket.handler.app = this.app;
-                websocket.handler.flags.ssl = ssl_enabled;
-                this.app.ws(
-                    "/*",
-                    this,
-                    0,
-                    ServerWebSocket.behavior(ThisServer, ssl_enabled, websocket.toBehavior()),
-                );
-            }
-
-            this.app.any("/*", *ThisServer, this, onRequest);
-
-            if (comptime debug_mode) {
-                this.app.get("/bun:info", *ThisServer, this, onBunInfoRequest);
-                if (this.config.inspector) {
-                    JSC.markBinding(@src());
-                    Bun__addInspector(ssl_enabled, this.app, this.globalThis);
+            if (this.app) |app| {
+                if (this.config.websocket) |*websocket| {
+                    websocket.globalObject = this.globalThis;
+                    websocket.handler.app = app;
+                    websocket.handler.flags.ssl = ssl_enabled;
+                    app.ws(
+                        "/*",
+                        this,
+                        0,
+                        ServerWebSocket.behavior(ThisServer, ssl_enabled, websocket.toBehavior()),
+                    );
                 }
 
-                this.app.get("/src:/*", *ThisServer, this, onSrcRequest);
+                app.any("/*", *ThisServer, this, onRequest);
+
+                if (comptime debug_mode) {
+                    app.get("/bun:info", *ThisServer, this, onBunInfoRequest);
+                    if (this.config.inspector) {
+                        JSC.markBinding(@src());
+                        Bun__addInspector(ssl_enabled, app, this.globalThis);
+                    }
+
+                    app.get("/src:/*", *ThisServer, this, onSrcRequest);
+                }
             }
         }
 
@@ -6515,15 +6524,15 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 BoringSSL.load();
                 const ssl_config = this.config.ssl_config orelse @panic("Assertion failure: ssl_config");
                 const ssl_options = ssl_config.asUSockets();
-                this.app = App.create(ssl_options);
-
+                const app = App.create(ssl_options);
+                this.app = app;
                 this.setRoutes();
                 // add serverName to the SSL context using default ssl options
                 if (ssl_config.server_name != null) {
                     const servername_len = std.mem.span(ssl_config.server_name).len;
                     if (servername_len > 0) {
-                        this.app.addServerNameWithOptions(ssl_config.server_name, ssl_options);
-                        this.app.domain(ssl_config.server_name[0..servername_len :0]);
+                        app.addServerNameWithOptions(ssl_config.server_name, ssl_options);
+                        app.domain(ssl_config.server_name[0..servername_len :0]);
                         this.setRoutes();
                     }
                 }
@@ -6533,8 +6542,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     for (sni.slice()) |sni_ssl_config| {
                         const sni_servername_len = std.mem.span(sni_ssl_config.server_name).len;
                         if (sni_servername_len > 0) {
-                            this.app.addServerNameWithOptions(sni_ssl_config.server_name, sni_ssl_config.asUSockets());
-                            this.app.domain(sni_ssl_config.server_name[0..sni_servername_len :0]);
+                            app.addServerNameWithOptions(sni_ssl_config.server_name, sni_ssl_config.asUSockets());
+                            app.domain(sni_ssl_config.server_name[0..sni_servername_len :0]);
                             this.setRoutes();
                         }
                     }
@@ -6543,6 +6552,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 this.app = App.create(.{});
                 this.setRoutes();
             }
+            const app = this.app.?;
 
             this.ref();
 
@@ -6569,7 +6579,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         }
                     }
 
-                    this.app.listenWithConfig(*ThisServer, this, onListen, .{
+                    app.listenWithConfig(*ThisServer, this, onListen, .{
                         .port = tcp.port,
                         .host = host,
                         .options = if (this.config.reuse_port) 0 else 1,
@@ -6577,7 +6587,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 },
 
                 .unix => |unix| {
-                    this.app.listenOnUnixSocket(
+                    app.listenOnUnixSocket(
                         *ThisServer,
                         this,
                         onListen,

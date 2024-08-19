@@ -87,7 +87,7 @@ it("should be able to abruptly stop the server many times", async () => {
         await fetch(url, { keepalive: true }).then(res => res.text());
         expect.unreachable();
       } catch (e) {
-        expect(e.code).toBe("ConnectionClosed");
+        expect(["ConnectionClosed", "ConnectionRefused"]).toContain(e.code);
       }
     }
 
@@ -1632,6 +1632,7 @@ it("should be able to stop in the middle of a file response", async () => {
     } catch {}
   }
   const fixture = join(import.meta.dir, "server-bigfile-send.fixture.js");
+  const processes = [];
   for (let i = 0; i < 3; i++) {
     const process = Bun.spawn([bunExe(), fixture], {
       env: bunEnv,
@@ -1639,6 +1640,7 @@ it("should be able to stop in the middle of a file response", async () => {
       stdout: "pipe",
       stdin: "ignore",
     });
+    processes.push(process);
     const { value } = await process.stdout.getReader().read();
     const url = new TextDecoder().decode(value).trim();
     const requests = [];

@@ -2057,7 +2057,7 @@ pub const Subprocess = struct {
             } else {},
         };
 
-        const process_allocator = globalThis.allocator();
+        const process_allocator = bun.default_allocator;
         var subprocess = process_allocator.create(Subprocess) catch {
             globalThis.throwOutOfMemory();
             return .zero;

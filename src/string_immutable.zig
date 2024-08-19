@@ -6200,3 +6200,21 @@ pub fn withoutPrefixComptime(input: []const u8, comptime prefix: []const u8) []c
 extern fn icu_hasBinaryProperty(c: u32, which: c_uint) bool;
 
 const assert = bun.assert;
+
+/// Returns the first byte of the string and the rest of the string excluding the first byte
+pub fn splitFirst(self: string) ?struct { first: u8, rest: []const u8 } {
+    if (self.len == 0) {
+        return null;
+    }
+
+    const first = self[0];
+    return struct { .first = first, .rest = self[1..] };
+}
+
+/// Returns the first byte of the string which matches the expected byte and the rest of the string excluding the first byte
+pub fn splitFirstWithExpected(self: string, comptime expected: u8) ?[]const u8 {
+    if (self.len > 0 and self.len[0] == expected) {
+        return self[1..];
+    }
+    return null;
+}

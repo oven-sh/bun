@@ -33,6 +33,8 @@ const HorizontalPosition = css.css_values.position.HorizontalPosition;
 const VerticalPosition = css.css_values.position.VerticalPosition;
 const ContainerName = css.css_rules.container.ContainerName;
 
+pub const font = @import("./properties.zig");
+
 const BorderSideWidth = border.BorderSideWith;
 const Size2D = css_values.size.Size2D;
 const BorderRadius = border_radius.BorderRadius;
@@ -930,115 +932,6 @@ pub const flex = struct {
     /// A value for the legacy (prefixed) [flex-line-pack](https://www.w3.org/TR/2012/WD-css3-flexbox-20120322/#flex-line-pack) property.
     /// Equivalent to the `align-content` property in the standard syntax.
     pub const FlexLinePack = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
-};
-
-pub const font = struct {
-    /// A value for the [font-weight](https://www.w3.org/TR/css-fonts-4/#font-weight-prop) property.
-    pub const FontWeight = union(enum) {
-        /// An absolute font weight.
-        absolute: AbsoluteFontWeight,
-        /// The `bolder` keyword.
-        bolder,
-        /// The `lighter` keyword.
-        lighter,
-    };
-
-    /// An [absolute font weight](https://www.w3.org/TR/css-fonts-4/#font-weight-absolute-values),
-    /// as used in the `font-weight` property.
-    ///
-    /// See [FontWeight](FontWeight).
-    pub const AbsoluteFontWeight = union(enum) {
-        /// An explicit weight.
-        weight: CSSNumber,
-        /// Same as `400`.
-        normal,
-        /// Same as `700`.
-        bold,
-    };
-
-    /// A value for the [font-size](https://www.w3.org/TR/css-fonts-4/#font-size-prop) property.
-    pub const FontSize = union(enum) {
-        /// An explicit size.
-        length: LengthPercentage,
-        /// An absolute font size keyword.
-        absolute: AbsoluteFontSize,
-        /// A relative font size keyword.
-        relative: RelativeFontSize,
-    };
-
-    /// An [absolute font size](https://www.w3.org/TR/css-fonts-3/#absolute-size-value),
-    /// as used in the `font-size` property.
-    ///
-    /// See [FontSize](FontSize).
-    pub const AbsoluteFontSize = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
-
-    /// A [relative font size](https://www.w3.org/TR/css-fonts-3/#relative-size-value),
-    /// as used in the `font-size` property.
-    ///
-    /// See [FontSize](FontSize).
-    pub const RelativeFontSize = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
-
-    /// A value for the [font-stretch](https://www.w3.org/TR/css-fonts-4/#font-stretch-prop) property.
-    pub const FontStretch = union(enum) {
-        /// A font stretch keyword.
-        keyword: FontStretchKeyword,
-        /// A percentage.
-        percentage: Percentage,
-    };
-
-    pub const FontStretchKeyword = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
-
-    /// A value for the [font-family](https://www.w3.org/TR/css-fonts-4/#font-family-prop) property.
-    pub const FontFamily = union(enum) {
-        /// A generic family name.
-        generic: GenericFontFamily,
-        /// A custom family name.
-        family_name: []const u8,
-    };
-
-    /// A [generic font family](https://www.w3.org/TR/css-fonts-4/#generic-font-families) name,
-    /// as used in the `font-family` property.
-    ///
-    /// See [FontFamily](FontFamily).
-    pub const GenericFontFamily = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
-
-    /// A value for the [font-style](https://www.w3.org/TR/css-fonts-4/#font-style-prop) property.
-    pub const FontStyle = union(enum) {
-        /// Normal font style.
-        normal,
-        /// Italic font style.
-        italic,
-        /// Oblique font style, with a custom angle.
-        oblique: Angle,
-    };
-
-    /// A value for the [font-variant-caps](https://www.w3.org/TR/css-fonts-4/#font-variant-caps-prop) property.
-    pub const FontVariantCaps = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
-
-    /// A value for the [line-height](https://www.w3.org/TR/2020/WD-css-inline-3-20200827/#propdef-line-height) property.
-    pub const LineHeight = union(enum) {
-        /// The UA sets the line height based on the font.
-        normal,
-        /// A multiple of the element's font size.
-        number: CSSNumber,
-        /// An explicit height.
-        length: LengthPercentage,
-    };
-
-    /// A value for the [font](https://www.w3.org/TR/css-fonts-4/#font-prop) shorthand property.
-    pub const Font = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
-
-    /// A value for the [vertical align](https://drafts.csswg.org/css2/#propdef-vertical-align) property.
-    // TODO: there is a more extensive spec in CSS3 but it doesn't seem any browser implements it? https://www.w3.org/TR/css-inline-3/#transverse-alignment
-    pub const VerticalAlign = union(enum) {
-        /// A vertical align keyword.
-        keyword: VerticalAlignKeyword,
-        /// An explicit length.
-        length: LengthPercentage,
-    };
-
-    /// A keyword for the [vertical align](https://drafts.csswg.org/css2/#propdef-vertical-align) property.
-    pub const VerticalAlignKeyword = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
 };
 
 pub const list = struct {

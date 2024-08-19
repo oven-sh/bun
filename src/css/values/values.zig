@@ -117,6 +117,9 @@ pub const number = struct {
             const integer = try input.expectInteger();
             return integer;
         }
+        pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+            try css.to_css.integer(i32, this.*, W, dest);
+        }
     };
 };
 
@@ -458,8 +461,13 @@ pub const size = struct {
     /// When serialized, only a single component will be written if both are equal.
     pub fn Size2D(comptime T: type) type {
         return struct {
-            T,
-            T,
+            a: T,
+            b: T,
+
+            pub fn parse(input: *css.Parser) Error!Size2D(T) {
+                _ = input; // autofix
+                @compileError(css.todo_stuff.depth);
+            }
         };
     }
 };

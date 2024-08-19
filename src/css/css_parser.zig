@@ -32,8 +32,11 @@ pub const MediaList = media_query.MediaList;
 pub const css_values = @import("./values/values.zig");
 pub const DashedIdent = css_values.ident.DashedIdent;
 pub const DashedIdentFns = css_values.ident.DashedIdentFns;
+pub const CssColor = css_values.color.CssColor;
 pub const CSSString = css_values.string.CSSString;
 pub const CSSStringFns = css_values.string.CSSStringFns;
+pub const CSSInteger = css_values.number.CSSInteger;
+pub const CSSIntegerFns = css_values.number.CSSIntegerFns;
 pub const Ident = css_values.ident.Ident;
 pub const IdentFns = css_values.ident.IdentFns;
 pub const CustomIdent = css_values.ident.CustomIdent;
@@ -239,6 +242,37 @@ pub fn voidWrap(comptime T: type, comptime parsefn: *const fn (*Parser) Error!T)
     return Wrapper.wrapped;
 }
 
+pub fn DefineShorthand(comptime T: type) type {
+    return struct {
+        /// Returns a shorthand from the longhand properties defined in the given declaration block.
+        pub fn fromLonghands(decls: *const DeclarationBlock, vendor_prefix: VendorPrefix) ?struct { T, bool } {
+            _ = decls; // autofix
+            _ = vendor_prefix; // autofix
+            @compileError(todo_stuff.depth);
+        }
+
+        /// Returns a shorthand from the longhand properties defined in the given declaration block.
+        pub fn longhands(vendor_prefix: VendorPrefix) ArrayList(PropertyId) {
+            _ = vendor_prefix; // autofix
+            @compileError(todo_stuff.depth);
+        }
+
+        /// Returns a longhand property for this shorthand.
+        pub fn longhand(this: *const T, property_id: *const PropertyId) ?Property {
+            _ = this; // autofix
+            _ = property_id; // autofix
+            @compileError(todo_stuff.depth);
+        }
+
+        /// Updates this shorthand from a longhand property.
+        pub fn setLonghand(this: *T, property: *const Property) Maybe(void, void) {
+            _ = this; // autofix
+            _ = property; // autofix
+            @compileError(todo_stuff.depth);
+        }
+    };
+}
+
 pub fn DefineLengthUnits(comptime T: type) type {
     return struct {
         pub fn parse(input: *Parser) Error!T {
@@ -253,6 +287,17 @@ pub fn DeriveParse(comptime T: type) type {
         pub fn parse(input: *Parser) Error!T {
             // to implement this, we need to cargo expand the derive macro
             _ = input; // autofix
+            @compileError(todo_stuff.depth);
+        }
+    };
+}
+
+pub fn DeriveToCss(comptime T: type) type {
+    return struct {
+        pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
+            // to implement this, we need to cargo expand the derive macro
+            _ = this; // autofix
+            _ = dest; // autofix
             @compileError(todo_stuff.depth);
         }
     };
@@ -1175,7 +1220,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                     },
                     .font_palette_values => {
                         const name = prelude.font_palette_values;
-                        const rule = try css_rules.font_face.FontPaletteValuesRule.parse(name, input, loc);
+                        const rule = try css_rules.font_palette_values.FontPaletteValuesRule.parse(name, input, loc);
                         this.rules.v.append(
                             @compileError(todo_stuff.think_about_allocator),
                             .{ .font_palette_values = rule },
@@ -2016,6 +2061,11 @@ pub const Parser = struct {
         };
     }
 
+    /// Return a slice of the CSS input, from the given position to the current one.
+    pub fn sliceFrom(this: *const Parser, start_position: usize) []const u8 {
+        return this.input.tokenizer.sliceFrom(start_position);
+    }
+
     pub fn currentSourceLocation(this: *const Parser) SourceLocation {
         return this.input.tokenizer.currentSourceLocation();
     }
@@ -2083,7 +2133,7 @@ pub const Parser = struct {
     /// is restored to what it was before the call.
     ///
     /// func needs to be a funtion like this: `fn func(*ParserInput, ...@TypeOf(args_)) T`
-    pub fn tryParse(this: *Parser, comptime func: anytype, args_: anytype) Error!bun.meta.ReturnOf(func) {
+    pub inline fn tryParse(this: *Parser, comptime func: anytype, args_: anytype) Error!bun.meta.ReturnOf(func) {
         const start = this.state();
         const result = result: {
             const args = brk: {
@@ -4441,6 +4491,27 @@ pub const serializer = struct {
     }
 };
 
+pub const parse_utility = struct {
+    /// Parse a value from a string.
+    ///
+    /// (This is a convenience wrapper for `parse` and probably should not be overridden.)
+    ///
+    /// NOTE: `input` should live as long as the returned value. Otherwise, strings in the
+    /// returned parsed value will point to undefined memory.
+    pub fn parseString(
+        allocator: Allocator,
+        comptime T: type,
+        input: []const u8,
+        comptime parse_one: *const fn (*Parser) Error!T,
+    ) Error!T {
+        var i = ParserInput.new(allocator, input);
+        var parser = Parser.new(&i);
+        const result = try parse_one(&parser);
+        try parser.expectExhausted();
+        return result;
+    }
+};
+
 pub const to_css = struct {
     /// Serialize `self` in CSS syntax and return a string.
     ///
@@ -4466,5 +4537,17 @@ pub const to_css = struct {
                 try dest.delim(',', false);
             }
         }
+    }
+
+    pub fn integer(comptime T: type, this: T, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        const MAX_LEN = comptime maxDigits(T);
+        var buf: [MAX_LEN]u8 = undefined;
+        const str = std.fmt.bufPrint(buf[0..], "{d}", .{this}) catch unreachable;
+        try dest.writeStr(str);
+    }
+
+    fn maxDigits(comptime T: type) usize {
+        const max_val = std.math.maxInt(T);
+        return std.fmt.count("{d}", .{max_val});
     }
 };

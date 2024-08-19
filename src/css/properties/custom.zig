@@ -906,6 +906,13 @@ pub const CustomPropertyName = union(enum) {
         if (bun.strings.startsWith(name, "--")) return .{ .custom = name };
         return .{ .unknown = name };
     }
+
+    pub fn asStr(self: *const CustomPropertyName) []const u8 {
+        switch (self.*) {
+            .custom => |custom| return custom,
+            .unknown => |unknown| return unknown,
+        }
+    }
 };
 
 pub fn tryParseColorToken(f: []const u8, state: *const css.ParserState, input: *css.Parser) ?CssColor {

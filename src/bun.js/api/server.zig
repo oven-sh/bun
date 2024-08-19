@@ -6014,7 +6014,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             } else if (!this.flags.terminated) {
                 this.flags.terminated = true;
                 if (this.app) |app| {
-                    this.app = null;
                     app.close();
                 }
             }
@@ -6040,7 +6039,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             if (!this.flags.terminated) {
                 this.flags.terminated = true;
                 if (this.app) |app| {
-                    this.app = null;
                     app.close();
                 }
             }

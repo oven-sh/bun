@@ -80,7 +80,7 @@ function endNT(socket, callback, err) {
   socket.end();
   callback(err);
 }
-function closeNT(self, callback, err) {
+function closeNT(callback, err) {
   callback(err);
 }
 

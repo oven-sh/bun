@@ -23,6 +23,12 @@ pub const font_palette_values = @import("./font_palette_values.zig");
 pub const page = @import("./page.zig");
 pub const supports = @import("./supports.zig");
 pub const counter_style = @import("./counter_style.zig");
+pub const custom_media = @import("./custom_media.zig");
+pub const namespace = @import("./namespace.zig");
+pub const unknown = @import("./unknown.zig");
+pub const document = @import("./document.zig");
+pub const nesting = @import("./nesting.zig");
+pub const viewport = @import("./viewport.zig");
 
 pub fn CssRule(comptime Rule: type) type {
     return union(enum) {
@@ -165,18 +171,6 @@ pub const Location = struct {
 pub const StyleContext = struct {
     selectors: *const css.SelectorList,
     parent: ?*const StyleContext,
-};
-
-pub const custom_media = struct {
-    pub usingnamespace @import("./custom_media.zig");
-};
-
-pub const namespace = struct {
-    pub usingnamespace @import("./namespace.zig");
-};
-
-pub const unknown = struct {
-    pub usingnamespace @import("./unknown.zig");
 };
 
 pub const media = struct {
@@ -389,60 +383,6 @@ pub const scope = struct {
     }
 };
 
-pub const viewport = struct {
-    /// A [@viewport](https://drafts.csswg.org/css-device-adapt/#atviewport-rule) rule.
-    pub const ViewportRule = struct {
-        /// The vendor prefix for this rule, e.g. `@-ms-viewport`.
-        vendor_prefix: css.VendorPrefix,
-        /// The declarations within the `@viewport` rule.
-        declarations: css.DeclarationBlock,
-        /// The location of the rule in the source file.
-        loc: Location,
-
-        const This = @This();
-
-        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            // #[cfg(feature = "sourcemap")]
-            // dest.add_mapping(self.loc);
-            try dest.write_char('@');
-            try this.vendor_prefix.toCss(W, dest);
-            try dest.write_str("viewport");
-            try this.declarations.toCssBlock(W, dest);
-        }
-    };
-};
-
-pub const document = struct {
-    /// A [@-moz-document](https://www.w3.org/TR/2012/WD-css3-conditional-20120911/#at-document) rule.
-    ///
-    /// Note that only the `url-prefix()` function with no arguments is supported, and only the `-moz` prefix
-    /// is allowed since Firefox was the only browser that ever implemented this rule.
-    pub fn MozDocumentRule(comptime R: type) type {
-        return struct {
-            /// Nested rules within the `@-moz-document` rule.
-            rules: css.CssRuleList(R),
-            /// The location of the rule in the source file.
-            loc: Location,
-
-            const This = @This();
-
-            pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
-                // #[cfg(feature = "sourcemap")]
-                // dest.add_mapping(self.loc);
-                try dest.writeStr("@-moz-document url-prefix()");
-                try dest.whitespace();
-                try dest.writeChar('{');
-                dest.indent();
-                try dest.newline();
-                try this.rules.toCss(W, dest);
-                dest.dedent();
-                try dest.newline();
-                try dest.writeChar('}');
-            }
-        };
-    }
-};
-
 pub const property = struct {
     pub const PropertyRule = struct {
         name: css.css_values.ident.DashedIdent,
@@ -528,26 +468,6 @@ pub const starting_style = struct {
                 dest.dedent();
                 try dest.newline();
                 try dest.writeChar('}');
-            }
-        };
-    }
-};
-
-pub const nesting = struct {
-    /// A [@nest](https://www.w3.org/TR/css-nesting-1/#at-nest) rule.
-    pub fn NestingRule(comptime R: type) type {
-        return struct {
-            /// The style rule that defines the selector and declarations for the `@nest` rule.
-            style: style.StyleRule(R),
-            /// The location of the rule in the source file.
-            loc: Location,
-
-            const This = @This();
-
-            pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
-                _ = this; // autofix
-                _ = dest; // autofix
-                @compileError(css.todo_stuff.depth);
             }
         };
     }

@@ -31,6 +31,9 @@ pub const nesting = @import("./nesting.zig");
 pub const viewport = @import("./viewport.zig");
 pub const property = @import("./property.zig");
 pub const container = @import("./container.zig");
+pub const scope = @import("./scope.zig");
+pub const media = @import("./media.zig");
+pub const starting_style = @import("./starting_style.zig");
 
 pub fn CssRule(comptime Rule: type) type {
     return union(enum) {
@@ -173,130 +176,4 @@ pub const Location = struct {
 pub const StyleContext = struct {
     selectors: *const css.SelectorList,
     parent: ?*const StyleContext,
-};
-
-pub const media = struct {
-    pub fn MediaRule(comptime R: type) type {
-        return struct {
-            /// The media query list.
-            query: css.MediaList,
-            /// The rules within the `@media` rule.
-            rules: css.CssRuleList(R),
-            /// The location of the rule in the source file.
-            loc: Location,
-
-            const This = @This();
-
-            pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
-                if (dest.minify and this.query.alwaysMatches()) {
-                    try this.rules.toCss(W, dest);
-                    return;
-                }
-
-                // #[cfg(feature = "sourcemap")]
-                // dest.addMapping(this.loc);
-
-                try dest.writeStr("@media ");
-                try this.query.toCss(W, dest);
-                try dest.whitespace();
-                try dest.writeChar('{');
-                dest.indent();
-                try dest.newline();
-                try this.rules.toCss(W, dest);
-                dest.dedent();
-                try dest.newline();
-                dest.writeChar('}');
-            }
-        };
-    }
-};
-
-pub const scope = struct {
-    /// A [@scope](https://drafts.csswg.org/css-cascade-6/#scope-atrule) rule.
-    ///
-    /// @scope (<scope-start>) [to (<scope-end>)]? {
-    ///  <stylesheet>
-    /// }
-    pub fn ScopeRule(comptime R: type) type {
-        return struct {
-            /// A selector list used to identify the scoping root(s).
-            scope_start: ?css.selector.api.SelectorList,
-            /// A selector list used to identify any scoping limits.
-            scope_end: ?css.selector.api.SelectorList,
-            /// Nested rules within the `@scope` rule.
-            rules: css.CssRuleList(R),
-            /// The location of the rule in the source file.
-            loc: Location,
-
-            const This = @This();
-
-            pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
-                // #[cfg(feature = "sourcemap")]
-                // dest.add_mapping(self.loc);
-
-                try dest.writeStr("@scope");
-                try dest.whitespace();
-                if (this.scope_start) |*scope_start| {
-                    try dest.writeChar('(');
-                    try scope_start.toCss(W, dest);
-                    try dest.writeChar(')');
-                    try dest.whitespace();
-                }
-                if (this.scope_end) |*scope_end| {
-                    if (dest.minify) {
-                        try dest.writeChar(' ');
-                    }
-                    try dest.writeStr("to (");
-                    // <scope-start> is treated as an ancestor of scope end.
-                    // https://drafts.csswg.org/css-nesting/#nesting-at-scope
-                    if (this.scope_start) |*scope_start| {
-                        try dest.withContext(scope_start, css.SelectorList.toCss, .{scope_start});
-                    } else {
-                        try scope_end.toCss(W, dest);
-                    }
-                    try dest.writeChar(')');
-                    try dest.whitespace();
-                }
-                try dest.writeChar('{');
-                dest.indent();
-                try dest.newline();
-                // Nested style rules within @scope are implicitly relative to the <scope-start>
-                // so clear our style context while printing them to avoid replacing & ourselves.
-                // https://drafts.csswg.org/css-cascade-6/#scoped-rules
-                try dest.withClearedContext(CssRuleList(R).toCss, .{&this.rules});
-                dest.dedent();
-                try dest.newline();
-                try dest.writeChar('}');
-            }
-        };
-    }
-};
-
-pub const starting_style = struct {
-    /// A [@starting-style](https://drafts.csswg.org/css-transitions-2/#defining-before-change-style-the-starting-style-rule) rule.
-    pub fn StartingStyleRule(comptime R: type) type {
-        return struct {
-            /// Nested rules within the `@starting-style` rule.
-            rules: css.CssRuleList(R),
-            /// The location of the rule in the source file.
-            loc: Location,
-
-            const This = @This();
-
-            pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
-                // #[cfg(feature = "sourcemap")]
-                // dest.add_mapping(self.loc);
-
-                try dest.writeStr("@starting-style");
-                try dest.whitespace();
-                try dest.writeChar('{');
-                dest.indent();
-                try dest.newline();
-                try this.rules.toCss(W, dest);
-                dest.dedent();
-                try dest.newline();
-                try dest.writeChar('}');
-            }
-        };
-    }
 };

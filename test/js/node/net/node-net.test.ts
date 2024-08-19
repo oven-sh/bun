@@ -523,3 +523,35 @@ it("should not hang after FIN", async () => {
     server.close();
   }
 });
+
+it("should not hang after destroy", async () => {
+  const net = require("node:net");
+  const { promise: listening, resolve: resolveListening, reject } = Promise.withResolvers();
+  const server = net.createServer(c => {
+    c.write("Hello client");
+  });
+  try {
+    server.on("error", reject);
+    server.listen(0, () => {
+      resolveListening(server.address().port);
+    });
+    const process = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "node-destroy-fixture.js")],
+      stderr: "inherit",
+      stdin: "ignore",
+      stdout: "inherit",
+      env: {
+        ...bunEnv,
+        PORT: ((await listening) as number).toString(),
+      },
+    });
+    const timeout = setTimeout(() => {
+      process.kill();
+      reject(new Error("Timeout"));
+    }, 1000);
+    expect(await process.exited).toBe(0);
+    clearTimeout(timeout);
+  } finally {
+    server.close();
+  }
+});

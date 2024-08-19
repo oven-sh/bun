@@ -76,9 +76,6 @@ const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 
 const kRealListen = Symbol("kRealListen");
 
-function closeNT(self) {
-  self.emit("close");
-}
 function endNT(socket, callback, err) {
   socket.end();
   callback(err);
@@ -642,6 +639,14 @@ const Socket = (function (InternalSocket) {
     }
 
     _destroy(err, callback) {
+      const socket = this[bunSocketInternal];
+      if (socket) {
+        this[bunSocketInternal] = null;
+        // we still have a socket, call end before destroy
+        process.nextTick(endNT, socket, callback, err);
+        return;
+      }
+      // no socket, just destroy
       process.nextTick(closeNT, callback, err);
     }
 
@@ -655,6 +660,7 @@ const Socket = (function (InternalSocket) {
         this.#final_callback = callback;
       } else {
         // emit FIN not allowing half open
+        this[bunSocketInternal] = null;
         process.nextTick(endNT, socket, callback);
       }
     }

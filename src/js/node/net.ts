@@ -22,6 +22,8 @@
 const { Duplex } = require("node:stream");
 const EventEmitter = require("node:events");
 const { addServerName } = require("../internal/net");
+const { ExceptionWithHostPort } = require("internal/shared");
+const { ERR_SERVER_NOT_RUNNING } = require("internal/errors");
 
 // IPv4 Segment
 const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
@@ -31,6 +33,9 @@ var IPv4Reg;
 // IPv6 Segment
 const v6Seg = "(?:[0-9a-fA-F]{1,4})";
 var IPv6Reg;
+
+const DEFAULT_IPV4_ADDR = "0.0.0.0";
+const DEFAULT_IPV6_ADDR = "::";
 
 function isIPv4(s) {
   return (IPv4Reg ??= new RegExp(`^${v4Str}$`)).test(s);
@@ -66,8 +71,14 @@ const bunSocketServerConnections = Symbol.for("::bunnetserverconnections::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 
 const bunSocketInternal = Symbol.for("::bunnetsocketinternal::");
+const kServerSocket = Symbol("kServerSocket");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 
+const kRealListen = Symbol("kRealListen");
+
+function closeNT(self) {
+  self.emit("close");
+}
 function endNT(socket, callback, err) {
   socket.end();
   callback(err);
@@ -243,14 +254,15 @@ const Socket = (function (InternalSocket) {
       data: Socket.#Handlers.data,
       close(socket) {
         Socket.#Handlers.close(socket);
-        this.data[bunSocketServerConnections]--;
+        this.data.server[bunSocketServerConnections]--;
+        this.data.server._emitCloseIfDrained();
       },
       end(socket) {
         Socket.#Handlers.end(socket);
-        this.data[bunSocketServerConnections]--;
       },
       open(socket) {
         const self = this.data;
+        socket[kServerSocket] = self[bunSocketInternal];
         const options = self[bunSocketServerOptions];
         const { pauseOnConnect, connectionListener, InternalSocketClass, requestCert, rejectUnauthorized } = options;
         const _socket = new InternalSocketClass({});
@@ -802,24 +814,33 @@ class Server extends EventEmitter {
   }
 
   close(callback) {
-    if (this[bunSocketInternal]) {
-      this[bunSocketInternal].stop(true);
-      this[bunSocketInternal] = null;
-      this[bunSocketServerConnections] = 0;
-      this.emit("close");
-      if (typeof callback === "function") {
-        callback();
-      }
-
-      return this;
-    }
-
     if (typeof callback === "function") {
-      const error = new Error("Server is not running");
-      error.code = "ERR_SERVER_NOT_RUNNING";
-      callback(error);
+      if (!this[bunSocketInternal]) {
+        this.once("close", function close() {
+          callback(new ERR_SERVER_NOT_RUNNING());
+        });
+      } else {
+        this.once("close", callback);
+      }
     }
+
+    if (this[bunSocketInternal]) {
+      this[bunSocketInternal].stop(false);
+      this[bunSocketInternal] = null;
+    }
+
+    this._emitCloseIfDrained();
+
     return this;
+  }
+
+  _emitCloseIfDrained() {
+    if (this[bunSocketInternal] || this[bunSocketServerConnections] > 0) {
+      return;
+    }
+    process.nextTick(() => {
+      this.emit("close");
+    });
   }
 
   address() {
@@ -952,44 +973,75 @@ class Server extends EventEmitter {
       } else {
         options.InternalSocketClass = SocketClass;
       }
-      this[bunSocketInternal] = Bun.listen(
-        path
-          ? {
-              exclusive,
-              unix: path,
-              tls,
-              socket: SocketClass[bunSocketServerHandlers],
-            }
-          : {
-              exclusive,
-              port,
-              hostname,
-              tls,
-              socket: SocketClass[bunSocketServerHandlers],
-            },
+
+      listenInCluster(
+        this,
+        null,
+        port,
+        4,
+        backlog,
+        undefined,
+        exclusive,
+        undefined,
+        undefined,
+        path,
+        hostname,
+        tls,
+        contexts,
+        onListen,
       );
-
-      //make this instance available on handlers
-      this[bunSocketInternal].data = this;
-
-      if (contexts) {
-        for (const [name, context] of contexts) {
-          addServerName(this[bunSocketInternal], name, context);
-        }
-      }
-
-      // We must schedule the emitListeningNextTick() only after the next run of
-      // the event loop's IO queue. Otherwise, the server may not actually be listening
-      // when the 'listening' event is emitted.
-      //
-      // That leads to all sorts of confusion.
-      //
-      // process.nextTick() is not sufficient because it will run before the IO queue.
-      setTimeout(emitListeningNextTick, 1, this, onListen);
     } catch (err) {
       setTimeout(emitErrorNextTick, 1, this, err);
     }
     return this;
+  }
+
+  [kRealListen](path, port, hostname, exclusive, tls, contexts, onListen) {
+    if (path) {
+      this[bunSocketInternal] = Bun.listen({
+        unix: path,
+        tls,
+        socket: SocketClass[bunSocketServerHandlers],
+      });
+    } else {
+      this[bunSocketInternal] = Bun.listen({
+        exclusive,
+        port,
+        hostname,
+        tls,
+        socket: SocketClass[bunSocketServerHandlers],
+      });
+    }
+
+    //make this instance available on handlers
+    this[bunSocketInternal].data = this;
+
+    if (contexts) {
+      for (const [name, context] of contexts) {
+        addServerName(this[bunSocketInternal], name, context);
+      }
+    }
+
+    // We must schedule the emitListeningNextTick() only after the next run of
+    // the event loop's IO queue. Otherwise, the server may not actually be listening
+    // when the 'listening' event is emitted.
+    //
+    // That leads to all sorts of confusion.
+    //
+    // process.nextTick() is not sufficient because it will run before the IO queue.
+    setTimeout(emitListeningNextTick, 1, this, onListen?.bind(this));
+  }
+
+  get _handle() {
+    return this;
+  }
+  set _handle(new_handle) {
+    //nothing
+  }
+
+  getsockname(out) {
+    out.port = this.address().port;
+    return out;
   }
 }
 
@@ -1011,6 +1063,50 @@ function emitListeningNextTick(self, onListen) {
     }
   }
   self.emit("listening");
+}
+
+let cluster;
+function listenInCluster(
+  server,
+  address,
+  port,
+  addressType,
+  backlog,
+  fd,
+  exclusive,
+  flags,
+  options,
+  path,
+  hostname,
+  tls,
+  contexts,
+  onListen,
+) {
+  exclusive = !!exclusive;
+
+  if (cluster === undefined) cluster = require("node:cluster");
+
+  if (cluster.isPrimary || exclusive) {
+    server[kRealListen](path, port, hostname, exclusive, tls, contexts, onListen);
+    return;
+  }
+
+  const serverQuery = {
+    address: address,
+    port: port,
+    addressType: addressType,
+    fd: fd,
+    flags,
+    backlog,
+    ...options,
+  };
+  cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle) {
+    err = checkBindError(err, port, handle);
+    if (err) {
+      throw new ExceptionWithHostPort(err, "bind", address, port);
+    }
+    server[kRealListen](path, port, hostname, exclusive, tls, contexts, onListen);
+  });
 }
 
 function createServer(options, connectionListener) {
@@ -1044,6 +1140,23 @@ function normalizeArgs(args) {
   else arr = [options, cb];
 
   return arr;
+}
+
+function checkBindError(err, port, handle) {
+  // EADDRINUSE may not be reported until we call listen() or connect().
+  // To complicate matters, a failed bind() followed by listen() or connect()
+  // will implicitly bind to a random port. Ergo, check that the socket is
+  // bound to the expected port before calling listen() or connect().
+  if (err === 0 && port > 0 && handle.getsockname) {
+    const out = {};
+    err = handle.getsockname(out);
+    if (err === 0 && port !== out.port) {
+      $debug(`checkBindError, bound to ${out.port} instead of ${port}`);
+      const UV_EADDRINUSE = -4091;
+      err = UV_EADDRINUSE;
+    }
+  }
+  return err;
 }
 
 function isPipeName(s) {

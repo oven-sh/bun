@@ -426,37 +426,86 @@ pub export fn Bun__GlobalObject__hasIPC(global: *JSC.JSGlobalObject) bool {
     return global.bunVM().ipc != null;
 }
 
+extern fn Bun__Process__queueNextTick1(*JSC.ZigGlobalObject, JSC.JSValue, JSC.JSValue) void;
+
 pub export fn Bun__Process__send(
     globalObject: *JSGlobalObject,
     callFrame: *JSC.CallFrame,
 ) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    if (callFrame.argumentsCount() < 1) {
-        globalObject.throwInvalidArguments("process.send requires at least one argument", .{});
-        return .zero;
+    var message, var handle, var options_, var callback = callFrame.arguments(4).ptr;
+
+    if (message == .zero) message = .undefined;
+    if (handle == .zero) handle = .undefined;
+    if (options_ == .zero) options_ = .undefined;
+    if (callback == .zero) callback = .undefined;
+
+    if (handle.isFunction()) {
+        callback = handle;
+        handle = .undefined;
+        options_ = .undefined;
+    } else if (options_.isFunction()) {
+        callback = options_;
+        options_ = .undefined;
+    } else if (!options_.isUndefined()) {
+        if (!globalObject.validateObject("options", options_, .{})) return .zero;
     }
+
+    const S = struct {
+        fn impl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+            const arguments_ = callframe.arguments(1).slice();
+            const ex = arguments_[0];
+            VirtualMachine.Process__emitErrorEvent(globalThis, ex);
+            return .undefined;
+        }
+    };
+
     const vm = globalObject.bunVM();
-    if (vm.getIPCInstance()) |ipc_instance| {
-        const success = ipc_instance.data.serializeAndSend(globalObject, callFrame.argument(0));
-        return if (success) .undefined else .zero;
-    } else {
-        globalObject.throw("IPC Socket is no longer open.", .{});
-        return .zero;
+    const zigGlobal: *JSC.ZigGlobalObject = @ptrCast(globalObject);
+    const ipc_instance = vm.getIPCInstance() orelse {
+        const ex = globalObject.ERR_IPC_CHANNEL_CLOSED("Channel closed.", .{}).toJS();
+        if (callback.isFunction()) {
+            Bun__Process__queueNextTick1(zigGlobal, callback, ex);
+        } else {
+            const fnvalue = JSC.JSFunction.create(globalObject, "", S.impl, 1, .{});
+            Bun__Process__queueNextTick1(zigGlobal, fnvalue, ex);
+        }
+        return .false;
+    };
+
+    if (message.isUndefined()) {
+        return globalObject.throwValueRet(globalObject.ERR_MISSING_ARGS_static(ZigString.static("message"), null, null));
     }
+    if (!message.isString() and !message.isObject() and !message.isNumber() and !message.isBoolean()) {
+        return globalObject.throwValueRet(globalObject.ERR_INVALID_ARG_TYPE_static(
+            ZigString.static("message"),
+            ZigString.static("string, object, number, or boolean"),
+            message,
+        ));
+    }
+
+    const good = ipc_instance.data.serializeAndSend(globalObject, message);
+
+    if (good) {
+        if (callback.isFunction()) {
+            Bun__Process__queueNextTick1(zigGlobal, callback, .zero);
+        }
+    } else {
+        const ex = globalObject.createTypeErrorInstance("process.send() failed", .{});
+        ex.put(globalObject, ZigString.static("syscall"), ZigString.static("write").toJS(globalObject));
+        if (callback.isFunction()) {
+            Bun__Process__queueNextTick1(zigGlobal, callback, ex);
+        } else {
+            const fnvalue = JSC.JSFunction.create(globalObject, "", S.impl, 1, .{});
+            Bun__Process__queueNextTick1(zigGlobal, fnvalue, ex);
+        }
+    }
+
+    return .true;
 }
 
 pub export fn Bun__isBunMain(globalObject: *JSGlobalObject, str: *const bun.String) bool {
     return str.eqlUTF8(globalObject.bunVM().main);
-}
-
-pub export fn Bun__Process__disconnect(
-    globalObject: *JSGlobalObject,
-    callFrame: *JSC.CallFrame,
-) callconv(JSC.conv) JSValue {
-    JSC.markBinding(@src());
-    _ = callFrame;
-    _ = globalObject;
-    return .undefined;
 }
 
 /// When IPC environment variables are passed, the socket is not immediately opened,
@@ -3726,6 +3775,7 @@ pub const VirtualMachine = struct {
 
     extern fn Process__emitMessageEvent(global: *JSGlobalObject, value: JSValue) void;
     extern fn Process__emitDisconnectEvent(global: *JSGlobalObject) void;
+    extern fn Process__emitErrorEvent(global: *JSGlobalObject, value: JSValue) void;
 
     pub const IPCInstanceUnion = union(enum) {
         /// IPC is put in this "enabled but not started" state when IPC is detected
@@ -3741,8 +3791,11 @@ pub const VirtualMachine = struct {
         globalThis: ?*JSGlobalObject,
         context: if (Environment.isPosix) *uws.SocketContext else void,
         data: IPC.IPCData,
+        has_disconnect_called: bool = false,
 
         pub usingnamespace bun.New(@This());
+
+        const node_cluster_binding = @import("./node/node_cluster_binding.zig");
 
         pub fn ipc(this: *IPCInstance) *IPC.IPCData {
             return &this.data;
@@ -3750,6 +3803,9 @@ pub const VirtualMachine = struct {
 
         pub fn handleIPCMessage(this: *IPCInstance, message: IPC.DecodedIPCMessage) void {
             JSC.markBinding(@src());
+            const globalThis = this.globalThis orelse return;
+            const event_loop = JSC.VirtualMachine.get().eventLoop();
+
             switch (message) {
                 // In future versions we can read this in order to detect version mismatches,
                 // or disable future optimizations if the subprocess is old.
@@ -3758,23 +3814,43 @@ pub const VirtualMachine = struct {
                 },
                 .data => |data| {
                     IPC.log("Received IPC message from parent", .{});
-                    if (this.globalThis) |global| {
-                        Process__emitMessageEvent(global, data);
-                    }
+                    event_loop.enter();
+                    defer event_loop.exit();
+                    Process__emitMessageEvent(globalThis, data);
+                },
+                .internal => |data| {
+                    IPC.log("Received IPC internal message from parent", .{});
+                    event_loop.enter();
+                    defer event_loop.exit();
+                    node_cluster_binding.handleInternalMessageChild(globalThis, data);
                 },
             }
         }
 
         pub fn handleIPCClose(this: *IPCInstance) void {
-            if (this.globalThis) |global| {
-                var vm = global.bunVM();
-                vm.ipc = null;
-                Process__emitDisconnectEvent(global);
-            }
+            IPC.log("IPCInstance#handleIPCClose", .{});
+            var vm = VirtualMachine.get();
+            vm.ipc = null;
+            const event_loop = vm.eventLoop();
+            node_cluster_binding.child_singleton.deinit();
+            event_loop.enter();
+            Process__emitDisconnectEvent(vm.global);
+            event_loop.exit();
             if (Environment.isPosix) {
                 uws.us_socket_context_free(0, this.context);
             }
             this.destroy();
+        }
+
+        extern fn Bun__setChannelRef(*JSC.JSGlobalObject, bool) void;
+
+        export fn Bun__closeChildIPC(global: *JSGlobalObject) void {
+            const ipc_data = &global.bunVM().ipc.?.initialized.data;
+            JSC.VirtualMachine.get().enqueueImmediateTask(JSC.ManagedTask.New(IPC.IPCData, closeReal).init(ipc_data));
+        }
+
+        fn closeReal(ipc_data: *IPC.IPCData) void {
+            ipc_data.close();
         }
 
         pub const Handlers = IPC.NewIPCHandler(IPCInstance);

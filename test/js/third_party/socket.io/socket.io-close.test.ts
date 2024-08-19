@@ -117,17 +117,18 @@ describe("close", () => {
   });
 
   describe("protocol violations", () => {
-    it("should close the connection when receiving several CONNECT packets", done => {
+    it("should close the connection when receiving several CONNECT packets", async () => {
+      const { promise, resolve, reject } = Promise.withResolvers();
       const httpServer = createServer();
       const io = new Server(httpServer);
 
       httpServer.listen(0);
 
       let timeout = setTimeout(() => {
-        fail(done, io, new Error("timeout"));
+        fail(reject, io, new Error("timeout"));
       }, 1500);
 
-      (async () => {
+      await (async () => {
         const sid = await eioHandshake(httpServer);
         // send a first CONNECT packet
         await eioPush(httpServer, sid, "40");
@@ -144,20 +145,22 @@ describe("close", () => {
           expect(body).toBe("6\u001e1");
 
           io.close();
-          success(done, io);
+          success(resolve, io);
         } catch (err) {
-          fail(done, io, err);
+          fail(reject, io, err);
         }
+        return promise;
       });
     });
 
-    it("should close the connection when receiving an EVENT packet while not connected", done => {
+    it("should close the connection when receiving an EVENT packet while not connected", async () => {
+      const { promise, resolve, reject } = Promise.withResolvers();
       const httpServer = createServer();
       const io = new Server(httpServer);
 
       httpServer.listen(0);
       let timeout = setTimeout(() => {
-        fail(done, io, new Error("timeout"));
+        fail(reject, io, new Error("timeout"));
       }, 1500);
 
       (async () => {
@@ -172,10 +175,11 @@ describe("close", () => {
           expect(body).toBe("6\u001e1");
 
           io.close();
-          success(done, io);
+          success(resolve, io);
         } catch (err) {
-          fail(done, io, err);
+          fail(reject, io, err);
         }
+        return promise;
       });
     });
 

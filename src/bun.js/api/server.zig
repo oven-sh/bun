@@ -89,6 +89,7 @@ const SendfileContext = struct {
 };
 const linux = std.os.linux;
 const Async = bun.Async;
+const httplog = Output.scoped(.Server, false);
 
 const BlobFileContentResult = struct {
     data: [:0]const u8,
@@ -836,8 +837,8 @@ pub const ServerConfig = struct {
     };
 
     pub fn fromJS(global: *JSC.JSGlobalObject, arguments: *JSC.Node.ArgumentsSlice, exception: JSC.C.ExceptionRef) ServerConfig {
-        var env = arguments.vm.bundler.env;
-        const vm = JSC.VirtualMachine.get();
+        const vm = arguments.vm;
+        const env = vm.bundler.env;
 
         var args = ServerConfig{
             .address = .{
@@ -847,8 +848,13 @@ pub const ServerConfig = struct {
                 },
             },
             .development = true,
+
+            // If this is a node:cluster child, let's default to SO_REUSEPORT.
+            // That way you don't have to remember to set reusePort: true in Bun.serve() when using node:cluster.
+            .reuse_port = env.get("NODE_UNIQUE_ID") != null,
         };
         var has_hostname = false;
+
         if (strings.eqlComptime(env.get("NODE_ENV") orelse "", "production")) {
             args.development = false;
         }
@@ -5296,8 +5302,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
         pub const App = uws.NewApp(ssl_enabled);
 
-        const httplog = Output.scoped(.Server, false);
-
         listener: ?*App.ListenSocket = null,
         thisObject: JSC.JSValue = JSC.JSValue.zero,
         app: *App = undefined,
@@ -5307,6 +5311,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         config: ServerConfig = ServerConfig{},
         pending_requests: usize = 0,
         request_pool_allocator: *RequestContext.RequestContextStackAllocator = undefined,
+        all_closed_promise: JSC.JSPromise.Strong = .{},
 
         listen_callback: JSC.AnyTask = undefined,
         allocator: std.mem.Allocator,
@@ -5316,10 +5321,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         cached_hostname: bun.String = bun.String.empty,
         cached_protocol: bun.String = bun.String.empty,
 
-        flags: packed struct(u3) {
+        flags: packed struct(u4) {
             deinit_scheduled: bool = false,
             terminated: bool = false,
             has_js_deinited: bool = false,
+            has_handled_all_closed_promise: bool = false,
         } = .{},
 
         pub const doStop = JSC.wrapInstanceMethod(ThisServer, "stopFromJS", false);
@@ -5965,6 +5971,24 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
         pub fn deinitIfWeCan(this: *ThisServer) void {
             httplog("deinitIfWeCan", .{});
+
+            const vm = this.globalThis.bunVM();
+
+            if (this.pending_requests == 0 and this.listener == null and !this.hasActiveWebSockets() and !this.flags.has_handled_all_closed_promise and this.all_closed_promise.strong.has()) {
+                const event_loop = vm.eventLoop();
+
+                // use a flag here instead of `this.all_closed_promise.get().isHandled(vm)` to prevent the race condition of this block being called
+                // again before the task has run.
+                this.flags.has_handled_all_closed_promise = true;
+
+                const task = ServerAllConnectionsClosedTask.new(.{
+                    .globalObject = this.globalThis,
+                    .promise = this.all_closed_promise,
+                    .tracker = JSC.AsyncTaskTracker.init(vm),
+                });
+                this.all_closed_promise = .{};
+                event_loop.enqueueTask(JSC.Task.init(task));
+            }
             if (this.pending_requests == 0 and this.listener == null and this.flags.has_js_deinited and !this.hasActiveWebSockets()) {
                 if (this.config.websocket) |*ws| {
                     ws.handler.app = null;
@@ -6565,6 +6589,32 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
     };
 }
+
+pub const ServerAllConnectionsClosedTask = struct {
+    globalObject: *JSC.JSGlobalObject,
+    promise: JSC.JSPromise.Strong,
+    tracker: JSC.AsyncTaskTracker,
+
+    pub usingnamespace bun.New(@This());
+
+    pub fn runFromJSThread(this: *ServerAllConnectionsClosedTask, vm: *JSC.VirtualMachine) void {
+        httplog("ServerAllConnectionsClosedTask runFromJSThread", .{});
+
+        const globalObject = this.globalObject;
+        const tracker = this.tracker;
+        tracker.willDispatch(globalObject);
+        defer tracker.didDispatch(globalObject);
+
+        var promise = this.promise;
+        this.destroy();
+
+        if (!vm.isShuttingDown()) {
+            promise.resolve(globalObject, .undefined);
+        } else {
+            promise.deinit();
+        }
+    }
+};
 
 pub const HTTPServer = NewServer(JSC.Codegen.JSHTTPServer, false, false);
 pub const HTTPSServer = NewServer(JSC.Codegen.JSHTTPSServer, true, false);

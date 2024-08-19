@@ -2165,6 +2165,14 @@ pub const Parser = struct {
         return if (this.expectExhausted()) |_| true else false;
     }
 
+    /// Parse the input until exhaustion and check that it contains no “error” token.
+    ///
+    /// See `Token::is_parse_error`. This also checks nested blocks and functions recursively.
+    pub fn expectNoErrorToken(this: *Parser) Error!void {
+        _ = this; // autofix
+        @compileError(todo_stuff.depth);
+    }
+
     pub fn expectPercentage(this: *Parser) Error!f32 {
         const start_location = this.currentSourceLocation();
         const tok = try this.next();

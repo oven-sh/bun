@@ -1817,6 +1817,12 @@ pub fn DefineProperties(comptime properties: anytype) type {
     return struct {
         pub const PropertyId = PropertyIdT;
 
+        pub fn propertyIdEq(lhs: PropertyId, rhs: PropertyId) bool {
+            _ = lhs; // autofix
+            _ = rhs; // autofix
+            @compileError(css.todo_stuff.depth);
+        }
+
         pub fn propertyIdIsShorthand(id: PropertyId) bool {
             inline for (std.meta.fields(PropertyId)) |field| {
                 if (field.value == @intFromEnum(id)) {

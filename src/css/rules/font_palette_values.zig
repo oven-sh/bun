@@ -18,13 +18,10 @@ const LayerName = css.css_rules.layer.LayerName;
 const SupportsCondition = css.css_rules.supports.SupportsCondition;
 const Location = css.css_rules.Location;
 const Angle = css.css_values.angle.Angle;
-const FontStyleProperty = css.css_properties.font.FontStyle;
-const FontFamily = css.css_properties.font.FontFamily;
-const FontWeight = css.css_properties.font.FontWeight;
-const FontStretch = css.css_properties.font.FontStretch;
 const CustomProperty = css.css_properties.custom.CustomProperty;
 const CustomPropertyName = css.css_properties.custom.CustomPropertyName;
 const DashedIdent = css.css_values.ident.DashedIdent;
+const FontFamily = css.css_properties.font.FontFamily;
 
 /// A [@font-palette-values](https://drafts.csswg.org/css-fonts-4/#font-palette-values) rule.
 pub const FontPaletteValuesRule = struct {

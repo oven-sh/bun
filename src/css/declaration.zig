@@ -22,9 +22,9 @@ pub const DeclarationList = ArrayList(css.Property);
 /// instead of two.
 pub const DeclarationBlock = struct {
     /// A list of `!important` declarations in the block.
-    important_declarations: ArrayList(css.Property),
+    important_declarations: ArrayList(css.Property) = .{},
     /// A list of normal declarations in the block.
-    declarations: ArrayList(css.Property),
+    declarations: ArrayList(css.Property) = .{},
 
     const This = @This();
 

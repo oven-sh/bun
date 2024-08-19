@@ -33,7 +33,7 @@ const HorizontalPosition = css.css_values.position.HorizontalPosition;
 const VerticalPosition = css.css_values.position.VerticalPosition;
 const ContainerName = css.css_rules.container.ContainerName;
 
-pub const font = @import("./properties.zig");
+pub const font = @import("./font.zig");
 
 const BorderSideWidth = border.BorderSideWith;
 const Size2D = css_values.size.Size2D;

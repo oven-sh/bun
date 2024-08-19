@@ -42,6 +42,8 @@ pub const IdentFns = css_values.ident.IdentFns;
 pub const CustomIdent = css_values.ident.CustomIdent;
 pub const CustomIdentFns = css_values.ident.CustomIdentFns;
 
+pub const declaration = @import("./declaration.zig");
+
 pub const css_properties = @import("./properties/properties.zig");
 pub const Property = css_properties.Property;
 pub const PropertyId = Property.Id;

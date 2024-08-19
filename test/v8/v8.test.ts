@@ -27,10 +27,10 @@ const directories = {
   badModules: "",
 };
 
-async function build(srcDir: string, tmpDir: string, runtime: Runtime, buildMode: BuildMode): Promise<void> {
+async function install(srcDir: string, tmpDir: string, runtime: Runtime): Promise<void> {
   await fs.cp(srcDir, tmpDir, { recursive: true });
   const install = spawn({
-    cmd: runtime == Runtime.bun ? [bunExe(), "install", "--ignore-scripts"] : [bunExe(), "install"],
+    cmd: [bunExe(), "install", "--ignore-scripts"],
     cwd: tmpDir,
     env: bunEnv,
     stdin: "inherit",
@@ -41,20 +41,23 @@ async function build(srcDir: string, tmpDir: string, runtime: Runtime, buildMode
   if (install.exitCode != 0) {
     throw new Error("build failed");
   }
+}
 
-  if (runtime == Runtime.bun) {
-    const build = spawn({
-      cmd: [bunExe(), "x", "--bun", "node-gyp", "rebuild", buildMode == BuildMode.debug ? "--debug" : "--release"],
-      cwd: tmpDir,
-      env: bunEnv,
-      stdin: "inherit",
-      stdout: "inherit",
-      stderr: "inherit",
-    });
-    await build.exited;
-    if (build.exitCode != 0) {
-      throw new Error("build failed");
-    }
+async function build(srcDir: string, tmpDir: string, runtime: Runtime, buildMode: BuildMode): Promise<void> {
+  const build = spawn({
+    cmd:
+      runtime == Runtime.bun
+        ? [bunExe(), "x", "--bun", "node-gyp", "rebuild", buildMode == BuildMode.debug ? "--debug" : "--release"]
+        : ["npx", "node-gyp", "rebuild", "--release"], // for node.js we don't bother with debug mode
+    cwd: tmpDir,
+    env: bunEnv,
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  await build.exited;
+  if (build.exitCode != 0) {
+    throw new Error("build failed");
   }
 }
 
@@ -64,6 +67,13 @@ beforeAll(async () => {
   directories.bunDebug = tmpdirSync();
   directories.node = tmpdirSync();
   directories.badModules = tmpdirSync();
+
+  // run installs sequentially and builds in parallel due to bug with simultaneous
+  // bun install invocations
+  await install(srcDir, directories.bunRelease, Runtime.bun);
+  await install(srcDir, directories.bunDebug, Runtime.bun);
+  await install(srcDir, directories.node, Runtime.node);
+  await install(join(__dirname, "bad-modules"), directories.badModules, Runtime.node);
 
   await Promise.all([
     build(srcDir, directories.bunRelease, Runtime.bun, BuildMode.release),

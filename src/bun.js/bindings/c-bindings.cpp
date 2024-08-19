@@ -1,5 +1,6 @@
 // when we don't want to use @cInclude, we can just stick wrapper functions here
 #include "root.h"
+#include <cstdio>
 
 #if !OS(WINDOWS)
 #include <sys/resource.h>
@@ -624,3 +625,69 @@ extern "C" void Bun__disableSOLinger(SOCKET fd)
 }
 
 #endif
+
+extern "C" int ffi_vprintf(const char* fmt, va_list ap)
+{
+    int ret = vfprintf(stderr, fmt, ap);
+    fflush(stderr);
+    return ret;
+}
+
+extern "C" int ffi_vfprintf(FILE* stream, const char* fmt, va_list ap)
+{
+    int ret = vfprintf(stream, fmt, ap);
+    fflush(stream);
+    return ret;
+}
+
+extern "C" int ffi_printf(const char* fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int r = printf(fmt, ap);
+    va_end(ap);
+    fflush(stdout);
+    return r;
+}
+
+extern "C" int ffi_fprintf(FILE* stream, const char* fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int r = vfprintf(stream, fmt, ap);
+    va_end(ap);
+    fflush(stream);
+    return r;
+}
+
+extern "C" int ffi_scanf(const char* fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int r = scanf(fmt, ap);
+    va_end(ap);
+    return r;
+}
+
+extern "C" int ffi_fscanf(FILE* stream, const char* fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int r = vfscanf(stream, fmt, ap);
+    va_end(ap);
+    return r;
+}
+
+extern "C" int ffi_vsscanf(const char* str, const char* fmt, va_list ap)
+{
+    return vsscanf(str, fmt, ap);
+}
+
+extern "C" int ffi_sscanf(const char* str, const char* fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int r = vsscanf(str, fmt, ap);
+    va_end(ap);
+    return r;
+}

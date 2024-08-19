@@ -22,6 +22,7 @@ pub const font_face = @import("./font_face.zig");
 pub const font_palette_values = @import("./font_palette_values.zig");
 pub const page = @import("./page.zig");
 pub const supports = @import("./supports.zig");
+pub const counter_style = @import("./counter_style.zig");
 
 pub fn CssRule(comptime Rule: type) type {
     return union(enum) {
@@ -406,29 +407,6 @@ pub const viewport = struct {
             try dest.write_char('@');
             try this.vendor_prefix.toCss(W, dest);
             try dest.write_str("viewport");
-            try this.declarations.toCssBlock(W, dest);
-        }
-    };
-};
-
-pub const counter_style = struct {
-    /// A [@counter-style](https://drafts.csswg.org/css-counter-styles/#the-counter-style-rule) rule.
-    pub const CounterStyleRule = struct {
-        /// The name of the counter style to declare.
-        name: css.css_values.ident.CustomIdent,
-        /// Declarations in the `@counter-style` rule.
-        declarations: css.DeclarationBlock,
-        /// The location of the rule in the source file.
-        loc: Location,
-
-        const This = @This();
-
-        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            // #[cfg(feature = "sourcemap")]
-            // dest.add_mapping(self.loc);
-
-            try dest.writeStr("@counter-style");
-            css.css_values.ident.CustomIdentFns.toCss(W, dest);
             try this.declarations.toCssBlock(W, dest);
         }
     };

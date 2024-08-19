@@ -76,14 +76,11 @@ const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 
 const kRealListen = Symbol("kRealListen");
 
-function closeNT(self) {
-  self.emit("close");
-}
 function endNT(socket, callback, err) {
   socket.end();
   callback(err);
 }
-function closeNT(callback, err) {
+function closeNT(self, callback, err) {
   callback(err);
 }
 
@@ -642,6 +639,11 @@ const Socket = (function (InternalSocket) {
     }
 
     _destroy(err, callback) {
+      const socket = this[bunSocketInternal];
+      if (socket) {
+        this[bunSocketInternal] = null;
+        socket.end();
+      }
       process.nextTick(closeNT, callback, err);
     }
 

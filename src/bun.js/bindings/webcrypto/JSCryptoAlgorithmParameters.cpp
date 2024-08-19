@@ -47,14 +47,14 @@ template<> CryptoAlgorithmParameters convertDictionary<CryptoAlgorithmParameters
     if (isNullOrUndefined)
         nameValue = jsUndefined();
     else {
-        nameValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "name"_s));
+        nameValue = object->get(&lexicalGlobalObject, vm.propertyNames->name);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!nameValue.isUndefined()) {
         result.name = convert<IDLDOMString>(lexicalGlobalObject, nameValue);
         RETURN_IF_EXCEPTION(throwScope, {});
     } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "name", "CryptoAlgorithmParameters", "DOMString");
+        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "name"_s, "CryptoAlgorithmParameters"_s, "DOMString"_s);
         return {};
     }
     return result;

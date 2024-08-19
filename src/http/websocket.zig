@@ -2,7 +2,7 @@
 // Thank you @frmdstryr.
 const std = @import("std");
 
-const os = std.os;
+const posix = std.posix;
 const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
@@ -152,7 +152,7 @@ pub const Websocket = struct {
     reader: ReadStream.Reader,
     flags: u32 = 0,
     pub fn create(
-        fd: std.os.fd_t,
+        fd: std.posix.fd_t,
         comptime flags: u32,
     ) Websocket {
         const stream = ReadStream{

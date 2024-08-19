@@ -549,7 +549,7 @@ pub const Msg = struct {
         }
     }
 
-    pub fn formatNoWriter(msg: *const Msg, comptime formatterFunc: @TypeOf(Global.panic)) void {
+    pub fn formatNoWriter(msg: *const Msg, comptime formatterFunc: @TypeOf(Output.panic)) void {
         formatterFunc("\n\n{s}: {s}\n{s}\n{s}:{}:{} ({d})", .{
             msg.kind.string(),
             msg.data.text,
@@ -717,7 +717,7 @@ pub const Log = struct {
 
         const count = @as(u16, @intCast(@min(msgs.len, errors_stack.len)));
         switch (count) {
-            0 => return JSC.JSValue.jsUndefined(),
+            0 => return .undefined,
             1 => {
                 const msg = msgs[0];
                 return switch (msg.metadata) {

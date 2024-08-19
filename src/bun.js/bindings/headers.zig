@@ -95,8 +95,6 @@ pub extern fn ZigString__toExternalValueWithCallback(arg0: [*c]const ZigString, 
 pub extern fn ZigString__toRangeErrorInstance(arg0: [*c]const ZigString, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toSyntaxErrorInstance(arg0: [*c]const ZigString, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toTypeErrorInstance(arg0: [*c]const ZigString, arg1: *bindings.JSGlobalObject) JSC__JSValue;
-pub extern fn ZigString__toValue(arg0: [*c]const ZigString, arg1: *bindings.JSGlobalObject) JSC__JSValue;
-pub extern fn ZigString__toValueGC(arg0: [*c]const ZigString, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn WebCore__DOMURL__cast_(JSValue0: JSC__JSValue, arg1: *bindings.VM) ?*bindings.DOMURL;
 pub extern fn WebCore__DOMURL__fileSystemPath(arg0: ?*bindings.DOMURL) BunString;
 pub extern fn WebCore__DOMURL__href_(arg0: ?*bindings.DOMURL, arg1: [*c]ZigString) void;
@@ -114,9 +112,8 @@ pub extern fn WebCore__FetchHeaders__cloneThis(arg0: ?*bindings.FetchHeaders, ar
 pub extern fn WebCore__FetchHeaders__copyTo(arg0: ?*bindings.FetchHeaders, arg1: [*c]StringPointer, arg2: [*c]StringPointer, arg3: [*c]u8) void;
 pub extern fn WebCore__FetchHeaders__count(arg0: ?*bindings.FetchHeaders, arg1: [*c]u32, arg2: [*c]u32) void;
 pub extern fn WebCore__FetchHeaders__createEmpty(...) ?*bindings.FetchHeaders;
-pub extern fn WebCore__FetchHeaders__createFromJS(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) ?*bindings.FetchHeaders;
 pub extern fn WebCore__FetchHeaders__createFromPicoHeaders_(arg0: ?*const anyopaque) ?*bindings.FetchHeaders;
-pub extern fn WebCore__FetchHeaders__createFromUWS(arg0: *bindings.JSGlobalObject, arg1: ?*anyopaque) ?*bindings.FetchHeaders;
+pub extern fn WebCore__FetchHeaders__createFromUWS(arg1: ?*anyopaque) ?*bindings.FetchHeaders;
 pub extern fn WebCore__FetchHeaders__createValue(arg0: *bindings.JSGlobalObject, arg1: [*c]StringPointer, arg2: [*c]StringPointer, arg3: [*c]const ZigString, arg4: u32) JSC__JSValue;
 pub extern fn WebCore__FetchHeaders__deref(arg0: ?*bindings.FetchHeaders) void;
 pub extern fn WebCore__FetchHeaders__fastGet_(arg0: ?*bindings.FetchHeaders, arg1: u8, arg2: [*c]ZigString) void;
@@ -145,13 +142,11 @@ pub extern fn WebCore__AbortSignal__abortReason(arg0: ?*bindings.AbortSignal) JS
 pub extern fn WebCore__AbortSignal__addListener(arg0: ?*bindings.AbortSignal, arg1: ?*anyopaque, ArgFn2: ?*const fn (?*anyopaque, JSC__JSValue) callconv(.C) void) ?*bindings.AbortSignal;
 pub extern fn WebCore__AbortSignal__cleanNativeBindings(arg0: ?*bindings.AbortSignal, arg1: ?*anyopaque) void;
 pub extern fn WebCore__AbortSignal__create(arg0: *bindings.JSGlobalObject) JSC__JSValue;
-pub extern fn WebCore__AbortSignal__createAbortError(arg0: [*c]const ZigString, arg1: [*c]const ZigString, arg2: *bindings.JSGlobalObject) JSC__JSValue;
-pub extern fn WebCore__AbortSignal__createTimeoutError(arg0: [*c]const ZigString, arg1: [*c]const ZigString, arg2: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn WebCore__AbortSignal__fromJS(JSValue0: JSC__JSValue) ?*bindings.AbortSignal;
 pub extern fn WebCore__AbortSignal__ref(arg0: ?*bindings.AbortSignal) ?*bindings.AbortSignal;
 pub extern fn WebCore__AbortSignal__signal(arg0: ?*bindings.AbortSignal, JSValue1: JSC__JSValue) ?*bindings.AbortSignal;
 pub extern fn WebCore__AbortSignal__toJS(arg0: ?*bindings.AbortSignal, arg1: *bindings.JSGlobalObject) JSC__JSValue;
-pub extern fn WebCore__AbortSignal__unref(arg0: ?*bindings.AbortSignal) ?*bindings.AbortSignal;
+pub extern fn WebCore__AbortSignal__unref(arg0: ?*bindings.AbortSignal) void;
 pub extern fn JSC__JSPromise__asValue(arg0: ?*bindings.JSPromise, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSPromise__create(arg0: *bindings.JSGlobalObject) ?*bindings.JSPromise;
 pub extern fn JSC__JSPromise__isHandled(arg0: [*c]const JSC__JSPromise, arg1: *bindings.VM) bool;
@@ -197,7 +192,7 @@ pub extern fn JSC__JSMap__get_(arg0: ?*bindings.JSMap, arg1: *bindings.JSGlobalO
 pub extern fn JSC__JSMap__has(arg0: ?*bindings.JSMap, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) bool;
 pub extern fn JSC__JSMap__remove(arg0: ?*bindings.JSMap, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) bool;
 pub extern fn JSC__JSMap__set(arg0: ?*bindings.JSMap, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue, JSValue3: JSC__JSValue) void;
-pub extern fn JSC__JSValue___then(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue, ArgFn3: ?*const fn (*bindings.JSGlobalObject, *bindings.CallFrame) callconv(.C) JSC__JSValue, ArgFn4: ?*const fn (*bindings.JSGlobalObject, *bindings.CallFrame) callconv(.C) JSC__JSValue) void;
+pub extern fn JSC__JSValue___then(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue, ArgFn3: ?bun.JSC.JSHostFunctionPtr, ArgFn4: ?bun.JSC.JSHostFunctionPtr) void;
 pub extern fn JSC__JSValue__asArrayBuffer_(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: ?*Bun__ArrayBuffer) bool;
 pub extern fn JSC__JSValue__asBigIntCompare(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) u8;
 pub extern fn JSC__JSValue__asCell(JSValue0: JSC__JSValue) [*c]bindings.JSCell;

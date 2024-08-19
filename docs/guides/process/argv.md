@@ -13,7 +13,7 @@ console.log(Bun.argv);
 Running this file with arguments results in the following:
 
 ```sh
-$ bun run cli.tsx --flag1 --flag2 value
+$ bun run cli.ts --flag1 --flag2 value
 [ '/path/to/bun', '/path/to/cli.ts', '--flag1', '--flag2', 'value' ]
 ```
 
@@ -47,7 +47,7 @@ console.log(positionals);
 then it outputs
 
 ```
-$ bun run cli.tsx --flag1 --flag2 value
+$ bun run cli.ts --flag1 --flag2 value
 {
   flag1: true,
   flag2: "value",

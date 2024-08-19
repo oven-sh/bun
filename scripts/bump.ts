@@ -28,20 +28,15 @@ if (!version) {
   throw new Error("Could not find version in CMakeLists.txt");
 }
 
-const updated_version = version[1]
+const to_arg = process.argv.find(arg => arg.startsWith("--last-version="));
+const to = to_arg ? to_arg.slice("--last-version=".length) : version[1];
+
+const updated_version = to
   .split(".")
   .map((v, i) => (i === increment ? parseInt(v) + 1 : i < increment ? parseInt(v) : 0))
   .join(".");
 
-console.log("Bumping version from %s to %s", version[1], updated_version);
-
-// remove all files from stage
-await Bun.$`git reset`;
-
 await Bun.write("./CMakeLists.txt", cmakelists.replace(version[1], updated_version));
+await Bun.write("LATEST", to);
 
-await Bun.$`git add CMakeLists.txt`;
-await Bun.$`git commit -m "Release Bun v${updated_version}"`;
-
-console.log("");
-console.log("Done.");
+console.log("Bumping version from %s to %s", version[1], updated_version);

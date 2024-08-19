@@ -60,6 +60,43 @@ describe("mock()", () => {
 
       expect(onData).toHaveBeenCalled();
     });
+
+    // https://github.com/oven-sh/bun/issues/13331
+    describe("checks the this value", () => {
+      const fn = jest.fn();
+      const proto = Object.getPrototypeOf(fn);
+      test.each(Object.getOwnPropertyNames(proto))("%s", fnName => {
+        if (fnName === "_isMockFunction") {
+          expect(proto[fnName]).toBe(true);
+          return;
+        }
+
+        if (typeof Object.getOwnPropertyDescriptor(proto, fnName)?.value === "function") {
+          try {
+            const protoFn = fn[fnName];
+            protoFn.call(undefined);
+            expect.unreachable();
+          } catch (e) {
+            expect(e).toHaveProperty("code", "ERR_INVALID_THIS");
+            expect(e.message).toContain("Mock");
+          }
+        } else if ("value" in Object.getOwnPropertyDescriptor(proto, fnName)) {
+          try {
+            proto[fnName].value;
+            expect.unreachable();
+          } catch (e) {
+            expect(e.message).not.toContain("unreachable");
+          }
+        } else {
+          try {
+            proto[fnName];
+            expect.unreachable();
+          } catch (e) {
+            expect(e.message).not.toContain("unreachable");
+          }
+        }
+      });
+    });
   }
   test("are callable", () => {
     const fn = jest.fn(() => 42);

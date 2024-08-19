@@ -202,7 +202,7 @@ pub const ShellSubprocess = struct {
                     .memfd, .path, .ignore => {
                         return Writable{ .ignore = {} };
                     },
-                    .capture => {
+                    .ipc, .capture => {
                         return Writable{ .ignore = {} };
                     },
                 }
@@ -240,7 +240,7 @@ pub const ShellSubprocess = struct {
                 .path, .ignore => {
                     return Writable{ .ignore = {} };
                 },
-                .capture => {
+                .ipc, .capture => {
                     return Writable{ .ignore = {} };
                 },
             }
@@ -269,7 +269,7 @@ pub const ShellSubprocess = struct {
         }
 
         pub fn finalize(this: *Writable) void {
-            const subprocess = @fieldParentPtr(Subprocess, "stdin", this);
+            const subprocess: *Subprocess = @fieldParentPtr("stdin", this);
             if (subprocess.this_jsvalue != .zero) {
                 if (JSC.Codegen.JSSubprocess.stdinGetCached(subprocess.this_jsvalue)) |existing_value| {
                     JSC.WebCore.FileSink.JSSink.setDestroyCallback(existing_value, 0);
@@ -375,7 +375,7 @@ pub const ShellSubprocess = struct {
             if (Environment.isWindows) {
                 return switch (stdio) {
                     .inherit => Readable{ .inherit = {} },
-                    .dup2, .ignore => Readable{ .ignore = {} },
+                    .ipc, .dup2, .ignore => Readable{ .ignore = {} },
                     .path => Readable{ .ignore = {} },
                     .fd => |fd| Readable{ .fd = fd },
                     // blobs are immutable, so we should only ever get the case
@@ -396,7 +396,7 @@ pub const ShellSubprocess = struct {
 
             return switch (stdio) {
                 .inherit => Readable{ .inherit = {} },
-                .dup2, .ignore => Readable{ .ignore = {} },
+                .ipc, .dup2, .ignore => Readable{ .ignore = {} },
                 .path => Readable{ .ignore = {} },
                 .fd => Readable{ .fd = result.? },
                 // blobs are immutable, so we should only ever get the case
@@ -954,8 +954,6 @@ pub const ShellSubprocess = struct {
             }
         }
     }
-
-    const os = std.os;
 };
 
 const WaiterThread = bun.spawn.WaiterThread;
@@ -1048,7 +1046,7 @@ pub const PipeReader = struct {
         }
 
         pub fn parent(this: *CapturedWriter) *PipeReader {
-            return @fieldParentPtr(PipeReader, "captured_writer", this);
+            return @fieldParentPtr("captured_writer", this);
         }
 
         pub fn eventLoop(this: *CapturedWriter) JSC.EventLoopHandle {

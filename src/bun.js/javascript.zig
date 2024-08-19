@@ -114,7 +114,7 @@ pub const bun_file_import_path = "/node_modules.server.bun";
 export var has_bun_garbage_collector_flag_enabled = false;
 
 const SourceMap = @import("../sourcemap/sourcemap.zig");
-const ParsedSourceMap = SourceMap.Mapping.ParsedSourceMap;
+const ParsedSourceMap = SourceMap.ParsedSourceMap;
 const MappingList = SourceMap.Mapping.List;
 const SourceProviderMap = SourceMap.SourceProviderMap;
 
@@ -123,9 +123,28 @@ const uv = bun.windows.libuv;
 pub const SavedSourceMap = struct {
     /// This is a pointer to the map located on the VirtualMachine struct
     map: *HashTable,
-    mutex: bun.Lock = bun.Lock.init(),
+    mutex: bun.Lock = .{},
 
     pub const vlq_offset = 24;
+
+    pub fn init(this: *SavedSourceMap, map: *HashTable) void {
+        this.* = .{
+            .map = map,
+            .mutex = .{},
+        };
+
+        this.map.lockPointers();
+    }
+
+    pub inline fn lock(map: *SavedSourceMap) void {
+        map.mutex.lock();
+        map.map.unlockPointers();
+    }
+
+    pub inline fn unlock(map: *SavedSourceMap) void {
+        map.map.lockPointers();
+        map.mutex.unlock();
+    }
 
     // For the runtime, we store the number of mappings and how many bytes the final list is at the beginning of the array
     // The first 8 bytes are the length of the array
@@ -198,7 +217,7 @@ pub const SavedSourceMap = struct {
             if (seen_invalid) return;
             if (path) |note| {
                 Output.note("missing sourcemaps for {s}", .{note});
-                Output.note("consider bundling with '--sourcemap' to get an unminified traces", .{});
+                Output.note("consider bundling with '--sourcemap' to get unminified traces", .{});
             }
         }
     };
@@ -209,8 +228,8 @@ pub const SavedSourceMap = struct {
     }
 
     pub fn removeZigSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
-        this.mutex.lock();
-        defer this.mutex.unlock();
+        this.lock();
+        defer this.unlock();
 
         const entry = this.map.getEntry(bun.hash(path)) orelse return;
         const old_value = Value.from(entry.value_ptr.*);
@@ -222,8 +241,8 @@ pub const SavedSourceMap = struct {
         } else if (old_value.get(ParsedSourceMap)) |map| {
             if (map.underlying_provider.provider()) |prov| {
                 if (@intFromPtr(prov) == @intFromPtr(opaque_source_provider)) {
-                    map.deinit(default_allocator);
                     this.map.removeByPtr(entry.key_ptr);
+                    map.deref();
                 }
             }
         }
@@ -239,15 +258,14 @@ pub const SavedSourceMap = struct {
 
     pub fn deinit(this: *SavedSourceMap) void {
         {
-            this.mutex.lock();
-            defer this.mutex.unlock();
+            this.lock();
+            defer this.unlock();
 
             var iter = this.map.valueIterator();
             while (iter.next()) |val| {
                 var value = Value.from(val.*);
-                if (value.get(ParsedSourceMap)) |source_map_| {
-                    var source_map: *ParsedSourceMap = source_map_;
-                    source_map.deinit(default_allocator);
+                if (value.get(ParsedSourceMap)) |source_map| {
+                    source_map.deref();
                 } else if (value.get(SavedMappings)) |saved_mappings| {
                     var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
                     saved.deinit();
@@ -257,6 +275,7 @@ pub const SavedSourceMap = struct {
             }
         }
 
+        this.map.unlockPointers();
         this.map.deinit();
     }
 
@@ -265,14 +284,15 @@ pub const SavedSourceMap = struct {
     }
 
     fn putValue(this: *SavedSourceMap, path: []const u8, value: Value) !void {
-        this.mutex.lock();
-        defer this.mutex.unlock();
+        this.lock();
+        defer this.unlock();
+
         const entry = try this.map.getOrPut(bun.hash(path));
         if (entry.found_existing) {
             var old_value = Value.from(entry.value_ptr.*);
             if (old_value.get(ParsedSourceMap)) |parsed_source_map| {
                 var source_map: *ParsedSourceMap = parsed_source_map;
-                source_map.deinit(default_allocator);
+                source_map.deref();
             } else if (old_value.get(SavedMappings)) |saved_mappings| {
                 var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
                 saved.deinit();
@@ -283,37 +303,59 @@ pub const SavedSourceMap = struct {
         entry.value_ptr.* = value.ptr();
     }
 
-    pub fn getWithContent(
+    fn getWithContent(
         this: *SavedSourceMap,
         path: string,
         hint: SourceMap.ParseUrlResultHint,
     ) SourceMap.ParseUrl {
         const hash = bun.hash(path);
-        const mapping = this.map.getEntry(hash) orelse return .{};
+
+        // This lock is for the hash table
+        this.lock();
+
+        // This mapping entry is only valid while the mutex is locked
+        const mapping = this.map.getEntry(hash) orelse {
+            this.unlock();
+            return .{};
+        };
+
         switch (Value.from(mapping.value_ptr.*).tag()) {
             Value.Tag.ParsedSourceMap => {
-                return .{ .map = Value.from(mapping.value_ptr.*).as(ParsedSourceMap) };
+                defer this.unlock();
+                const map = Value.from(mapping.value_ptr.*).as(ParsedSourceMap);
+                map.ref();
+                return .{ .map = map };
             },
             Value.Tag.SavedMappings => {
+                defer this.unlock();
                 var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(Value.from(mapping.value_ptr.*).as(ParsedSourceMap))) };
                 defer saved.deinit();
-                const result = default_allocator.create(ParsedSourceMap) catch unreachable;
-                result.* = saved.toMapping(default_allocator, path) catch {
+                const result = ParsedSourceMap.new(saved.toMapping(default_allocator, path) catch {
                     _ = this.map.remove(mapping.key_ptr.*);
                     return .{};
-                };
+                });
                 mapping.value_ptr.* = Value.init(result).ptr();
+                result.ref();
+
                 return .{ .map = result };
             },
             Value.Tag.SourceProviderMap => {
-                var ptr = Value.from(mapping.value_ptr.*).as(SourceProviderMap);
+                const ptr: *SourceProviderMap = Value.from(mapping.value_ptr.*).as(SourceProviderMap);
+                this.unlock();
 
-                if (ptr.getSourceMap(path, .none, hint)) |parse|
+                // Do not lock the mutex while we're parsing JSON!
+                if (ptr.getSourceMap(path, .none, hint)) |parse| {
                     if (parse.map) |map| {
-                        mapping.value_ptr.* = Value.init(map).ptr();
-                        return parse;
-                    };
+                        map.ref();
+                        // The mutex is not locked. We have to check the hash table again.
+                        this.putValue(path, Value.init(map)) catch bun.outOfMemory();
 
+                        return parse;
+                    }
+                }
+
+                this.lock();
+                defer this.unlock();
                 // does not have a valid source map. let's not try again
                 _ = this.map.remove(hash);
 
@@ -327,6 +369,7 @@ pub const SavedSourceMap = struct {
                 if (Environment.allow_assert) {
                     @panic("Corrupt pointer tag");
                 }
+                this.unlock();
                 return .{};
             },
         }
@@ -343,14 +386,12 @@ pub const SavedSourceMap = struct {
         column: i32,
         source_handling: SourceMap.SourceContentHandling,
     ) ?SourceMap.Mapping.Lookup {
-        this.mutex.lock();
-        defer this.mutex.unlock();
-
         const parse = this.getWithContent(path, switch (source_handling) {
             .no_source_contents => .mappings_only,
             .source_contents => .{ .all = .{ .line = line, .column = column } },
         });
         const map = parse.map orelse return null;
+
         const mapping = parse.mapping orelse
             SourceMap.Mapping.find(map.mappings, line, column) orelse
             return null;
@@ -363,10 +404,6 @@ pub const SavedSourceMap = struct {
     }
 };
 const uws = bun.uws;
-
-pub export fn Bun__getDefaultGlobal() *JSGlobalObject {
-    return JSC.VirtualMachine.get().global;
-}
 
 pub export fn Bun__getVM() *JSC.VirtualMachine {
     return JSC.VirtualMachine.get();
@@ -389,37 +426,86 @@ pub export fn Bun__GlobalObject__hasIPC(global: *JSC.JSGlobalObject) bool {
     return global.bunVM().ipc != null;
 }
 
+extern fn Bun__Process__queueNextTick1(*JSC.ZigGlobalObject, JSC.JSValue, JSC.JSValue) void;
+
 pub export fn Bun__Process__send(
     globalObject: *JSGlobalObject,
     callFrame: *JSC.CallFrame,
-) JSValue {
+) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    if (callFrame.argumentsCount() < 1) {
-        globalObject.throwInvalidArguments("process.send requires at least one argument", .{});
-        return .zero;
+    var message, var handle, var options_, var callback = callFrame.arguments(4).ptr;
+
+    if (message == .zero) message = .undefined;
+    if (handle == .zero) handle = .undefined;
+    if (options_ == .zero) options_ = .undefined;
+    if (callback == .zero) callback = .undefined;
+
+    if (handle.isFunction()) {
+        callback = handle;
+        handle = .undefined;
+        options_ = .undefined;
+    } else if (options_.isFunction()) {
+        callback = options_;
+        options_ = .undefined;
+    } else if (!options_.isUndefined()) {
+        if (!globalObject.validateObject("options", options_, .{})) return .zero;
     }
+
+    const S = struct {
+        fn impl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+            const arguments_ = callframe.arguments(1).slice();
+            const ex = arguments_[0];
+            VirtualMachine.Process__emitErrorEvent(globalThis, ex);
+            return .undefined;
+        }
+    };
+
     const vm = globalObject.bunVM();
-    if (vm.getIPCInstance()) |ipc_instance| {
-        const success = ipc_instance.data.serializeAndSend(globalObject, callFrame.argument(0));
-        return if (success) .undefined else .zero;
-    } else {
-        globalObject.throw("IPC Socket is no longer open.", .{});
-        return .zero;
+    const zigGlobal: *JSC.ZigGlobalObject = @ptrCast(globalObject);
+    const ipc_instance = vm.getIPCInstance() orelse {
+        const ex = globalObject.ERR_IPC_CHANNEL_CLOSED("Channel closed.", .{}).toJS();
+        if (callback.isFunction()) {
+            Bun__Process__queueNextTick1(zigGlobal, callback, ex);
+        } else {
+            const fnvalue = JSC.JSFunction.create(globalObject, "", S.impl, 1, .{});
+            Bun__Process__queueNextTick1(zigGlobal, fnvalue, ex);
+        }
+        return .false;
+    };
+
+    if (message.isUndefined()) {
+        return globalObject.throwValueRet(globalObject.ERR_MISSING_ARGS_static(ZigString.static("message"), null, null));
     }
+    if (!message.isString() and !message.isObject() and !message.isNumber() and !message.isBoolean()) {
+        return globalObject.throwValueRet(globalObject.ERR_INVALID_ARG_TYPE_static(
+            ZigString.static("message"),
+            ZigString.static("string, object, number, or boolean"),
+            message,
+        ));
+    }
+
+    const good = ipc_instance.data.serializeAndSend(globalObject, message);
+
+    if (good) {
+        if (callback.isFunction()) {
+            Bun__Process__queueNextTick1(zigGlobal, callback, .zero);
+        }
+    } else {
+        const ex = globalObject.createTypeErrorInstance("process.send() failed", .{});
+        ex.put(globalObject, ZigString.static("syscall"), ZigString.static("write").toJS(globalObject));
+        if (callback.isFunction()) {
+            Bun__Process__queueNextTick1(zigGlobal, callback, ex);
+        } else {
+            const fnvalue = JSC.JSFunction.create(globalObject, "", S.impl, 1, .{});
+            Bun__Process__queueNextTick1(zigGlobal, fnvalue, ex);
+        }
+    }
+
+    return .true;
 }
 
 pub export fn Bun__isBunMain(globalObject: *JSGlobalObject, str: *const bun.String) bool {
     return str.eqlUTF8(globalObject.bunVM().main);
-}
-
-pub export fn Bun__Process__disconnect(
-    globalObject: *JSGlobalObject,
-    callFrame: *JSC.CallFrame,
-) JSValue {
-    JSC.markBinding(@src());
-    _ = callFrame;
-    _ = globalObject;
-    return .undefined;
 }
 
 /// When IPC environment variables are passed, the socket is not immediately opened,
@@ -451,7 +537,7 @@ pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JS
     // See the crash in https://github.com/oven-sh/bun/issues/9778
     const jsc_vm = JSC.VirtualMachine.get();
     _ = jsc_vm.uncaughtException(globalObject, value, false);
-    return JSC.JSValue.jsUndefined();
+    return .undefined;
 }
 
 /// This function is called on another thread
@@ -460,12 +546,9 @@ pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JS
 pub export fn Bun__queueTaskConcurrently(global: *JSGlobalObject, task: *JSC.CppTask) void {
     JSC.markBinding(@src());
 
-    const concurrent = bun.default_allocator.create(JSC.ConcurrentTask) catch unreachable;
-    concurrent.* = JSC.ConcurrentTask{
-        .task = Task.init(task),
-        .auto_delete = true,
-    };
-    global.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(concurrent);
+    global.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(
+        JSC.ConcurrentTask.create(Task.init(task)),
+    );
 }
 
 pub export fn Bun__handleRejectedPromise(global: *JSGlobalObject, promise: *JSC.JSPromise) void {
@@ -523,7 +606,7 @@ pub const ExitHandler = struct {
 
     pub fn dispatchOnExit(this: *ExitHandler) void {
         JSC.markBinding(@src());
-        var vm = @fieldParentPtr(VirtualMachine, "exit_handler", this);
+        const vm: *VirtualMachine = @alignCast(@fieldParentPtr("exit_handler", this));
         Process__dispatchOnExit(vm.global, this.exit_code);
         if (vm.isMainThread()) {
             Bun__closeAllSQLiteDatabasesForTermination();
@@ -532,7 +615,7 @@ pub const ExitHandler = struct {
 
     pub fn dispatchOnBeforeExit(this: *ExitHandler) void {
         JSC.markBinding(@src());
-        const vm = @fieldParentPtr(VirtualMachine, "exit_handler", this);
+        const vm: *VirtualMachine = @alignCast(@fieldParentPtr("exit_handler", this));
         Process__dispatchOnBeforeExit(vm.global, this.exit_code);
     }
 };
@@ -593,6 +676,30 @@ pub const ImportWatcher = union(enum) {
 
 pub const PlatformEventLoop = if (Environment.isPosix) uws.Loop else bun.Async.Loop;
 
+export fn Bun__setTLSRejectUnauthorizedValue(value: i32) void {
+    VirtualMachine.get().default_tls_reject_unauthorized = value != 0;
+}
+
+export fn Bun__getTLSRejectUnauthorizedValue() i32 {
+    return if (JSC.VirtualMachine.get().getTLSRejectUnauthorized()) 1 else 0;
+}
+
+export fn Bun__setVerboseFetchValue(value: i32) void {
+    VirtualMachine.get().default_verbose_fetch = if (value == 1) .headers else if (value == 2) .curl else .none;
+}
+
+export fn Bun__getVerboseFetchValue() i32 {
+    return switch (JSC.VirtualMachine.get().getVerboseFetch()) {
+        .none => 0,
+        .headers => 1,
+        .curl => 2,
+    };
+}
+
+const body_value_pool_size = if (bun.heap_breakdown.enabled) 0 else 256;
+pub const BodyValueRef = bun.HiveRef(JSC.WebCore.Body.Value, body_value_pool_size);
+const BodyValueHiveAllocator = bun.HiveArray(BodyValueRef, body_value_pool_size).Fallback;
+
 /// TODO: rename this to ScriptExecutionContext
 /// This is the shared global state for a single JS instance execution
 /// Today, Bun is one VM per thread, so the name "VirtualMachine" sort of makes sense
@@ -635,11 +742,15 @@ pub const VirtualMachine = struct {
     last_reported_error_for_dedupe: JSValue = .zero,
     exit_handler: ExitHandler = .{},
 
-    /// Do not access this field directly
-    /// It exists in the VirtualMachine struct so that
-    /// we don't accidentally make a stack copy of it
-    /// only use it through
-    /// source_mappings
+    default_tls_reject_unauthorized: ?bool = null,
+    default_verbose_fetch: ?bun.http.HTTPVerboseLevel = null,
+
+    /// Do not access this field directly!
+    ///
+    /// It exists in the VirtualMachine struct so that we don't accidentally
+    /// make a stack copy of it only use it through source_mappings.
+    ///
+    /// This proposal could let us safely move it back https://github.com/ziglang/zig/issues/7769
     saved_source_map_table: SavedSourceMap.HashTable = undefined,
     source_mappings: SavedSourceMap = undefined,
 
@@ -724,9 +835,15 @@ pub const VirtualMachine = struct {
 
     debug_thread_id: if (Environment.allow_assert) std.Thread.Id else void,
 
+    body_value_hive_allocator: BodyValueHiveAllocator = undefined,
+
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
 
     pub const OnException = fn (*ZigException) void;
+
+    pub fn initRequestBodyValue(this: *VirtualMachine, body: JSC.WebCore.Body.Value) !*BodyValueRef {
+        return BodyValueRef.init(body, &this.body_value_hive_allocator);
+    }
 
     pub fn uwsLoop(this: *const VirtualMachine) *uws.Loop {
         if (comptime Environment.isPosix) {
@@ -758,8 +875,45 @@ pub const VirtualMachine = struct {
         return this.is_shutting_down;
     }
 
+    pub fn getTLSRejectUnauthorized(this: *const VirtualMachine) bool {
+        return this.default_tls_reject_unauthorized orelse this.bundler.env.getTLSRejectUnauthorized();
+    }
+
+    pub fn getVerboseFetch(this: *VirtualMachine) bun.http.HTTPVerboseLevel {
+        return this.default_verbose_fetch orelse {
+            if (this.bundler.env.get("BUN_CONFIG_VERBOSE_FETCH")) |verbose_fetch| {
+                if (strings.eqlComptime(verbose_fetch, "true") or strings.eqlComptime(verbose_fetch, "1")) {
+                    this.default_verbose_fetch = .headers;
+                    return .headers;
+                } else if (strings.eqlComptime(verbose_fetch, "curl")) {
+                    this.default_verbose_fetch = .curl;
+                    return .curl;
+                }
+            }
+            this.default_verbose_fetch = .none;
+            return .none;
+        };
+    }
+
     const VMHolder = struct {
         pub threadlocal var vm: ?*VirtualMachine = null;
+        pub threadlocal var cached_global_object: ?*JSGlobalObject = null;
+        pub export fn Bun__setDefaultGlobalObject(global: *JSGlobalObject) void {
+            if (vm) |vm_instance| {
+                vm_instance.global = global;
+            }
+
+            cached_global_object = global;
+        }
+
+        pub export fn Bun__getDefaultGlobalObject() ?*JSGlobalObject {
+            return cached_global_object orelse {
+                if (vm) |vm_instance| {
+                    cached_global_object = vm_instance.global;
+                }
+                return null;
+            };
+        }
     };
 
     pub inline fn get() *VirtualMachine {
@@ -874,27 +1028,41 @@ pub const VirtualMachine = struct {
         };
     }
 
-    pub fn loadExtraEnv(this: *VirtualMachine) void {
+    fn ensureSourceCodePrinter(this: *VirtualMachine) void {
+        if (source_code_printer == null) {
+            const allocator = if (bun.heap_breakdown.enabled) bun.heap_breakdown.namedAllocator("SourceCode") else this.allocator;
+            const writer = try js_printer.BufferWriter.init(allocator);
+            source_code_printer = allocator.create(js_printer.BufferPrinter) catch unreachable;
+            source_code_printer.?.* = js_printer.BufferPrinter.init(writer);
+            source_code_printer.?.ctx.append_null_byte = false;
+        }
+    }
+
+    pub fn loadExtraEnvAndSourceCodePrinter(this: *VirtualMachine) void {
         var map = this.bundler.env.map;
+
+        ensureSourceCodePrinter(this);
 
         if (map.get("BUN_SHOW_BUN_STACKFRAMES") != null) {
             this.hide_bun_stackframes = false;
         }
 
+        if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER")) {
+            this.transpiler_store.enabled = false;
+        }
+
         if (map.map.fetchSwapRemove("NODE_CHANNEL_FD")) |kv| {
+            const fd_s = kv.value.value;
             const mode = if (map.map.fetchSwapRemove("NODE_CHANNEL_SERIALIZATION_MODE")) |mode_kv|
                 IPC.Mode.fromString(mode_kv.value.value) orelse .json
             else
                 .json;
-            IPC.log("IPC environment variables: NODE_CHANNEL_FD={d}, NODE_CHANNEL_SERIALIZATION_MODE={s}", .{ kv.value.value, @tagName(mode) });
-            if (Environment.isWindows) {
-                this.initIPCInstance(kv.value.value, mode);
-            } else {
-                if (std.fmt.parseInt(i32, kv.value.value, 10)) |fd| {
-                    this.initIPCInstance(bun.toFD(fd), mode);
-                } else |_| {
-                    Output.warn("Failed to parse IPC channel number '{s}'", .{kv.value.value});
-                }
+
+            IPC.log("IPC environment variables: NODE_CHANNEL_FD={s}, NODE_CHANNEL_SERIALIZATION_MODE={s}", .{ fd_s, @tagName(mode) });
+            if (std.fmt.parseInt(i32, fd_s, 10)) |fd| {
+                this.initIPCInstance(bun.toFD(fd), mode);
+            } else |_| {
+                Output.warn("Failed to parse IPC channel number '{s}'", .{fd_s});
             }
         }
 
@@ -917,6 +1085,15 @@ pub const VirtualMachine = struct {
             } else if (strings.eqlComptime(gc_level, "2")) {
                 this.aggressive_garbage_collection = .aggressive;
                 has_bun_garbage_collector_flag_enabled = true;
+            }
+
+            if (map.get("BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT")) |value| {
+                if (std.fmt.parseInt(usize, value, 10)) |limit| {
+                    synthetic_allocation_limit = limit;
+                    string_allocation_limit = limit;
+                } else |_| {
+                    Output.panic("BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT must be a positive integer", .{});
+                }
             }
         }
     }
@@ -959,7 +1136,7 @@ pub const VirtualMachine = struct {
 
         if (this.is_handling_uncaught_exception) {
             this.runErrorHandler(err, null);
-            Bun__Process__exit(globalObject, 1);
+            Bun__Process__exit(globalObject, 7);
             @panic("Uncaught exception while handling uncaught exception");
         }
         this.is_handling_uncaught_exception = true;
@@ -1135,6 +1312,10 @@ pub const VirtualMachine = struct {
         }
     }
 
+    pub fn globalExit(this: *VirtualMachine) noreturn {
+        bun.Global.exit(this.exit_handler.exit_code);
+    }
+
     pub fn nextAsyncTaskID(this: *VirtualMachine) u64 {
         var debugger: *Debugger = &(this.debugger orelse return 0);
         debugger.next_debugger_id +%= 1;
@@ -1187,7 +1368,9 @@ pub const VirtualMachine = struct {
             }
 
             debug("spin", .{});
-            while (futex_atomic.load(.Monotonic) > 0) std.Thread.Futex.wait(&futex_atomic, 1);
+            while (futex_atomic.load(.monotonic) > 0) {
+                std.Thread.Futex.wait(&futex_atomic, 1);
+            }
             if (comptime Environment.allow_assert)
                 debug("waitForDebugger: {}", .{Output.ElapsedFormatter{
                     .colors = Output.enable_ansi_colors_stderr,
@@ -1259,7 +1442,7 @@ pub const VirtualMachine = struct {
             }
 
             debug("wake", .{});
-            futex_atomic.store(0, .Monotonic);
+            futex_atomic.store(0, .monotonic);
             std.Thread.Futex.wake(&futex_atomic, 1);
 
             this.eventLoop().tick();
@@ -1323,6 +1506,7 @@ pub const VirtualMachine = struct {
             this.macro_event_loop.global = this.global;
             this.macro_event_loop.virtual_machine = this;
             this.macro_event_loop.concurrent_tasks = .{};
+            ensureSourceCodePrinter(this);
         }
 
         this.bundler.options.target = .bun_macro;
@@ -1385,7 +1569,7 @@ pub const VirtualMachine = struct {
 
         vm.* = VirtualMachine{
             .global = undefined,
-            .transpiler_store = RuntimeTranspilerStore.init(allocator),
+            .transpiler_store = RuntimeTranspilerStore.init(),
             .allocator = allocator,
             .entry_point = ServerEntryPoint{},
             .bundler = bundler,
@@ -1400,11 +1584,11 @@ pub const VirtualMachine = struct {
             .origin_timer = std.time.Timer.start() catch @panic("Timers are not supported on this system."),
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
-            .ref_strings_mutex = Lock.init(),
+            .ref_strings_mutex = .{},
             .standalone_module_graph = opts.graph.?,
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
         };
-        vm.source_mappings = .{ .map = &vm.saved_source_map_table };
+        vm.source_mappings.init(&vm.saved_source_map_table);
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
             default_allocator,
         );
@@ -1447,14 +1631,8 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.virtual_machine = vm;
         vm.jsc = vm.global.vm();
 
-        if (source_code_printer == null) {
-            const writer = try js_printer.BufferWriter.init(allocator);
-            source_code_printer = allocator.create(js_printer.BufferPrinter) catch unreachable;
-            source_code_printer.?.* = js_printer.BufferPrinter.init(writer);
-            source_code_printer.?.ctx.append_null_byte = false;
-        }
-
         vm.configureDebugger(opts.debugger);
+        vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 
         return vm;
     }
@@ -1500,7 +1678,7 @@ pub const VirtualMachine = struct {
 
         vm.* = VirtualMachine{
             .global = undefined,
-            .transpiler_store = RuntimeTranspilerStore.init(allocator),
+            .transpiler_store = RuntimeTranspilerStore.init(),
             .allocator = allocator,
             .entry_point = ServerEntryPoint{},
             .bundler = bundler,
@@ -1515,10 +1693,10 @@ pub const VirtualMachine = struct {
             .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
-            .ref_strings_mutex = Lock.init(),
+            .ref_strings_mutex = .{},
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
         };
-        vm.source_mappings = .{ .map = &vm.saved_source_map_table };
+        vm.source_mappings.init(&vm.saved_source_map_table);
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
             default_allocator,
         );
@@ -1566,14 +1744,8 @@ pub const VirtualMachine = struct {
         if (opts.smol)
             is_smol_mode = opts.smol;
 
-        if (source_code_printer == null) {
-            const writer = try js_printer.BufferWriter.init(allocator);
-            source_code_printer = allocator.create(js_printer.BufferPrinter) catch unreachable;
-            source_code_printer.?.* = js_printer.BufferPrinter.init(writer);
-            source_code_printer.?.ctx.append_null_byte = false;
-        }
-
         vm.configureDebugger(opts.debugger);
+        vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 
         return vm;
     }
@@ -1648,7 +1820,7 @@ pub const VirtualMachine = struct {
         vm.* = VirtualMachine{
             .global = undefined,
             .allocator = allocator,
-            .transpiler_store = RuntimeTranspilerStore.init(allocator),
+            .transpiler_store = RuntimeTranspilerStore.init(),
             .entry_point = ServerEntryPoint{},
             .bundler = bundler,
             .console = console,
@@ -1662,12 +1834,12 @@ pub const VirtualMachine = struct {
             .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
-            .ref_strings_mutex = Lock.init(),
+            .ref_strings_mutex = .{},
             .standalone_module_graph = worker.parent.standalone_module_graph,
             .worker = worker,
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
         };
-        vm.source_mappings = .{ .map = &vm.saved_source_map_table };
+        vm.source_mappings.init(&vm.saved_source_map_table);
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
             default_allocator,
         );
@@ -1710,12 +1882,7 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.virtual_machine = vm;
         vm.jsc = vm.global.vm();
         vm.bundler.setAllocator(allocator);
-        if (source_code_printer == null) {
-            const writer = try js_printer.BufferWriter.init(allocator);
-            source_code_printer = allocator.create(js_printer.BufferPrinter) catch unreachable;
-            source_code_printer.?.* = js_printer.BufferPrinter.init(writer);
-            source_code_printer.?.ctx.append_null_byte = false;
-        }
+        vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 
         return vm;
     }
@@ -1732,7 +1899,7 @@ pub const VirtualMachine = struct {
             return ResolvedSource{
                 .source_code = bun.String.init(""),
                 .specifier = specifier,
-                .source_url = bun.String.init(source_url),
+                .source_url = specifier.createIfDifferent(source_url),
                 .hash = 0,
                 .allocator = null,
                 .source_code_needs_deref = false,
@@ -1747,7 +1914,7 @@ pub const VirtualMachine = struct {
         return ResolvedSource{
             .source_code = bun.String.init(source.impl),
             .specifier = specifier,
-            .source_url = bun.String.init(source_url),
+            .source_url = specifier.createIfDifferent(source_url),
             .hash = source.hash,
             .allocator = source,
             .source_code_needs_deref = false,
@@ -2233,16 +2400,6 @@ pub const VirtualMachine = struct {
         res.* = ErrorableString.ok(bun.String.init(result.path));
     }
 
-    // // This double prints
-    // pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, _: JSPromiseRejectionOperation) callconv(.C) JSValue {
-    //     const result = promise.result(global.vm());
-    //     if (@intFromEnum(VirtualMachine.get().last_error_jsvalue) != @intFromEnum(result)) {
-    //         VirtualMachine.get().runErrorHandler(result, null);
-    //     }
-
-    //     return JSValue.jsUndefined();
-    // }
-
     pub const main_file_name: string = "bun:main";
 
     pub fn drainMicrotasks(this: *VirtualMachine) void {
@@ -2324,7 +2481,14 @@ pub const VirtualMachine = struct {
 
     // TODO:
     pub fn deinit(this: *VirtualMachine) void {
+        if (source_code_printer) |print| {
+            print.getMutableBuffer().deinit();
+            print.ctx.written = &.{};
+        }
         this.source_mappings.deinit();
+        if (this.rare_data) |rare_data| {
+            rare_data.deinit();
+        }
         this.has_terminated = true;
     }
 
@@ -2735,13 +2899,13 @@ pub const VirtualMachine = struct {
                 writer: Writer,
                 current_exception_list: ?*ExceptionList = null,
 
-                pub fn iteratorWithColor(_vm: [*c]VM, globalObject: [*c]JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+                pub fn iteratorWithColor(_vm: [*c]VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                     iterator(_vm, globalObject, nextValue, ctx.?, true);
                 }
-                pub fn iteratorWithOutColor(_vm: [*c]VM, globalObject: [*c]JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+                pub fn iteratorWithOutColor(_vm: [*c]VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                     iterator(_vm, globalObject, nextValue, ctx.?, false);
                 }
-                inline fn iterator(_: [*c]VM, _: [*c]JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
+                inline fn iterator(_: [*c]VM, _: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
                     const this_ = @as(*@This(), @ptrFromInt(@intFromPtr(ctx)));
                     VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, Writer, this_.writer, color, allow_side_effects);
                 }
@@ -2835,7 +2999,7 @@ pub const VirtualMachine = struct {
     pub fn reportUncaughtException(globalObject: *JSGlobalObject, exception: *JSC.Exception) JSValue {
         var jsc_vm = globalObject.bunVM();
         _ = jsc_vm.uncaughtException(globalObject, exception.value(), false);
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
 
     pub fn printStackTrace(comptime Writer: type, writer: Writer, trace: ZigStackTrace, comptime allow_ansi_colors: bool) !void {
@@ -2858,7 +3022,7 @@ pub const VirtualMachine = struct {
 
                 const has_name = std.fmt.count("{}", .{frame.nameFormatter(false)}) > 0;
 
-                if (has_name) {
+                if (has_name and !frame.position.isInvalid()) {
                     try writer.print(
                         comptime Output.prettyFmt(
                             "<r>      <d>at <r>{}<d> (<r>{}<d>)<r>\n",
@@ -2876,10 +3040,37 @@ pub const VirtualMachine = struct {
                             ),
                         },
                     );
-                } else {
+                } else if (!frame.position.isInvalid()) {
                     try writer.print(
                         comptime Output.prettyFmt(
                             "<r>      <d>at <r>{}\n",
+                            allow_ansi_colors,
+                        ),
+                        .{
+                            frame.sourceURLFormatter(
+                                dir,
+                                origin,
+                                false,
+                                allow_ansi_colors,
+                            ),
+                        },
+                    );
+                } else if (has_name) {
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r>      <d>at <r>{}<d>\n",
+                            allow_ansi_colors,
+                        ),
+                        .{
+                            frame.nameFormatter(
+                                allow_ansi_colors,
+                            ),
+                        },
+                    );
+                } else {
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r>      <d>at <r>{}<d>\n",
                             allow_ansi_colors,
                         ),
                         .{
@@ -2906,12 +3097,14 @@ pub const VirtualMachine = struct {
             var sourceURL = frame.source_url.toUTF8(bun.default_allocator);
             defer sourceURL.deinit();
 
-            if (this.source_mappings.resolveMapping(
+            if (this.resolveSourceMapping(
                 sourceURL.slice(),
                 @max(frame.position.line.zeroBased(), 0),
                 @max(frame.position.column.zeroBased(), 0),
                 .no_source_contents,
             )) |lookup| {
+                const source_map = lookup.source_map;
+                defer if (source_map) |map| map.deref();
                 if (lookup.displaySourceURLIfNeeded(sourceURL.slice())) |source_url| {
                     frame.source_url.deref();
                     frame.source_url = source_url;
@@ -3023,12 +3216,11 @@ pub const VirtualMachine = struct {
                     },
                     .source_index = 0,
                 },
-                // undefined is fine, because these two values are never read if `top.remapped == true`
-                .source_map = undefined,
-                .prefetched_source_code = undefined,
+                .source_map = null,
+                .prefetched_source_code = null,
             }
         else
-            this.source_mappings.resolveMapping(
+            this.resolveSourceMapping(
                 top_source_url.slice(),
                 @max(top.position.line.zeroBased(), 0),
                 @max(top.position.column.zeroBased(), 0),
@@ -3037,6 +3229,8 @@ pub const VirtualMachine = struct {
 
         if (maybe_lookup) |lookup| {
             const mapping = lookup.mapping;
+            const source_map = lookup.source_map;
+            defer if (source_map) |map| map.deref();
 
             if (!top.remapped) {
                 if (lookup.displaySourceURLIfNeeded(top_source_url.slice())) |src| {
@@ -3046,7 +3240,8 @@ pub const VirtualMachine = struct {
             }
 
             const code = code: {
-                if (!top.remapped and lookup.source_map.isExternal()) {
+                if (bun.getRuntimeFeatureFlag("BUN_DISABLE_SOURCE_CODE_PREVIEW") or bun.getRuntimeFeatureFlag("BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW")) break :code ZigString.Slice.empty;
+                if (!top.remapped and lookup.source_map != null and lookup.source_map.?.isExternal()) {
                     if (lookup.getSourceCode(top_source_url.slice())) |src| {
                         break :code src;
                     }
@@ -3097,12 +3292,13 @@ pub const VirtualMachine = struct {
                 if (frame == top or frame.position.isInvalid()) continue;
                 const source_url = frame.source_url.toUTF8(bun.default_allocator);
                 defer source_url.deinit();
-                if (this.source_mappings.resolveMapping(
+                if (this.resolveSourceMapping(
                     source_url.slice(),
                     @max(frame.position.line.zeroBased(), 0),
                     @max(frame.position.column.zeroBased(), 0),
                     .no_source_contents,
                 )) |lookup| {
+                    defer if (lookup.source_map) |map| map.deref();
                     if (lookup.displaySourceURLIfNeeded(source_url.slice())) |src| {
                         frame.source_url.deref();
                         frame.source_url = src;
@@ -3121,6 +3317,9 @@ pub const VirtualMachine = struct {
         var exception = exception_holder.zigException();
         defer exception_holder.deinit(this);
 
+        // The ZigException structure stores substrings of the source code, in
+        // which we need the lifetime of this data to outlive the inner call to
+        // remapZigException, but still get freed.
         var source_code_slice: ?ZigString.Slice = null;
         defer if (source_code_slice) |slice| slice.deinit();
 
@@ -3543,8 +3742,40 @@ pub const VirtualMachine = struct {
         writer.print("\n", .{}) catch {};
     }
 
+    pub fn resolveSourceMapping(
+        this: *VirtualMachine,
+        path: []const u8,
+        line: i32,
+        column: i32,
+        source_handling: SourceMap.SourceContentHandling,
+    ) ?SourceMap.Mapping.Lookup {
+        return this.source_mappings.resolveMapping(path, line, column, source_handling) orelse {
+            if (this.standalone_module_graph) |graph| {
+                const file = graph.find(path) orelse return null;
+                const map = file.sourcemap.load() orelse return null;
+
+                map.ref();
+
+                this.source_mappings.putValue(path, SavedSourceMap.Value.init(map)) catch
+                    bun.outOfMemory();
+
+                const mapping = SourceMap.Mapping.find(map.mappings, line, column) orelse
+                    return null;
+
+                return .{
+                    .mapping = mapping,
+                    .source_map = map,
+                    .prefetched_source_code = null,
+                };
+            }
+
+            return null;
+        };
+    }
+
     extern fn Process__emitMessageEvent(global: *JSGlobalObject, value: JSValue) void;
     extern fn Process__emitDisconnectEvent(global: *JSGlobalObject) void;
+    extern fn Process__emitErrorEvent(global: *JSGlobalObject, value: JSValue) void;
 
     pub const IPCInstanceUnion = union(enum) {
         /// IPC is put in this "enabled but not started" state when IPC is detected
@@ -3558,20 +3789,23 @@ pub const VirtualMachine = struct {
 
     pub const IPCInstance = struct {
         globalThis: ?*JSGlobalObject,
-        context: if (Environment.isPosix) *uws.SocketContext else u0,
+        context: if (Environment.isPosix) *uws.SocketContext else void,
         data: IPC.IPCData,
+        has_disconnect_called: bool = false,
 
         pub usingnamespace bun.New(@This());
+
+        const node_cluster_binding = @import("./node/node_cluster_binding.zig");
 
         pub fn ipc(this: *IPCInstance) *IPC.IPCData {
             return &this.data;
         }
 
-        pub fn handleIPCMessage(
-            this: *IPCInstance,
-            message: IPC.DecodedIPCMessage,
-        ) void {
+        pub fn handleIPCMessage(this: *IPCInstance, message: IPC.DecodedIPCMessage) void {
             JSC.markBinding(@src());
+            const globalThis = this.globalThis orelse return;
+            const event_loop = JSC.VirtualMachine.get().eventLoop();
+
             switch (message) {
                 // In future versions we can read this in order to detect version mismatches,
                 // or disable future optimizations if the subprocess is old.
@@ -3580,34 +3814,52 @@ pub const VirtualMachine = struct {
                 },
                 .data => |data| {
                     IPC.log("Received IPC message from parent", .{});
-                    if (this.globalThis) |global| {
-                        Process__emitMessageEvent(global, data);
-                    }
+                    event_loop.enter();
+                    defer event_loop.exit();
+                    Process__emitMessageEvent(globalThis, data);
+                },
+                .internal => |data| {
+                    IPC.log("Received IPC internal message from parent", .{});
+                    event_loop.enter();
+                    defer event_loop.exit();
+                    node_cluster_binding.handleInternalMessageChild(globalThis, data);
                 },
             }
         }
 
         pub fn handleIPCClose(this: *IPCInstance) void {
-            if (this.globalThis) |global| {
-                var vm = global.bunVM();
-                vm.ipc = null;
-                Process__emitDisconnectEvent(global);
-            }
+            IPC.log("IPCInstance#handleIPCClose", .{});
+            var vm = VirtualMachine.get();
+            vm.ipc = null;
+            const event_loop = vm.eventLoop();
+            node_cluster_binding.child_singleton.deinit();
+            event_loop.enter();
+            Process__emitDisconnectEvent(vm.global);
+            event_loop.exit();
             if (Environment.isPosix) {
                 uws.us_socket_context_free(0, this.context);
             }
             this.destroy();
         }
 
+        extern fn Bun__setChannelRef(*JSC.JSGlobalObject, bool) void;
+
+        export fn Bun__closeChildIPC(global: *JSGlobalObject) void {
+            const ipc_data = &global.bunVM().ipc.?.initialized.data;
+            JSC.VirtualMachine.get().enqueueImmediateTask(JSC.ManagedTask.New(IPC.IPCData, closeReal).init(ipc_data));
+        }
+
+        fn closeReal(ipc_data: *IPC.IPCData) void {
+            ipc_data.close();
+        }
+
         pub const Handlers = IPC.NewIPCHandler(IPCInstance);
     };
 
-    const IPCInfoType = if (Environment.isWindows) []const u8 else bun.FileDescriptor;
+    const IPCInfoType = bun.FileDescriptor;
     pub fn initIPCInstance(this: *VirtualMachine, info: IPCInfoType, mode: IPC.Mode) void {
-        IPC.log("initIPCInstance {" ++ (if (Environment.isWindows) "s" else "") ++ "}", .{info});
-        this.ipc = .{
-            .waiting = .{ .info = info, .mode = mode },
-        };
+        IPC.log("initIPCInstance {}", .{info});
+        this.ipc = .{ .waiting = .{ .info = info, .mode = mode } };
     }
 
     pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
@@ -3615,7 +3867,7 @@ pub const VirtualMachine = struct {
         if (this.ipc.? != .waiting) return this.ipc.?.initialized;
         const opts = this.ipc.?.waiting;
 
-        IPC.log("getIPCInstance {" ++ (if (Environment.isWindows) "s" else "") ++ "}", .{opts.info});
+        IPC.log("getIPCInstance {}", .{opts.info});
 
         this.event_loop.ensureWaker();
 
@@ -3645,14 +3897,14 @@ pub const VirtualMachine = struct {
             .windows => instance: {
                 var instance = IPCInstance.new(.{
                     .globalThis = this.global,
-                    .context = 0,
+                    .context = {},
                     .data = .{ .mode = opts.mode },
                 });
 
                 instance.data.configureClient(IPCInstance, instance, opts.info) catch {
                     instance.destroy();
                     this.ipc = null;
-                    Output.warn("Unable to start IPC pipe '{s}'", .{opts.info});
+                    Output.warn("Unable to start IPC pipe '{}'", .{opts.info});
                     return null;
                 };
 
@@ -3686,8 +3938,9 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
         onAccept: std.ArrayHashMapUnmanaged(GenericWatcher.HashType, bun.BabyList(OnAcceptCallback), bun.ArrayIdentityContext, false) = .{},
         ctx: *Ctx,
         verbose: bool = false,
+        pending_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
-        tombstones: std.StringHashMapUnmanaged(*bun.fs.FileSystem.RealFS.EntriesOption) = .{},
+        tombstones: bun.StringHashMapUnmanaged(*bun.fs.FileSystem.RealFS.EntriesOption) = .{},
 
         pub fn eventLoop(this: @This()) *EventLoopType {
             return this.ctx.eventLoop();
@@ -3723,7 +3976,18 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             }
 
             pub fn run(this: *HotReloadTask) void {
-                this.reloader.ctx.reload();
+                // Since we rely on the event loop for hot reloads, there can be
+                // a delay before the next reload begins. In the time between the
+                // last reload and the next one, we shouldn't schedule any more
+                // hot reloads. Since we reload literally everything, we don't
+                // need to worry about missing any changes.
+                //
+                // Note that we set the count _before_ we reload, so that if we
+                // get another hot reload request while we're reloading, we'll
+                // still enqueue it.
+                while (this.reloader.pending_count.swap(0, .monotonic) > 0) {
+                    this.reloader.ctx.reload();
+                }
             }
 
             pub fn enqueue(this: *HotReloadTask) void {
@@ -3739,6 +4003,8 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     bun.reloadProcess(bun.default_allocator, clear_screen, false);
                     unreachable;
                 }
+
+                _ = this.reloader.pending_count.fetchAdd(1, .monotonic);
 
                 BunDebugger__willHotReload();
                 var that = bun.default_allocator.create(HotReloadTask) catch unreachable;
@@ -3790,13 +4056,19 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         reloader,
                         this.bundler.fs,
                         bun.default_allocator,
-                    ) catch @panic("Failed to enable File Watcher") }
+                    ) catch |err| {
+                        bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                        Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
+                    } }
                 else
                     .{ .hot = @This().Watcher.init(
                         reloader,
                         this.bundler.fs,
                         bun.default_allocator,
-                    ) catch @panic("Failed to enable File Watcher") };
+                    ) catch |err| {
+                        bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                        Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
+                    } };
 
                 if (reload_immediately) {
                     this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.watch);
@@ -3808,7 +4080,10 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     reloader,
                     this.bundler.fs,
                     bun.default_allocator,
-                ) catch @panic("Failed to enable File Watcher");
+                ) catch |err| {
+                    bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                    Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
+                };
                 this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.?);
             }
 
@@ -3839,6 +4114,9 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             err: bun.sys.Error,
         ) void {
             Output.err(@as(bun.C.E, @enumFromInt(err.errno)), "Watcher crashed", .{});
+            if (bun.Environment.isDebug) {
+                @panic("Watcher crash");
+            }
         }
 
         pub fn getContext(this: *@This()) *@This().Watcher {
@@ -3946,7 +4224,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                         if (parent_hash == id) {
                                             const affected_path = file_paths[entry_id];
                                             const was_deleted = check: {
-                                                std.os.access(affected_path, std.os.F_OK) catch break :check true;
+                                                std.posix.access(affected_path, std.posix.F_OK) catch break :check true;
                                                 break :check false;
                                             };
                                             if (!was_deleted) continue;
@@ -4064,3 +4342,31 @@ export fn Bun__removeSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_
 }
 
 pub export var isBunTest: bool = false;
+
+// TODO: evaluate if this has any measurable performance impact.
+pub var synthetic_allocation_limit: usize = std.math.maxInt(u32);
+pub var string_allocation_limit: usize = std.math.maxInt(u32);
+
+comptime {
+    @export(synthetic_allocation_limit, .{ .name = "Bun__syntheticAllocationLimit" });
+    @export(string_allocation_limit, .{ .name = "Bun__stringSyntheticAllocationLimit" });
+}
+
+pub export fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+    const args = callframe.arguments(1).slice();
+    if (args.len < 1) {
+        globalObject.throwNotEnoughArguments("setSyntheticAllocationLimitForTesting", 1, args.len);
+        return JSValue.zero;
+    }
+
+    if (!args[0].isNumber()) {
+        globalObject.throwInvalidArguments("setSyntheticAllocationLimitForTesting expects a number", .{});
+        return JSValue.zero;
+    }
+
+    const limit: usize = @intCast(@max(args[0].coerceToInt64(globalObject), 1024 * 1024));
+    const prev = synthetic_allocation_limit;
+    synthetic_allocation_limit = limit;
+    string_allocation_limit = limit;
+    return JSValue.jsNumber(prev);
+}

@@ -22,16 +22,38 @@
 				"tarball": "http://localhost:4873/optional-peer-deps/-/optional-peer-deps-1.0.0.tgz"
 			},
 			"contributors": []
+		},
+		"1.0.1": {
+			"name": "optional-peer-deps",
+			"version": "1.0.1",
+			"peerDependencies": {
+				"no-deps": "*"
+			},
+			"peerDependenciesMeta": {
+				"no-deps": {
+					"optional": true
+				}
+			},
+			"_id": "optional-peer-deps@1.0.1",
+			"_nodeVersion": "22.3.0",
+			"_npmVersion": "10.8.1",
+			"dist": {
+				"integrity": "sha512-uOXnoNBSmmFwb8Jyesz6PgmhBKNi7tWRZucHUzqKso7zWVieVD99RM5UwzW2ar45KE9FBi7vtMA2s/MA+wXnlg==",
+				"shasum": "391af8b02376645200bb74ad7847bf74ded79a24",
+				"tarball": "http://localhost:4873/optional-peer-deps/-/optional-peer-deps-1.0.1.tgz"
+			},
+			"contributors": []
 		}
 	},
 	"time": {
-		"modified": "2023-11-01T22:05:27.238Z",
+		"modified": "2024-07-09T08:11:22.701Z",
 		"created": "2023-11-01T22:05:27.238Z",
-		"1.0.0": "2023-11-01T22:05:27.238Z"
+		"1.0.0": "2023-11-01T22:05:27.238Z",
+		"1.0.1": "2024-07-09T08:11:22.701Z"
 	},
 	"users": {},
 	"dist-tags": {
-		"latest": "1.0.0"
+		"latest": "1.0.1"
 	},
 	"_uplinks": {},
 	"_distfiles": {},
@@ -39,6 +61,10 @@
 		"optional-peer-deps-1.0.0.tgz": {
 			"shasum": "4a2be080620986b309ae061903aaa68edf73070b",
 			"version": "1.0.0"
+		},
+		"optional-peer-deps-1.0.1.tgz": {
+			"shasum": "391af8b02376645200bb74ad7847bf74ded79a24",
+			"version": "1.0.1"
 		}
 	},
 	"_rev": "3-62c621d1e44acf6e",

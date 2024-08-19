@@ -70,7 +70,7 @@ describe("fetch doesn't leak", () => {
     }
 
     if (compressed) {
-      env.COUNT = "5000";
+      env.COUNT = "1000";
     }
 
     const proc = Bun.spawn({

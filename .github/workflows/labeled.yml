@@ -1,0 +1,81 @@
+name: Issue Labeled
+env:
+  BUN_VERSION: 1.1.13
+
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  on-labeled:
+    runs-on: ubuntu-latest
+    if: github.event.label.name == 'crash' || github.event.label.name == 'needs repro'
+    permissions:
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            scripts
+            .github
+            CMakeLists.txt
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: "1.1.13"
+      - name: "add platform and command label"
+        id: add-labels
+        if: github.event.label.name == 'crash'
+        env:
+          GITHUB_ISSUE_BODY: ${{ github.event.issue.body }}
+          GITHUB_ISSUE_TITLE: ${{ github.event.issue.title }}
+        shell: bash
+        run: |
+          LABELS=$(bun scripts/read-issue.ts)
+          echo "labels=$LABELS" >> $GITHUB_OUTPUT
+          bun scripts/is-outdated.ts
+
+          if [[ -f "is-outdated.txt" ]]; then 
+            echo "is-outdated=true" >> $GITHUB_OUTPUT
+          fi
+
+          if [[ -f "outdated.txt" ]]; then
+            echo "oudated=$(cat outdated.txt)" >> $GITHUB_OUTPUT
+          fi
+
+          echo "latest=$(cat LATEST)" >> $GITHUB_OUTPUT
+
+          rm -rf is-outdated.txt outdated.txt latest.txt
+      - name: Add labels
+        uses: actions-cool/issues-helper@v3
+        if: github.event.label.name == 'crash'
+        with:
+          actions: "add-labels"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.issue.number }}
+          labels: ${{ steps.add-labels.outputs.labels }}
+      - name: Comment outdated
+        if: steps.add-labels.outputs.is-outdated == 'true' && github.event.label.name == 'crash'
+        uses: actions-cool/issues-helper@v3
+        with:
+          actions: "create-comment"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            @${{ github.event.issue.user.login }}, the latest version of Bun is v${{ steps.add-labels.outputs.latest }}, but this crash was reported on Bun v${{ steps.add-labels.outputs.oudated }}.
+
+            Are you able to reproduce this crash on the latest version of Bun?
+
+            ```sh
+            bun upgrade
+            ```
+      - name: Comment needs repro
+        if: github.event.label.name == 'needs repro'
+        uses: actions-cool/issues-helper@v3
+        with:
+          actions: "create-comment"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            Hello @${{ github.event.issue.user.login }}. Please provide a [minimal reproduction](https://stackoverflow.com/help/minimal-reproducible-example) using a GitHub repository, [Replit](https://replit.com/@replit/Bun), or [CodeSandbox](https://codesandbox.io/templates/bun). Issues marked with `needs repro` will be closed if they have no activity within 3 days.

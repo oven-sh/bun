@@ -286,8 +286,8 @@ pub const MutableString = struct {
         return std.mem.eql(u8, self.list.items, other);
     }
 
-    pub fn toSocketBuffers(self: *MutableString, comptime count: usize, ranges: anytype) [count]std.os.iovec_const {
-        var buffers: [count]std.os.iovec_const = undefined;
+    pub fn toSocketBuffers(self: *MutableString, comptime count: usize, ranges: anytype) [count]std.posix.iovec_const {
+        var buffers: [count]std.posix.iovec_const = undefined;
         inline for (&buffers, ranges) |*b, r| {
             b.* = .{
                 .iov_base = self.list.items[r[0]..r[1]].ptr,

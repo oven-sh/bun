@@ -1,7 +1,5 @@
-import assert from "assert";
-import dedent from "dedent";
-import { itBundled, testForFile } from "../expectBundled";
-var { describe, test, expect } = testForFile(import.meta.path);
+import { itBundled } from "../expectBundled";
+import { describe } from "bun:test";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild

@@ -1,0 +1,43 @@
+name: Bump version
+description: Bump the version of Bun
+
+inputs:
+  version:
+    description: The most recent version of Bun.
+    required: true
+    type: string
+  token:
+    description: The GitHub token to use for creating a pull request.
+    required: true
+    type: string
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Run Bump
+      shell: bash
+      id: bump
+      run: |
+        set -euo pipefail
+        MESSAGE=$(bun ./scripts/bump.ts patch --last-version=${{ inputs.version }})
+        LATEST=$(cat LATEST)
+        echo "version=$LATEST" >> $GITHUB_OUTPUT
+        echo "message=$MESSAGE" >> $GITHUB_OUTPUT
+    - name: Create Pull Request
+      uses: peter-evans/create-pull-request@v4
+      with:
+        add-paths: |
+          CMakeLists.txt
+          LATEST
+        token: ${{ inputs.token }}
+        commit-message: Bump version to ${{ steps.bump.outputs.version }}
+        title: Bump to ${{ steps.bump.outputs.version }}
+        delete-branch: true
+        branch: github-actions/bump-version-${{ steps.bump.outputs.version }}--${{ github.run_id }}
+        body: |
+          ## What does this PR do?
+
+          ${{ steps.bump.outputs.message }}
+
+          Auto-bumped by [this workflow](https://github.com/oven-sh/bun/actions/workflows/release.yml)

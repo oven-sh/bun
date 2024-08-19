@@ -42,4 +42,10 @@ describe("fileURLToPath", () => {
     const url = pathToFileURL("foo.txt");
     expect(url.href).toBe(`${pathToFileURL(process.cwd())}/foo.txt`);
   });
+
+  it("should roundtrip", () => {
+    const url = pathToFileURL(import.meta.path);
+    expect(fileURLToPath(url)).toBe(import.meta.path);
+    expect(fileURLToPath(import.meta.url)).toBe(import.meta.path);
+  });
 });

@@ -126,11 +126,21 @@ void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WT
     if (isNative()) {
         sb.append("native"_s);
     } else {
-        sb.append(mySourceURL->getString(globalObject));
-        sb.append(":"_s);
-        sb.append(myLineNumber->getString(globalObject));
-        sb.append(":"_s);
-        sb.append(myColumnNumber->getString(globalObject));
+        if (mySourceURL->length() == 0) {
+            sb.append("unknown"_s);
+        } else {
+            sb.append(mySourceURL->getString(globalObject));
+        }
+
+        if (myLineNumber->length() > 0 && myColumnNumber->length() > 0) {
+            sb.append(":"_s);
+            sb.append(myLineNumber->getString(globalObject));
+            sb.append(":"_s);
+            sb.append(myColumnNumber->getString(globalObject));
+        } else if (myLineNumber->length() > 0) {
+            sb.append(":"_s);
+            sb.append(myLineNumber->getString(globalObject));
+        }
     }
     sb.append(")"_s);
 }

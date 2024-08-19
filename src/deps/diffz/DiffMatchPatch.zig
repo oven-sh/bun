@@ -691,7 +691,7 @@ fn diffLinesToChars(
     text2: []const u8,
 ) DiffError!LinesToCharsResult {
     var line_array = ArrayListUnmanaged([]const u8){};
-    var line_hash = std.StringHashMapUnmanaged(usize){};
+    var line_hash = bun.StringHashMapUnmanaged(usize){};
     // e.g. line_array[4] == "Hello\n"
     // e.g. line_hash.get("Hello\n") == 4
 
@@ -716,7 +716,7 @@ fn diffLinesToCharsMunge(
     allocator: std.mem.Allocator,
     text: []const u8,
     line_array: *ArrayListUnmanaged([]const u8),
-    line_hash: *std.StringHashMapUnmanaged(usize),
+    line_hash: *bun.StringHashMapUnmanaged(usize),
     max_lines: usize,
 ) DiffError![]const u8 {
     var line_start: isize = 0;

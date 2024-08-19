@@ -225,7 +225,7 @@ static inline JSValue jsAbortSignal_reasonGetter(JSGlobalObject& lexicalGlobalOb
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = thisObject.wrapped();
-    RELEASE_AND_RETURN(throwScope, (toJS<IDLAny>(lexicalGlobalObject, throwScope, impl.reason())));
+    RELEASE_AND_RETURN(throwScope, (toJS<IDLAny>(lexicalGlobalObject, throwScope, impl.jsReason(lexicalGlobalObject))));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsAbortSignal_reason, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -376,7 +376,7 @@ void JSAbortSignal::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = jsCast<JSAbortSignal*>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, "url "_s + thisObject->scriptExecutionContext()->url().string());
+        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
 }
 
@@ -405,18 +405,18 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
 
     if constexpr (std::is_polymorphic_v<AbortSignal>) {
 #if ENABLE(BINDING_INTEGRITY)
-        const void* actualVTablePointer = getVTablePointer(impl.ptr());
+        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
 #if PLATFORM(WIN)
         void* expectedVTablePointer = __identifier("??_7AbortSignal@WebCore@@6B@");
 #else
-        void* expectedVTablePointer = &_ZTVN7WebCore11AbortSignalE[2];
+        // void* expectedVTablePointer = &_ZTVN7WebCore11AbortSignalE[2];
 #endif
 
         // If you hit this assertion you either have a use after free bug, or
         // AbortSignal has subclasses. If AbortSignal has subclasses that get passed
         // to toJS() we currently require AbortSignal you to opt out of binding hardening
         // by adding the SkipVTableValidation attribute to the interface IDL definition
-        RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
     return createWrapper<AbortSignal>(globalObject, WTFMove(impl));

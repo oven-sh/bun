@@ -98,9 +98,9 @@ template<> std::optional<CryptoKey::Type> parseEnumeration<CryptoKey::Type>(JSGl
     return std::nullopt;
 }
 
-template<> const char* expectedEnumerationValues<CryptoKey::Type>()
+template<> ASCIILiteral expectedEnumerationValues<CryptoKey::Type>()
 {
-    return "\"public\", \"private\", \"secret\"";
+    return "\"public\", \"private\", \"secret\""_s;
 }
 
 // Attributes
@@ -318,7 +318,7 @@ void JSCryptoKey::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = jsCast<JSCryptoKey*>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
 }
 

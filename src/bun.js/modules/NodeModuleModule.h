@@ -3,6 +3,8 @@
 
 #include "CommonJSModuleRecord.h"
 #include "ImportMetaObject.h"
+#include "JavaScriptCore/ArgList.h"
+#include "JavaScriptCore/JSGlobalObjectInlines.h"
 #include "_NativeModule.h"
 #include "isBuiltinModule.h"
 #include <JavaScriptCore/JSBoundFunction.h>
@@ -120,7 +122,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor, (JSC::JSGlobalOb
     idString = idValue.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
 
-    auto index = idString->tryGetValue().reverseFind('/', idString->length());
+    auto index = idString->tryGetValue()->reverseFind('/', idString->length());
 
     if (index != WTF::notFound) {
       dirname = JSC::jsSubstring(globalObject, idString, 0, index);
@@ -208,7 +210,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
       scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(
                  vm, globalObject, val)));
 }
-extern "C" JSC::EncodedJSValue Resolver__nodeModulePathsForJS(JSGlobalObject *, CallFrame *);
+BUN_DECLARE_HOST_FUNCTION(Resolver__nodeModulePathsForJS);
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionFindSourceMap, (JSGlobalObject * globalObject, CallFrame *callFrame)) {
   auto &vm = globalObject->vm();
@@ -265,7 +267,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName, (JSC::JSGlobalObject * globa
         // weird thing.
         (fromValue.isObject()) {
 
-      if (auto idValue = fromValue.getObject()->getIfPropertyExists(globalObject, Identifier::fromString(vm, "filename"_s))) {
+      if (auto idValue = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).filenamePublicName())) {
         if (idValue.isString()) {
           fromValue = idValue;
         }
@@ -332,21 +334,25 @@ struct Parent {
 
 Parent getParent(VM&vm, JSGlobalObject* global, JSValue maybe_parent) {
   Parent value { nullptr, nullptr };
-  if (!maybe_parent.isCell()) {
+
+  if (!maybe_parent) {
     return value;
   }
-  if (!maybe_parent.isObject()) {
-    return value;
-  }
+  
   auto parent = maybe_parent.getObject();
+  if (!parent) {
+    return value;
+  }
+
   auto scope = DECLARE_THROW_SCOPE(vm);
-  JSValue paths = parent->get(global, Identifier::fromString(vm, "paths"_s));
+  const auto& builtinNames = Bun::builtinNames(vm);
+  JSValue paths = parent->get(global, builtinNames.pathsPublicName());
   RETURN_IF_EXCEPTION(scope, value);
   if (paths.isCell()) {
     value.paths = jsDynamicCast<JSArray*>(paths);
   }
 
-  JSValue filename = parent->get(global, Identifier::fromString(vm, "filename"_s));
+  JSValue filename = parent->get(global, builtinNames.filenamePublicName());
   RETURN_IF_EXCEPTION(scope, value);
   if (filename.isString()) {
     value.filename = filename.toString(global);
@@ -515,7 +521,7 @@ DEFINE_NATIVE_MODULE(NodeModule) {
   putNativeFn(Identifier::fromString(vm, "_resolveLookupPaths"_s), jsFunctionResolveLookupPaths);
 
   putNativeFn(Identifier::fromString(vm, "createRequire"_s), jsFunctionNodeModuleCreateRequire);
-  putNativeFn(Identifier::fromString(vm, "paths"_s), Resolver__nodeModulePathsForJS);
+  putNativeFn(builtinNames(vm).pathsPublicName(), Resolver__nodeModulePathsForJS);
   putNativeFn(Identifier::fromString(vm, "findSourceMap"_s), jsFunctionFindSourceMap);
   putNativeFn(Identifier::fromString(vm, "syncBuiltinExports"_s), jsFunctionSyncBuiltinExports);
   putNativeFn(Identifier::fromString(vm, "SourceMap"_s), jsFunctionSourceMap);
@@ -539,17 +545,15 @@ DEFINE_NATIVE_MODULE(NodeModule) {
 
   defaultObject->putDirect(vm, vm.propertyNames->prototype, prototype);
 
-  JSC::JSArray *builtinModules = JSC::JSArray::create(
-    vm,
-    globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous),
-    countof(builtinModuleNames)
-  );
+  MarkedArgumentBuffer args;
+  args.ensureCapacity(countof(builtinModuleNames));
 
   for (unsigned i = 0; i < countof(builtinModuleNames); ++i) {
-    builtinModules->putDirectIndex(globalObject, i, JSC::jsString(vm, String(builtinModuleNames[i])));
+    args.append(JSC::jsOwnedString(vm, String(builtinModuleNames[i])));
   }
 
-  put(JSC::Identifier::fromString(vm, "builtinModules"_s), builtinModules);
+
+  put(JSC::Identifier::fromString(vm, "builtinModules"_s), JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), JSC::ArgList(args)));
 }
 
 } // namespace Zig

@@ -8,8 +8,10 @@ const Async = bun.Async;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
+const posix = std.posix;
 const Output = bun.Output;
 const os = std.os;
+
 const uv = bun.windows.libuv;
 pub const Stdio = union(enum) {
     inherit: void,
@@ -25,6 +27,7 @@ pub const Stdio = union(enum) {
     array_buffer: JSC.ArrayBuffer.Strong,
     memfd: bun.FileDescriptor,
     pipe: void,
+    ipc: void,
 
     const log = bun.sys.syslog;
 
@@ -109,20 +112,7 @@ pub const Stdio = union(enum) {
             else => "spawn_stdio_memory_file",
         };
 
-        // We use the linux syscall api because the glibc requirement is 2.27, which is a little close for comfort.
-        const rc = std.os.linux.memfd_create(label, 0);
-
-        log("memfd_create({s}) = {d}", .{ label, rc });
-
-        switch (std.os.linux.getErrno(rc)) {
-            .SUCCESS => {},
-            else => |errno| {
-                log("Failed to create memfd: {s}", .{@tagName(errno)});
-                return;
-            },
-        }
-
-        const fd = bun.toFD(rc);
+        const fd = bun.sys.memfd_create(label, 0).unwrap() catch return;
 
         var remain = this.byteSlice();
 
@@ -208,6 +198,7 @@ pub const Stdio = union(enum) {
                 },
                 .dup2 => .{ .dup2 = .{ .out = stdio.dup2.out, .to = stdio.dup2.to } },
                 .capture, .pipe, .array_buffer => .{ .buffer = {} },
+                .ipc => .{ .ipc = {} },
                 .fd => |fd| .{ .pipe = fd },
                 .memfd => |fd| .{ .pipe = fd },
                 .path => |pathlike| .{ .path = pathlike.slice() },
@@ -259,6 +250,7 @@ pub const Stdio = union(enum) {
 
                     break :brk .{ .buffer = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() };
                 },
+                .ipc => .{ .ipc = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() },
                 .capture, .pipe, .array_buffer => .{ .buffer = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() },
                 .fd => |fd| .{ .pipe = fd },
                 .dup2 => .{ .dup2 = .{ .out = stdio.dup2.out, .to = stdio.dup2.to } },
@@ -293,6 +285,7 @@ pub const Stdio = union(enum) {
     pub fn isPiped(self: Stdio) bool {
         return switch (self) {
             .capture, .array_buffer, .blob, .pipe => true,
+            .ipc => Environment.isWindows,
             else => false,
         };
     }
@@ -323,7 +316,7 @@ pub const Stdio = union(enum) {
             } else if (str.eqlComptime("pipe") or str.eqlComptime("overlapped")) {
                 out_stdio.* = Stdio{ .pipe = {} };
             } else if (str.eqlComptime("ipc")) {
-                out_stdio.* = Stdio{ .pipe = {} }; // TODO:
+                out_stdio.* = Stdio{ .ipc = {} };
             } else {
                 globalThis.throwInvalidArguments("stdio must be an array of 'inherit', 'pipe', 'ignore', Bun.file(pathOrFd), number, or null", .{});
                 return false;
@@ -341,7 +334,7 @@ pub const Stdio = union(enum) {
             if (file_fd >= std.math.maxInt(i32)) {
                 var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
                 globalThis.throwInvalidArguments("file descriptor must be a valid integer, received: {}", .{
-                    value.toFmt(globalThis, &formatter),
+                    value.toFmt(&formatter),
                 });
                 return false;
             }

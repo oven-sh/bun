@@ -34,6 +34,7 @@ const kStateSymbol = Symbol("state symbol");
 const async_id_symbol = Symbol("async_id_symbol");
 
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
+const { ERR_SOCKET_BAD_TYPE } = require("internal/errors");
 
 const {
   FunctionPrototypeBind,
@@ -139,7 +140,7 @@ function validateString(value, name) {
 }
 hideFromStack(validateString);
 
-function validateNumber(value, name, min = undefined, max) {
+function validateNumber(value, name, min?, max?) {
   if (typeof value !== "number") throw new ERR_INVALID_ARG_TYPE(name, "number", value);
 
   if (
@@ -247,6 +248,7 @@ function Socket(type, listener) {
     ipv6Only: options && options.ipv6Only,
     recvBufferSize,
     sendBufferSize,
+    unrefOnBind: false,
   };
 
   if (options?.signal !== undefined) {
@@ -399,6 +401,10 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
       },
     }).$then(
       socket => {
+        if (state.unrefOnBind) {
+          socket.unref();
+          state.unrefOnBind = false;
+        }
         state.handle.socket = socket;
         state.receiving = true;
         state.bindState = BIND_STATE_BOUND;
@@ -934,7 +940,11 @@ Socket.prototype.ref = function () {
 Socket.prototype.unref = function () {
   const socket = this[kStateSymbol].handle?.socket;
 
-  if (socket) socket.unref();
+  if (socket) {
+    socket.unref();
+  } else {
+    this[kStateSymbol].unrefOnBind = true;
+  }
 
   return this;
 };

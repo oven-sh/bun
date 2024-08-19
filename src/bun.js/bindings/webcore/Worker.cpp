@@ -59,7 +59,6 @@
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/DeferredWorkTimer.h>
 #include "MessageEvent.h"
-#include <JavaScriptCore/HashMapImplInlines.h>
 #include "BunWorkerGlobalScope.h"
 #include "CloseEvent.h"
 #include "JSMessagePort.h"
@@ -95,7 +94,7 @@ Worker::Worker(ScriptExecutionContext& context, WorkerOptions&& options)
     : EventTargetWithInlineData()
     , ContextDestructionObserver(&context)
     , m_options(WTFMove(options))
-    , m_identifier("worker:" + Inspector::IdentifiersFactory::createIdentifier())
+    , m_identifier(makeString("worker:"_s, Inspector::IdentifiersFactory::createIdentifier()))
     , m_clientIdentifier(ScriptExecutionContext::generateIdentifier())
 {
     // static bool addedListener;
@@ -400,10 +399,12 @@ extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker*
         JSC::VM& vm = globalObject->vm();
         vm.setHasTerminationRequest();
 
-        while (!vm.hasOneRef())
-            vm.deref();
+        // clang-tidy is smart enough to realize that deref() leads to freeing
+        // but it's not smart enough to realize that `hasOneRef()` ensures its safety
+        while (!vm.hasOneRef()) // NOLINT
+            vm.deref(); // NOLINT
 
-        vm.deref();
+        vm.deref(); // NOLINT
     }
 }
 extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* globalObject)

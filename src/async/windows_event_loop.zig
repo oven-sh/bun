@@ -316,9 +316,9 @@ pub const FilePoll = struct {
 
         const log = Output.scoped(.FilePoll, false);
 
-        pub fn init(allocator: std.mem.Allocator) Store {
+        pub fn init() Store {
             return .{
-                .hive = HiveArray.init(allocator),
+                .hive = HiveArray.init(bun.typedAllocator(FilePoll)),
             };
         }
 
@@ -405,7 +405,7 @@ pub const Closer = struct {
     }
 
     fn onClose(req: *uv.fs_t) callconv(.C) void {
-        var closer = @fieldParentPtr(Closer, "io_request", req);
+        var closer: *Closer = @fieldParentPtr("io_request", req);
         bun.assert(closer == @as(*Closer, @alignCast(@ptrCast(req.data.?))));
         bun.sys.syslog("uv_fs_close({}) = {}", .{ bun.toFD(req.file.fd), req.result });
 

@@ -4,8 +4,8 @@ const stream = require("node:stream");
 
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
-const createBrotliEncoder = $zig("node_zlib_binding.zig", "createBrotliEncoder");
-const createBrotliDecoder = $zig("node_zlib_binding.zig", "createBrotliDecoder");
+const createBrotliEncoder = $newZigFunction("js_brotli.zig", "BrotliEncoder.create", 2);
+const createBrotliDecoder = $newZigFunction("js_brotli.zig", "BrotliDecoder.create", 2);
 
 function brotliCompress(buffer, opts, callback) {
   if (typeof opts === "function") {

@@ -837,8 +837,8 @@ pub const ServerConfig = struct {
     };
 
     pub fn fromJS(global: *JSC.JSGlobalObject, arguments: *JSC.Node.ArgumentsSlice, exception: JSC.C.ExceptionRef) ServerConfig {
-        var env = arguments.vm.bundler.env;
-        const vm = JSC.VirtualMachine.get();
+        const vm = arguments.vm;
+        const env = vm.bundler.env;
 
         var args = ServerConfig{
             .address = .{
@@ -848,8 +848,13 @@ pub const ServerConfig = struct {
                 },
             },
             .development = true,
+
+            // If this is a node:cluster child, let's default to SO_REUSEPORT.
+            // That way you don't have to remember to set reusePort: true in Bun.serve() when using node:cluster.
+            .reuse_port = env.get("NODE_UNIQUE_ID") != null,
         };
         var has_hostname = false;
+
         if (strings.eqlComptime(env.get("NODE_ENV") orelse "", "production")) {
             args.development = false;
         }

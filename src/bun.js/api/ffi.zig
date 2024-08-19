@@ -106,6 +106,20 @@ pub const FFI = struct {
             extern "C" fn ffi_scanf([*:0]const u8, ...) callconv(.C) c_int;
             extern "C" fn ffi_sscanf([*:0]const u8, [*:0]const u8, ...) callconv(.C) c_int;
             extern "C" fn ffi_vsscanf([*:0]const u8, [*:0]const u8, ...) callconv(.C) c_int;
+            extern "C" fn ffi_fopen([*:0]const u8, [*:0]const u8) callconv(.C) *anyopaque;
+            extern "C" fn ffi_fclose(*anyopaque) callconv(.C) c_int;
+            extern "C" fn ffi_fgetc(*anyopaque) callconv(.C) c_int;
+            extern "C" fn ffi_fputc(c: c_int, *anyopaque) callconv(.C) c_int;
+            extern "C" fn ffi_feof(*anyopaque) callconv(.C) c_int;
+            extern "C" fn ffi_fileno(*anyopaque) callconv(.C) c_int;
+            extern "C" fn ffi_ungetc(c: c_int, *anyopaque) callconv(.C) c_int;
+            extern "C" fn ffi_ftell(*anyopaque) callconv(.C) c_long;
+            extern "C" fn ffi_fseek(*anyopaque, c_long, c_int) callconv(.C) c_int;
+            extern "C" fn ffi_fflush(*anyopaque) callconv(.C) c_int;
+
+            extern "C" fn calloc(nmemb: usize, size: usize) callconv(.C) ?*anyopaque;
+            extern "C" fn perror([*:0]const u8) callconv(.C) void;
+
             var ffi_stdinp: *anyopaque = @extern(*anyopaque, .{ .name = "__stdinp" });
             var ffi_stdoutp: *anyopaque = @extern(*anyopaque, .{ .name = "__stdoutp" });
             var ffi_stderrp: *anyopaque = @extern(*anyopaque, .{ .name = "__stderrp" });
@@ -120,7 +134,26 @@ pub const FFI = struct {
                 _ = TCC.tcc_add_symbol(state, "sscanf", ffi_sscanf);
                 _ = TCC.tcc_add_symbol(state, "vsscanf", ffi_vsscanf);
 
+                _ = TCC.tcc_add_symbol(state, "fopen", ffi_fopen);
+                _ = TCC.tcc_add_symbol(state, "fclose", ffi_fclose);
+                _ = TCC.tcc_add_symbol(state, "fgetc", ffi_fgetc);
+                _ = TCC.tcc_add_symbol(state, "fputc", ffi_fputc);
+                _ = TCC.tcc_add_symbol(state, "feof", ffi_feof);
+                _ = TCC.tcc_add_symbol(state, "fileno", ffi_fileno);
+                _ = TCC.tcc_add_symbol(state, "fwrite", std.c.fwrite);
+                _ = TCC.tcc_add_symbol(state, "ungetc", ffi_ungetc);
+                _ = TCC.tcc_add_symbol(state, "ftell", ffi_ftell);
+                _ = TCC.tcc_add_symbol(state, "fseek", ffi_fseek);
+                _ = TCC.tcc_add_symbol(state, "fflush", ffi_fflush);
+                _ = TCC.tcc_add_symbol(state, "malloc", std.c.malloc);
+                _ = TCC.tcc_add_symbol(state, "free", std.c.free);
+                _ = TCC.tcc_add_symbol(state, "fread", std.c.fread);
+                _ = TCC.tcc_add_symbol(state, "realloc", std.c.realloc);
+                _ = TCC.tcc_add_symbol(state, "calloc", calloc);
+                _ = TCC.tcc_add_symbol(state, "perror", perror);
+
                 if (Environment.isPosix) {
+                    _ = TCC.tcc_add_symbol(state, "posix_memalign", std.c.posix_memalign);
                     _ = TCC.tcc_add_symbol(state, "dlopen", std.c.dlopen);
                     _ = TCC.tcc_add_symbol(state, "dlclose", std.c.dlclose);
                     _ = TCC.tcc_add_symbol(state, "dlsym", std.c.dlsym);
@@ -148,7 +181,7 @@ pub const FFI = struct {
             this.deferred_errors.append(bun.default_allocator, bun.default_allocator.dupe(u8, msg) catch bun.outOfMemory()) catch bun.outOfMemory();
         }
 
-        const tcc_options = "-std=c11 -nostdlib -Wl,--export-all-symbols -g";
+        const default_tcc_options = "-std=c11 -nostdlib -Wl,--export-all-symbols -g";
 
         pub fn compile(this: *CompileC, globalThis: *JSGlobalObject) !struct { *TCC.TCCState, []u8 } {
             const state = TCC.tcc_new() orelse {
@@ -156,7 +189,11 @@ pub const FFI = struct {
                 return error.JSException;
             };
             TCC.tcc_set_error_func(state, this, @ptrCast(&handleCompilationError));
-            TCC.tcc_set_options(state, tcc_options);
+            if (bun.getenvZ("BUN_TCC_OPTIONS")) |tcc_options| {
+                TCC.tcc_set_options(state, @ptrCast(tcc_options));
+            } else {
+                TCC.tcc_set_options(state, default_tcc_options);
+            }
             _ = TCC.tcc_set_output_type(state, TCC.TCC_OUTPUT_MEMORY);
             errdefer TCC.tcc_delete(state);
 
@@ -180,7 +217,7 @@ pub const FFI = struct {
                     switch (bun.sys.directoryExistsAt(std.fs.cwd(), "/opt/homebrew/include")) {
                         .result => |exists| {
                             if (exists) {
-                                if (TCC.tcc_add_sysinclude_path(state, "/opt/homebrew/include") == -1) {
+                                if (TCC.tcc_add_include_path(state, "/opt/homebrew/include") == -1) {
                                     debug("TinyCC failed to add library path", .{});
                                 }
                             }
@@ -223,18 +260,6 @@ pub const FFI = struct {
                 }
             }
 
-            for (this.library_dirs.items) |library_dir| {
-                if (TCC.tcc_add_library_path(state, library_dir) == -1) {}
-            }
-
-            for (this.libraries.items) |library| {
-                if (TCC.tcc_add_library(state, library) == -1) {}
-
-                if (this.deferred_errors.items.len > 0) {
-                    return error.DeferredErrors;
-                }
-            }
-
             if (this.deferred_errors.items.len > 0) {
                 return error.DeferredErrors;
             }
@@ -268,6 +293,26 @@ pub const FFI = struct {
 
             CompilerRT.inject(state);
             stdarg.inject(state);
+
+            if (this.deferred_errors.items.len > 0) {
+                return error.DeferredErrors;
+            }
+
+            for (this.library_dirs.items) |library_dir| {
+                if (TCC.tcc_add_library_path(state, library_dir) == -1) {}
+            }
+
+            if (this.deferred_errors.items.len > 0) {
+                return error.DeferredErrors;
+            }
+
+            for (this.libraries.items) |library| {
+                _ = TCC.tcc_add_library(state, library);
+
+                if (this.deferred_errors.items.len > 0) {
+                    break;
+                }
+            }
 
             if (this.deferred_errors.items.len > 0) {
                 return error.DeferredErrors;
@@ -1264,7 +1309,7 @@ pub const FFI = struct {
 
             const compilation_result = TCC.tcc_compile_string(
                 state,
-                source_code.items.ptr,
+                @ptrCast(source_code.items.ptr),
             );
             // did tcc report an error?
             if (this.step == .failed) {
@@ -1365,7 +1410,7 @@ pub const FFI = struct {
 
             const compilation_result = TCC.tcc_compile_string(
                 state,
-                source_code.items.ptr,
+                @ptrCast(source_code.items.ptr),
             );
             // did tcc report an error?
             if (this.step == .failed) {

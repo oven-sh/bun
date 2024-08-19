@@ -3848,8 +3848,7 @@ pub const VirtualMachine = struct {
             if (global.bunVM().ipc) |*current_ipc| {
                 switch (current_ipc.*) {
                     .initialized => |instance| {
-                        const ipc_data = instance.data;
-                        JSC.VirtualMachine.get().enqueueImmediateTask(JSC.ManagedTask.New(IPC.IPCData, closeReal).init(ipc_data));
+                        JSC.VirtualMachine.get().enqueueImmediateTask(JSC.ManagedTask.New(IPC.IPCData, closeReal).init(&instance.data));
                     },
                     .waiting => {},
                 }

@@ -691,3 +691,53 @@ extern "C" int ffi_sscanf(const char* str, const char* fmt, ...)
     va_end(ap);
     return r;
 }
+
+extern "C" FILE* ffi_fopen(const char* path, const char* mode)
+{
+    return fopen(path, mode);
+}
+
+extern "C" int ffi_fclose(FILE* file)
+{
+    return fclose(file);
+}
+
+extern "C" int ffi_fgetc(FILE* file)
+{
+    return fgetc(file);
+}
+
+extern "C" int ffi_fputc(int c, FILE* file)
+{
+    return fputc(c, file);
+}
+
+extern "C" int ffi_ungetc(int c, FILE* file)
+{
+    return ungetc(c, file);
+}
+
+extern "C" int ffi_feof(FILE* file)
+{
+    return feof(file);
+}
+
+extern "C" int ffi_fseek(FILE* file, long offset, int whence)
+{
+    return fseek(file, offset, whence);
+}
+
+extern "C" long ffi_ftell(FILE* file)
+{
+    return ftell(file);
+}
+
+extern "C" int ffi_fflush(FILE* file)
+{
+    return fflush(file);
+}
+
+extern "C" int ffi_fileno(FILE* file)
+{
+    return fileno(file);
+}

@@ -3845,8 +3845,12 @@ pub const VirtualMachine = struct {
         extern fn Bun__setChannelRef(*JSC.JSGlobalObject, bool) void;
 
         export fn Bun__closeChildIPC(global: *JSGlobalObject) void {
-            const ipc_data = &global.bunVM().ipc.?.initialized.data;
-            JSC.VirtualMachine.get().enqueueImmediateTask(JSC.ManagedTask.New(IPC.IPCData, closeReal).init(ipc_data));
+            if (global.bunVM().ipc) |*current_ipc| {
+                if (current_ipc == .initialized) {
+                    const ipc_data = current_ipc.initialized.data;
+                    JSC.VirtualMachine.get().enqueueImmediateTask(JSC.ManagedTask.New(IPC.IPCData, closeReal).init(ipc_data));
+                }
+            }
         }
 
         fn closeReal(ipc_data: *IPC.IPCData) void {

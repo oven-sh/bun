@@ -2517,7 +2517,7 @@ pub const Delimiters = packed struct(u8) {
     }
 };
 
-const ParserInput = struct {
+pub const ParserInput = struct {
     tokenizer: Tokenizer,
     cached_token: ?CachedToken = null,
 

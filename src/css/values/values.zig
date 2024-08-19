@@ -358,6 +358,18 @@ pub const syntax = struct {
             _ = dest; // autofix
             @compileError(css.todo_stuff.depth);
         }
+
+        pub fn parse(input: *css.Parser) Error!SyntaxString {
+            _ = input; // autofix
+            @compileError(css.todo_stuff.depth);
+        }
+
+        /// Parses a value according to the syntax grammar.
+        pub fn parseValue(this: *SyntaxString, input: *css.Parser) Error!ParsedComponent {
+            _ = this; // autofix
+            _ = input; // autofix
+            @compileError(css.todo_stuff.depth);
+        }
     };
 
     /// A [syntax component](https://drafts.css-houdini.org/css-properties-values-api/#syntax-component)

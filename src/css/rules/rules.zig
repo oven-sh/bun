@@ -29,6 +29,7 @@ pub const unknown = @import("./unknown.zig");
 pub const document = @import("./document.zig");
 pub const nesting = @import("./nesting.zig");
 pub const viewport = @import("./viewport.zig");
+pub const property = @import("./property.zig");
 
 pub fn CssRule(comptime Rule: type) type {
     return union(enum) {
@@ -381,67 +382,6 @@ pub const scope = struct {
             }
         };
     }
-};
-
-pub const property = struct {
-    pub const PropertyRule = struct {
-        name: css.css_values.ident.DashedIdent,
-        syntax: css.css_values.syntax.SyntaxString,
-        inherits: bool,
-        initial_vlaue: ?css.css_values.syntax.ParsedComponent,
-        loc: Location,
-
-        pub fn parse(name: css.css_values.ident.DashedIdent, input: *css.Parser, loc: Location) Error!PropertyRule {
-            _ = name; // autofix
-            _ = input; // autofix
-            _ = loc; // autofix
-        }
-
-        const This = @This();
-
-        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            // #[cfg(feature = "sourcemap")]
-            // dest.add_mapping(self.loc);
-
-            try dest.writeStr("@property ");
-            try css.css_values.ident.DashedIdentFns.toCss(&this.name, W, dest);
-            try dest.whitespace();
-            try dest.writeChar('{');
-            dest.indent();
-            try dest.newline();
-
-            try dest.writeStr("syntax:");
-            try dest.whitespace();
-            try this.syntax.toCss(W, dest);
-            try dest.writeChar(';');
-            try dest.newline();
-
-            try dest.writeStr("inherits:");
-            try dest.whitespace();
-            if (this.inherits) {
-                try dest.writeStr("true");
-            } else {
-                try dest.writeStr("false");
-            }
-
-            if (this.initial_vlaue) |*initial_value| {
-                try dest.writeChar(';');
-                try dest.newline();
-
-                try dest.writeStr("initial-value:");
-                try dest.whitespace();
-                try initial_value.toCss(W, dest);
-
-                if (!dest.minify) {
-                    try dest.writeChar(';');
-                }
-            }
-
-            dest.dedent();
-            try dest.newline();
-            try dest.writeChar(';');
-        }
-    };
 };
 
 pub const starting_style = struct {

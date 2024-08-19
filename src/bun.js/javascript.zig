@@ -3845,8 +3845,14 @@ pub const VirtualMachine = struct {
         extern fn Bun__setChannelRef(*JSC.JSGlobalObject, bool) void;
 
         export fn Bun__closeChildIPC(global: *JSGlobalObject) void {
-            const ipc_data = &global.bunVM().ipc.?.initialized.data;
-            JSC.VirtualMachine.get().enqueueImmediateTask(JSC.ManagedTask.New(IPC.IPCData, closeReal).init(ipc_data));
+            if (global.bunVM().ipc) |*current_ipc| {
+                switch (current_ipc.*) {
+                    .initialized => |instance| {
+                        JSC.VirtualMachine.get().enqueueImmediateTask(JSC.ManagedTask.New(IPC.IPCData, closeReal).init(&instance.data));
+                    },
+                    .waiting => {},
+                }
+            }
         }
 
         fn closeReal(ipc_data: *IPC.IPCData) void {
@@ -3882,6 +3888,8 @@ pub const VirtualMachine = struct {
                     .data = undefined,
                 });
 
+                this.ipc = .{ .initialized = instance };
+
                 const socket = IPC.Socket.fromFd(context, opts.info, IPCInstance, instance, null) orelse {
                     instance.destroy();
                     this.ipc = null;
@@ -3901,6 +3909,8 @@ pub const VirtualMachine = struct {
                     .data = .{ .mode = opts.mode },
                 });
 
+                this.ipc = .{ .initialized = instance };
+
                 instance.data.configureClient(IPCInstance, instance, opts.info) catch {
                     instance.destroy();
                     this.ipc = null;
@@ -3911,8 +3921,6 @@ pub const VirtualMachine = struct {
                 break :instance instance;
             },
         };
-
-        this.ipc = .{ .initialized = instance };
 
         instance.data.writeVersionPacket();
 

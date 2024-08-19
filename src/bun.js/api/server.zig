@@ -5787,7 +5787,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
 
         pub fn disposeFromJS(this: *ThisServer) JSC.JSValue {
-            if (this.listener != null and !this.thisObject.isEmptyOrUndefinedOrNull() and !this.flags.deinit_scheduled) {
+            if (this.listener != null) {
                 this.thisObject.unprotect();
                 this.thisObject = .undefined;
                 this.stop(true);

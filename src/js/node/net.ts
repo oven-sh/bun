@@ -642,8 +642,11 @@ const Socket = (function (InternalSocket) {
       const socket = this[bunSocketInternal];
       if (socket) {
         this[bunSocketInternal] = null;
-        socket.end();
+        // we still have a socket, call end before destroy
+        process.nextTick(endNT, socket, callback, err);
+        return;
       }
+      // no socket, just destroy
       process.nextTick(closeNT, callback, err);
     }
 
@@ -657,6 +660,7 @@ const Socket = (function (InternalSocket) {
         this.#final_callback = callback;
       } else {
         // emit FIN not allowing half open
+        this[bunSocketInternal] = null;
         process.nextTick(endNT, socket, callback);
       }
     }

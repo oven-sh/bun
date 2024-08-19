@@ -30,6 +30,7 @@ pub const document = @import("./document.zig");
 pub const nesting = @import("./nesting.zig");
 pub const viewport = @import("./viewport.zig");
 pub const property = @import("./property.zig");
+pub const container = @import("./container.zig");
 
 pub fn CssRule(comptime Rule: type) type {
     return union(enum) {
@@ -205,119 +206,6 @@ pub const media = struct {
                 dest.dedent();
                 try dest.newline();
                 dest.writeChar('}');
-            }
-        };
-    }
-};
-
-pub const container = struct {
-    pub const ContainerName = struct {
-        v: css.css_values.ident.CustomIdent,
-        pub fn parse(input: *css.Parser) Error!ContainerName {
-            _ = input; // autofix
-            @compileError(css.todo_stuff.depth);
-        }
-
-        const This = @This();
-
-        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            _ = this; // autofix
-            _ = dest; // autofix
-            @compileError(css.todo_stuff.depth);
-        }
-    };
-
-    pub const ContainerNameFns = ContainerName;
-    pub const ContainerSizeFeature = struct {
-        comptime {
-            @compileError(css.todo_stuff.depth);
-        }
-    };
-
-    /// Represents a style query within a container condition.
-    pub const StyleQuery = union(enum) {
-        /// A style feature, implicitly parenthesized.
-        feature: css.Property,
-
-        /// A negation of a condition.
-        not: *StyleQuery,
-
-        /// A set of joint operations.
-        Operation: struct {
-            /// The operator for the conditions.
-            operator: css.media_query.Operator,
-            /// The conditions for the operator.
-            conditions: ArrayList(StyleQuery),
-        },
-    };
-
-    pub const ContainerCondition = union(enum) {
-        /// A size container feature, implicitly parenthesized.
-        feature: ContainerSizeFeature,
-        /// A negation of a condition.
-        not: *ContainerCondition,
-        /// A set of joint operations.
-        operation: struct {
-            /// The operator for the conditions.
-            operator: css.media_query.Operator,
-            /// The conditions for the operator.
-            conditions: ArrayList(ContainerCondition),
-        },
-        /// A style query.
-        style: StyleQuery,
-
-        pub fn parse(input: *css.Parser) Error!ContainerCondition {
-            _ = input; // autofix
-            @compileError(css.todo_stuff.depth);
-        }
-
-        const This = @This();
-
-        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            _ = this; // autofix
-            _ = dest; // autofix
-            @compileError(css.todo_stuff.depth);
-        }
-    };
-
-    /// A [@container](https://drafts.csswg.org/css-contain-3/#container-rule) rule.
-    pub fn ContainerRule(comptime R: type) type {
-        return struct {
-            /// The name of the container.
-            name: ?ContainerName,
-            /// The container condition.
-            condition: ContainerCondition,
-            /// The rules within the `@container` rule.
-            rules: css.CssRuleList(R),
-            /// The location of the rule in the source file.
-            loc: Location,
-
-            const This = @This();
-
-            pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
-                // #[cfg(feature = "sourcemap")]
-                // dest.add_mapping(self.loc);
-
-                try dest.writeStr("@container ");
-                if (this.name) |*name| {
-                    try name.toCss(W, dest);
-                    try dest.writeChar(' ');
-                }
-
-                // Don't downlevel range syntax in container queries.
-                const exclude = dest.targets.exclude;
-                dest.targets.exclude.insert(css.Features{ .media_queries = true });
-                try this.condition.toCss(W, dest);
-                dest.targets.exclude = exclude;
-
-                try dest.whitespace();
-                try dest.writeChar('{');
-                dest.indent();
-                try dest.newline();
-                try this.rules.toCss(W, dest);
-                dest.dedent();
-                try dest.newline();
-                try dest.writeChar('}');
             }
         };
     }

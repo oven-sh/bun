@@ -26,8 +26,9 @@ pub const ImportRule = css_rules.import.ImportRule;
 pub const StyleRule = css_rules.style.StyleRule;
 pub const StyleContext = css_rules.StyleContext;
 
-const media_query = @import("./media_query.zig");
+pub const media_query = @import("./media_query.zig");
 pub const MediaList = media_query.MediaList;
+pub const MediaFeatureType = media_query.MediaFeatureType;
 
 pub const css_values = @import("./values/values.zig");
 pub const DashedIdent = css_values.ident.DashedIdent;
@@ -331,6 +332,19 @@ pub fn DefineEnumProperty(comptime T: type) type {
 
         pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
             try dest.writeStr(asStr(this));
+        }
+    };
+}
+
+pub fn DeriveValueType(comptime T: type) type {
+    const ValueTypeMap = T.ValueTypeMap;
+    const fields = std.meta.fields(@This());
+    for (fields) |field| {
+        _ = @field(ValueTypeMap, field.name);
+    }
+    return struct {
+        pub fn valueType(this: *const T) MediaFeatureType {
+            return @field(ValueTypeMap, @tagName(this.*));
         }
     };
 }
@@ -4561,3 +4575,12 @@ pub const to_css = struct {
         return std.fmt.count("{d}", .{max_val});
     }
 };
+
+/// Parse `!important`.
+///
+/// Typical usage is `input.try_parse(parse_important).is_ok()`
+/// at the end of a `DeclarationParser::parse_value` implementation.
+pub fn parseImportant(input: *Parser) Error!void {
+    try input.expectDelim('!');
+    return try input.expectIdentMatch("important");
+}

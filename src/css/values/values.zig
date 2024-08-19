@@ -311,6 +311,12 @@ pub const length = struct {
             const len = try LengthValue.parse(input);
             return .{ .value = len };
         }
+
+        pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+            _ = this; // autofix
+            _ = dest; // autofix
+            @compileError(css.todo_stuff.depth);
+        }
     };
 };
 
@@ -464,6 +470,17 @@ pub const ratio = struct {
     pub const Ratio = struct {
         numerator: number.CSSNumber,
         denominator: number.CSSNumber,
+
+        pub fn parse(input: *css.Parser) Error!Ratio {
+            _ = input; // autofix
+            @compileError(css.todo_stuff.depth);
+        }
+
+        pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+            _ = this; // autofix
+            _ = dest; // autofix
+            @compileError(css.todo_stuff.depth);
+        }
     };
 };
 

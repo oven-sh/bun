@@ -20,6 +20,7 @@ const Ident = css.css_values.ident.Ident;
 const IdentFns = css.css_values.ident.IdentFns;
 const EnvironmentVariable = css.css_properties.custom.EnvironmentVariable;
 const DashedIdent = css.css_values.ident.DashedIdent;
+const DashedIdentFns = css.css_values.ident.DashedIdentFns;
 
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -549,8 +550,9 @@ const MediaFeatureId = union(enum) {
     @"-moz-device-pixel-ratio",
 
     pub usingnamespace css.DefineEnumProperty(@This());
+    pub usingnamespace css.DeriveValueType(@This());
 
-    const meta = .{
+    pub const ValueTypeMap = .{
         .width = MediaFeatureType.length,
         .height = MediaFeatureType.length,
         .@"aspect-ratio" = MediaFeatureType.ratio,
@@ -592,16 +594,21 @@ const MediaFeatureId = union(enum) {
         .@"-moz-device-pixel-ratio" = MediaFeatureType.number,
     };
 
-    // Make sure we defined ecah field
-    comptime {
-        const fields = std.meta.fields(@This());
-        for (fields) |field| {
-            _ = @field(meta, field.name);
+    pub fn toCssWithPrefix(
+        this: *const MediaFeatureId,
+        prefix: []const u8,
+        comptime W: type,
+        dest: *Printer(W),
+    ) PrintErr!void {
+        switch (this.*) {
+            .@"-webkit-device-pixel-ratio" => {
+                try dest.writeFmt("-webkit-{s}device-pixel-ratio", .{prefix});
+            },
+            else => {
+                try dest.writeStr(prefix);
+                return try this.toCss(W, dest);
+            },
         }
-    }
-
-    pub fn valueType(this: *const MediaFeatureId) MediaFeatureType {
-        return @field(meta, @tagName(this.*));
     }
 };
 
@@ -651,6 +658,66 @@ pub fn QueryFeature(comptime FeatureId: type) type {
             return parent_operator != .@"and" and
                 this.* == .interval and
                 targets.shouldCompile(css.Features{ .media_interval_syntax = true });
+        }
+
+        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+            try dest.writeChar('(');
+
+            switch (this.*) {
+                .boolean => {
+                    try this.boolean.name.toCss(W, dest);
+                },
+                .plain => {
+                    try this.plain.name.toCss(W, dest);
+                    try dest.delim(':', false);
+                    try this.plain.value.toCss(W, dest);
+                },
+                .range => {
+                    // If range syntax is unsupported, use min/max prefix if possible.
+                    if (dest.targets.shouldCompile(.media_range_syntax, .media_range_syntax)) {
+                        return try writeMinMax(
+                            &this.range.operator,
+                            FeatureId,
+                            &this.range.name,
+                            &this.range.value,
+                            W,
+                            dest,
+                        );
+                    }
+                    try this.range.name.toCss(W, dest);
+                    try this.range.operator.toCss(W, dest);
+                    try this.range.value.toCss(W, dest);
+                },
+                .interval => |interval| {
+                    if (dest.targets.shouldCompile(.media_interval_syntax, .media_interval_syntax)) {
+                        try writeMinMax(
+                            &interval.start_operator.opposite(),
+                            FeatureId,
+                            &interval.name,
+                            &interval.start,
+                            W,
+                            dest,
+                        );
+                        try dest.writeStr(" and (");
+                        return writeMinMax(
+                            &interval.end_operator,
+                            FeatureId,
+                            &interval.name,
+                            &interval.end,
+                            W,
+                            dest,
+                        );
+                    }
+
+                    try interval.start.toCss(W, dest);
+                    try interval.start_operator.toCss(W, dest);
+                    try interval.name.toCss(W, dest);
+                    try interval.end_operator.toCss(W, dest);
+                    try interval.end.toCss(W, dest);
+                },
+            }
+
+            return try dest.writeChar(')');
         }
 
         pub fn parse(input: *css.Parser) Error!This {
@@ -774,11 +841,10 @@ pub fn QueryFeature(comptime FeatureId: type) type {
                 };
             } else {
                 const final_operator = operator.?.opposite();
-                _ = final_operator; // autofix
                 return .{
                     .range = .{
                         .name = name,
-                        .operator = operator,
+                        .operator = final_operator,
                         .value = value,
                     },
                 };
@@ -864,6 +930,29 @@ pub const MediaFeatureValue = union(enum) {
     ident: Ident,
     /// An environment variable reference.
     env: EnvironmentVariable,
+
+    pub fn toCss(
+        this: *const MediaFeatureValue,
+        comptime W: type,
+        dest: *Printer(W),
+    ) PrintErr!void {
+        switch (this.*) {
+            .length => |len| return len.toCss(W, dest),
+            .number => |num| return CSSNumberFns.toCss(&num, W, dest),
+            .integer => |int| return CSSIntegerFns.toCss(&int, W, dest),
+            .boolean => |b| {
+                if (b.*) {
+                    return try dest.writeChar('1');
+                } else {
+                    return try dest.writeChar('0');
+                }
+            },
+            .resolution => |res| return res.toCss(W, dest),
+            .ratio => |ratio| return ratio.toCss(W, dest),
+            .ident => |id| return IdentFns.toCss(&id, W, dest),
+            .env => |env| return EnvironmentVariable.toCss(env, W, dest, false),
+        }
+    }
 
     pub fn checkType(this: *const @This(), expected_type: MediaFeatureType) bool {
         const vt = this.valueType();
@@ -957,8 +1046,30 @@ pub fn MediaFeatureName(comptime FeatureId: type) type {
         pub fn valueType(this: *const This) MediaFeatureType {
             return switch (this) {
                 .standard => |standard| standard.valueType(),
-                _ => .unknown,
+                else => .unknown,
             };
+        }
+
+        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+            return switch (this.*) {
+                .standard => |v| v.toCss(W, dest),
+                .custom => |d| DashedIdentFns.toCss(&d, W, dest),
+                .unknown => |v| IdentFns.toCss(&v, W, dest),
+            };
+        }
+
+        pub fn toCssWithPrefix(this: *const This, prefix: []const u8, comptime W: type, dest: *Printer(W)) PrintErr!void {
+            switch (this.*) {
+                .standard => |v| try v.toCssWithPrefix(prefix, W, dest),
+                .custom => |d| {
+                    try dest.writeStr(prefix);
+                    return try DashedIdentFns.toCss(&d, W, dest);
+                },
+                .unknown => |v| {
+                    try dest.writeStr(prefix);
+                    return try IdentFns.toCss(&v, W, dest);
+                },
+            }
         }
 
         /// Parses a media feature name.
@@ -1016,4 +1127,41 @@ pub fn MediaFeatureName(comptime FeatureId: type) type {
             };
         }
     };
+}
+
+fn writeMinMax(
+    operator: *const MediaFeatureComparison,
+    comptime FeatureId: type,
+    name: *const MediaFeatureName(FeatureId),
+    value: *const MediaFeatureValue,
+    comptime W: type,
+    dest: *Printer(W),
+) PrintErr!void {
+    const prefix = switch (operator.*) {
+        .@"greater-than", .@"greater-than-equal" => "min-",
+        .@"less-than", .@"less-than-equal" => "max-",
+        .equal => null,
+    };
+
+    if (prefix) |p| {
+        try name.toCssWithPrefix(p, W, dest);
+    } else {
+        try name.toCss(W, dest);
+    }
+
+    try dest.delim(':', false);
+
+    const adjusted = switch (operator.*) {
+        .@"greater-than" => value.add(0.001),
+        .@"less-than" => value.add(-0.001),
+        else => null,
+    };
+
+    if (adjusted) |val| {
+        try val.toCss(W, dest);
+    } else {
+        try value.toCss(W, dest);
+    }
+
+    return try dest.writeChar(')');
 }

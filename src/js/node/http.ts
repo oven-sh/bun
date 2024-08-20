@@ -1133,6 +1133,16 @@ Object.defineProperty(OutgoingMessage.prototype, "finished", {
   },
 });
 
+function emitContinueAndSocketNT(self) {
+  if (self.destroyed) return;
+  // Ref: https://github.com/nodejs/node/blob/f63e8b7fa7a4b5e041ddec67307609ec8837154f/lib/_http_client.js#L803-L839
+  self.emit("socket", self.socket);
+
+  //Emit continue event for the client (internally we auto handle it)
+  if (!self._closed && self.getHeader("expect") === "100-continue") {
+    self.emit("continue");
+  }
+}
 function emitCloseNT(self) {
   if (!self._closed) {
     self._closed = true;
@@ -1888,11 +1898,7 @@ class ClientRequest extends OutgoingMessage {
 
     this._httpMessage = this;
 
-    process.nextTick(() => {
-      // Ref: https://github.com/nodejs/node/blob/f63e8b7fa7a4b5e041ddec67307609ec8837154f/lib/_http_client.js#L803-L839
-      if (this.destroyed) return;
-      this.emit("socket", this.socket);
-    });
+    process.nextTick(emitContinueAndSocketNT, this);
   }
 
   setSocketKeepAlive(enable = true, initialDelay = 0) {

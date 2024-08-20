@@ -86,42 +86,10 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
     endif()
 endif()
 
-# --- MacOS SDK ---
-if(APPLE AND DEFINED ENV{CI})
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0")
-endif()
-
-if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
-    execute_process(COMMAND xcrun --show-sdk-path OUTPUT_VARIABLE SDKROOT)
-    string(STRIP ${SDKROOT} SDKROOT)
-    message(STATUS "MacOS SDK path: ${SDKROOT}")
-    SET(CMAKE_OSX_SYSROOT ${SDKROOT})
-
-    execute_process(COMMAND xcrun --sdk macosx --show-sdk-version OUTPUT_VARIABLE MACOSX_DEPLOYMENT_TARGET)
-    string(STRIP ${MACOSX_DEPLOYMENT_TARGET} MACOSX_DEPLOYMENT_TARGET)
-    set(CMAKE_OSX_DEPLOYMENT_TARGET ${MACOSX_DEPLOYMENT_TARGET})
-
-    # Check if current version of macOS is less than the deployment target and if so, raise an error
-    execute_process(COMMAND sw_vers -productVersion OUTPUT_VARIABLE MACOS_VERSION)
-    string(STRIP ${MACOS_VERSION} MACOS_VERSION)
-
-    if(MACOS_VERSION VERSION_LESS ${MACOSX_DEPLOYMENT_TARGET})
-        message(WARNING
-            "The current version of macOS (${MACOS_VERSION}) is less than the deployment target (${MACOSX_DEPLOYMENT_TARGET}).\n"
-            "The build will be incompatible with your current device due to mismatches in `icucore` versions.\n"
-            "To fix this, please either:\n"
-            " - Upgrade to at least macOS ${MACOSX_DEPLOYMENT_TARGET}\n"
-            " - Use `xcode-select` to switch to an SDK version <= ${MACOS_VERSION}\n"
-            " - Set CMAKE_OSX_DEPLOYMENT_TARGET=${MACOS_VERSION} (make sure to build all dependencies with this variable set too)"
-        )
-    endif()
-endif()
-
-if(APPLE)
-    message(STATUS "Building for macOS v${CMAKE_OSX_DEPLOYMENT_TARGET}")
-endif()
-
 # Must be called before project() so CMake doesn't pick its own compiler
+if(APPLE)
+    include(cmake/SetupMacSDK.cmake)
+endif()
 include(cmake/SetupLLVM.cmake)
 include(cmake/SetupCcache.cmake)
 

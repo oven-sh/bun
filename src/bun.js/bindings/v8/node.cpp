@@ -89,8 +89,8 @@ void node_module_register(void* opaque_mod)
     HandleScope hs(Isolate::fromGlobalObject(globalObject));
 
     // exports, module
-    Local<Object> exports = hs.createLocal<Object>(*strongExportsObject);
-    Local<Value> module = hs.createLocal<Value>(object);
+    Local<Object> exports = hs.createLocal<Object>(vm, *strongExportsObject);
+    Local<Value> module = hs.createLocal<Value>(vm, object);
     Local<Context> context = Isolate::fromGlobalObject(globalObject)->GetCurrentContext();
     if (mod->nm_context_register_func) {
         mod->nm_context_register_func(exports, module, context, mod->nm_priv);

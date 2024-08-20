@@ -47,7 +47,7 @@ Local<ObjectTemplate> ObjectTemplate::New(Isolate* isolate, Local<FunctionTempla
     auto* objectTemplate = new (NotNull, JSC::allocateCell<ObjectTemplate>(vm)) ObjectTemplate(vm, structure);
     // TODO pass constructor
     objectTemplate->finishCreation(vm);
-    return isolate->currentHandleScope()->createLocal<ObjectTemplate>(objectTemplate);
+    return isolate->currentHandleScope()->createLocal<ObjectTemplate>(isolate->vm(), objectTemplate);
 }
 
 MaybeLocal<Object> ObjectTemplate::NewInstance(Local<Context> context)
@@ -69,7 +69,7 @@ MaybeLocal<Object> ObjectTemplate::NewInstance(Local<Context> context)
 
     // todo: apply properties
 
-    return MaybeLocal<Object>(context->currentHandleScope()->createLocal<Object>(newInstance));
+    return MaybeLocal<Object>(context->currentHandleScope()->createLocal<Object>(vm, newInstance));
 }
 
 template<typename Visitor>

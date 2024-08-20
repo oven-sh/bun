@@ -54,7 +54,7 @@ Local<FunctionTemplate> FunctionTemplate::New(
         vm, structure, callback, jsc_data);
     functionTemplate->finishCreation(vm);
 
-    return isolate->currentHandleScope()->createLocal<FunctionTemplate>(functionTemplate);
+    return isolate->currentHandleScope()->createLocal<FunctionTemplate>(isolate->vm(), functionTemplate);
 }
 
 MaybeLocal<Function> FunctionTemplate::GetFunction(Local<Context> context)
@@ -63,7 +63,7 @@ MaybeLocal<Function> FunctionTemplate::GetFunction(Local<Context> context)
     auto* globalObject = context->globalObject();
     auto* f = Function::create(vm, globalObject->V8GlobalInternals()->v8FunctionStructure(globalObject), localToObjectPointer());
 
-    return context->currentHandleScope()->createLocal<Function>(f);
+    return context->currentHandleScope()->createLocal<Function>(vm, f);
 }
 
 Structure* FunctionTemplate::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
@@ -84,6 +84,7 @@ void FunctionTemplate::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(fn, visitor);
 
     if (fn->__internals.data.isCell()) {
+        // AUDIT
         JSC::JSCell::visitChildren(fn->__internals.data.asCell(), visitor);
     }
 }
@@ -95,19 +96,20 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
     auto* callee = JSC::jsDynamicCast<Function*>(callFrame->jsCallee());
     auto* functionTemplate = callee->functionTemplate();
     auto* isolate = Isolate::fromGlobalObject(JSC::jsDynamicCast<Zig::GlobalObject*>(globalObject));
+    auto& vm = globalObject->vm();
 
     WTF::Vector<TaggedPointer, 8> args(callFrame->argumentCount() + 1);
 
     HandleScope hs(isolate);
-    Local<Value> thisValue = hs.createLocal<Value>(callFrame->thisValue());
+    Local<Value> thisValue = hs.createLocal<Value>(vm, callFrame->thisValue());
     args[0] = thisValue.tagged();
 
     for (size_t i = 0; i < callFrame->argumentCount(); i++) {
-        Local<Value> argValue = hs.createLocal<Value>(callFrame->argument(i));
+        Local<Value> argValue = hs.createLocal<Value>(vm, callFrame->argument(i));
         args[i + 1] = argValue.tagged();
     }
 
-    Local<Value> data = hs.createLocal<Value>(functionTemplate->__internals.data);
+    Local<Value> data = hs.createLocal<Value>(vm, functionTemplate->__internals.data);
 
     ImplicitArgs implicit_args = {
         .holder = nullptr,

@@ -27,7 +27,7 @@ MaybeLocal<String> String::NewFromUtf8(Isolate* isolate, char const* data, NewSt
     auto string = WTF::String::fromUTF8ReplacingInvalidSequences(span);
     RELEASE_ASSERT(!string.isNull());
     JSString* jsString = JSC::jsString(isolate->vm(), string);
-    return MaybeLocal<String>(isolate->globalInternals()->currentHandleScope()->createLocal<String>(jsString));
+    return MaybeLocal<String>(isolate->currentHandleScope()->createLocal<String>(isolate->vm(), jsString));
 }
 
 MaybeLocal<String> String::NewFromOneByte(Isolate* isolate, const uint8_t* data, NewStringType type, int length)
@@ -37,7 +37,7 @@ MaybeLocal<String> String::NewFromOneByte(Isolate* isolate, const uint8_t* data,
 
     auto string = WTF::String::fromLatin1(reinterpret_cast<const char*>(data));
     JSString* jsString = JSC::jsString(isolate->vm(), string);
-    return MaybeLocal<String>(isolate->globalInternals()->currentHandleScope()->createLocal<String>(jsString));
+    return MaybeLocal<String>(isolate->currentHandleScope()->createLocal<String>(isolate->vm(), jsString));
 }
 
 extern "C" size_t TextEncoder__encodeInto8(const LChar* stringPtr, size_t stringLen, void* ptr, size_t len);

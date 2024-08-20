@@ -31,7 +31,7 @@ void HandleScopeBuffer::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     for (auto& handle : thisObject->storage) {
         if (handle.isCell()) {
-            JSCell::visitChildren(reinterpret_cast<JSCell*>(handle.object.ptr), visitor);
+            visitor.append(handle.object.contents.cell);
         }
     }
 }
@@ -45,18 +45,31 @@ Handle& HandleScopeBuffer::createUninitializedHandle()
     return storage.last();
 }
 
-TaggedPointer* HandleScopeBuffer::createHandle(void* ptr, const Map* map)
+TaggedPointer* HandleScopeBuffer::createHandle(JSCell* ptr, const Map* map, JSC::VM& vm)
 {
-    // TODO(@190n) specify the map more correctly
     auto& handle = createUninitializedHandle();
-    handle = Handle(map, ptr);
+    handle = Handle(map, ptr, vm, this);
+    return &handle.to_v8_object;
+}
+
+TaggedPointer* HandleScopeBuffer::createRawHandle(void* ptr)
+{
+    auto& handle = createUninitializedHandle();
+    handle = Handle(ptr);
     return &handle.to_v8_object;
 }
 
 TaggedPointer* HandleScopeBuffer::createSmiHandle(int32_t smi)
 {
     auto& handle = createUninitializedHandle();
-    handle.to_v8_object = TaggedPointer(smi);
+    handle = Handle(smi);
+    return &handle.to_v8_object;
+}
+
+TaggedPointer* HandleScopeBuffer::createDoubleHandle(double value)
+{
+    auto& handle = createUninitializedHandle();
+    handle = Handle(value);
     return &handle.to_v8_object;
 }
 

@@ -24,7 +24,7 @@ public:
     }
 
     // never changes size
-    using FieldContainer = WTF::FixedVector<JSC::JSValue>;
+    using FieldContainer = WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>>;
 
     FieldContainer* internalFields() { return &fields; }
     static InternalFieldObject* create(JSC::VM& vm, JSC::Structure* structure, Local<ObjectTemplate> objectTemplate);
@@ -34,7 +34,7 @@ public:
 protected:
     InternalFieldObject(JSC::VM& vm, JSC::Structure* structure, int internalFieldCount)
         : Base(vm, structure)
-        , fields(internalFieldCount, JSC::jsUndefined())
+        , fields(internalFieldCount, JSC::WriteBarrier<JSC::Unknown>(vm, this, JSC::jsUndefined()))
     {
     }
 

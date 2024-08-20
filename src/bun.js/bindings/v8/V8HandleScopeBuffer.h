@@ -33,8 +33,10 @@ public:
             [](auto& spaces, auto&& space) { spaces.m_subspaceForHandleScopeBuffer = std::forward<decltype(space)>(space); });
     }
 
-    TaggedPointer* createHandle(void* ptr, const Map* map);
+    TaggedPointer* createHandle(JSC::JSCell* object, const Map* map, JSC::VM& vm);
+    TaggedPointer* createRawHandle(void* ptr);
     TaggedPointer* createSmiHandle(int32_t smi);
+    TaggedPointer* createDoubleHandle(double value);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;

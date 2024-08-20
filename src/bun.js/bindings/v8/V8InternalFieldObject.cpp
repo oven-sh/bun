@@ -30,9 +30,7 @@ void InternalFieldObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
 
     for (auto& value : thisObject->fields) {
-        if (value.isCell()) {
-            JSCell::visitChildren(value.asCell(), visitor);
-        }
+        visitor.append(value);
     }
 }
 

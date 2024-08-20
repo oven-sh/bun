@@ -21,10 +21,10 @@ if (cluster.isPrimary) {
   cluster.on("exit", (worker, code, signal) => {
     console.log(`worker ${worker.process.pid} died`);
   });
-  // process.on("exit", code => {
-  //   assert.strictEqual(code, 0);
-  //   assert.strictEqual(workers, numCPUs);
-  // });
+  process.on("exit", code => {
+    assert.strictEqual(code, 0);
+    assert.strictEqual(workers, numCPUs);
+  });
 } else {
   // Workers can share any TCP connection
   // In this case it is an HTTP server

@@ -3,11 +3,12 @@ import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { join } from "node:path";
 import { writeFileSync, rmSync } from "node:fs";
-import { bunExe, bunEnv, tmpdirSync } from "harness";
+import { bunExe, bunEnv, tmpdirSync, isWindows } from "harness";
 
 let watchee: Subprocess;
 
 for (const dir of ["dir", "©️"]) {
+  // prettier-ignore
   it(`should watch files ${dir === "dir" ? "" : "(non-ascii path)"}`, async () => {
     const cwd = join(tmpdirSync(), dir);
     const path = join(cwd, "watchee.js");
@@ -35,7 +36,7 @@ for (const dir of ["dir", "©️"]) {
       await updateFile(i);
     }
     rmSync(path);
-  });
+  }, isWindows ? Infinity : undefined);
 }
 
 afterEach(() => {

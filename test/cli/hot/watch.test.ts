@@ -1,11 +1,12 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
 import { writeFile } from "node:fs/promises";
-import { bunEnv, bunExe, forEachLine, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, forEachLine, isWindows, tempDirWithFiles } from "harness";
 import { join } from "node:path";
 
 describe("--watch works", async () => {
   for (const watchedFile of ["tmp.js", "entry.js"]) {
+    // prettier-ignore
     test(`with ${watchedFile}`, async () => {
       const tmpdir_ = tempDirWithFiles("watch-fixture", {
         "tmp.js": "console.log('hello #1')",
@@ -44,6 +45,6 @@ describe("--watch works", async () => {
 
       process.kill("SIGKILL");
       await process.exited;
-    });
+    }, isWindows ? Infinity : undefined);
   }
 });

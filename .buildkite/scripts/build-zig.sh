@@ -10,6 +10,8 @@ if [[ -n "$CMAKE_FLAGS" ]]; then
   exit 1
 fi
 
+source "$(dirname "$0")/fix-cmake.sh"
+
 function assert_target() {
   local arch="${2-$(uname -m)}"
   case "$(echo "$arch" | tr '[:upper:]' '[:lower:]')" in
@@ -73,8 +75,6 @@ ZIG_OPTIMIZE="ReleaseFast"
 if [[ "$ZIG_OS" == "windows" ]]; then
   ZIG_OPTIMIZE="ReleaseSafe"
 fi
-
-source "$(dirname "$0")/fix-cmake.sh"
 
 run_command cmake .. "${CMAKE_FLAGS[@]}" \
   -GNinja \

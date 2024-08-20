@@ -5,6 +5,7 @@ export FORCE_UPDATE_SUBMODULES=1
 
 # env.sh calls update_submodules.sh
 source "$(dirname "$0")/env.sh"
+source "$(dirname "$0")/fix-cmake.sh"
 
 { set +x; } 2>/dev/null
 
@@ -17,8 +18,6 @@ function run_command() {
 mkdir -p build
 cd build
 mkdir -p tmp_modules tmp_functions js codegen
-
-source "$(dirname "$0")/fix-cmake.sh"
 
 run_command cmake .. "${CMAKE_FLAGS[@]}" \
   -GNinja \

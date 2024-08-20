@@ -2,6 +2,7 @@
 
 set -eo pipefail
 source "$(dirname "$0")/env.sh"
+source "$(dirname "$0")/fix-cmake.sh"
 
 function run_command() {
   set -x
@@ -16,8 +17,6 @@ source "$(dirname "$0")/download-artifact.sh" "build/bun-deps/**" --step "$BUILD
 source "$(dirname "$0")/download-artifact.sh" "build/bun-zig.o" --step "$BUILDKITE_GROUP_KEY-build-zig"
 source "$(dirname "$0")/download-artifact.sh" "build/bun-cpp-objects.a" --step "$BUILDKITE_GROUP_KEY-build-cpp" --split
 cd build
-
-source "$(dirname "$0")/fix-cmake.sh"
 
 run_command cmake .. "${CMAKE_FLAGS[@]}" \
   -GNinja \

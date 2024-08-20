@@ -35,6 +35,8 @@ pub const StandaloneModuleGraph = struct {
 
     pub const base_public_path = targetBasePublicPath(Environment.os, "");
 
+    pub const base_public_path_with_default_suffix = targetBasePublicPath(Environment.os, "root/");
+
     pub fn targetBasePublicPath(target: Environment.OperatingSystem, comptime suffix: [:0]const u8) [:0]const u8 {
         return switch (target) {
             .windows => "B:/~BUN/" ++ suffix,
@@ -56,6 +58,11 @@ pub const StandaloneModuleGraph = struct {
         if (!isBunStandaloneFilePath(base_path)) {
             return null;
         }
+
+        return this.findAssumeStandalonePath(name);
+    }
+
+    pub fn findAssumeStandalonePath(this: *const StandaloneModuleGraph, name: []const u8) ?*File {
         if (Environment.isWindows) {
             var normalized_buf: bun.PathBuffer = undefined;
             const normalized = bun.path.platformToPosixBuf(u8, name, &normalized_buf);

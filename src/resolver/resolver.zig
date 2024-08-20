@@ -114,6 +114,7 @@ const bufs = struct {
     pub threadlocal var path_in_global_disk_cache: bun.PathBuffer = undefined;
     pub threadlocal var abs_to_rel: bun.PathBuffer = undefined;
     pub threadlocal var node_modules_paths_buf: bun.PathBuffer = undefined;
+    pub threadlocal var import_path_for_standalone_module_graph: bun.PathBuffer = undefined;
 
     pub inline fn bufs(comptime field: std.meta.DeclEnum(@This())) *@TypeOf(@field(@This(), @tagName(field))) {
         return &@field(@This(), @tagName(field));
@@ -934,11 +935,13 @@ pub const Resolver = struct {
         // relative to our special /$bunfs/ directory.
         //
         // It's always relative to the current working directory of the project root.
+        //
+        // ...unless you pass a relative path that exists in the standalone module graph executable.
         var source_dir_resolver: bun.path.PosixToWinNormalizer = .{};
         const source_dir_normalized = brk: {
             if (r.standalone_module_graph) |graph| {
                 if (bun.StandaloneModuleGraph.isBunStandaloneFilePath(import_path)) {
-                    if (graph.files.contains(import_path)) {
+                    if (graph.findAssumeStandalonePath(import_path) != null) {
                         return .{
                             .success = Result{
                                 .import_kind = kind,
@@ -953,6 +956,24 @@ pub const Resolver = struct {
 
                     return .{ .not_found = {} };
                 } else if (bun.StandaloneModuleGraph.isBunStandaloneFilePath(source_dir)) {
+                    if (import_path.len > 2 and isDotSlash(import_path[0..2])) {
+                        const buf = bufs(.import_path_for_standalone_module_graph);
+                        const joined = bun.path.joinAbsStringBuf(source_dir, buf, &.{import_path}, .loose);
+
+                        // Support relative paths in the graph
+                        if (graph.findAssumeStandalonePath(joined)) |file| {
+                            return .{
+                                .success = Result{
+                                    .import_kind = kind,
+                                    .path_pair = PathPair{
+                                        .primary = Path.init(file.name),
+                                    },
+                                    .is_standalone_module = true,
+                                    .module_type = .esm,
+                                },
+                            };
+                        }
+                    }
                     break :brk Fs.FileSystem.instance.top_level_dir;
                 }
             }

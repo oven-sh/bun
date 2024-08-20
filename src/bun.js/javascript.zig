@@ -1861,8 +1861,14 @@ pub const VirtualMachine = struct {
             .handler = ModuleLoader.AsyncModule.Queue.onWakeHandler,
             .onDependencyError = JSC.ModuleLoader.AsyncModule.Queue.onDependencyError,
         };
+        vm.bundler.resolver.standalone_module_graph = opts.graph;
 
-        vm.bundler.configureLinker();
+        if (opts.graph == null) {
+            vm.bundler.configureLinker();
+        } else {
+            vm.bundler.configureLinkerWithAutoJSX(false);
+        }
+
         try vm.bundler.configureFramework(false);
         vm.smol = opts.smol;
         vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);

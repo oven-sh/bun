@@ -30,6 +30,63 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "Hello, world!" },
   });
+  itBundled("compile/WorkerRelativePathNoExtension", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import {rmSync} from 'fs';
+        // Verify we're not just importing from the filesystem
+        rmSync("./worker.ts", {force: true});
+        
+        console.log("Hello, world!");
+        new Worker("./worker");
+      `,
+      "/worker.ts": /* js */ `
+        console.log("Worker loaded!");
+    `.trim(),
+    },
+    entryPointsRaw: ["./entry.ts", "./worker.ts"],
+    outfile: "dist/out",
+    run: { stdout: "Hello, world!\nWorker loaded!\n", file: "dist/out", setCwd: true },
+  });
+  itBundled("compile/WorkerRelativePathTSExtension", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import {rmSync} from 'fs';
+        // Verify we're not just importing from the filesystem
+        rmSync("./worker.ts", {force: true});
+        console.log("Hello, world!");
+        new Worker("./worker.ts");
+      `,
+      "/worker.ts": /* js */ `
+        console.log("Worker loaded!");
+    `.trim(),
+    },
+    entryPointsRaw: ["./entry.ts", "./worker.ts"],
+    outfile: "dist/out",
+    run: { stdout: "Hello, world!\nWorker loaded!\n", file: "dist/out", setCwd: true },
+  });
+  itBundled("compile/ResolveEmbeddedFileOutfile", {
+    compile: true,
+    // TODO: this shouldn't be necessary, or we should add a map aliasing files.
+    assetNaming: "[name].[ext]",
+
+    files: {
+      "/entry.ts": /* js */ `
+      import {rmSync} from 'fs';
+        import './foo.file';
+        rmSync('./foo.file', {force: true});
+        if ((await Bun.file(import.meta.require.resolve('./foo.file')).text()).trim() !== "abcd") throw "fail";
+        console.log("Hello, world!");
+      `,
+      "/foo.file": /* js */ `
+      abcd
+    `.trim(),
+    },
+    outfile: "dist/out",
+    run: { stdout: "Hello, world!" },
+  });
   itBundled("compile/pathToFileURLWorks", {
     compile: true,
     files: {

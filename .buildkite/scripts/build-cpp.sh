@@ -24,11 +24,11 @@ run_command cmake .. "${CMAKE_FLAGS[@]}" \
   -DBUN_CPP_ONLY="1" \
   -DNO_CONFIGURE_DEPENDS="1" \
   -DCMAKE_BUILD_TYPE="$CMAKE_BUILD_TYPE" \
-  -DCPU_TARGET="$CPU_TARGET" \
+  -DUSE_CPU="$CPU_TARGET" \
   -DUSE_LTO="$USE_LTO" \
-  -DUSE_DEBUG_JSC="$USE_DEBUG_JSC" \
-  -DCANARY="$CANARY" \
-  -DGIT_SHA="$GIT_SHA"
+  -DENABLE_ASSERTIONS="$USE_DEBUG_JSC" \
+  -DENABLE_CANARY="$CANARY" \
+  -DUSE_REVISION="$GIT_SHA"
 
 chmod +x compile-cpp-only.sh
 source compile-cpp-only.sh -v -j "$CPUS"

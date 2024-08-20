@@ -56,18 +56,20 @@ else()
 endif()
 
 if(USE_ARCH STREQUAL "aarch64")
-  set(USE_ZIG_ARCH "aarch64")
+  set(DEFAULT_USE_ZIG_ARCH "aarch64")
 else()
-  set(USE_ZIG_ARCH "x86_64")
+  set(DEFAULT_USE_ZIG_ARCH "x86_64")
 endif()
 
 if(APPLE)
-  set(USE_ZIG_TARGET ${USE_ZIG_ARCH}-macos-none)
+  set(DEFAULT_USE_ZIG_TARGET ${DEFAULT_USE_ZIG_ARCH}-macos-none)
 elseif(WIN32)
-  set(USE_ZIG_TARGET ${USE_ZIG_ARCH}-windows-msvc)
+  set(DEFAULT_USE_ZIG_TARGET ${DEFAULT_USE_ZIG_ARCH}-windows-msvc)
 else()
-  set(USE_ZIG_TARGET ${USE_ZIG_ARCH}-linux-gnu)
+  set(DEFAULT_USE_ZIG_TARGET ${DEFAULT_USE_ZIG_ARCH}-linux-gnu)
 endif()
+
+parse_option(USE_ZIG_TARGET STRING "The zig target to use" ${DEFAULT_USE_ZIG_TARGET})
 
 # Since Bun 1.1, Windows has been built using ReleaseSafe, and macOS & Linux have been using ReleaseFast
 # This is because it caught more crashes, but we could reconsider this in the future

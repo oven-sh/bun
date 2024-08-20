@@ -26,11 +26,11 @@ run_command cmake .. "${CMAKE_FLAGS[@]}" \
   -DBUN_CPP_ARCHIVE="$cwd/build/bun-cpp-objects.a" \
   -DBUN_DEPS_OUT_DIR="$cwd/build/bun-deps" \
   -DCMAKE_BUILD_TYPE="$CMAKE_BUILD_TYPE" \
-  -DCPU_TARGET="$CPU_TARGET" \
+  -DUSE_CPU="$CPU_TARGET" \
   -DUSE_LTO="$USE_LTO" \
-  -DUSE_DEBUG_JSC="$USE_DEBUG_JSC" \
-  -DCANARY="$CANARY" \
-  -DGIT_SHA="$GIT_SHA"
+  -DENABLE_ASSERTIONS="$USE_DEBUG_JSC" \
+  -DENABLE_CANARY="$CANARY" \
+  -DUSE_REVISION="$GIT_SHA"
 run_command ninja -v -j "$CPUS"
 run_command ls
 

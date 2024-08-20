@@ -84,14 +84,14 @@ run_command cmake .. "${CMAKE_FLAGS[@]}" \
   -DBUN_ZIG_OBJ_DIR="$cwd/build" \
   -DZIG_LIB_DIR="$cwd/src/deps/zig/lib" \
   -DCMAKE_BUILD_TYPE="$CMAKE_BUILD_TYPE" \
-  -DARCH="$ZIG_ARCH" \
-  -DCPU_TARGET="$ZIG_CPU_TARGET" \
-  -DZIG_TARGET="$ZIG_TARGET" \
+  -DUSE_ARCH="$ZIG_ARCH" \
+  -DUSE_CPU="$ZIG_CPU_TARGET" \
+  -DUSE_ZIG_TARGET="$ZIG_TARGET" \
   -DUSE_LTO="$USE_LTO" \
-  -DUSE_DEBUG_JSC="$USE_DEBUG_JSC" \
-  -DCANARY="$CANARY" \
-  -DZIG_OPTIMIZE="$ZIG_OPTIMIZE" \
-  -DGIT_SHA="$GIT_SHA"
+  -DENABLE_ASSERTIONS="$USE_DEBUG_JSC" \
+  -DENABLE_CANARY="$CANARY" \
+  -DUSE_ZIG_OPTIMIZE="$ZIG_OPTIMIZE" \
+  -DUSE_REVISION="$GIT_SHA"
 
 export ONLY_ZIG="1"
 run_command ninja "$cwd/build/bun-zig.o" -v -j "$CPUS"

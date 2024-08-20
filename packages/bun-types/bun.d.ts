@@ -2861,6 +2861,13 @@ declare module "bun" {
   function file(path: string | URL, options?: BlobPropertyBag): BunFile;
 
   /**
+   * A list of files embedded into the standalone executable. Lexigraphically sorted by name.
+   *
+   * If the process is not a standalone executable, this returns an empty array.
+   */
+  const embeddedFiles: ReadonlyArray<Blob>;
+
+  /**
    * `Blob` that leverages the fastest system calls available to operate on files.
    *
    * This Blob is lazy. It won't do any work until you read from it. Errors propagate as promise rejections.

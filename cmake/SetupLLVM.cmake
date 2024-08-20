@@ -3,11 +3,11 @@ include(cmake/Utils.cmake)
 if(WIN32 OR APPLE)
   set(DEFAULT_LLVM_VERSION "18.1.8")
 else()
-  set(DEFAULT_LLVM_VERSION "16")
+  set(DEFAULT_LLVM_VERSION "16.0.6")
 endif()
 
-parse_option(USE_LLVM_VERSION STRING "The version of LLVM to use" ${DEFAULT_LLVM_VERSION})
-parse_semver(${USE_LLVM_VERSION} LLVM)
+parse_option(LLVM_VERSION STRING "The version of LLVM to use" ${DEFAULT_LLVM_VERSION})
+parse_semver(${LLVM_VERSION} LLVM)
 
 if(APPLE)
   execute_process(

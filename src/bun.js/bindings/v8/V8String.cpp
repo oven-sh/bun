@@ -139,9 +139,7 @@ int String::WriteUtf8(Isolate* isolate, char* buffer, int length, int* nchars_re
 int String::Length() const
 {
     auto jsString = localToObjectPointer<JSString>();
-    RELEASE_ASSERT(jsString->isString());
-    WTF::String s = jsString->getString(Isolate::GetCurrent()->globalObject());
-    return s.length();
+    return static_cast<int>(jsString->length());
 }
 
 }

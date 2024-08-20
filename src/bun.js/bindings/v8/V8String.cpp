@@ -1,6 +1,7 @@
 #include "V8String.h"
 
 #include "V8HandleScope.h"
+#include "wtf/SIMDUTF.h"
 
 using JSC::JSString;
 
@@ -28,6 +29,75 @@ MaybeLocal<String> String::NewFromUtf8(Isolate* isolate, char const* data, NewSt
     RELEASE_ASSERT(!string.isNull());
     JSString* jsString = JSC::jsString(isolate->vm(), string);
     return MaybeLocal<String>(isolate->globalInternals()->currentHandleScope()->createLocal<String>(jsString));
+}
+
+int String::Utf8Length(Isolate* isolate) const
+{
+    auto jsString = localToObjectPointer<JSString>();
+    if (jsString->length() == 0) {
+        return 0;
+    }
+
+    auto str = jsString->view(isolate->globalObject());
+    if (str->is8Bit()) {
+        const auto span = str->span8();
+        size_t len = simdutf::utf8_length_from_latin1(reinterpret_cast<const char*>(span.data()), span.size());
+        return static_cast<int>(len);
+    } else {
+        const auto span = str->span16();
+        size_t len = simdutf::utf8_length_from_utf16(span.data(), span.size());
+        return static_cast<int>(len);
+    }
+}
+
+bool String::IsOneByte() const
+{
+    auto jsString = localToObjectPointer<JSString>();
+    if (jsString->length() == 0) {
+        return true;
+    }
+    auto impl = jsString->tryGetValue();
+    return impl->is8Bit();
+}
+
+bool String::ContainsOnlyOneByte() const
+{
+    auto jsString = localToObjectPointer<JSString>();
+    if (jsString->length() == 0) {
+        return true;
+    }
+    auto impl = jsString->tryGetValue();
+    return impl->containsOnlyLatin1();
+}
+
+bool String::IsExternal() const
+{
+    auto jsString = localToObjectPointer<JSString>();
+    if (jsString->length() == 0) {
+        return false;
+    }
+    auto impl = jsString->tryGetValue();
+    return !impl->isNull() && impl->impl()->isExternal();
+}
+
+bool String::IsExternalTwoByte() const
+{
+    auto jsString = localToObjectPointer<JSString>();
+    if (jsString->length() == 0) {
+        return false;
+    }
+    auto impl = jsString->tryGetValue();
+    return !impl->isNull() && impl->impl()->isExternal() && !impl->is8Bit();
+}
+
+bool String::IsExternalOneByte() const
+{
+    auto jsString = localToObjectPointer<JSString>();
+    if (jsString->length() == 0) {
+        return false;
+    }
+    auto impl = jsString->tryGetValue();
+    return !impl->isNull() && impl->impl()->isExternal() && impl->is8Bit();
 }
 
 extern "C" size_t TextEncoder__encodeInto8(const LChar* stringPtr, size_t stringLen, void* ptr, size_t len);

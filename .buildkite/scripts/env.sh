@@ -94,6 +94,7 @@ function assert_buildkite_agent() {
 }
 
 function export_environment() {
+  source "${ROOT_DIR}/scripts/env.sh"
   source "${ROOT_DIR}/scripts/update-submodules.sh"
 
   { set +x; } 2>/dev/null

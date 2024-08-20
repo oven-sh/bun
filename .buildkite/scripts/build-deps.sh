@@ -2,8 +2,6 @@
 
 set -eo pipefail
 
-ROOT_DIR="$(realpath "$(dirname "$0")/../../")"
-source "$ROOT_DIR/scripts/env.sh"
 source "$(dirname "$0")/env.sh"
 source "$(realpath $(dirname "$0")/../../scripts/all-dependencies.sh)"
 

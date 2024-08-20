@@ -333,6 +333,7 @@ const SocketIPCData = struct {
     outgoing: bun.io.StreamBuffer = .{},
     has_written_version: if (Environment.allow_assert) u1 else u0 = 0,
     internal_msg_queue: node_cluster_binding.InternalMsgHolder = .{},
+    disconnected: bool = false,
 
     pub fn writeVersionPacket(this: *SocketIPCData) void {
         if (Environment.allow_assert) {
@@ -400,8 +401,22 @@ const SocketIPCData = struct {
         return true;
     }
 
-    pub fn close(this: *SocketIPCData) void {
-        this.socket.close(.normal);
+    pub fn close(this: *SocketIPCData, nextTick: bool) void {
+        log("SocketIPCData#close", .{});
+        if (this.disconnected) return;
+        this.disconnected = true;
+        if (nextTick) {
+            JSC.VirtualMachine.get().enqueueTask(JSC.ManagedTask.New(SocketIPCData, closeTask).init(this));
+        } else {
+            this.closeTask();
+        }
+    }
+
+    pub fn closeTask(this: *SocketIPCData) void {
+        log("SocketIPCData#closeTask", .{});
+        if (this.disconnected) {
+            this.socket.close(.normal);
+        }
     }
 };
 

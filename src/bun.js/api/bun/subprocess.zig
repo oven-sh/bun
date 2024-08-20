@@ -735,20 +735,21 @@ pub const Subprocess = struct {
 
         return .undefined;
     }
-    pub fn disconnectIPC(this: *Subprocess) void {
+    pub fn disconnectIPC(this: *Subprocess, nextTick: bool) void {
         const ipc_data = this.ipc() orelse return;
-        ipc_data.close();
+        ipc_data.close(nextTick);
     }
     pub fn disconnect(this: *Subprocess, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         _ = globalThis;
         _ = callframe;
-        this.disconnectIPC();
+        this.disconnectIPC(false);
         return .undefined;
     }
 
     pub fn getConnected(this: *Subprocess, globalThis: *JSGlobalObject) JSValue {
         _ = globalThis;
-        return JSValue.jsBoolean(this.ipc() != null);
+        const ipc_data = this.ipc();
+        return JSValue.jsBoolean(ipc_data != null and ipc_data.?.disconnected == false);
     }
 
     pub fn pid(this: *const Subprocess) i32 {
@@ -1532,7 +1533,7 @@ pub const Subprocess = struct {
     // This must only be run once per Subprocess
     pub fn finalizeStreams(this: *Subprocess) void {
         log("finalizeStreams", .{});
-        this.disconnectIPC();
+        this.disconnectIPC(true);
         this.closeProcess();
 
         this.closeIO(.stdin);
@@ -2168,15 +2169,17 @@ pub const Subprocess = struct {
             if (Environment.isPosix) {
                 if (posix_ipc_info.ext(*Subprocess)) |ctx| {
                     ctx.* = subprocess;
+                    subprocess.ref();
                 }
             } else {
                 subprocess.ref();
+
                 if (ipc_data.configureServer(
                     Subprocess,
                     subprocess,
                     subprocess.stdio_pipes.items[@intCast(ipc_channel)].buffer,
                 ).asErr()) |err| {
-                    process_allocator.destroy(subprocess);
+                    subprocess.deref();
                     globalThis.throwValue(err.toJSC(globalThis));
                     return .zero;
                 }

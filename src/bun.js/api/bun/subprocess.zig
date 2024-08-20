@@ -738,8 +738,8 @@ pub const Subprocess = struct {
     }
     pub fn disconnectIPC(this: *Subprocess) void {
         const ipc_data = this.ipc_maybe() orelse return;
-        ipc_data.close();
         this.ipc_data = null;
+        ipc_data.close();
     }
     pub fn disconnect(this: *Subprocess, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         _ = globalThis;

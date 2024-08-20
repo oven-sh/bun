@@ -202,6 +202,9 @@ pub const Subprocess = struct {
     flags: Flags = .{},
 
     weak_file_sink_stdin_ptr: ?*JSC.WebCore.FileSink = null,
+    ref_count: u32 = 1,
+
+    usingnamespace bun.NewRefCounted(@This(), Subprocess.deinit);
 
     pub const Flags = packed struct {
         is_sync: bool = false,
@@ -345,7 +348,7 @@ pub const Subprocess = struct {
         return this.has_pending_activity.load(.acquire);
     }
 
-    pub fn ref(this: *Subprocess) void {
+    pub fn jsRef(this: *Subprocess) void {
         this.process.enableKeepingEventLoopAlive();
 
         if (!this.hasCalledGetter(.stdin)) {
@@ -364,7 +367,7 @@ pub const Subprocess = struct {
     }
 
     /// This disables the keeping process alive flag on the poll and also in the stdin, stdout, and stderr
-    pub fn unref(this: *Subprocess) void {
+    pub fn jsUnref(this: *Subprocess) void {
         this.process.disableKeepingEventLoopAlive();
 
         if (!this.hasCalledGetter(.stdin)) {
@@ -690,23 +693,20 @@ pub const Subprocess = struct {
     }
 
     pub fn doRef(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
-        this.ref();
+        this.jsRef();
         return .undefined;
     }
 
     pub fn doUnref(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
-        this.unref();
+        this.jsUnref();
         return .undefined;
     }
 
     pub fn onStdinDestroyed(this: *Subprocess) void {
         this.flags.has_stdin_destructor_called = true;
         this.weak_file_sink_stdin_ptr = null;
-
-        if (this.flags.finalized) {
-            // if the process has already been garbage collected, we can free the memory now
-            bun.default_allocator.destroy(this);
-        } else {
+        defer this.deref();
+        if (!this.flags.finalized) {
             // otherwise update the pending activity flag
             this.updateHasPendingActivity();
         }
@@ -737,7 +737,6 @@ pub const Subprocess = struct {
     }
     pub fn disconnectIPC(this: *Subprocess) void {
         const ipc_data = this.ipc() orelse return;
-        this.ipc_data = null;
         ipc_data.close();
     }
     pub fn disconnect(this: *Subprocess, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
@@ -838,7 +837,7 @@ pub const Subprocess = struct {
             ref_count: u32 = 1,
             buffer: []const u8 = "",
 
-            pub usingnamespace bun.NewRefCounted(@This(), deinit);
+            pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
             const This = @This();
             const print = bun.Output.scoped(.StaticPipeWriter, false);
 
@@ -962,7 +961,7 @@ pub const Subprocess = struct {
         pub const IOReader = bun.io.BufferedReader;
         pub const Poll = IOReader;
 
-        pub usingnamespace bun.NewRefCounted(PipeReader, deinit);
+        pub usingnamespace bun.NewRefCounted(PipeReader, PipeReader.deinit);
 
         pub fn hasPendingActivity(this: *const PipeReader) bool {
             if (this.state == .pending)
@@ -1239,6 +1238,7 @@ pub const Subprocess = struct {
                             }
                             pipe.writer.setParent(pipe);
                             subprocess.weak_file_sink_stdin_ptr = pipe;
+                            subprocess.ref();
                             subprocess.flags.has_stdin_destructor_called = false;
 
                             return Writable{
@@ -1297,6 +1297,7 @@ pub const Subprocess = struct {
                     }
 
                     subprocess.weak_file_sink_stdin_ptr = pipe;
+                    subprocess.ref();
                     subprocess.flags.has_stdin_destructor_called = false;
 
                     pipe.writer.handle.poll.flags.insert(.socket);
@@ -1348,6 +1349,7 @@ pub const Subprocess = struct {
                     } else {
                         subprocess.flags.has_stdin_destructor_called = false;
                         subprocess.weak_file_sink_stdin_ptr = pipe;
+                        subprocess.ref();
                         if (@intFromPtr(pipe.signal.ptr) == @intFromPtr(subprocess)) {
                             pipe.signal.clear();
                         }
@@ -1559,6 +1561,11 @@ pub const Subprocess = struct {
         this.on_disconnect_callback.deinit();
     }
 
+    pub fn deinit(this: *Subprocess) void {
+        log("deinit", .{});
+        this.destroy();
+    }
+
     pub fn finalize(this: *Subprocess) callconv(.C) void {
         log("finalize", .{});
         // Ensure any code which references the "this" value doesn't attempt to
@@ -1573,10 +1580,7 @@ pub const Subprocess = struct {
         this.process.deref();
 
         this.flags.finalized = true;
-        if (this.weak_file_sink_stdin_ptr == null) {
-            // if no file sink exists we can free immediately
-            bun.default_allocator.destroy(this);
-        }
+        this.deref();
     }
 
     pub fn getExited(
@@ -2166,6 +2170,7 @@ pub const Subprocess = struct {
                     ctx.* = subprocess;
                 }
             } else {
+                subprocess.ref();
                 if (ipc_data.configureServer(
                     Subprocess,
                     subprocess,
@@ -2321,6 +2326,7 @@ pub const Subprocess = struct {
     pub fn handleIPCClose(this: *Subprocess) void {
         IPClog("Subprocess#handleIPCClose", .{});
         this.updateHasPendingActivity();
+        defer this.deref();
         var ok = false;
         if (this.ipc()) |ipc_data| {
             ok = true;

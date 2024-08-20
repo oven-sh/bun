@@ -5776,7 +5776,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     break :brk false;
                 };
 
-                JSC.C.JSValueUnprotect(this.globalThis, this.thisObject.asObjectRef());
+                this.thisObject.unprotect();
                 this.thisObject = .undefined;
                 this.stop(abrupt);
             }
@@ -5786,7 +5786,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
         pub fn disposeFromJS(this: *ThisServer) JSC.JSValue {
             if (this.listener != null) {
-                JSC.C.JSValueUnprotect(this.globalThis, this.thisObject.asObjectRef());
+                this.thisObject.unprotect();
                 this.thisObject = .undefined;
                 this.stop(true);
             }

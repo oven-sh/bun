@@ -127,6 +127,12 @@ static void perform_string_test(const FunctionCallbackInfo<Value> &info,
 
   LOG_VALUE_KIND(v8_string);
   LOG_EXPR(v8_string->Length());
+  LOG_EXPR(v8_string->Utf8Length(isolate));
+  LOG_EXPR(v8_string->IsOneByte());
+  LOG_EXPR(v8_string->ContainsOnlyOneByte());
+  LOG_EXPR(v8_string->IsExternal());
+  LOG_EXPR(v8_string->IsExternalTwoByte());
+  LOG_EXPR(v8_string->IsExternalOneByte());
 
   // check string has the right contents
   LOG_EXPR(retval = v8_string->WriteUtf8(isolate, buf, sizeof buf, &nchars));

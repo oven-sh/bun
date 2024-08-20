@@ -17,7 +17,7 @@ source "$(dirname "$0")/download-artifact.sh" "build/bun-zig.o" --step "$BUILDKI
 source "$(dirname "$0")/download-artifact.sh" "build/bun-cpp-objects.a" --step "$BUILDKITE_GROUP_KEY-build-cpp" --split
 cd build
 
-unset LLVM_VERSION
+source "$(dirname "$0")/fix-cmake.sh"
 
 run_command cmake .. "${CMAKE_FLAGS[@]}" \
   -GNinja \

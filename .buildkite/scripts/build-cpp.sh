@@ -18,7 +18,7 @@ mkdir -p build
 cd build
 mkdir -p tmp_modules tmp_functions js codegen
 
-unset LLVM_VERSION
+source "$(dirname "$0")/fix-cmake.sh"
 
 run_command cmake .. "${CMAKE_FLAGS[@]}" \
   -GNinja \

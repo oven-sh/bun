@@ -74,6 +74,8 @@ if [[ "$ZIG_OS" == "windows" ]]; then
   ZIG_OPTIMIZE="ReleaseSafe"
 fi
 
+source "$(dirname "$0")/fix-cmake.sh"
+
 run_command cmake .. "${CMAKE_FLAGS[@]}" \
   -GNinja \
   -DNO_CONFIGURE_DEPENDS="1" \

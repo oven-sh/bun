@@ -746,18 +746,19 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             context: *Context,
             socket: Socket,
         ) void {
-            const to_write = context.ipc().outgoing.slice();
+            const ipc = context.ipc() orelse return;
+            const to_write = ipc.outgoing.slice();
             if (to_write.len == 0) {
-                context.ipc().outgoing.reset();
-                context.ipc().outgoing.reset();
+                ipc.outgoing.reset();
+                ipc.outgoing.reset();
                 return;
             }
             const n = socket.write(to_write, false);
             if (n == to_write.len) {
-                context.ipc().outgoing.reset();
-                context.ipc().outgoing.reset();
+                ipc.outgoing.reset();
+                ipc.outgoing.reset();
             } else if (n > 0) {
-                context.ipc().outgoing.cursor += @intCast(n);
+                ipc.outgoing.cursor += @intCast(n);
             }
         }
 

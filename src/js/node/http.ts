@@ -1671,7 +1671,7 @@ class ClientRequest extends OutgoingMessage {
     }
 
     const defaultPort = options.defaultPort || this.#agent.defaultPort;
-    this.#port = options.port || options.defaultPort || defaultPort;
+    this.#port = options.port || defaultPort || 80;
     this.#useDefaultPort = this.#port === defaultPort;
     const host =
       (this.#host =

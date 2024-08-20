@@ -67,6 +67,52 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "Hello, world!\nWorker loaded!\n", file: "dist/out", setCwd: true },
   });
+  itBundled("compile/Bun.embeddedFiles", {
+    compile: true,
+    // TODO: this shouldn't be necessary, or we should add a map aliasing files.
+    assetNaming: "[name].[ext]",
+
+    files: {
+      "/entry.ts": /* js */ `
+      import {rmSync} from 'fs';
+        import './foo.file';
+        import './1.embed';
+        import './2.embed';
+        rmSync('./foo.file', {force: true});
+        rmSync('./1.embed', {force: true});
+        rmSync('./2.embed', {force: true});
+        const names = {
+          "1.embed": "1.embed",
+          "2.embed": "2.embed",
+          "foo.file": "foo.file",
+        }
+        // We want to verify it omits source code.
+        for (let f of Bun.embeddedFiles) {
+          const name = f.name;
+          if (!names[name]) {
+            throw new Error("Unexpected embedded file: " + name);
+          }
+        }
+
+        if (Bun.embeddedFiles.length !== 3) throw "fail";
+        if ((await Bun.file(import.meta.require.resolve('./1.embed')).text()).trim() !== "abcd") throw "fail";
+        if ((await Bun.file(import.meta.require.resolve('./2.embed')).text()).trim() !== "abcd") throw "fail";
+        if ((await Bun.file(import.meta.require.resolve('./foo.file')).text()).trim() !== "abcd") throw "fail";
+        console.log("Hello, world!");
+      `,
+      "/1.embed": /* js */ `
+      abcd
+    `.trim(),
+      "/2.embed": /* js */ `
+      abcd
+    `.trim(),
+      "/foo.file": /* js */ `
+      abcd
+    `.trim(),
+    },
+    outfile: "dist/out",
+    run: { stdout: "Hello, world!" },
+  });
   itBundled("compile/ResolveEmbeddedFileOutfile", {
     compile: true,
     // TODO: this shouldn't be necessary, or we should add a map aliasing files.

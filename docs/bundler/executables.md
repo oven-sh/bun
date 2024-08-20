@@ -228,6 +228,35 @@ export default {
 
 This is honestly a workaround, and we expect to improve this in the future with a more direct API.
 
+### Listing embedded files
+
+To get a list of all embedded files, use `Bun.embeddedFiles`:
+
+```js
+import "./icon.png" with { type: "file" };
+import { embeddedFiles } from "bun";
+
+console.log(embeddedFiles[0].name); // `icon-${hash}.png`
+```
+
+`Bun.embeddedFiles` returns an array of `Blob` objects which you can use to get the size, contents, and other properties of the files.
+
+```ts
+embeddedFiles: Blob[]
+```
+
+The list of embedded files excludes bundled source code like `.ts` and `.js` files.
+
+#### Content hash
+
+By default, embedded files have a content hash appended to their name. This is useful for situations where you want to serve the file from a URL or CDN and ensure it is unique. But sometimes, this is unexpected and you might want the original name instead:
+
+To disable the content hash, pass `--asset-naming` to `bun build --compile` like this:
+
+```sh
+$ bun build --compile --asset-naming="[name].[ext]" ./index.ts
+```
+
 ## Minification
 
 To trim down the size of the executable a little, pass `--minify` to `bun build --compile`. This uses Bun's minifier to reduce the code size. Overall though, Bun's binary is still way too big and we need to make it smaller.

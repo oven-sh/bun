@@ -16,7 +16,7 @@ function assert_target() {
   local arch="${2-$(uname -m)}"
   case "$(echo "$arch" | tr '[:upper:]' '[:lower:]')" in
   x64 | x86_64 | amd64)
-    export ZIG_ARCH="x86_64"
+    export ZIG_ARCH="x64"
     if [[ "$BUILDKITE_STEP_KEY" == *"baseline"* ]]; then
       export ZIG_CPU_TARGET="nehalem"
     else

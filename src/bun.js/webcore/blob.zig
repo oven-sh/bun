@@ -660,7 +660,7 @@ pub const Blob = struct {
         );
     }
 
-    pub fn writeFormat(this: *const Blob, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
+    pub fn writeFormat(this: *Blob, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         const Writer = @TypeOf(writer);
 
         if (this.isDetached()) {
@@ -715,11 +715,25 @@ pub const Blob = struct {
             }
         }
 
-        if (this.content_type.len > 0 or this.offset > 0) {
+        const show_name = (this.is_jsdom_file and this.getNameString() != null) or (!this.name.isEmpty() and this.store != null and this.store.?.data == .bytes);
+        if (this.content_type.len > 0 or this.offset > 0 or show_name) {
             try writer.writeAll(" {\n");
             {
                 formatter.indent += 1;
                 defer formatter.indent -= 1;
+
+                if (show_name) {
+                    try formatter.writeIndent(Writer, writer);
+
+                    try writer.print(
+                        comptime Output.prettyFmt("name: <green>\"{}\"<r>", enable_ansi_colors),
+                        .{
+                            this.getNameString() orelse bun.String.empty,
+                        },
+                    );
+
+                    try writer.writeAll("\n");
+                }
 
                 if (this.content_type.len > 0) {
                     try formatter.writeIndent(Writer, writer);
@@ -731,7 +745,7 @@ pub const Blob = struct {
                     );
 
                     if (this.offset > 0) {
-                        formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+                        try formatter.printComma(Writer, writer, enable_ansi_colors);
                     }
 
                     try writer.writeAll("\n");
@@ -746,6 +760,8 @@ pub const Blob = struct {
                             this.offset,
                         },
                     );
+
+                    try writer.writeAll("\n");
                 }
             }
 
@@ -3640,21 +3656,24 @@ pub const Blob = struct {
         return ZigString.Empty.toJS(globalThis);
     }
 
+    pub fn getNameString(this: *Blob) ?bun.String {
+        if (this.name.tag != .Dead) return this.name;
+
+        if (this.getFileName()) |path| {
+            this.name = bun.String.createUTF8(path);
+            return this.name;
+        }
+
+        return null;
+    }
+
     // TODO: Move this to a separate `File` object or BunFile
     pub fn getName(
         this: *Blob,
         _: JSC.JSValue,
         globalThis: *JSC.JSGlobalObject,
     ) JSValue {
-        if (this.name.tag != .Dead) return this.name.toJS(globalThis);
-
-        if (this.getFileName()) |path| {
-            var str = bun.String.createUTF8(path);
-            this.name = str;
-            return str.toJS(globalThis);
-        }
-
-        return JSValue.undefined;
+        return if (this.getNameString()) |name| name.toJS(globalThis) else .undefined;
     }
 
     pub fn setName(
@@ -3672,8 +3691,13 @@ pub const Blob = struct {
         }
         if (value.isString()) {
             this.name.deref();
-            this.name = bun.String.tryFromJS(value, globalThis) orelse return false;
-            this.name.ref();
+
+            this.name = bun.String.tryFromJS(value, globalThis) orelse {
+                // Handle allocation failure.
+                this.name = bun.String.empty;
+                return false;
+            };
+            // We don't need to increment the reference count since tryFromJS already did it.
             Blob.nameSetCached(jsThis, globalThis, value);
             return true;
         }

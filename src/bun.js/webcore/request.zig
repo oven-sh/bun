@@ -182,7 +182,8 @@ pub const Request = struct {
                 try formatter.writeIndent(Writer, writer);
                 const size = this.body.value.size();
                 if (size == 0) {
-                    try Blob.initEmpty(undefined).writeFormat(Formatter, formatter, writer, enable_ansi_colors);
+                    var empty = Blob.initEmpty(undefined);
+                    try empty.writeFormat(Formatter, formatter, writer, enable_ansi_colors);
                 } else {
                     try Blob.writeFormatForSize(size, writer, enable_ansi_colors);
                 }

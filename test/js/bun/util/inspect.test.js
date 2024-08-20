@@ -541,3 +541,19 @@ describe("console.logging function displays async and generator names", async ()
     });
   }
 });
+
+it("console.log on a Blob shows name", () => {
+  const blob = new Blob(["foo"], { type: "text/plain" });
+  expect(Bun.inspect(blob)).toBe('Blob (3 bytes) {\n  type: "text/plain;charset=utf-8"\n}');
+  blob.name = "bar";
+  expect(Bun.inspect(blob)).toBe('Blob (3 bytes) {\n  name: "bar"\n  type: "text/plain;charset=utf-8"\n}');
+  blob.name = "foobar";
+  expect(Bun.inspect(blob)).toBe('Blob (3 bytes) {\n  name: "foobar"\n  type: "text/plain;charset=utf-8"\n}');
+
+  const file = new File(["foo"], "bar.txt", { type: "text/plain" });
+  expect(Bun.inspect(file)).toBe('Blob (3 bytes) {\n  name: "bar.txt"\n  type: "text/plain;charset=utf-8"\n}');
+  file.name = "foobar";
+  expect(Bun.inspect(file)).toBe('Blob (3 bytes) {\n  name: "foobar"\n  type: "text/plain;charset=utf-8"\n}');
+  file.name = "";
+  expect(Bun.inspect(file)).toBe('Blob (3 bytes) {\n  name: ""\n  type: "text/plain;charset=utf-8"\n}');
+});

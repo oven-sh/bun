@@ -442,13 +442,26 @@ const NamedPipeIPCData = struct {
         context: *anyopaque,
     };
 
+    fn onServerPipeClose(this: *uv.Pipe) callconv(.C) void {
+        // safely free the pipes
+        bun.default_allocator.destroy(this);
+    }
+
     fn detach(this: *NamedPipeIPCData) void {
         log("NamedPipeIPCData#detach: is_server {}", .{this.is_server});
         const source = this.writer.source.?;
         // unref because we are closing the pipe
         source.pipe.unref();
+        this.writer.source = null;
+
+        if(this.is_server) {
+            source.pipe.data = source.pipe;
+            source.pipe.close(onServerPipeClose);
+            this.onPipeClose();
+            return;
+        }
         // server will be destroyed by the process that created it
-        defer if (!this.is_server) bun.default_allocator.destroy(source.pipe);
+        defer bun.default_allocator.destroy(source.pipe);
         this.writer.source = null;
         this.onPipeClose();
     }
@@ -559,10 +572,13 @@ const NamedPipeIPCData = struct {
     }
 
     pub fn closeTask(this: *NamedPipeIPCData) void {
-        log("NamedPipeIPCData#closeTask", .{});
+        log("NamedPipeIPCData#closeTask is_server {}", .{this.is_server});
         if (this.disconnected) {
             _ = this.writer.flush();
             this.writer.end();
+            if(this.writer.getStream()) |stream| {
+                stream.readStop();
+            }
             if (!this.writer.hasPendingData()) {
                 this.detach();
             }
@@ -814,9 +830,8 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
         fn onReadError(this: *Context, err: bun.C.E) void {
             log("NewNamedPipeIPCHandler#onReadError {}", .{err});
             if (this.ipc()) |ipc_data| {
-                ipc_data.close(false);
+                ipc_data.close(true);
             }
-            onClose(this);
         }
 
         fn onRead(this: *Context, buffer: []const u8) void {
@@ -835,7 +850,7 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                     if (this.globalThis) |global| {
                         break :brk global;
                     }
-                    ipc.close(false);
+                    ipc.close(true);
                     return;
                 },
                 else => @panic("Unexpected globalThis type: " ++ @typeName(@TypeOf(this.globalThis))),

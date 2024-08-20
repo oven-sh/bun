@@ -1420,6 +1420,8 @@ pub const Subprocess = struct {
         this.pid_rusage = rusage.*;
         const is_sync = this.flags.is_sync;
         defer this.deref();
+        defer this.disconnectIPC(true);
+
 
         var stdin: ?*JSC.WebCore.FileSink = this.weak_file_sink_stdin_ptr;
         var existing_stdin_value = JSC.JSValue.zero;
@@ -1534,7 +1536,6 @@ pub const Subprocess = struct {
     // This must only be run once per Subprocess
     pub fn finalizeStreams(this: *Subprocess) void {
         log("finalizeStreams", .{});
-        this.disconnectIPC(true);
         this.closeProcess();
 
         this.closeIO(.stdin);
@@ -2185,6 +2186,7 @@ pub const Subprocess = struct {
                     globalThis.throwValue(err.toJSC(globalThis));
                     return .zero;
                 }
+                subprocess.stdio_pipes.items[@intCast(ipc_channel)] = .unavailable;
             }
             ipc_data.writeVersionPacket();
         }

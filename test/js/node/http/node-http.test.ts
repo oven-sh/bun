@@ -420,7 +420,7 @@ describe("node:http", () => {
     });
 
     it("should make a https:// GET request when passed string as first arg", done => {
-      const req = request("https://example.com", { headers: { "accept-encoding": "identity" } }, res => {
+      const req = https.request("https://example.com", { headers: { "accept-encoding": "identity" } }, res => {
         let data = "";
         res.setEncoding("utf8");
         res.on("data", chunk => {
@@ -2275,15 +2275,6 @@ it("http.get can use http.Agent", async () => {
   expect(response.req.protocol).toBe("http:");
 });
 
-it("http.get can use https.Agent", async () => {
-  const agent = new https.Agent();
-  const { promise, resolve } = Promise.withResolvers();
-  http.get({ agent, hostname: "google.com" }, resolve);
-  const response = await promise;
-  expect(response.req.port).toBe(443);
-  expect(response.req.protocol).toBe("https:");
-});
-
 it("http.request has the correct options", async () => {
   const { promise, resolve } = Promise.withResolvers();
   http.request({ method: "GET", hostname: "google.com" }, resolve).end();
@@ -2298,4 +2289,12 @@ it("https.request has the correct options", async () => {
   const response = await promise;
   expect(response.req.port).toBe(443);
   expect(response.req.protocol).toBe("https:");
+});
+
+it("using node:http to do https: request fails", () => {
+  expect(() => http.request("https://example.com")).toThrow(TypeError);
+  expect(() => http.request("https://example.com")).toThrow({
+    code: "ERR_INVALID_PROTOCOL",
+    message: `Protocol "https:" not supported. Expected "http:"`,
+  });
 });

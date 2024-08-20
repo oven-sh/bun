@@ -2,7 +2,7 @@
 const EventEmitter = require("node:events");
 const { isTypedArray } = require("node:util/types");
 const { Duplex, Readable, Writable } = require("node:stream");
-const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
+const { ERR_INVALID_ARG_TYPE, ERR_INVALID_PROTOCOL } = require("internal/errors");
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { kAutoDestroyed } = require("internal/shared");
 
@@ -1639,16 +1639,24 @@ class ClientRequest extends OutgoingMessage {
       options = ObjectAssign(input || {}, options);
     }
 
-    const agent = options.agent || options._defaultAgent || Agent.globalAgent;
+    let agent = options.agent;
+    const defaultAgent = options._defaultAgent || Agent.globalAgent;
+    if (agent === false) {
+      agent = new defaultAgent.constructor();
+    } else if (agent == null) {
+      agent = defaultAgent;
+    } else if (typeof agent.addRequest !== "function") {
+      throw ERR_INVALID_ARG_TYPE("options.agent", "Agent-like Object, undefined, or false", agent);
+    }
     this.#agent = agent;
 
-    let protocol = options.protocol || agent.protocol;
-    if (!protocol) {
-      if (options.port === 443) {
-        protocol = "https:";
-      } else {
-        protocol = agent.protocol;
-      }
+    const protocol = options.protocol || defaultAgent.protocol;
+    let expectedProtocol = defaultAgent.protocol;
+    if (this.agent.protocol) {
+      expectedProtocol = this.agent.protocol;
+    }
+    if (protocol !== expectedProtocol) {
+      throw ERR_INVALID_PROTOCOL(protocol, expectedProtocol);
     }
     this.#protocol = protocol;
 
@@ -1659,13 +1667,6 @@ class ClientRequest extends OutgoingMessage {
         throw new Error("Path contains unescaped characters");
         // throw new ERR_UNESCAPED_CHARACTERS("Request path");
       }
-    }
-
-    // Since we don't implement Agent, we don't need this
-    if (protocol !== "http:" && protocol !== "https:" && protocol) {
-      const expectedProtocol = agent.protocol ?? "http:";
-      throw new Error(`Protocol mismatch. Expected: ${expectedProtocol}. Got: ${protocol}`);
-      // throw new ERR_INVALID_PROTOCOL(protocol, expectedProtocol);
     }
 
     const defaultPort = protocol === "https:" ? 443 : 80;

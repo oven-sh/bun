@@ -1066,7 +1066,7 @@ if(NOT BUN_CPP_ARCHIVE)
                 "$ErrorActionPreference = \"Stop\"\n"
                 "$ObjectFiles=@(\n  ${BUN_OBJECT_LIST}\n)\n"
                 "ninja @ObjectFiles @args\n"
-                "& \"${CMAKE_AR}\" rcvs bun-cpp-objects.a @ObjectFiles\n"
+                "& llvm-ar rcvs bun-cpp-objects.a @ObjectFiles\n"
                 "Write-Host '-> bun-cpp-objects.a'\n"
             )
         endif()

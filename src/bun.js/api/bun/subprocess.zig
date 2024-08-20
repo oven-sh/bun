@@ -675,7 +675,7 @@ pub const Subprocess = struct {
         if (this.hasExited()) {
             return .{ .result = {} };
         }
-
+        this.disconnectIPC();
         return this.process.kill(@intCast(sig));
     }
 
@@ -736,13 +736,15 @@ pub const Subprocess = struct {
 
         return .undefined;
     }
-
+    pub fn disconnectIPC(this: *Subprocess) void {
+        const ipc_data = this.ipc_maybe() orelse return;
+        ipc_data.close();
+        this.ipc_data = null;
+    }
     pub fn disconnect(this: *Subprocess, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         _ = globalThis;
         _ = callframe;
-        const ipc_data = this.ipc_maybe() orelse return .undefined;
-        ipc_data.close();
-        this.ipc_data = null;
+        this.disconnectIPC();
         return .undefined;
     }
 
@@ -1529,6 +1531,7 @@ pub const Subprocess = struct {
     // This must only be run once per Subprocess
     pub fn finalizeStreams(this: *Subprocess) void {
         log("finalizeStreams", .{});
+        this.disconnectIPC();
         this.closeProcess();
 
         this.closeIO(.stdin);

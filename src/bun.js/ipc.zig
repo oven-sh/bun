@@ -470,7 +470,10 @@ const NamedPipeIPCData = struct {
     fn onServerClose(pipe: *uv.Pipe) callconv(.C) void {
         log("onServerClose", .{});
         const this = bun.cast(*NamedPipeIPCData, pipe.data);
-        this.server = null;
+        if (this.server) |server| {
+            this.server = null;
+            bun.default_allocator.destroy(server);
+        }
         if (this.connected) {
             // close and deinit client if connected
             this.writer.close();

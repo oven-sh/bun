@@ -75,6 +75,7 @@ describe("bundler", () => {
     files: {
       "/entry.ts": /* js */ `
       import {rmSync} from 'fs';
+      import {createRequire} from 'module';
         import './foo.file';
         import './1.embed';
         import './2.embed';
@@ -95,6 +96,9 @@ describe("bundler", () => {
         }
 
         if (Bun.embeddedFiles.length !== 3) throw "fail";
+        if ((await Bun.file(createRequire(import.meta.url).resolve('./1.embed')).text()).trim() !== "abcd") throw "fail";
+        if ((await Bun.file(createRequire(import.meta.url).resolve('./2.embed')).text()).trim() !== "abcd") throw "fail";
+        if ((await Bun.file(createRequire(import.meta.url).resolve('./foo.file')).text()).trim() !== "abcd") throw "fail";
         if ((await Bun.file(import.meta.require.resolve('./1.embed')).text()).trim() !== "abcd") throw "fail";
         if ((await Bun.file(import.meta.require.resolve('./2.embed')).text()).trim() !== "abcd") throw "fail";
         if ((await Bun.file(import.meta.require.resolve('./foo.file')).text()).trim() !== "abcd") throw "fail";
@@ -111,7 +115,7 @@ describe("bundler", () => {
     `.trim(),
     },
     outfile: "dist/out",
-    run: { stdout: "Hello, world!" },
+    run: { stdout: "Hello, world!", setCwd: true },
   });
   itBundled("compile/ResolveEmbeddedFileOutfile", {
     compile: true,

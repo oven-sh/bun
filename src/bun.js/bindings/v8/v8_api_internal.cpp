@@ -1,12 +1,11 @@
-#include "v8.h"
+#include "v8_api_internal.h"
 
 namespace v8 {
 namespace api_internal {
 
-BUN_EXPORT void ToLocalEmpty()
+void ToLocalEmpty()
 {
-    // TODO(@190n) proper error handling
-    V8_UNIMPLEMENTED();
+    BUN_PANIC("Attempt to unwrap an empty v8::MaybeLocal");
 }
 
 }

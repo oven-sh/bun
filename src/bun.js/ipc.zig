@@ -334,7 +334,7 @@ const SocketIPCData = struct {
     has_written_version: if (Environment.allow_assert) u1 else u0 = 0,
     internal_msg_queue: node_cluster_binding.InternalMsgHolder = .{},
     disconnected: bool = false,
-
+    is_server: bool = false,
     pub fn writeVersionPacket(this: *SocketIPCData) void {
         if (Environment.allow_assert) {
             bun.assert(this.has_written_version == 0);
@@ -427,13 +427,12 @@ const NamedPipeIPCData = struct {
     mode: Mode,
 
     // we will use writer pipe as Duplex
-    writer: bun.io.StreamingWriter(NamedPipeIPCData, onWrite, onError, null, onClientClose) = .{},
+    writer: bun.io.StreamingWriter(NamedPipeIPCData, onWrite, onError, null, onPipeClose) = .{},
 
     incoming: bun.ByteList = .{}, // Maybe we should use IPCBuffer here as well
-    connected: bool = false,
     disconnected: bool = false,
+    is_server: bool = false,
     connect_req: uv.uv_connect_t = std.mem.zeroes(uv.uv_connect_t),
-    server: ?*uv.Pipe = null,
     onClose: ?CloseHandler = null,
     has_written_version: if (Environment.allow_assert) u1 else u0 = 0,
     internal_msg_queue: node_cluster_binding.InternalMsgHolder = .{},
@@ -443,42 +442,39 @@ const NamedPipeIPCData = struct {
         context: *anyopaque,
     };
 
-    fn onWrite(_: *NamedPipeIPCData, amount: usize, status: bun.io.WriteStatus) void {
+    fn detach(this: *NamedPipeIPCData) void {
+        log("NamedPipeIPCData#detach: is_server {}", .{this.is_server});
+        const source = this.writer.source.?;
+        // unref because we are closing the pipe
+        source.pipe.unref();
+        // server will be destroyed by the process that created it
+        defer if (!this.is_server) bun.default_allocator.destroy(source.pipe);
+        this.writer.source = null;
+        this.onPipeClose();
+    }
+
+    fn onWrite(this: *NamedPipeIPCData, amount: usize, status: bun.io.WriteStatus) void {
         log("onWrite {d} {}", .{ amount, status });
+
+        switch (status) {
+            .pending => {},
+            .drained => {
+                // unref after sending all data
+                this.writer.source.?.pipe.unref();
+            },
+            .end_of_file => {
+                this.detach();
+            },
+        }
     }
 
-    fn onError(_: *NamedPipeIPCData, err: bun.sys.Error) void {
+    fn onError(this: *NamedPipeIPCData, err: bun.sys.Error) void {
         log("Failed to write outgoing data {}", .{err});
+        this.detach();
     }
 
-    fn onClientClose(this: *NamedPipeIPCData) void {
-        log("onClientClose", .{});
-        this.connected = false;
-        if (this.server) |server| {
-            // we must close the server too
-            server.close(onServerClose);
-        } else {
-            if (this.onClose) |handler| {
-                this.onClose = null;
-                handler.callback(handler.context);
-                // deinit dont free the instance of IPCData we should call it before the onClose callback actually frees it
-                this.deinit();
-            }
-        }
-    }
-
-    fn onServerClose(pipe: *uv.Pipe) callconv(.C) void {
-        log("onServerClose", .{});
-        const this = bun.cast(*NamedPipeIPCData, pipe.data);
-        if (this.server) |server| {
-            this.server = null;
-            bun.default_allocator.destroy(server);
-        }
-        if (this.connected) {
-            // close and deinit client if connected
-            this.writer.close();
-            return;
-        }
+    fn onPipeClose(this: *NamedPipeIPCData) void {
+        log("onPipeClose", .{});
         if (this.onClose) |handler| {
             this.onClose = null;
             handler.callback(handler.context);
@@ -493,11 +489,11 @@ const NamedPipeIPCData = struct {
         }
         const bytes = getVersionPacket(this.mode);
         if (bytes.len > 0) {
-            if (this.connected) {
-                _ = this.writer.write(bytes);
-            } else {
+            if (this.disconnected) {
                 // enqueue to be sent after connecting
                 this.writer.outgoing.write(bytes) catch bun.outOfMemory();
+            } else {
+                _ = this.writer.write(bytes);
             }
         }
         if (Environment.allow_assert) {
@@ -512,7 +508,8 @@ const NamedPipeIPCData = struct {
         if (this.disconnected) {
             return false;
         }
-
+        // ref because we have pending data
+        this.writer.source.?.pipe.ref();
         const start_offset = this.writer.outgoing.list.items.len;
 
         const payload_length: usize = serialize(this, &this.writer.outgoing, global, value) catch return false;
@@ -521,9 +518,7 @@ const NamedPipeIPCData = struct {
 
         if (start_offset == 0) {
             bun.assert(this.writer.outgoing.cursor == 0);
-            if (this.connected) {
-                _ = this.writer.flush();
-            }
+            _ = this.writer.flush();
         }
 
         return true;
@@ -536,7 +531,8 @@ const NamedPipeIPCData = struct {
         if (this.disconnected) {
             return false;
         }
-
+        // ref because we have pending data
+        this.writer.source.?.pipe.ref();
         const start_offset = this.writer.outgoing.list.items.len;
 
         const payload_length: usize = serializeInternal(this, &this.writer.outgoing, global, value) catch return false;
@@ -545,9 +541,7 @@ const NamedPipeIPCData = struct {
 
         if (start_offset == 0) {
             bun.assert(this.writer.outgoing.cursor == 0);
-            if (this.connected) {
-                _ = this.writer.flush();
-            }
+            _ = this.writer.flush();
         }
 
         return true;
@@ -567,26 +561,25 @@ const NamedPipeIPCData = struct {
     pub fn closeTask(this: *NamedPipeIPCData) void {
         log("NamedPipeIPCData#closeTask", .{});
         if (this.disconnected) {
-            if (this.server) |server| {
-                server.close(onServerClose);
-            } else {
-                this.writer.close();
-                this.onClientClose();
+            _ = this.writer.flush();
+            this.writer.end();
+            if (!this.writer.hasPendingData()) {
+                this.detach();
             }
         }
     }
 
     pub fn configureServer(this: *NamedPipeIPCData, comptime Context: type, instance: *Context, ipc_pipe: *uv.Pipe) JSC.Maybe(void) {
         log("configureServer", .{});
-        this.server = ipc_pipe;
         ipc_pipe.data = @ptrCast(instance);
         this.onClose = .{
             .callback = @ptrCast(&NewNamedPipeIPCHandler(Context).onClose),
             .context = @ptrCast(instance),
         };
-        this.connected = true;
         ipc_pipe.unref();
-
+        this.is_server = true;
+        this.writer.setParent(this);
+        this.writer.owns_fd = false;
         const startPipeResult = this.writer.startWithPipe(ipc_pipe);
         if (startPipeResult == .err) {
             this.close(false);
@@ -618,8 +611,8 @@ const NamedPipeIPCData = struct {
             return err;
         };
         ipc_pipe.unref();
-        this.connected = true;
-
+        this.writer.owns_fd = false;
+        this.writer.setParent(this);
         this.writer.startWithPipe(ipc_pipe).unwrap() catch |err| {
             this.close(false);
             return err;
@@ -644,10 +637,6 @@ const NamedPipeIPCData = struct {
     fn deinit(this: *NamedPipeIPCData) void {
         log("deinit", .{});
         this.writer.deinit();
-        if (this.server) |server| {
-            this.server = null;
-            bun.default_allocator.destroy(server);
-        }
         this.incoming.deinitWithAllocator(bun.default_allocator);
     }
 };

@@ -1419,6 +1419,7 @@ pub const Subprocess = struct {
         this_jsvalue.ensureStillAlive();
         this.pid_rusage = rusage.*;
         const is_sync = this.flags.is_sync;
+        defer this.deref();
 
         var stdin: ?*JSC.WebCore.FileSink = this.weak_file_sink_stdin_ptr;
         var existing_stdin_value = JSC.JSValue.zero;
@@ -2163,16 +2164,17 @@ pub const Subprocess = struct {
                 .is_sync = is_sync,
             },
         };
+        subprocess.ref(); // + one ref for the process
         subprocess.process.setExitHandler(subprocess);
 
         if (subprocess.ipc_data) |*ipc_data| {
             if (Environment.isPosix) {
                 if (posix_ipc_info.ext(*Subprocess)) |ctx| {
                     ctx.* = subprocess;
-                    subprocess.ref();
+                    subprocess.ref(); // + one ref for the IPC
                 }
             } else {
-                subprocess.ref();
+                subprocess.ref(); // + one ref for the IPC
 
                 if (ipc_data.configureServer(
                     Subprocess,

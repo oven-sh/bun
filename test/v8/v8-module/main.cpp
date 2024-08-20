@@ -244,7 +244,7 @@ static bool perform_string_test(const FunctionCallbackInfo<Value> &info,
     return false;
   }
 
-  if (v8_string->isExternal()) {
+  if (v8_string->IsExternal()) {
     fail(info, "String::IsExternal returned true");
     return false;
   }

@@ -829,7 +829,14 @@ if(NOT NO_CODEGEN)
     add_custom_command(
         OUTPUT ${BUN_ERROR_OUT}
         DEPENDS ${BUN_ERROR_WORKDIR}/node_modules
-        COMMAND ${BUN_EXECUTABLE} x esbuild index.tsx bun-error.css --define:process.env.NODE_ENV=\"'production'\"  --minify --bundle --outdir=dist --platform=browser --format=esm
+        COMMAND ${BUN_EXECUTABLE} x esbuild
+            index.tsx bun-error.css
+            --outdir=dist
+            --define:process.env.NODE_ENV=\"'production'\"
+            --minify
+            --bundle
+            --platform=browser
+            --format=esm
         WORKING_DIRECTORY ${BUN_ERROR_WORKDIR}
         VERBATIM
         COMMENT "Building bun-error"
@@ -844,7 +851,14 @@ if(NOT NO_CODEGEN)
         OUTPUT ${FALLBACK_DECODER_OUT}
         DEPENDS ${BUN_INSTALL_OUT} ${FALLBACK_DECODER_SRC}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        COMMAND ${BUN_EXECUTABLE} x esbuild ${FALLBACK_DECODER_SRC} --outfile=${FALLBACK_DECODER_OUT} --target=esnext --bundle --format=iife --platform=browser --minify
+        COMMAND ${BUN_EXECUTABLE} x esbuild
+            ${FALLBACK_DECODER_SRC}
+            --outfile=${FALLBACK_DECODER_OUT}
+            --target=esnext
+            --bundle
+            --format=iife
+            --platform=browser
+            --minify
         VERBATIM
         COMMENT "Building fallback.out.js"
     )
@@ -858,7 +872,16 @@ if(NOT NO_CODEGEN)
         OUTPUT ${RUNTIME_JS_OUT}
         DEPENDS ${BUN_INSTALL_OUT} ${RUNTIME_JS_SRC}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        COMMAND ${BUN_EXECUTABLE} x esbuild ${RUNTIME_JS_SRC} --outfile=${RUNTIME_JS_OUT} --target=esnext --bundle --format=esm --platform=node --minify --external:/bun:*
+        COMMAND ${BUN_EXECUTABLE} x esbuild
+            ${RUNTIME_JS_SRC}
+            --outfile=${RUNTIME_JS_OUT}
+            --define:process.env.NODE_ENV=\"'production'\"
+            --target=esnext
+            --bundle
+            --format=esm
+            --platform=node
+            --minify
+            --external:/bun:*
         VERBATIM
         COMMENT "Building runtime.out.js"
     )
@@ -867,7 +890,7 @@ endif()
 # --- node-fallbacks ---
 if(NOT NO_CODEGEN)
     set(NODE_FALLBACKS_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/node-fallbacks)
-    set(NODE_FALLBACKS_OUT ${BUN_ERROR_WORKDIR}/out)
+    set(NODE_FALLBACKS_OUT ${NODE_FALLBACKS_SRC}/out)
 
     add_custom_command(
         OUTPUT ${NODE_FALLBACKS_SRC}/node_modules
@@ -878,12 +901,20 @@ if(NOT NO_CODEGEN)
         COMMENT "Installing node-fallbacks"
     )
 
-    file(GLOB NODE_FALLBACKS_FILES ${NODE_FALLBACKS_SRC}/*.js)
+    # Files must be relative, otherwise the build does not work
+    file(GLOB RELATIVE ${NODE_FALLBACKS_SRC} NODE_FALLBACKS_FILES ${NODE_FALLBACKS_SRC}/*.js)
+
     add_custom_command(
         OUTPUT ${NODE_FALLBACKS_OUT}
         DEPENDS ${BUN_INSTALL_OUT} ${NODE_FALLBACKS_SRC}
         WORKING_DIRECTORY ${NODE_FALLBACKS_SRC}
-        COMMAND ${BUN_EXECUTABLE} x esbuild ${NODE_FALLBACKS_FILES} --outdir=out --format=esm --minify --platform=browser
+        COMMAND ${BUN_EXECUTABLE} x esbuild
+            ${NODE_FALLBACKS_FILES}
+            --outdir=out
+            --format=esm
+            --minify
+            --bundle
+            --platform=browser
         VERBATIM
         COMMENT "Building node-fallbacks.out.js"
     )

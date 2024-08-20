@@ -535,10 +535,15 @@ const NamedPipeIPCData = struct {
         return true;
     }
 
-    pub fn close(this: *NamedPipeIPCData) void {
+    pub fn close(this: *NamedPipeIPCData, nextTick: bool) void {
         log("NamedPipeIPCData#close", .{});
+        if (this.disconnected) return;
         this.disconnected = true;
-        JSC.VirtualMachine.get().enqueueTask(JSC.ManagedTask.New(NamedPipeIPCData, closeTask).init(this));
+        if (nextTick) {
+            JSC.VirtualMachine.get().enqueueTask(JSC.ManagedTask.New(NamedPipeIPCData, closeTask).init(this));
+        } else {
+            this.closeTask();
+        }
     }
 
     pub fn closeTask(this: *NamedPipeIPCData) void {
@@ -566,18 +571,18 @@ const NamedPipeIPCData = struct {
 
         const startPipeResult = this.writer.startWithPipe(ipc_pipe);
         if (startPipeResult == .err) {
-            this.close();
+            this.close(false);
             return startPipeResult;
         }
 
         const stream = this.writer.getStream() orelse {
-            this.close();
+            this.close(false);
             return JSC.Maybe(void).errno(bun.C.E.PIPE, .pipe);
         };
 
         const readStartResult = stream.readStart(instance, NewNamedPipeIPCHandler(Context).onReadAlloc, NewNamedPipeIPCHandler(Context).onReadError, NewNamedPipeIPCHandler(Context).onRead);
         if (readStartResult == .err) {
-            this.close();
+            this.close(false);
             return readStartResult;
         }
         return .{ .result = {} };
@@ -598,7 +603,7 @@ const NamedPipeIPCData = struct {
         this.connected = true;
 
         this.writer.startWithPipe(ipc_pipe).unwrap() catch |err| {
-            this.close();
+            this.close(false);
             return err;
         };
         this.connect_req.data = @ptrCast(instance);
@@ -608,12 +613,12 @@ const NamedPipeIPCData = struct {
         };
 
         const stream = this.writer.getStream() orelse {
-            this.close();
+            this.close(false);
             return error.FailedToConnectIPC;
         };
 
         stream.readStart(instance, NewNamedPipeIPCHandler(Context).onReadAlloc, NewNamedPipeIPCHandler(Context).onReadError, NewNamedPipeIPCHandler(Context).onRead).unwrap() catch |err| {
-            this.close();
+            this.close(false);
             return err;
         };
     }
@@ -804,7 +809,7 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
         fn onReadError(this: *Context, err: bun.C.E) void {
             log("NewNamedPipeIPCHandler#onReadError {}", .{err});
             if (this.ipc()) |ipc_data| {
-                ipc_data.close();
+                ipc_data.close(false);
             }
             onClose(this);
         }
@@ -825,7 +830,7 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                     if (this.globalThis) |global| {
                         break :brk global;
                     }
-                    ipc.close();
+                    ipc.close(false);
                     return;
                 },
                 else => @panic("Unexpected globalThis type: " ++ @typeName(@TypeOf(this.globalThis))),
@@ -841,7 +846,7 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                     },
                     error.InvalidFormat => {
                         Output.printErrorln("InvalidFormatError during IPC message handling", .{});
-                        ipc.close();
+                        ipc.close(false);
                         return;
                     },
                 };

@@ -249,7 +249,7 @@ The list of embedded files excludes bundled source code like `.ts` and `.js` fil
 
 #### Content hash
 
-By default, embedded files have a content hash appended to their name. This is useful for situations where you want to serve the file from a URL or CDN and ensure it is unique. But sometimes, this is unexpected and you might want the original name instead:
+By default, embedded files have a content hash appended to their name. This is useful for situations where you want to serve the file from a URL or CDN and have fewer cache invalidation issues. But sometimes, this is unexpected and you might want the original name instead:
 
 To disable the content hash, pass `--asset-naming` to `bun build --compile` like this:
 

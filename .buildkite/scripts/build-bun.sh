@@ -29,7 +29,8 @@ run_command cmake .. "${CMAKE_FLAGS[@]}" \
   -DUSE_CPU="$CPU_TARGET" \
   -DUSE_LTO="$USE_LTO" \
   -DENABLE_ASSERTIONS="$USE_DEBUG_JSC" \
-  -DENABLE_CANARY="$CANARY" \
+  -DENABLE_CANARY="ON" \
+  -DUSE_CANARY_REVISION="$CANARY" \
   -DUSE_REVISION="$GIT_SHA"
 run_command ninja -v -j "$CPUS"
 run_command ls

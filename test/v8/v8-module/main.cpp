@@ -370,24 +370,24 @@ void test_handle_scope_gc(const FunctionCallbackInfo<Value> &info) {
   // allocate a ton of objects
   constexpr size_t num_small_allocs = 10000;
 
-  std::array<Local<String>, num_small_allocs> mini_strings;
-  for (auto &s : mini_strings) {
-    int i = &s - &mini_strings[0];
+  Local<String> mini_strings[num_small_allocs];
+  for (size_t i = 0; i < num_small_allocs; i++) {
     std::string cpp_str = std::to_string(i);
-    s = String::NewFromUtf8(isolate, cpp_str.c_str()).ToLocalChecked();
+    mini_strings[i] =
+        String::NewFromUtf8(isolate, cpp_str.c_str()).ToLocalChecked();
   }
 
   // allocate some objects with internal fields, to check that those are traced
   Local<ObjectTemplate> tmp = ObjectTemplate::New(isolate);
   tmp->SetInternalFieldCount(2);
-  std::array<Local<Object>, num_small_allocs> objects;
+  Local<Object> objects[num_small_allocs];
 
-  for (auto &o : objects) {
-    int i = &o - &objects[0];
+  for (size_t i = 0; i < num_small_allocs; i++) {
     std::string cpp_str = std::to_string(i + num_small_allocs);
     // this uses a function so that the strings aren't kept alive by the current
     // handle scope
-    o = setup_object_with_string_field(isolate, context, tmp, i, cpp_str);
+    objects[i] =
+        setup_object_with_string_field(isolate, context, tmp, i, cpp_str);
   }
 
   // allocate some massive strings
@@ -400,7 +400,7 @@ void test_handle_scope_gc(const FunctionCallbackInfo<Value> &info) {
   auto string_data = new char[string_size];
   string_data[string_size - 1] = 0;
 
-  std::array<Local<String>, num_strings> huge_strings;
+  Local<String> huge_strings[num_strings];
   for (size_t i = 0; i < num_strings; i++) {
     printf("%lu\n", i);
     memset(string_data, i + 1, string_size - 1);
@@ -408,12 +408,12 @@ void test_handle_scope_gc(const FunctionCallbackInfo<Value> &info) {
         String::NewFromUtf8(isolate, string_data).ToLocalChecked();
 
     // try to use all mini strings
-    for (size_t j = 0; j < mini_strings.size(); j++) {
+    for (size_t j = 0; j < num_small_allocs; j++) {
       char buf[16];
       mini_strings[j]->WriteUtf8(isolate, buf);
     }
 
-    for (size_t j = 0; j < objects.size(); j++) {
+    for (size_t j = 0; j < num_small_allocs; j++) {
       examine_object_fields(isolate, objects[j]);
     }
 

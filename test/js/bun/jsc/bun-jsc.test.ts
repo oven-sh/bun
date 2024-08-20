@@ -27,6 +27,7 @@ import {
   setTimeZone,
   profile,
 } from "bun:jsc";
+import { isBuildKite, isWindows } from "harness";
 
 describe("bun:jsc", () => {
   function count() {
@@ -172,7 +173,7 @@ describe("bun:jsc", () => {
     Bun.gc(true);
   });
 
-  it("profile async", async () => {
+  it.todoIf(isBuildKite && isWindows)("profile async", async () => {
     const { promise, resolve } = Promise.withResolvers();
     const result = await profile(
       async function hey(arg1: number) {

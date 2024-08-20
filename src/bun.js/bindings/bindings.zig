@@ -1145,6 +1145,7 @@ pub const DOMFormData = opaque {
         "createFromURLQuery",
     };
 };
+
 pub const FetchHeaders = opaque {
     pub const shim = Shimmer("WebCore", "FetchHeaders", @This());
 
@@ -2884,10 +2885,7 @@ pub const JSGlobalObject = opaque {
         comptime field: []const u8,
         comptime typename: []const u8,
     ) JSC.JSValue {
-        return this.ERR_INVALID_ARG_TYPE(
-            comptime std.fmt.comptimePrint("Expected {s} to be a {s} for '{s}'.", .{ field, typename, name_ }),
-            .{},
-        ).toJS();
+        return this.ERR_INVALID_ARG_TYPE(comptime std.fmt.comptimePrint("Expected {s} to be a {s} for '{s}'.", .{ field, typename, name_ }), .{}).toJS();
     }
 
     pub fn toJS(this: *JSC.JSGlobalObject, value: anytype, comptime lifetime: JSC.Lifetime) JSC.JSValue {
@@ -2905,13 +2903,13 @@ pub const JSGlobalObject = opaque {
 
     pub fn throwInvalidArgumentTypeValue(
         this: *JSGlobalObject,
-        field: []const u8,
+        argname: []const u8,
         typename: []const u8,
         value: JSValue,
     ) JSValue {
         const ty_str = value.jsTypeString(this).toSlice(this, bun.default_allocator);
         defer ty_str.deinit();
-        this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be of type {s}. Received {}", .{ field, typename, bun.fmt.quote(ty_str.slice()) }).throw();
+        this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be of type {s}. Received {}", .{ argname, typename, bun.fmt.quote(ty_str.slice()) }).throw();
         return .zero;
     }
 
@@ -2921,12 +2919,7 @@ pub const JSGlobalObject = opaque {
         comptime expected: usize,
         got: usize,
     ) JSC.JSValue {
-        return JSC.toTypeError(
-            .ERR_MISSING_ARGS,
-            "Not enough arguments to '" ++ name_ ++ "'. Expected {d}, got {d}.",
-            .{ expected, got },
-            this,
-        );
+        return JSC.toTypeError(.ERR_MISSING_ARGS, "Not enough arguments to '" ++ name_ ++ "'. Expected {d}, got {d}.", .{ expected, got }, this);
     }
 
     pub fn throwNotEnoughArguments(
@@ -3004,7 +2997,7 @@ pub const JSGlobalObject = opaque {
         return err;
     }
 
-    fn createTypeErrorInstance(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
+    pub fn createTypeErrorInstance(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
         if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
             var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
             var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
@@ -3277,10 +3270,40 @@ pub const JSGlobalObject = opaque {
         if (bun.Environment.allow_assert) this.bunVM().assertOnJSThread();
     }
 
+    // returns false if it throws
+    pub fn validateObject(
+        this: *JSGlobalObject,
+        comptime arg_name: [:0]const u8,
+        value: JSValue,
+        opts: struct {
+            allowArray: bool = false,
+            allowFunction: bool = false,
+            nullable: bool = false,
+        },
+    ) bool {
+        if ((!opts.nullable and value.isNull()) or
+            (!opts.allowArray and value.isArray()) or
+            (!value.isObject() and (!opts.allowFunction or !value.isFunction())))
+        {
+            this.throwValue(this.ERR_INVALID_ARG_TYPE_static(
+                ZigString.static(arg_name),
+                ZigString.static("object"),
+                value,
+            ));
+            return false;
+        }
+        return true;
+    }
+
     extern fn Bun__ERR_INVALID_ARG_TYPE_static(*JSGlobalObject, *const ZigString, *const ZigString, JSValue) JSValue;
     /// Caller asserts 'arg_name' and 'etype' are utf-8 literals.
     pub fn ERR_INVALID_ARG_TYPE_static(this: *JSGlobalObject, arg_name: *const ZigString, etype: *const ZigString, atype: JSValue) JSValue {
         return Bun__ERR_INVALID_ARG_TYPE_static(this, arg_name, etype, atype);
+    }
+
+    extern fn Bun__ERR_MISSING_ARGS_static(*JSGlobalObject, *const ZigString, ?*const ZigString, ?*const ZigString) JSValue;
+    pub fn ERR_MISSING_ARGS_static(this: *JSGlobalObject, arg1: *const ZigString, arg2: ?*const ZigString, arg3: ?*const ZigString) JSValue {
+        return Bun__ERR_MISSING_ARGS_static(this, arg1, arg2, arg3);
     }
 
     pub usingnamespace @import("ErrorCode").JSGlobalObjectExtensions;
@@ -3367,6 +3390,7 @@ pub const JSMap = opaque {
 };
 
 pub const JSValueReprInt = i64;
+
 pub const JSValue = enum(JSValueReprInt) {
     zero = 0,
     undefined = 0xa,
@@ -4614,6 +4638,12 @@ pub const JSValue = enum(JSValueReprInt) {
     }
     pub inline fn isObject(this: JSValue) bool {
         return this.isCell() and this.jsType().isObject();
+    }
+    pub inline fn isArray(this: JSValue) bool {
+        return this.isCell() and this.jsType().isArray();
+    }
+    pub inline fn isFunction(this: JSValue) bool {
+        return this.isCell() and this.jsType().isFunction();
     }
     pub fn isObjectEmpty(this: JSValue, globalObject: *JSGlobalObject) bool {
         const type_of_value = this.jsType();
@@ -6055,7 +6085,7 @@ pub const CallFrame = opaque {
             len: usize,
             pub inline fn init(comptime i: usize, ptr: [*]const JSC.JSValue) @This() {
                 var args: [max]JSC.JSValue = std.mem.zeroes([max]JSC.JSValue);
-                args[0..comptime i].* = ptr[0..i].*;
+                args[0..i].* = ptr[0..i].*;
 
                 return @This(){
                     .ptr = args,

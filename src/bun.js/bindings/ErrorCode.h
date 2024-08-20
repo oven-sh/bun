@@ -51,6 +51,7 @@ JSC::JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, co
 JSC::JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, JSC::JSValue message);
 JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options = jsUndefined());
 JSC::JSValue toJS(JSC::JSGlobalObject*, ErrorCode);
+JSObject* createInvalidThisError(JSGlobalObject* globalObject, JSValue thisValue, const ASCIILiteral typeName);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_INVALID_ARG_TYPE);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_OUT_OF_RANGE);

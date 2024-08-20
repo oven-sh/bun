@@ -42,8 +42,7 @@ function Agent(options) {
   this.maxCachedSessions = this.options.maxCachedSessions;
   if (this.maxCachedSessions === undefined) this.maxCachedSessions = 100;
 }
-Agent.prototype = {};
-ObjectSetPrototypeOf(Agent.prototype, http.Agent.prototype);
+Agent.prototype = Object.create(http.Agent.prototype);
 Agent.prototype.createConnection = http.createConnection;
 
 var https = {

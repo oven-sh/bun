@@ -868,8 +868,7 @@ function ReadStream(this: typeof ReadStream, pathOrFd, options) {
   $assert(overridden_fs);
   this[kFs] = overridden_fs;
 }
-ReadStream.prototype = {};
-ObjectSetPrototypeOf(ReadStream.prototype, NativeReadable.prototype);
+ReadStream.prototype = Object.create(NativeReadable.prototype);
 
 ReadStream.prototype._construct = function (callback) {
   if (NativeReadablePrototype._construct) {

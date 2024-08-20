@@ -273,8 +273,7 @@ function Agent(options = kEmptyObject) {
   this.defaultPort = options.defaultPort || 80;
   this.protocol = options.protocol || "http:";
 }
-Agent.prototype = {};
-$setPrototypeDirect.$call(Agent.prototype, EventEmitter.prototype);
+Agent.prototype = Object.create(EventEmitter.prototype);
 
 ObjectDefineProperty(Agent, "globalAgent", {
   get: function () {

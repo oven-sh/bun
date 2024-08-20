@@ -537,19 +537,19 @@ const NamedPipeIPCData = struct {
 
     pub fn close(this: *NamedPipeIPCData) void {
         log("NamedPipeIPCData#close", .{});
-        if (this.server) |server| {
-            server.close(onServerClose);
-        } else {
-            this.disconnected = true;
-            JSC.VirtualMachine.get().enqueueTask(JSC.ManagedTask.New(NamedPipeIPCData, closeTask).init(this));
-        }
+        this.disconnected = true;
+        JSC.VirtualMachine.get().enqueueTask(JSC.ManagedTask.New(NamedPipeIPCData, closeTask).init(this));
     }
 
     pub fn closeTask(this: *NamedPipeIPCData) void {
         log("NamedPipeIPCData#closeTask", .{});
         if (this.disconnected) {
-            this.writer.close();
-            this.onClientClose();
+            if (this.server) |server| {
+                server.close(onServerClose);
+            } else {
+                this.writer.close();
+                this.onClientClose();
+            }
         }
     }
 

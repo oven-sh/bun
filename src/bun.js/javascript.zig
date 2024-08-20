@@ -3803,7 +3803,7 @@ pub const VirtualMachine = struct {
 
         const node_cluster_binding = @import("./node/node_cluster_binding.zig");
 
-        pub fn ipc(this: *IPCInstance) *IPC.IPCData {
+        pub fn ipc(this: *IPCInstance) ?*IPC.IPCData {
             return &this.data;
         }
 
@@ -3854,15 +3854,11 @@ pub const VirtualMachine = struct {
             if (global.bunVM().ipc) |*current_ipc| {
                 switch (current_ipc.*) {
                     .initialized => |instance| {
-                        JSC.VirtualMachine.get().enqueueImmediateTask(JSC.ManagedTask.New(IPC.IPCData, closeReal).init(&instance.data));
+                        instance.data.close(true);
                     },
                     .waiting => {},
                 }
             }
-        }
-
-        fn closeReal(ipc_data: *IPC.IPCData) void {
-            ipc_data.close();
         }
 
         pub const Handlers = IPC.NewIPCHandler(IPCInstance);

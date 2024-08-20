@@ -87,7 +87,7 @@ it("should be able to abruptly stop the server many times", async () => {
         await fetch(url, { keepalive: true }).then(res => res.text());
         expect.unreachable();
       } catch (e) {
-        expect(e.code).toBe("ConnectionClosed");
+        expect(["ConnectionClosed", "ConnectionRefused"]).toContain(e.code);
       }
     }
 

@@ -83,10 +83,7 @@ void FunctionTemplate::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(fn, info());
     Base::visitChildren(fn, visitor);
 
-    if (fn->__internals.data.isCell()) {
-        // AUDIT
-        JSC::JSCell::visitChildren(fn->__internals.data.asCell(), visitor);
-    }
+    visitor.append(fn->__internals.data);
 }
 
 DEFINE_VISIT_CHILDREN(FunctionTemplate);
@@ -109,7 +106,7 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
         args[i + 1] = argValue.tagged();
     }
 
-    Local<Value> data = hs.createLocal<Value>(vm, functionTemplate->__internals.data);
+    Local<Value> data = hs.createLocal<Value>(vm, functionTemplate->__internals.data.get());
 
     ImplicitArgs implicit_args = {
         .holder = nullptr,

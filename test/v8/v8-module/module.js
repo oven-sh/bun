@@ -7,5 +7,12 @@ module.exports = debugMode => {
       nativeModule.global_set("abc");
       console.log(nativeModule.global_get());
     },
+    test_v8_function_template() {
+      const f = nativeModule.create_function_with_data();
+      if (process.isBun) {
+        Bun.gc(true);
+      }
+      console.log(f());
+    },
   };
 };

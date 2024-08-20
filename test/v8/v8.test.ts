@@ -172,6 +172,12 @@ describe("ObjectTemplate", () => {
   });
 });
 
+describe("FunctionTemplate", () => {
+  it("keeps the data parameter alive", () => {
+    checkSameOutput("test_v8_function_template", []);
+  });
+});
+
 describe("Function", () => {
   it("correctly receives all its arguments from JS", () => {
     checkSameOutput("print_values_from_js", [5.0, true, null, false, "meow", {}], {});

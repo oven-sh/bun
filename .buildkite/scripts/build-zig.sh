@@ -16,7 +16,7 @@ function assert_target() {
   local arch="${2-$(uname -m)}"
   case "$(echo "$arch" | tr '[:upper:]' '[:lower:]')" in
   x64 | x86_64 | amd64)
-    export ZIG_ARCH="x64"
+    export ZIG_ARCH="x86_64"
     if [[ "$BUILDKITE_STEP_KEY" == *"baseline"* ]]; then
       export ZIG_CPU_TARGET="nehalem"
     else
@@ -84,7 +84,6 @@ run_command cmake .. "${CMAKE_FLAGS[@]}" \
   -DBUN_ZIG_OBJ_DIR="$cwd/build" \
   -DZIG_LIB_DIR="$cwd/src/deps/zig/lib" \
   -DCMAKE_BUILD_TYPE="$CMAKE_BUILD_TYPE" \
-  -DUSE_ARCH="$ZIG_ARCH" \
   -DUSE_CPU="$ZIG_CPU_TARGET" \
   -DUSE_ZIG_TARGET="$ZIG_TARGET" \
   -DUSE_LTO="$USE_LTO" \

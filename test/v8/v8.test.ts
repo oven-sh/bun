@@ -202,6 +202,9 @@ describe("HandleScope", () => {
   it("can hold a lot of locals", () => {
     checkSameOutput("test_many_v8_locals", []);
   });
+  it("keeps GC objects alive", () => {
+    checkSameOutput("test_handle_scope_gc", []);
+  }, 10000);
 });
 
 afterAll(() => {

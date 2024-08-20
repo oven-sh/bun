@@ -337,6 +337,105 @@ void test_many_v8_locals(const FunctionCallbackInfo<Value> &info) {
   }
 }
 
+static Local<Object> setup_object_with_string_field(Isolate *isolate,
+                                                    Local<Context> context,
+                                                    Local<ObjectTemplate> tmp,
+                                                    int i,
+                                                    const std::string &str) {
+  EscapableHandleScope ehs(isolate);
+  Local<Object> o = tmp->NewInstance(context).ToLocalChecked();
+  // print_cell_location(o, "objects[%5d]          ", i);
+  Local<String> value =
+      String::NewFromUtf8(isolate, str.c_str()).ToLocalChecked();
+
+  o->SetInternalField(0, value);
+  return ehs.Escape(o);
+}
+
+static void examine_object_fields(Isolate *isolate, Local<Object> o) {
+  char buf[16];
+  HandleScope hs(isolate);
+  o->GetInternalField(0).As<String>()->WriteUtf8(isolate, buf);
+
+  Local<Data> field1 = o->GetInternalField(1);
+  if (field1.As<Value>()->IsString()) {
+    field1.As<String>()->WriteUtf8(isolate, buf);
+  }
+}
+
+void test_handle_scope_gc(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  // allocate a ton of objects
+  constexpr size_t num_small_allocs = 10000;
+
+  std::array<Local<String>, num_small_allocs> mini_strings;
+  for (auto &s : mini_strings) {
+    int i = &s - &mini_strings[0];
+    std::string cpp_str = std::to_string(i);
+    s = String::NewFromUtf8(isolate, cpp_str.c_str()).ToLocalChecked();
+  }
+
+  // allocate some objects with internal fields, to check that those are traced
+  Local<ObjectTemplate> tmp = ObjectTemplate::New(isolate);
+  tmp->SetInternalFieldCount(2);
+  std::array<Local<Object>, num_small_allocs> objects;
+
+  for (auto &o : objects) {
+    int i = &o - &objects[0];
+    std::string cpp_str = std::to_string(i + num_small_allocs);
+    // this uses a function so that the strings aren't kept alive by the current
+    // handle scope
+    o = setup_object_with_string_field(isolate, context, tmp, i, cpp_str);
+  }
+
+  // allocate some massive strings
+  // this should cause GC to start looking for objects to free
+  // after each big string allocation, we try reading all of the strings we
+  // created above to ensure they are still alive
+  constexpr size_t num_strings = 100;
+  constexpr size_t string_size = 20 * 1000 * 1000;
+
+  auto string_data = new char[string_size];
+  string_data[string_size - 1] = 0;
+
+  std::array<Local<String>, num_strings> huge_strings;
+  for (size_t i = 0; i < num_strings; i++) {
+    printf("%lu\n", i);
+    memset(string_data, i + 1, string_size - 1);
+    huge_strings[i] =
+        String::NewFromUtf8(isolate, string_data).ToLocalChecked();
+
+    // try to use all mini strings
+    for (size_t j = 0; j < mini_strings.size(); j++) {
+      char buf[16];
+      mini_strings[j]->WriteUtf8(isolate, buf);
+    }
+
+    for (size_t j = 0; j < objects.size(); j++) {
+      examine_object_fields(isolate, objects[j]);
+    }
+
+    if (i == 1) {
+      // add more internal fields to the objects a long time after they were
+      // created, to ensure these can also be traced
+      // make a new handlescope here so that the new strings we allocate are
+      // only referenced by the objects
+      HandleScope inner_hs(isolate);
+      for (auto &o : objects) {
+        int i = &o - &objects[0];
+        auto cpp_str = std::to_string(i + 2 * num_small_allocs);
+        Local<String> field =
+            String::NewFromUtf8(isolate, cpp_str.c_str()).ToLocalChecked();
+        o->SetInternalField(1, field);
+      }
+    }
+  }
+
+  delete[] string_data;
+}
+
 void initialize(Local<Object> exports, Local<Value> module,
                 Local<Context> context) {
   NODE_SET_METHOD(exports, "test_v8_native_call", test_v8_native_call);
@@ -360,6 +459,7 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "global_get", GlobalTestWrapper::get);
   NODE_SET_METHOD(exports, "global_set", GlobalTestWrapper::set);
   NODE_SET_METHOD(exports, "test_many_v8_locals", test_many_v8_locals);
+  NODE_SET_METHOD(exports, "test_handle_scope_gc", test_handle_scope_gc);
 
   node::AddEnvironmentCleanupHook(context->GetIsolate(),
                                   GlobalTestWrapper::cleanup, nullptr);

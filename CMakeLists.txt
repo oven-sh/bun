@@ -796,6 +796,99 @@ if(NOT BUN_LINK_ONLY)
     WEBKIT_ADD_SOURCE_DEPENDENCIES(${BUN_SRC}/bun.js/bindings/ZigGlobalObject.cpp ${BUN_WORKDIR}/codegen/ZigGlobalObject.lut.h)
 endif()
 
+# --- bun install ---
+if(NOT NO_CODEGEN)
+    set(BUN_INSTALL_OUT
+        ${CMAKE_CURRENT_SOURCE_DIR}/node_modules
+        ${CMAKE_CURRENT_SOURCE_DIR}/bun.lockb
+    )
+    add_custom_command(
+        OUTPUT ${BUN_INSTALL_OUT}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/package.json
+        COMMAND ${BUN_EXECUTABLE} install --frozen-lockfile
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        VERBATIM
+        COMMENT "Running bun install"
+    )
+endif()
+
+# --- bun-error ---
+if(NOT NO_CODEGEN)
+    set(BUN_ERROR_WORKDIR ${CMAKE_CURRENT_SOURCE_DIR}/packages/bun-error)
+    set(BUN_ERROR_OUT
+        ${BUN_ERROR_WORKDIR}/dist/index.js
+        ${BUN_ERROR_WORKDIR}/dist/bun-error.css
+    )
+    add_custom_command(
+        OUTPUT ${BUN_ERROR_WORKDIR}/node_modules
+        COMMAND ${BUN_EXECUTABLE} install --frozen-lockfile
+        WORKING_DIRECTORY ${BUN_ERROR_WORKDIR}
+        VERBATIM
+        COMMENT "Installing bun-error"
+    )
+    add_custom_command(
+        OUTPUT ${BUN_ERROR_OUT}
+        DEPENDS ${BUN_ERROR_WORKDIR}/node_modules
+        COMMAND ${BUN_EXECUTABLE} x esbuild index.tsx bun-error.css --define:process.env.NODE_ENV=\"'production'\"  --minify --bundle --outdir=dist --platform=browser --format=esm
+        WORKING_DIRECTORY ${BUN_ERROR_WORKDIR}
+        VERBATIM
+        COMMENT "Building bun-error"
+    )
+endif()
+
+# --- fallback-decoder ---
+if(NOT NO_CODEGEN)
+    set(FALLBACK_DECODER_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/fallback.ts)
+    set(FALLBACK_DECODER_OUT ${CMAKE_CURRENT_SOURCE_DIR}/src/fallback.out.js)
+    add_custom_command(
+        OUTPUT ${FALLBACK_DECODER_OUT}
+        DEPENDS ${BUN_INSTALL_OUT} ${FALLBACK_DECODER_SRC}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMAND ${BUN_EXECUTABLE} x esbuild ${FALLBACK_DECODER_SRC} --outfile=${FALLBACK_DECODER_OUT} --target=esnext --bundle --format=iife --platform=browser --minify
+        VERBATIM
+        COMMENT "Building fallback.out.js"
+    )
+endif()
+
+# --- runtime.js ---
+if(NOT NO_CODEGEN)
+    set(RUNTIME_JS_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime.bun.js)
+    set(RUNTIME_JS_OUT ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime.out.js)
+    add_custom_command(
+        OUTPUT ${RUNTIME_JS_OUT}
+        DEPENDS ${BUN_INSTALL_OUT} ${RUNTIME_JS_SRC}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMAND ${BUN_EXECUTABLE} x esbuild ${RUNTIME_JS_SRC} --outfile=${RUNTIME_JS_OUT} --target=esnext --bundle --format=esm --platform=node --minify --external:/bun:*
+        VERBATIM
+        COMMENT "Building runtime.out.js"
+    )
+endif()
+
+# --- node-fallbacks ---
+if(NOT NO_CODEGEN)
+    set(NODE_FALLBACKS_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/node-fallbacks)
+    set(NODE_FALLBACKS_OUT ${BUN_ERROR_WORKDIR}/out)
+
+    add_custom_command(
+        OUTPUT ${NODE_FALLBACKS_SRC}/node_modules
+        DEPENDS ${BUN_INSTALL_OUT} ${NODE_FALLBACKS_SRC}
+        WORKING_DIRECTORY ${NODE_FALLBACKS_SRC}
+        COMMAND ${BUN_EXECUTABLE} install --frozen-lockfile
+        VERBATIM
+        COMMENT "Installing node-fallbacks"
+    )
+
+    file(GLOB NODE_FALLBACKS_FILES ${NODE_FALLBACKS_SRC}/*.js)
+    add_custom_command(
+        OUTPUT ${NODE_FALLBACKS_OUT}
+        DEPENDS ${BUN_INSTALL_OUT} ${NODE_FALLBACKS_SRC}
+        WORKING_DIRECTORY ${NODE_FALLBACKS_SRC}
+        COMMAND ${BUN_EXECUTABLE} x esbuild ${NODE_FALLBACKS_FILES} --outdir=out --format=esm --minify --platform=browser
+        VERBATIM
+        COMMENT "Building node-fallbacks.out.js"
+    )
+endif()
+
 # --- Identifier Cache ---
 if(NOT NO_CODEGEN)
     set(BUN_IDENTIFIER_CACHE_OUT
@@ -895,16 +988,6 @@ list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp")
 # )
 # endif()
 
-# --- Runtime.js ---
-if(NOT NO_CODEGEN)
-    add_custom_command(
-        OUTPUT "src/fallback.out.js"
-        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-        COMMAND "${ESBUILD}" "--target=esnext" "--bundle" "src/fallback.ts" "--format=iife" "--platform=browser" "--minify" "--outfile=src/fallback.out.js"
-        DEPENDS "src/fallback.ts"
-    )
-endif()
-
 # --- Zig Object ---
 file(GLOB ZIG_FILES
     "${BUN_SRC}/*.zig"
@@ -968,6 +1051,10 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         "${BUN_IDENTIFIER_CACHE_OUT}"
         "${BUN_SRC}/api/schema.zig"
         "${BUN_SRC}/bun.js/bindings/GeneratedJS2Native.zig"
+        ${BUN_ERROR_OUT}
+        ${FALLBACK_DECODER_OUT}
+        ${RUNTIME_JS_OUT}
+        ${NODE_FALLBACKS_OUT}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         COMMENT "Building zig code"
         VERBATIM

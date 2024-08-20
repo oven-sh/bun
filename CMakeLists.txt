@@ -901,12 +901,11 @@ if(NOT NO_CODEGEN)
         COMMENT "Installing node-fallbacks"
     )
 
-    # Files must be relative, otherwise the build does not work
-    file(GLOB RELATIVE ${NODE_FALLBACKS_SRC} NODE_FALLBACKS_FILES ${NODE_FALLBACKS_SRC}/*.js)
+    file(GLOB NODE_FALLBACKS_FILES ${NODE_FALLBACKS_SRC}/*.js)
 
     add_custom_command(
         OUTPUT ${NODE_FALLBACKS_OUT}
-        DEPENDS ${BUN_INSTALL_OUT} ${NODE_FALLBACKS_SRC}
+        DEPENDS ${BUN_INSTALL_OUT} ${NODE_FALLBACKS_SRC}/node_modules ${NODE_FALLBACKS_SRC}
         WORKING_DIRECTORY ${NODE_FALLBACKS_SRC}
         COMMAND ${BUN_EXECUTABLE} x esbuild
             ${NODE_FALLBACKS_FILES}

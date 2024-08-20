@@ -28,12 +28,6 @@ set(GLOBAL_ZIG_CACHE_DIR "${ZIG_CACHE_DIR}")
 cmake_path(APPEND LOCAL_ZIG_CACHE_DIR "local")
 cmake_path(APPEND GLOBAL_ZIG_CACHE_DIR "global")
 
-# Used in process.version, process.versions.node, napi, and elsewhere
-set(REPORTED_NODEJS_VERSION "22.6.0")
-
-# Used in process.versions.modules and compared while loading V8 modules
-set(REPORTED_NODEJS_ABI_VERSION "127")
-
 # WebKit uses -std=gnu++20 on non-macOS non-Windows
 # If we do not set this, it will crash at startup on the first memory allocation.
 if(NOT WIN32 AND NOT APPLE)
@@ -41,49 +35,11 @@ if(NOT WIN32 AND NOT APPLE)
     set(CMAKE_POSITION_INDEPENDENT_CODE FALSE)
 endif()
 
-# --- Build Type ---
-if(NOT CMAKE_BUILD_TYPE)
-    message(WARNING "No CMAKE_BUILD_TYPE value specified, defaulting to Debug.\nSet a build type with -DCMAKE_BUILD_TYPE=<Debug|Release>")
-    set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Choose the type of build (Debug, Release)" FORCE)
-else()
-    if(NOT CMAKE_BUILD_TYPE MATCHES "^(Debug|Release)$")
-        message(FATAL_ERROR
-            "Invalid CMAKE_BUILD_TYPE value specified: ${CMAKE_BUILD_TYPE}\n"
-            "CMAKE_BUILD_TYPE must be Debug or Release.")
-    endif()
-
-    message(STATUS "The CMake build type is: ${CMAKE_BUILD_TYPE}")
-endif()
-
 if(WIN32 AND NOT CMAKE_CL_SHOWINCLUDES_PREFIX)
     # workaround until cmake fix is shipped https://github.com/ninja-build/ninja/issues/2280
     # './build/.ninja_deps' may need to be deleted, the bug is "Note: including file: ..." is saved
     # as part of some file paths
     set(CMAKE_CL_SHOWINCLUDES_PREFIX "Note: including file:")
-endif()
-
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    set(DEBUG ON)
-    set(DEFAULT_ZIG_OPTIMIZE "Debug")
-    set(bun "bun-debug")
-
-    # COMPILE_COMMANDS
-    set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
-    set(DEBUG OFF)
-    set(DEFAULT_ZIG_OPTIMIZE "ReleaseFast")
-
-    if(WIN32)
-        # Debug symbols are in a separate file: bun.pdb
-        set(bun "bun")
-        set(DEFAULT_ZIG_OPTIMIZE "ReleaseSafe")
-    else()
-        if(ZIG_OPTIMIZE STREQUAL "Debug")
-            set(bun "bun-debug")
-        else()
-            set(bun "bun-profile")
-        endif()
-    endif()
 endif()
 
 # Must be called before project() so CMake doesn't pick its own compiler
@@ -95,6 +51,29 @@ include(cmake/SetupCcache.cmake)
 
 project(Bun VERSION "${Bun_VERSION}")
 
+include(cmake/Options.cmake)
+
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(DEBUG ON)
+    set(bun "bun-debug")
+
+    # COMPILE_COMMANDS
+    set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
+    set(DEBUG OFF)
+
+    if(WIN32)
+        # Debug symbols are in a separate file: bun.pdb
+        set(bun "bun")
+    else()
+        if(USE_ZIG_OPTIMIZE STREQUAL "Debug")
+            set(bun "bun-debug")
+        else()
+            set(bun "bun-profile")
+        endif()
+    endif()
+endif()
+
 if(NOT WIN32)
     set(SHELL "bash")
     set(SCRIPT_EXTENSION "sh")
@@ -105,72 +84,10 @@ else()
     find_program(SHELL NAMES pwsh powershell)
 endif()
 
-set(DEFAULT_ON_UNLESS_APPLE ON)
-
-if(APPLE)
-    set(DEFAULT_ON_UNLESS_APPLE OFF)
-endif()
-
 set(CI OFF)
 
 if(DEFINED ENV{CI} OR DEFINED ENV{GITHUB_ACTIONS})
     set(CI ON)
-endif()
-
-set(DEFAULT_USE_STATIC_LIBATOMIC ON)
-set(DEFAULT_USE_DEBUG_JSC, OFF)
-
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    set(DEFAULT_USE_DEBUG_JSC ON)
-    set(DEFAULT_LTO OFF)
-elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
-    if(CI)
-        set(DEFAULT_LTO ON)
-    else()
-        set(DEFAULT_LTO OFF)
-    endif()
-endif()
-
-if(WIN32)
-    set(DEFAULT_USE_DEBUG_JSC OFF)
-endif()
-
-if(UNIX AND NOT APPLE)
-    execute_process(COMMAND grep -w "NAME" /etc/os-release OUTPUT_VARIABLE LINUX_DISTRO)
-
-    if(${LINUX_DISTRO} MATCHES "NAME=\"(Arch|Manjaro|Artix) Linux\"|NAME=\"openSUSE Tumbleweed\"\n")
-        set(DEFAULT_USE_STATIC_LIBATOMIC OFF)
-    endif()
-endif()
-
-# -- Build Flags --
-option(USE_STATIC_SQLITE "Statically link SQLite?" ${DEFAULT_ON_UNLESS_APPLE})
-option(USE_CUSTOM_ZLIB "Use Bun's recommended version of zlib" ON)
-option(USE_CUSTOM_LIBDEFLATE "Use Bun's recommended version of libdeflate" ON)
-option(USE_CUSTOM_BORINGSSL "Use Bun's recommended version of BoringSSL" ON)
-option(USE_CUSTOM_LIBARCHIVE "Use Bun's recommended version of libarchive" ON)
-option(USE_CUSTOM_MIMALLOC "Use Bun's recommended version of Mimalloc" ON)
-option(USE_CUSTOM_ZSTD "Use Bun's recommended version of zstd" ON)
-option(USE_CUSTOM_CARES "Use Bun's recommended version of c-ares" ON)
-option(USE_CUSTOM_LOLHTML "Use Bun's recommended version of lolhtml" ON)
-option(USE_CUSTOM_TINYCC "Use Bun's recommended version of tinycc" ON)
-option(USE_CUSTOM_LIBUV "Use Bun's recommended version of libuv (Windows only)" ON)
-option(USE_CUSTOM_LSHPACK "Use Bun's recommended version of ls-hpack" ON)
-option(USE_BASELINE_BUILD "Build Bun for baseline (older) CPUs" OFF)
-option(USE_SYSTEM_ICU "Use the system-provided libicu. May fix startup crashes when building WebKit yourself." OFF)
-
-option(USE_VALGRIND "Build Bun with Valgrind support (Linux only)" OFF)
-
-option(ZIG_OPTIMIZE "Optimization level for Zig" ${DEFAULT_ZIG_OPTIMIZE})
-option(USE_DEBUG_JSC "Enable assertions and use a debug build of JavaScriptCore" ${DEFAULT_USE_DEBUG_JSC})
-option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
-option(USE_STATIC_LIBATOMIC "Statically link libatomic, requires the presence of libatomic.a" ${DEFAULT_USE_STATIC_LIBATOMIC})
-
-option(USE_LTO "Enable Link-Time Optimization" ${DEFAULT_LTO})
-
-if(APPLE AND USE_LTO)
-    set(USE_LTO OFF)
-    message(FATAL_ERROR "Link-Time Optimization is not supported on macOS because it requires -fuse-ld=lld and lld causes many segfaults on macOS (likely related to stack size)")
 endif()
 
 if(WIN32 AND USE_LTO)
@@ -186,9 +103,6 @@ if(NOT ZIG_LIB_DIR)
 endif()
 
 if(USE_VALGRIND)
-    # Disable SIMD
-    set(USE_BASELINE_BUILD ON)
-
     if(ARCH STREQUAL "x86_64")
         # This is for picohttpparser
         # Valgrind cannot handle SSE4.2 instructions
@@ -196,52 +110,12 @@ if(USE_VALGRIND)
     endif()
 endif()
 
-if(NOT CANARY)
-    set(CANARY 0)
-endif()
-
-if(NOT ENABLE_LOGS)
-    set(ENABLE_LOGS false)
-endif()
-
-if(NOT ZIG_OPTIMIZE)
-    set(ZIG_OPTIMIZE ${DEFAULT_ZIG_OPTIMIZE})
-endif()
-
 set(ERROR_LIMIT 100 CACHE STRING "Maximum number of errors to show when compiling C++ code")
 
 set(ARCH x86_64)
-set(HOMEBREW_PREFIX "/usr/local")
 
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|arm")
     set(ARCH aarch64)
-    set(HOMEBREW_PREFIX "/opt/homebrew")
-endif()
-
-if(NOT CPU_TARGET)
-    if(DEFINED ENV{CPU_TARGET})
-        set(CPU_TARGET $ENV{CPU_TARGET})
-    else()
-        set(CPU_TARGET "native" CACHE STRING "CPU target for the compiler" FORCE)
-
-        if(ARCH STREQUAL "x86_64")
-            if(USE_BASELINE_BUILD)
-                set(CPU_TARGET "nehalem")
-            else()
-                set(CPU_TARGET "haswell")
-            endif()
-        endif()
-    endif()
-endif()
-
-message(STATUS "Building for CPU Target: ${CPU_TARGET}")
-
-if(NOT ZIG_TARGET)
-    set(ZIG_TARGET "native")
-
-    if(WIN32)
-        set(ZIG_TARGET "${ARCH}-windows-msvc")
-    endif()
 endif()
 
 set(CONFIGURE_DEPENDS "CONFIGURE_DEPENDS")
@@ -306,17 +180,6 @@ endif()
 # Bun
 find_program(BUN_EXECUTABLE bun ${REQUIRED_IF_NOT_ONLY_CPP_OR_LINK} DOC "Path to an already built release of Bun")
 message(STATUS "Found Bun: ${BUN_EXECUTABLE}")
-
-if(WIN32 AND NO_CODEGEN)
-    # TODO(@paperdave): remove this, see bun-windows.yml's comment.
-    set(BUN_EXECUTABLE "echo")
-endif()
-
-# Ruby (only needed for unified sources)
-if(USE_UNIFIED_SOURCES)
-    # ruby 'WebKit/Source/WTF/Scripts/generate-unified-source-bundles.rb' source_list.txt --source-tree-path . --derived-sources-path build/unified-sources
-    find_program(RUBY ruby DOC "Path to ruby")
-endif()
 
 # --- WebKit ---
 # WebKit is either prebuilt and distributed via NPM, or you can pass WEBKIT_DIR to use a local build.
@@ -857,6 +720,11 @@ if(NOT CI)
 endif()
 
 if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
+    if(ENABLE_LOGS)
+        set(ZIG_ENABLE_LOGS "true")
+    else()
+        set(ZIG_ENABLE_LOGS "false")
+    endif()
     add_custom_command(
         OUTPUT "${BUN_ZIG_OBJ}"
         COMMAND
@@ -867,12 +735,12 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         "-Dgenerated-code=${BUN_WORKDIR}/codegen"
         "-freference-trace=10"
         "-Dversion=${Bun_VERSION}"
-        "-Dcanary=${CANARY}"
-        "-Doptimize=${ZIG_OPTIMIZE}"
-        "-Dcpu=${CPU_TARGET}"
-        "-Dtarget=${ZIG_TARGET}"
-        "-Denable_logs=${ENABLE_LOGS}"
-        "-Dreported_nodejs_version=${REPORTED_NODEJS_VERSION}"
+        "-Dcanary=${USE_CANARY_REVISION}"
+        "-Doptimize=${USE_ZIG_OPTIMIZE}"
+        "-Dcpu=${USE_ZIG_CPU}"
+        "-Dtarget=${USE_ZIG_TARGET}"
+        "-Denable_logs=${ZIG_ENABLE_LOGS}"
+        "-Dreported_nodejs_version=${USE_NODEJS_VERSION}"
         "-Dobj_format=${BUN_ZIG_OBJ_FORMAT}"
         "--cache-dir" "${LOCAL_ZIG_CACHE_DIR}"
         "--global-cache-dir" "${GLOBAL_ZIG_CACHE_DIR}"
@@ -913,8 +781,8 @@ else()
 endif()
 
 # -- Windows resources (app icon) --
-if(CANARY GREATER 0)
-    set(Bun_VERSION_WITH_TAG "${Bun_VERSION}-canary.${CANARY}")
+if(ENABLE_CANARY)
+    set(Bun_VERSION_WITH_TAG "${Bun_VERSION}-canary.${USE_CANARY_REVISION}")
 else()
     set(Bun_VERSION_WITH_TAG "${Bun_VERSION}")
 endif()
@@ -965,8 +833,8 @@ add_compile_definitions(
     "IS_BUILD"
     "BUILDING_JSCONLY__"
     "BUN_DYNAMIC_JS_LOAD_PATH=\"${BUN_WORKDIR}/js\""
-    "REPORTED_NODEJS_VERSION=\"${REPORTED_NODEJS_VERSION}\""
-    "REPORTED_NODEJS_ABI_VERSION=${REPORTED_NODEJS_ABI_VERSION}"
+    "REPORTED_NODEJS_VERSION=\"${USE_NODEJS_VERSION}\""
+    "REPORTED_NODEJS_ABI_VERSION=${USE_NODEJS_ABI_VERSION}"
 )
 
 if(NOT ASSERT_ENABLED)
@@ -1143,11 +1011,11 @@ if(NOT CI AND NOT WIN32)
     target_compile_options(${bun} PRIVATE -fdiagnostics-color=always)
 endif()
 
-if(NOT CPU_TARGET STREQUAL "native")
+if(NOT USE_CPU STREQUAL "native")
     # passing -march=native to clang will break older systems
-    # by default on x64, CPU_TARGET is set to "haswell" or "nehalem" depending on baseline
+    # by default on x64, USE_CPU is set to "haswell" or "nehalem" depending on baseline
     # on arm, this argument will not be passed.
-    target_compile_options(${bun} PUBLIC "-march=${CPU_TARGET}")
+    target_compile_options(${bun} PUBLIC "-march=${USE_CPU}")
 else()
     if(APPLE AND ARCH STREQUAL "aarch64")
         # On arm macOS, we can set it to a minimum of the M1 cpu set. this might be the default already.
@@ -1179,7 +1047,7 @@ if(WIN32)
     target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000" "/DEF:${BUN_SRC}/symbols.def" "/errorlimit:0")
 else()
     target_compile_options(${bun} PUBLIC
-        -mtune=${CPU_TARGET}
+        -mtune=${USE_CPU}
         -fconstexpr-steps=2542484
         -fconstexpr-depth=54
         -fno-exceptions

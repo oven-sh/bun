@@ -60,7 +60,7 @@ macro(parse_option label type description default)
 endmacro()
 
 macro(set_if label regex value)
-  if(VALUE MATCHES "^(${regex})$")
+  if(${value} MATCHES "^(${regex})$")
     set(${label} TRUE)
   else()
     set(${label} FALSE)

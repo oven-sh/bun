@@ -158,7 +158,7 @@ pub const Async = struct {
             else => return NewAsyncFSTask(ReturnType, ArgumentType, @field(NodeFS, @tagName(FunctionEnum))),
         }
 
-        comptime std.debug.assert(Environment.isWindows);
+        comptime bun.assert(Environment.isWindows);
         return struct {
             promise: JSC.JSPromise.Strong,
             args: ArgumentType,

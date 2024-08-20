@@ -5,7 +5,7 @@ const { Duplex, Readable, Writable } = require("node:stream");
 const { ERR_INVALID_ARG_TYPE, ERR_INVALID_PROTOCOL } = require("internal/errors");
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { kAutoDestroyed } = require("internal/shared");
-const { urlToHttpOptions } = require("node:url");
+const { urlToHttpOptions } = require("internal/url");
 
 const {
   getHeader,

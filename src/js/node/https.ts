@@ -1,6 +1,6 @@
 // Hardcoded module "node:https"
 const http = require("node:http");
-const { urlToHttpOptions } = require("node:url");
+const { urlToHttpOptions } = require("internal/url");
 
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const ArrayPrototypeShift = Array.prototype.shift;

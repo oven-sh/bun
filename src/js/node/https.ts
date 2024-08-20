@@ -1,16 +1,30 @@
 // Hardcoded module "node:https"
 const http = require("node:http");
+const { urlToHttpOptions } = require("node:url");
 
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
+const ArrayPrototypeShift = Array.prototype.shift;
+const ObjectAssign = Object.assign;
+const ArrayPrototypeUnshift = Array.prototype.unshift;
 
-function request(input, options, cb) {
-  if (input && typeof input === "object" && !(input instanceof URL)) {
-    input._defaultAgent = https.globalAgent;
-  } else if (typeof options === "object") {
-    options._defaultAgent = https.globalAgent;
+function request(...args) {
+  let options = {};
+
+  if (typeof args[0] === "string") {
+    const urlStr = ArrayPrototypeShift.$call(args);
+    options = urlToHttpOptions(new URL(urlStr));
+  } else if (args[0] instanceof URL) {
+    options = urlToHttpOptions(ArrayPrototypeShift.$call(args));
   }
 
-  return http.request(input, options, cb);
+  if (args[0] && typeof args[0] !== "function") {
+    ObjectAssign.$call(null, options, ArrayPrototypeShift.$call(args));
+  }
+
+  options._defaultAgent = https.globalAgent;
+  ArrayPrototypeUnshift.$call(args, options);
+
+  return new http.ClientRequest(...args);
 }
 
 function get(input, options, cb) {

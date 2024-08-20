@@ -737,7 +737,7 @@ pub const Subprocess = struct {
         return .undefined;
     }
     pub fn disconnectIPC(this: *Subprocess) void {
-        const ipc_data = this.ipc_maybe() orelse return;
+        const ipc_data = this.ipc() orelse return;
         this.ipc_data = null;
         ipc_data.close();
     }
@@ -750,7 +750,7 @@ pub const Subprocess = struct {
 
     pub fn getConnected(this: *Subprocess, globalThis: *JSGlobalObject) JSValue {
         _ = globalThis;
-        return JSValue.jsBoolean(this.ipc_maybe() != null);
+        return JSValue.jsBoolean(this.ipc() != null);
     }
 
     pub fn pid(this: *const Subprocess) i32 {
@@ -2322,8 +2322,11 @@ pub const Subprocess = struct {
     pub fn handleIPCClose(this: *Subprocess) void {
         IPClog("Subprocess#handleIPCClose", .{});
         this.updateHasPendingActivity();
-        const ok = this.ipc_data != null;
-        if (ok) this.ipc().internal_msg_queue.deinit();
+        var ok = false;
+        if (this.ipc()) |ipc_data| {
+            ok = true;
+            ipc_data.internal_msg_queue.deinit();
+        }
         this.ipc_data = null;
 
         const this_jsvalue = this.this_jsvalue;
@@ -2333,11 +2336,7 @@ pub const Subprocess = struct {
         }
     }
 
-    pub fn ipc(this: *Subprocess) *IPC.IPCData {
-        return &this.ipc_data.?;
-    }
-
-    pub fn ipc_maybe(this: *Subprocess) ?*IPC.IPCData {
+    pub fn ipc(this: *Subprocess) ?*IPC.IPCData {
         return &(this.ipc_data orelse return null);
     }
 

@@ -664,7 +664,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             all_data: []const u8,
         ) void {
             var data = all_data;
-            const ipc = this.ipc();
+            const ipc = this.ipc() orelse return;
             log("onData {}", .{std.fmt.fmtSliceHexLower(data)});
 
             // In the VirtualMachine case, `globalThis` is an optional, in case
@@ -790,7 +790,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
 fn NewNamedPipeIPCHandler(comptime Context: type) type {
     return struct {
         fn onReadAlloc(this: *Context, suggested_size: usize) []u8 {
-            const ipc = this.ipc();
+            const ipc = this.ipc() orelse return "";
             var available = ipc.incoming.available();
             if (available.len < suggested_size) {
                 ipc.incoming.ensureUnusedCapacity(bun.default_allocator, suggested_size) catch bun.outOfMemory();
@@ -802,12 +802,14 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
 
         fn onReadError(this: *Context, err: bun.C.E) void {
             log("NewNamedPipeIPCHandler#onReadError {}", .{err});
-            this.ipc().close();
+            if (this.ipc()) |ipc_data| {
+                ipc_data.close();
+            }
             onClose(this);
         }
 
         fn onRead(this: *Context, buffer: []const u8) void {
-            const ipc = this.ipc();
+            const ipc = this.ipc() orelse return;
 
             log("NewNamedPipeIPCHandler#onRead {d}", .{buffer.len});
             ipc.incoming.len += @as(u32, @truncate(buffer.len));
@@ -868,7 +870,7 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
 /// struct {
 ///     globalThis: ?*JSGlobalObject,
 ///
-///     fn ipc(*Context) *IPCData,
+///     fn ipc(*Context) ?*IPCData,
 ///     fn handleIPCMessage(*Context, DecodedIPCMessage) void
 ///     fn handleIPCClose(*Context) void
 /// }

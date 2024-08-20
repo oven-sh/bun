@@ -3797,7 +3797,7 @@ pub const VirtualMachine = struct {
 
         const node_cluster_binding = @import("./node/node_cluster_binding.zig");
 
-        pub fn ipc(this: *IPCInstance) *IPC.IPCData {
+        pub fn ipc(this: *IPCInstance) ?*IPC.IPCData {
             return &this.data;
         }
 

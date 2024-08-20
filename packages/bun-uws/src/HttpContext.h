@@ -113,6 +113,9 @@ private:
 
         /* Handle socket disconnections */
         us_socket_context_on_close(SSL, getSocketContext(), [](us_socket_t *s, int /*code*/, void */*reason*/) {
+            ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
+
+           
             /* Get socket ext */
             HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(SSL, s);
 
@@ -124,8 +127,9 @@ private:
 
             /* Signal broken HTTP request only if we have a pending request */
             if (httpResponseData->onAborted) {
-                httpResponseData->onAborted();
+                httpResponseData->onAborted((HttpResponse<SSL> *)s, httpResponseData->userData);
             }
+            
 
             /* Destruct socket ext */
             httpResponseData->~HttpResponseData<SSL>();
@@ -258,7 +262,7 @@ private:
                     }
 
                     /* We might respond in the handler, so do not change timeout after this */
-                    httpResponseData->inStream(data, fin);
+                    httpResponseData->inStream(static_cast<HttpResponse<SSL>*>(user), data.data(), data.length(), fin, httpResponseData->userData);
 
                     /* Was the socket closed? */
                     if (us_socket_is_closed(SSL, (struct us_socket_t *) user)) {
@@ -366,7 +370,7 @@ private:
 
                 /* We expect the developer to return whether or not write was successful (true).
                  * If write was never called, the developer should still return true so that we may drain. */
-                bool success = httpResponseData->callOnWritable(httpResponseData->offset);
+                bool success = httpResponseData->callOnWritable((HttpResponse<SSL> *)asyncSocket, httpResponseData->offset);
 
                 /* The developer indicated that their onWritable failed. */
                 if (!success) {
@@ -400,6 +404,7 @@ private:
 
         /* Handle FIN, HTTP does not support half-closed sockets, so simply close */
         us_socket_context_on_end(SSL, getSocketContext(), [](us_socket_t *s) {
+            ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
 
             /* We do not care for half closed sockets */
             AsyncSocket<SSL> *asyncSocket = (AsyncSocket<SSL> *) s;

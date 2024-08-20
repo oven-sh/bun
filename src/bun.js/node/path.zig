@@ -463,7 +463,7 @@ pub fn basename(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*
         };
     }
 
-    const path_ptr = if (args_len > 0) args_ptr[0] else JSC.JSValue.jsUndefined();
+    const path_ptr = if (args_len > 0) args_ptr[0] else .undefined;
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validateString(globalObject, path_ptr, "path", .{}) catch {
         return .zero;
@@ -658,7 +658,7 @@ pub inline fn dirnameJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, i
 }
 
 pub fn dirname(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(JSC.conv) JSC.JSValue {
-    const path_ptr = if (args_len > 0) args_ptr[0] else JSC.JSValue.jsUndefined();
+    const path_ptr = if (args_len > 0) args_ptr[0] else .undefined;
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validateString(globalObject, path_ptr, "path", .{}) catch {
         // Returning .zero translates to a nullprt JSC.JSValue.
@@ -857,7 +857,7 @@ pub inline fn extnameJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, i
 }
 
 pub fn extname(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(JSC.conv) JSC.JSValue {
-    const path_ptr = if (args_len > 0) args_ptr[0] else JSC.JSValue.jsUndefined();
+    const path_ptr = if (args_len > 0) args_ptr[0] else .undefined;
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validateString(globalObject, path_ptr, "path", .{}) catch {
         // Returning .zero translates to a nullprt JSC.JSValue.
@@ -971,7 +971,7 @@ pub fn formatJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocator
 }
 
 pub fn format(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(JSC.conv) JSC.JSValue {
-    const pathObject_ptr = if (args_len > 0) args_ptr[0] else JSC.JSValue.jsUndefined();
+    const pathObject_ptr = if (args_len > 0) args_ptr[0] else .undefined;
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validateObject(globalObject, pathObject_ptr, "pathObject", .{}, .{}) catch {
         // Returning .zero translates to a nullprt JSC.JSValue.
@@ -1045,7 +1045,7 @@ pub fn isAbsoluteWindowsZigString(pathZStr: JSC.ZigString) bool {
 }
 
 pub fn isAbsolute(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(JSC.conv) JSC.JSValue {
-    const path_ptr = if (args_len > 0) args_ptr[0] else JSC.JSValue.jsUndefined();
+    const path_ptr = if (args_len > 0) args_ptr[0] else .undefined;
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validateString(globalObject, path_ptr, "path", .{}) catch {
         // Returning .zero translates to a nullprt JSC.JSValue.
@@ -1658,7 +1658,7 @@ pub fn normalizeJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, alloca
 }
 
 pub fn normalize(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(JSC.conv) JSC.JSValue {
-    const path_ptr = if (args_len > 0) args_ptr[0] else JSC.JSValue.jsUndefined();
+    const path_ptr = if (args_len > 0) args_ptr[0] else .undefined;
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validateString(globalObject, path_ptr, "path", .{}) catch {
         // Returning .zero translates to a nullprt JSC.JSValue.
@@ -1981,7 +1981,7 @@ pub inline fn parseJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, isW
 }
 
 pub fn parse(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(JSC.conv) JSC.JSValue {
-    const path_ptr = if (args_len > 0) args_ptr[0] else JSC.JSValue.jsUndefined();
+    const path_ptr = if (args_len > 0) args_ptr[0] else .undefined;
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validateString(globalObject, path_ptr, "path", .{}) catch {
         // Returning .zero translates to a nullprt JSC.JSValue.
@@ -2340,13 +2340,13 @@ pub fn relativeJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocat
 }
 
 pub fn relative(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(JSC.conv) JSC.JSValue {
-    const from_ptr = if (args_len > 0) args_ptr[0] else JSC.JSValue.jsUndefined();
+    const from_ptr = if (args_len > 0) args_ptr[0] else .undefined;
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validateString(globalObject, from_ptr, "from", .{}) catch {
         // Returning .zero translates to a nullprt JSC.JSValue.
         return .zero;
     };
-    const to_ptr = if (args_len > 1) args_ptr[1] else JSC.JSValue.jsUndefined();
+    const to_ptr = if (args_len > 1) args_ptr[1] else .undefined;
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validateString(globalObject, to_ptr, "to", .{}) catch {
         return .zero;
@@ -2906,7 +2906,7 @@ pub fn toNamespacedPathJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject,
 }
 
 pub fn toNamespacedPath(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(JSC.conv) JSC.JSValue {
-    if (args_len == 0) return JSC.JSValue.jsUndefined();
+    if (args_len == 0) return .undefined;
     var path_ptr = args_ptr[0];
 
     // Based on Node v21.6.1 path.win32.toNamespacedPath and path.posix.toNamespacedPath:

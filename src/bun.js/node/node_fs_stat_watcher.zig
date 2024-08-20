@@ -305,7 +305,7 @@ pub const StatWatcher = struct {
             if (obj.js_this != .zero) {
                 return obj.js_this;
             }
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
     };
 
@@ -314,7 +314,7 @@ pub const StatWatcher = struct {
             this.persistent = true;
             this.poll_ref.ref(this.ctx);
         }
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
 
     pub fn doUnref(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
@@ -322,7 +322,7 @@ pub const StatWatcher = struct {
             this.persistent = false;
             this.poll_ref.unref(this.ctx);
         }
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
 
     pub fn hasPendingActivity(this: *StatWatcher) bool {
@@ -345,7 +345,7 @@ pub const StatWatcher = struct {
 
     pub fn doClose(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         this.close();
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
 
     /// If the scheduler is not using this, free instantly, otherwise mark for being freed.
@@ -417,6 +417,7 @@ pub const StatWatcher = struct {
 
         const result = StatWatcher.listenerGetCached(this.js_this).?.call(
             this.globalThis,
+            .undefined,
             &[2]JSC.JSValue{
                 jsvalue,
                 jsvalue,
@@ -454,6 +455,7 @@ pub const StatWatcher = struct {
 
         const result = StatWatcher.listenerGetCached(this.js_this).?.call(
             this.globalThis,
+            .undefined,
             &[2]JSC.JSValue{
                 current_jsvalue,
                 prev_jsvalue,

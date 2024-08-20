@@ -237,7 +237,7 @@ const DarwinWatcher = struct {
 };
 
 const WindowsWatcher = struct {
-    mutex: Mutex = Mutex.init(),
+    mutex: Mutex = .{},
     iocp: w.HANDLE = undefined,
     watcher: DirWatcher = undefined,
 
@@ -574,7 +574,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 .watched_count = 0,
                 .ctx = ctx,
                 .watchlist = WatchList{},
-                .mutex = Mutex.init(),
+                .mutex = .{},
                 .cwd = fs.top_level_dir,
             };
 

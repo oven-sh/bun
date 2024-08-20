@@ -160,6 +160,9 @@ pub const Body = struct {
 
             return false;
         }
+        pub fn isStreamingOrBuffering(this: *PendingValue) bool {
+            return this.readable.held.has() or (this.promise != null and !this.promise.?.isEmptyOrUndefinedOrNull());
+        }
 
         pub fn hasPendingPromise(this: *PendingValue) bool {
             const promise = this.promise orelse return false;
@@ -220,7 +223,7 @@ pub const Body = struct {
 
                                 break :brk globalThis.readableStreamToFormData(readable.value, switch (form_data.?.encoding) {
                                     .Multipart => |multipart| bun.String.init(multipart).toJS(globalThis),
-                                    .URLEncoded => JSC.JSValue.jsUndefined(),
+                                    .URLEncoded => .undefined,
                                 });
                             },
                             else => unreachable,
@@ -307,9 +310,66 @@ pub const Body = struct {
         Locked: PendingValue,
         Used: void,
         Empty: void,
-        Error: JSValue,
+        Error: ValueError,
         Null: void,
 
+        pub const heap_breakdown_label = "BodyValue";
+        pub const ValueError = union(enum) {
+            AbortReason: JSC.CommonAbortReason,
+            SystemError: JSC.SystemError,
+            Message: bun.String,
+            JSValue: JSC.Strong,
+
+            pub fn toStreamError(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.WebCore.StreamResult.StreamError {
+                return switch (this.*) {
+                    .AbortReason => .{
+                        .AbortReason = this.AbortReason,
+                    },
+                    else => .{
+                        .JSValue = this.toJS(globalObject),
+                    },
+                };
+            }
+
+            pub fn toJS(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+                const js_value = switch (this.*) {
+                    .AbortReason => |reason| reason.toJS(globalObject),
+                    .SystemError => |system_error| system_error.toErrorInstance(globalObject),
+                    .Message => |message| message.toErrorInstance(globalObject),
+                    // do a early return in this case we don't need to create a new Strong
+                    .JSValue => |js_value| return js_value.get() orelse JSC.JSValue.jsUndefined(),
+                };
+                this.* = .{ .JSValue = JSC.Strong.create(js_value, globalObject) };
+                return js_value;
+            }
+
+            pub fn dupe(this: *const @This(), globalObject: *JSC.JSGlobalObject) @This() {
+                var value = this.*;
+                switch (this.*) {
+                    .SystemError => value.SystemError.ref(),
+                    .Message => value.Message.ref(),
+                    .JSValue => |js_ref| {
+                        if (js_ref.get()) |js_value| {
+                            return .{ .JSValue = JSC.Strong.create(js_value, globalObject) };
+                        }
+                        return .{ .JSValue = .{} };
+                    },
+                    .AbortReason => {},
+                }
+                return value;
+            }
+
+            pub fn deinit(this: *@This()) void {
+                switch (this.*) {
+                    .SystemError => |system_error| system_error.deref(),
+                    .Message => |message| message.deref(),
+                    .JSValue => this.JSValue.deinit(),
+                    .AbortReason => {},
+                }
+                // safe empty value after deinit
+                this.* = .{ .JSValue = .{} };
+            }
+        };
         pub fn toBlobIfPossible(this: *Value) void {
             if (this.* == .WTFStringImpl) {
                 if (this.WTFStringImpl.toUTF8IfNeeded(bun.default_allocator)) |bytes| {
@@ -597,12 +657,15 @@ pub const Body = struct {
 
             return Body.Value{
                 .Blob = Blob.get(globalThis, value, true, false) catch |err| {
-                    if (err == error.InvalidArguments) {
-                        globalThis.throwInvalidArguments("Expected an Array", .{});
-                        return null;
+                    if (!globalThis.hasException()) {
+                        if (err == error.InvalidArguments) {
+                            globalThis.throwInvalidArguments("Expected an Array", .{});
+                            return null;
+                        }
+
+                        globalThis.throwInvalidArguments("Invalid Body object", .{});
                     }
 
-                    globalThis.throwInvalidArguments("Invalid Body object", .{});
                     return null;
                 },
             };
@@ -643,6 +706,8 @@ pub const Body = struct {
                     locked.promise = null;
 
                     switch (locked.action) {
+                        // These ones must use promise.wrap() to handle exceptions thrown while calling .toJS() on the value.
+                        // These exceptions can happen if the String is too long, ArrayBuffer is too large, JSON parse error, etc.
                         .getText => {
                             switch (new.*) {
                                 .WTFStringImpl,
@@ -650,37 +715,32 @@ pub const Body = struct {
                                 // .InlineBlob,
                                 => {
                                     var blob = new.useAsAnyBlobAllowNonUTF8String();
-                                    promise.resolve(global, blob.toString(global, .transfer));
+                                    promise.wrap(global, AnyBlob.toStringTransfer, .{ &blob, global });
                                 },
                                 else => {
                                     var blob = new.use();
-                                    promise.resolve(global, blob.toString(global, .transfer));
+                                    promise.wrap(global, Blob.toStringTransfer, .{ &blob, global });
                                 },
                             }
                         },
                         .getJSON => {
                             var blob = new.useAsAnyBlobAllowNonUTF8String();
-                            const json_value = blob.toJSON(global, .share);
+                            promise.wrap(global, AnyBlob.toJSONShare, .{ &blob, global });
                             blob.detach();
-
-                            if (json_value.isAnyError()) {
-                                promise.reject(global, json_value);
-                            } else {
-                                promise.resolve(global, json_value);
-                            }
                         },
                         .getArrayBuffer => {
                             var blob = new.useAsAnyBlobAllowNonUTF8String();
-                            promise.resolve(global, blob.toArrayBuffer(global, .transfer));
+                            promise.wrap(global, AnyBlob.toArrayBufferTransfer, .{ &blob, global });
                         },
                         .getBytes => {
                             var blob = new.useAsAnyBlobAllowNonUTF8String();
-                            promise.resolve(global, blob.toUint8Array(global, .transfer));
+                            promise.wrap(global, AnyBlob.toUint8ArrayTransfer, .{ &blob, global });
                         },
+
                         .getFormData => inner: {
                             var blob = new.useAsAnyBlob();
                             defer blob.detach();
-                            var async_form_data = locked.action.getFormData orelse {
+                            var async_form_data: *bun.FormData.AsyncFormData = locked.action.getFormData orelse {
                                 promise.reject(global, ZigString.init("Internal error: task for FormData must not be null").toErrorInstance(global));
                                 break :inner;
                             };
@@ -857,13 +917,10 @@ pub const Body = struct {
             return any_blob;
         }
 
-        pub fn toErrorInstance(this: *Value, error_instance: JSC.JSValue, global: *JSGlobalObject) void {
-            error_instance.ensureStillAlive();
+        pub fn toErrorInstance(this: *Value, err: ValueError, global: *JSGlobalObject) void {
             if (this.* == .Locked) {
                 var locked = this.Locked;
-                // will be unprotected by body value deinit
-                error_instance.protect();
-                this.* = .{ .Error = error_instance };
+                this.* = .{ .Error = err };
 
                 var strong_readable = locked.readable;
                 locked.readable = .{};
@@ -875,12 +932,21 @@ pub const Body = struct {
                     locked.promise = null;
 
                     if (promise.asAnyPromise()) |internal| {
-                        internal.reject(global, error_instance);
+                        internal.reject(global, this.Error.toJS(global));
                     }
                 }
 
+                // The Promise version goes before the ReadableStream version incase the Promise version is used too.
+                // Avoid creating unnecessary duplicate JSValue.
                 if (strong_readable.get()) |readable| {
-                    readable.abort(global);
+                    if (readable.ptr == .Bytes) {
+                        readable.ptr.Bytes.onData(
+                            .{ .err = this.Error.toStreamError(global) },
+                            bun.default_allocator,
+                        );
+                    } else {
+                        readable.abort(global);
+                    }
                 }
 
                 if (locked.onReceiveValue) |onReceiveValue| {
@@ -889,20 +955,14 @@ pub const Body = struct {
                 }
                 return;
             }
-            // will be unprotected by body value deinit
-            error_instance.protect();
-            this.* = .{ .Error = error_instance };
+            this.* = .{ .Error = err };
         }
 
         pub fn toError(this: *Value, err: anyerror, global: *JSGlobalObject) void {
-            var error_str = ZigString.init(std.fmt.allocPrint(
-                bun.default_allocator,
+            return this.toErrorInstance(.{ .Message = bun.String.createFormat(
                 "Error reading file {s}",
                 .{@errorName(err)},
-            ) catch unreachable);
-            error_str.mark();
-            const error_instance = error_str.toErrorInstance(global);
-            return this.toErrorInstance(error_instance, global);
+            ) catch bun.outOfMemory() }, global);
         }
 
         pub fn deinit(this: *Value) void {
@@ -933,7 +993,7 @@ pub const Body = struct {
             }
 
             if (tag == .Error) {
-                JSC.C.JSValueUnprotect(VirtualMachine.get().global, this.Error.asObjectRef());
+                this.Error.deinit();
             }
         }
         pub fn clone(this: *Value, globalThis: *JSC.JSGlobalObject) Value {
@@ -1005,7 +1065,7 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             var blob = value.useAsAnyBlobAllowNonUTF8String();
-            return JSC.JSPromise.wrap(globalObject, blob.toString(globalObject, .transfer));
+            return JSC.JSPromise.wrap(globalObject, lifetimeWrap(AnyBlob.toString, .transfer), .{ &blob, globalObject });
         }
 
         pub fn getBody(
@@ -1040,6 +1100,14 @@ pub fn BodyMixin(comptime Type: type) type {
             );
         }
 
+        fn lifetimeWrap(comptime Fn: anytype, comptime lifetime: JSC.WebCore.Lifetime) fn (*AnyBlob, *JSC.JSGlobalObject) JSC.JSValue {
+            return struct {
+                fn wrap(this: *AnyBlob, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+                    return Fn(this, globalObject, lifetime);
+                }
+            }.wrap;
+        }
+
         pub fn getJSON(
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
@@ -1058,16 +1126,12 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             var blob = value.useAsAnyBlobAllowNonUTF8String();
-            const result = blob.toJSON(globalObject, .share);
 
-            return JSC.JSPromise.wrap(globalObject, result);
+            return JSC.JSPromise.wrap(globalObject, lifetimeWrap(AnyBlob.toJSON, .share), .{ &blob, globalObject });
         }
 
         fn handleBodyAlreadyUsed(globalObject: *JSC.JSGlobalObject) JSValue {
-            return JSC.JSPromise.rejectedPromiseValue(
-                globalObject,
-                ZigString.static("Body already used").toErrorInstance(globalObject),
-            );
+            return globalObject.ERR_BODY_ALREADY_USED("Body already used", .{}).reject();
         }
 
         pub fn getArrayBuffer(
@@ -1090,7 +1154,8 @@ pub fn BodyMixin(comptime Type: type) type {
 
             // toArrayBuffer in AnyBlob checks for non-UTF8 strings
             var blob: AnyBlob = value.useAsAnyBlobAllowNonUTF8String();
-            return JSC.JSPromise.wrap(globalObject, blob.toArrayBuffer(globalObject, .transfer));
+
+            return JSC.JSPromise.wrap(globalObject, lifetimeWrap(AnyBlob.toArrayBuffer, .transfer), .{ &blob, globalObject });
         }
 
         pub fn getBytes(
@@ -1113,7 +1178,7 @@ pub fn BodyMixin(comptime Type: type) type {
 
             // toArrayBuffer in AnyBlob checks for non-UTF8 strings
             var blob: AnyBlob = value.useAsAnyBlobAllowNonUTF8String();
-            return JSC.JSPromise.wrap(globalObject, blob.toUint8Array(globalObject, .transfer));
+            return JSC.JSPromise.wrap(globalObject, lifetimeWrap(AnyBlob.toUint8Array, .transfer), .{ &blob, globalObject });
         }
 
         pub fn getFormData(
@@ -1135,11 +1200,7 @@ pub fn BodyMixin(comptime Type: type) type {
 
             var encoder = this.getFormDataEncoding() orelse {
                 // TODO: catch specific errors from getFormDataEncoding
-                const err = globalObject.createTypeErrorInstance("Can't decode form data from body because of incorrect MIME type/boundary", .{});
-                return JSC.JSPromise.rejectedPromiseValue(
-                    globalObject,
-                    err,
-                );
+                return globalObject.ERR_FORMDATA_PARSE_ERROR("Can't decode form data from body because of incorrect MIME type/boundary", .{}).reject();
             };
 
             if (value.* == .Locked) {
@@ -1155,18 +1216,15 @@ pub fn BodyMixin(comptime Type: type) type {
                 blob.slice(),
                 encoder.encoding,
             ) catch |err| {
-                return JSC.JSPromise.rejectedPromiseValue(
-                    globalObject,
-                    globalObject.createTypeErrorInstance(
-                        "FormData parse error {s}",
-                        .{
-                            @errorName(err),
-                        },
-                    ),
-                );
+                return globalObject.ERR_FORMDATA_PARSE_ERROR(
+                    "FormData parse error {s}",
+                    .{
+                        @errorName(err),
+                    },
+                ).reject();
             };
 
-            return JSC.JSPromise.wrap(
+            return JSC.JSPromise.wrapValue(
                 globalObject,
                 js_value,
             );
@@ -1230,7 +1288,7 @@ pub const BodyValueBufferer = struct {
     const log = bun.Output.scoped(.BodyValueBufferer, false);
 
     const ArrayBufferSink = JSC.WebCore.ArrayBufferSink;
-    const Callback = *const fn (ctx: *anyopaque, bytes: []const u8, err: ?JSC.JSValue, is_async: bool) void;
+    const Callback = *const fn (ctx: *anyopaque, bytes: []const u8, err: ?Body.Value.ValueError, is_async: bool) void;
 
     ctx: *anyopaque,
     onFinishedBuffering: Callback,
@@ -1294,7 +1352,8 @@ pub const BodyValueBufferer = struct {
 
             .Error => |err| {
                 log("Error", .{});
-                return sink.onFinishedBuffering(sink.ctx, "", err, false);
+                sink.onFinishedBuffering(sink.ctx, "", err, false);
+                return;
             },
             // .InlineBlob,
             .WTFStringImpl,
@@ -1325,7 +1384,7 @@ pub const BodyValueBufferer = struct {
         switch (bytes) {
             .err => |err| {
                 log("onFinishedLoadingFile Error", .{});
-                sink.onFinishedBuffering(sink.ctx, "", err.toErrorInstance(sink.global), true);
+                sink.onFinishedBuffering(sink.ctx, "", .{ .SystemError = err }, true);
                 return;
             },
             .result => |data| {
@@ -1382,7 +1441,9 @@ pub const BodyValueBufferer = struct {
             sink.js_sink = null;
             wrapper.sink.destroy();
         }
-        sink.onFinishedBuffering(sink.ctx, "", err, is_async);
+        var ref = JSC.Strong.create(err, sink.global);
+        defer ref.deinit();
+        sink.onFinishedBuffering(sink.ctx, "", .{ .JSValue = ref }, is_async);
     }
 
     fn handleResolveStream(sink: *@This(), is_async: bool) void {
@@ -1528,9 +1589,9 @@ pub const BodyValueBufferer = struct {
     fn onReceiveValue(ctx: *anyopaque, value: *JSC.WebCore.Body.Value) void {
         const sink = bun.cast(*@This(), ctx);
         switch (value.*) {
-            .Error => {
+            .Error => |err| {
                 log("onReceiveValue Error", .{});
-                sink.onFinishedBuffering(sink.ctx, "", value.Error, true);
+                sink.onFinishedBuffering(sink.ctx, "", err, true);
                 return;
             },
             else => {
@@ -1538,7 +1599,7 @@ pub const BodyValueBufferer = struct {
                 var input = value.useAsAnyBlobAllowNonUTF8String();
                 const bytes = input.slice();
                 log("onReceiveValue {}", .{bytes.len});
-                sink.onFinishedBuffering(sink.ctx, bytes, value.Error, true);
+                sink.onFinishedBuffering(sink.ctx, bytes, null, true);
             },
         }
     }

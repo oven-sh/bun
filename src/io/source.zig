@@ -113,9 +113,7 @@ pub const Source = union(enum) {
             else => {},
         }
 
-        const file_fd = bun.uvfdcast(fd);
-
-        return switch (pipe.open(file_fd)) {
+        return switch (pipe.open(fd)) {
             .err => |err| .{
                 .err = err,
             },

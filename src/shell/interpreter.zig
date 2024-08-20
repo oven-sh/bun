@@ -67,6 +67,33 @@ const log = bun.Output.scoped(.SHELL, false);
 
 const assert = bun.assert;
 
+/// This is a zero-sized type returned by `.needsIO()`, designed to ensure
+/// functions which rely on IO are not called when they do don't need it.
+///
+/// For example the .enqueue(), .enqueueFmtBltn(), etc functions.
+///
+/// It is used like this:
+///
+/// ```zig
+/// if (this.bltn.stdout.needsIO()) |safeguard| {
+///     this.bltn.stdout.enqueue(this, chunk, safeguard);
+///     return .cont;
+/// }
+// _ = this.bltn.writeNoIO(.stdout, chunk);
+/// ```
+///
+/// The compiler optimizes away this type so it has zero runtime cost.
+///
+/// You should never instantiate this type directly, unless you know
+/// from previous context that the output needs IO.
+///
+/// Functions which accept a `_: OutputNeedsIOSafeGuard` parameter can
+/// safely assume the stdout/stderr they are working with require IO.
+pub const OutputNeedsIOSafeGuard = struct {
+    /// Dummy zero sized field to prevent it from being trivial to create this type (by doing `.{}`)
+    __i_know_what_i_am_doing_it_needs_io_yes: u0,
+};
+
 pub const ExitCode = u16;
 
 pub const StateKind = enum(u8) {
@@ -313,8 +340,8 @@ pub const IO = struct {
             comptime kind: ?Interpreter.Builtin.Kind,
             comptime fmt_: []const u8,
             args: anytype,
+            _: OutputNeedsIOSafeGuard,
         ) void {
-            if (bun.Environment.allow_assert) assert(this.* == .fd);
             this.fd.writer.enqueueFmtBltn(ptr, this.fd.captured, kind, fmt_, args);
         }
 
@@ -1666,7 +1693,7 @@ pub const Interpreter = struct {
             this.exit_code = exit_code;
             if (this.this_jsvalue != .zero) {
                 if (JSC.Codegen.JSShellInterpreter.resolveGetCached(this.this_jsvalue)) |resolve| {
-                    _ = resolve.call(this.globalThis, &.{ JSValue.jsNumberFromU16(exit_code), this.getBufferedStdout(), this.getBufferedStderr() });
+                    _ = resolve.call(this.globalThis, .undefined, &.{ JSValue.jsNumberFromU16(exit_code), this.getBufferedStdout(), this.getBufferedStderr() });
                     JSC.Codegen.JSShellInterpreter.resolveSetCached(this.this_jsvalue, this.globalThis, .undefined);
                     JSC.Codegen.JSShellInterpreter.rejectSetCached(this.this_jsvalue, this.globalThis, .undefined);
                 }
@@ -5335,26 +5362,35 @@ pub const Interpreter = struct {
                     }
                 }
 
-                pub fn needsIO(this: *Output) bool {
+                pub fn needsIO(this: *Output) ?OutputNeedsIOSafeGuard {
                     return switch (this.*) {
-                        .fd => true,
-                        else => false,
+                        .fd => OutputNeedsIOSafeGuard{
+                            .__i_know_what_i_am_doing_it_needs_io_yes = 0,
+                        },
+                        else => null,
                     };
                 }
 
+                /// You must check that `.needsIO() == true` before calling this!
+                /// e.g.
+                ///
+                /// ```zig
+                /// if (this.stderr.neesdIO()) |safeguard| {
+                ///   this.bltn.stderr.enqueueFmtBltn(this, .cd, fmt, args, safeguard);
+                /// }
+                /// ```
                 pub fn enqueueFmtBltn(
                     this: *@This(),
                     ptr: anytype,
                     comptime kind: ?Interpreter.Builtin.Kind,
                     comptime fmt_: []const u8,
                     args: anytype,
+                    _: OutputNeedsIOSafeGuard,
                 ) void {
-                    if (bun.Environment.allow_assert) assert(this.* == .fd);
                     this.fd.writer.enqueueFmtBltn(ptr, this.fd.captured, kind, fmt_, args);
                 }
 
-                pub fn enqueue(this: *@This(), ptr: anytype, buf: []const u8) void {
-                    if (bun.Environment.allow_assert) assert(this.* == .fd);
+                pub fn enqueue(this: *@This(), ptr: anytype, buf: []const u8, _: OutputNeedsIOSafeGuard) void {
                     this.fd.writer.enqueue(ptr, this.fd.captured, buf);
                 }
             };
@@ -5869,9 +5905,9 @@ pub const Interpreter = struct {
             } = .idle,
 
             pub fn writeFailingError(this: *Cat, buf: []const u8, exit_code: ExitCode) Maybe(void) {
-                if (this.bltn.stderr.needsIO()) {
+                if (this.bltn.stderr.needsIO()) |safeguard| {
                     this.state = .waiting_write_err;
-                    this.bltn.stderr.enqueue(this, buf);
+                    this.bltn.stderr.enqueue(this, buf, safeguard);
                     return Maybe(void).success;
                 }
 
@@ -5922,12 +5958,13 @@ pub const Interpreter = struct {
                         if (!this.bltn.stdin.needsIO()) {
                             this.state.exec_stdin.in_done = true;
                             const buf = this.bltn.readStdinNoIO();
-                            if (!this.bltn.stdout.needsIO()) {
+                            if (this.bltn.stdout.needsIO()) |safeguard| {
+                                this.bltn.stdout.enqueue(this, buf, safeguard);
+                            } else {
                                 _ = this.bltn.writeNoIO(.stdout, buf);
                                 this.bltn.done(0);
                                 return;
                             }
-                            this.bltn.stdout.enqueue(this, buf);
                             return;
                         }
                         this.bltn.stdin.fd.addReader(this);
@@ -6033,17 +6070,17 @@ pub const Interpreter = struct {
                 debug("onIOReaderChunk(0x{x}, {s}, chunk_len={d})", .{ @intFromPtr(this), @tagName(this.state), chunk.len });
                 switch (this.state) {
                     .exec_stdin => {
-                        if (this.bltn.stdout.needsIO()) {
+                        if (this.bltn.stdout.needsIO()) |safeguard| {
                             this.state.exec_stdin.chunks_queued += 1;
-                            this.bltn.stdout.enqueue(this, chunk);
+                            this.bltn.stdout.enqueue(this, chunk, safeguard);
                             return .cont;
                         }
                         _ = this.bltn.writeNoIO(.stdout, chunk);
                     },
                     .exec_filepath_args => {
-                        if (this.bltn.stdout.needsIO()) {
+                        if (this.bltn.stdout.needsIO()) |safeguard| {
                             this.state.exec_filepath_args.chunks_queued += 1;
-                            this.bltn.stdout.enqueue(this, chunk);
+                            this.bltn.stdout.enqueue(this, chunk, safeguard);
                             return .cont;
                         }
                         _ = this.bltn.writeNoIO(.stdout, chunk);
@@ -6065,21 +6102,21 @@ pub const Interpreter = struct {
                         this.state.exec_stdin.errno = errno;
                         this.state.exec_stdin.in_done = true;
                         if (errno != 0) {
-                            if ((this.state.exec_stdin.chunks_done >= this.state.exec_stdin.chunks_queued) or !this.bltn.stdout.needsIO()) {
+                            if ((this.state.exec_stdin.chunks_done >= this.state.exec_stdin.chunks_queued) or this.bltn.stdout.needsIO() == null) {
                                 this.bltn.done(errno);
                                 return;
                             }
                             this.bltn.stdout.fd.writer.cancelChunks(this);
                             return;
                         }
-                        if ((this.state.exec_stdin.chunks_done >= this.state.exec_stdin.chunks_queued) or !this.bltn.stdout.needsIO()) {
+                        if ((this.state.exec_stdin.chunks_done >= this.state.exec_stdin.chunks_queued) or this.bltn.stdout.needsIO() == null) {
                             this.bltn.done(0);
                         }
                     },
                     .exec_filepath_args => {
                         this.state.exec_filepath_args.in_done = true;
                         if (errno != 0) {
-                            if (this.state.exec_filepath_args.out_done or !this.bltn.stdout.needsIO()) {
+                            if (this.state.exec_filepath_args.out_done or this.bltn.stdout.needsIO() == null) {
                                 this.state.exec_filepath_args.deinit();
                                 this.bltn.done(errno);
                                 return;
@@ -6087,7 +6124,7 @@ pub const Interpreter = struct {
                             this.bltn.stdout.fd.writer.cancelChunks(this);
                             return;
                         }
-                        if (this.state.exec_filepath_args.out_done or (this.state.exec_filepath_args.chunks_done >= this.state.exec_filepath_args.chunks_queued) or !this.bltn.stdout.needsIO()) {
+                        if (this.state.exec_filepath_args.out_done or (this.state.exec_filepath_args.chunks_done >= this.state.exec_filepath_args.chunks_queued) or this.bltn.stdout.needsIO() == null) {
                             this.next();
                         }
                     },
@@ -6279,9 +6316,9 @@ pub const Interpreter = struct {
             }
 
             pub fn writeFailingError(this: *Touch, buf: []const u8, exit_code: ExitCode) Maybe(void) {
-                if (this.bltn.stderr.needsIO()) {
+                if (this.bltn.stderr.needsIO()) |safeguard| {
                     this.state = .waiting_write_err;
-                    this.bltn.stderr.enqueue(this, buf);
+                    this.bltn.stderr.enqueue(this, buf, safeguard);
                     return Maybe(void).success;
                 }
 
@@ -6323,9 +6360,9 @@ pub const Interpreter = struct {
 
             const ShellTouchOutputTaskVTable = struct {
                 pub fn writeErr(this: *Touch, childptr: anytype, errbuf: []const u8) CoroutineResult {
-                    if (this.bltn.stderr.needsIO()) {
+                    if (this.bltn.stderr.needsIO()) |safeguard| {
                         this.state.exec.output_waiting += 1;
-                        this.bltn.stderr.enqueue(childptr, errbuf);
+                        this.bltn.stderr.enqueue(childptr, errbuf, safeguard);
                         return .yield;
                     }
                     _ = this.bltn.writeNoIO(.stderr, errbuf);
@@ -6337,11 +6374,11 @@ pub const Interpreter = struct {
                 }
 
                 pub fn writeOut(this: *Touch, childptr: anytype, output: *OutputSrc) CoroutineResult {
-                    if (this.bltn.stdout.needsIO()) {
+                    if (this.bltn.stdout.needsIO()) |safeguard| {
                         this.state.exec.output_waiting += 1;
                         const slice = output.slice();
                         log("THE SLICE: {d} {s}", .{ slice.len, slice });
-                        this.bltn.stdout.enqueue(childptr, slice);
+                        this.bltn.stdout.enqueue(childptr, slice, safeguard);
                         return .yield;
                     }
                     _ = this.bltn.writeNoIO(.stdout, output.slice());
@@ -6607,9 +6644,9 @@ pub const Interpreter = struct {
                 this.next();
             }
             pub fn writeFailingError(this: *Mkdir, buf: []const u8, exit_code: ExitCode) Maybe(void) {
-                if (this.bltn.stderr.needsIO()) {
+                if (this.bltn.stderr.needsIO()) |safeguard| {
                     this.state = .waiting_write_err;
-                    this.bltn.stderr.enqueue(this, buf);
+                    this.bltn.stderr.enqueue(this, buf, safeguard);
                     return Maybe(void).success;
                 }
 
@@ -6711,9 +6748,9 @@ pub const Interpreter = struct {
 
             const ShellMkdirOutputTaskVTable = struct {
                 pub fn writeErr(this: *Mkdir, childptr: anytype, errbuf: []const u8) CoroutineResult {
-                    if (this.bltn.stderr.needsIO()) {
+                    if (this.bltn.stderr.needsIO()) |safeguard| {
                         this.state.exec.output_waiting += 1;
-                        this.bltn.stderr.enqueue(childptr, errbuf);
+                        this.bltn.stderr.enqueue(childptr, errbuf, safeguard);
                         return .yield;
                     }
                     _ = this.bltn.writeNoIO(.stderr, errbuf);
@@ -6725,11 +6762,11 @@ pub const Interpreter = struct {
                 }
 
                 pub fn writeOut(this: *Mkdir, childptr: anytype, output: *OutputSrc) CoroutineResult {
-                    if (this.bltn.stdout.needsIO()) {
+                    if (this.bltn.stdout.needsIO()) |safeguard| {
                         this.state.exec.output_waiting += 1;
                         const slice = output.slice();
                         log("THE SLICE: {d} {s}", .{ slice.len, slice });
-                        this.bltn.stdout.enqueue(childptr, slice);
+                        this.bltn.stdout.enqueue(childptr, slice, safeguard);
                         return .yield;
                     }
                     _ = this.bltn.writeNoIO(.stdout, output.slice());
@@ -6967,16 +7004,16 @@ pub const Interpreter = struct {
             };
 
             pub fn writeOutput(this: *Export, comptime io_kind: @Type(.EnumLiteral), comptime fmt: []const u8, args: anytype) Maybe(void) {
-                if (!this.bltn.stdout.needsIO()) {
-                    const buf = this.bltn.fmtErrorArena(.@"export", fmt, args);
-                    _ = this.bltn.writeNoIO(io_kind, buf);
-                    this.bltn.done(0);
+                if (this.bltn.stdout.needsIO()) |safeguard| {
+                    var output: *BuiltinIO.Output = &@field(this.bltn, @tagName(io_kind));
+                    this.printing = true;
+                    output.enqueueFmtBltn(this, .@"export", fmt, args, safeguard);
                     return Maybe(void).success;
                 }
 
-                var output: *BuiltinIO.Output = &@field(this.bltn, @tagName(io_kind));
-                this.printing = true;
-                output.enqueueFmtBltn(this, .@"export", fmt, args);
+                const buf = this.bltn.fmtErrorArena(.@"export", fmt, args);
+                _ = this.bltn.writeNoIO(io_kind, buf);
+                this.bltn.done(0);
                 return Maybe(void).success;
             }
 
@@ -7027,15 +7064,15 @@ pub const Interpreter = struct {
                         }
                     }
 
-                    if (!this.bltn.stdout.needsIO()) {
-                        _ = this.bltn.writeNoIO(.stdout, buf);
-                        this.bltn.done(0);
+                    if (this.bltn.stdout.needsIO()) |safeguard| {
+                        this.printing = true;
+                        this.bltn.stdout.enqueue(this, buf, safeguard);
+
                         return Maybe(void).success;
                     }
 
-                    this.printing = true;
-                    this.bltn.stdout.enqueue(this, buf);
-
+                    _ = this.bltn.writeNoIO(.stdout, buf);
+                    this.bltn.done(0);
                     return Maybe(void).success;
                 }
 
@@ -7100,15 +7137,14 @@ pub const Interpreter = struct {
 
                 if (!has_leading_newline) this.output.append('\n') catch bun.outOfMemory();
 
-                if (!this.bltn.stdout.needsIO()) {
-                    _ = this.bltn.writeNoIO(.stdout, this.output.items[0..]);
-                    this.state = .done;
-                    this.bltn.done(0);
+                if (this.bltn.stdout.needsIO()) |safeguard| {
+                    this.state = .waiting;
+                    this.bltn.stdout.enqueue(this, this.output.items[0..], safeguard);
                     return Maybe(void).success;
                 }
-
-                this.state = .waiting;
-                this.bltn.stdout.enqueue(this, this.output.items[0..]);
+                _ = this.bltn.writeNoIO(.stdout, this.output.items[0..]);
+                this.state = .done;
+                this.bltn.done(0);
                 return Maybe(void).success;
             }
 
@@ -7157,17 +7193,17 @@ pub const Interpreter = struct {
             pub fn start(this: *Which) Maybe(void) {
                 const args = this.bltn.argsSlice();
                 if (args.len == 0) {
-                    if (!this.bltn.stdout.needsIO()) {
-                        _ = this.bltn.writeNoIO(.stdout, "\n");
-                        this.bltn.done(1);
+                    if (this.bltn.stdout.needsIO()) |safeguard| {
+                        this.state = .one_arg;
+                        this.bltn.stdout.enqueue(this, "\n", safeguard);
                         return Maybe(void).success;
                     }
-                    this.state = .one_arg;
-                    this.bltn.stdout.enqueue(this, "\n");
+                    _ = this.bltn.writeNoIO(.stdout, "\n");
+                    this.bltn.done(1);
                     return Maybe(void).success;
                 }
 
-                if (!this.bltn.stdout.needsIO()) {
+                if (this.bltn.stdout.needsIO() == null) {
                     var path_buf: bun.PathBuffer = undefined;
                     const PATH = this.bltn.parentCmd().base.shell.export_env.get(EnvStr.initSlice("PATH")) orelse EnvStr.initSlice("");
                     var had_not_found = false;
@@ -7213,27 +7249,28 @@ pub const Interpreter = struct {
 
                 const resolved = which(&path_buf, PATH.slice(), this.bltn.parentCmd().base.shell.cwdZ(), arg) orelse {
                     multiargs.had_not_found = true;
-                    if (!this.bltn.stdout.needsIO()) {
-                        const buf = this.bltn.fmtErrorArena(null, "{s} not found\n", .{arg});
-                        _ = this.bltn.writeNoIO(.stdout, buf);
-                        this.argComplete();
+                    if (this.bltn.stdout.needsIO()) |safeguard| {
+                        multiargs.state = .waiting_write;
+                        this.bltn.stdout.enqueueFmtBltn(this, null, "{s} not found\n", .{arg}, safeguard);
+                        // yield execution
                         return;
                     }
-                    multiargs.state = .waiting_write;
-                    this.bltn.stdout.enqueueFmtBltn(this, null, "{s} not found\n", .{arg});
-                    // yield execution
-                    return;
-                };
 
-                if (!this.bltn.stdout.needsIO()) {
-                    const buf = this.bltn.fmtErrorArena(null, "{s}\n", .{resolved});
+                    const buf = this.bltn.fmtErrorArena(null, "{s} not found\n", .{arg});
                     _ = this.bltn.writeNoIO(.stdout, buf);
                     this.argComplete();
                     return;
+                };
+
+                if (this.bltn.stdout.needsIO()) |safeguard| {
+                    multiargs.state = .waiting_write;
+                    this.bltn.stdout.enqueueFmtBltn(this, null, "{s}\n", .{resolved}, safeguard);
+                    return;
                 }
 
-                multiargs.state = .waiting_write;
-                this.bltn.stdout.enqueueFmtBltn(this, null, "{s}\n", .{resolved});
+                const buf = this.bltn.fmtErrorArena(null, "{s}\n", .{resolved});
+                _ = this.bltn.writeNoIO(.stdout, buf);
+                this.argComplete();
                 return;
             }
 
@@ -7289,7 +7326,14 @@ pub const Interpreter = struct {
 
             fn writeStderrNonBlocking(this: *Cd, comptime fmt: []const u8, args: anytype) void {
                 this.state = .waiting_write_stderr;
-                this.bltn.stderr.enqueueFmtBltn(this, .cd, fmt, args);
+                if (this.bltn.stderr.needsIO()) |safeguard| {
+                    this.bltn.stderr.enqueueFmtBltn(this, .cd, fmt, args, safeguard);
+                } else {
+                    const buf = this.bltn.fmtErrorArena(.cd, fmt, args);
+                    _ = this.bltn.writeNoIO(.stderr, buf);
+                    this.state = .done;
+                    this.bltn.done(1);
+                }
             }
 
             pub fn start(this: *Cd) Maybe(void) {
@@ -7300,31 +7344,34 @@ pub const Interpreter = struct {
                     return Maybe(void).success;
                 }
 
-                const first_arg = args[0][0..std.mem.len(args[0]) :0];
-                switch (first_arg[0]) {
-                    '-' => {
-                        switch (this.bltn.parentCmd().base.shell.changePrevCwd(this.bltn.parentCmd().base.interpreter)) {
-                            .result => {},
-                            .err => |err| {
-                                return this.handleChangeCwdErr(err, this.bltn.parentCmd().base.shell.prevCwdZ());
-                            },
-                        }
-                    },
-                    '~' => {
-                        const homedir = this.bltn.parentCmd().base.shell.getHomedir();
-                        homedir.deref();
-                        switch (this.bltn.parentCmd().base.shell.changeCwd(this.bltn.parentCmd().base.interpreter, homedir.slice())) {
-                            .result => {},
-                            .err => |err| return this.handleChangeCwdErr(err, homedir.slice()),
-                        }
-                    },
-                    else => {
-                        switch (this.bltn.parentCmd().base.shell.changeCwd(this.bltn.parentCmd().base.interpreter, first_arg)) {
-                            .result => {},
-                            .err => |err| return this.handleChangeCwdErr(err, first_arg),
-                        }
-                    },
+                if (args.len == 1) {
+                    const first_arg = args[0][0..std.mem.len(args[0]) :0];
+                    switch (first_arg[0]) {
+                        '-' => {
+                            switch (this.bltn.parentCmd().base.shell.changePrevCwd(this.bltn.parentCmd().base.interpreter)) {
+                                .result => {},
+                                .err => |err| {
+                                    return this.handleChangeCwdErr(err, this.bltn.parentCmd().base.shell.prevCwdZ());
+                                },
+                            }
+                        },
+                        '~' => {
+                            const homedir = this.bltn.parentCmd().base.shell.getHomedir();
+                            homedir.deref();
+                            switch (this.bltn.parentCmd().base.shell.changeCwd(this.bltn.parentCmd().base.interpreter, homedir.slice())) {
+                                .result => {},
+                                .err => |err| return this.handleChangeCwdErr(err, homedir.slice()),
+                            }
+                        },
+                        else => {
+                            switch (this.bltn.parentCmd().base.shell.changeCwd(this.bltn.parentCmd().base.interpreter, first_arg)) {
+                                .result => {},
+                                .err => |err| return this.handleChangeCwdErr(err, first_arg),
+                            }
+                        },
+                    }
                 }
+
                 this.bltn.done(0);
                 return Maybe(void).success;
             }
@@ -7334,7 +7381,7 @@ pub const Interpreter = struct {
 
                 switch (errno) {
                     @as(usize, @intFromEnum(bun.C.E.NOTDIR)) => {
-                        if (!this.bltn.stderr.needsIO()) {
+                        if (this.bltn.stderr.needsIO() == null) {
                             const buf = this.bltn.fmtErrorArena(.cd, "not a directory: {s}\n", .{new_cwd_});
                             _ = this.bltn.writeNoIO(.stderr, buf);
                             this.state = .done;
@@ -7347,7 +7394,7 @@ pub const Interpreter = struct {
                         return Maybe(void).success;
                     },
                     @as(usize, @intFromEnum(bun.C.E.NOENT)) => {
-                        if (!this.bltn.stderr.needsIO()) {
+                        if (this.bltn.stderr.needsIO() == null) {
                             const buf = this.bltn.fmtErrorArena(.cd, "not a directory: {s}\n", .{new_cwd_});
                             _ = this.bltn.writeNoIO(.stderr, buf);
                             this.state = .done;
@@ -7399,9 +7446,9 @@ pub const Interpreter = struct {
                 const args = this.bltn.argsSlice();
                 if (args.len > 0) {
                     const msg = "pwd: too many arguments\n";
-                    if (this.bltn.stderr.needsIO()) {
+                    if (this.bltn.stderr.needsIO()) |safeguard| {
                         this.state = .{ .waiting_io = .{ .kind = .stderr } };
-                        this.bltn.stderr.enqueue(this, msg);
+                        this.bltn.stderr.enqueue(this, msg, safeguard);
                         return Maybe(void).success;
                     }
 
@@ -7411,9 +7458,9 @@ pub const Interpreter = struct {
                 }
 
                 const cwd_str = this.bltn.parentCmd().base.shell.cwd();
-                if (this.bltn.stdout.needsIO()) {
+                if (this.bltn.stdout.needsIO()) |safeguard| {
                     this.state = .{ .waiting_io = .{ .kind = .stdout } };
-                    this.bltn.stdout.enqueueFmtBltn(this, null, "{s}\n", .{cwd_str});
+                    this.bltn.stdout.enqueueFmtBltn(this, null, "{s}\n", .{cwd_str}, safeguard);
                     return Maybe(void).success;
                 }
                 const buf = this.bltn.fmtErrorArena(null, "{s}\n", .{cwd_str});
@@ -7493,9 +7540,9 @@ pub const Interpreter = struct {
             }
 
             pub fn writeFailingError(this: *Ls, buf: []const u8, exit_code: ExitCode) Maybe(void) {
-                if (this.bltn.stderr.needsIO()) {
+                if (this.bltn.stderr.needsIO()) |safeguard| {
                     this.state = .waiting_write_err;
-                    this.bltn.stderr.enqueue(this, buf);
+                    this.bltn.stderr.enqueue(this, buf, safeguard);
                     return Maybe(void).success;
                 }
 
@@ -7616,9 +7663,9 @@ pub const Interpreter = struct {
 
             const ShellLsOutputTaskVTable = struct {
                 pub fn writeErr(this: *Ls, childptr: anytype, errbuf: []const u8) CoroutineResult {
-                    if (this.bltn.stderr.needsIO()) {
+                    if (this.bltn.stderr.needsIO()) |safeguard| {
                         this.state.exec.output_waiting += 1;
-                        this.bltn.stderr.enqueue(childptr, errbuf);
+                        this.bltn.stderr.enqueue(childptr, errbuf, safeguard);
                         return .yield;
                     }
                     _ = this.bltn.writeNoIO(.stderr, errbuf);
@@ -7630,9 +7677,9 @@ pub const Interpreter = struct {
                 }
 
                 pub fn writeOut(this: *Ls, childptr: anytype, output: *OutputSrc) CoroutineResult {
-                    if (this.bltn.stdout.needsIO()) {
+                    if (this.bltn.stdout.needsIO()) |safeguard| {
                         this.state.exec.output_waiting += 1;
-                        this.bltn.stdout.enqueue(childptr, output.slice());
+                        this.bltn.stdout.enqueue(childptr, output.slice(), safeguard);
                         return .yield;
                     }
                     _ = this.bltn.writeNoIO(.stdout, output.slice());
@@ -8427,9 +8474,9 @@ pub const Interpreter = struct {
             }
 
             pub fn writeFailingError(this: *Mv, buf: []const u8, exit_code: ExitCode) Maybe(void) {
-                if (this.bltn.stderr.needsIO()) {
+                if (this.bltn.stderr.needsIO()) |safeguard| {
                     this.state = .{ .waiting_write_err = .{ .exit_code = exit_code } };
-                    this.bltn.stderr.enqueue(this, buf);
+                    this.bltn.stderr.enqueue(this, buf, safeguard);
                     return Maybe(void).success;
                 }
 
@@ -8876,9 +8923,9 @@ pub const Interpreter = struct {
                                     // string
                                     if (parse_opts.idx >= parse_opts.args_slice.len) {
                                         const error_string = Builtin.Kind.usageString(.rm);
-                                        if (this.bltn.stderr.needsIO()) {
+                                        if (this.bltn.stderr.needsIO()) |safeguard| {
                                             parse_opts.state = .wait_write_err;
-                                            this.bltn.stderr.enqueue(this, error_string);
+                                            this.bltn.stderr.enqueue(this, error_string, safeguard);
                                             return Maybe(void).success;
                                         }
 
@@ -8905,9 +8952,9 @@ pub const Interpreter = struct {
 
                                             if (this.opts.prompt_behaviour != .never) {
                                                 const buf = "rm: \"-i\" is not supported yet";
-                                                if (this.bltn.stderr.needsIO()) {
+                                                if (this.bltn.stderr.needsIO()) |safeguard| {
                                                     parse_opts.state = .wait_write_err;
-                                                    this.bltn.stderr.enqueue(this, buf);
+                                                    this.bltn.stderr.enqueue(this, buf, safeguard);
                                                     continue;
                                                 }
 
@@ -8941,9 +8988,9 @@ pub const Interpreter = struct {
                                                     };
 
                                                     if (is_root) {
-                                                        if (this.bltn.stderr.needsIO()) {
+                                                        if (this.bltn.stderr.needsIO()) |safeguard| {
                                                             parse_opts.state = .wait_write_err;
-                                                            this.bltn.stderr.enqueueFmtBltn(this, .rm, "\"{s}\" may not be removed\n", .{resolved_path});
+                                                            this.bltn.stderr.enqueueFmtBltn(this, .rm, "\"{s}\" may not be removed\n", .{resolved_path}, safeguard);
                                                             return Maybe(void).success;
                                                         }
 
@@ -8973,9 +9020,9 @@ pub const Interpreter = struct {
                                         },
                                         .illegal_option => {
                                             const error_string = "rm: illegal option -- -\n";
-                                            if (this.bltn.stderr.needsIO()) {
+                                            if (this.bltn.stderr.needsIO()) |safeguard| {
                                                 parse_opts.state = .wait_write_err;
-                                                this.bltn.stderr.enqueue(this, error_string);
+                                                this.bltn.stderr.enqueue(this, error_string, safeguard);
                                                 return Maybe(void).success;
                                             }
 
@@ -8986,9 +9033,9 @@ pub const Interpreter = struct {
                                         },
                                         .illegal_option_with_flag => {
                                             const flag = arg;
-                                            if (this.bltn.stderr.needsIO()) {
+                                            if (this.bltn.stderr.needsIO()) |safeguard| {
                                                 parse_opts.state = .wait_write_err;
-                                                this.bltn.stderr.enqueueFmtBltn(this, .rm, "illegal option -- {s}\n", .{flag[1..]});
+                                                this.bltn.stderr.enqueueFmtBltn(this, .rm, "illegal option -- {s}\n", .{flag[1..]}, safeguard);
                                                 return Maybe(void).success;
                                             }
                                             const error_string = this.bltn.fmtErrorArena(.rm, "illegal option -- {s}\n", .{flag[1..]});
@@ -9187,13 +9234,13 @@ pub const Interpreter = struct {
                         if (task.err) |err| {
                             exec.err = err;
                             const error_string = this.bltn.taskErrorToString(.rm, err);
-                            if (!this.bltn.stderr.needsIO()) {
-                                _ = this.bltn.writeNoIO(.stderr, error_string);
-                            } else {
+                            if (this.bltn.stderr.needsIO()) |safeguard| {
                                 log("Rm(0x{x}) task=0x{x} ERROR={s}", .{ @intFromPtr(this), @intFromPtr(task), error_string });
                                 exec.incrementOutputCount(.output_count);
-                                this.bltn.stderr.enqueue(this, error_string);
+                                this.bltn.stderr.enqueue(this, error_string, safeguard);
                                 return;
+                            } else {
+                                _ = this.bltn.writeNoIO(.stderr, error_string);
                             }
                         }
                         break :brk amt;
@@ -9212,7 +9259,11 @@ pub const Interpreter = struct {
             }
 
             fn writeVerbose(this: *Rm, verbose: *ShellRmTask.DirTask) void {
-                if (!this.bltn.stdout.needsIO()) {
+                if (this.bltn.stdout.needsIO()) |safeguard| {
+                    const buf = verbose.takeDeletedEntries();
+                    defer buf.deinit();
+                    this.bltn.stdout.enqueue(this, buf.items, safeguard);
+                } else {
                     _ = this.bltn.writeNoIO(.stdout, verbose.deleted_entries.items);
                     _ = this.state.exec.incrementOutputCount(.output_done);
                     if (this.state.exec.state.tasksDone() >= this.state.exec.total_tasks and this.state.exec.getOutputCount(.output_done) >= this.state.exec.getOutputCount(.output_count)) {
@@ -9221,9 +9272,6 @@ pub const Interpreter = struct {
                     }
                     return;
                 }
-                const buf = verbose.takeDeletedEntries();
-                defer buf.deinit();
-                this.bltn.stdout.enqueue(this, buf.items);
             }
 
             pub const ShellRmTask = struct {
@@ -9240,7 +9288,7 @@ pub const Interpreter = struct {
                 root_is_absolute: bool,
 
                 error_signal: *std.atomic.Value(bool),
-                err_mutex: bun.Lock = bun.Lock.init(),
+                err_mutex: bun.Lock = .{},
                 err: ?Syscall.Error = null,
 
                 event_loop: JSC.EventLoopHandle,
@@ -9987,9 +10035,9 @@ pub const Interpreter = struct {
             }
 
             fn fail(this: *Exit, msg: string) Maybe(void) {
-                if (this.bltn.stderr.needsIO()) {
+                if (this.bltn.stderr.needsIO()) |safeguard| {
                     this.state = .waiting_io;
-                    this.bltn.stderr.enqueue(this, msg);
+                    this.bltn.stderr.enqueue(this, msg, safeguard);
                     return Maybe(void).success;
                 }
                 _ = this.bltn.writeNoIO(.stderr, msg);
@@ -10080,32 +10128,33 @@ pub const Interpreter = struct {
                     this.expletive = std.mem.sliceTo(args[0], 0);
                 }
 
-                if (!this.bltn.stdout.needsIO()) {
-                    var res: Maybe(usize) = undefined;
-                    while (true) {
-                        res = this.bltn.writeNoIO(.stdout, this.expletive);
-                        if (res == .err) {
-                            this.bltn.done(1);
-                            return Maybe(void).success;
-                        }
-                        res = this.bltn.writeNoIO(.stdout, "\n");
-                        if (res == .err) {
-                            this.bltn.done(1);
-                            return Maybe(void).success;
-                        }
-                    }
-                    @compileError(unreachable);
+                if (this.bltn.stdout.needsIO()) |safeguard| {
+                    const evtloop = this.bltn.eventLoop();
+                    this.task = .{
+                        .evtloop = evtloop,
+                        .concurrent_task = JSC.EventLoopTask.fromEventLoop(evtloop),
+                    };
+                    this.state = .waiting_io;
+                    this.bltn.stdout.enqueue(this, this.expletive, safeguard);
+                    this.bltn.stdout.enqueue(this, "\n", safeguard);
+                    this.task.enqueue();
+                    return Maybe(void).success;
                 }
-                const evtloop = this.bltn.eventLoop();
-                this.task = .{
-                    .evtloop = evtloop,
-                    .concurrent_task = JSC.EventLoopTask.fromEventLoop(evtloop),
-                };
-                this.state = .waiting_io;
-                this.bltn.stdout.enqueue(this, this.expletive);
-                this.bltn.stdout.enqueue(this, "\n");
-                this.task.enqueue();
-                return Maybe(void).success;
+
+                var res: Maybe(usize) = undefined;
+                while (true) {
+                    res = this.bltn.writeNoIO(.stdout, this.expletive);
+                    if (res == .err) {
+                        this.bltn.done(1);
+                        return Maybe(void).success;
+                    }
+                    res = this.bltn.writeNoIO(.stdout, "\n");
+                    if (res == .err) {
+                        this.bltn.done(1);
+                        return Maybe(void).success;
+                    }
+                }
+                @compileError(unreachable);
             }
 
             pub fn onIOWriterChunk(this: *@This(), _: usize, maybe_e: ?JSC.SystemError) void {
@@ -10138,8 +10187,9 @@ pub const Interpreter = struct {
                 pub fn runFromMainThread(this: *@This()) void {
                     const yes: *Yes = @fieldParentPtr("task", this);
 
-                    yes.bltn.stdout.enqueue(yes, yes.expletive);
-                    yes.bltn.stdout.enqueue(yes, "\n");
+                    // Manually make safeguard since this task should not be created if output does not need IO
+                    yes.bltn.stdout.enqueue(yes, yes.expletive, OutputNeedsIOSafeGuard{ .__i_know_what_i_am_doing_it_needs_io_yes = 0 });
+                    yes.bltn.stdout.enqueue(yes, "\n", OutputNeedsIOSafeGuard{ .__i_know_what_i_am_doing_it_needs_io_yes = 0 });
 
                     this.enqueue();
                 }
@@ -10226,9 +10276,9 @@ pub const Interpreter = struct {
             }
 
             fn fail(this: *@This(), msg: string) Maybe(void) {
-                if (this.bltn.stderr.needsIO()) {
+                if (this.bltn.stderr.needsIO()) |safeguard| {
                     this.state = .err;
-                    this.bltn.stderr.enqueue(this, msg);
+                    this.bltn.stderr.enqueue(this, msg, safeguard);
                     return Maybe(void).success;
                 }
                 _ = this.bltn.writeNoIO(.stderr, msg);
@@ -10250,8 +10300,8 @@ pub const Interpreter = struct {
                 _ = this.print(this.terminator);
 
                 this.state = .done;
-                if (this.bltn.stdout.needsIO()) {
-                    this.bltn.stdout.enqueue(this, this.buf.items);
+                if (this.bltn.stdout.needsIO()) |safeguard| {
+                    this.bltn.stdout.enqueue(this, this.buf.items, safeguard);
                 } else {
                     this.bltn.done(0);
                 }
@@ -10259,7 +10309,7 @@ pub const Interpreter = struct {
             }
 
             fn print(this: *@This(), msg: string) Maybe(void) {
-                if (this.bltn.stdout.needsIO()) {
+                if (this.bltn.stdout.needsIO() != null) {
                     this.buf.appendSlice(bun.default_allocator, msg) catch bun.outOfMemory();
                     return Maybe(void).success;
                 }
@@ -10307,8 +10357,8 @@ pub const Interpreter = struct {
                 }
 
                 this.state = .done;
-                if (this.bltn.stdout.needsIO()) {
-                    this.bltn.stdout.enqueue(this, this.buf.items);
+                if (this.bltn.stdout.needsIO()) |safeguard| {
+                    this.bltn.stdout.enqueue(this, this.buf.items, safeguard);
                 } else {
                     this.bltn.done(0);
                 }
@@ -10321,9 +10371,9 @@ pub const Interpreter = struct {
             }
 
             fn fail(this: *@This(), msg: string) Maybe(void) {
-                if (this.bltn.stderr.needsIO()) {
+                if (this.bltn.stderr.needsIO()) |safeguard| {
                     this.state = .err;
-                    this.bltn.stderr.enqueue(this, msg);
+                    this.bltn.stderr.enqueue(this, msg, safeguard);
                     return Maybe(void).success;
                 }
                 _ = this.bltn.writeNoIO(.stderr, msg);
@@ -10332,7 +10382,7 @@ pub const Interpreter = struct {
             }
 
             fn print(this: *@This(), msg: string) Maybe(void) {
-                if (this.bltn.stdout.needsIO()) {
+                if (this.bltn.stdout.needsIO() != null) {
                     this.buf.appendSlice(bun.default_allocator, msg) catch bun.outOfMemory();
                     return Maybe(void).success;
                 }
@@ -10375,8 +10425,8 @@ pub const Interpreter = struct {
                 }
 
                 this.state = .done;
-                if (this.bltn.stdout.needsIO()) {
-                    this.bltn.stdout.enqueue(this, this.buf.items);
+                if (this.bltn.stdout.needsIO()) |safeguard| {
+                    this.bltn.stdout.enqueue(this, this.buf.items, safeguard);
                 } else {
                     this.bltn.done(0);
                 }
@@ -10389,9 +10439,9 @@ pub const Interpreter = struct {
             }
 
             fn fail(this: *@This(), msg: string) Maybe(void) {
-                if (this.bltn.stderr.needsIO()) {
+                if (this.bltn.stderr.needsIO()) |safeguard| {
                     this.state = .err;
-                    this.bltn.stderr.enqueue(this, msg);
+                    this.bltn.stderr.enqueue(this, msg, safeguard);
                     return Maybe(void).success;
                 }
                 _ = this.bltn.writeNoIO(.stderr, msg);
@@ -10400,7 +10450,7 @@ pub const Interpreter = struct {
             }
 
             fn print(this: *@This(), msg: string) Maybe(void) {
-                if (this.bltn.stdout.needsIO()) {
+                if (this.bltn.stdout.needsIO() != null) {
                     this.buf.appendSlice(bun.default_allocator, msg) catch bun.outOfMemory();
                     return Maybe(void).success;
                 }
@@ -10613,9 +10663,9 @@ pub const Interpreter = struct {
             }
 
             pub fn writeFailingError(this: *Cp, buf: []const u8, exit_code: ExitCode) Maybe(void) {
-                if (this.bltn.stderr.needsIO()) {
+                if (this.bltn.stderr.needsIO()) |safeguard| {
                     this.state = .waiting_write_err;
-                    this.bltn.stderr.enqueue(this, buf);
+                    this.bltn.stderr.enqueue(this, buf, safeguard);
                     return Maybe(void).success;
                 }
 
@@ -10699,9 +10749,9 @@ pub const Interpreter = struct {
 
             const ShellCpOutputTaskVTable = struct {
                 pub fn writeErr(this: *Cp, childptr: anytype, errbuf: []const u8) CoroutineResult {
-                    if (this.bltn.stderr.needsIO()) {
+                    if (this.bltn.stderr.needsIO()) |safeguard| {
                         this.state.exec.output_waiting += 1;
-                        this.bltn.stderr.enqueue(childptr, errbuf);
+                        this.bltn.stderr.enqueue(childptr, errbuf, safeguard);
                         return .yield;
                     }
                     _ = this.bltn.writeNoIO(.stderr, errbuf);
@@ -10713,9 +10763,9 @@ pub const Interpreter = struct {
                 }
 
                 pub fn writeOut(this: *Cp, childptr: anytype, output: *OutputSrc) CoroutineResult {
-                    if (this.bltn.stdout.needsIO()) {
+                    if (this.bltn.stdout.needsIO()) |safeguard| {
                         this.state.exec.output_waiting += 1;
-                        this.bltn.stdout.enqueue(childptr, output.slice());
+                        this.bltn.stdout.enqueue(childptr, output.slice(), safeguard);
                         return .yield;
                     }
                     _ = this.bltn.writeNoIO(.stdout, output.slice());

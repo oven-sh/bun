@@ -24,6 +24,7 @@ describe("napi", () => {
       checkSameOutput("test_issue_7685", args);
     });
   });
+
   describe("issue_11949", () => {
     it("napi_call_threadsafe_function should accept null", () => {
       const result = checkSameOutput("test_issue_11949", []);
@@ -57,6 +58,11 @@ describe("napi", () => {
       const result = checkSameOutput("test_napi_get_value_string_utf8_with_buffer", ["abcdef", 424242]);
       expect(result).toEndWith("str:");
     });
+  });
+
+  it("threadsafe function does not hang on finalize", () => {
+    const result = checkSameOutput("test_napi_threadsafe_function_does_not_hang_after_finalize", []);
+    expect(result).toBe("success!");
   });
 
   it("#1288", async () => {

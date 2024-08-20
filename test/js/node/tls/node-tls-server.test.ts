@@ -464,15 +464,12 @@ describe("tls.createServer events", () => {
     );
   });
 
-  it("should call close", done => {
-    let closed = false;
+  it("should call close", async () => {
+    const { promise, reject, resolve } = Promise.withResolvers();
     const server: Server = createServer(COMMON_CERT);
-    server.listen().on("close", () => {
-      closed = true;
-    });
+    server.listen().on("close", resolve).on("error", reject);
     server.close();
-    expect(closed).toBe(true);
-    done();
+    await promise;
   });
 
   it("should call connection and drop", done => {
@@ -628,6 +625,9 @@ describe("tls.createServer events", () => {
           hostname: address.address,
           port: address.port,
           socket: {
+            error(socket, err) {
+              closeAndFail();
+            },
             drain(socket) {
               socket.write("Hello");
             },

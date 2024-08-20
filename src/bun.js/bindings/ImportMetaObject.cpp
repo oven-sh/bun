@@ -102,7 +102,7 @@ static JSC::EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObj
             // require.resolve also supports a paths array
             // we only support a single path
             if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
-                if (auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "paths"_s))) {
+                if (auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName())) {
                     if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
                         auto pathsArray = JSC::jsCast<JSC::JSArray*>(pathsObject);
                         if (pathsArray->length() > 0) {
@@ -209,7 +209,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
 
         if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
 
-            if (auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "paths"_s))) {
+            if (auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName())) {
                 if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
                     auto pathsArray = JSC::jsCast<JSC::JSArray*>(pathsObject);
                     if (pathsArray->length() > 0) {
@@ -358,7 +358,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
         JSValue fromValue = callFrame->uncheckedArgument(1);
 
         if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
-            if (JSValue pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "paths"_s))) {
+            if (JSValue pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName())) {
                 if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
                     auto* pathsArray = JSC::jsCast<JSC::JSArray*>(pathsObject);
                     if (pathsArray->length() > 0) {
@@ -535,7 +535,7 @@ public:
         reifyStaticProperties(vm, ImportMetaObject::info(), ImportMetaObjectPrototypeValues, *this);
         JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 
-        auto mainGetter = JSFunction::create(vm, importMetaObjectMainCodeGenerator(vm), globalObject);
+        auto mainGetter = JSFunction::create(vm, globalObject, importMetaObjectMainCodeGenerator(vm), globalObject);
 
         this->putDirectAccessor(
             this->globalObject(),

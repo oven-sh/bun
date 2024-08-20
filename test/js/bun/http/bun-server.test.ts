@@ -546,6 +546,7 @@ test("should be able to async upgrade using custom protocol", async () => {
 
 test("should be able to abrubtly close a upload request", async () => {
   const { promise, resolve } = Promise.withResolvers();
+  const { promise: promise2, resolve: resolve2 } = Promise.withResolvers();
   using server = Bun.serve({
     port: 0,
     hostname: "localhost",
@@ -553,12 +554,17 @@ test("should be able to abrubtly close a upload request", async () => {
     async fetch(req) {
       let total_size = 0;
       req.signal.addEventListener("abort", resolve);
-
-      for await (const chunk of req.body as ReadableStream) {
-        total_size += chunk.length;
-        if (total_size > 1024 * 1024 * 1024) {
-          return new Response("too big", { status: 413 });
+      try {
+        for await (const chunk of req.body as ReadableStream) {
+          total_size += chunk.length;
+          if (total_size > 1024 * 1024 * 1024) {
+            return new Response("too big", { status: 413 });
+          }
         }
+      } catch (e) {
+        expect((e as Error)?.name).toBe("AbortError");
+      } finally {
+        resolve2();
       }
 
       return new Response("Received " + total_size);
@@ -620,6 +626,51 @@ test("should be able to abrubtly close a upload request", async () => {
       data(socket, data) {},
     },
   });
-  await promise;
+  await Promise.all([promise, promise2]);
   expect().pass();
 });
+
+// This test is disabled because it can OOM the CI
+test.skip("should be able to stream huge amounts of data", async () => {
+  const buf = Buffer.alloc(1024 * 1024 * 256);
+  const CONTENT_LENGTH = 3 * 1024 * 1024 * 1024;
+  let received = 0;
+  let written = 0;
+  using server = Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(controller) {
+            while (written < CONTENT_LENGTH) {
+              written += buf.byteLength;
+              await controller.write(buf);
+            }
+            controller.close();
+          },
+        }),
+        {
+          headers: {
+            "Content-Type": "text/plain",
+            "Content-Length": CONTENT_LENGTH.toString(),
+          },
+        },
+      );
+    },
+  });
+
+  const response = await fetch(server.url);
+  expect(response.status).toBe(200);
+  expect(response.headers.get("content-type")).toBe("text/plain");
+  const reader = (response.body as ReadableStream).getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    received += value ? value.byteLength : 0;
+    if (done) {
+      break;
+    }
+  }
+  expect(written).toBe(CONTENT_LENGTH);
+  expect(received).toBe(CONTENT_LENGTH);
+}, 30_000);

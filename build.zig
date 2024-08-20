@@ -49,6 +49,7 @@ const BunBuildOptions = struct {
     reported_nodejs_version: Version,
 
     generated_code_dir: []const u8,
+    no_llvm: bool,
 
     cached_options_module: ?*Module = null,
     windows_shim: ?WindowsShim = null,
@@ -186,6 +187,8 @@ pub fn build(b: *Build) !void {
 
     const obj_format = b.option(ObjectFormat, "obj_format", "Output file for object files") orelse .obj;
 
+    const no_llvm = b.option(bool, "no_llvm", "Experiment with Zig self hosted backends. No stability guaranteed") orelse false;
+
     var build_options = BunBuildOptions{
         .target = target,
         .optimize = optimize,
@@ -194,6 +197,7 @@ pub fn build(b: *Build) !void {
         .arch = arch,
 
         .generated_code_dir = generated_code_dir,
+        .no_llvm = no_llvm,
 
         .version = try Version.parse(bun_version),
         .canary_revision = canary: {
@@ -323,6 +327,7 @@ pub inline fn addMultiCheck(
                 .version = root_build_options.version,
                 .reported_nodejs_version = root_build_options.reported_nodejs_version,
                 .generated_code_dir = root_build_options.generated_code_dir,
+                .no_llvm = root_build_options.no_llvm,
             };
 
             var obj = addBunObject(b, &options);
@@ -341,6 +346,8 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
         },
         .target = opts.target,
         .optimize = opts.optimize,
+        .use_llvm = !opts.no_llvm,
+        .use_lld = if (opts.os == .mac) false else !opts.no_llvm,
 
         // https://github.com/ziglang/zig/issues/17430
         .pic = true,
@@ -417,6 +424,12 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
     validateGeneratedPath(resolved_source_tag_path);
     obj.root_module.addAnonymousImport("ResolvedSourceTag", .{
         .root_source_file = .{ .cwd_relative = resolved_source_tag_path },
+    });
+
+    const error_code_path = b.pathJoin(&.{ opts.generated_code_dir, "ErrorCode.zig" });
+    validateGeneratedPath(error_code_path);
+    obj.root_module.addAnonymousImport("ErrorCode", .{
+        .root_source_file = .{ .cwd_relative = error_code_path },
     });
 
     if (os == .windows) {

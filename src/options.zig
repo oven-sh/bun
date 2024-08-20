@@ -1240,7 +1240,7 @@ pub fn definesFromTransformOptions(
         }
     }
 
-    const resolved_defines = try defines.DefineData.from_input(user_defines, log, allocator);
+    const resolved_defines = try defines.DefineData.fromInput(user_defines, log, allocator);
 
     return try defines.Define.init(
         allocator,
@@ -1510,10 +1510,14 @@ pub const BundleOptions = struct {
     install: ?*Api.BunInstall = null,
 
     inlining: bool = false,
+    inline_entrypoint_import_meta_main: bool = false,
     minify_whitespace: bool = false,
     minify_syntax: bool = false,
     minify_identifiers: bool = false,
     dead_code_elimination: bool = true,
+
+    ignore_dce_annotations: bool = false,
+    emit_dce_annotations: bool = false,
 
     code_coverage: bool = false,
     debugger: bool = false,
@@ -1545,7 +1549,6 @@ pub const BundleOptions = struct {
         "react-client",
         "react-server",
         "react-refresh",
-        "__bun-test-unwrap-commonjs__",
     };
 
     pub inline fn cssImportBehavior(this: *const BundleOptions) Api.CssInJsBehavior {

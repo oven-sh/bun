@@ -114,6 +114,7 @@ const bufs = struct {
     pub threadlocal var path_in_global_disk_cache: bun.PathBuffer = undefined;
     pub threadlocal var abs_to_rel: bun.PathBuffer = undefined;
     pub threadlocal var node_modules_paths_buf: bun.PathBuffer = undefined;
+    pub threadlocal var import_path_for_standalone_module_graph: bun.PathBuffer = undefined;
 
     pub inline fn bufs(comptime field: std.meta.DeclEnum(@This())) *@TypeOf(@field(@This(), @tagName(field))) {
         return &@field(@This(), @tagName(field));
@@ -171,9 +172,9 @@ pub const SideEffects = enum {
     /// known to not have side effects.
     no_side_effects__pure_data,
 
-    // / Same as above but it came from a plugin. We don't want to warn about
-    // / unused imports to these files since running the plugin is a side effect.
-    // / Removing the import would not call the plugin which is observable.
+    // /// Same as above but it came from a plugin. We don't want to warn about
+    // /// unused imports to these files since running the plugin is a side effect.
+    // /// Removing the import would not call the plugin which is observable.
     // no_side_effects__pure_data_from_plugin,
 };
 
@@ -453,7 +454,7 @@ var resolver_Mutex_loaded: bool = false;
 
 const BinFolderArray = std.BoundedArray(string, 128);
 var bin_folders: BinFolderArray = undefined;
-var bin_folders_lock: Mutex = Mutex.init();
+var bin_folders_lock: Mutex = .{};
 var bin_folders_loaded: bool = false;
 
 const Timer = @import("../system_timer.zig").Timer;
@@ -479,13 +480,6 @@ pub fn ResolveWatcher(comptime Context: type, comptime onWatch: anytype) type {
             onWatch(bun.cast(Context, this), dir_path, fd);
         }
     };
-}
-
-fn isExternalModuleLike(import_path: string) bool {
-    if (strings.startsWith(import_path, ".") or strings.startsWith(import_path, "/") or strings.startsWith(import_path, "..")) {
-        return false;
-    }
-    return true;
 }
 
 pub const Resolver = struct {
@@ -613,7 +607,7 @@ pub const Resolver = struct {
         opts: options.BundleOptions,
     ) ThisResolver {
         if (!resolver_Mutex_loaded) {
-            resolver_Mutex = Mutex.init();
+            resolver_Mutex = .{};
             resolver_Mutex_loaded = true;
         }
 
@@ -632,7 +626,7 @@ pub const Resolver = struct {
     }
 
     pub fn isExternalPattern(r: *ThisResolver, import_path: string) bool {
-        if (r.opts.packages == .external and isExternalModuleLike(import_path)) {
+        if (r.opts.packages == .external and isPackagePath(import_path)) {
             return true;
         }
         for (r.opts.external.patterns) |pattern| {
@@ -807,6 +801,26 @@ pub const Resolver = struct {
         const tracer = bun.tracy.traceNamed(@src(), "ModuleResolver.resolve");
         defer tracer.end();
 
+        // Only setting 'current_action' in debug mode because module resolution
+        // is done very often, and has a very low crash rate.
+        const prev_action = if (Environment.isDebug) bun.crash_handler.current_action;
+        if (Environment.isDebug) bun.crash_handler.current_action = .{ .resolver = .{
+            .source_dir = source_dir,
+            .import_path = import_path,
+            .kind = kind,
+        } };
+        defer if (Environment.isDebug) {
+            bun.crash_handler.current_action = prev_action;
+        };
+
+        if (Environment.isDebug and bun.CLI.debug_flags.hasResolveBreakpoint(import_path)) {
+            bun.Output.debug("Resolving <green>{s}<r> from <blue>{s}<r>", .{
+                import_path,
+                source_dir,
+            });
+            @breakpoint();
+        }
+
         const original_order = r.extension_order;
         defer r.extension_order = original_order;
         r.extension_order = switch (kind) {
@@ -853,8 +867,10 @@ pub const Resolver = struct {
             }
         }
 
-        // Certain types of URLs default to being external for convenience
-        if (r.isExternalPattern(import_path) or
+        // Certain types of URLs default to being external for convenience,
+        // while these rules should not be applied to the entrypoint as it is never external (#12734)
+        if (kind != .entry_point and
+            (r.isExternalPattern(import_path) or
             // "fill: url(#filter);"
             (kind.isFromCSS() and strings.startsWith(import_path, "#")) or
 
@@ -865,7 +881,7 @@ pub const Resolver = struct {
             strings.startsWith(import_path, "https://") or
 
             // "background: url(//example.com/images/image.png);"
-            strings.startsWith(import_path, "//"))
+            strings.startsWith(import_path, "//")))
         {
             if (r.debug_logs) |*debug| {
                 debug.addNote("Marking this path as implicitly external");
@@ -919,11 +935,13 @@ pub const Resolver = struct {
         // relative to our special /$bunfs/ directory.
         //
         // It's always relative to the current working directory of the project root.
+        //
+        // ...unless you pass a relative path that exists in the standalone module graph executable.
         var source_dir_resolver: bun.path.PosixToWinNormalizer = .{};
         const source_dir_normalized = brk: {
             if (r.standalone_module_graph) |graph| {
                 if (bun.StandaloneModuleGraph.isBunStandaloneFilePath(import_path)) {
-                    if (graph.files.contains(import_path)) {
+                    if (graph.findAssumeStandalonePath(import_path) != null) {
                         return .{
                             .success = Result{
                                 .import_kind = kind,
@@ -938,6 +956,24 @@ pub const Resolver = struct {
 
                     return .{ .not_found = {} };
                 } else if (bun.StandaloneModuleGraph.isBunStandaloneFilePath(source_dir)) {
+                    if (import_path.len > 2 and isDotSlash(import_path[0..2])) {
+                        const buf = bufs(.import_path_for_standalone_module_graph);
+                        const joined = bun.path.joinAbsStringBuf(source_dir, buf, &.{import_path}, .loose);
+
+                        // Support relative paths in the graph
+                        if (graph.findAssumeStandalonePath(joined)) |file| {
+                            return .{
+                                .success = Result{
+                                    .import_kind = kind,
+                                    .path_pair = PathPair{
+                                        .primary = Path.init(file.name),
+                                    },
+                                    .is_standalone_module = true,
+                                    .module_type = .esm,
+                                },
+                            };
+                        }
+                    }
                     break :brk Fs.FileSystem.instance.top_level_dir;
                 }
             }
@@ -1143,13 +1179,13 @@ pub const Resolver = struct {
     pub fn resolveWithoutSymlinks(
         r: *ThisResolver,
         source_dir: string,
-        import_path_: string,
+        input_import_path: string,
         kind: ast.ImportKind,
         global_cache: GlobalCache,
     ) Result.Union {
         assert(std.fs.path.isAbsolute(source_dir));
 
-        var import_path = import_path_;
+        var import_path = input_import_path;
 
         // This implements the module resolution algorithm from node.js, which is
         // described here: https://nodejs.org/api/modules.html#modules_all_together
@@ -1375,7 +1411,10 @@ pub const Resolver = struct {
             }
 
             // Check for external packages first
-            if (r.opts.external.node_modules.count() > 0) {
+            if (r.opts.external.node_modules.count() > 0 and
+                // Imports like "process/" need to resolve to the filesystem, not a builtin
+                !strings.hasSuffixComptime(import_path, "/"))
+            {
                 var query = import_path;
                 while (true) {
                     if (r.opts.external.node_modules.contains(query)) {
@@ -2481,7 +2520,7 @@ pub const Resolver = struct {
         const source = logger.Source.initPathString(key_path.text, entry.contents);
         const file_dir = source.path.sourceDir();
 
-        var result = (try TSConfigJSON.parse(bun.fs_allocator, r.log, source, &r.caches.json)) orelse return null;
+        var result = (try TSConfigJSON.parse(bun.default_allocator, r.log, source, &r.caches.json)) orelse return null;
 
         if (result.hasBaseURL()) {
 
@@ -2541,9 +2580,7 @@ pub const Resolver = struct {
             ) orelse return null;
         }
 
-        const _pkg = try bun.default_allocator.create(PackageJSON);
-        _pkg.* = pkg;
-        return _pkg;
+        return PackageJSON.new(pkg);
     }
 
     fn dirInfoCached(

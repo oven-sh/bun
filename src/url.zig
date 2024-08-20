@@ -130,7 +130,7 @@ pub const URL = struct {
     }
 
     pub fn hasValidPort(this: *const URL) bool {
-        return (this.getPort() orelse 0) > 1;
+        return (this.getPort() orelse 0) > 0;
     }
 
     pub fn isEmpty(this: *const URL) bool {

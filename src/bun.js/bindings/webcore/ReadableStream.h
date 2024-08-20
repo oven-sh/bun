@@ -102,4 +102,6 @@ inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, R
     return stream->readableStream();
 }
 
+JSC_DECLARE_HOST_FUNCTION(jsFunctionTransferToNativeReadableStream);
+
 }

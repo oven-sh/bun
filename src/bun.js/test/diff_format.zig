@@ -148,15 +148,15 @@ pub const DiffFormatter = struct {
                 var formatter = ConsoleObject.Formatter{ .globalThis = this.globalThis, .quote_strings = true };
                 if (Output.enable_ansi_colors) {
                     try writer.print(Output.prettyFmt(fmt, true), .{
-                        expected.toFmt(this.globalThis, &formatter),
-                        received.toFmt(this.globalThis, &formatter),
+                        expected.toFmt(&formatter),
+                        received.toFmt(&formatter),
                     });
                     return;
                 }
 
                 try writer.print(Output.prettyFmt(fmt, true), .{
-                    expected.toFmt(this.globalThis, &formatter),
-                    received.toFmt(this.globalThis, &formatter),
+                    expected.toFmt(&formatter),
+                    received.toFmt(&formatter),
                 });
                 return;
             },

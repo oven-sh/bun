@@ -598,7 +598,7 @@ const Scanner = struct {
         };
 
         // always ignore node_modules.
-        if (strings.contains(slice, "/" ++ "node_modules" ++ "/")) {
+        if (strings.contains(slice, "/node_modules/") or strings.contains(slice, "\\node_modules\\")) {
             return false;
         }
 
@@ -740,7 +740,7 @@ pub const TestCommand = struct {
             loader.* = DotEnv.Loader.init(map, ctx.allocator);
             break :brk loader;
         };
-        bun.JSC.initialize();
+        bun.JSC.initialize(false);
         HTTPThread.init();
 
         var snapshot_file_buf = std.ArrayList(u8).init(ctx.allocator);
@@ -816,7 +816,7 @@ pub const TestCommand = struct {
 
         try vm.bundler.configureDefines();
 
-        vm.loadExtraEnv();
+        vm.loadExtraEnvAndSourceCodePrinter();
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
 
@@ -1105,7 +1105,7 @@ pub const TestCommand = struct {
         if (reporter.summary.fail > 0 or (coverage.enabled and coverage.fractions.failing and coverage.fail_on_low_coverage)) {
             Global.exit(1);
         } else if (reporter.jest.unhandled_errors_between_tests > 0) {
-            Global.exitWide(@intCast(reporter.jest.unhandled_errors_between_tests));
+            Global.exit(reporter.jest.unhandled_errors_between_tests);
         }
     }
 
@@ -1250,7 +1250,7 @@ pub const TestCommand = struct {
                         if (!jest.Jest.runner.?.has_pending_tests) break;
                         vm.eventLoop().tick();
                     } else {
-                        vm.eventLoop().tickImmediateTasks();
+                        vm.eventLoop().tickImmediateTasks(vm);
                     }
 
                     while (prev_unhandled_count < vm.unhandled_error_counter) {

@@ -316,9 +316,9 @@ pub const FilePoll = struct {
 
         const log = Output.scoped(.FilePoll, false);
 
-        pub fn init(allocator: std.mem.Allocator) Store {
+        pub fn init() Store {
             return .{
-                .hive = HiveArray.init(allocator),
+                .hive = HiveArray.init(bun.typedAllocator(FilePoll)),
             };
         }
 

@@ -269,6 +269,26 @@ pub const BlobOrStringOrBuffer = union(enum) {
         };
     }
 
+    pub fn protect(this: *const BlobOrStringOrBuffer) void {
+        switch (this.*) {
+            .string_or_buffer => |sob| {
+                sob.protect();
+            },
+            else => {},
+        }
+    }
+
+    pub fn deinitAndUnprotect(this: *BlobOrStringOrBuffer) void {
+        switch (this.*) {
+            .string_or_buffer => |sob| {
+                sob.deinitAndUnprotect();
+            },
+            .blob => |*blob| {
+                blob.deinit();
+            },
+        }
+    }
+
     pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue) ?BlobOrStringOrBuffer {
         if (value.as(JSC.WebCore.Blob)) |blob| {
             if (blob.store) |store| {
@@ -313,6 +333,15 @@ pub const StringOrBuffer = union(enum) {
             .threadsafe_string => {},
             .encoded_slice => {},
             .buffer => {},
+        }
+    }
+
+    pub fn protect(this: *const StringOrBuffer) void {
+        switch (this.*) {
+            .buffer => |buf| {
+                buf.buffer.value.protect();
+            },
+            else => {},
         }
     }
 
@@ -423,6 +452,7 @@ pub const StringOrBuffer = union(enum) {
             .Int32Array,
             .Uint32Array,
             .Float32Array,
+            .Float16Array,
             .Float64Array,
             .BigInt64Array,
             .BigUint64Array,
@@ -946,7 +976,7 @@ pub const VectorArrayBuffer = struct {
         var bufferlist = std.ArrayList(bun.PlatformIOVec).init(allocator);
         var i: usize = 0;
         const len = val.getLength(globalObject);
-        bufferlist.ensureTotalCapacityPrecise(len) catch @panic("Failed to allocate memory for ArrayBuffer[]");
+        bufferlist.ensureTotalCapacityPrecise(len) catch bun.outOfMemory();
 
         while (i < len) {
             const element = val.getIndex(globalObject, @as(u32, @truncate(i)));
@@ -962,7 +992,7 @@ pub const VectorArrayBuffer = struct {
             };
 
             const buf = array_buffer.byteSlice();
-            bufferlist.append(bun.platformIOVecCreate(buf)) catch @panic("Failed to allocate memory for ArrayBuffer[]");
+            bufferlist.append(bun.platformIOVecCreate(buf)) catch bun.outOfMemory();
             i += 1;
         }
 
@@ -1102,9 +1132,13 @@ pub fn timeLikeFromJS(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue, _: 
 }
 
 pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Mode {
-    const mode_int = if (value.isNumber())
-        @as(Mode, @truncate(value.to(Mode)))
-    else brk: {
+    const mode_int = if (value.isNumber()) brk: {
+        if (!value.isUInt32AsAnyInt()) {
+            exception.* = ctx.ERR_OUT_OF_RANGE("The value of \"mode\" is out of range. It must be an integer. Received {d}", .{value.asNumber()}).toJS().asObjectRef();
+            return null;
+        }
+        break :brk @as(Mode, @truncate(value.to(Mode)));
+    } else brk: {
         if (value.isUndefinedOrNull()) return null;
 
         //        An easier method of constructing the mode is to use a sequence of
@@ -1305,6 +1339,10 @@ pub const FileSystemFlags = enum(Mode) {
 
     pub fn fromJS(ctx: JSC.C.JSContextRef, val: JSC.JSValue, exception: JSC.C.ExceptionRef) ?FileSystemFlags {
         if (val.isNumber()) {
+            if (!val.isInt32()) {
+                exception.* = ctx.ERR_OUT_OF_RANGE("The value of \"flags\" is out of range. It must be an integer. Received {d}", .{val.asNumber()}).toJS().asObjectRef();
+                return null;
+            }
             const number = val.coerce(i32, ctx);
             return @as(FileSystemFlags, @enumFromInt(@as(Mode, @intCast(@max(number, 0)))));
         }
@@ -1390,8 +1428,8 @@ pub fn StatType(comptime Big: bool) type {
 
         // Stats stores these as i32, but BigIntStats stores all of these as i64
         // On windows, these two need to be u64 as the numbers are often very large.
-        dev: if (Environment.isWindows) u64 else Int,
-        ino: if (Environment.isWindows) u64 else Int,
+        dev: u64,
+        ino: u64,
         mode: Int,
         nlink: Int,
         uid: Int,
@@ -1441,10 +1479,16 @@ pub fn StatType(comptime Big: bool) type {
             return struct {
                 pub fn callback(this: *This, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
                     const value = @field(this, @tagName(field));
-                    if (comptime (Big and @typeInfo(@TypeOf(value)) == .Int)) {
-                        return JSC.JSValue.fromInt64NoTruncate(globalObject, @intCast(value));
+                    const Type = @TypeOf(value);
+                    if (comptime Big and @typeInfo(Type) == .Int) {
+                        if (Type == u64) {
+                            return JSC.JSValue.fromUInt64NoTruncate(globalObject, value);
+                        }
+
+                        return JSC.JSValue.fromInt64NoTruncate(globalObject, value);
                     }
-                    return globalObject.toJS(value, .temporary);
+
+                    return JSC.JSValue.jsNumber(value);
                 }
             }.callback;
         }
@@ -1565,8 +1609,8 @@ pub fn StatType(comptime Big: bool) type {
             const cTime = stat_.ctime();
 
             return .{
-                .dev = if (Environment.isWindows) stat_.dev else @truncate(@as(i64, @intCast(stat_.dev))),
-                .ino = if (Environment.isWindows) stat_.ino else @truncate(@as(i64, @intCast(stat_.ino))),
+                .dev = @intCast(@max(stat_.dev, 0)),
+                .ino = @intCast(@max(stat_.ino, 0)),
                 .mode = @truncate(@as(i64, @intCast(stat_.mode))),
                 .nlink = @truncate(@as(i64, @intCast(stat_.nlink))),
                 .uid = @truncate(@as(i64, @intCast(stat_.uid))),
@@ -2066,7 +2110,7 @@ pub const Process = struct {
                 fs.top_level_dir_buf[len + 1] = 0;
                 fs.top_level_dir = fs.top_level_dir_buf[0 .. len + 1];
 
-                return JSC.JSValue.jsUndefined();
+                return .undefined;
             },
             .err => |e| return e.toJSC(globalObject),
         }
@@ -2080,8 +2124,9 @@ pub const Process = struct {
             return;
         }
 
+        vm.exit_handler.exit_code = code;
         vm.onExit();
-        bun.Global.exit(code);
+        vm.globalExit();
     }
 
     pub export const Bun__version: [*:0]const u8 = "v" ++ bun.Global.package_json_version;
@@ -2096,6 +2141,7 @@ pub const Process = struct {
     pub export const Bun__versions_tinycc: [*:0]const u8 = bun.Global.versions.tinycc;
     pub export const Bun__versions_lolhtml: [*:0]const u8 = bun.Global.versions.lolhtml;
     pub export const Bun__versions_c_ares: [*:0]const u8 = bun.Global.versions.c_ares;
+    pub export const Bun__versions_libdeflate: [*:0]const u8 = bun.Global.versions.libdeflate;
     pub export const Bun__versions_usockets: [*:0]const u8 = bun.Environment.git_sha;
     pub export const Bun__version_sha: [*:0]const u8 = bun.Environment.git_sha;
     pub export const Bun__versions_lshpack: [*:0]const u8 = bun.Global.versions.lshpack;

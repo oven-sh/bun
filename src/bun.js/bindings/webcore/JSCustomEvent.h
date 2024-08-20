@@ -68,6 +68,7 @@ public:
     {
         return static_cast<CustomEvent&>(Base::wrapped());
     }
+
 protected:
     JSCustomEvent(JSC::Structure*, JSDOMGlobalObject&, Ref<CustomEvent>&&);
 
@@ -84,6 +85,5 @@ template<> struct JSDOMWrapperConverterTraits<CustomEvent> {
     using ToWrappedReturnType = CustomEvent*;
 };
 template<> CustomEvent::Init convertDictionary<CustomEvent::Init>(JSC::JSGlobalObject&, JSC::JSValue);
-
 
 } // namespace WebCore

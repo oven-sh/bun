@@ -3,8 +3,8 @@ cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
 set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
-set(Bun_VERSION "1.1.21")
-set(WEBKIT_TAG dac47fbd5444cbd4e3568267099ae276c547e897)
+set(Bun_VERSION "1.1.25")
+set(WEBKIT_TAG 21fc366db3de8f30dbb7f5997b9b9f5cf422ff1e)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -15,8 +15,24 @@ set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
+option(ZIG_CACHE_DIR "Path to the Zig cache directory" "")
+
+if(NOT ZIG_CACHE_DIR)
+    SET(ZIG_CACHE_DIR "${BUN_WORKDIR}")
+    cmake_path(APPEND ZIG_CACHE_DIR "zig-cache")
+endif()
+
+set(LOCAL_ZIG_CACHE_DIR "${ZIG_CACHE_DIR}")
+set(GLOBAL_ZIG_CACHE_DIR "${ZIG_CACHE_DIR}")
+
+cmake_path(APPEND LOCAL_ZIG_CACHE_DIR "local")
+cmake_path(APPEND GLOBAL_ZIG_CACHE_DIR "global")
+
 # Used in process.version, process.versions.node, napi, and elsewhere
-set(REPORTED_NODEJS_VERSION "22.3.0")
+set(REPORTED_NODEJS_VERSION "22.6.0")
+
+# Used in process.versions.modules and compared while loading V8 modules
+set(REPORTED_NODEJS_ABI_VERSION "127")
 
 # WebKit uses -std=gnu++20 on non-macOS non-Windows
 # If we do not set this, it will crash at startup on the first memory allocation.
@@ -72,7 +88,7 @@ endif()
 
 # --- MacOS SDK ---
 if(APPLE AND DEFINED ENV{CI})
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0")
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0")
 endif()
 
 if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
@@ -116,7 +132,7 @@ endif()
 # we do some extra work afterwards to double-check, and we will rerun BUN_FIND_LLVM if the compiler did not match.
 #
 # If the user passes -DLLVM_PREFIX, most of this logic is skipped, but we still warn if invalid.
-if(WIN32)
+if(WIN32 OR APPLE)
     set(LLVM_VERSION 18)
 else()
     set(LLVM_VERSION 16)
@@ -154,11 +170,12 @@ macro(BUN_FIND_LLVM)
         PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
         DOC "Path to LLVM ${LLVM_VERSION}'s llvm-strip binary"
     )
+
     find_program(
         STRIP
         NAMES strip
         PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
-        DOC "Path to LLVM ${LLVM_VERSION}'s llvm-strip binary"
+        DOC "Path to strip binary"
     )
     find_program(
         DSYMUTIL
@@ -309,6 +326,7 @@ endif()
 # -- Build Flags --
 option(USE_STATIC_SQLITE "Statically link SQLite?" ${DEFAULT_ON_UNLESS_APPLE})
 option(USE_CUSTOM_ZLIB "Use Bun's recommended version of zlib" ON)
+option(USE_CUSTOM_LIBDEFLATE "Use Bun's recommended version of libdeflate" ON)
 option(USE_CUSTOM_BORINGSSL "Use Bun's recommended version of BoringSSL" ON)
 option(USE_CUSTOM_LIBARCHIVE "Use Bun's recommended version of libarchive" ON)
 option(USE_CUSTOM_MIMALLOC "Use Bun's recommended version of Mimalloc" ON)
@@ -329,6 +347,11 @@ option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
 option(USE_STATIC_LIBATOMIC "Statically link libatomic, requires the presence of libatomic.a" ${DEFAULT_USE_STATIC_LIBATOMIC})
 
 option(USE_LTO "Enable Link-Time Optimization" ${DEFAULT_LTO})
+
+if(APPLE AND USE_LTO)
+    set(USE_LTO OFF)
+    message(FATAL_ERROR "Link-Time Optimization is not supported on macOS because it requires -fuse-ld=lld and lld causes many segfaults on macOS (likely related to stack size)")
+endif()
 
 if(WIN32 AND USE_LTO)
     set(CMAKE_LINKER_TYPE LLD)
@@ -456,6 +479,8 @@ elseif(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY AND NOT BUN_TIDY_ONLY AND NOT BUN_
 
     message(STATUS "Installed Zig Compiler: ${ZIG_COMPILER}")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
+
+    message(STATUS "Using zig cache directory: ${ZIG_CACHE_DIR}")
 endif()
 
 # Bun
@@ -484,7 +509,7 @@ if(USE_UNIFIED_SOURCES)
 endif()
 
 # CCache
-find_program(CCACHE_PROGRAM sccache)
+# find_program(CCACHE_PROGRAM sccache)
 find_program(CCACHE_PROGRAM ccache)
 
 if(CCACHE_PROGRAM)
@@ -646,6 +671,7 @@ file(GLOB BUN_CPP ${CONFIGURE_DEPENDS}
     "${BUN_SRC}/bun.js/bindings/sqlite/*.cpp"
     "${BUN_SRC}/bun.js/bindings/webcrypto/*.cpp"
     "${BUN_SRC}/bun.js/bindings/webcrypto/*/*.cpp"
+    "${BUN_SRC}/bun.js/bindings/v8/*.cpp"
     "${BUN_SRC}/deps/picohttpparser/picohttpparser.c"
 )
 list(APPEND BUN_RAW_SOURCES ${BUN_CPP})
@@ -685,6 +711,32 @@ add_custom_command(
     COMMENT "Generating *.classes.ts bindings"
 )
 list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.cpp")
+
+if(NOT NO_CODEGEN)
+    # --- ErrorCode Generator ---
+    file(GLOB NODE_ERRORS_TS ${CONFIGURE_DEPENDS}
+        "${BUN_SRC}/bun.js/bindings/ErrorCode.ts"
+    )
+    add_custom_command(
+        OUTPUT "${BUN_WORKDIR}/codegen/ErrorCode+List.h" "${BUN_WORKDIR}/codegen/ErrorCode+Data.h" "${BUN_WORKDIR}/codegen/ErrorCode.zig"
+        COMMAND ${BUN_EXECUTABLE} run "${BUN_CODEGEN_SRC}/generate-node-errors.ts" "${BUN_WORKDIR}/codegen"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        MAIN_DEPENDENCY "${BUN_CODEGEN_SRC}/generate-node-errors.ts"
+        DEPENDS ${NODE_ERRORS_TS}
+        VERBATIM
+        COMMENT "Generating ErrorCode.zig"
+    )
+
+    # This needs something to force it to be regenerated
+    WEBKIT_ADD_SOURCE_DEPENDENCIES(
+        "${BUN_SRC}/bun.js/bindings/ErrorCode.cpp"
+        "${BUN_WORKDIR}/codegen/ErrorCode+List.h"
+    )
+    WEBKIT_ADD_SOURCE_DEPENDENCIES(
+        "${BUN_SRC}/bun.js/bindings/ErrorCode.h"
+        "${BUN_WORKDIR}/codegen/ErrorCode+Data.h"
+    )
+endif()
 
 # --- JSSink Generator ---
 add_custom_command(
@@ -759,7 +811,7 @@ if(NOT NO_CODEGEN)
         OUTPUT ${BUN_IDENTIFIER_CACHE_OUT}
         MAIN_DEPENDENCY "${BUN_SRC}/js_lexer/identifier_data.zig"
         DEPENDS "${BUN_SRC}/js_lexer/identifier_cache.zig"
-        COMMAND ${ZIG_COMPILER} run "--zig-lib-dir" "${ZIG_LIB_DIR}" "${BUN_SRC}/js_lexer/identifier_data.zig"
+        COMMAND ${ZIG_COMPILER} run "--zig-lib-dir" "${ZIG_LIB_DIR}" "--cache-dir" "${LOCAL_ZIG_CACHE_DIR}" "--global-cache-dir" "${GLOBAL_ZIG_CACHE_DIR}" "${BUN_SRC}/js_lexer/identifier_data.zig"
         VERBATIM
         COMMENT "Building Identifier Cache"
     )
@@ -780,6 +832,7 @@ if(NOT NO_CODEGEN)
         "${BUN_SRC}/js/thirdparty/*.ts"
         "${BUN_SRC}/js/internal/*.js"
         "${BUN_SRC}/js/internal/*.ts"
+        "${BUN_SRC}/js/internal/cluster/*.ts"
         "${BUN_SRC}/js/internal/util/*.js"
         "${BUN_SRC}/js/internal/fs/*.ts"
         "${BUN_SRC}/js/node/*.js"
@@ -908,10 +961,13 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         "-Denable_logs=${ENABLE_LOGS}"
         "-Dreported_nodejs_version=${REPORTED_NODEJS_VERSION}"
         "-Dobj_format=${BUN_ZIG_OBJ_FORMAT}"
+        "--cache-dir" "${LOCAL_ZIG_CACHE_DIR}"
+        "--global-cache-dir" "${GLOBAL_ZIG_CACHE_DIR}"
         DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/build.zig"
         "${ZIG_FILES}"
         "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.zig"
+        "${BUN_WORKDIR}/codegen/ErrorCode.zig"
         "${BUN_WORKDIR}/codegen/ResolvedSourceTag.zig"
         "${BUN_IDENTIFIER_CACHE_OUT}"
         "${BUN_SRC}/api/schema.zig"
@@ -983,7 +1039,6 @@ add_compile_definitions(
     "LIBUS_USE_BORINGSSL=1"
     "WITH_BORINGSSL=1"
     "STATICALLY_LINKED_WITH_JavaScriptCore=1"
-    "STATICALLY_LINKED_WITH_WTF=1"
     "STATICALLY_LINKED_WITH_BMALLOC=1"
     "BUILDING_WITH_CMAKE=1"
     "JSC_OBJC_API_ENABLED=0"
@@ -994,11 +1049,24 @@ add_compile_definitions(
     "BUILDING_JSCONLY__"
     "BUN_DYNAMIC_JS_LOAD_PATH=\"${BUN_WORKDIR}/js\""
     "REPORTED_NODEJS_VERSION=\"${REPORTED_NODEJS_VERSION}\""
+    "REPORTED_NODEJS_ABI_VERSION=${REPORTED_NODEJS_ABI_VERSION}"
 )
 
 if(NOT ASSERT_ENABLED)
+    if(APPLE)
+        add_compile_definitions("_LIBCXX_ENABLE_ASSERTIONS=0")
+        add_compile_definitions("_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_NONE")
+    endif()
+
     add_compile_definitions("NDEBUG=1")
 else()
+    if(APPLE)
+        add_compile_definitions("_LIBCXX_ENABLE_ASSERTIONS=1")
+        add_compile_definitions("_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_DEBUG")
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_compile_definitions("_GLIBCXX_ASSERTIONS=1")
+    endif()
+
     add_compile_definitions("ASSERT_ENABLED=1")
 endif()
 
@@ -1068,12 +1136,25 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
             -Werror=uninitialized
             -Werror=conditional-uninitialized
             -Werror=suspicious-memaccess
+            -Werror=int-conversion
+            -Werror=nonnull
             -Werror=move
             -Werror=sometimes-uninitialized
             -Werror=unused
             -Wno-unused-function
+            -Wno-nullability-completeness
             -Werror
+            -fsanitize=null
+            -fsanitize-recover=all
+            -fsanitize=bounds
+            -fsanitize=return
+            -fsanitize=nullability-arg
+            -fsanitize=nullability-assign
+            -fsanitize=nullability-return
+            -fsanitize=returns-nonnull-attribute
+            -fsanitize=unreachable
         )
+        target_link_libraries(${bun} PRIVATE -fsanitize=null)
     else()
         target_compile_options(${bun} PUBLIC /Od /Z7)
     endif()
@@ -1084,7 +1165,7 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
 
     if(NOT WIN32)
         if(USE_LTO)
-            list(APPEND LTO_FLAG "-flto=full" "-emit-llvm")
+            list(APPEND LTO_FLAG "-flto=full" "-emit-llvm" "-fwhole-program-vtables" "-fforce-emit-vtables")
         endif()
 
         # Leave -Werror=unused off in release builds so we avoid errors from being used in ASSERT
@@ -1095,8 +1176,11 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
             -Werror=uninitialized
             -Werror=conditional-uninitialized
             -Werror=suspicious-memaccess
+            -Werror=int-conversion
+            -Werror=nonnull
             -Werror=move
             -Werror=sometimes-uninitialized
+            -Wno-nullability-completeness
             -Werror
         )
     else()
@@ -1173,7 +1257,7 @@ if(WIN32)
     # set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
 
-    target_compile_options(${bun} PUBLIC "/EHsc" "/GR-")
+    target_compile_options(${bun} PUBLIC "/EHsc" "/GR-" -Xclang -fno-c++-static-destructors)
 
     target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000" "/DEF:${BUN_SRC}/symbols.def" "/errorlimit:0")
 else()
@@ -1182,6 +1266,9 @@ else()
         -fconstexpr-steps=2542484
         -fconstexpr-depth=54
         -fno-exceptions
+        -fno-asynchronous-unwind-tables
+        -fno-unwind-tables
+        -fno-c++-static-destructors
         -fvisibility=hidden
         -fvisibility-inlines-hidden
         -fno-rtti
@@ -1190,6 +1277,9 @@ else()
         -fno-pic
         -fno-pie
         -faddrsig
+        -ffile-prefix-map="${CMAKE_CURRENT_SOURCE_DIR}"=.
+        -ffile-prefix-map="${BUN_DEPS_DIR}"=src/deps
+        -ffile-prefix-map="${BUN_DEPS_OUT_DIR}"=src/deps
     )
 endif()
 
@@ -1205,7 +1295,7 @@ endif()
 
 if(UNIX AND NOT APPLE)
     target_link_options(${bun} PUBLIC
-        -fuse-ld=lld
+        -fuse-ld=lld-${LLVM_VERSION}
         -fno-pic
         -static-libstdc++
         -static-libgcc
@@ -1351,6 +1441,19 @@ if(USE_CUSTOM_LIBARCHIVE)
 else()
     find_package(LibArchive REQUIRED)
     target_link_libraries(${bun} PRIVATE LibArchive::LibArchive)
+endif()
+
+if(USE_CUSTOM_LIBDEFLATE)
+    include_directories(${BUN_DEPS_DIR}/libdeflate)
+
+    if(WIN32)
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/deflate.lib")
+    else()
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libdeflate.a")
+    endif()
+else()
+    find_package(LibDeflate REQUIRED)
+    target_link_libraries(${bun} PRIVATE LibDeflate::LibDeflate)
 endif()
 
 if(USE_CUSTOM_MIMALLOC)
@@ -1499,7 +1602,10 @@ endif()
 if(NOT WIN32)
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libWTF.a")
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libJavaScriptCore.a")
-    target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libbmalloc.a")
+
+    if(NOT APPLE OR EXISTS "${WEBKIT_LIB_DIR}/libbmalloc.a")
+        target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libbmalloc.a")
+    endif()
 else()
     target_link_libraries(${bun} PRIVATE
         "${WEBKIT_LIB_DIR}/WTF.lib"
@@ -1531,12 +1637,14 @@ endif()
 
 if(BUN_TIDY_ONLY)
     find_program(CLANG_TIDY_EXE NAMES "clang-tidy")
-    set(CLANG_TIDY_COMMAND "${CLANG_TIDY_EXE}" "-checks=-*,clang-analyzer-*,-clang-analyzer-webkit.UncountedLambdaCapturesChecker" "--fix" "--fix-errors" "--format-style=webkit" "--warnings-as-errors=*")
+
+    # webkit ones are disabled disabled because it's noisy, e.g. for JavaScriptCore/Lookup.h
+    set(CLANG_TIDY_COMMAND "${CLANG_TIDY_EXE}" "-checks=-*,clang-analyzer-*,-clang-analyzer-webkit.UncountedLambdaCapturesChecker,-clang-analyzer-optin.core.EnumCastOutOfRange,-clang-analyzer-webkit.RefCntblBaseVirtualDtor" "--fix" "--fix-errors" "--format-style=webkit" "--warnings-as-errors=*")
     set_target_properties(${bun} PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_COMMAND}")
 endif()
 
 if(BUN_TIDY_ONLY_EXTRA)
     find_program(CLANG_TIDY_EXE NAMES "clang-tidy")
-    set(CLANG_TIDY_COMMAND "${CLANG_TIDY_EXE}" "-checks=-*,clang-analyzer-*,performance-*,-clang-analyzer-webkit.UncountedLambdaCapturesChecker" "--fix" "--fix-errors" "--format-style=webkit" "--warnings-as-errors=*")
+    set(CLANG_TIDY_COMMAND "${CLANG_TIDY_EXE}" "-checks=-*,clang-analyzer-*,performance-*,-clang-analyzer-webkit.UncountedLambdaCapturesChecker,-clang-analyzer-optin.core.EnumCastOutOfRange,-clang-analyzer-webkit.RefCntblBaseVirtualDtor" "--fix" "--fix-errors" "--format-style=webkit" "--warnings-as-errors=*")
     set_target_properties(${bun} PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_COMMAND}")
 endif()

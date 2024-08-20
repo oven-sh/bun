@@ -1,4 +1,5 @@
 
+
 #if defined(WIN32)
 
 #include <cstdint>
@@ -266,8 +267,23 @@ extern "C" int __wrap_mknodat(int dirfd, const char* path, __mode_t mode, __dev_
 // macOS
 #if defined(__APPLE__)
 
+#include <version>
 #include <dlfcn.h>
 #include <cstdint>
+#include <cstdarg>
+#include <cstdio>
+#include "headers.h"
+
+void std::__libcpp_verbose_abort(char const* format, ...)
+{
+    va_list list;
+    va_start(list, format);
+    char buffer[1024];
+    size_t len = vsnprintf(buffer, sizeof(buffer), format, list);
+    va_end(list);
+
+    Bun__panic(buffer, len);
+}
 
 extern "C" int pthread_self_is_exiting_np()
 {

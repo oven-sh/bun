@@ -2288,7 +2288,7 @@ it("https.get can use https.Agent", async () => {
 
 it("http.request has the correct options", async () => {
   const { promise, resolve } = Promise.withResolvers();
-  http.request({ method: "GET", hostname: "google.com" }, resolve).end();
+  http.request("http://google.com/", resolve).end();
   const response = await promise;
   expect(response.req.port).toBe(80);
   expect(response.req.protocol).toBe("http:");
@@ -2296,7 +2296,7 @@ it("http.request has the correct options", async () => {
 
 it("https.request has the correct options", async () => {
   const { promise, resolve } = Promise.withResolvers();
-  https.request({ method: "GET", hostname: "google.com" }, resolve).end();
+  https.request("https://google.com/", resolve).end();
   const response = await promise;
   expect(response.req.port).toBe(443);
   expect(response.req.protocol).toBe("https:");

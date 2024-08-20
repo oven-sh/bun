@@ -85,7 +85,7 @@ pub const Body = struct {
             try formatter.printComma(Writer, writer, enable_ansi_colors);
             try writer.writeAll("\n");
             try formatter.writeIndent(Writer, writer);
-            try Blob.writeFormatForSize(this.value.size(), writer, enable_ansi_colors);
+            try Blob.writeFormatForSize(false, this.value.size(), writer, enable_ansi_colors);
         } else if (this.value == .Locked) {
             if (this.value.Locked.readable.get()) |stream| {
                 try formatter.printComma(Writer, writer, enable_ansi_colors);

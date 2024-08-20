@@ -185,7 +185,7 @@ pub const Request = struct {
                     var empty = Blob.initEmpty(undefined);
                     try empty.writeFormat(Formatter, formatter, writer, enable_ansi_colors);
                 } else {
-                    try Blob.writeFormatForSize(size, writer, enable_ansi_colors);
+                    try Blob.writeFormatForSize(false, size, writer, enable_ansi_colors);
                 }
             } else if (this.body.value == .Locked) {
                 if (this.body.value.Locked.readable.get()) |stream| {

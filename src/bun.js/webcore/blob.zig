@@ -650,8 +650,12 @@ pub const Blob = struct {
         _ = Blob__getFileNameString;
     }
 
-    pub fn writeFormatForSize(size: usize, writer: anytype, comptime enable_ansi_colors: bool) !void {
-        try writer.writeAll(comptime Output.prettyFmt("<r>Blob<r>", enable_ansi_colors));
+    pub fn writeFormatForSize(is_jdom_file: bool, size: usize, writer: anytype, comptime enable_ansi_colors: bool) !void {
+        if (is_jdom_file) {
+            try writer.writeAll(comptime Output.prettyFmt("<r>File<r>", enable_ansi_colors));
+        } else {
+            try writer.writeAll(comptime Output.prettyFmt("<r>Blob<r>", enable_ansi_colors));
+        }
         try writer.print(
             comptime Output.prettyFmt(" (<yellow>{any}<r>)", enable_ansi_colors),
             .{
@@ -664,7 +668,11 @@ pub const Blob = struct {
         const Writer = @TypeOf(writer);
 
         if (this.isDetached()) {
-            try writer.writeAll(comptime Output.prettyFmt("<d>[<r>Blob<r> detached<d>]<r>", enable_ansi_colors));
+            if (this.is_jsdom_file) {
+                try writer.writeAll(comptime Output.prettyFmt("<d>[<r>File<r> detached<d>]<r>", enable_ansi_colors));
+            } else {
+                try writer.writeAll(comptime Output.prettyFmt("<d>[<r>Blob<r> detached<d>]<r>", enable_ansi_colors));
+            }
             return;
         }
 
@@ -687,7 +695,7 @@ pub const Blob = struct {
                             if (comptime Environment.isWindows) {
                                 if (fd_impl.kind == .uv) {
                                     try writer.print(
-                                        comptime Output.prettyFmt(" (<r>fd: <yellow>{d}<r>)<r>", enable_ansi_colors),
+                                        comptime Output.prettyFmt(" (<r>fd<d>:<r> <yellow>{d}<r>)<r>", enable_ansi_colors),
                                         .{fd_impl.uv()},
                                     );
                                 } else {
@@ -696,13 +704,13 @@ pub const Blob = struct {
                                         @panic("this shouldn't be reachable.");
                                     }
                                     try writer.print(
-                                        comptime Output.prettyFmt(" (<r>fd: <yellow>{any}<r>)<r>", enable_ansi_colors),
+                                        comptime Output.prettyFmt(" (<r>fd<d>:<r> <yellow>{any}<r>)<r>", enable_ansi_colors),
                                         .{fd_impl.system()},
                                     );
                                 }
                             } else {
                                 try writer.print(
-                                    comptime Output.prettyFmt(" (<r>fd: <yellow>{d}<r>)<r>", enable_ansi_colors),
+                                    comptime Output.prettyFmt(" (<r>fd<d>:<r> <yellow>{d}<r>)<r>", enable_ansi_colors),
                                     .{fd_impl.system()},
                                 );
                             }
@@ -710,13 +718,13 @@ pub const Blob = struct {
                     }
                 },
                 .bytes => {
-                    try writeFormatForSize(this.size, writer, enable_ansi_colors);
+                    try writeFormatForSize(this.is_jsdom_file, this.size, writer, enable_ansi_colors);
                 },
             }
         }
 
         const show_name = (this.is_jsdom_file and this.getNameString() != null) or (!this.name.isEmpty() and this.store != null and this.store.?.data == .bytes);
-        if (this.content_type.len > 0 or this.offset > 0 or show_name) {
+        if (this.content_type.len > 0 or this.offset > 0 or show_name or this.last_modified != 0.0) {
             try writer.writeAll(" {\n");
             {
                 formatter.indent += 1;
@@ -726,11 +734,15 @@ pub const Blob = struct {
                     try formatter.writeIndent(Writer, writer);
 
                     try writer.print(
-                        comptime Output.prettyFmt("name: <green>\"{}\"<r>", enable_ansi_colors),
+                        comptime Output.prettyFmt("name<d>:<r> <green>\"{}\"<r>", enable_ansi_colors),
                         .{
                             this.getNameString() orelse bun.String.empty,
                         },
                     );
+
+                    if (this.content_type.len > 0 or this.offset > 0 or this.last_modified != 0) {
+                        try formatter.printComma(Writer, writer, enable_ansi_colors);
+                    }
 
                     try writer.writeAll("\n");
                 }
@@ -738,13 +750,13 @@ pub const Blob = struct {
                 if (this.content_type.len > 0) {
                     try formatter.writeIndent(Writer, writer);
                     try writer.print(
-                        comptime Output.prettyFmt("type: <green>\"{s}\"<r>", enable_ansi_colors),
+                        comptime Output.prettyFmt("type<d>:<r> <green>\"{s}\"<r>", enable_ansi_colors),
                         .{
                             this.content_type,
                         },
                     );
 
-                    if (this.offset > 0) {
+                    if (this.offset > 0 or this.last_modified != 0) {
                         try formatter.printComma(Writer, writer, enable_ansi_colors);
                     }
 
@@ -755,13 +767,28 @@ pub const Blob = struct {
                     try formatter.writeIndent(Writer, writer);
 
                     try writer.print(
-                        comptime Output.prettyFmt("offset: <yellow>{d}<r>\n", enable_ansi_colors),
+                        comptime Output.prettyFmt("offset<d>:<r> <yellow>{d}<r>\n", enable_ansi_colors),
                         .{
                             this.offset,
                         },
                     );
 
+                    if (this.last_modified != 0) {
+                        try formatter.printComma(Writer, writer, enable_ansi_colors);
+                    }
+
                     try writer.writeAll("\n");
+                }
+
+                if (this.last_modified != 0) {
+                    try formatter.writeIndent(Writer, writer);
+
+                    try writer.print(
+                        comptime Output.prettyFmt("lastModified<d>:<r> <yellow>{d}<r>\n", enable_ansi_colors),
+                        .{
+                            this.last_modified,
+                        },
+                    );
                 }
             }
 

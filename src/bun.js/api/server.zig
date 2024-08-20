@@ -6005,12 +6005,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             var listener = this.listener orelse return;
             this.listener = null;
             this.unref();
-            const context = listener.socket().context();
-            defer {
-                if (context) |ctx| {
-                    ctx.unref(ssl_enabled);
-                }
-            }
 
             if (!ssl_enabled_)
                 this.vm.removeListeningSocketForWatchMode(listener.socket().fd());
@@ -6217,9 +6211,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             this.listener = socket;
-            if (socket.?.socket().context()) |context| {
-                context.ref(ssl_enabled);
-            }
             this.vm.event_loop_handle = Async.Loop.get();
             if (!ssl_enabled_)
                 this.vm.addListeningSocketForWatchMode(socket.?.socket().fd());

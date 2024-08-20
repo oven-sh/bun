@@ -2066,25 +2066,36 @@ pub const Subprocess = struct {
             } else {},
         };
 
-        const process_allocator = bun.default_allocator;
-        var subprocess = process_allocator.create(Subprocess) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        var subprocess = Subprocess.new(.{
+            .globalThis = globalThis,
+            .process = undefined,
+            .pid_rusage = null,
+            .stdin = undefined,
+            .stdout = undefined,
+            .stderr  = undefined,
+            .stdio_pipes = .{},
+            .on_exit_callback = .{},
+            .on_disconnect_callback = .{},
+            .ipc_data = null,
+            .ipc_callback =.{},
+            .flags = .{
+                .is_sync = is_sync,
+            },
+        });
 
         var spawned = switch (bun.spawn.spawnProcess(
             &spawn_options,
             @ptrCast(argv.items.ptr),
             @ptrCast(env_array.items.ptr),
         ) catch |err| {
-            process_allocator.destroy(subprocess);
+            subprocess.deref();
             spawn_options.deinit();
             globalThis.throwError(err, ": failed to spawn process");
 
             return .zero;
         }) {
             .err => |err| {
-                process_allocator.destroy(subprocess);
+                subprocess.deref();
                 spawn_options.deinit();
                 globalThis.throwValue(err.toJSC(globalThis));
                 return .zero;
@@ -2102,7 +2113,7 @@ pub const Subprocess = struct {
                         @sizeOf(*Subprocess),
                         spawned.extra_pipes.items[@intCast(ipc_channel)].cast(),
                     ) orelse {
-                        process_allocator.destroy(subprocess);
+                        subprocess.deref();
                         spawn_options.deinit();
                         globalThis.throw("failed to create socket pair", .{});
                         return .zero;

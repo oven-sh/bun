@@ -30,12 +30,13 @@ macro(parse_option label type description default)
 
   if(DEFINED ENV{${label}})
     if(DEFINED ${label} AND NOT ${label} STREQUAL $ENV{${label}})
-      message(FATAL_ERROR "Invalid ${${label}_SOURCE}: ${${label}_PREVIEW}=\"${${label}}\" conflicts with environment variable ${label}=\"$ENV{${label}}\"")
+      message(WARNING "Invalid ${${label}_SOURCE}: ${${label}_PREVIEW}=\"${${label}}\" conflicts with environment variable ${label}=\"$ENV{${label}}\"")
     endif()
 
-    set(${label} $ENV{${label}} CACHE ${${label}_TYPE} "${description}" FORCE)
-    set(${label}_SOURCE "environment variable")
-    set(${label}_PREVIEW "${label}")
+    # TODO: restore after everything is ported to CMake, also change to FATAL_ERROR
+    # set(${label} $ENV{${label}} CACHE ${${label}_TYPE} "${description}" FORCE)
+    # set(${label}_SOURCE "environment variable")
+    # set(${label}_PREVIEW "${label}")
   endif()
 
   if("${${label}}" STREQUAL "" AND ${default} STREQUAL "REQUIRED")

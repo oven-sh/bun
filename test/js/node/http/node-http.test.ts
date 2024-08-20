@@ -1081,12 +1081,14 @@ describe("node:http", () => {
 
     test("should not decompress gzip, issue#4397", async () => {
       const { promise, resolve } = Promise.withResolvers();
-      request("https://bun.sh/", { headers: { "accept-encoding": "gzip" } }, res => {
-        res.on("data", function cb(chunk) {
-          resolve(chunk);
-          res.off("data", cb);
-        });
-      }).end();
+      https
+        .request("https://bun.sh/", { headers: { "accept-encoding": "gzip" } }, res => {
+          res.on("data", function cb(chunk) {
+            resolve(chunk);
+            res.off("data", cb);
+          });
+        })
+        .end();
       const chunk = await promise;
       expect(chunk.toString()).not.toContain("<html");
     });

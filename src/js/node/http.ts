@@ -5,6 +5,7 @@ const { Duplex, Readable, Writable } = require("node:stream");
 const { ERR_INVALID_ARG_TYPE, ERR_INVALID_PROTOCOL } = require("internal/errors");
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { kAutoDestroyed } = require("internal/shared");
+const { urlToHttpOptions } = require("node:url");
 
 const {
   getHeader,
@@ -1920,24 +1921,6 @@ class ClientRequest extends OutgoingMessage {
 
     return this;
   }
-}
-
-function urlToHttpOptions(url) {
-  var { protocol, hostname, hash, search, pathname, href, port, username, password } = url;
-  return {
-    protocol,
-    hostname:
-      typeof hostname === "string" && StringPrototypeStartsWith.$call(hostname, "[")
-        ? StringPrototypeSlice.$call(hostname, 1, -1)
-        : hostname,
-    hash,
-    search,
-    pathname,
-    path: `${pathname || ""}${search || ""}`,
-    href,
-    port: port ? Number(port) : protocol === "https:" ? 443 : protocol === "http:" ? 80 : undefined,
-    auth: username || password ? `${decodeURIComponent(username)}:${decodeURIComponent(password)}` : undefined,
-  };
 }
 
 function validateHost(host, name) {

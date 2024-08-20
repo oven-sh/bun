@@ -121,160 +121,12 @@ if(APPLE)
     message(STATUS "Building for macOS v${CMAKE_OSX_DEPLOYMENT_TARGET}")
 endif()
 
-# --- LLVM ---
-# This detection is a little overkill, but it ensures that the set LLVM_VERSION matches under
-# any case possible. Sorry for the complexity...
-#
-# Bun and WebKit must be compiled with the same compiler, so we do as much as we can to ensure that
-# the compiler used for the prebuilt WebKit is the same as we install as a dependency.
-#
-# It has to be done before project() is called, so that CMake doesnt pick a compiler for us, but even then
-# we do some extra work afterwards to double-check, and we will rerun BUN_FIND_LLVM if the compiler did not match.
-#
-# If the user passes -DLLVM_PREFIX, most of this logic is skipped, but we still warn if invalid.
-if(WIN32 OR APPLE)
-    set(LLVM_VERSION 18)
-else()
-    set(LLVM_VERSION 16)
-endif()
-
-macro(BUN_FIND_LLVM)
-    find_program(
-        _LLVM_CXX_PATH
-        NAMES clang++-${LLVM_VERSION} clang++
-        PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
-        DOC "Path to LLVM ${LLVM_VERSION}'s clang++ binary. Please pass -DLLVM_PREFIX with the path to LLVM"
-    )
-
-    if(NOT _LLVM_CXX_PATH)
-        message(FATAL_ERROR "Could not find LLVM ${LLVM_VERSION}, search paths: ${PLATFORM_LLVM_SEARCH_PATHS}")
-    endif()
-
-    set(CMAKE_CXX_COMPILER "${_LLVM_CXX_PATH}")
-    find_program(
-        _LLVM_C_PATH
-        NAMES clang-${LLVM_VERSION} clang
-        PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
-        DOC "Path to LLVM ${LLVM_VERSION}'s clang binary. Please pass -DLLVM_PREFIX with the path to LLVM"
-    )
-
-    if(NOT _LLVM_C_PATH)
-        message(FATAL_ERROR "Could not find LLVM ${LLVM_VERSION}, search paths: ${PLATFORM_LLVM_SEARCH_PATHS}")
-    endif()
-
-    set(CMAKE_C_COMPILER "${_LLVM_C_PATH}")
-
-    find_program(
-        STRIP
-        NAMES llvm-strip
-        PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
-        DOC "Path to LLVM ${LLVM_VERSION}'s llvm-strip binary"
-    )
-
-    find_program(
-        STRIP
-        NAMES strip
-        PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
-        DOC "Path to strip binary"
-    )
-    find_program(
-        DSYMUTIL
-        NAMES dsymutil
-        PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
-        DOC "Path to LLVM ${LLVM_VERSION}'s dsymutil binary"
-    )
-    find_program(
-        AR
-        NAMES llvm-ar
-        PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
-        DOC "Path to LLVM ${LLVM_VERSION}'s llvm-ar binary"
-    )
-    find_program(
-        AR
-        NAMES ar
-        PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
-        DOC "Path to LLVM ${LLVM_VERSION}'s llvm-ar binary"
-    )
-    find_program(
-        RANLIB
-        NAMES llvm-ranlib
-        PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
-        DOC "Path to LLVM ${LLVM_VERSION}'s llvm-ar binary"
-    )
-
-    execute_process(COMMAND ${CMAKE_CXX_COMPILER} --version OUTPUT_VARIABLE _tmp)
-    string(REGEX MATCH "version ([0-9]+)\\.([0-9]+)\\.([0-9]+)" CMAKE_CXX_COMPILER_VERSION "${_tmp}")
-    set(CMAKE_CXX_COMPILER_VERSION "${CMAKE_MATCH_1}.${CMAKE_MATCH_2}.${CMAKE_MATCH_3}")
-endmacro()
-
-if(UNIX)
-    if(LLVM_PREFIX)
-        set(PLATFORM_LLVM_SEARCH_PATHS ${LLVM_PREFIX}/bin)
-    else()
-        set(PLATFORM_LLVM_SEARCH_PATHS /usr/lib/llvm-${LLVM_VERSION}/bin /usr/lib/llvm${LLVM_VERSION}/bin /usr/bin /usr/local/bin)
-
-        if(APPLE)
-            set(PLATFORM_LLVM_SEARCH_PATHS /opt/homebrew/opt/llvm@${LLVM_VERSION}/bin /opt/homebrew/bin ${PLATFORM_LLVM_SEARCH_PATHS})
-        endif()
-    endif()
-
-    if(CMAKE_CXX_COMPILER)
-        set(_LLVM_CXX_PATH "${CMAKE_CXX_COMPILER}")
-    endif()
-
-    if(CMAKE_C_COMPILER)
-        set(_LLVM_C_PATH "${CMAKE_C_COMPILER}")
-    endif()
-
-    BUN_FIND_LLVM()
-else()
-    # Windows uses Clang-CL
-    # TODO: good configuration in this regard. -G Ninja will pick clang-cl if possible, which should be fine for most users.
-    if(NOT CMAKE_C_COMPILER)
-        set(CMAKE_C_COMPILER "clang-cl")
-    endif()
-
-    if(NOT CMAKE_CXX_COMPILER)
-        set(CMAKE_CXX_COMPILER "clang-cl")
-    endif()
-
-    find_program(
-        STRIP
-        NAMES llvm-strip
-        PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
-        DOC "Path to LLVM ${LLVM_VERSION}'s llvm-strip binary"
-    )
-    find_program(
-        AR
-        NAMES llvm-ar
-        PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
-        DOC "Path to LLVM ${LLVM_VERSION}'s llvm-ar binary"
-    )
-endif()
+# Must be called before project() so CMake doesn't pick its own compiler
+include(cmake/SetupLLVM.cmake)
+include(cmake/SetupCcache.cmake)
 
 project(Bun VERSION "${Bun_VERSION}")
 
-# if(MSVC)
-# message(FATAL_ERROR "Bun does not support building with MSVC. Please use `cmake -G Ninja` with LLVM ${LLVM_VERSION} and Ninja.")
-# endif()
-
-# More effort to prevent using the wrong C++ compiler
-if(UNIX)
-    if((NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang") OR(NOT CMAKE_CXX_COMPILER_VERSION MATCHES "^${LLVM_VERSION}\."))
-        # Attempt to auto-correct the compiler
-        message(STATUS "Compiler mismatch, attempting to auto-correct")
-        unset(_LLVM_CXX_PATH)
-        BUN_FIND_LLVM()
-
-        if((NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang") OR(NOT CMAKE_CXX_COMPILER_VERSION MATCHES "^${LLVM_VERSION}\."))
-            message(WARNING "Expected LLVM ${LLVM_VERSION} as the C++ compiler, build may fail or break at runtime.")
-        endif()
-    endif()
-endif()
-
-message(STATUS "C++ Compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} at ${CMAKE_CXX_COMPILER}")
-
-# --- End LLVM ---
 if(NOT WIN32)
     set(SHELL "bash")
     set(SCRIPT_EXTENSION "sh")
@@ -492,26 +344,10 @@ if(WIN32 AND NO_CODEGEN)
     set(BUN_EXECUTABLE "echo")
 endif()
 
-# Prettier
-find_program(PRETTIER prettier DOC "Path to prettier" PATHS ./node_modules/.bin ENV PATH)
-
-# Esbuild (TODO: switch these to "bun build")
-find_program(ESBUILD esbuild DOC "Path to esbuild" PATHS ./node_modules/.bin ENV PATH)
-
 # Ruby (only needed for unified sources)
 if(USE_UNIFIED_SOURCES)
     # ruby 'WebKit/Source/WTF/Scripts/generate-unified-source-bundles.rb' source_list.txt --source-tree-path . --derived-sources-path build/unified-sources
     find_program(RUBY ruby DOC "Path to ruby")
-endif()
-
-# CCache
-# find_program(CCACHE_PROGRAM sccache)
-find_program(CCACHE_PROGRAM ccache)
-
-if(CCACHE_PROGRAM)
-    set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
-    set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
-    message(STATUS "Using ccache: ${CCACHE_PROGRAM}")
 endif()
 
 # --- WebKit ---
@@ -1217,7 +1053,7 @@ if(NOT BUN_CPP_ARCHIVE)
                 "set -ex\n"
                 "OBJ_LIST=(\n  ${BUN_OBJECT_LIST}\n)\n"
                 "ninja \${OBJ_LIST[@]} $@\n"
-                "\"${AR}\" rcvs bun-cpp-objects.a \${OBJ_LIST[@]}\n"
+                "\"${CMAKE_AR}\" rcvs bun-cpp-objects.a \${OBJ_LIST[@]}\n"
                 "echo '-> bun-cpp-objects.a'\n"
             )
         else()
@@ -1230,7 +1066,7 @@ if(NOT BUN_CPP_ARCHIVE)
                 "$ErrorActionPreference = \"Stop\"\n"
                 "$ObjectFiles=@(\n  ${BUN_OBJECT_LIST}\n)\n"
                 "ninja @ObjectFiles @args\n"
-                "& \"${AR}\" rcvs bun-cpp-objects.a @ObjectFiles\n"
+                "& \"${CMAKE_AR}\" rcvs bun-cpp-objects.a @ObjectFiles\n"
                 "Write-Host '-> bun-cpp-objects.a'\n"
             )
         endif()
@@ -1482,7 +1318,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32 AND NOT ASSERT_ENABLED)
         add_custom_command(
             TARGET ${bun}
             POST_BUILD
-            COMMAND ${DSYMUTIL} -o ${BUN_WORKDIR}/${bun}.dSYM ${BUN_WORKDIR}/${bun}
+            COMMAND ${CMAKE_DSYMUTIL} -o ${BUN_WORKDIR}/${bun}.dSYM ${BUN_WORKDIR}/${bun}
             COMMENT "Generating .dSYM"
         )
     endif()
@@ -1490,7 +1326,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32 AND NOT ASSERT_ENABLED)
     add_custom_command(
         TARGET ${bun}
         POST_BUILD
-        COMMAND ${STRIP} -s -x -S -o ${BUN_WORKDIR}/bun ${BUN_WORKDIR}/${bun}
+        COMMAND ${CMAKE_STRIP} -s -x -S -o ${BUN_WORKDIR}/bun ${BUN_WORKDIR}/${bun}
         COMMENT "Stripping Symbols"
     )
 endif()

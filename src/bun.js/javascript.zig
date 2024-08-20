@@ -3848,11 +3848,15 @@ pub const VirtualMachine = struct {
             if (global.bunVM().ipc) |*current_ipc| {
                 switch (current_ipc.*) {
                     .initialized => |instance| {
-                        instance.data.close(true);
+                        JSC.VirtualMachine.get().enqueueImmediateTask(JSC.ManagedTask.New(IPC.IPCData, closeReal).init(&instance.data));
                     },
                     .waiting => {},
                 }
             }
+        }
+
+        fn closeReal(ipc_data: *IPC.IPCData) void {
+            ipc_data.close(true);
         }
 
         pub const Handlers = IPC.NewIPCHandler(IPCInstance);

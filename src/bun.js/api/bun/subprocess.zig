@@ -742,7 +742,7 @@ pub const Subprocess = struct {
     pub fn disconnect(this: *Subprocess, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         _ = globalThis;
         _ = callframe;
-        this.disconnectIPC(false);
+        this.disconnectIPC(true);
         return .undefined;
     }
 

@@ -675,7 +675,6 @@ pub const Subprocess = struct {
         if (this.hasExited()) {
             return .{ .result = {} };
         }
-        this.disconnectIPC();
         return this.process.kill(@intCast(sig));
     }
 

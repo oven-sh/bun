@@ -61,12 +61,14 @@ pub const JSBundler = struct {
         minify: Minify = .{},
         server_components: ServerComponents = ServerComponents{},
         no_macros: bool = false,
-
+        ignore_dce_annotations: bool = false,
+        emit_dce_annotations: ?bool = null,
         names: Names = .{},
         external: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         source_map: options.SourceMapOption = .none,
         public_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         conditions: bun.StringSet = bun.StringSet.init(bun.default_allocator),
+        packages: options.PackagesOption = .bundle,
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
@@ -223,6 +225,10 @@ pub const JSBundler = struct {
                 }
             }
 
+            if (try config.getOptionalEnum(globalThis, "packages", options.PackagesOption)) |packages| {
+                this.packages = packages;
+            }
+
             if (try config.getOptionalEnum(globalThis, "format", options.Format)) |format| {
                 switch (format) {
                     .esm => {},
@@ -276,6 +282,18 @@ pub const JSBundler = struct {
             } else {
                 globalThis.throwInvalidArguments("Expected entrypoints to be an array of strings", .{});
                 return error.JSException;
+            }
+
+            if (config.getTruthy(globalThis, "emitDCEAnnotations")) |flag| {
+                if (flag.coerce(bool, globalThis)) {
+                    this.emit_dce_annotations = true;
+                }
+            }
+
+            if (config.getTruthy(globalThis, "ignoreDCEAnnotations")) |flag| {
+                if (flag.coerce(bool, globalThis)) {
+                    this.ignore_dce_annotations = true;
+                }
             }
 
             if (config.getTruthy(globalThis, "conditions")) |conditions_value| {
@@ -543,12 +561,12 @@ pub const JSBundler = struct {
     ) JSC.JSValue {
         if (arguments.len == 0 or !arguments[0].isObject()) {
             globalThis.throwInvalidArguments("Expected a config object to be passed to Bun.build", .{});
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
 
         var plugins: ?*Plugin = null;
         const config = Config.fromJS(globalThis, arguments[0], &plugins, globalThis.allocator()) catch {
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         };
 
         return bun.BundleV2.generateFromJavaScript(
@@ -558,7 +576,7 @@ pub const JSBundler = struct {
             globalThis.bunVM().eventLoop(),
             bun.default_allocator,
         ) catch {
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         };
     }
 

@@ -132,14 +132,15 @@ JSC_DEFINE_HOST_FUNCTION(jsGetErrorMap, (JSGlobalObject * globalObject, JSC::Cal
     auto& vm = globalObject->vm();
     auto map = JSC::JSMap::create(vm, globalObject->mapStructure());
 
-#define PUT_PROPERTY(name, value, desc)                                                                           \
-    {                                                                                                             \
-        auto arr = JSC::constructEmptyArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), 2); \
-        arr->putDirectIndex(globalObject, 0, JSC::jsString(vm, String(#name##_s)));                               \
-        arr->putDirectIndex(globalObject, 1, JSC::jsString(vm, String(desc##_s)));                                \
-        map->set(globalObject, JSC::jsNumber(value), arr);                                                        \
-    }
+    // Inlining each of these via macros costs like 300 KB.
+    const auto putProperty = [](JSC::VM& vm, JSC::JSMap* map, JSC::JSGlobalObject* globalObject, ASCIILiteral name, int value, ASCIILiteral desc) -> void {
+        auto arr = JSC::constructEmptyArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), 2);
+        arr->putDirectIndex(globalObject, 0, JSC::jsString(vm, String(name)));
+        arr->putDirectIndex(globalObject, 1, JSC::jsString(vm, String(desc)));
+        map->set(globalObject, JSC::jsNumber(value), arr);
+    };
 
+#define PUT_PROPERTY(name, value, desc) putProperty(vm, map, globalObject, #name##_s, value, desc##_s);
     BUN_UV_ERRNO_MAP(PUT_PROPERTY)
 #undef PUT_PROPERTY
 
@@ -152,9 +153,15 @@ JSObject* create(VM& vm, JSGlobalObject* globalObject)
     EnsureStillAliveScope ensureStillAlive(bindingObject);
     bindingObject->putDirect(vm, JSC::Identifier::fromString(vm, "errname"_s), JSC::JSFunction::create(vm, globalObject, 1, "errname"_s, jsErrname, ImplementationVisibility::Public));
 
-#define PUT_PROPERTY(name, value, desc) \
-    bindingObject->putDirect(vm, JSC::Identifier::fromString(vm, "UV_" #name##_s), JSC::jsNumber(value));
+    // Inlining each of these via macros costs like 300 KB.
+    // Before: 96305608
+    // After:  95973832
+    const auto putNamedProperty = [](JSC::VM& vm, JSObject* bindingObject, const ASCIILiteral name, int value) -> void {
+        bindingObject->putDirect(vm, JSC::Identifier::fromString(vm, makeString("UV_"_s, name)), JSC::jsNumber(value));
+    };
 
+#define PUT_PROPERTY(name, value, desc) \
+    putNamedProperty(vm, bindingObject, #name##_s, value);
     BUN_UV_ERRNO_MAP(PUT_PROPERTY)
 #undef PUT_PROPERTY
 

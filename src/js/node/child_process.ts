@@ -2,12 +2,13 @@
 const EventEmitter = require("node:events");
 const StreamModule = require("node:stream");
 const OsModule = require("node:os");
+const { ERR_INVALID_ARG_TYPE, ERR_IPC_DISCONNECTED } = require("internal/errors");
+const { kHandle } = require("internal/shared");
 
 var NetModule;
 
 var ObjectCreate = Object.create;
 var ObjectAssign = Object.assign;
-var ObjectDefineProperty = Object.defineProperty;
 var BufferConcat = Buffer.concat;
 var BufferIsEncoding = Buffer.isEncoding;
 
@@ -21,7 +22,6 @@ var ArrayPrototypeIncludes = Array.prototype.includes;
 var ArrayPrototypeSlice = Array.prototype.slice;
 var ArrayPrototypeUnshift = Array.prototype.unshift;
 
-// var ArrayBuffer = ArrayBuffer;
 var ArrayBufferIsView = ArrayBuffer.isView;
 
 var NumberIsInteger = Number.isInteger;
@@ -32,6 +32,7 @@ var StringPrototypeSlice = String.prototype.slice;
 var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
 const MAX_BUFFER = 1024 * 1024;
+const kFromNode = Symbol("kFromNode");
 
 // Pass DEBUG_CHILD_PROCESS=1 to enable debug output
 if ($debug) {
@@ -104,17 +105,6 @@ var ReadableFromWeb;
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-function spawnTimeoutFunction(child, timeoutHolder) {
-  var timeoutId = timeoutHolder.timeoutId;
-  if (timeoutId > -1) {
-    try {
-      child.kill(killSignal);
-    } catch (err) {
-      child.emit("error", err);
-    }
-    timeoutHolder.timeoutId = -1;
-  }
-}
 /**
  * Spawns a new process using the given `file`.
  * @param {string} file
@@ -145,11 +135,12 @@ function spawn(file, args, options) {
   const child = new ChildProcess();
 
   $debug("spawn", options);
+  options[kFromNode] = true;
   child.spawn(options);
 
   const timeout = options.timeout;
   if (timeout && timeout > 0) {
-    let timeoutId = setTimeout(() => {
+    let timeoutId: Timer | null = setTimeout(() => {
       if (timeoutId) {
         timeoutId = null;
 
@@ -266,7 +257,7 @@ function execFile(file, args, options, callback) {
 
   let cmd = file;
 
-  function exitHandler(code, signal) {
+  function exitHandler(code = 0, signal?: number | null) {
     if (exited) return;
     exited = true;
 
@@ -998,7 +989,6 @@ class ChildProcess extends EventEmitter {
   #closesNeeded = 1;
   #closesGot = 0;
 
-  connected = false;
   signalCode = null;
   exitCode = null;
   spawnfile;
@@ -1047,10 +1037,6 @@ class ChildProcess extends EventEmitter {
       } else if (stderr && this.#stdioOptions[2] === "pipe" && !stderr?.destroyed) {
         stderr.resume?.();
       }
-    }
-
-    if (this.#handle) {
-      this.#handle = null;
     }
 
     if (err) {
@@ -1200,6 +1186,16 @@ class ChildProcess extends EventEmitter {
     return (this.#stdioObject ??= this.#createStdioObject());
   }
 
+  get connected() {
+    const handle = this.#handle;
+    if (handle === null) return false;
+    return handle.connected ?? false;
+  }
+
+  get [kHandle]() {
+    return this.#handle;
+  }
+
   spawn(options) {
     validateObject(options, "options");
 
@@ -1226,21 +1222,20 @@ class ChildProcess extends EventEmitter {
     const bunStdio = getBunStdioFromOptions(stdio);
     const argv0 = file || options.argv0;
 
-    // TODO: better ipc support
-    const ipc = $isJSArray(stdio) && stdio[3] === "ipc";
-    var env = options.envPairs || undefined;
+    const has_ipc = $isJSArray(stdio) && stdio[3] === "ipc";
+    var env = options.envPairs || process.env;
+
     const detachedOption = options.detached;
     this.#encoding = options.encoding || undefined;
     this.#stdioOptions = bunStdio;
     const stdioCount = stdio.length;
     const hasSocketsToEagerlyLoad = stdioCount >= 3;
-    this.#closesNeeded = 1;
 
     this.#handle = Bun.spawn({
       cmd: spawnargs,
       stdio: bunStdio,
       cwd: options.cwd || undefined,
-      env: env || process.env,
+      env: env,
       detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
       onExit: (handle, exitCode, signalCode, err) => {
         if (hasSocketsToEagerlyLoad) {
@@ -1258,7 +1253,8 @@ class ChildProcess extends EventEmitter {
         );
       },
       lazy: true,
-      ipc: ipc ? this.#emitIpcMessage.bind(this) : undefined,
+      ipc: has_ipc ? this.#emitIpcMessage.bind(this) : undefined,
+      onDisconnect: has_ipc ? ok => this.#disconnect(ok) : undefined,
       serialization,
       argv0,
       windowsHide: !!options.windowsHide,
@@ -1270,9 +1266,10 @@ class ChildProcess extends EventEmitter {
 
     onSpawnNT(this);
 
-    if (ipc) {
+    if (has_ipc) {
       this.send = this.#send;
       this.disconnect = this.#disconnect;
+      if (options[kFromNode]) this.#closesNeeded += 1;
     }
 
     if (hasSocketsToEagerlyLoad) {
@@ -1324,13 +1321,18 @@ class ChildProcess extends EventEmitter {
     }
   }
 
-  #disconnect() {
-    if (!this.connected) {
-      this.emit("error", new TypeError("Process was closed while trying to send message"));
+  #disconnect(ok) {
+    if (ok == null) {
+      $assert(this.connected);
+      this.#handle.disconnect();
+    } else if (!ok) {
+      this.emit("error", ERR_IPC_DISCONNECTED());
       return;
     }
-    this.connected = false;
     this.#handle.disconnect();
+    $assert(!this.connected);
+    process.nextTick(() => this.emit("disconnect"));
+    this.#maybeClose();
   }
 
   kill(sig?) {
@@ -1940,12 +1942,6 @@ function ERR_CHILD_PROCESS_STDIO_MAXBUFFER(stdio) {
 function ERR_UNKNOWN_SIGNAL(name) {
   const err = new TypeError(`Unknown signal: ${name}`);
   err.code = "ERR_UNKNOWN_SIGNAL";
-  return err;
-}
-
-function ERR_INVALID_ARG_TYPE(name, type, value) {
-  const err = new TypeError(`The "${name}" argument must be of type ${type}. Received ${value?.toString()}`);
-  err.code = "ERR_INVALID_ARG_TYPE";
   return err;
 }
 

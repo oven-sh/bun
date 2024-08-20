@@ -1,4 +1,5 @@
 
+
 #if defined(WIN32)
 
 #include <cstdint>
@@ -266,8 +267,23 @@ extern "C" int __wrap_mknodat(int dirfd, const char* path, __mode_t mode, __dev_
 // macOS
 #if defined(__APPLE__)
 
+#include <version>
 #include <dlfcn.h>
 #include <cstdint>
+#include <cstdarg>
+#include <cstdio>
+#include "headers.h"
+
+void std::__libcpp_verbose_abort(char const* format, ...)
+{
+    va_list list;
+    va_start(list, format);
+    char buffer[1024];
+    size_t len = vsnprintf(buffer, sizeof(buffer), format, list);
+    va_end(list);
+
+    Bun__panic(buffer, len);
+}
 
 extern "C" int pthread_self_is_exiting_np()
 {
@@ -356,6 +372,10 @@ extern "C" int __ulock_wait2(uint32_t operation, void* addr, uint64_t value,
     return ((int (*)(uint32_t, void*, uint64_t, uint64_t, uint64_t))__ulock_wait2_ptr)(operation, addr, value, timeout_ns, value2);
 }
 
+#endif
+
+#ifndef U_SHOW_CPLUSPLUS_API
+#define U_SHOW_CPLUSPLUS_API 0
 #endif
 
 #include <unicode/uchar.h>

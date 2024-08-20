@@ -43,6 +43,20 @@ pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .
 /// FileSystem is a singleton.
 pub const fs_allocator = default_allocator;
 
+pub fn typedAllocator(comptime T: type) std.mem.Allocator {
+    if (heap_breakdown.enabled)
+        return heap_breakdown.allocator(comptime T);
+
+    return default_allocator;
+}
+
+pub inline fn namedAllocator(comptime name: [:0]const u8) std.mem.Allocator {
+    if (heap_breakdown.enabled)
+        return heap_breakdown.namedAllocator(name);
+
+    return default_allocator;
+}
+
 pub const C = @import("root").C;
 pub const sha = @import("./sha.zig");
 pub const FeatureFlags = @import("feature_flags.zig");
@@ -105,17 +119,17 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     /// On Windows, it is always a mistake, as the integer is bitcast of a tagged packed struct.
     ///
     /// TODO(@paperdave): remove this API.
-    pub inline fn int(self: FileDescriptor) std.posix.fd_t {
+    pub fn int(self: FileDescriptor) std.posix.fd_t {
         if (Environment.isWindows)
             @compileError("FileDescriptor.int() is not allowed on Windows.");
         return @intFromEnum(self);
     }
 
-    pub inline fn writeTo(fd: FileDescriptor, writer: anytype, endian: std.builtin.Endian) !void {
+    pub fn writeTo(fd: FileDescriptor, writer: anytype, endian: std.builtin.Endian) !void {
         try writer.writeInt(FileDescriptorInt, @intFromEnum(fd), endian);
     }
 
-    pub inline fn readFrom(reader: anytype, endian: std.builtin.Endian) !FileDescriptor {
+    pub fn readFrom(reader: anytype, endian: std.builtin.Endian) !FileDescriptor {
         return @enumFromInt(try reader.readInt(FileDescriptorInt, endian));
     }
 
@@ -125,35 +139,35 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     /// to Windows' *HANDLE, and casts the types for proper usage.
     ///
     /// This may be needed in places where a FileDescriptor is given to `std` or `kernel32` apis
-    pub inline fn cast(fd: FileDescriptor) std.posix.fd_t {
+    pub fn cast(fd: FileDescriptor) std.posix.fd_t {
         if (!Environment.isWindows) return fd.int();
         // if not having this check, the cast may crash zig compiler?
         if (@inComptime() and fd == invalid_fd) return FDImpl.invalid.system();
-        return FDImpl.decode(fd).system();
+        return fd.impl().system();
     }
 
-    pub inline fn asDir(fd: FileDescriptor) std.fs.Dir {
+    pub fn asDir(fd: FileDescriptor) std.fs.Dir {
         return std.fs.Dir{ .fd = fd.cast() };
     }
 
-    pub inline fn asFile(fd: FileDescriptor) std.fs.File {
+    pub fn asFile(fd: FileDescriptor) std.fs.File {
         return std.fs.File{ .handle = fd.cast() };
     }
 
     pub fn format(fd: FileDescriptor, comptime fmt_: string, options_: std.fmt.FormatOptions, writer: anytype) !void {
-        try FDImpl.format(FDImpl.decode(fd), fmt_, options_, writer);
+        try FDImpl.format(fd.impl(), fmt_, options_, writer);
     }
 
     pub fn assertValid(fd: FileDescriptor) void {
-        FDImpl.decode(fd).assertValid();
+        fd.impl().assertValid();
     }
 
     pub fn isValid(fd: FileDescriptor) bool {
-        return FDImpl.decode(fd).isValid();
+        return fd.impl().isValid();
     }
 
     pub fn assertKind(fd: FileDescriptor, kind: FDImpl.Kind) void {
-        assert(FDImpl.decode(fd).kind == kind);
+        assert(fd.impl().kind == kind);
     }
 
     pub fn cwd() FileDescriptor {
@@ -179,7 +193,7 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
 
     pub fn isStdio(fd: FileDescriptor) bool {
         // fd.assertValid();
-        const decoded = FDImpl.decode(fd);
+        const decoded = fd.impl();
         return switch (Environment.os) {
             else => decoded.value.as_system < 3,
             .windows => switch (decoded.kind) {
@@ -193,6 +207,10 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
 
     pub fn toJS(value: FileDescriptor, global: *JSC.JSGlobalObject) JSC.JSValue {
         return FDImpl.decode(value).toJS(global);
+    }
+
+    pub fn impl(fd: FileDescriptor) FDImpl {
+        return FDImpl.decode(fd);
     }
 };
 
@@ -499,7 +517,7 @@ pub fn fastRandom() u64 {
                 // and we only need to do it once per process
                 var value = seed_value.load(.monotonic);
                 while (value == 0) : (value = seed_value.load(.monotonic)) {
-                    if (comptime Environment.isDebug) outer: {
+                    if (comptime Environment.isDebug or Environment.is_canary) outer: {
                         if (getenvZ("BUN_DEBUG_HASH_RANDOM_SEED")) |env| {
                             value = std.fmt.parseInt(u64, env, 10) catch break :outer;
                             seed_value.store(value, .monotonic);
@@ -1247,11 +1265,11 @@ pub const JSON = @import("./json_parser.zig");
 pub const JSAst = @import("./js_ast.zig");
 pub const bit_set = @import("./bit_set.zig");
 
-pub fn enumMap(comptime T: type, comptime args: anytype) (fn (T) []const u8) {
+pub fn enumMap(comptime T: type, comptime args: anytype) (fn (T) [:0]const u8) {
     const Map = struct {
         const vargs = args;
         const labels = brk: {
-            var vabels_ = std.enums.EnumArray(T, []const u8).initFill("");
+            var vabels_ = std.enums.EnumArray(T, [:0]const u8).initFill("");
             @setEvalBranchQuota(99999);
             for (vargs) |field| {
                 vabels_.set(field.@"0", field.@"1");
@@ -1259,7 +1277,7 @@ pub fn enumMap(comptime T: type, comptime args: anytype) (fn (T) []const u8) {
             break :brk vabels_;
         };
 
-        pub fn get(input: T) []const u8 {
+        pub fn get(input: T) [:0]const u8 {
             return labels.get(input);
         }
     };
@@ -1268,7 +1286,7 @@ pub fn enumMap(comptime T: type, comptime args: anytype) (fn (T) []const u8) {
 }
 
 pub fn ComptimeEnumMap(comptime T: type) type {
-    var entries: [std.enums.values(T).len]struct { string, T } = undefined;
+    var entries: [std.enums.values(T).len]struct { [:0]const u8, T } = undefined;
     for (std.enums.values(T), &entries) |value, *entry| {
         entry.* = .{ .@"0" = @tagName(value), .@"1" = value };
     }
@@ -1516,10 +1534,8 @@ pub const StringJoiner = @import("./StringJoiner.zig");
 pub const NullableAllocator = @import("./NullableAllocator.zig");
 
 pub const renamer = @import("./renamer.zig");
-pub const sourcemap = struct {
-    pub usingnamespace @import("./sourcemap/sourcemap.zig");
-    pub usingnamespace @import("./sourcemap/CodeCoverage.zig");
-};
+// TODO: Rename to SourceMap as this is a struct.
+pub const sourcemap = @import("./sourcemap/sourcemap.zig");
 
 pub fn asByteSlice(buffer: anytype) []const u8 {
     return switch (@TypeOf(buffer)) {
@@ -1859,8 +1875,9 @@ pub const StringMap = struct {
 };
 
 pub const DotEnv = @import("./env_loader.zig");
-pub const BundleV2 = @import("./bundler/bundle_v2.zig").BundleV2;
-pub const ParseTask = @import("./bundler/bundle_v2.zig").ParseTask;
+pub const bundle_v2 = @import("./bundler/bundle_v2.zig");
+pub const BundleV2 = bundle_v2.BundleV2;
+pub const ParseTask = bundle_v2.ParseTask;
 
 pub const Lock = @import("./lock.zig").Lock;
 pub const UnboundedQueue = @import("./bun.js/unbounded_queue.zig").UnboundedQueue;
@@ -1909,15 +1926,17 @@ pub fn Ref(comptime T: type) type {
 pub fn HiveRef(comptime T: type, comptime capacity: u16) type {
     return struct {
         const HiveAllocator = HiveArray(@This(), capacity).Fallback;
-
         ref_count: u32,
         allocator: *HiveAllocator,
         value: T,
+
         pub fn init(value: T, allocator: *HiveAllocator) !*@This() {
-            var this = try allocator.tryGet();
-            this.allocator = allocator;
-            this.ref_count = 1;
-            this.value = value;
+            const this = try allocator.tryGet();
+            this.* = .{
+                .ref_count = 1,
+                .allocator = allocator,
+                .value = value,
+            };
             return this;
         }
 
@@ -1927,8 +1946,9 @@ pub fn HiveRef(comptime T: type, comptime capacity: u16) type {
         }
 
         pub fn unref(this: *@This()) ?*@This() {
-            this.ref_count -= 1;
-            if (this.ref_count == 0) {
+            const ref_count = this.ref_count;
+            this.ref_count = ref_count - 1;
+            if (ref_count == 1) {
                 if (@hasDecl(T, "deinit")) {
                     this.value.deinit();
                 }
@@ -2329,7 +2349,7 @@ pub const win32 = struct {
             if (exit_code == watcher_reload_exit) {
                 continue;
             } else {
-                Global.exitWide(exit_code);
+                Global.exit(exit_code);
             }
         }
     }
@@ -2927,6 +2947,11 @@ pub const heap_breakdown = @import("./heap_breakdown.zig");
 
 /// Globally-allocate a value on the heap.
 ///
+/// **Prefer `bun.New`, `bun.NewRefCounted`, or `bun.NewThreadSafeRefCounted` instead.**
+/// Use this when the struct is a third-party struct you cannot modify, like a
+/// Zig stdlib struct. Choosing the wrong allocator is an easy way to introduce
+/// bugs.
+///
 /// When used, you must call `bun.destroy` to free the memory.
 /// default_allocator.destroy should not be used.
 ///
@@ -2934,7 +2959,7 @@ pub const heap_breakdown = @import("./heap_breakdown.zig");
 /// to dump the heap.
 pub inline fn new(comptime T: type, init: T) *T {
     const ptr = if (heap_breakdown.enabled)
-        heap_breakdown.getZone(T).create(T, init)
+        heap_breakdown.getZoneT(T).create(T, init)
     else ptr: {
         const ptr = default_allocator.create(T) catch outOfMemory();
         ptr.* = init;
@@ -2959,8 +2984,8 @@ pub inline fn destroy(ptr: anytype) void {
         logAlloc("destroy({s}) = {*}", .{ meta.typeName(T), ptr });
     }
 
-    if (heap_breakdown.enabled) {
-        heap_breakdown.getZone(T).destroy(T, ptr);
+    if (comptime heap_breakdown.enabled) {
+        heap_breakdown.getZoneT(T).destroy(T, ptr);
     } else {
         default_allocator.destroy(ptr);
     }
@@ -3240,7 +3265,7 @@ pub fn selfExePath() ![:0]u8 {
             4096 + 1 // + 1 for the null terminator
         ]u8 = undefined;
         var len: usize = 0;
-        var lock = Lock.init();
+        var lock: Lock = .{};
 
         pub fn load() ![:0]u8 {
             const init = try std.fs.selfExePath(&value);
@@ -3309,7 +3334,7 @@ noinline fn assertionFailureWithLocation(src: std.builtin.SourceLocation) noretu
     });
 }
 
-pub inline fn debugAssert(cheap_value_only_plz: bool) void {
+pub fn debugAssert(cheap_value_only_plz: bool) callconv(callconv_inline) void {
     if (comptime !Environment.isDebug) {
         return;
     }
@@ -3342,12 +3367,19 @@ pub fn assertWithLocation(value: bool, src: std.builtin.SourceLocation) callconv
 }
 
 /// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
-pub inline fn assert_eql(a: anytype, b: anytype) void {
+pub fn assert_eql(a: anytype, b: anytype) callconv(callconv_inline) void {
+    if (@inComptime()) {
+        if (a != b) {
+            @compileLog(a);
+            @compileLog(b);
+            @compileError("A != B");
+        }
+    }
     return assert(a == b);
 }
 
 /// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
-pub inline fn assert_neql(a: anytype, b: anytype) void {
+pub fn assert_neql(a: anytype, b: anytype) callconv(callconv_inline) void {
     return assert(a != b);
 }
 
@@ -3614,3 +3646,15 @@ pub fn memmove(output: []u8, input: []const u8) void {
 }
 
 pub const hmac = @import("./hmac.zig");
+pub const libdeflate = @import("./deps/libdeflate.zig");
+
+/// like std.enums.tagName, except it doesn't lose the sentinel value.
+pub fn tagName(comptime Enum: type, value: Enum) ?[:0]const u8 {
+    return inline for (@typeInfo(Enum).Enum.fields) |f| {
+        if (@intFromEnum(value) == f.value) break f.name;
+    } else null;
+}
+extern "C" fn Bun__ramSize() usize;
+pub fn getTotalMemorySize() usize {
+    return Bun__ramSize();
+}

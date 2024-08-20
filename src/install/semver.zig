@@ -609,6 +609,10 @@ pub const Version = extern struct {
         return this.patch == 0 and this.minor == 0 and this.major == 0;
     }
 
+    pub fn parseUTF8(slice: []const u8) ParseResult {
+        return parse(.{ .buf = slice, .slice = slice });
+    }
+
     pub fn cloneInto(this: Version, slice: []const u8, buf: *[]u8) Version {
         return .{
             .major = this.major,
@@ -1864,18 +1868,18 @@ pub const Query = struct {
             try std.json.encodeJsonString(temp, .{}, writer);
         }
 
-        pub fn deinit(this: *Group) void {
+        pub fn deinit(this: *const Group) void {
             var list = this.head;
             var allocator = this.allocator;
 
             while (list.next) |next| {
                 var query = list.head;
                 while (query.next) |next_query| {
-                    allocator.destroy(next_query);
                     query = next_query.*;
+                    allocator.destroy(next_query);
                 }
-                allocator.destroy(next);
                 list = next.*;
+                allocator.destroy(next);
             }
         }
 
@@ -2241,11 +2245,13 @@ pub const Query = struct {
         };
     };
 
+    const ParseError = error{OutOfMemory};
+
     pub fn parse(
         allocator: Allocator,
         input: string,
         sliced: SlicedString,
-    ) !Group {
+    ) ParseError!Group {
         var i: usize = 0;
         var list = Group{
             .allocator = allocator,
@@ -2586,7 +2592,15 @@ pub const SemverObject = struct {
             allocator,
             right.slice(),
             SlicedString.init(right.slice(), right.slice()),
-        ) catch return .false;
+        ) catch |err| {
+            switch (err) {
+                error.OutOfMemory => {
+                    globalThis.throwOutOfMemory();
+                    return .zero;
+                },
+            }
+        };
+        defer right_group.deinit();
 
         const right_version = right_group.getExactVersion();
 

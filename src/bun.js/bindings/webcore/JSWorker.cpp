@@ -131,7 +131,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
     options.bun.unref = false;
 
     if (JSObject* optionsObject = JSC::jsDynamicCast<JSC::JSObject*>(argument1.value())) {
-        if (auto nameValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "name"_s))) {
+        if (auto nameValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->name)) {
             if (nameValue.isString()) {
                 options.name = nameValue.toWTFString(lexicalGlobalObject);
                 RETURN_IF_EXCEPTION(throwScope, encodedJSValue());

@@ -824,12 +824,19 @@ pub const Api = struct {
         }
     };
 
-    pub const StringPointer = packed struct {
+    /// Represents a slice stored within an externally stored buffer. Safe to serialize.
+    /// Must be an extern struct to match with `headers-handwritten.h`.
+    pub const StringPointer = extern struct {
         /// offset
         offset: u32 = 0,
 
         /// length
         length: u32 = 0,
+
+        comptime {
+            bun.assert(@alignOf(StringPointer) == @alignOf(u32));
+            bun.assert(@sizeOf(StringPointer) == @sizeOf(u64));
+        }
 
         pub fn decode(reader: anytype) anyerror!StringPointer {
             var this = std.mem.zeroes(StringPointer);
@@ -842,6 +849,10 @@ pub const Api = struct {
         pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
             try writer.writeInt(this.offset);
             try writer.writeInt(this.length);
+        }
+
+        pub fn slice(this: @This(), bytes: []const u8) []const u8 {
+            return bytes[this.offset .. this.offset + this.length];
         }
     };
 
@@ -1684,6 +1695,12 @@ pub const Api = struct {
         /// conditions
         conditions: []const []const u8,
 
+        /// packages
+        packages: ?PackagesMode = null,
+
+        /// ignore_dce_annotations
+        ignore_dce_annotations: bool,
+
         pub fn decode(reader: anytype) anyerror!TransformOptions {
             var this = std.mem.zeroes(TransformOptions);
 
@@ -1770,6 +1787,9 @@ pub const Api = struct {
                     },
                     26 => {
                         this.conditions = try reader.readArray([]const u8);
+                    },
+                    27 => {
+                        this.packages = try reader.readValue(PackagesMode);
                     },
                     else => {
                         return error.InvalidMessage;
@@ -1886,6 +1906,11 @@ pub const Api = struct {
                 try writer.writeArray([]const u8, conditions);
             }
 
+            if (this.packages) |packages| {
+                try writer.writeFieldID(27);
+                try writer.writeValue([]const u8, packages);
+            }
+
             try writer.endMessage();
         }
     };
@@ -1900,6 +1925,20 @@ pub const Api = struct {
         external,
 
         linked,
+
+        _,
+
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
+        }
+    };
+
+    pub const PackagesMode = enum(u8) {
+        /// bundle
+        bundle,
+
+        /// external
+        external,
 
         _,
 

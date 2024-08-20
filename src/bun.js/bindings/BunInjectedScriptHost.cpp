@@ -33,7 +33,7 @@ JSValue BunInjectedScriptHost::subtype(JSGlobalObject* exec, JSValue value)
 static JSObject* constructInternalProperty(VM& vm, JSGlobalObject* exec, const String& name, JSValue value)
 {
     auto* object = constructEmptyObject(exec);
-    object->putDirect(vm, Identifier::fromString(vm, "name"_s), jsString(vm, name));
+    object->putDirect(vm, vm.propertyNames->name, jsString(vm, name));
     object->putDirect(vm, Identifier::fromString(vm, "value"_s), value);
     return object;
 }
@@ -41,7 +41,7 @@ static JSObject* constructInternalProperty(VM& vm, JSGlobalObject* exec, const S
 static JSObject* constructInternalProperty(VM& vm, JSGlobalObject* exec, const Identifier& name, JSValue value)
 {
     auto* object = constructEmptyObject(exec);
-    object->putDirect(vm, Identifier::fromString(vm, "name"_s), JSC::identifierToJSValue(vm, name));
+    object->putDirect(vm, vm.propertyNames->name, JSC::identifierToJSValue(vm, name));
     object->putDirect(vm, Identifier::fromString(vm, "value"_s), value);
     return object;
 }

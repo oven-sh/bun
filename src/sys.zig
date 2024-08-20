@@ -366,12 +366,12 @@ pub const Error = struct {
 
                 break :brk @as(C.SystemErrno, @enumFromInt(this.errno));
             };
-            if (std.enums.tagName(bun.C.SystemErrno, system_errno)) |errname| {
+            if (bun.tagName(bun.C.SystemErrno, system_errno)) |errname| {
                 return errname;
             }
         } else if (this.errno > 0 and this.errno < C.SystemErrno.max) {
             const system_errno = @as(C.SystemErrno, @enumFromInt(this.errno));
-            if (std.enums.tagName(bun.C.SystemErrno, system_errno)) |errname| {
+            if (bun.tagName(bun.C.SystemErrno, system_errno)) |errname| {
                 return errname;
             }
         }
@@ -408,7 +408,7 @@ pub const Error = struct {
 
                 break :brk @as(C.SystemErrno, @enumFromInt(this.errno));
             };
-            if (std.enums.tagName(bun.C.SystemErrno, system_errno)) |errname| {
+            if (bun.tagName(bun.C.SystemErrno, system_errno)) |errname| {
                 err.code = bun.String.static(errname);
                 if (C.SystemErrno.labels.get(system_errno)) |label| {
                     err.message = bun.String.static(label);
@@ -776,11 +776,22 @@ pub fn normalizePathWindows(
     var path = if (T == u16) path_ else bun.strings.convertUTF8toUTF16InBuffer(&wbuf, path_);
 
     if (std.fs.path.isAbsoluteWindowsWTF16(path)) {
+        // handle the special "nul" device
+        // we technically should handle the other DOS devices too.
+        if (path_.len >= "\\nul".len and
+            (bun.strings.eqlComptimeT(T, path_[path_.len - "\\nul".len ..], "\\nul") or
+            bun.strings.eqlComptimeT(T, path_[path_.len - "\\NUL".len ..], "\\NUL")))
+        {
+            @memcpy(buf[0..bun.strings.w("\\??\\NUL").len], bun.strings.w("\\??\\NUL"));
+            buf[bun.strings.w("\\??\\NUL").len] = 0;
+            return .{ .result = buf[0..bun.strings.w("\\??\\NUL").len :0] };
+        }
+
         const norm = bun.path.normalizeStringGenericTZ(u16, path, buf, .{ .add_nt_prefix = true, .zero_terminate = true });
         return .{ .result = norm };
     }
 
-    if (std.mem.indexOfAny(T, path_, &.{ '\\', '/', '.' }) == null) {
+    if (bun.strings.indexOfAnyT(T, path_, &.{ '\\', '/', '.' }) == null) {
         if (buf.len < path.len) {
             return .{
                 .err = .{
@@ -1857,7 +1868,8 @@ pub fn renameatConcurrentlyWithoutFallback(
             var err = switch (bun.sys.renameat2(from_dir_fd, from, to_dir_fd, to, .{
                 .exclude = true,
             })) {
-                .err => |err| err,
+                // if ENOENT don't retry
+                .err => |err| if (err.getErrno() == .NOENT) return .{ .err = err } else err,
                 .result => break :attempt_atomic_rename_and_fallback_to_racy_delete,
             };
 
@@ -1882,8 +1894,12 @@ pub fn renameatConcurrentlyWithoutFallback(
         }
 
         //  sad path: let's try to delete the folder and then rename it
-        var to_dir = to_dir_fd.asDir();
-        to_dir.deleteTree(to) catch {};
+        if (to_dir_fd.isValid()) {
+            var to_dir = to_dir_fd.asDir();
+            to_dir.deleteTree(to) catch {};
+        } else {
+            std.fs.deleteTreeAbsolute(to) catch {};
+        }
         switch (bun.sys.renameat(from_dir_fd, from, to_dir_fd, to)) {
             .err => |err| {
                 return .{ .err = err };

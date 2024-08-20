@@ -9,6 +9,8 @@ const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const Syscall = bun.sys;
+const SourceMap = bun.sourcemap;
+const StringPointer = bun.StringPointer;
 
 const w = std.os.windows;
 
@@ -33,6 +35,8 @@ pub const StandaloneModuleGraph = struct {
 
     pub const base_public_path = targetBasePublicPath(Environment.os, "");
 
+    pub const base_public_path_with_default_suffix = targetBasePublicPath(Environment.os, "root/");
+
     pub fn targetBasePublicPath(target: Environment.OperatingSystem, comptime suffix: [:0]const u8) [:0]const u8 {
         return switch (target) {
             .windows => "B:/~BUN/" ++ suffix,
@@ -54,6 +58,11 @@ pub const StandaloneModuleGraph = struct {
         if (!isBunStandaloneFilePath(base_path)) {
             return null;
         }
+
+        return this.findAssumeStandalonePath(name);
+    }
+
+    pub fn findAssumeStandalonePath(this: *const StandaloneModuleGraph, name: []const u8) ?*File {
         if (Environment.isWindows) {
             var normalized_buf: bun.PathBuffer = undefined;
             const normalized = bun.path.platformToPosixBuf(u8, name, &normalized_buf);
@@ -64,21 +73,55 @@ pub const StandaloneModuleGraph = struct {
 
     pub const CompiledModuleGraphFile = struct {
         name: Schema.StringPointer = .{},
-        loader: bun.options.Loader = .file,
         contents: Schema.StringPointer = .{},
         sourcemap: Schema.StringPointer = .{},
+        encoding: Encoding = .latin1,
+        loader: bun.options.Loader = .file,
+    };
+
+    pub const Encoding = enum(u8) {
+        binary = 0,
+
+        latin1 = 1,
+
+        // Not used yet.
+        utf8 = 2,
     };
 
     pub const File = struct {
         name: []const u8 = "",
         loader: bun.options.Loader,
-        contents: []const u8 = "",
+        contents: [:0]const u8 = "",
         sourcemap: LazySourceMap,
         cached_blob: ?*bun.JSC.WebCore.Blob = null,
+        encoding: Encoding = .binary,
+        wtf_string: bun.String = bun.String.empty,
+
+        pub fn lessThanByIndex(ctx: []const File, lhs_i: u32, rhs_i: u32) bool {
+            const lhs = ctx[lhs_i];
+            const rhs = ctx[rhs_i];
+            return bun.strings.cmpStringsAsc({}, lhs.name, rhs.name);
+        }
+
+        pub fn toWTFString(this: *File) bun.String {
+            if (this.wtf_string.isEmpty()) {
+                switch (this.encoding) {
+                    .binary, .utf8 => {
+                        this.wtf_string = bun.String.createUTF8(this.contents);
+                    },
+                    .latin1 => {
+                        this.wtf_string = bun.String.createStaticExternal(this.contents, true);
+                    },
+                }
+            }
+
+            // We don't want this to free.
+            return this.wtf_string.dupeRef();
+        }
 
         pub fn blob(this: *File, globalObject: *bun.JSC.JSGlobalObject) *bun.JSC.WebCore.Blob {
             if (this.cached_blob == null) {
-                var store = bun.JSC.WebCore.Blob.Store.init(@constCast(this.contents), bun.default_allocator);
+                const store = bun.JSC.WebCore.Blob.Store.init(@constCast(this.contents), bun.default_allocator);
                 // make it never free
                 store.ref();
 
@@ -92,7 +135,15 @@ pub const StandaloneModuleGraph = struct {
                     b.content_type_allocated = false;
                 }
 
+                // The real name goes here:
                 store.data.bytes.stored_name = bun.PathString.init(this.name);
+
+                // The pretty name goes here:
+                if (strings.hasPrefixComptime(this.name, base_public_path_with_default_suffix)) {
+                    b.name = bun.String.createUTF8(this.name[base_public_path_with_default_suffix.len..]);
+                } else if (this.name.len > 0) {
+                    b.name = bun.String.createUTF8(this.name);
+                }
 
                 this.cached_blob = b;
             }
@@ -102,24 +153,61 @@ pub const StandaloneModuleGraph = struct {
     };
 
     pub const LazySourceMap = union(enum) {
-        compressed: []const u8,
-        decompressed: bun.sourcemap,
+        serialized: SerializedSourceMap,
+        parsed: *SourceMap.ParsedSourceMap,
+        none,
 
-        pub fn load(this: *LazySourceMap, log: *bun.logger.Log, allocator: std.mem.Allocator) !*bun.sourcemap {
-            if (this.* == .decompressed) return &this.decompressed;
+        /// It probably is not possible to run two decoding jobs on the same file
+        var init_lock: bun.Lock = .{};
 
-            var decompressed = try allocator.alloc(u8, bun.zstd.getDecompressedSize(this.compressed));
-            const result = bun.zstd.decompress(decompressed, this.compressed);
-            if (result == .err) {
-                allocator.free(decompressed);
-                log.addError(null, bun.logger.Loc.Empty, bun.span(result.err)) catch unreachable;
-                return error.@"Failed to decompress sourcemap";
-            }
-            errdefer allocator.free(decompressed);
-            const bytes = decompressed[0..result.success];
+        pub fn load(this: *LazySourceMap) ?*SourceMap.ParsedSourceMap {
+            init_lock.lock();
+            defer init_lock.unlock();
 
-            this.* = .{ .decompressed = try bun.sourcemap.parse(allocator, &bun.logger.Source.initPathString("sourcemap.json", bytes), log) };
-            return &this.decompressed;
+            return switch (this.*) {
+                .none => null,
+                .parsed => |map| map,
+                .serialized => |serialized| {
+                    var stored = switch (SourceMap.Mapping.parse(
+                        bun.default_allocator,
+                        serialized.mappingVLQ(),
+                        null,
+                        std.math.maxInt(i32),
+                        std.math.maxInt(i32),
+                    )) {
+                        .success => |x| x,
+                        .fail => {
+                            this.* = .none;
+                            return null;
+                        },
+                    };
+
+                    const source_files = serialized.sourceFileNames();
+                    const slices = bun.default_allocator.alloc(?[]u8, source_files.len * 2) catch bun.outOfMemory();
+
+                    const file_names: [][]const u8 = @ptrCast(slices[0..source_files.len]);
+                    const decompressed_contents_slice = slices[source_files.len..][0..source_files.len];
+                    for (file_names, source_files) |*dest, src| {
+                        dest.* = src.slice(serialized.bytes);
+                    }
+
+                    @memset(decompressed_contents_slice, null);
+
+                    const data = bun.new(SerializedSourceMap.Loaded, .{
+                        .map = serialized,
+                        .decompressed_files = decompressed_contents_slice,
+                    });
+
+                    stored.external_source_names = file_names;
+                    stored.underlying_provider = .{ .data = @truncate(@intFromPtr(data)) };
+                    stored.is_standalone_module_graph = true;
+
+                    const parsed = stored.new(); // allocate this on the heap
+                    parsed.ref(); // never free
+                    this.* = .{ .parsed = parsed };
+                    return parsed;
+                },
+            };
         }
     };
 
@@ -131,7 +219,7 @@ pub const StandaloneModuleGraph = struct {
 
     const trailer = "\n---- Bun! ----\n";
 
-    pub fn fromBytes(allocator: std.mem.Allocator, raw_bytes: []const u8, offsets: Offsets) !StandaloneModuleGraph {
+    pub fn fromBytes(allocator: std.mem.Allocator, raw_bytes: []u8, offsets: Offsets) !StandaloneModuleGraph {
         if (raw_bytes.len == 0) return StandaloneModuleGraph{
             .files = bun.StringArrayHashMap(File).init(allocator),
         };
@@ -147,17 +235,22 @@ pub const StandaloneModuleGraph = struct {
         try modules.ensureTotalCapacity(modules_list.len);
         for (modules_list) |module| {
             modules.putAssumeCapacity(
-                sliceTo(raw_bytes, module.name),
+                sliceToZ(raw_bytes, module.name),
                 File{
-                    .name = sliceTo(raw_bytes, module.name),
+                    .name = sliceToZ(raw_bytes, module.name),
                     .loader = module.loader,
-                    .contents = sliceTo(raw_bytes, module.contents),
-                    .sourcemap = LazySourceMap{
-                        .compressed = sliceTo(raw_bytes, module.sourcemap),
-                    },
+                    .contents = sliceToZ(raw_bytes, module.contents),
+                    .sourcemap = if (module.sourcemap.length > 0)
+                        .{ .serialized = .{
+                            .bytes = @alignCast(sliceTo(raw_bytes, module.sourcemap)),
+                        } }
+                    else
+                        .none,
                 },
             );
         }
+
+        modules.lockPointers(); // make the pointers stable forever
 
         return StandaloneModuleGraph{
             .bytes = raw_bytes[0..offsets.byte_count],
@@ -172,18 +265,29 @@ pub const StandaloneModuleGraph = struct {
         return bytes[ptr.offset..][0..ptr.length];
     }
 
+    fn sliceToZ(bytes: []const u8, ptr: bun.StringPointer) [:0]const u8 {
+        if (ptr.length == 0) return "";
+
+        return bytes[ptr.offset..][0..ptr.length :0];
+    }
+
     pub fn toBytes(allocator: std.mem.Allocator, prefix: []const u8, output_files: []const bun.options.OutputFile) ![]u8 {
         var serialize_trace = bun.tracy.traceNamed(@src(), "StandaloneModuleGraph.serialize");
         defer serialize_trace.end();
+
         var entry_point_id: ?usize = null;
         var string_builder = bun.StringBuilder{};
         var module_count: usize = 0;
         for (output_files, 0..) |output_file, i| {
-            string_builder.count(output_file.dest_path);
-            string_builder.count(prefix);
+            string_builder.countZ(output_file.dest_path);
+            string_builder.countZ(prefix);
             if (output_file.value == .buffer) {
                 if (output_file.output_kind == .sourcemap) {
-                    string_builder.cap += bun.zstd.compressBound(output_file.value.buffer.bytes.len);
+                    // This is an over-estimation to ensure that we allocate
+                    // enough memory for the source-map contents. Calculating
+                    // the exact amount is not possible without allocating as it
+                    // involves a JSON parser.
+                    string_builder.cap += output_file.value.buffer.bytes.len * 2;
                 } else {
                     if (entry_point_id == null) {
                         if (output_file.output_kind == .@"entry-point") {
@@ -191,7 +295,7 @@ pub const StandaloneModuleGraph = struct {
                         }
                     }
 
-                    string_builder.count(output_file.value.buffer.bytes);
+                    string_builder.countZ(output_file.value.buffer.bytes);
                     module_count += 1;
                 }
             }
@@ -202,15 +306,18 @@ pub const StandaloneModuleGraph = struct {
         string_builder.cap += @sizeOf(CompiledModuleGraphFile) * output_files.len;
         string_builder.cap += trailer.len;
         string_builder.cap += 16;
-
-        {
-            var offsets_ = Offsets{};
-            string_builder.cap += std.mem.asBytes(&offsets_).len;
-        }
+        string_builder.cap += @sizeOf(Offsets);
 
         try string_builder.allocate(allocator);
 
         var modules = try std.ArrayList(CompiledModuleGraphFile).initCapacity(allocator, module_count);
+
+        var source_map_header_list = std.ArrayList(u8).init(allocator);
+        defer source_map_header_list.deinit();
+        var source_map_string_list = std.ArrayList(u8).init(allocator);
+        defer source_map_string_list.deinit();
+        var source_map_arena = bun.ArenaAllocator.init(allocator);
+        defer source_map_arena.deinit();
 
         for (output_files) |output_file| {
             if (output_file.output_kind == .sourcemap) {
@@ -224,25 +331,36 @@ pub const StandaloneModuleGraph = struct {
             const dest_path = bun.strings.removeLeadingDotSlash(output_file.dest_path);
 
             var module = CompiledModuleGraphFile{
-                .name = string_builder.fmtAppendCount("{s}{s}", .{
+                .name = string_builder.fmtAppendCountZ("{s}{s}", .{
                     prefix,
                     dest_path,
                 }),
                 .loader = output_file.loader,
-                .contents = string_builder.appendCount(output_file.value.buffer.bytes),
+                .contents = string_builder.appendCountZ(output_file.value.buffer.bytes),
+                .encoding = switch (output_file.loader) {
+                    .js, .jsx, .ts, .tsx => .latin1,
+                    else => .binary,
+                },
             };
             if (output_file.source_map_index != std.math.maxInt(u32)) {
-                const remaining_slice = string_builder.allocatedSlice()[string_builder.len..];
-                const compressed_result = bun.zstd.compress(remaining_slice, output_files[output_file.source_map_index].value.buffer.bytes, 1);
-                if (compressed_result == .err) {
-                    bun.Output.panic("Unexpected error compressing sourcemap: {s}", .{bun.span(compressed_result.err)});
-                }
-                module.sourcemap = string_builder.add(compressed_result.success);
+                defer source_map_header_list.clearRetainingCapacity();
+                defer source_map_string_list.clearRetainingCapacity();
+                _ = source_map_arena.reset(.retain_capacity);
+                try serializeJsonSourceMapForStandalone(
+                    &source_map_header_list,
+                    &source_map_string_list,
+                    source_map_arena.allocator(),
+                    output_files[output_file.source_map_index].value.buffer.bytes,
+                );
+                module.sourcemap = string_builder.addConcat(&.{
+                    source_map_header_list.items,
+                    source_map_string_list.items,
+                });
             }
             modules.appendAssumeCapacity(module);
         }
 
-        var offsets = Offsets{
+        const offsets = Offsets{
             .entry_point_id = @as(u32, @truncate(entry_point_id.?)),
             .modules_ptr = string_builder.appendCount(std.mem.sliceAsBytes(modules.items)),
             .byte_count = string_builder.len,
@@ -251,7 +369,20 @@ pub const StandaloneModuleGraph = struct {
         _ = string_builder.append(std.mem.asBytes(&offsets));
         _ = string_builder.append(trailer);
 
-        return string_builder.ptr.?[0..string_builder.len];
+        const output_bytes = string_builder.ptr.?[0..string_builder.len];
+
+        if (comptime Environment.isDebug) {
+            // An expensive sanity check:
+            var graph = try fromBytes(allocator, @alignCast(output_bytes), offsets);
+            defer {
+                graph.files.unlockPointers();
+                graph.files.deinit();
+            }
+
+            bun.assert_eql(graph.files.count(), modules.items.len);
+        }
+
+        return output_bytes;
     }
 
     const page_size = if (Environment.isLinux and Environment.isAarch64)
@@ -776,5 +907,173 @@ pub const StandaloneModuleGraph = struct {
             },
             else => @compileError("TODO"),
         }
+    }
+
+    /// Source map serialization in the bundler is specially designed to be
+    /// loaded in memory as is. Source contents are compressed with ZSTD to
+    /// reduce the file size, and mappings are stored as uncompressed VLQ.
+    pub const SerializedSourceMap = struct {
+        bytes: []const u8,
+
+        /// Following the header bytes:
+        /// - source_files_count number of StringPointer, file names
+        /// - source_files_count number of StringPointer, zstd compressed contents
+        /// - the mapping data, `map_vlq_length` bytes
+        /// - all the StringPointer contents
+        pub const Header = extern struct {
+            source_files_count: u32,
+            map_bytes_length: u32,
+        };
+
+        pub fn header(map: SerializedSourceMap) *align(1) const Header {
+            return @ptrCast(map.bytes.ptr);
+        }
+
+        pub fn mappingVLQ(map: SerializedSourceMap) []const u8 {
+            const head = map.header();
+            const start = @sizeOf(Header) + head.source_files_count * @sizeOf(StringPointer) * 2;
+            return map.bytes[start..][0..head.map_bytes_length];
+        }
+
+        pub fn sourceFileNames(map: SerializedSourceMap) []align(1) const StringPointer {
+            const head = map.header();
+            return @as([*]align(1) const StringPointer, @ptrCast(map.bytes[@sizeOf(Header)..]))[0..head.source_files_count];
+        }
+
+        fn compressedSourceFiles(map: SerializedSourceMap) []align(1) const StringPointer {
+            const head = map.header();
+            return @as([*]align(1) const StringPointer, @ptrCast(map.bytes[@sizeOf(Header)..]))[head.source_files_count..][0..head.source_files_count];
+        }
+
+        /// Once loaded, this map stores additional data for keeping track of source code.
+        pub const Loaded = struct {
+            map: SerializedSourceMap,
+
+            /// Only decompress source code once! Once a file is decompressed,
+            /// it is stored here. Decompression failures are stored as an empty
+            /// string, which will be treated as "no contents".
+            decompressed_files: []?[]u8,
+
+            pub fn sourceFileContents(this: Loaded, index: usize) ?[]const u8 {
+                if (this.decompressed_files[index]) |decompressed| {
+                    return if (decompressed.len == 0) null else decompressed;
+                }
+
+                const compressed_codes = this.map.compressedSourceFiles();
+                const compressed_file = compressed_codes[@intCast(index)].slice(this.map.bytes);
+                const size = bun.zstd.getDecompressedSize(compressed_file);
+
+                const bytes = bun.default_allocator.alloc(u8, size) catch bun.outOfMemory();
+                const result = bun.zstd.decompress(bytes, compressed_file);
+
+                if (result == .err) {
+                    bun.Output.warn("Source map decompression error: {s}", .{result.err});
+                    bun.default_allocator.free(bytes);
+                    this.decompressed_files[index] = "";
+                    return null;
+                }
+
+                const data = bytes[0..result.success];
+                this.decompressed_files[index] = data;
+                return data;
+            }
+        };
+    };
+
+    pub fn serializeJsonSourceMapForStandalone(
+        header_list: *std.ArrayList(u8),
+        string_payload: *std.ArrayList(u8),
+        arena: std.mem.Allocator,
+        json_source: []const u8,
+    ) !void {
+        const out = header_list.writer();
+        const json_src = bun.logger.Source.initPathString("sourcemap.json", json_source);
+        var log = bun.logger.Log.init(arena);
+        defer log.deinit();
+
+        // the allocator given to the JS parser is not respected for all parts
+        // of the parse, so we need to remember to reset the ast store
+        bun.JSAst.Expr.Data.Store.reset();
+        bun.JSAst.Stmt.Data.Store.reset();
+        defer {
+            bun.JSAst.Expr.Data.Store.reset();
+            bun.JSAst.Stmt.Data.Store.reset();
+        }
+        var json = bun.JSON.ParseJSON(&json_src, &log, arena) catch
+            return error.InvalidSourceMap;
+
+        const mappings_str = json.get("mappings") orelse
+            return error.InvalidSourceMap;
+        if (mappings_str.data != .e_string)
+            return error.InvalidSourceMap;
+        const sources_content = switch ((json.get("sourcesContent") orelse return error.InvalidSourceMap).data) {
+            .e_array => |arr| arr,
+            else => return error.InvalidSourceMap,
+        };
+        const sources_paths = switch ((json.get("sources") orelse return error.InvalidSourceMap).data) {
+            .e_array => |arr| arr,
+            else => return error.InvalidSourceMap,
+        };
+        if (sources_content.items.len != sources_paths.items.len) {
+            return error.InvalidSourceMap;
+        }
+
+        const map_vlq: []const u8 = mappings_str.data.e_string.slice(arena);
+
+        try out.writeInt(u32, sources_paths.items.len, .little);
+        try out.writeInt(u32, @intCast(map_vlq.len), .little);
+
+        const string_payload_start_location = @sizeOf(u32) +
+            @sizeOf(u32) +
+            @sizeOf(bun.StringPointer) * sources_content.items.len * 2 + // path + source
+            map_vlq.len;
+
+        for (sources_paths.items.slice()) |item| {
+            if (item.data != .e_string)
+                return error.InvalidSourceMap;
+
+            const decoded = try item.data.e_string.stringDecodedUTF8(arena);
+
+            const offset = string_payload.items.len;
+            try string_payload.appendSlice(decoded);
+
+            const slice = bun.StringPointer{
+                .offset = @intCast(offset + string_payload_start_location),
+                .length = @intCast(string_payload.items.len - offset),
+            };
+            try out.writeInt(u32, slice.offset, .little);
+            try out.writeInt(u32, slice.length, .little);
+        }
+
+        for (sources_content.items.slice()) |item| {
+            if (item.data != .e_string)
+                return error.InvalidSourceMap;
+
+            const utf8 = try item.data.e_string.stringDecodedUTF8(arena);
+            defer arena.free(utf8);
+
+            const offset = string_payload.items.len;
+
+            const bound = bun.zstd.compressBound(utf8.len);
+            try string_payload.ensureUnusedCapacity(bound);
+
+            const unused = string_payload.unusedCapacitySlice();
+            const compressed_result = bun.zstd.compress(unused, utf8, 1);
+            if (compressed_result == .err) {
+                bun.Output.panic("Unexpected error compressing sourcemap: {s}", .{bun.span(compressed_result.err)});
+            }
+            string_payload.items.len += compressed_result.success;
+
+            const slice = bun.StringPointer{
+                .offset = @intCast(offset + string_payload_start_location),
+                .length = @intCast(string_payload.items.len - offset),
+            };
+            try out.writeInt(u32, slice.offset, .little);
+            try out.writeInt(u32, slice.length, .little);
+        }
+
+        try out.writeAll(map_vlq);
+
+        bun.assert(header_list.items.len == string_payload_start_location);
     }
 };

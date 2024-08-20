@@ -145,7 +145,7 @@ pub const FFI = struct {
     ) callconv(.C) JSValue {
         JSC.markBinding(@src());
         if (this.closed) {
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
         this.closed = true;
         if (this.dylib) |*dylib| {
@@ -160,7 +160,7 @@ pub const FFI = struct {
         }
         this.functions.deinit(allocator);
 
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
 
     pub fn printCallback(global: *JSGlobalObject, object: JSC.JSValue) JSValue {
@@ -326,7 +326,7 @@ pub const FFI = struct {
                 break :brk std.DynLib.open(backup_name) catch {
                     // Then, if that fails, report an error.
                     const system_error = JSC.SystemError{
-                        .code = bun.String.createUTF8(@tagName(JSC.Node.ErrorCode.ERR_DLOPEN_FAILED)),
+                        .code = bun.String.createUTF8(@tagName(.ERR_DLOPEN_FAILED)),
                         .message = bun.String.createUTF8("Failed to open library. This is usually caused by a missing library or an invalid library path."),
                         .syscall = bun.String.createUTF8("dlopen"),
                     };
@@ -568,7 +568,7 @@ pub const FFI = struct {
                 defer type_name.deinit();
                 abi_types.appendAssumeCapacity(ABIType.label.get(type_name.slice()) orelse {
                     abi_types.clearAndFree(allocator);
-                    return JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE, "Unknown type {s}", .{type_name.slice()}, global);
+                    return JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "Unknown type {s}", .{type_name.slice()}, global);
                 });
             }
         }
@@ -600,7 +600,7 @@ pub const FFI = struct {
             defer ret_slice.deinit();
             return_type = ABIType.label.get(ret_slice.slice()) orelse {
                 abi_types.clearAndFree(allocator);
-                return JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE, "Unknown return type {s}", .{ret_slice.slice()}, global);
+                return JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "Unknown return type {s}", .{ret_slice.slice()}, global);
             };
         }
 
@@ -648,7 +648,7 @@ pub const FFI = struct {
             const value = symbols_iter.value;
 
             if (value.isEmptyOrUndefinedOrNull()) {
-                return JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE, "Expected an object for key \"{any}\"", .{prop}, global);
+                return JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "Expected an object for key \"{any}\"", .{prop}, global);
             }
 
             var function: Function = .{};

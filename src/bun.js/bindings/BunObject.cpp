@@ -49,6 +49,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__lookupService);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__prefetch);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__getCacheStats);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetch);
+BUN_DECLARE_HOST_FUNCTION(Bun__fetchPreconnect);
 
 namespace Bun {
 
@@ -267,12 +268,23 @@ static JSValue constructPasswordObject(VM& vm, JSObject* bunObject)
     return JSValue::decode(JSPasswordObject__create(bunObject->globalObject()));
 }
 
+JSValue constructBunFetchObject(VM& vm, JSObject* bunObject)
+{
+    JSFunction* fetchFn = JSFunction::create(vm, bunObject->globalObject(), 1, "fetch"_s, Bun__fetch, ImplementationVisibility::Public, NoIntrinsic);
+
+    auto* globalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
+    fetchFn->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "preconnect"_s), 1, Bun__fetchPreconnect, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+
+    return fetchFn;
+}
+
 static JSValue constructBunShell(VM& vm, JSObject* bunObject)
 {
     auto* globalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
     JSFunction* createParsedShellScript = JSFunction::create(vm, bunObject->globalObject(), 2, "createParsedShellScript"_s, BunObject_callback_createParsedShellScript, ImplementationVisibility::Private, NoIntrinsic);
     JSFunction* createShellInterpreterFunction = JSFunction::create(vm, bunObject->globalObject(), 1, "createShellInterpreter"_s, BunObject_callback_createShellInterpreter, ImplementationVisibility::Private, NoIntrinsic);
-    JSC::JSFunction* createShellFn = JSC::JSFunction::create(vm, shellCreateBunShellTemplateFunctionCodeGenerator(vm), globalObject);
+    JSC::JSFunction* createShellFn = JSC::JSFunction::create(vm, globalObject, shellCreateBunShellTemplateFunctionCodeGenerator(vm), globalObject);
 
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto args = JSC::MarkedArgumentBuffer();
@@ -299,7 +311,7 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
     JSC::JSObject* dnsObject = JSC::constructEmptyObject(globalObject);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "lookup"_s), 2, Bun__DNSResolver__lookup, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, builtinNames(vm).resolvePublicName(), 2, Bun__DNSResolver__resolve, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, vm.propertyNames->resolve, 2, Bun__DNSResolver__resolve, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveSrv"_s), 2, Bun__DNSResolver__resolveSrv, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
@@ -336,8 +348,8 @@ static JSValue constructBunPeekObject(VM& vm, JSObject* bunObject)
 {
     JSGlobalObject* globalObject = bunObject->globalObject();
     JSC::Identifier identifier = JSC::Identifier::fromString(vm, "peek"_s);
-    JSFunction* peekFunction = JSFunction::create(vm, peekPeekCodeGenerator(vm), globalObject->globalScope());
-    JSFunction* peekStatus = JSFunction::create(vm, peekPeekStatusCodeGenerator(vm), globalObject->globalScope());
+    JSFunction* peekFunction = JSFunction::create(vm, globalObject, peekPeekCodeGenerator(vm), globalObject->globalScope());
+    JSFunction* peekStatus = JSFunction::create(vm, globalObject, peekPeekStatusCodeGenerator(vm), globalObject->globalScope());
     peekFunction->putDirect(vm, PropertyName(JSC::Identifier::fromString(vm, "status"_s)), peekStatus, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
 
     return peekFunction;
@@ -541,6 +553,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     SHA512_256                                     BunObject_getter_wrap_SHA512_256                                    DontDelete|PropertyCallback
     TOML                                           BunObject_getter_wrap_TOML                                          DontDelete|PropertyCallback
     Transpiler                                     BunObject_getter_wrap_Transpiler                                    DontDelete|PropertyCallback
+    embeddedFiles                                  BunObject_getter_wrap_embeddedFiles                                 DontDelete|PropertyCallback
     allocUnsafe                                    BunObject_callback_allocUnsafe                                      DontDelete|Function 1
     argv                                           BunObject_getter_wrap_argv                                          DontDelete|PropertyCallback
     build                                          BunObject_callback_build                                            DontDelete|Function 1
@@ -549,14 +562,14 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     cwd                                            BunObject_getter_wrap_cwd                                           DontEnum|DontDelete|PropertyCallback
     deepEquals                                     functionBunDeepEquals                                               DontDelete|Function 2
     deepMatch                                      functionBunDeepMatch                                                DontDelete|Function 2
-    deflateSync                                    BunObject_callback_deflateSync                                      DontDelete|Function 1
+    deflateSync                                    BunObject_callback_deflateSync                                        DontDelete|Function 1
     dns                                            constructDNSObject                                                  ReadOnly|DontDelete|PropertyCallback
     enableANSIColors                               BunObject_getter_wrap_enableANSIColors                              DontDelete|PropertyCallback
     env                                            constructEnvObject                                                  ReadOnly|DontDelete|PropertyCallback
     escapeHTML                                     functionBunEscapeHTML                                               DontDelete|Function 2
-    fetch                                          Bun__fetch                                                          ReadOnly|DontDelete|Function 1
-    file                                           BunObject_callback_file                                             DontDelete|Function 1
-    fileURLToPath                                  functionFileURLToPath                                               DontDelete|Function 1
+    fetch                                         constructBunFetchObject                                              ReadOnly|DontDelete|PropertyCallback
+    file                                           BunObject_callback_file                                               DontDelete|Function 1
+    fileURLToPath                                  functionFileURLToPath                                                DontDelete|Function 1
     gc                                             BunObject_callback_gc                                               DontDelete|Function 1
     generateHeapSnapshot                           BunObject_callback_generateHeapSnapshot                             DontDelete|Function 1
     gunzipSync                                     BunObject_callback_gunzipSync                                       DontDelete|Function 1

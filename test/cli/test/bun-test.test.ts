@@ -891,7 +891,7 @@ function createTest(input?: string | (string | { filename: string; contents: str
   const inputs = Array.isArray(input) ? input : [input ?? ""];
   for (const input of inputs) {
     const contents = typeof input === "string" ? input : input.contents;
-    const name = typeof input === "string" ? filename ?? `bun-test-${Math.random()}.test.ts` : input.filename;
+    const name = typeof input === "string" ? (filename ?? `bun-test-${Math.random()}.test.ts`) : input.filename;
 
     const path = join(cwd, name);
     try {

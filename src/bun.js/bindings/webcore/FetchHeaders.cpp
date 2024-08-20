@@ -31,8 +31,11 @@
 #include "HTTPHeaderNames.h"
 
 #include "HTTPParsers.h"
+#include "wtf/DebugHeap.h"
 
 namespace WebCore {
+
+DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(FetchHeaders);
 
 // https://fetch.spec.whatwg.org/#concept-headers-remove-privileged-no-cors-request-headers
 static void removePrivilegedNoCORSRequestHeaders(HTTPHeaderMap& headers)
@@ -231,6 +234,24 @@ ExceptionOr<bool> FetchHeaders::has(const String& name) const
     if (!isValidHTTPToken(name))
         return Exception { TypeError, makeString("Invalid header name: '"_s, name, '"') };
     return m_headers.contains(name);
+}
+
+ExceptionOr<void> FetchHeaders::set(const HTTPHeaderName name, const String& value)
+{
+    String normalizedValue = value.trim(isHTTPSpace);
+    auto canWriteResult = canWriteHeader(name, normalizedValue, normalizedValue, m_guard);
+    if (canWriteResult.hasException())
+        return canWriteResult.releaseException();
+    if (!canWriteResult.releaseReturnValue())
+        return {};
+
+    ++m_updateCounter;
+    m_headers.set(name, normalizedValue);
+
+    if (m_guard == FetchHeaders::Guard::RequestNoCors)
+        removePrivilegedNoCORSRequestHeaders(m_headers);
+
+    return {};
 }
 
 ExceptionOr<void> FetchHeaders::set(const String& name, const String& value)

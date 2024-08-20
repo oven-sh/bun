@@ -291,8 +291,8 @@ JSC_DEFINE_JIT_OPERATION(jsTextEncoderPrototypeFunction_encodeIntoWithoutTypeChe
         res = TextEncoder__encodeInto8(source.span8().data(), source.length(), destination->vector(), destination->byteLength());
     }
 
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto* result = JSC::constructEmptyObject(vm, globalObject->encodeIntoObjectStructure());
+    Bun::GlobalScope* globalScope = reinterpret_cast<Bun::GlobalScope*>(lexicalGlobalObject);
+    auto* result = JSC::constructEmptyObject(vm, globalScope->encodeIntoObjectStructure());
     result->putDirectOffset(vm, 0, JSC::jsNumber(static_cast<uint32_t>(res)));
     result->putDirectOffset(vm, 1, JSC::jsNumber(static_cast<uint32_t>(res >> 32)));
 
@@ -433,9 +433,8 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeIntoBody(
         res = TextEncoder__encodeInto8(span.data(), span.size(), destination->vector(), destination->byteLength());
     }
 
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-
-    auto* result = JSC::constructEmptyObject(vm, globalObject->encodeIntoObjectStructure());
+    Bun::GlobalScope* globalScope = reinterpret_cast<Bun::GlobalScope*>(lexicalGlobalObject);
+    auto* result = JSC::constructEmptyObject(vm, globalScope->encodeIntoObjectStructure());
     result->putDirectOffset(vm, 0, JSC::jsNumber(static_cast<uint32_t>(res)));
     result->putDirectOffset(vm, 1, JSC::jsNumber(static_cast<uint32_t>(res >> 32)));
 

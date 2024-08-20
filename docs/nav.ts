@@ -287,8 +287,11 @@ export default {
 
     divider("API"),
     page("api/http", "HTTP server", {
-      description: `Bun implements Web-standard fetch, plus a Bun-native API for building fast HTTP servers.`,
+      description: `Bun implements a fast HTTP server built on Request/Response objects, along with supporting node:http APIs.`,
     }), // "`Bun.serve`"),
+    page("api/fetch", "HTTP client", {
+      description: `Bun implements Web-standard fetch with some Bun-native extensions.`,
+    }), // "fetch"),
     page("api/websockets", "WebSockets", {
       description: `Bun supports server-side WebSockets with on-the-fly compression, TLS support, and a Bun-native pubsub API.`,
     }), // "`Bun.serve`"),

@@ -79,8 +79,8 @@ pub const BunxCommand = struct {
         const package_json_contents = package_json_read.bytes.items;
         const source = bun.logger.Source.initPathString(bun.span(subpath_z), package_json_contents);
 
-        bun.JSAst.Expr.Data.Store.create(default_allocator);
-        bun.JSAst.Stmt.Data.Store.create(default_allocator);
+        bun.JSAst.Expr.Data.Store.create();
+        bun.JSAst.Stmt.Data.Store.create();
 
         const expr = try bun.JSON.ParsePackageJSONUTF8(&source, bundler.log, bundler.allocator);
 

@@ -7,7 +7,6 @@ const Index = @import("ast/base.zig").Index;
 const Api = @import("./api/schema.zig").Api;
 
 pub const ImportKind = enum(u8) {
-
     // An entry point provided by the user
     entry_point,
 

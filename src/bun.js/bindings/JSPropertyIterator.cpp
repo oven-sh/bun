@@ -24,7 +24,7 @@ public:
     }
 
     RefPtr<JSC::PropertyNameArrayData> properties;
-    JSC::VM& vm;
+    Ref<JSC::VM> vm;
     static JSPropertyIterator* create(JSC::VM& vm, RefPtr<JSC::PropertyNameArrayData> data)
     {
         return new JSPropertyIterator(vm, data);
@@ -38,7 +38,6 @@ extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObje
     JSC::VM& vm = globalObject->vm();
     JSC::JSValue value = JSValue::decode(encodedValue);
     JSC::JSObject* object = value.getObject();
-    ASSERT(object != NULL);
 
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::PropertyNameArray array(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);

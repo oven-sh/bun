@@ -6,6 +6,10 @@
 #include "BunClientData.h"
 #include "JSEventEmitter.h"
 
+namespace Zig {
+class GlobalObject;
+}
+
 namespace Bun {
 
 // TODO: find a better place for this
@@ -21,6 +25,7 @@ class Process : public WebCore::JSEventEmitter {
     LazyProperty<Process, JSObject> m_bindingUV;
     LazyProperty<Process, JSObject> m_bindingNatives;
     WriteBarrier<Unknown> m_uncaughtExceptionCaptureCallback;
+    WriteBarrier<JSObject> m_nextTickFunction;
 
 public:
     Process(JSC::Structure* structure, WebCore::JSDOMGlobalObject& globalObject, Ref<WebCore::EventEmitter>&& impl)
@@ -37,7 +42,14 @@ public:
 
     ~Process();
 
+    bool m_isExitCodeObservable = false;
+
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
+
+    JSValue constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject);
+    void queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const ArgList& args);
+    void queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSValue);
+    void queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSValue, JSValue);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject,
         JSC::JSValue prototype)
@@ -71,11 +83,13 @@ public:
 
     void finishCreation(JSC::VM& vm);
 
-    inline void setUncaughtExceptionCaptureCallback(JSC::JSValue callback) {
+    inline void setUncaughtExceptionCaptureCallback(JSC::JSValue callback)
+    {
         m_uncaughtExceptionCaptureCallback.set(vm(), this, callback);
     }
 
-    inline JSC::JSValue getUncaughtExceptionCaptureCallback() {
+    inline JSC::JSValue getUncaughtExceptionCaptureCallback()
+    {
         return m_uncaughtExceptionCaptureCallback.get();
     }
 

@@ -852,9 +852,9 @@ class ClientHttp2Session extends Http2Session {
         process.nextTick(emitWantTrailersNT, self.#streams, streamId);
       }
     },
-    goaway(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
+    goaway(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData?: Buffer) {
       if (!self) return;
-      self.emit("goaway", errorCode, lastStreamId, opaqueData);
+      self.emit("goaway", errorCode, lastStreamId, opaqueData || Buffer.allocUnsafe(0));
       if (errorCode !== 0) {
         for (let [_, stream] of self.#streams) {
           stream.rstCode = errorCode;

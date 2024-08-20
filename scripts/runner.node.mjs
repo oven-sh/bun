@@ -21,12 +21,12 @@ import {
 } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir, hostname, userInfo, homedir } from "node:os";
-import { join, basename, dirname, relative } from "node:path";
+import { join, basename, dirname, relative, sep } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
 import { isIP } from "node:net";
 import { parseArgs } from "node:util";
 
-const spawnTimeout = 30_000;
+const spawnTimeout = 5_000;
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
 
@@ -104,15 +104,19 @@ async function printInfo() {
     console.log("Glibc:", getGlibcVersion());
   }
   console.log("Hostname:", getHostname());
-  if (isCloud) {
-    console.log("Public IP:", await getPublicIp());
-    console.log("Cloud:", getCloud());
-  }
   if (isCI) {
     console.log("CI:", getCI());
     console.log("Shard:", options["shard"], "/", options["max-shards"]);
     console.log("Build URL:", getBuildUrl());
     console.log("Environment:", process.env);
+    if (isCloud) {
+      console.log("Public IP:", await getPublicIp());
+      console.log("Cloud:", getCloud());
+    }
+    const tailscaleIp = await getTailscaleIp();
+    if (tailscaleIp) {
+      console.log("Tailscale IP:", tailscaleIp);
+    }
   }
   console.log("Cwd:", cwd);
   console.log("Tmpdir:", tmpPath);
@@ -130,7 +134,32 @@ async function printInfo() {
 async function runTests() {
   let execPath;
   if (options["step"]) {
-    execPath = await getExecPathFromBuildKite(options["step"]);
+    downloadLoop: for (let i = 0; i < 10; i++) {
+      execPath = await getExecPathFromBuildKite(options["step"]);
+      for (let j = 0; j < 10; j++) {
+        const { error } = spawnSync(execPath, ["--version"], {
+          encoding: "utf-8",
+          timeout: spawnTimeout,
+          env: {
+            PATH: process.env.PATH,
+            BUN_DEBUG_QUIET_LOGS: 1,
+          },
+        });
+        if (!error) {
+          break;
+        }
+        const { code } = error;
+        if (code === "EBUSY") {
+          console.log("Bun appears to be busy, retrying...");
+          continue;
+        }
+        if (code === "UNKNOWN") {
+          console.log("Bun appears to be corrupted, downloading again...");
+          rmSync(execPath, { force: true });
+          continue downloadLoop;
+        }
+      }
+    }
   } else {
     execPath = getExecPath(options["exec-path"]);
   }
@@ -231,18 +260,20 @@ async function runTests() {
  */
 
 /**
- * @param {SpawnOptions} request
+ * @param {SpawnOptions} options
  * @returns {Promise<SpawnResult>}
  */
-async function spawnSafe({
-  command,
-  args,
-  cwd,
-  env,
-  timeout = spawnTimeout,
-  stdout = process.stdout.write.bind(process.stdout),
-  stderr = process.stderr.write.bind(process.stderr),
-}) {
+async function spawnSafe(options) {
+  const {
+    command,
+    args,
+    cwd,
+    env,
+    timeout = spawnTimeout,
+    stdout = process.stdout.write.bind(process.stdout),
+    stderr = process.stderr.write.bind(process.stderr),
+    retries = 0,
+  } = options;
   let exitCode;
   let signalCode;
   let spawnError;
@@ -318,6 +349,16 @@ async function spawnSafe({
       resolve();
     }
   });
+  if (spawnError && retries < 5) {
+    const { code } = spawnError;
+    if (code === "EBUSY" || code === "UNKNOWN") {
+      await new Promise(resolve => setTimeout(resolve, 1000 * (retries + 1)));
+      return spawnSafe({
+        ...options,
+        retries: retries + 1,
+      });
+    }
+  }
   let error;
   if (exitCode === 0) {
     // ...
@@ -396,7 +437,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
     BUN_DEBUG_QUIET_LOGS: "1",
     BUN_GARBAGE_COLLECTOR_LEVEL: "1",
-    BUN_ENABLE_CRASH_REPORTING: "1",
+    BUN_ENABLE_CRASH_REPORTING: "0", // change this to '1' if https://github.com/oven-sh/bun/issues/13012 is implemented
     BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
     BUN_INSTALL_CACHE_DIR: tmpdirPath,
     SHELLOPTS: isWindows ? "igncr" : undefined, // ignore "\r" on Windows
@@ -488,10 +529,11 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
 async function spawnBunTest(execPath, testPath) {
   const timeout = getTestTimeout(testPath);
   const perTestTimeout = Math.ceil(timeout / 2);
+  const isReallyTest = isTestStrict(testPath);
   const { ok, error, stdout } = await spawnBun(execPath, {
-    args: ["test", `--timeout=${perTestTimeout}`, testPath],
+    args: isReallyTest ? ["test", `--timeout=${perTestTimeout}`, testPath] : [testPath],
     cwd: cwd,
-    timeout,
+    timeout: isReallyTest ? timeout : 30_000,
     env: {
       GITHUB_ACTIONS: "true", // always true so annotations are parsed
     },
@@ -770,6 +812,12 @@ function isJavaScript(path) {
  * @returns {boolean}
  */
 function isTest(path) {
+  if (path.replaceAll(sep, "/").includes("/test-cluster-") && path.endsWith(".js")) return true;
+  if (path.replaceAll(sep, "/").startsWith("js/node/cluster/test-") && path.endsWith(".ts")) return true;
+  return isTestStrict(path);
+}
+
+function isTestStrict(path) {
   return isJavaScript(path) && /\.test|spec\./.test(basename(path));
 }
 
@@ -961,7 +1009,7 @@ async function getExecPathFromBuildKite(target) {
   if (isWindows) {
     await spawnSafe({
       command: "powershell",
-      args: ["-Command", `Expand-Archive -Path ${zipPath} -DestinationPath ${releasePath}`],
+      args: ["-Command", `Expand-Archive -Path ${zipPath} -DestinationPath ${releasePath} -Force`],
     });
   } else {
     await spawnSafe({
@@ -1287,6 +1335,26 @@ async function getPublicIp() {
 }
 
 /**
+ * @returns {string | undefined}
+ */
+function getTailscaleIp() {
+  try {
+    const { status, stdout } = spawnSync("tailscale", ["ip", "--1"], {
+      encoding: "utf-8",
+      timeout: spawnTimeout,
+      env: {
+        PATH: process.env.PATH,
+      },
+    });
+    if (status === 0) {
+      return stdout.trim();
+    }
+  } catch {
+    // ...
+  }
+}
+
+/**
  * @param  {...string} paths
  * @returns {string}
  */
@@ -1332,7 +1400,7 @@ function formatTestToMarkdown(result, concise) {
 
   let markdown = "";
   for (const { testPath, ok, tests, error, stdoutPreview: stdout } of results) {
-    if (ok) {
+    if (ok || error === "SIGTERM") {
       continue;
     }
 

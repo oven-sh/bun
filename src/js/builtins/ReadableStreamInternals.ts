@@ -1362,7 +1362,13 @@ export function readableStreamDefaultControllerCallPullIfNeeded(controller) {
 
 export function isReadableStreamLocked(stream) {
   $assert($isReadableStream(stream));
-  return !!$getByIdDirectPrivate(stream, "reader") || stream.$bunNativePtr === -1;
+  return (
+    // Case 1. Is there a reader actively using it?
+    !!$getByIdDirectPrivate(stream, "reader") ||
+    // Case 2. Has the native reader been released?
+    // Case 3. Has it been converted into a Node.js NativeReadable?
+    stream.$bunNativePtr === -1
+  );
 }
 
 export function readableStreamDefaultControllerGetDesiredSize(controller) {
@@ -2036,12 +2042,16 @@ export function readableStreamDefineLazyIterators(prototype) {
       reader.releaseLock();
 
       if (!preventCancel && !$isReadableStreamLocked(stream)) {
-        stream.cancel(deferredError);
+        const promise = stream.cancel(deferredError);
+        if (Bun.peek.status(promise) === "rejected") {
+          $markPromiseAsHandled(promise);
+        }
       }
 
       if (deferredError) {
         throw deferredError;
       }
+
     }
   };
   var createAsyncIterator = function asyncIterator() {

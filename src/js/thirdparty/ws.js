@@ -747,10 +747,14 @@ class BunWebSocketMocked extends EventEmitter {
     if (this.#state === 1) {
       const compress = opts?.compress;
       data = normalizeData(data, opts);
+      // send returns:
+      // 1+ - The number of bytes sent is always the byte length of the data never less
+      // 0 - dropped due to backpressure (not sent)
+      // -1 - enqueue the data internaly
+      // we dont need to do anything with the return value here
       const written = this.#ws.send(data, compress);
-
-      if (written == -1) {
-        // backpressure
+      if (written === 0) {
+        // dropped
         this.#enquedMessages.push([data, compress, cb]);
         this.#bufferedAmount += data.length;
         return;
@@ -1116,7 +1120,7 @@ class WebSocketServer extends EventEmitter {
    * @private
    */
   completeUpgrade(extensions, key, protocols, request, socket, head, cb) {
-    const [server, response, req] = socket[kBunInternals];
+    const [{ [kBunInternals]: server }, response, req] = socket[kBunInternals];
     if (this._state > RUNNING) return abortHandshake(response, 503);
 
     let protocol = "";

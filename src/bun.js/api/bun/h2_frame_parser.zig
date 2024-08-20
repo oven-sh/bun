@@ -716,7 +716,7 @@ pub const H2FrameParser = struct {
 
         stream.state = .CLOSED;
         if (rstCode == .NO_ERROR) {
-            this.dispatchWithExtra(.onStreamEnd, JSC.JSValue.jsNumber(stream.id), JSC.JSValue.jsUndefined());
+            this.dispatchWithExtra(.onStreamEnd, JSC.JSValue.jsNumber(stream.id), .undefined);
         } else {
             this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream.id), JSC.JSValue.jsNumber(@intFromEnum(rstCode)));
         }
@@ -1428,7 +1428,7 @@ pub const H2FrameParser = struct {
             return .zero;
         };
 
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
 
     pub fn loadSettingsFromJSValue(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, options: JSC.JSValue) bool {
@@ -1544,7 +1544,7 @@ pub const H2FrameParser = struct {
 
         if (this.loadSettingsFromJSValue(globalObject, options)) {
             this.setSettings(this.localSettings);
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
 
         return .zero;
@@ -1608,14 +1608,14 @@ pub const H2FrameParser = struct {
                     if (opaque_data_arg.asArrayBuffer(globalObject)) |array_buffer| {
                         const slice = array_buffer.byteSlice();
                         this.sendGoAway(0, @enumFromInt(errorCode), slice, lastStreamID);
-                        return JSC.JSValue.jsUndefined();
+                        return .undefined;
                     }
                 }
             }
         }
 
         this.sendGoAway(0, @enumFromInt(errorCode), "", lastStreamID);
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
 
     pub fn ping(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
@@ -1629,7 +1629,7 @@ pub const H2FrameParser = struct {
         if (args_list.ptr[0].asArrayBuffer(globalObject)) |array_buffer| {
             const slice = array_buffer.slice();
             this.sendPing(false, slice);
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
 
         globalObject.throw("Expected payload to be a Buffer", .{});
@@ -1994,13 +1994,13 @@ pub const H2FrameParser = struct {
             const name = name_slice.slice();
 
             if (header_name.charAt(0) == ':') {
-                const exception = JSC.toTypeErrorWithCode("ERR_HTTP2_INVALID_PSEUDOHEADER", "\"{s}\" is an invalid pseudoheader or is used incorrectly", .{name}, globalObject);
+                const exception = JSC.toTypeError(.ERR_HTTP2_INVALID_PSEUDOHEADER, "\"{s}\" is an invalid pseudoheader or is used incorrectly", .{name}, globalObject);
                 globalObject.throwValue(exception);
                 return .zero;
             }
 
             var js_value = headers_arg.getTruthy(globalObject, name) orelse {
-                const exception = JSC.toTypeErrorWithCode("ERR_HTTP2_INVALID_HEADER_VALUE", "Invalid value for header \"{s}\"", .{name}, globalObject);
+                const exception = JSC.toTypeError(.ERR_HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name}, globalObject);
                 globalObject.throwValue(exception);
                 return .zero;
             };
@@ -2010,20 +2010,20 @@ pub const H2FrameParser = struct {
                 var value_iter = js_value.arrayIterator(globalObject);
 
                 if (SingleValueHeaders.has(name) and value_iter.len > 1) {
-                    const exception = JSC.toTypeErrorWithCode("ERR_HTTP2_INVALID_SINGLE_VALUE_HEADER", "Header field \"{s}\" must only have a single value", .{name}, globalObject);
+                    const exception = JSC.toTypeError(.ERR_HTTP2_INVALID_SINGLE_VALUE_HEADER, "Header field \"{s}\" must only have a single value", .{name}, globalObject);
                     globalObject.throwValue(exception);
                     return .zero;
                 }
 
                 while (value_iter.next()) |item| {
                     if (item.isEmptyOrUndefinedOrNull()) {
-                        const exception = JSC.toTypeErrorWithCode("ERR_HTTP2_INVALID_HEADER_VALUE", "Invalid value for header \"{s}\"", .{name}, globalObject);
+                        const exception = JSC.toTypeError(.ERR_HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name}, globalObject);
                         globalObject.throwValue(exception);
                         return .zero;
                     }
 
                     const value_str = item.toStringOrNull(globalObject) orelse {
-                        const exception = JSC.toTypeErrorWithCode("ERR_HTTP2_INVALID_HEADER_VALUE", "Invalid value for header \"{s}\"", .{name}, globalObject);
+                        const exception = JSC.toTypeError(.ERR_HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name}, globalObject);
                         globalObject.throwValue(exception);
                         return .zero;
                     };
@@ -2038,12 +2038,12 @@ pub const H2FrameParser = struct {
                         stream.state = .CLOSED;
                         stream.rstCode = @intFromEnum(ErrorCode.COMPRESSION_ERROR);
                         this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream_id), JSC.JSValue.jsNumber(stream.rstCode));
-                        return JSC.JSValue.jsUndefined();
+                        return .undefined;
                     };
                 }
             } else {
                 const value_str = js_value.toStringOrNull(globalObject) orelse {
-                    const exception = JSC.toTypeErrorWithCode("ERR_HTTP2_INVALID_HEADER_VALUE", "Invalid value for header \"{s}\"", .{name}, globalObject);
+                    const exception = JSC.toTypeError(.ERR_HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name}, globalObject);
                     globalObject.throwValue(exception);
                     return .zero;
                 };
@@ -2058,7 +2058,7 @@ pub const H2FrameParser = struct {
                     stream.state = .CLOSED;
                     stream.rstCode = @intFromEnum(ErrorCode.COMPRESSION_ERROR);
                     this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream_id), JSC.JSValue.jsNumber(stream.rstCode));
-                    return JSC.JSValue.jsUndefined();
+                    return .undefined;
                 };
             }
         }
@@ -2075,7 +2075,7 @@ pub const H2FrameParser = struct {
         frame.write(@TypeOf(writer), writer);
         _ = writer.write(buffer[0..encoded_size]) catch 0;
 
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
     pub fn writeStream(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());
@@ -2121,7 +2121,8 @@ pub const H2FrameParser = struct {
             const payload = zig_str.slice();
             this.sendData(stream_id, payload, close and !stream.waitForTrailers);
         } else {
-            globalObject.throw("Expected data to be an ArrayBuffer or a string", .{});
+            if (!globalObject.hasException())
+                globalObject.throw("Expected data to be an ArrayBuffer or a string", .{});
             return .zero;
         }
 
@@ -2199,7 +2200,7 @@ pub const H2FrameParser = struct {
                     if (ignore_pseudo_headers == 1) continue;
 
                     if (!ValidRequestPseudoHeaders.has(name)) {
-                        const exception = JSC.toTypeErrorWithCode("ERR_HTTP2_INVALID_PSEUDOHEADER", "\"{s}\" is an invalid pseudoheader or is used incorrectly", .{name}, globalObject);
+                        const exception = JSC.toTypeError(.ERR_HTTP2_INVALID_PSEUDOHEADER, "\"{s}\" is an invalid pseudoheader or is used incorrectly", .{name}, globalObject);
                         globalObject.throwValue(exception);
                         return .zero;
                     }
@@ -2208,7 +2209,7 @@ pub const H2FrameParser = struct {
                 }
 
                 var js_value = headers_arg.getTruthy(globalObject, name) orelse {
-                    const exception = JSC.toTypeErrorWithCode("ERR_HTTP2_INVALID_HEADER_VALUE", "Invalid value for header \"{s}\"", .{name}, globalObject);
+                    const exception = JSC.toTypeError(.ERR_HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name}, globalObject);
                     globalObject.throwValue(exception);
                     return .zero;
                 };
@@ -2219,20 +2220,20 @@ pub const H2FrameParser = struct {
                     var value_iter = js_value.arrayIterator(globalObject);
 
                     if (SingleValueHeaders.has(name) and value_iter.len > 1) {
-                        const exception = JSC.toTypeErrorWithCode("ERR_HTTP2_INVALID_SINGLE_VALUE_HEADER", "Header field \"{s}\" must only have a single value", .{name}, globalObject);
+                        const exception = JSC.toTypeError(.ERR_HTTP2_INVALID_HEADER_VALUE, "Header field \"{s}\" must only have a single value", .{name}, globalObject);
                         globalObject.throwValue(exception);
                         return .zero;
                     }
 
                     while (value_iter.next()) |item| {
                         if (item.isEmptyOrUndefinedOrNull()) {
-                            const exception = JSC.toTypeErrorWithCode("ERR_HTTP2_INVALID_HEADER_VALUE", "Invalid value for header \"{s}\"", .{name}, globalObject);
+                            const exception = JSC.toTypeError(.ERR_HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name}, globalObject);
                             globalObject.throwValue(exception);
                             return .zero;
                         }
 
                         const value_str = item.toStringOrNull(globalObject) orelse {
-                            const exception = JSC.toTypeErrorWithCode("ERR_HTTP2_INVALID_HEADER_VALUE", "Invalid value for header \"{s}\"", .{name}, globalObject);
+                            const exception = JSC.toTypeError(.ERR_HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name}, globalObject);
                             globalObject.throwValue(exception);
                             return .zero;
                         };
@@ -2250,13 +2251,13 @@ pub const H2FrameParser = struct {
                             stream.state = .CLOSED;
                             stream.rstCode = @intFromEnum(ErrorCode.COMPRESSION_ERROR);
                             this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream_id), JSC.JSValue.jsNumber(stream.rstCode));
-                            return JSC.JSValue.jsUndefined();
+                            return .undefined;
                         };
                     }
                 } else {
                     log("single header {s}", .{name});
                     const value_str = js_value.toStringOrNull(globalObject) orelse {
-                        const exception = JSC.toTypeErrorWithCode("ERR_HTTP2_INVALID_HEADER_VALUE", "Invalid value for header \"{s}\"", .{name}, globalObject);
+                        const exception = JSC.toTypeError(.ERR_HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name}, globalObject);
                         globalObject.throwValue(exception);
                         return .zero;
                     };
@@ -2439,7 +2440,7 @@ pub const H2FrameParser = struct {
                 const result = this.readBytes(bytes);
                 bytes = bytes[result..];
             }
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
         globalObject.throw("Expected data to be a Buffer or ArrayBuffer", .{});
         return .zero;

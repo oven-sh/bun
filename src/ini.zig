@@ -705,9 +705,10 @@ pub const ConfigIterator = struct {
         registry_url: []const u8,
         optname: Opt,
         value: []const u8,
+        loc: Loc,
 
         pub const Opt = enum {
-            /// base64 authentication string
+            /// `${username}:${password}` encoded in base64
             _auth,
 
             /// authentication string
@@ -715,6 +716,7 @@ pub const ConfigIterator = struct {
 
             username,
 
+            /// this is encoded as base64 in .npmrc
             _password,
 
             email,
@@ -724,7 +726,41 @@ pub const ConfigIterator = struct {
 
             /// path to key file
             keyfile,
+
+            pub fn isBase64Encoded(this: Opt) bool {
+                return switch (this) {
+                    ._auth, ._password => true,
+                    else => false,
+                };
+            }
         };
+
+        /// Duplicate the value, decoding it if it is base64 encoded.
+        pub fn dupeValueDecoded(
+            this: *const Item,
+            allocator: Allocator,
+            log: *bun.logger.Log,
+            source: *const bun.logger.Source,
+        ) ?[]const u8 {
+            if (this.optname.isBase64Encoded()) {
+                if (this.value.len == 0) return "";
+                const len = bun.base64.decodeLen(this.value);
+                var slice = allocator.alloc(u8, len) catch bun.outOfMemory();
+                const result = bun.base64.decode(slice[0..], this.value);
+                if (result.status != .success) {
+                    log.addErrorFmt(
+                        source,
+                        this.loc,
+                        allocator,
+                        "{s} is not valid base64",
+                        .{@tagName(this.optname)},
+                    ) catch bun.outOfMemory();
+                    return null;
+                }
+                return allocator.dupe(u8, slice[0..result.count]) catch bun.outOfMemory();
+            }
+            return allocator.dupe(u8, this.value) catch bun.outOfMemory();
+        }
 
         pub fn format(this: *const @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             try writer.print("//{s}:{s}={s}", .{ this.registry_url, @tagName(this.optname), this.value });
@@ -767,6 +803,7 @@ pub const ConfigIterator = struct {
                                             .registry_url = url_part,
                                             .value = value,
                                             .optname = std.meta.stringToEnum(Item.Opt, name).?,
+                                            .loc = prop.key.?.loc,
                                         },
                                     };
                                 }
@@ -828,8 +865,6 @@ pub const ScopeIterator = struct {
                             },
                         };
                     }
-
-                    return .none;
                 }
             }
         }
@@ -843,8 +878,9 @@ pub fn loadNpmrcFromFile(
     install: *bun.Schema.Api.BunInstall,
     env: *bun.DotEnv.Loader,
     auto_loaded: bool,
-    log: *bun.logger.Log,
-) !void {
+) void {
+    var log = bun.logger.Log.init(allocator);
+    defer log.deinit();
     const npmrc_file = switch (bun.sys.openat(bun.FD.cwd(), ".npmrc", bun.O.RDONLY, 0)) {
         .result => |fd| fd,
         .err => |err| {
@@ -858,22 +894,25 @@ pub fn loadNpmrcFromFile(
     };
     defer _ = bun.sys.close(npmrc_file);
 
-    var npmrc_contents = std.ArrayList(u8).init(allocator);
-    defer npmrc_contents.deinit();
-    switch (bun.sys.File.readToEndWithArrayList(bun.sys.File{ .handle = npmrc_file }, &npmrc_contents)) {
-        .result => {},
-        .err => |err| {
-            // TODO: should this exit(1)?
+    const source = switch (bun.sys.File.toSource(".npmrc", allocator)) {
+        .result => |s| s,
+        .err => |e| {
             Output.prettyErrorln("{}\nwhile reading .npmrc \"{s}\"", .{
-                err,
+                e,
                 ".npmrc",
             });
             Global.exit(1);
         },
-    }
-    const source = bun.logger.Source.initPathString(".npmrc", npmrc_contents.items[0..]);
+    };
+    defer allocator.free(source.contents);
 
-    return loadNpmrc(allocator, install, env, auto_loaded, log, &source);
+    loadNpmrc(allocator, install, env, auto_loaded, &log, &source) catch {
+        if (log.errors == 1)
+            Output.warn("Encountered an error while reading <b>.npmrc<r>:\n", .{})
+        else
+            Output.warn("Encountered errors while reading <b>.npmrc<r>:\n", .{});
+    };
+    log.printForLogLevel(Output.errorWriter()) catch bun.outOfMemory();
 }
 
 pub fn loadNpmrc(
@@ -1065,7 +1104,7 @@ pub fn loadNpmrc(
                 // - @myorg:registry=https://somewhere-else.com/myorg
                 const conf_item: bun.ini.ConfigIterator.Item = conf_item_;
                 switch (conf_item.optname) {
-                    ._auth, .email, .certfile, .keyfile => {
+                    .email, .certfile, .keyfile => {
                         log.addWarningFmt(
                             source,
                             iter.config.properties.at(iter.prop_idx - 1).key.?.loc,
@@ -1095,10 +1134,19 @@ pub fn loadNpmrc(
                     };
 
                     switch (conf_item.optname) {
-                        ._authToken => v.token = allocator.dupe(u8, conf_item.value) catch bun.outOfMemory(),
-                        .username => v.username = allocator.dupe(u8, conf_item.value) catch bun.outOfMemory(),
-                        ._password => v.password = allocator.dupe(u8, conf_item.value) catch bun.outOfMemory(),
-                        ._auth, .email, .certfile, .keyfile => unreachable,
+                        ._authToken => {
+                            if (conf_item.dupeValueDecoded(allocator, log, source)) |x| v.token = x;
+                        },
+                        .username => {
+                            if (conf_item.dupeValueDecoded(allocator, log, source)) |x| v.username = x;
+                        },
+                        ._password => {
+                            if (conf_item.dupeValueDecoded(allocator, log, source)) |x| v.password = x;
+                        },
+                        ._auth => {
+                            _ = @"handle _auth"(allocator, v, &conf_item, log, source);
+                        },
+                        .email, .certfile, .keyfile => unreachable,
                     }
                     continue;
                 }
@@ -1115,10 +1163,19 @@ pub fn loadNpmrc(
                         }
                         matched_at_least_one = true;
                         switch (conf_item.optname) {
-                            ._authToken => v.token = allocator.dupe(u8, conf_item.value) catch bun.outOfMemory(),
-                            .username => v.username = allocator.dupe(u8, conf_item.value) catch bun.outOfMemory(),
-                            ._password => v.password = allocator.dupe(u8, conf_item.value) catch bun.outOfMemory(),
-                            ._auth, .email, .certfile, .keyfile => unreachable,
+                            ._authToken => {
+                                if (conf_item.dupeValueDecoded(allocator, log, source)) |x| v.token = x;
+                            },
+                            .username => {
+                                if (conf_item.dupeValueDecoded(allocator, log, source)) |x| v.username = x;
+                            },
+                            ._password => {
+                                if (conf_item.dupeValueDecoded(allocator, log, source)) |x| v.password = x;
+                            },
+                            ._auth => {
+                                _ = @"handle _auth"(allocator, v, &conf_item, log, source);
+                            },
+                            .email, .certfile, .keyfile => unreachable,
                         }
                         // We have to keep going as it could match multiple scopes
                         continue;
@@ -1142,23 +1199,50 @@ pub fn loadNpmrc(
     }
 
     const had_errors = log.hasErrors();
-    log.printForLogLevel(Output.errorWriter()) catch bun.outOfMemory();
     if (had_errors) {
         return error.ParserError;
     }
+}
 
-    // if (!bun.Environment.isDebug) {
-    //     if (!@import("./bun.js/module_loader.zig").ModuleLoader.is_allowed_to_use_internal_testing_apis)
-    //         return;
-    // }
-
-    // if (bun.getenvTruthy("BUN_TEST_LOG_DEFAULT_REGISTRY")) {
-    //     if (install.default_registry) |reg| {
-    //         Output.print("Default registry url: {s}\n", .{reg.url});
-    //         Output.print("Default registry token: {s}\n", .{reg.token});
-    //         Output.print("Default registry username: {s}\n", .{reg.username});
-    //         Output.print("Default registry password: {s}\n", .{reg.password});
-    //         Output.flush();
-    //     }
-    // }
+fn @"handle _auth"(
+    allocator: Allocator,
+    v: *bun.Schema.Api.NpmRegistry,
+    conf_item: *const ConfigIterator.Item,
+    log: *bun.logger.Log,
+    source: *const bun.logger.Source,
+) void {
+    if (conf_item.value.len == 0) {
+        log.addErrorFmt(
+            source,
+            conf_item.loc,
+            allocator,
+            "invalid _auth value, expected it to be \"\\<username\\>:\\<password\\>\" encoded in base64, but got an empty string",
+            .{},
+        ) catch bun.outOfMemory();
+        return;
+    }
+    const decode_len = bun.base64.decodeLen(conf_item.value);
+    const decoded = allocator.alloc(u8, decode_len) catch bun.outOfMemory();
+    const result = bun.base64.decode(decoded[0..], conf_item.value);
+    if (!result.isSuccessful()) {
+        defer allocator.free(decoded);
+        log.addErrorFmt(source, conf_item.loc, allocator, "invalid base64", .{}) catch bun.outOfMemory();
+        return;
+    }
+    const @"username:password" = decoded[0..result.count];
+    const colon_idx = std.mem.indexOfScalar(u8, @"username:password", ':') orelse {
+        defer allocator.free(decoded);
+        log.addErrorFmt(source, conf_item.loc, allocator, "invalid _auth value, expected it to be \"\\<username\\>:\\<password\\>\" encoded in base 64, but got:\n\n{s}", .{decoded}) catch bun.outOfMemory();
+        return;
+    };
+    const username = @"username:password"[0..colon_idx];
+    if (colon_idx + 1 >= @"username:password".len) {
+        defer allocator.free(decoded);
+        log.addErrorFmt(source, conf_item.loc, allocator, "invalid _auth value, expected it to be \"\\<username\\>:\\<password\\>\" encoded in base64, but got:\n\n{s}", .{decoded}) catch bun.outOfMemory();
+        return;
+    }
+    const password = @"username:password"[colon_idx + 1 ..];
+    v.username = username;
+    v.password = password;
+    return;
 }

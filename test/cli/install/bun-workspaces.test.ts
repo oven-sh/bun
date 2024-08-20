@@ -459,3 +459,53 @@ describe("workspace aliases", async () => {
     });
   }
 });
+
+for (const glob of [true, false]) {
+  test(`does not crash when root package.json is in "workspaces"${glob ? " (glob)" : ""}`, async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          workspaces: glob ? ["**"] : ["pkg1", "./*"],
+        }),
+      ),
+      write(
+        join(packageDir, "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+        }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir);
+    expect(await file(join(packageDir, "node_modules", "pkg1", "package.json")).json()).toEqual({
+      name: "pkg1",
+    });
+  });
+}
+
+test("cwd in workspace script is not the symlink path on windows", async () => {
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        workspaces: ["pkg1"],
+      }),
+    ),
+    write(
+      join(packageDir, "pkg1", "package.json"),
+      JSON.stringify({
+        name: "pkg1",
+        scripts: {
+          postinstall: 'bun -e \'require("fs").writeFileSync("cwd", process.cwd())\'',
+        },
+      }),
+    ),
+  ]);
+
+  await runBunInstall(env, packageDir);
+
+  expect(await file(join(packageDir, "node_modules", "pkg1", "cwd")).text()).toBe(join(packageDir, "pkg1"));
+});

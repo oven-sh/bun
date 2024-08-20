@@ -12,14 +12,14 @@ pub const BunObject = struct {
     pub const allocUnsafe = toJSCallback(Bun.allocUnsafe);
     pub const build = toJSCallback(Bun.JSBundler.buildFn);
     pub const connect = toJSCallback(JSC.wrapStaticMethod(JSC.API.Listener, "connect", false));
-    pub const deflateSync = toJSCallback(JSC.wrapStaticMethod(JSZlib, "deflateSync", true));
+    pub const deflateSync = toJSCallback(JSZlib.deflateSync);
     pub const file = toJSCallback(WebCore.Blob.constructBunFile);
     pub const gc = toJSCallback(Bun.runGC);
     pub const generateHeapSnapshot = toJSCallback(Bun.generateHeapSnapshot);
-    pub const gunzipSync = toJSCallback(JSC.wrapStaticMethod(JSZlib, "gunzipSync", true));
-    pub const gzipSync = toJSCallback(JSC.wrapStaticMethod(JSZlib, "gzipSync", true));
+    pub const gunzipSync = toJSCallback(JSZlib.gunzipSync);
+    pub const gzipSync = toJSCallback(JSZlib.gzipSync);
     pub const indexOfLine = toJSCallback(Bun.indexOfLine);
-    pub const inflateSync = toJSCallback(JSC.wrapStaticMethod(JSZlib, "inflateSync", true));
+    pub const inflateSync = toJSCallback(JSZlib.inflateSync);
     pub const jest = toJSCallback(@import("../test/jest.zig").Jest.call);
     pub const listen = toJSCallback(JSC.wrapStaticMethod(JSC.API.Listener, "listen", false));
     pub const udpSocket = toJSCallback(JSC.wrapStaticMethod(JSC.API.UDPSocket, "udpSocket", false));
@@ -72,6 +72,7 @@ pub const BunObject = struct {
     pub const stdout = toJSGetter(Bun.getStdout);
     pub const unsafe = toJSGetter(Bun.getUnsafe);
     pub const semver = toJSGetter(Bun.getSemver);
+    pub const embeddedFiles = toJSGetter(Bun.getEmbeddedFiles);
     // --- Getters ---
 
     fn getterName(comptime baseName: anytype) [:0]const u8 {
@@ -131,6 +132,7 @@ pub const BunObject = struct {
         @export(BunObject.stdout, .{ .name = getterName("stdout") });
         @export(BunObject.unsafe, .{ .name = getterName("unsafe") });
         @export(BunObject.semver, .{ .name = getterName("semver") });
+        @export(BunObject.embeddedFiles, .{ .name = getterName("embeddedFiles") });
         // --- Getters --
 
         // -- Callbacks --
@@ -327,7 +329,7 @@ pub fn shell(
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     const string_args = arguments.nextEat() orelse {
         globalThis.throw("shell: expected 2 arguments, got 0", .{});
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     };
 
     const template_args_js = arguments.nextEat() orelse {
@@ -459,7 +461,7 @@ pub fn braces(
 
     const brace_str_js = arguments.nextEat() orelse {
         globalThis.throw("braces: expected at least 1 argument, got 0", .{});
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     };
     const brace_str = brace_str_js.toBunString(globalThis);
     defer brace_str.deref();
@@ -566,7 +568,7 @@ pub fn which(
     defer arguments.deinit();
     const path_arg = arguments.nextEat() orelse {
         globalThis.throw("which: expected 1 argument, got 0", .{});
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     };
 
     var path_str: ZigString.Slice = ZigString.Slice.empty;
@@ -589,7 +591,7 @@ pub fn which(
 
     if (bin_str.len >= bun.MAX_PATH_BYTES) {
         globalThis.throw("bin path is too long", .{});
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
 
     if (bin_str.len == 0) {
@@ -980,7 +982,7 @@ pub fn openInEditor(
         return .zero;
     };
 
-    return JSC.JSValue.jsUndefined();
+    return .undefined;
 }
 
 pub fn getPublicPath(to: string, origin: URL, comptime Writer: type, writer: Writer) void {
@@ -1574,7 +1576,7 @@ pub const Crypto = struct {
                     assert(output_slice.len == @as(usize, @intCast(this.pbkdf2.length)));
                     const buffer_value = JSC.JSValue.createBuffer(globalThis, output_slice, bun.default_allocator);
                     if (buffer_value == .zero) {
-                        promise.reject(globalThis, globalThis.createTypeErrorInstance("Failed to create buffer", .{}));
+                        promise.reject(globalThis, ZigString.init("Failed to create buffer").toErrorInstance(globalThis));
                         return;
                     }
 
@@ -1663,8 +1665,7 @@ pub const Crypto = struct {
                             const slice = arguments[4].toSlice(globalThis, bun.default_allocator);
                             defer slice.deinit();
                             const name = slice.slice();
-                            const err = globalThis.createTypeErrorInstanceWithCode(.ERR_CRYPTO_INVALID_DIGEST, "Unsupported algorithm \"{s}\"", .{name});
-                            globalThis.throwValue(err);
+                            globalThis.ERR_CRYPTO_INVALID_DIGEST("Unsupported algorithm \"{s}\"", .{name}).throw();
                         }
                         return null;
                     };
@@ -2178,6 +2179,8 @@ pub const Crypto = struct {
             ref: Async.KeepAlive = .{},
             task: JSC.WorkPoolTask = .{ .callback = &run },
 
+            pub usingnamespace bun.New(@This());
+
             pub const Result = struct {
                 value: Value,
                 ref: Async.KeepAlive = .{},
@@ -2185,6 +2188,8 @@ pub const Crypto = struct {
                 task: JSC.AnyTask = undefined,
                 promise: JSC.JSPromise.Strong,
                 global: *JSC.JSGlobalObject,
+
+                pub usingnamespace bun.New(@This());
 
                 pub const Value = union(enum) {
                     err: PasswordObject.HashError,
@@ -2201,18 +2206,19 @@ pub const Crypto = struct {
 
                 pub fn runFromJS(this: *Result) void {
                     var promise = this.promise;
+                    defer promise.deinit();
                     this.promise = .{};
                     this.ref.unref(this.global.bunVM());
                     const global = this.global;
                     switch (this.value) {
                         .err => {
                             const error_instance = this.value.toErrorInstance(global);
-                            bun.default_allocator.destroy(this);
+                            this.destroy();
                             promise.reject(global, error_instance);
                         },
                         .hash => |value| {
                             const js_string = JSC.ZigString.init(value).toJS(global);
-                            bun.default_allocator.destroy(this);
+                            this.destroy();
                             promise.resolve(global, js_string);
                         },
                     }
@@ -2220,10 +2226,9 @@ pub const Crypto = struct {
             };
 
             pub fn deinit(this: *HashJob) void {
-                this.ref = .{};
-                this.promise.strong.deinit();
+                this.promise.deinit();
                 bun.default_allocator.free(this.password);
-                bun.default_allocator.destroy(this);
+                this.destroy();
             }
 
             pub fn getValue(password: []const u8, algorithm: PasswordObject.Algorithm.Value) Result.Value {
@@ -2236,14 +2241,14 @@ pub const Crypto = struct {
             pub fn run(task: *bun.ThreadPool.Task) void {
                 var this: *HashJob = @fieldParentPtr("task", task);
 
-                var result = bun.default_allocator.create(Result) catch bun.outOfMemory();
-                result.* = Result{
+                var result = Result.new(.{
                     .value = getValue(this.password, this.algorithm),
-                    .task = JSC.AnyTask.New(Result, Result.runFromJS).init(result),
+                    .task = undefined,
                     .promise = this.promise,
                     .global = this.global,
                     .ref = this.ref,
-                };
+                });
+                result.task = JSC.AnyTask.New(Result, Result.runFromJS).init(result);
                 this.ref = .{};
                 this.promise.strong = .{};
                 this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(&result.task));
@@ -2274,17 +2279,15 @@ pub const Crypto = struct {
                 unreachable;
             }
 
-            var job = bun.default_allocator.create(HashJob) catch bun.outOfMemory();
-            var promise = JSC.JSPromise.Strong.init(globalObject);
+            const promise = JSC.JSPromise.Strong.init(globalObject);
 
-            job.* = HashJob{
+            var job = HashJob.new(.{
                 .algorithm = algorithm,
                 .password = password,
                 .promise = promise,
                 .event_loop = globalObject.bunVM().eventLoop(),
                 .global = globalObject,
-            };
-
+            });
             job.ref.ref(globalObject.bunVM());
             JSC.WorkPool.schedule(&job.task);
 
@@ -2316,18 +2319,16 @@ pub const Crypto = struct {
                 unreachable;
             }
 
-            var job = bun.default_allocator.create(VerifyJob) catch bun.outOfMemory();
             var promise = JSC.JSPromise.Strong.init(globalObject);
 
-            job.* = VerifyJob{
+            const job = VerifyJob.new(.{
                 .algorithm = algorithm,
                 .password = password,
                 .prev_hash = prev_hash,
                 .promise = promise,
                 .event_loop = globalObject.bunVM().eventLoop(),
                 .global = globalObject,
-            };
-
+            });
             job.ref.ref(globalObject.bunVM());
             JSC.WorkPool.schedule(&job.task);
 
@@ -2355,7 +2356,9 @@ pub const Crypto = struct {
             }
 
             const password_to_hash = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(globalObject, arguments[0], bun.default_allocator) catch {
-                globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
+                if (!globalObject.hasException()) {
+                    globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
+                }
                 return JSC.JSValue.undefined;
             };
 
@@ -2389,7 +2392,9 @@ pub const Crypto = struct {
             }
 
             var string_or_buffer = JSC.Node.StringOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[0]) orelse {
-                globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
+                if (!globalObject.hasException()) {
+                    globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
+                }
                 return JSC.JSValue.undefined;
             };
 
@@ -2414,6 +2419,8 @@ pub const Crypto = struct {
             ref: Async.KeepAlive = .{},
             task: JSC.WorkPoolTask = .{ .callback = &run },
 
+            pub usingnamespace bun.New(@This());
+
             pub const Result = struct {
                 value: Value,
                 ref: Async.KeepAlive = .{},
@@ -2421,6 +2428,8 @@ pub const Crypto = struct {
                 task: JSC.AnyTask = undefined,
                 promise: JSC.JSPromise.Strong,
                 global: *JSC.JSGlobalObject,
+
+                pub usingnamespace bun.New(@This());
 
                 pub const Value = union(enum) {
                     err: PasswordObject.HashError,
@@ -2437,17 +2446,18 @@ pub const Crypto = struct {
 
                 pub fn runFromJS(this: *Result) void {
                     var promise = this.promise;
+                    defer promise.deinit();
                     this.promise = .{};
                     this.ref.unref(this.global.bunVM());
                     const global = this.global;
                     switch (this.value) {
                         .err => {
                             const error_instance = this.value.toErrorInstance(global);
-                            bun.default_allocator.destroy(this);
+                            this.destroy();
                             promise.reject(global, error_instance);
                         },
                         .pass => |pass| {
-                            bun.default_allocator.destroy(this);
+                            this.destroy();
                             promise.resolve(global, JSC.JSValue.jsBoolean(pass));
                         },
                     }
@@ -2455,11 +2465,10 @@ pub const Crypto = struct {
             };
 
             pub fn deinit(this: *VerifyJob) void {
-                this.ref = .{};
-                this.promise.strong.deinit();
+                this.promise.deinit();
                 bun.default_allocator.free(this.password);
                 bun.default_allocator.free(this.prev_hash);
-                bun.default_allocator.destroy(this);
+                this.destroy();
             }
 
             pub fn getValue(password: []const u8, prev_hash: []const u8, algorithm: ?PasswordObject.Algorithm) Result.Value {
@@ -2472,14 +2481,14 @@ pub const Crypto = struct {
             pub fn run(task: *bun.ThreadPool.Task) void {
                 var this: *VerifyJob = @fieldParentPtr("task", task);
 
-                var result = bun.default_allocator.create(Result) catch bun.outOfMemory();
-                result.* = Result{
+                var result = Result.new(.{
                     .value = getValue(this.password, this.prev_hash, this.algorithm),
-                    .task = JSC.AnyTask.New(Result, Result.runFromJS).init(result),
+                    .task = undefined,
                     .promise = this.promise,
                     .global = this.global,
                     .ref = this.ref,
-                };
+                });
+                result.task = JSC.AnyTask.New(Result, Result.runFromJS).init(result);
                 this.ref = .{};
                 this.promise.strong = .{};
                 this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(&result.task));
@@ -2511,19 +2520,21 @@ pub const Crypto = struct {
                 const algorithm_string = arguments[2].getZigString(globalObject);
 
                 algorithm = PasswordObject.Algorithm.label.getWithEql(algorithm_string, JSC.ZigString.eqlComptime) orelse {
-                    globalObject.throwInvalidArgumentType("verify", "algorithm", unknown_password_algorithm_message);
+                    if (!globalObject.hasException()) {
+                        globalObject.throwInvalidArgumentType("verify", "algorithm", unknown_password_algorithm_message);
+                    }
                     return JSC.JSValue.undefined;
                 };
             }
 
             const owned_password = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(globalObject, arguments[0], bun.default_allocator) catch |err| {
-                if (err != error.JSError) globalObject.throwInvalidArgumentType("verify", "password", "string or TypedArray");
+                if (err != error.JSError and !globalObject.hasException()) globalObject.throwInvalidArgumentType("verify", "password", "string or TypedArray");
                 return JSC.JSValue.undefined;
             };
 
             const owned_hash = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(globalObject, arguments[1], bun.default_allocator) catch |err| {
                 bun.default_allocator.free(owned_password);
-                if (err != error.JSError) globalObject.throwInvalidArgumentType("verify", "hash", "string or TypedArray");
+                if (err != error.JSError and !globalObject.hasException()) globalObject.throwInvalidArgumentType("verify", "hash", "string or TypedArray");
                 return JSC.JSValue.undefined;
             };
 
@@ -2564,19 +2575,25 @@ pub const Crypto = struct {
                 const algorithm_string = arguments[2].getZigString(globalObject);
 
                 algorithm = PasswordObject.Algorithm.label.getWithEql(algorithm_string, JSC.ZigString.eqlComptime) orelse {
-                    globalObject.throwInvalidArgumentType("verify", "algorithm", unknown_password_algorithm_message);
+                    if (!globalObject.hasException()) {
+                        globalObject.throwInvalidArgumentType("verify", "algorithm", unknown_password_algorithm_message);
+                    }
                     return JSC.JSValue.undefined;
                 };
             }
 
             var password = JSC.Node.StringOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[0]) orelse {
-                globalObject.throwInvalidArgumentType("verify", "password", "string or TypedArray");
+                if (!globalObject.hasException()) {
+                    globalObject.throwInvalidArgumentType("verify", "password", "string or TypedArray");
+                }
                 return JSC.JSValue.undefined;
             };
 
             var hash_ = JSC.Node.StringOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[1]) orelse {
                 password.deinit();
-                globalObject.throwInvalidArgumentType("verify", "hash", "string or TypedArray");
+                if (!globalObject.hasException()) {
+                    globalObject.throwInvalidArgumentType("verify", "hash", "string or TypedArray");
+                }
                 return JSC.JSValue.undefined;
             };
 
@@ -2772,9 +2789,13 @@ pub const Crypto = struct {
             const thisValue = callframe.this();
             const arguments = callframe.arguments(2);
             const input = arguments.ptr[0];
+            if (input.isEmptyOrUndefinedOrNull()) {
+                globalThis.throwInvalidArguments("expected blob, string or buffer", .{});
+                return JSC.JSValue.zero;
+            }
             const encoding = arguments.ptr[1];
             const buffer = JSC.Node.BlobOrStringOrBuffer.fromJSWithEncodingValue(globalThis, globalThis.bunVM().allocator, input, encoding) orelse {
-                globalThis.throwInvalidArguments("expected blob, string or buffer", .{});
+                if (!globalThis.hasException()) globalThis.throwInvalidArguments("expected blob, string or buffer", .{});
                 return JSC.JSValue.zero;
             };
             defer buffer.deinit();
@@ -3437,7 +3458,7 @@ pub export fn Bun__escapeHTML16(globalObject: *JSC.JSGlobalObject, input_value: 
     const input_slice = ptr[0..len];
     const escaped = strings.escapeHTMLForUTF16Input(globalObject.bunVM().allocator, input_slice) catch {
         globalObject.vm().throwError(globalObject, ZigString.init("Out of memory").toJS(globalObject));
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     };
 
     switch (escaped) {
@@ -3483,7 +3504,7 @@ pub export fn Bun__escapeHTML8(globalObject: *JSC.JSGlobalObject, input_value: J
 
     const escaped = strings.escapeHTMLForLatin1Input(allocator, input_slice) catch {
         globalObject.vm().throwError(globalObject, ZigString.init("Out of memory").toJS(globalObject));
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     };
 
     switch (escaped) {
@@ -3701,6 +3722,7 @@ const HashObject = struct {
                             .Uint16Array,
                             .Int32Array,
                             .Uint32Array,
+                            .Float16Array,
                             .Float32Array,
                             .Float64Array,
                             .BigInt64Array,
@@ -3766,6 +3788,42 @@ pub fn getGlobConstructor(
     _: *JSC.JSObject,
 ) JSC.JSValue {
     return JSC.API.Glob.getConstructor(globalThis);
+}
+
+pub fn getEmbeddedFiles(
+    globalThis: *JSC.JSGlobalObject,
+    _: *JSC.JSObject,
+) JSC.JSValue {
+    const vm = globalThis.bunVM();
+    const graph = vm.standalone_module_graph orelse return JSC.JSValue.createEmptyArray(globalThis, 0);
+
+    const unsorted_files = graph.files.values();
+    var sort_indices = std.ArrayList(u32).initCapacity(bun.default_allocator, unsorted_files.len) catch bun.outOfMemory();
+    defer sort_indices.deinit();
+    for (0..unsorted_files.len) |index| {
+        // Some % of people using `bun build --compile` want to obscure the source code
+        // We don't really do that right now, but exposing the output source
+        // code here as an easily accessible Blob is even worse for them.
+        // So let's omit any source code files from the list.
+        if (unsorted_files[index].loader.isJavaScriptLike()) continue;
+        sort_indices.appendAssumeCapacity(@intCast(index));
+    }
+
+    var i: u32 = 0;
+    var array = JSC.JSValue.createEmptyArray(globalThis, sort_indices.items.len);
+    std.mem.sort(u32, sort_indices.items, unsorted_files, bun.StandaloneModuleGraph.File.lessThanByIndex);
+    for (sort_indices.items) |index| {
+        const file = &unsorted_files[index];
+        // We call .dupe() on this to ensure that we don't return a blob that might get freed later.
+        const input_blob = file.blob(globalThis);
+        const blob = JSC.WebCore.Blob.new(input_blob.dupeWithContentType(true));
+        blob.allocator = bun.default_allocator;
+        blob.name = input_blob.name.dupeRef();
+        array.putIndex(globalThis, i, blob.toJS(globalThis));
+        i += 1;
+    }
+
+    return array;
 }
 
 pub fn getSemver(
@@ -4549,8 +4607,8 @@ pub const FFIObject = struct {
 
 fn stringWidth(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
     const arguments = callframe.arguments(2).slice();
-    const value = if (arguments.len > 0) arguments[0] else JSC.JSValue.jsUndefined();
-    const options_object = if (arguments.len > 1) arguments[1] else JSC.JSValue.jsUndefined();
+    const value = if (arguments.len > 0) arguments[0] else .undefined;
+    const options_object = if (arguments.len > 1) arguments[1] else .undefined;
 
     if (!value.isString()) {
         return JSC.jsNumber(0);
@@ -4643,27 +4701,220 @@ pub const JSZlib = struct {
         reader.list.deinit(reader.allocator);
         reader.deinit();
     }
-
+    export fn global_deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
+        comptime assert(bun.use_mimalloc);
+        bun.Mimalloc.mi_free(ctx);
+    }
     export fn compressor_deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
         var compressor: *zlib.ZlibCompressorArrayList = bun.cast(*zlib.ZlibCompressorArrayList, ctx.?);
         compressor.list.deinit(compressor.allocator);
         compressor.deinit();
     }
 
+    const Library = enum {
+        zlib,
+        libdeflate,
+
+        pub const map = bun.ComptimeEnumMap(Library);
+    };
+
+    // This has to be `inline` due to the callframe.
+    inline fn getOptions(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) ?struct { JSC.Node.StringOrBuffer, ?JSValue } {
+        const arguments = callframe.arguments(2).slice();
+        const buffer_value = if (arguments.len > 0) arguments[0] else .undefined;
+        const options_val: ?JSValue =
+            if (arguments.len > 1 and arguments[1].isObject())
+            arguments[1]
+        else if (arguments.len > 1 and !arguments[1].isUndefined()) {
+            globalThis.throwInvalidArguments("Expected options to be an object", .{});
+            return null;
+        } else null;
+
+        if (JSC.Node.StringOrBuffer.fromJS(globalThis, bun.default_allocator, buffer_value)) |buffer| {
+            return .{ buffer, options_val };
+        }
+
+        globalThis.throwInvalidArguments("Expected buffer to be a string or buffer", .{});
+        return null;
+    }
+
     pub fn gzipSync(
         globalThis: *JSGlobalObject,
-        buffer: JSC.Node.StringOrBuffer,
-        options_val_: ?JSValue,
+        callframe: *JSC.CallFrame,
     ) JSValue {
-        return gzipOrDeflateSync(globalThis, buffer, options_val_, true);
+        const buffer, const options_val = getOptions(globalThis, callframe) orelse return .zero;
+        defer buffer.deinit();
+        return gzipOrDeflateSync(globalThis, buffer, options_val, true);
+    }
+
+    pub fn inflateSync(
+        globalThis: *JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) JSValue {
+        const buffer, const options_val = getOptions(globalThis, callframe) orelse return .zero;
+        defer buffer.deinit();
+        return gunzipOrInflateSync(globalThis, buffer, options_val, false);
     }
 
     pub fn deflateSync(
         globalThis: *JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) JSValue {
+        const buffer, const options_val = getOptions(globalThis, callframe) orelse return .zero;
+        defer buffer.deinit();
+        return gzipOrDeflateSync(globalThis, buffer, options_val, false);
+    }
+
+    pub fn gunzipSync(
+        globalThis: *JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) JSValue {
+        const buffer, const options_val = getOptions(globalThis, callframe) orelse return .zero;
+        defer buffer.deinit();
+        return gunzipOrInflateSync(globalThis, buffer, options_val, true);
+    }
+
+    pub fn gunzipOrInflateSync(
+        globalThis: *JSGlobalObject,
         buffer: JSC.Node.StringOrBuffer,
         options_val_: ?JSValue,
+        is_gzip: bool,
     ) JSValue {
-        return gzipOrDeflateSync(globalThis, buffer, options_val_, false);
+        var opts = zlib.Options{
+            .gzip = is_gzip,
+            .windowBits = if (is_gzip) 31 else -15,
+        };
+
+        var library: Library = .zlib;
+        if (options_val_) |options_val| {
+            if (options_val.get(globalThis, "windowBits")) |window| {
+                opts.windowBits = window.coerce(i32, globalThis);
+                library = .zlib;
+            }
+
+            if (options_val.get(globalThis, "level")) |level| {
+                opts.level = level.coerce(i32, globalThis);
+            }
+
+            if (options_val.get(globalThis, "memLevel")) |memLevel| {
+                opts.memLevel = memLevel.coerce(i32, globalThis);
+                library = .zlib;
+            }
+
+            if (options_val.get(globalThis, "strategy")) |strategy| {
+                opts.strategy = strategy.coerce(i32, globalThis);
+                library = .zlib;
+            }
+
+            if (options_val.getTruthy(globalThis, "library")) |library_value| {
+                if (!library_value.isString()) {
+                    globalThis.throwInvalidArguments("Expected library to be a string", .{});
+                    return .zero;
+                }
+
+                library = Library.map.fromJS(globalThis, library_value) orelse {
+                    globalThis.throwInvalidArguments("Expected library to be one of 'zlib' or 'libdeflate'", .{});
+                    return .zero;
+                };
+            }
+        }
+
+        if (globalThis.hasException()) return .zero;
+
+        const compressed = buffer.slice();
+        const allocator = JSC.VirtualMachine.get().allocator;
+
+        var list = brk: {
+            if (is_gzip and compressed.len > 64) {
+                //   0   1   2   3   4   5   6   7
+                //  +---+---+---+---+---+---+---+---+
+                //  |     CRC32     |     ISIZE     |
+                //  +---+---+---+---+---+---+---+---+
+                const estimated_size: u32 = @bitCast(compressed[compressed.len - 4 ..][0..4].*);
+                // If it's > 256 MB, let's rely on dynamic allocation to minimize the risk of OOM.
+                if (estimated_size > 0 and estimated_size < 256 * 1024 * 1024) {
+                    break :brk std.ArrayListUnmanaged(u8).initCapacity(allocator, @max(estimated_size, 64)) catch {
+                        globalThis.throwOutOfMemory();
+                        return .zero;
+                    };
+                }
+            }
+
+            break :brk std.ArrayListUnmanaged(u8).initCapacity(allocator, if (compressed.len > 512) compressed.len else 32) catch {
+                globalThis.throwOutOfMemory();
+                return .zero;
+            };
+        };
+
+        switch (library) {
+            .zlib => {
+                var reader = zlib.ZlibReaderArrayList.initWithOptions(compressed, &list, allocator, .{
+                    .windowBits = opts.windowBits,
+                    .level = opts.level,
+                }) catch |err| {
+                    list.deinit(allocator);
+                    if (err == error.InvalidArgument) {
+                        globalThis.throw("Zlib error: Invalid argument", .{});
+                        return .zero;
+                    }
+
+                    globalThis.throwError(err, "Zlib error");
+                    return .zero;
+                };
+
+                reader.readAll() catch {
+                    defer reader.deinit();
+                    globalThis.throwValue(ZigString.init(reader.errorMessage() orelse "Zlib returned an error").toErrorInstance(globalThis));
+                    return .zero;
+                };
+                reader.list = .{ .items = reader.list.items };
+                reader.list.capacity = reader.list.items.len;
+                reader.list_ptr = &reader.list;
+
+                var array_buffer = JSC.ArrayBuffer.fromBytes(reader.list.items, .Uint8Array);
+                return array_buffer.toJSWithContext(globalThis, reader, reader_deallocator, null);
+            },
+            .libdeflate => {
+                var decompressor: *bun.libdeflate.Decompressor = bun.libdeflate.Decompressor.alloc() orelse {
+                    list.deinit(allocator);
+                    globalThis.throwOutOfMemory();
+                    return .zero;
+                };
+                defer decompressor.deinit();
+                while (true) {
+                    const result = decompressor.decompress(compressed, list.allocatedSlice(), if (is_gzip) .gzip else .deflate);
+
+                    list.items.len = result.written;
+
+                    if (result.status == .insufficient_space) {
+                        if (list.capacity > 1024 * 1024 * 1024) {
+                            list.deinit(allocator);
+                            globalThis.throwOutOfMemory();
+                            return .zero;
+                        }
+
+                        list.ensureTotalCapacity(allocator, list.capacity * 2) catch {
+                            list.deinit(allocator);
+                            globalThis.throwOutOfMemory();
+                            return .zero;
+                        };
+                        continue;
+                    }
+
+                    if (result.status == .success) {
+                        list.items.len = result.written;
+                        break;
+                    }
+
+                    list.deinit(allocator);
+                    globalThis.throw("libdeflate returned an error: {s}", .{@tagName(result.status)});
+                    return .zero;
+                }
+
+                var array_buffer = JSC.ArrayBuffer.fromBytes(list.items, .Uint8Array);
+                return array_buffer.toJSWithContext(globalThis, list.items.ptr, global_deallocator, null);
+            },
+        }
     }
 
     pub fn gzipOrDeflateSync(
@@ -4672,107 +4923,112 @@ pub const JSZlib = struct {
         options_val_: ?JSValue,
         is_gzip: bool,
     ) JSValue {
-        var opts = zlib.Options{ .gzip = is_gzip };
+        var level: ?i32 = null;
+        var library: Library = .zlib;
+        var windowBits: i32 = 0;
+
         if (options_val_) |options_val| {
-            if (options_val.isObject()) {
-                if (options_val.get(globalThis, "windowBits")) |window| {
-                    opts.windowBits = window.coerce(i32, globalThis);
+            if (options_val.get(globalThis, "windowBits")) |window| {
+                windowBits = window.coerce(i32, globalThis);
+                library = .zlib;
+            }
+
+            if (options_val.getTruthy(globalThis, "library")) |library_value| {
+                if (!library_value.isString()) {
+                    globalThis.throwInvalidArguments("Expected library to be a string", .{});
+                    return .zero;
                 }
 
-                if (options_val.get(globalThis, "level")) |level| {
-                    opts.level = level.coerce(i32, globalThis);
-                }
+                library = Library.map.fromJS(globalThis, library_value) orelse {
+                    globalThis.throwInvalidArguments("Expected library to be one of 'zlib' or 'libdeflate'", .{});
+                    return .zero;
+                };
+            }
 
-                if (options_val.get(globalThis, "memLevel")) |memLevel| {
-                    opts.memLevel = memLevel.coerce(i32, globalThis);
-                }
-
-                if (options_val.get(globalThis, "strategy")) |strategy| {
-                    opts.strategy = strategy.coerce(i32, globalThis);
-                }
+            if (options_val.get(globalThis, "level")) |level_value| {
+                level = level_value.coerce(i32, globalThis);
+                if (globalThis.hasException()) return .zero;
             }
         }
 
+        if (globalThis.hasException()) return .zero;
+
         const compressed = buffer.slice();
-        const allocator = JSC.VirtualMachine.get().allocator;
-        var list = std.ArrayListUnmanaged(u8).initCapacity(allocator, if (compressed.len > 512) compressed.len else 32) catch unreachable;
-        var reader = zlib.ZlibCompressorArrayList.init(compressed, &list, allocator, opts) catch |err| {
-            if (err == error.InvalidArgument) {
-                return JSC.toInvalidArguments("Invalid buffer", .{}, globalThis);
-            }
+        const allocator = bun.default_allocator;
 
-            return JSC.toInvalidArguments("Unexpected", .{}, globalThis);
-        };
+        switch (library) {
+            .zlib => {
+                var list = std.ArrayListUnmanaged(u8).initCapacity(
+                    allocator,
+                    if (compressed.len > 512) compressed.len else 32,
+                ) catch {
+                    globalThis.throwOutOfMemory();
+                    return .zero;
+                };
 
-        reader.readAll() catch {
-            defer reader.deinit();
-            globalThis.throwValue(ZigString.init(reader.errorMessage() orelse "Zlib returned an error").toErrorInstance(globalThis));
-            return .zero;
-        };
-        reader.list = .{ .items = reader.list.toOwnedSlice(allocator) catch @panic("TODO") };
-        reader.list.capacity = reader.list.items.len;
-        reader.list_ptr = &reader.list;
+                var reader = zlib.ZlibCompressorArrayList.init(compressed, &list, allocator, .{
+                    .windowBits = 15,
+                    .gzip = is_gzip,
+                    .level = level orelse 6,
+                }) catch |err| {
+                    defer list.deinit(allocator);
+                    if (err == error.InvalidArgument) {
+                        globalThis.throw("Zlib error: Invalid argument", .{});
+                        return .zero;
+                    }
 
-        var array_buffer = JSC.ArrayBuffer.fromBytes(reader.list.items, .Uint8Array);
-        return array_buffer.toJSWithContext(globalThis, reader, reader_deallocator, null);
-    }
+                    globalThis.throwError(err, "Zlib error");
+                    return .zero;
+                };
 
-    pub fn inflateSync(
-        globalThis: *JSGlobalObject,
-        buffer: JSC.Node.StringOrBuffer,
-    ) JSValue {
-        const compressed = buffer.slice();
-        const allocator = JSC.VirtualMachine.get().allocator;
-        var list = std.ArrayListUnmanaged(u8).initCapacity(allocator, if (compressed.len > 512) compressed.len else 32) catch unreachable;
-        var reader = zlib.ZlibReaderArrayList.initWithOptions(compressed, &list, allocator, .{
-            .windowBits = -15,
-        }) catch |err| {
-            if (err == error.InvalidArgument) {
-                return JSC.toInvalidArguments("Invalid buffer", .{}, globalThis);
-            }
+                reader.readAll() catch {
+                    defer reader.deinit();
+                    globalThis.throwValue(ZigString.init(reader.errorMessage() orelse "Zlib returned an error").toErrorInstance(globalThis));
+                    return .zero;
+                };
+                reader.list = .{ .items = reader.list.toOwnedSlice(allocator) catch @panic("TODO") };
+                reader.list.capacity = reader.list.items.len;
+                reader.list_ptr = &reader.list;
 
-            return JSC.toInvalidArguments("Unexpected", .{}, globalThis);
-        };
+                var array_buffer = JSC.ArrayBuffer.fromBytes(reader.list.items, .Uint8Array);
+                return array_buffer.toJSWithContext(globalThis, reader, reader_deallocator, null);
+            },
+            .libdeflate => {
+                var compressor: *bun.libdeflate.Compressor = bun.libdeflate.Compressor.alloc(level orelse 6) orelse {
+                    globalThis.throwOutOfMemory();
+                    return .zero;
+                };
+                const encoding: bun.libdeflate.Encoding = if (is_gzip) .gzip else .deflate;
+                defer compressor.deinit();
 
-        reader.readAll() catch {
-            defer reader.deinit();
-            globalThis.throwValue(ZigString.init(reader.errorMessage() orelse "Zlib returned an error").toErrorInstance(globalThis));
-            return .zero;
-        };
-        reader.list = .{ .items = reader.list.toOwnedSlice(allocator) catch @panic("TODO") };
-        reader.list.capacity = reader.list.items.len;
-        reader.list_ptr = &reader.list;
+                var list = std.ArrayListUnmanaged(u8).initCapacity(
+                    allocator,
+                    // This allocation size is unfortunate, but it's not clear how to avoid it with libdeflate.
+                    compressor.maxBytesNeeded(compressed, encoding),
+                ) catch {
+                    globalThis.throwOutOfMemory();
+                    return .zero;
+                };
 
-        var array_buffer = JSC.ArrayBuffer.fromBytes(reader.list.items, .Uint8Array);
-        return array_buffer.toJSWithContext(globalThis, reader, reader_deallocator, null);
-    }
+                while (true) {
+                    const result = compressor.compress(compressed, list.allocatedSlice(), encoding);
 
-    pub fn gunzipSync(
-        globalThis: *JSGlobalObject,
-        buffer: JSC.Node.StringOrBuffer,
-    ) JSValue {
-        const compressed = buffer.slice();
-        const allocator = JSC.VirtualMachine.get().allocator;
-        var list = std.ArrayListUnmanaged(u8).initCapacity(allocator, if (compressed.len > 512) compressed.len else 32) catch unreachable;
-        var reader = zlib.ZlibReaderArrayList.init(compressed, &list, allocator) catch |err| {
-            if (err == error.InvalidArgument) {
-                return JSC.toInvalidArguments("Invalid buffer", .{}, globalThis);
-            }
+                    list.items.len = result.written;
 
-            return JSC.toInvalidArguments("Unexpected", .{}, globalThis);
-        };
+                    if (result.status == .success) {
+                        list.items.len = result.written;
+                        break;
+                    }
 
-        reader.readAll() catch {
-            defer reader.deinit();
-            globalThis.throwValue(ZigString.init(reader.errorMessage() orelse "Zlib returned an error").toErrorInstance(globalThis));
-            return .zero;
-        };
-        reader.list = .{ .items = reader.list.toOwnedSlice(allocator) catch @panic("TODO") };
-        reader.list.capacity = reader.list.items.len;
-        reader.list_ptr = &reader.list;
+                    list.deinit(allocator);
+                    globalThis.throw("libdeflate error: {s}", .{@tagName(result.status)});
+                    return .zero;
+                }
 
-        var array_buffer = JSC.ArrayBuffer.fromBytes(reader.list.items, .Uint8Array);
-        return array_buffer.toJSWithContext(globalThis, reader, reader_deallocator, null);
+                var array_buffer = JSC.ArrayBuffer.fromBytes(list.items, .Uint8Array);
+                return array_buffer.toJSWithContext(globalThis, list.items.ptr, global_deallocator, null);
+            },
+        }
     }
 };
 

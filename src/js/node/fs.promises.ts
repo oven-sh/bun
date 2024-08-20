@@ -200,6 +200,15 @@ const exports = {
   },
   writeFile: function (fileHandleOrFdOrPath, ...args) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
+    if (
+      !$isTypedArrayView(args[0]) &&
+      typeof args[0] !== "string" &&
+      ($isCallable(args[0]?.[Symbol.iterator]) || $isCallable(args[0]?.[Symbol.asyncIterator]))
+    ) {
+      $debug("fs.promises.writeFile async iterator slow path!");
+      // Node accepts an arbitrary async iterator here
+      return writeFileAsyncIterator(fileHandleOrFdOrPath, ...args);
+    }
     return _writeFile(fileHandleOrFdOrPath, ...args);
   },
   readlink: fs.readlink.bind(fs),
@@ -568,5 +577,72 @@ function throwEBADFIfNecessary(fn, fd) {
     err.name = "SystemError";
     err.syscall = fn.name;
     throw err;
+  }
+}
+
+async function writeFileAsyncIteratorInner(fd, iterable, encoding) {
+  const writer = Bun.file(fd).writer();
+
+  const mustRencode = !(encoding === "utf8" || encoding === "utf-8" || encoding === "binary" || encoding === "buffer");
+  let totalBytesWritten = 0;
+
+  try {
+    for await (let chunk of iterable) {
+      if (mustRencode && typeof chunk === "string") {
+        $debug("Re-encoding chunk to", encoding);
+        chunk = Buffer.from(chunk, encoding);
+      }
+
+      const prom = writer.write(chunk);
+      if (prom && $isPromise(prom)) {
+        totalBytesWritten += await prom;
+      } else {
+        totalBytesWritten += prom;
+      }
+    }
+  } finally {
+    await writer.end();
+  }
+
+  return totalBytesWritten;
+}
+
+async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, flag, mode) {
+  let encoding;
+  if (typeof optionsOrEncoding === "object") {
+    encoding = optionsOrEncoding?.encoding ?? (encoding || "utf8");
+    flag = optionsOrEncoding?.flag ?? (flag || "w");
+    mode = optionsOrEncoding?.mode ?? (mode || 0o666);
+  } else if (typeof optionsOrEncoding === "string" || optionsOrEncoding == null) {
+    encoding = optionsOrEncoding || "utf8";
+    flag ??= "w";
+    mode ??= 0o666;
+  }
+
+  if (!Buffer.isEncoding(encoding)) {
+    // ERR_INVALID_OPT_VALUE_ENCODING was removed in Node v15.
+    throw new TypeError(`Unknown encoding: ${encoding}`);
+  }
+
+  let mustClose = typeof fdOrPath === "string";
+  if (mustClose) {
+    // Rely on fs.open for further argument validaiton.
+    fdOrPath = await fs.open(fdOrPath, flag, mode);
+  }
+
+  let totalBytesWritten = 0;
+
+  try {
+    totalBytesWritten = await writeFileAsyncIteratorInner(fdOrPath, iterable, encoding);
+  } finally {
+    if (mustClose) {
+      try {
+        if (typeof flag === "string" && !flag.includes("a")) {
+          await fs.ftruncate(fdOrPath, totalBytesWritten);
+        }
+      } finally {
+        await fs.close(fdOrPath);
+      }
+    }
   }
 }

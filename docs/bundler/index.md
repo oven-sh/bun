@@ -756,6 +756,25 @@ $ bun build ./index.tsx --outdir ./out --external '*'
 
 {% /codetabs %}
 
+### `packages`
+
+Control whatever package dependencies are included to bundle or not. Possible values: `bundle` (default), `external`. Bun threats any import which path do not start with `.`, `..` or `/` as package.
+
+{% codetabs group="a" %}
+
+```ts#JavaScript
+await Bun.build({
+  entrypoints: ['./index.ts'],
+  packages: 'external',
+})
+```
+
+```bash#CLI
+$ bun build ./index.ts --packages external
+```
+
+{% /codetabs %}
+
 ### `naming`
 
 Customizes the generated file names. Defaults to `./[dir]/[name].[ext]`.
@@ -1257,7 +1276,7 @@ interface BuildOptions {
   loader?: { [k in string]: Loader }; // See https://bun.sh/docs/bundler/loaders
   manifest?: boolean; // false
   external?: string[]; // []
-  sourcemap?: "none" | "inline" | "linked" | "external" | boolean; // "none"
+  sourcemap?: "none" | "inline" | "linked" | "external" | "linked" | boolean; // "none"
   root?: string; // computed from entrypoints
   naming?:
     | string

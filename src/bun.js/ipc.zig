@@ -773,12 +773,10 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             const to_write = ipc.outgoing.slice();
             if (to_write.len == 0) {
                 ipc.outgoing.reset();
-                ipc.outgoing.reset();
                 return;
             }
             const n = socket.write(to_write, false);
             if (n == to_write.len) {
-                ipc.outgoing.reset();
                 ipc.outgoing.reset();
             } else if (n > 0) {
                 ipc.outgoing.cursor += @intCast(n);

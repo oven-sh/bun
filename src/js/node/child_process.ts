@@ -1039,10 +1039,6 @@ class ChildProcess extends EventEmitter {
       }
     }
 
-    if (this.#handle) {
-      this.#handle = null;
-    }
-
     if (err) {
       if (this.spawnfile) err.path = this.spawnfile;
       err.spawnargs = ArrayPrototypeSlice.$call(this.spawnargs, 1);

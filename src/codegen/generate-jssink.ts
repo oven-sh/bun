@@ -64,7 +64,7 @@ function header() {
         class ${className} final : public JSC::JSDestructibleObject {                                                                                                              
         public:                                                                                                                                                                     
             using Base = JSC::JSDestructibleObject;                                                                                                                                 
-            static ${className}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* sinkPtr, uintptr_t destructor = 0);       
+            static ${className}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* sinkPtr);       
             static constexpr SinkID Sink = SinkID::${name};                                          
                                                                                                                                                                                     
             DECLARE_EXPORT_INFO;                                                                                                                                                    
@@ -106,13 +106,11 @@ function header() {
             void* m_sinkPtr;
             int m_refCount { 1 };
 
-            uintptr_t m_onDestroy { 0 };
                                                                                                                                                                                     
-            ${className}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, uintptr_t onDestroy)                                                                                                    
+            ${className}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)                                                                                                    
                 : Base(vm, structure)                                                                                                                                               
             {                                                                                                                                                                       
                 m_sinkPtr = sinkPtr;
-                m_onDestroy = onDestroy;
             }                                                                                                                                                                       
                                                                                                                                                                                     
             void finishCreation(JSC::VM&);
@@ -123,7 +121,7 @@ function header() {
         class ${controller} final : public JSC::JSDestructibleObject {                                                                                                              
             public:                                                                                                                                                                     
                 using Base = JSC::JSDestructibleObject;                                                                                                                                 
-                static ${controller}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* sinkPtr, uintptr_t onDestroy);       
+                static ${controller}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* sinkPtr);       
                 static constexpr SinkID Sink = SinkID::${name};                                          
                                                                                                                                                                                         
                 DECLARE_EXPORT_INFO;                                                                                                                                                    
@@ -162,13 +160,10 @@ function header() {
                 mutable WriteBarrier<JSC::Unknown> m_onClose;
                 mutable JSC::Weak<JSObject> m_weakReadableStream;
 
-                uintptr_t m_onDestroy { 0 };
-                                                                                                                                                                                        
-                ${controller}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, uintptr_t onDestroy)                                                                                                    
+                ${controller}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)                                                                                                    
                     : Base(vm, structure)                                                                                                                                               
                 {                                                                                                                                                                       
                     m_sinkPtr = sinkPtr;
-                    m_onDestroy = onDestroy;
                 }                                                                                                                                                                       
                                                                                                                                                                                         
                 void finishCreation(JSC::VM&);
@@ -566,10 +561,6 @@ const ClassInfo ${controller}::s_info = { "${controllerName}"_s, &Base::s_info, 
 
 ${className}::~${className}()
 {
-    if (m_onDestroy) {
-        Bun__onSinkDestroyed(m_onDestroy, m_sinkPtr);
-    }
-
     if (m_sinkPtr) {
         ${name}__finalize(m_sinkPtr);
     }
@@ -578,10 +569,6 @@ ${className}::~${className}()
 
 ${controller}::~${controller}()
 {
-    if (m_onDestroy) {
-        Bun__onSinkDestroyed(m_onDestroy, m_sinkPtr);
-    }
-
     if (m_sinkPtr) {
         ${name}__finalize(m_sinkPtr);
     }
@@ -598,12 +585,6 @@ JSObject* JS${controllerName}::createPrototype(VM& vm, JSDOMGlobalObject& global
 }
 
 void JS${controllerName}::detach() {
-    if (m_onDestroy) {
-        auto destroy = m_onDestroy;
-        m_onDestroy = 0;
-        Bun__onSinkDestroyed(destroy, m_sinkPtr);
-    }
-
     m_sinkPtr = nullptr;
     m_onPull.clear();
 
@@ -635,16 +616,16 @@ ${constructor}* ${constructor}::create(JSC::VM& vm, JSC::JSGlobalObject* globalO
     return ptr;
 }
 
-${className}* ${className}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* sinkPtr, uintptr_t onDestroy)
+${className}* ${className}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* sinkPtr)
 {
-    ${className}* ptr = new (NotNull, JSC::allocateCell<${className}>(vm)) ${className}(vm, structure, sinkPtr, onDestroy);
+    ${className}* ptr = new (NotNull, JSC::allocateCell<${className}>(vm)) ${className}(vm, structure, sinkPtr);
     ptr->finishCreation(vm);
     return ptr;
 }
 
-${controller}* ${controller}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* sinkPtr, uintptr_t onDestroy)
+${controller}* ${controller}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* sinkPtr)
 {
-    ${controller}* ptr = new (NotNull, JSC::allocateCell<${controller}>(vm)) ${controller}(vm, structure, sinkPtr, onDestroy);
+    ${controller}* ptr = new (NotNull, JSC::allocateCell<${controller}>(vm)) ${controller}(vm, structure, sinkPtr);
     ptr->finishCreation(vm);
     return ptr;
 }
@@ -695,16 +676,6 @@ void ${controller}::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-}
-
-extern "C" void ${name}__setDestroyCallback(EncodedJSValue encodedValue, uintptr_t callback)
-{
-    JSValue value = JSValue::decode(encodedValue);
-    if (auto* sink = JSC::jsDynamicCast<WebCore::${className}*>(value)) {
-        sink->m_onDestroy = callback;
-    } else if (auto* controller = JSC::jsDynamicCast<WebCore::${controller}*>(value)) {
-        controller->m_onDestroy = callback;
-    }
 }
 
 void ${className}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -844,12 +815,12 @@ default:
     const { className, controller, prototypeName, controllerPrototypeName, constructor } = names(name);
 
     templ += `
-extern "C" JSC__JSValue ${name}__createObject(JSC__JSGlobalObject* arg0, void* sinkPtr, uintptr_t destructor)
+extern "C" JSC__JSValue ${name}__createObject(JSC__JSGlobalObject* arg0, void* sinkPtr)
 {
     auto& vm = arg0->vm();
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
     JSC::Structure* structure = globalObject->${name}Structure();
-    return JSC::JSValue::encode(WebCore::JS${name}::create(vm, globalObject, structure, sinkPtr, destructor));
+    return JSC::JSValue::encode(WebCore::JS${name}::create(vm, globalObject, structure, sinkPtr));
 }
 
 extern "C" void* ${name}__fromJS(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1)
@@ -883,7 +854,7 @@ extern "C" JSC__JSValue ${name}__assignToStream(JSC__JSGlobalObject* arg0, JSC__
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
 
     JSC::Structure* structure = WebCore::getDOMStructure<WebCore::${controller}>(vm, *globalObject);
-    WebCore::${controller} *controller = WebCore::${controller}::create(vm, globalObject, structure, sinkPtr, 0);
+    WebCore::${controller} *controller = WebCore::${controller}::create(vm, globalObject, structure, sinkPtr);
     *controllerValue = reinterpret_cast<void*>(JSC::JSValue::encode(controller));
     return globalObject->assignToStream(JSC::JSValue::decode(stream), controller);
 }

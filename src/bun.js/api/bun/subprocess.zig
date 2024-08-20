@@ -174,6 +174,7 @@ pub const Subprocess = struct {
             };
         }
     };
+
     process: *Process,
     stdin: Writable,
     stdout: Readable,
@@ -201,13 +202,11 @@ pub const Subprocess = struct {
     ipc_callback: JSC.Strong = .{},
     flags: Flags = .{},
 
-    weak_file_sink_stdin_ptr: ?*JSC.WebCore.FileSink = null,
+    island: *Island,
 
     pub const Flags = packed struct {
         is_sync: bool = false,
         killed: bool = false,
-        has_stdin_destructor_called: bool = false,
-        finalized: bool = false,
     };
 
     pub const SignalCode = bun.SignalCode;
@@ -700,19 +699,6 @@ pub const Subprocess = struct {
         return .undefined;
     }
 
-    pub fn onStdinDestroyed(this: *Subprocess) void {
-        this.flags.has_stdin_destructor_called = true;
-        this.weak_file_sink_stdin_ptr = null;
-
-        if (this.flags.finalized) {
-            // if the process has already been garbage collected, we can free the memory now
-            bun.default_allocator.destroy(this);
-        } else {
-            // otherwise update the pending activity flag
-            this.updateHasPendingActivity();
-        }
-    }
-
     pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) JSValue {
         IPClog("Subprocess#doSend", .{});
         const ipc_data = &(this.ipc_data orelse {
@@ -1187,13 +1173,6 @@ pub const Subprocess = struct {
         // When the stream has closed we need to be notified to prevent a use-after-free
         // We can test for this use-after-free by enabling hot module reloading on a file and then saving it twice
         pub fn onClose(this: *Writable, _: ?bun.sys.Error) void {
-            const process: *Subprocess = @fieldParentPtr("stdin", this);
-
-            if (process.this_jsvalue != .zero) {
-                if (Subprocess.stdinGetCached(process.this_jsvalue)) |existing_value| {
-                    JSC.WebCore.FileSink.JSSink.setDestroyCallback(existing_value, 0);
-                }
-            }
 
             switch (this.*) {
                 .buffer => {
@@ -1201,11 +1180,11 @@ pub const Subprocess = struct {
                 },
                 .pipe => {
                     this.pipe.deref();
+                    this.pipe.island.?.clearStdin();
                 },
                 else => {},
             }
 
-            process.onStdinDestroyed();
 
             this.* = .{
                 .ignore = {},
@@ -1217,7 +1196,7 @@ pub const Subprocess = struct {
         pub fn init(
             stdio: Stdio,
             event_loop: *JSC.EventLoop,
-            subprocess: *Subprocess,
+            island: *Subprocess.Island,
             result: StdioResult,
         ) !Writable {
             assertStdioResult(result);
@@ -1237,8 +1216,8 @@ pub const Subprocess = struct {
                                 },
                             }
                             pipe.writer.setParent(pipe);
-                            subprocess.weak_file_sink_stdin_ptr = pipe;
-                            subprocess.flags.has_stdin_destructor_called = false;
+                            pipe.island = island;
+                            island.stdin = pipe;
 
                             return Writable{
                                 .pipe = pipe,
@@ -1249,12 +1228,12 @@ pub const Subprocess = struct {
 
                     .blob => |blob| {
                         return Writable{
-                            .buffer = StaticPipeWriter.create(event_loop, subprocess, result, .{ .blob = blob }),
+                            .buffer = StaticPipeWriter.create(event_loop, island.subprocess.?, result, .{ .blob = blob }),
                         };
                     },
                     .array_buffer => |array_buffer| {
                         return Writable{
-                            .buffer = StaticPipeWriter.create(event_loop, subprocess, result, .{ .array_buffer = array_buffer }),
+                            .buffer = StaticPipeWriter.create(event_loop, island.subprocess.?, result, .{ .array_buffer = array_buffer }),
                         };
                     },
                     .fd => |fd| {
@@ -1295,8 +1274,7 @@ pub const Subprocess = struct {
                         },
                     }
 
-                    subprocess.weak_file_sink_stdin_ptr = pipe;
-                    subprocess.flags.has_stdin_destructor_called = false;
+                    island.stdin = pipe;
 
                     pipe.writer.handle.poll.flags.insert(.socket);
 
@@ -1307,12 +1285,12 @@ pub const Subprocess = struct {
 
                 .blob => |blob| {
                     return Writable{
-                        .buffer = StaticPipeWriter.create(event_loop, subprocess, result, .{ .blob = blob }),
+                        .buffer = StaticPipeWriter.create(event_loop, island.subprocess.?, result, .{ .blob = blob }),
                     };
                 },
                 .array_buffer => |array_buffer| {
                     return Writable{
-                        .buffer = StaticPipeWriter.create(event_loop, subprocess, result, .{ .array_buffer = array_buffer }),
+                        .buffer = StaticPipeWriter.create(event_loop, island.subprocess.?, result, .{ .array_buffer = array_buffer }),
                     };
                 },
                 .memfd => |memfd| {
@@ -1341,18 +1319,16 @@ pub const Subprocess = struct {
                 .buffer, .inherit => JSValue.jsUndefined(),
                 .pipe => |pipe| {
                     this.* = .{ .ignore = {} };
-                    if (subprocess.process.hasExited() and !subprocess.flags.has_stdin_destructor_called) {
+                    if (subprocess.process.hasExited() and subprocess.island.stdin != null) {
                         pipe.onAttachedProcessExit();
                         return pipe.toJS(globalThis);
                     } else {
-                        subprocess.flags.has_stdin_destructor_called = false;
-                        subprocess.weak_file_sink_stdin_ptr = pipe;
+                        subprocess.island.stdin = pipe;
                         if (@intFromPtr(pipe.signal.ptr) == @intFromPtr(subprocess)) {
                             pipe.signal.clear();
                         }
                         return pipe.toJSWithDestructor(
                             globalThis,
-                            JSC.WebCore.SinkDestructor.Ptr.init(subprocess),
                         );
                     }
                 },
@@ -1360,13 +1336,6 @@ pub const Subprocess = struct {
         }
 
         pub fn finalize(this: *Writable) void {
-            const subprocess: *Subprocess = @fieldParentPtr("stdin", this);
-            if (subprocess.this_jsvalue != .zero) {
-                if (JSC.Codegen.JSSubprocess.stdinGetCached(subprocess.this_jsvalue)) |existing_value| {
-                    JSC.WebCore.FileSink.JSSink.setDestroyCallback(existing_value, 0);
-                }
-            }
-
             return switch (this.*) {
                 .pipe => |pipe| {
                     if (pipe.signal.ptr == @as(*anyopaque, @ptrCast(this))) {
@@ -1416,7 +1385,7 @@ pub const Subprocess = struct {
         this.pid_rusage = rusage.*;
         const is_sync = this.flags.is_sync;
 
-        var stdin: ?*JSC.WebCore.FileSink = this.weak_file_sink_stdin_ptr;
+        var stdin: ?*JSC.WebCore.FileSink = this.island.stdin;
         var existing_stdin_value = JSC.JSValue.zero;
         if (this_jsvalue != .zero) {
             if (JSC.Codegen.JSSubprocess.stdinGetCached(this_jsvalue)) |existing_value| {
@@ -1434,14 +1403,9 @@ pub const Subprocess = struct {
             this.stdin.buffer.close();
         }
 
-        if (existing_stdin_value != .zero) {
-            JSC.WebCore.FileSink.JSSink.setDestroyCallback(existing_stdin_value, 0);
-        }
-
         if (stdin) |pipe| {
-            this.weak_file_sink_stdin_ptr = null;
-            this.flags.has_stdin_destructor_called = true;
-            pipe.onAttachedProcessExit();
+            _ = pipe;
+            this.island.clearStdin();
         }
 
         var did_update_has_pending_activity = false;
@@ -1570,11 +1534,8 @@ pub const Subprocess = struct {
         this.process.detach();
         this.process.deref();
 
-        this.flags.finalized = true;
-        if (this.weak_file_sink_stdin_ptr == null) {
-            // if no file sink exists we can free immediately
-            bun.default_allocator.destroy(this);
-        }
+        this.island.clearSubprocess();
+        bun.default_allocator.destroy(this);
     }
 
     pub fn getExited(
@@ -2103,21 +2064,14 @@ pub const Subprocess = struct {
         }
 
         const loop = jsc_vm.eventLoop();
+        var island = Island.new(.{});
 
         // When run synchronously, subprocess isn't garbage collected
         subprocess.* = Subprocess{
             .globalThis = globalThis,
             .process = spawned.toProcess(loop, is_sync),
             .pid_rusage = null,
-            .stdin = Writable.init(
-                stdio[0],
-                loop,
-                subprocess,
-                spawned.stdin,
-            ) catch {
-                globalThis.throwOutOfMemory();
-                return .zero;
-            },
+            .stdin = undefined,
             .stdout = Readable.init(
                 stdio[1],
                 loop,
@@ -2155,6 +2109,17 @@ pub const Subprocess = struct {
             .flags = .{
                 .is_sync = is_sync,
             },
+            .island = island,
+        };
+        island.subprocess = subprocess;
+        subprocess.stdin = Writable.init(
+            stdio[0],
+            loop,
+            island,
+            spawned.stdin,
+        ) catch {
+            globalThis.throwOutOfMemory();
+            return .zero;
         };
         subprocess.process.setExitHandler(subprocess);
 
@@ -2339,4 +2304,21 @@ pub const Subprocess = struct {
     }
 
     pub const IPCHandler = IPC.NewIPCHandler(Subprocess);
+
+    pub const Island = struct {
+        pub usingnamespace bun.New(@This());
+
+        subprocess: ?*Subprocess = null,
+        stdin: ?*JSC.WebCore.FileSink = null,
+
+        pub fn clearSubprocess(this: *Island) void {
+            this.subprocess = null;
+            if (this.stdin == null) this.destroy();
+        }
+
+        pub fn clearStdin(this: *Island) void {
+            this.stdin = null;
+            if (this.subprocess == null) this.destroy();
+        }
+    };
 };

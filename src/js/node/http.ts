@@ -1670,8 +1670,7 @@ class ClientRequest extends OutgoingMessage {
       }
     }
 
-    const defaultPort = protocol === "https:" ? 443 : 80;
-
+    const defaultPort = options.defaultPort || this.#agent.defaultPort;
     this.#port = options.port || options.defaultPort || defaultPort;
     this.#useDefaultPort = this.#port === defaultPort;
     const host =

@@ -791,13 +791,11 @@ pub const HTTPThread = struct {
 
     lazy_libdeflater: ?*LibdeflateState = null,
 
+    const threadlog = Output.scoped(.HTTPThread, true);
     const ShutdownMessage = struct {
         async_http_id: u32,
         is_tls: bool,
     };
-
-    const threadlog = Output.scoped(.HTTPThread, true);
-
     pub const LibdeflateState = struct {
         decompressor: *bun.libdeflate.Decompressor = undefined,
         shared_buffer: [512 * 1024]u8 = undefined,
@@ -1086,6 +1084,24 @@ pub fn checkServerIdentity(
     return true;
 }
 
+pub fn registerAbortTracker(
+    client: *HTTPClient,
+    comptime is_ssl: bool,
+    socket: NewHTTPContext(is_ssl).HTTPSocket,
+) void {
+    if (client.signals.aborted != null) {
+        socket_async_http_abort_tracker.put(client.async_http_id, socket.socket) catch unreachable;
+    }
+}
+
+pub fn unregisterAbortTracker(
+    client: *HTTPClient,
+) void {
+    if (client.signals.aborted != null) {
+        _ = socket_async_http_abort_tracker.swapRemove(client.async_http_id);
+    }
+}
+
 pub fn onOpen(
     client: *HTTPClient,
     comptime is_ssl: bool,
@@ -1098,9 +1114,7 @@ pub fn onOpen(
             assert(is_ssl == client.url.isHTTPS());
         }
     }
-    if (client.signals.aborted != null) {
-        socket_async_http_abort_tracker.put(client.async_http_id, socket.socket) catch unreachable;
-    }
+    client.registerAbortTracker(is_ssl, socket);
     log("Connected {s} \n", .{client.url.href});
 
     if (client.signals.get(.aborted)) {
@@ -2458,9 +2472,7 @@ pub fn doRedirect(
         tunnel.deinit();
         this.proxy_tunnel = null;
     }
-    if (this.signals.aborted != null) {
-        _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
-    }
+    this.unregisterAbortTracker();
 
     return this.start(.{ .bytes = request_body }, body_out_str);
 }
@@ -2554,7 +2566,7 @@ fn printResponse(response: picohttp.Response) void {
 
 pub fn onPreconnect(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     log("onPreconnect({})", .{this.url});
-    _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
+    this.unregisterAbortTracker();
     const ctx = if (comptime is_ssl) &http_thread.https_context else &http_thread.http_context;
     ctx.releaseSocket(
         socket,
@@ -3193,9 +3205,7 @@ pub fn closeAndAbort(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCo
 }
 
 fn fail(this: *HTTPClient, err: anyerror) void {
-    if (this.signals.aborted != null) {
-        _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
-    }
+    this.unregisterAbortTracker();
 
     this.state.request_stage = .fail;
     this.state.response_stage = .fail;
@@ -3267,15 +3277,13 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
         const result = this.toResult();
         const is_done = !result.has_more;
 
-        if (this.signals.aborted != null and is_done) {
-            _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
-        }
-
         log("progressUpdate {}", .{is_done});
 
         const callback = this.result_callback;
 
         if (is_done) {
+            this.unregisterAbortTracker();
+
             if (this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
                 ctx.releaseSocket(
                     socket,

@@ -1264,3 +1264,11 @@ https://buildkite.com/docs/pipelines/security/secrets/buildkite-secrets`;
 
   return value;
 }
+
+// Make it easier to run some node tests.
+Object.defineProperty(globalThis, "gc", {
+  value: Bun.gc,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});

@@ -1881,11 +1881,14 @@ it("should allow use of custom timeout", async () => {
       );
     },
   });
-  const res = await fetch(new URL("/timeout", server.url.origin));
-  expect(res.status).toBe(200);
-  expect(res.text()).rejects.toThrow(/The socket connection was closed unexpectedly./);
-
-  const res2 = await fetch(new URL("/ok", server.url.origin));
-  expect(res2.status).toBe(200);
-  expect(res2.text()).resolves.toBe("Hello, World!");
+  async function testTimeout(pathname: string, success: boolean) {
+    const res = await fetch(new URL(pathname, server.url.origin));
+    expect(res.status).toBe(200);
+    if (success) {
+      expect(res.text()).resolves.toBe("Hello, World!");
+    } else {
+      expect(res.text()).rejects.toThrow(/The socket connection was closed unexpectedly./);
+    }
+  }
+  await Promise.all([testTimeout("/ok", true), testTimeout("/timeout", false)]);
 }, 10_000);

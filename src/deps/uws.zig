@@ -86,7 +86,7 @@ pub const InternalSocket = union(enum) {
     detached: void,
     pub fn isDetached(this: InternalSocket) bool {
         return this == .detached;
-    }  
+    }
     pub fn detach(this: *InternalSocket) void {
         this.* = .detached;
     }
@@ -222,7 +222,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 
         pub fn ssl(this: ThisSocket) ?*BoringSSL.SSL {
             if (comptime is_ssl) {
-                if(this.getNativeHandle()) |handle| {
+                if (this.getNativeHandle()) |handle| {
                     return @as(*BoringSSL.SSL, @ptrCast(handle));
                 }
                 return null;
@@ -674,7 +674,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         ) ?ThisSocket {
             const socket_ = ThisSocket{ .socket = .{ .done = us_socket_from_fd(ctx, @sizeOf(*anyopaque), bun.socketcast(handle)) orelse return null } };
 
-            if(socket_.ext(*anyopaque)) |holder| {
+            if (socket_.ext(*anyopaque)) |holder| {
                 holder.* = this;
             }
 
@@ -712,7 +712,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 return error.FailedToOpenSocket;
 
             const socket_ = ThisSocket{ .socket = .{ .done = socket } };
-            if(socket_.ext(*anyopaque)) |holder| {
+            if (socket_.ext(*anyopaque)) |holder| {
                 holder.* = ctx;
             }
             return socket_;
@@ -755,7 +755,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 ThisSocket{
                     .socket = .{ .connecting = @ptrCast(socket_ptr) },
                 };
-            if(socket.ext(*anyopaque)) |holder| {
+            if (socket.ext(*anyopaque)) |holder| {
                 holder.* = ptr;
             }
             return socket;
@@ -1067,7 +1067,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             const new_socket = us_socket_context_adopt_socket(comptime ssl_int, socket_ctx, socket, -1) orelse return false;
             bun.assert(new_socket == socket);
             var adopted = ThisSocket.from(new_socket);
-            if(adopted.ext(*anyopaque)) |holder| {
+            if (adopted.ext(*anyopaque)) |holder| {
                 holder.* = ctx;
             }
             @field(ctx, socket_field_name) = adopted;
@@ -2267,6 +2267,9 @@ pub fn NewApp(comptime ssl: bool) type {
             pub fn endSendFile(res: *Response, write_offset: u64, close_connection: bool) void {
                 uws_res_end_sendfile(ssl_flag, res.downcast(), write_offset, close_connection);
             }
+            pub fn timeout(res: *Response, seconds: u8) void {
+                uws_res_timeout(ssl_flag, res.downcast(), seconds);
+            }
             pub fn write(res: *Response, data: []const u8) bool {
                 return uws_res_write(ssl_flag, res.downcast(), data.ptr, data.len);
             }
@@ -2679,6 +2682,8 @@ extern fn uws_res_write_header(ssl: i32, res: *uws_res, key: [*c]const u8, key_l
 extern fn uws_res_write_header_int(ssl: i32, res: *uws_res, key: [*c]const u8, key_length: usize, value: u64) void;
 extern fn uws_res_end_without_body(ssl: i32, res: *uws_res, close_connection: bool) void;
 extern fn uws_res_end_sendfile(ssl: i32, res: *uws_res, write_offset: u64, close_connection: bool) void;
+extern fn uws_res_timeout(ssl: i32, res: *uws_res, timeout: u8) void;
+
 extern fn uws_res_write(ssl: i32, res: *uws_res, data: [*c]const u8, length: usize) bool;
 extern fn uws_res_get_write_offset(ssl: i32, res: *uws_res) u64;
 extern fn uws_res_override_write_offset(ssl: i32, res: *uws_res, u64) void;

@@ -42,7 +42,7 @@ endif()
 
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
   set(WEBKIT_ARCH "arm64")
-elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "amd64|x86_64|x64")
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "amd64|x86_64|x64|AMD64")
   set(WEBKIT_ARCH "amd64")
 else()
   message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")

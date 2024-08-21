@@ -2259,7 +2259,7 @@ it.skip("should be able to stream huge amounts of data", async () => {
 // TODO: today we use a workaround to continue event, we need to fix it in the future.
 it("should emit continue event #7480", done => {
   let receivedContinue = false;
-  const req = request(
+  const req = https.request(
     "https://example.com",
     { headers: { "accept-encoding": "identity", "expect": "100-continue" } },
     res => {
@@ -2284,7 +2284,7 @@ it("should emit continue event #7480", done => {
 
 it("should not emit continue event #7480", done => {
   let receivedContinue = false;
-  const req = request("https://example.com", { headers: { "accept-encoding": "identity" } }, res => {
+  const req = https.request("https://example.com", { headers: { "accept-encoding": "identity" } }, res => {
     let data = "";
     res.setEncoding("utf8");
     res.on("data", chunk => {

@@ -67,26 +67,3 @@ macro(set_if label regex value)
   endif()
 endmacro()
 
-function(check_version found executable)
-  set(${found} FALSE PARENT_SCOPE)
-
-  execute_process(
-    COMMAND ${executable} --version
-    RESULT_VARIABLE result
-    OUTPUT_VARIABLE output
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-  )
-
-  if(NOT result EQUAL 0)
-    message(DEBUG "Checking ${executable} (expected \"${LLVM_VERSION}\", exited with \"${result}\")")
-    return()
-  endif()
-
-  parse_semver("${output}" executable)
-  if(NOT executable_VERSION STREQUAL LLVM_VERSION)
-    message(DEBUG "Checking ${executable} (expected \"${LLVM_VERSION}\", received \"${executable_VERSION}\")")
-    return()
-  endif()
-
-  set(${found} TRUE PARENT_SCOPE)
-endfunction()

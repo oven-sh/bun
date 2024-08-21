@@ -6,6 +6,10 @@ set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
 set(Bun_VERSION "1.1.27")
 set(WEBKIT_TAG 147ed53838e21525677492c27099567a6cd19c6b)
 
+set(CWD ${CMAKE_SOURCE_DIR})
+set(BUILD_PATH ${CMAKE_BINARY_DIR})
+set(CACHE_PATH ${CWD}/.cache)
+
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
 
@@ -14,19 +18,6 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD_REQUIRED ON)
-
-option(ZIG_CACHE_DIR "Path to the Zig cache directory" "")
-
-if(NOT ZIG_CACHE_DIR)
-    SET(ZIG_CACHE_DIR "${BUN_WORKDIR}")
-    cmake_path(APPEND ZIG_CACHE_DIR "zig-cache")
-endif()
-
-set(LOCAL_ZIG_CACHE_DIR "${ZIG_CACHE_DIR}")
-set(GLOBAL_ZIG_CACHE_DIR "${ZIG_CACHE_DIR}")
-
-cmake_path(APPEND LOCAL_ZIG_CACHE_DIR "local")
-cmake_path(APPEND GLOBAL_ZIG_CACHE_DIR "global")
 
 # WebKit uses -std=gnu++20 on non-macOS non-Windows
 # If we do not set this, it will crash at startup on the first memory allocation.
@@ -52,6 +43,10 @@ include(cmake/SetupCcache.cmake)
 project(Bun VERSION "${Bun_VERSION}")
 
 include(cmake/Options.cmake)
+
+if(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY)
+    include(cmake/SetupZig.cmake)
+endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(DEBUG ON)
@@ -98,10 +93,6 @@ endif()
 option(BUN_TIDY_ONLY "Only run clang-tidy" OFF)
 option(BUN_TIDY_ONLY_EXTRA " Only run clang-tidy, with extra checks for local development" OFF)
 
-if(NOT ZIG_LIB_DIR)
-    cmake_path(SET ZIG_LIB_DIR NORMALIZE "${CMAKE_CURRENT_SOURCE_DIR}/src/deps/zig/lib")
-endif()
-
 if(USE_VALGRIND)
     if(ARCH STREQUAL "x86_64")
         # This is for picohttpparser
@@ -131,51 +122,7 @@ if(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY)
     set(REQUIRED_IF_NOT_ONLY_CPP_OR_LINK "REQUIRED")
 endif()
 
-# Zig Compiler
-function(validate_zig validator_result_var item)
-    set(${validator_result_var} FALSE PARENT_SCOPE)
-
-    # We will allow any valid zig compiler, as long as it contains some text from `zig zen`
-    # Ideally we would do a version or feature check, but that would be quite slow
-    execute_process(COMMAND ${item} zen OUTPUT_VARIABLE ZIG_ZEN_OUTPUT)
-
-    if(ZIG_ZEN_OUTPUT MATCHES "Together we serve the users")
-        set(${validator_result_var} TRUE PARENT_SCOPE)
-    else()
-        set(${validator_result_var} FALSE PARENT_SCOPE)
-    endif()
-endfunction()
-
-if(ZIG_COMPILER)
-    if(ZIG_COMPILER STREQUAL "system")
-        message(STATUS "Using system Zig compiler")
-        unset(ZIG_COMPILER_)
-    endif()
-
-    find_program(ZIG_COMPILER_ zig ${REQUIRED_IF_NOT_ONLY_CPP_OR_LINK} DOC "Path to the Zig compiler" VALIDATOR validate_zig)
-    set(ZIG_COMPILER "${ZIG_COMPILER_}")
-    message(STATUS "Found Zig Compiler: ${ZIG_COMPILER}")
-elseif(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY AND NOT BUN_TIDY_ONLY AND NOT BUN_TIDY_ONLY_EXTRA)
-    execute_process(
-        COMMAND "${SHELL}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/download-zig.${SCRIPT_EXTENSION}"
-    )
-    set(ZIG_COMPILER "${CMAKE_CURRENT_SOURCE_DIR}/.cache/zig/zig")
-
-    if(WIN32)
-        set(ZIG_COMPILER "${ZIG_COMPILER}.exe")
-    endif()
-
-    if(NOT EXISTS "${ZIG_COMPILER}")
-        unset(ZIG_COMPILER)
-        message(FATAL_ERROR "Auto-installation of Zig failed. Please pass -DZIG_COMPILER=system or a path to the Zig")
-    endif()
-
-    message(STATUS "Installed Zig Compiler: ${ZIG_COMPILER}")
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
-
-    message(STATUS "Using zig cache directory: ${ZIG_CACHE_DIR}")
-endif()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
 
 # Bun
 find_program(BUN_EXECUTABLE bun ${REQUIRED_IF_NOT_ONLY_CPP_OR_LINK} DOC "Path to an already built release of Bun")
@@ -200,7 +147,7 @@ if(NOT WEBKIT_DIR)
     set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "")
     set(ASSERT_ENABLED "0")
 
-    if(USE_DEBUG_JSC)
+    if(ENABLE_ASSERTIONS)
         add_compile_definitions("BUN_DEBUG=1")
         set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "-debug")
         set(ASSERT_ENABLED "1")
@@ -270,7 +217,7 @@ else()
         )
         set(WEBKIT_LIB_DIR "${WEBKIT_DIR}/lib")
 
-        if(USE_DEBUG_JSC)
+        if(ENABLE_ASSERTIONS)
             add_compile_definitions("BUN_DEBUG=1")
             set(ASSERT_ENABLED "1")
         endif()
@@ -597,7 +544,11 @@ if(NOT NO_CODEGEN)
         OUTPUT ${BUN_IDENTIFIER_CACHE_OUT}
         MAIN_DEPENDENCY "${BUN_SRC}/js_lexer/identifier_data.zig"
         DEPENDS "${BUN_SRC}/js_lexer/identifier_cache.zig"
-        COMMAND ${ZIG_COMPILER} run "--zig-lib-dir" "${ZIG_LIB_DIR}" "--cache-dir" "${LOCAL_ZIG_CACHE_DIR}" "--global-cache-dir" "${GLOBAL_ZIG_CACHE_DIR}" "${BUN_SRC}/js_lexer/identifier_data.zig"
+        COMMAND ${CMAKE_ZIG_COMPILER} run
+            "--zig-lib-dir" ${ZIG_LIB_DIR}
+            "--cache-dir" ${ZIG_LOCAL_CACHE_DIR}
+            "--global-cache-dir" ${ZIG_GLOBAL_CACHE_DIR}
+            "${BUN_SRC}/js_lexer/identifier_data.zig"
         VERBATIM
         COMMENT "Building Identifier Cache"
     )
@@ -668,7 +619,7 @@ list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp")
 # "--esm" "${BUN_SRC}/api/schema.js"
 # "--ts" "${BUN_SRC}/api/schema.d.ts"
 # "--zig" "${BUN_SRC}/api/schema.zig"
-# COMMAND "${ZIG_COMPILER}" "fmt" "src/api/schema.zig"
+# COMMAND "${CMAKE_ZIG_COMPILER}" "fmt" "src/api/schema.zig"
 # COMMAND "${PRETTIER}" "--config=.prettierrc.cjs" "--write" "src/api/schema.js" "src/api/schema.d.ts"
 # DEPENDS "${BUN_SRC}/api/schema.peechy"
 # COMMENT "Building schema"
@@ -679,7 +630,7 @@ list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp")
 # COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/.bin/peechy"
 # "--schema" "${BUN_SRC}/analytics/schema.peechy"
 # "--zig" "${BUN_SRC}/analytics/analytics_schema.zig"
-# COMMAND "${ZIG_COMPILER}" "fmt" "${BUN_SRC}/analytics/analytics_schema.zig"
+# COMMAND "${CMAKE_ZIG_COMPILER}" "fmt" "${BUN_SRC}/analytics/analytics_schema.zig"
 # DEPENDS "${BUN_SRC}/api/schema.peechy"
 # COMMENT "Building analytics_schema.zig"
 # )
@@ -728,8 +679,10 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
     add_custom_command(
         OUTPUT "${BUN_ZIG_OBJ}"
         COMMAND
-        "${ZIG_COMPILER}" "build" "obj"
-        "--zig-lib-dir" "${ZIG_LIB_DIR}"
+        ${CMAKE_ZIG_COMPILER} "build" "obj"
+        "--zig-lib-dir" ${ZIG_LIB_DIR}
+        "--cache-dir" ${ZIG_LOCAL_CACHE_DIR}
+        "--global-cache-dir" ${ZIG_GLOBAL_CACHE_DIR}
         "--prefix" "${BUN_ZIG_OBJ_DIR}"
         "--verbose"
         "-Dgenerated-code=${BUN_WORKDIR}/codegen"
@@ -742,8 +695,6 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         "-Denable_logs=${ZIG_ENABLE_LOGS}"
         "-Dreported_nodejs_version=${USE_NODEJS_VERSION}"
         "-Dobj_format=${BUN_ZIG_OBJ_FORMAT}"
-        "--cache-dir" "${LOCAL_ZIG_CACHE_DIR}"
-        "--global-cache-dir" "${GLOBAL_ZIG_CACHE_DIR}"
         DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/build.zig"
         "${ZIG_FILES}"
@@ -1234,7 +1185,7 @@ if(USE_CUSTOM_MIMALLOC)
     if(WIN32)
         target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/mimalloc.lib")
     elseif(APPLE)
-        if(USE_DEBUG_JSC OR CMAKE_BUILD_TYPE STREQUAL "Debug")
+        if(ENABLE_ASSERTIONS OR CMAKE_BUILD_TYPE STREQUAL "Debug")
             message(STATUS "Using debug mimalloc")
             target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc-debug.o")
         else()
@@ -1243,7 +1194,7 @@ if(USE_CUSTOM_MIMALLOC)
             target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc.o")
         endif()
     else()
-        if(USE_DEBUG_JSC OR CMAKE_BUILD_TYPE STREQUAL "Debug")
+        if(ENABLE_ASSERTIONS OR CMAKE_BUILD_TYPE STREQUAL "Debug")
             message(STATUS "Using debug mimalloc")
             target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc-debug.a")
         else()

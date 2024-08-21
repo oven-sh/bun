@@ -46,11 +46,35 @@ else()
   endif()
 endif()
 
+function(check_llvm_version found executable)
+  set(${found} FALSE PARENT_SCOPE)
+
+  execute_process(
+    COMMAND ${executable} --version
+    RESULT_VARIABLE result
+    OUTPUT_VARIABLE output
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+
+  if(NOT result EQUAL 0)
+    message(DEBUG "Checking ${executable} (expected \"${LLVM_VERSION}\", exited with \"${result}\")")
+    return()
+  endif()
+
+  parse_semver("${output}" executable)
+  if(NOT executable_VERSION STREQUAL LLVM_VERSION)
+    message(DEBUG "Checking ${executable} (expected \"${LLVM_VERSION}\", received \"${executable_VERSION}\")")
+    return()
+  endif()
+
+  set(${found} TRUE PARENT_SCOPE)
+endfunction()
+
 find_program(
   CMAKE_C_COMPILER
   NAMES ${CMAKE_C_COMPILER} ${CMAKE_C_COMPILER}-${LLVM_VERSION}
   PATHS ENV PATH ${LLVM_PATH}
-  VALIDATOR check_version
+  VALIDATOR check_llvm_version
   REQUIRED
 )
 
@@ -58,7 +82,7 @@ find_program(
   CMAKE_CXX_COMPILER
   NAMES ${CMAKE_CXX_COMPILER} ${CMAKE_CXX_COMPILER}-${LLVM_VERSION}
   PATHS ENV PATH ${LLVM_PATH}
-  VALIDATOR check_version
+  VALIDATOR check_llvm_version
   REQUIRED
 )
 
@@ -66,7 +90,7 @@ find_program(
   CMAKE_LINKER
   NAMES ${CMAKE_LINKER} ${CMAKE_LINKER}-${LLVM_VERSION}
   PATHS ENV PATH ${LLVM_PATH}
-  VALIDATOR check_version
+  VALIDATOR check_llvm_version
   REQUIRED
 )
 
@@ -74,7 +98,7 @@ find_program(
   CMAKE_AR
   NAMES ${CMAKE_AR} ${CMAKE_AR}-${LLVM_VERSION}
   PATHS ENV PATH ${LLVM_PATH}
-  VALIDATOR check_version
+  VALIDATOR check_llvm_version
   REQUIRED
 )
 
@@ -82,7 +106,7 @@ find_program(
   CMAKE_STRIP
   NAMES ${CMAKE_STRIP} ${CMAKE_STRIP}-${LLVM_VERSION}
   PATHS ENV PATH ${LLVM_PATH}
-  VALIDATOR check_version
+  VALIDATOR check_llvm_version
   REQUIRED
 )
 
@@ -91,7 +115,7 @@ if(NOT WIN32)
     CMAKE_RANLIB
     NAMES ${CMAKE_RANLIB} ${CMAKE_RANLIB}-${LLVM_VERSION}
     PATHS ENV PATH ${LLVM_PATH}
-    VALIDATOR check_version
+    VALIDATOR check_llvm_version
     REQUIRED
   )
 endif()
@@ -101,7 +125,7 @@ if(APPLE)
     CMAKE_DSYMUTIL
     NAMES ${CMAKE_DSYMUTIL} ${CMAKE_DSYMUTIL}-${LLVM_VERSION}
     PATHS ENV PATH ${LLVM_PATH}
-    VALIDATOR check_version
+    VALIDATOR check_llvm_version
     REQUIRED
   )
 endif()

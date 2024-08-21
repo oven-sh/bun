@@ -1779,8 +1779,9 @@ pub const Fetch = struct {
             var batch = bun.ThreadPool.Batch{};
             node.http.?.schedule(allocator, &batch);
             node.poll_ref.ref(global.bunVM());
-            node.ref();
 
+            // increment ref so we can keep it alive until the http client is done
+            node.ref();
             http.http_thread.schedule(batch);
 
             return node;

@@ -531,7 +531,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                             // if checkServerIdentity returns false, we dont call open this means that the connection was rejected
                             if (!client.checkServerIdentity(comptime ssl, socket, handshake_error)) {
                                 client.flags.did_have_handshaking_error = true;
-
+                                client.unregisterAbortTracker();
                                 if (!socket.isClosed()) terminateSocket(socket);
                                 return;
                             }

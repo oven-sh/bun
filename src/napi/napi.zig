@@ -1744,6 +1744,12 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn _ZNK2v85Value8IsStringEv() *anyopaque;
     pub extern fn _ZN2v87Boolean3NewEPNS_7IsolateEb() *anyopaque;
     pub extern fn _ZN2v86Object16GetInternalFieldEi() *anyopaque;
+    pub extern fn _ZNK2v86String10Utf8LengthEPNS_7IsolateE() *anyopaque;
+    pub extern fn _ZNK2v86String10IsExternalEv() *anyopaque;
+    pub extern fn _ZNK2v86String17IsExternalOneByteEv() *anyopaque;
+    pub extern fn _ZNK2v86String17IsExternalTwoByteEv() *anyopaque;
+    pub extern fn _ZNK2v86String9IsOneByteEv() *anyopaque;
+    pub extern fn _ZNK2v86String19ContainsOnlyOneByteEv() *anyopaque;
 } else struct {
     // MSVC name mangling is different than it is on unix.
     // To make this easier to deal with, I have provided a script to generate the list of functions.
@@ -1800,6 +1806,12 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"?IsString@Value@v8@@QEBA_NXZ"() *anyopaque;
     pub extern fn @"?New@Boolean@v8@@SA?AV?$Local@VBoolean@v8@@@2@PEAVIsolate@2@_N@Z"() *anyopaque;
     pub extern fn @"?GetInternalField@Object@v8@@QEAA?AV?$Local@VData@v8@@@2@H@Z"() *anyopaque;
+    pub extern fn @"?IsExternal@String@v8@@QEBA_NXZ"() *anyopaque;
+    pub extern fn @"?IsExternalOneByte@String@v8@@QEBA_NXZ"() *anyopaque;
+    pub extern fn @"?IsExternalTwoByte@String@v8@@QEBA_NXZ"() *anyopaque;
+    pub extern fn @"?IsOneByte@String@v8@@QEBA_NXZ"() *anyopaque;
+    pub extern fn @"?Utf8Length@String@v8@@QEBAHPEAVIsolate@2@@Z"() *anyopaque;
+    pub extern fn @"?ContainsOnlyOneByte@String@v8@@QEBA_NXZ"() *anyopaque;
 };
 
 pub fn fixDeadCodeElimination() void {

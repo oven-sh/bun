@@ -31,6 +31,8 @@
 #include "wtf/text/ASCIILiteral.h"
 #include "wtf/text/OrdinalNumber.h"
 
+#include "AsyncContextFrame.h"
+
 #ifndef WIN32
 #include <errno.h>
 #include <dlfcn.h>
@@ -105,17 +107,21 @@ JSC_DECLARE_CUSTOM_GETTER(Process_getTitle);
 JSC_DECLARE_CUSTOM_GETTER(Process_getPID);
 JSC_DECLARE_CUSTOM_GETTER(Process_getPPID);
 JSC_DECLARE_HOST_FUNCTION(Process_functionCwd);
+JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_IPC_DISCONNECTED, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*));
 static bool processIsExiting = false;
 
 extern "C" uint8_t Bun__getExitCode(void*);
 extern "C" uint8_t Bun__setExitCode(void*, uint8_t);
 extern "C" void* Bun__getVM();
+extern "C" bool Bun__closeChildIPC(JSGlobalObject*);
 extern "C" Zig::GlobalObject* Bun__getDefaultGlobalObject();
 extern "C" bool Bun__GlobalObject__hasIPC(JSGlobalObject*);
 extern "C" bool Bun__ensureProcessIPCInitialized(JSGlobalObject*);
 extern "C" const char* Bun__githubURL;
 BUN_DECLARE_HOST_FUNCTION(Bun__Process__send);
-BUN_DECLARE_HOST_FUNCTION(Bun__Process__disconnect);
+
+extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global);
+extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValue value);
 
 static JSValue constructArch(VM& vm, JSObject* processObject)
 {
@@ -892,22 +898,33 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
     }
 }
 
+extern "C" void Bun__setChannelRef(GlobalObject* globalObject, bool enabled)
+{
+    auto process = jsCast<Process*>(globalObject->processObject());
+    process->wrapped().m_hasIPCRef = enabled;
+
+    if (enabled) {
+        process->scriptExecutionContext()->refEventLoop();
+    } else {
+        process->scriptExecutionContext()->unrefEventLoop();
+    }
+}
+
 static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
 {
     if (eventEmitter.scriptExecutionContext()->isMainThread()) {
         // IPC handlers
-        if (eventName.string() == "message"_s) {
+        if (eventName.string() == "message"_s || eventName.string() == "disconnect"_s) {
+            auto* global = jsCast<GlobalObject*>(eventEmitter.scriptExecutionContext()->jsGlobalObject());
             if (isAdded) {
-                auto* global = eventEmitter.scriptExecutionContext()->jsGlobalObject();
                 if (Bun__GlobalObject__hasIPC(global)
                     && eventEmitter.listenerCount(eventName) == 1) {
                     Bun__ensureProcessIPCInitialized(global);
-                    eventEmitter.scriptExecutionContext()->refEventLoop();
-                    eventEmitter.m_hasIPCRef = true;
+                    Bun__setChannelRef(global, true);
                 }
             } else {
-                if (eventEmitter.listenerCount(eventName) == 0 && eventEmitter.m_hasIPCRef) {
-                    eventEmitter.scriptExecutionContext()->unrefEventLoop();
+                if (eventEmitter.listenerCount(eventName) == 0) {
+                    Bun__setChannelRef(global, false);
                 }
             }
             return;
@@ -1916,11 +1933,64 @@ static JSValue constructProcessSend(VM& vm, JSObject* processObject)
     }
 }
 
+JSC_DEFINE_HOST_FUNCTION(processDisonnectFinish, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    Bun__closeChildIPC(globalObject);
+    return JSC::JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(Bun__Process__disconnect, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto global = jsCast<GlobalObject*>(globalObject);
+
+    if (!Bun__GlobalObject__hasIPC(globalObject)) {
+        Process__emitErrorEvent(global, jsFunction_ERR_IPC_DISCONNECTED(globalObject, nullptr));
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
+    auto finishFn = JSC::JSFunction::create(vm, globalObject, 0, String("finish"_s), processDisonnectFinish, ImplementationVisibility::Public);
+    auto process = jsCast<Process*>(global->processObject());
+
+    process->queueNextTick(vm, globalObject, finishFn);
+    return JSC::JSValue::encode(jsUndefined());
+}
+
 static JSValue constructProcessDisconnect(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
     if (Bun__GlobalObject__hasIPC(globalObject)) {
         return JSC::JSFunction::create(vm, globalObject, 1, String("disconnect"_s), Bun__Process__disconnect, ImplementationVisibility::Public);
+    } else {
+        return jsUndefined();
+    }
+}
+
+static JSValue constructProcessChannel(VM& vm, JSObject* processObject)
+{
+    auto* globalObject = processObject->globalObject();
+    if (Bun__GlobalObject__hasIPC(globalObject)) {
+        auto& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        JSC::JSFunction* getControl = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetChannelCodeGenerator(vm), globalObject);
+        JSC::MarkedArgumentBuffer args;
+        JSC::CallData callData = JSC::getCallData(getControl);
+
+        NakedPtr<JSC::Exception> returnedException = nullptr;
+        auto result = JSC::call(globalObject, getControl, callData, globalObject->globalThis(), args, returnedException);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (auto* exception = returnedException.get()) {
+#if BUN_DEBUG
+            Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+#endif
+            scope.throwException(globalObject, exception->value());
+            returnedException.clear();
+            return {};
+        }
+
+        return result;
     } else {
         return jsUndefined();
     }
@@ -2184,6 +2254,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_uncaughtExceptionCaptureCallback);
+    visitor.append(thisObject->m_nextTickFunction);
     thisObject->m_cpuUsageStructure.visit(visitor);
     thisObject->m_memoryUsageStructure.visit(visitor);
     thisObject->m_bindingUV.visit(visitor);
@@ -2595,10 +2666,52 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDrainMicrotaskQueue, (JSC::JSGlobalObject * g
     return JSValue::encode(jsUndefined());
 }
 
-static JSValue constructProcessNextTickFn(VM& vm, JSObject* processObject)
+void Process::queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const ArgList& args)
 {
-    JSGlobalObject* lexicalGlobalObject = processObject->globalObject();
-    Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!this->m_nextTickFunction) {
+        this->get(globalObject, Identifier::fromString(vm, "nextTick"_s));
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+
+    ASSERT(!args.isEmpty());
+    JSObject* nextTickFn = this->m_nextTickFunction.get();
+    AsyncContextFrame::call(globalObject, nextTickFn, jsUndefined(), args);
+    RELEASE_AND_RETURN(scope, void());
+}
+
+void Process::queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSValue value)
+{
+    ASSERT_WITH_MESSAGE(value.isCallable(), "Must be a function for us to call");
+    MarkedArgumentBuffer args;
+    if (value != 0)
+        args.append(value);
+    this->queueNextTick(vm, globalObject, args);
+}
+
+void Process::queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSValue value, JSValue arg1)
+{
+    ASSERT_WITH_MESSAGE(value.isCallable(), "Must be a function for us to call");
+    MarkedArgumentBuffer args;
+    if (value != 0) {
+        args.append(value);
+        if (arg1 != 0) {
+            args.append(arg1);
+        }
+    }
+    this->queueNextTick(vm, globalObject, args);
+}
+
+extern "C" void Bun__Process__queueNextTick1(GlobalObject* globalObject, EncodedJSValue value, EncodedJSValue arg1)
+{
+    auto process = jsCast<Process*>(globalObject->processObject());
+    auto& vm = globalObject->vm();
+    process->queueNextTick(vm, globalObject, JSValue::decode(value), JSValue::decode(arg1));
+}
+JSC_DECLARE_HOST_FUNCTION(Bun__Process__queueNextTick1);
+
+JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)
+{
     JSValue nextTickQueueObject;
     if (!globalObject->m_nextTickQueue) {
         nextTickQueueObject = Bun::JSNextTickQueue::create(globalObject);
@@ -2607,15 +2720,27 @@ static JSValue constructProcessNextTickFn(VM& vm, JSObject* processObject)
         nextTickQueueObject = jsCast<Bun::JSNextTickQueue*>(globalObject->m_nextTickQueue.get());
     }
 
-    JSC::JSFunction* initializer = JSC::JSFunction::create(vm, globalObject, processObjectInternalsInitializeNextTickQueueCodeGenerator(vm), lexicalGlobalObject);
+    JSC::JSFunction* initializer = JSC::JSFunction::create(vm, globalObject, processObjectInternalsInitializeNextTickQueueCodeGenerator(vm), globalObject);
 
     JSC::MarkedArgumentBuffer args;
-    args.append(processObject);
+    args.append(this);
     args.append(nextTickQueueObject);
     args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionDrainMicrotaskQueue, ImplementationVisibility::Private));
     args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionReportUncaughtException, ImplementationVisibility::Private));
 
-    return JSC::call(globalObject, initializer, JSC::getCallData(initializer), globalObject->globalThis(), args);
+    JSValue nextTickFunction = JSC::call(globalObject, initializer, JSC::getCallData(initializer), globalObject->globalThis(), args);
+    if (nextTickFunction && nextTickFunction.isObject()) {
+        this->m_nextTickFunction.set(vm, this, nextTickFunction.getObject());
+    }
+
+    return nextTickFunction;
+}
+
+static JSValue constructProcessNextTickFn(VM& vm, JSObject* processObject)
+{
+    JSGlobalObject* lexicalGlobalObject = processObject->globalObject();
+    Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    return jsCast<Process*>(processObject)->constructNextTickFn(globalObject->vm(), globalObject);
 }
 
 static JSValue constructFeatures(VM& vm, JSObject* processObject)
@@ -2775,14 +2900,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-
     int pid = callFrame->argument(0).toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (pid < 0) {
         throwNodeRangeError(globalObject, scope, "pid must be a positive integer"_s);
         return JSValue::encode(jsUndefined());
     }
-
     JSC::JSValue signalValue = callFrame->argument(1);
     int signal = SIGTERM;
     if (signalValue.isNumber()) {
@@ -2797,7 +2920,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
             throwNodeRangeError(globalObject, scope, "Unknown signal name"_s);
             return JSValue::encode(jsUndefined());
         }
-
         RETURN_IF_EXCEPTION(scope, {});
     } else if (!signalValue.isUndefinedOrNull()) {
         throwTypeError(globalObject, scope, "signal must be a string or number"_s);
@@ -2860,6 +2982,17 @@ extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
     }
 }
 
+extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValue value)
+{
+    auto* process = static_cast<Process*>(global->processObject());
+    auto& vm = global->vm();
+    if (process->wrapped().hasEventListeners(vm.propertyNames->error)) {
+        JSC::MarkedArgumentBuffer args;
+        args.append(JSValue::decode(value));
+        process->wrapped().emit(vm.propertyNames->error, args);
+    }
+}
+
 /* Source for Process.lut.h
 @begin processObjectTable
   abort                            Process_functionAbort                               Function 1
@@ -2871,6 +3004,7 @@ extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
   binding                          Process_functionBinding                             Function 1
   browser                          constructBrowser                                    PropertyCallback
   chdir                            Process_functionChdir                               Function 1
+  channel                          constructProcessChannel                             PropertyCallback
   config                           constructProcessConfigObject                        PropertyCallback
   connected                        processConnected                                    CustomAccessor
   constrainedMemory                Process_functionConstrainedMemory                   Function 0

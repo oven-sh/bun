@@ -404,6 +404,8 @@ const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.
 const ProcessMiniEventLoopWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessMiniEventLoopQueue.ResultTask else opaque {};
 const ShellAsyncSubprocessDone = bun.shell.Interpreter.Cmd.ShellAsyncSubprocessDone;
 const RuntimeTranspilerStore = JSC.RuntimeTranspilerStore;
+const ServerAllConnectionsClosedTask = @import("./api/server.zig").ServerAllConnectionsClosedTask;
+
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
@@ -485,6 +487,7 @@ pub const Task = TaggedPointerUnion(.{
 
     ProcessWaiterThreadTask,
     RuntimeTranspilerStore,
+    ServerAllConnectionsClosedTask,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
@@ -882,7 +885,7 @@ pub const EventLoop = struct {
         }
     }
 
-    pub fn tickQueueWithCount(this: *EventLoop, comptime queue_name: []const u8) u32 {
+    fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, comptime queue_name: []const u8) u32 {
         var global = this.global;
         const global_vm = global.vm();
         var counter: usize = 0;
@@ -1045,7 +1048,7 @@ pub const EventLoop = struct {
                     any.run(global);
                 },
                 @field(Task.Tag, typeBaseName(@typeName(PollPendingModulesTask))) => {
-                    this.virtual_machine.modules.onPoll();
+                    virtual_machine.modules.onPoll();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(GetAddrInfoRequestTask))) => {
                     if (Environment.os == .windows) @panic("This should not be reachable on Windows");
@@ -1241,7 +1244,11 @@ pub const EventLoop = struct {
                 },
                 @field(Task.Tag, typeBaseName(@typeName(TimerObject))) => {
                     var any: *TimerObject = task.get(TimerObject).?;
-                    any.runImmediateTask(this.virtual_machine);
+                    any.runImmediateTask(virtual_machine);
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ServerAllConnectionsClosedTask))) => {
+                    var any: *ServerAllConnectionsClosedTask = task.get(ServerAllConnectionsClosedTask).?;
+                    any.runFromJSThread(virtual_machine);
                 },
 
                 else => if (Environment.allow_assert) {
@@ -1259,15 +1266,15 @@ pub const EventLoop = struct {
         return @as(u32, @truncate(counter));
     }
 
-    pub fn tickWithCount(this: *EventLoop) u32 {
-        return this.tickQueueWithCount("tasks");
+    fn tickWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u32 {
+        return this.tickQueueWithCount(virtual_machine, "tasks");
     }
 
-    pub fn tickImmediateTasks(this: *EventLoop) void {
-        _ = this.tickQueueWithCount("immediate_tasks");
+    pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) void {
+        _ = this.tickQueueWithCount(virtual_machine, "immediate_tasks");
     }
 
-    pub fn tickConcurrent(this: *EventLoop) void {
+    fn tickConcurrent(this: *EventLoop) void {
         _ = this.tickConcurrentWithCount();
     }
 
@@ -1347,7 +1354,7 @@ pub const EventLoop = struct {
         var loop = this.usocketsLoop();
 
         this.flushImmediateQueue();
-        this.tickImmediateTasks();
+        this.tickImmediateTasks(ctx);
 
         if (comptime Environment.isPosix) {
             // Some tasks need to keep the event loop alive for one more tick.
@@ -1438,7 +1445,7 @@ pub const EventLoop = struct {
         var loop = this.usocketsLoop();
         var ctx = this.virtual_machine;
         this.flushImmediateQueue();
-        this.tickImmediateTasks();
+        this.tickImmediateTasks(ctx);
 
         if (comptime Environment.isPosix) {
             const pending_unref = ctx.pending_unref_counter;
@@ -1487,7 +1494,7 @@ pub const EventLoop = struct {
             const global_vm = ctx.jsc;
 
             while (true) {
-                while (this.tickWithCount() > 0) : (this.global.handleRejectedPromises()) {
+                while (this.tickWithCount(ctx) > 0) : (this.global.handleRejectedPromises()) {
                     this.tickConcurrent();
                 } else {
                     this.drainMicrotasksWithGlobal(global, global_vm);
@@ -1497,7 +1504,7 @@ pub const EventLoop = struct {
                 break;
             }
 
-            while (this.tickWithCount() > 0) {
+            while (this.tickWithCount(ctx) > 0) {
                 this.tickConcurrent();
             }
 

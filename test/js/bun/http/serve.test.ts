@@ -2,7 +2,18 @@ import { file, gc, Serve, serve, Server } from "bun";
 import { afterEach, describe, it, expect, afterAll, mock } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { join, resolve } from "path";
-import { bunExe, bunEnv, dumpStats, isPosix, isIPv6, tmpdirSync, isIPv4, rejectUnauthorizedScope, tls } from "harness";
+import {
+  bunExe,
+  bunEnv,
+  dumpStats,
+  isPosix,
+  isIPv6,
+  tmpdirSync,
+  isIPv4,
+  rejectUnauthorizedScope,
+  tls,
+  isWindows,
+} from "harness";
 // import { renderToReadableStream } from "react-dom/server";
 // import app_jsx from "./app.jsx";
 import { spawn } from "child_process";
@@ -76,7 +87,7 @@ it("should be able to abruptly stop the server many times", async () => {
         await fetch(url, { keepalive: true }).then(res => res.text());
         expect.unreachable();
       } catch (e) {
-        expect(e.code).toBe("ConnectionClosed");
+        expect(["ConnectionClosed", "ConnectionRefused"]).toContain(e.code);
       }
     }
 
@@ -1607,6 +1618,7 @@ it("should work with dispose keyword", async () => {
   expect(fetch(url)).rejects.toThrow();
 });
 
+// prettier-ignore
 it("should be able to stop in the middle of a file response", async () => {
   async function doRequest(url: string) {
     try {

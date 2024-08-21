@@ -18,13 +18,13 @@
 #ifndef UWS_WEBSOCKET_H
 #define UWS_WEBSOCKET_H
 
-#include "WebSocketData.h"
-#include "WebSocketProtocol.h"
 #include "AsyncSocket.h"
 #include "WebSocketContextData.h"
+#include "WebSocketData.h"
+#include "WebSocketProtocol.h"
 
 #include <string_view>
-
+// clang-format off
 namespace uWS {
 
 template <bool SSL, bool isServer, typename USERDATA>
@@ -107,7 +107,7 @@ public:
         WebSocketData *webSocketData = (WebSocketData *) Super::getAsyncSocketData();
 
         /* Special path for long sends of non-compressed, non-SSL messages */
-        if (message.length() >= 16 * 1024 && !compress && !SSL && !webSocketData->subscriber && getBufferedAmount() == 0 && Super::getLoopData()->corkOffset == 0) {
+        if (message.length() >= 16 * 1024 && !compress && !SSL && !webSocketData->subscriber && getBufferedAmount() == 0 && Super::getLoopData()->getCorkOffset() == 0) {
             char header[10];
             int header_length = (int) protocol::formatMessage<isServer>(header, "", 0, opCode, message.length(), compress, fin);
             int written = us_socket_write2(0, (struct us_socket_t *)this, header, header_length, message.data(), (int) message.length());

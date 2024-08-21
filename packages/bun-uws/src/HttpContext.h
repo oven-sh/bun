@@ -113,6 +113,9 @@ private:
 
         /* Handle socket disconnections */
         us_socket_context_on_close(SSL, getSocketContext(), [](us_socket_t *s, int /*code*/, void */*reason*/) {
+            ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
+
+           
             /* Get socket ext */
             HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(SSL, s);
 
@@ -126,6 +129,7 @@ private:
             if (httpResponseData->onAborted) {
                 httpResponseData->onAborted((HttpResponse<SSL> *)s, httpResponseData->userData);
             }
+            
 
             /* Destruct socket ext */
             httpResponseData->~HttpResponseData<SSL>();
@@ -400,6 +404,7 @@ private:
 
         /* Handle FIN, HTTP does not support half-closed sockets, so simply close */
         us_socket_context_on_end(SSL, getSocketContext(), [](us_socket_t *s) {
+            ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
 
             /* We do not care for half closed sockets */
             AsyncSocket<SSL> *asyncSocket = (AsyncSocket<SSL> *) s;

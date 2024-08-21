@@ -1250,7 +1250,7 @@ pub const TestCommand = struct {
                         if (!jest.Jest.runner.?.has_pending_tests) break;
                         vm.eventLoop().tick();
                     } else {
-                        vm.eventLoop().tickImmediateTasks();
+                        vm.eventLoop().tickImmediateTasks(vm);
                     }
 
                     while (prev_unhandled_count < vm.unhandled_error_counter) {

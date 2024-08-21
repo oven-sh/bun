@@ -4023,10 +4023,18 @@ pub const Package = extern struct {
                 if (trimmed.len != 1 or (trimmed[0] != '*' and trimmed[0] != '^' and trimmed[0] != '~')) {
                     const at = strings.lastIndexOfChar(input, '@') orelse 0;
                     if (at > 0) {
-                        workspace_range = Semver.Query.parse(allocator, input[at + 1 ..], sliced) catch return error.InstallFailed;
+                        workspace_range = Semver.Query.parse(allocator, input[at + 1 ..], sliced) catch |err| {
+                            switch (err) {
+                                error.OutOfMemory => bun.outOfMemory(),
+                            }
+                        };
                         break :brk String.Builder.stringHash(input[0..at]);
                     }
-                    workspace_range = Semver.Query.parse(allocator, input, sliced) catch null;
+                    workspace_range = Semver.Query.parse(allocator, input, sliced) catch |err| {
+                        switch (err) {
+                            error.OutOfMemory => bun.outOfMemory(),
+                        }
+                    };
                 }
                 break :brk external_alias.hash;
             } else external_alias.hash,

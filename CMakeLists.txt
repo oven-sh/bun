@@ -150,15 +150,15 @@ endif()
 include(cmake/SetupWebKit.cmake)
 
 if(WEBKIT_PREBUILT)
-    set(WEBKIT_INCLUDE_DIR "${BUN_WORKDIR}/bun-webkit/include")
+    set(WEBKIT_INCLUDE_DIR ${WEBKIT_DIR}/include)
 
     if(APPLE)
         set(ICU_INCLUDE_DIR "")
     else()
-        set(ICU_INCLUDE_DIR "${BUN_WORKDIR}/bun-webkit/include/wtf/unicode")
+        set(ICU_INCLUDE_DIR ${WEBKIT_DIR}/include/wtf/unicode)
     endif()
 
-    set(WEBKIT_LIB_DIR "${BUN_WORKDIR}/bun-webkit/lib")
+    set(WEBKIT_LIB_DIR ${WEBKIT_DIR}lib)
 elseif(WEBKIT_DIR STREQUAL "omit")
     # message(STATUS "Not using WebKit. This is only valid if you are only trying to build Zig code")
 else()

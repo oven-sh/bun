@@ -792,6 +792,7 @@ pub const Fetch = struct {
         metadata: ?http.HTTPResponseMetadata = null,
         javascript_vm: *VirtualMachine = undefined,
         global_this: *JSGlobalObject = undefined,
+        vm: *VirtualMachine,
         request_body: HTTPRequestBody = undefined,
         /// buffer being used by AsyncHTTP
         response_buffer: MutableString = undefined,
@@ -1118,9 +1119,18 @@ pub const Fetch = struct {
             // if we abort because of cert error
             // we wait the Http Client because we already have the response
             // we just need to deinit
-            const globalThis = this.global_this;
-            const vm = globalThis.bunVM();
 
+            const vm = this.vm;
+            if (vm.isShuttingDown()) {
+                // vm is shutting down we cannot touch JS
+                this.mutex.unlock();
+                if (is_done) {
+                    this.deref();
+                }
+                return;
+            }
+
+            const globalThis = this.global_this;
             defer {
                 this.mutex.unlock();
                 // if we are not done we wait until the next call
@@ -1130,6 +1140,7 @@ pub const Fetch = struct {
                     this.deref();
                 }
             }
+
             if (this.is_waiting_body) {
                 this.onBodyReceived();
                 return;
@@ -1616,6 +1627,7 @@ pub const Fetch = struct {
                 .javascript_vm = jsc_vm,
                 .request_body = fetch_options.body,
                 .global_this = globalThis,
+                .vm = globalThis.bunVM(),
                 .promise = promise,
                 .request_headers = fetch_options.headers,
                 .url_proxy_buffer = fetch_options.url_proxy_buffer,

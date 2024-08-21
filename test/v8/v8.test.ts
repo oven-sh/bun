@@ -119,6 +119,9 @@ describe("String", () => {
   it("handles replacement correctly in strings with invalid UTF-8 sequences", () => {
     checkSameOutput("test_v8_string_invalid_utf8", []);
   });
+  it("can create strings from null-terminated Latin-1 data", () => {
+    checkSameOutput("test_v8_string_latin1", []);
+  });
   describe("WriteUtf8", () => {
     it("truncates the string correctly", () => {
       checkSameOutput("test_v8_string_write_utf8", []);
@@ -150,6 +153,12 @@ describe("ObjectTemplate", () => {
   });
 });
 
+describe("FunctionTemplate", () => {
+  it("keeps the data parameter alive", () => {
+    checkSameOutput("test_v8_function_template", []);
+  });
+});
+
 describe("Function", () => {
   it("correctly receives all its arguments from JS", () => {
     checkSameOutput("print_values_from_js", [5.0, true, null, false, "meow", {}], {});
@@ -168,6 +177,21 @@ describe("error handling", () => {
       "The module 'no_entrypoint' has no declared entry point.",
     );
   });
+});
+
+describe("Global", () => {
+  it("can create, modify, and read the value from global handles", () => {
+    checkSameOutput("test_v8_global", []);
+  });
+});
+
+describe("HandleScope", () => {
+  it("can hold a lot of locals", () => {
+    checkSameOutput("test_many_v8_locals", []);
+  });
+  it("keeps GC objects alive", () => {
+    checkSameOutput("test_handle_scope_gc", []);
+  }, 10000);
 });
 
 afterAll(async () => {
@@ -228,9 +252,10 @@ function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, jsArgs:
     env: bunEnv,
   });
   const errs = exec.stderr.toString();
+  const crashMsg = `test ${testName} crashed under ${Runtime[runtime]} in ${BuildMode[buildMode]} mode`;
   if (errs !== "") {
-    throw new Error(errs);
+    throw new Error(`${crashMsg}: ${errs}`);
   }
-  expect(exec.success, `test ${testName} crashed under ${Runtime[runtime]} in ${BuildMode[buildMode]} mode`).toBeTrue();
+  expect(exec.success, crashMsg).toBeTrue();
   return exec.stdout.toString();
 }

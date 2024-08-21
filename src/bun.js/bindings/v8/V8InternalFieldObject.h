@@ -23,15 +23,18 @@ public:
             [](auto& spaces, auto&& space) { spaces.m_subspaceForInternalFieldObject = std::forward<decltype(space)>(space); });
     }
 
-    using FieldContainer = WTF::Vector<JSC::JSValue, 2>;
+    // never changes size
+    using FieldContainer = WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>>;
 
     FieldContainer* internalFields() { return &fields; }
     static InternalFieldObject* create(JSC::VM& vm, JSC::Structure* structure, Local<ObjectTemplate> objectTemplate);
 
+    DECLARE_VISIT_CHILDREN;
+
 protected:
     InternalFieldObject(JSC::VM& vm, JSC::Structure* structure, int internalFieldCount)
         : Base(vm, structure)
-        , fields(internalFieldCount)
+        , fields(internalFieldCount, JSC::WriteBarrier<JSC::Unknown>(vm, this, JSC::jsUndefined()))
     {
     }
 

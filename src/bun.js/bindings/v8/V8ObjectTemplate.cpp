@@ -41,13 +41,14 @@ const JSC::ClassInfo ObjectTemplate::s_info = {
 Local<ObjectTemplate> ObjectTemplate::New(Isolate* isolate, Local<FunctionTemplate> constructor)
 {
     RELEASE_ASSERT(constructor.IsEmpty());
-    auto globalObject = isolate->globalObject();
+    auto* globalObject = isolate->globalObject();
     auto& vm = globalObject->vm();
-    Structure* structure = globalObject->V8GlobalInternals()->objectTemplateStructure(globalObject);
+    auto* globalInternals = globalObject->V8GlobalInternals();
+    Structure* structure = globalInternals->objectTemplateStructure(globalObject);
     auto* objectTemplate = new (NotNull, JSC::allocateCell<ObjectTemplate>(vm)) ObjectTemplate(vm, structure);
     // TODO pass constructor
     objectTemplate->finishCreation(vm);
-    return isolate->currentHandleScope()->createLocal<ObjectTemplate>(objectTemplate);
+    return globalInternals->currentHandleScope()->createLocal<ObjectTemplate>(vm, objectTemplate);
 }
 
 MaybeLocal<Object> ObjectTemplate::NewInstance(Local<Context> context)
@@ -69,7 +70,7 @@ MaybeLocal<Object> ObjectTemplate::NewInstance(Local<Context> context)
 
     // todo: apply properties
 
-    return MaybeLocal<Object>(context->currentHandleScope()->createLocal<Object>(newInstance));
+    return MaybeLocal<Object>(context->currentHandleScope()->createLocal<Object>(vm, newInstance));
 }
 
 template<typename Visitor>

@@ -10,7 +10,7 @@ bool Boolean::Value() const
 
 Local<Boolean> Boolean::New(Isolate* isolate, bool value)
 {
-    return isolate->currentHandleScope()->createLocal<Boolean>(JSC::jsBoolean(value));
+    return isolate->currentHandleScope()->createLocal<Boolean>(isolate->vm(), JSC::jsBoolean(value));
 }
 
 }

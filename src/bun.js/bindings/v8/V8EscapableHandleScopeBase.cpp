@@ -7,9 +7,7 @@ EscapableHandleScopeBase::EscapableHandleScopeBase(Isolate* isolate)
 {
     // at this point isolate->currentHandleScope() would just be this, so instead we have to get the
     // previous one
-    auto& handle = prev->buffer->createUninitializedHandle();
-    memset(&handle, 0xaa, sizeof(handle));
-    handle.to_v8_object = TaggedPointer(0);
+    auto& handle = prev->buffer->createEmptyHandle();
     escape_slot = &handle;
 }
 
@@ -18,7 +16,7 @@ EscapableHandleScopeBase::EscapableHandleScopeBase(Isolate* isolate)
 uintptr_t* EscapableHandleScopeBase::EscapeSlot(uintptr_t* escape_value)
 {
     *escape_slot = *reinterpret_cast<Handle*>(escape_value);
-    return reinterpret_cast<uintptr_t*>(escape_slot);
+    return &escape_slot->to_v8_object.value;
 }
 
 }

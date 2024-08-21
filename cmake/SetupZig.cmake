@@ -1,8 +1,6 @@
 include(cmake/Utils.cmake)
 
-set(DEFAULT_ZIG_VERSION "0.13.0")
-
-parse_option(ZIG_VERSION STRING "The version of zig to use" ${DEFAULT_ZIG_VERSION})
+parse_option(ZIG_VERSION STRING "The version of zig to use" "0.13.0")
 parse_option(ZIG_LOCAL_CACHE_DIR FILEPATH "The path to local the zig cache directory" ${CACHE_PATH}/zig/local)
 parse_option(ZIG_GLOBAL_CACHE_DIR FILEPATH "The path to the global zig cache directory" ${CACHE_PATH}/zig/global)
 parse_option(ZIG_BIN_CACHE_DIR FILEPATH "The path to the zig binary cache directory" ${CACHE_PATH}/zig/bin)

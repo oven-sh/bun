@@ -1,4 +1,3 @@
-include(FetchContent)
 include(cmake/Utils.cmake)
 
 set(DEFAULT_ZIG_VERSION "0.13.0")
@@ -32,6 +31,7 @@ find_program(
 )
 
 if(CMAKE_ZIG_COMPILER)
+  message(STATUS "Using Zig compiler: ${CMAKE_ZIG_COMPILER}")
   return()
 endif()
 
@@ -58,10 +58,7 @@ set(ZIG_FILENAME ${ZIG_NAME}.tar.xz)
 set(ZIG_DOWNLOAD_URL https://ziglang.org/download/${ZIG_VERSION}/${ZIG_FILENAME})
 
 message(STATUS "Downloading ${ZIG_DOWNLOAD_URL}")
-file(DOWNLOAD
-  ${ZIG_DOWNLOAD_URL}
-  ${ZIG_BIN_CACHE_DIR}/${ZIG_FILENAME}
-)
+file(DOWNLOAD ${ZIG_DOWNLOAD_URL} ${ZIG_BIN_CACHE_DIR}/${ZIG_FILENAME})
 
 message(STATUS "Extracting ${ZIG_FILENAME}")
 execute_process(
@@ -76,4 +73,4 @@ file(CHMOD ${ZIG_BIN_CACHE_DIR}/zig PERMISSIONS OWNER_EXECUTE)
 file(CREATE_LINK ${ZIG_BIN_CACHE_DIR}/zig ${ZIG_BIN_CACHE_DIR}/zig.exe SYMBOLIC)
 
 set(CMAKE_ZIG_COMPILER ${ZIG_BIN_CACHE_DIR}/zig)
-message(STATUS "Using Zig compiler: ${CMAKE_ZIG_COMPILER}")
+message(STATUS "Downloaded Zig compiler: ${CMAKE_ZIG_COMPILER}")

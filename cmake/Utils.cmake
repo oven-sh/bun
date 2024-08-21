@@ -16,7 +16,9 @@ function(get_major_version version variable)
   set(${variable} ${major_version} PARENT_SCOPE)
 endfunction()
 
-macro(parse_option label type description default)
+macro(parse_option label type description)
+  set(default "${ARGN}")
+
   if(NOT ${type} MATCHES "^(BOOL|STRING|FILEPATH|PATH|INTERNAL)$")
     set(${label}_REGEX "${type}")
     set(${label}_TYPE STRING)

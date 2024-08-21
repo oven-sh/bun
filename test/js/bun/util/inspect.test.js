@@ -552,14 +552,14 @@ it("console.log on a Blob shows name", () => {
 
   const file = new File(["foo"], "bar.txt", { type: "text/plain" });
   expect(Bun.inspect(file)).toBe(
-    `File (3 bytes) {\n  name: "bar.txt",\n  type: "text/plain;charset=utf-8",\n lastModified: ${file.lastModified}\n}`,
+    `File (3 bytes) {\n  name: "bar.txt",\n  type: "text/plain;charset=utf-8",\n  lastModified: ${file.lastModified}\n}`,
   );
   file.name = "foobar";
   expect(Bun.inspect(file)).toBe(
-    `File (3 bytes) {\n  name: "foobar",\n  type: "text/plain;charset=utf-8",\n lastModified: ${file.lastModified}\n}`,
+    `File (3 bytes) {\n  name: "foobar",\n  type: "text/plain;charset=utf-8",\n  lastModified: ${file.lastModified}\n}`,
   );
   file.name = "";
   expect(Bun.inspect(file)).toBe(
-    `File (3 bytes) {\n  name: "",\n  type: "text/plain;charset=utf-8",\n lastModified: ${file.lastModified}\n}`,
+    `File (3 bytes) {\n  name: "",\n  type: "text/plain;charset=utf-8",\n  lastModified: ${file.lastModified}\n}`,
   );
 });

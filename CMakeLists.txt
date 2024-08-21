@@ -143,55 +143,13 @@ else()
     set(libWTF "libWTF")
 endif()
 
-if(NOT WEBKIT_DIR)
-    set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "")
-    set(ASSERT_ENABLED "0")
+if(ENABLE_ASSERTIONS)
+    add_compile_definitions("BUN_DEBUG=1")
+endif()
 
-    if(ENABLE_ASSERTIONS)
-        add_compile_definitions("BUN_DEBUG=1")
-        set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "-debug")
-        set(ASSERT_ENABLED "1")
-    elseif(NOT DEBUG AND NOT WIN32)
-        # Avoid waiting for LTO in local release builds outside of CI
-        if(USE_LTO)
-            set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "-lto")
-        else()
-            set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "")
-        endif()
+include(cmake/SetupWebKit.cmake)
 
-        set(ASSERT_ENABLED "0")
-    endif()
-
-    if(WIN32)
-        set(BUN_WEBKIT_PACKAGE_PLATFORM "windows")
-    elseif(APPLE)
-        set(BUN_WEBKIT_PACKAGE_PLATFORM "macos")
-    else()
-        set(BUN_WEBKIT_PACKAGE_PLATFORM "linux")
-    endif()
-
-    if(ARCH STREQUAL "x86_64")
-        set(BUN_WEBKIT_PACKAGE_ARCH "amd64")
-    elseif(ARCH MATCHES "aarch64|arm64|arm")
-        set(BUN_WEBKIT_PACKAGE_ARCH "arm64")
-    endif()
-
-    set(BUN_WEBKIT_PACKAGE_NAME "bun-webkit-${BUN_WEBKIT_PACKAGE_PLATFORM}-${BUN_WEBKIT_PACKAGE_ARCH}${BUN_WEBKIT_PACKAGE_NAME_SUFFIX}")
-
-    message(STATUS "Using Pre-built WebKit: ${BUN_WEBKIT_PACKAGE_NAME}")
-    execute_process(
-        COMMAND "${SHELL}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/download-webkit.${SCRIPT_EXTENSION}"
-        "${BUN_WORKDIR}/bun-webkit"
-        "${WEBKIT_TAG}"
-        "${BUN_WEBKIT_PACKAGE_NAME}"
-        WORKING_DIRECTORY ${BUN_WORKDIR}
-    )
-
-    if(NOT EXISTS "${BUN_WORKDIR}/bun-webkit")
-        message(FATAL_ERROR "Prebuilt WebKit package ${BUN_WEBKIT_PACKAGE_NAME} failed to install")
-    endif()
-
+if(WEBKIT_PREBUILT)
     set(WEBKIT_INCLUDE_DIR "${BUN_WORKDIR}/bun-webkit/include")
 
     if(APPLE)
@@ -202,7 +160,7 @@ if(NOT WEBKIT_DIR)
 
     set(WEBKIT_LIB_DIR "${BUN_WORKDIR}/bun-webkit/lib")
 elseif(WEBKIT_DIR STREQUAL "omit")
-    message(STATUS "Not using WebKit. This is only valid if you are only trying to build Zig code")
+    # message(STATUS "Not using WebKit. This is only valid if you are only trying to build Zig code")
 else()
     # Expected to be WebKit/WebKitBuild/${CMAKE_BUILD_TYPE}
     if(EXISTS "${WEBKIT_DIR}/cmakeconfig.h")
@@ -219,7 +177,6 @@ else()
 
         if(ENABLE_ASSERTIONS)
             add_compile_definitions("BUN_DEBUG=1")
-            set(ASSERT_ENABLED "1")
         endif()
 
         message(STATUS "Using WebKit from ${WEBKIT_DIR}")
@@ -236,8 +193,6 @@ else()
         set(WEBKIT_LIB_DIR "${WEBKIT_DIR}/lib")
 
         message(STATUS "Using specified WebKit directory: ${WEBKIT_DIR}")
-
-        set(ASSERT_ENABLED "0")
         message(STATUS "WebKit assertions: OFF")
     endif()
 endif()
@@ -788,14 +743,7 @@ add_compile_definitions(
     "REPORTED_NODEJS_ABI_VERSION=${USE_NODEJS_ABI_VERSION}"
 )
 
-if(NOT ASSERT_ENABLED)
-    if(APPLE)
-        add_compile_definitions("_LIBCXX_ENABLE_ASSERTIONS=0")
-        add_compile_definitions("_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_NONE")
-    endif()
-
-    add_compile_definitions("NDEBUG=1")
-else()
+if(ENABLE_ASSERTIONS)
     if(APPLE)
         add_compile_definitions("_LIBCXX_ENABLE_ASSERTIONS=1")
         add_compile_definitions("_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_DEBUG")
@@ -804,6 +752,13 @@ else()
     endif()
 
     add_compile_definitions("ASSERT_ENABLED=1")
+else()
+    if(APPLE)
+        add_compile_definitions("_LIBCXX_ENABLE_ASSERTIONS=0")
+        add_compile_definitions("_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_NONE")
+    endif()
+
+    add_compile_definitions("NDEBUG=1")
 endif()
 
 if(ICU_INCLUDE_DIR)

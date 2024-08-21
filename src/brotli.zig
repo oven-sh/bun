@@ -201,6 +201,7 @@ pub const BrotliCompressionStream = struct {
     }
 
     pub fn writeChunk(this: *BrotliCompressionStream, input: []const u8, last: bool) ![]const u8 {
+        this.total_in += input.len;
         const result = this.brotli.compressStream(if (last) this.finishFlushOp else this.flushOp, input);
 
         if (!result.success) {

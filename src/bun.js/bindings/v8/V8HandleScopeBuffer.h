@@ -37,6 +37,7 @@ public:
     TaggedPointer* createRawHandle(void* ptr);
     TaggedPointer* createSmiHandle(int32_t smi);
     TaggedPointer* createDoubleHandle(double value);
+    TaggedPointer* createHandleFromExistingHandle(TaggedPointer address);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -47,7 +48,7 @@ private:
     WTF::Lock gc_lock;
     WTF::SegmentedVector<Handle, 16> storage;
 
-    Handle& createUninitializedHandle();
+    Handle& createEmptyHandle();
 
     HandleScopeBuffer(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)

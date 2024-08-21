@@ -13,7 +13,6 @@ class HandleScope {
 public:
     BUN_EXPORT HandleScope(Isolate* isolate);
     BUN_EXPORT ~HandleScope();
-    BUN_EXPORT uintptr_t* CreateHandle(internal::Isolate* isolate, uintptr_t value);
 
     template<typename T> Local<T> createLocal(JSC::VM& vm, JSC::JSValue value)
     {
@@ -53,6 +52,9 @@ protected:
     Isolate* isolate;
     HandleScope* prev;
     HandleScopeBuffer* buffer;
+
+    // is protected in v8, which matters on windows
+    BUN_EXPORT static uintptr_t* CreateHandle(internal::Isolate* isolate, uintptr_t value);
 };
 
 static_assert(sizeof(HandleScope) == 24, "HandleScope has wrong layout");

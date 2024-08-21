@@ -584,7 +584,7 @@ EXPORTS
   ?Set@Object@v8@@QEAA?AV?$Maybe@_N@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@1@Z
   ?SetInternalField@Object@v8@@QEAAXHV?$Local@VData@v8@@@2@@Z
   ?SlowGetInternalField@Object@v8@@AEAA?AV?$Local@VData@v8@@@2@H@Z
-  ?CreateHandle@HandleScope@v8@@QEAAPEA_KPEAVIsolate@internal@2@_K@Z
+  ?CreateHandle@HandleScope@v8@@KAPEA_KPEAVIsolate@internal@2@_K@Z
   ??0HandleScope@v8@@QEAA@PEAVIsolate@1@@Z
   ??1HandleScope@v8@@QEAA@XZ
   ?GetFunction@FunctionTemplate@v8@@QEAA?AV?$MaybeLocal@VFunction@v8@@@2@V?$Local@VContext@v8@@@2@@Z
@@ -624,3 +624,5 @@ EXPORTS
   ?IsOneByte@String@v8@@QEBA_NXZ
   ?Utf8Length@String@v8@@QEBAHPEAVIsolate@2@@Z
   ?ContainsOnlyOneByte@String@v8@@QEBA_NXZ
+  ?GlobalizeReference@api_internal@v8@@YAPEA_KPEAVIsolate@internal@2@PEA_K@Z
+  ?DisposeGlobal@api_internal@v8@@YAXPEA_K@Z

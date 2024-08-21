@@ -100,6 +100,12 @@ struct Handle {
         *this = that;
     }
 
+    Handle(const ObjectLayout* that)
+        : to_v8_object(&this->object)
+    {
+        object = *that;
+    }
+
     Handle& operator=(const Handle& that)
     {
         object = that.object;

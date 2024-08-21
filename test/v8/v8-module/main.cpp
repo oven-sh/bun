@@ -484,6 +484,7 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "test_many_v8_locals", test_many_v8_locals);
   NODE_SET_METHOD(exports, "test_handle_scope_gc", test_handle_scope_gc);
 
+  // without this, node hits a UAF deleting the Global
   node::AddEnvironmentCleanupHook(context->GetIsolate(),
                                   GlobalTestWrapper::cleanup, nullptr);
 }

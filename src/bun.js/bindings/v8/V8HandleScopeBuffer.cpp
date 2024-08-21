@@ -38,7 +38,7 @@ void HandleScopeBuffer::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(HandleScopeBuffer);
 
-Handle& HandleScopeBuffer::createUninitializedHandle()
+Handle& HandleScopeBuffer::createEmptyHandle()
 {
     WTF::Locker locker { gc_lock };
     storage.append(Handle {});
@@ -47,29 +47,42 @@ Handle& HandleScopeBuffer::createUninitializedHandle()
 
 TaggedPointer* HandleScopeBuffer::createHandle(JSCell* ptr, const Map* map, JSC::VM& vm)
 {
-    auto& handle = createUninitializedHandle();
+    auto& handle = createEmptyHandle();
     handle = Handle(map, ptr, vm, this);
     return &handle.to_v8_object;
 }
 
 TaggedPointer* HandleScopeBuffer::createRawHandle(void* ptr)
 {
-    auto& handle = createUninitializedHandle();
+    auto& handle = createEmptyHandle();
     handle = Handle(ptr);
     return &handle.to_v8_object;
 }
 
 TaggedPointer* HandleScopeBuffer::createSmiHandle(int32_t smi)
 {
-    auto& handle = createUninitializedHandle();
+    auto& handle = createEmptyHandle();
     handle = Handle(smi);
     return &handle.to_v8_object;
 }
 
 TaggedPointer* HandleScopeBuffer::createDoubleHandle(double value)
 {
-    auto& handle = createUninitializedHandle();
+    auto& handle = createEmptyHandle();
     handle = Handle(value);
+    return &handle.to_v8_object;
+}
+
+TaggedPointer* HandleScopeBuffer::createHandleFromExistingHandle(TaggedPointer address)
+{
+    auto& handle = createEmptyHandle();
+    int32_t smi;
+    if (address.getSmi(smi)) {
+        handle = Handle(smi);
+    } else {
+        auto* v8_object = address.getPtr<ObjectLayout>();
+        handle = Handle(v8_object);
+    }
     return &handle.to_v8_object;
 }
 

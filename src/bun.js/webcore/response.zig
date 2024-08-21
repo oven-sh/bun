@@ -973,19 +973,11 @@ pub const Fetch = struct {
         pub fn onBodyReceived(this: *FetchTasklet) void {
             const success = this.result.isSuccess();
             const globalThis = this.global_this;
-            const is_done = !success or !this.result.has_more;
             // reset the buffer if we are streaming or if we are not waiting for bufferig anymore
             var buffer_reset = true;
             defer {
                 if (buffer_reset) {
                     this.scheduled_response_buffer.reset();
-                }
-
-                this.mutex.unlock();
-                if (is_done) {
-                    const vm = globalThis.bunVM();
-                    this.poll_ref.unref(vm);
-                    this.deref();
                 }
             }
 
@@ -1122,10 +1114,6 @@ pub const Fetch = struct {
             log("onProgressUpdate", .{});
             this.mutex.lock();
             this.has_schedule_callback.store(false, .monotonic);
-            if (this.is_waiting_body) {
-                this.onBodyReceived();
-                return;
-            }
             const is_done = !this.result.has_more;
             // if we abort because of cert error
             // we wait the Http Client because we already have the response
@@ -1133,31 +1121,27 @@ pub const Fetch = struct {
             const globalThis = this.global_this;
             const vm = globalThis.bunVM();
 
-            if (this.is_waiting_abort) {
-                // has_more will be false when the request is aborted/finished
+            defer {
                 this.mutex.unlock();
-
+                // if we are not done we wait until the next call
                 if (is_done) {
                     var poll_ref = this.poll_ref;
                     poll_ref.unref(vm);
                     this.deref();
                 }
+            }
+            if (this.is_waiting_body) {
+                this.onBodyReceived();
+                return;
+            }
+            if (this.is_waiting_abort) {
                 return;
             }
             const promise_value = this.promise.valueOrEmpty();
 
-            var poll_ref = this.poll_ref;
-
             if (promise_value.isEmptyOrUndefinedOrNull()) {
                 log("onProgressUpdate: promise_value is null", .{});
                 this.promise.deinit();
-                this.mutex.unlock();
-
-                // http thread will call this again
-                if (is_done) {
-                    poll_ref.unref(vm);
-                    this.deref();
-                }
                 return;
             }
 
@@ -1180,20 +1164,11 @@ pub const Fetch = struct {
 
                     tracker.didDispatch(globalThis);
                     this.promise.deinit();
-                    this.mutex.unlock();
-
-                    if (is_done) {
-                        // we are already done we can deinit
-                        poll_ref.unref(vm);
-                        this.deref();
-                    }
                     return;
                 }
                 // everything ok
                 if (this.metadata == null) {
                     log("onProgressUpdate: metadata is null", .{});
-                    // cannot continue without metadata
-                    this.mutex.unlock();
                     return;
                 }
             }
@@ -1204,12 +1179,6 @@ pub const Fetch = struct {
                 log("onProgressUpdate: promise_value is not null", .{});
                 tracker.didDispatch(globalThis);
                 this.promise.deinit();
-                this.mutex.unlock();
-
-                if (is_done) {
-                    poll_ref.unref(vm);
-                    this.deref();
-                }
             }
             const success = this.result.isSuccess();
 

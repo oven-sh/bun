@@ -2445,6 +2445,7 @@ pub fn doRedirect(
     this.remaining_redirect_count -|= 1;
     this.flags.redirected = true;
     assert(this.redirect_type == FetchRedirect.follow);
+    this.unregisterAbortTracker();
 
     // we need to clean the client reference before closing the socket because we are going to reuse the same ref in a another request
     if (this.isKeepAlivePossible()) {
@@ -2474,7 +2475,6 @@ pub fn doRedirect(
         tunnel.deinit();
         this.proxy_tunnel = null;
     }
-    this.unregisterAbortTracker();
 
     return this.start(.{ .bytes = request_body }, body_out_str);
 }

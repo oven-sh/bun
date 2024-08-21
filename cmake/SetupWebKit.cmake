@@ -4,8 +4,7 @@ parse_option(WEBKIT_VERSION STRING "The version of WebKit to use" "21fc366db3de8
 parse_option(WEBKIT_PREBUILT BOOL "If a pre-built version of WebKit should be used" ON)
 
 if(WEBKIT_PREBUILT)
-  # set(DEFAULT_WEBKIT_DIR ${CACHE_PATH}/webkit)
-  set(DEFAULT_WEBKIT_DIR ${BUILD_PATH}/bun-webkit)
+  set(DEFAULT_WEBKIT_DIR ${CACHE_PATH}/webkit)
 else()
   set(DEFAULT_WEBKIT_DIR ${CWD}/src/bun.js/WebKit)
 endif()

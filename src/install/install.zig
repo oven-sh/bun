@@ -6323,6 +6323,10 @@ pub const PackageManager = struct {
                                 manager.getCacheDirectory(),
                             );
 
+                            if (@hasField(@TypeOf(callbacks), "manifestsOnly") and callbacks.manifestsOnly) {
+                                continue;
+                            }
+
                             const dependency_list_entry = manager.task_queue.getEntry(task.task_id).?;
 
                             const dependency_list = dependency_list_entry.value_ptr.*;
@@ -6563,6 +6567,10 @@ pub const PackageManager = struct {
                     const manifest = &task.data.package_manifest;
 
                     try manager.manifests.insert(manifest.pkg.name.hash, manifest);
+
+                    if (@hasField(@TypeOf(callbacks), "manifestsOnly") and callbacks.manifestsOnly) {
+                        continue;
+                    }
 
                     const dependency_list_entry = manager.task_queue.getEntry(task.id).?;
                     const dependency_list = dependency_list_entry.value_ptr.*;
@@ -8191,6 +8199,7 @@ pub const PackageManager = struct {
         unlink,
         patch,
         @"patch-commit",
+        outdated,
 
         pub fn canGloballyInstallPackages(this: Subcommand) bool {
             return switch (this) {
@@ -8709,6 +8718,10 @@ pub const PackageManager = struct {
         try updatePackageJSONAndInstallCatchError(ctx, .remove);
     }
 
+    pub fn outdated(ctx: Command.Context) !void {
+        try updatePackageJSONAndInstallCatchError(ctx, .outdated);
+    }
+
     pub fn updatePackageJSONAndInstallCatchError(
         ctx: Command.Context,
         subcommand: Subcommand,
@@ -9063,7 +9076,6 @@ pub const PackageManager = struct {
         clap.parseParam("--backend <STR>                       Platform-specific optimizations for installing dependencies. " ++ platform_specific_backend_label) catch unreachable,
         clap.parseParam("--link-native-bins <STR>...           Link \"bin\" from a matching platform-specific \"optionalDependencies\" instead. Default: esbuild, turbo") catch unreachable,
         clap.parseParam("--concurrent-scripts <NUM>            Maximum number of concurrent jobs for lifecycle scripts (default 5)") catch unreachable,
-        // clap.parseParam("--omit <STR>...                    Skip installing dependencies of a certain type. \"dev\", \"optional\", or \"peer\"") catch unreachable,
         clap.parseParam("-h, --help                            Print this help menu") catch unreachable,
     };
 
@@ -9116,6 +9128,11 @@ pub const PackageManager = struct {
         clap.parseParam("--patches-dir <dir>                    The directory to put the patch file") catch unreachable,
     });
 
+    const outdated_params: []const ParamType = &(install_params_ ++ [_]ParamType{
+        clap.parseParam("<POS> ...                             ") catch unreachable,
+        clap.parseParam("--json                                Print outdated information in JSON format") catch unreachable,
+    });
+
     pub const CommandLineArguments = struct {
         registry: string = "",
         cache_dir: string = "",
@@ -9143,6 +9160,7 @@ pub const PackageManager = struct {
         trusted: bool = false,
         no_summary: bool = false,
         latest: bool = false,
+        json_output: bool = false,
 
         link_native_bins: []const string = &[_]string{},
 
@@ -9372,6 +9390,26 @@ pub const PackageManager = struct {
                     Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
                     Output.flush();
                 },
+                .outdated => {
+                    const intro_text =
+                        \\<b>Usage<r>: <b><green>bun outdated<r> <cyan>[flags]<r>
+                    ;
+
+                    const outro_text =
+                        \\<b>Examples:<r>
+                        \\  <b><green>bun outdated<r>
+                        \\  
+                        \\  <d>Print with JSON format<r>
+                        \\  <b><green>bun outdated --json<r>
+                    ;
+
+                    Output.pretty("\n" ++ intro_text ++ "\n", .{});
+                    Output.flush();
+                    Output.pretty("\n<b>Flags:<r>", .{});
+                    clap.simpleHelp(PackageManager.outdated_params);
+                    Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
+                    Output.flush();
+                },
             }
         }
 
@@ -9388,6 +9426,7 @@ pub const PackageManager = struct {
                 .unlink => unlink_params,
                 .patch => patch_params,
                 .@"patch-commit" => patch_commit_params,
+                .outdated => outdated_params,
             };
 
             var diag = clap.Diagnostic{};
@@ -9423,6 +9462,12 @@ pub const PackageManager = struct {
             cli.trusted = args.flag("--trust");
             cli.no_summary = args.flag("--no-summary");
 
+            if (comptime subcommand == .outdated) {
+                // fake --dry-run
+                cli.dry_run = true;
+                cli.json_output = args.flag("--json");
+            }
+
             // link and unlink default to not saving, all others default to
             // saving.
             if (comptime subcommand == .link or subcommand == .unlink) {
@@ -9453,8 +9498,6 @@ pub const PackageManager = struct {
                 };
             }
 
-            if (comptime subcommand == .@"patch-commit") {}
-
             if (args.option("--config")) |opt| {
                 cli.config = opt;
             }
@@ -9468,22 +9511,8 @@ pub const PackageManager = struct {
             }
 
             if (args.option("--concurrent-scripts")) |concurrency| {
-                // var buf: []
                 cli.concurrent_scripts = std.fmt.parseInt(usize, concurrency, 10) catch null;
             }
-
-            // for (args.options("--omit")) |omit| {
-            //     if (strings.eqlComptime(omit, "dev")) {
-            //         cli.omit.dev = true;
-            //     } else if (strings.eqlComptime(omit, "optional")) {
-            //         cli.omit.optional = true;
-            //     } else if (strings.eqlComptime(omit, "peer")) {
-            //         cli.omit.peer = true;
-            //     } else {
-            //         Output.prettyErrorln("<b>error<r><d>:<r> Invalid argument <b>\"--omit\"<r> must be one of <cyan>\"dev\"<r>, <cyan>\"optional\"<r>, or <cyan>\"peer\"<r>. ", .{});
-            //         Global.crash();
-            //     }
-            // }
 
             if (args.option("--cwd")) |cwd_| {
                 var buf: bun.PathBuffer = undefined;
@@ -9701,16 +9730,19 @@ pub const PackageManager = struct {
             if (err == error.MissingPackageJSON) {
                 switch (subcommand) {
                     .update => {
-                        Output.prettyErrorln("<r>No package.json, so nothing to update\n", .{});
+                        Output.prettyErrorln("<r>No package.json, so nothing to update", .{});
                         Global.crash();
                     },
                     .remove => {
-                        Output.prettyErrorln("<r>No package.json, so nothing to remove\n", .{});
+                        Output.prettyErrorln("<r>No package.json, so nothing to remove", .{});
                         Global.crash();
                     },
                     .patch, .@"patch-commit" => {
-                        Output.prettyErrorln("<r>No package.json, so nothing to patch\n", .{});
+                        Output.prettyErrorln("<r>No package.json, so nothing to patch", .{});
                         Global.crash();
+                    },
+                    .outdated => {
+                        Output.prettyErrorln("<r>Missing package.json, nothing to report", .{});
                     },
                     else => {
                         try attemptToCreatePackageJSON();
@@ -14120,6 +14152,10 @@ pub const PackageManager = struct {
             }
         }
 
+        if (manager.subcommand == .outdated) {
+            return manager.printOutdatedInfo(log_level);
+        }
+
         var printed_timestamp = false;
         if (comptime log_level != .silent) {
             if (manager.options.do.summary) {
@@ -14216,6 +14252,262 @@ pub const PackageManager = struct {
         }
 
         Output.flush();
+    }
+
+    fn printOutdatedInfo(this: *PackageManager, comptime log_level: Options.LogLevel) !void {
+        var outdated_ids: std.ArrayListUnmanaged(struct { package_id: PackageID, dep_id: DependencyID }) = .{};
+        defer outdated_ids.deinit(bun.default_allocator);
+
+        var max_name: usize = 0;
+        var max_current: usize = 0;
+        var max_update: usize = 0;
+        var max_latest: usize = 0;
+
+        const packages = this.lockfile.packages.slice();
+        const pkg_names = packages.items(.name);
+        const pkg_resolutions = packages.items(.resolution);
+
+        var version_buf = std.ArrayList(u8).init(bun.default_allocator);
+        defer version_buf.deinit();
+        const version_writer = version_buf.writer();
+
+        var at_least_one = false;
+
+        const root_pkg = this.lockfile.rootPackage() orelse return;
+        // make sure we have all manifests
+        for (root_pkg.dependencies.begin()..root_pkg.dependencies.end()) |dep_id| {
+            const package_id = this.lockfile.buffers.resolutions.items[dep_id];
+            if (package_id == invalid_package_id) continue;
+            const dep = this.lockfile.buffers.dependencies.items[dep_id];
+            if (dep.version.tag != .npm and dep.version.tag != .dist_tag) continue;
+            const resolution = pkg_resolutions[package_id];
+            if (resolution.tag != .npm) continue;
+
+            const package_name = pkg_names[package_id].slice(this.lockfile.buffers.string_bytes.items);
+            _ = this.manifests.byName(
+                this.scopeForPackageName(package_name),
+                package_name,
+            ) orelse {
+                const task_id = Task.Id.forManifest(package_name);
+                if (this.hasCreatedNetworkTask(task_id, dep.behavior.optional)) continue;
+
+                this.startProgressBarIfNone();
+
+                var network_task = this.getNetworkTask();
+                network_task.* = .{
+                    .package_manager = &PackageManager.instance,
+                    .callback = undefined,
+                    .task_id = task_id,
+                    .allocator = this.allocator,
+                };
+                try network_task.forManifest(
+                    package_name,
+                    this.allocator,
+                    this.scopeForPackageName(package_name),
+                    null,
+                    dep.behavior.optional,
+                );
+
+                at_least_one = true;
+                this.enqueueNetworkTask(network_task);
+                continue;
+            };
+        }
+
+        if (at_least_one) {
+            this.drainDependencyList();
+            this.flushNetworkQueue();
+
+            const runAndWaitFn = struct {
+                pub fn runAndWaitFn() *const fn (*PackageManager) anyerror!void {
+                    return struct {
+                        manager: *PackageManager,
+                        err: ?anyerror = null,
+                        pub fn isDone(closure: *@This()) bool {
+                            var manager = closure.manager;
+
+                            manager.runTasks(
+                                *PackageManager,
+                                manager,
+                                .{
+                                    .onExtract = {},
+                                    .onPatch = {},
+                                    .onResolve = {},
+                                    .onPackageManifestError = {},
+                                    .onPackageDownloadError = {},
+                                    .progress_bar = false,
+                                    .manifestsOnly = true,
+                                },
+                                true,
+                                log_level,
+                            ) catch |err| {
+                                closure.err = err;
+                                return true;
+                            };
+
+                            return manager.pendingTaskCount() == 0;
+                        }
+
+                        pub fn runAndWait(package_manager: *PackageManager) !void {
+                            var closure: @This() = .{
+                                .manager = package_manager,
+                            };
+
+                            package_manager.sleepUntil(&closure, &@This().isDone);
+
+                            if (closure.err) |err| {
+                                return err;
+                            }
+                        }
+                    }.runAndWait;
+                }
+            }.runAndWaitFn;
+
+            const wait = runAndWaitFn();
+
+            try wait(this);
+
+            this.endProgressBar();
+        }
+
+        const lockfile = this.lockfile;
+        const string_buf = lockfile.buffers.string_bytes.items;
+
+        for (root_pkg.dependencies.begin()..root_pkg.dependencies.end()) |dep_id| {
+            const package_id = lockfile.buffers.resolutions.items[dep_id];
+            if (package_id == invalid_package_id) continue;
+            const dep = lockfile.buffers.dependencies.items[dep_id];
+            if (dep.version.tag != .npm and dep.version.tag != .dist_tag) continue;
+            const resolution = pkg_resolutions[package_id];
+            if (resolution.tag != .npm) continue;
+
+            const package_name = pkg_names[package_id].slice(string_buf);
+            var expired = false;
+            const manifest = this.manifests.byNameAllowExpired(
+                this.scopeForPackageName(package_name),
+                package_name,
+                &expired,
+            ) orelse continue;
+
+            const latest = manifest.findByDistTag("latest") orelse continue;
+
+            const update_version = if (dep.version.tag == .npm)
+                manifest.findBestVersion(dep.version.value.npm.version, string_buf) orelse continue
+            else
+                manifest.findByDistTag(dep.version.value.dist_tag.tag.slice(string_buf)) orelse continue;
+
+            if (resolution.value.npm.version.order(latest.version, string_buf, string_buf) != .lt) continue;
+
+            const package_name_len = package_name.len + if (dep.behavior.dev)
+                " (dev)".len
+            else if (dep.behavior.peer)
+                " (peer)".len
+            else if (dep.behavior.optional)
+                " (optional".len
+            else
+                0;
+
+            if (package_name_len > max_name) max_name = package_name_len;
+
+            version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)}) catch bun.outOfMemory();
+            if (version_buf.items.len > max_current) max_current = version_buf.items.len;
+            version_buf.items.len = 0;
+
+            version_writer.print("{}", .{update_version.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
+            if (version_buf.items.len > max_update) max_update = version_buf.items.len;
+            version_buf.items.len = 0;
+
+            version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
+            if (version_buf.items.len > max_latest) max_latest = version_buf.items.len;
+            version_buf.items.len = 0;
+
+            outdated_ids.append(
+                bun.default_allocator,
+                .{ .package_id = package_id, .dep_id = @intCast(dep_id) },
+            ) catch bun.outOfMemory();
+        }
+
+        if (outdated_ids.items.len == 0) return;
+
+        // begin printing
+        Output.pretty("\n", .{});
+
+        const package_column_length = "Package  ".len + (max_name -| "Package".len);
+        Output.pretty("<r><d>Package<r>  ", .{});
+        for ("Package  ".len..package_column_length) |_| Output.pretty(" ", .{});
+
+        const current_column_length = "Current  ".len + (max_current -| "Current".len);
+        Output.pretty("<d>Current<r>  ", .{});
+        for ("Current  ".len..current_column_length) |_| Output.pretty(" ", .{});
+
+        const update_column_length = "Update  ".len + (max_update -| "Update".len);
+        Output.pretty("<d>Update<r>  ", .{});
+        for ("Update  ".len..update_column_length) |_| Output.pretty(" ", .{});
+
+        const latest_column_length = "Latest  ".len + (max_latest -| "Latest".len);
+        Output.pretty("<d>Latest<r>  ", .{});
+        for ("Latest  ".len..latest_column_length) |_| Output.pretty(" ", .{});
+
+        Output.pretty("\n", .{});
+
+        for (outdated_ids.items) |ids| {
+            const package_id = ids.package_id;
+            const dep_id = ids.dep_id;
+            const package_name = pkg_names[package_id].slice(string_buf);
+            const dep = lockfile.buffers.dependencies.items[dep_id];
+
+            var expired = false;
+            const manifest = this.manifests.byNameAllowExpired(
+                this.scopeForPackageName(package_name),
+                package_name,
+                &expired,
+            ) orelse continue;
+
+            const latest = manifest.findByDistTag("latest") orelse continue;
+            const update_version = if (dep.version.tag == .npm)
+                manifest.findBestVersion(dep.version.value.npm.version, string_buf) orelse continue
+            else
+                manifest.findByDistTag(dep.version.value.dist_tag.tag.slice(string_buf)) orelse continue;
+
+            Output.pretty("{s}", .{package_name});
+            var package_name_len = package_name.len;
+            if (dep.behavior.dev) {
+                Output.pretty(" <d>(dev)<r>", .{});
+                package_name_len += " (dev)".len;
+            } else if (dep.behavior.peer) {
+                Output.pretty(" <d>(peer)<r>", .{});
+                package_name_len += " (peer)".len;
+            } else if (dep.behavior.optional) {
+                Output.pretty(" <d>(optional)<r>", .{});
+                package_name_len += " (optional)".len;
+            }
+            for (package_name_len..package_column_length) |_| Output.pretty(" ", .{});
+
+            const resolution = pkg_resolutions[package_id];
+            version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)}) catch bun.outOfMemory();
+            Output.pretty("{s}", .{version_buf.items});
+            for (version_buf.items.len..current_column_length) |_| Output.pretty(" ", .{});
+            version_buf.items.len = 0;
+
+            version_writer.print("{}", .{update_version.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
+            if (update_version.version.order(resolution.value.npm.version, manifest.string_buf, string_buf) == .gt) {
+                Output.pretty("<blue>{s}<r>", .{version_buf.items});
+            } else {
+                Output.pretty("<d>{s}<r>", .{version_buf.items});
+            }
+            for (version_buf.items.len..update_column_length) |_| Output.pretty(" ", .{});
+            version_buf.items.len = 0;
+
+            version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
+            Output.pretty("<cyan>{s}<r>", .{version_buf.items});
+            for (version_buf.items.len..latest_column_length) |_| Output.pretty(" ", .{});
+            version_buf.items.len = 0;
+
+            Output.pretty("\n", .{});
+        }
+
+        Output.flush();
+        return;
     }
 
     fn printBlockedPackagesInfo(summary: PackageInstall.Summary) void {

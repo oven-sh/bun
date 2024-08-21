@@ -115,6 +115,7 @@ pub const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
 pub const ExecCommand = @import("./cli/exec_command.zig").ExecCommand;
 pub const PatchCommand = @import("./cli/patch_command.zig").PatchCommand;
 pub const PatchCommitCommand = @import("./cli/patch_commit_command.zig").PatchCommitCommand;
+pub const OutdatedCommand = @import("./cli/outdated_command.zig").OutdatedCommand;
 
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
@@ -1438,6 +1439,8 @@ pub const Command = struct {
 
             RootCommandMatcher.case("exec") => .ExecCommand,
 
+            RootCommandMatcher.case("outdated") => .OutdatedCommand,
+
             // These are reserved for future use by Bun, so that someone
             // doing `bun deploy` to run a script doesn't accidentally break
             // when we add our actual command
@@ -1452,7 +1455,6 @@ pub const Command = struct {
             RootCommandMatcher.case("whoami") => .ReservedCommand,
             RootCommandMatcher.case("publish") => .ReservedCommand,
             RootCommandMatcher.case("prune") => .ReservedCommand,
-            RootCommandMatcher.case("outdated") => .ReservedCommand,
             RootCommandMatcher.case("list") => .ReservedCommand,
             RootCommandMatcher.case("why") => .ReservedCommand,
 
@@ -1572,6 +1574,13 @@ pub const Command = struct {
                 const ctx = try Command.init(allocator, log, .PatchCommitCommand);
 
                 try PatchCommitCommand.exec(ctx);
+                return;
+            },
+            .OutdatedCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .OutdatedCommand) unreachable;
+                const ctx = try Command.init(allocator, log, .OutdatedCommand);
+
+                try OutdatedCommand.exec(ctx);
                 return;
             },
             .BunxCommand => {
@@ -2141,6 +2150,7 @@ pub const Command = struct {
         ExecCommand,
         PatchCommand,
         PatchCommitCommand,
+        OutdatedCommand,
 
         /// Used by crash reports.
         ///
@@ -2172,6 +2182,7 @@ pub const Command = struct {
                 .ExecCommand => 'e',
                 .PatchCommand => 'x',
                 .PatchCommitCommand => 'z',
+                .OutdatedCommand => 'o',
             };
         }
 
@@ -2395,6 +2406,9 @@ pub const Command = struct {
                     , .{});
                     Output.flush();
                 },
+                .OutdatedCommand => {
+                    Install.PackageManager.CommandLineArguments.printHelp(.outdated);
+                },
                 else => {
                     HelpCommand.printWithReason(.explicit);
                 },
@@ -2403,7 +2417,16 @@ pub const Command = struct {
 
         pub fn readGlobalConfig(this: Tag) bool {
             return switch (this) {
-                .BunxCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand, .UpdateCommand, .PatchCommand, .PatchCommitCommand => true,
+                .BunxCommand,
+                .PackageManagerCommand,
+                .InstallCommand,
+                .AddCommand,
+                .RemoveCommand,
+                .UpdateCommand,
+                .PatchCommand,
+                .PatchCommitCommand,
+                .OutdatedCommand,
+                => true,
                 else => false,
             };
         }
@@ -2420,6 +2443,7 @@ pub const Command = struct {
                 .UpdateCommand,
                 .PatchCommand,
                 .PatchCommitCommand,
+                .OutdatedCommand,
                 => true,
                 else => false,
             };
@@ -2439,6 +2463,7 @@ pub const Command = struct {
             .AutoCommand = true,
             .RunCommand = true,
             .RunAsNodeCommand = true,
+            .OutdatedCommand = true,
         });
 
         pub const always_loads_config: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{
@@ -2452,6 +2477,7 @@ pub const Command = struct {
             .PatchCommitCommand = true,
             .PackageManagerCommand = true,
             .BunxCommand = true,
+            .OutdatedCommand = true,
         });
 
         pub const uses_global_options: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(true, .{
@@ -2466,6 +2492,7 @@ pub const Command = struct {
             .LinkCommand = false,
             .UnlinkCommand = false,
             .BunxCommand = false,
+            .OutdatedCommand = false,
         });
     };
 };

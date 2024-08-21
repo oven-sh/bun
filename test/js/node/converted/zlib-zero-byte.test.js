@@ -22,8 +22,8 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
-const zlib = require('zlib');
+"use strict";
+const zlib = require("zlib");
 
 for (const Compressor of [zlib.Gzip, zlib.BrotliCompress]) {
   test(`${Compressor.name} compresses empty buffer`, async () => {
@@ -31,16 +31,16 @@ for (const Compressor of [zlib.Gzip, zlib.BrotliCompress]) {
     const emptyBuffer = Buffer.alloc(0);
     let received = 0;
 
-    gz.on('data', (c) => {
+    gz.on("data", c => {
       received += c.length;
     });
 
-    const endPromise = new Promise((resolve) => {
-      gz.on('end', resolve);
+    const endPromise = new Promise(resolve => {
+      gz.on("end", resolve);
     });
 
-    const finishPromise = new Promise((resolve) => {
-      gz.on('finish', resolve);
+    const finishPromise = new Promise(resolve => {
+      gz.on("finish", resolve);
     });
 
     gz.write(emptyBuffer);

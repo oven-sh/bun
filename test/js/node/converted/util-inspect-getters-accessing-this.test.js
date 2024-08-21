@@ -1,14 +1,14 @@
 //#FILE: test-util-inspect-getters-accessing-this.js
 //#SHA1: 92c41c06f838da46cbbfcd7f695a19784af3f581
 //-----------------
-'use strict';
+"use strict";
 
-const { inspect } = require('util');
+const { inspect } = require("util");
 
 // This test ensures that util.inspect logs getters
 // which access this.
 
-test('util.inspect logs getters accessing this', () => {
+test("util.inspect logs getters accessing this", () => {
   class X {
     constructor() {
       this._y = 123;
@@ -21,14 +21,14 @@ test('util.inspect logs getters accessing this', () => {
 
   const result = inspect(new X(), {
     getters: true,
-    showHidden: true
+    showHidden: true,
   });
 
-  expect(result).toBe('X { _y: 123, [y]: [Getter: 123] }');
+  expect(result).toBe("X { _y: 123, [y]: [Getter: 123] }");
 });
 
 // Regression test for https://github.com/nodejs/node/issues/37054
-test('util.inspect handles circular references in getters', () => {
+test("util.inspect handles circular references in getters", () => {
   class A {
     constructor(B) {
       this.B = B;
@@ -50,13 +50,13 @@ test('util.inspect handles circular references in getters', () => {
   const result = inspect(new B(), {
     depth: 1,
     getters: true,
-    showHidden: true
+    showHidden: true,
   });
 
   expect(result).toBe(
-    '<ref *1> B {\n' +
-    '  A: A { B: [Circular *1], [b]: [Getter] [Circular *1] },\n' +
-    '  [a]: [Getter] A { B: [Circular *1], [b]: [Getter] [Circular *1] }\n' +
-    '}'
+    "<ref *1> B {\n" +
+      "  A: A { B: [Circular *1], [b]: [Getter] [Circular *1] },\n" +
+      "  [a]: [Getter] A { B: [Circular *1], [b]: [Getter] [Circular *1] }\n" +
+      "}",
   );
 });

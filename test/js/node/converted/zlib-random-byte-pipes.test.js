@@ -22,11 +22,11 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
+"use strict";
 
-const crypto = require('crypto');
-const stream = require('stream');
-const zlib = require('zlib');
+const crypto = require("crypto");
+const stream = require("stream");
+const zlib = require("zlib");
 
 const Stream = stream.Stream;
 
@@ -39,7 +39,7 @@ class RandomReadStream extends Stream {
     this._paused = false;
     this._processing = false;
 
-    this._hasher = crypto.createHash('sha1');
+    this._hasher = crypto.createHash("sha1");
     opt = opt || {};
 
     // base block size.
@@ -61,13 +61,13 @@ class RandomReadStream extends Stream {
 
   pause() {
     this._paused = true;
-    this.emit('pause');
+    this.emit("pause");
   }
 
   resume() {
     // console.error("rrs resume");
     this._paused = false;
-    this.emit('resume');
+    this.emit("resume");
     this._process();
   }
 
@@ -78,10 +78,10 @@ class RandomReadStream extends Stream {
     this._processing = true;
 
     if (!this._remaining) {
-      this._hash = this._hasher.digest('hex').toLowerCase().trim();
+      this._hash = this._hasher.digest("hex").toLowerCase().trim();
       this._processing = false;
 
-      this.emit('end');
+      this.emit("end");
       return;
     }
 
@@ -90,7 +90,7 @@ class RandomReadStream extends Stream {
     let block = this._opt.block;
     const jitter = this._opt.jitter;
     if (jitter) {
-      block += Math.ceil(Math.random() * jitter - (jitter / 2));
+      block += Math.ceil(Math.random() * jitter - jitter / 2);
     }
     block = Math.min(block, this._remaining);
     const buf = Buffer.allocUnsafe(block);
@@ -104,7 +104,7 @@ class RandomReadStream extends Stream {
 
     this._processing = false;
 
-    this.emit('data', buf);
+    this.emit("data", buf);
     process.nextTick(this._process);
   }
 }
@@ -114,7 +114,7 @@ class HashStream extends Stream {
   constructor() {
     super();
     this.readable = this.writable = true;
-    this._hasher = crypto.createHash('sha1');
+    this._hasher = crypto.createHash("sha1");
   }
 
   write(c) {
@@ -126,21 +126,21 @@ class HashStream extends Stream {
   }
 
   resume() {
-    this.emit('resume');
-    process.nextTick(() => this.emit('drain'));
+    this.emit("resume");
+    process.nextTick(() => this.emit("drain"));
   }
 
   end(c) {
     if (c) {
       this.write(c);
     }
-    this._hash = this._hasher.digest('hex').toLowerCase().trim();
-    this.emit('data', this._hash);
-    this.emit('end');
+    this._hash = this._hasher.digest("hex").toLowerCase().trim();
+    this.emit("data", this._hash);
+    this.emit("end");
   }
 }
 
-test('zlib random byte pipes', async () => {
+test("zlib random byte pipes", async () => {
   const testCases = [
     [zlib.createGzip, zlib.createGunzip],
     [zlib.createBrotliCompress, zlib.createBrotliDecompress],
@@ -154,8 +154,8 @@ test('zlib random byte pipes', async () => {
 
     inp.pipe(gzip).pipe(gunz).pipe(out);
 
-    await new Promise((resolve) => {
-      out.on('data', (c) => {
+    await new Promise(resolve => {
+      out.on("data", c => {
         expect(c).toBe(inp._hash);
         resolve();
       });

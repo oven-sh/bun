@@ -4,16 +4,16 @@
 /* eslint-disable node-core/required-modules */
 /* eslint-disable node-core/require-common-first */
 
-'use strict';
+"use strict";
 
 // We are not loading common because it will load the stream module,
 // defeating the purpose of this test.
 
-const { gzipSync } = require('zlib');
+const { gzipSync } = require("zlib");
 
 // Avoid regressions such as https://github.com/nodejs/node/issues/36615
 
-test('gzipSync should not throw', () => {
+test("gzipSync should not throw", () => {
   // This must not throw
-  expect(() => gzipSync('fooobar')).not.toThrow();
+  expect(() => gzipSync("fooobar")).not.toThrow();
 });

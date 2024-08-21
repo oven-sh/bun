@@ -22,16 +22,16 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
-const zlib = require('zlib');
+"use strict";
+const zlib = require("zlib");
 
-test('zlib close after write', (done) => {
-  zlib.gzip('hello', (err, out) => {
+test("zlib close after write", done => {
+  zlib.gzip("hello", (err, out) => {
     expect(err).toBeNull();
-    
+
     const unzip = zlib.createGunzip();
     unzip.write(out);
-    
+
     unzip.close(() => {
       done();
     });

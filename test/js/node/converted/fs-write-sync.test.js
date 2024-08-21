@@ -22,12 +22,12 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+"use strict";
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
 
-const filename = path.join(os.tmpdir(), 'write.txt');
+const filename = path.join(os.tmpdir(), "write.txt");
 
 beforeEach(() => {
   try {
@@ -37,8 +37,8 @@ beforeEach(() => {
   }
 });
 
-test('fs.writeSync with various parameter combinations', () => {
-  const parameters = [Buffer.from('bár'), 0, Buffer.byteLength('bár')];
+test("fs.writeSync with various parameter combinations", () => {
+  const parameters = [Buffer.from("bár"), 0, Buffer.byteLength("bár")];
 
   // The first time fs.writeSync is called with all parameters provided.
   // After that, each pop in the cycle removes the final parameter. So:
@@ -46,18 +46,18 @@ test('fs.writeSync with various parameter combinations', () => {
   // - The 3rd time fs.writeSync with a buffer, without the offset and length
   //   parameters.
   while (parameters.length > 0) {
-    const fd = fs.openSync(filename, 'w');
+    const fd = fs.openSync(filename, "w");
 
-    let written = fs.writeSync(fd, '');
+    let written = fs.writeSync(fd, "");
     expect(written).toBe(0);
 
-    fs.writeSync(fd, 'foo');
+    fs.writeSync(fd, "foo");
 
     written = fs.writeSync(fd, ...parameters);
     expect(written).toBeGreaterThan(3);
     fs.closeSync(fd);
 
-    expect(fs.readFileSync(filename, 'utf-8')).toBe('foobár');
+    expect(fs.readFileSync(filename, "utf-8")).toBe("foobár");
 
     parameters.pop();
   }

@@ -22,16 +22,16 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
-const zlib = require('zlib');
+"use strict";
+const zlib = require("zlib");
 
 // String "test" encoded with dictionary "dict".
-const input = Buffer.from([0x78, 0xBB, 0x04, 0x09, 0x01, 0xA5]);
+const input = Buffer.from([0x78, 0xbb, 0x04, 0x09, 0x01, 0xa5]);
 
-test('Inflate stream without dictionary', (done) => {
+test("Inflate stream without dictionary", done => {
   const stream = zlib.createInflate();
 
-  stream.on('error', (err) => {
+  stream.on("error", err => {
     expect(err.message).toMatch(/Missing dictionary/);
     done();
   });
@@ -39,10 +39,10 @@ test('Inflate stream without dictionary', (done) => {
   stream.write(input);
 });
 
-test('Inflate stream with incorrect dictionary', (done) => {
-  const stream = zlib.createInflate({ dictionary: Buffer.from('fail') });
+test("Inflate stream with incorrect dictionary", done => {
+  const stream = zlib.createInflate({ dictionary: Buffer.from("fail") });
 
-  stream.on('error', (err) => {
+  stream.on("error", err => {
     expect(err.message).toMatch(/Bad dictionary/);
     done();
   });
@@ -50,10 +50,10 @@ test('Inflate stream with incorrect dictionary', (done) => {
   stream.write(input);
 });
 
-test('InflateRaw stream with incorrect dictionary', (done) => {
-  const stream = zlib.createInflateRaw({ dictionary: Buffer.from('fail') });
+test("InflateRaw stream with incorrect dictionary", done => {
+  const stream = zlib.createInflateRaw({ dictionary: Buffer.from("fail") });
 
-  stream.on('error', (err) => {
+  stream.on("error", err => {
     // It's not possible to separate invalid dict and invalid data when using
     // the raw format
     expect(err.message).toMatch(/(invalid|Operation-Ending-Supplemental Code is 0x12)/);

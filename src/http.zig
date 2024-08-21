@@ -1178,6 +1178,11 @@ pub fn onClose(
     log("Closed  {s}\n", .{client.url.href});
     // the socket is closed, we need to unregister the abort tracker
     client.unregisterAbortTracker();
+    if (client.signals.get(.aborted)) {
+        client.fail(error.Aborted);
+        return;
+    }
+
     const in_progress = client.state.stage != .done and client.state.stage != .fail and client.state.flags.is_redirect_pending == false;
 
     if (in_progress) {

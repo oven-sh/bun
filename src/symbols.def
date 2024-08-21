@@ -624,5 +624,5 @@ EXPORTS
   ?IsOneByte@String@v8@@QEBA_NXZ
   ?Utf8Length@String@v8@@QEBAHPEAVIsolate@2@@Z
   ?ContainsOnlyOneByte@String@v8@@QEBA_NXZ
-  ?GlobalizeReference@api_internal@v8@@YAPEA_KPEAVIsolate@internal@2@PEA_K@Z
+  ?GlobalizeReference@api_internal@v8@@YAPEA_KPEAVIsolate@internal@2@_K@Z
   ?DisposeGlobal@api_internal@v8@@YAXPEA_K@Z

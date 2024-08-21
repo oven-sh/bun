@@ -1116,13 +1116,10 @@ pub const Fetch = struct {
             this.mutex.lock();
             this.has_schedule_callback.store(false, .monotonic);
             const is_done = !this.result.has_more;
-            // if we abort because of cert error
-            // we wait the Http Client because we already have the response
-            // we just need to deinit
 
             const vm = this.vm;
+            // vm is shutting down we cannot touch JS
             if (vm.isShuttingDown()) {
-                // vm is shutting down we cannot touch JS
                 this.mutex.unlock();
                 if (is_done) {
                     this.deref();
@@ -1140,11 +1137,14 @@ pub const Fetch = struct {
                     this.deref();
                 }
             }
-
+            // if we already respond the metadata and still need to process the body
             if (this.is_waiting_body) {
                 this.onBodyReceived();
                 return;
             }
+            // if we abort because of cert error
+            // we wait the Http Client because we already have the response
+            // we just need to deinit
             if (this.is_waiting_abort) {
                 return;
             }

@@ -883,69 +883,65 @@ pub const Request = struct {
     ) void {
         _ = allocator;
         this.ensureURL() catch {};
-
-        const body = InitRequestBodyValue(
-            switch (this.body.value.clone(globalThis)) {
-                .Empty => brk: {
-                    const stream = stream: {
-                        if (Request.bodyGetCached(req_jsvalue)) |existing_stream_value| {
-                            const existing_stream = JSC.WebCore.ReadableStream.fromJS(existing_stream_value, globalThis) orelse break :stream null;
-                            if (existing_stream.isDisturbed(globalThis)) {
-                                break :stream null;
-                            }
-
-                            break :stream existing_stream;
-                        }
-
-                        if (this.body.value.Locked.readable.get()) |stream| {
-                            if (stream.isDisturbed(globalThis)) {
-                                break :stream null;
-                            }
-
-                            break :stream stream;
-                        }
-
-                        if (this.body.value.Locked.promise == null) {
-                            const stream_value = this.body.value.toReadableStream(globalThis);
-                            break :stream JSC.WebCore.ReadableStream.fromJS(stream_value, globalThis);
-                        }
-
-                        break :stream null;
-                    };
-
-                    if (stream) |s| {
-                        if (s.tee(globalThis)) |teed| {
-                            Request.bodySetCached(req_jsvalue, globalThis, teed[0].value);
-
-                            break :brk Body.Value{
-                                .Locked = .{
-                                    .readable = JSC.WebCore.ReadableStream.Strong.init(teed[1], globalThis),
-                                    .global = globalThis,
-                                },
-                            };
-                        }
-                    }
-
-                    break :brk .{ .Empty = {} };
-                },
-                else => |result| result,
-            },
-        ) catch {
-            if (!globalThis.hasException()) {
-                globalThis.throw("Failed to clone request", .{});
-            }
-
-            return;
-        };
-
-        const vm = globalThis.bunVM();
         const original_url = req.url;
+        var old_body = req.body;
 
         req.* = Request{
-            .body = body,
+            .body = old_body,
             .url = if (preserve_url) original_url else this.url.dupeRef(),
             .method = this.method,
             ._headers = this.cloneHeaders(globalThis),
+        };
+
+        if (globalThis.hasException()) {
+            return;
+        }
+
+        old_body.value =
+            switch (this.body.value.clone(globalThis)) {
+            .Empty => brk: {
+                const stream = stream: {
+                    if (Request.bodyGetCached(req_jsvalue)) |existing_stream_value| {
+                        const existing_stream = JSC.WebCore.ReadableStream.fromJS(existing_stream_value, globalThis) orelse break :stream null;
+                        if (existing_stream.isDisturbed(globalThis)) {
+                            break :stream null;
+                        }
+
+                        break :stream existing_stream;
+                    }
+
+                    if (this.body.value.Locked.readable.get()) |stream| {
+                        if (stream.isDisturbed(globalThis)) {
+                            break :stream null;
+                        }
+
+                        break :stream stream;
+                    }
+
+                    if (this.body.value.Locked.promise == null) {
+                        const stream_value = this.body.value.toReadableStream(globalThis);
+                        break :stream JSC.WebCore.ReadableStream.fromJS(stream_value, globalThis);
+                    }
+
+                    break :stream null;
+                };
+
+                if (stream) |s| {
+                    if (s.tee(globalThis)) |teed| {
+                        Request.bodySetCached(req_jsvalue, globalThis, teed[0].value);
+
+                        break :brk Body.Value{
+                            .Locked = .{
+                                .readable = JSC.WebCore.ReadableStream.Strong.init(teed[1], globalThis),
+                                .global = globalThis,
+                            },
+                        };
+                    }
+                }
+
+                break :brk .{ .Empty = {} };
+            },
+            else => |result| result,
         };
 
         if (this.signal) |signal| {
@@ -954,7 +950,9 @@ pub const Request = struct {
     }
 
     pub fn clone(this: *Request, allocator: std.mem.Allocator, globalThis: *JSGlobalObject, this_jsvalue: JSC.JSValue) *Request {
-        const req = allocator.create(Request) catch bun.outOfMemory();
+        const req = Request.new(.{
+            .body = globalThis.bunVM().initRequestBodyValue(.{ .Empty = {} }) catch bun.outOfMemory(),
+        });
         this.cloneInto(req, allocator, globalThis, false, this_jsvalue);
         return req;
     }

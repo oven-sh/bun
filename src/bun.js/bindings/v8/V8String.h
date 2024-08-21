@@ -33,6 +33,42 @@ public:
     BUN_EXPORT int WriteUtf8(Isolate* isolate, char* buffer, int length = -1, int* nchars_ref = nullptr, int options = NO_OPTIONS) const;
     BUN_EXPORT int Length() const;
 
+    /**
+     * Returns the number of bytes in the UTF-8 encoded
+     * representation of this string.
+     */
+    BUN_EXPORT int Utf8Length(Isolate* isolate) const;
+
+    /**
+     * Returns whether this string is known to contain only one byte data,
+     * i.e. ISO-8859-1 code points.
+     * Does not read the string.
+     * False negatives are possible.
+     */
+    BUN_EXPORT bool IsOneByte() const;
+
+    /**
+     * Returns whether this string contain only one byte data,
+     * i.e. ISO-8859-1 code points.
+     * Will read the entire string in some cases.
+     */
+    BUN_EXPORT bool ContainsOnlyOneByte() const;
+
+    /**
+     * Returns true if the string is external.
+     */
+    BUN_EXPORT bool IsExternal() const;
+
+    /**
+     * Returns true if the string is both external and two-byte.
+     */
+    BUN_EXPORT bool IsExternalTwoByte() const;
+
+    /**
+     * Returns true if the string is both external and one-byte.
+     */
+    BUN_EXPORT bool IsExternalOneByte() const;
+
     JSC::JSString* localToJSString()
     {
         return localToObjectPointer<JSC::JSString>();

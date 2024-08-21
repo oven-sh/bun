@@ -2256,6 +2256,53 @@ it.skip("should be able to stream huge amounts of data", async () => {
   }
 }, 30_000);
 
+// TODO: today we use a workaround to continue event, we need to fix it in the future.
+it("should emit continue event #7480", done => {
+  let receivedContinue = false;
+  const req = request(
+    "https://example.com",
+    { headers: { "accept-encoding": "identity", "expect": "100-continue" } },
+    res => {
+      let data = "";
+      res.setEncoding("utf8");
+      res.on("data", chunk => {
+        data += chunk;
+      });
+      res.on("end", () => {
+        expect(receivedContinue).toBe(true);
+        expect(data).toContain("This domain is for use in illustrative examples in documents");
+        done();
+      });
+      res.on("error", err => done(err));
+    },
+  );
+  req.on("continue", () => {
+    receivedContinue = true;
+  });
+  req.end();
+});
+
+it("should not emit continue event #7480", done => {
+  let receivedContinue = false;
+  const req = request("https://example.com", { headers: { "accept-encoding": "identity" } }, res => {
+    let data = "";
+    res.setEncoding("utf8");
+    res.on("data", chunk => {
+      data += chunk;
+    });
+    res.on("end", () => {
+      expect(receivedContinue).toBe(false);
+      expect(data).toContain("This domain is for use in illustrative examples in documents");
+      done();
+    });
+    res.on("error", err => done(err));
+  });
+  req.on("continue", () => {
+    receivedContinue = true;
+  });
+  req.end();
+});
+
 it("http.Agent is configured correctly", () => {
   const agent = new http.Agent();
   expect(agent.defaultPort).toBe(80);

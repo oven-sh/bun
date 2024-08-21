@@ -238,6 +238,17 @@ static bool perform_string_test(const FunctionCallbackInfo<Value> &info,
     return false;
   }
 
+  if (v8_string->Utf8Length(isolate) != encoded_utf_8_length) {
+    fail(info, "String::Utf8Length returned wrong length: expected %d got %d",
+         encoded_utf_8_length, v8_string->Utf8Length(isolate));
+    return false;
+  }
+
+  if (v8_string->IsExternal()) {
+    fail(info, "String::IsExternal returned true");
+    return false;
+  }
+
   ok(info);
   return true;
 }

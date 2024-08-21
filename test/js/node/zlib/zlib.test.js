@@ -290,12 +290,13 @@ describe.each(["Deflate", "DeflateRaw"])("%s", constructor_name => {
   );
 });
 
-it("premature end handles bytesWritten properly", () => {
-  for (const [compress, decompressor] of [
-    [zlib.deflateRawSync, zlib.createInflateRaw],
-    [zlib.deflateSync, zlib.createInflate],
-    [zlib.brotliCompressSync, zlib.createBrotliDecompress],
-  ]) {
+for (const [compress, decompressor] of [
+  [zlib.deflateRawSync, zlib.createInflateRaw],
+  [zlib.deflateSync, zlib.createInflate],
+  [zlib.brotliCompressSync, zlib.createBrotliDecompress],
+]) {
+  it(`premature end handles bytesWritten properly: ${compress.name} + ${decompressor.name}`, async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
     const input = "0123456789".repeat(4);
     const compressed = compress(input);
     const trailingData = Buffer.from("not valid compressed data");
@@ -324,13 +325,19 @@ it("premature end handles bytesWritten properly", () => {
       stream.setEncoding("utf8");
       stream.on("data", chunk => (output += chunk));
       stream.on("end", () => {
-        expect(output).toBe(input);
-        expect(stream.bytesWritten).toBe(compressed.length);
+        try {
+          expect(output).toBe(input);
+          expect(stream.bytesWritten).toBe(compressed.length);
+          resolve();
+        } catch (e) {
+          reject(e);
+        }
       });
       variant(stream);
     }
-  }
-});
+    await promise;
+  });
+}
 
 const inputString =
   "ΩΩLorem ipsum dolor sit amet, consectetur adipiscing eli" +

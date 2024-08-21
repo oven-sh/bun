@@ -1176,7 +1176,8 @@ pub fn onClose(
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
     log("Closed  {s}\n", .{client.url.href});
-
+    // the socket is closed, we need to unregister the abort tracker
+    client.unregisterAbortTracker();
     const in_progress = client.state.stage != .done and client.state.stage != .fail and client.state.flags.is_redirect_pending == false;
 
     if (in_progress) {
@@ -1219,7 +1220,7 @@ pub fn onTimeout(
 ) void {
     if (client.flags.disable_timeout) return;
     log("Timeout  {s}\n", .{client.url.href});
-
+    client.unregisterAbortTracker();
     defer NewHTTPContext(is_ssl).terminateSocket(socket);
 
     if (client.state.stage != .done and client.state.stage != .fail) {
@@ -1230,6 +1231,7 @@ pub fn onConnectError(
     client: *HTTPClient,
 ) void {
     log("onConnectError  {s}\n", .{client.url.href});
+    client.unregisterAbortTracker();
     if (client.state.stage != .done and client.state.stage != .fail)
         client.fail(error.ConnectionRefused);
 }

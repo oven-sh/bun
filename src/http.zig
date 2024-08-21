@@ -792,10 +792,12 @@ pub const HTTPThread = struct {
     lazy_libdeflater: ?*LibdeflateState = null,
 
     const threadlog = Output.scoped(.HTTPThread, true);
+
     const ShutdownMessage = struct {
         async_http_id: u32,
         is_tls: bool,
     };
+
     pub const LibdeflateState = struct {
         decompressor: *bun.libdeflate.Decompressor = undefined,
         shared_buffer: [512 * 1024]u8 = undefined,

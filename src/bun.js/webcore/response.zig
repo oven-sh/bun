@@ -1787,7 +1787,7 @@ pub const Fetch = struct {
         }
 
         pub fn callback(task: *FetchTasklet, async_http: *http.AsyncHTTP, result: http.HTTPClientResult) void {
-            // we are done with the http client si we can deref our side
+            // we are done with the http client so we can deref our side
             if (!result.has_more) task.deref();
 
             task.mutex.lock();

@@ -47,23 +47,25 @@ Local<FunctionTemplate> FunctionTemplate::New(
 
     auto globalObject = isolate->globalObject();
     auto& vm = globalObject->vm();
-    JSValue jsc_data = data.IsEmpty() ? JSC::jsUndefined() : data->localToJSValue(globalObject->V8GlobalInternals());
+    auto* globalInternals = globalObject->V8GlobalInternals();
+    JSValue jsc_data = data.IsEmpty() ? JSC::jsUndefined() : data->localToJSValue(globalInternals);
 
-    Structure* structure = globalObject->V8GlobalInternals()->functionTemplateStructure(globalObject);
+    Structure* structure = globalInternals->functionTemplateStructure(globalObject);
     auto* functionTemplate = new (NotNull, JSC::allocateCell<FunctionTemplate>(vm)) FunctionTemplate(
         vm, structure, callback, jsc_data);
     functionTemplate->finishCreation(vm);
 
-    return isolate->currentHandleScope()->createLocal<FunctionTemplate>(isolate->vm(), functionTemplate);
+    return globalInternals->currentHandleScope()->createLocal<FunctionTemplate>(vm, functionTemplate);
 }
 
 MaybeLocal<Function> FunctionTemplate::GetFunction(Local<Context> context)
 {
     auto& vm = context->vm();
     auto* globalObject = context->globalObject();
-    auto* f = Function::create(vm, globalObject->V8GlobalInternals()->v8FunctionStructure(globalObject), localToObjectPointer());
+    auto* globalInternals = globalObject->V8GlobalInternals();
+    auto* f = Function::create(vm, globalInternals->v8FunctionStructure(globalObject), localToObjectPointer());
 
-    return context->currentHandleScope()->createLocal<Function>(vm, f);
+    return globalInternals->currentHandleScope()->createLocal<Function>(vm, f);
 }
 
 Structure* FunctionTemplate::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)

@@ -49,7 +49,7 @@ MaybeLocal<String> String::NewFromOneByte(Isolate* isolate, const uint8_t* data,
     auto& vm = isolate->vm();
     std::span<const unsigned char> span(data, length);
     WTF::String string(span);
-    JSString* jsString = JSC::jsString(isolate->vm(), string);
+    JSString* jsString = JSC::jsString(vm, string);
     return MaybeLocal<String>(isolate->currentHandleScope()->createLocal<String>(vm, jsString));
 }
 

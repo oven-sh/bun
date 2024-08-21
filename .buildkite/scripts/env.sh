@@ -7,8 +7,6 @@ BUILDKITE_CLEAN_CHECKOUT=${BUILDKITE_CLEAN_CHECKOUT:-}
 BUILDKITE_BRANCH=${BUILDKITE_BRANCH:-}
 CCACHE_DIR=${CCACHE_DIR:-}
 SCCACHE_DIR=${SCCACHE_DIR:-}
-ZIG_LOCAL_CACHE_DIR=${ZIG_LOCAL_CACHE_DIR:-}
-ZIG_GLOBAL_CACHE_DIR=${ZIG_GLOBAL_CACHE_DIR:-}
 BUN_DEPS_CACHE_DIR=${BUN_DEPS_CACHE_DIR:-}
 BUN_DEPS_CACHE_DIR=${BUN_DEPS_CACHE_DIR:-}
 BUILDKITE_STEP_KEY=${BUILDKITE_STEP_KEY:-}
@@ -103,15 +101,11 @@ function export_environment() {
     local tmpdir="$(mktemp -d 2>/dev/null || mktemp -d -t 'new')"
     export CCACHE_DIR="$tmpdir/.cache/ccache"
     export SCCACHE_DIR="$tmpdir/.cache/sccache"
-    export ZIG_LOCAL_CACHE_DIR="$tmpdir/.cache/zig-cache"
-    export ZIG_GLOBAL_CACHE_DIR="$tmpdir/.cache/zig-cache"
     export BUN_DEPS_CACHE_DIR="$tmpdir/.cache/bun-deps"
     export CCACHE_RECACHE="1"
   else
     export CCACHE_DIR="$HOME/.cache/ccache/$BUILDKITE_STEP_KEY"
     export SCCACHE_DIR="$HOME/.cache/sccache/$BUILDKITE_STEP_KEY"
-    export ZIG_LOCAL_CACHE_DIR="$HOME/.cache/zig-cache/$BUILDKITE_STEP_KEY"
-    export ZIG_GLOBAL_CACHE_DIR="$HOME/.cache/zig-cache/$BUILDKITE_STEP_KEY"
     export BUN_DEPS_CACHE_DIR="$HOME/.cache/bun-deps/$BUILDKITE_STEP_KEY"
   fi
   if [ "$(assert_os)" == "linux" ]; then

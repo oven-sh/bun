@@ -423,7 +423,7 @@ void test_handle_scope_gc(const FunctionCallbackInfo<Value> &info) {
 
   Local<String> huge_strings[num_strings];
   for (size_t i = 0; i < num_strings; i++) {
-    printf("%lu\n", i);
+    printf("%zu\n", i);
     memset(string_data, i + 1, string_size - 1);
     huge_strings[i] =
         String::NewFromUtf8(isolate, string_data).ToLocalChecked();

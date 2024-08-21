@@ -792,7 +792,6 @@ pub const Fetch = struct {
         metadata: ?http.HTTPResponseMetadata = null,
         javascript_vm: *VirtualMachine = undefined,
         global_this: *JSGlobalObject = undefined,
-        vm: *VirtualMachine,
         request_body: HTTPRequestBody = undefined,
         /// buffer being used by AsyncHTTP
         response_buffer: MutableString = undefined,
@@ -1117,7 +1116,7 @@ pub const Fetch = struct {
             this.has_schedule_callback.store(false, .monotonic);
             const is_done = !this.result.has_more;
 
-            const vm = this.vm;
+            const vm = this.javascript_vm;
             // vm is shutting down we cannot touch JS
             if (vm.isShuttingDown()) {
                 this.mutex.unlock();
@@ -1627,7 +1626,6 @@ pub const Fetch = struct {
                 .javascript_vm = jsc_vm,
                 .request_body = fetch_options.body,
                 .global_this = globalThis,
-                .vm = globalThis.bunVM(),
                 .promise = promise,
                 .request_headers = fetch_options.headers,
                 .url_proxy_buffer = fetch_options.url_proxy_buffer,

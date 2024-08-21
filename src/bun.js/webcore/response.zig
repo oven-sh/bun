@@ -1122,41 +1122,42 @@ pub const Fetch = struct {
             log("onProgressUpdate", .{});
             this.mutex.lock();
             this.has_schedule_callback.store(false, .monotonic);
-
             if (this.is_waiting_body) {
                 this.onBodyReceived();
                 return;
             }
+            const is_done = !this.result.has_more;
             // if we abort because of cert error
             // we wait the Http Client because we already have the response
             // we just need to deinit
             const globalThis = this.global_this;
+            const vm = globalThis.bunVM();
 
             if (this.is_waiting_abort) {
                 // has_more will be false when the request is aborted/finished
-                if (this.result.has_more) {
-                    this.mutex.unlock();
-                    return;
-                }
                 this.mutex.unlock();
-                var poll_ref = this.poll_ref;
-                const vm = globalThis.bunVM();
 
-                poll_ref.unref(vm);
-                this.deref();
+                if (is_done) {
+                    var poll_ref = this.poll_ref;
+                    poll_ref.unref(vm);
+                    this.deref();
+                }
                 return;
             }
             const promise_value = this.promise.valueOrEmpty();
 
             var poll_ref = this.poll_ref;
-            const vm = globalThis.bunVM();
 
             if (promise_value.isEmptyOrUndefinedOrNull()) {
                 log("onProgressUpdate: promise_value is null", .{});
                 this.promise.deinit();
                 this.mutex.unlock();
-                poll_ref.unref(vm);
-                this.deref();
+
+                // http thread will call this again
+                if (is_done) {
+                    poll_ref.unref(vm);
+                    this.deref();
+                }
                 return;
             }
 
@@ -1180,12 +1181,12 @@ pub const Fetch = struct {
                     tracker.didDispatch(globalThis);
                     this.promise.deinit();
                     this.mutex.unlock();
-                    if (this.is_waiting_abort) {
-                        return;
+
+                    if (is_done) {
+                        // we are already done we can deinit
+                        poll_ref.unref(vm);
+                        this.deref();
                     }
-                    // we are already done we can deinit
-                    poll_ref.unref(vm);
-                    this.deref();
                     return;
                 }
                 // everything ok
@@ -1204,7 +1205,8 @@ pub const Fetch = struct {
                 tracker.didDispatch(globalThis);
                 this.promise.deinit();
                 this.mutex.unlock();
-                if (!this.is_waiting_body) {
+
+                if (is_done) {
                     poll_ref.unref(vm);
                     this.deref();
                 }

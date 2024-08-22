@@ -12,9 +12,12 @@ pub const PrintErr = css.PrintErr;
 /// A quoted CSS string.
 pub const CSSString = []const u8;
 pub const CSSStringFns = struct {
+    pub fn parse(input: *css.Parser) Error!CSSString {
+        const s = try input.expectString();
+        return s;
+    }
+
     pub fn toCss(this: *const []const u8, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        _ = this; // autofix
-        _ = dest; // autofix
-        @compileError(css.todo_stuff.depth);
+        return css.serializer.serializeString(this.*, W, dest);
     }
 };

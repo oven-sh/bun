@@ -10,10 +10,8 @@ get_filename_component(ZIG_OBJECT_DIR ${ZIG_OBJECT_PATH} DIRECTORY)
 
 # TODO: src/deps/zig/*.zig files are currently included, but should be excluded
 file(GLOB_RECURSE BUN_ZIG_OBJECT_SOURCES 
-  RELATIVE ${CWD}
-  FOLLOW_SYMLINKS
   ${CONFIGURE_DEPENDS}
-  src/*.zig
+  ${CWD}/src/*.zig
 )
 
 list(APPEND BUN_ZIG_OBJECT_SOURCES

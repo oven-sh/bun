@@ -19,9 +19,7 @@ add_custom_command(
 
 set(BUN_ZIG_IDENTIFIER_SOURCE ${CWD}/src/js_lexer)
 
-file(GLOB_RECURSE BUN_ZIG_IDENTIFIER_SOURCES
-  RELATIVE ${CWD}
-  FOLLOW_SYMLINKS
+file(GLOB BUN_ZIG_IDENTIFIER_SOURCES
   ${CONFIGURE_DEPENDS}
   ${BUN_ZIG_IDENTIFIER_SOURCE}/*.zig
 )
@@ -37,12 +35,12 @@ add_custom_command(
   COMMENT
     "Generating src/js_lexer/*.blob"
   WORKING_DIRECTORY
-    ${BUN_ZIG_IDENTIFIER_SOURCE}
+    ${CWD}
   VERBATIM COMMAND
     ${CMAKE_ZIG_COMPILER}
     run
     ${CMAKE_ZIG_FLAGS}
-    identifier_data.zig
+    ${BUN_ZIG_IDENTIFIER_SOURCE}/identifier_data.zig
   OUTPUT
     ${BUN_ZIG_IDENTIFIER_OUTPUTS}
   MAIN_DEPENDENCY
@@ -70,11 +68,13 @@ add_custom_command(
     ${BUN_ERROR_SOURCE}/package.json
 )
 
-file(GLOB_RECURSE BUN_ERROR_SOURCES
-  RELATIVE ${BUN_ERROR_SOURCE}
-  FOLLOW_SYMLINKS
+file(GLOB BUN_ERROR_SOURCES
   ${CONFIGURE_DEPENDS}
-  *.json *.ts *.tsx *.css img/*
+  ${BUN_ERROR_SOURCE}/*.json
+  ${BUN_ERROR_SOURCE}/*.ts
+  ${BUN_ERROR_SOURCE}/*.tsx
+  ${BUN_ERROR_SOURCE}/*.css
+  ${BUN_ERROR_SOURCE}/img/*
 )
 
 set(BUN_ERROR_OUTPUTS
@@ -183,9 +183,7 @@ add_custom_command(
     ${BUN_NODE_FALLBACKS_SOURCE}/package.json
 )
 
-file(GLOB_RECURSE BUN_NODE_FALLBACKS_SOURCES
-  RELATIVE ${BUN_NODE_FALLBACKS_SOURCE}
-  FOLLOW_SYMLINKS
+file(GLOB BUN_NODE_FALLBACKS_SOURCES
   ${CONFIGURE_DEPENDS}
   ${BUN_NODE_FALLBACKS_SOURCE}/*.js
 )
@@ -245,11 +243,13 @@ add_custom_command(
 
 # --- ZigGeneratedClasses.{zig,cpp,h} --
 
-file(GLOB_RECURSE BUN_ZIG_GENERATED_CLASSES_SOURCES
-  RELATIVE ${CWD}
-  FOLLOW_SYMLINKS
+file(GLOB BUN_ZIG_GENERATED_CLASSES_SOURCES
   ${CONFIGURE_DEPENDS}
-  *.classes.ts
+  ${CWD}/src/bun.js/*.classes.ts
+  ${CWD}/src/bun.js/api/*.classes.ts
+  ${CWD}/src/bun.js/node/*.classes.ts
+  ${CWD}/src/bun.js/test/*.classes.ts
+  ${CWD}/src/bun.js/webcore/*.classes.ts
 )
 
 set(BUN_ZIG_GENERATED_CLASSES_OUTPUTS
@@ -284,17 +284,14 @@ add_custom_command(
 # --- src/js/*.{js,ts} ---
 
 file(GLOB_RECURSE BUN_JAVASCRIPT_SOURCES
-  RELATIVE ${CWD}
-  FOLLOW_SYMLINKS
   ${CONFIGURE_DEPENDS}
-  src/js/*.js src/js/*.ts
+  ${CWD}/src/js/*.js
+  ${CWD}/src/js/*.ts
 )
 
-file(GLOB_RECURSE BUN_JAVASCRIPT_CODEGEN_SOURCES
-  RELATIVE ${CODEGEN_PATH}
-  FOLLOW_SYMLINKS
+file(GLOB BUN_JAVASCRIPT_CODEGEN_SOURCES
   ${CONFIGURE_DEPENDS}
-  *.ts
+  ${CWD}/src/codegen/*.ts
 )
 
 set(BUN_JAVASCRIPT_OUTPUTS

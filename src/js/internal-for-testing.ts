@@ -97,3 +97,10 @@ export const setSyntheticAllocationLimitForTesting: (limit: number) => number = 
   "Bun__setSyntheticAllocationLimitForTesting",
   1,
 );
+
+export const npm_manifest_test_helpers = $zig("npm.zig", "PackageManifest.bindings.generate") as {
+  /**
+   * Returns the parsed manifest file. Currently only returns an array of available versions.
+   */
+  parseManifest: (manifestFileName: string, registryUrl: string) => any;
+};

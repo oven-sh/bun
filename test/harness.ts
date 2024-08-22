@@ -5,6 +5,8 @@ import { isAbsolute, join, dirname } from "path";
 import fs, { openSync, closeSync } from "node:fs";
 import os from "node:os";
 import { heapStats } from "bun:jsc";
+import { npm_manifest_test_helpers } from "bun:internal-for-testing";
+const { parseManifest } = npm_manifest_test_helpers;
 
 type Awaitable<T> = T | Promise<T>;
 
@@ -1263,4 +1265,13 @@ https://buildkite.com/docs/pipelines/security/secrets/buildkite-secrets`;
   process.env[name] = value;
 
   return value;
+}
+
+export function assertManifestsPopulated(absCachePath: string, registryUrl: string) {
+  for (const file of fs.readdirSync(absCachePath)) {
+    if (!file.endsWith(".npm")) continue;
+
+    const manifest = parseManifest(join(absCachePath, file), registryUrl);
+    expect(manifest.versions.length).toBeGreaterThan(0);
+  }
 }

@@ -783,6 +783,33 @@ describe("expect()", () => {
     });
   });
 
+  test("toThrow asymmetric matchers", () => {
+    expect(() => {
+      const err = new Error("foo");
+      err.code = "ERR_BAR";
+      throw err;
+    }).toThrow(expect.objectContaining({ code: "ERR_BAR" }));
+
+    expect(() => {
+      const err = new TypeError("foo");
+      err.code = "ERR_BAZ";
+      throw err;
+    }).not.toThrow(expect.objectContaining({ code: "ERR_BAR", name: "TypeError" }));
+
+    expect(() => {
+      const err = new TypeError("foo");
+      err.code = "ERR_BAZ";
+      throw err;
+    }).toThrow(expect.objectContaining({ code: "ERR_BAZ", name: "TypeError" }));
+
+    expect(() => {
+      const err = new TypeError("foo");
+      err.code = "ERR_BAZ";
+      throw err;
+    }).toThrow(expect.objectContaining({ code: "ERR_BAZ", name: "TypeError" }));
+
+  });
+
   test("toThrow", () => {
     expect(() => {
       throw new Error("hello");

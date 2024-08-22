@@ -158,7 +158,7 @@ if(WEBKIT_PREBUILT)
         set(ICU_INCLUDE_DIR ${WEBKIT_DIR}/include/wtf/unicode)
     endif()
 
-    set(WEBKIT_LIB_DIR ${WEBKIT_DIR}lib)
+    set(WEBKIT_LIB_DIR ${WEBKIT_DIR}/lib)
 elseif(WEBKIT_DIR STREQUAL "omit")
     # message(STATUS "Not using WebKit. This is only valid if you are only trying to build Zig code")
 else()

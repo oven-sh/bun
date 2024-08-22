@@ -207,7 +207,7 @@ add_custom_command(
         --bundle
         --platform=browser
   OUTPUT
-    ${BUN_NODE_FALLBACKS_OUTPUT}
+    ${BUN_NODE_FALLBACKS_OUTPUTS}
   MAIN_DEPENDENCY
     ${BUN_NODE_FALLBACKS_SOURCE}/bun.lockb
   DEPENDS

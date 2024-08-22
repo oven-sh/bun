@@ -304,284 +304,190 @@ test("redirect with body", async () => {
   expect(await res.text()).toBe("2");
 });
 
-// test("redirect with stream", (t, done) => {
-//   const { strictEqual } = tspl(t, { plan: 3 });
+test("redirect with stream", async () => {
+  const location = "/asd";
+  const body = "hello!";
+  await using server = createServer(async (req, res) => {
+    res.writeHead(302, { location });
+    let count = 0;
+    const l = setInterval(() => {
+      res.write(body[count++]);
+      if (count === body.length) {
+        res.end();
+        clearInterval(l);
+      }
+    }, 50);
+  }).listen(0);
 
-//   const location = "/asd";
-//   const body = "hello!";
-//   const server = createServer(async (req, res) => {
-//     res.writeHead(302, { location });
-//     let count = 0;
-//     const l = setInterval(() => {
-//       res.write(body[count++]);
-//       if (count === body.length) {
-//         res.end();
-//         clearInterval(l);
-//       }
-//     }, 50);
-//   });
-//   t.after(closeServerAsPromise(server));
+  await once(server, "listening");
 
-//   server.listen(0, async () => {
-//     const res = await fetch(`http://localhost:${server.address().port}`, {
-//       redirect: "manual",
-//     });
-//     strictEqual(res.status, 302);
-//     strictEqual(res.headers.get("location"), location);
-//     strictEqual(await res.text(), body);
-//     done();
-//   });
-// });
+  const res = await fetch(`http://localhost:${server.address().port}`, {
+    redirect: "manual",
+  });
+  expect(res.status).toBe(302);
+  expect(res.headers.get("location")).toBe(location);
+  expect(await res.text()).toBe(body);
+});
 
-// test("fail to extract locked body", t => {
-//   const { strictEqual } = tspl(t, { plan: 1 });
+test("fail to extract locked body", () => {
+  const stream = new ReadableStream({});
+  const reader = stream.getReader();
+  try {
+    // eslint-disable-next-line
+    new Response(stream);
+  } catch (err) {
+    expect((err as Error).name).toBe("TypeError");
+  }
+  reader.cancel();
+});
 
-//   const stream = new ReadableStream({});
-//   const reader = stream.getReader();
-//   try {
-//     // eslint-disable-next-line
-//     new Response(stream);
-//   } catch (err) {
-//     strictEqual(err.name, "TypeError");
-//   }
-//   reader.cancel();
-// });
+test("fail to extract locked body", () => {
+  const stream = new ReadableStream({});
+  const reader = stream.getReader();
+  try {
+    // eslint-disable-next-line
+    new Request("http://asd", {
+      method: "PUT",
+      body: stream,
+      keepalive: true,
+    });
+  } catch (err) {
+    expect((err as Error).message).toBe("keepalive");
+  }
+  reader.cancel();
+});
 
-// test("fail to extract locked body", t => {
-//   const { strictEqual } = tspl(t, { plan: 1 });
+test("post FormData with Blob", async () => {
+  const body = new FormData();
+  body.append("field1", new Blob(["asd1"]));
 
-//   const stream = new ReadableStream({});
-//   const reader = stream.getReader();
-//   try {
-//     // eslint-disable-next-line
-//     new Request("http://asd", {
-//       method: "PUT",
-//       body: stream,
-//       keepalive: true,
-//     });
-//   } catch (err) {
-//     strictEqual(err.message, "keepalive");
-//   }
-//   reader.cancel();
-// });
+  await using server = createServer((req, res) => {
+    req.pipe(res);
+  }).listen(0);
+  await once(server, "listening");
 
-// test("post FormData with Blob", (t, done) => {
-//   const { ok } = tspl(t, { plan: 1 });
+  const res = await fetch(`http://localhost:${server.address().port}`, {
+    method: "PUT",
+    body,
+  });
+  expect(/asd1/.test(await res.text())).toBeTruthy();
+});
 
-//   const body = new FormData();
-//   body.append("field1", new Blob(["asd1"]));
+test("post FormData with File", async () => {
+  const body = new FormData();
+  body.append("field1", new File(["asd1"], "filename123"));
 
-//   const server = createServer((req, res) => {
-//     req.pipe(res);
-//   });
-//   t.after(closeServerAsPromise(server));
+  await using server = createServer((req, res) => {
+    req.pipe(res);
+  }).listen(0);
+  await once(server, "listening");
 
-//   server.listen(0, async () => {
-//     const res = await fetch(`http://localhost:${server.address().port}`, {
-//       method: "PUT",
-//       body,
-//     });
-//     ok(/asd1/.test(await res.text()));
-//     done();
-//   });
-// });
+  const res = await fetch(`http://localhost:${server.address().port}`, {
+    method: "PUT",
+    body,
+  });
+  const result = await res.text();
+  expect(/asd1/.test(result)).toBeTrue();
+  expect(/filename123/.test(result)).toBeTrue();
+});
 
-// test("post FormData with File", (t, done) => {
-//   const { ok } = tspl(t, { plan: 2 });
+test("invalid url", async () => {
+  try {
+    await fetch("http://invalid");
+  } catch (e) {
+    expect(e.message).toBe("Unable to connect. Is the computer able to access the url?");
+    // expect(e.cause.message).toBe(/invalid/);
+  }
+});
 
-//   const body = new FormData();
-//   body.append("field1", new File(["asd1"], "filename123"));
+test("error on redirect", async () => {
+  await using server = createServer((req, res) => {
+    res.statusCode = 302;
+    res.end();
+  }).listen(0);
+  await once(server, "listening");
 
-//   const server = createServer((req, res) => {
-//     req.pipe(res);
-//   });
-//   t.after(closeServerAsPromise(server));
+  expect(
+    fetch(`http://localhost:${server.address().port}`, {
+      redirect: "error",
+    }),
+  ).rejects.toThrow(/UnexpectedRedirect/);
+});
 
-//   server.listen(0, async () => {
-//     const res = await fetch(`http://localhost:${server.address().port}`, {
-//       method: "PUT",
-//       body,
-//     });
-//     const result = await res.text();
-//     ok(/asd1/.test(result));
-//     ok(/filename123/.test(result));
-//     done();
-//   });
-// });
+// https://github.com/nodejs/undici/issues/1527
+test("fetching with Request object - issue #1527", async () => {
+  await using server = createServer((req, res) => {
+    res.end();
+  }).listen(0);
 
-// test("invalid url", async t => {
-//   const { match } = tspl(t, { plan: 1 });
+  await once(server, "listening");
 
-//   try {
-//     await fetch("http://invalid");
-//   } catch (e) {
-//     match(e.cause.message, /invalid/);
-//   }
-// });
+  const body = JSON.stringify({ foo: "bar" });
+  const request = new Request(`http://localhost:${server.address().port}`, {
+    method: "POST",
+    body,
+  });
 
-// test("custom agent", (t, done) => {
-//   const { ok, deepStrictEqual } = tspl(t, { plan: 2 });
+  expect(fetch(request)).resolves.pass();
+});
 
-//   const obj = { asd: true };
-//   const server = createServer((req, res) => {
-//     res.end(JSON.stringify(obj));
-//   });
-//   t.after(closeServerAsPromise(server));
+test("do not decode redirect body", async () => {
+  const obj = { asd: true };
+  await using server = createServer((req, res) => {
+    if (req.url === "/resource") {
+      res.statusCode = 301;
+      res.setHeader("location", "/resource/");
+      // Some dumb http servers set the content-encoding gzip
+      // even if there is no response
+      res.setHeader("content-encoding", "gzip");
+      res.end();
+      return;
+    }
+    res.setHeader("content-encoding", "gzip");
+    res.end(gzipSync(JSON.stringify(obj)));
+  }).listen(0);
+  await once(server, "listening");
+  const body = await fetch(`http://localhost:${server.address().port}/resource`);
+  expect(JSON.stringify(obj)).toBe(await body.text());
+});
 
-//   server.listen(0, async () => {
-//     const dispatcher = new Client("http://localhost:" + server.address().port, {
-//       keepAliveTimeout: 1,
-//       keepAliveMaxTimeout: 1,
-//     });
-//     const oldDispatch = dispatcher.dispatch;
-//     dispatcher.dispatch = function (options, handler) {
-//       ok(true);
-//       return oldDispatch.call(this, options, handler);
-//     };
-//     const body = await fetch(`http://localhost:${server.address().port}`, {
-//       dispatcher,
-//     });
-//     deepStrictEqual(obj, await body.json());
-//     done();
-//   });
-// });
+test("decode non-redirect body with location header", async () => {
+  const obj = { asd: true };
+  await using server = createServer((req, res) => {
+    res.statusCode = 201;
+    res.setHeader("location", "/resource/");
+    res.setHeader("content-encoding", "gzip");
+    res.end(gzipSync(JSON.stringify(obj)));
+  }).listen(0);
+  await once(server, "listening");
 
-// test("custom agent node fetch", (t, done) => {
-//   const { ok, deepStrictEqual } = tspl(t, { plan: 2 });
+  const body = await fetch(`http://localhost:${server.address().port}/resource`);
+  expect(JSON.stringify(obj)).toBe(await body.text());
+});
 
-//   const obj = { asd: true };
-//   const server = createServer((req, res) => {
-//     res.end(JSON.stringify(obj));
-//   });
-//   t.after(closeServerAsPromise(server));
+test("Receiving non-Latin1 headers", async t => {
+  const ContentDisposition = [
+    "inline; filename=rock&roll.png",
+    "inline; filename=\"rock'n'roll.png\"",
+    "inline; filename=\"image â\x80\x94 copy (1).png\"; filename*=UTF-8''image%20%E2%80%94%20copy%20(1).png",
+    "inline; filename=\"_å\x9C\x96ç\x89\x87_ð\x9F\x96¼_image_.png\"; filename*=UTF-8''_%E5%9C%96%E7%89%87_%F0%9F%96%BC_image_.png",
+    "inline; filename=\"100 % loading&perf.png\"; filename*=UTF-8''100%20%25%20loading%26perf.png",
+  ];
 
-//   server.listen(0, async () => {
-//     const dispatcher = new Client("http://localhost:" + server.address().port, {
-//       keepAliveTimeout: 1,
-//       keepAliveMaxTimeout: 1,
-//     });
-//     const oldDispatch = dispatcher.dispatch;
-//     dispatcher.dispatch = function (options, handler) {
-//       ok(true);
-//       return oldDispatch.call(this, options, handler);
-//     };
-//     const body = await nodeFetch.fetch(`http://localhost:${server.address().port}`, {
-//       dispatcher,
-//     });
-//     deepStrictEqual(obj, await body.json());
-//     done();
-//   });
-// });
+  await using server = createServer((req, res) => {
+    for (let i = 0; i < ContentDisposition.length; i++) {
+      res.setHeader(`Content-Disposition-${i + 1}`, ContentDisposition[i]);
+    }
 
-// test("error on redirect", (t, done) => {
-//   const server = createServer((req, res) => {
-//     res.statusCode = 302;
-//     res.end();
-//   });
-//   t.after(closeServerAsPromise(server));
+    res.end();
+  }).listen(0);
+  await once(server, "listening");
 
-//   server.listen(0, async () => {
-//     const errorCause = await fetch(`http://localhost:${server.address().port}`, {
-//       redirect: "error",
-//     }).catch(e => e.cause);
+  const url = `http://localhost:${server.address().port}`;
+  const response = await fetch(url, { method: "HEAD" });
+  const cdHeaders = [...response.headers].filter(([k]) => k.startsWith("content-disposition")).map(([, v]) => v);
+  const lengths = cdHeaders.map(h => h.length);
 
-//     assert.strictEqual(errorCause.message, "unexpected redirect");
-//     done();
-//   });
-// });
-
-// // https://github.com/nodejs/undici/issues/1527
-// test("fetching with Request object - issue #1527", async t => {
-//   const server = createServer((req, res) => {
-//     assert.ok(true);
-//     res.end();
-//   }).listen(0);
-
-//   t.after(closeServerAsPromise(server));
-//   await once(server, "listening");
-
-//   const body = JSON.stringify({ foo: "bar" });
-//   const request = new Request(`http://localhost:${server.address().port}`, {
-//     method: "POST",
-//     body,
-//   });
-
-//   await assert.doesNotReject(fetch(request));
-// });
-
-// test("do not decode redirect body", (t, done) => {
-//   const { ok, strictEqual } = tspl(t, { plan: 3 });
-
-//   const obj = { asd: true };
-//   const server = createServer((req, res) => {
-//     if (req.url === "/resource") {
-//       ok(true);
-//       res.statusCode = 301;
-//       res.setHeader("location", "/resource/");
-//       // Some dumb http servers set the content-encoding gzip
-//       // even if there is no response
-//       res.setHeader("content-encoding", "gzip");
-//       res.end();
-//       return;
-//     }
-//     ok(true);
-//     res.setHeader("content-encoding", "gzip");
-//     res.end(gzipSync(JSON.stringify(obj)));
-//   });
-//   t.after(closeServerAsPromise(server));
-
-//   server.listen(0, async () => {
-//     const body = await fetch(`http://localhost:${server.address().port}/resource`);
-//     strictEqual(JSON.stringify(obj), await body.text());
-//     done();
-//   });
-// });
-
-// test("decode non-redirect body with location header", (t, done) => {
-//   const { ok, strictEqual } = tspl(t, { plan: 2 });
-
-//   const obj = { asd: true };
-//   const server = createServer((req, res) => {
-//     ok(true);
-//     res.statusCode = 201;
-//     res.setHeader("location", "/resource/");
-//     res.setHeader("content-encoding", "gzip");
-//     res.end(gzipSync(JSON.stringify(obj)));
-//   });
-//   t.after(closeServerAsPromise(server));
-
-//   server.listen(0, async () => {
-//     const body = await fetch(`http://localhost:${server.address().port}/resource`);
-//     strictEqual(JSON.stringify(obj), await body.text());
-//     done();
-//   });
-// });
-
-// test("Receiving non-Latin1 headers", async t => {
-//   const ContentDisposition = [
-//     "inline; filename=rock&roll.png",
-//     "inline; filename=\"rock'n'roll.png\"",
-//     "inline; filename=\"image â\x80\x94 copy (1).png\"; filename*=UTF-8''image%20%E2%80%94%20copy%20(1).png",
-//     "inline; filename=\"_å\x9C\x96ç\x89\x87_ð\x9F\x96¼_image_.png\"; filename*=UTF-8''_%E5%9C%96%E7%89%87_%F0%9F%96%BC_image_.png",
-//     "inline; filename=\"100 % loading&perf.png\"; filename*=UTF-8''100%20%25%20loading%26perf.png",
-//   ];
-
-//   const server = createServer((req, res) => {
-//     for (let i = 0; i < ContentDisposition.length; i++) {
-//       res.setHeader(`Content-Disposition-${i + 1}`, ContentDisposition[i]);
-//     }
-
-//     res.end();
-//   }).listen(0);
-
-//   t.after(closeServerAsPromise(server));
-//   await once(server, "listening");
-
-//   const url = `http://localhost:${server.address().port}`;
-//   const response = await fetch(url, { method: "HEAD" });
-//   const cdHeaders = [...response.headers].filter(([k]) => k.startsWith("content-disposition")).map(([, v]) => v);
-//   const lengths = cdHeaders.map(h => h.length);
-
-//   assert.deepStrictEqual(cdHeaders, ContentDisposition);
-//   assert.deepStrictEqual(lengths, [30, 34, 94, 104, 90]);
-// });
+  expect(cdHeaders).toEqual(ContentDisposition);
+  expect(lengths).toEqual([30, 34, 94, 104, 90]);
+});

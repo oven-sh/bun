@@ -9124,11 +9124,6 @@ pub const PackageManager = struct {
         clap.parseParam("--patches-dir <dir>                    The directory to put the patch file") catch unreachable,
     });
 
-    const outdated_params: []const ParamType = &(install_params_ ++ [_]ParamType{
-        clap.parseParam("<POS> ...                             ") catch unreachable,
-        clap.parseParam("--json                                Print outdated information in JSON format") catch unreachable,
-    });
-
     pub const CommandLineArguments = struct {
         registry: string = "",
         cache_dir: string = "",
@@ -9156,7 +9151,7 @@ pub const PackageManager = struct {
         trusted: bool = false,
         no_summary: bool = false,
         latest: bool = false,
-        json_output: bool = false,
+        // json_output: bool = false,
 
         link_native_bins: []const string = &[_]string{},
 
@@ -9394,15 +9389,13 @@ pub const PackageManager = struct {
                     const outro_text =
                         \\<b>Examples:<r>
                         \\  <b><green>bun outdated<r>
-                        \\  
-                        \\  <d>Print with JSON format<r>
-                        \\  <b><green>bun outdated --json<r>
+                        \\
                     ;
 
                     Output.pretty("\n" ++ intro_text ++ "\n", .{});
                     Output.flush();
                     Output.pretty("\n<b>Flags:<r>", .{});
-                    clap.simpleHelp(PackageManager.outdated_params);
+                    clap.simpleHelp(PackageManager.install_params);
                     Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
                     Output.flush();
                 },
@@ -9422,7 +9415,7 @@ pub const PackageManager = struct {
                 .unlink => unlink_params,
                 .patch => patch_params,
                 .@"patch-commit" => patch_commit_params,
-                .outdated => outdated_params,
+                .outdated => install_params,
             };
 
             var diag = clap.Diagnostic{};
@@ -9461,7 +9454,7 @@ pub const PackageManager = struct {
             if (comptime subcommand == .outdated) {
                 // fake --dry-run, we don't actually resolve+clean the lockfile
                 cli.dry_run = true;
-                cli.json_output = args.flag("--json");
+                // cli.json_output = args.flag("--json");
             }
 
             // link and unlink default to not saving, all others default to

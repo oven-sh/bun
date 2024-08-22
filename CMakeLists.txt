@@ -225,6 +225,8 @@ if(NOT BUN_DEPS_OUT_DIR)
     set(BUN_DEPS_OUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/build/bun-deps")
 endif()
 
+include(cmake/BuildCodegen.cmake)
+
 set(BUN_RAW_SOURCES, "")
 
 file(GLOB BUN_CPP ${CONFIGURE_DEPENDS}

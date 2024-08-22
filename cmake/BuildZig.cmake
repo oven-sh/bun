@@ -44,7 +44,7 @@ add_custom_command(
       build obj
       ${CMAKE_ZIG_FLAGS}
       --prefix ${ZIG_OBJECT_DIR}
-      -Dgenerated-code=${BUILD_PATH}/codegen
+      -Dgenerated-code=${CODEGEN_PATH}
       -Dreported_nodejs_version=${USE_NODEJS_VERSION}
       -Dobj_format=${ZIG_OBJECT_FORMAT}
       -Dcpu=${USE_ZIG_CPU}

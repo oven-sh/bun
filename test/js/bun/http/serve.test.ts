@@ -1856,3 +1856,39 @@ it("we should always send date", async () => {
     expect(res.headers.has("Date")).toBeTrue();
   }
 });
+
+it("should allow use of custom timeout", async () => {
+  using server = Bun.serve({
+    port: 0,
+    idleTimeout: 4, // uws precision is in seconds, and lower than 4 seconds is not reliable its timer is not that accurate
+    async fetch(req) {
+      const url = new URL(req.url);
+      return new Response(
+        new ReadableStream({
+          async pull(controller) {
+            controller.enqueue("Hello,");
+            if (url.pathname === "/timeout") {
+              await Bun.sleep(5000);
+            } else {
+              await Bun.sleep(10);
+            }
+            controller.enqueue(" World!");
+
+            controller.close();
+          },
+        }),
+        { headers: { "Content-Type": "text/plain" } },
+      );
+    },
+  });
+  async function testTimeout(pathname: string, success: boolean) {
+    const res = await fetch(new URL(pathname, server.url.origin));
+    expect(res.status).toBe(200);
+    if (success) {
+      expect(res.text()).resolves.toBe("Hello, World!");
+    } else {
+      expect(res.text()).rejects.toThrow(/The socket connection was closed unexpectedly./);
+    }
+  }
+  await Promise.all([testTimeout("/ok", true), testTimeout("/timeout", false)]);
+}, 10_000);

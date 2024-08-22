@@ -47,23 +47,25 @@ Local<FunctionTemplate> FunctionTemplate::New(
 
     auto globalObject = isolate->globalObject();
     auto& vm = globalObject->vm();
-    JSValue jsc_data = data.IsEmpty() ? JSC::jsUndefined() : data->localToJSValue(globalObject->V8GlobalInternals());
+    auto* globalInternals = globalObject->V8GlobalInternals();
+    JSValue jsc_data = data.IsEmpty() ? JSC::jsUndefined() : data->localToJSValue(globalInternals);
 
-    Structure* structure = globalObject->V8GlobalInternals()->functionTemplateStructure(globalObject);
+    Structure* structure = globalInternals->functionTemplateStructure(globalObject);
     auto* functionTemplate = new (NotNull, JSC::allocateCell<FunctionTemplate>(vm)) FunctionTemplate(
         vm, structure, callback, jsc_data);
     functionTemplate->finishCreation(vm);
 
-    return isolate->currentHandleScope()->createLocal<FunctionTemplate>(functionTemplate);
+    return globalInternals->currentHandleScope()->createLocal<FunctionTemplate>(vm, functionTemplate);
 }
 
 MaybeLocal<Function> FunctionTemplate::GetFunction(Local<Context> context)
 {
     auto& vm = context->vm();
     auto* globalObject = context->globalObject();
-    auto* f = Function::create(vm, globalObject->V8GlobalInternals()->v8FunctionStructure(globalObject), localToObjectPointer());
+    auto* globalInternals = globalObject->V8GlobalInternals();
+    auto* f = Function::create(vm, globalInternals->v8FunctionStructure(globalObject), localToObjectPointer());
 
-    return context->currentHandleScope()->createLocal<Function>(f);
+    return globalInternals->currentHandleScope()->createLocal<Function>(vm, f);
 }
 
 Structure* FunctionTemplate::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
@@ -83,9 +85,7 @@ void FunctionTemplate::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(fn, info());
     Base::visitChildren(fn, visitor);
 
-    if (fn->__internals.data.isCell()) {
-        JSC::JSCell::visitChildren(fn->__internals.data.asCell(), visitor);
-    }
+    visitor.append(fn->__internals.data);
 }
 
 DEFINE_VISIT_CHILDREN(FunctionTemplate);
@@ -95,19 +95,20 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
     auto* callee = JSC::jsDynamicCast<Function*>(callFrame->jsCallee());
     auto* functionTemplate = callee->functionTemplate();
     auto* isolate = Isolate::fromGlobalObject(JSC::jsDynamicCast<Zig::GlobalObject*>(globalObject));
+    auto& vm = globalObject->vm();
 
     WTF::Vector<TaggedPointer, 8> args(callFrame->argumentCount() + 1);
 
     HandleScope hs(isolate);
-    Local<Value> thisValue = hs.createLocal<Value>(callFrame->thisValue());
+    Local<Value> thisValue = hs.createLocal<Value>(vm, callFrame->thisValue());
     args[0] = thisValue.tagged();
 
     for (size_t i = 0; i < callFrame->argumentCount(); i++) {
-        Local<Value> argValue = hs.createLocal<Value>(callFrame->argument(i));
+        Local<Value> argValue = hs.createLocal<Value>(vm, callFrame->argument(i));
         args[i + 1] = argValue.tagged();
     }
 
-    Local<Value> data = hs.createLocal<Value>(functionTemplate->__internals.data);
+    Local<Value> data = hs.createLocal<Value>(vm, functionTemplate->__internals.data.get());
 
     ImplicitArgs implicit_args = {
         .holder = nullptr,

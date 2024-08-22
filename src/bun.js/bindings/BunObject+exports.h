@@ -30,6 +30,7 @@
     macro(stdout) \
     macro(unsafe) \
     macro(semver) \
+    macro(embeddedFiles) \
 
 // --- Callbacks ---
 #define FOR_EACH_CALLBACK(macro) \

@@ -266,6 +266,28 @@ pub const Expect = struct {
         return value;
     }
 
+    pub fn isAsymmetricMatcher(value: JSValue) bool {
+        if (ExpectCustomAsymmetricMatcher.fromJS(value) != null) {
+            return true;
+        } else if (ExpectAny.fromJS(value) != null) {
+            return true;
+        } else if (ExpectAnything.fromJS(value) != null) {
+            return true;
+        } else if (ExpectStringMatching.fromJS(value) != null) {
+            return true;
+        } else if (ExpectCloseTo.fromJS(value) != null) {
+            return true;
+        } else if (ExpectObjectContaining.fromJS(value) != null) {
+            return true;
+        } else if (ExpectStringContaining.fromJS(value) != null) {
+            return true;
+        } else if (ExpectArrayContaining.fromJS(value) != null) {
+            return true;
+        }
+
+        return false;
+    }
+
     /// Called by C++ when matching with asymmetric matchers
     fn readFlagsAndProcessPromise(instanceValue: JSValue, globalThis: *JSGlobalObject, outFlags: *Expect.Flags.FlagsCppType, value: *JSValue, any_constructor_type: *u8) callconv(.C) bool {
         const flags: Expect.Flags = flags: {
@@ -2527,6 +2549,25 @@ pub const Expect = struct {
                 const received_fmt = result.toFmt(&formatter);
                 const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
                 this.throw(globalThis, signature, "\n\n" ++ "Expected pattern: <green>{any}<r>\nReceived value: <red>{any}<r>", .{ expected_fmt, received_fmt });
+                return .zero;
+            }
+
+            if (Expect.isAsymmetricMatcher(expected_value)) {
+                const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
+                const is_equal = result.jestStrictDeepEquals(expected_value, globalThis);
+
+                if (globalThis.hasException()) {
+                    return .zero;
+                }
+
+                if (is_equal) {
+                    return .undefined;
+                }
+
+                var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                const received_fmt = result.toFmt(&formatter);
+                const expected_fmt = expected_value.toFmt(&formatter);
+                this.throw(globalThis, signature, "\n\nExpected value: <green>{any}<r>\nReceived value: <red>{any}<r>\n", .{ expected_fmt, received_fmt });
                 return .zero;
             }
 

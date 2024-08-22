@@ -2343,6 +2343,14 @@ declare module "bun" {
     unix?: never;
 
     /**
+     * Sets the the number of seconds to wait before timing out a connection
+     * due to inactivity.
+     *
+     * Default is `10` seconds.
+     */
+    idleTimeout?: number;
+
+    /**
      * Handle HTTP requests
      *
      * Respond to {@link Request} objects with a {@link Response} object.
@@ -2859,6 +2867,13 @@ declare module "bun" {
    */
   // tslint:disable-next-line:unified-signatures
   function file(path: string | URL, options?: BlobPropertyBag): BunFile;
+
+  /**
+   * A list of files embedded into the standalone executable. Lexigraphically sorted by name.
+   *
+   * If the process is not a standalone executable, this returns an empty array.
+   */
+  const embeddedFiles: ReadonlyArray<Blob>;
 
   /**
    * `Blob` that leverages the fastest system calls available to operate on files.

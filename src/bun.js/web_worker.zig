@@ -107,6 +107,60 @@ pub const WebWorker = struct {
                 if (graph.find(str) != null) {
                     break :brk str;
                 }
+
+                // Since `bun build --compile` renames files to `.js` by
+                // default, we need to do the reverse of our file extension
+                // mapping.
+                //
+                //   new Worker("./foo") -> new Worker("./foo.js")
+                //   new Worker("./foo.ts") -> new Worker("./foo.js")
+                //   new Worker("./foo.jsx") -> new Worker("./foo.js")
+                //   new Worker("./foo.mjs") -> new Worker("./foo.js")
+                //   new Worker("./foo.mts") -> new Worker("./foo.js")
+                //   new Worker("./foo.cjs") -> new Worker("./foo.js")
+                //   new Worker("./foo.cts") -> new Worker("./foo.js")
+                //   new Worker("./foo.tsx") -> new Worker("./foo.js")
+                //
+                if (bun.strings.hasPrefixComptime(str, "./") or bun.strings.hasPrefixComptime(str, "../")) try_from_extension: {
+                    var pathbuf: bun.PathBuffer = undefined;
+                    var base = str;
+
+                    base = bun.path.joinAbsStringBuf(bun.StandaloneModuleGraph.base_public_path_with_default_suffix, &pathbuf, &.{str}, .loose);
+                    const extname = std.fs.path.extension(base);
+
+                    // ./foo -> ./foo.js
+                    if (extname.len == 0) {
+                        pathbuf[base.len..][0..3].* = ".js".*;
+                        if (graph.find(pathbuf[0 .. base.len + 3])) |js_file| {
+                            break :brk js_file.name;
+                        }
+
+                        break :try_from_extension;
+                    }
+
+                    // ./foo.ts -> ./foo.js
+                    if (bun.strings.eqlComptime(extname, ".ts")) {
+                        pathbuf[base.len - 3 .. base.len][0..3].* = ".js".*;
+                        if (graph.find(pathbuf[0..base.len])) |js_file| {
+                            break :brk js_file.name;
+                        }
+
+                        break :try_from_extension;
+                    }
+
+                    if (extname.len == 4) {
+                        inline for (.{ ".tsx", ".jsx", ".mjs", ".mts", ".cts", ".cjs" }) |ext| {
+                            if (bun.strings.eqlComptime(extname, ext)) {
+                                pathbuf[base.len - ext.len ..][0..".js".len].* = ".js".*;
+                                const as_js = pathbuf[0 .. base.len - ext.len + ".js".len];
+                                if (graph.find(as_js)) |js_file| {
+                                    break :brk js_file.name;
+                                }
+                                break :try_from_extension;
+                            }
+                        }
+                    }
+                }
             }
 
             if (JSC.WebCore.ObjectURLRegistry.isBlobURL(str)) {

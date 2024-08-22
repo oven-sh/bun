@@ -203,10 +203,14 @@
     __ZNK2v85Value8IsStringEv;
     __ZN2v87Boolean3NewEPNS_7IsolateEb;
     __ZN2v86Object16GetInternalFieldEi;
+    __ZN2v87Context10GetIsolateEv;
+    __ZN2v86String14NewFromOneByteEPNS_7IsolateEPKhNS_13NewStringTypeEi;
     __ZNK2v86String10Utf8LengthEPNS_7IsolateE;
     __ZNK2v86String10IsExternalEv;
     __ZNK2v86String17IsExternalOneByteEv;
     __ZNK2v86String17IsExternalTwoByteEv;
     __ZNK2v86String9IsOneByteEv;
     __ZNK2v86String19ContainsOnlyOneByteEv;
+    __ZN2v812api_internal18GlobalizeReferenceEPNS_8internal7IsolateEm;
+    __ZN2v812api_internal13DisposeGlobalEPm;
 };

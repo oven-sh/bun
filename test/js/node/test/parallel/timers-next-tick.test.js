@@ -1,12 +1,12 @@
 //#FILE: test-timers-next-tick.js
 //#SHA1: c6c6f667dac048dd0aed0a244e484ae1f0127d53
 //-----------------
-'use strict';
+"use strict";
 
 // This test verifies that the next tick queue runs after each
 // individual Timeout, as well as each individual Immediate.
 
-test('next tick queue runs after each Timeout and Immediate', async () => {
+test("next tick queue runs after each Timeout and Immediate", async () => {
   const timeoutSpy1 = jest.fn();
   const timeoutSpy2 = jest.fn();
   const immediateSpy1 = jest.fn();

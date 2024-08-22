@@ -1,9 +1,9 @@
 //#FILE: test-tls-cert-ext-encoding.js
 //#SHA1: 235c886145290bd46f4f40110eace31e4cbcf55f
 //-----------------
-'use strict';
+"use strict";
 
-const tls = require('tls');
+const tls = require("tls");
 
 // NOTE: This certificate is hand-generated, hence it is not located in
 // `test/fixtures/keys` to avoid confusion.
@@ -62,24 +62,27 @@ const options = {
   cert: pem,
 };
 
-test('TLS certificate extension encoding', async () => {
-  const server = tls.createServer(options, (socket) => {
+test("TLS certificate extension encoding", async () => {
+  const server = tls.createServer(options, socket => {
     socket.end();
   });
 
-  await new Promise((resolve) => {
+  await new Promise(resolve => {
     server.listen(0, () => {
-      const client = tls.connect({
-        port: server.address().port,
-        rejectUnauthorized: false
-      }, () => {
-        // This should not crash process:
-        client.getPeerCertificate();
+      const client = tls.connect(
+        {
+          port: server.address().port,
+          rejectUnauthorized: false,
+        },
+        () => {
+          // This should not crash process:
+          client.getPeerCertificate();
 
-        server.close();
-        client.end();
-        resolve();
-      });
+          server.close();
+          client.end();
+          resolve();
+        },
+      );
     });
   });
 });

@@ -22,16 +22,16 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
+"use strict";
 
 const N = 30;
 
-test('Timer ordering and timing', async () => {
+test("Timer ordering and timing", async () => {
   let last_i = 0;
   let last_ts = 0;
 
   function f(i) {
-    return new Promise((resolve) => {
+    return new Promise(resolve => {
       if (i <= N) {
         // check order
         expect(i).toBe(last_i + 1);

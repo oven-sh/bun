@@ -1,7 +1,7 @@
 //#FILE: test-timers-setimmediate-infinite-loop.js
 //#SHA1: cd4dd01a6d06097758004eaa8d36d8712977d49d
 //-----------------
-'use strict';
+"use strict";
 
 // This test ensures that if an Immediate callback clears subsequent
 // immediates we don't get stuck in an infinite loop.
@@ -11,7 +11,7 @@
 //
 // Ref: https://github.com/nodejs/node/issues/9756
 
-test('setImmediate clears subsequent immediates without infinite loop', (done) => {
+test("setImmediate clears subsequent immediates without infinite loop", done => {
   const firstCallback = jest.fn(() => {
     clearImmediate(i2);
     clearImmediate(i3);

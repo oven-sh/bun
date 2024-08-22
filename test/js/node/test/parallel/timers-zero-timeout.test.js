@@ -22,28 +22,28 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
+"use strict";
 
 // https://github.com/joyent/node/issues/2079 - zero timeout drops extra args
-test('setTimeout with zero timeout and extra args', (done) => {
+test("setTimeout with zero timeout and extra args", done => {
   const f = jest.fn((a, b, c) => {
-    expect(a).toBe('foo');
-    expect(b).toBe('bar');
-    expect(c).toBe('baz');
+    expect(a).toBe("foo");
+    expect(b).toBe("bar");
+    expect(c).toBe("baz");
     done();
   });
 
-  setTimeout(f, 0, 'foo', 'bar', 'baz');
+  setTimeout(f, 0, "foo", "bar", "baz");
   setTimeout(() => {}, 0);
 });
 
-test('setInterval with zero timeout and extra args', (done) => {
+test("setInterval with zero timeout and extra args", done => {
   let ncalled = 3;
 
   const f = jest.fn((a, b, c) => {
-    expect(a).toBe('foo');
-    expect(b).toBe('bar');
-    expect(c).toBe('baz');
+    expect(a).toBe("foo");
+    expect(b).toBe("bar");
+    expect(c).toBe("baz");
     if (--ncalled === 0) {
       clearTimeout(iv);
       expect(f).toHaveBeenCalledTimes(3);
@@ -51,7 +51,7 @@ test('setInterval with zero timeout and extra args', (done) => {
     }
   });
 
-  const iv = setInterval(f, 0, 'foo', 'bar', 'baz');
+  const iv = setInterval(f, 0, "foo", "bar", "baz");
 });
 
 //<#END_FILE: test-timers-zero-timeout.js

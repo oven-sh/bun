@@ -22,7 +22,7 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
+"use strict";
 
 // setImmediate should run clear its queued cbs once per event loop turn
 // but immediates queued while processing the current queue should happen
@@ -31,14 +31,16 @@
 // hit should be the exact same size of QUEUE, if we're letting things
 // recursively add to the immediate QUEUE hit will be > QUEUE
 
-test('setImmediate queue processing', (done) => {
+test("setImmediate queue processing", done => {
   let ticked = false;
   let hit = 0;
   const QUEUE = 10;
 
   function run() {
     if (hit === 0) {
-      setTimeout(() => { ticked = true; }, 1);
+      setTimeout(() => {
+        ticked = true;
+      }, 1);
       const now = Date.now();
       while (Date.now() - now < 2);
     }
@@ -49,8 +51,7 @@ test('setImmediate queue processing', (done) => {
     setImmediate(run);
   }
 
-  for (let i = 0; i < QUEUE; i++)
-    setImmediate(run);
+  for (let i = 0; i < QUEUE; i++) setImmediate(run);
 
   // Use setImmediate to ensure all other immediates have run
   setImmediate(() => {

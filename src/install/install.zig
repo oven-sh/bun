@@ -141,7 +141,7 @@ const GlobalStringBuilder = @import("../string_builder.zig");
 const SlicedString = Semver.SlicedString;
 const Repository = @import("./repository.zig").Repository;
 const Bin = @import("./bin.zig").Bin;
-const Dependency = @import("./dependency.zig");
+pub const Dependency = @import("./dependency.zig");
 const Behavior = @import("./dependency.zig").Behavior;
 const FolderResolution = @import("./resolvers/folder_resolver.zig").FolderResolution;
 

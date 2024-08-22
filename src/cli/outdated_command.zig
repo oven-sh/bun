@@ -8,6 +8,7 @@ const PackageManager = Install.PackageManager;
 const Lockfile = Install.Lockfile;
 const PackageID = Install.PackageID;
 const DependencyID = Install.DependencyID;
+const Behavior = Install.Dependency.Behavior;
 const invalid_package_id = Install.invalid_package_id;
 
 pub const OutdatedCommand = struct {
@@ -80,13 +81,14 @@ pub const OutdatedCommand = struct {
 
         manager.lockfile = lockfile;
 
-        const root_pkg = lockfile.rootPackage() orelse return;
+        const root_pkg_id = manager.root_package_id.get(lockfile, manager.workspace_name_hash);
+        const root_pkg_deps = lockfile.packages.items(.dependencies)[root_pkg_id];
 
-        try updateManifestsIfNecessary(manager, log_level, root_pkg);
-        try printOutdatedInfo(manager, root_pkg);
+        try updateManifestsIfNecessary(manager, log_level, root_pkg_deps);
+        try printOutdatedInfo(manager, root_pkg_deps);
     }
 
-    fn printOutdatedInfo(manager: *PackageManager, root_pkg: Lockfile.Package) !void {
+    fn printOutdatedInfo(manager: *PackageManager, root_pkg_deps: Lockfile.DependencySlice) !void {
         var outdated_ids: std.ArrayListUnmanaged(struct { package_id: PackageID, dep_id: DependencyID }) = .{};
         defer outdated_ids.deinit(manager.allocator);
 
@@ -94,6 +96,10 @@ pub const OutdatedCommand = struct {
         var max_current: usize = 0;
         var max_update: usize = 0;
         var max_latest: usize = 0;
+
+        var has_dev = false;
+        var has_peer = false;
+        var has_optional = false;
 
         const lockfile = manager.lockfile;
 
@@ -106,7 +112,7 @@ pub const OutdatedCommand = struct {
         defer version_buf.deinit();
         const version_writer = version_buf.writer();
 
-        for (root_pkg.dependencies.begin()..root_pkg.dependencies.end()) |dep_id| {
+        for (root_pkg_deps.begin()..root_pkg_deps.end()) |dep_id| {
             const package_id = lockfile.buffers.resolutions.items[dep_id];
             if (package_id == invalid_package_id) continue;
             const dep = lockfile.buffers.dependencies.items[dep_id];
@@ -131,16 +137,14 @@ pub const OutdatedCommand = struct {
 
             if (resolution.value.npm.version.order(latest.version, string_buf, string_buf) != .lt) continue;
 
-            const package_name_len = package_name.len + if (dep.behavior.dev)
-                " (dev)".len
+            if (dep.behavior.dev)
+                has_dev = true
             else if (dep.behavior.peer)
-                " (peer)".len
+                has_peer = true
             else if (dep.behavior.optional)
-                " (optional".len
-            else
-                0;
+                has_optional = true;
 
-            if (package_name_len > max_name) max_name = package_name_len;
+            if (package_name.len > max_name) max_name = package_name.len;
 
             version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)}) catch bun.outOfMemory();
             if (version_buf.items.len > max_current) max_current = version_buf.items.len;
@@ -163,86 +167,122 @@ pub const OutdatedCommand = struct {
         if (outdated_ids.items.len == 0) return;
 
         // begin printing
-        Output.pretty("\n", .{});
+        const package_column_length = 2 + if (has_optional)
+            "Optional dependencies".len + (max_name -| "Optional dependencies".len)
+        else if (has_peer)
+            "Peer dependencies".len + (max_name -| "Peer dependencies".len)
+        else if (has_dev)
+            "Dev dependencies".len + (max_name -| "Dev dependencies".len)
+        else
+            "Dependencies".len + (max_name -| "Dependencies".len);
 
-        const package_column_length = "Package  ".len + (max_name -| "Package".len);
-        Output.pretty("<r><d>Package<r>  ", .{});
-        for ("Package  ".len..package_column_length) |_| Output.pretty(" ", .{});
+        // Output.pretty("<r><d>Dependencies<r>", .{});
+        // for ("".len..package_column_length) |_| Output.pretty(" ", .{});
 
-        const current_column_length = "Current  ".len + (max_current -| "Current".len);
-        Output.pretty("<d>Current<r>  ", .{});
-        for ("Current  ".len..current_column_length) |_| Output.pretty(" ", .{});
+        const current_column_length = "Current".len + (max_current -| "Current".len) + 2;
+        // Output.pretty("<d>Current<r>", .{});
+        // for ("Current".len..current_column_length) |_| Output.pretty(" ", .{});
 
-        const update_column_length = "Update  ".len + (max_update -| "Update".len);
-        Output.pretty("<d>Update<r>  ", .{});
-        for ("Update  ".len..update_column_length) |_| Output.pretty(" ", .{});
+        const update_column_length = "Update".len + (max_update -| "Update".len) + 2;
+        // Output.pretty("<d>Update<r>", .{});
+        // for ("Update".len..update_column_length) |_| Output.pretty(" ", .{});
 
-        const latest_column_length = "Latest  ".len + (max_latest -| "Latest".len);
-        Output.pretty("<d>Latest<r>  ", .{});
-        for ("Latest  ".len..latest_column_length) |_| Output.pretty(" ", .{});
+        const latest_column_length = "Latest".len + (max_latest -| "Latest".len) + 2;
+        // Output.pretty("<d>Latest<r>", .{});
+        // for ("Latest".len..latest_column_length) |_| Output.pretty(" ", .{});
 
-        Output.pretty("\n", .{});
+        // Output.pretty("\n", .{});
 
-        for (outdated_ids.items) |ids| {
-            const package_id = ids.package_id;
-            const dep_id = ids.dep_id;
-            const package_name = pkg_names[package_id].slice(string_buf);
-            const dep = lockfile.buffers.dependencies.items[dep_id];
+        var printed_column_names = false;
+        inline for (
+            .{
+                .{ "Dependencies", Behavior{ .normal = true } },
+                .{ "Dev dependencies", Behavior{ .dev = true } },
+                .{ "Peer dependencies", Behavior{ .peer = true } },
+                .{ "Optional dependencnies", Behavior{ .optional = true } },
+            },
+        ) |dependency_group| {
+            const group_name, const group_behavior = dependency_group;
 
-            var expired = false;
-            const manifest = manager.manifests.byNameAllowExpired(
-                manager.scopeForPackageName(package_name),
-                package_name,
-                &expired,
-            ) orelse continue;
+            var printed_group_name = false;
 
-            const latest = manifest.findByDistTag("latest") orelse continue;
-            const update_version = if (dep.version.tag == .npm)
-                manifest.findBestVersion(dep.version.value.npm.version, string_buf) orelse continue
-            else
-                manifest.findByDistTag(dep.version.value.dist_tag.tag.slice(string_buf)) orelse continue;
+            for (outdated_ids.items) |ids| {
+                const package_id = ids.package_id;
+                const dep_id = ids.dep_id;
+                const package_name = pkg_names[package_id].slice(string_buf);
+                const dep = lockfile.buffers.dependencies.items[dep_id];
 
-            Output.pretty("{s}", .{package_name});
-            var package_name_len = package_name.len;
-            if (dep.behavior.dev) {
-                Output.pretty(" <d>(dev)<r>", .{});
-                package_name_len += " (dev)".len;
-            } else if (dep.behavior.peer) {
-                Output.pretty(" <d>(peer)<r>", .{});
-                package_name_len += " (peer)".len;
-            } else if (dep.behavior.optional) {
-                Output.pretty(" <d>(optional)<r>", .{});
-                package_name_len += " (optional)".len;
+                if (@as(u8, @bitCast(dep.behavior)) & @as(u8, @bitCast(group_behavior)) == 0) continue;
+
+                var expired = false;
+                const manifest = manager.manifests.byNameAllowExpired(
+                    manager.scopeForPackageName(package_name),
+                    package_name,
+                    &expired,
+                ) orelse continue;
+
+                const latest = manifest.findByDistTag("latest") orelse continue;
+                const update_version = if (dep.version.tag == .npm)
+                    manifest.findBestVersion(dep.version.value.npm.version, string_buf) orelse continue
+                else
+                    manifest.findByDistTag(dep.version.value.dist_tag.tag.slice(string_buf)) orelse continue;
+
+                if (!printed_group_name) {
+                    printed_group_name = true;
+
+                    Output.pretty("<r>\n<d>" ++ group_name ++ "<r>", .{});
+
+                    if (!printed_column_names) {
+                        printed_column_names = true;
+
+                        for (group_name.len..package_column_length) |_| Output.pretty(" ", .{});
+
+                        Output.pretty("<d>Current<r>", .{});
+                        for ("Current".len..current_column_length) |_| Output.pretty(" ", .{});
+
+                        Output.pretty("<d>Update<r>", .{});
+                        for ("Update".len..update_column_length) |_| Output.pretty(" ", .{});
+
+                        Output.pretty("<d>Latest<r>", .{});
+                        for ("Latest".len..latest_column_length) |_| Output.pretty(" ", .{});
+                    } else {
+                        for (group_name.len..package_column_length + current_column_length + update_column_length + latest_column_length) |_| Output.pretty(" ", .{});
+                    }
+
+                    Output.pretty("\n", .{});
+                }
+
+                Output.pretty("{s}", .{package_name});
+                for (package_name.len..package_column_length) |_| Output.pretty(" ", .{});
+
+                const resolution = pkg_resolutions[package_id];
+                version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)}) catch bun.outOfMemory();
+                Output.pretty("{s}", .{version_buf.items});
+                for (version_buf.items.len..current_column_length) |_| Output.pretty(" ", .{});
+                version_buf.items.len = 0;
+
+                version_writer.print("{}", .{update_version.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
+                if (update_version.version.order(resolution.value.npm.version, manifest.string_buf, string_buf) == .gt) {
+                    Output.pretty("<blue>{s}<r>", .{version_buf.items});
+                } else {
+                    Output.pretty("<d>{s}<r>", .{version_buf.items});
+                }
+                for (version_buf.items.len..update_column_length) |_| Output.pretty(" ", .{});
+                version_buf.items.len = 0;
+
+                version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
+                Output.pretty("<cyan>{s}<r>", .{version_buf.items});
+                for (version_buf.items.len..latest_column_length) |_| Output.pretty(" ", .{});
+                version_buf.items.len = 0;
+
+                Output.pretty("\n", .{});
             }
-            for (package_name_len..package_column_length) |_| Output.pretty(" ", .{});
-
-            const resolution = pkg_resolutions[package_id];
-            version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)}) catch bun.outOfMemory();
-            Output.pretty("{s}", .{version_buf.items});
-            for (version_buf.items.len..current_column_length) |_| Output.pretty(" ", .{});
-            version_buf.items.len = 0;
-
-            version_writer.print("{}", .{update_version.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
-            if (update_version.version.order(resolution.value.npm.version, manifest.string_buf, string_buf) == .gt) {
-                Output.pretty("<blue>{s}<r>", .{version_buf.items});
-            } else {
-                Output.pretty("<d>{s}<r>", .{version_buf.items});
-            }
-            for (version_buf.items.len..update_column_length) |_| Output.pretty(" ", .{});
-            version_buf.items.len = 0;
-
-            version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
-            Output.pretty("<cyan>{s}<r>", .{version_buf.items});
-            for (version_buf.items.len..latest_column_length) |_| Output.pretty(" ", .{});
-            version_buf.items.len = 0;
-
-            Output.pretty("\n", .{});
         }
 
         Output.flush();
     }
 
-    fn updateManifestsIfNecessary(manager: *PackageManager, comptime log_level: PackageManager.Options.LogLevel, root_pkg: Lockfile.Package) !void {
+    fn updateManifestsIfNecessary(manager: *PackageManager, comptime log_level: PackageManager.Options.LogLevel, root_pkg_deps: Lockfile.DependencySlice) !void {
         const lockfile = manager.lockfile;
         const resolutions = lockfile.buffers.resolutions.items;
         const dependencies = lockfile.buffers.dependencies.items;
@@ -251,7 +291,7 @@ pub const OutdatedCommand = struct {
         const pkg_resolutions = packages.items(.resolution);
         const pkg_names = packages.items(.name);
 
-        for (root_pkg.dependencies.begin()..root_pkg.dependencies.end()) |dep_id| {
+        for (root_pkg_deps.begin()..root_pkg_deps.end()) |dep_id| {
             if (dep_id >= dependencies.len) continue;
             const package_id = resolutions[dep_id];
             if (package_id == invalid_package_id) continue;

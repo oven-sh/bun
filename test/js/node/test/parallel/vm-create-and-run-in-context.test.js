@@ -35,13 +35,13 @@ describe("vm.createContext and vm.runInContext", () => {
   });
 
   test("Create a new pre-populated context", () => {
-    const context = vm.createContext({ "foo": "bar", "thing": "lala" });
+    const context = vm.createContext({ foo: "bar", thing: "lala" });
     expect(context.foo).toBe("bar");
     expect(context.thing).toBe("lala");
   });
 
   test("Test updating context", () => {
-    const context = vm.createContext({ "foo": "bar", "thing": "lala" });
+    const context = vm.createContext({ foo: "bar", thing: "lala" });
     vm.runInContext("var foo = 3;", context);
     expect(context.foo).toBe(3);
     expect(context.thing).toBe("lala");

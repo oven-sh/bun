@@ -1247,7 +1247,7 @@ pub const Fetch = struct {
                 false => JSC.AnyTask.New(Holder, Holder.reject).init(holder),
             };
 
-            globalThis.bunVM().enqueueTask(JSC.Task.init(&holder.task));
+            vm.enqueueTask(JSC.Task.init(&holder.task));
         }
 
         pub fn checkServerIdentity(this: *FetchTasklet, certificate_info: http.CertificateInfo) bool {
@@ -1540,7 +1540,7 @@ pub const Fetch = struct {
                 http_.enableBodyStreaming();
             }
             // we should not keep the process alive if we are ignoring the body
-            const vm = this.global_this.bunVM();
+            const vm = this.javascript_vm;
             this.poll_ref.unref(vm);
             // clean any remaining refereces
             this.readable_stream_ref.deinit();

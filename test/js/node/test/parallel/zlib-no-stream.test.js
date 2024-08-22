@@ -17,3 +17,5 @@ test("gzipSync should not throw", () => {
   // This must not throw
   expect(() => gzipSync("fooobar")).not.toThrow();
 });
+
+//<#END_FILE: test-zlib-no-stream.js

@@ -22,11 +22,11 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
-const fs = require('fs');
-const path = require('path');
+"use strict";
+const fs = require("fs");
+const path = require("path");
 
-const tmpdir = path.join(__dirname, 'tmp');
+const tmpdir = path.join(__dirname, "tmp");
 
 beforeAll(() => {
   if (!fs.existsSync(tmpdir)) {
@@ -38,36 +38,36 @@ afterAll(() => {
   fs.rmSync(tmpdir, { recursive: true, force: true });
 });
 
-test('end without data', (done) => {
-  const file = path.join(tmpdir, 'write-end-test0.txt');
+test("end without data", done => {
+  const file = path.join(tmpdir, "write-end-test0.txt");
   const stream = fs.createWriteStream(file);
   stream.end();
-  stream.on('close', () => {
+  stream.on("close", () => {
     done();
   });
 });
 
-test('end with data', (done) => {
-  const file = path.join(tmpdir, 'write-end-test1.txt');
+test("end with data", done => {
+  const file = path.join(tmpdir, "write-end-test1.txt");
   const stream = fs.createWriteStream(file);
-  stream.end('a\n', 'utf8');
-  stream.on('close', () => {
-    const content = fs.readFileSync(file, 'utf8');
-    expect(content).toBe('a\n');
+  stream.end("a\n", "utf8");
+  stream.on("close", () => {
+    const content = fs.readFileSync(file, "utf8");
+    expect(content).toBe("a\n");
     done();
   });
 });
 
-test('end triggers open and finish events', (done) => {
-  const file = path.join(tmpdir, 'write-end-test2.txt');
+test("end triggers open and finish events", done => {
+  const file = path.join(tmpdir, "write-end-test2.txt");
   const stream = fs.createWriteStream(file);
   stream.end();
 
   let calledOpen = false;
-  stream.on('open', () => {
+  stream.on("open", () => {
     calledOpen = true;
   });
-  stream.on('finish', () => {
+  stream.on("finish", () => {
     expect(calledOpen).toBe(true);
     done();
   });

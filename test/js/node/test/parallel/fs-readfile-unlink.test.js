@@ -22,25 +22,25 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
+"use strict";
 
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
 
 // Test that unlink succeeds immediately after readFile completes.
 
-test('unlink succeeds immediately after readFile completes', async () => {
-  const tmpdir = path.join(os.tmpdir(), 'node-test-fs-readfile-unlink');
+test("unlink succeeds immediately after readFile completes", async () => {
+  const tmpdir = path.join(os.tmpdir(), "node-test-fs-readfile-unlink");
   await fs.promises.mkdir(tmpdir, { recursive: true });
 
-  const fileName = path.join(tmpdir, 'test.bin');
+  const fileName = path.join(tmpdir, "test.bin");
   const buf = Buffer.alloc(512 * 1024, 42);
 
   await fs.promises.writeFile(fileName, buf);
 
   const data = await fs.promises.readFile(fileName);
-  
+
   expect(data.length).toBe(buf.length);
   expect(data[0]).toBe(42);
 

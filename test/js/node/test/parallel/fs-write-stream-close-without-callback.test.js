@@ -1,13 +1,13 @@
 //#FILE: test-fs-write-stream-close-without-callback.js
 //#SHA1: 63e0c345b440c8cfb157aa84340f387cf314e20f
 //-----------------
-'use strict';
+"use strict";
 
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
 
-const tmpdir = path.join(os.tmpdir(), 'test-fs-write-stream-close-without-callback');
+const tmpdir = path.join(os.tmpdir(), "test-fs-write-stream-close-without-callback");
 
 beforeEach(() => {
   // Create a fresh temporary directory before each test
@@ -23,11 +23,11 @@ afterEach(() => {
   }
 });
 
-test('fs.WriteStream can be closed without a callback', () => {
-  const filePath = path.join(tmpdir, 'nocallback');
+test("fs.WriteStream can be closed without a callback", () => {
+  const filePath = path.join(tmpdir, "nocallback");
   const s = fs.createWriteStream(filePath);
 
-  s.end('hello world');
+  s.end("hello world");
   s.close();
 
   // We don't need to assert anything here as the test is checking

@@ -25,7 +25,7 @@
 "use strict";
 const http = require("http");
 
-test("HTTP server writing empty string", async () => {
+test("http write empty string", async () => {
   const server = http.createServer(function (request, response) {
     console.log(`responding to ${request.url}`);
 

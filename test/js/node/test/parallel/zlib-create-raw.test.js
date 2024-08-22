@@ -5,12 +5,14 @@
 
 const zlib = require("zlib");
 
-test("zlib.createInflateRaw() creates an instance of InflateRaw", () => {
+test("zlib.createInflateRaw returns an instance of InflateRaw", () => {
   const inflateRaw = zlib.createInflateRaw();
   expect(inflateRaw).toBeInstanceOf(zlib.InflateRaw);
 });
 
-test("zlib.createDeflateRaw() creates an instance of DeflateRaw", () => {
+test("zlib.createDeflateRaw returns an instance of DeflateRaw", () => {
   const deflateRaw = zlib.createDeflateRaw();
   expect(deflateRaw).toBeInstanceOf(zlib.DeflateRaw);
 });
+
+//<#END_FILE: test-zlib-create-raw.js

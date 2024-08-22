@@ -26,7 +26,7 @@
 const http = require("http");
 const url = require("url");
 
-test("http url parse search", async () => {
+test("HTTP request URL parsing with search params", async () => {
   function check(request) {
     // A path should come over with params
     expect(request.url).toBe("/asdf?qwer=zxcv");

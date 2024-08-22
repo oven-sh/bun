@@ -26,7 +26,7 @@
 const http = require("http");
 const url = require("url");
 
-test("HTTP request URL parsing", async () => {
+test("http request url parsing", async () => {
   function check(request) {
     // A path should come over
     expect(request.url).toBe("/asdf");

@@ -94,7 +94,7 @@ test("gzip and gunzip", async () => {
   expect(gunzipped.toString()).toBe(inputString);
 });
 
-test("unzip deflated data", async () => {
+test("unzip base64 deflate", async () => {
   const buffer = Buffer.from(expectedBase64Deflate, "base64");
   const unzipped = await new Promise((resolve, reject) => {
     zlib.unzip(buffer, (err, unzipped) => {
@@ -106,7 +106,7 @@ test("unzip deflated data", async () => {
   expect(unzipped.toString()).toBe(inputString);
 });
 
-test("unzip gzipped data", async () => {
+test("unzip base64 gzip", async () => {
   const buffer = Buffer.from(expectedBase64Gzip, "base64");
   const unzipped = await new Promise((resolve, reject) => {
     zlib.unzip(buffer, (err, unzipped) => {
@@ -117,3 +117,5 @@ test("unzip gzipped data", async () => {
 
   expect(unzipped.toString()).toBe(inputString);
 });
+
+//<#END_FILE: test-zlib-from-string.js

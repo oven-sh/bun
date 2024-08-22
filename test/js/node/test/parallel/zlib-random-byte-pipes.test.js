@@ -141,12 +141,12 @@ class HashStream extends Stream {
 }
 
 test("zlib random byte pipes", async () => {
-  const testCases = [
+  const compressionMethods = [
     [zlib.createGzip, zlib.createGunzip],
     [zlib.createBrotliCompress, zlib.createBrotliDecompress],
   ];
 
-  for (const [createCompress, createDecompress] of testCases) {
+  for (const [createCompress, createDecompress] of compressionMethods) {
     const inp = new RandomReadStream({ total: 1024, block: 256, jitter: 16 });
     const out = new HashStream();
     const gzip = createCompress();
@@ -162,3 +162,5 @@ test("zlib random byte pipes", async () => {
     });
   }
 });
+
+//<#END_FILE: test-zlib-random-byte-pipes.js

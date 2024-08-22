@@ -26,8 +26,8 @@
 const zlib = require("zlib");
 
 for (const Compressor of [zlib.Gzip, zlib.BrotliCompress]) {
-  test(`${Compressor.name} compresses empty buffer`, async () => {
-    const gz = new Compressor();
+  test(`${Compressor.name} compresses zero-byte input`, async () => {
+    const gz = Compressor();
     const emptyBuffer = Buffer.alloc(0);
     let received = 0;
 
@@ -52,3 +52,5 @@ for (const Compressor of [zlib.Gzip, zlib.BrotliCompress]) {
     expect(received).toBe(expected);
   });
 }
+
+//<#END_FILE: test-zlib-zero-byte.js

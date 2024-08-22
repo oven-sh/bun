@@ -19,15 +19,17 @@ const inputString =
 
 const errMessage = /unexpected end of file/;
 
-[
+const methods = [
   { comp: "gzip", decomp: "gunzip", decompSync: "gunzipSync" },
   { comp: "gzip", decomp: "unzip", decompSync: "unzipSync" },
   { comp: "deflate", decomp: "inflate", decompSync: "inflateSync" },
   { comp: "deflateRaw", decomp: "inflateRaw", decompSync: "inflateRawSync" },
-].forEach(function (methods) {
-  test(`Test ${methods.comp} compression and ${methods.decomp} decompression`, async () => {
+];
+
+methods.forEach(({ comp, decomp, decompSync }) => {
+  test(`Test ${comp} and ${decomp}`, async () => {
     const compressed = await new Promise((resolve, reject) => {
-      zlib[methods.comp](inputString, (err, result) => {
+      zlib[comp](inputString, (err, result) => {
         if (err) reject(err);
         else resolve(result);
       });
@@ -37,12 +39,12 @@ const errMessage = /unexpected end of file/;
     const toUTF8 = buffer => buffer.toString("utf-8");
 
     // sync sanity
-    const decompressed = zlib[methods.decompSync](compressed);
+    const decompressed = zlib[decompSync](compressed);
     expect(toUTF8(decompressed)).toBe(inputString);
 
     // async sanity
     await new Promise((resolve, reject) => {
-      zlib[methods.decomp](compressed, (err, result) => {
+      zlib[decomp](compressed, (err, result) => {
         if (err) reject(err);
         else {
           expect(toUTF8(result)).toBe(inputString);
@@ -53,28 +55,36 @@ const errMessage = /unexpected end of file/;
 
     // Sync truncated input test
     expect(() => {
-      zlib[methods.decompSync](truncated);
-    }).toThrow(expect.objectContaining({ message: expect.stringMatching(errMessage) }));
+      zlib[decompSync](truncated);
+    }).toThrow(
+      expect.objectContaining({
+        message: expect.stringMatching(errMessage),
+      }),
+    );
 
     // Async truncated input test
     await expect(
       new Promise((resolve, reject) => {
-        zlib[methods.decomp](truncated, (err, result) => {
+        zlib[decomp](truncated, err => {
           if (err) reject(err);
-          else resolve(result);
+          else resolve();
         });
       }),
-    ).rejects.toThrow(expect.objectContaining({ message: expect.stringMatching(errMessage) }));
+    ).rejects.toThrow(
+      expect.objectContaining({
+        message: expect.stringMatching(errMessage),
+      }),
+    );
 
     const syncFlushOpt = { finishFlush: zlib.constants.Z_SYNC_FLUSH };
 
     // Sync truncated input test, finishFlush = Z_SYNC_FLUSH
-    const result = toUTF8(zlib[methods.decompSync](truncated, syncFlushOpt));
+    const result = toUTF8(zlib[decompSync](truncated, syncFlushOpt));
     expect(result).toBe(inputString.slice(0, result.length));
 
     // Async truncated input test, finishFlush = Z_SYNC_FLUSH
     await new Promise((resolve, reject) => {
-      zlib[methods.decomp](truncated, syncFlushOpt, (err, decompressed) => {
+      zlib[decomp](truncated, syncFlushOpt, (err, decompressed) => {
         if (err) reject(err);
         else {
           const result = toUTF8(decompressed);
@@ -85,3 +95,5 @@ const errMessage = /unexpected end of file/;
     });
   });
 });
+
+//<#END_FILE: test-zlib-truncated.js

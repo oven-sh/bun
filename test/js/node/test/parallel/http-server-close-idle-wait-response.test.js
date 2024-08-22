@@ -11,7 +11,7 @@ test("HTTP server close idle connections after response", async () => {
       req.resume();
 
       setTimeout(() => {
-        res.writeHead(204, { "Connection": "keep-alive", "Keep-Alive": "timeout=1" });
+        res.writeHead(204, { Connection: "keep-alive", "Keep-Alive": "timeout=1" });
         res.end();
       }, 1000);
     }),

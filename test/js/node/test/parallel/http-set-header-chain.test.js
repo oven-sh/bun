@@ -6,10 +6,10 @@
 const http = require("http");
 
 const expected = {
-  "__proto__": null,
-  "testheader1": "foo",
-  "testheader2": "bar",
-  "testheader3": "xyz",
+  __proto__: null,
+  testheader1: "foo",
+  testheader2: "bar",
+  testheader3: "xyz",
 };
 
 test("HTTP setHeader chaining", async () => {

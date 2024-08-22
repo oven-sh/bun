@@ -25,10 +25,10 @@ const Socket = net.Socket;
 test("net.connect calls Socket.prototype.connect", async () => {
   // Monkey patch Socket.prototype.connect to check that it's called.
   const orig = Socket.prototype.connect;
-  const mockConnect = jest.fn(function () {
+  const connectMock = jest.fn(function () {
     return orig.apply(this, arguments);
   });
-  Socket.prototype.connect = mockConnect;
+  Socket.prototype.connect = connectMock;
 
   const server = net.createServer();
 
@@ -44,7 +44,7 @@ test("net.connect calls Socket.prototype.connect", async () => {
     });
   });
 
-  expect(mockConnect).toHaveBeenCalledTimes(1);
+  expect(connectMock).toHaveBeenCalledTimes(1);
 
   // Restore original Socket.prototype.connect
   Socket.prototype.connect = orig;

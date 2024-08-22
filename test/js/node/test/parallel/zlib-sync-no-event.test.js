@@ -7,7 +7,7 @@ const zlib = require("zlib");
 const message = "Come on, Fhqwhgads.";
 const buffer = Buffer.from(message);
 
-test("Gzip and Gunzip synchronously without emitting events", () => {
+test("zlib sync compression and decompression without events", () => {
   const zipper = new zlib.Gzip();
   const closeSpy = jest.fn();
   zipper.on("close", closeSpy);
@@ -26,3 +26,5 @@ test("Gzip and Gunzip synchronously without emitting events", () => {
   expect(closeSpy).not.toHaveBeenCalled();
   expect(unzipperCloseSpy).not.toHaveBeenCalled();
 });
+
+//<#END_FILE: test-zlib-sync-no-event.js

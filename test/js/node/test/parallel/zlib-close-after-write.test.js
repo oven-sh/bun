@@ -25,15 +25,24 @@
 "use strict";
 const zlib = require("zlib");
 
-test("zlib close after write", done => {
-  zlib.gzip("hello", (err, out) => {
-    expect(err).toBeNull();
-
-    const unzip = zlib.createGunzip();
-    unzip.write(out);
-
-    unzip.close(() => {
-      done();
+test("zlib close after write", async () => {
+  const gzipPromise = new Promise((resolve, reject) => {
+    zlib.gzip("hello", (err, out) => {
+      if (err) reject(err);
+      else resolve(out);
     });
   });
+
+  const out = await gzipPromise;
+
+  const unzip = zlib.createGunzip();
+  unzip.write(out);
+
+  const closePromise = new Promise(resolve => {
+    unzip.close(resolve);
+  });
+
+  await closePromise;
 });
+
+//<#END_FILE: test-zlib-close-after-write.js

@@ -22,7 +22,7 @@ run_command cmake .. "${CMAKE_FLAGS[@]}" \
   -GNinja \
   -DBUN_LINK_ONLY="1" \
   -DNO_CONFIGURE_DEPENDS="1" \
-  -DBUN_ZIG_OBJ_DIR="$cwd/build" \
+  -DBUN_ZIG_OBJECT_PATH="$cwd/build/bun-zig.o" \
   -DBUN_CPP_ARCHIVE="$cwd/build/bun-cpp-objects.a" \
   -DBUN_DEPS_OUT_DIR="$cwd/build/bun-deps" \
   -DCMAKE_BUILD_TYPE="$CMAKE_BUILD_TYPE" \

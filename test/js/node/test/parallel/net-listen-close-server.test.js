@@ -1,5 +1,5 @@
-//#FILE: test-net-server-unref.js
-//#SHA1: bb2f989bf01182d804d6a8a0d0f33950f357c617
+//#FILE: test-net-listen-close-server.js
+//#SHA1: e39989e43d691f9cc91a02156112ba681366601b
 //-----------------
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -25,15 +25,17 @@
 "use strict";
 const net = require("net");
 
-test("net server unref", () => {
-  const s = net.createServer();
-  s.listen(0);
-  s.unref();
+test("server listen and close without calling callbacks", () => {
+  const server = net.createServer(() => {});
+  const listenSpy = jest.fn();
+  const errorSpy = jest.fn();
 
-  const mockCallback = jest.fn();
-  setTimeout(mockCallback, 1000).unref();
+  server.listen(0, listenSpy);
+  server.on("error", errorSpy);
+  server.close();
 
-  expect(mockCallback).not.toHaveBeenCalled();
+  expect(listenSpy).not.toHaveBeenCalled();
+  expect(errorSpy).not.toHaveBeenCalled();
 });
 
-//<#END_FILE: test-net-server-unref.js
+//<#END_FILE: test-net-listen-close-server.js

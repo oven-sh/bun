@@ -1,5 +1,5 @@
-//#FILE: test-net-server-unref.js
-//#SHA1: bb2f989bf01182d804d6a8a0d0f33950f357c617
+//#FILE: test-http-response-readable.js
+//#SHA1: bfdd12475c68879668c3019c685001244559fb20
 //-----------------
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -23,17 +23,27 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 "use strict";
-const net = require("net");
+const http = require("http");
 
-test("net server unref", () => {
-  const s = net.createServer();
-  s.listen(0);
-  s.unref();
+test("HTTP response readable state", async () => {
+  const testServer = new http.Server((req, res) => {
+    res.writeHead(200);
+    res.end("Hello world");
+  });
 
-  const mockCallback = jest.fn();
-  setTimeout(mockCallback, 1000).unref();
-
-  expect(mockCallback).not.toHaveBeenCalled();
+  await new Promise(resolve => {
+    testServer.listen(0, () => {
+      const port = testServer.address().port;
+      http.get({ port }, res => {
+        expect(res.readable).toBe(true);
+        res.on("end", () => {
+          expect(res.readable).toBe(false);
+          testServer.close(resolve);
+        });
+        res.resume();
+      });
+    });
+  });
 });
 
-//<#END_FILE: test-net-server-unref.js
+//<#END_FILE: test-http-response-readable.js

@@ -1,5 +1,5 @@
-//#FILE: test-net-server-unref.js
-//#SHA1: bb2f989bf01182d804d6a8a0d0f33950f357c617
+//#FILE: test-net-connect-paused-connection.js
+//#SHA1: ab2fae629f3abb5fc4d5e59dd7d1dd2e09b9eb48
 //-----------------
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -25,15 +25,30 @@
 "use strict";
 const net = require("net");
 
-test("net server unref", () => {
-  const s = net.createServer();
-  s.listen(0);
-  s.unref();
+test("net connect with paused connection", done => {
+  const server = net.createServer(conn => {
+    conn.unref();
+  });
 
-  const mockCallback = jest.fn();
-  setTimeout(mockCallback, 1000).unref();
+  server.listen(0, () => {
+    const connection = net.connect(server.address().port, "localhost");
+    connection.pause();
 
-  expect(mockCallback).not.toHaveBeenCalled();
+    const timeoutId = setTimeout(() => {
+      done.fail("Should not have called timeout");
+    }, 1000);
+
+    // Unref the timeout to allow the process to exit
+    timeoutId.unref();
+
+    // Allow some time for the test to potentially fail
+    setTimeout(() => {
+      server.close();
+      done();
+    }, 500);
+  });
+
+  server.unref();
 });
 
-//<#END_FILE: test-net-server-unref.js
+//<#END_FILE: test-net-connect-paused-connection.js

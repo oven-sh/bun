@@ -1,5 +1,5 @@
-//#FILE: test-net-server-unref.js
-//#SHA1: bb2f989bf01182d804d6a8a0d0f33950f357c617
+//#FILE: test-dgram-listen-after-bind.js
+//#SHA1: c1a91f2b83b502dd1abc4b46f023df6677fdf465
 //-----------------
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -23,17 +23,28 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 "use strict";
-const net = require("net");
+const dgram = require("dgram");
 
-test("net server unref", () => {
-  const s = net.createServer();
-  s.listen(0);
-  s.unref();
+test("dgram listen after bind", done => {
+  const socket = dgram.createSocket("udp4");
 
-  const mockCallback = jest.fn();
-  setTimeout(mockCallback, 1000).unref();
+  socket.bind();
 
-  expect(mockCallback).not.toHaveBeenCalled();
+  let fired = false;
+  const timer = setTimeout(() => {
+    socket.close();
+  }, 100);
+
+  socket.on("listening", () => {
+    clearTimeout(timer);
+    fired = true;
+    socket.close();
+  });
+
+  socket.on("close", () => {
+    expect(fired).toBe(true);
+    done();
+  });
 });
 
-//<#END_FILE: test-net-server-unref.js
+//<#END_FILE: test-dgram-listen-after-bind.js

@@ -1,5 +1,5 @@
-//#FILE: test-net-server-unref.js
-//#SHA1: bb2f989bf01182d804d6a8a0d0f33950f357c617
+//#FILE: test-dgram-implicit-bind.js
+//#SHA1: 3b390facaac3ee5e617c9fdc11acdb9f019fabfa
 //-----------------
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -23,17 +23,39 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 "use strict";
-const net = require("net");
+const dgram = require("dgram");
 
-test("net server unref", () => {
-  const s = net.createServer();
-  s.listen(0);
-  s.unref();
+test("dgram implicit bind", async () => {
+  const source = dgram.createSocket("udp4");
+  const target = dgram.createSocket("udp4");
+  let messages = 0;
 
-  const mockCallback = jest.fn();
-  setTimeout(mockCallback, 1000).unref();
+  const messageHandler = jest.fn(buf => {
+    if (buf.toString() === "abc") ++messages;
+    if (buf.toString() === "def") ++messages;
+    if (messages === 2) {
+      source.close();
+      target.close();
+    }
+  });
 
-  expect(mockCallback).not.toHaveBeenCalled();
+  target.on("message", messageHandler);
+
+  await new Promise(resolve => {
+    target.on("listening", resolve);
+    target.bind(0);
+  });
+
+  // Second .send() call should not throw a bind error.
+  const port = target.address().port;
+  source.send(Buffer.from("abc"), 0, 3, port, "127.0.0.1");
+  source.send(Buffer.from("def"), 0, 3, port, "127.0.0.1");
+
+  // Wait for the messages to be processed
+  await new Promise(resolve => setTimeout(resolve, 100));
+
+  expect(messageHandler).toHaveBeenCalledTimes(2);
+  expect(messages).toBe(2);
 });
 
-//<#END_FILE: test-net-server-unref.js
+//<#END_FILE: test-dgram-implicit-bind.js

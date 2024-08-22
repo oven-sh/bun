@@ -1,5 +1,5 @@
-//#FILE: test-net-server-unref.js
-//#SHA1: bb2f989bf01182d804d6a8a0d0f33950f357c617
+//#FILE: test-net-server-close.js
+//#SHA1: 96e512298a1cede953eecb3a1d06b8dad1aeec81
 //-----------------
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -25,15 +25,37 @@
 "use strict";
 const net = require("net");
 
-test("net server unref", () => {
-  const s = net.createServer();
-  s.listen(0);
-  s.unref();
+test("server close behavior", async () => {
+  const sockets = [];
 
-  const mockCallback = jest.fn();
-  setTimeout(mockCallback, 1000).unref();
+  const serverClosePromise = new Promise(resolve => {
+    const server = net.createServer(c => {
+      const closeHandler = jest.fn();
+      c.on("close", closeHandler);
 
-  expect(mockCallback).not.toHaveBeenCalled();
+      sockets.push(c);
+
+      if (sockets.length === 2) {
+        expect(server.close()).toBe(server);
+        sockets.forEach(c => c.destroy());
+      }
+
+      c.on("close", () => {
+        expect(closeHandler).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    server.on("close", resolve);
+
+    expect(server).toBe(
+      server.listen(0, () => {
+        net.createConnection(server.address().port);
+        net.createConnection(server.address().port);
+      }),
+    );
+  });
+
+  await serverClosePromise;
 });
 
-//<#END_FILE: test-net-server-unref.js
+//<#END_FILE: test-net-server-close.js

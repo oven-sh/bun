@@ -1,5 +1,5 @@
-//#FILE: test-net-server-unref.js
-//#SHA1: bb2f989bf01182d804d6a8a0d0f33950f357c617
+//#FILE: test-net-during-close.js
+//#SHA1: c5fc5c85760b2c68679f7041ebf737e8204ca8c5
 //-----------------
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -25,15 +25,28 @@
 "use strict";
 const net = require("net");
 
-test("net server unref", () => {
-  const s = net.createServer();
-  s.listen(0);
-  s.unref();
+test("accessing client properties during server close", done => {
+  const server = net.createServer(socket => {
+    socket.end();
+  });
 
-  const mockCallback = jest.fn();
-  setTimeout(mockCallback, 1000).unref();
+  server.listen(0, () => {
+    const client = net.createConnection(server.address().port);
+    server.close();
 
-  expect(mockCallback).not.toHaveBeenCalled();
+    // Server connection event has not yet fired client is still attempting to
+    // connect. Accessing properties should not throw in this case.
+    expect(() => {
+      /* eslint-disable no-unused-expressions */
+      client.remoteAddress;
+      client.remoteFamily;
+      client.remotePort;
+      /* eslint-enable no-unused-expressions */
+    }).not.toThrow();
+
+    // Exit now, do not wait for the client error event.
+    done();
+  });
 });
 
-//<#END_FILE: test-net-server-unref.js
+//<#END_FILE: test-net-during-close.js

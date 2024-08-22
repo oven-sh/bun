@@ -1,5 +1,5 @@
-//#FILE: test-net-server-unref.js
-//#SHA1: bb2f989bf01182d804d6a8a0d0f33950f357c617
+//#FILE: test-net-buffersize.js
+//#SHA1: b6b1298dc9f836252e5fcdcee680116d50da7651
 //-----------------
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -25,15 +25,36 @@
 "use strict";
 const net = require("net");
 
-test("net server unref", () => {
-  const s = net.createServer();
-  s.listen(0);
-  s.unref();
+const iter = 10;
 
-  const mockCallback = jest.fn();
-  setTimeout(mockCallback, 1000).unref();
+test("net buffer size", async () => {
+  const server = net.createServer(socket => {
+    socket.on("readable", () => {
+      socket.read();
+    });
 
-  expect(mockCallback).not.toHaveBeenCalled();
+    socket.on("end", () => {
+      server.close();
+    });
+  });
+
+  await new Promise(resolve => {
+    server.listen(0, () => {
+      const client = net.connect(server.address().port);
+
+      client.on("finish", () => {
+        expect(client.bufferSize).toBe(0);
+        resolve();
+      });
+
+      for (let i = 1; i < iter; i++) {
+        client.write("a");
+        expect(client.bufferSize).toBe(i);
+      }
+
+      client.end();
+    });
+  });
 });
 
-//<#END_FILE: test-net-server-unref.js
+//<#END_FILE: test-net-buffersize.js

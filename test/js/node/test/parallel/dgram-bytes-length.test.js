@@ -1,5 +1,5 @@
-//#FILE: test-net-server-unref.js
-//#SHA1: bb2f989bf01182d804d6a8a0d0f33950f357c617
+//#FILE: test-dgram-bytes-length.js
+//#SHA1: f899cc14c13e8c913645e204819cf99b867aec5c
 //-----------------
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -23,17 +23,20 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 "use strict";
-const net = require("net");
+const dgram = require("dgram");
 
-test("net server unref", () => {
-  const s = net.createServer();
-  s.listen(0);
-  s.unref();
+test("dgram bytes length", async () => {
+  const message = Buffer.from("Some bytes");
+  const client = dgram.createSocket("udp4");
 
-  const mockCallback = jest.fn();
-  setTimeout(mockCallback, 1000).unref();
-
-  expect(mockCallback).not.toHaveBeenCalled();
+  await new Promise((resolve, reject) => {
+    client.send(message, 0, message.length, 41234, "localhost", function (err, bytes) {
+      if (err) reject(err);
+      expect(bytes).toBe(message.length);
+      client.close();
+      resolve();
+    });
+  });
 });
 
-//<#END_FILE: test-net-server-unref.js
+//<#END_FILE: test-dgram-bytes-length.js

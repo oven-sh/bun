@@ -1,5 +1,5 @@
-//#FILE: test-net-server-unref.js
-//#SHA1: bb2f989bf01182d804d6a8a0d0f33950f357c617
+//#FILE: test-http-res-write-after-end.js
+//#SHA1: e579896871bf375190397b4f7e99f37cc156e7c9
 //-----------------
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -23,17 +23,33 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 "use strict";
-const net = require("net");
+const http = require("http");
 
-test("net server unref", () => {
-  const s = net.createServer();
-  s.listen(0);
-  s.unref();
+test("HTTP response write after end", async () => {
+  const server = http.Server((req, res) => {
+    res.on("error", error => {
+      expect(error).toMatchObject({
+        code: "ERR_STREAM_WRITE_AFTER_END",
+        name: "Error",
+        message: expect.any(String),
+      });
+    });
 
-  const mockCallback = jest.fn();
-  setTimeout(mockCallback, 1000).unref();
+    res.write("This should write.");
+    res.end();
 
-  expect(mockCallback).not.toHaveBeenCalled();
+    const r = res.write("This should raise an error.");
+    // Write after end should return false
+    expect(r).toBe(false);
+  });
+
+  await new Promise(resolve => {
+    server.listen(0, () => {
+      http.get({ port: server.address().port }, res => {
+        server.close(resolve);
+      });
+    });
+  });
 });
 
-//<#END_FILE: test-net-server-unref.js
+//<#END_FILE: test-http-res-write-after-end.js

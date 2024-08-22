@@ -1,5 +1,5 @@
-//#FILE: test-net-server-unref.js
-//#SHA1: bb2f989bf01182d804d6a8a0d0f33950f357c617
+//#FILE: test-dgram-ref.js
+//#SHA1: b1a50859a1784815d575d8203f7da20fe8d07e50
 //-----------------
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -23,17 +23,22 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 "use strict";
-const net = require("net");
+const dgram = require("dgram");
 
-test("net server unref", () => {
-  const s = net.createServer();
-  s.listen(0);
-  s.unref();
-
-  const mockCallback = jest.fn();
-  setTimeout(mockCallback, 1000).unref();
-
-  expect(mockCallback).not.toHaveBeenCalled();
+test("Should not hang when creating UDP sockets", () => {
+  // Should not hang, see https://github.com/nodejs/node-v0.x-archive/issues/1282
+  expect(() => dgram.createSocket("udp4")).not.toThrow();
+  expect(() => dgram.createSocket("udp6")).not.toThrow();
 });
 
-//<#END_FILE: test-net-server-unref.js
+test("Test ref() on a closed socket", done => {
+  // Test the case of ref()'ing a socket with no handle.
+  const s = dgram.createSocket("udp4");
+
+  s.close(() => {
+    expect(() => s.ref()).not.toThrow();
+    done();
+  });
+});
+
+//<#END_FILE: test-dgram-ref.js

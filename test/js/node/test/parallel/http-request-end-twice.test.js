@@ -1,5 +1,5 @@
-//#FILE: test-net-server-unref.js
-//#SHA1: bb2f989bf01182d804d6a8a0d0f33950f357c617
+//#FILE: test-http-request-end-twice.js
+//#SHA1: c8c502b3bf8a681a7acb9afa603a13cebaf1d00e
 //-----------------
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -23,17 +23,25 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 "use strict";
-const net = require("net");
+const http = require("http");
 
-test("net server unref", () => {
-  const s = net.createServer();
-  s.listen(0);
-  s.unref();
+test("http request end twice", async () => {
+  const server = http.Server((req, res) => {
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end("hello world\n");
+  });
 
-  const mockCallback = jest.fn();
-  setTimeout(mockCallback, 1000).unref();
-
-  expect(mockCallback).not.toHaveBeenCalled();
+  await new Promise(resolve => {
+    server.listen(0, () => {
+      const req = http.get({ port: server.address().port }, res => {
+        res.on("end", () => {
+          expect(req.end()).toBe(req);
+          server.close(resolve);
+        });
+        res.resume();
+      });
+    });
+  });
 });
 
-//<#END_FILE: test-net-server-unref.js
+//<#END_FILE: test-http-request-end-twice.js

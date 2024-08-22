@@ -1,5 +1,5 @@
-//#FILE: test-net-server-unref.js
-//#SHA1: bb2f989bf01182d804d6a8a0d0f33950f357c617
+//#FILE: test-net-end-without-connect.js
+//#SHA1: d13d4a7117c5625fec0c619acc024e705dfb4212
 //-----------------
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -25,15 +25,12 @@
 "use strict";
 const net = require("net");
 
-test("net server unref", () => {
-  const s = net.createServer();
-  s.listen(0);
-  s.unref();
-
-  const mockCallback = jest.fn();
-  setTimeout(mockCallback, 1000).unref();
-
-  expect(mockCallback).not.toHaveBeenCalled();
+test("Socket.end() without connect", done => {
+  const sock = new net.Socket();
+  sock.end(() => {
+    expect(sock.writable).toBe(false);
+    done();
+  });
 });
 
-//<#END_FILE: test-net-server-unref.js
+//<#END_FILE: test-net-end-without-connect.js

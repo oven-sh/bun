@@ -1625,7 +1625,7 @@ inline fn createScope(
     }
 
     if (function.isEmptyOrUndefinedOrNull() or !function.isCell() or !function.isCallable(globalThis.vm())) {
-        if (tag != .todo) {
+        if (tag != .todo and tag != .skip) {
             globalThis.throwPretty("{s} expects a function", .{signature});
             return .zero;
         }

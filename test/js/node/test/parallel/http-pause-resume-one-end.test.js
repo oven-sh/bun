@@ -1,5 +1,5 @@
-//#FILE: test-net-server-unref.js
-//#SHA1: bb2f989bf01182d804d6a8a0d0f33950f357c617
+//#FILE: test-http-pause-resume-one-end.js
+//#SHA1: 69f25ca624d470d640d6366b6df27eba31668e96
 //-----------------
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -23,17 +23,48 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 "use strict";
-const net = require("net");
+const http = require("http");
 
-test("net server unref", () => {
-  const s = net.createServer();
-  s.listen(0);
-  s.unref();
+test("HTTP server pause and resume", async () => {
+  const server = http.Server(function (req, res) {
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end("Hello World\n");
+    server.close();
+  });
 
-  const mockCallback = jest.fn();
-  setTimeout(mockCallback, 1000).unref();
+  await new Promise(resolve => {
+    server.listen(0, resolve);
+  });
 
-  expect(mockCallback).not.toHaveBeenCalled();
+  const opts = {
+    port: server.address().port,
+    headers: { connection: "close" },
+  };
+
+  await new Promise(resolve => {
+    http.get(opts, res => {
+      res.on(
+        "data",
+        jest.fn().mockImplementation(() => {
+          res.pause();
+          setImmediate(() => {
+            res.resume();
+          });
+        }),
+      );
+
+      res.on("end", () => {
+        expect(res.destroyed).toBe(false);
+      });
+
+      expect(res.destroyed).toBe(false);
+
+      res.on("close", () => {
+        expect(res.destroyed).toBe(true);
+        resolve();
+      });
+    });
+  });
 });
 
-//<#END_FILE: test-net-server-unref.js
+//<#END_FILE: test-http-pause-resume-one-end.js

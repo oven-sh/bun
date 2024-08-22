@@ -1,45 +1,47 @@
 //#FILE: test-net-write-fully-async-hex-string.js
 //#SHA1: e5b365bb794f38e7153fc41ebfaf991031f85423
 //-----------------
-'use strict';
+"use strict";
 // Flags: --expose-gc
 
 // Regression test for https://github.com/nodejs/node/issues/8251.
-const net = require('net');
+const net = require("net");
 
-const data = Buffer.alloc(1000000).toString('hex');
+const data = Buffer.alloc(1000000).toString("hex");
 
-test('net write fully async hex string', (done) => {
-  const server = net.createServer((conn) => {
-    conn.resume();
-  }).listen(0, () => {
-    const conn = net.createConnection(server.address().port, () => {
-      let count = 0;
+test("net write fully async hex string", done => {
+  const server = net
+    .createServer(conn => {
+      conn.resume();
+    })
+    .listen(0, () => {
+      const conn = net.createConnection(server.address().port, () => {
+        let count = 0;
 
-      function writeLoop() {
-        if (count++ === 20) {
-          conn.destroy();
-          server.close();
-          done();
-          return;
+        function writeLoop() {
+          if (count++ === 20) {
+            conn.destroy();
+            server.close();
+            done();
+            return;
+          }
+
+          while (conn.write(data, "hex"));
+          global.gc({ type: "minor" });
+          // The buffer allocated inside the .write() call should still be alive.
         }
 
-        while (conn.write(data, 'hex'));
-        global.gc({ type: 'minor' });
-        // The buffer allocated inside the .write() call should still be alive.
-      }
+        conn.on("drain", writeLoop);
 
-      conn.on('drain', writeLoop);
-
-      writeLoop();
+        writeLoop();
+      });
     });
-  });
 
   expect.assertions(2);
-  server.on('listening', () => {
+  server.on("listening", () => {
     expect(server.address().port).toBeGreaterThan(0);
   });
-  server.on('connection', () => {
+  server.on("connection", () => {
     expect(true).toBe(true); // Connection established
   });
 });

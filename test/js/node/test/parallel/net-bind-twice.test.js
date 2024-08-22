@@ -1,5 +1,5 @@
-//#FILE: test-net-server-unref.js
-//#SHA1: bb2f989bf01182d804d6a8a0d0f33950f357c617
+//#FILE: test-net-bind-twice.js
+//#SHA1: 432eb9529d0affc39c8af9ebc1147528d96305c9
 //-----------------
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -25,15 +25,30 @@
 "use strict";
 const net = require("net");
 
-test("net server unref", () => {
-  const s = net.createServer();
-  s.listen(0);
-  s.unref();
+test("net.Server cannot bind to the same port twice", async () => {
+  const server1 = net.createServer(jest.fn());
+  const server1ListenPromise = new Promise(resolve => {
+    server1.listen(0, "127.0.0.1", resolve);
+  });
 
-  const mockCallback = jest.fn();
-  setTimeout(mockCallback, 1000).unref();
+  await server1ListenPromise;
 
-  expect(mockCallback).not.toHaveBeenCalled();
+  const server2 = net.createServer(jest.fn());
+  const server2ErrorPromise = new Promise(resolve => {
+    server2.on("error", resolve);
+  });
+
+  server2.listen(server1.address().port, "127.0.0.1", jest.fn());
+
+  const error = await server2ErrorPromise;
+  expect(error).toEqual(
+    expect.objectContaining({
+      code: "EADDRINUSE",
+      message: expect.any(String),
+    }),
+  );
+
+  await new Promise(resolve => server1.close(resolve));
 });
 
-//<#END_FILE: test-net-server-unref.js
+//<#END_FILE: test-net-bind-twice.js

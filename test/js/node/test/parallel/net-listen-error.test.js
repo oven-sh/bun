@@ -1,5 +1,5 @@
-//#FILE: test-net-server-unref.js
-//#SHA1: bb2f989bf01182d804d6a8a0d0f33950f357c617
+//#FILE: test-net-listen-error.js
+//#SHA1: e137f95ad19c9814ab76d44f0020b7b1c9969b07
 //-----------------
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -25,15 +25,22 @@
 "use strict";
 const net = require("net");
 
-test("net server unref", () => {
-  const s = net.createServer();
-  s.listen(0);
-  s.unref();
+test("net.createServer listen error", done => {
+  const server = net.createServer(function (socket) {});
 
-  const mockCallback = jest.fn();
-  setTimeout(mockCallback, 1000).unref();
+  const mockListenCallback = jest.fn();
+  server.listen(1, "1.1.1.1", mockListenCallback); // EACCES or EADDRNOTAVAIL
 
-  expect(mockCallback).not.toHaveBeenCalled();
+  server.on("error", error => {
+    expect(error).toEqual(
+      expect.objectContaining({
+        message: expect.any(String),
+        code: expect.stringMatching(/^(EACCES|EADDRNOTAVAIL)$/),
+      }),
+    );
+    expect(mockListenCallback).not.toHaveBeenCalled();
+    done();
+  });
 });
 
-//<#END_FILE: test-net-server-unref.js
+//<#END_FILE: test-net-listen-error.js

@@ -1,5 +1,5 @@
-//#FILE: test-net-server-unref.js
-//#SHA1: bb2f989bf01182d804d6a8a0d0f33950f357c617
+//#FILE: test-dgram-send-empty-buffer.js
+//#SHA1: ac60fc545252e681b648a7038d1bebe46ffbbac0
 //-----------------
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -23,17 +23,28 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 "use strict";
-const net = require("net");
+const dgram = require("dgram");
 
-test("net server unref", () => {
-  const s = net.createServer();
-  s.listen(0);
-  s.unref();
+test("dgram send empty buffer", done => {
+  const client = dgram.createSocket("udp4");
 
-  const mockCallback = jest.fn();
-  setTimeout(mockCallback, 1000).unref();
+  client.bind(0, () => {
+    const port = client.address().port;
 
-  expect(mockCallback).not.toHaveBeenCalled();
+    client.on("message", buffer => {
+      expect(buffer.length).toBe(0);
+      clearInterval(interval);
+      client.close();
+      done();
+    });
+
+    const buf = Buffer.alloc(0);
+    const interval = setInterval(() => {
+      client.send(buf, 0, 0, port, "127.0.0.1", () => {
+        // This callback is expected to be called
+      });
+    }, 10);
+  });
 });
 
-//<#END_FILE: test-net-server-unref.js
+//<#END_FILE: test-dgram-send-empty-buffer.js

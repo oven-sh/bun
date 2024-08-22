@@ -674,7 +674,7 @@ pub const Version = extern struct {
                             this.version.major, this.version.minor, this.version.patch,
                         });
                     } else {
-                        try writer.print(Output.prettyFmt("<d>{d}.<r><yellow>{d}.{d}", true), .{
+                        try writer.print(Output.prettyFmt("<d>{d}.<r><b><yellow>{d}.{d}", true), .{
                             this.version.major, this.version.minor, this.version.patch,
                         });
                     }
@@ -693,7 +693,7 @@ pub const Version = extern struct {
                 .none, .build => try writer.print(Output.prettyFmt("<d>{d}.{d}.{d}", true), .{
                     this.version.major, this.version.minor, this.version.patch,
                 }),
-                .pre => try writer.print(Output.prettyFmt("<d>{d}.{d}.{d}<yellow>", true), .{
+                .pre => try writer.print(Output.prettyFmt("<d>{d}.{d}.{d}<r><b><yellow>", true), .{
                     this.version.major, this.version.minor, this.version.patch,
                 }),
             }
@@ -703,7 +703,7 @@ pub const Version = extern struct {
             }
 
             if (this.diff == .build) {
-                try writer.writeAll(Output.prettyFmt("<yellow>", true));
+                try writer.writeAll(Output.prettyFmt("<r><b><yellow>", true));
             }
 
             if (this.version.tag.hasBuild()) {

@@ -153,6 +153,7 @@ pub const OutdatedCommand = struct {
         manager.lockfile = lockfile;
 
         const root_pkg_id = manager.root_package_id.get(lockfile, manager.workspace_name_hash);
+        if (root_pkg_id == invalid_package_id) return;
         const root_pkg_deps = lockfile.packages.items(.dependencies)[root_pkg_id];
 
         try updateManifestsIfNecessary(manager, log_level, root_pkg_deps);
@@ -168,12 +169,7 @@ pub const OutdatedCommand = struct {
         var max_update: usize = 0;
         var max_latest: usize = 0;
 
-        var has_dev = false;
-        var has_peer = false;
-        var has_optional = false;
-
         const lockfile = manager.lockfile;
-
         const string_buf = lockfile.buffers.string_bytes.items;
         const dependencies = lockfile.buffers.dependencies.items;
         const packages = lockfile.packages.slice();
@@ -209,17 +205,15 @@ pub const OutdatedCommand = struct {
 
             if (resolution.value.npm.version.order(latest.version, string_buf, string_buf) != .lt) continue;
 
-            var package_name_len = package_name.len;
-            if (dep.behavior.dev) {
-                package_name_len += " (dev)".len;
-                has_dev = true;
-            } else if (dep.behavior.peer) {
-                package_name_len += " (peer)".len;
-                has_peer = true;
-            } else if (dep.behavior.optional) {
-                package_name_len += " (optional)".len;
-                has_optional = true;
-            }
+            const package_name_len = package_name.len +
+                if (dep.behavior.dev)
+                " (dev)".len
+            else if (dep.behavior.peer)
+                " (peer)".len
+            else if (dep.behavior.optional)
+                " (optional)".len
+            else
+                0;
 
             if (package_name_len > max_name) max_name = package_name_len;
 

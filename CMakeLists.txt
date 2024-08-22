@@ -253,45 +253,9 @@ file(GLOB USOCKETS_FILES ${CONFIGURE_DEPENDS}
 list(APPEND BUN_RAW_SOURCES ${USOCKETS_FILES})
 
 # --- Classes Generator ---
-file(GLOB BUN_CLASSES_TS ${CONFIGURE_DEPENDS}
-    "${BUN_SRC}/bun.js/*.classes.ts"
-    "${BUN_SRC}/bun.js/api/*.classes.ts"
-    "${BUN_SRC}/bun.js/test/*.classes.ts"
-    "${BUN_SRC}/bun.js/webcore/*.classes.ts"
-    "${BUN_SRC}/bun.js/node/*.classes.ts"
-)
-add_custom_command(
-    OUTPUT "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.h"
-    "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.cpp"
-    "${BUN_WORKDIR}/codegen/ZigGeneratedClasses+lazyStructureHeader.h"
-    "${BUN_WORKDIR}/codegen/ZigGeneratedClasses+DOMClientIsoSubspaces.h"
-    "${BUN_WORKDIR}/codegen/ZigGeneratedClasses+DOMIsoSubspaces.h"
-    "${BUN_WORKDIR}/codegen/ZigGeneratedClasses+lazyStructureImpl.h"
-    "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.zig"
-    COMMAND ${BUN_EXECUTABLE} run "${BUN_CODEGEN_SRC}/generate-classes.ts" ${BUN_CLASSES_TS} "${BUN_WORKDIR}/codegen"
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    MAIN_DEPENDENCY "${BUN_CODEGEN_SRC}/generate-classes.ts"
-    DEPENDS ${BUN_CLASSES_TS}
-    VERBATIM
-    COMMENT "Generating *.classes.ts bindings"
-)
 list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.cpp")
 
 if(NOT NO_CODEGEN)
-    # --- ErrorCode Generator ---
-    file(GLOB NODE_ERRORS_TS ${CONFIGURE_DEPENDS}
-        "${BUN_SRC}/bun.js/bindings/ErrorCode.ts"
-    )
-    add_custom_command(
-        OUTPUT "${BUN_WORKDIR}/codegen/ErrorCode+List.h" "${BUN_WORKDIR}/codegen/ErrorCode+Data.h" "${BUN_WORKDIR}/codegen/ErrorCode.zig"
-        COMMAND ${BUN_EXECUTABLE} run "${BUN_CODEGEN_SRC}/generate-node-errors.ts" "${BUN_WORKDIR}/codegen"
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        MAIN_DEPENDENCY "${BUN_CODEGEN_SRC}/generate-node-errors.ts"
-        DEPENDS ${NODE_ERRORS_TS}
-        VERBATIM
-        COMMENT "Generating ErrorCode.zig"
-    )
-
     # This needs something to force it to be regenerated
     WEBKIT_ADD_SOURCE_DEPENDENCIES(
         "${BUN_SRC}/bun.js/bindings/ErrorCode.cpp"
@@ -304,16 +268,6 @@ if(NOT NO_CODEGEN)
 endif()
 
 # --- JSSink Generator ---
-add_custom_command(
-    OUTPUT "${BUN_WORKDIR}/codegen/JSSink.cpp"
-    "${BUN_WORKDIR}/codegen/JSSink.h"
-    COMMAND ${BUN_EXECUTABLE} run "src/codegen/generate-jssink.ts" "${BUN_WORKDIR}/codegen"
-    VERBATIM
-    MAIN_DEPENDENCY "src/codegen/generate-jssink.ts"
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMENT "Generating JSSink"
-    USES_TERMINAL
-)
 list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/JSSink.cpp")
 
 # --- .lut.h Generator ---
@@ -365,311 +319,15 @@ if(NOT BUN_LINK_ONLY)
     WEBKIT_ADD_SOURCE_DEPENDENCIES(${BUN_SRC}/bun.js/bindings/ZigGlobalObject.cpp ${BUN_WORKDIR}/codegen/ZigGlobalObject.lut.h)
 endif()
 
-# --- bun install ---
-if(NOT NO_CODEGEN)
-    set(BUN_INSTALL_OUT
-        ${CMAKE_CURRENT_SOURCE_DIR}/node_modules
-        ${CMAKE_CURRENT_SOURCE_DIR}/bun.lockb
-    )
-    add_custom_command(
-        OUTPUT ${BUN_INSTALL_OUT}
-        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/package.json
-        COMMAND ${BUN_EXECUTABLE} install --frozen-lockfile
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        VERBATIM
-        COMMENT "Running bun install"
-    )
-endif()
-
-# --- bun-error ---
-if(NOT NO_CODEGEN)
-    set(BUN_ERROR_WORKDIR ${CMAKE_CURRENT_SOURCE_DIR}/packages/bun-error)
-    set(BUN_ERROR_OUT
-        ${BUN_ERROR_WORKDIR}/dist/index.js
-        ${BUN_ERROR_WORKDIR}/dist/bun-error.css
-    )
-    add_custom_command(
-        OUTPUT ${BUN_ERROR_WORKDIR}/node_modules
-        COMMAND ${BUN_EXECUTABLE} install --frozen-lockfile
-        WORKING_DIRECTORY ${BUN_ERROR_WORKDIR}
-        VERBATIM
-        COMMENT "Installing bun-error"
-    )
-    add_custom_command(
-        OUTPUT ${BUN_ERROR_OUT}
-        DEPENDS ${BUN_ERROR_WORKDIR}/node_modules
-        COMMAND ${BUN_EXECUTABLE} x esbuild
-            index.tsx bun-error.css
-            --outdir=dist
-            --define:process.env.NODE_ENV=\"'production'\"
-            --minify
-            --bundle
-            --platform=browser
-            --format=esm
-        WORKING_DIRECTORY ${BUN_ERROR_WORKDIR}
-        VERBATIM
-        COMMENT "Building bun-error"
-    )
-endif()
-
-# --- fallback-decoder ---
-if(NOT NO_CODEGEN)
-    set(FALLBACK_DECODER_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/fallback.ts)
-    set(FALLBACK_DECODER_OUT ${CMAKE_CURRENT_SOURCE_DIR}/src/fallback.out.js)
-    add_custom_command(
-        OUTPUT ${FALLBACK_DECODER_OUT}
-        DEPENDS ${BUN_INSTALL_OUT} ${FALLBACK_DECODER_SRC}
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        COMMAND ${BUN_EXECUTABLE} x esbuild
-            ${FALLBACK_DECODER_SRC}
-            --outfile=${FALLBACK_DECODER_OUT}
-            --target=esnext
-            --bundle
-            --format=iife
-            --platform=browser
-            --minify
-        VERBATIM
-        COMMENT "Building fallback.out.js"
-    )
-endif()
-
-# --- runtime.js ---
-if(NOT NO_CODEGEN)
-    set(RUNTIME_JS_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime.bun.js)
-    set(RUNTIME_JS_OUT ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime.out.js)
-    add_custom_command(
-        OUTPUT ${RUNTIME_JS_OUT}
-        DEPENDS ${BUN_INSTALL_OUT} ${RUNTIME_JS_SRC}
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        COMMAND ${BUN_EXECUTABLE} x esbuild
-            ${RUNTIME_JS_SRC}
-            --outfile=${RUNTIME_JS_OUT}
-            --define:process.env.NODE_ENV=\"'production'\"
-            --target=esnext
-            --bundle
-            --format=esm
-            --platform=node
-            --minify
-            --external:/bun:*
-        VERBATIM
-        COMMENT "Building runtime.out.js"
-    )
-endif()
-
-# --- node-fallbacks ---
-if(NOT NO_CODEGEN)
-    set(NODE_FALLBACKS_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/node-fallbacks)
-    set(NODE_FALLBACKS_OUT ${NODE_FALLBACKS_SRC}/out)
-
-    add_custom_command(
-        OUTPUT ${NODE_FALLBACKS_SRC}/node_modules
-        DEPENDS ${BUN_INSTALL_OUT} ${NODE_FALLBACKS_SRC}
-        WORKING_DIRECTORY ${NODE_FALLBACKS_SRC}
-        COMMAND ${BUN_EXECUTABLE} install --frozen-lockfile
-        VERBATIM
-        COMMENT "Installing node-fallbacks"
-    )
-
-    file(GLOB NODE_FALLBACKS_FILES ${NODE_FALLBACKS_SRC}/*.js)
-
-    add_custom_command(
-        OUTPUT ${NODE_FALLBACKS_OUT}
-        DEPENDS ${BUN_INSTALL_OUT} ${NODE_FALLBACKS_SRC}/node_modules ${NODE_FALLBACKS_SRC}
-        WORKING_DIRECTORY ${NODE_FALLBACKS_SRC}
-        COMMAND ${BUN_EXECUTABLE} x esbuild
-            ${NODE_FALLBACKS_FILES}
-            --outdir=out
-            --format=esm
-            --minify
-            --bundle
-            --platform=browser
-        VERBATIM
-        COMMENT "Building node-fallbacks.out.js"
-    )
-endif()
-
-# --- Identifier Cache ---
-if(NOT NO_CODEGEN)
-    set(BUN_IDENTIFIER_CACHE_OUT
-        "${BUN_SRC}/js_lexer/id_continue_bitset.blob"
-        "${BUN_SRC}/js_lexer/id_continue_bitset.meta.blob"
-        "${BUN_SRC}/js_lexer/id_start_bitset.blob"
-        "${BUN_SRC}/js_lexer/id_start_bitset.meta.blob")
-    add_custom_command(
-        OUTPUT ${BUN_IDENTIFIER_CACHE_OUT}
-        MAIN_DEPENDENCY "${BUN_SRC}/js_lexer/identifier_data.zig"
-        DEPENDS "${BUN_SRC}/js_lexer/identifier_cache.zig"
-        COMMAND ${CMAKE_ZIG_COMPILER} run
-            "--zig-lib-dir" ${ZIG_LIB_DIR}
-            "--cache-dir" ${ZIG_LOCAL_CACHE_DIR}
-            "--global-cache-dir" ${ZIG_GLOBAL_CACHE_DIR}
-            "${BUN_SRC}/js_lexer/identifier_data.zig"
-        VERBATIM
-        COMMENT "Building Identifier Cache"
-    )
-endif()
-
-# --- Bundled TS/JS ---
-# Note: It's not worth doing this in parallel at the CMake/Ninja level, because this bundling
-# requires all the JS files to be known, but also Bun will use all cores during bundling anyways.
-if(NOT NO_CODEGEN)
-    file(GLOB BUN_TS_MODULES ${CONFIGURE_DEPENDS}
-        "${BUN_SRC}/js/node/*.ts"
-        "${BUN_SRC}/js/node/*.js"
-        "${BUN_SRC}/js/bun/*.ts"
-        "${BUN_SRC}/js/bun/*.js"
-        "${BUN_SRC}/js/builtins/*.ts"
-        "${BUN_SRC}/js/builtins/*.js"
-        "${BUN_SRC}/js/thirdparty/*.js"
-        "${BUN_SRC}/js/thirdparty/*.ts"
-        "${BUN_SRC}/js/internal/*.js"
-        "${BUN_SRC}/js/internal/*.ts"
-        "${BUN_SRC}/js/internal/cluster/*.ts"
-        "${BUN_SRC}/js/internal/util/*.js"
-        "${BUN_SRC}/js/internal/fs/*.ts"
-        "${BUN_SRC}/js/node/*.js"
-        "${BUN_SRC}/js/node/*.ts"
-        "${BUN_SRC}/js/thirdparty/*.js"
-        "${BUN_SRC}/js/thirdparty/*.ts"
-        "${BUN_SRC}/js/internal-for-testing.ts"
-    )
-
-    file(GLOB CODEGEN_FILES ${CONFIGURE_DEPENDS} "${BUN_CODEGEN_SRC}/*.ts")
-
-    add_custom_command(
-        OUTPUT
-        "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp"
-        "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.h"
-        "${BUN_WORKDIR}/codegen/InternalModuleRegistryConstants.h"
-        "${BUN_WORKDIR}/codegen/InternalModuleRegistry+createInternalModuleById.h"
-        "${BUN_WORKDIR}/codegen/InternalModuleRegistry+enum.h"
-        "${BUN_WORKDIR}/codegen/InternalModuleRegistry+numberOfModules.h"
-        "${BUN_WORKDIR}/codegen/NativeModuleImpl.h"
-        "${BUN_WORKDIR}/codegen/ResolvedSourceTag.zig"
-        "${BUN_WORKDIR}/codegen/SyntheticModuleType.h"
-        "${BUN_WORKDIR}/codegen/GeneratedJS2Native.h"
-        "${BUN_SRC}/bun.js/bindings/GeneratedJS2Native.zig"
-        COMMAND ${BUN_EXECUTABLE} run "${BUN_SRC}/codegen/bundle-modules.ts" "--debug=${DEBUG}" "${BUN_WORKDIR}"
-        DEPENDS ${BUN_TS_MODULES} ${CODEGEN_FILES}
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        COMMENT "Bundling JS"
-    )
-endif()
-
 WEBKIT_ADD_SOURCE_DEPENDENCIES(
     "${BUN_SRC}/bun.js/bindings/InternalModuleRegistry.cpp"
     "${BUN_WORKDIR}/codegen/InternalModuleRegistryConstants.h"
 )
 list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp")
 
-# --- Peechy API ---
-# if(NOT NO_CODEGEN)
-# add_custom_command(
-# OUTPUT "${BUN_SRC}/api/schema.js"
-# "${BUN_SRC}/api/schema.d.ts"
-# "${BUN_SRC}/api/schema.zig"
-# WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-# COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/.bin/peechy"
-# "--schema" "${BUN_SRC}/api/schema.peechy"
-# "--esm" "${BUN_SRC}/api/schema.js"
-# "--ts" "${BUN_SRC}/api/schema.d.ts"
-# "--zig" "${BUN_SRC}/api/schema.zig"
-# COMMAND "${CMAKE_ZIG_COMPILER}" "fmt" "src/api/schema.zig"
-# COMMAND "${PRETTIER}" "--config=.prettierrc.cjs" "--write" "src/api/schema.js" "src/api/schema.d.ts"
-# DEPENDS "${BUN_SRC}/api/schema.peechy"
-# COMMENT "Building schema"
-# )
-# add_custom_command(
-# OUTPUT "${BUN_SRC}/analytics/analytics_schema.zig"
-# WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-# COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/.bin/peechy"
-# "--schema" "${BUN_SRC}/analytics/schema.peechy"
-# "--zig" "${BUN_SRC}/analytics/analytics_schema.zig"
-# COMMAND "${CMAKE_ZIG_COMPILER}" "fmt" "${BUN_SRC}/analytics/analytics_schema.zig"
-# DEPENDS "${BUN_SRC}/api/schema.peechy"
-# COMMENT "Building analytics_schema.zig"
-# )
-# endif()
-
 # --- Zig Object ---
-file(GLOB ZIG_FILES
-    "${BUN_SRC}/*.zig"
-    "${BUN_SRC}/*/*.zig"
-    "${BUN_SRC}/*/*/*.zig"
-    "${BUN_SRC}/*/*/*/*.zig"
-    "${BUN_SRC}/*/*/*/*/*.zig"
-)
-
-if(NOT BUN_ZIG_OBJ_FORMAT)
-    # To use LLVM bitcode from Zig, more work needs to be done. Currently, an install of
-    # LLVM 18.1.7 does not compatible with what bitcode Zig 0.13 outputs (has LLVM 18.1.7)
-    # Change to "bc" to experiment, "Invalid record" means it is not valid output.
-    set(BUN_ZIG_OBJ_FORMAT "obj")
-endif()
-
-if(NOT BUN_ZIG_OBJ_DIR)
-    set(BUN_ZIG_OBJ_DIR "${BUN_WORKDIR}/CMakeFiles")
-endif()
-
-get_filename_component(BUN_ZIG_OBJ_DIR "${BUN_ZIG_OBJ_DIR}" REALPATH BASE_DIR "${CMAKE_BINARY_DIR}")
-
-if(WIN32)
-    set(BUN_ZIG_OBJ "${BUN_ZIG_OBJ_DIR}/bun-zig.o")
-else()
-    set(BUN_ZIG_OBJ "${BUN_ZIG_OBJ_DIR}/bun-zig.o")
-endif()
-
-set(USES_TERMINAL_NOT_IN_CI "")
-
-if(NOT CI)
-    set(USES_TERMINAL_NOT_IN_CI "USES_TERMINAL")
-endif()
-
-if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
-    if(ENABLE_LOGS)
-        set(ZIG_ENABLE_LOGS "true")
-    else()
-        set(ZIG_ENABLE_LOGS "false")
-    endif()
-    add_custom_command(
-        OUTPUT "${BUN_ZIG_OBJ}"
-        COMMAND
-        ${CMAKE_ZIG_COMPILER} "build" "obj"
-        "--zig-lib-dir" ${ZIG_LIB_DIR}
-        "--cache-dir" ${ZIG_LOCAL_CACHE_DIR}
-        "--global-cache-dir" ${ZIG_GLOBAL_CACHE_DIR}
-        "--prefix" "${BUN_ZIG_OBJ_DIR}"
-        "--verbose"
-        "-Dgenerated-code=${BUN_WORKDIR}/codegen"
-        "-freference-trace=10"
-        "-Dversion=${Bun_VERSION}"
-        "-Dcanary=${USE_CANARY_REVISION}"
-        "-Doptimize=${USE_ZIG_OPTIMIZE}"
-        "-Dcpu=${USE_ZIG_CPU}"
-        "-Dtarget=${USE_ZIG_TARGET}"
-        "-Denable_logs=${ZIG_ENABLE_LOGS}"
-        "-Dreported_nodejs_version=${USE_NODEJS_VERSION}"
-        "-Dobj_format=${BUN_ZIG_OBJ_FORMAT}"
-        DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/build.zig"
-        "${ZIG_FILES}"
-        "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.zig"
-        "${BUN_WORKDIR}/codegen/ErrorCode.zig"
-        "${BUN_WORKDIR}/codegen/ResolvedSourceTag.zig"
-        "${BUN_IDENTIFIER_CACHE_OUT}"
-        "${BUN_SRC}/api/schema.zig"
-        "${BUN_SRC}/bun.js/bindings/GeneratedJS2Native.zig"
-        ${BUN_ERROR_OUT}
-        ${FALLBACK_DECODER_OUT}
-        ${RUNTIME_JS_OUT}
-        ${NODE_FALLBACKS_OUT}
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        COMMENT "Building zig code"
-        VERBATIM
-
-        # This is here to show Zig's progress indicator
-        ${USES_TERMINAL_NOT_IN_CI}
-    )
+if(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY)
+    include(cmake/BuildZig.cmake)
 endif()
 
 if(WIN32)
@@ -703,7 +361,7 @@ endif()
 if(BUN_TIDY_ONLY OR BUN_TIDY_ONLY_EXTRA)
     add_library(${bun} OBJECT "${BUN_SOURCES}")
 elseif(NOT BUN_CPP_ONLY)
-    add_executable(${bun} "${BUN_SOURCES}" "${BUN_ZIG_OBJ}")
+    add_executable(${bun} "${BUN_SOURCES}" ${ZIG_OBJECT_PATH})
 else()
     add_executable(${bun} "${BUN_SOURCES}")
 endif()
@@ -723,7 +381,6 @@ if(APPLE)
 endif()
 
 add_compile_definitions(
-
     # TODO: are all of these variables strictly necessary?
     "_HAS_EXCEPTIONS=0"
     "LIBUS_USE_OPENSSL=1"

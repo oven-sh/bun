@@ -24,7 +24,7 @@ if(EXISTS ${WEBKIT_DIR}/package.json)
   file(READ ${WEBKIT_DIR}/package.json WEBKIT_PACKAGE_JSON)
 
   if(WEBKIT_PACKAGE_JSON MATCHES ${WEBKIT_VERSION})
-    message(STATUS "Using cached WebKit: ${WEBKIT_CACHED_VERSION}")
+    message(STATUS "Using cached WebKit: ${WEBKIT_VERSION}")
     return()
   endif()
 endif()

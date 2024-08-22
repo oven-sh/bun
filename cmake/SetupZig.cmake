@@ -3,8 +3,18 @@ include(cmake/Utils.cmake)
 parse_option(ZIG_VERSION STRING "The version of zig to use" "0.13.0")
 parse_option(ZIG_LOCAL_CACHE_DIR FILEPATH "The path to local the zig cache directory" ${CACHE_PATH}/zig/local)
 parse_option(ZIG_GLOBAL_CACHE_DIR FILEPATH "The path to the global zig cache directory" ${CACHE_PATH}/zig/global)
-parse_option(ZIG_BIN_CACHE_DIR FILEPATH "The path to the zig binary cache directory" ${CACHE_PATH}/zig/bin)
 parse_option(ZIG_LIB_DIR FILEPATH "The path to the Zig library directory" ${CWD}/src/deps/zig/lib)
+parse_option(ZIG_BIN_CACHE_DIR FILEPATH "The path to the zig binary cache directory" ${CACHE_PATH}/zig/bin)
+
+set(CMAKE_ZIG_FLAGS
+  --cache-dir ${ZIG_LOCAL_CACHE_DIR}
+  --global-cache-dir ${ZIG_GLOBAL_CACHE_DIR}
+  --zig-lib-dir ${ZIG_LIB_DIR}
+)
+
+if(CMAKE_VERBOSE_MAKEFILE)
+  list(APPEND CMAKE_ZIG_FLAGS --verbose)
+endif()
 
 function(check_zig_version found executable)
   set(${found} FALSE PARENT_SCOPE)

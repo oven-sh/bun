@@ -1,1 +1,1 @@
-module.exports = require("../../../cluster/upstream/common");
+module.exports = require("../../../cluster/upstream/common/index");

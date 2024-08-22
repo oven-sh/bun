@@ -1275,3 +1275,11 @@ export function assertManifestsPopulated(absCachePath: string, registryUrl: stri
     expect(manifest.versions.length).toBeGreaterThan(0);
   }
 }
+
+// Make it easier to run some node tests.
+Object.defineProperty(globalThis, "gc", {
+  value: Bun.gc,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});

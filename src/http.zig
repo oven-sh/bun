@@ -1225,20 +1225,15 @@ pub fn onTimeout(
 ) void {
     if (client.flags.disable_timeout) return;
     log("Timeout  {s}\n", .{client.url.href});
-    client.unregisterAbortTracker();
     defer NewHTTPContext(is_ssl).terminateSocket(socket);
 
-    if (client.state.stage != .done and client.state.stage != .fail) {
-        client.fail(error.Timeout);
-    }
+    client.fail(error.Timeout);
 }
 pub fn onConnectError(
     client: *HTTPClient,
 ) void {
     log("onConnectError  {s}\n", .{client.url.href});
-    client.unregisterAbortTracker();
-    if (client.state.stage != .done and client.state.stage != .fail)
-        client.fail(error.ConnectionRefused);
+    client.fail(error.ConnectionRefused);
 }
 
 pub inline fn getAllocator() std.mem.Allocator {
@@ -3215,18 +3210,19 @@ pub fn closeAndAbort(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCo
 
 fn fail(this: *HTTPClient, err: anyerror) void {
     this.unregisterAbortTracker();
+    if (this.state.stage != .done and this.state.stage != .fail) {
+        this.state.request_stage = .fail;
+        this.state.response_stage = .fail;
+        this.state.fail = err;
+        this.state.stage = .fail;
 
-    this.state.request_stage = .fail;
-    this.state.response_stage = .fail;
-    this.state.fail = err;
-    this.state.stage = .fail;
+        const callback = this.result_callback;
+        const result = this.toResult();
+        this.state.reset(this.allocator);
+        this.flags.proxy_tunneling = false;
 
-    const callback = this.result_callback;
-    const result = this.toResult();
-    this.state.reset(this.allocator);
-    this.flags.proxy_tunneling = false;
-
-    callback.run(@fieldParentPtr("client", this), result);
+        callback.run(@fieldParentPtr("client", this), result);
+    }
 }
 
 // We have to clone metadata immediately after use

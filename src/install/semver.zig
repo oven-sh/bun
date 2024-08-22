@@ -665,12 +665,12 @@ pub const Version = extern struct {
             }
 
             switch (this.diff) {
-                .major => try writer.print(Output.prettyFmt("<red>{d}.{d}.{d}", true), .{
+                .major => try writer.print(Output.prettyFmt("<b><red>{d}.{d}.{d}", true), .{
                     this.version.major, this.version.minor, this.version.patch,
                 }),
                 .minor => {
                     if (this.version.major == 0) {
-                        try writer.print(Output.prettyFmt("<d>{d}.<r><red>{d}.{d}", true), .{
+                        try writer.print(Output.prettyFmt("<d>{d}.<r><b><red>{d}.{d}", true), .{
                             this.version.major, this.version.minor, this.version.patch,
                         });
                     } else {
@@ -681,7 +681,7 @@ pub const Version = extern struct {
                 },
                 .patch => {
                     if (this.version.major == 0 and this.version.minor == 0) {
-                        try writer.print(Output.prettyFmt("<d>{d}.{d}.<r><red>{d}", true), .{
+                        try writer.print(Output.prettyFmt("<d>{d}.{d}.<r><b><red>{d}", true), .{
                             this.version.major, this.version.minor, this.version.patch,
                         });
                     } else {

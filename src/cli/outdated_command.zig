@@ -11,6 +11,77 @@ const DependencyID = Install.DependencyID;
 const Behavior = Install.Dependency.Behavior;
 const invalid_package_id = Install.invalid_package_id;
 
+fn Table(comptime num_columns: usize, comptime column_color: []const u8, comptime column_left_pad: usize, comptime column_right_pad: usize) type {
+    return struct {
+        column_names: [num_columns][]const u8,
+        column_inside_lengths: [num_columns]usize,
+
+        pub fn init(column_names_: [num_columns][]const u8, column_inside_lengths_: [num_columns]usize) @This() {
+            return .{
+                .column_names = column_names_,
+                .column_inside_lengths = column_inside_lengths_,
+            };
+        }
+
+        pub fn writeTopLineSeparator(this: *const @This()) void {
+            for (this.column_inside_lengths, 0..) |column_inside_length, i| {
+                if (i == 0) {
+                    Output.pretty("┌", .{});
+                } else {
+                    Output.pretty("┬", .{});
+                }
+                for (0..column_left_pad + column_inside_length + column_right_pad) |_| Output.pretty("─", .{});
+
+                if (i == this.column_inside_lengths.len - 1) {
+                    Output.pretty("┐\n", .{});
+                }
+            }
+        }
+
+        pub fn writeBottomLineSeparator(this: *const @This()) void {
+            for (this.column_inside_lengths, 0..) |column_inside_length, i| {
+                if (i == 0) {
+                    Output.pretty("└", .{});
+                } else {
+                    Output.pretty("┴", .{});
+                }
+                for (0..column_left_pad + column_inside_length + column_right_pad) |_| Output.pretty("─", .{});
+
+                if (i == this.column_inside_lengths.len - 1) {
+                    Output.pretty("┘\n", .{});
+                }
+            }
+        }
+
+        pub fn writeLineSeparator(this: *const @This()) void {
+            for (this.column_inside_lengths, 0..) |column_inside_length, i| {
+                if (i == 0) {
+                    Output.pretty("├", .{});
+                } else {
+                    Output.pretty("┼", .{});
+                }
+                for (0..column_left_pad + column_inside_length + column_right_pad) |_| Output.pretty("─", .{});
+
+                if (i == this.column_inside_lengths.len - 1) {
+                    Output.pretty("┤\n", .{});
+                }
+            }
+        }
+
+        pub fn writeColumnNames(this: *const @This()) void {
+            for (this.column_inside_lengths, 0..) |column_inside_length, i| {
+                Output.pretty("│", .{});
+                for (0..column_left_pad) |_| Output.pretty(" ", .{});
+                Output.pretty("<b><" ++ column_color ++ ">{s}<r>", .{this.column_names[i]});
+                for (this.column_names[i].len..column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
+                if (i == this.column_inside_lengths.len - 1) {
+                    Output.pretty("│\n", .{});
+                }
+            }
+        }
+    };
+}
+
 pub const OutdatedCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .outdated);
@@ -85,10 +156,10 @@ pub const OutdatedCommand = struct {
         const root_pkg_deps = lockfile.packages.items(.dependencies)[root_pkg_id];
 
         try updateManifestsIfNecessary(manager, log_level, root_pkg_deps);
-        try printOutdatedInfo(manager, root_pkg_deps);
+        try printOutdatedInfoTable(manager, root_pkg_deps);
     }
 
-    fn printOutdatedInfo(manager: *PackageManager, root_pkg_deps: Lockfile.DependencySlice) !void {
+    fn printOutdatedInfoTable(manager: *PackageManager, root_pkg_deps: Lockfile.DependencySlice) !void {
         var outdated_ids: std.ArrayListUnmanaged(struct { package_id: PackageID, dep_id: DependencyID }) = .{};
         defer outdated_ids.deinit(manager.allocator);
 
@@ -104,6 +175,7 @@ pub const OutdatedCommand = struct {
         const lockfile = manager.lockfile;
 
         const string_buf = lockfile.buffers.string_bytes.items;
+        const dependencies = lockfile.buffers.dependencies.items;
         const packages = lockfile.packages.slice();
         const pkg_names = packages.items(.name);
         const pkg_resolutions = packages.items(.resolution);
@@ -137,26 +209,31 @@ pub const OutdatedCommand = struct {
 
             if (resolution.value.npm.version.order(latest.version, string_buf, string_buf) != .lt) continue;
 
-            if (dep.behavior.dev)
-                has_dev = true
-            else if (dep.behavior.peer)
-                has_peer = true
-            else if (dep.behavior.optional)
+            var package_name_len = package_name.len;
+            if (dep.behavior.dev) {
+                package_name_len += " (dev)".len;
+                has_dev = true;
+            } else if (dep.behavior.peer) {
+                package_name_len += " (peer)".len;
+                has_peer = true;
+            } else if (dep.behavior.optional) {
+                package_name_len += " (optional)".len;
                 has_optional = true;
+            }
 
-            if (package_name.len > max_name) max_name = package_name.len;
+            if (package_name_len > max_name) max_name = package_name_len;
 
             version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)}) catch bun.outOfMemory();
             if (version_buf.items.len > max_current) max_current = version_buf.items.len;
-            version_buf.items.len = 0;
+            version_buf.clearRetainingCapacity();
 
             version_writer.print("{}", .{update_version.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
             if (version_buf.items.len > max_update) max_update = version_buf.items.len;
-            version_buf.items.len = 0;
+            version_buf.clearRetainingCapacity();
 
             version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
             if (version_buf.items.len > max_latest) max_latest = version_buf.items.len;
-            version_buf.items.len = 0;
+            version_buf.clearRetainingCapacity();
 
             outdated_ids.append(
                 bun.default_allocator,
@@ -166,40 +243,49 @@ pub const OutdatedCommand = struct {
 
         if (outdated_ids.items.len == 0) return;
 
-        // +2 for padding columns with 2 spaces
-        const package_column_length: usize = 2 + if (has_optional)
-            "Optional dependencies".len + @as(usize, (max_name -| "Optional dependencies".len))
-        else if (has_peer)
-            "Peer dependencies".len + @as(usize, (max_name -| "Peer dependencies".len))
-        else if (has_dev)
-            "Dev dependencies".len + @as(usize, (max_name -| "Dev dependencies".len))
-        else
-            "Dependencies".len + @as(usize, (max_name -| "Dependencies".len));
+        const package_column_inside_length = @max("Packages".len, max_name);
+        const current_column_inside_length = @max("Current".len, max_current);
+        const update_column_inside_length = @max("update".len, max_update);
+        const latest_column_inside_length = @max("--latest".len, max_latest);
 
-        const current_column_length: usize = "Current".len + @as(usize, (max_current -| "Current".len)) + 2;
-        const update_column_length: usize = "Update".len + @as(usize, (max_update -| "Update".len)) + 2;
-        const latest_column_length: usize = "Latest".len + @as(usize, (max_latest -| "Latest".len)) + 2;
+        const column_left_pad = 1;
+        const column_right_pad = 1;
 
-        var printed_column_names = false;
+        const table = Table(4, "blue", column_left_pad, column_right_pad).init(
+            [_][]const u8{
+                "Packages",
+                "Current",
+                "update",
+                "--latest",
+            },
+            [_]usize{
+                package_column_inside_length,
+                current_column_inside_length,
+                update_column_inside_length,
+                latest_column_inside_length,
+            },
+        );
+
+        table.writeTopLineSeparator();
+        table.writeColumnNames();
+
         inline for (
             .{
-                .{ "Dependencies", Behavior{ .normal = true } },
-                .{ "Dev dependencies", Behavior{ .dev = true } },
-                .{ "Peer dependencies", Behavior{ .peer = true } },
-                .{ "Optional dependencies", Behavior{ .optional = true } },
+                Behavior{ .normal = true },
+                Behavior{ .dev = true },
+                Behavior{ .peer = true },
+                Behavior{ .optional = true },
             },
-        ) |dependency_group| {
-            const group_name, const group_behavior = dependency_group;
-
-            var printed_group_name = false;
-
+        ) |group_behavior| {
             for (outdated_ids.items) |ids| {
                 const package_id = ids.package_id;
                 const dep_id = ids.dep_id;
-                const package_name = pkg_names[package_id].slice(string_buf);
-                const dep = lockfile.buffers.dependencies.items[dep_id];
 
-                if (@as(u8, @bitCast(dep.behavior)) & @as(u8, @bitCast(group_behavior)) == 0) continue;
+                const dep = dependencies[dep_id];
+                if (@as(u8, @bitCast(group_behavior)) & @as(u8, @bitCast(dep.behavior)) == 0) continue;
+
+                const package_name = pkg_names[package_id].slice(string_buf);
+                const resolution = pkg_resolutions[package_id];
 
                 var expired = false;
                 const manifest = manager.manifests.byNameAllowExpired(
@@ -209,57 +295,69 @@ pub const OutdatedCommand = struct {
                 ) orelse continue;
 
                 const latest = manifest.findByDistTag("latest") orelse continue;
-                const update_version = if (dep.version.tag == .npm)
+                const update = if (dep.version.tag == .npm)
                     manifest.findBestVersion(dep.version.value.npm.version, string_buf) orelse continue
                 else
                     manifest.findByDistTag(dep.version.value.dist_tag.tag.slice(string_buf)) orelse continue;
 
-                if (!printed_group_name) {
-                    printed_group_name = true;
+                table.writeLineSeparator();
 
-                    Output.pretty("<r>\n<cyan>" ++ group_name ++ "<r>", .{});
-                    for (group_name.len..package_column_length) |_| Output.pretty(" ", .{});
+                {
+                    // package name
+                    const behavior_str = if (dep.behavior.dev)
+                        " (dev)"
+                    else if (dep.behavior.peer)
+                        " (peer)"
+                    else if (dep.behavior.optional)
+                        " (optional)"
+                    else
+                        "";
 
-                    if (!printed_column_names) {
-                        printed_column_names = true;
+                    Output.pretty("│", .{});
+                    for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
-                        Output.pretty("<cyan>Current<r>", .{});
-                        for ("Current".len..current_column_length) |_| Output.pretty(" ", .{});
-
-                        Output.pretty("<cyan>Update<r>", .{});
-                        for ("Update".len..update_column_length) |_| Output.pretty(" ", .{});
-
-                        Output.pretty("<cyan>Latest<r>", .{});
-                        for ("Latest".len..latest_column_length) |_| Output.pretty(" ", .{});
-                    }
-
-                    Output.pretty("\n", .{});
+                    Output.pretty("{s}<d>{s}<r>", .{ package_name, behavior_str });
+                    for (package_name.len + behavior_str.len..package_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
                 }
 
-                Output.pretty("{s}", .{package_name});
-                for (package_name.len..package_column_length) |_| Output.pretty(" ", .{});
+                {
+                    // current version
+                    Output.pretty("│", .{});
+                    for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
-                const resolution = pkg_resolutions[package_id];
-                version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)}) catch bun.outOfMemory();
-                Output.pretty("{s}", .{version_buf.items});
-                for (version_buf.items.len..current_column_length) |_| Output.pretty(" ", .{});
-                version_buf.items.len = 0;
+                    version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)}) catch bun.outOfMemory();
+                    Output.pretty("{s}", .{version_buf.items});
+                    for (version_buf.items.len..current_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
+                    version_buf.clearRetainingCapacity();
+                }
 
-                version_writer.print("{}", .{update_version.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
-                Output.pretty("{}", .{update_version.version.diffFmt(resolution.value.npm.version, manifest.string_buf, string_buf)});
-                for (version_buf.items.len..update_column_length) |_| Output.pretty(" ", .{});
-                version_buf.items.len = 0;
+                {
+                    // update version
+                    Output.pretty("│", .{});
+                    for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
-                version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
-                Output.pretty("{}", .{latest.version.diffFmt(resolution.value.npm.version, manifest.string_buf, string_buf)});
-                for (version_buf.items.len..latest_column_length) |_| Output.pretty(" ", .{});
-                version_buf.items.len = 0;
+                    version_writer.print("{}", .{update.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
+                    Output.pretty("{s}", .{update.version.diffFmt(resolution.value.npm.version, manifest.string_buf, string_buf)});
+                    for (version_buf.items.len..update_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
+                    version_buf.clearRetainingCapacity();
+                }
 
-                Output.pretty("\n", .{});
+                {
+                    // latest version
+                    Output.pretty("│", .{});
+                    for (0..column_left_pad) |_| Output.pretty(" ", .{});
+
+                    version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
+                    Output.pretty("{s}", .{latest.version.diffFmt(resolution.value.npm.version, manifest.string_buf, string_buf)});
+                    for (version_buf.items.len..latest_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
+                    version_buf.clearRetainingCapacity();
+                }
+
+                Output.pretty("│\n", .{});
             }
         }
 
-        Output.flush();
+        table.writeBottomLineSeparator();
     }
 
     fn updateManifestsIfNecessary(manager: *PackageManager, comptime log_level: PackageManager.Options.LogLevel, root_pkg_deps: Lockfile.DependencySlice) !void {

@@ -807,7 +807,6 @@ describe("expect()", () => {
       err.code = "ERR_BAZ";
       throw err;
     }).toThrow(expect.objectContaining({ code: "ERR_BAZ", name: "TypeError" }));
-
   });
 
   test("toThrow", () => {
@@ -4482,6 +4481,36 @@ describe("expect()", () => {
   test("expect.assertions doesn't throw when valid", () => {
     expect.assertions(1);
     expect("a").toEqual("a");
+  });
+
+  test("expect.assertions doesn't throw when valid, async", async () => {
+    expect.assertions(1);
+    await new Promise(resolve => setTimeout(resolve, 1));
+    expect("a").toEqual("a");
+  });
+
+  test("expect.assertions doesn't throw when valid, callback", done => {
+    expect.assertions(1);
+    process.nextTick(() => {
+      expect("a").toEqual("a");
+      done();
+    });
+  });
+
+  test("expect.assertions doesn't throw when valid, setImmediate", done => {
+    expect.assertions(1);
+    setImmediate(() => {
+      expect("a").toEqual("a");
+      done();
+    });
+  });
+
+  test("expect.assertions doesn't throw when valid, queueMicrotask", done => {
+    expect.assertions(1);
+    queueMicrotask(() => {
+      expect("a").toEqual("a");
+      done();
+    });
   });
 
   test("expect.hasAssertions returns undefined", () => {

@@ -42,7 +42,6 @@ const JSTypeOfMap = bun.ComptimeStringMap([]const u8, .{
 pub var active_test_expectation_counter: Counter = .{};
 pub var is_expecting_assertions: bool = false;
 pub var is_expecting_assertions_count: bool = false;
-pub var expected_assertions_number: u32 = 0;
 
 const log = bun.Output.scoped(.expect, false);
 
@@ -4868,8 +4867,8 @@ pub const Expect = struct {
             return .zero;
         }
 
-        const expected_assertions: f64 = expected.asNumber();
-        if (@round(expected_assertions) != expected_assertions or std.math.isInf(expected_assertions) or std.math.isNan(expected_assertions) or expected_assertions < 0) {
+        const expected_assertions: f64 = expected.coerceToDouble(globalThis);
+        if (@round(expected_assertions) != expected_assertions or std.math.isInf(expected_assertions) or std.math.isNan(expected_assertions) or expected_assertions < 0 or expected_assertions > std.math.maxInt(u32)) {
             var fmt = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
             globalThis.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(&fmt)});
             return .zero;
@@ -4878,7 +4877,7 @@ pub const Expect = struct {
         const unsigned_expected_assertions: u32 = @intFromFloat(expected_assertions);
 
         is_expecting_assertions_count = true;
-        expected_assertions_number = unsigned_expected_assertions;
+        active_test_expectation_counter.expected = unsigned_expected_assertions;
 
         return .undefined;
     }

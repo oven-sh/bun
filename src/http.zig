@@ -2879,13 +2879,11 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
 }
 
 pub fn closeAndFail(this: *HTTPClient, err: anyerror, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
-    if (this.state.stage != .fail and this.state.stage != .done) {
-        if (!socket.isClosed()) {
-            NewHTTPContext(is_ssl).terminateSocket(socket);
-        }
-        log("closeAndFail: {s}", .{@errorName(err)});
-        this.fail(err);
+    log("closeAndFail: {s}", .{@errorName(err)});
+    if (!socket.isClosed()) {
+        NewHTTPContext(is_ssl).terminateSocket(socket);
     }
+    this.fail(err);
 }
 
 fn startProxySendHeaders(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {

@@ -36,6 +36,16 @@ pub const angle = struct {
         /// An angle in turns. There is 1 turn in a full circle.
         turn: CSSNumber,
 
+        pub fn toDegrees(this: *const Angle) CSSNumber {
+            const DEG_PER_RAD: f32 = 180.0 / std.math.pi;
+            switch (this.*) {
+                .deg => |deg| return deg,
+                .rad => |rad| return rad * DEG_PER_RAD,
+                .grad => |grad| return grad * 180.0 / 200.0,
+                .turn => |turn| return turn * 360.0,
+            }
+        }
+
         pub fn parse(input: *css.Parser) Error!Angle {
             _ = input; // autofix
             @compileError(css.todo_stuff.depth);

@@ -179,9 +179,13 @@ pub const VendorPrefix = packed struct(u8) {
     pub usingnamespace Bitflags(@This());
 
     pub fn toCss(this: *const VendorPrefix, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        _ = this; // autofix
-        _ = dest; // autofix
-        @compileError(todo_stuff.depth);
+        return switch (this.asBits()) {
+            VendorPrefix.asBits(.{ .webkit = true }) => dest.writeStr("-webkit"),
+            VendorPrefix.asBits(.{ .moz = true }) => dest.writeStr("-moz-"),
+            VendorPrefix.asBits(.{ .ms = true }) => dest.writeStr("-ms-"),
+            VendorPrefix.asBits(.{ .o = true }) => dest.writeStr("-o-"),
+            else => {},
+        };
     }
 
     /// Returns VendorPrefix::None if empty.
@@ -308,6 +312,9 @@ pub fn DeriveToCss(comptime T: type) type {
 
 pub fn DefineEnumProperty(comptime T: type) type {
     const fields: []const std.builtin.Type.EnumField = std.meta.fields(T);
+    // TODO: make it passed in as arguments
+    const CssCase = if (@hasDecl(T, "CssCase")) T.CssCase else "kebab";
+    _ = CssCase; // autofix
 
     return struct {
         pub fn asStr(this: *const T) []const u8 {
@@ -4385,6 +4392,42 @@ pub const color = struct {
             'A'...'F' => c - 'A' + 10,
             else => ColorError.parse,
         };
+    }
+
+    /// <https://drafts.csswg.org/css-color/#hsl-color>
+    /// except with h pre-multiplied by 3, to avoid some rounding errors.
+    pub fn hslToRgb(hue: f32, saturation: f32, lightness: f32) struct { f32, f32, f32 } {
+        bun.debugAssert(saturation >= 0.0 and saturation <= 1.0);
+        const Helpers = struct {
+            pub fn hueToRgb(m1: f32, m2: f32, _h3: f32) f32 {
+                var h3 = _h3;
+                if (h3 < 0.0) {
+                    h3 += 3.0;
+                }
+                if (h3 > 3.0) {
+                    h3 -= 3.0;
+                }
+                if (h3 * 2.0 < 1.0) {
+                    return m1 + (m2 - m1) * h3 * 2.0;
+                } else if (h3 * 2.0 < 3.0) {
+                    return m2;
+                } else if (h3 < 2.0) {
+                    return m1 + (m2 - m1) * (2.0 - h3) * 2.0;
+                } else {
+                    return m1;
+                }
+            }
+        };
+        const m2 = if (lightness <= 0.5)
+            lightness * (saturation + 1.0)
+        else
+            lightness + saturation - lightness * saturation;
+        const m1 = lightness * 2.0 - m2;
+        const hue_times_3 = hue * 3.0;
+        const red = Helpers.hueToRgb(m1, m2, hue_times_3 + 1.0);
+        const green = Helpers.hueToRgb(m1, m2, hue_times_3);
+        const blue = Helpers.hueToRgb(m1, m2, hue_times_3 - 1.0);
+        return .{ red, green, blue };
     }
 };
 

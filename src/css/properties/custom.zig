@@ -11,6 +11,7 @@ pub const PrintErr = css.PrintErr;
 const DashedIdent = css_values.ident.DashedIdent;
 const DashedIdentFns = css_values.ident.DashedIdentFns;
 const Ident = css_values.ident.Ident;
+const IdentFns = css_values.ident.IdentFns;
 pub const Error = css.Error;
 
 pub const CssColor = css.css_values.color.CssColor;
@@ -19,6 +20,8 @@ pub const SRGB = css.css_values.color.SRGB;
 pub const HSL = css.css_values.color.HSL;
 pub const CSSInteger = css.css_values.number.CSSInteger;
 pub const CSSIntegerFns = css.css_values.number.CSSIntegerFns;
+pub const CSSNumberFns = css.css_values.number.CSSNumberFns;
+pub const Percentage = css.css_values.percentage.Percentage;
 pub const Url = css.css_values.url.Url;
 pub const DashedIdentReference = css.css_values.ident.DashedIdentReference;
 pub const CustomIdent = css.css_values.ident.CustomIdent;
@@ -153,10 +156,15 @@ pub const TokenList = struct {
         comptime W: type,
         dest: *Printer(W),
     ) PrintErr!bool {
-        _ = this; // autofix
-        _ = i; // autofix
-        _ = dest; // autofix
-        @compileError(css.todo_stuff.depth);
+        if (!dest.minify and
+            i != this.v.items.len - 1 and
+            this.v.items[i + 1] == .token and switch (this.v.items[i + 1]) {
+            .comma, .close_paren => true,
+        }) {
+            // Whitespace is removed during parsing, so add it back if we aren't minifying.
+            try dest.writeChar(' ');
+            return true;
+        } else return false;
     }
 
     pub fn parse(input: *css.Parser, options: *css.ParserOptions, depth: usize) Error!TokenList {
@@ -563,10 +571,85 @@ pub const UnresolvedColor = union(enum) {
         dest: *Printer(W),
         is_custom_property: bool,
     ) PrintErr!void {
-        _ = this; // autofix
-        _ = dest; // autofix
-        _ = is_custom_property; // autofix
-        @compileError(css.todo_stuff.depth);
+        const Helper = struct {
+            pub fn conv(c: f32) i32 {
+                return std.math.clamp(@as(i32, @round(c * 255.0)), 0.0, 255.0);
+            }
+        };
+
+        switch (this.*) {
+            .RGB => |rgb| {
+                if (dest.targets.shouldCompile(.space_separated_color_notation, .space_separated_color_notation)) {
+                    try dest.writeStr("rgba(");
+                    try css.to_css.integer(i32, Helper.conv(rgb.r), W, dest);
+                    try dest.delim(',', false);
+                    try css.to_css.integer(i32, Helper.conv(rgb.g), W, dest);
+                    try dest.delim(',', false);
+                    try css.to_css.integer(i32, Helper.conv(rgb.b), W, dest);
+                    rgb.alpha.toCss(W, dest, is_custom_property);
+                    try dest.writeChar(')');
+                    return;
+                }
+
+                try dest.writeStr("rgb(");
+                try css.to_css.integer(i32, Helper.conv(rgb.r), W, dest);
+                try dest.writeChar(' ');
+                try css.to_css.integer(i32, Helper.conv(rgb.g), W, dest);
+                try dest.writeChar(' ');
+                try css.to_css.integer(i32, Helper.conv(rgb.b), W, dest);
+                try dest.delim('/', true);
+                try rgb.alpha.toCss(W, dest, is_custom_property);
+                try dest.writeChar(')');
+            },
+            .HSL => |hsl| {
+                if (dest.targets.shouldCompile(.space_separated_color_notation, .space_separated_color_notation)) {
+                    try dest.writeStr("hsla(");
+                    try CSSNumberFns.toCss(&hsl.h, W, dest);
+                    try dest.delim(',', false);
+                    try (Percentage{ .v = hsl.s }).toCss(W, dest);
+                    try dest.delim(',', false);
+                    try (Percentage{ .v = hsl.l }).toCss(W, dest);
+                    try dest.delim(',', false);
+                    try hsl.alpha.toCss(W, dest, is_custom_property);
+                    try dest.writeChar(')');
+                    return;
+                }
+
+                try dest.writeStr("hsl(");
+                try CSSNumberFns.toCss(&hsl.h, W, dest);
+                try dest.writeChar(' ');
+                try (Percentage{ .v = hsl.s }).toCss(W, dest);
+                try dest.writeChar(' ');
+                try (Percentage{ .v = hsl.l }).toCss(W, dest);
+                try dest.delim('/', true);
+                try hsl.alpha.toCss(W, dest, is_custom_property);
+                try dest.writeChar(')');
+                return;
+            },
+            .light_dark => |*ld| {
+                const light: *const TokenList = &ld.light;
+                const dark: *const TokenList = &ld.dark;
+
+                if (!dest.targets.isCompatible(.light_dark)) {
+                    // TODO(zack): lightningcss -> buncss
+                    try dest.writeStr("var(--lightningcss-light)");
+                    try dest.delim(',', false);
+                    try light.toCss(W, dest, is_custom_property);
+                    try dest.writeChar(')');
+                    try dest.whitespace();
+                    try dest.writeStr("var(--lightningcss-dark");
+                    try dest.delim(',', false);
+                    try dark.toCss(W, dest, is_custom_property);
+                    return dest.writeChar(')');
+                }
+
+                try dest.writeStr("light-dark(");
+                try light.toCss(W, dest, is_custom_property);
+                try dest.delim(',', false);
+                try dark.toCss(W, dest, is_custom_property);
+                try dest.writeChar(')');
+            },
+        }
     }
 
     pub fn parse(
@@ -677,14 +760,34 @@ pub const Variable = struct {
 
     const This = @This();
 
+    pub fn parse(
+        input: *css.Parser,
+        options: *css.ParserOptions,
+        depth: usize,
+    ) Error!This {
+        const name = try DashedIdentReference.parseWithOptions(input, options);
+
+        const fallback = if (input.tryParse(css.Parser.expectComma, .{})) |_|
+            try TokenList.parse(input, options, depth)
+        else
+            null;
+
+        return Variable{ .name = name, .fallback = fallback };
+    }
+
     pub fn toCss(
         this: *const This,
         comptime W: type,
         dest: *Printer(W),
+        is_custom_property: bool,
     ) PrintErr!void {
-        _ = this; // autofix
-        _ = dest; // autofix
-        @compileError(css.todo_stuff.depth);
+        try dest.writeStr("var(");
+        try this.name.toCss(W, dest);
+        if (this.fallback) |*fallback| {
+            try dest.delim(',', false);
+            try fallback.toCss(W, dest, is_custom_property);
+        }
+        return try dest.writeChar(')');
     }
 };
 
@@ -693,7 +796,8 @@ pub const EnvironmentVariable = struct {
     /// The environment variable name.
     name: EnvironmentVariableName,
     /// Optional indices into the dimensions of the environment variable.
-    indices: ArrayList(CSSInteger) = ArrayList(CSSInteger).init(),
+    /// TODO(zack): this could totally be a smallvec, why isn't it?
+    indices: ArrayList(CSSInteger) = ArrayList(CSSInteger){},
     /// A fallback value in case the variable is not defined.
     fallback: ?TokenList,
 
@@ -739,10 +843,20 @@ pub const EnvironmentVariable = struct {
         dest: *Printer(W),
         is_custom_property: bool,
     ) PrintErr!void {
-        _ = this; // autofix
-        _ = dest; // autofix
-        _ = is_custom_property; // autofix
-        @compileError(css.todo_stuff.depth);
+        try dest.writeStr("env(");
+        try this.name.toCss(W, dest);
+
+        for (this.indices.items) |index| {
+            try dest.writeChar(' ');
+            try css.to_css.integer(i32, index, W, dest);
+        }
+
+        if (this.fallback) |*fallback| {
+            try dest.delim(',', false);
+            fallback.toCss(W, dest, is_custom_property);
+        }
+
+        return try dest.writeChar(')');
     }
 };
 
@@ -771,34 +885,40 @@ pub const EnvironmentVariableName = union(enum) {
         const ident = try CustomIdentFns.parse(input);
         return .{ .unknown = ident };
     }
+
+    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+        return switch (this.*) {
+            .ua => |ua| ua.toCss(W, dest),
+            .custom => |custom| DashedIdentFns.toCss(&custom, W, dest),
+            .unknown => |unknown| CustomIdentFns.toCss(&unknown, W, dest),
+        };
+    }
 };
 
 /// A UA-defined environment variable name.
 pub const UAEnvironmentVariable = enum {
     /// The safe area inset from the top of the viewport.
-    safe_area_inset_top,
+    @"safe-area-inset-top",
     /// The safe area inset from the right of the viewport.
-    safe_area_inset_right,
+    @"safe-area-inset-right",
     /// The safe area inset from the bottom of the viewport.
-    safe_area_inset_bottom,
+    @"safe-area-inset-bottom",
     /// The safe area inset from the left of the viewport.
-    safe_area_inset_left,
+    @"safe-area-inset-left",
     /// The viewport segment width.
-    viewport_segment_width,
+    @"viewport-segment-width",
     /// The viewport segment height.
-    viewport_segment_height,
+    @"viewport-segment-height",
     /// The viewport segment top position.
-    viewport_segment_top,
+    @"viewport-segment-top",
     /// The viewport segment left position.
-    viewport_segment_left,
+    @"viewport-segment-left",
     /// The viewport segment bottom position.
-    viewport_segment_bottom,
+    @"viewport-segment-bottom",
     /// The viewport segment right position.
-    viewport_segment_right,
+    @"viewport-segment-right",
 
-    pub fn parse(input: *css.Parser) Error!UAEnvironmentVariable {
-        return css.comptime_parse(UAEnvironmentVariable, input);
-    }
+    pub usingnamespace css.DefineEnumProperty(@This());
 };
 
 /// A custom CSS function.
@@ -814,10 +934,12 @@ pub const Function = struct {
         this: *const This,
         comptime W: type,
         dest: *Printer(W),
+        is_custom_property: bool,
     ) PrintErr!void {
-        _ = this; // autofix
-        _ = dest; // autofix
-        @compileError(css.todo_stuff.depth);
+        try IdentFns.toCss(&this.name, W, dest);
+        try dest.writeChar('(');
+        try this.arguments.toCss(W, dest, is_custom_property);
+        return try dest.writeChar(')');
     }
 };
 

@@ -70,6 +70,12 @@ pub const Targets = struct {
         _ = flag; // autofix
         @compileError(css.todo_stuff.depth);
     }
+
+    pub fn isCompatible(this: *const Targets, feature: css.compat.Feature) bool {
+        _ = this; // autofix
+        _ = feature; // autofix
+        @compileError(css.todo_stuff.depth);
+    }
 };
 
 pub const Features = packed struct(u32) {

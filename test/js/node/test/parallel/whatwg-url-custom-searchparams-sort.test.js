@@ -23,8 +23,8 @@ tests[0].input = pairs
   .join("&");
 
 tests.push({
-  "input": "z=a&=b&c=d",
-  "output": [
+  input: "z=a&=b&c=d",
+  output: [
     ["", "b"],
     ["c", "d"],
     ["z", "a"],

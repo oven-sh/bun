@@ -1086,7 +1086,7 @@ pub fn checkServerIdentity(
     return true;
 }
 
-pub fn registerAbortTracker(
+fn registerAbortTracker(
     client: *HTTPClient,
     comptime is_ssl: bool,
     socket: NewHTTPContext(is_ssl).HTTPSocket,
@@ -1096,7 +1096,7 @@ pub fn registerAbortTracker(
     }
 }
 
-pub fn unregisterAbortTracker(
+fn unregisterAbortTracker(
     client: *HTTPClient,
 ) void {
     if (client.signals.aborted != null) {
@@ -3423,7 +3423,7 @@ pub fn toResult(this: *HTTPClient) HTTPClientResult {
             .redirected = this.flags.redirected,
             .fail = this.state.fail,
             // check if we are reporting cert errors, do not have a fail state and we are not done
-            .has_more = this.state.fail == null and !this.state.isDone(),
+            .has_more = certificate_info != null or (this.state.fail == null and !this.state.isDone()),
             .body_size = body_size,
             .certificate_info = null,
         };

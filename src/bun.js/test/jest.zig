@@ -1423,6 +1423,13 @@ pub const TestRunnerTask = struct {
 
         if (result == .pending and this.sync_state == .pending and (this.done_callback_state == .pending or this.promise_state == .pending)) {
             this.sync_state = .fulfilled;
+
+            if (this.reported and this.promise_state != .pending) {
+                // An unhandled error was reported.
+                // Let's allow any pending work to run, and then move on to the next test.
+                this.unrefOnNextTick();
+            }
+
             return true;
         }
 
@@ -1456,6 +1463,14 @@ pub const TestRunnerTask = struct {
         this.handleResultPtr(&result_copy, from);
     }
 
+    fn unrefOnNextTick(this: *TestRunnerTask) void {
+        if (this.ref.has)
+            // Drain microtasks one more time.
+            // But don't hang forever.
+            // We report the test failure before that task is run.
+            this.globalThis.bunVM().enqueueTask(JSC.ManagedTask.New(@This(), deinit).init(this));
+    }
+
     pub fn handleResultPtr(this: *TestRunnerTask, result: *Result, from: ResultType) void {
         switch (from) {
             .promise => {
@@ -1486,8 +1501,43 @@ pub const TestRunnerTask = struct {
                 this.deinit();
         }
 
-        if (this.reported)
+        if (this.reported) {
+            // This covers the following scenario:
+            //
+            // test("foo", async done => {
+            //     await Bun.sleep(42);
+            //     throw new Error("foo");
+            // });
+            //
+            // The test will hang forever if we don't drain microtasks here.
+            //
+            // It is okay for this to be called multiple times, as it unrefs() the event loop once, and doesn't free memory.
+            if (result.* != .pass and this.promise_state != .pending and this.done_callback_state == .pending and this.sync_state == .fulfilled) {
+                this.unrefOnNextTick();
+            }
             return;
+        }
+
+        // This covers the following scenario:
+        //
+        //
+        //   test("foo", done => {
+        //       setTimeout(() => {
+        //           if (Math.random() > 0.5) {
+        //               done();
+        //           } else {
+        //               throw new Error("boom");
+        //           }
+        //       }, 100);
+        //    })
+        //
+        // It is okay for this to be called multiple times, as it unrefs() the event loop once, and doesn't free memory.
+        if (this.promise_state != .pending and this.sync_state != .pending and this.done_callback_state == .pending) {
+            // Drain microtasks one more time.
+            // But don't hang forever.
+            // We report the test failure before that task is run.
+            this.unrefOnNextTick();
+        }
 
         this.reported = true;
 

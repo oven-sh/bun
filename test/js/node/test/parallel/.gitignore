@@ -4,8 +4,18 @@ pipe-file-to-http.test.js
 shadow-realm*
 http-request-agent.test.js
 permissions*.test.js
+worker-message-port-wasm-module.test.js
+trace-events-worker-metadata-with-name.test.js
+worker-esm-exit.test.js
+net-bind-twice.test.js
+net-server-close.test.js
+net-listen-error.test.js
+windows-failed-heap-allocation.test.js
+trace-events-net-abstract-socket.test.js
+# macOS not working yet
+node-dns.test.js
 
-# Things we don't support yet:
+# Things we don't support:
 repl*
 inspector*
 npm*

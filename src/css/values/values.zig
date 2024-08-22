@@ -39,3 +39,4 @@ pub const time = @import("./time.zig");
 pub const easing = @import("./easing.zig");
 pub const url = @import("./url.zig");
 pub const resolution = @import("./resolution.zig");
+pub const gradient = @import("./gradient.zig");

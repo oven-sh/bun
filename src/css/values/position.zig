@@ -11,6 +11,15 @@ const Calc = css.css_values.calc.Calc;
 const DimensionPercentage = css.css_values.percentage.DimensionPercentage;
 const LengthPercentage = css.css_values.length.LengthPercentage;
 
+/// A CSS `<position>` value,
+/// as used in the `background-position` property, gradients, masks, etc.
+pub const Position = struct {
+    /// The x-position.
+    x: HorizontalPosition,
+    /// The y-position.
+    y: VerticalPosition,
+};
+
 pub fn PositionComponent(comptime S: type) type {
     return union(enum) {
         center,

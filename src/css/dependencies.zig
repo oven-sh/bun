@@ -7,6 +7,7 @@ const Log = logger.Log;
 pub const css = @import("./css_parser.zig");
 pub const css_values = @import("./values/values.zig");
 const DashedIdent = css_values.ident.DashedIdent;
+const Url = css_values.url.Url;
 const Ident = css_values.ident.Ident;
 pub const Error = css.Error;
 // const Location = css.Location;
@@ -94,6 +95,16 @@ pub const UrlDependency = struct {
     placeholder: []const u8,
     /// The location of the dependency in the source file.
     loc: SourceRange,
+
+    pub fn new(url: *const Url, filename: []const u8) UrlDependency {
+        const placeholder = css.css_modules.hash(
+            @compileError(css.todo_stuff.think_about_allocator),
+            "{s}_{s}",
+            .{ filename, url.url },
+            false,
+        );
+        _ = placeholder; // autofix
+    }
 };
 
 /// Represents the range of source code where a dependency was found.

@@ -290,16 +290,42 @@ pub fn DefineLengthUnits(comptime T: type) type {
 }
 
 pub fn DeriveParse(comptime T: type) type {
+    // TODO: this has to work for enums and union(enums)
     return struct {
         pub fn parse(input: *Parser) Error!T {
             // to implement this, we need to cargo expand the derive macro
             _ = input; // autofix
             @compileError(todo_stuff.depth);
         }
+
+        // pub fn parse(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        //     // to implement this, we need to cargo expand the derive macro
+        //     _ = this; // autofix
+        //     _ = dest; // autofix
+        //     @compileError(todo_stuff.depth);
+        // }
+    };
+}
+pub fn DeriveParse2(comptime T: type) type {
+    // TODO: this has to work for enums and union(enums)
+    return struct {
+        pub fn parse(input: *Parser) Error!T {
+            // to implement this, we need to cargo expand the derive macro
+            _ = input; // autofix
+            @compileError(todo_stuff.depth);
+        }
+
+        // pub fn parse(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        //     // to implement this, we need to cargo expand the derive macro
+        //     _ = this; // autofix
+        //     _ = dest; // autofix
+        //     @compileError(todo_stuff.depth);
+        // }
     };
 }
 
 pub fn DeriveToCss(comptime T: type) type {
+    // TODO: this has to work for enums and union(enums)
     return struct {
         pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
             // to implement this, we need to cargo expand the derive macro
@@ -2284,6 +2310,16 @@ pub const Parser = struct {
         return start_location.newBasicUnexpectedTokenError(tok.*);
     }
 
+    pub fn expectFunction(this: *Parser) Error![]const u8 {
+        const start_location = this.currentSourceLocation();
+        const tok = try this.next();
+        switch (tok.*) {
+            .function => |fn_name| return fn_name,
+            else => {},
+        }
+        return start_location.newBasicUnexpectedTokenError(tok.*);
+    }
+
     pub fn expectFunctionMatching(this: *Parser, name: []const u8) Error!void {
         const start_location = this.currentSourceLocation();
         const tok = try this.next();
@@ -2301,6 +2337,11 @@ pub const Parser = struct {
             .open_curly => return,
             else => return start_location.newBasicUnexpectedTokenError(tok.*),
         }
+    }
+
+    pub fn expectUrlOrString(this: *Parser) Error![]const u8 {
+        _ = this; // autofix
+        @compileError(todo_stuff.depth);
     }
 
     pub fn position(this: *Parser) usize {

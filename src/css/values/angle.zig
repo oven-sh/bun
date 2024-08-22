@@ -156,3 +156,7 @@ pub const Angle = union(enum) {
         };
     }
 };
+
+/// A CSS [`<angle-percentage>`](https://www.w3.org/TR/css-values-4/#typedef-angle-percentage) value.
+/// May be specified as either an angle or a percentage that resolves to an angle.
+pub const AnglePercentage = css.css_values.percentage.DimensionPercentage(Angle);

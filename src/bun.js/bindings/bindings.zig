@@ -3327,8 +3327,24 @@ pub const JSGlobalObject = opaque {
                 _ = this.throwInvalidPropertyTypeValue("options." ++ field_name, "number", level_val);
                 return null;
             }
-            if (!level_val.isInt32()) {
-                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be a finite number. Received {s}", .{ field_name, level_val.toString(this).getZigString(this).slice() }));
+            const level_f64 = level_val.asNumber();
+            if (std.math.isNan(level_f64)) {
+                return default;
+            }
+            if (level_f64 == std.math.inf(f64)) {
+                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d}. Received Infinity", .{ field_name, min }));
+                return null;
+            }
+            if (level_f64 == -std.math.inf(f64)) {
+                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d}. Received -Infinity", .{ field_name, min }));
+                return null;
+            }
+            if (@floor(level_f64) != level_f64) {
+                _ = this.throwInvalidPropertyTypeValue("options." ++ field_name, "integer", level_val);
+                return null;
+            }
+            if (level_f64 > std.math.maxInt(i32)) {
+                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d} and <= {d}. Received {d}", .{ field_name, min, max, level_f64 }));
                 return null;
             }
             const level_i32 = level_val.toInt32();
@@ -3348,8 +3364,24 @@ pub const JSGlobalObject = opaque {
                 _ = this.throwInvalidPropertyTypeValue("options." ++ field_name, "number", level_val);
                 return null;
             }
-            if (!level_val.isInt32()) {
-                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be a finite number. Received {s}", .{ field_name, level_val.toString(this).getZigString(this).slice() }));
+            const level_f64 = level_val.asNumber();
+            if (std.math.isNan(level_f64)) {
+                return default;
+            }
+            if (level_f64 == std.math.inf(f64)) {
+                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d}. Received Infinity", .{ field_name, min }));
+                return null;
+            }
+            if (level_f64 == -std.math.inf(f64)) {
+                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d}. Received -Infinity", .{ field_name, min }));
+                return null;
+            }
+            if (@floor(level_f64) != level_f64) {
+                _ = this.throwInvalidPropertyTypeValue("options." ++ field_name, "integer", level_val);
+                return null;
+            }
+            if (level_f64 > std.math.maxInt(i32)) {
+                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d}. Received {d}", .{ field_name, min, level_f64 }));
                 return null;
             }
             const level_i32 = level_val.toInt32();
@@ -3369,7 +3401,7 @@ pub const JSGlobalObject = opaque {
                 _ = this.throwInvalidPropertyTypeValue("options." ++ field_name, "number", level_val);
                 return null;
             }
-            const level_double = level_val.coerceToDouble(this);
+            const level_double = level_val.asNumber();
             if (level_double == std.math.inf(f64)) {
                 this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d}. Received Infinity", .{ field_name, min }));
                 return null;
@@ -3388,7 +3420,7 @@ pub const JSGlobalObject = opaque {
         if (this.hasException()) return null;
         return default;
     }
-    
+
     extern fn Bun__ERR_MISSING_ARGS_static(*JSGlobalObject, *const ZigString, ?*const ZigString, ?*const ZigString) JSValue;
     pub fn ERR_MISSING_ARGS_static(this: *JSGlobalObject, arg1: *const ZigString, arg2: ?*const ZigString, arg3: ?*const ZigString) JSValue {
         return Bun__ERR_MISSING_ARGS_static(this, arg1, arg2, arg3);

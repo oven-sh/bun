@@ -1,5 +1,5 @@
-//#FILE: test-http-url.parse-search.js
-//#SHA1: 11d08b9c62625b7b554d5fb46d63c4aaa77c1a7c
+//#FILE: test-http-url.parse-post.js
+//#SHA1: e0e7f97c725fb9eaa6058365bef5021e9710e857
 //-----------------
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -22,34 +22,38 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
-const http = require('http');
-const url = require('url');
+"use strict";
+const http = require("http");
+const url = require("url");
 
-test('http url parse search', async () => {
-  function check(request) {
-    // A path should come over with params
-    expect(request.url).toBe('/asdf?qwer=zxcv');
-  }
+let testURL;
 
+function check(request) {
+  // url.parse should not mess with the method
+  expect(request.method).toBe("POST");
+  // Everything else should be right
+  expect(request.url).toBe("/asdf?qwer=zxcv");
+  // The host header should use the url.parse.hostname
+  expect(request.headers.host).toBe(`${testURL.hostname}:${testURL.port}`);
+}
+
+test("http.request with url.parse and POST method", done => {
   const server = http.createServer((request, response) => {
     // Run the check function
     check(request);
     response.writeHead(200, {});
-    response.end('ok');
+    response.end("ok");
     server.close();
+    done();
   });
 
-  await new Promise((resolve) => {
-    server.listen(0, () => {
-      const port = server.address().port;
-      const testURL = url.parse(`http://localhost:${port}/asdf?qwer=zxcv`);
+  server.listen(0, () => {
+    testURL = url.parse(`http://localhost:${server.address().port}/asdf?qwer=zxcv`);
+    testURL.method = "POST";
 
-      // make the request
-      http.request(testURL).end();
-      resolve();
-    });
+    // make the request
+    http.request(testURL).end();
   });
 });
 
-//<#END_FILE: test-http-url.parse-search.js
+//<#END_FILE: test-http-url.parse-post.js

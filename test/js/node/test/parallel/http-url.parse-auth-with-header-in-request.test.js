@@ -1,5 +1,5 @@
-//#FILE: test-http-url.parse-post.js
-//#SHA1: e0e7f97c725fb9eaa6058365bef5021e9710e857
+//#FILE: test-http-url.parse-auth-with-header-in-request.js
+//#SHA1: 396adc5e441a57d24b11a42513c834b6b11ea7ff
 //-----------------
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -22,38 +22,38 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
-const http = require('http');
-const url = require('url');
+"use strict";
+const http = require("http");
+const url = require("url");
 
-let testURL;
+test("http url parse auth with header in request", async () => {
+  function check(request) {
+    // The correct authorization header is be passed
+    expect(request.headers.authorization).toBe("NoAuthForYOU");
+  }
 
-function check(request) {
-  // url.parse should not mess with the method
-  expect(request.method).toBe('POST');
-  // Everything else should be right
-  expect(request.url).toBe('/asdf?qwer=zxcv');
-  // The host header should use the url.parse.hostname
-  expect(request.headers.host).toBe(`${testURL.hostname}:${testURL.port}`);
-}
-
-test('http.request with url.parse and POST method', (done) => {
   const server = http.createServer((request, response) => {
     // Run the check function
     check(request);
     response.writeHead(200, {});
-    response.end('ok');
+    response.end("ok");
     server.close();
-    done();
   });
 
-  server.listen(0, () => {
-    testURL = url.parse(`http://localhost:${server.address().port}/asdf?qwer=zxcv`);
-    testURL.method = 'POST';
+  await new Promise(resolve => {
+    server.listen(0, () => {
+      const testURL = url.parse(`http://asdf:qwer@localhost:${server.address().port}`);
+      // The test here is if you set a specific authorization header in the
+      // request we should not override that with basic auth
+      testURL.headers = {
+        Authorization: "NoAuthForYOU",
+      };
 
-    // make the request
-    http.request(testURL).end();
+      // make the request
+      http.request(testURL).end();
+      resolve();
+    });
   });
 });
 
-//<#END_FILE: test-http-url.parse-post.js
+//<#END_FILE: test-http-url.parse-auth-with-header-in-request.js

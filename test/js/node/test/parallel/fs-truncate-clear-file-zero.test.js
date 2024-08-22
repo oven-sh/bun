@@ -1,5 +1,5 @@
-//#FILE: test-fs-write-sync.js
-//#SHA1: 4ae5fa7550eefe258b9c1de798f4a4092e9d15d1
+//#FILE: test-fs-truncate-clear-file-zero.js
+//#SHA1: 28aa057c9903ea2436c340ccecfec093c647714c
 //-----------------
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -22,43 +22,46 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-"use strict";
-const fs = require("fs");
-const path = require("path");
-const os = require("os");
+'use strict';
 
-const filename = path.join(os.tmpdir(), "write.txt");
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+
+// This test ensures that `fs.truncate` opens the file with `r+` and not `w`,
+// which had earlier resulted in the target file's content getting zeroed out.
+// https://github.com/nodejs/node-v0.x-archive/issues/6233
+
+const filename = path.join(os.tmpdir(), 'truncate-file.txt');
 
 beforeEach(() => {
+  // Clean up any existing test file
   try {
     fs.unlinkSync(filename);
   } catch (err) {
-    // Ignore errors if file doesn't exist
+    if (err.code !== 'ENOENT') throw err;
   }
 });
 
-test("fs.writeSync with various parameter combinations", () => {
-  const parameters = [Buffer.from("bár"), 0, Buffer.byteLength("bár")];
-
-  // The first time fs.writeSync is called with all parameters provided.
-  // After that, each pop in the cycle removes the final parameter. So:
-  // - The 2nd time fs.writeSync with a buffer, without the length parameter.
-  // - The 3rd time fs.writeSync with a buffer, without the offset and length
-  //   parameters.
-  while (parameters.length > 0) {
-    const fd = fs.openSync(filename, "w");
-
-    let written = fs.writeSync(fd, "");
-    expect(written).toBe(0);
-
-    fs.writeSync(fd, "foo");
-
-    written = fs.writeSync(fd, ...parameters);
-    expect(written).toBeGreaterThan(3);
-    fs.closeSync(fd);
-
-    expect(fs.readFileSync(filename, "utf-8")).toBe("foobár");
-
-    parameters.pop();
-  }
+test('fs.truncateSync', () => {
+  fs.writeFileSync(filename, '0123456789');
+  expect(fs.readFileSync(filename, 'utf8')).toBe('0123456789');
+  fs.truncateSync(filename, 5);
+  expect(fs.readFileSync(filename, 'utf8')).toBe('01234');
 });
+
+test('fs.truncate', async () => {
+  fs.writeFileSync(filename, '0123456789');
+  expect(fs.readFileSync(filename, 'utf8')).toBe('0123456789');
+  
+  await new Promise((resolve, reject) => {
+    fs.truncate(filename, 5, (err) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+  
+  expect(fs.readFileSync(filename, 'utf8')).toBe('01234');
+});
+
+//<#END_FILE: test-fs-truncate-clear-file-zero.js

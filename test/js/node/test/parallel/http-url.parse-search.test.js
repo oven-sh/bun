@@ -1,5 +1,5 @@
-//#FILE: test-http-url.parse-basic.js
-//#SHA1: f2f2841de1c82e38067e73196926090f350d89c6
+//#FILE: test-http-url.parse-search.js
+//#SHA1: 11d08b9c62625b7b554d5fb46d63c4aaa77c1a7c
 //-----------------
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -22,44 +22,34 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
-const http = require('http');
-const url = require('url');
+"use strict";
+const http = require("http");
+const url = require("url");
 
-let testURL;
+test("http url parse search", async () => {
+  function check(request) {
+    // A path should come over with params
+    expect(request.url).toBe("/asdf?qwer=zxcv");
+  }
 
-// Make sure the basics work
-function check(request) {
-  // Default method should still be 'GET'
-  expect(request.method).toBe('GET');
-  // There are no URL params, so you should not see any
-  expect(request.url).toBe('/');
-  // The host header should use the url.parse.hostname
-  expect(request.headers.host).toBe(`${testURL.hostname}:${testURL.port}`);
-}
-
-test('HTTP URL parsing basics', async () => {
   const server = http.createServer((request, response) => {
     // Run the check function
     check(request);
     response.writeHead(200, {});
-    response.end('ok');
+    response.end("ok");
     server.close();
   });
 
-  await new Promise((resolve) => {
+  await new Promise(resolve => {
     server.listen(0, () => {
-      testURL = url.parse(`http://localhost:${server.address().port}`);
+      const port = server.address().port;
+      const testURL = url.parse(`http://localhost:${port}/asdf?qwer=zxcv`);
 
       // make the request
-      const clientRequest = http.request(testURL);
-      // Since there is a little magic with the agent
-      // make sure that an http request uses the http.Agent
-      expect(clientRequest.agent).toBeInstanceOf(http.Agent);
-      clientRequest.end();
+      http.request(testURL).end();
       resolve();
     });
   });
 });
 
-//<#END_FILE: test-http-url.parse-basic.js
+//<#END_FILE: test-http-url.parse-search.js

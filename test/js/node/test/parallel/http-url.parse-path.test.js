@@ -1,5 +1,5 @@
-//#FILE: test-http-url.parse-auth.js
-//#SHA1: 97f9b1c737c705489b2d6402750034291a9f6f63
+//#FILE: test-http-url.parse-path.js
+//#SHA1: 9eb246a6c09b70b76260a83bec4bb25452d38b7d
 //-----------------
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -22,29 +22,27 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
-const http = require('http');
-const url = require('url');
+"use strict";
+const http = require("http");
+const url = require("url");
 
-test('HTTP URL parse auth', async () => {
+test("HTTP request URL parsing", async () => {
   function check(request) {
-    // The correct authorization header is be passed
-    expect(request.headers.authorization).toBe('Basic dXNlcjpwYXNzOg==');
+    // A path should come over
+    expect(request.url).toBe("/asdf");
   }
 
   const server = http.createServer((request, response) => {
     // Run the check function
     check(request);
     response.writeHead(200, {});
-    response.end('ok');
+    response.end("ok");
     server.close();
   });
 
-  await new Promise((resolve) => {
+  await new Promise(resolve => {
     server.listen(0, () => {
-      const port = server.address().port;
-      // username = "user", password = "pass:"
-      const testURL = url.parse(`http://user:pass%3A@localhost:${port}`);
+      const testURL = url.parse(`http://localhost:${server.address().port}/asdf`);
 
       // make the request
       http.request(testURL).end();
@@ -53,4 +51,4 @@ test('HTTP URL parse auth', async () => {
   });
 });
 
-//<#END_FILE: test-http-url.parse-auth.js
+//<#END_FILE: test-http-url.parse-path.js

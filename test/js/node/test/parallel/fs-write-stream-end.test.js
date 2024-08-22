@@ -22,55 +22,55 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-"use strict";
-const fs = require("fs");
-const path = require("path");
-const os = require("os");
+'use strict';
+const fs = require('fs');
+const path = require('path');
 
-const tmpdir = {
-  refresh: () => {
-    // Implementation of tmpdir.refresh() is not provided in the original code
-    // This is a placeholder and might need to be adjusted based on actual implementation
-  },
-  resolve: filename => path.join(os.tmpdir(), filename),
-};
+const tmpdir = path.join(__dirname, 'tmp');
 
-beforeEach(() => {
-  tmpdir.refresh();
+beforeAll(() => {
+  if (!fs.existsSync(tmpdir)) {
+    fs.mkdirSync(tmpdir, { recursive: true });
+  }
 });
 
-test("write stream end without data", done => {
-  const file = tmpdir.resolve("write-end-test0.txt");
+afterAll(() => {
+  fs.rmSync(tmpdir, { recursive: true, force: true });
+});
+
+test('end without data', (done) => {
+  const file = path.join(tmpdir, 'write-end-test0.txt');
   const stream = fs.createWriteStream(file);
   stream.end();
-  stream.on("close", () => {
-    expect(true).toBe(true);
+  stream.on('close', () => {
     done();
   });
 });
 
-test("write stream end with data", done => {
-  const file = tmpdir.resolve("write-end-test1.txt");
+test('end with data', (done) => {
+  const file = path.join(tmpdir, 'write-end-test1.txt');
   const stream = fs.createWriteStream(file);
-  stream.end("a\n", "utf8");
-  stream.on("close", () => {
-    const content = fs.readFileSync(file, "utf8");
-    expect(content).toBe("a\n");
+  stream.end('a\n', 'utf8');
+  stream.on('close', () => {
+    const content = fs.readFileSync(file, 'utf8');
+    expect(content).toBe('a\n');
     done();
   });
 });
 
-test("write stream end and open event", done => {
-  const file = tmpdir.resolve("write-end-test2.txt");
+test('end triggers open and finish events', (done) => {
+  const file = path.join(tmpdir, 'write-end-test2.txt');
   const stream = fs.createWriteStream(file);
   stream.end();
 
   let calledOpen = false;
-  stream.on("open", () => {
+  stream.on('open', () => {
     calledOpen = true;
   });
-  stream.on("finish", () => {
+  stream.on('finish', () => {
     expect(calledOpen).toBe(true);
     done();
   });
 });
+
+//<#END_FILE: test-fs-write-stream-end.js

@@ -20,5 +20,5 @@ test("only resets per test", async () => {
 
   expect(result.stderr.toString()).toContain(" 6 pass\n");
   expect(result.stderr.toString()).toContain(" 0 fail\n");
-  expect(result.stderr.toString()).toContain("Ran 4 tests across 4 files");
+  expect(result.stderr.toString()).toContain("Ran 6 tests across 4 files");
 });

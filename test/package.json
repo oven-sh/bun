@@ -17,6 +17,7 @@
     "@resvg/resvg-js": "2.4.1",
     "@swc/core": "1.3.38",
     "@types/ws": "8.5.10",
+    "abort-controller": "3.0.0",
     "aws-cdk-lib": "2.148.0",
     "axios": "1.6.8",
     "body-parser": "1.20.2",

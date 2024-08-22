@@ -243,8 +243,8 @@ pub const OutdatedCommand = struct {
 
         if (outdated_ids.items.len == 0) return;
 
-        const package_column_inside_length = @max("Packages".len, max_name);
-        const current_column_inside_length = @max("Current".len, max_current);
+        const package_column_inside_length = @max("packages".len, max_name);
+        const current_column_inside_length = @max("current".len, max_current);
         const update_column_inside_length = @max("update".len, max_update);
         const latest_column_inside_length = @max("--latest".len, max_latest);
 
@@ -253,8 +253,8 @@ pub const OutdatedCommand = struct {
 
         const table = Table(4, "blue", column_left_pad, column_right_pad).init(
             [_][]const u8{
-                "Packages",
-                "Current",
+                "packages",
+                "current",
                 "update",
                 "--latest",
             },

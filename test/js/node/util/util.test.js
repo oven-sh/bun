@@ -54,7 +54,7 @@ describe("util", () => {
       expect(util.toUSVString(strings[i])).toBe(outputs[i]);
     }
   });
-  it.only("inherits", () => {
+  it("inherits", () => {
     function Bar() {}
     Bar.prototype.bar = function () {};
 

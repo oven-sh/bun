@@ -54,6 +54,19 @@ describe("util", () => {
       expect(util.toUSVString(strings[i])).toBe(outputs[i]);
     }
   });
+  it.only("inherits", () => {
+    function Bar() {}
+    Bar.prototype.bar = function () {};
+
+    Wat.prototype.func = function () {
+      return 43;
+    };
+
+    function Wat() {}
+
+    expect(util.inherits(Wat, Bar)).toBeUndefined();
+    expect(Wat.prototype.func).toBeDefined();
+  });
   describe("isArray", () => {
     it("all cases", () => {
       strictEqual(util.isArray([]), true);

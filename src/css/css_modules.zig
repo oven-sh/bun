@@ -9,6 +9,7 @@ pub const css_values = @import("./values/values.zig");
 const DashedIdent = css_values.ident.DashedIdent;
 const Ident = css_values.ident.Ident;
 pub const Error = css.Error;
+const PrintErr = css.PrintErr;
 
 const ArrayList = std.ArrayListUnmanaged;
 
@@ -44,6 +45,13 @@ const CssModule = struct {
         _ = source_index; // autofix
         @compileError(css.todo_stuff.errors);
     }
+
+    pub fn addDashed(this: *CssModule, local: []const u8, source_index: u32) void {
+        _ = this; // autofix
+        _ = local; // autofix
+        _ = source_index; // autofix
+        @compileError(css.todo_stuff.errors);
+    }
 };
 
 /// Configuration for CSS modules.
@@ -72,6 +80,23 @@ pub const Config = struct {
 pub const Pattern = struct {
     /// The list of segments in the pattern.
     segments: css.SmallList(Segment, 2),
+
+    /// Write the substituted pattern to a destination.
+    pub fn write(
+        this: *const Pattern,
+        _hash: []const u8,
+        path: bun.PathString,
+        local: []const u8,
+        closure: anytype,
+        comptime writefn: *const fn (@TypeOf(closure), []const u8) PrintErr!void,
+    ) PrintErr!void {
+        _ = this; // autofix
+        _ = _hash; // autofix
+        _ = path; // autofix
+        _ = local; // autofix
+        _ = writefn; // autofix
+        @compileError(css.todo_stuff.depth);
+    }
 };
 
 /// A segment in a CSS modules class name pattern.

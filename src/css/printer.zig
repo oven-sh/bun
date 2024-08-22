@@ -10,6 +10,7 @@ const DashedIdent = css_values.ident.DashedIdent;
 const Ident = css_values.ident.Ident;
 pub const Error = css.Error;
 const Location = css.Location;
+const PrintErr = css.PrintErr;
 
 const ArrayList = std.ArrayListUnmanaged;
 
@@ -261,6 +262,34 @@ pub fn Printer(comptime Writer: type) type {
             _ = ident; // autofix
             _ = handle_css_module; // autofix
             @compileError(css.todo_stuff.depth);
+        }
+
+        pub fn writeDashedIdent(this: *This, ident: []const u8, is_declaration: bool) !void {
+            try this.writeStr("--");
+
+            if (this.css_module) |*css_module| {
+                if (css_module.config.dashed_idents) {
+                    const Fn = struct {
+                        pub fn writeFn(self: *This, s: []const u8) PrintErr!void {
+                            self.col += s.len;
+                            return css.serializer.serializeName(s, Writer, self);
+                        }
+                    };
+                    try css_module.config.pattern.write(
+                        css_module.hashes.items[this.loc.source_index],
+                        css_module.sources.items[this.loc.source_index],
+                        ident[2..],
+                        this,
+                        Fn.writeFn,
+                    );
+
+                    if (is_declaration) {
+                        css_module.addDashed(ident, this.loc.source_index);
+                    }
+                }
+            }
+
+            return try css.serializer.serializeName(ident[2..], Writer, this);
         }
 
         /// Write a single character to the underlying destination.

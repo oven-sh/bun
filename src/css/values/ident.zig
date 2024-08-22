@@ -53,10 +53,8 @@ pub const DashedIdentFns = struct {
 
     const This = @This();
 
-    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        _ = this; // autofix
-        _ = dest; // autofix
-        @compileError(css.todo_stuff.depth);
+    pub fn toCss(this: *const DashedIdent, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        return dest.writeDashedIdent(this, true);
     }
 };
 
@@ -65,15 +63,12 @@ pub const Ident = []const u8;
 
 pub const IdentFns = struct {
     pub fn parse(input: *css.Parser) Error![]const u8 {
-        _ = input; // autofix
-
-        @compileError(css.todo_stuff.depth);
+        const ident = try input.expectIdent();
+        return ident;
     }
 
-    pub fn toCss(this: *const []const u8, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        _ = this; // autofix
-        _ = dest; // autofix
-        @compileError(css.todo_stuff.depth);
+    pub fn toCss(this: *const Ident, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        return css.serializer.serializeIdentifier(this.*, W, dest);
     }
 };
 
@@ -96,10 +91,23 @@ pub const CustomIdentFns = struct {
 
     const This = @This();
 
-    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        _ = this; // autofix
-        _ = dest; // autofix
-        @compileError(css.todo_stuff.depth);
+    pub fn toCss(this: *const CustomIdent, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        return @This().toCssWithOptions(this, W, dest, true);
+    }
+
+    /// Write the custom ident to CSS.
+    pub fn toCssWithOptions(
+        this: *const CustomIdent,
+        comptime W: type,
+        dest: *Printer(W),
+        enabled_css_modules: bool,
+    ) PrintErr!void {
+        const css_module_custom_idents_enabled = enabled_css_modules and
+            if (dest.css_module) |*css_module|
+            css_module.config.custom_idents
+        else
+            false;
+        return dest.writeIdent(this.*, css_module_custom_idents_enabled);
     }
 };
 

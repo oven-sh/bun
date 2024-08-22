@@ -75,6 +75,7 @@ ObjectDefineProperty(BrotliCompress.prototype, "bytesWritten", {
 });
 BrotliCompress.prototype.flush = ZlibBase_flush;
 BrotliCompress.prototype.reset = ZlibBase_reset;
+BrotliCompress.prototype.close = ZlibBase_close;
 
 BrotliCompress.prototype._transform = function _transform(chunk, encoding, callback) {
   callback(undefined, this[kHandle].encodeSync(chunk, encoding, false));
@@ -103,6 +104,7 @@ ObjectDefineProperty(BrotliDecompress.prototype, "bytesWritten", {
 });
 BrotliDecompress.prototype.flush = ZlibBase_flush;
 BrotliDecompress.prototype.reset = ZlibBase_reset;
+BrotliDecompress.prototype.close = ZlibBase_close;
 
 BrotliDecompress.prototype._transform = function (chunk, encoding, callback) {
   callback(undefined, this[kHandle].decodeSync(chunk, encoding, false));
@@ -173,6 +175,7 @@ ObjectDefineProperty(Deflate.prototype, "bytesWritten", {
 });
 Deflate.prototype.flush = ZlibBase_flush;
 Deflate.prototype.reset = ZlibBase_reset;
+Deflate.prototype.close = ZlibBase_close;
 Deflate.prototype.params = Zlib_params;
 
 Deflate.prototype._transform = function _transform(chunk, encoding, callback) {
@@ -202,6 +205,7 @@ ObjectDefineProperty(Inflate.prototype, "bytesWritten", {
 });
 Inflate.prototype.flush = ZlibBase_flush;
 Inflate.prototype.reset = ZlibBase_reset;
+Inflate.prototype.close = ZlibBase_close;
 Inflate.prototype.params = Zlib_params;
 
 Inflate.prototype._transform = function (chunk, encoding, callback) {
@@ -276,6 +280,7 @@ ObjectDefineProperty(DeflateRaw.prototype, "bytesWritten", {
 });
 DeflateRaw.prototype.flush = ZlibBase_flush;
 DeflateRaw.prototype.reset = ZlibBase_reset;
+DeflateRaw.prototype.close = ZlibBase_close;
 DeflateRaw.prototype.params = Zlib_params;
 
 DeflateRaw.prototype._transform = function _transform(chunk, encoding, callback) {
@@ -305,6 +310,7 @@ ObjectDefineProperty(InflateRaw.prototype, "bytesWritten", {
 });
 InflateRaw.prototype.flush = ZlibBase_flush;
 InflateRaw.prototype.reset = ZlibBase_reset;
+InflateRaw.prototype.close = ZlibBase_close;
 InflateRaw.prototype.params = Zlib_params;
 
 InflateRaw.prototype._transform = function (chunk, encoding, callback) {
@@ -342,6 +348,11 @@ function ZlibBase_flush(kind, callback) {
 function ZlibBase_reset() {
   assert(this[kHandle], "zlib binding closed");
   return this[kHandle].reset();
+}
+
+function ZlibBase_close(callback) {
+  if (callback) stream.finished(this, callback);
+  this.destroy();
 }
 
 function Zlib_params(level, strategy, callback) {

@@ -3,3 +3,10 @@ pipe-abstract-socket-http.test.js
 pipe-file-to-http.test.js
 shadow-realm*
 http-request-agent.test.js
+permissions*.test.js
+
+# Things we don't support yet:
+repl*
+inspector*
+npm*
+*changelog*

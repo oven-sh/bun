@@ -1427,7 +1427,7 @@ pub const TestRunnerTask = struct {
             if (this.reported and this.promise_state != .pending) {
                 // An unhandled error was reported.
                 // Let's allow any pending work to run, and then move on to the next test.
-                this.unrefOnNextTick();
+                this.continueRunningTestsAfterMicrotasksRun();
             }
 
             return true;
@@ -1463,7 +1463,7 @@ pub const TestRunnerTask = struct {
         this.handleResultPtr(&result_copy, from);
     }
 
-    fn unrefOnNextTick(this: *TestRunnerTask) void {
+    fn continueRunningTestsAfterMicrotasksRun(this: *TestRunnerTask) void {
         if (this.ref.has)
             // Drain microtasks one more time.
             // But don't hang forever.
@@ -1513,7 +1513,7 @@ pub const TestRunnerTask = struct {
             //
             // It is okay for this to be called multiple times, as it unrefs() the event loop once, and doesn't free memory.
             if (result.* != .pass and this.promise_state != .pending and this.done_callback_state == .pending and this.sync_state == .fulfilled) {
-                this.unrefOnNextTick();
+                this.continueRunningTestsAfterMicrotasksRun();
             }
             return;
         }
@@ -1536,7 +1536,7 @@ pub const TestRunnerTask = struct {
             // Drain microtasks one more time.
             // But don't hang forever.
             // We report the test failure before that task is run.
-            this.unrefOnNextTick();
+            this.continueRunningTestsAfterMicrotasksRun();
         }
 
         this.reported = true;

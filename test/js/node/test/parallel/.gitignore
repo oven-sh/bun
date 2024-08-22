@@ -1,0 +1,5 @@
+# Not working yet:
+pipe-abstract-socket-http.test.js
+pipe-file-to-http.test.js
+shadow-realm*
+http-request-agent.test.js

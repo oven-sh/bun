@@ -911,8 +911,8 @@ pub const Fetch = struct {
             this.request_headers.buf.deinit(allocator);
             this.request_headers = Headers{ .allocator = undefined };
 
-            if (this.http != null) {
-                this.http.?.clearData();
+            if (this.http) |http_| {
+                http_.clearData();
             }
 
             if (this.metadata != null) {
@@ -948,7 +948,10 @@ pub const Fetch = struct {
             var reporter = this.memory_reporter;
             const allocator = reporter.allocator();
 
-            if (this.http) |http_| allocator.destroy(http_);
+            if (this.http) |http_| {
+                this.http = null;
+                allocator.destroy(http_);
+            }
             allocator.destroy(this);
             // reporter.assert();
             bun.default_allocator.destroy(reporter);
@@ -1275,8 +1278,8 @@ pub const Fetch = struct {
                             this.tracker.didCancel(this.global_this);
 
                             // we need to abort the request
-                            if (this.http != null) {
-                                http.http_thread.scheduleShutdown(this.http.?);
+                            if (this.http) |http_| {
+                                http.http_thread.scheduleShutdown(http_);
                             }
                             this.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
                             return false;
@@ -1715,8 +1718,8 @@ pub const Fetch = struct {
             this.signal_store.aborted.store(true, .monotonic);
             this.tracker.didCancel(this.global_this);
 
-            if (this.http != null) {
-                http.http_thread.scheduleShutdown(this.http.?);
+            if (this.http) |http_| {
+                http.http_thread.scheduleShutdown(http_);
             }
         }
 

@@ -82,7 +82,7 @@ private:
                     }
 
                     /* Any connected socket should timeout until it has a request */
-                    us_socket_timeout(SSL, s, HTTP_IDLE_TIMEOUT_S);
+                    ((HttpResponse<SSL> *) s)->resetTimeout();
 
                     /* Call filter */
                     for (auto &f : httpContextData->filterHandlers) {
@@ -94,11 +94,10 @@ private:
             
         /* Handle socket connections */
         us_socket_context_on_open(SSL, getSocketContext(), [](us_socket_t *s, int /*is_client*/, char */*ip*/, int /*ip_length*/) {
-            /* Any connected socket should timeout until it has a request */
-            us_socket_timeout(SSL, s, HTTP_IDLE_TIMEOUT_S);
-
             /* Init socket ext */
             new (us_socket_ext(SSL, s)) HttpResponseData<SSL>;
+              /* Any connected socket should timeout until it has a request */
+            ((HttpResponse<SSL> *) s)->resetTimeout();
 
             if(!SSL) {
                 /* Call filter */
@@ -237,7 +236,7 @@ private:
 
                 /* If we have not responded and we have a data handler, we need to timeout to enfore client sending the data */
                 if (!((HttpResponse<SSL> *) s)->hasResponded() && httpResponseData->inStream) {
-                    us_socket_timeout(SSL, (us_socket_t *) s, HTTP_IDLE_TIMEOUT_S);
+                    ((HttpResponse<SSL> *) s)->resetTimeout();
                 }
 
                 /* Continue parsing */
@@ -255,8 +254,8 @@ private:
                         /* We still have some more data coming in later, so reset timeout */
                         /* Only reset timeout if we got enough bytes (16kb/sec) since last time we reset here */
                         httpResponseData->received_bytes_per_timeout += (unsigned int) data.length();
-                        if (httpResponseData->received_bytes_per_timeout >= HTTP_RECEIVE_THROUGHPUT_BYTES * HTTP_IDLE_TIMEOUT_S) {
-                            us_socket_timeout(SSL, (struct us_socket_t *) user, HTTP_IDLE_TIMEOUT_S);
+                        if (httpResponseData->received_bytes_per_timeout >= HTTP_RECEIVE_THROUGHPUT_BYTES * httpResponseData->idleTimeout) {
+                            ((HttpResponse<SSL> *) user)->resetTimeout();
                             httpResponseData->received_bytes_per_timeout = 0;
                         }
                     }
@@ -308,8 +307,7 @@ private:
                 auto [written, failed] = ((AsyncSocket<SSL> *) returnedSocket)->uncork();
                 if (failed) {
                     /* All Http sockets timeout by this, and this behavior match the one in HttpResponse::cork */
-                    /* Warning: both HTTP_IDLE_TIMEOUT_S and HTTP_TIMEOUT_S are 10 seconds and both are used the same */
-                    ((AsyncSocket<SSL> *) s)->timeout(HTTP_IDLE_TIMEOUT_S);
+                    ((HttpResponse<SSL> *) s)->resetTimeout();
                 }
 
                 /* We need to check if we should close this socket here now */
@@ -397,7 +395,7 @@ private:
             }
 
             /* Expect another writable event, or another request within the timeout */
-            asyncSocket->timeout(HTTP_IDLE_TIMEOUT_S);
+            ((HttpResponse<SSL> *) s)->resetTimeout();
 
             return s;
         });

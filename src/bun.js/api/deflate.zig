@@ -50,15 +50,15 @@ pub const DeflateEncoder = struct {
         const opts = arguments[0];
         const callback = arguments[2];
 
-        _ = globalThis.checkMinOrGetDefault(opts, "chunkSize", u32, 64, 1024 * 14) orelse return .zero;
+        _ = globalThis.checkMinOrGetDefault(opts, "chunkSize", u32, 64, 1024 * 16) orelse return .zero;
         const level = globalThis.checkRangesOrGetDefault(opts, "level", u8, 0, 9, 6) orelse return .zero;
         const windowBits = globalThis.checkRangesOrGetDefault(opts, "windowBits", u8, 8, 15, 15) orelse return .zero;
         const memLevel = globalThis.checkRangesOrGetDefault(opts, "memLevel", u8, 1, 9, 8) orelse return .zero;
         const strategy = globalThis.checkRangesOrGetDefault(opts, "strategy", u8, 0, 4, 0) orelse return .zero;
         const maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)) orelse return .zero;
-        const flush = globalThis.checkRangesOrGetDefault(opts, "flush", u8, 0, 6, 0) orelse return .zero;
-        const finishFlush = globalThis.checkRangesOrGetDefault(opts, "finishFlush", u8, 0, 6, 4) orelse return .zero;
-        const fullFlush = globalThis.checkRangesOrGetDefault(opts, "fullFlush", u8, 0, 6, 3) orelse return .zero;
+        const flush = globalThis.checkRangesOrGetDefault(opts, "flush", u8, 0, 5, 0) orelse return .zero;
+        const finishFlush = globalThis.checkRangesOrGetDefault(opts, "finishFlush", u8, 0, 5, 4) orelse return .zero;
+        const fullFlush = globalThis.checkRangesOrGetDefault(opts, "fullFlush", u8, 0, 5, 3) orelse return .zero;
 
         var this: *DeflateEncoder = DeflateEncoder.new(.{
             .globalThis = globalThis,
@@ -374,7 +374,7 @@ pub const DeflateDecoder = struct {
         const opts = arguments[0];
         const callback = arguments[2];
 
-        _ = globalThis.checkMinOrGetDefault(opts, "chunkSize", u32, 64, 1024 * 14) orelse return .zero;
+        _ = globalThis.checkMinOrGetDefault(opts, "chunkSize", u32, 64, 1024 * 16) orelse return .zero;
         const maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)) orelse return .zero;
         const flush = globalThis.checkRangesOrGetDefault(opts, "flush", u8, 0, 6, 0) orelse return .zero;
         const finishFlush = globalThis.checkRangesOrGetDefault(opts, "finishFlush", u8, 0, 6, 4) orelse return .zero;

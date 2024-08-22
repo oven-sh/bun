@@ -78,11 +78,11 @@ pub const BrotliEncoder = struct {
         const opts = arguments[0];
         const callback = arguments[2];
 
-        _ = globalThis.checkMinOrGetDefault(opts, "chunkSize", u32, 64, 1024 * 14) orelse return .zero;
+        _ = globalThis.checkMinOrGetDefault(opts, "chunkSize", u32, 64, 1024 * 16) orelse return .zero;
         const maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)) orelse return .zero;
-        const flush = globalThis.checkRangesOrGetDefault(opts, "flush", u8, 0, 6, 0) orelse return .zero;
-        const finishFlush = globalThis.checkRangesOrGetDefault(opts, "finishFlush", u8, 0, 6, 2) orelse return .zero;
-        const fullFlush = globalThis.checkRangesOrGetDefault(opts, "fullFlush", u8, 0, 6, 1) orelse return .zero;
+        const flush = globalThis.checkRangesOrGetDefault(opts, "flush", u8, 0, 3, 0) orelse return .zero;
+        const finishFlush = globalThis.checkRangesOrGetDefault(opts, "finishFlush", u8, 0, 3, 2) orelse return .zero;
+        const fullFlush = globalThis.checkRangesOrGetDefault(opts, "fullFlush", u8, 0, 3, 1) orelse return .zero;
 
         var this: *BrotliEncoder = BrotliEncoder.new(.{
             .globalThis = globalThis,
@@ -427,7 +427,7 @@ pub const BrotliDecoder = struct {
         const opts = arguments[0];
         const callback = arguments[2];
 
-        _ = globalThis.checkMinOrGetDefault(opts, "chunkSize", u32, 64, 1024 * 14) orelse return .zero;
+        _ = globalThis.checkMinOrGetDefault(opts, "chunkSize", u32, 64, 1024 * 16) orelse return .zero;
         const maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)) orelse return .zero;
         const flush = globalThis.checkRangesOrGetDefault(opts, "flush", u8, 0, 6, 0) orelse return .zero;
         const finishFlush = globalThis.checkRangesOrGetDefault(opts, "finishFlush", u8, 0, 6, 2) orelse return .zero;

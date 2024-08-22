@@ -626,8 +626,131 @@ pub const Version = extern struct {
         return this.tag.build.len + this.tag.pre.len;
     }
 
+    pub const Formatter = struct {
+        version: Version,
+        input: string,
+
+        pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            const self = formatter.version;
+            try std.fmt.format(writer, "{?d}.{?d}.{?d}", .{ self.major, self.minor, self.patch });
+
+            if (self.tag.hasPre()) {
+                const pre = self.tag.pre.slice(formatter.input);
+                try writer.writeAll("-");
+                try writer.writeAll(pre);
+            }
+
+            if (self.tag.hasBuild()) {
+                const build = self.tag.build.slice(formatter.input);
+                try writer.writeAll("+");
+                try writer.writeAll(build);
+            }
+        }
+    };
+
     pub fn fmt(this: Version, input: string) Formatter {
         return .{ .version = this, .input = input };
+    }
+
+    pub const DiffFormatter = struct {
+        version: Version,
+        buf: string,
+        diff: ChangedVersion,
+
+        pub fn format(this: DiffFormatter, comptime fmt_: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            if (!Output.enable_ansi_colors) {
+                // print normally if no colors
+                const formatter: Formatter = .{ .version = this.version, .input = this.buf };
+                return Formatter.format(formatter, fmt_, options, writer);
+            }
+
+            switch (this.diff) {
+                .major => try writer.print(Output.prettyFmt("<red>{d}.{d}.{d}", true), .{
+                    this.version.major, this.version.minor, this.version.patch,
+                }),
+                .minor => {
+                    if (this.version.major == 0) {
+                        try writer.print(Output.prettyFmt("<d>{d}.<r><red>{d}.{d}", true), .{
+                            this.version.major, this.version.minor, this.version.patch,
+                        });
+                    } else {
+                        try writer.print(Output.prettyFmt("<d>{d}.<r><yellow>{d}.{d}", true), .{
+                            this.version.major, this.version.minor, this.version.patch,
+                        });
+                    }
+                },
+                .patch => {
+                    if (this.version.major == 0 and this.version.minor == 0) {
+                        try writer.print(Output.prettyFmt("<d>{d}.{d}.<r><red>{d}", true), .{
+                            this.version.major, this.version.minor, this.version.patch,
+                        });
+                    } else {
+                        try writer.print(Output.prettyFmt("<d>{d}.{d}.<r><b><green>{d}", true), .{
+                            this.version.major, this.version.minor, this.version.patch,
+                        });
+                    }
+                },
+                .none, .build => try writer.print(Output.prettyFmt("<d>{d}.{d}.{d}", true), .{
+                    this.version.major, this.version.minor, this.version.patch,
+                }),
+                .pre => try writer.print(Output.prettyFmt("<d>{d}.{d}.{d}<yellow>", true), .{
+                    this.version.major, this.version.minor, this.version.patch,
+                }),
+            }
+
+            if (this.version.tag.hasPre()) {
+                try writer.print("-{}", .{this.version.tag.pre.fmt(this.buf)});
+            }
+
+            if (this.diff == .build) {
+                try writer.writeAll(Output.prettyFmt("<yellow>", true));
+            }
+
+            if (this.version.tag.hasBuild()) {
+                try writer.print("+{}", .{this.version.tag.build.fmt(this.buf)});
+            }
+
+            try writer.writeAll(Output.prettyFmt("<r>", true));
+        }
+    };
+
+    pub fn diffFmt(this: Version, other: Version, this_buf: string, other_buf: string) DiffFormatter {
+        return .{
+            .version = this,
+            .buf = this_buf,
+            .diff = this.whichVersionIsDifferent(other, this_buf, other_buf) orelse .none,
+        };
+    }
+
+    pub const ChangedVersion = enum {
+        major,
+        minor,
+        patch,
+        pre,
+        build,
+        none,
+    };
+
+    pub fn whichVersionIsDifferent(
+        left: Version,
+        right: Version,
+        left_buf: string,
+        right_buf: string,
+    ) ?ChangedVersion {
+        if (left.major != right.major) return .major;
+        if (left.minor != right.minor) return .minor;
+        if (left.patch != right.patch) return .patch;
+
+        if (left.tag.hasPre() != right.tag.hasPre()) return .pre;
+        if (!left.tag.hasPre() and !right.tag.hasPre()) return null;
+        if (left.tag.orderPre(right.tag, left_buf, right_buf) != .eq) return .pre;
+
+        if (left.tag.hasBuild() != right.tag.hasBuild()) return .build;
+        if (!left.tag.hasBuild() and !right.tag.hasBuild()) return null;
+        return if (left.tag.build.order(&right.tag.build, left_buf, right_buf) != .eq)
+            .build
+        else
+            null;
     }
 
     pub fn count(this: *const Version, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) void {
@@ -688,28 +811,6 @@ pub const Version = extern struct {
         const bytes = std.mem.asBytes(&hashable);
         return bun.Wyhash.hash(0, bytes);
     }
-
-    pub const Formatter = struct {
-        version: Version,
-        input: string,
-
-        pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            const self = formatter.version;
-            try std.fmt.format(writer, "{?d}.{?d}.{?d}", .{ self.major, self.minor, self.patch });
-
-            if (self.tag.hasPre()) {
-                const pre = self.tag.pre.slice(formatter.input);
-                try writer.writeAll("-");
-                try writer.writeAll(pre);
-            }
-
-            if (self.tag.hasBuild()) {
-                const build = self.tag.build.slice(formatter.input);
-                try writer.writeAll("+");
-                try writer.writeAll(build);
-            }
-        }
-    };
 
     pub fn eql(lhs: Version, rhs: Version) bool {
         return lhs.major == rhs.major and lhs.minor == rhs.minor and lhs.patch == rhs.patch and rhs.tag.eql(lhs.tag);

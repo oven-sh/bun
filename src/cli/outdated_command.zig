@@ -166,32 +166,19 @@ pub const OutdatedCommand = struct {
 
         if (outdated_ids.items.len == 0) return;
 
-        // begin printing
-        const package_column_length = 2 + if (has_optional)
-            "Optional dependencies".len + (max_name -| "Optional dependencies".len)
+        // +2 for padding columns with 2 spaces
+        const package_column_length: usize = 2 + if (has_optional)
+            "Optional dependencies".len + @as(usize, (max_name -| "Optional dependencies".len))
         else if (has_peer)
-            "Peer dependencies".len + (max_name -| "Peer dependencies".len)
+            "Peer dependencies".len + @as(usize, (max_name -| "Peer dependencies".len))
         else if (has_dev)
-            "Dev dependencies".len + (max_name -| "Dev dependencies".len)
+            "Dev dependencies".len + @as(usize, (max_name -| "Dev dependencies".len))
         else
-            "Dependencies".len + (max_name -| "Dependencies".len);
+            "Dependencies".len + @as(usize, (max_name -| "Dependencies".len));
 
-        // Output.pretty("<r><d>Dependencies<r>", .{});
-        // for ("".len..package_column_length) |_| Output.pretty(" ", .{});
-
-        const current_column_length = "Current".len + (max_current -| "Current".len) + 2;
-        // Output.pretty("<d>Current<r>", .{});
-        // for ("Current".len..current_column_length) |_| Output.pretty(" ", .{});
-
-        const update_column_length = "Update".len + (max_update -| "Update".len) + 2;
-        // Output.pretty("<d>Update<r>", .{});
-        // for ("Update".len..update_column_length) |_| Output.pretty(" ", .{});
-
-        const latest_column_length = "Latest".len + (max_latest -| "Latest".len) + 2;
-        // Output.pretty("<d>Latest<r>", .{});
-        // for ("Latest".len..latest_column_length) |_| Output.pretty(" ", .{});
-
-        // Output.pretty("\n", .{});
+        const current_column_length: usize = "Current".len + @as(usize, (max_current -| "Current".len)) + 2;
+        const update_column_length: usize = "Update".len + @as(usize, (max_update -| "Update".len)) + 2;
+        const latest_column_length: usize = "Latest".len + @as(usize, (max_latest -| "Latest".len)) + 2;
 
         var printed_column_names = false;
         inline for (
@@ -199,7 +186,7 @@ pub const OutdatedCommand = struct {
                 .{ "Dependencies", Behavior{ .normal = true } },
                 .{ "Dev dependencies", Behavior{ .dev = true } },
                 .{ "Peer dependencies", Behavior{ .peer = true } },
-                .{ "Optional dependencnies", Behavior{ .optional = true } },
+                .{ "Optional dependencies", Behavior{ .optional = true } },
             },
         ) |dependency_group| {
             const group_name, const group_behavior = dependency_group;
@@ -230,23 +217,20 @@ pub const OutdatedCommand = struct {
                 if (!printed_group_name) {
                     printed_group_name = true;
 
-                    Output.pretty("<r>\n<d>" ++ group_name ++ "<r>", .{});
+                    Output.pretty("<r>\n<cyan>" ++ group_name ++ "<r>", .{});
+                    for (group_name.len..package_column_length) |_| Output.pretty(" ", .{});
 
                     if (!printed_column_names) {
                         printed_column_names = true;
 
-                        for (group_name.len..package_column_length) |_| Output.pretty(" ", .{});
-
-                        Output.pretty("<d>Current<r>", .{});
+                        Output.pretty("<cyan>Current<r>", .{});
                         for ("Current".len..current_column_length) |_| Output.pretty(" ", .{});
 
-                        Output.pretty("<d>Update<r>", .{});
+                        Output.pretty("<cyan>Update<r>", .{});
                         for ("Update".len..update_column_length) |_| Output.pretty(" ", .{});
 
-                        Output.pretty("<d>Latest<r>", .{});
+                        Output.pretty("<cyan>Latest<r>", .{});
                         for ("Latest".len..latest_column_length) |_| Output.pretty(" ", .{});
-                    } else {
-                        for (group_name.len..package_column_length + current_column_length + update_column_length + latest_column_length) |_| Output.pretty(" ", .{});
                     }
 
                     Output.pretty("\n", .{});
@@ -262,16 +246,12 @@ pub const OutdatedCommand = struct {
                 version_buf.items.len = 0;
 
                 version_writer.print("{}", .{update_version.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
-                if (update_version.version.order(resolution.value.npm.version, manifest.string_buf, string_buf) == .gt) {
-                    Output.pretty("<blue>{s}<r>", .{version_buf.items});
-                } else {
-                    Output.pretty("<d>{s}<r>", .{version_buf.items});
-                }
+                Output.pretty("{}", .{update_version.version.diffFmt(resolution.value.npm.version, manifest.string_buf, string_buf)});
                 for (version_buf.items.len..update_column_length) |_| Output.pretty(" ", .{});
                 version_buf.items.len = 0;
 
                 version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
-                Output.pretty("<cyan>{s}<r>", .{version_buf.items});
+                Output.pretty("{}", .{latest.version.diffFmt(resolution.value.npm.version, manifest.string_buf, string_buf)});
                 for (version_buf.items.len..latest_column_length) |_| Output.pretty(" ", .{});
                 version_buf.items.len = 0;
 

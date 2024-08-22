@@ -2956,7 +2956,7 @@ inline fn handleShortRead(
 pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u8, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     log("onData {}", .{incoming_data.len});
 
-    if (this.state.stage != .done and this.state.stage != .fail) {
+    if (this.state.stage == .pending) {
         // already done or failed so we should no care about this data
         return;
     }

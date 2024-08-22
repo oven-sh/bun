@@ -1115,6 +1115,7 @@ pub const Fetch = struct {
         pub fn onProgressUpdate(this: *FetchTasklet) void {
             JSC.markBinding(@src());
             log("onProgressUpdate", .{});
+            defer this.deref();
             this.mutex.lock();
             this.has_schedule_callback.store(false, .monotonic);
             const is_done = !this.result.has_more;
@@ -1772,6 +1773,7 @@ pub const Fetch = struct {
         }
 
         pub fn callback(task: *FetchTasklet, async_http: *http.AsyncHTTP, result: http.HTTPClientResult) void {
+            task.ref();
             // we are done with the http client so we can deref our side
             defer if (!result.has_more) task.deref();
 
@@ -1824,6 +1826,7 @@ pub const Fetch = struct {
                 }
                 if (success and result.has_more) {
                     // we are ignoring the body so we should not receive more data, so will only signal when result.has_more = true
+                    task.deref();
                     return;
                 }
             } else {
@@ -1836,6 +1839,7 @@ pub const Fetch = struct {
 
             if (task.has_schedule_callback.cmpxchgStrong(false, true, .acquire, .monotonic)) |has_schedule_callback| {
                 if (has_schedule_callback) {
+                    task.deref();
                     return;
                 }
             }

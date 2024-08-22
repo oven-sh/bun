@@ -7,9 +7,6 @@ const Output = bun.Output;
 const ZigString = JSC.ZigString;
 const Queue = std.fifo.LinearFifo(JSC.Node.BlobOrStringOrBuffer, .Dynamic);
 
-const Z_NO_FLUSH = 0;
-const Z_FINISH = 4;
-
 pub const DeflateEncoder = struct {
     pub usingnamespace bun.New(@This());
     pub usingnamespace JSC.Codegen.JSDeflateEncoder;

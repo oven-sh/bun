@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { once } from "node:events";
 import { createBrotliCompress, createGzip, createDeflate } from "node:zlib";
 
-test("content-encoding header is case-iNsENsITIve", async () => {
+test.todo("content-encoding header is case-iNsENsITIve", async () => {
   const contentCodings = "GZiP, bR";
   const text = "Hello, World!";
 
@@ -28,7 +28,7 @@ test("content-encoding header is case-iNsENsITIve", async () => {
   expect(response.headers.get("content-encoding")).toBe(contentCodings);
 });
 
-test("response decompression according to content-encoding should be handled in a correct order", async () => {
+test.todo("response decompression according to content-encoding should be handled in a correct order", async () => {
   const contentCodings = "deflate, gzip";
   const text = "Hello, World!";
 

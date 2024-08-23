@@ -15,10 +15,7 @@ function run_command() {
   { set +x; } 2>/dev/null
 }
 
-mkdir -p build
-cd build
-
-run_command cmake .. "${CMAKE_FLAGS[@]}" \
+run_command cmake -B build "${CMAKE_FLAGS[@]}" \
   -GNinja \
   -DBUN_CPP_ONLY="1" \
   -DNO_CONFIGURE_DEPENDS="1" \
@@ -29,6 +26,6 @@ run_command cmake .. "${CMAKE_FLAGS[@]}" \
   -DENABLE_CANARY="ON" \
   -DUSE_CANARY_REVISION="$CANARY" \
   -DUSE_REVISION="$GIT_SHA"
+cmake build --build build
 
-cd ..
 source "$(dirname "$0")/upload-artifact.sh" "build/libbun.a" --split

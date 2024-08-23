@@ -26,7 +26,6 @@ run_command cmake -B build "${CMAKE_FLAGS[@]}" \
   -DENABLE_CANARY="ON" \
   -DUSE_CANARY_REVISION="$CANARY" \
   -DUSE_REVISION="$GIT_SHA"
-NINJA_STATUS="--- [%f/%t] " \
-  cmake --build build --verbose --parallel "$CPUS"
+cmake --build build --verbose --parallel "$CPUS"
 
 source "$(dirname "$0")/upload-artifact.sh" "build/libbun.a" --split

@@ -978,13 +978,9 @@ pub const Fetch = struct {
             const globalThis = this.global_this;
             // reset the buffer if we are streaming or if we are not waiting for bufferig anymore
             var buffer_reset = true;
-            var any_js = false;
             defer {
                 if (buffer_reset) {
                     this.scheduled_response_buffer.reset();
-                }
-                if (any_js) {
-                    this.javascript_vm.drainMicrotasks();
                 }
             }
 
@@ -1002,7 +998,6 @@ pub const Fetch = struct {
                             bun.default_allocator,
                         );
                     }
-                    any_js = true;
                 }
                 // if we are buffering resolve the promise
                 if (this.getCurrentResponse()) |response| {
@@ -1015,7 +1010,6 @@ pub const Fetch = struct {
                             promise.reject(globalThis, response.body.value.Error.toJS(globalThis));
                         }
                     }
-                    any_js = true;
                 }
                 return;
             }
@@ -1035,7 +1029,6 @@ pub const Fetch = struct {
                             },
                             bun.default_allocator,
                         );
-                        any_js = true;
                     } else {
                         var prev = this.readable_stream_ref;
                         this.readable_stream_ref = .{};
@@ -1046,7 +1039,6 @@ pub const Fetch = struct {
                             },
                             bun.default_allocator,
                         );
-                        any_js = true;
                     }
                     return;
                 }
@@ -1070,7 +1062,6 @@ pub const Fetch = struct {
                                     },
                                     bun.default_allocator,
                                 );
-                                any_js = true;
                             } else {
                                 var prev = body.value.Locked.readable;
                                 body.value.Locked.readable = .{};
@@ -1083,7 +1074,6 @@ pub const Fetch = struct {
                                     },
                                     bun.default_allocator,
                                 );
-                                any_js = true;
                             }
 
                             return;
@@ -1115,7 +1105,6 @@ pub const Fetch = struct {
                         };
 
                         if (old == .Locked) {
-                            any_js = true;
                             old.resolve(&response.body.value, this.global_this, response.getFetchHeaders());
                         }
                     }
@@ -1184,12 +1173,6 @@ pub const Fetch = struct {
                     defer result.deinit();
 
                     promise_value.ensureStillAlive();
-
-                    // we need to drain the microtasks
-                    const loop = vm.eventLoop();
-                    loop.enter();
-                    defer loop.exit();
-
                     promise.reject(globalThis, result.toJS(globalThis));
 
                     tracker.didDispatch(globalThis);
@@ -1234,18 +1217,11 @@ pub const Fetch = struct {
                     defer bun.default_allocator.destroy(self);
                     defer self.held.deinit();
                     defer self.promise.deinit();
-
-                    // we need to drain the microtasks
-                    const globalObject = self.globalObject;
-                    const loop = globalObject.bunVM().eventLoop();
-                    loop.enter();
-                    defer loop.exit();
-
                     // resolve the promise
                     var prom = self.promise.swap().asAnyPromise().?;
                     const res = self.held.swap();
                     res.ensureStillAlive();
-                    prom.resolve(globalObject, res);
+                    prom.resolve(self.globalObject, res);
                 }
 
                 pub fn reject(self: *@This()) void {
@@ -1254,17 +1230,11 @@ pub const Fetch = struct {
                     defer self.held.deinit();
                     defer self.promise.deinit();
 
-                    // we need to drain the microtasks
-                    const globalObject = self.globalObject;
-                    const loop = globalObject.bunVM().eventLoop();
-                    loop.enter();
-                    defer loop.exit();
-
                     // reject the promise
                     var prom = self.promise.swap().asAnyPromise().?;
                     const res = self.held.swap();
                     res.ensureStillAlive();
-                    prom.reject(globalObject, res);
+                    prom.reject(self.globalObject, res);
                 }
             };
             var holder = bun.default_allocator.create(Holder) catch bun.outOfMemory();

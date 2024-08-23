@@ -20,10 +20,13 @@ file(GLOB BUN_CPP_SOURCES ${CONFIGURE_DEPENDS}
   # TODO: Keep this for now, but it's dubious if we actually need it
   ${BUN_DEPENDENCIES_SOURCE}/picohttpparser/picohttpparser.c
   ${BUN_DEPENDENCIES_SOURCE}/*.cpp
-  # Codegen
-  ${CODEGEN_PATH}/ZigGeneratedClasses.cpp
-  ${CODEGEN_PATH}/JSSink.cpp
-  ${CODEGEN_PATH}/WebCoreJSBuiltins.cpp
+)
+
+list(APPEND BUN_CPP_SOURCES
+  ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}
+  ${BUN_JS_SINK_OUTPUTS}
+  ${BUN_JAVASCRIPT_OUTPUTS}
+  ${BUN_OBJECT_LUT_OUTPUTS}
 )
 
 if(WIN32)

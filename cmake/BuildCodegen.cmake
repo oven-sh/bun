@@ -1,3 +1,20 @@
+# Append the given dependencies to the source file
+macro(WEBKIT_ADD_SOURCE_DEPENDENCIES _source _deps)
+  set(_tmp)
+  get_source_file_property(_tmp ${_source} OBJECT_DEPENDS)
+
+  if(NOT _tmp)
+    set(_tmp "")
+  endif()
+
+  foreach(f ${_deps})
+    list(APPEND _tmp "${f}")
+  endforeach()
+
+  set_source_files_properties(${_source} PROPERTIES OBJECT_DEPENDS "${_tmp}")
+  unset(_tmp)
+endmacro()
+
 # --- package.json ---
 
 add_custom_command(
@@ -250,6 +267,17 @@ add_custom_command(
     ${BUN_ERROR_CODE_SOURCES}
 )
 
+# This needs something to force it to be regenerated
+WEBKIT_ADD_SOURCE_DEPENDENCIES(
+  ${CWD}/src/bun.js/bindings/ErrorCode.cpp
+  ${CODEGEN_PATH}/ErrorCode+List.h
+)
+
+WEBKIT_ADD_SOURCE_DEPENDENCIES(
+  ${CWD}/src/bun.js/bindings/ErrorCode.h
+  ${CODEGEN_PATH}/ErrorCode+Data.h
+)
+
 # --- ZigGeneratedClasses.{zig,cpp,h} --
 
 set(BUN_ZIG_GENERATED_CLASSES_SCRIPT ${CWD}/src/codegen/generate-classes.ts)
@@ -322,7 +350,8 @@ set(BUN_JAVASCRIPT_OUTPUTS
   ${CODEGEN_PATH}/ResolvedSourceTag.zig
   ${CODEGEN_PATH}/SyntheticModuleType.h
   ${CODEGEN_PATH}/GeneratedJS2Native.h
-  ${CODEGEN_PATH}/GeneratedJS2Native.zig
+  # Zig will complain if files are outside of the source directory
+  ${CWD}/src/bun.js/bindings/GeneratedJS2Native.zig
 )
 
 add_custom_command(
@@ -343,6 +372,11 @@ add_custom_command(
   DEPENDS
     ${BUN_JAVASCRIPT_SOURCES}
     ${BUN_JAVASCRIPT_CODEGEN_SOURCES}
+)
+
+WEBKIT_ADD_SOURCE_DEPENDENCIES(
+  ${CWD}/src/bun.js/bindings/InternalModuleRegistry.cpp
+  ${CODEGEN_PATH}/InternalModuleRegistryConstants.h
 )
 
 # --- JSSink.{cpp,h} ---
@@ -383,17 +417,23 @@ set(BUN_OBJECT_LUT_SOURCES
   ${CWD}/src/bun.js/bindings/ProcessBindingNatives.cpp
 )
 
-foreach(BUN_OBJECT_LUT_SOURCE ${BUN_OBJECT_LUT_SOURCES})
+set(BUN_OBJECT_LUT_OUTPUTS
+  ${CODEGEN_PATH}/BunObject.lut.h
+  ${CODEGEN_PATH}/ZigGlobalObject.lut.h
+  ${CODEGEN_PATH}/JSBuffer.lut.h
+  ${CODEGEN_PATH}/BunProcess.lut.h
+  ${CODEGEN_PATH}/ProcessBindingConstants.lut.h
+  ${CODEGEN_PATH}/ProcessBindingNatives.lut.h
+)
+
+list(LENGTH BUN_OBJECT_LUT_SOURCES BUN_OBJECT_LUT_SOURCES_COUNT)
+
+foreach(i RANGE ${BUN_OBJECT_LUT_SOURCES_COUNT})
+  math(EXPR i "${i} - 1")
+  list(GET BUN_OBJECT_LUT_SOURCES ${i} BUN_OBJECT_LUT_SOURCE)
+  list(GET BUN_OBJECT_LUT_OUTPUTS ${i} BUN_OBJECT_LUT_OUTPUT)
+
   get_filename_component(filename ${BUN_OBJECT_LUT_SOURCE} NAME_WE)
-  message(STATUS "Generating ${filename}.lut.h")
-
-  # Workaround for ZigGlobalObject.lut.txt since it has a double extension
-  if(filename MATCHES "ZigGlobalObject")
-    set(filename "ZigGlobalObject")
-  endif()
-
-  set(BUN_OBJECT_LUT_OUTPUT ${CODEGEN_PATH}/${filename}.lut.h)
-
   add_custom_command(
     COMMENT
       "Generating ${filename}.lut.h"
@@ -412,10 +452,26 @@ foreach(BUN_OBJECT_LUT_SOURCE ${BUN_OBJECT_LUT_SOURCES})
     DEPENDS
       ${BUN_OBJECT_LUT_SOURCE}
   )
+
+  WEBKIT_ADD_SOURCE_DEPENDENCIES(${BUN_OBJECT_LUT_SOURCE} ${BUN_OBJECT_LUT_OUTPUT})
 endforeach()
 
-# TODO
-# WEBKIT_ADD_SOURCE_DEPENDENCIES(${BUN_SRC}/bun.js/bindings/ZigGlobalObject.cpp ${BUN_WORKDIR}/codegen/ZigGlobalObject.lut.h)
+WEBKIT_ADD_SOURCE_DEPENDENCIES(
+  ${CWD}/src/bun.js/bindings/ZigGlobalObject.cpp
+  ${CODEGEN_PATH}/ZigGlobalObject.lut.h
+)
 
-# TODO
-# Skip some or all of these during linking?
+# --- target: codegen ---
+
+add_custom_target(
+  codegen
+  COMMENT
+    "Running codegen"
+  DEPENDS
+    ${BUN_OBJECT_LUT_OUTPUTS}
+    ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}
+    ${BUN_JS_SINK_OUTPUTS}
+    ${BUN_JAVASCRIPT_OUTPUTS}
+    ${BUN_ERROR_CODE_OUTPUTS}
+    ${BUN_ZIG_OBJECT_OUTPUTS}
+)

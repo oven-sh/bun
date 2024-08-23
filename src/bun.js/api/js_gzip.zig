@@ -100,7 +100,7 @@ pub const GzipEncoder = struct {
         this.destroy();
     }
 
-    pub fn encodeSync(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn transformSync(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         const arguments = callframe.arguments(3);
 
         if (arguments.len < 3) {
@@ -148,7 +148,7 @@ pub const GzipEncoder = struct {
         return this.collectOutputValue();
     }
 
-    pub fn encode(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn transform(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         const arguments = callframe.arguments(3);
 
         if (arguments.len < 3) {
@@ -450,7 +450,7 @@ pub const GzipDecoder = struct {
         this.destroy();
     }
 
-    pub fn decodeSync(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn transformSync(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         const arguments = callframe.arguments(3);
 
         if (arguments.len < 3) {
@@ -498,7 +498,7 @@ pub const GzipDecoder = struct {
         return this.collectOutputValue();
     }
 
-    pub fn decode(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn transform(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         const arguments = callframe.arguments(3);
 
         if (arguments.len < 3) {

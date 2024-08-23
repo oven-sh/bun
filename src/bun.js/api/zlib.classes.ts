@@ -12,12 +12,12 @@ export default [
     JSType: "0b11101110",
     values: ["callback"],
     proto: {
-      encode: {
-        fn: "encode",
+      transform: {
+        fn: "transform",
         length: 2,
       },
-      encodeSync: {
-        fn: "encodeSync",
+      transformSync: {
+        fn: "transformSync",
         length: 2,
       },
       reset: {
@@ -47,12 +47,12 @@ export default [
     values: ["callback"],
 
     proto: {
-      decode: {
-        fn: "decode",
+      transform: {
+        fn: "transform",
         length: 2,
       },
-      decodeSync: {
-        fn: "decodeSync",
+      transformSync: {
+        fn: "transformSync",
         length: 2,
       },
       reset: {
@@ -82,12 +82,12 @@ export default [
     JSType: "0b11101110",
     values: ["callback"],
     proto: {
-      encode: {
-        fn: "encode",
+      transform: {
+        fn: "transform",
         length: 2,
       },
-      encodeSync: {
-        fn: "encodeSync",
+      transformSync: {
+        fn: "transformSync",
         length: 2,
       },
       reset: {
@@ -123,12 +123,12 @@ export default [
     values: ["callback"],
 
     proto: {
-      decode: {
-        fn: "decode",
+      transform: {
+        fn: "transform",
         length: 2,
       },
-      decodeSync: {
-        fn: "decodeSync",
+      transformSync: {
+        fn: "transformSync",
         length: 2,
       },
       reset: {
@@ -164,12 +164,12 @@ export default [
     JSType: "0b11101110",
     values: ["callback"],
     proto: {
-      encode: {
-        fn: "encode",
+      transform: {
+        fn: "transform",
         length: 2,
       },
-      encodeSync: {
-        fn: "encodeSync",
+      transformSync: {
+        fn: "transformSync",
         length: 2,
       },
       reset: {
@@ -205,12 +205,12 @@ export default [
     values: ["callback"],
 
     proto: {
-      decode: {
-        fn: "decode",
+      transform: {
+        fn: "transform",
         length: 2,
       },
-      decodeSync: {
-        fn: "decodeSync",
+      transformSync: {
+        fn: "transformSync",
         length: 2,
       },
       reset: {

@@ -57,7 +57,6 @@ Base.prototype.flush = function (kind, callback) {
     callback = kind;
     kind = 3;
   }
-
   if (this.writableFinished) {
     if (callback) process.nextTick(callback);
   } else if (this.writableEnded) {
@@ -73,6 +72,20 @@ Base.prototype.reset = function () {
 Base.prototype.close = function (callback) {
   if (callback) stream.finished(this, callback);
   this.destroy();
+};
+Base.prototype._transform = function _transform(chunk, encoding, callback) {
+  try {
+    callback(undefined, this[kHandle].transformSync(chunk, encoding, false));
+  } catch (err) {
+    callback(err, undefined);
+  }
+};
+Base.prototype._flush = function _flush(callback) {
+  try {
+    callback(undefined, this[kHandle].transformSync("", undefined, true));
+  } catch (err) {
+    callback(err, undefined);
+  }
 };
 
 //
@@ -103,21 +116,6 @@ function BrotliCompress(opts) {
 }
 BrotliCompress.prototype = Object.create(Base.prototype);
 
-BrotliCompress.prototype._transform = function _transform(chunk, encoding, callback) {
-  try {
-    callback(undefined, this[kHandle].encodeSync(chunk, encoding, false));
-  } catch (err) {
-    callback(err, undefined);
-  }
-};
-BrotliCompress.prototype._flush = function _flush(callback) {
-  try {
-    callback(undefined, this[kHandle].encodeSync("", undefined, true));
-  } catch (err) {
-    callback(err, undefined);
-  }
-};
-
 //
 
 function BrotliDecompress(opts) {
@@ -125,21 +123,6 @@ function BrotliDecompress(opts) {
   Base.$call(this, BROTLI_DECODE, opts);
 }
 BrotliDecompress.prototype = Object.create(Base.prototype);
-
-BrotliDecompress.prototype._transform = function (chunk, encoding, callback) {
-  try {
-    callback(undefined, this[kHandle].decodeSync(chunk, encoding, false));
-  } catch (err) {
-    callback(err, undefined);
-  }
-};
-BrotliDecompress.prototype._flush = function (callback) {
-  try {
-    callback(undefined, this[kHandle].decodeSync("", undefined, true));
-  } catch (err) {
-    callback(err, undefined);
-  }
-};
 
 //
 
@@ -149,21 +132,6 @@ function Deflate(opts) {
 }
 Deflate.prototype = Object.create(Zlib.prototype);
 
-Deflate.prototype._transform = function _transform(chunk, encoding, callback) {
-  try {
-    callback(undefined, this[kHandle].encodeSync(chunk, encoding, false));
-  } catch (err) {
-    callback(err, undefined);
-  }
-};
-Deflate.prototype._flush = function _flush(callback) {
-  try {
-    callback(undefined, this[kHandle].encodeSync("", undefined, true));
-  } catch (err) {
-    callback(err, undefined);
-  }
-};
-
 //
 
 function Inflate(opts) {
@@ -171,21 +139,6 @@ function Inflate(opts) {
   Zlib.$call(this, INFLATE, opts);
 }
 Inflate.prototype = Object.create(Zlib.prototype);
-
-Inflate.prototype._transform = function (chunk, encoding, callback) {
-  try {
-    callback(undefined, this[kHandle].decodeSync(chunk, encoding, false));
-  } catch (err) {
-    callback(err, undefined);
-  }
-};
-Inflate.prototype._flush = function (callback) {
-  try {
-    callback(undefined, this[kHandle].decodeSync("", undefined, true));
-  } catch (err) {
-    callback(err, undefined);
-  }
-};
 
 //
 
@@ -195,21 +148,6 @@ function DeflateRaw(opts) {
 }
 DeflateRaw.prototype = Object.create(Zlib.prototype);
 
-DeflateRaw.prototype._transform = function _transform(chunk, encoding, callback) {
-  try {
-    callback(undefined, this[kHandle].encodeSync(chunk, encoding, false));
-  } catch (err) {
-    callback(err, undefined);
-  }
-};
-DeflateRaw.prototype._flush = function _flush(callback) {
-  try {
-    callback(undefined, this[kHandle].encodeSync("", undefined, true));
-  } catch (err) {
-    callback(err, undefined);
-  }
-};
-
 //
 
 function InflateRaw(opts) {
@@ -217,21 +155,6 @@ function InflateRaw(opts) {
   Zlib.$call(this, INFLATERAW, opts);
 }
 InflateRaw.prototype = Object.create(Zlib.prototype);
-
-InflateRaw.prototype._transform = function (chunk, encoding, callback) {
-  try {
-    callback(undefined, this[kHandle].decodeSync(chunk, encoding, false));
-  } catch (err) {
-    callback(err, undefined);
-  }
-};
-InflateRaw.prototype._flush = function (callback) {
-  try {
-    callback(undefined, this[kHandle].decodeSync("", undefined, true));
-  } catch (err) {
-    callback(err, undefined);
-  }
-};
 
 //
 
@@ -241,21 +164,6 @@ function Gzip(opts) {
 }
 Gzip.prototype = Object.create(Zlib.prototype);
 
-Gzip.prototype._transform = function _transform(chunk, encoding, callback) {
-  try {
-    callback(undefined, this[kHandle].encodeSync(chunk, encoding, false));
-  } catch (err) {
-    callback(err, undefined);
-  }
-};
-Gzip.prototype._flush = function _flush(callback) {
-  try {
-    callback(undefined, this[kHandle].encodeSync("", undefined, true));
-  } catch (err) {
-    callback(err, undefined);
-  }
-};
-
 //
 
 function Gunzip(opts) {
@@ -264,21 +172,6 @@ function Gunzip(opts) {
 }
 Gunzip.prototype = Object.create(Zlib.prototype);
 
-Gunzip.prototype._transform = function (chunk, encoding, callback) {
-  try {
-    callback(undefined, this[kHandle].decodeSync(chunk, encoding, false));
-  } catch (err) {
-    callback(err, undefined);
-  }
-};
-Gunzip.prototype._flush = function (callback) {
-  try {
-    callback(undefined, this[kHandle].decodeSync("", undefined, true));
-  } catch (err) {
-    callback(err, undefined);
-  }
-};
-
 //
 
 function Unzip(opts) {
@@ -286,21 +179,6 @@ function Unzip(opts) {
   Zlib.$call(this, UNZIP, opts);
 }
 Unzip.prototype = Object.create(Zlib.prototype);
-
-Unzip.prototype._transform = function (chunk, encoding, callback) {
-  try {
-    callback(undefined, this[kHandle].decodeSync(chunk, encoding, false));
-  } catch (err) {
-    callback(err, undefined);
-  }
-};
-Unzip.prototype._flush = function (callback) {
-  try {
-    callback(undefined, this[kHandle].decodeSync("", undefined, true));
-  } catch (err) {
-    callback(err, undefined);
-  }
-};
 
 //
 
@@ -470,29 +348,15 @@ function createConvenienceMethod(method: number, is_sync: boolean) {
         if (options == null) options = {};
         if ($isObject(options)) options.maxOutputLength ??= maxOutputLengthDefault;
         if (typeof callback !== "function") throw new TypeError(`${name}Encoder callback is not callable`);
-        switch (is_encoder) {
-          case true:
-            const encoder = private_constructor(options, {}, callback, method);
-            encoder.encode(buffer, undefined, true);
-            return;
-          case false:
-            const decoder = private_constructor(options, {}, callback, method);
-            decoder.decode(buffer, undefined, true);
-            return;
-        }
+        const coder = private_constructor(options, {}, callback, method);
+        coder.transform(buffer, undefined, true);
       };
     case true:
       return function (buffer, options) {
         if (options == null) options = {};
         if ($isObject(options)) options.maxOutputLength ??= maxOutputLengthDefault;
-        switch (is_encoder) {
-          case true:
-            const encoder = private_constructor(options, {}, null, method);
-            return encoder.encodeSync(buffer, undefined, true);
-          case false:
-            const decoder = private_constructor(options, {}, null, method);
-            return decoder.decodeSync(buffer, undefined, true);
-        }
+        const coder = private_constructor(options, {}, null, method);
+        return coder.transformSync(buffer, undefined, true);
       };
   }
 }

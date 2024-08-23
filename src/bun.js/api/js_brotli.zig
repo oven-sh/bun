@@ -279,7 +279,7 @@ pub const BrotliEncoder = struct {
         }
     };
 
-    pub fn encode(this: *BrotliEncoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn transform(this: *BrotliEncoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
         const arguments = callframe.arguments(3);
 
         if (arguments.len < 3) {
@@ -323,7 +323,7 @@ pub const BrotliEncoder = struct {
         return .undefined;
     }
 
-    pub fn encodeSync(this: *BrotliEncoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn transformSync(this: *BrotliEncoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
         const arguments = callframe.arguments(3);
 
         if (arguments.len < 3) {
@@ -526,7 +526,7 @@ pub const BrotliDecoder = struct {
         this.freelist.drain();
     }
 
-    pub fn decode(this: *BrotliDecoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn transform(this: *BrotliDecoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
         const arguments = callframe.arguments(3);
 
         if (arguments.len < 3) {
@@ -570,7 +570,7 @@ pub const BrotliDecoder = struct {
         return .undefined;
     }
 
-    pub fn decodeSync(this: *BrotliDecoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn transformSync(this: *BrotliDecoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
         const arguments = callframe.arguments(3);
 
         if (arguments.len < 3) {

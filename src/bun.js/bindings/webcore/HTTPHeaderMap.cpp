@@ -257,7 +257,7 @@ HTTPHeaderMap::HeaderIndex HTTPHeaderMap::indexOf(HTTPHeaderName name) const
     auto index = m_commonHeaders.findIf([&](auto& header) {
         return header.key == name;
     });
-    return (HeaderIndex) { .index = index, .isCommon = false };
+    return (HeaderIndex) { .index = index, .isCommon = true };
 }
 
 HTTPHeaderMap::HeaderIndex HTTPHeaderMap::indexOf(const String& name) const

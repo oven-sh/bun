@@ -7,8 +7,7 @@ if ($env:CI -eq "true") {
   & (Join-Path $PSScriptRoot "build-libuv.ps1") -CloneOnly $True
 }
 
-cd build
-cmake .. @CMAKE_FLAGS `
+cmake -B build @CMAKE_FLAGS `
   -G Ninja `
   -DCMAKE_BUILD_TYPE=Release `
   -DNO_CODEGEN=0 `
@@ -16,7 +15,7 @@ cmake .. @CMAKE_FLAGS `
   -DBUN_CPP_ONLY=1
 if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed" }
 
-.\compile-cpp-only.ps1 -v -j $env:CPUS
+cmake --build --verbose --parallel $env:CPUS
 if ($LASTEXITCODE -ne 0) { throw "C++ compilation failed" }
 
 # HACK: For some reason, the buildkite agent is hanging when uploading bun-cpp-objects.a

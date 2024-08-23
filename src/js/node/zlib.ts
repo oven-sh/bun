@@ -5144,5 +5144,135 @@ function ERR_INVALID_ARG_TYPE(name, type, value) {
   return err;
 }
 
-// zlib.js
-export default require_lib();
+const constants = require_constants();
+const { DEFLATE, INFLATE, GZIP, GUNZIP, DEFLATERAW, INFLATERAW, UNZIP, BROTLI_DECODE, BROTLI_ENCODE } = constants;
+
+// Translation table for return codes.
+const codes = {
+  Z_OK: constants.Z_OK,
+  Z_STREAM_END: constants.Z_STREAM_END,
+  Z_NEED_DICT: constants.Z_NEED_DICT,
+  Z_ERRNO: constants.Z_ERRNO,
+  Z_STREAM_ERROR: constants.Z_STREAM_ERROR,
+  Z_DATA_ERROR: constants.Z_DATA_ERROR,
+  Z_MEM_ERROR: constants.Z_MEM_ERROR,
+  Z_BUF_ERROR: constants.Z_BUF_ERROR,
+  Z_VERSION_ERROR: constants.Z_VERSION_ERROR,
+};
+
+for (const ckey of Object.keys(codes)) {
+  codes[codes[ckey]] = ckey;
+}
+
+const methods = [
+  [],
+  [Deflate, true, createDeflateEncoder],
+  [Inflate, false, createDeflateDecoder],
+  [Gzip, true, createGzipEncoder],
+  [Gunzip, false, createGzipDecoder],
+  [DeflateRaw, true, createDeflateEncoder],
+  [InflateRaw, false, createDeflateDecoder],
+  [Unzip, false, createGzipDecoder],
+  [BrotliDecompress, false, createBrotliDecoder],
+  [BrotliCompress, true, createBrotliEncoder],
+];
+
+function createConvenienceMethod(method: number, is_sync: boolean) {
+  const [pub_constructor, is_encoder, private_constructor] = methods[method];
+  const name = pub_constructor.name;
+
+  switch (is_sync) {
+    case false:
+      return function (buffer, options, callback) {
+        if (typeof options === "function") {
+          callback = options;
+          options = {};
+        }
+        if (options == null) options = {};
+        if ($isObject(options)) options.maxOutputLength ??= maxOutputLengthDefault;
+        if (typeof callback !== "function") throw new TypeError(`${name}Encoder callback is not callable`);
+        switch (is_encoder) {
+          case true:
+            const encoder = private_constructor(options, {}, callback, method);
+            encoder.encode(buffer, undefined, true);
+            return;
+          case false:
+            const decoder = private_constructor(options, {}, callback, method);
+            decoder.decode(buffer, undefined, true);
+            return;
+        }
+      };
+    case true:
+      return function (buffer, options) {
+        if (options == null) options = {};
+        if ($isObject(options)) options.maxOutputLength ??= maxOutputLengthDefault;
+        switch (is_encoder) {
+          case true:
+            const encoder = private_constructor(options, {}, null, method);
+            return encoder.encodeSync(buffer, undefined, true);
+          case false:
+            const decoder = private_constructor(options, {}, null, method);
+            return decoder.decodeSync(buffer, undefined, true);
+        }
+      };
+  }
+}
+
+function createCreator(method: number) {
+  return function (opts) {
+    return new methods[method][0](opts);
+  };
+}
+
+const zlib = {
+  Deflate,
+  Inflate,
+  Gzip,
+  Gunzip,
+  DeflateRaw,
+  InflateRaw,
+  Unzip,
+  BrotliCompress,
+  BrotliDecompress,
+
+  deflate: createConvenienceMethod(DEFLATE, false),
+  deflateSync: createConvenienceMethod(DEFLATE, true),
+  gzip: createConvenienceMethod(GZIP, false),
+  gzipSync: createConvenienceMethod(GZIP, true),
+  deflateRaw: createConvenienceMethod(DEFLATERAW, false),
+  deflateRawSync: createConvenienceMethod(DEFLATERAW, true),
+  unzip: createConvenienceMethod(UNZIP, false),
+  unzipSync: createConvenienceMethod(UNZIP, true),
+  inflate: createConvenienceMethod(INFLATE, false),
+  inflateSync: createConvenienceMethod(INFLATE, true),
+  gunzip: createConvenienceMethod(GUNZIP, false),
+  gunzipSync: createConvenienceMethod(GUNZIP, true),
+  inflateRaw: createConvenienceMethod(INFLATERAW, false),
+  inflateRawSync: createConvenienceMethod(INFLATERAW, true),
+  brotliCompress: createConvenienceMethod(BROTLI_ENCODE, false),
+  brotliCompressSync: createConvenienceMethod(BROTLI_ENCODE, true),
+  brotliDecompress: createConvenienceMethod(BROTLI_DECODE, false),
+  brotliDecompressSync: createConvenienceMethod(BROTLI_DECODE, true),
+
+  createDeflate: createCreator(DEFLATE),
+  createInflate: createCreator(INFLATE),
+  createDeflateRaw: createCreator(DEFLATERAW),
+  createInflateRaw: createCreator(INFLATERAW),
+  createGzip: createCreator(GZIP),
+  createGunzip: createCreator(GUNZIP),
+  createUnzip: createCreator(UNZIP),
+  createBrotliCompress: createCreator(BROTLI_ENCODE),
+  createBrotliDecompress: createCreator(BROTLI_DECODE),
+};
+Object.defineProperty(zlib, "constants", {
+  writable: false,
+  configurable: false,
+  value: Object.freeze(constants),
+});
+Object.defineProperty(zlib, "codes", {
+  writable: false,
+  configurable: false,
+  value: Object.freeze(codes),
+});
+
+export default zlib;

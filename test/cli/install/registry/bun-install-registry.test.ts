@@ -9960,12 +9960,13 @@ describe("outdated", () => {
       await runBunInstall(env, packageDir);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
+      const testEnv = { ...env, NO_COLOR: "" };
       const { stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "outdated"],
         cwd: packageDir,
         stdout: "pipe",
         stderr: "pipe",
-        env,
+        env: testEnv,
       });
 
       expect(await exited).toBe(0);

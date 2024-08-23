@@ -3,7 +3,6 @@
 const stream = require("node:stream");
 const BufferModule = require("node:buffer");
 
-const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const ObjectDefineProperty = Object.defineProperty;
 
 const createBrotliEncoder = $newZigFunction("node_zlib_binding.zig", "createBrotliEncoder", 3);
@@ -15,49 +14,7 @@ const createGzipDecoder = $newZigFunction("node_zlib_binding.zig", "createGzipDe
 
 const maxOutputLengthDefault = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModule.kMaxLength;
 
-function brotliCompress(buffer, opts, callback) {
-  if (typeof opts === "function") {
-    callback = opts;
-    opts = {};
-  }
-  if (opts == null) opts = {};
-  if (typeof callback !== "function") throw new TypeError("BrotliEncoder callback is not callable");
-  if ($isObject(opts)) opts.maxOutputLength ??= maxOutputLengthDefault;
-  const encoder = createBrotliEncoder(opts, {}, callback, 9);
-  encoder.encode(buffer, undefined, true);
-}
-
-function brotliDecompress(buffer, opts, callback) {
-  if (typeof opts === "function") {
-    callback = opts;
-    opts = {};
-  }
-  if (opts == null) opts = {};
-  if (typeof callback !== "function") throw new TypeError("BrotliDecoder callback is not callable");
-  if ($isObject(opts)) opts.maxOutputLength ??= maxOutputLengthDefault;
-  const decoder = createBrotliDecoder(opts, {}, callback, 8);
-  decoder.decode(buffer, undefined, true);
-}
-
-function brotliCompressSync(buffer, opts) {
-  if (opts == null) opts = {};
-  if ($isObject(opts)) opts.maxOutputLength ??= maxOutputLengthDefault;
-  const encoder = createBrotliEncoder(opts, {}, null, 9);
-  return encoder.encodeSync(buffer, undefined, true);
-}
-
-function brotliDecompressSync(buffer, opts) {
-  if (opts == null) opts = {};
-  if ($isObject(opts)) opts.maxOutputLength ??= maxOutputLengthDefault;
-  const decoder = createBrotliDecoder(opts, {}, null, 8);
-  return decoder.decodeSync(buffer, undefined, true);
-}
-
 //
-
-function createBrotliCompress(opts) {
-  return new BrotliCompress(opts);
-}
 
 const kHandle = Symbol("kHandle");
 
@@ -98,9 +55,7 @@ BrotliCompress.prototype._flush = function _flush(callback) {
   }
 };
 
-function createBrotliDecompress(opts) {
-  return new BrotliDecompress(opts);
-}
+//
 
 function BrotliDecompress(opts) {
   if (!(this instanceof BrotliDecompress)) return new BrotliDecompress(opts);
@@ -140,50 +95,6 @@ BrotliDecompress.prototype._flush = function (callback) {
 };
 
 //
-
-function deflate(buffer, options, callback) {
-  if (typeof options === "function") {
-    callback = options;
-    options = {};
-  }
-  if (options == null) options = {};
-  if (typeof callback !== "function") throw new TypeError("DeflateEncoder callback is not callable");
-  if ($isObject(options)) options.maxOutputLength ??= maxOutputLengthDefault;
-  const encoder = createDeflateEncoder(options, {}, callback, 1);
-  encoder.encode(buffer, undefined, true);
-}
-
-function deflateSync(buffer, options) {
-  if (options == null) options = {};
-  if ($isObject(options)) options.maxOutputLength ??= maxOutputLengthDefault;
-  const encoder = createDeflateEncoder(options, {}, null, 1);
-  return encoder.encodeSync(buffer, undefined, true);
-}
-
-function inflate(buffer, options, callback) {
-  if (typeof options === "function") {
-    callback = options;
-    options = {};
-  }
-  if (options == null) options = {};
-  if (typeof callback !== "function") throw new TypeError("DeflateDecoder callback is not callable");
-  if ($isObject(options)) options.maxOutputLength ??= maxOutputLengthDefault;
-  const decoder = createDeflateDecoder(options, {}, callback, 2);
-  decoder.decode(buffer, undefined, true);
-}
-
-function inflateSync(buffer, options) {
-  if (options == null) options = {};
-  if ($isObject(options)) options.maxOutputLength ??= maxOutputLengthDefault;
-  const decoder = createDeflateDecoder(options, {}, null, 2);
-  return decoder.decodeSync(buffer, undefined, true);
-}
-
-//
-
-function createDeflate(opts) {
-  return new Deflate(opts);
-}
 
 function Deflate(opts) {
   if (!(this instanceof Deflate)) return new Deflate(opts);
@@ -238,9 +149,7 @@ Deflate.prototype._flush = function _flush(callback) {
   }
 };
 
-function createInflate(opts) {
-  return new Inflate(opts);
-}
+//
 
 function Inflate(opts) {
   if (!(this instanceof Inflate)) return new Inflate(opts);
@@ -297,52 +206,6 @@ Inflate.prototype._flush = function (callback) {
 
 //
 
-function deflateRaw(buffer, options, callback) {
-  if (typeof options === "function") {
-    callback = options;
-    options = {};
-  }
-  if (options == null) options = {};
-  if (typeof callback !== "function") throw new TypeError("DeflateEncoder callback is not callable");
-  if ($isObject(options)) options.maxOutputLength ??= maxOutputLengthDefault;
-  if (options && options.windowBits === 8) options.windowBits = 9;
-  const encoder = createDeflateEncoder(options, {}, callback, 5);
-  encoder.encode(buffer, undefined, true);
-}
-
-function deflateRawSync(buffer, options) {
-  if (options == null) options = {};
-  if ($isObject(options)) options.maxOutputLength ??= maxOutputLengthDefault;
-  if (options && options.windowBits === 8) options.windowBits = 9;
-  const encoder = createDeflateEncoder(options, {}, null, 5);
-  return encoder.encodeSync(buffer, undefined, true);
-}
-
-function inflateRaw(buffer, options, callback) {
-  if (typeof options === "function") {
-    callback = options;
-    options = {};
-  }
-  if (options == null) options = {};
-  if (typeof callback !== "function") throw new TypeError("DeflateDecoder callback is not callable");
-  if ($isObject(options)) options.maxOutputLength ??= maxOutputLengthDefault;
-  const decoder = createDeflateDecoder(options, {}, callback, 6);
-  decoder.decode(buffer, undefined, true);
-}
-
-function inflateRawSync(buffer, options) {
-  if (options == null) options = {};
-  if ($isObject(options)) options.maxOutputLength ??= maxOutputLengthDefault;
-  const decoder = createDeflateDecoder(options, {}, null, 6);
-  return decoder.decodeSync(buffer, undefined, true);
-}
-
-//
-
-function createDeflateRaw(opts) {
-  return new DeflateRaw(opts);
-}
-
 function DeflateRaw(opts) {
   if (!(this instanceof DeflateRaw)) return new DeflateRaw(opts);
   if (opts == null) opts = {};
@@ -397,9 +260,7 @@ DeflateRaw.prototype._flush = function _flush(callback) {
   }
 };
 
-function createInflateRaw(opts) {
-  return new InflateRaw(opts);
-}
+//
 
 function InflateRaw(opts) {
   if (!(this instanceof InflateRaw)) return new InflateRaw(opts);
@@ -456,69 +317,6 @@ InflateRaw.prototype._flush = function (callback) {
 
 //
 
-function gzip(buffer, options, callback) {
-  if (typeof options === "function") {
-    callback = options;
-    options = {};
-  }
-  if (options == null) options = {};
-  if (typeof callback !== "function") throw new TypeError("GzipEncoder callback is not callable");
-  if ($isObject(options)) options.maxOutputLength ??= maxOutputLengthDefault;
-  const encoder = createGzipEncoder(options, {}, callback, 3);
-  encoder.encode(buffer, undefined, true);
-}
-
-function gzipSync(buffer, options) {
-  if (options == null) options = {};
-  if ($isObject(options)) options.maxOutputLength ??= maxOutputLengthDefault;
-  const encoder = createGzipEncoder(options, {}, null, 3);
-  return encoder.encodeSync(buffer, undefined, true);
-}
-
-function gunzip(buffer, options, callback) {
-  if (typeof options === "function") {
-    callback = options;
-    options = {};
-  }
-  if (options == null) options = {};
-  if (typeof callback !== "function") throw new TypeError("GzipDecoder callback is not callable");
-  if ($isObject(options)) options.maxOutputLength ??= maxOutputLengthDefault;
-  const decoder = createGzipDecoder(options, {}, callback, 4);
-  decoder.decode(buffer, undefined, true);
-}
-
-function gunzipSync(buffer, options) {
-  if (options == null) options = {};
-  if ($isObject(options)) options.maxOutputLength ??= maxOutputLengthDefault;
-  const decoder = createGzipDecoder(options, {}, null, 4);
-  return decoder.decodeSync(buffer, undefined, true);
-}
-
-function unzip(buffer, options, callback) {
-  if (typeof options === "function") {
-    callback = options;
-    options = {};
-  }
-  if (options == null) options = {};
-  if (typeof callback !== "function") throw new TypeError("GzipDecoder callback is not callable");
-  if ($isObject(options)) options.maxOutputLength ??= maxOutputLengthDefault;
-  const decoder = createGzipDecoder(options, {}, callback, 7);
-  decoder.decode(buffer, undefined, true);
-}
-
-function unzipSync(buffer, options) {
-  if (options == null) options = {};
-  if ($isObject(options)) options.maxOutputLength ??= maxOutputLengthDefault;
-  const decoder = createGzipDecoder(options, {}, null, 7);
-  return decoder.decodeSync(buffer, undefined, true);
-}
-
-//
-
-function createGzip(opts) {
-  return new Gzip(opts);
-}
-
 function Gzip(opts) {
   if (!(this instanceof Gzip)) return new Gzip(opts);
   if (opts == null) opts = {};
@@ -572,9 +370,7 @@ Gzip.prototype._flush = function _flush(callback) {
   }
 };
 
-function createGunzip(opts) {
-  return new Gunzip(opts);
-}
+//
 
 function Gunzip(opts) {
   if (!(this instanceof Gunzip)) return new Gunzip(opts);
@@ -629,9 +425,7 @@ Gunzip.prototype._flush = function (callback) {
   }
 };
 
-function createUnzip(opts) {
-  return new Unzip(opts);
-}
+//
 
 function Unzip(opts) {
   if (!(this instanceof Unzip)) return new Unzip(opts);

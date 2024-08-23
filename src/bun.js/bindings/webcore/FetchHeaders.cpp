@@ -73,11 +73,12 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
     if (findHTTPHeaderName(name, headerName)) {
 
         if (headerName != HTTPHeaderName::SetCookie) {
-            if (headers.contains(headerName)) {
+            auto existing = headers.get(headerName);
+            if (!existing.isEmpty()) {
                 if (headerName == HTTPHeaderName::Cookie) {
-                    combinedValue = makeString(headers.get(headerName), "; "_s, normalizedValue);
+                    combinedValue = makeString(existing, "; "_s, normalizedValue);
                 } else {
-                    combinedValue = makeString(headers.get(headerName), ", "_s, normalizedValue);
+                    combinedValue = makeString(existing, ", "_s, normalizedValue);
                 }
             }
         }
@@ -97,8 +98,9 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
 
         return {};
     }
-    if (headers.contains(name)) {
-        combinedValue = makeString(headers.get(name), ", "_s, normalizedValue);
+    auto existing = headers.get(headerName);
+    if (!existing.isEmpty()) {
+        combinedValue = makeString(existing, ", "_s, normalizedValue);
     }
     auto canWriteResult = canWriteHeader(name, normalizedValue, combinedValue, guard);
     if (canWriteResult.hasException())

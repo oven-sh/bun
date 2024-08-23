@@ -36,6 +36,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     using OnWritableCallback = bool (*)(uWS::HttpResponse<SSL>*, uint64_t, void*);
     using OnAbortedCallback = void (*)(uWS::HttpResponse<SSL>*, void*);
     using OnDataCallback = void (*)(uWS::HttpResponse<SSL>* response, const char* chunk, size_t chunk_length, bool, void*);
+    uint8_t idleTimeout = 10; // default HTTP_TIMEOUT 10 seconds
 
     /* When we are done with a response we mark it like so */
     void markDone() {

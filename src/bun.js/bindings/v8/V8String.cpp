@@ -23,12 +23,34 @@ MaybeLocal<String> String::NewFromUtf8(Isolate* isolate, char const* data, NewSt
         return MaybeLocal<String>();
     }
 
+    auto& vm = isolate->vm();
     std::span<const unsigned char> span(reinterpret_cast<const unsigned char*>(data), length);
     // ReplacingInvalidSequences matches how v8 behaves here
     auto string = WTF::String::fromUTF8ReplacingInvalidSequences(span);
-    RELEASE_ASSERT(!string.isNull());
-    JSString* jsString = JSC::jsString(isolate->vm(), string);
-    return MaybeLocal<String>(isolate->globalInternals()->currentHandleScope()->createLocal<String>(jsString));
+    JSString* jsString = JSC::jsString(vm, string);
+    return MaybeLocal<String>(isolate->currentHandleScope()->createLocal<String>(vm, jsString));
+}
+
+MaybeLocal<String> String::NewFromOneByte(Isolate* isolate, const uint8_t* data, NewStringType type, int signed_length)
+{
+    (void)type;
+    size_t length = 0;
+    if (signed_length < 0) {
+        length = strlen(reinterpret_cast<const char*>(data));
+    } else {
+        length = static_cast<int>(signed_length);
+    }
+
+    if (length > JSString::MaxLength) {
+        // empty
+        return MaybeLocal<String>();
+    }
+
+    auto& vm = isolate->vm();
+    std::span<const unsigned char> span(data, length);
+    WTF::String string(span);
+    JSString* jsString = JSC::jsString(vm, string);
+    return MaybeLocal<String>(isolate->currentHandleScope()->createLocal<String>(vm, jsString));
 }
 
 int String::Utf8Length(Isolate* isolate) const

@@ -141,7 +141,7 @@ const GlobalStringBuilder = @import("../string_builder.zig");
 const SlicedString = Semver.SlicedString;
 const Repository = @import("./repository.zig").Repository;
 const Bin = @import("./bin.zig").Bin;
-const Dependency = @import("./dependency.zig");
+pub const Dependency = @import("./dependency.zig");
 const Behavior = @import("./dependency.zig").Behavior;
 const FolderResolution = @import("./resolvers/folder_resolver.zig").FolderResolution;
 
@@ -5625,7 +5625,7 @@ pub const PackageManager = struct {
         }
     }
 
-    fn flushNetworkQueue(this: *PackageManager) void {
+    pub fn flushNetworkQueue(this: *PackageManager) void {
         var network = &this.network_task_fifo;
 
         while (network.readItem()) |network_task| {
@@ -6323,6 +6323,10 @@ pub const PackageManager = struct {
                                 manager.getCacheDirectory(),
                             );
 
+                            if (@hasField(@TypeOf(callbacks), "manifests_only") and callbacks.manifests_only) {
+                                continue;
+                            }
+
                             const dependency_list_entry = manager.task_queue.getEntry(task.task_id).?;
 
                             const dependency_list = dependency_list_entry.value_ptr.*;
@@ -6563,6 +6567,10 @@ pub const PackageManager = struct {
                     const manifest = &task.data.package_manifest;
 
                     try manager.manifests.insert(manifest.pkg.name.hash, manifest);
+
+                    if (@hasField(@TypeOf(callbacks), "manifests_only") and callbacks.manifests_only) {
+                        continue;
+                    }
 
                     const dependency_list_entry = manager.task_queue.getEntry(task.id).?;
                     const dependency_list = dependency_list_entry.value_ptr.*;
@@ -8191,6 +8199,7 @@ pub const PackageManager = struct {
         unlink,
         patch,
         @"patch-commit",
+        outdated,
 
         pub fn canGloballyInstallPackages(this: Subcommand) bool {
             return switch (this) {
@@ -9063,7 +9072,6 @@ pub const PackageManager = struct {
         clap.parseParam("--backend <STR>                       Platform-specific optimizations for installing dependencies. " ++ platform_specific_backend_label) catch unreachable,
         clap.parseParam("--link-native-bins <STR>...           Link \"bin\" from a matching platform-specific \"optionalDependencies\" instead. Default: esbuild, turbo") catch unreachable,
         clap.parseParam("--concurrent-scripts <NUM>            Maximum number of concurrent jobs for lifecycle scripts (default 5)") catch unreachable,
-        // clap.parseParam("--omit <STR>...                    Skip installing dependencies of a certain type. \"dev\", \"optional\", or \"peer\"") catch unreachable,
         clap.parseParam("-h, --help                            Print this help menu") catch unreachable,
     };
 
@@ -9143,6 +9151,7 @@ pub const PackageManager = struct {
         trusted: bool = false,
         no_summary: bool = false,
         latest: bool = false,
+        // json_output: bool = false,
 
         link_native_bins: []const string = &[_]string{},
 
@@ -9372,6 +9381,24 @@ pub const PackageManager = struct {
                     Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
                     Output.flush();
                 },
+                .outdated => {
+                    const intro_text =
+                        \\<b>Usage<r>: <b><green>bun outdated<r> <cyan>[flags]<r>
+                    ;
+
+                    const outro_text =
+                        \\<b>Examples:<r>
+                        \\  <b><green>bun outdated<r>
+                        \\
+                    ;
+
+                    Output.pretty("\n" ++ intro_text ++ "\n", .{});
+                    Output.flush();
+                    Output.pretty("\n<b>Flags:<r>", .{});
+                    clap.simpleHelp(PackageManager.install_params);
+                    Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
+                    Output.flush();
+                },
             }
         }
 
@@ -9388,6 +9415,7 @@ pub const PackageManager = struct {
                 .unlink => unlink_params,
                 .patch => patch_params,
                 .@"patch-commit" => patch_commit_params,
+                .outdated => install_params,
             };
 
             var diag = clap.Diagnostic{};
@@ -9423,6 +9451,12 @@ pub const PackageManager = struct {
             cli.trusted = args.flag("--trust");
             cli.no_summary = args.flag("--no-summary");
 
+            if (comptime subcommand == .outdated) {
+                // fake --dry-run, we don't actually resolve+clean the lockfile
+                cli.dry_run = true;
+                // cli.json_output = args.flag("--json");
+            }
+
             // link and unlink default to not saving, all others default to
             // saving.
             if (comptime subcommand == .link or subcommand == .unlink) {
@@ -9453,8 +9487,6 @@ pub const PackageManager = struct {
                 };
             }
 
-            if (comptime subcommand == .@"patch-commit") {}
-
             if (args.option("--config")) |opt| {
                 cli.config = opt;
             }
@@ -9468,22 +9500,8 @@ pub const PackageManager = struct {
             }
 
             if (args.option("--concurrent-scripts")) |concurrency| {
-                // var buf: []
                 cli.concurrent_scripts = std.fmt.parseInt(usize, concurrency, 10) catch null;
             }
-
-            // for (args.options("--omit")) |omit| {
-            //     if (strings.eqlComptime(omit, "dev")) {
-            //         cli.omit.dev = true;
-            //     } else if (strings.eqlComptime(omit, "optional")) {
-            //         cli.omit.optional = true;
-            //     } else if (strings.eqlComptime(omit, "peer")) {
-            //         cli.omit.peer = true;
-            //     } else {
-            //         Output.prettyErrorln("<b>error<r><d>:<r> Invalid argument <b>\"--omit\"<r> must be one of <cyan>\"dev\"<r>, <cyan>\"optional\"<r>, or <cyan>\"peer\"<r>. ", .{});
-            //         Global.crash();
-            //     }
-            // }
 
             if (args.option("--cwd")) |cwd_| {
                 var buf: bun.PathBuffer = undefined;
@@ -9701,15 +9719,15 @@ pub const PackageManager = struct {
             if (err == error.MissingPackageJSON) {
                 switch (subcommand) {
                     .update => {
-                        Output.prettyErrorln("<r>No package.json, so nothing to update\n", .{});
+                        Output.prettyErrorln("<r>No package.json, so nothing to update", .{});
                         Global.crash();
                     },
                     .remove => {
-                        Output.prettyErrorln("<r>No package.json, so nothing to remove\n", .{});
+                        Output.prettyErrorln("<r>No package.json, so nothing to remove", .{});
                         Global.crash();
                     },
                     .patch, .@"patch-commit" => {
-                        Output.prettyErrorln("<r>No package.json, so nothing to patch\n", .{});
+                        Output.prettyErrorln("<r>No package.json, so nothing to patch", .{});
                         Global.crash();
                     },
                     else => {

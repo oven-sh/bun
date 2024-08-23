@@ -5,7 +5,7 @@ namespace v8 {
 
 Local<Number> Number::New(Isolate* isolate, double value)
 {
-    return isolate->currentHandleScope()->createLocal<Number>(JSC::jsNumber(value));
+    return isolate->currentHandleScope()->createLocal<Number>(isolate->vm(), JSC::jsNumber(value));
 }
 
 double Number::Value() const

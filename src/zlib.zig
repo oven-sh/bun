@@ -712,6 +712,19 @@ pub extern fn deflateBound(strm: z_streamp, sourceLen: u64) u64;
 ///   compression: this will be done by deflate().
 pub extern fn deflateInit2_(strm: z_streamp, level: c_int, method: c_int, windowBits: c_int, memLevel: c_int, strategy: c_int, version: [*c]const u8, stream_size: c_int) ReturnCode;
 
+pub const NodeMode = enum(u8) {
+    NONE = 0,
+    DEFLATE = 1,
+    INFLATE = 2,
+    GZIP = 3,
+    GUNZIP = 4,
+    DEFLATERAW = 5,
+    INFLATERAW = 6,
+    UNZIP = 7,
+    BROTLI_DECODE = 8,
+    BROTLI_ENCODE = 9,
+};
+
 /// Not for streaming!
 pub const ZlibCompressorArrayList = struct {
     const ZlibCompressor = ZlibCompressorArrayList;
@@ -911,14 +924,23 @@ pub const ZlibCompressorArrayList = struct {
 const CHUNK = 1024 * 64;
 
 pub const ZlibCompressorStreaming = struct {
+    mode: NodeMode,
     state: z_stream = std.mem.zeroes(z_stream),
     flush: FlushValue = .NoFlush,
     finishFlush: FlushValue = .Finish,
     fullFlush: FlushValue = .FullFlush,
+    level: c_int = -1,
+    windowBits: c_int = -1,
+    memLevel: c_int = -1,
+    strategy: c_int = -1,
 
-    pub fn init(this: *ZlibCompressorStreaming, level: u8, windowBits: c_int, memLevel: c_int, strategy: c_int) !void {
+    pub fn init(this: *ZlibCompressorStreaming, level: c_int, windowBits: c_int, memLevel: c_int, strategy: c_int) !void {
         const ret_code = deflateInit2_(&this.state, level, 8, windowBits, memLevel, strategy, zlibVersion(), @sizeOf(z_stream));
         if (ret_code != .Ok) return error.ZlibError;
+        this.level = level;
+        this.windowBits = windowBits;
+        this.memLevel = memLevel;
+        this.strategy = strategy;
         return;
     }
 
@@ -942,6 +964,7 @@ pub const ZlibCompressorStreaming = struct {
                 const state = &this.ctx.state;
                 state.next_in = bytes.ptr;
                 state.avail_in = @intCast(bytes.len);
+                if (state.avail_in == 0) state.next_in = null;
 
                 while (true) {
                     var out: [CHUNK]u8 = undefined;
@@ -986,14 +1009,22 @@ pub const ZlibCompressorStreaming = struct {
 };
 
 pub const ZlibDecompressorStreaming = struct {
+    mode: NodeMode,
     state: z_stream = std.mem.zeroes(z_stream),
+    next_expected_header_byte: ?[*]const u8 = null,
+    gzip_id_bytes_read: u16 = 0,
     flush: FlushValue = .NoFlush,
     finishFlush: FlushValue = .Finish,
     fullFlush: FlushValue = .FullFlush,
+    windowBits: c_int = -1,
 
-    pub fn init(this: *ZlibDecompressorStreaming) !void {
-        const ret_code = inflateInit_(&this.state, zlibVersion(), @sizeOf(z_stream));
-        if (ret_code != .Ok) return error.ZlibError;
+    pub fn init(this: *ZlibDecompressorStreaming, windowBits: c_int) !void {
+        const ret_code = inflateInit2_(&this.state, windowBits, zlibVersion(), @sizeOf(z_stream));
+        if (ret_code != .Ok) return error.ZlibError1;
+        // this.level = level;
+        this.windowBits = windowBits;
+        // this.memLevel = memLevel;
+        // this.strategy = strategy;
         return;
     }
 
@@ -1006,7 +1037,7 @@ pub const ZlibDecompressorStreaming = struct {
             ctx: *ZlibDecompressorStreaming,
             out_writer: T,
 
-            const WriteError = std.mem.Allocator.Error || error{ZlibError};
+            const WriteError = std.mem.Allocator.Error || error{ZlibError} || anyerror;
             const Writer = std.io.Writer(@This(), WriteError, write);
 
             fn writer(this: @This()) Writer {
@@ -1017,6 +1048,63 @@ pub const ZlibDecompressorStreaming = struct {
                 const state = &this.ctx.state;
                 state.next_in = bytes.ptr;
                 state.avail_in = @intCast(bytes.len);
+                if (state.avail_in == 0) state.next_in = null;
+
+                if (this.ctx.mode == .UNZIP) {
+                    var redd: usize = 0;
+
+                    if (bytes.len > 0) {
+                        this.ctx.next_expected_header_byte = state.next_in;
+                    }
+                    if (this.ctx.gzip_id_bytes_read == 0) {
+                        if (this.ctx.next_expected_header_byte == null) {
+                            return 0;
+                        }
+
+                        if (this.ctx.next_expected_header_byte.?[redd] == GZIP_HEADER_ID1) {
+                            this.ctx.gzip_id_bytes_read += 1;
+                            redd += 1;
+                            // next_expected_header_byte++;
+
+                            if (bytes.len == 1) {
+                                // The only available byte was already read.
+                                return 1;
+                            }
+                        } else {
+                            this.ctx.mode = .INFLATE;
+                            return 0;
+                        }
+                    }
+                    if (this.ctx.gzip_id_bytes_read == 1) {
+                        if (this.ctx.next_expected_header_byte == null) {
+                            return 0;
+                        }
+
+                        if (this.ctx.next_expected_header_byte.?[redd] == GZIP_HEADER_ID2) {
+                            this.ctx.gzip_id_bytes_read += 1;
+                            redd += 1;
+                            // next_expected_header_byte++;
+
+                            this.ctx.mode = .GUNZIP;
+                            {
+                                const header = &[_]u8{ 0x1f, 0x8b };
+                                state.next_in = header.ptr;
+                                state.avail_in = @intCast(header.len);
+                                var out: [CHUNK]u8 = undefined;
+                                state.avail_out = CHUNK;
+                                state.next_out = &out;
+                                const ret = inflate(state, this.ctx.flush);
+                                bun.assert(ret == .Ok);
+                            }
+                        } else {
+                            // There is no actual difference between INFLATE and INFLATERAW (after initialization).
+                            this.ctx.mode = .INFLATE;
+                        }
+                        return redd;
+                    }
+
+                    bun.assert(false); // invalid number of gzip magic number bytes read
+                }
 
                 while (true) {
                     var out: [CHUNK]u8 = undefined;
@@ -1025,9 +1113,16 @@ pub const ZlibDecompressorStreaming = struct {
 
                     const ret = inflate(state, this.ctx.flush);
                     bun.assert(ret != .StreamError);
-                    if (ret == .NeedDict) return error.ZlibError;
-                    if (ret == .DataError) return error.ZlibError;
-                    if (ret == .MemError) return error.ZlibError;
+                    if (ret == .NeedDict) return error.ZlibError2;
+                    if (ret == .DataError) {
+                        std.log.warn("Z_DATA_ERROR: {s}", .{std.mem.span(state.err_msg.?)});
+                        return error.ZlibError3;
+                    }
+                    if (ret == .MemError) return error.ZlibError4;
+                    if (ret == .StreamEnd and this.ctx.mode == .GUNZIP and state.avail_in > 0 and state.next_in.?[0] != 0) {
+                        _ = inflateReset(state);
+                        continue;
+                    }
                     const have = CHUNK - state.avail_out;
                     try this.out_writer.writeAll(out[0..have]);
                     if (state.avail_out == 0) continue;
@@ -1051,11 +1146,16 @@ pub const ZlibDecompressorStreaming = struct {
             state.next_out = &out;
             ret = inflate(state, this.finishFlush);
             bun.assert(ret != .StreamError);
-            if (ret == .NeedDict) return error.ZlibError;
-            if (ret == .DataError) return error.ZlibError;
-            if (ret == .MemError) return error.ZlibError;
+            if (ret == .NeedDict) return error.ZlibError5;
+            if (ret == .DataError) return error.ZlibError6;
+            if (ret == .MemError) return error.ZlibError7;
+            // if (ret == .StreamEnd and this.ctx.mode == .GUNZIP and state.avail_in > 0 and state.next_in.?[0] != 0) {
+            //     _ = inflateReset(state);
+            //     continue;
+            // }
             const have = CHUNK - state.avail_out;
             try output.appendSlice(bun.default_allocator, out[0..have]);
+            if (ret == .StreamEnd) break;
             if (state.avail_out == 0) continue;
             // if (ret == .BufError) return;
             break;
@@ -1063,6 +1163,12 @@ pub const ZlibDecompressorStreaming = struct {
         // bun.assert(state.avail_in == 0);
 
         _ = inflateEnd(&this.state);
-        if (ret != .StreamEnd and this.finishFlush == .Finish) return error.ZlibError;
+        if (ret != .StreamEnd and this.finishFlush == .Finish) return error.ZlibError8;
     }
 };
+
+//
+//
+
+const GZIP_HEADER_ID1: u8 = 0x1f;
+const GZIP_HEADER_ID2: u8 = 0x8b;

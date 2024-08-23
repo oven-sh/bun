@@ -7,9 +7,9 @@ const Output = bun.Output;
 const ZigString = JSC.ZigString;
 const Queue = std.fifo.LinearFifo(JSC.Node.BlobOrStringOrBuffer, .Dynamic);
 
-pub const DeflateEncoder = struct {
+pub const GzipEncoder = struct {
     pub usingnamespace bun.New(@This());
-    pub usingnamespace JSC.Codegen.JSDeflateEncoder;
+    pub usingnamespace JSC.Codegen.JSGzipEncoder;
 
     globalThis: *JSC.JSGlobalObject,
     stream: bun.zlib.ZlibCompressorStreaming,
@@ -36,7 +36,7 @@ pub const DeflateEncoder = struct {
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) ?*@This() {
         _ = callframe;
-        globalThis.throw("DeflateEncoder is not constructable", .{});
+        globalThis.throw("GzipEncoder is not constructable", .{});
         return null;
     }
 
@@ -44,7 +44,7 @@ pub const DeflateEncoder = struct {
         const arguments = callframe.arguments(4).slice();
 
         if (arguments.len < 4) {
-            globalThis.throwNotEnoughArguments("DeflateEncoder", 4, arguments.len);
+            globalThis.throwNotEnoughArguments("GzipEncoder", 4, arguments.len);
             return .zero;
         }
 
@@ -54,7 +54,7 @@ pub const DeflateEncoder = struct {
 
         _ = globalThis.checkMinOrGetDefault(opts, "chunkSize", u32, 64, 1024 * 16) orelse return .zero;
         const level = globalThis.checkRangesOrGetDefault(opts, "level", i16, -1, 9, -1) orelse return .zero;
-        const windowBits = globalThis.checkRangesOrGetDefault(opts, "windowBits", u8, 8, 15, 15) orelse return .zero;
+        var windowBits = globalThis.checkRangesOrGetDefault(opts, "windowBits", i16, 9, 15, 15) orelse return .zero;
         const memLevel = globalThis.checkRangesOrGetDefault(opts, "memLevel", u8, 1, 9, 8) orelse return .zero;
         const strategy = globalThis.checkRangesOrGetDefault(opts, "strategy", u8, 0, 4, 0) orelse return .zero;
         const maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)) orelse return .zero;
@@ -62,7 +62,10 @@ pub const DeflateEncoder = struct {
         const finishFlush = globalThis.checkRangesOrGetDefault(opts, "finishFlush", u8, 0, 5, 4) orelse return .zero;
         const fullFlush = globalThis.checkRangesOrGetDefault(opts, "fullFlush", u8, 0, 5, 3) orelse return .zero;
 
-        var this: *DeflateEncoder = DeflateEncoder.new(.{
+        if (mode == .GZIP or mode == .GUNZIP) windowBits += 16;
+        if (mode == .UNZIP) windowBits += 32;
+
+        var this: *GzipEncoder = GzipEncoder.new(.{
             .globalThis = globalThis,
             .maxOutputLength = maxOutputLength,
             .stream = .{
@@ -73,7 +76,7 @@ pub const DeflateEncoder = struct {
             },
         });
         this.stream.init(level, windowBits, memLevel, strategy) catch {
-            globalThis.throw("Failed to create DeflateEncoder", .{});
+            globalThis.throw("Failed to create GzipEncoder", .{});
             return .zero;
         };
 
@@ -101,12 +104,12 @@ pub const DeflateEncoder = struct {
         const arguments = callframe.arguments(3);
 
         if (arguments.len < 3) {
-            globalThis.throwNotEnoughArguments("DeflateEncoder.encode", 3, arguments.len);
+            globalThis.throwNotEnoughArguments("GzipEncoder.encode", 3, arguments.len);
             return .zero;
         }
 
         if (this.has_called_end) {
-            globalThis.throw("DeflateEncoder.encodeSync called after DeflateEncoder.end", .{});
+            globalThis.throw("GzipEncoder.encodeSync called after GzipEncoder.end", .{});
             return .zero;
         }
 
@@ -115,7 +118,7 @@ pub const DeflateEncoder = struct {
         const is_last = callframe.argument(2).toBoolean();
 
         const input_to_queue = JSC.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalThis, bun.default_allocator, input, optional_encoding, true) orelse {
-            globalThis.throwInvalidArgumentType("DeflateEncoder.encode", "input", "Blob, String, or Buffer");
+            globalThis.throwInvalidArgumentType("GzipEncoder.encode", "input", "Blob, String, or Buffer");
             return .zero;
         };
 
@@ -149,12 +152,12 @@ pub const DeflateEncoder = struct {
         const arguments = callframe.arguments(3);
 
         if (arguments.len < 3) {
-            globalThis.throwNotEnoughArguments("DeflateEncoder.encode", 3, arguments.len);
+            globalThis.throwNotEnoughArguments("GzipEncoder.encode", 3, arguments.len);
             return .zero;
         }
 
         if (this.has_called_end) {
-            globalThis.throw("DeflateEncoder.encode called after DeflateEncoder.end", .{});
+            globalThis.throw("GzipEncoder.encode called after GzipEncoder.end", .{});
             return .zero;
         }
 
@@ -163,7 +166,7 @@ pub const DeflateEncoder = struct {
         const is_last = callframe.argument(2).toBoolean();
 
         const input_to_queue = JSC.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalThis, bun.default_allocator, input, optional_encoding, true) orelse {
-            globalThis.throwInvalidArgumentType("DeflateEncoder.encode", "input", "Blob, String, or Buffer");
+            globalThis.throwInvalidArgumentType("GzipEncoder.encode", "input", "Blob, String, or Buffer");
             return .zero;
         };
 
@@ -211,7 +214,7 @@ pub const DeflateEncoder = struct {
         return this.has_pending_activity.load(.monotonic) > 0;
     }
 
-    fn drainFreelist(this: *DeflateEncoder) void {
+    fn drainFreelist(this: *GzipEncoder) void {
         this.freelist_write_lock.lock();
         defer this.freelist_write_lock.unlock();
         const to_free = this.freelist.readableSlice(0);
@@ -221,7 +224,7 @@ pub const DeflateEncoder = struct {
         this.freelist.discard(to_free.len);
     }
 
-    fn collectOutputValue(this: *DeflateEncoder) JSC.JSValue {
+    fn collectOutputValue(this: *GzipEncoder) JSC.JSValue {
         this.output_lock.lock();
         defer this.output_lock.unlock();
 
@@ -231,7 +234,7 @@ pub const DeflateEncoder = struct {
 
     const EncodeJob = struct {
         task: JSC.WorkPoolTask = .{ .callback = &runTask },
-        encoder: *DeflateEncoder,
+        encoder: *GzipEncoder,
         is_async: bool,
 
         pub usingnamespace bun.New(@This());
@@ -259,7 +262,7 @@ pub const DeflateEncoder = struct {
                     const pending = readable;
 
                     const Writer = struct {
-                        encoder: *DeflateEncoder,
+                        encoder: *GzipEncoder,
 
                         pub const Error = error{OutOfMemory};
                         pub fn writeAll(writer: @This(), chunk: []const u8) Error!void {
@@ -277,15 +280,15 @@ pub const DeflateEncoder = struct {
                     }
                     for (pending) |input| {
                         var writer = this.encoder.stream.writer(Writer{ .encoder = this.encoder });
-                        writer.writeAll(input.slice()) catch {
+                        writer.writeAll(input.slice()) catch |e| {
                             any = true;
                             _ = this.encoder.pending_encode_job_count.fetchSub(1, .monotonic);
                             if (!this.is_async) {
                                 this.encoder.closed = true;
-                                this.encoder.globalThis.throw("DeflateError", .{});
+                                this.encoder.globalThis.throw("GzipError: {s}", .{@errorName(e)});
                                 return;
                             }
-                            this.encoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "DeflateError", .{}); // TODO propogate better error
+                            this.encoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "GzipError: {s}", .{@errorName(e)}); // TODO propogate better error
                             break :outer;
                         };
                         if (this.encoder.output.items.len > this.encoder.maxOutputLength) {
@@ -307,9 +310,9 @@ pub const DeflateEncoder = struct {
                     this.encoder.output_lock.lock();
                     defer this.encoder.output_lock.unlock();
 
-                    this.encoder.stream.end(output) catch {
+                    this.encoder.stream.end(output) catch |e| {
                         _ = this.encoder.pending_encode_job_count.fetchSub(1, .monotonic);
-                        this.encoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "DeflateError", .{}); // TODO propogate better error
+                        this.encoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "GzipError: {s}", .{@errorName(e)}); // TODO propogate better error
                         return;
                     };
                     if (this.encoder.output.items.len > this.encoder.maxOutputLength) {
@@ -357,9 +360,9 @@ pub const DeflateEncoder = struct {
     }
 };
 
-pub const DeflateDecoder = struct {
+pub const GzipDecoder = struct {
     pub usingnamespace bun.New(@This());
-    pub usingnamespace JSC.Codegen.JSDeflateDecoder;
+    pub usingnamespace JSC.Codegen.JSGzipDecoder;
 
     globalThis: *JSC.JSGlobalObject,
     stream: bun.zlib.ZlibDecompressorStreaming,
@@ -386,7 +389,7 @@ pub const DeflateDecoder = struct {
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) ?*@This() {
         _ = callframe;
-        globalThis.throw("DeflateDecoder is not constructable", .{});
+        globalThis.throw("GzipDecoder is not constructable", .{});
         return null;
     }
 
@@ -394,7 +397,7 @@ pub const DeflateDecoder = struct {
         const arguments = callframe.arguments(4).slice();
 
         if (arguments.len < 4) {
-            globalThis.throwNotEnoughArguments("DeflateDecoder", 4, arguments.len);
+            globalThis.throwNotEnoughArguments("GzipDecoder", 4, arguments.len);
             return .zero;
         }
 
@@ -404,12 +407,15 @@ pub const DeflateDecoder = struct {
 
         _ = globalThis.checkMinOrGetDefault(opts, "chunkSize", u32, 64, 1024 * 16) orelse return .zero;
         const maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)) orelse return .zero;
-        const windowBits = globalThis.checkRangesOrGetDefault(opts, "windowBits", u8, 8, 15, 15) orelse return .zero;
         const flush = globalThis.checkRangesOrGetDefault(opts, "flush", u8, 0, 6, 0) orelse return .zero;
         const finishFlush = globalThis.checkRangesOrGetDefault(opts, "finishFlush", u8, 0, 6, 4) orelse return .zero;
         const fullFlush = globalThis.checkRangesOrGetDefault(opts, "fullFlush", u8, 0, 6, 3) orelse return .zero;
 
-        var this: *DeflateDecoder = DeflateDecoder.new(.{
+        var windowBits = globalThis.checkRangesOrGetDefault(opts, "windowBits", i16, 9, 15, 15) orelse return .zero;
+        if (mode == .GZIP or mode == .GUNZIP) windowBits += 16;
+        if (mode == .UNZIP) windowBits += 32;
+
+        var this: *GzipDecoder = GzipDecoder.new(.{
             .globalThis = globalThis,
             .maxOutputLength = maxOutputLength,
             .stream = .{
@@ -420,7 +426,7 @@ pub const DeflateDecoder = struct {
             },
         });
         this.stream.init(windowBits) catch {
-            globalThis.throw("Failed to create DeflateDecoder", .{});
+            globalThis.throw("Failed to create GzipDecoder", .{});
             return .zero;
         };
 
@@ -448,12 +454,12 @@ pub const DeflateDecoder = struct {
         const arguments = callframe.arguments(3);
 
         if (arguments.len < 3) {
-            globalThis.throwNotEnoughArguments("DeflateDecoder.encode", 3, arguments.len);
+            globalThis.throwNotEnoughArguments("GzipDecoder.encode", 3, arguments.len);
             return .zero;
         }
 
         if (this.has_called_end) {
-            globalThis.throw("DeflateDecoder.encodeSync called after DeflateDecoder.end", .{});
+            globalThis.throw("GzipDecoder.encodeSync called after GzipDecoder.end", .{});
             return .zero;
         }
 
@@ -462,7 +468,7 @@ pub const DeflateDecoder = struct {
         const is_last = callframe.argument(2).toBoolean();
 
         const input_to_queue = JSC.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalThis, bun.default_allocator, input, optional_encoding, true) orelse {
-            globalThis.throwInvalidArgumentType("DeflateDecoder.encode", "input", "Blob, String, or Buffer");
+            globalThis.throwInvalidArgumentType("GzipDecoder.encode", "input", "Blob, String, or Buffer");
             return .zero;
         };
 
@@ -496,12 +502,12 @@ pub const DeflateDecoder = struct {
         const arguments = callframe.arguments(3);
 
         if (arguments.len < 3) {
-            globalThis.throwNotEnoughArguments("DeflateDecoder.encode", 3, arguments.len);
+            globalThis.throwNotEnoughArguments("GzipDecoder.encode", 3, arguments.len);
             return .zero;
         }
 
         if (this.has_called_end) {
-            globalThis.throw("DeflateDecoder.encode called after DeflateDecoder.end", .{});
+            globalThis.throw("GzipDecoder.encode called after GzipDecoder.end", .{});
             return .zero;
         }
 
@@ -510,7 +516,7 @@ pub const DeflateDecoder = struct {
         const is_last = callframe.argument(2).toBoolean();
 
         const input_to_queue = JSC.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalThis, bun.default_allocator, input, optional_encoding, true) orelse {
-            globalThis.throwInvalidArgumentType("DeflateDecoder.encode", "input", "Blob, String, or Buffer");
+            globalThis.throwInvalidArgumentType("GzipDecoder.encode", "input", "Blob, String, or Buffer");
             return .zero;
         };
 
@@ -558,7 +564,7 @@ pub const DeflateDecoder = struct {
         return this.has_pending_activity.load(.monotonic) > 0;
     }
 
-    fn drainFreelist(this: *DeflateDecoder) void {
+    fn drainFreelist(this: *GzipDecoder) void {
         this.freelist_write_lock.lock();
         defer this.freelist_write_lock.unlock();
         const to_free = this.freelist.readableSlice(0);
@@ -568,7 +574,7 @@ pub const DeflateDecoder = struct {
         this.freelist.discard(to_free.len);
     }
 
-    fn collectOutputValue(this: *DeflateDecoder) JSC.JSValue {
+    fn collectOutputValue(this: *GzipDecoder) JSC.JSValue {
         this.output_lock.lock();
         defer this.output_lock.unlock();
 
@@ -578,7 +584,7 @@ pub const DeflateDecoder = struct {
 
     const DecodeJob = struct {
         task: JSC.WorkPoolTask = .{ .callback = &runTask },
-        decoder: *DeflateDecoder,
+        decoder: *GzipDecoder,
         is_async: bool,
 
         pub usingnamespace bun.New(@This());
@@ -606,7 +612,7 @@ pub const DeflateDecoder = struct {
                     const pending = readable;
 
                     const Writer = struct {
-                        decoder: *DeflateDecoder,
+                        decoder: *GzipDecoder,
 
                         pub const Error = error{OutOfMemory};
                         pub fn writeAll(writer: @This(), chunk: []const u8) Error!void {
@@ -624,15 +630,15 @@ pub const DeflateDecoder = struct {
                     }
                     for (pending) |input| {
                         var writer = this.decoder.stream.writer(Writer{ .decoder = this.decoder });
-                        writer.writeAll(input.slice()) catch {
+                        writer.writeAll(input.slice()) catch |e| {
                             any = true;
                             _ = this.decoder.pending_encode_job_count.fetchSub(1, .monotonic);
                             if (!this.is_async) {
                                 this.decoder.closed = true;
-                                this.decoder.globalThis.throw("DeflateError", .{});
+                                this.decoder.globalThis.throw("GzipError: {s}", .{@errorName(e)});
                                 return;
                             }
-                            this.decoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "DeflateError", .{}); // TODO propogate better error
+                            this.decoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "GzipError: {s}", .{@errorName(e)}); // TODO propogate better error
                             break :outer;
                         };
                     }
@@ -648,10 +654,10 @@ pub const DeflateDecoder = struct {
                     this.decoder.output_lock.lock();
                     defer this.decoder.output_lock.unlock();
 
-                    this.decoder.stream.end(output) catch {
+                    this.decoder.stream.end(output) catch |e| {
                         any = true;
                         _ = this.decoder.pending_encode_job_count.fetchSub(1, .monotonic);
-                        this.decoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "DeflateError", .{}); // TODO propogate better error
+                        this.decoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "GzipError: {s}", .{@errorName(e)}); // TODO propogate better error
                         break :outer;
                     };
                     if (output.items.len > this.decoder.maxOutputLength) {

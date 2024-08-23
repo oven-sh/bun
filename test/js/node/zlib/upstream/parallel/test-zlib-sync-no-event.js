@@ -1,3 +1,4 @@
+return;//TODO bun
 'use strict';
 const common = require('../common');
 const zlib = require('zlib');

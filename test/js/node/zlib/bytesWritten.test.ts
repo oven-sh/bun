@@ -21,8 +21,8 @@ function createWriter(target: zlib.Zlib, buffer: Buffer): Promise<void> {
 }
 
 const methods: [string, string, boolean][] = [
-  // ["createGzip", "createGunzip", false],
-  // ["createGzip", "createUnzip", false],
+  ["createGzip", "createGunzip", false],
+  ["createGzip", "createUnzip", false],
   ["createDeflate", "createInflate", true],
   ["createDeflateRaw", "createInflateRaw", true],
   ["createBrotliCompress", "createBrotliDecompress", true],

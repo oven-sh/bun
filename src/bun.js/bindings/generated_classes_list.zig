@@ -78,4 +78,6 @@ pub const Classes = struct {
     pub const TextEncoderStreamEncoder = JSC.WebCore.TextEncoderStreamEncoder;
     pub const DeflateEncoder = JSC.API.DeflateEncoder;
     pub const DeflateDecoder = JSC.API.DeflateDecoder;
+    pub const GzipEncoder = JSC.API.GzipEncoder;
+    pub const GzipDecoder = JSC.API.GzipDecoder;
 };

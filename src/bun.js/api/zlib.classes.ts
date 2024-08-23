@@ -27,6 +27,12 @@ export default [
       bytesWritten: {
         getter: "getBytesWritten",
       },
+      bytesRead: { // deprecated
+        value: "bytesWritten",
+      },
+      closed: {
+        getter: "getClosed",
+      },
     },
   }),
   define({
@@ -55,6 +61,12 @@ export default [
       },
       bytesWritten: {
         getter: "getBytesWritten",
+      },
+      bytesRead: { // deprecated
+        value: "bytesWritten",
+      },
+      closed: {
+        getter: "getClosed",
       },
     },
   }),
@@ -85,6 +97,18 @@ export default [
       bytesWritten: {
         getter: "getBytesWritten",
       },
+      bytesRead: { // deprecated
+        value: "bytesWritten",
+      },
+      level: {
+        getter: "getLevel",
+      },
+      strategy: {
+        getter: "getStrategy",
+      },
+      closed: {
+        getter: "getClosed",
+      },
     },
   }),
   define({
@@ -113,6 +137,100 @@ export default [
       },
       bytesWritten: {
         getter: "getBytesWritten",
+      },
+      bytesRead: { // deprecated
+        value: "bytesWritten",
+      },
+      level: {
+        getter: "getLevel",
+      },
+      strategy: {
+        getter: "getStrategy",
+      },
+      closed: {
+        getter: "getClosed",
+      },
+    },
+  }),
+
+  define({
+    name: "GzipEncoder",
+    construct: true,
+    noConstructor: true,
+    finalize: true,
+    configurable: false,
+    hasPendingActivity: true,
+    klass: {},
+    JSType: "0b11101110",
+    values: ["callback"],
+    proto: {
+      encode: {
+        fn: "encode",
+        length: 2,
+      },
+      encodeSync: {
+        fn: "encodeSync",
+        length: 2,
+      },
+      reset: {
+        fn: "reset",
+        length: 0,
+      },
+      bytesWritten: {
+        getter: "getBytesWritten",
+      },
+      bytesRead: { // deprecated
+        value: "bytesWritten",
+      },
+      level: {
+        getter: "getLevel",
+      },
+      strategy: {
+        getter: "getStrategy",
+      },
+      closed: {
+        getter: "getClosed",
+      },
+    },
+  }),
+  define({
+    name: "GzipDecoder",
+    construct: true,
+    noConstructor: true,
+    finalize: true,
+    configurable: false,
+    hasPendingActivity: true,
+    klass: {},
+    JSType: "0b11101110",
+    values: ["callback"],
+
+    proto: {
+      decode: {
+        fn: "decode",
+        length: 2,
+      },
+      decodeSync: {
+        fn: "decodeSync",
+        length: 2,
+      },
+      reset: {
+        fn: "reset",
+        length: 0,
+      },
+      bytesWritten: {
+        getter: "getBytesWritten",
+      },
+      bytesRead: { // deprecated
+        value: "bytesWritten",
+      },
+      level: {
+        getter: "getLevel",
+      },
+      strategy: {
+        getter: "getStrategy",
+      },
+      closed: {
+        getter: "getClosed",
       },
     },
   }),

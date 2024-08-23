@@ -266,16 +266,23 @@ describe("zlib.brotli", () => {
   });
 });
 
-it.each(["BrotliCompress", "BrotliDecompress", "Deflate", "Inflate", "DeflateRaw", "InflateRaw"])(
-  "%s should work with and without `new` keyword",
-  constructor_name => {
-    const C = zlib[constructor_name];
-    expect(C()).toBeInstanceOf(C);
-    expect(new C()).toBeInstanceOf(C);
-  },
-);
+it.each([
+  "BrotliCompress",
+  "BrotliDecompress",
+  "Deflate",
+  "Inflate",
+  "DeflateRaw",
+  "InflateRaw",
+  "Gzip",
+  "Gunzip",
+  "Unzip",
+])("%s should work with and without `new` keyword", constructor_name => {
+  const C = zlib[constructor_name];
+  expect(C()).toBeInstanceOf(C);
+  expect(new C()).toBeInstanceOf(C);
+});
 
-describe.each(["Deflate", "DeflateRaw"])("%s", constructor_name => {
+describe.each(["Deflate", "DeflateRaw", "Gzip"])("%s", constructor_name => {
   describe.each(["chunkSize", "level", "windowBits", "memLevel", "strategy", "maxOutputLength"])(
     "should throw if options.%s is",
     option_name => {
@@ -283,7 +290,7 @@ describe.each(["Deflate", "DeflateRaw"])("%s", constructor_name => {
       it.each(["test", Symbol("bun"), 2n, {}, true])("%p", value => {
         expect(() => new zlib[constructor_name]({ [option_name]: value })).toThrow(TypeError);
       });
-      it.each([Infinity, -Infinity, -1])("%p", value => {
+      it.each([Infinity, -Infinity, -2])("%p", value => {
         expect(() => new zlib[constructor_name]({ [option_name]: value })).toThrow(RangeError);
       });
     },
@@ -294,6 +301,8 @@ for (const [compress, decompressor] of [
   [zlib.deflateRawSync, zlib.createInflateRaw],
   [zlib.deflateSync, zlib.createInflate],
   [zlib.brotliCompressSync, zlib.createBrotliDecompress],
+  // [zlib.gzipSync, zlib.createGunzip],
+  // [zlib.gzipSync, zlib.createUnzip],
 ]) {
   it(`premature end handles bytesWritten properly: ${compress.name} + ${decompressor.name}`, async () => {
     const { promise, resolve, reject } = Promise.withResolvers();
@@ -353,11 +362,11 @@ const inputString =
 const errMessage = /unexpected end of file/;
 
 it.each([
-  // ["gzip/gunzip", "gunzip", "gunzipSync"],
-  // ["gzip/unzip", "unzip", "unzipSync"],
+  ["gzip", "gunzip", "gunzipSync"],
+  ["gzip", "unzip", "unzipSync"],
   ["deflate", "inflate", "inflateSync"],
   ["deflateRaw", "inflateRaw", "inflateRawSync"],
-])("%s should handle truncated input correctly", async (comp, decomp, decompSync) => {
+])("%s %s should handle truncated input correctly", async (comp, decomp, decompSync) => {
   const comp_p = util.promisify(zlib[comp]);
   const decomp_p = util.promisify(zlib[decomp]);
 

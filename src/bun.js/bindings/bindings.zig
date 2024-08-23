@@ -3947,6 +3947,10 @@ pub const JSValue = enum(JSValueReprInt) {
     /// This does not call [Symbol.toPrimitive] or [Symbol.toStringTag].
     /// This is only safe when you don't want to do conversions across non-primitive types.
     pub fn to(this: JSValue, comptime T: type) T {
+        if (@typeInfo(T) == .Enum) {
+            const Int = @typeInfo(T).Enum.tag_type;
+            return @enumFromInt(this.to(Int));
+        }
         return switch (comptime T) {
             u32 => toU32(this),
             u16 => toU16(this),

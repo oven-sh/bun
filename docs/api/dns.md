@@ -99,7 +99,7 @@ console.log(stats);
 
 ### Configuring DNS cache TTL
 
-Bun defaults to 30 seconds for the TTL of DNS cache entries. To change this, you can set the envionrment variable `$BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS`. For example, to set the TTL to 5 seconds:
+Bun defaults to 30 seconds for the TTL of DNS cache entries. To change this, you can set the environment variable `$BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS`. For example, to set the TTL to 5 seconds:
 
 ```sh
 BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS=5 bun run my-script.ts

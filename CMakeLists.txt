@@ -469,6 +469,7 @@ if(WIN32)
 
     target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000" "/DEF:${BUN_SRC}/symbols.def" "/errorlimit:0")
 else()
+    # TODO: look at -fconstexpr-steps=2542484 -fconstexpr-depth=54
     target_compile_options(${bun} PUBLIC
         -mtune=${USE_CPU}
         -fconstexpr-steps=2542484

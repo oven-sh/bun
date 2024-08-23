@@ -363,7 +363,7 @@ add_custom_command(
     ${BUN_EXECUTABLE}
       run
       ${BUN_JAVASCRIPT_SCRIPT}
-      --debug=${DEBUG}
+      --debug=${ENABLE_ASSERTIONS}
       ${BUILD_PATH}
   OUTPUT
     ${BUN_JAVASCRIPT_OUTPUTS}

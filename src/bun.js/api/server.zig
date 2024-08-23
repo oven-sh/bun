@@ -3940,6 +3940,28 @@ pub const WebSocketServer = struct {
                 server.idleTimeout = idleTimeout;
             }
         }
+
+        if (object.get(globalObject, "maxLifetime")) |value| {
+            if (!value.isUndefinedOrNull()) {
+                if (!value.isAnyInt()) {
+                    globalObject.throwInvalidArguments("websocket expects maxLifetime to be an integer", .{});
+                    return null;
+                }
+
+                var maxLifetime: u16 = @truncate(@max(value.toInt64(), 0));
+                if (maxLifetime > 240) {
+                    globalObject.throwInvalidArguments("websocket expects maxLifetime to be 240 minutes or less (4 hours). To disable maxLifetime, set it to 0.", .{});
+                    return null;
+                } else if (maxLifetime > 0) {
+                    // uws does not allow maxLifetime to be between (0, 8),
+                    // since its timer is not that accurate, therefore round up.
+                    maxLifetime = @max(maxLifetime, 8);
+                }
+
+                server.maxLifetime = maxLifetime;
+            }
+        }
+
         if (object.get(globalObject, "backpressureLimit")) |value| {
             if (!value.isUndefinedOrNull()) {
                 if (!value.isAnyInt()) {

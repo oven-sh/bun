@@ -2215,6 +2215,17 @@ declare module "bun" {
     idleTimeout?: number;
 
     /**
+     * Total minutes of activity before a client is automatically disconnected.
+     *
+     * `0` disables this feature.
+     * Must be a number between 0 and 240.
+     *
+     * @default 0
+     * @since Bun v1.1.26
+     */
+    maxLifetime?: number;
+
+    /**
      * Should `ws.publish()` also send a message to `ws` (itself), if it is subscribed?
      *
      * Default is `false`.

@@ -9886,6 +9886,99 @@ test("tarball `./` prefix, duplicate directory with file, and empty directory", 
   );
 });
 
+describe("outdated", () => {
+  const edgeCaseTests = [
+    {
+      description: "normal dep, smaller than column title",
+      packageJson: {
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+      },
+    },
+    {
+      description: "normal dep, larger than column title",
+      packageJson: {
+        dependencies: {
+          "prereleases-1": "1.0.0-future.1",
+        },
+      },
+    },
+    {
+      description: "dev dep, smaller than column title",
+      packageJson: {
+        devDependencies: {
+          "no-deps": "1.0.0",
+        },
+      },
+    },
+    {
+      description: "dev dep, larger than column title",
+      packageJson: {
+        devDependencies: {
+          "prereleases-1": "1.0.0-future.1",
+        },
+      },
+    },
+    {
+      description: "peer dep, smaller than column title",
+      packageJson: {
+        peerDependencies: {
+          "no-deps": "1.0.0",
+        },
+      },
+    },
+    {
+      description: "peer dep, larger than column title",
+      packageJson: {
+        peerDependencies: {
+          "prereleases-1": "1.0.0-future.1",
+        },
+      },
+    },
+    {
+      description: "optional dep, smaller than column title",
+      packageJson: {
+        optionalDependencies: {
+          "no-deps": "1.0.0",
+        },
+      },
+    },
+    {
+      description: "optional dep, larger than column title",
+      packageJson: {
+        optionalDependencies: {
+          "prereleases-1": "1.0.0-future.1",
+        },
+      },
+    },
+  ];
+
+  for (const { description, packageJson } of edgeCaseTests) {
+    test(description, async () => {
+      await write(join(packageDir, "package.json"), JSON.stringify(packageJson));
+      await runBunInstall(env, packageDir);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "outdated"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+
+      expect(await exited).toBe(0);
+
+      const err = await Bun.readableStreamToText(stderr);
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("panic:");
+      const out = await Bun.readableStreamToText(stdout);
+      expect(out).toMatchSnapshot();
+    });
+  }
+});
+
 // TODO: setup verdaccio to run across multiple test files, then move this and a few other describe
 // scopes (update, hoisting, ...) to other files
 //

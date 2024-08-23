@@ -45,3 +45,75 @@ what-bin@1.0.0:
   integrity sha512-sa99On1k5aDqCvpni/TQ6rLzYprUWBlb8fNwWOzbjDlM24fRr7FKDOuaBO/Y9WEIcZuzoPkCW5EkBCpflj8REQ==
 "
 `;
+
+exports[`outdated normal dep, smaller than column title 1`] = `
+"┌──────────┬─────────┬────────┬────────┐
+│ Packages │ Current │ Update │ Latest │
+├──────────┼─────────┼────────┼────────┤
+│ no-deps  │ 1.0.0   │ 1.0.0  │ 2.0.0  │
+└──────────┴─────────┴────────┴────────┘
+"
+`;
+
+exports[`outdated normal dep, larger than column title 1`] = `
+"┌───────────────┬────────────────┬────────────────┬────────────────┐
+│ Packages      │ Current        │ Update         │ Latest         │
+├───────────────┼────────────────┼────────────────┼────────────────┤
+│ prereleases-1 │ 1.0.0-future.1 │ 1.0.0-future.1 │ 1.0.0-future.4 │
+└───────────────┴────────────────┴────────────────┴────────────────┘
+"
+`;
+
+exports[`outdated dev dep, smaller than column title 1`] = `
+"┌───────────────┬─────────┬────────┬────────┐
+│ Packages      │ Current │ Update │ Latest │
+├───────────────┼─────────┼────────┼────────┤
+│ no-deps (dev) │ 1.0.0   │ 1.0.0  │ 2.0.0  │
+└───────────────┴─────────┴────────┴────────┘
+"
+`;
+
+exports[`outdated dev dep, larger than column title 1`] = `
+"┌─────────────────────┬────────────────┬────────────────┬────────────────┐
+│ Packages            │ Current        │ Update         │ Latest         │
+├─────────────────────┼────────────────┼────────────────┼────────────────┤
+│ prereleases-1 (dev) │ 1.0.0-future.1 │ 1.0.0-future.1 │ 1.0.0-future.4 │
+└─────────────────────┴────────────────┴────────────────┴────────────────┘
+"
+`;
+
+exports[`outdated peer dep, smaller than column title 1`] = `
+"┌────────────────┬─────────┬────────┬────────┐
+│ Packages       │ Current │ Update │ Latest │
+├────────────────┼─────────┼────────┼────────┤
+│ no-deps (peer) │ 1.0.0   │ 1.0.0  │ 2.0.0  │
+└────────────────┴─────────┴────────┴────────┘
+"
+`;
+
+exports[`outdated peer dep, larger than column title 1`] = `
+"┌──────────────────────┬────────────────┬────────────────┬────────────────┐
+│ Packages             │ Current        │ Update         │ Latest         │
+├──────────────────────┼────────────────┼────────────────┼────────────────┤
+│ prereleases-1 (peer) │ 1.0.0-future.1 │ 1.0.0-future.1 │ 1.0.0-future.4 │
+└──────────────────────┴────────────────┴────────────────┴────────────────┘
+"
+`;
+
+exports[`outdated optional dep, smaller than column title 1`] = `
+"┌────────────────────┬─────────┬────────┬────────┐
+│ Packages           │ Current │ Update │ Latest │
+├────────────────────┼─────────┼────────┼────────┤
+│ no-deps (optional) │ 1.0.0   │ 1.0.0  │ 2.0.0  │
+└────────────────────┴─────────┴────────┴────────┘
+"
+`;
+
+exports[`outdated optional dep, larger than column title 1`] = `
+"┌──────────────────────────┬────────────────┬────────────────┬────────────────┐
+│ Packages                 │ Current        │ Update         │ Latest         │
+├──────────────────────────┼────────────────┼────────────────┼────────────────┤
+│ prereleases-1 (optional) │ 1.0.0-future.1 │ 1.0.0-future.1 │ 1.0.0-future.4 │
+└──────────────────────────┴────────────────┴────────────────┴────────────────┘
+"
+`;

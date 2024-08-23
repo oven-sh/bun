@@ -15,7 +15,7 @@ cmake -B build @CMAKE_FLAGS `
   -DBUN_CPP_ONLY=1
 if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed" }
 
-cmake --build --verbose --parallel $env:CPUS
+cmake --build build --verbose --parallel $env:CPUS
 if ($LASTEXITCODE -ne 0) { throw "C++ compilation failed" }
 
 # HACK: For some reason, the buildkite agent is hanging when uploading bun-cpp-objects.a

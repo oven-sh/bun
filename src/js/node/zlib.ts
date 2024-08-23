@@ -18,14 +18,31 @@ const maxOutputLengthDefault = $requireMap.$get("buffer")?.exports.kMaxLength ??
 
 const kHandle = Symbol("kHandle");
 
+//
+
+function Base(method, options) {
+  if (options == null) options = {};
+  if ($isObject(options)) options.maxOutputLength ??= maxOutputLengthDefault;
+  const [, , private_constructor] = methods[method];
+  this[kHandle] = private_constructor(options, {}, null, method);
+  stream.Transform.$call(this, options);
+}
+Base.prototype = Object.create(stream.Transform.prototype);
+
+//
+
+function Zlib(method, options) {
+  Base.$call(this, method, options);
+}
+Zlib.prototype = Object.create(Base.prototype);
+
+//
+
 function BrotliCompress(opts) {
   if (!(this instanceof BrotliCompress)) return new BrotliCompress(opts);
-  if (opts == null) opts = {};
-  if ($isObject(opts)) opts.maxOutputLength ??= maxOutputLengthDefault;
-  this[kHandle] = createBrotliEncoder(opts, {}, null, 9);
-  stream.Transform.$apply(this, arguments);
+  Base.$call(this, BROTLI_ENCODE, opts);
 }
-BrotliCompress.prototype = Object.create(stream.Transform.prototype);
+BrotliCompress.prototype = Object.create(Base.prototype);
 ObjectDefineProperty(BrotliCompress.prototype, "bytesWritten", {
   get: function () {
     return this[kHandle].bytesWritten;
@@ -59,12 +76,9 @@ BrotliCompress.prototype._flush = function _flush(callback) {
 
 function BrotliDecompress(opts) {
   if (!(this instanceof BrotliDecompress)) return new BrotliDecompress(opts);
-  if (opts == null) opts = {};
-  if ($isObject(opts)) opts.maxOutputLength ??= maxOutputLengthDefault;
-  this[kHandle] = createBrotliDecoder(opts, {}, null, 8);
-  stream.Transform.$apply(this, arguments);
+  Base.$call(this, BROTLI_DECODE, opts);
 }
-BrotliDecompress.prototype = Object.create(stream.Transform.prototype);
+BrotliDecompress.prototype = Object.create(Base.prototype);
 ObjectDefineProperty(BrotliDecompress.prototype, "bytesWritten", {
   get: function () {
     return this[kHandle].bytesWritten;
@@ -98,12 +112,9 @@ BrotliDecompress.prototype._flush = function (callback) {
 
 function Deflate(opts) {
   if (!(this instanceof Deflate)) return new Deflate(opts);
-  if (opts == null) opts = {};
-  if ($isObject(opts)) opts.maxOutputLength ??= maxOutputLengthDefault;
-  this[kHandle] = createDeflateEncoder(opts, {}, null, 1);
-  stream.Transform.$apply(this, arguments);
+  Zlib.$call(this, DEFLATE, opts);
 }
-Deflate.prototype = Object.create(stream.Transform.prototype);
+Deflate.prototype = Object.create(Zlib.prototype);
 ObjectDefineProperty(Deflate.prototype, "bytesWritten", {
   get: function () {
     return this[kHandle].bytesWritten;
@@ -153,12 +164,9 @@ Deflate.prototype._flush = function _flush(callback) {
 
 function Inflate(opts) {
   if (!(this instanceof Inflate)) return new Inflate(opts);
-  if (opts == null) opts = {};
-  if ($isObject(opts)) opts.maxOutputLength ??= maxOutputLengthDefault;
-  this[kHandle] = createDeflateDecoder(opts, {}, null, 2);
-  stream.Transform.$apply(this, arguments);
+  Zlib.$call(this, INFLATE, opts);
 }
-Inflate.prototype = Object.create(stream.Transform.prototype);
+Inflate.prototype = Object.create(Zlib.prototype);
 ObjectDefineProperty(Inflate.prototype, "bytesWritten", {
   get: function () {
     return this[kHandle].bytesWritten;
@@ -208,13 +216,9 @@ Inflate.prototype._flush = function (callback) {
 
 function DeflateRaw(opts) {
   if (!(this instanceof DeflateRaw)) return new DeflateRaw(opts);
-  if (opts == null) opts = {};
-  if ($isObject(opts)) opts.maxOutputLength ??= maxOutputLengthDefault;
-  if (opts && opts.windowBits === 8) opts.windowBits = 9;
-  this[kHandle] = createDeflateEncoder(opts, {}, null, 5);
-  stream.Transform.$apply(this, arguments);
+  Zlib.$call(this, DEFLATERAW, opts);
 }
-DeflateRaw.prototype = Object.create(stream.Transform.prototype);
+DeflateRaw.prototype = Object.create(Zlib.prototype);
 ObjectDefineProperty(DeflateRaw.prototype, "bytesWritten", {
   get: function () {
     return this[kHandle].bytesWritten;
@@ -264,12 +268,9 @@ DeflateRaw.prototype._flush = function _flush(callback) {
 
 function InflateRaw(opts) {
   if (!(this instanceof InflateRaw)) return new InflateRaw(opts);
-  if (opts == null) opts = {};
-  if ($isObject(opts)) opts.maxOutputLength ??= maxOutputLengthDefault;
-  this[kHandle] = createDeflateDecoder(opts, {}, null, 6);
-  stream.Transform.$apply(this, arguments);
+  Zlib.$call(this, INFLATERAW, opts);
 }
-InflateRaw.prototype = Object.create(stream.Transform.prototype);
+InflateRaw.prototype = Object.create(Zlib.prototype);
 ObjectDefineProperty(InflateRaw.prototype, "bytesWritten", {
   get: function () {
     return this[kHandle].bytesWritten;
@@ -319,12 +320,9 @@ InflateRaw.prototype._flush = function (callback) {
 
 function Gzip(opts) {
   if (!(this instanceof Gzip)) return new Gzip(opts);
-  if (opts == null) opts = {};
-  if ($isObject(opts)) opts.maxOutputLength ??= maxOutputLengthDefault;
-  this[kHandle] = createGzipEncoder(opts, {}, null, 3);
-  stream.Transform.$apply(this, arguments);
+  Zlib.$call(this, GZIP, opts);
 }
-Gzip.prototype = Object.create(stream.Transform.prototype);
+Gzip.prototype = Object.create(Zlib.prototype);
 ObjectDefineProperty(Gzip.prototype, "bytesWritten", {
   get: function () {
     return this[kHandle].bytesWritten;
@@ -374,12 +372,9 @@ Gzip.prototype._flush = function _flush(callback) {
 
 function Gunzip(opts) {
   if (!(this instanceof Gunzip)) return new Gunzip(opts);
-  if (opts == null) opts = {};
-  if ($isObject(opts)) opts.maxOutputLength ??= maxOutputLengthDefault;
-  this[kHandle] = createGzipDecoder(opts, {}, null, 4);
-  stream.Transform.$apply(this, arguments);
+  Zlib.$call(this, GUNZIP, opts);
 }
-Gunzip.prototype = Object.create(stream.Transform.prototype);
+Gunzip.prototype = Object.create(Zlib.prototype);
 ObjectDefineProperty(Gunzip.prototype, "bytesWritten", {
   get: function () {
     return this[kHandle].bytesWritten;
@@ -429,12 +424,9 @@ Gunzip.prototype._flush = function (callback) {
 
 function Unzip(opts) {
   if (!(this instanceof Unzip)) return new Unzip(opts);
-  if (opts == null) opts = {};
-  if ($isObject(opts)) opts.maxOutputLength ??= maxOutputLengthDefault;
-  this[kHandle] = createGzipDecoder(opts, {}, null, 7);
-  stream.Transform.$apply(this, arguments);
+  Zlib.$call(this, UNZIP, opts);
 }
-Unzip.prototype = Object.create(stream.Transform.prototype);
+Unzip.prototype = Object.create(Zlib.prototype);
 ObjectDefineProperty(Unzip.prototype, "bytesWritten", {
   get: function () {
     return this[kHandle].bytesWritten;

@@ -10,11 +10,55 @@ const PackageID = Install.PackageID;
 const DependencyID = Install.DependencyID;
 const Behavior = Install.Dependency.Behavior;
 const invalid_package_id = Install.invalid_package_id;
+const string = bun.string;
 
-fn Table(comptime num_columns: usize, comptime column_color: []const u8, comptime column_left_pad: usize, comptime column_right_pad: usize) type {
+fn Table(
+    comptime num_columns: usize,
+    comptime column_color: []const u8,
+    comptime column_left_pad: usize,
+    comptime column_right_pad: usize,
+    comptime enable_ansi_colors: bool,
+) type {
     return struct {
         column_names: [num_columns][]const u8,
         column_inside_lengths: [num_columns]usize,
+
+        pub fn topLeftSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "┌" else "-";
+        }
+        pub fn topRightSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "┐" else "-";
+        }
+        pub fn topColumnSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "┬" else "-";
+        }
+
+        pub fn bottomLeftSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "└" else "-";
+        }
+        pub fn bottomRightSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "┘" else "-";
+        }
+        pub fn bottomColumnSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "┴" else "-";
+        }
+
+        pub fn middleLeftSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "├" else "|";
+        }
+        pub fn middleRightSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "┤" else "|";
+        }
+        pub fn middleColumnSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "┼" else "|";
+        }
+
+        pub fn horizontalEdge(_: *const @This()) string {
+            return if (enable_ansi_colors) "─" else "-";
+        }
+        pub fn verticalEdge(_: *const @This()) string {
+            return if (enable_ansi_colors) "│" else "|";
+        }
 
         pub fn init(column_names_: [num_columns][]const u8, column_inside_lengths_: [num_columns]usize) @This() {
             return .{
@@ -23,59 +67,42 @@ fn Table(comptime num_columns: usize, comptime column_color: []const u8, comptim
             };
         }
 
-        pub fn writeTopLineSeparator(this: *const @This()) void {
+        pub fn printTopLineSeparator(this: *const @This()) void {
+            this.printLine(this.topLeftSep(), this.topRightSep(), this.topColumnSep());
+        }
+
+        pub fn printBottomLineSeparator(this: *const @This()) void {
+            this.printLine(this.bottomLeftSep(), this.bottomRightSep(), this.bottomColumnSep());
+        }
+
+        pub fn printLineSeparator(this: *const @This()) void {
+            this.printLine(this.middleLeftSep(), this.middleRightSep(), this.middleColumnSep());
+        }
+
+        pub fn printLine(this: *const @This(), left_edge_separator: string, right_edge_separator: string, column_separator: string) void {
             for (this.column_inside_lengths, 0..) |column_inside_length, i| {
                 if (i == 0) {
-                    Output.pretty("┌", .{});
+                    Output.pretty("{s}", .{left_edge_separator});
                 } else {
-                    Output.pretty("┬", .{});
+                    Output.pretty("{s}", .{column_separator});
                 }
-                for (0..column_left_pad + column_inside_length + column_right_pad) |_| Output.pretty("─", .{});
+
+                for (0..column_left_pad + column_inside_length + column_right_pad) |_| Output.pretty("{s}", .{this.horizontalEdge()});
 
                 if (i == this.column_inside_lengths.len - 1) {
-                    Output.pretty("┐\n", .{});
+                    Output.pretty("{s}\n", .{right_edge_separator});
                 }
             }
         }
 
-        pub fn writeBottomLineSeparator(this: *const @This()) void {
+        pub fn printColumnNames(this: *const @This()) void {
             for (this.column_inside_lengths, 0..) |column_inside_length, i| {
-                if (i == 0) {
-                    Output.pretty("└", .{});
-                } else {
-                    Output.pretty("┴", .{});
-                }
-                for (0..column_left_pad + column_inside_length + column_right_pad) |_| Output.pretty("─", .{});
-
-                if (i == this.column_inside_lengths.len - 1) {
-                    Output.pretty("┘\n", .{});
-                }
-            }
-        }
-
-        pub fn writeLineSeparator(this: *const @This()) void {
-            for (this.column_inside_lengths, 0..) |column_inside_length, i| {
-                if (i == 0) {
-                    Output.pretty("├", .{});
-                } else {
-                    Output.pretty("┼", .{});
-                }
-                for (0..column_left_pad + column_inside_length + column_right_pad) |_| Output.pretty("─", .{});
-
-                if (i == this.column_inside_lengths.len - 1) {
-                    Output.pretty("┤\n", .{});
-                }
-            }
-        }
-
-        pub fn writeColumnNames(this: *const @This()) void {
-            for (this.column_inside_lengths, 0..) |column_inside_length, i| {
-                Output.pretty("│", .{});
+                Output.pretty("{s}", .{this.verticalEdge()});
                 for (0..column_left_pad) |_| Output.pretty(" ", .{});
                 Output.pretty("<b><" ++ column_color ++ ">{s}<r>", .{this.column_names[i]});
                 for (this.column_names[i].len..column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
                 if (i == this.column_inside_lengths.len - 1) {
-                    Output.pretty("│\n", .{});
+                    Output.pretty("{s}\n", .{this.verticalEdge()});
                 }
             }
         }
@@ -160,10 +187,13 @@ pub const OutdatedCommand = struct {
         Output.flush();
 
         try updateManifestsIfNecessary(manager, log_level, root_pkg_deps);
-        try printOutdatedInfoTable(manager, root_pkg_deps);
+
+        try switch (Output.enable_ansi_colors) {
+            inline else => |enable_ansi_colors| printOutdatedInfoTable(manager, root_pkg_deps, enable_ansi_colors),
+        };
     }
 
-    fn printOutdatedInfoTable(manager: *PackageManager, root_pkg_deps: Lockfile.DependencySlice) !void {
+    fn printOutdatedInfoTable(manager: *PackageManager, root_pkg_deps: Lockfile.DependencySlice, comptime enable_ansi_colors: bool) !void {
         var outdated_ids: std.ArrayListUnmanaged(struct { package_id: PackageID, dep_id: DependencyID }) = .{};
         defer outdated_ids.deinit(manager.allocator);
 
@@ -248,7 +278,7 @@ pub const OutdatedCommand = struct {
         const column_left_pad = 1;
         const column_right_pad = 1;
 
-        const table = Table(4, "blue", column_left_pad, column_right_pad).init(
+        const table = Table(4, "blue", column_left_pad, column_right_pad, enable_ansi_colors).init(
             [_][]const u8{
                 "Packages",
                 "Current",
@@ -263,8 +293,8 @@ pub const OutdatedCommand = struct {
             },
         );
 
-        table.writeTopLineSeparator();
-        table.writeColumnNames();
+        table.printTopLineSeparator();
+        table.printColumnNames();
 
         inline for (
             .{
@@ -297,7 +327,7 @@ pub const OutdatedCommand = struct {
                 else
                     manifest.findByDistTag(dep.version.value.dist_tag.tag.slice(string_buf)) orelse continue;
 
-                table.writeLineSeparator();
+                table.printLineSeparator();
 
                 {
                     // package name
@@ -310,7 +340,7 @@ pub const OutdatedCommand = struct {
                     else
                         "";
 
-                    Output.pretty("│", .{});
+                    Output.pretty("{s}", .{table.verticalEdge()});
                     for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
                     Output.pretty("{s}<d>{s}<r>", .{ package_name, behavior_str });
@@ -319,7 +349,7 @@ pub const OutdatedCommand = struct {
 
                 {
                     // current version
-                    Output.pretty("│", .{});
+                    Output.pretty("{s}", .{table.verticalEdge()});
                     for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
                     version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)}) catch bun.outOfMemory();
@@ -330,7 +360,7 @@ pub const OutdatedCommand = struct {
 
                 {
                     // update version
-                    Output.pretty("│", .{});
+                    Output.pretty("{s}", .{table.verticalEdge()});
                     for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
                     version_writer.print("{}", .{update.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
@@ -341,7 +371,7 @@ pub const OutdatedCommand = struct {
 
                 {
                     // latest version
-                    Output.pretty("│", .{});
+                    Output.pretty("{s}", .{table.verticalEdge()});
                     for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
                     version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
@@ -350,11 +380,11 @@ pub const OutdatedCommand = struct {
                     version_buf.clearRetainingCapacity();
                 }
 
-                Output.pretty("│\n", .{});
+                Output.pretty("{s}\n", .{table.verticalEdge()});
             }
         }
 
-        table.writeBottomLineSeparator();
+        table.printBottomLineSeparator();
     }
 
     fn updateManifestsIfNecessary(manager: *PackageManager, comptime log_level: PackageManager.Options.LogLevel, root_pkg_deps: Lockfile.DependencySlice) !void {

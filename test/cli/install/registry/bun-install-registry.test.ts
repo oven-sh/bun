@@ -10065,6 +10065,8 @@ describe("outdated", () => {
     const out = await Bun.readableStreamToText(stdout);
     expect(out).toContain("a-dep");
     expect(out).toMatchSnapshot();
+
+    expect(await exited).toBe(0);
   });
 });
 

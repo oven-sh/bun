@@ -10034,6 +10034,37 @@ describe("outdated", () => {
     expect(out2).not.toContain("a-dep");
     expect(await exited).toBe(0);
   });
+
+  test("NO_COLOR works", async () => {
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "a-dep": "1.0.1",
+        },
+      }),
+    );
+
+    await runBunInstall(env, packageDir);
+
+    const testEnv = { ...env, NO_COLOR: "1" };
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "outdated"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: testEnv,
+    });
+
+    const err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("panic:");
+
+    const out = await Bun.readableStreamToText(stdout);
+    expect(out).toContain("a-dep");
+    expect(out).toMatchSnapshot();
+  });
 });
 
 // TODO: setup verdaccio to run across multiple test files, then move this and a few other describe

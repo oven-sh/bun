@@ -17,6 +17,15 @@ const maxOutputLengthDefault = $requireMap.$get("buffer")?.exports.kMaxLength ??
 //
 
 const kHandle = Symbol("kHandle");
+const kFlushFlag = Symbol("kFlushFlag");
+const kFlushBuffers: Buffer[] = [];
+{
+  const dummyArrayBuffer = new ArrayBuffer();
+  for (const flushFlag of [0, 1, 2, 3, 4, 5]) {
+    kFlushBuffers[flushFlag] = Buffer.from(dummyArrayBuffer);
+    kFlushBuffers[flushFlag][kFlushFlag] = flushFlag;
+  }
+}
 
 //
 
@@ -43,6 +52,28 @@ ObjectDefineProperty(Base.prototype, "_closed", {
     return this[kHandle].closed;
   },
 });
+Base.prototype.flush = function (kind, callback) {
+  if (typeof kind === "function" || (kind === undefined && !callback)) {
+    callback = kind;
+    kind = 3;
+  }
+
+  if (this.writableFinished) {
+    if (callback) process.nextTick(callback);
+  } else if (this.writableEnded) {
+    if (callback) this.once("end", callback);
+  } else {
+    this.write(kFlushBuffers[kind], "", callback);
+  }
+};
+Base.prototype.reset = function () {
+  assert(this[kHandle], "zlib binding closed");
+  return this[kHandle].reset();
+};
+Base.prototype.close = function (callback) {
+  if (callback) stream.finished(this, callback);
+  this.destroy();
+};
 
 //
 
@@ -60,6 +91,9 @@ ObjectDefineProperty(Zlib.prototype, "_strategy", {
     return this[kHandle].strategy;
   },
 });
+Zlib.prototype.params = function (level, strategy, callback) {
+  // TODO:
+};
 
 //
 
@@ -68,9 +102,6 @@ function BrotliCompress(opts) {
   Base.$call(this, BROTLI_ENCODE, opts);
 }
 BrotliCompress.prototype = Object.create(Base.prototype);
-BrotliCompress.prototype.flush = ZlibBase_flush;
-BrotliCompress.prototype.reset = ZlibBase_reset;
-BrotliCompress.prototype.close = ZlibBase_close;
 
 BrotliCompress.prototype._transform = function _transform(chunk, encoding, callback) {
   try {
@@ -94,9 +125,6 @@ function BrotliDecompress(opts) {
   Base.$call(this, BROTLI_DECODE, opts);
 }
 BrotliDecompress.prototype = Object.create(Base.prototype);
-BrotliDecompress.prototype.flush = ZlibBase_flush;
-BrotliDecompress.prototype.reset = ZlibBase_reset;
-BrotliDecompress.prototype.close = ZlibBase_close;
 
 BrotliDecompress.prototype._transform = function (chunk, encoding, callback) {
   try {
@@ -120,10 +148,6 @@ function Deflate(opts) {
   Zlib.$call(this, DEFLATE, opts);
 }
 Deflate.prototype = Object.create(Zlib.prototype);
-Deflate.prototype.flush = ZlibBase_flush;
-Deflate.prototype.reset = ZlibBase_reset;
-Deflate.prototype.close = ZlibBase_close;
-Deflate.prototype.params = Zlib_params;
 
 Deflate.prototype._transform = function _transform(chunk, encoding, callback) {
   try {
@@ -147,10 +171,6 @@ function Inflate(opts) {
   Zlib.$call(this, INFLATE, opts);
 }
 Inflate.prototype = Object.create(Zlib.prototype);
-Inflate.prototype.flush = ZlibBase_flush;
-Inflate.prototype.reset = ZlibBase_reset;
-Inflate.prototype.close = ZlibBase_close;
-Inflate.prototype.params = Zlib_params;
 
 Inflate.prototype._transform = function (chunk, encoding, callback) {
   try {
@@ -174,10 +194,6 @@ function DeflateRaw(opts) {
   Zlib.$call(this, DEFLATERAW, opts);
 }
 DeflateRaw.prototype = Object.create(Zlib.prototype);
-DeflateRaw.prototype.flush = ZlibBase_flush;
-DeflateRaw.prototype.reset = ZlibBase_reset;
-DeflateRaw.prototype.close = ZlibBase_close;
-DeflateRaw.prototype.params = Zlib_params;
 
 DeflateRaw.prototype._transform = function _transform(chunk, encoding, callback) {
   try {
@@ -201,10 +217,6 @@ function InflateRaw(opts) {
   Zlib.$call(this, INFLATERAW, opts);
 }
 InflateRaw.prototype = Object.create(Zlib.prototype);
-InflateRaw.prototype.flush = ZlibBase_flush;
-InflateRaw.prototype.reset = ZlibBase_reset;
-InflateRaw.prototype.close = ZlibBase_close;
-InflateRaw.prototype.params = Zlib_params;
 
 InflateRaw.prototype._transform = function (chunk, encoding, callback) {
   try {
@@ -228,10 +240,6 @@ function Gzip(opts) {
   Zlib.$call(this, GZIP, opts);
 }
 Gzip.prototype = Object.create(Zlib.prototype);
-Gzip.prototype.flush = ZlibBase_flush;
-Gzip.prototype.reset = ZlibBase_reset;
-Gzip.prototype.close = ZlibBase_close;
-Gzip.prototype.params = Zlib_params;
 
 Gzip.prototype._transform = function _transform(chunk, encoding, callback) {
   try {
@@ -255,10 +263,6 @@ function Gunzip(opts) {
   Zlib.$call(this, GUNZIP, opts);
 }
 Gunzip.prototype = Object.create(Zlib.prototype);
-Gunzip.prototype.flush = ZlibBase_flush;
-Gunzip.prototype.reset = ZlibBase_reset;
-Gunzip.prototype.close = ZlibBase_close;
-Gunzip.prototype.params = Zlib_params;
 
 Gunzip.prototype._transform = function (chunk, encoding, callback) {
   try {
@@ -282,10 +286,6 @@ function Unzip(opts) {
   Zlib.$call(this, UNZIP, opts);
 }
 Unzip.prototype = Object.create(Zlib.prototype);
-Unzip.prototype.flush = ZlibBase_flush;
-Unzip.prototype.reset = ZlibBase_reset;
-Unzip.prototype.close = ZlibBase_close;
-Unzip.prototype.params = Zlib_params;
 
 Unzip.prototype._transform = function (chunk, encoding, callback) {
   try {
@@ -303,45 +303,6 @@ Unzip.prototype._flush = function (callback) {
 };
 
 //
-
-const kFlushFlag = Symbol("kFlushFlag");
-const kFlushBuffers: Buffer[] = [];
-{
-  const dummyArrayBuffer = new ArrayBuffer();
-  for (const flushFlag of [0, 1, 2, 3, 4, 5]) {
-    kFlushBuffers[flushFlag] = Buffer.from(dummyArrayBuffer);
-    kFlushBuffers[flushFlag][kFlushFlag] = flushFlag;
-  }
-}
-
-function ZlibBase_flush(kind, callback) {
-  if (typeof kind === "function" || (kind === undefined && !callback)) {
-    callback = kind;
-    kind = 3;
-  }
-
-  if (this.writableFinished) {
-    if (callback) process.nextTick(callback);
-  } else if (this.writableEnded) {
-    if (callback) this.once("end", callback);
-  } else {
-    this.write(kFlushBuffers[kind], "", callback);
-  }
-}
-
-function ZlibBase_reset() {
-  assert(this[kHandle], "zlib binding closed");
-  return this[kHandle].reset();
-}
-
-function ZlibBase_close(callback) {
-  if (callback) stream.finished(this, callback);
-  this.destroy();
-}
-
-function Zlib_params(level, strategy, callback) {
-  // TODO:
-}
 
 // TODO: **use a native binding from Bun for this!!**
 // This is a very slow module!

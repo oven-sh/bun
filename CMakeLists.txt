@@ -301,35 +301,35 @@ include_directories(
 
 # -- BUN_CPP_ONLY Target
 if(NOT BUN_CPP_ARCHIVE)
-    if(BUN_CPP_ONLY)
-        if(NOT WIN32)
-            string(REPLACE ";" ".o\n  " BUN_OBJECT_LIST "${BUN_SOURCES}.o")
-            string(REPLACE "${BUN_WORKDIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
-            string(REPLACE "${CMAKE_CURRENT_SOURCE_DIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
-            write_file("${BUN_WORKDIR}/compile-cpp-only.sh"
-                "#!/usr/bin/env bash\n"
-                "# this file is generated in CMakeLists.txt\n"
-                "set -ex\n"
-                "OBJ_LIST=(\n  ${BUN_OBJECT_LIST}\n)\n"
-                "ninja \${OBJ_LIST[@]} $@\n"
-                "\"${CMAKE_AR}\" rcvs bun-cpp-objects.a \${OBJ_LIST[@]}\n"
-                "echo '-> bun-cpp-objects.a'\n"
-            )
-        else()
-            string(REPLACE ";" ".obj\",\n  \"" BUN_OBJECT_LIST "\"${BUN_SOURCES}.obj\"")
-            string(REPLACE "rc.obj" "rc.res" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
-            string(REPLACE "${BUN_WORKDIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
-            string(REPLACE "${CMAKE_CURRENT_SOURCE_DIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
-            write_file("${BUN_WORKDIR}/compile-cpp-only.ps1"
-                "# this file is generated in CMakeLists.txt\n"
-                "$ErrorActionPreference = \"Stop\"\n"
-                "$ObjectFiles=@(\n  ${BUN_OBJECT_LIST}\n)\n"
-                "ninja @ObjectFiles @args\n"
-                "& llvm-ar rcvs bun-cpp-objects.a @ObjectFiles\n"
-                "Write-Host '-> bun-cpp-objects.a'\n"
-            )
-        endif()
-    endif()
+    # if(BUN_CPP_ONLY)
+    #     if(NOT WIN32)
+    #         string(REPLACE ";" ".o\n  " BUN_OBJECT_LIST "${BUN_SOURCES}.o")
+    #         string(REPLACE "${BUN_WORKDIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
+    #         string(REPLACE "${CMAKE_CURRENT_SOURCE_DIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
+    #         write_file("${BUN_WORKDIR}/compile-cpp-only.sh"
+    #             "#!/usr/bin/env bash\n"
+    #             "# this file is generated in CMakeLists.txt\n"
+    #             "set -ex\n"
+    #             "OBJ_LIST=(\n  ${BUN_OBJECT_LIST}\n)\n"
+    #             "ninja \${OBJ_LIST[@]} $@\n"
+    #             "\"${CMAKE_AR}\" rcvs bun-cpp-objects.a \${OBJ_LIST[@]}\n"
+    #             "echo '-> bun-cpp-objects.a'\n"
+    #         )
+    #     else()
+    #         string(REPLACE ";" ".obj\",\n  \"" BUN_OBJECT_LIST "\"${BUN_SOURCES}.obj\"")
+    #         string(REPLACE "rc.obj" "rc.res" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
+    #         string(REPLACE "${BUN_WORKDIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
+    #         string(REPLACE "${CMAKE_CURRENT_SOURCE_DIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
+    #         write_file("${BUN_WORKDIR}/compile-cpp-only.ps1"
+    #             "# this file is generated in CMakeLists.txt\n"
+    #             "$ErrorActionPreference = \"Stop\"\n"
+    #             "$ObjectFiles=@(\n  ${BUN_OBJECT_LIST}\n)\n"
+    #             "ninja @ObjectFiles @args\n"
+    #             "& llvm-ar rcvs bun-cpp-objects.a @ObjectFiles\n"
+    #             "Write-Host '-> bun-cpp-objects.a'\n"
+    #         )
+    #     endif()
+    # endif()
 else()
     set_target_properties(${bun} PROPERTIES LINKER_LANGUAGE CXX)
 endif()

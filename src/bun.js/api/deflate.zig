@@ -74,6 +74,8 @@ pub const DeflateEncoder = struct {
             return .zero;
         };
 
+        this.poll_ref.ref(globalThis.bunVM());
+
         const out = this.toJS(globalThis);
         this.callback_value.set(globalThis, callback);
 
@@ -85,6 +87,7 @@ pub const DeflateEncoder = struct {
     }
 
     pub fn deinit(this: *@This()) void {
+        this.poll_ref.unref(this.globalThis.bunVM());
         this.input.deinit();
         this.output.deinit(bun.default_allocator);
         this.callback_value.deinit();
@@ -394,6 +397,8 @@ pub const DeflateDecoder = struct {
             return .zero;
         };
 
+        this.poll_ref.ref(globalThis.bunVM());
+
         const out = this.toJS(globalThis);
         this.callback_value.set(globalThis, callback);
 
@@ -405,6 +410,7 @@ pub const DeflateDecoder = struct {
     }
 
     pub fn deinit(this: *@This()) void {
+        this.poll_ref.unref(this.globalThis.bunVM());
         this.input.deinit();
         this.output.deinit(bun.default_allocator);
         this.callback_value.deinit();

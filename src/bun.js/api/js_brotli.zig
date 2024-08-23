@@ -93,6 +93,8 @@ pub const BrotliEncoder = struct {
             .maxOutputLength = maxOutputLength,
         });
 
+        this.poll_ref.ref(globalThis.bunVM());
+
         if (opts.get(globalThis, "params")) |params| {
             inline for (std.meta.fields(bun.brotli.c.BrotliEncoderParameter)) |f| {
                 if (params.hasOwnPropertyValue(globalThis, JSC.ZigString.static(std.fmt.comptimePrint("{d}", .{f.value})).toJS(globalThis))) {
@@ -128,6 +130,7 @@ pub const BrotliEncoder = struct {
     }
 
     pub fn deinit(this: *BrotliEncoder) void {
+        this.poll_ref.unref(this.globalThis.bunVM());
         this.callback_value.deinit();
         this.freelist.deinit();
         this.output.deinit(bun.default_allocator);
@@ -403,6 +406,7 @@ pub const BrotliDecoder = struct {
     }
 
     pub fn deinit(this: *BrotliDecoder) void {
+        this.poll_ref.unref(this.globalThis.bunVM());
         this.callback_value.deinit();
         this.freelist.deinit();
         this.output.deinit(bun.default_allocator);
@@ -445,6 +449,8 @@ pub const BrotliDecoder = struct {
         _ = flush;
         _ = finishFlush;
         _ = fullFlush;
+
+        this.poll_ref.ref(globalThis.bunVM());
 
         if (opts.get(globalThis, "params")) |params| {
             inline for (std.meta.fields(bun.brotli.c.BrotliDecoderParameter)) |f| {

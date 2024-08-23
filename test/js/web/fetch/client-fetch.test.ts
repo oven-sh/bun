@@ -63,23 +63,27 @@ test("should set type of blob object to the value of the `Content-Type` header f
 });
 
 test("pre aborted with readable request body", async () => {
-  await using server = createServer((req, res) => {}).listen(0);
-  await once(server, "listening");
+  const server = createServer((req, res) => {}).listen(0);
+  try {
+    await once(server, "listening");
 
-  const ac = new AbortController();
-  ac.abort();
-  expect(
-    fetch(`http://localhost:${server.address().port}`, {
-      signal: ac.signal,
-      method: "POST",
-      body: new ReadableStream({
-        async cancel(reason) {
-          expect(reason.name).toBe("AbortError");
-        },
+    const ac = new AbortController();
+    ac.abort();
+    expect(
+      fetch(`http://localhost:${server.address().port}`, {
+        signal: ac.signal,
+        method: "POST",
+        body: new ReadableStream({
+          async cancel(reason) {
+            expect(reason.name).toBe("AbortError");
+          },
+        }),
+        duplex: "half",
       }),
-      duplex: "half",
-    }),
-  ).rejects.toThrow();
+    ).rejects.toThrow();
+  } finally {
+    server.closeAllConnections();
+  }
 });
 
 test("pre aborted with closed readable request body", async () => {
@@ -476,17 +480,20 @@ test("Receiving non-Latin1 headers", async () => {
 
 // https://github.com/nodejs/undici/issues/1527
 test("fetching with Request object - issue #1527", async () => {
-  await using server = createServer((req, res) => {
+  const server = createServer((req, res) => {
     res.end();
   }).listen(0);
+  try {
+    await once(server, "listening");
 
-  await once(server, "listening");
+    const body = JSON.stringify({ foo: "bar" });
+    const request = new Request(`http://localhost:${server.address().port}`, {
+      method: "POST",
+      body,
+    });
 
-  const body = JSON.stringify({ foo: "bar" });
-  const request = new Request(`http://localhost:${server.address().port}`, {
-    method: "POST",
-    body,
-  });
-
-  expect(fetch(request)).resolves.pass();
+    expect(fetch(request)).resolves.pass();
+  } finally {
+    server.closeAllConnections();
+  }
 });

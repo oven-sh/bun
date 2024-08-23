@@ -3,10 +3,10 @@ import { $ } from "bun";
 import path from "path";
 import { bunExe } from "harness";
 
-test.each(["only-fixture-1.ts", "only-fixture-2.ts", "only-fixture-3.ts"])(
+test.each(["./only-fixture-1.ts", "./only-fixture-2.ts", "./only-fixture-3.ts"])(
   `test.only shouldn't need --only for %s`,
   async (file: string) => {
-    const result = await $`${bunExe()} test ${path.normalize(path.join(import.meta.dir, file).replaceAll("\\", "/"))}`;
+    const result = await $.cwd(import.meta.dir)`${bunExe()} test ${file}`;
 
     expect(result.stderr.toString()).toContain(" 1 pass\n");
     expect(result.stderr.toString()).toContain(" 0 fail\n");
@@ -15,9 +15,8 @@ test.each(["only-fixture-1.ts", "only-fixture-2.ts", "only-fixture-3.ts"])(
 );
 
 test("only resets per test", async () => {
-  const files = ["only-fixture-1.ts", "only-fixture-2.ts", "only-fixture-3.ts", "only-fixture-4.ts"];
-  const result =
-    await $`${bunExe()} test ${{ raw: files.map(file => path.normalize(path.join(import.meta.dir, file).replaceAll("\\", "/"))).join(" ") }}`;
+  const files = ["./only-fixture-1.ts", "./only-fixture-2.ts", "./only-fixture-3.ts", "./only-fixture-4.ts"];
+  const result = await $.cwd(import.meta.dir)`${bunExe()} test ${{ raw: files.join(" ") }}`;
 
   expect(result.stderr.toString()).toContain(" 6 pass\n");
   expect(result.stderr.toString()).toContain(" 0 fail\n");

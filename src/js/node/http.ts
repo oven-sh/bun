@@ -2161,7 +2161,7 @@ function _writeHead(statusCode, reason, obj, response) {
   } else {
     // writeHead(statusCode[, headers])
     if (!response.statusMessage) response.statusMessage = STATUS_CODES[statusCode] || "unknown";
-    obj = reason;
+    obj ??= reason;
   }
   response.statusCode = statusCode;
 

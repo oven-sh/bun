@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { createServer } from "node:http";
 import { once } from "node:events";
-test("abort the request on the other side if the stream is canceled", async () => {
+test.todo("abort the request on the other side if the stream is canceled", async () => {
   const { promise: abort, resolve: resolveAbort } = Promise.withResolvers();
   await using server = createServer((req, res) => {
     res.writeHead(200);

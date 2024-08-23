@@ -68,8 +68,7 @@ function BrotliCompress(opts) {
   this[kHandle] = createBrotliEncoder(opts, {}, null, 9);
   stream.Transform.$apply(this, arguments);
 }
-BrotliCompress.prototype = {};
-ObjectSetPrototypeOf(BrotliCompress.prototype, stream.Transform.prototype);
+BrotliCompress.prototype = Object.create(stream.Transform.prototype);
 ObjectDefineProperty(BrotliCompress.prototype, "bytesWritten", {
   get: function () {
     return this[kHandle].bytesWritten;
@@ -110,8 +109,7 @@ function BrotliDecompress(opts) {
   this[kHandle] = createBrotliDecoder(opts, {}, null, 8);
   stream.Transform.$apply(this, arguments);
 }
-BrotliDecompress.prototype = {};
-ObjectSetPrototypeOf(BrotliDecompress.prototype, stream.Transform.prototype);
+BrotliDecompress.prototype = Object.create(stream.Transform.prototype);
 ObjectDefineProperty(BrotliDecompress.prototype, "bytesWritten", {
   get: function () {
     return this[kHandle].bytesWritten;

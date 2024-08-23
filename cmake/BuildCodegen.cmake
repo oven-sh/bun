@@ -18,6 +18,7 @@ add_custom_command(
 # --- src/ls_lexer ---
 
 set(BUN_ZIG_IDENTIFIER_SOURCE ${CWD}/src/js_lexer)
+set(BUN_ZIG_IDENTIFIER_SCRIPT ${BUN_ZIG_IDENTIFIER_SOURCE}/identifier_data.zig)
 
 file(GLOB BUN_ZIG_IDENTIFIER_SOURCES
   ${CONFIGURE_DEPENDS}
@@ -40,11 +41,11 @@ add_custom_command(
     ${CMAKE_ZIG_COMPILER}
     run
     ${CMAKE_ZIG_FLAGS}
-    ${BUN_ZIG_IDENTIFIER_SOURCE}/identifier_data.zig
+    ${BUN_ZIG_IDENTIFIER_SCRIPT}
   OUTPUT
     ${BUN_ZIG_IDENTIFIER_OUTPUTS}
   MAIN_DEPENDENCY
-    ${BUN_ZIG_IDENTIFIER_SOURCE}/identifier_data.zig
+    ${BUN_ZIG_IDENTIFIER_SCRIPT}
   DEPENDS
     ${BUN_ZIG_IDENTIFIER_SOURCES}
 )
@@ -217,6 +218,14 @@ parse_option(CODEGEN_PATH FILEPATH "Path to the codegen directory" ${BUN_WORKDIR
 
 # --- ErrorCode.{zig,h} --
 
+set(BUN_ERROR_CODE_SCRIPT ${CWD}/src/codegen/generate-node-errors.ts)
+
+set(BUN_ERROR_CODE_SOURCES
+  ${CWD}/src/bun.js/bindings/ErrorCode.ts
+  ${CWD}/src/bun.js/bindings/ErrorCode.cpp
+  ${CWD}/src/bun.js/bindings/ErrorCode.h
+)
+
 set(BUN_ERROR_CODE_OUTPUTS
   ${CODEGEN_PATH}/ErrorCode+List.h
   ${CODEGEN_PATH}/ErrorCode+Data.h
@@ -231,17 +240,19 @@ add_custom_command(
   VERBATIM COMMAND
     ${BUN_EXECUTABLE}
       run
-      src/codegen/generate-node-errors.ts
+      ${BUN_ERROR_CODE_SCRIPT}
       ${CODEGEN_PATH}
   OUTPUT
     ${BUN_ERROR_CODE_OUTPUTS}
   MAIN_DEPENDENCY
-    ${CWD}/src/codegen/generate-node-errors.ts
+    ${BUN_ERROR_CODE_SCRIPT}
   DEPENDS
-    ${CWD}/src/bun.js/bindings/ErrorCode.ts
+    ${BUN_ERROR_CODE_SOURCES}
 )
 
 # --- ZigGeneratedClasses.{zig,cpp,h} --
+
+set(BUN_ZIG_GENERATED_CLASSES_SCRIPT ${CWD}/src/codegen/generate-classes.ts)
 
 file(GLOB BUN_ZIG_GENERATED_CLASSES_SOURCES
   ${CONFIGURE_DEPENDS}
@@ -270,18 +281,20 @@ add_custom_command(
   VERBATIM COMMAND
     ${BUN_EXECUTABLE}
       run
-      src/codegen/generate-classes.ts
+      ${BUN_ZIG_GENERATED_CLASSES_SCRIPT}
       ${BUN_ZIG_GENERATED_CLASSES_SOURCES}
       ${CODEGEN_PATH}
   OUTPUT
     ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}
   MAIN_DEPENDENCY
-    ${CWD}/src/codegen/generate-classes.ts
+    ${BUN_ZIG_GENERATED_CLASSES_SCRIPT}
   DEPENDS
     ${BUN_ZIG_GENERATED_CLASSES_SOURCES}
 )
 
 # --- src/js/*.{js,ts} ---
+
+set(BUN_JAVASCRIPT_SCRIPT ${CWD}/src/codegen/bundle-modules.ts)
 
 file(GLOB_RECURSE BUN_JAVASCRIPT_SOURCES
   ${CONFIGURE_DEPENDS}
@@ -292,6 +305,10 @@ file(GLOB_RECURSE BUN_JAVASCRIPT_SOURCES
 file(GLOB BUN_JAVASCRIPT_CODEGEN_SOURCES
   ${CONFIGURE_DEPENDS}
   ${CWD}/src/codegen/*.ts
+)
+
+list(APPEND BUN_JAVASCRIPT_CODEGEN_SOURCES
+  ${CWD}/src/bun.js/bindings/InternalModuleRegistry.cpp
 )
 
 set(BUN_JAVASCRIPT_OUTPUTS
@@ -316,19 +333,21 @@ add_custom_command(
   VERBATIM COMMAND
     ${BUN_EXECUTABLE}
       run
-      src/codegen/bundle-modules.ts
+      ${BUN_JAVASCRIPT_SCRIPT}
       --debug=${DEBUG}
       ${BUILD_PATH}
   OUTPUT
     ${BUN_JAVASCRIPT_OUTPUTS}
   MAIN_DEPENDENCY
-    ${CWD}/src/codegen/bundle-modules.ts
+    ${BUN_JAVASCRIPT_SCRIPT}
   DEPENDS
     ${BUN_JAVASCRIPT_SOURCES}
     ${BUN_JAVASCRIPT_CODEGEN_SOURCES}
 )
 
 # --- JSSink.{cpp,h} ---
+
+set(BUN_JS_SINK_SCRIPT ${CWD}/src/codegen/generate-jssink.ts)
 
 set(BUN_JS_SINK_OUTPUTS
   ${CODEGEN_PATH}/JSSink.cpp
@@ -343,10 +362,60 @@ add_custom_command(
   VERBATIM COMMAND
     ${BUN_EXECUTABLE}
       run
-      src/codegen/generate-jssink.ts
+      ${BUN_JS_SINK_SCRIPT}
       ${CODEGEN_PATH}
   OUTPUT
     ${BUN_JS_SINK_OUTPUTS}
   MAIN_DEPENDENCY
-    ${CWD}/src/codegen/generate-jssink.ts
+    ${BUN_JS_SINK_SCRIPT}
 )
+
+# --- *.lut.h ---
+
+set(BUN_OBJECT_LUT_SCRIPT ${CWD}/src/codegen/create-hash-table.ts)
+
+set(BUN_OBJECT_LUT_SOURCES
+  ${CWD}/src/bun.js/bindings/BunObject.cpp
+  ${CWD}/src/bun.js/bindings/ZigGlobalObject.lut.txt
+  ${CWD}/src/bun.js/bindings/JSBuffer.cpp
+  ${CWD}/src/bun.js/bindings/BunProcess.cpp
+  ${CWD}/src/bun.js/bindings/ProcessBindingConstants.cpp
+  ${CWD}/src/bun.js/bindings/ProcessBindingNatives.cpp
+)
+
+foreach(BUN_OBJECT_LUT_SOURCE ${BUN_OBJECT_LUT_SOURCES})
+  get_filename_component(filename ${BUN_OBJECT_LUT_SOURCE} NAME_WE)
+  message(STATUS "Generating ${filename}.lut.h")
+
+  # Workaround for ZigGlobalObject.lut.txt since it has a double extension
+  if(filename MATCHES "ZigGlobalObject")
+    set(filename "ZigGlobalObject")
+  endif()
+
+  set(BUN_OBJECT_LUT_OUTPUT ${CODEGEN_PATH}/${filename}.lut.h)
+
+  add_custom_command(
+    COMMENT
+      "Generating ${filename}.lut.h"
+    WORKING_DIRECTORY
+      ${CWD}
+    VERBATIM COMMAND
+      ${BUN_EXECUTABLE}
+        run
+        ${BUN_OBJECT_LUT_SCRIPT}
+        ${BUN_OBJECT_LUT_SOURCE}
+        ${BUN_OBJECT_LUT_OUTPUT}
+    OUTPUT
+      ${BUN_OBJECT_LUT_OUTPUT}
+    MAIN_DEPENDENCY
+      ${BUN_OBJECT_LUT_SCRIPT}
+    DEPENDS
+      ${BUN_OBJECT_LUT_SOURCE}
+  )
+endforeach()
+
+# TODO
+# WEBKIT_ADD_SOURCE_DEPENDENCIES(${BUN_SRC}/bun.js/bindings/ZigGlobalObject.cpp ${BUN_WORKDIR}/codegen/ZigGlobalObject.lut.h)
+
+# TODO
+# Skip some or all of these during linking?

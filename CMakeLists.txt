@@ -19,6 +19,10 @@ set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
+if(ENV{BUILDKITE})
+  set(ENV{NINJA_STATUS} "--- [%f/%t] ")
+endif()
+
 # WebKit uses -std=gnu++20 on non-macOS non-Windows
 # If we do not set this, it will crash at startup on the first memory allocation.
 if(NOT WIN32 AND NOT APPLE)
@@ -44,8 +48,15 @@ project(Bun VERSION "${Bun_VERSION}")
 
 include(cmake/Options.cmake)
 
+find_program(BUN_EXECUTABLE bun ${REQUIRED_IF_NOT_ONLY_CPP_OR_LINK} DOC "Path to an already built release of Bun")
+message(STATUS "Found Bun: ${BUN_EXECUTABLE}")
+
 if(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY)
     include(cmake/SetupZig.cmake)
+endif()
+
+if(NOT BUN_LINK_ONLY)
+    include(cmake/BuildCodegen.cmake)
 endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -125,8 +136,6 @@ endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
 
 # Bun
-find_program(BUN_EXECUTABLE bun ${REQUIRED_IF_NOT_ONLY_CPP_OR_LINK} DOC "Path to an already built release of Bun")
-message(STATUS "Found Bun: ${BUN_EXECUTABLE}")
 
 # --- WebKit ---
 # WebKit is either prebuilt and distributed via NPM, or you can pass WEBKIT_DIR to use a local build.
@@ -197,25 +206,6 @@ else()
     endif()
 endif()
 
-# --- CMake Macros ---
-
-# Append the given dependencies to the source file
-macro(WEBKIT_ADD_SOURCE_DEPENDENCIES _source _deps)
-    set(_tmp)
-    get_source_file_property(_tmp ${_source} OBJECT_DEPENDS)
-
-    if(NOT _tmp)
-        set(_tmp "")
-    endif()
-
-    foreach(f ${_deps})
-        list(APPEND _tmp "${f}")
-    endforeach()
-
-    set_source_files_properties(${_source} PROPERTIES OBJECT_DEPENDS "${_tmp}")
-    unset(_tmp)
-endmacro()
-
 # --- BUILD ---
 set(BUN_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 set(BUN_DEPS_DIR "${BUN_SRC}/deps")
@@ -225,147 +215,15 @@ if(NOT BUN_DEPS_OUT_DIR)
     set(BUN_DEPS_OUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/build/bun-deps")
 endif()
 
-include(cmake/BuildCodegen.cmake)
-
-set(BUN_RAW_SOURCES, "")
-
-file(GLOB BUN_CPP ${CONFIGURE_DEPENDS}
-    "${BUN_SRC}/deps/*.cpp"
-    "${BUN_SRC}/io/*.cpp"
-    "${BUN_SRC}/bun.js/modules/*.cpp"
-    "${BUN_SRC}/bun.js/bindings/*.cpp"
-    "${BUN_SRC}/bun.js/bindings/webcore/*.cpp"
-    "${BUN_SRC}/bun.js/bindings/sqlite/*.cpp"
-    "${BUN_SRC}/bun.js/bindings/webcrypto/*.cpp"
-    "${BUN_SRC}/bun.js/bindings/webcrypto/*/*.cpp"
-    "${BUN_SRC}/bun.js/bindings/v8/*.cpp"
-    "${BUN_SRC}/deps/picohttpparser/picohttpparser.c"
-)
-list(APPEND BUN_RAW_SOURCES ${BUN_CPP})
-
-# -- uSockets --
-set(USOCKETS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/packages/bun-usockets/src")
-file(GLOB USOCKETS_FILES ${CONFIGURE_DEPENDS}
-    "${USOCKETS_SRC}/*.c"
-    "${USOCKETS_SRC}/eventing/*.c"
-    "${USOCKETS_SRC}/internal/*.c"
-    "${USOCKETS_SRC}/crypto/*.c"
-    "${USOCKETS_SRC}/crypto/*.cpp"
-)
-list(APPEND BUN_RAW_SOURCES ${USOCKETS_FILES})
-
-# --- Classes Generator ---
-list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.cpp")
-
-if(NOT NO_CODEGEN)
-    # This needs something to force it to be regenerated
-    WEBKIT_ADD_SOURCE_DEPENDENCIES(
-        "${BUN_SRC}/bun.js/bindings/ErrorCode.cpp"
-        "${BUN_WORKDIR}/codegen/ErrorCode+List.h"
-    )
-    WEBKIT_ADD_SOURCE_DEPENDENCIES(
-        "${BUN_SRC}/bun.js/bindings/ErrorCode.h"
-        "${BUN_WORKDIR}/codegen/ErrorCode+Data.h"
-    )
-endif()
-
-# --- JSSink Generator ---
-list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/JSSink.cpp")
-
-# --- .lut.h Generator ---
-set(BUN_OBJECT_LUT_SOURCES
-    bun.js/bindings/BunObject.cpp
-    bun.js/bindings/ZigGlobalObject.lut.txt
-    bun.js/bindings/JSBuffer.cpp
-    bun.js/bindings/BunProcess.cpp
-    bun.js/bindings/ProcessBindingConstants.cpp
-    bun.js/bindings/ProcessBindingNatives.cpp
-)
-set(BUN_OBJECT_LUT_OUTPUTS "")
-set(BUN_HASH_LUT_GENERATOR "${BUN_CODEGEN_SRC}/create-hash-table.ts")
-
-if(NOT BUN_LINK_ONLY)
-    macro(GENERATE_HASH_LUT _input _output _display_name)
-        if(NOT NO_CODEGEN)
-            add_custom_command(
-                OUTPUT ${_output}
-                MAIN_DEPENDENCY ${BUN_HASH_LUT_GENERATOR}
-                DEPENDS ${_input}
-                COMMAND ${BUN_EXECUTABLE} run ${BUN_HASH_LUT_GENERATOR} ${_input} ${_output}
-                VERBATIM
-                COMMENT "Generating ${_display_name}"
-            )
-        endif()
-
-        list(APPEND BUN_OBJECT_LUT_OUTPUTS "${_output}")
-
-        # list(APPEND Bun_HEADERS ${_output})
-        WEBKIT_ADD_SOURCE_DEPENDENCIES(${_input} ${_output})
-    endmacro()
-
-    foreach(_file ${BUN_OBJECT_LUT_SOURCES})
-        if(NOT EXISTS "${BUN_SRC}/${_file}")
-            message(FATAL_ERROR "Could not find ${_file} needed for LUT generation")
-        endif()
-
-        get_filename_component(_name ${_file} NAME_WE)
-
-        # workaround for ZigGlobalObject
-        if(_name MATCHES "ZigGlobalObject")
-            set(_name "ZigGlobalObject")
-        endif()
-
-        GENERATE_HASH_LUT(${BUN_SRC}/${_file} ${BUN_WORKDIR}/codegen/${_name}.lut.h ${_name}.lut.h)
-    endforeach()
-
-    WEBKIT_ADD_SOURCE_DEPENDENCIES(${BUN_SRC}/bun.js/bindings/ZigGlobalObject.cpp ${BUN_WORKDIR}/codegen/ZigGlobalObject.lut.h)
-endif()
-
-WEBKIT_ADD_SOURCE_DEPENDENCIES(
-    "${BUN_SRC}/bun.js/bindings/InternalModuleRegistry.cpp"
-    "${BUN_WORKDIR}/codegen/InternalModuleRegistryConstants.h"
-)
-list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp")
-
 # --- Zig Object ---
 if(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY)
-    include(cmake/BuildZig.cmake)
+  include(cmake/BuildBunZig.cmake)
 endif()
 
+include(cmake/BuildBun.cmake)
+
 if(WIN32)
-    list(APPEND BUN_RAW_SOURCES "${BUN_SRC}/bun.js/bindings/windows/musl-memmem.c")
     include_directories("${BUN_SRC}/bun.js/bindings/windows")
-endif()
-
-if(NOT BUN_CPP_ARCHIVE)
-    # TODO: unified sources
-    set(BUN_SOURCES ${BUN_RAW_SOURCES})
-else()
-    # used by ci
-    set(BUN_SOURCES "")
-    add_link_options("${BUN_CPP_ARCHIVE}")
-endif()
-
-# -- Windows resources (app icon) --
-if(ENABLE_CANARY)
-    set(Bun_VERSION_WITH_TAG "${Bun_VERSION}-canary.${USE_CANARY_REVISION}")
-else()
-    set(Bun_VERSION_WITH_TAG "${Bun_VERSION}")
-endif()
-
-if(WIN32)
-    set(BUN_ICO_PATH "${BUN_SRC}/bun.ico")
-    configure_file("${BUN_SRC}/windows-app-info.rc" "${BUN_WORKDIR}/CMakeFiles/windows-app-info.rc")
-    list(APPEND BUN_SOURCES "${BUN_WORKDIR}/CMakeFiles/windows-app-info.rc")
-endif()
-
-# -- The Buntime™️ ---
-if(BUN_TIDY_ONLY OR BUN_TIDY_ONLY_EXTRA)
-    add_library(${bun} OBJECT "${BUN_SOURCES}")
-elseif(NOT BUN_CPP_ONLY)
-    add_executable(${bun} "${BUN_SOURCES}" ${ZIG_OBJECT_PATH})
-else()
-    add_executable(${bun} "${BUN_SOURCES}")
 endif()
 
 set_target_properties(${bun} PROPERTIES

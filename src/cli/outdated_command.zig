@@ -156,6 +156,9 @@ pub const OutdatedCommand = struct {
         if (root_pkg_id == invalid_package_id) return;
         const root_pkg_deps = lockfile.packages.items(.dependencies)[root_pkg_id];
 
+        Output.prettyErrorln("<r><b>bun outdated <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+        Output.flush();
+
         try updateManifestsIfNecessary(manager, log_level, root_pkg_deps);
         try printOutdatedInfoTable(manager, root_pkg_deps);
     }
@@ -237,20 +240,20 @@ pub const OutdatedCommand = struct {
 
         if (outdated_ids.items.len == 0) return;
 
-        const package_column_inside_length = @max("packages".len, max_name);
-        const current_column_inside_length = @max("current".len, max_current);
-        const update_column_inside_length = @max("update".len, max_update);
-        const latest_column_inside_length = @max("--latest".len, max_latest);
+        const package_column_inside_length = @max("Packages".len, max_name);
+        const current_column_inside_length = @max("Current".len, max_current);
+        const update_column_inside_length = @max("Update".len, max_update);
+        const latest_column_inside_length = @max("Latest".len, max_latest);
 
         const column_left_pad = 1;
         const column_right_pad = 1;
 
         const table = Table(4, "blue", column_left_pad, column_right_pad).init(
             [_][]const u8{
-                "packages",
-                "current",
-                "update",
-                "--latest",
+                "Packages",
+                "Current",
+                "Update",
+                "Latest",
             },
             [_]usize{
                 package_column_inside_length,

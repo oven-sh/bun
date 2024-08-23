@@ -5,7 +5,7 @@ import { createServer } from "node:http";
 import { once } from "node:events";
 import { AbortController as NPMAbortController } from "abort-controller";
 
-test("Allow the usage of custom implementation of AbortController", async t => {
+test("Allow the usage of custom implementation of AbortController", async () => {
   const body = {
     fixes: 1605,
   };
@@ -31,16 +31,16 @@ test("Allow the usage of custom implementation of AbortController", async t => {
   }
 });
 
-describe("allows aborting with custom errors", async () => {
+describe("allows aborting with custom errors", () => {
   test("Using AbortSignal.timeout with cause", async () => {
     await using server = createServer().listen(0);
-
     await once(server, "listening");
+
     try {
-      await fetch(`http://localhost:${server.address().port}`, {
+      const res = await fetch(`http://localhost:${server.address().port}`, {
         signal: AbortSignal.timeout(50),
       });
-      expect().fail("should throw");
+      expect.unreachable(res.statusText);
     } catch (err) {
       if (err.name === "TypeError") {
         const cause = err.cause;
@@ -52,7 +52,7 @@ describe("allows aborting with custom errors", async () => {
         expect(err.code).toBe(DOMException.TIMEOUT_ERR);
         expect(err.cause).toBeUndefined();
       } else {
-        throw err;
+        expect.unreachable(err);
       }
     }
   });
@@ -70,8 +70,7 @@ describe("allows aborting with custom errors", async () => {
       }),
     ).rejects.toEqual(
       expect.objectContaining({
-        name: "AbortError",
-        code: DOMException.ABORT_ERR,
+        code: "ABORT_ERR",
       }),
     );
   });

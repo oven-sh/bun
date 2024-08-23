@@ -34,7 +34,7 @@ test("after redirecting the url of the response is set to the target url", async
   expect(response.url).toBe(`http://127.0.0.1:${port}/target`);
 });
 
-test.todo("location header with non-ASCII character redirects to a properly encoded url", async () => {
+test.only("location header with non-ASCII character redirects to a properly encoded url", async () => {
   // redirect -> %EC%95%88%EB%85%95 (안녕), not %C3%AC%C2%95%C2%88%C3%AB%C2%85%C2%95
   await using server = createServer((req, res) => {
     if (res.req.url.endsWith("/redirect")) {

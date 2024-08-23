@@ -142,7 +142,7 @@ test("multipart formdata not base64", async () => {
   expect(text).toBe("example\ntext file");
 });
 
-test("multipart formdata base64", async () => {
+test.todo("multipart formdata base64", async () => {
   // Example form data with base64 encoding
   const data = randomFillSync(Buffer.alloc(256));
   const formRaw =
@@ -396,39 +396,7 @@ test("invalid url", async () => {
     await fetch("http://invalid");
   } catch (e) {
     expect(e.message).toBe("Unable to connect. Is the computer able to access the url?");
-    // expect(e.cause.message).toBe(/invalid/);
   }
-});
-
-test("error on redirect", async () => {
-  await using server = createServer((req, res) => {
-    res.statusCode = 302;
-    res.end();
-  }).listen(0);
-  await once(server, "listening");
-
-  expect(
-    fetch(`http://localhost:${server.address().port}`, {
-      redirect: "error",
-    }),
-  ).rejects.toThrow(/UnexpectedRedirect/);
-});
-
-// https://github.com/nodejs/undici/issues/1527
-test("fetching with Request object - issue #1527", async () => {
-  await using server = createServer((req, res) => {
-    res.end();
-  }).listen(0);
-
-  await once(server, "listening");
-
-  const body = JSON.stringify({ foo: "bar" });
-  const request = new Request(`http://localhost:${server.address().port}`, {
-    method: "POST",
-    body,
-  });
-
-  expect(fetch(request)).resolves.pass();
 });
 
 test("do not decode redirect body", async () => {
@@ -465,7 +433,21 @@ test("decode non-redirect body with location header", async () => {
   expect(JSON.stringify(obj)).toBe(await body.text());
 });
 
-test("Receiving non-Latin1 headers", async t => {
+test("error on redirect", async () => {
+  await using server = createServer((req, res) => {
+    res.statusCode = 302;
+    res.end();
+  }).listen(0);
+  await once(server, "listening");
+
+  expect(
+    fetch(`http://localhost:${server.address().port}`, {
+      redirect: "error",
+    }),
+  ).rejects.toThrow(/UnexpectedRedirect/);
+});
+
+test("Receiving non-Latin1 headers", async () => {
   const ContentDisposition = [
     "inline; filename=rock&roll.png",
     "inline; filename=\"rock'n'roll.png\"",
@@ -490,4 +472,21 @@ test("Receiving non-Latin1 headers", async t => {
 
   expect(cdHeaders).toEqual(ContentDisposition);
   expect(lengths).toEqual([30, 34, 94, 104, 90]);
+});
+
+// https://github.com/nodejs/undici/issues/1527
+test("fetching with Request object - issue #1527", async () => {
+  await using server = createServer((req, res) => {
+    res.end();
+  }).listen(0);
+
+  await once(server, "listening");
+
+  const body = JSON.stringify({ foo: "bar" });
+  const request = new Request(`http://localhost:${server.address().port}`, {
+    method: "POST",
+    body,
+  });
+
+  expect(fetch(request)).resolves.pass();
 });

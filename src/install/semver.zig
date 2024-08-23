@@ -655,7 +655,8 @@ pub const Version = extern struct {
     pub const DiffFormatter = struct {
         version: Version,
         buf: string,
-        diff: ChangedVersion,
+        other: Version,
+        other_buf: string,
 
         pub fn format(this: DiffFormatter, comptime fmt_: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
             if (!Output.enable_ansi_colors) {
@@ -664,7 +665,9 @@ pub const Version = extern struct {
                 return Formatter.format(formatter, fmt_, options, writer);
             }
 
-            switch (this.diff) {
+            const diff = this.version.whichVersionIsDifferent(this.other, this.buf, this.other_buf) orelse .none;
+
+            switch (diff) {
                 .major => try writer.print(Output.prettyFmt("<b><red>{d}.{d}.{d}", true), .{
                     this.version.major, this.version.minor, this.version.patch,
                 }),
@@ -674,7 +677,7 @@ pub const Version = extern struct {
                             this.version.major, this.version.minor, this.version.patch,
                         });
                     } else {
-                        try writer.print(Output.prettyFmt("<d>{d}.<r><b><yellow>{d}.{d}", true), .{
+                        try writer.print(Output.prettyFmt("<d>{d}.<r><yellow>{d}.{d}", true), .{
                             this.version.major, this.version.minor, this.version.patch,
                         });
                     }
@@ -690,24 +693,62 @@ pub const Version = extern struct {
                         });
                     }
                 },
-                .none, .build => try writer.print(Output.prettyFmt("<d>{d}.{d}.{d}", true), .{
-                    this.version.major, this.version.minor, this.version.patch,
-                }),
-                .pre => try writer.print(Output.prettyFmt("<d>{d}.{d}.{d}<r><b><yellow>", true), .{
+                .none, .pre, .build => try writer.print(Output.prettyFmt("<d>{d}.{d}.{d}", true), .{
                     this.version.major, this.version.minor, this.version.patch,
                 }),
             }
 
+            // might be pre or build. loop through all characters, and insert <red> on
+            // first diff.
+
+            var set_color = false;
             if (this.version.tag.hasPre()) {
-                try writer.print("-{}", .{this.version.tag.pre.fmt(this.buf)});
-            }
+                if (this.other.tag.hasPre()) {
+                    const pre = this.version.tag.pre.slice(this.buf);
+                    const other_pre = this.other.tag.pre.slice(this.other_buf);
 
-            if (this.diff == .build) {
-                try writer.writeAll(Output.prettyFmt("<r><b><yellow>", true));
+                    var first = true;
+                    for (pre, 0..) |c, i| {
+                        if (!set_color and i < other_pre.len and c != other_pre[i]) {
+                            set_color = true;
+                            try writer.writeAll(Output.prettyFmt("<r><b><red>", true));
+                        }
+                        if (first) {
+                            first = false;
+                            try writer.writeByte('-');
+                        }
+                        try writer.writeByte(c);
+                    }
+                } else {
+                    try writer.print(Output.prettyFmt("<r><b><red>-{}", true), .{this.version.tag.pre.fmt(this.buf)});
+                    set_color = true;
+                }
             }
 
             if (this.version.tag.hasBuild()) {
-                try writer.print("+{}", .{this.version.tag.build.fmt(this.buf)});
+                if (this.other.tag.hasBuild()) {
+                    const build = this.version.tag.build.slice(this.buf);
+                    const other_build = this.other.tag.build.slice(this.other_buf);
+
+                    var first = true;
+                    for (build, 0..) |c, i| {
+                        if (!set_color and i < other_build.len and c != other_build[i]) {
+                            set_color = true;
+                            try writer.writeAll(Output.prettyFmt("<r><b><red>", true));
+                        }
+                        if (first) {
+                            first = false;
+                            try writer.writeByte('+');
+                        }
+                        try writer.writeByte(c);
+                    }
+                } else {
+                    if (!set_color) {
+                        try writer.print(Output.prettyFmt("<r><b><red>+{}", true), .{this.version.tag.build.fmt(this.buf)});
+                    } else {
+                        try writer.print("+{}", .{this.version.tag.build.fmt(this.other_buf)});
+                    }
+                }
             }
 
             try writer.writeAll(Output.prettyFmt("<r>", true));
@@ -718,7 +759,8 @@ pub const Version = extern struct {
         return .{
             .version = this,
             .buf = this_buf,
-            .diff = this.whichVersionIsDifferent(other, this_buf, other_buf) orelse .none,
+            .other = other,
+            .other_buf = other_buf,
         };
     }
 

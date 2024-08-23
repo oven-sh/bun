@@ -542,7 +542,7 @@ if(APPLE)
 endif()
 
 # --- Stripped Binary "bun"
-if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32 AND NOT ASSERT_ENABLED)
+if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32 AND NOT ASSERT_ENABLED AND NOT BUN_CPP_ONLY)
     # if(CI AND APPLE)
     if(APPLE)
         add_custom_command(

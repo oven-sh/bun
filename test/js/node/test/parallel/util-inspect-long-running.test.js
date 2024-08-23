@@ -19,8 +19,10 @@ test("util.inspect handles huge objects without crashing", () => {
     obj[i] = last;
   }
 
-  // If this doesn't throw, we consider the test passed
+  // This should not throw an error or crash
   expect(() => {
     util.inspect(obj, { depth: Infinity });
   }).not.toThrow();
 });
+
+//<#END_FILE: test-util-inspect-long-running.js

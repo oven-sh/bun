@@ -26,7 +26,7 @@
 const http = require("http");
 const url = require("url");
 
-test("HTTP URL parse auth", async () => {
+test("http url parse auth", async () => {
   function check(request) {
     // The correct authorization header is be passed
     expect(request.headers.authorization).toBe("Basic dXNlcjpwYXNzOg==");

@@ -22,10 +22,10 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
-const net = require('net');
+"use strict";
+const net = require("net");
 
-test('net server unref', () => {
+test("net server unref", () => {
   const s = net.createServer();
   s.listen(0);
   s.unref();

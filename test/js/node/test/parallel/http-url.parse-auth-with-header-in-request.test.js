@@ -26,7 +26,7 @@
 const http = require("http");
 const url = require("url");
 
-test("http url parse auth with header in request", async () => {
+test("HTTP request with authorization header in request", async () => {
   function check(request) {
     // The correct authorization header is be passed
     expect(request.headers.authorization).toBe("NoAuthForYOU");

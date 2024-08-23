@@ -22,15 +22,15 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+"use strict";
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
 
 const canCreateSymLink = () => {
   try {
-    fs.symlinkSync('', '');
-    fs.unlinkSync('');
+    fs.symlinkSync("", "");
+    fs.unlinkSync("");
     return true;
   } catch (e) {
     return false;
@@ -38,34 +38,34 @@ const canCreateSymLink = () => {
 };
 
 if (!canCreateSymLink()) {
-  it.skip('insufficient privileges', () => {});
+  it.skip("insufficient privileges", () => {});
 } else {
   let linkTime;
   let fileTime;
   const tmpdir = os.tmpdir();
 
   beforeEach(() => {
-    jest.spyOn(fs, 'symlink');
-    jest.spyOn(fs, 'lstat');
-    jest.spyOn(fs, 'stat');
-    jest.spyOn(fs, 'readlink');
+    jest.spyOn(fs, "symlink");
+    jest.spyOn(fs, "lstat");
+    jest.spyOn(fs, "stat");
+    jest.spyOn(fs, "readlink");
   });
 
   afterEach(() => {
     jest.restoreAllMocks();
   });
 
-  test('Test creating and reading symbolic link', async () => {
-    const linkData = path.resolve(__dirname, '../fixtures/cycles/root.js');
-    const linkPath = path.resolve(tmpdir, 'symlink1.js');
+  test("Test creating and reading symbolic link", async () => {
+    const linkData = path.resolve(__dirname, "../fixtures/cycles/root.js");
+    const linkPath = path.resolve(tmpdir, "symlink1.js");
 
-    await new Promise((resolve) => {
+    await new Promise(resolve => {
       fs.symlink(linkData, linkPath, resolve);
     });
 
     expect(fs.symlink).toHaveBeenCalled();
 
-    await new Promise((resolve) => {
+    await new Promise(resolve => {
       fs.lstat(linkPath, (err, stats) => {
         expect(err).toBeNull();
         linkTime = stats.mtime.getTime();
@@ -73,7 +73,7 @@ if (!canCreateSymLink()) {
       });
     });
 
-    await new Promise((resolve) => {
+    await new Promise(resolve => {
       fs.stat(linkPath, (err, stats) => {
         expect(err).toBeNull();
         fileTime = stats.mtime.getTime();
@@ -81,7 +81,7 @@ if (!canCreateSymLink()) {
       });
     });
 
-    await new Promise((resolve) => {
+    await new Promise(resolve => {
       fs.readlink(linkPath, (err, destination) => {
         expect(err).toBeNull();
         expect(destination).toBe(linkData);
@@ -90,57 +90,57 @@ if (!canCreateSymLink()) {
     });
   });
 
-  test('Test invalid symlink', async () => {
-    const linkData = path.resolve(__dirname, '../fixtures/not/exists/file');
-    const linkPath = path.resolve(tmpdir, 'symlink2.js');
+  test("Test invalid symlink", async () => {
+    const linkData = path.resolve(__dirname, "../fixtures/not/exists/file");
+    const linkPath = path.resolve(tmpdir, "symlink2.js");
 
-    await new Promise((resolve) => {
+    await new Promise(resolve => {
       fs.symlink(linkData, linkPath, resolve);
     });
 
     expect(fs.existsSync(linkPath)).toBe(false);
   });
 
-  test('Test invalid inputs', () => {
+  test("Test invalid inputs", () => {
     const invalidInputs = [false, 1, {}, [], null, undefined];
     const errObj = expect.objectContaining({
-      code: 'ERR_INVALID_ARG_TYPE',
-      name: 'TypeError',
-      message: expect.stringMatching(/target|path/)
+      code: "ERR_INVALID_ARG_TYPE",
+      name: "TypeError",
+      message: expect.stringMatching(/target|path/),
     });
 
-    invalidInputs.forEach((input) => {
-      expect(() => fs.symlink(input, '', () => {})).toThrow(errObj);
-      expect(() => fs.symlinkSync(input, '')).toThrow(errObj);
+    invalidInputs.forEach(input => {
+      expect(() => fs.symlink(input, "", () => {})).toThrow(errObj);
+      expect(() => fs.symlinkSync(input, "")).toThrow(errObj);
 
-      expect(() => fs.symlink('', input, () => {})).toThrow(errObj);
-      expect(() => fs.symlinkSync('', input)).toThrow(errObj);
+      expect(() => fs.symlink("", input, () => {})).toThrow(errObj);
+      expect(() => fs.symlinkSync("", input)).toThrow(errObj);
     });
   });
 
-  test('Test invalid type inputs', () => {
+  test("Test invalid type inputs", () => {
     const errObj = expect.objectContaining({
-      code: 'ERR_INVALID_ARG_VALUE',
-      name: 'TypeError',
+      code: "ERR_INVALID_ARG_VALUE",
+      name: "TypeError",
     });
 
-    expect(() => fs.symlink('', '', '🍏', () => {})).toThrow(errObj);
-    expect(() => fs.symlinkSync('', '', '🍏')).toThrow(errObj);
+    expect(() => fs.symlink("", "", "🍏", () => {})).toThrow(errObj);
+    expect(() => fs.symlinkSync("", "", "🍏")).toThrow(errObj);
 
-    expect(() => fs.symlink('', '', 'nonExistentType', () => {})).toThrow(errObj);
-    expect(() => fs.symlinkSync('', '', 'nonExistentType')).toThrow(errObj);
-    expect(fs.promises.symlink('', '', 'nonExistentType')).rejects.toMatchObject(errObj);
+    expect(() => fs.symlink("", "", "nonExistentType", () => {})).toThrow(errObj);
+    expect(() => fs.symlinkSync("", "", "nonExistentType")).toThrow(errObj);
+    expect(fs.promises.symlink("", "", "nonExistentType")).rejects.toMatchObject(errObj);
 
-    expect(() => fs.symlink('', '', false, () => {})).toThrow(errObj);
-    expect(() => fs.symlinkSync('', '', false)).toThrow(errObj);
-    expect(fs.promises.symlink('', '', false)).rejects.toMatchObject(errObj);
+    expect(() => fs.symlink("", "", false, () => {})).toThrow(errObj);
+    expect(() => fs.symlinkSync("", "", false)).toThrow(errObj);
+    expect(fs.promises.symlink("", "", false)).rejects.toMatchObject(errObj);
 
-    expect(() => fs.symlink('', '', {}, () => {})).toThrow(errObj);
-    expect(() => fs.symlinkSync('', '', {})).toThrow(errObj);
-    expect(fs.promises.symlink('', '', {})).rejects.toMatchObject(errObj);
+    expect(() => fs.symlink("", "", {}, () => {})).toThrow(errObj);
+    expect(() => fs.symlinkSync("", "", {})).toThrow(errObj);
+    expect(fs.promises.symlink("", "", {})).rejects.toMatchObject(errObj);
   });
 
-  test('Link time should not be equal to file time', () => {
+  test("Link time should not be equal to file time", () => {
     expect(linkTime).not.toBe(fileTime);
   });
 }

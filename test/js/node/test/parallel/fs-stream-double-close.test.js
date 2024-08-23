@@ -22,12 +22,12 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+"use strict";
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
 
-const tmpdir = path.join(os.tmpdir(), 'node-test-fs-stream-double-close');
+const tmpdir = path.join(os.tmpdir(), "node-test-fs-stream-double-close");
 beforeAll(() => {
   if (!fs.existsSync(tmpdir)) {
     fs.mkdirSync(tmpdir, { recursive: true });
@@ -38,28 +38,28 @@ afterAll(() => {
   fs.rmSync(tmpdir, { recursive: true, force: true });
 });
 
-test('test1 with ReadStream', () => {
+test("test1 with ReadStream", () => {
   test1(fs.createReadStream(__filename));
 });
 
-test('test2 with ReadStream', () => {
+test("test2 with ReadStream", () => {
   test2(fs.createReadStream(__filename));
 });
 
-test('test3 with ReadStream', () => {
+test("test3 with ReadStream", () => {
   test3(fs.createReadStream(__filename));
 });
 
-test('test1 with WriteStream', () => {
-  test1(fs.createWriteStream(path.join(tmpdir, 'dummy1')));
+test("test1 with WriteStream", () => {
+  test1(fs.createWriteStream(path.join(tmpdir, "dummy1")));
 });
 
-test('test2 with WriteStream', () => {
-  test2(fs.createWriteStream(path.join(tmpdir, 'dummy2')));
+test("test2 with WriteStream", () => {
+  test2(fs.createWriteStream(path.join(tmpdir, "dummy2")));
 });
 
-test('test3 with WriteStream', () => {
-  test3(fs.createWriteStream(path.join(tmpdir, 'dummy3')));
+test("test3 with WriteStream", () => {
+  test3(fs.createWriteStream(path.join(tmpdir, "dummy3")));
 });
 
 function test1(stream) {
@@ -69,13 +69,13 @@ function test1(stream) {
 
 function test2(stream) {
   stream.destroy();
-  stream.on('open', jest.fn());
+  stream.on("open", jest.fn());
 }
 
 function test3(stream) {
   const openHandler = jest.fn();
-  stream.on('open', openHandler);
-  stream.emit('open');
+  stream.on("open", openHandler);
+  stream.emit("open");
   expect(openHandler).toHaveBeenCalledTimes(1);
   stream.destroy();
   stream.destroy();

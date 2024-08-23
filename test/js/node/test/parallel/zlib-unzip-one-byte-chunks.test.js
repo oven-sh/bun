@@ -4,7 +4,7 @@
 "use strict";
 const zlib = require("zlib");
 
-test("unzip one byte chunks", done => {
+test("zlib unzip one byte chunks", done => {
   const data = Buffer.concat([zlib.gzipSync("abc"), zlib.gzipSync("def")]);
 
   const resultBuffers = [];
@@ -28,3 +28,5 @@ test("unzip one byte chunks", done => {
 
   unzip.end();
 });
+
+//<#END_FILE: test-zlib-unzip-one-byte-chunks.js

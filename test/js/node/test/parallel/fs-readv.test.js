@@ -1,19 +1,19 @@
 //#FILE: test-fs-readv.js
 //#SHA1: 07d6fe434017163aea491c98db8127bc2c942b96
 //-----------------
-'use strict';
+"use strict";
 
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
 
-const expected = 'ümlaut. Лорем 運務ホソモ指及 आपको करने विकास 紙読決多密所 أضف';
+const expected = "ümlaut. Лорем 運務ホソモ指及 आपको करने विकास 紙読決多密所 أضف";
 
 let cnt = 0;
 const getFileName = () => path.join(os.tmpdir(), `readv_${++cnt}.txt`);
 const expectedBuff = Buffer.from(expected);
 
-const allocateEmptyBuffers = (combinedLength) => {
+const allocateEmptyBuffers = combinedLength => {
   const bufferArr = [];
   // Allocate two buffers, each half the size of expectedBuff
   bufferArr[0] = Buffer.alloc(Math.floor(combinedLength / 2));
@@ -35,19 +35,19 @@ const getCallback = (fd, bufferArr) => {
 };
 
 beforeEach(() => {
-  jest.spyOn(fs, 'writeSync');
-  jest.spyOn(fs, 'writeFileSync');
-  jest.spyOn(fs, 'openSync');
-  jest.spyOn(fs, 'closeSync');
+  jest.spyOn(fs, "writeSync");
+  jest.spyOn(fs, "writeFileSync");
+  jest.spyOn(fs, "openSync");
+  jest.spyOn(fs, "closeSync");
 });
 
 afterEach(() => {
   jest.restoreAllMocks();
 });
 
-test('fs.readv with array of buffers with all parameters', (done) => {
+test("fs.readv with array of buffers with all parameters", done => {
   const filename = getFileName();
-  const fd = fs.openSync(filename, 'w+');
+  const fd = fs.openSync(filename, "w+");
   fs.writeSync(fd, expectedBuff);
 
   const bufferArr = allocateEmptyBuffers(expectedBuff.length);
@@ -59,10 +59,10 @@ test('fs.readv with array of buffers with all parameters', (done) => {
   });
 });
 
-test('fs.readv with array of buffers without position', (done) => {
+test("fs.readv with array of buffers without position", done => {
   const filename = getFileName();
   fs.writeFileSync(filename, expectedBuff);
-  const fd = fs.openSync(filename, 'r');
+  const fd = fs.openSync(filename, "r");
 
   const bufferArr = allocateEmptyBuffers(expectedBuff.length);
   const callback = getCallback(fd, bufferArr);
@@ -73,32 +73,36 @@ test('fs.readv with array of buffers without position', (done) => {
   });
 });
 
-describe('Testing with incorrect arguments', () => {
-  const wrongInputs = [false, 'test', {}, [{}], ['sdf'], null, undefined];
+describe("Testing with incorrect arguments", () => {
+  const wrongInputs = [false, "test", {}, [{}], ["sdf"], null, undefined];
 
-  test('fs.readv with wrong buffers argument', () => {
+  test("fs.readv with wrong buffers argument", () => {
     const filename = getFileName();
     fs.writeFileSync(filename, expectedBuff);
-    const fd = fs.openSync(filename, 'r');
+    const fd = fs.openSync(filename, "r");
 
     for (const wrongInput of wrongInputs) {
-      expect(() => fs.readv(fd, wrongInput, null, jest.fn())).toThrow(expect.objectContaining({
-        code: 'ERR_INVALID_ARG_TYPE',
-        name: 'TypeError',
-        message: expect.any(String)
-      }));
+      expect(() => fs.readv(fd, wrongInput, null, jest.fn())).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          name: "TypeError",
+          message: expect.any(String),
+        }),
+      );
     }
 
     fs.closeSync(fd);
   });
 
-  test('fs.readv with wrong fd argument', () => {
+  test("fs.readv with wrong fd argument", () => {
     for (const wrongInput of wrongInputs) {
-      expect(() => fs.readv(wrongInput, jest.fn())).toThrow(expect.objectContaining({
-        code: 'ERR_INVALID_ARG_TYPE',
-        name: 'TypeError',
-        message: expect.any(String)
-      }));
+      expect(() => fs.readv(wrongInput, jest.fn())).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          name: "TypeError",
+          message: expect.any(String),
+        }),
+      );
     }
   });
 });

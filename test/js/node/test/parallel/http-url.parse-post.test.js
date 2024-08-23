@@ -37,22 +37,24 @@ function check(request) {
   expect(request.headers.host).toBe(`${testURL.hostname}:${testURL.port}`);
 }
 
-test("http.request with url.parse and POST method", done => {
+test("http url parse post", async () => {
   const server = http.createServer((request, response) => {
     // Run the check function
     check(request);
     response.writeHead(200, {});
     response.end("ok");
     server.close();
-    done();
   });
 
-  server.listen(0, () => {
-    testURL = url.parse(`http://localhost:${server.address().port}/asdf?qwer=zxcv`);
-    testURL.method = "POST";
+  await new Promise(resolve => {
+    server.listen(0, () => {
+      testURL = url.parse(`http://localhost:${server.address().port}/asdf?qwer=zxcv`);
+      testURL.method = "POST";
 
-    // make the request
-    http.request(testURL).end();
+      // make the request
+      http.request(testURL).end();
+      resolve();
+    });
   });
 });
 

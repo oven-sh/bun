@@ -22,13 +22,13 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
+"use strict";
 
-const fs = require('fs');
+const fs = require("fs");
 
 // Test that readFile works even when stat returns size 0.
 
-const dataExpected = fs.readFileSync(__filename, 'utf8');
+const dataExpected = fs.readFileSync(__filename, "utf8");
 
 // Sometimes stat returns size=0, but it's a lie.
 fs._fstat = fs.fstat;
@@ -42,19 +42,19 @@ fs.fstat = (fd, cb) => {
   });
 };
 
-fs.fstatSync = (fd) => {
+fs.fstatSync = fd => {
   const st = fs._fstatSync(fd);
   st.size = 0;
   return st;
 };
 
-test('readFileSync works with zero byte liar', () => {
-  const d = fs.readFileSync(__filename, 'utf8');
+test("readFileSync works with zero byte liar", () => {
+  const d = fs.readFileSync(__filename, "utf8");
   expect(d).toBe(dataExpected);
 });
 
-test('readFile works with zero byte liar', async () => {
-  const d = await fs.promises.readFile(__filename, 'utf8');
+test("readFile works with zero byte liar", async () => {
+  const d = await fs.promises.readFile(__filename, "utf8");
   expect(d).toBe(dataExpected);
 });
 

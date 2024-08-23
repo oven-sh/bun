@@ -60,3 +60,5 @@ test("util.inspect handles circular references in getters", () => {
       "}",
   );
 });
+
+//<#END_FILE: test-util-inspect-getters-accessing-this.js

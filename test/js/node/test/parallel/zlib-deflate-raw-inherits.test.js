@@ -27,10 +27,14 @@ test("DeflateRaw can be inherited with Object.setPrototypeOf", done => {
   });
 
   read.pipe(dest);
+  dest.resume();
+
+  // We need to add an event listener to ensure the test completes
   dest.on("finish", () => {
     expect(dest.prop).toBe(true);
     expect(dest instanceof DeflateRaw).toBe(true);
     done();
   });
-  dest.resume();
 });
+
+//<#END_FILE: test-zlib-deflate-raw-inherits.js

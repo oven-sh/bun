@@ -22,40 +22,40 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
-const net = require('net');
+"use strict";
+const net = require("net");
 
-test('net write connect write', async () => {
-  const server = net.createServer((socket) => {
+test("net write connect write", async () => {
+  const server = net.createServer(socket => {
     socket.pipe(socket);
   });
 
-  await new Promise((resolve) => {
+  await new Promise(resolve => {
     server.listen(0, resolve);
   });
 
   const conn = net.connect(server.address().port);
-  let received = '';
+  let received = "";
 
-  conn.setEncoding('utf8');
-  conn.write('before');
+  conn.setEncoding("utf8");
+  conn.write("before");
 
-  await new Promise((resolve) => {
-    conn.on('connect', () => {
-      conn.write(' after');
+  await new Promise(resolve => {
+    conn.on("connect", () => {
+      conn.write(" after");
       resolve();
     });
   });
 
-  await new Promise((resolve) => {
-    conn.on('data', (buf) => {
+  await new Promise(resolve => {
+    conn.on("data", buf => {
       received += buf;
       conn.end();
     });
 
-    conn.on('end', () => {
+    conn.on("end", () => {
       server.close();
-      expect(received).toBe('before after');
+      expect(received).toBe("before after");
       resolve();
     });
   });

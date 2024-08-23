@@ -22,15 +22,15 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
+"use strict";
 
 // Test that unref'ed sockets with timeouts do not prevent exit.
 
-const net = require('net');
+const net = require("net");
 
-test('unref\'ed sockets with timeouts do not prevent exit', () => {
-  const server = net.createServer((c) => {
-    c.write('hello');
+test("unref'ed sockets with timeouts do not prevent exit", () => {
+  const server = net.createServer(c => {
+    c.write("hello");
     c.unref();
   });
   server.listen(0);
@@ -40,14 +40,14 @@ test('unref\'ed sockets with timeouts do not prevent exit', () => {
   const sockets = [];
   const delays = [8, 5, 3, 6, 2, 4];
 
-  delays.forEach((T) => {
-    const socket = net.createConnection(server.address().port, 'localhost');
-    socket.on('connect', () => {
+  delays.forEach(T => {
+    const socket = net.createConnection(server.address().port, "localhost");
+    socket.on("connect", () => {
       if (++connections === delays.length) {
-        sockets.forEach((s) => {
+        sockets.forEach(s => {
           s.socket.setTimeout(s.timeout, () => {
             s.socket.destroy();
-            throw new Error('socket timed out unexpectedly');
+            throw new Error("socket timed out unexpectedly");
           });
 
           s.socket.unref();

@@ -28,37 +28,49 @@ const zlib = require("zlib");
 // String "test" encoded with dictionary "dict".
 const input = Buffer.from([0x78, 0xbb, 0x04, 0x09, 0x01, 0xa5]);
 
-test("Inflate stream without dictionary", done => {
+test("zlib.createInflate without dictionary", async () => {
   const stream = zlib.createInflate();
 
-  stream.on("error", err => {
-    expect(err.message).toMatch(/Missing dictionary/);
-    done();
-  });
-
-  stream.write(input);
+  await expect(
+    new Promise((resolve, reject) => {
+      stream.on("error", reject);
+      stream.write(input);
+    }),
+  ).rejects.toThrow(
+    expect.objectContaining({
+      message: expect.stringMatching(/Missing dictionary/),
+    }),
+  );
 });
 
-test("Inflate stream with incorrect dictionary", done => {
+test("zlib.createInflate with wrong dictionary", async () => {
   const stream = zlib.createInflate({ dictionary: Buffer.from("fail") });
 
-  stream.on("error", err => {
-    expect(err.message).toMatch(/Bad dictionary/);
-    done();
-  });
-
-  stream.write(input);
+  await expect(
+    new Promise((resolve, reject) => {
+      stream.on("error", reject);
+      stream.write(input);
+    }),
+  ).rejects.toThrow(
+    expect.objectContaining({
+      message: expect.stringMatching(/Bad dictionary/),
+    }),
+  );
 });
 
-test("InflateRaw stream with incorrect dictionary", done => {
+test("zlib.createInflateRaw with wrong dictionary", async () => {
   const stream = zlib.createInflateRaw({ dictionary: Buffer.from("fail") });
 
-  stream.on("error", err => {
-    // It's not possible to separate invalid dict and invalid data when using
-    // the raw format
-    expect(err.message).toMatch(/(invalid|Operation-Ending-Supplemental Code is 0x12)/);
-    done();
-  });
-
-  stream.write(input);
+  await expect(
+    new Promise((resolve, reject) => {
+      stream.on("error", reject);
+      stream.write(input);
+    }),
+  ).rejects.toThrow(
+    expect.objectContaining({
+      message: expect.stringMatching(/(invalid|Operation-Ending-Supplemental Code is 0x12)/),
+    }),
+  );
 });
+
+//<#END_FILE: test-zlib-dictionary-fail.js

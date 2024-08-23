@@ -22,11 +22,11 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
+"use strict";
 
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
 
 // Make sure the deletion event gets reported in the following scenario:
 // 1. Watch a file.
@@ -38,23 +38,23 @@ const os = require('os');
 // stopped it from getting emitted.
 // https://github.com/nodejs/node-v0.x-archive/issues/4027
 
-test('fs.watchFile reports deletion', (done) => {
-  const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-'));
-  const filename = path.join(tmpdir, 'watched');
-  fs.writeFileSync(filename, 'quis custodiet ipsos custodes');
+test("fs.watchFile reports deletion", done => {
+  const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), "test-"));
+  const filename = path.join(tmpdir, "watched");
+  fs.writeFileSync(filename, "quis custodiet ipsos custodes");
 
   const watcher = jest.fn();
   fs.watchFile(filename, { interval: 50 }, watcher);
 
   setTimeout(() => {
     fs.unlinkSync(filename);
-    
+
     setTimeout(() => {
       expect(watcher).toHaveBeenCalledTimes(1);
       const [curr, prev] = watcher.mock.calls[0];
       expect(curr.nlink).toBe(0);
       expect(prev.nlink).toBe(1);
-      
+
       fs.unwatchFile(filename);
       fs.rmdirSync(tmpdir);
       done();

@@ -22,46 +22,46 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
+"use strict";
 
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
 
 // This test ensures that `fs.truncate` opens the file with `r+` and not `w`,
 // which had earlier resulted in the target file's content getting zeroed out.
 // https://github.com/nodejs/node-v0.x-archive/issues/6233
 
-const filename = path.join(os.tmpdir(), 'truncate-file.txt');
+const filename = path.join(os.tmpdir(), "truncate-file.txt");
 
 beforeEach(() => {
   // Clean up any existing test file
   try {
     fs.unlinkSync(filename);
   } catch (err) {
-    if (err.code !== 'ENOENT') throw err;
+    if (err.code !== "ENOENT") throw err;
   }
 });
 
-test('fs.truncateSync', () => {
-  fs.writeFileSync(filename, '0123456789');
-  expect(fs.readFileSync(filename, 'utf8')).toBe('0123456789');
+test("fs.truncateSync", () => {
+  fs.writeFileSync(filename, "0123456789");
+  expect(fs.readFileSync(filename, "utf8")).toBe("0123456789");
   fs.truncateSync(filename, 5);
-  expect(fs.readFileSync(filename, 'utf8')).toBe('01234');
+  expect(fs.readFileSync(filename, "utf8")).toBe("01234");
 });
 
-test('fs.truncate', async () => {
-  fs.writeFileSync(filename, '0123456789');
-  expect(fs.readFileSync(filename, 'utf8')).toBe('0123456789');
-  
+test("fs.truncate", async () => {
+  fs.writeFileSync(filename, "0123456789");
+  expect(fs.readFileSync(filename, "utf8")).toBe("0123456789");
+
   await new Promise((resolve, reject) => {
-    fs.truncate(filename, 5, (err) => {
+    fs.truncate(filename, 5, err => {
       if (err) reject(err);
       else resolve();
     });
   });
-  
-  expect(fs.readFileSync(filename, 'utf8')).toBe('01234');
+
+  expect(fs.readFileSync(filename, "utf8")).toBe("01234");
 });
 
 //<#END_FILE: test-fs-truncate-clear-file-zero.js

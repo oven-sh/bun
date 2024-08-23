@@ -85,7 +85,7 @@ $ bun run ./my-wasm-app.whatever
 You can import sqlite databases directly into your code. Bun will automatically load the database and return a `Database` object.
 
 ```ts
-import db from "./my.db" with {type: "sqlite"};
+import db from "./my.db" with { type: "sqlite" };
 console.log(db.query("select * from users LIMIT 1").get());
 ```
 

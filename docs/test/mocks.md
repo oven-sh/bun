@@ -206,18 +206,18 @@ Using `mock.restore()` can reduce the amount of code in your tests by adding it 
 ```ts
 import { expect, mock, spyOn, test } from "bun:test";
 
-import * as fooModule from './foo.ts';
-import * as barModule from './bar.ts';
-import * as bazModule from './baz.ts';
+import * as fooModule from "./foo.ts";
+import * as barModule from "./bar.ts";
+import * as bazModule from "./baz.ts";
 
-test('foo, bar, baz', () => {
-  const fooSpy = spyOn(fooModule, 'foo');
-  const barSpy = spyOn(barModule, 'bar');
-  const bazSpy = spyOn(bazModule, 'baz');
+test("foo, bar, baz", () => {
+  const fooSpy = spyOn(fooModule, "foo");
+  const barSpy = spyOn(barModule, "bar");
+  const bazSpy = spyOn(bazModule, "baz");
 
-  expect(fooSpy).toBe('foo');
-  expect(barSpy).toBe('bar');
-  expect(bazSpy).toBe('baz');
+  expect(fooSpy).toBe("foo");
+  expect(barSpy).toBe("bar");
+  expect(bazSpy).toBe("baz");
 
   fooSpy.mockImplementation(() => 42);
   barSpy.mockImplementation(() => 43);
@@ -229,8 +229,8 @@ test('foo, bar, baz', () => {
 
   mock.restore();
 
-  expect(fooSpy).toBe('foo');
-  expect(barSpy).toBe('bar');
-  expect(bazSpy).toBe('baz');
+  expect(fooSpy).toBe("foo");
+  expect(barSpy).toBe("bar");
+  expect(bazSpy).toBe("baz");
 });
 ```

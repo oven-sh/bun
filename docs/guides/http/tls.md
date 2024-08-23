@@ -6,7 +6,7 @@ Set the `tls` key to configure TLS. Both `key` and `cert` are required. The `key
 
 ```ts
 const server = Bun.serve({
-  fetch: (request) => new Response("Welcome to Bun!"),
+  fetch: request => new Response("Welcome to Bun!"),
   tls: {
     cert: Bun.file("cert.pem"),
     key: Bun.file("key.pem"),
@@ -20,7 +20,7 @@ By default Bun trusts the default Mozilla-curated list of well-known root CAs. T
 
 ```ts
 const server = Bun.serve({
-  fetch: (request) => new Response("Welcome to Bun!"),
+  fetch: request => new Response("Welcome to Bun!"),
   tls: {
     cert: Bun.file("cert.pem"),
     key: Bun.file("key.pem"),

@@ -324,6 +324,7 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 - [`.toContainAllValues()`](https://jest-extended.jestcommunity.dev/docs/matchers/Object#tocontainallvaluesvalues)
 
 ---
+
 - ✅
 - [`.toContainAnyValues()`](https://jest-extended.jestcommunity.dev/docs/matchers/Object#tocontainanyvaluesvalues)
 

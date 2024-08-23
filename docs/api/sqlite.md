@@ -75,7 +75,7 @@ To instead throw an error when a parameter is missing and allow binding without 
 import { Database } from "bun:sqlite";
 
 const strict = new Database(
-  ":memory:", 
+  ":memory:",
   { strict: true }
 );
 

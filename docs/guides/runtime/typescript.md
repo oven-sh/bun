@@ -16,7 +16,7 @@ Below is the full set of recommended `compilerOptions` for a Bun project. With t
 {
   "compilerOptions": {
     // Enable latest features
-    "lib": ["ESNext","DOM"],
+    "lib": ["ESNext", "DOM"],
     "target": "ESNext",
     "module": "ESNext",
     "moduleDetection": "force",
@@ -37,8 +37,8 @@ Below is the full set of recommended `compilerOptions` for a Bun project. With t
     // Some stricter flags
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noPropertyAccessFromIndexSignature": true
-  }
+    "noPropertyAccessFromIndexSignature": true,
+  },
 }
 ```
 

@@ -39,8 +39,8 @@ Bun supports things like top-level await, JSX, and extensioned `.ts` imports, wh
     // Some stricter flags
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noPropertyAccessFromIndexSignature": true
-  }
+    "noPropertyAccessFromIndexSignature": true,
+  },
 }
 ```
 

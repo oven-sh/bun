@@ -9,7 +9,7 @@ export default new Router()
   .get('/', () => new Response('Hi'));
 ```
 
-Stric provides support for [ArrowJS](https://www.arrow-js.com), a library for building reactive interfaces. 
+Stric provides support for [ArrowJS](https://www.arrow-js.com), a library for building reactive interfaces.
 
 {% codetabs %}
 
@@ -25,6 +25,7 @@ export function render() {
 // Set the path to handle
 export const path = '/';
 ```
+
 ```ts#index.ts
 import { PageRouter } from '@stricjs/arrow';
 

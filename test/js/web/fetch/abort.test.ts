@@ -33,7 +33,7 @@ test("Allow the usage of custom implementation of AbortController", async () => 
 
 describe("allows aborting with custom errors", () => {
   test("Using AbortSignal.timeout with cause", async () => {
-    await using server = createServer().listen(0);
+    const server = createServer().listen(0);
     await once(server, "listening");
 
     try {
@@ -54,6 +54,8 @@ describe("allows aborting with custom errors", () => {
       } else {
         expect.unreachable(err);
       }
+    } finally {
+      server.closeAllConnections();
     }
   });
 

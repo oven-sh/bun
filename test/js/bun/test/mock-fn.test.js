@@ -114,6 +114,18 @@ describe("mock()", () => {
     expect(fn).toHaveBeenCalledWith();
   });
 
+  test("mockName returns this", () => {
+    const fn = jest.fn();
+    expect(fn.mockName()).toBe(fn);
+    fn.mockName("foo");
+    expect(fn.getMockName()).toBe("foo");
+
+    // nullish values are ignored.
+    expect(fn.mockName("")).toBe(fn);
+
+    expect(fn.getMockName()).toBe("foo");
+  });
+
   test("jest.clearAllMocks()", () => {
     const func = jest.fn(() => 42);
     expect(func).not.toHaveBeenCalled();
@@ -753,6 +765,10 @@ describe("spyOn", () => {
       },
     };
     const fn = spyOn(obj, "original");
+    expect(fn.getMockName()).toBe("original");
+    fn.mockName("not the original");
+    expect(fn.getMockName()).toBe("not the original");
+    expect(obj.original.name).toBe("not the original");
     fn.mockImplementation(() => 43);
     expect(fn).toBe(obj.original);
     expect(obj.original()).toBe(43);

@@ -9977,6 +9977,63 @@ describe("outdated", () => {
       expect(out).toMatchSnapshot();
     });
   }
+  test("in workspace", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          workspaces: ["pkg1"],
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          dependencies: {
+            "a-dep": "1.0.1",
+          },
+        }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir);
+
+    let { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "outdated"],
+      cwd: join(packageDir, "pkg1"),
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("panic:");
+    let out = await Bun.readableStreamToText(stdout);
+    expect(out).toContain("a-dep");
+    expect(out).not.toContain("no-deps");
+    expect(await exited).toBe(0);
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "outdated"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+
+    const err2 = await Bun.readableStreamToText(stderr);
+    expect(err2).not.toContain("error:");
+    expect(err2).not.toContain("panic:");
+    let out2 = await Bun.readableStreamToText(stdout);
+    expect(out2).toContain("no-deps");
+    expect(out2).not.toContain("a-dep");
+    expect(await exited).toBe(0);
+  });
 });
 
 // TODO: setup verdaccio to run across multiple test files, then move this and a few other describe

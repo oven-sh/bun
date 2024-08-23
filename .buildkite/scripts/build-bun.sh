@@ -15,7 +15,7 @@ cwd="$(pwd)"
 mkdir -p build
 source "$(dirname "$0")/download-artifact.sh" "build/bun-deps/**" --step "$BUILDKITE_GROUP_KEY-build-deps"
 source "$(dirname "$0")/download-artifact.sh" "build/bun-zig.o" --step "$BUILDKITE_GROUP_KEY-build-zig"
-source "$(dirname "$0")/download-artifact.sh" "build/bun-cpp-objects.a" --step "$BUILDKITE_GROUP_KEY-build-cpp" --split
+source "$(dirname "$0")/download-artifact.sh" "build/libbun.a" --step "$BUILDKITE_GROUP_KEY-build-cpp" --split
 cd build
 
 run_command cmake .. "${CMAKE_FLAGS[@]}" \
@@ -23,7 +23,7 @@ run_command cmake .. "${CMAKE_FLAGS[@]}" \
   -DBUN_LINK_ONLY="1" \
   -DNO_CONFIGURE_DEPENDS="1" \
   -DBUN_ZIG_OBJECT_PATH="$cwd/build/bun-zig.o" \
-  -DBUN_CPP_ARCHIVE="$cwd/build/bun-cpp-objects.a" \
+  -DBUN_CPP_ARCHIVE="$cwd/build/libbun.a" \
   -DBUN_DEPS_OUT_DIR="$cwd/build/bun-deps" \
   -DCMAKE_BUILD_TYPE="$CMAKE_BUILD_TYPE" \
   -DUSE_CPU="$CPU_TARGET" \

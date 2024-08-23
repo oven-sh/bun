@@ -60,4 +60,7 @@ elseif(NOT BUN_CPP_ONLY)
   add_executable(${bun} ${BUN_CPP_SOURCES} ${ZIG_OBJECT_PATH})
 else()
   add_library(${bun} STATIC ${BUN_CPP_SOURCES})
+  set_target_properties(${bun} PROPERTIES
+    OUTPUT_NAME bun
+  )
 endif()

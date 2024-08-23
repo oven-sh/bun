@@ -17,7 +17,6 @@ function run_command() {
 
 mkdir -p build
 cd build
-mkdir -p tmp_modules tmp_functions js codegen
 
 run_command cmake .. "${CMAKE_FLAGS[@]}" \
   -GNinja \
@@ -31,9 +30,5 @@ run_command cmake .. "${CMAKE_FLAGS[@]}" \
   -DUSE_CANARY_REVISION="$CANARY" \
   -DUSE_REVISION="$GIT_SHA"
 
-chmod +x compile-cpp-only.sh
-source compile-cpp-only.sh -v -j "$CPUS"
-{ set +x; } 2>/dev/null
-
 cd ..
-source "$(dirname "$0")/upload-artifact.sh" "build/bun-cpp-objects.a" --split
+source "$(dirname "$0")/upload-artifact.sh" "build/libbun.a" --split

@@ -1380,7 +1380,7 @@ pub const TestRunnerTask = struct {
         var test_: TestScope = this.describe.tests.items[test_id];
         describe.current_test_id = test_id;
 
-        if (test_.func == .zero or !describe.shouldEvaluateScope()) {
+        if (test_.func == .zero or !describe.shouldEvaluateScope() or (test_.tag != .only and Jest.runner.?.only)) {
             const tag = if (!describe.shouldEvaluateScope()) describe.tag else test_.tag;
             switch (tag) {
                 .todo => {

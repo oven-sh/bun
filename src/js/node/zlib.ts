@@ -28,6 +28,21 @@ function Base(method, options) {
   stream.Transform.$call(this, options);
 }
 Base.prototype = Object.create(stream.Transform.prototype);
+ObjectDefineProperty(Base.prototype, "bytesWritten", {
+  get: function () {
+    return this[kHandle].bytesWritten;
+  },
+});
+ObjectDefineProperty(Base.prototype, "bytesRead", {
+  get: function () {
+    return this[kHandle].bytesRead;
+  },
+});
+ObjectDefineProperty(Base.prototype, "_closed", {
+  get: function () {
+    return this[kHandle].closed;
+  },
+});
 
 //
 
@@ -35,6 +50,16 @@ function Zlib(method, options) {
   Base.$call(this, method, options);
 }
 Zlib.prototype = Object.create(Base.prototype);
+ObjectDefineProperty(Zlib.prototype, "_level", {
+  get: function () {
+    return this[kHandle].level;
+  },
+});
+ObjectDefineProperty(Zlib.prototype, "_strategy", {
+  get: function () {
+    return this[kHandle].strategy;
+  },
+});
 
 //
 
@@ -43,16 +68,6 @@ function BrotliCompress(opts) {
   Base.$call(this, BROTLI_ENCODE, opts);
 }
 BrotliCompress.prototype = Object.create(Base.prototype);
-ObjectDefineProperty(BrotliCompress.prototype, "bytesWritten", {
-  get: function () {
-    return this[kHandle].bytesWritten;
-  },
-});
-ObjectDefineProperty(BrotliCompress.prototype, "_closed", {
-  get: function () {
-    return this[kHandle].closed;
-  },
-});
 BrotliCompress.prototype.flush = ZlibBase_flush;
 BrotliCompress.prototype.reset = ZlibBase_reset;
 BrotliCompress.prototype.close = ZlibBase_close;
@@ -79,16 +94,6 @@ function BrotliDecompress(opts) {
   Base.$call(this, BROTLI_DECODE, opts);
 }
 BrotliDecompress.prototype = Object.create(Base.prototype);
-ObjectDefineProperty(BrotliDecompress.prototype, "bytesWritten", {
-  get: function () {
-    return this[kHandle].bytesWritten;
-  },
-});
-ObjectDefineProperty(BrotliDecompress.prototype, "_closed", {
-  get: function () {
-    return this[kHandle].closed;
-  },
-});
 BrotliDecompress.prototype.flush = ZlibBase_flush;
 BrotliDecompress.prototype.reset = ZlibBase_reset;
 BrotliDecompress.prototype.close = ZlibBase_close;
@@ -115,31 +120,6 @@ function Deflate(opts) {
   Zlib.$call(this, DEFLATE, opts);
 }
 Deflate.prototype = Object.create(Zlib.prototype);
-ObjectDefineProperty(Deflate.prototype, "bytesWritten", {
-  get: function () {
-    return this[kHandle].bytesWritten;
-  },
-});
-ObjectDefineProperty(Deflate.prototype, "bytesRead", {
-  get: function () {
-    return this[kHandle].bytesRead;
-  },
-});
-ObjectDefineProperty(Deflate.prototype, "_level", {
-  get: function () {
-    return this[kHandle].level;
-  },
-});
-ObjectDefineProperty(Deflate.prototype, "_strategy", {
-  get: function () {
-    return this[kHandle].strategy;
-  },
-});
-ObjectDefineProperty(Deflate.prototype, "_closed", {
-  get: function () {
-    return this[kHandle].closed;
-  },
-});
 Deflate.prototype.flush = ZlibBase_flush;
 Deflate.prototype.reset = ZlibBase_reset;
 Deflate.prototype.close = ZlibBase_close;
@@ -167,31 +147,6 @@ function Inflate(opts) {
   Zlib.$call(this, INFLATE, opts);
 }
 Inflate.prototype = Object.create(Zlib.prototype);
-ObjectDefineProperty(Inflate.prototype, "bytesWritten", {
-  get: function () {
-    return this[kHandle].bytesWritten;
-  },
-});
-ObjectDefineProperty(Inflate.prototype, "bytesRead", {
-  get: function () {
-    return this[kHandle].bytesRead;
-  },
-});
-ObjectDefineProperty(Inflate.prototype, "_level", {
-  get: function () {
-    return this[kHandle].level;
-  },
-});
-ObjectDefineProperty(Inflate.prototype, "_strategy", {
-  get: function () {
-    return this[kHandle].strategy;
-  },
-});
-ObjectDefineProperty(Inflate.prototype, "_closed", {
-  get: function () {
-    return this[kHandle].closed;
-  },
-});
 Inflate.prototype.flush = ZlibBase_flush;
 Inflate.prototype.reset = ZlibBase_reset;
 Inflate.prototype.close = ZlibBase_close;
@@ -219,31 +174,6 @@ function DeflateRaw(opts) {
   Zlib.$call(this, DEFLATERAW, opts);
 }
 DeflateRaw.prototype = Object.create(Zlib.prototype);
-ObjectDefineProperty(DeflateRaw.prototype, "bytesWritten", {
-  get: function () {
-    return this[kHandle].bytesWritten;
-  },
-});
-ObjectDefineProperty(DeflateRaw.prototype, "bytesRead", {
-  get: function () {
-    return this[kHandle].bytesRead;
-  },
-});
-ObjectDefineProperty(DeflateRaw.prototype, "_level", {
-  get: function () {
-    return this[kHandle].level;
-  },
-});
-ObjectDefineProperty(DeflateRaw.prototype, "_strategy", {
-  get: function () {
-    return this[kHandle].strategy;
-  },
-});
-ObjectDefineProperty(DeflateRaw.prototype, "_closed", {
-  get: function () {
-    return this[kHandle].closed;
-  },
-});
 DeflateRaw.prototype.flush = ZlibBase_flush;
 DeflateRaw.prototype.reset = ZlibBase_reset;
 DeflateRaw.prototype.close = ZlibBase_close;
@@ -271,31 +201,6 @@ function InflateRaw(opts) {
   Zlib.$call(this, INFLATERAW, opts);
 }
 InflateRaw.prototype = Object.create(Zlib.prototype);
-ObjectDefineProperty(InflateRaw.prototype, "bytesWritten", {
-  get: function () {
-    return this[kHandle].bytesWritten;
-  },
-});
-ObjectDefineProperty(InflateRaw.prototype, "bytesRead", {
-  get: function () {
-    return this[kHandle].bytesRead;
-  },
-});
-ObjectDefineProperty(InflateRaw.prototype, "_level", {
-  get: function () {
-    return this[kHandle].level;
-  },
-});
-ObjectDefineProperty(InflateRaw.prototype, "_strategy", {
-  get: function () {
-    return this[kHandle].strategy;
-  },
-});
-ObjectDefineProperty(InflateRaw.prototype, "_closed", {
-  get: function () {
-    return this[kHandle].closed;
-  },
-});
 InflateRaw.prototype.flush = ZlibBase_flush;
 InflateRaw.prototype.reset = ZlibBase_reset;
 InflateRaw.prototype.close = ZlibBase_close;
@@ -323,31 +228,6 @@ function Gzip(opts) {
   Zlib.$call(this, GZIP, opts);
 }
 Gzip.prototype = Object.create(Zlib.prototype);
-ObjectDefineProperty(Gzip.prototype, "bytesWritten", {
-  get: function () {
-    return this[kHandle].bytesWritten;
-  },
-});
-ObjectDefineProperty(Gzip.prototype, "bytesRead", {
-  get: function () {
-    return this[kHandle].bytesRead;
-  },
-});
-ObjectDefineProperty(Gzip.prototype, "_level", {
-  get: function () {
-    return this[kHandle].level;
-  },
-});
-ObjectDefineProperty(Gzip.prototype, "_strategy", {
-  get: function () {
-    return this[kHandle].strategy;
-  },
-});
-ObjectDefineProperty(Gzip.prototype, "_closed", {
-  get: function () {
-    return this[kHandle].closed;
-  },
-});
 Gzip.prototype.flush = ZlibBase_flush;
 Gzip.prototype.reset = ZlibBase_reset;
 Gzip.prototype.close = ZlibBase_close;
@@ -375,31 +255,6 @@ function Gunzip(opts) {
   Zlib.$call(this, GUNZIP, opts);
 }
 Gunzip.prototype = Object.create(Zlib.prototype);
-ObjectDefineProperty(Gunzip.prototype, "bytesWritten", {
-  get: function () {
-    return this[kHandle].bytesWritten;
-  },
-});
-ObjectDefineProperty(Gunzip.prototype, "bytesRead", {
-  get: function () {
-    return this[kHandle].bytesRead;
-  },
-});
-ObjectDefineProperty(Gunzip.prototype, "_level", {
-  get: function () {
-    return this[kHandle].level;
-  },
-});
-ObjectDefineProperty(Gunzip.prototype, "_strategy", {
-  get: function () {
-    return this[kHandle].strategy;
-  },
-});
-ObjectDefineProperty(Gunzip.prototype, "_closed", {
-  get: function () {
-    return this[kHandle].closed;
-  },
-});
 Gunzip.prototype.flush = ZlibBase_flush;
 Gunzip.prototype.reset = ZlibBase_reset;
 Gunzip.prototype.close = ZlibBase_close;
@@ -427,31 +282,6 @@ function Unzip(opts) {
   Zlib.$call(this, UNZIP, opts);
 }
 Unzip.prototype = Object.create(Zlib.prototype);
-ObjectDefineProperty(Unzip.prototype, "bytesWritten", {
-  get: function () {
-    return this[kHandle].bytesWritten;
-  },
-});
-ObjectDefineProperty(Unzip.prototype, "bytesRead", {
-  get: function () {
-    return this[kHandle].bytesRead;
-  },
-});
-ObjectDefineProperty(Unzip.prototype, "_level", {
-  get: function () {
-    return this[kHandle].level;
-  },
-});
-ObjectDefineProperty(Unzip.prototype, "_strategy", {
-  get: function () {
-    return this[kHandle].strategy;
-  },
-});
-ObjectDefineProperty(Unzip.prototype, "_closed", {
-  get: function () {
-    return this[kHandle].closed;
-  },
-});
 Unzip.prototype.flush = ZlibBase_flush;
 Unzip.prototype.reset = ZlibBase_reset;
 Unzip.prototype.close = ZlibBase_close;

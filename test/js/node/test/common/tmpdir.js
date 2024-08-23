@@ -93,4 +93,3 @@ module.exports = {
   refresh,
   resolve,
 };
-

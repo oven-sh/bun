@@ -5136,9 +5136,9 @@ test("missing package on reinstall, some with binaries", async () => {
 
 // waiter thread is only a thing on Linux.
 for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
-  const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
   describe("lifecycle scripts" + (forceWaiterThread ? " (waiter thread)" : ""), async () => {
     test("root package with all lifecycle scripts", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
       const writeScript = async (name: string) => {
         const contents = `
       import { writeFileSync, existsSync, rmSync } from "fs";
@@ -5319,6 +5319,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("workspace lifecycle scripts", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -5409,6 +5411,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("dependency lifecycle scripts run before root lifecycle scripts", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       const script = '[[ -f "./node_modules/uses-what-bin-slow/what-bin.txt" ]]';
       await writeFile(
         join(packageDir, "package.json"),
@@ -5452,6 +5456,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("install a dependency with lifecycle scripts, then add to trusted dependencies and install again", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -5542,6 +5548,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("adding a package without scripts to trustedDependencies", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -5705,6 +5713,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("lifecycle scripts run if node_modules is deleted", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -5767,6 +5777,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("INIT_CWD is set to the correct directory", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -5826,6 +5838,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("failing lifecycle script should print output", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -5857,6 +5871,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("failing root lifecycle script should print output correctly", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -5886,6 +5902,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("exit 0 in lifecycle scripts works", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -5923,6 +5941,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("--ignore-scripts should skip lifecycle scripts", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -5960,6 +5980,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("it should add `node-gyp rebuild` as the `install` script when `install` and `postinstall` don't exist and `binding.gyp` exists in the root of the package", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -5999,6 +6021,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("automatic node-gyp scripts should not run for untrusted dependencies, and should run after adding to `trustedDependencies`", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       const packageJSON: any = {
         name: "foo",
         version: "1.0.0",
@@ -6061,6 +6085,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("automatic node-gyp scripts work in package root", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -6117,6 +6143,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("auto node-gyp scripts work when scripts exists other than `install` and `preinstall`", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -6163,6 +6191,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
     for (const script of ["install", "preinstall"]) {
       test(`does not add auto node-gyp script when ${script} script exists`, async () => {
+        const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
         const packageJSON: any = {
           name: "foo",
           version: "1.0.0",
@@ -6204,6 +6234,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     }
 
     test("git dependencies also run `preprepare`, `prepare`, and `postprepare` scripts", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -6287,6 +6319,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("root lifecycle scripts should wait for dependency lifecycle scripts", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -6371,6 +6405,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     }
 
     test("reach max concurrent scripts", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       const scripts = {
         "preinstall": `${bunExe()} -e 'Bun.sleepSync(500)'`,
       };
@@ -6403,6 +6439,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("stress test", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       const dependenciesList = await createPackagesWithScripts(500, {
         "postinstall": `${bunExe()} --version`,
       });
@@ -6435,6 +6473,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("it should install and use correct binary version", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       // this should install `what-bin` in two places:
       //
       // - node_modules/.bin/what-bin@1.5.0
@@ -6558,6 +6598,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("node-gyp should always be available for lifecycle scripts", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -6591,6 +6633,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
     // if this test fails, `electron` might be removed from the default list
     test("default trusted dependencies should work", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -6629,6 +6673,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("default trusted dependencies should not be used of trustedDependencies is populated", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -6724,6 +6770,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("does not run any scripts if trustedDependencies is an empty list", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -6769,6 +6817,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("will run default trustedDependencies after install that didn't include them", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -6850,6 +6900,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
     describe("--trust", async () => {
       test("unhoisted untrusted scripts, none at root node_modules", async () => {
+        const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
         await Promise.all([
           write(
             join(packageDir, "package.json"),
@@ -6965,6 +7017,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       ];
       for (const { label, packageJson } of trustTests) {
         test(label, async () => {
+          const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
           await writeFile(join(packageDir, "package.json"), JSON.stringify(packageJson));
 
           let { stdout, stderr, exited } = spawn({
@@ -7023,6 +7077,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       }
       describe("packages without lifecycle scripts", async () => {
         test("initial install", async () => {
+          const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
           await writeFile(
             join(packageDir, "package.json"),
             JSON.stringify({
@@ -7061,6 +7117,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           });
         });
         test("already installed", async () => {
+          const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
           await writeFile(
             join(packageDir, "package.json"),
             JSON.stringify({
@@ -7139,6 +7197,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
     describe("updating trustedDependencies", async () => {
       test("existing trustedDependencies, unchanged trustedDependencies", async () => {
+        const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
         await writeFile(
           join(packageDir, "package.json"),
           JSON.stringify({
@@ -7208,6 +7268,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       });
 
       test("existing trustedDependencies, removing trustedDependencies", async () => {
+        const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
         await writeFile(
           join(packageDir, "package.json"),
           JSON.stringify({
@@ -7297,6 +7359,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       });
 
       test("non-existent trustedDependencies, then adding it", async () => {
+        const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
         await writeFile(
           join(packageDir, "package.json"),
           JSON.stringify({
@@ -7382,6 +7446,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("node -p should work in postinstall scripts", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -7419,6 +7485,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("ensureTempNodeGypScript works", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -7454,6 +7522,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("bun pm trust and untrusted on missing package", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -7530,6 +7600,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       // for both cases, we need to update this test
       for (const withRm of [true, false]) {
         test(withRm ? "withRm" : "withoutRm", async () => {
+          const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
           await writeFile(
             join(packageDir, "package.json"),
             JSON.stringify({
@@ -7706,6 +7778,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
     describe.if(!forceWaiterThread || process.platform === "linux")("does not use 100% cpu", async () => {
       test("install", async () => {
+        const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
         await writeFile(
           join(packageDir, "package.json"),
           JSON.stringify({
@@ -7734,6 +7808,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
       // https://github.com/oven-sh/bun/issues/11252
       test.todoIf(isWindows)("bun pm trust", async () => {
+        const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
         const dep = isWindows ? "uses-what-bin-slow-window" : "uses-what-bin-slow";
         await writeFile(
           join(packageDir, "package.json"),
@@ -7778,6 +7854,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
   describe("stdout/stderr is inherited from root scripts during install", async () => {
     test("without packages", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       const exe = bunExe().replace(/\\/g, "\\\\");
       await writeFile(
         join(packageDir, "package.json"),
@@ -7826,6 +7904,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("with a package", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       const exe = bunExe().replace(/\\/g, "\\\\");
       await writeFile(
         join(packageDir, "package.json"),

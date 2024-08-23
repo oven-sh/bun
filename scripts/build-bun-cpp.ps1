@@ -24,5 +24,5 @@ if ($LASTEXITCODE -ne 0) { throw "C++ compilation failed" }
 # For now, use FileSplitter to split the file into smaller chunks:
 # https://www.powershellgallery.com/packages/FileSplitter/1.3
 if ($env:BUILDKITE) {
-  Split-File -Path (Resolve-Path "bun.lib") -PartSizeBytes "50MB" -Verbose
+  Split-File -Path (Resolve-Path "build\bun.lib") -PartSizeBytes "50MB" -Verbose
 }

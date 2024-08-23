@@ -26,6 +26,6 @@ run_command cmake -B build "${CMAKE_FLAGS[@]}" \
   -DENABLE_CANARY="ON" \
   -DUSE_CANARY_REVISION="$CANARY" \
   -DUSE_REVISION="$GIT_SHA"
-cmake build --build build
+cmake --build build
 
 source "$(dirname "$0")/upload-artifact.sh" "build/libbun.a" --split

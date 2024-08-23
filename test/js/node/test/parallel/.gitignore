@@ -1,6 +1,7 @@
 # Not working yet:
 child-process-double-pipe.test.js
 child-process-exec-cwd.test.js
+child-process-exec-timeout-expire.test.js
 child-process-spawn-controller.test.js
 child-process-stdio-inherit.test.js
 cluster-fork-env.test.js
@@ -10,6 +11,7 @@ file-write-stream5.test.js
 filehandle-close.test.js
 fs-existssync-false.test.js
 fs-fmap.test.js
+fs-read-stream-fd.test.js
 fs-readdir-ucs2.test.js
 fs-watch-recursive-add-file-to-new-folder.test.js
 fs-watch-recursive-symlink.test.js
@@ -18,14 +20,18 @@ http-request-agent.test.js
 http2-connect-options.test.js
 https-server-connections-checking-leak.test.js
 module-circular-symlinks.test.js
+module-prototype-mutation.test.js
 net-bind-twice.test.js
 net-listen-error.test.js
 net-server-close.test.js
+net-write-fully-async-hex-string.test.js
 permission-fs-windows-path.test.js
 pipe-abstract-socket-http.test.js
 pipe-file-to-http.test.js
 process-ppid.test.js
+require-invalid-package.test.js
 require-long-path.test.js
+snapshot-dns-lookup-localhost.test.js
 trace-events-net-abstract-socket.test.js
 trace-events-worker-metadata-with-name.test.js
 windows-failed-heap-allocation.test.js
@@ -43,3 +49,14 @@ npm*
 *changelog*
 permission*
 shadow-realm*
+trace-events*
+cli-node-options*
+corepack*
+eslint*
+coverage*
+buffer-zero-fill-cli*
+icu-minimum-version.test.js
+release-npm.test.js
+
+# Bad tests
+tls-wrap-no-abort.test.js

@@ -19,7 +19,7 @@ mv -Force -ErrorAction SilentlyContinue build\build\* build
 Set-Location build
 
 # HACK: See scripts/build-bun-cpp.ps1
-Join-File -Path "$(Resolve-Path .)\bun-cpp-objects.a" -Verbose -DeletePartFiles
+Join-File -Path "$(Resolve-Path .)\libbun.a" -Verbose -DeletePartFiles
 
 cmake .. @CMAKE_FLAGS `
   -G Ninja `
@@ -28,7 +28,7 @@ cmake .. @CMAKE_FLAGS `
   -DNO_CONFIGURE_DEPENDS=1 `
   -DBUN_LINK_ONLY=1 `
   "-DBUN_DEPS_OUT_DIR=$(Resolve-Path bun-deps)" `
-  "-DBUN_CPP_ARCHIVE=$(Resolve-Path bun-cpp-objects.a)" `
+  "-DBUN_CPP_ARCHIVE=$(Resolve-Path libbun.a)" `
   "-DBUN_ZIG_OBJ_DIR=$(Resolve-Path .)"
 if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed" }
 

@@ -909,10 +909,14 @@ pub const PackageManifest = struct {
                 .{ .mode = .read_only },
             ) catch return null;
             defer cache_file.close();
-            const bytes = try cache_file.readToEndAllocOptions(
+            return loadByFile(allocator, scope, cache_file);
+        }
+
+        pub fn loadByFile(allocator: std.mem.Allocator, scope: *const Registry.Scope, manifest_file: std.fs.File) !?PackageManifest {
+            const bytes = try manifest_file.readToEndAllocOptions(
                 allocator,
                 std.math.maxInt(u32),
-                cache_file.getEndPos() catch null,
+                manifest_file.getEndPos() catch null,
                 @alignOf(u8),
                 null,
             );
@@ -957,6 +961,96 @@ pub const PackageManifest = struct {
             }
 
             return package_manifest;
+        }
+    };
+
+    pub const bindings = struct {
+        const JSC = bun.JSC;
+        const JSValue = JSC.JSValue;
+        const JSGlobalObject = JSC.JSGlobalObject;
+        const CallFrame = JSC.CallFrame;
+        const ZigString = JSC.ZigString;
+
+        pub fn generate(global: *JSGlobalObject) JSValue {
+            const obj = JSValue.createEmptyObject(global, 1);
+            const parseManifestString = ZigString.static("parseManifest");
+            obj.put(global, parseManifestString, JSC.createCallback(global, parseManifestString, 2, jsParseManifest));
+            return obj;
+        }
+
+        pub fn jsParseManifest(global: *JSGlobalObject, callFrame: *CallFrame) JSValue {
+            const args = callFrame.arguments(2).slice();
+            if (args.len < 2 or !args[0].isString() or !args[1].isString()) {
+                global.throw("expected manifest filename and registry string arguments", .{});
+                return .zero;
+            }
+
+            const manifest_filename_str = args[0].toBunString(global);
+            defer manifest_filename_str.deref();
+
+            const manifest_filename = manifest_filename_str.toUTF8(bun.default_allocator);
+            defer manifest_filename.deinit();
+
+            const registry_str = args[1].toBunString(global);
+            defer registry_str.deref();
+
+            const registry = registry_str.toUTF8(bun.default_allocator);
+            defer registry.deinit();
+
+            const manifest_file = std.fs.openFileAbsolute(manifest_filename.slice(), .{}) catch |err| {
+                global.throw("failed to open manifest file \"{s}\": {s}", .{ manifest_filename.slice(), @errorName(err) });
+                return .zero;
+            };
+            defer manifest_file.close();
+
+            const scope: Registry.Scope = .{
+                .url_hash = Registry.Scope.hash(strings.withoutTrailingSlash(registry.slice())),
+                .url = .{
+                    .host = strings.withoutTrailingSlash(strings.withoutPrefixComptime(registry.slice(), "http://")),
+                    .hostname = strings.withoutTrailingSlash(strings.withoutPrefixComptime(registry.slice(), "http://")),
+                    .href = registry.slice(),
+                    .origin = strings.withoutTrailingSlash(registry.slice()),
+                    .protocol = if (strings.indexOfChar(registry.slice(), ':')) |colon| registry.slice()[0..colon] else "",
+                },
+            };
+
+            const maybe_package_manifest = Serializer.loadByFile(bun.default_allocator, &scope, manifest_file) catch |err| {
+                global.throw("failed to load manifest file: {s}", .{@errorName(err)});
+                return .zero;
+            };
+
+            const package_manifest: PackageManifest = maybe_package_manifest orelse {
+                global.throw("manifest is invalid ", .{});
+                return .zero;
+            };
+
+            var buf: std.ArrayListUnmanaged(u8) = .{};
+            const writer = buf.writer(bun.default_allocator);
+
+            // TODO: we can add more information. for now just versions is fine
+
+            writer.print("{{\"name\":\"{s}\",\"versions\":[", .{package_manifest.name()}) catch {
+                global.throwOutOfMemory();
+                return .zero;
+            };
+
+            for (package_manifest.versions, 0..) |version, i| {
+                if (i == package_manifest.versions.len - 1)
+                    writer.print("\"{}\"]}}", .{version.fmt(package_manifest.string_buf)}) catch {
+                        global.throwOutOfMemory();
+                        return .zero;
+                    }
+                else
+                    writer.print("\"{}\",", .{version.fmt(package_manifest.string_buf)}) catch {
+                        global.throwOutOfMemory();
+                        return .zero;
+                    };
+            }
+
+            var result = bun.String.fromUTF8(buf.items);
+            defer result.deref();
+
+            return result.toJSByParseJSON(global);
         }
     };
 

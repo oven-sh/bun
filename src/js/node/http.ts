@@ -259,9 +259,9 @@ function Agent(options = kEmptyObject) {
   if (options.noDelay === undefined) options.noDelay = true;
 
   // Don't confuse net and make it think that we're connecting to a pipe
-  this.requests = kEmptyObject;
-  this.sockets = kEmptyObject;
-  this.freeSockets = kEmptyObject;
+  this.requests = Object.create(null);
+  this.sockets = Object.create(null);
+  this.freeSockets = Object.create(null);
 
   this.keepAliveMsecs = options.keepAliveMsecs || 1000;
   this.keepAlive = options.keepAlive || false;

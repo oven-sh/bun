@@ -5,6 +5,7 @@ child-process-spawn-controller.test.js
 child-process-stdio-inherit.test.js
 cluster-fork-env.test.js
 cluster-kill-infinite-loop.test.js
+file-write-stream4.test.js
 file-write-stream5.test.js
 filehandle-close.test.js
 fs-existssync-false.test.js

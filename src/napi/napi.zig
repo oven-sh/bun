@@ -1335,28 +1335,24 @@ pub export fn napi_add_env_cleanup_hook(env: napi_env, fun: ?*const fn (?*anyopa
 }
 pub export fn napi_remove_env_cleanup_hook(env: napi_env, fun: ?*const fn (?*anyopaque) callconv(.C) void, arg: ?*anyopaque) napi_status {
     log("napi_remove_env_cleanup_hook", .{});
-    if (env.bunVM().rare_data == null or fun == null)
+
+    // Avoid looking up env.bunVM().
+    if (bun.Global.isExiting()) {
+        return .ok;
+    }
+
+    const vm = JSC.VirtualMachine.get();
+
+    if (vm.rare_data == null or fun == null or vm.isShuttingDown())
         return .ok;
 
-    var rare_data = env.bunVM().rare_data.?;
-    var hook = rare_data.cleanup_hook orelse return .ok;
-    const cmp = JSC.RareData.CleanupHook.from(env, arg, fun.?);
-    if (hook.eql(cmp)) {
-        env.bunVM().allocator.destroy(hook);
-        rare_data.cleanup_hook = null;
-        rare_data.tail_cleanup_hook = null;
-    }
-    while (hook.next) |current| {
+    var rare_data = vm.rare_data.?;
+    const cmp = JSC.RareData.CleanupHook.init(env, arg, fun.?);
+    for (rare_data.cleanup_hooks.items, 0..) |*hook, i| {
         if (hook.eql(cmp)) {
-            if (current.next) |next| {
-                hook.next = next;
-            } else {
-                hook.next = null;
-            }
-            env.bunVM().allocator.destroy(current);
-            return .ok;
+            _ = rare_data.cleanup_hooks.orderedRemove(i);
+            break;
         }
-        hook = current;
     }
 
     return .ok;

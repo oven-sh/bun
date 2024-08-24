@@ -126,6 +126,7 @@ src/deps/zig-clap/.gitattributes
 src/deps/zig-clap/.github
 src/deps/zig-clap/example
 src/deps/zig-clap/README.md
+src/deps/brotli
 src/fallback.version
 src/js/out/DebugPath.h
 src/js/out/functions*

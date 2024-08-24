@@ -2,6 +2,10 @@ include(cmake/Utils.cmake)
 
 parse_option(CMAKE_BUILD_TYPE "Debug|Release|RelWithDebInfo|MinSizeRel" "The build type to use" REQUIRED)
 
+list(APPEND CMAKE_ARGS
+  -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+)
+
 set_if(DEFAULT_IF_RELEASE "Release|RelWithDebInfo|MinSizeRel" CMAKE_BUILD_TYPE)
 set_if(DEFAULT_IF_DEBUG "Debug|RelWithDebInfo" CMAKE_BUILD_TYPE)
 
@@ -140,7 +144,6 @@ if(NOT WIN32 AND NOT APPLE)
 endif()
 
 parse_option(USE_STATIC_LIBATOMIC BOOL "If libatomic should be statically linked" ${DEFAULT_USE_STATIC_LIBATOMIC})
-
 parse_option(USE_CUSTOM_ZLIB BOOL "Use Bun's recommended version of zlib" ON)
 parse_option(USE_CUSTOM_LIBDEFLATE BOOL "Use Bun's recommended version of libdeflate" ON)
 parse_option(USE_CUSTOM_BORINGSSL BOOL "Use Bun's recommended version of BoringSSL" ON)

@@ -79,6 +79,8 @@ macro(find_llvm_program variable program_name)
       "   ${LLVM_INSTALL_COMMAND}\n")
   endif()
 
+  list(APPEND CMAKE_ARGS -D${variable}=${${variable}})
+  
   message(STATUS "Set ${variable}: ${${variable}}")
 endmacro()
 

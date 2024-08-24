@@ -1,0 +1,21 @@
+include(cmake/Utils.cmake)
+
+build_dependency(
+  NAME
+    brotli
+  REPOSITORY
+    https://github.com/google/brotli.git
+  TAG
+    v1.1.0
+  LIBRARIES
+    brotlicommon
+    brotlidec
+    brotlienc
+  INCLUDES
+    c/include
+  CMAKE_ARGS
+    -DBUILD_SHARED_LIBS=OFF
+    -DBROTLI_BUILD_TOOLS=OFF
+    -DBROTLI_EMSCRIPTEN=OFF
+    -DBROTLI_DISABLE_TESTS=ON
+)

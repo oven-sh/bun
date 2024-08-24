@@ -13,6 +13,7 @@ set(CACHE_PATH ${CWD}/.cache)
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
 
+set(CMAKE_ARGS "")
 set(CMAKE_COLOR_DIAGNOSTICS ON)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_C_STANDARD 17)
@@ -730,22 +731,7 @@ else()
 endif()
 
 # -- Brotli --
-set(BROTLI_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/deps/brotli")
-file(GLOB BROTLI_FILES ${CONFIGURE_DEPENDS}
-    "${BROTLI_SRC}/common/*.c"
-    "${BROTLI_SRC}/enc/*.c"
-    "${BROTLI_SRC}/dec/*.c"
-)
-add_library(brotli STATIC ${BROTLI_FILES})
-target_include_directories(brotli PRIVATE "${BROTLI_SRC}/include")
-target_compile_definitions(brotli PRIVATE "BROTLI_STATIC")
-
-if(WIN32)
-    target_compile_options(brotli PRIVATE /MT /U_DLL)
-endif()
-
-target_link_libraries(${bun} PRIVATE brotli)
-include_directories("${BUN_DEPS_DIR}/brotli/include")
+include(cmake/BuildBrotli.cmake)
 
 if(USE_CUSTOM_LSHPACK)
     include_directories(${BUN_DEPS_DIR}/ls-hpack)

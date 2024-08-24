@@ -71,10 +71,16 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
     String combinedValue = normalizedValue;
     HTTPHeaderName headerName;
     if (findHTTPHeaderName(name, headerName)) {
+        auto index = headers.indexOf(headerName);
 
         if (headerName != HTTPHeaderName::SetCookie) {
-            if (headers.contains(headerName)) {
-                combinedValue = makeString(headers.get(headerName), ", "_s, normalizedValue);
+            if (index.isValid()) {
+                auto existing = headers.getIndex(index);
+                if (headerName == HTTPHeaderName::Cookie) {
+                    combinedValue = makeString(existing, "; "_s, normalizedValue);
+                } else {
+                    combinedValue = makeString(existing, ", "_s, normalizedValue);
+                }
             }
         }
 
@@ -86,22 +92,26 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
             return {};
 
         if (headerName != HTTPHeaderName::SetCookie) {
-            headers.set(headerName, combinedValue);
+            if (!headers.setIndex(index, combinedValue))
+                headers.set(headerName, combinedValue);
         } else {
             headers.add(headerName, normalizedValue);
         }
 
         return {};
     }
-
-    if (headers.contains(name))
-        combinedValue = makeString(headers.get(name), ", "_s, normalizedValue);
+    auto index = headers.indexOf(name);
+    if (index.isValid()) {
+        combinedValue = makeString(headers.getIndex(index), ", "_s, normalizedValue);
+    }
     auto canWriteResult = canWriteHeader(name, normalizedValue, combinedValue, guard);
     if (canWriteResult.hasException())
         return canWriteResult.releaseException();
     if (!canWriteResult.releaseReturnValue())
         return {};
-    headers.set(name, combinedValue);
+
+    if (!headers.setIndex(index, combinedValue))
+        headers.set(name, combinedValue);
 
     // if (guard == FetchHeaders::Guard::RequestNoCors)
     //     removePrivilegedNoCORSRequestHeaders(headers);

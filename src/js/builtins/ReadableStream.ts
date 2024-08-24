@@ -112,6 +112,8 @@ export function readableStreamToArray(stream: ReadableStream): Promise<unknown[]
   if (underlyingSource !== undefined) {
     return $readableStreamToArrayDirect(stream, underlyingSource);
   }
+  if ($isReadableStreamLocked(stream)) return Promise.$reject($makeTypeError("ReadableStream is locked"));
+
   return $readableStreamIntoArray(stream);
 }
 
@@ -122,6 +124,7 @@ export function readableStreamToText(stream: ReadableStream): Promise<string> {
   if (underlyingSource !== undefined) {
     return $readableStreamToTextDirect(stream, underlyingSource);
   }
+  if ($isReadableStreamLocked(stream)) return Promise.$reject($makeTypeError("ReadableStream is locked"));
   return $readableStreamIntoText(stream);
 }
 
@@ -133,6 +136,7 @@ export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>)
   if (underlyingSource !== undefined) {
     return $readableStreamToArrayBufferDirect(stream, underlyingSource, false);
   }
+  if ($isReadableStreamLocked(stream)) return Promise.$reject($makeTypeError("ReadableStream is locked"));
 
   var result = Bun.readableStreamToArray(stream);
   if ($isPromise(result)) {
@@ -152,6 +156,7 @@ export function readableStreamToBytes(stream: ReadableStream<ArrayBuffer>): Prom
   if (underlyingSource !== undefined) {
     return $readableStreamToArrayBufferDirect(stream, underlyingSource, true);
   }
+  if ($isReadableStreamLocked(stream)) return Promise.$reject($makeTypeError("ReadableStream is locked"));
 
   var result = Bun.readableStreamToArray(stream);
   if ($isPromise(result)) {
@@ -168,6 +173,7 @@ export function readableStreamToFormData(
   stream: ReadableStream<ArrayBuffer>,
   contentType: string | ArrayBuffer | ArrayBufferView,
 ): Promise<FormData> {
+  if ($isReadableStreamLocked(stream)) return Promise.$reject($makeTypeError("ReadableStream is locked"));
   return Bun.readableStreamToBlob(stream).then(blob => {
     return FormData.from(blob, contentType);
   });
@@ -175,11 +181,13 @@ export function readableStreamToFormData(
 
 $linkTimeConstant;
 export function readableStreamToJSON(stream: ReadableStream): unknown {
+  if ($isReadableStreamLocked(stream)) return Promise.$reject($makeTypeError("ReadableStream is locked"));
   return Promise.resolve(Bun.readableStreamToText(stream)).then(globalThis.JSON.parse);
 }
 
 $linkTimeConstant;
 export function readableStreamToBlob(stream: ReadableStream): Promise<Blob> {
+  if ($isReadableStreamLocked(stream)) return Promise.$reject($makeTypeError("ReadableStream is locked"));
   return Promise.resolve(Bun.readableStreamToArray(stream)).then(array => new Blob(array));
 }
 

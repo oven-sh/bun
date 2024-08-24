@@ -2376,14 +2376,13 @@ describe("fs/promises", () => {
   }, 100000);
 
   for (let withFileTypes of [false, true] as const) {
-    const warmup = 1;
     const iterCount = 200;
     const full = resolve(import.meta.dir, "../");
 
     const doIt = async () => {
-      for (let i = 0; i < warmup; i++) {
-        await promises.readdir(full, { withFileTypes });
-      }
+      await Promise.all(
+        Array.from({ length: iterCount }, () => promises.readdir(full, { withFileTypes, recursive: true })),
+      );
 
       const maxFD = getMaxFD();
       const pending = new Array(iterCount);

@@ -306,23 +306,6 @@ pub fn DeriveParse(comptime T: type) type {
         // }
     };
 }
-pub fn DeriveParse2(comptime T: type) type {
-    // TODO: this has to work for enums and union(enums)
-    return struct {
-        pub fn parse(input: *Parser) Error!T {
-            // to implement this, we need to cargo expand the derive macro
-            _ = input; // autofix
-            @compileError(todo_stuff.depth);
-        }
-
-        // pub fn parse(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        //     // to implement this, we need to cargo expand the derive macro
-        //     _ = this; // autofix
-        //     _ = dest; // autofix
-        //     @compileError(todo_stuff.depth);
-        // }
-    };
-}
 
 pub fn DeriveToCss(comptime T: type) type {
     // TODO: this has to work for enums and union(enums)
@@ -2144,13 +2127,23 @@ pub const Parser = struct {
         comptime T: type,
         comptime parse_one: *const fn (*Parser) Error!T,
     ) Error!ArrayList(T) {
-        return this.parseCommaSeparatedInternal(T, parse_one, false);
+        return this.parseCommaSeparatedInternal(T, {}, voidWrap(T, parse_one), false);
+    }
+
+    pub fn parseCommaSeparatedWithCtx(
+        this: *Parser,
+        comptime T: type,
+        closure: anytype,
+        comptime parse_one: *const fn (@TypeOf(closure), *Parser) Error!T,
+    ) Error!ArrayList(T) {
+        return this.parseCommaSeparatedInternal(T, closure, parse_one, false);
     }
 
     fn parseCommaSeparatedInternal(
         this: *Parser,
         comptime T: type,
-        comptime parse_one: *const fn (*Parser) Error!T,
+        closure: anytype,
+        comptime parse_one: *const fn (@TypeOf(closure), *Parser) Error!T,
         ignore_errors: bool,
     ) Error!ArrayList(T) {
         // Vec grows from 0 to 4 by default on first push().  So allocate with
@@ -2204,7 +2197,7 @@ pub const Parser = struct {
         return result;
     }
 
-    pub fn parseNestedBlock(this: *Parser, comptime T: type, closure: anytype, comptime parsefn: *const fn (@TypeOf(closure), *Parser) Error!T) Error!T {
+    pub inline fn parseNestedBlock(this: *Parser, comptime T: type, closure: anytype, comptime parsefn: *const fn (@TypeOf(closure), *Parser) Error!T) Error!T {
         return parse_nested_block(this, T, closure, parsefn);
     }
 
@@ -4652,6 +4645,16 @@ pub const to_css = struct {
         var buf: [MAX_LEN]u8 = undefined;
         const str = std.fmt.bufPrint(buf[0..], "{d}", .{this}) catch unreachable;
         try dest.writeStr(str);
+    }
+
+    pub fn float32(this: f32, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        var scratch: [26]u8 = undefined;
+        // PERF: Compare this to Rust dtoa-short crate
+        const floats = std.fmt.formatFloat(scratch[0..], this, .{
+            .mode = .scientific,
+            .precision = 6,
+        }) catch unreachable;
+        return dest.writeStr(floats);
     }
 
     fn maxDigits(comptime T: type) usize {

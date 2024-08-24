@@ -23,10 +23,24 @@ pub const CSSNumberFns = struct {
         return num;
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
-        _ = this; // autofix
-        _ = dest; // autofix
-        @compileError(css.todo_stuff.depth);
+    pub fn toCss(this: *const CSSNumber, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        const number: f32 = this.*;
+        if (number != 0.0 and @abs(number) < 1.0) {
+            // PERF: Use temp allocation here?
+            // why the extra allocation anyway?
+            var s = ArrayList(u8){};
+            const writer = s.writer(@compileError(css.todo_stuff.think_about_allocator));
+            const W2 = @TypeOf(writer);
+            try css.to_css.float32(number, W2, writer);
+            if (number < 0.0) {
+                try dest.writeChar('-');
+                dest.writeStr(bun.strings.trimLeadingPattern2(s, '-', '0'));
+            } else {
+                try dest.writeStr(bun.strings.trimLeadingChar(s, '0'));
+            }
+        } else {
+            return css.to_css.float32(number, W, dest);
+        }
     }
 };
 

@@ -9,11 +9,18 @@ const CSSNumber = css.css_values.number.CSSNumber;
 const CSSNumberFns = css.css_values.number.CSSNumberFns;
 const Calc = css.css_values.calc.Calc;
 
+const Tag = enum(u8) {
+    deg = 1,
+    rad = 2,
+    grad = 4,
+    turn = 8,
+};
+
 /// A CSS [`<angle>`](https://www.w3.org/TR/css-values-4/#angles) value.
 ///
 /// Angles may be explicit or computed by `calc()`, but are always stored and serialized
 /// as their computed value.
-pub const Angle = union(enum) {
+pub const Angle = union(Tag) {
     /// An angle in degrees. There are 360 degrees in a full circle.
     deg: CSSNumber,
     /// An angle in radians. There are 2π radians in a full circle.
@@ -153,6 +160,79 @@ pub const Angle = union(enum) {
     pub fn intoCalc(this: *const Angle, allocator: std.mem.Allocator) Calc(Angle) {
         return Calc(Angle){
             .value = bun.create(allocator, Angle, this.*),
+        };
+    }
+
+    pub fn add(this: *const Angle, rhs: *const Angle) Angle {
+        const addfn = struct {
+            pub fn add(a: f32, b: f32) f32 {
+                return a + b;
+            }
+        };
+        return Angle.op(this, rhs, addfn.add);
+    }
+
+    pub fn tryOp(
+        this: *const Angle,
+        other: *const Angle,
+        comptime op_fn: *const fn (a: f32, b: f32) f32,
+    ) ?Angle {
+        return Angle.op(this, other, op_fn);
+    }
+
+    pub fn tryOpTo(
+        this: *const Angle,
+        other: *const Angle,
+        comptime T: type,
+        comptime op_fn: *const fn (a: f32, b: f32) T,
+    ) ?T {
+        return Angle.opTo(this, other, T, op_fn);
+    }
+
+    pub fn op(
+        this: *const Angle,
+        other: *const Angle,
+        comptime op_fn: *const fn (a: f32, b: f32) f32,
+    ) Angle {
+        // PERF: not sure if this is faster
+        const self_tag: u8 = @intFromEnum(this.*);
+        const other_tag: u8 = @intFromEnum(this.*);
+        const DEG: u8 = @intFromEnum(Tag.deg);
+        const GRAD: u8 = @intFromEnum(Tag.grad);
+        const RAD: u8 = @intFromEnum(Tag.rad);
+        const TURN: u8 = @intFromEnum(Tag.trun);
+
+        const switch_val: u8 = self_tag | other_tag;
+        return switch (switch_val) {
+            DEG | DEG => Angle{ .deg = op_fn(this.deg, other.deg) },
+            RAD | RAD => Angle{ .rad = op_fn(this.rad, other.rad) },
+            GRAD | GRAD => Angle{ .grad = op_fn(this.grad, other.grad) },
+            TURN | TURN => Angle{ .turn = op_fn(this.turn, other.turn) },
+            else => Angle{ .deg = op_fn(this.toDegrees(), other.toDegrees()) },
+        };
+    }
+
+    pub fn opTo(
+        this: *const Angle,
+        other: *const Angle,
+        comptime T: type,
+        comptime op_fn: *const fn (a: f32, b: f32) T,
+    ) T {
+        // PERF: not sure if this is faster
+        const self_tag: u8 = @intFromEnum(this.*);
+        const other_tag: u8 = @intFromEnum(this.*);
+        const DEG: u8 = @intFromEnum(Tag.deg);
+        const GRAD: u8 = @intFromEnum(Tag.grad);
+        const RAD: u8 = @intFromEnum(Tag.rad);
+        const TURN: u8 = @intFromEnum(Tag.trun);
+
+        const switch_val: u8 = self_tag | other_tag;
+        return switch (switch_val) {
+            DEG | DEG => Angle{ .deg = op_fn(this.deg, other.deg) },
+            RAD | RAD => Angle{ .rad = op_fn(this.rad, other.rad) },
+            GRAD | GRAD => Angle{ .grad = op_fn(this.grad, other.grad) },
+            TURN | TURN => Angle{ .turn = op_fn(this.turn, other.turn) },
+            else => Angle{ .deg = op_fn(this.toDegrees(), other.toDegrees()) },
         };
     }
 };

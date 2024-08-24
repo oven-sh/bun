@@ -4238,6 +4238,24 @@ pub fn trimLeadingChar(slice: []const u8, char: u8) []const u8 {
     return "";
 }
 
+/// Trim leading pattern of 2 bytes
+///
+/// e.g.
+/// `trimLeadingPattern2("abcdef", 'a', 'b') == "cdef"`
+pub fn trimLeadingPattern2(slice_: []const u8, comptime byte1: u8, comptime byte2: u8) []const u8 {
+    const pattern: u16 = comptime @as(byte1, u16) << 8 | @as(u16, byte2);
+    var slice = slice_;
+    while (slice.len >= 2) {
+        const sliceu16: [*]const u16 = @ptrCast(slice.ptr);
+        if (sliceu16[0] == pattern) {
+            slice = slice[2..];
+        } else {
+            break;
+        }
+    }
+    return slice;
+}
+
 /// Get the line number and the byte offsets of `line_range_count` above the desired line number
 /// The final element is the end index of the desired line
 const LineRange = struct {

@@ -2381,11 +2381,11 @@ describe("fs/promises", () => {
     const full = resolve(import.meta.dir, "../");
 
     const doIt = async () => {
+      const maxFD = getMaxFD();
       for (let i = 0; i < warmup; i++) {
         await promises.readdir(full, { withFileTypes });
       }
 
-      const maxFD = getMaxFD();
       const pending = new Array(iterCount);
       for (let i = 0; i < iterCount; i++) {
         pending[i] = promises.readdir(full, { recursive: true, withFileTypes });

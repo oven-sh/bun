@@ -111,6 +111,9 @@ fn Table(
 
 pub const OutdatedCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
+        Output.prettyErrorln("<r><b>bun outdated <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+        Output.flush();
+
         const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .outdated);
 
         const manager = PackageManager.init(ctx, cli, .outdated) catch |err| {
@@ -182,9 +185,6 @@ pub const OutdatedCommand = struct {
         const root_pkg_id = manager.root_package_id.get(lockfile, manager.workspace_name_hash);
         if (root_pkg_id == invalid_package_id) return;
         const root_pkg_deps = lockfile.packages.items(.dependencies)[root_pkg_id];
-
-        Output.prettyErrorln("<r><b>bun outdated <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
-        Output.flush();
 
         try updateManifestsIfNecessary(manager, log_level, root_pkg_deps);
 

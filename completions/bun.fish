@@ -179,6 +179,7 @@ complete -c bun -n "__fish_use_subcommand" -a "remove" -d "Remove a dependency f
 complete -c bun -n "__fish_use_subcommand" -a "add" -d "Add a dependency to package.json" -f
 complete -c bun -n "__fish_use_subcommand" -a "init" -d "Initialize a Bun project in this directory" -f
 complete -c bun -n "__fish_use_subcommand" -a "link" -d "Register or link a local npm package" -f
-complete -c bun -n "__fish_use_subcommand" -a "link" -d "Unregister a local npm package" -f
+complete -c bun -n "__fish_use_subcommand" -a "unlink" -d "Unregister a local npm package" -f
 complete -c bun -n "__fish_use_subcommand" -a "pm" -d "Additional package management utilities" -f
 complete -c bun -n "__fish_use_subcommand" -a "x" -d "Execute a package binary, installing if needed" -f
+complete -c bun -n "__fish_use_subcommand" -a "outdated" -d "Display the latest versions of outdated dependencies" -f

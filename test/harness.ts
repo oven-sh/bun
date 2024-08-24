@@ -296,7 +296,7 @@ const binaryTypes = {
   "int8array": Int8Array,
   "int16array": Int16Array,
   "int32array": Int32Array,
-  "float16array": Float16Array,
+  "float16array": globalThis.Float16Array,
   "float32array": Float32Array,
   "float64array": Float64Array,
 } as const;

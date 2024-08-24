@@ -72,8 +72,6 @@ pub const ZlibEncoder = struct {
             return .zero;
         };
 
-        this.poll_ref.ref(globalThis.bunVM());
-
         const out = this.toJS(globalThis);
         this.callback_value.set(globalThis, callback);
 
@@ -85,7 +83,6 @@ pub const ZlibEncoder = struct {
     }
 
     pub fn deinit(this: *@This()) void {
-        this.poll_ref.unref(this.globalThis.bunVM());
         this.input.deinit();
         this.output.deinit(bun.default_allocator);
         this.callback_value.deinit();
@@ -177,6 +174,7 @@ pub const ZlibEncoder = struct {
 
             this.input.writeItem(input_to_queue) catch unreachable;
         }
+        this.poll_ref.ref(globalThis.bunVM());
         JSC.WorkPool.schedule(&task.task);
 
         return .undefined;
@@ -238,6 +236,8 @@ pub const ZlibEncoder = struct {
         }
 
         pub fn run(this: *EncodeJob) void {
+            const vm = this.encoder.globalThis.bunVMConcurrently();
+            defer this.encoder.poll_ref.unrefConcurrently(vm);
             defer {
                 _ = this.encoder.has_pending_activity.fetchSub(1, .monotonic);
             }
@@ -316,8 +316,8 @@ pub const ZlibEncoder = struct {
             }
 
             if (this.is_async and any) {
-                var vm = this.encoder.globalThis.bunVMConcurrently();
                 _ = this.encoder.has_pending_activity.fetchAdd(1, .monotonic);
+                this.encoder.poll_ref.refConcurrently(vm);
                 this.encoder.poll_ref.refConcurrently(vm);
                 vm.enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(this.encoder)));
             }
@@ -417,8 +417,6 @@ pub const ZlibDecoder = struct {
             return .zero;
         };
 
-        this.poll_ref.ref(globalThis.bunVM());
-
         const out = this.toJS(globalThis);
         this.callback_value.set(globalThis, callback);
 
@@ -430,7 +428,6 @@ pub const ZlibDecoder = struct {
     }
 
     pub fn deinit(this: *@This()) void {
-        this.poll_ref.unref(this.globalThis.bunVM());
         this.input.deinit();
         this.output.deinit(bun.default_allocator);
         this.callback_value.deinit();
@@ -522,6 +519,7 @@ pub const ZlibDecoder = struct {
 
             this.input.writeItem(input_to_queue) catch unreachable;
         }
+        this.poll_ref.ref(globalThis.bunVM());
         JSC.WorkPool.schedule(&task.task);
 
         return .undefined;
@@ -583,6 +581,8 @@ pub const ZlibDecoder = struct {
         }
 
         pub fn run(this: *DecodeJob) void {
+            const vm = this.decoder.globalThis.bunVMConcurrently();
+            defer this.decoder.poll_ref.unrefConcurrently(vm);
             defer {
                 _ = this.decoder.has_pending_activity.fetchSub(1, .monotonic);
             }
@@ -657,8 +657,8 @@ pub const ZlibDecoder = struct {
             }
 
             if (this.is_async and any) {
-                var vm = this.decoder.globalThis.bunVMConcurrently();
                 _ = this.decoder.has_pending_activity.fetchAdd(1, .monotonic);
+                this.decoder.poll_ref.refConcurrently(vm);
                 this.decoder.poll_ref.refConcurrently(vm);
                 vm.enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(this.decoder)));
             }

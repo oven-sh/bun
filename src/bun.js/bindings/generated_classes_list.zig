@@ -80,4 +80,6 @@ pub const Classes = struct {
     pub const DeflateDecoder = JSC.API.DeflateDecoder;
     pub const GzipEncoder = JSC.API.GzipEncoder;
     pub const GzipDecoder = JSC.API.GzipDecoder;
+    pub const ZlibEncoder = JSC.API.ZlibEncoder;
+    pub const ZlibDecoder = JSC.API.ZlibDecoder;
 };

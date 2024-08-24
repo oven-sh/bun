@@ -11,6 +11,8 @@ const createDeflateEncoder = $newZigFunction("node_zlib_binding.zig", "createDef
 const createDeflateDecoder = $newZigFunction("node_zlib_binding.zig", "createDeflateDecoder", 3);
 const createGzipEncoder = $newZigFunction("node_zlib_binding.zig", "createGzipEncoder", 3);
 const createGzipDecoder = $newZigFunction("node_zlib_binding.zig", "createGzipDecoder", 3);
+const createZlibEncoder = $newZigFunction("node_zlib_binding.zig", "createZlibEncoder", 3);
+const createZlibDecoder = $newZigFunction("node_zlib_binding.zig", "createZlibDecoder", 3);
 
 const maxOutputLengthDefault = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModule.kMaxLength;
 
@@ -323,13 +325,13 @@ for (const ckey of Object.keys(codes)) {
 
 const methods = [
   [],
-  [Deflate, true, createDeflateEncoder],
-  [Inflate, false, createDeflateDecoder],
-  [Gzip, true, createGzipEncoder],
-  [Gunzip, false, createGzipDecoder],
-  [DeflateRaw, true, createDeflateEncoder],
-  [InflateRaw, false, createDeflateDecoder],
-  [Unzip, false, createGzipDecoder],
+  [Deflate, true, createZlibEncoder],
+  [Inflate, false, createZlibDecoder],
+  [Gzip, true, createZlibEncoder],
+  [Gunzip, false, createZlibDecoder],
+  [DeflateRaw, true, createZlibEncoder],
+  [InflateRaw, false, createZlibDecoder],
+  [Unzip, false, createZlibDecoder],
   [BrotliDecompress, false, createBrotliDecoder],
   [BrotliCompress, true, createBrotliEncoder],
 ];

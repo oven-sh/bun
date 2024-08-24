@@ -386,6 +386,8 @@ const DeflateDecoder = JSC.API.DeflateDecoder;
 const DeflateEncoder = JSC.API.DeflateEncoder;
 const GzipDecoder = JSC.API.GzipDecoder;
 const GzipEncoder = JSC.API.GzipEncoder;
+const ZlibDecoder = JSC.API.ZlibDecoder;
+const ZlibEncoder = JSC.API.ZlibEncoder;
 
 const ShellGlobTask = bun.shell.interpret.Interpreter.Expansion.ShellGlobTask;
 const ShellRmTask = bun.shell.Interpreter.Builtin.Rm.ShellRmTask;
@@ -474,6 +476,8 @@ pub const Task = TaggedPointerUnion(.{
     DeflateDecoder,
     GzipEncoder,
     GzipDecoder,
+    ZlibEncoder,
+    ZlibDecoder,
     ShellGlobTask,
     ShellRmTask,
     ShellRmDirTask,
@@ -1243,6 +1247,14 @@ pub const EventLoop = struct {
                 },
                 @field(Task.Tag, typeBaseName(@typeName(GzipDecoder))) => {
                     var any: *GzipDecoder = task.get(GzipDecoder).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ZlibEncoder))) => {
+                    var any: *ZlibEncoder = task.get(ZlibEncoder).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ZlibDecoder))) => {
+                    var any: *ZlibDecoder = task.get(ZlibDecoder).?;
                     any.runFromJSThread();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ProcessWaiterThreadTask))) => {

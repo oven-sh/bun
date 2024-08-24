@@ -55,6 +55,8 @@ pub const API = struct {
     pub const DeflateDecoder = @import("./bun.js/api/deflate.zig").DeflateDecoder;
     pub const GzipEncoder = @import("./bun.js/api/js_gzip.zig").GzipEncoder;
     pub const GzipDecoder = @import("./bun.js/api/js_gzip.zig").GzipDecoder;
+    pub const ZlibEncoder = @import("./bun.js/api/js_zlib.zig").ZlibEncoder;
+    pub const ZlibDecoder = @import("./bun.js/api/js_zlib.zig").ZlibDecoder;
 };
 pub const Postgres = @import("./sql/postgres.zig");
 pub const DNS = @import("./bun.js/api/bun/dns_resolver.zig");

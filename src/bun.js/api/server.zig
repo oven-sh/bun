@@ -5367,6 +5367,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             var topic = arguments.ptr[0].toSlice(globalThis, bun.default_allocator);
             defer topic.deinit();
+            if (topic.len == 0) {
+                return JSValue.jsNumber(0);
+            }
+
             if (globalThis.hasException()) {
                 return .zero;
             }

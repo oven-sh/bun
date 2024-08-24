@@ -4339,7 +4339,6 @@ pub const ServerWebSocket = struct {
         callframe: *JSC.CallFrame,
     ) JSValue {
         const args = callframe.arguments(4);
-
         if (args.len < 1) {
             log("publish()", .{});
             globalThis.throw("publish requires at least 1 argument", .{});
@@ -5353,6 +5352,26 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub const doReload = onReload;
         pub const doFetch = onFetch;
         pub const doRequestIP = JSC.wrapInstanceMethod(ThisServer, "requestIP", false);
+
+        pub fn doSubscriberCount(this: *ThisServer, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+            const arguments = callframe.arguments(1);
+            if (arguments.len < 1) {
+                globalThis.throwNotEnoughArguments("subscriberCount", 1, 0);
+                return .zero;
+            }
+
+            if (arguments.ptr[0].isEmptyOrUndefinedOrNull()) {
+                globalThis.throwInvalidArguments("subscriberCount requires a topic name as a string", .{});
+                return .zero;
+            }
+
+            var topic = arguments.ptr[0].toSlice(globalThis, bun.default_allocator);
+            defer topic.deinit();
+            if (globalThis.hasException()) {
+                return .zero;
+            }
+            return JSValue.jsNumber((this.app.num_subscribers(topic.slice())));
+        }
 
         pub usingnamespace NamespaceType;
         pub usingnamespace bun.New(@This());

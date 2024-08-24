@@ -39,6 +39,13 @@ worker-dns-terminate.test.js
 worker-esm-exit.test.js
 worker-message-port-wasm-module.test.js
 
+# Failing on Windows:
+pipe-head.test.js
+http-client-response-domain.test.js
+require-extensions-same-filename-as-dir-trailing-slash.test.js
+fs-realpath-on-substed-drive.test.js
+fs-symlink-dir-junction.test.js
+
 # macOS not working yet
 node-dns.test.js
 

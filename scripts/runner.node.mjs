@@ -443,6 +443,8 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
     BUN_INSTALL_CACHE_DIR: tmpdirPath,
     SHELLOPTS: isWindows ? "igncr" : undefined, // ignore "\r" on Windows
+    // Used in Node.js tests.
+    TEST_TMPDIR: tmpdirPath,
   };
   if (env) {
     Object.assign(bunEnv, env);

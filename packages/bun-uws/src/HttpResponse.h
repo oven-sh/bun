@@ -40,19 +40,27 @@ namespace uWS {
 /* Some pre-defined status constants to use with writeStatus */
 static const char *HTTP_200_OK = "200 OK";
 
-/* The general timeout for HTTP sockets */
-static const int HTTP_TIMEOUT_S = 10;
-
 template <bool SSL>
 struct HttpResponse : public AsyncSocket<SSL> {
     /* Solely used for getHttpResponseData() */
     template <bool> friend struct TemplatedApp;
     typedef AsyncSocket<SSL> Super;
 public:
+
     HttpResponseData<SSL> *getHttpResponseData() {
         return (HttpResponseData<SSL> *) Super::getAsyncSocketData();
     }
+    void setTimeout(uint8_t seconds) {
+        auto* data = getHttpResponseData();
+        data->idleTimeout = seconds;
+        Super::timeout(data->idleTimeout);
+    }
 
+    void resetTimeout() {
+        auto* data = getHttpResponseData();
+
+        Super::timeout(data->idleTimeout);
+    }
     /* Write an unsigned 32-bit integer in hex */
     void writeUnsignedHex(unsigned int value) {
         char buf[10];
@@ -140,7 +148,7 @@ public:
             }
 
             /* tryEnd can never fail when in chunked mode, since we do not have tryWrite (yet), only write */
-            Super::timeout(HTTP_TIMEOUT_S);
+            this->resetTimeout();
             return true;
         } else {
             /* Write content-length on first call */
@@ -183,7 +191,7 @@ public:
 
             /* If we are now at the end, start a timeout. Also start a timeout if we failed. */
             if (!success || httpResponseData->offset == totalSize) {
-                Super::timeout(HTTP_TIMEOUT_S);
+                this->resetTimeout();
             }
 
             /* Remove onAborted function if we reach the end */
@@ -358,7 +366,7 @@ public:
 
     HttpResponse *resume() {
         Super::resume();
-        Super::timeout(HTTP_TIMEOUT_S);
+        this->resetTimeout();
         return this;
     }
 
@@ -475,7 +483,7 @@ public:
 
         auto [written, failed] = Super::write(data.data(), (int) data.length());
         if (failed) {
-            Super::timeout(HTTP_TIMEOUT_S);
+            this->resetTimeout();
         }
 
         /* If we did not fail the write, accept more */
@@ -534,7 +542,7 @@ public:
             if (failed) {
                 /* For now we only have one single timeout so let's use it */
                 /* This behavior should equal the behavior in HttpContext when uncorking fails */
-                Super::timeout(HTTP_TIMEOUT_S);
+                this->resetTimeout();
             }
 
             /* If we have no backbuffer and we are connection close and we responded fully then close */

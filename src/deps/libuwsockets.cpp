@@ -1149,7 +1149,7 @@ extern "C"
       data->offset = offset;
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
       data->markDone();
-      us_socket_timeout(true, (us_socket_t *)uwsRes, uWS::HTTP_TIMEOUT_S);
+      uwsRes->resetTimeout();
     }
     else
     {
@@ -1158,9 +1158,20 @@ extern "C"
       data->offset = offset;
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
       data->markDone();
-      us_socket_timeout(0, (us_socket_t *)uwsRes, uWS::HTTP_TIMEOUT_S);
+      uwsRes->resetTimeout();
     }
   }
+
+  void uws_res_timeout(int ssl, uws_res_r res, uint8_t seconds) {
+    if (ssl) {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->setTimeout(seconds);
+    } else {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->setTimeout(seconds);
+    }
+  }
+
   void uws_res_end_without_body(int ssl, uws_res_r res, bool close_connection)
   {
     if (ssl)
@@ -1181,7 +1192,7 @@ extern "C"
       }
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
       data->markDone();
-      us_socket_timeout(true, (us_socket_t *)uwsRes, uWS::HTTP_TIMEOUT_S);
+      uwsRes->resetTimeout();
     }
     else
     {
@@ -1203,7 +1214,7 @@ extern "C"
       }
       data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;
       data->markDone();
-      us_socket_timeout(false, (us_socket_t *)uwsRes, uWS::HTTP_TIMEOUT_S);
+      uwsRes->resetTimeout();
     }
   }
 

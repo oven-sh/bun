@@ -23,6 +23,7 @@ public:
     };
 
     BUN_EXPORT static MaybeLocal<String> NewFromUtf8(Isolate* isolate, char const* data, NewStringType type, int length = -1);
+    BUN_EXPORT static MaybeLocal<String> NewFromOneByte(Isolate* isolate, const uint8_t* data, NewStringType type, int length);
 
     // length:     number of bytes in buffer (if negative, assume it is large enough)
     // nchars_ref: store number of code units written here

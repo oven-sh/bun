@@ -56,10 +56,10 @@ public:
             }
 
             ObjectLayout* v8_object = reinterpret_cast<ObjectLayout*>(raw_ptr);
-            if (v8_object->map.getPtr<Map>()->instance_type == InstanceType::HeapNumber) {
-                return JSC::jsDoubleNumber(*reinterpret_cast<double*>(&v8_object->ptr));
+            if (v8_object->map()->instance_type == InstanceType::HeapNumber) {
+                return JSC::jsDoubleNumber(v8_object->asDouble());
             } else {
-                return JSC::JSValue(reinterpret_cast<JSC::JSCell*>(v8_object->ptr));
+                return JSC::JSValue(v8_object->asCell());
             }
         }
     }
@@ -97,8 +97,8 @@ private:
             // root points to the V8 object. The first field of the V8 object is the map, and the
             // second is a pointer to some object we have stored. So we ignore the map and recover
             // the object pointer.
-            JSC::JSCell** v8_object = reinterpret_cast<JSC::JSCell**>(root.getPtr());
-            return TaggedPointer(v8_object[1]);
+            ObjectLayout* v8_object = root.getPtr<ObjectLayout>();
+            return TaggedPointer(v8_object->asRaw());
         }
     }
 };

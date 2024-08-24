@@ -2343,6 +2343,14 @@ declare module "bun" {
     unix?: never;
 
     /**
+     * Sets the the number of seconds to wait before timing out a connection
+     * due to inactivity.
+     *
+     * Default is `10` seconds.
+     */
+    idleTimeout?: number;
+
+    /**
      * Handle HTTP requests
      *
      * Respond to {@link Request} objects with a {@link Response} object.

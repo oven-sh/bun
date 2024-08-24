@@ -399,6 +399,11 @@ extern "C" JSC::EncodedJSValue WebCore__CommonAbortReason__toJS(JSC::JSGlobalObj
     return JSC::JSValue::encode(WebCore::toJS(globalObject, abortReason));
 }
 
+JSC::JSObject* Bun::createInvalidThisError(JSC::JSGlobalObject* globalObject, const String& message)
+{
+    return Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_THIS, message);
+}
+
 JSC::JSObject* Bun::createInvalidThisError(JSC::JSGlobalObject* globalObject, JSC::JSValue thisValue, const ASCIILiteral typeName)
 {
     if (thisValue.isEmpty() || thisValue.isUndefined()) {
@@ -408,4 +413,9 @@ JSC::JSObject* Bun::createInvalidThisError(JSC::JSGlobalObject* globalObject, JS
     // Pathological case: the this value returns a string which is extremely long or causes an out of memory error.
     const auto& typeString = thisValue.isString() ? String("a string"_s) : JSC::errorDescriptionForValue(globalObject, thisValue);
     return Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_THIS, makeString("Expected this to be instanceof "_s, typeName, ", but received "_s, typeString));
+}
+
+JSC::EncodedJSValue Bun::throwError(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, Bun::ErrorCode code, const WTF::String& message)
+{
+    return JSC::JSValue::encode(scope.throwException(globalObject, createError(globalObject, code, message)));
 }

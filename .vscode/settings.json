@@ -15,6 +15,9 @@
     "src/bun.js/WebKit": true,
     "src/deps/*/**": true,
     "test/node.js/upstream": true,
+    // This will fill up your whole search history.
+    "test/js/node/test/fixtures": true,
+    "test/js/node/test/common": true,
   },
   "search.followSymlinks": false,
   "search.useIgnoreFiles": true,

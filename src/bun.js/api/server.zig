@@ -143,7 +143,7 @@ pub const ServerConfig = struct {
     } = .{
         .tcp = .{},
     },
-
+    idleTimeout: u8 = 10, //TODO: should we match websocket default idleTimeout of 120?
     // TODO: use webkit URL parser instead of bun's
     base_url: URL = URL{},
     base_uri: string = "",
@@ -892,6 +892,24 @@ pub const ServerConfig = struct {
             if (!arg.isObject()) {
                 JSC.throwInvalidArguments("Bun.serve expects an object", .{}, global, exception);
                 return args;
+            }
+
+            if (arg.get(global, "idleTimeout")) |value| {
+                if (!value.isUndefinedOrNull()) {
+                    if (!value.isAnyInt()) {
+                        JSC.throwInvalidArguments("Bun.serve expects idleTimeout to be an integer", .{}, global, exception);
+
+                        return args;
+                    }
+
+                    const idleTimeout: u64 = @intCast(@max(value.toInt64(), 0));
+                    if (idleTimeout > 255) {
+                        JSC.throwInvalidArguments("Bun.serve expects idleTimeout to be 255 or less", .{}, global, exception);
+                        return args;
+                    }
+
+                    args.idleTimeout = @truncate(idleTimeout);
+                }
             }
 
             if (arg.getTruthy(global, "webSocket") orelse arg.getTruthy(global, "websocket")) |websocket_object| {
@@ -3914,7 +3932,7 @@ pub const WebSocketServer = struct {
                     globalObject.throwInvalidArguments("websocket expects idleTimeout to be 960 or less", .{});
                     return null;
                 } else if (idleTimeout > 0) {
-                    // uws does not allow idleTimeout to be between (0, 8],
+                    // uws does not allow idleTimeout to be between (0, 8),
                     // since its timer is not that accurate, therefore round up.
                     idleTimeout = @max(idleTimeout, 8);
                 }
@@ -6306,8 +6324,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     this.vm.eventLoop().debug.exit();
                 }
             }
-
             req.setYield(false);
+            resp.timeout(this.config.idleTimeout);
+
             var ctx = this.request_pool_allocator.tryGet() catch bun.outOfMemory();
             ctx.create(this, req, resp);
             this.vm.jsc.reportExtraMemory(@sizeOf(RequestContext));

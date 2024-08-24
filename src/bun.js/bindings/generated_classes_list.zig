@@ -76,10 +76,6 @@ pub const Classes = struct {
     pub const BrotliEncoder = JSC.API.BrotliEncoder;
     pub const BrotliDecoder = JSC.API.BrotliDecoder;
     pub const TextEncoderStreamEncoder = JSC.WebCore.TextEncoderStreamEncoder;
-    pub const DeflateEncoder = JSC.API.DeflateEncoder;
-    pub const DeflateDecoder = JSC.API.DeflateDecoder;
-    pub const GzipEncoder = JSC.API.GzipEncoder;
-    pub const GzipDecoder = JSC.API.GzipDecoder;
     pub const ZlibEncoder = JSC.API.ZlibEncoder;
     pub const ZlibDecoder = JSC.API.ZlibDecoder;
 };

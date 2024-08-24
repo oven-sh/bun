@@ -7,10 +7,6 @@ const ObjectDefineProperty = Object.defineProperty;
 
 const createBrotliEncoder = $newZigFunction("node_zlib_binding.zig", "createBrotliEncoder", 3);
 const createBrotliDecoder = $newZigFunction("node_zlib_binding.zig", "createBrotliDecoder", 3);
-const createDeflateEncoder = $newZigFunction("node_zlib_binding.zig", "createDeflateEncoder", 3);
-const createDeflateDecoder = $newZigFunction("node_zlib_binding.zig", "createDeflateDecoder", 3);
-const createGzipEncoder = $newZigFunction("node_zlib_binding.zig", "createGzipEncoder", 3);
-const createGzipDecoder = $newZigFunction("node_zlib_binding.zig", "createGzipDecoder", 3);
 const createZlibEncoder = $newZigFunction("node_zlib_binding.zig", "createZlibEncoder", 3);
 const createZlibDecoder = $newZigFunction("node_zlib_binding.zig", "createZlibDecoder", 3);
 

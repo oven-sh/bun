@@ -668,7 +668,7 @@ pub const Version = extern struct {
             const diff = this.version.whichVersionIsDifferent(this.other, this.buf, this.other_buf) orelse .none;
 
             switch (diff) {
-                .major => try writer.print(Output.prettyFmt("<b><red>{d}.{d}.{d}", true), .{
+                .major => try writer.print(Output.prettyFmt("<r><b><red>{d}.{d}.{d}", true), .{
                     this.version.major, this.version.minor, this.version.patch,
                 }),
                 .minor => {
@@ -677,7 +677,7 @@ pub const Version = extern struct {
                             this.version.major, this.version.minor, this.version.patch,
                         });
                     } else {
-                        try writer.print(Output.prettyFmt("<d>{d}.<r><yellow>{d}.{d}", true), .{
+                        try writer.print(Output.prettyFmt("<d>{d}.<r><b><yellow>{d}.{d}", true), .{
                             this.version.major, this.version.minor, this.version.patch,
                         });
                     }

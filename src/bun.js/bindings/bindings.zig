@@ -932,15 +932,6 @@ pub const ZigString = extern struct {
         return shim.cppFn("toRangeErrorInstance", .{ this, global });
     }
 
-    pub fn fromFmt(comptime fmt: [:0]const u8, args: anytype) ZigString {
-        if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
-            var buf = bun.MutableString.init2048(bun.default_allocator) catch unreachable;
-            buf.writer().print(fmt, args) catch return ZigString.static(fmt).*;
-            return ZigString.fromUTF8(buf.toOwnedSliceLeaky());
-        }
-        return ZigString.static(fmt).*;
-    }
-
     pub const Extern = [_][]const u8{
         "toAtomicValue",
         "toExternalValue",
@@ -6679,7 +6670,7 @@ comptime {
 pub const DeferredError = struct {
     kind: Kind,
     code: JSC.Node.ErrorCode,
-    msg: ZigString,
+    msg: bun.String,
 
     pub const Kind = enum { plainerror, typeerror, rangeerror };
 
@@ -6687,12 +6678,11 @@ pub const DeferredError = struct {
         return .{
             .kind = kind,
             .code = code,
-            .msg = ZigString.fromFmt(fmt, args),
+            .msg = bun.String.createFormat(fmt, args) catch bun.outOfMemory(),
         };
     }
 
     pub fn toError(this: *const DeferredError, globalThis: *JSGlobalObject) JSValue {
-        defer if (bun.Mimalloc.mi_is_in_heap_region(this.msg.slice().ptr)) this.msg.deinitGlobal() else {};
         const err = switch (this.kind) {
             .plainerror => this.msg.toErrorInstance(globalThis),
             .typeerror => this.msg.toTypeErrorInstance(globalThis),

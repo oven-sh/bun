@@ -86,6 +86,9 @@ Base.prototype._flush = function _flush(callback) {
     callback(err, undefined);
   }
 };
+Base.prototype._final = function(callback) {
+  callback();
+};
 
 //
 

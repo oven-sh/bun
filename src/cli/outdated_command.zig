@@ -24,20 +24,20 @@ fn Table(
         column_inside_lengths: [num_columns]usize,
 
         pub fn topLeftSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "┌" else "|";
+            return if (enable_ansi_colors) "╭" else "|";
         }
         pub fn topRightSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "┐" else "|";
+            return if (enable_ansi_colors) "╮" else "|";
         }
         pub fn topColumnSep(_: *const @This()) string {
             return if (enable_ansi_colors) "┬" else "-";
         }
 
         pub fn bottomLeftSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "└" else "|";
+            return if (enable_ansi_colors) "╰" else "|";
         }
         pub fn bottomRightSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "┘" else "|";
+            return if (enable_ansi_colors) "╯" else "|";
         }
         pub fn bottomColumnSep(_: *const @This()) string {
             return if (enable_ansi_colors) "┴" else "-";

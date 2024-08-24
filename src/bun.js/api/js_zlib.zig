@@ -707,43 +707,73 @@ const Options = struct {
     fullFlush: u8,
 
     pub fn fromJS(globalThis: *JSC.JSGlobalObject, mode: bun.zlib.NodeMode, opts: JSC.JSValue) ?Options {
-        return switch (mode) {
+        const chunkSize = globalThis.checkMinOrGetDefault(opts, "chunkSize", usize, 64, 1024 * 16) orelse return null;
+        const level = globalThis.checkRangesOrGetDefault(opts, "level", i16, -1, 9, -1) orelse return null;
+        const memLevel = globalThis.checkRangesOrGetDefault(opts, "memLevel", u8, 1, 9, 8) orelse return null;
+        const strategy = globalThis.checkRangesOrGetDefault(opts, "strategy", u8, 0, 4, 0) orelse return null;
+        const maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)) orelse return null;
+        const flush = globalThis.checkRangesOrGetDefault(opts, "flush", u8, 0, 5, 0) orelse return null;
+        const finishFlush = globalThis.checkRangesOrGetDefault(opts, "finishFlush", u8, 0, 5, 4) orelse return null;
+        const fullFlush = globalThis.checkRangesOrGetDefault(opts, "fullFlush", u8, 0, 5, 3) orelse return null;
+
+        const windowBits = switch (mode) {
             .NONE,
             .BROTLI_DECODE,
             .BROTLI_ENCODE,
-            => {
-                bun.assert(false); // unreachable, native binding leaked
-                unreachable;
-            },
-            .DEFLATE,
-            .INFLATE,
-            .DEFLATERAW,
-            .INFLATERAW,
-            => .{
-                .chunkSize = globalThis.checkMinOrGetDefault(opts, "chunkSize", usize, 64, 1024 * 16) orelse return null,
-                .level = globalThis.checkRangesOrGetDefault(opts, "level", i16, -1, 9, -1) orelse return null,
-                .windowBits = globalThis.checkRangesOrGetDefault(opts, "windowBits", u8, 8, 15, 15) orelse return null,
-                .memLevel = globalThis.checkRangesOrGetDefault(opts, "memLevel", u8, 1, 9, 8) orelse return null,
-                .strategy = globalThis.checkRangesOrGetDefault(opts, "strategy", u8, 0, 4, 0) orelse return null,
-                .maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)) orelse return null,
-                .flush = globalThis.checkRangesOrGetDefault(opts, "flush", u8, 0, 5, 0) orelse return null,
-                .finishFlush = globalThis.checkRangesOrGetDefault(opts, "finishFlush", u8, 0, 5, 4) orelse return null,
-                .fullFlush = globalThis.checkRangesOrGetDefault(opts, "fullFlush", u8, 0, 5, 3) orelse return null,
-            },
-            .GZIP,
-            .GUNZIP,
-            .UNZIP,
-            => .{
-                .chunkSize = globalThis.checkMinOrGetDefault(opts, "chunkSize", usize, 64, 1024 * 16) orelse return null,
-                .level = globalThis.checkRangesOrGetDefault(opts, "level", i16, -1, 9, -1) orelse return null,
-                .windowBits = globalThis.checkRangesOrGetDefault(opts, "windowBits", i16, 9, 15, 15) orelse return null,
-                .memLevel = globalThis.checkRangesOrGetDefault(opts, "memLevel", u8, 1, 9, 8) orelse return null,
-                .strategy = globalThis.checkRangesOrGetDefault(opts, "strategy", u8, 0, 4, 0) orelse return null,
-                .maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)) orelse return null,
-                .flush = globalThis.checkRangesOrGetDefault(opts, "flush", u8, 0, 5, 0) orelse return null,
-                .finishFlush = globalThis.checkRangesOrGetDefault(opts, "finishFlush", u8, 0, 5, 4) orelse return null,
-                .fullFlush = globalThis.checkRangesOrGetDefault(opts, "fullFlush", u8, 0, 5, 3) orelse return null,
-            },
+            => unreachable,
+            .DEFLATE, .DEFLATERAW => globalThis.checkRangesOrGetDefault(opts, "windowBits", u8, 8, 15, 15) orelse return null,
+            .INFLATE, .INFLATERAW => getWindowBits(globalThis, opts, "windowBits", u8, 8, 15, 15) orelse return null,
+            .GZIP => globalThis.checkRangesOrGetDefault(opts, "windowBits", i16, 9, 15, 15) orelse return null,
+            .GUNZIP, .UNZIP => getWindowBits(globalThis, opts, "windowBits", i16, 9, 15, 15) orelse return null,
         };
+
+        return .{
+            .chunkSize = chunkSize,
+            .level = level,
+            .windowBits = windowBits,
+            .memLevel = memLevel,
+            .strategy = strategy,
+            .maxOutputLength = maxOutputLength,
+            .flush = flush,
+            .finishFlush = finishFlush,
+            .fullFlush = fullFlush,
+        };
+    }
+
+    // Specialization of globalThis.checkRangesOrGetDefault since windowBits also allows 0 when decompressing
+    fn getWindowBits(this: *JSC.JSGlobalObject, obj: JSC.JSValue, comptime field_name: []const u8, comptime T: type, min: T, max: T, default: T) ?T {
+        if (obj.get(this, field_name)) |level_val| {
+            if (!level_val.isNumber()) {
+                _ = this.throwInvalidPropertyTypeValue("options." ++ field_name, "number", level_val);
+                return null;
+            }
+            const level_f64 = level_val.asNumber();
+            if (level_f64 == 0) return 0;
+            if (std.math.isNan(level_f64)) return default;
+            if (level_f64 == std.math.inf(f64)) {
+                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d}. Received Infinity", .{ field_name, min }));
+                return null;
+            }
+            if (level_f64 == -std.math.inf(f64)) {
+                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d}. Received -Infinity", .{ field_name, min }));
+                return null;
+            }
+            if (@floor(level_f64) != level_f64) {
+                _ = this.throwInvalidPropertyTypeValue("options." ++ field_name, "integer", level_val);
+                return null;
+            }
+            if (level_f64 > std.math.maxInt(i32)) {
+                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d} and <= {d}. Received {d}", .{ field_name, min, max, level_f64 }));
+                return null;
+            }
+            const level_i32 = level_val.toInt32();
+            if (level_i32 < min or level_i32 > max) {
+                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d} and <= {d}. Received {d}", .{ field_name, min, max, level_i32 }));
+                return null;
+            }
+            return @intCast(level_i32);
+        }
+        if (this.hasException()) return null;
+        return default;
     }
 };

@@ -1,5 +1,6 @@
 // Hardcoded module "node:zlib"
 
+const assert = require("node:assert");
 const stream = require("node:stream");
 const BufferModule = require("node:buffer");
 
@@ -179,12 +180,6 @@ function Unzip(opts) {
 Unzip.prototype = Object.create(Zlib.prototype);
 
 //
-
-// TODO: **use a native binding from Bun for this!!**
-// This is a very slow module!
-// It should really be fixed. It will show up in benchmarking. It also loads
-// slowly. We need to fix it!
-const assert = require("node:assert");
 
 const constants = {
   Z_NO_FLUSH: 0,

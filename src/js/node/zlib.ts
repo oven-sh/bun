@@ -410,11 +410,13 @@ const zlib = {
 Object.defineProperty(zlib, "constants", {
   writable: false,
   configurable: false,
+  enumerable: true,
   value: Object.freeze(constants),
 });
 Object.defineProperty(zlib, "codes", {
   writable: false,
   configurable: false,
+  enumerable: true,
   value: Object.freeze(codes),
 });
 

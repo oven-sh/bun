@@ -1747,7 +1747,7 @@ inline fn createScope(
         // Handle the byte ranges inserted by the transpiler.
         // Let's not run any of this if it's not enabled.
         if (Jest.is_byte_range_filter_enabled) {
-            if (options.isArray() and args_len == 3) {
+            if (options.isArray() and args_len > 2) {
                 test_range_value = options;
                 options = .zero;
             }

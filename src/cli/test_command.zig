@@ -1298,6 +1298,7 @@ pub const TestCommand = struct {
             const file_end = reporter.jest.files.len;
 
             for (file_start..file_end) |module_id| {
+                const initial_ran_count = reporter.summary.pass + reporter.summary.fail;
                 const module: *jest.DescribeScope = reporter.jest.files.items(.module_scope)[module_id];
 
                 vm.onUnhandledRejectionCtx = null;
@@ -1328,6 +1329,13 @@ pub const TestCommand = struct {
                 }
 
                 vm.eventLoop().flushImmediateQueue();
+
+                const end_ran_count = reporter.summary.pass + reporter.summary.fail;
+                if (end_ran_count != initial_ran_count) {
+                    if (module.runCallback(vm.global, .afterAll)) |err| {
+                        _ = vm.uncaughtException(vm.global, err, true);
+                    }
+                }
 
                 switch (vm.aggressive_garbage_collection) {
                     .none => {},

@@ -1944,3 +1944,19 @@ it("should reset timeout after writes", async () => {
 
   expect(received).toBe(CHUNKS * payload.byteLength);
 }, 20_000);
+
+it("allow requestIP after async operation", async () => {
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req, server) {
+      await Bun.sleep(1);
+      return new Response(JSON.stringify(server.requestIP(req)));
+    },
+  });
+
+  const ip = await fetch(server.url).then(res => res.json());
+  expect(ip).not.toBeNull();
+  expect(ip.port).toBeInteger();
+  expect(ip.address).toBeString();
+  expect(ip.family).toBeString();
+});

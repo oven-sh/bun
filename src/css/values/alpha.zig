@@ -23,9 +23,25 @@ const Resolution = css.css_values.resolution.Resolution;
 const CustomIdent = css.css_values.ident.CustomIdent;
 const CustomIdentFns = css.css_values.ident.CustomIdentFns;
 const Ident = css.css_values.ident.Ident;
+const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
 
+/// A CSS [`<alpha-value>`](https://www.w3.org/TR/css-color-4/#typedef-alpha-value),
+/// used to represent opacity.
+///
+/// Parses either a `<number>` or `<percentage>`, but is always stored and serialized as a number.
 pub const AlphaValue = struct {
-    comptime {
-        @compileError(css.todo_stuff.depth);
+    v: f32,
+
+    pub fn parse(input: *css.Parser) Error!AlphaValue {
+        // For some reason NumberOrPercentage.parse makes zls crash, using this instead.
+        const val: NumberOrPercentage = @call(.auto, @field(NumberOrPercentage, "parse"), .{input});
+        return switch (val) {
+            .percentage => |percent| AlphaValue{ .v = percent.v },
+            .number => |num| AlphaValue{ .v = num },
+        };
+    }
+
+    pub fn toCss(this: *const AlphaValue, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+        return CSSNumberFns.toCss(&this.v, W, dest);
     }
 };

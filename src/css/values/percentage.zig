@@ -127,4 +127,7 @@ pub const NumberOrPercentage = union(enum) {
     number: CSSNumber,
     /// A percentage.
     percentage: Percentage,
+
+    pub usingnamespace css.DeriveParse(@This());
+    pub usingnamespace css.DeriveToCss(@This());
 };

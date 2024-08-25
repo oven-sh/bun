@@ -4923,6 +4923,34 @@ const Jest = struct {
     beforeAll: Ref = Ref.None,
     afterAll: Ref = Ref.None,
     jest: Ref = Ref.None,
+
+    const BunTestField = enum {
+        expect,
+        describe,
+        it,
+        @"test",
+        beforeEach,
+        afterEach,
+        beforeAll,
+        afterAll,
+        jest,
+    };
+
+    const map = bun.ComptimeEnumMap(BunTestField);
+
+    pub fn setFromClauseItems(this: *Jest, items: []const js_ast.ClauseItem) void {
+        for (items) |item| {
+            if (map.get(item.alias)) |field| {
+                switch (field) {
+                    inline else => |tag| @field(this, @tagName(tag)) = item.name.ref.?,
+                }
+            }
+        }
+    }
+
+    pub fn shouldBecomeLocationIdentifierForTests(this: *const Jest, ref: Ref) bool {
+        return this.it.eql(ref) or this.describe.eql(ref) or this.@"test".eql(ref);
+    }
 };
 
 // workaround for https://github.com/ziglang/zig/issues/10903
@@ -6149,6 +6177,11 @@ fn NewParser_(
                 }
             }
 
+            // Handle functions which need to have their source location tracked at runtime
+            if (p.options.features.inline_loc_for_tests and (p.jest.shouldBecomeLocationIdentifierForTests(ref))) {
+                return p.newLocationIdentifier(ref, opts.was_originally_identifier, loc);
+            }
+
             // Substitute an EImportIdentifier now if this is an import item
             if (p.is_import_item.contains(ref)) {
                 return p.newExpr(
@@ -6220,6 +6253,12 @@ fn NewParser_(
                 .data = .{ .e_identifier = ident },
                 .loc = loc,
             };
+        }
+
+        fn newLocationIdentifier(p: *P, ref: Ref, was_originally_identifier: bool, loc: logger.Loc) Expr {
+            // This function exists entirely for @setCold(true);
+            @setCold(true);
+            return p.newExpr(E.LocationIdentifier{ .ref = ref, .was_originally_identifier = was_originally_identifier }, loc);
         }
 
         pub fn generateImportStmt(
@@ -6874,15 +6913,11 @@ fn NewParser_(
             p.filename_ref = try p.declareCommonJSSymbol(.unbound, "__filename");
 
             if (p.options.features.inject_jest_globals) {
-                p.jest.describe = try p.declareCommonJSSymbol(.unbound, "describe");
-                p.jest.@"test" = try p.declareCommonJSSymbol(.unbound, "test");
-                p.jest.jest = try p.declareCommonJSSymbol(.unbound, "jest");
-                p.jest.it = try p.declareCommonJSSymbol(.unbound, "it");
-                p.jest.expect = try p.declareCommonJSSymbol(.unbound, "expect");
-                p.jest.beforeEach = try p.declareCommonJSSymbol(.unbound, "beforeEach");
-                p.jest.afterEach = try p.declareCommonJSSymbol(.unbound, "afterEach");
-                p.jest.beforeAll = try p.declareCommonJSSymbol(.unbound, "beforeAll");
-                p.jest.afterAll = try p.declareCommonJSSymbol(.unbound, "afterAll");
+                inline for (comptime std.meta.fieldNames(Jest)) |field_name| {
+                    if (@field(p.jest, field_name).isNull()) {
+                        @field(p.jest, field_name) = try p.declareCommonJSSymbol(.unbound, field_name);
+                    }
+                }
             }
 
             if (p.options.features.hot_module_reloading) {
@@ -9290,9 +9325,23 @@ fn NewParser_(
                 try p.validateImportType(path.import_tag, &stmt);
             }
 
+            if (comptime !only_scan_imports_and_do_not_visit) {
+                if (p.options.features.inline_loc_for_tests and strings.eqlComptime(path.text, "bun:test")) {
+                    p.configureBunTestImport(stmt.items, stmt.import_record_index);
+                }
+            }
+
             // Track the items for this namespace
             try p.import_items_for_namespace.put(p.allocator, stmt.namespace_ref, item_refs);
             return p.s(stmt, loc);
+        }
+
+        // This function mostly exists for @setCold(true).
+        fn configureBunTestImport(p: *P, clause_items: []const js_ast.ClauseItem, record_index: u32) void {
+            @setCold(true);
+
+            p.import_records.items[record_index].tag = .bun_test;
+            p.jest.setFromClauseItems(clause_items);
         }
 
         fn validateImportType(p: *P, import_tag: ImportRecord.Tag, stmt: *S.Import) !void {
@@ -9618,7 +9667,7 @@ fn NewParser_(
                         }
                     }
                 },
-                .e_identifier => |ident| {
+                inline .e_location_identifier, .e_identifier => |ident| {
                     return LocRef{ .loc = loc, .ref = ident.ref };
                 },
                 .e_import_identifier => |ident| {
@@ -15808,13 +15857,7 @@ fn NewParser_(
 
                                     const key = brk: {
                                         switch (expr.data) {
-                                            .e_import_identifier => |ident| {
-                                                break :brk p.newExpr(E.String{ .data = p.loadNameFromRef(ident.ref) }, expr.loc);
-                                            },
-                                            .e_commonjs_export_identifier => |ident| {
-                                                break :brk p.newExpr(E.String{ .data = p.loadNameFromRef(ident.ref) }, expr.loc);
-                                            },
-                                            .e_identifier => |ident| {
+                                            inline .e_location_identifier, .e_identifier, .e_commonjs_export_identifier, .e_import_identifier => |ident| {
                                                 break :brk p.newExpr(E.String{ .data = p.loadNameFromRef(ident.ref) }, expr.loc);
                                             },
                                             .e_dot => |dot| {
@@ -18779,9 +18822,9 @@ fn NewParser_(
                                         // just not module.exports = { bar: function() {}  }
                                         // just not module.exports = { bar() {}  }
                                         switch (prop.value.?.data) {
-                                        .e_commonjs_export_identifier, .e_import_identifier, .e_identifier => false,
+                                        .e_location_identifier, .e_commonjs_export_identifier, .e_import_identifier, .e_identifier => false,
                                         .e_call => |call| switch (call.target.data) {
-                                            .e_commonjs_export_identifier, .e_import_identifier, .e_identifier => false,
+                                            .e_location_identifier, .e_commonjs_export_identifier, .e_import_identifier, .e_identifier => false,
                                             else => |call_target| !@as(Expr.Tag, call_target).isPrimitiveLiteral(),
                                         },
                                         else => !prop.value.?.isPrimitiveLiteral(),
@@ -18966,6 +19009,24 @@ fn NewParser_(
                                 return p.newExpr(E.Number{ .value = @floatFromInt(str.javascriptLength()) }, loc);
                             }
                         }
+                    }
+                },
+                .e_location_identifier => |id| {
+                    // support:
+                    // - test.each
+                    // - test.only
+                    // - describe.only
+                    // - describe.each
+                    if (identifier_opts.is_call_target and (id.ref.eql(p.jest.@"test") or id.ref.eql(p.jest.describe) or id.ref.eql(p.jest.it)) and ((strings.eqlComptime(name, "each") or strings.eqlComptime(name, "only")))) {
+                        var out = Expr.init(E.Dot, E.Dot{
+                            .name = name,
+                            .name_loc = name_loc,
+                            .target = target,
+                        }, loc);
+                        out.data = .{
+                            .e_location_dot = out.data.e_dot,
+                        };
+                        return out;
                     }
                 },
                 .e_object => |obj| {

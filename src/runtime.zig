@@ -251,6 +251,8 @@ pub const Runtime = struct {
 
         replace_exports: ReplaceableExport.Map = .{},
 
+        inline_loc_for_tests: bool = false,
+
         dont_bundle_twice: bool = false,
 
         /// This is a list of packages which even when require() is used, we will

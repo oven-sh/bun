@@ -1686,6 +1686,15 @@ pub const E = struct {
         was_originally_identifier: bool = false,
     };
 
+    pub const LocationIdentifier = struct {
+        ref: Ref = Ref.None,
+
+        /// If true, this was originally an identifier expression such as "foo". If
+        /// false, this could potentially have been a member access expression such
+        /// as "ns.foo" off of an imported namespace object.
+        was_originally_identifier: bool = false,
+    };
+
     /// This is a dot expression on exports, such as `exports.<ref>`. It is given
     /// it's own AST node to allow CommonJS unwrapping, in which this can just be
     /// the identifier in the Ref
@@ -3876,6 +3885,17 @@ pub const Expr = struct {
                     },
                 };
             },
+            E.LocationIdentifier => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_location_identifier = .{
+                            .ref = st.ref,
+                            .was_originally_identifier = st.was_originally_identifier,
+                        },
+                    },
+                };
+            },
             E.ImportIdentifier => {
                 return Expr{
                     .loc = loc,
@@ -4266,6 +4286,15 @@ pub const Expr = struct {
                     },
                 };
             },
+            E.LocationIdentifier => return Expr{
+                .loc = loc,
+                .data = Data{
+                    .e_location_identifier = .{
+                        .ref = st.ref,
+                        .was_originally_identifier = st.was_originally_identifier,
+                    },
+                },
+            },
             E.ImportIdentifier => {
                 return Expr{
                     .loc = loc,
@@ -4449,8 +4478,7 @@ pub const Expr = struct {
 
     pub fn isRef(this: Expr, ref: Ref) bool {
         return switch (this.data) {
-            .e_import_identifier => |import_identifier| import_identifier.ref.eql(ref),
-            .e_identifier => |ident| ident.ref.eql(ref),
+            inline .e_identifier, .e_import_identifier, .e_location_identifier => |ident| ident.ref.eql(ref),
             else => false,
         };
     }
@@ -4478,6 +4506,8 @@ pub const Expr = struct {
         e_import,
         e_identifier,
         e_import_identifier,
+        e_location_identifier,
+        e_location_dot,
         e_private_identifier,
         e_commonjs_export_identifier,
         e_module_dot_exports,
@@ -4544,6 +4574,8 @@ pub const Expr = struct {
                 .e_arrow => writer.writeAll("arrow"),
                 .e_identifier => writer.writeAll("identifier"),
                 .e_import_identifier => writer.writeAll("import identifier"),
+                .e_location_identifier => writer.writeAll("location identifier"),
+                .e_location_dot => writer.writeAll("location dot"),
                 .e_private_identifier => writer.writeAll("#privateIdentifier"),
                 .e_jsx_element => writer.writeAll("<jsx>"),
                 .e_missing => writer.writeAll("<missing>"),
@@ -5173,6 +5205,23 @@ pub const Expr = struct {
 
         e_identifier: E.Identifier,
         e_import_identifier: E.ImportIdentifier,
+
+        // These are used by the printer to insert the byte ranges of the source
+        // locations at print time when calling the functions as an extra argument.
+        //
+        // Currently, this is only used by bun:test when calling:
+        // - test(label, callback, [start, end])
+        // - test.only(label, callback, [start, end])
+        // - test.each(label, callback, [start, end])
+        // - describe(label, callback, [start, end])
+        // - describe.only(label, callback, [start, end])
+        // - describe.each(label, callback, [start, end])
+        //
+        // We might use it later to implement toMatchInlineSnapshot.
+        //
+        e_location_identifier: E.LocationIdentifier,
+        e_location_dot: *E.Dot,
+
         e_private_identifier: E.PrivateIdentifier,
         e_commonjs_export_identifier: E.CommonJSExportIdentifier,
         e_module_dot_exports,
@@ -6003,6 +6052,7 @@ pub const Expr = struct {
 
                 .e_identifier,
                 .e_import_identifier,
+                .e_location_identifier,
                 .e_private_identifier,
                 .e_commonjs_export_identifier,
                 => error.@"Cannot convert identifier to JS. Try a statically-known value",

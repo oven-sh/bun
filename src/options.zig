@@ -1493,6 +1493,10 @@ pub const BundleOptions = struct {
 
     rewrite_jest_for_tests: bool = false,
 
+    /// Appends the byte range of the source location to the test
+    /// In the parser, this is called `inline_loc_for_tests`
+    has_byte_range_filter_for_tests: bool = false,
+
     macro_remap: MacroRemap = MacroRemap{},
     no_macros: bool = false,
 

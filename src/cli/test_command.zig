@@ -723,6 +723,51 @@ pub const TestCommand = struct {
         lcov: bool,
     };
 
+    const TestFilePath = struct {
+        path: []const u8 = "",
+        byte_ranges: std.ArrayListUnmanaged(logger.Range) = .{},
+
+        pub fn slice(this: *const TestFilePath) string {
+            return this.path;
+        }
+
+        pub fn update(this: *TestFilePath, input: []const u8) !void {
+            var remaining = input;
+            while (remaining.len > 0) {
+                const end_index = strings.indexOfChar(remaining, ':') orelse return error.InvalidRange;
+                const start_buffer = remaining[0..end_index];
+                const next_i = strings.indexOf(remaining, "::") orelse remaining.len;
+                const end_buffer = remaining[@min(end_index + 1, remaining.len)..next_i];
+
+                const start = std.fmt.parseInt(i32, start_buffer, 10) catch {
+                    Output.err(error.InvalidByteRange, "Invalid start byte range passed to bun test filter: {s}", .{remaining});
+                    Global.exit(1);
+                };
+
+                const len = std.fmt.parseInt(i32, end_buffer, 10) catch {
+                    Output.err(error.InvalidByteRange, "Invalid end range passed to bun test filter: {s}", .{remaining});
+                    Global.exit(1);
+                };
+                try this.byte_ranges.append(bun.default_allocator, .{
+                    .loc = .{ .start = start },
+                    .len = len,
+                });
+                remaining = remaining[@min(next_i + 2, remaining.len)..];
+            }
+        }
+    };
+    const PathsOrFiles = union(enum) {
+        paths: []const PathString,
+        files: []const TestFilePath,
+
+        pub fn isEmpty(this: *const PathsOrFiles) bool {
+            return switch (this.*) {
+                .paths => |paths| paths.len == 0,
+                .files => |files| files.len == 0,
+            };
+        }
+    };
+
     pub fn exec(ctx: Command.Context) !void {
         if (comptime is_bindgen) unreachable;
 
@@ -843,10 +888,11 @@ pub const TestCommand = struct {
             _ = vm.global.setTimeZone(&JSC.ZigString.init(TZ_NAME));
         }
 
-        var results = try std.ArrayList(PathString).initCapacity(ctx.allocator, ctx.positionals.len);
+        var results = bun.StringArrayHashMap(TestFilePath).init(ctx.allocator);
+        try results.ensureTotalCapacity(ctx.positionals.len);
         defer results.deinit();
 
-        const test_files, const search_count = scan: {
+        const test_files: PathsOrFiles, const search_count = scan: {
             if (for (ctx.positionals) |arg| {
                 if (std.fs.path.isAbsolute(arg) or
                     strings.startsWith(arg, "./") or
@@ -855,10 +901,22 @@ pub const TestCommand = struct {
                     strings.startsWith(arg, "..\\")))) break true;
             } else false) {
                 // One of the files is a filepath. Instead of treating the arguments as filters, treat them as filepaths
-                for (ctx.positionals[1..]) |arg| {
-                    results.appendAssumeCapacity(PathString.init(arg));
+                for (ctx.positionals[1..]) |arg_| {
+                    const range_index = strings.indexOf(arg_, "::");
+                    const path = if (range_index) |index| arg_[0..index] else arg_;
+                    var gpe = results.getOrPutAssumeCapacity(path);
+                    if (!gpe.found_existing) {
+                        gpe.value_ptr.* = TestFilePath{
+                            .path = path,
+                            .byte_ranges = .{},
+                        };
+                    }
+
+                    if (range_index != null) {
+                        try gpe.value_ptr.update(arg_[@min(range_index.? + 2, arg_.len)..]);
+                    }
                 }
-                break :scan .{ results.items, 0 };
+                break :scan .{ .{ .files = results.values() }, 0 };
             }
 
             // Treat arguments as filters and scan the codebase
@@ -880,13 +938,13 @@ pub const TestCommand = struct {
                     ctx.allocator.free(i);
                 ctx.allocator.free(filter_names_normalized);
             };
-
+            var scanner_results = std.ArrayList(PathString).init(bun.default_allocator);
             var scanner = Scanner{
                 .dirs_to_scan = Scanner.Fifo.init(ctx.allocator),
                 .options = &vm.bundler.options,
                 .fs = vm.bundler.fs,
                 .filter_names = filter_names_normalized,
-                .results = &results,
+                .results = &scanner_results,
             };
             const dir_to_scan = brk: {
                 if (ctx.debug.test_directory.len > 0) {
@@ -899,10 +957,10 @@ pub const TestCommand = struct {
             scanner.scan(dir_to_scan);
             scanner.dirs_to_scan.deinit();
 
-            break :scan .{ scanner.results.items, scanner.search_count };
+            break :scan .{ .{ .paths = scanner.results.items }, scanner.search_count };
         };
 
-        if (test_files.len > 0) {
+        if (!test_files.isEmpty()) {
             vm.hot_reload = ctx.debug.hot_reload;
 
             switch (vm.hot_reload) {
@@ -912,7 +970,7 @@ pub const TestCommand = struct {
             }
 
             // vm.bundler.fs.fs.readDirectory(_dir: string, _handle: ?std.fs.Dir)
-            runAllTests(reporter, vm, test_files, ctx.allocator);
+            runAllTests(reporter, vm, test_files);
         }
 
         try jest.Jest.runner.?.snapshots.writeSnapshotFile();
@@ -954,7 +1012,7 @@ pub const TestCommand = struct {
 
         Output.flush();
 
-        if (test_files.len == 0) {
+        if (test_files.isEmpty()) {
             if (ctx.positionals.len == 0) {
                 Output.prettyErrorln(
                     \\<yellow>No tests found!<r>
@@ -1112,30 +1170,30 @@ pub const TestCommand = struct {
     pub fn runAllTests(
         reporter_: *CommandLineReporter,
         vm_: *JSC.VirtualMachine,
-        files_: []const PathString,
-        allocator_: std.mem.Allocator,
+        files_: PathsOrFiles,
     ) void {
         const Context = struct {
             reporter: *CommandLineReporter,
             vm: *JSC.VirtualMachine,
-            files: []const PathString,
-            allocator: std.mem.Allocator,
+            files: PathsOrFiles,
             pub fn begin(this: *@This()) void {
                 const reporter = this.reporter;
                 const vm = this.vm;
-                var files = this.files;
-                const allocator = this.allocator;
-                bun.assert(files.len > 0);
+                const paths_or_files = this.files;
 
-                if (files.len > 1) {
-                    for (files[0 .. files.len - 1]) |file_name| {
-                        TestCommand.run(reporter, vm, file_name.slice(), allocator, false) catch {};
-                        reporter.jest.default_timeout_override = std.math.maxInt(u32);
-                        Global.mimalloc_cleanup(false);
-                    }
+                switch (paths_or_files) {
+                    inline else => |files| {
+                        if (files.len > 1) {
+                            for (files[0 .. files.len - 1]) |file_name| {
+                                TestCommand.run(reporter, vm, file_name.slice(), if (comptime @TypeOf(files) == []const PathString) &.{} else file_name.byte_ranges.items, false) catch {};
+                                reporter.jest.default_timeout_override = std.math.maxInt(u32);
+                                Global.mimalloc_cleanup(false);
+                            }
+                        }
+
+                        TestCommand.run(reporter, vm, files[files.len - 1].slice(), if (comptime @TypeOf(files) == []const PathString) &.{} else files[files.len - 1].byte_ranges.items, true) catch {};
+                    },
                 }
-
-                TestCommand.run(reporter, vm, files[files.len - 1].slice(), allocator, true) catch {};
             }
         };
 
@@ -1143,7 +1201,11 @@ pub const TestCommand = struct {
         vm_.eventLoop().ensureWaker();
         vm_.arena = &arena;
         vm_.allocator = arena.allocator();
-        var ctx = Context{ .reporter = reporter_, .vm = vm_, .files = files_, .allocator = allocator_ };
+        vm_.bundler.options.has_byte_range_filter_for_tests = files_ == .files;
+        vm_.bundler.resolver.opts.has_byte_range_filter_for_tests = files_ == .files;
+        jest.Jest.is_byte_range_filter_enabled = files_ == .files;
+
+        var ctx = Context{ .reporter = reporter_, .vm = vm_, .files = files_ };
         vm_.runWithAPILock(Context, &ctx, Context.begin);
     }
 
@@ -1153,7 +1215,7 @@ pub const TestCommand = struct {
         reporter: *CommandLineReporter,
         vm: *JSC.VirtualMachine,
         file_name: string,
-        _: std.mem.Allocator,
+        byte_ranges: []const logger.Range,
         is_last: bool,
     ) !void {
         defer {
@@ -1180,6 +1242,7 @@ pub const TestCommand = struct {
         const file_start = reporter.jest.files.len;
         const resolution = try vm.bundler.resolveEntryPoint(file_name);
         vm.clearEntryPoint();
+        reporter.jest.byte_range_filter = byte_ranges;
 
         const file_path = resolution.path_pair.primary.text;
         const file_title = bun.path.relative(FileSystem.instance.top_level_dir, file_path);
@@ -1243,6 +1306,7 @@ pub const TestCommand = struct {
                 vm.eventLoop().tick();
 
                 var prev_unhandled_count = vm.unhandled_error_counter;
+
                 while (vm.active_tasks > 0) : (vm.eventLoop().flushImmediateQueue()) {
                     if (!jest.Jest.runner.?.has_pending_tests) {
                         jest.Jest.runner.?.drain();

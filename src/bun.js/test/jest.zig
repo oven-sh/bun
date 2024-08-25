@@ -67,6 +67,7 @@ pub const TestRunner = struct {
     run_todo: bool = false,
     last_file: u64 = 0,
     bail: u32 = 0,
+    byte_range_filter: []const logger.Range = &.{},
 
     allocator: std.mem.Allocator,
     callback: *Callback = undefined,
@@ -105,6 +106,26 @@ pub const TestRunner = struct {
     unhandled_errors_between_tests: u32 = 0,
 
     pub const Drainer = JSC.AnyTask.New(TestRunner, drain);
+
+    pub fn isOutsideByteRangeFilter(this: *const TestRunner, byte_range: logger.Range) bool {
+        if (byte_range.len == 0 or this.byte_range_filter.len == 0) {
+            return false;
+        }
+
+        const start_test_range = byte_range.loc.start;
+        const end_test_range = byte_range.end().start;
+        for (this.byte_range_filter) |range| {
+            const user_provided_start = range.loc.start;
+            const user_provided_end = range.end().start;
+
+            // Check if the ranges overlap
+            if (start_test_range <= user_provided_end and end_test_range >= user_provided_start) {
+                return false; // Ranges overlap
+            }
+        }
+
+        return true;
+    }
 
     pub fn onTestTimeout(this: *TestRunner, now: *const bun.timespec, vm: *VirtualMachine) void {
         _ = vm; // autofix
@@ -170,6 +191,12 @@ pub const TestRunner = struct {
         if (this.only) {
             return;
         }
+
+        // byte range filter overrides only
+        if (this.byte_range_filter.len > 0) {
+            return;
+        }
+
         this.only = true;
 
         const list = this.queue.readableSlice(0);
@@ -272,6 +299,7 @@ pub const TestRunner = struct {
 
 pub const Jest = struct {
     pub var runner: ?*TestRunner = null;
+    pub var is_byte_range_filter_enabled: bool = false;
 
     fn globalHook(comptime name: string) JSC.JSHostFunctionType {
         return struct {
@@ -590,6 +618,8 @@ pub const TestScope = struct {
     tag: Tag = .pass,
     snapshot_count: usize = 0,
 
+    byte_range: logger.Range = .{},
+
     // null if the test does not set a timeout
     timeout_millis: u32 = std.math.maxInt(u32),
 
@@ -831,6 +861,7 @@ pub const DescribeScope = struct {
     done: bool = false,
     skip_count: u32 = 0,
     tag: Tag = .pass,
+    byte_range: logger.Range = .{},
 
     fn isWithinOnlyScope(this: *const DescribeScope) bool {
         if (this.tag == .only) return true;
@@ -1380,7 +1411,7 @@ pub const TestRunnerTask = struct {
         var test_: TestScope = this.describe.tests.items[test_id];
         describe.current_test_id = test_id;
 
-        if (test_.func == .zero or !describe.shouldEvaluateScope() or (test_.tag != .only and Jest.runner.?.only)) {
+        if (test_.func == .zero or !describe.shouldEvaluateScope() or (test_.tag != .only and Jest.runner.?.only) or Jest.runner.?.isOutsideByteRangeFilter(test_.byte_range)) {
             const tag = if (!describe.shouldEvaluateScope()) describe.tag else test_.tag;
             switch (tag) {
                 .todo => {
@@ -1689,17 +1720,14 @@ inline fn createScope(
     comptime tag: Tag,
 ) JSValue {
     const this = callframe.this();
-    const arguments = callframe.arguments(3);
-    const args = arguments.slice();
+    const arguments = callframe.arguments(4);
+    var description, var function, var options, var test_range_value = arguments.ptr;
+    const args_len = arguments.len;
 
-    if (args.len == 0) {
+    if (args_len == 0) {
         globalThis.throwPretty("{s} expects a description or function", .{signature});
         return .zero;
     }
-
-    var description = args[0];
-    var function = if (args.len > 1) args[1] else .zero;
-    var options = if (args.len > 2) args[2] else .zero;
 
     if (description.isEmptyOrUndefinedOrNull() or !description.isString()) {
         function = description;
@@ -1713,9 +1741,33 @@ inline fn createScope(
         }
     }
 
+    var test_range = logger.Range.None;
+
+    if (comptime tag == .pass or tag == .only) {
+        // Handle the byte ranges inserted by the transpiler.
+        // Let's not run any of this if it's not enabled.
+        if (Jest.is_byte_range_filter_enabled) {
+            if (options.isArray() and args_len == 3) {
+                test_range_value = options;
+                options = .zero;
+            }
+
+            if (test_range_value.isArray() and test_range_value.getLength(globalThis) == 2) {
+                test_range = logger.Range{
+                    .loc = .{ .start = test_range_value.getDirectIndex(globalThis, 0).coerceToInt32(globalThis) },
+                    .len = test_range_value.getDirectIndex(globalThis, 1).coerceToInt32(globalThis),
+                };
+            }
+
+            if (globalThis.hasException()) {
+                return .zero;
+            }
+        }
+    }
+
     var timeout_ms: u32 = std.math.maxInt(u32);
     if (options.isNumber()) {
-        timeout_ms = @as(u32, @intCast(@max(args[2].coerce(i32, globalThis), 0)));
+        timeout_ms = @as(u32, @intCast(@max(options.coerce(i32, globalThis), 0)));
     } else if (options.isObject()) {
         if (options.get(globalThis, "timeout")) |timeout| {
             if (!timeout.isNumber()) {
@@ -1802,6 +1854,7 @@ inline fn createScope(
             .func_arg = function_args,
             .func_has_callback = has_callback,
             .timeout_millis = timeout_ms,
+            .byte_range = test_range,
         }) catch unreachable;
     } else {
         var scope = allocator.create(DescribeScope) catch unreachable;
@@ -1810,6 +1863,7 @@ inline fn createScope(
             .parent = parent,
             .file_id = parent.file_id,
             .tag = tag_to_use,
+            .byte_range = test_range,
         };
 
         return scope.run(globalThis, function, &.{});
@@ -2067,7 +2121,7 @@ fn eachBind(
             if (Jest.runner.?.filter_regex) |regex| {
                 var buffer: bun.MutableString = Jest.runner.?.filter_buffer;
                 buffer.reset();
-                appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
+                appendParentLabel(&buffer, parent) catch bun.outOfMemory();
                 buffer.append(formattedLabel) catch unreachable;
                 const str = bun.String.fromBytes(buffer.toOwnedSliceLeaky());
                 is_skip = !regex.matches(str);
@@ -2118,7 +2172,7 @@ inline fn createEach(
     comptime signature: string,
     comptime is_test: bool,
 ) JSValue {
-    const arguments = callframe.arguments(1);
+    const arguments = callframe.arguments(2);
     const args = arguments.slice();
 
     if (args.len == 0) {

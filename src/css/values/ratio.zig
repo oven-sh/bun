@@ -31,13 +31,24 @@ pub const Ratio = struct {
     denominator: CSSNumber,
 
     pub fn parse(input: *css.Parser) Error!Ratio {
-        _ = input; // autofix
-        @compileError(css.todo_stuff.depth);
+        const first = try CSSNumberFns.parse(input);
+        const second = if (input.tryParse(css.Parser.expectDelim, .{'/'})) |_| try CSSNumberFns.parse(input) else 1.0;
+        return Ratio{ .numerator = first, .denominator = second };
+    }
+
+    /// Parses a ratio where both operands are required.
+    pub fn parseRequired(input: *css.Parser) Error!Ratio {
+        const first = try CSSNumberFns.parse(input);
+        try input.expectDelim('/');
+        const second = try CSSNumberFns.parse(input);
+        return Ratio{ .numerator = first, .denominator = second };
     }
 
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
-        _ = this; // autofix
-        _ = dest; // autofix
-        @compileError(css.todo_stuff.depth);
+        try CSSNumberFns.toCss(&this.numerator, W, dest);
+        if (this.denominator != 1.0) {
+            try dest.delim('/', true);
+            try CSSNumberFns.toCss(&this.denominator, W, dest);
+        }
     }
 };

@@ -2270,6 +2270,9 @@ pub fn NewApp(comptime ssl: bool) type {
             pub fn timeout(res: *Response, seconds: u8) void {
                 uws_res_timeout(ssl_flag, res.downcast(), seconds);
             }
+            pub fn resetTimeout(res: *Response) void {
+                uws_res_reset_timeout(ssl_flag, res.downcast());
+            }
             pub fn write(res: *Response, data: []const u8) bool {
                 return uws_res_write(ssl_flag, res.downcast(), data.ptr, data.len);
             }
@@ -2683,7 +2686,7 @@ extern fn uws_res_write_header_int(ssl: i32, res: *uws_res, key: [*c]const u8, k
 extern fn uws_res_end_without_body(ssl: i32, res: *uws_res, close_connection: bool) void;
 extern fn uws_res_end_sendfile(ssl: i32, res: *uws_res, write_offset: u64, close_connection: bool) void;
 extern fn uws_res_timeout(ssl: i32, res: *uws_res, timeout: u8) void;
-
+extern fn uws_res_reset_timeout(ssl: i32, res: *uws_res) void;
 extern fn uws_res_write(ssl: i32, res: *uws_res, data: [*c]const u8, length: usize) bool;
 extern fn uws_res_get_write_offset(ssl: i32, res: *uws_res) u64;
 extern fn uws_res_override_write_offset(ssl: i32, res: *uws_res, u64) void;

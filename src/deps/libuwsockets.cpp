@@ -1161,7 +1161,15 @@ extern "C"
       uwsRes->resetTimeout();
     }
   }
-
+  void uws_res_reset_timeout(int ssl, uws_res_r res) {
+    if (ssl) {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->resetTimeout();
+    } else {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->resetTimeout();
+    }
+  }
   void uws_res_timeout(int ssl, uws_res_r res, uint8_t seconds) {
     if (ssl) {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;

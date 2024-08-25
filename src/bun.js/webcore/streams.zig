@@ -2522,6 +2522,8 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         }
 
         fn registerAutoFlusher(this: *@This()) void {
+            // if we enqueue data we should reset the timeout
+            this.res.resetTimeout();
             if (!this.auto_flusher.registered)
                 AutoFlusher.registerDeferredMicrotaskWithTypeUnchecked(@This(), this, this.globalThis.bunVM());
         }

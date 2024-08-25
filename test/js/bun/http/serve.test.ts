@@ -1892,3 +1892,54 @@ it("should allow use of custom timeout", async () => {
   }
   await Promise.all([testTimeout("/ok", true), testTimeout("/timeout", false)]);
 }, 10_000);
+
+it.only("should reset timeout after writes", async () => {
+  // the default is 10s so we send 15
+  // this test should take 20s at most
+  const CHUNKS = 15;
+  using server = Bun.serve({
+    idleTimeout: 5,
+    port: 0,
+    fetch(request, server) {
+      let controller!: ReadableStreamDefaultController;
+      let count = CHUNKS;
+      const interval = setInterval(() => {
+        controller.enqueue(`data: ${Date.now()}\n\n`);
+        count--;
+        if (count == 0) clearInterval(interval);
+      }, 1000);
+      return new Response(
+        new ReadableStream({
+          start(_controller) {
+            controller = _controller;
+          },
+          cancel(controller) {
+            clearInterval(interval);
+          },
+        }),
+        {
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+          },
+        },
+      );
+    },
+  });
+  let received = 0;
+  try {
+    const response = await fetch(server.url);
+    const stream = response.body.getReader();
+    const decoder = new TextDecoder();
+    while (true) {
+      const { done, value } = await stream.read();
+      if (value) received++;
+      if (done) break;
+    }
+    expect.unreachable();
+  } catch (err) {
+    expect(err?.code).toBe("ConnectionClosed");
+  }
+
+  expect(received).toBeGreaterThanOrEqual(CHUNKS);
+}, 22_000);

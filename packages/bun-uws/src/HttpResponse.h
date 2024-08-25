@@ -479,9 +479,8 @@ public:
         Super::write("\r\n", 2);
 
         auto [written, failed] = Super::write(data.data(), (int) data.length());
-        if (written > 0 || failed) {
-            this->resetTimeout();
-        }
+        /* Reset timeout on each sended chunk */
+        this->resetTimeout();
 
         /* If we did not fail the write, accept more */
         return !failed;

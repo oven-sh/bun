@@ -148,24 +148,53 @@ pub const LengthValue = union(enum) {
     cqmax: CSSNumber,
 
     pub fn parse(input: *css.Parser) Error!@This() {
-        _ = input; // autofix
-        @compileError(css.todo_stuff.depth);
+        const location = input.currentSourceLocation();
+        const token = try input.next();
+        switch (token.*) {
+            .dimension => |*dim| {
+                inline for (std.meta.fields(@This())) |field| {
+                    if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(field.name, dim.unit)) {
+                        return @unionInit(LengthValue, field.name, dim.num.value);
+                    }
+                }
+            },
+            .number => |*num| return .{ .px = num.value },
+        }
+        return location.newUnexpectedTokenError(token.*);
     }
 
     pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
-        _ = this; // autofix
-        _ = dest; // autofix
-        @compileError(css.todo_stuff.depth);
+        const value, const unit = this.toUnitValue();
+
+        // The unit can be omitted if the value is zero, except inside calc()
+        // expressions, where unitless numbers won't be parsed as dimensions.
+        if (!dest.in_calc and value == 0.0) {
+            return dest.writeChar('0');
+        }
+
+        return css.serializer.serializeDimension(value, unit, W, dest);
     }
 
     pub fn tryFromToken(token: *const css.Token) Error!@This() {
-        _ = token; // autofix
-        @compileError(css.todo_stuff.depth);
+        switch (token.*) {
+            .dimension => |*dim| {
+                inline for (std.meta.fields(@This())) |field| {
+                    if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(field.name, dim.unit)) {
+                        return @unionInit(LengthValue, field.name, dim.num.value);
+                    }
+                }
+            },
+            else => {},
+        }
+        @compileError(css.todo_stuff.errors);
     }
 
     pub fn toUnitValue(this: *const @This()) struct { CSSNumber, []const u8 } {
-        _ = this; // autofix
-        @compileError(css.todo_stuff.depth);
+        inline for (std.meta.fields(@This())) |field| {
+            if (@field(this, field.value) == @intFromEnum(this.*)) {
+                return .{ @field(this, field.name), field.name };
+            }
+        }
     }
 
     pub fn mulF32(this: *const @This(), other: f32) Length {
@@ -218,8 +247,9 @@ pub const Length = union(enum) {
     }
 
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
-        _ = this; // autofix
-        _ = dest; // autofix
-        @compileError(css.todo_stuff.depth);
+        return switch (this.*) {
+            .value => |a| a.toCss(W, dest),
+            .calc => |c| c.toCss(W, dest),
+        };
     }
 };

@@ -59,7 +59,6 @@ pub const Request = struct {
     method: Method = Method.GET,
     request_context: JSC.API.AnyRequestContext = JSC.API.AnyRequestContext.Null,
     https: bool = false,
-    upgrader: ?*anyopaque = null,
 
     // We must report a consistent value for this
     reported_estimated_size: usize = 0,

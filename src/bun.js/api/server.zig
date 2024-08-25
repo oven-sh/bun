@@ -1729,7 +1729,9 @@ pub const AnyRequestContext = struct {
     pub fn init(request_ctx: anytype) AnyRequestContext {
         return .{ .tagged_pointer = Pointer.init(request_ctx) };
     }
-
+    pub fn get(self: AnyRequestContext, comptime T: type) ?*T {
+        return self.tagged_pointer.get(T);
+    }
     pub fn getRemoteSocketInfo(self: AnyRequestContext) ?uws.SocketAddress {
         if (self.tagged_pointer.isNull()) {
             return null;
@@ -5820,11 +5822,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return JSValue.jsUndefined();
             };
 
-            if (request.upgrader == null) {
-                return JSC.jsBoolean(false);
-            }
-
-            var upgrader = bun.cast(*RequestContext, request.upgrader.?);
+            var upgrader = request.request_context.get(RequestContext) orelse return JSC.jsBoolean(false);
 
             if (upgrader.isAbortedOrEnded()) {
                 return JSC.jsBoolean(false);
@@ -5957,7 +5955,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             upgrader.setAbortHandler();
             // after upgrading we should not use the response anymore
             upgrader.resp = null;
-            request.upgrader = null;
+            request.request_context = AnyRequestContext.Null;
 
             data_value.ensureStillAlive();
             const ws = ServerWebSocket.new(.{
@@ -6861,7 +6859,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             var request_object = Request.new(.{
                 .method = ctx.method,
                 .request_context = AnyRequestContext.init(ctx),
-                .upgrader = ctx,
                 .https = ssl_enabled,
                 .signal = signal.ref(),
                 .body = body.ref(),

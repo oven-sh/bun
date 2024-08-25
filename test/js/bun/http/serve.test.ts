@@ -1941,5 +1941,5 @@ it("should reset timeout after writes", async () => {
     expect(err?.code).toBe("ConnectionClosed");
   }
 
-  expect(received).toBeGreaterThanOrEqual(CHUNKS);
+  expect(received).toBe(CHUNKS);
 }, 22_000);

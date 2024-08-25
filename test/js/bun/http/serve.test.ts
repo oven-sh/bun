@@ -1893,7 +1893,7 @@ it("should allow use of custom timeout", async () => {
   await Promise.all([testTimeout("/ok", true), testTimeout("/timeout", false)]);
 }, 10_000);
 
-it.only("should reset timeout after writes", async () => {
+it("should reset timeout after writes", async () => {
   // the default is 10s so we send 15
   // this test should take 20s at most
   const CHUNKS = 15;

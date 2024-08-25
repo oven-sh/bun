@@ -56,6 +56,10 @@ pub const Percentage = struct {
     pub fn mulF32(this: Percentage, other: f32) Percentage {
         return Percentage{ .v = this.v * other };
     }
+
+    pub fn isZero(this: *const Percentage) bool {
+        return this.v == 0.0;
+    }
 };
 
 pub fn DimensionPercentage(comptime D: type) type {
@@ -91,6 +95,28 @@ pub fn DimensionPercentage(comptime D: type) type {
                 .percentage => |*per| return per.toCss(W, dest),
                 .calc => |calc| calc.toCss(W, dest),
             }
+        }
+
+        pub fn zero() This {
+            return .{
+                .percentage = .{
+                    .value = switch (D) {
+                        f32 => 0.0,
+                        else => @compileError("TODO implement .zero() for " + @typeName(D)),
+                    },
+                },
+            };
+        }
+
+        pub fn isZero(this: *const This) bool {
+            return switch (this.*) {
+                .dimension => |*d| switch (D) {
+                    f32 => d == 0.0,
+                    else => @compileError("TODO implement .isZero() for " + @typeName(D)),
+                },
+                .percentage => |*p| p.isZero(),
+                else => false,
+            };
         }
     };
 }

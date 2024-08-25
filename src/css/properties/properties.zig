@@ -1497,6 +1497,11 @@ pub const transform = struct {
     /// A value for the [transform](https://www.w3.org/TR/2019/CR-css-transforms-1-20190214/#propdef-transform) property.
     pub const TransformList = struct {
         v: ArrayList(Transform),
+
+        pub fn parse(input: *css.Parser) Error!@This() {
+            _ = input; // autofix
+            @compileError(css.todo_stuff.depth);
+        }
     };
 
     /// An individual transform function (https://www.w3.org/TR/2019/CR-css-transforms-1-20190214/#two-d-transform-functions).
@@ -1543,6 +1548,11 @@ pub const transform = struct {
         matrix: Matrix(f32),
         /// A 3D matrix transform.
         matrix_3d: Matrix3d(f32),
+
+        pub fn parse(input: *css.Parser) Error!Transform {
+            _ = input; // autofix
+            @compileError(css.todo_stuff.depth);
+        }
     };
 
     /// A 2D matrix.

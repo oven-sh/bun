@@ -1895,18 +1895,24 @@ it("should allow use of custom timeout", async () => {
 
 it("should reset timeout after writes", async () => {
   // the default is 10s so we send 15
-  // this test should take 20s at most
+  // this test should take 15s at most
   const CHUNKS = 15;
+  const payload = Buffer.from(`data: ${Date.now()}\n\n`);
   using server = Bun.serve({
     idleTimeout: 5,
     port: 0,
     fetch(request, server) {
       let controller!: ReadableStreamDefaultController;
       let count = CHUNKS;
-      const interval = setInterval(() => {
-        controller.enqueue(`data: ${Date.now()}\n\n`);
+      let interval = setInterval(() => {
+        controller.enqueue(payload);
         count--;
-        if (count == 0) clearInterval(interval);
+        if (count == 0) {
+          clearInterval(interval);
+          interval = null;
+          controller.close();
+          return;
+        }
       }, 1000);
       return new Response(
         new ReadableStream({
@@ -1914,7 +1920,7 @@ it("should reset timeout after writes", async () => {
             controller = _controller;
           },
           cancel(controller) {
-            clearInterval(interval);
+            if (interval) clearInterval(interval);
           },
         }),
         {
@@ -1927,19 +1933,14 @@ it("should reset timeout after writes", async () => {
     },
   });
   let received = 0;
-  try {
-    const response = await fetch(server.url);
-    const stream = response.body.getReader();
-    const decoder = new TextDecoder();
-    while (true) {
-      const { done, value } = await stream.read();
-      if (value) received++;
-      if (done) break;
-    }
-    expect.unreachable();
-  } catch (err) {
-    expect(err?.code).toBe("ConnectionClosed");
+  const response = await fetch(server.url);
+  const stream = response.body.getReader();
+  const decoder = new TextDecoder();
+  while (true) {
+    const { done, value } = await stream.read();
+    received += value?.length || 0;
+    if (done) break;
   }
 
-  expect(received).toBe(CHUNKS);
-}, 22_000);
+  expect(received).toBe(CHUNKS * payload.byteLength);
+}, 20_000);

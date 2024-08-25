@@ -134,6 +134,7 @@ pub fn Printer(comptime Writer: type) type {
         minify: bool,
         targets: Targets,
         vendor_prefix: css.VendorPrefix,
+        in_calc: bool = false,
         css_module: ?css.CssModule,
         dependencies: ?ArrayList(css.Dependency),
         remove_imports: bool,

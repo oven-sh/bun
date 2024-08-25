@@ -24,9 +24,33 @@ pub const Percentage = struct {
     }
 
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
-        _ = this; // autofix
-        _ = dest; // autofix
-        @compileError(css.todo_stuff.depth);
+        const x = this.v * 100.0;
+        const int_value: ?i32 = if ((x - @trunc(x)) == 0.0)
+            @intFromFloat(this.v)
+        else
+            null;
+
+        const percent = css.Token{ .percentage = .{
+            .has_sign = this.v < 0.0,
+            .unit_value = this.v,
+            .int_value = int_value,
+        } };
+
+        if (this.v != 0.0 and @abs(this.v) < 0.01) {
+            // TODO: is this the max length?
+            var buf: [32]u8 = undefined;
+            var fba = std.heap.FixedBufferAllocator.init(&buf);
+            var string = std.ArrayList(u8).init(fba.allocator());
+            try percent.toCss(W, &string);
+            if (this.v < 0.0) {
+                try dest.writeChar('-');
+                try dest.writeStr(bun.strings.trimLeadingPattern2(string.items, '-', '0'));
+            } else {
+                try dest.writeStr(bun.strings.trimLeadingChar(string.items, '0'));
+            }
+        } else {
+            try percent.toCss(W, dest);
+        }
     }
 };
 
@@ -35,6 +59,35 @@ pub fn DimensionPercentage(comptime D: type) type {
         dimension: D,
         percentage: Percentage,
         calc: *Calc(DimensionPercentage(D)),
+
+        const This = @This();
+
+        pub fn parse(input: *css.Parser) Error!@This() {
+            if (input.tryParse(Calc(This, .{}))) |calc_value| {
+                if (calc_value == .value) return calc_value.value.*;
+                return .{
+                    .calc = bun.create(@compileError(css.todo_stuff.think_about_allocator), This, calc_value),
+                };
+            }
+
+            if (input.tryParse(D.parse(), .{})) |length| {
+                return .{ .dimension = length };
+            }
+
+            if (input.tryParse(Percentage.parse, .{})) |percentage| {
+                return .{ .percentage = percentage };
+            }
+
+            return input.newErrorForNextToken();
+        }
+
+        pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+            switch (this.*) {
+                .dimension => |*length| return length.toCss(W, dest),
+                .percentage => |*per| return per.toCss(W, dest),
+                .calc => |calc| calc.toCss(W, dest),
+            }
+        }
     };
 }
 

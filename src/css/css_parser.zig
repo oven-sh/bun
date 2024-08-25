@@ -280,15 +280,6 @@ pub fn DefineShorthand(comptime T: type) type {
     };
 }
 
-pub fn DefineLengthUnits(comptime T: type) type {
-    return struct {
-        pub fn parse(input: *Parser) Error!T {
-            _ = input; // autofix
-            @compileError(todo_stuff.depth);
-        }
-    };
-}
-
 pub fn DeriveParse(comptime T: type) type {
     // TODO: this has to work for enums and union(enums)
     return struct {
@@ -4670,4 +4661,44 @@ pub const to_css = struct {
 pub fn parseImportant(input: *Parser) Error!void {
     try input.expectDelim('!');
     return try input.expectIdentMatch("important");
+}
+
+pub const signfns = struct {
+    pub inline fn isSignPositive(x: f32) bool {
+        return !isSignNegative(x);
+    }
+    pub inline fn isSignNegative(x: f32) bool {
+        // IEEE754 says: isSignMinus(x) is true if and only if x has negative sign. isSignMinus
+        // applies to zeros and NaNs as well.
+        // SAFETY: This is just transmuting to get the sign bit, it's fine.
+        return @as(u32, @bitCast(x)) & 0x8000_0000 != 0;
+    }
+    /// Returns a number that represents the sign of `self`.
+    ///
+    /// - `1.0` if the number is positive, `+0.0` or `INFINITY`
+    /// - `-1.0` if the number is negative, `-0.0` or `NEG_INFINITY`
+    /// - NaN if the number is NaN
+    pub fn signum(x: f32) f32 {
+        if (std.math.isNan(x)) return std.math.nan(f32);
+        return copysign(1, x);
+    }
+
+    pub fn signF32(x: f32) f32 {
+        if (x == 0.0) return if (isSignNegative(x)) 0.0 else -0.0;
+        return signum(x);
+    }
+};
+
+/// TODO(zack) is this correct
+/// Copies the sign of `sign` to `self`, returning a new f32 value
+pub inline fn copysign(self: f32, sign: f32) f32 {
+    // Convert both floats to their bit representations
+    const self_bits = @as(u32, @bitCast(self));
+    const sign_bits = @as(u32, @bitCast(sign));
+
+    // Clear the sign bit of self and combine with the sign bit of sign
+    const result_bits = (self_bits & 0x7FFFFFFF) | (sign_bits & 0x80000000);
+
+    // Convert the result back to f32
+    return @as(f32, @bitCast(result_bits));
 }

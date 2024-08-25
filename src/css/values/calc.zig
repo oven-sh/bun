@@ -11,6 +11,7 @@ const Percentage = css.css_values.percentage.Percentage;
 const Time = css.css_values.time.Time;
 
 const CSSNumber = css.css_values.number.CSSNumber;
+const CSSNumberFns = css.css_values.number.CSSNumberFns;
 /// A mathematical expression used within the `calc()` function.
 ///
 /// This type supports generic value types. Values such as `Length`, `Percentage`,
@@ -49,6 +50,24 @@ pub fn Calc(comptime V: type) type {
         };
 
         const This = @This();
+
+        fn mulValueF32(lhs: V, rhs: f32) V {
+            return switch (V) {
+                f32 => lhs * rhs,
+                // todo_stuff.depth
+                Angle => lhs.mulF32(rhs),
+                // todo_stuff.depth
+                CSSNumber => lhs * rhs,
+                // todo_stuff.depth
+                Length => lhs.mulF32(rhs),
+                // todo_stuff.depth
+                Percentage => lhs.mulF32(rhs),
+                // todo_stuff.depth
+                Time => lhs.mulF32(rhs),
+                // todo_stuff.depth
+                else => lhs.mulF32(rhs),
+            };
+        }
 
         fn addValue(lhs: V, rhs: V) V {
             switch (V) {
@@ -953,6 +972,120 @@ pub fn Calc(comptime V: type) type {
 
             return null;
         }
+
+        pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+            const was_in_calc = dest.in_calc;
+            dest.in_calc = true;
+
+            const res = toCssImpl(this, W, dest);
+
+            dest.in_calc = was_in_calc;
+            return res;
+        }
+
+        pub fn toCssImpl(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+            return switch (this.*) {
+                .value => |v| v.toCss(W, dest),
+                .number => |n| n.toCss(W, dest),
+                .sum => |sum| {
+                    const a = sum.left;
+                    const b = sum.left;
+                    try a.toCss(W, dest);
+                    // White space is always required.
+                    if (b.isSignNegative()) {
+                        try dest.writeStr(" - ");
+                        const b2 = b.mulf32(-1.0);
+                        try b2.toCss(W, dest);
+                    } else {
+                        try dest.writeStr(" + ");
+                        try b.toCss(W, dest);
+                    }
+                    return;
+                },
+                .product => {
+                    const num = this.product.number;
+                    const calc = &this.product.expression;
+                    if (@abs(num) < 1.0) {
+                        const div = 1.0 / num;
+                        try calc.toCss(W, dest);
+                        try dest.delim('/', true);
+                        try CSSNumberFns.toCss(&div, W, dest);
+                    } else {
+                        try CSSNumberFns.toCss(num, W, dest);
+                        try dest.delim('*', true);
+                        try calc.toCss(W, dest);
+                    }
+                },
+                .function => |f| return f.toCss(W, dest),
+            };
+        }
+
+        pub fn trySign(this: *const @This()) ?f32 {
+            return switch (this.*) {
+                .value => |v| return switch (V) {
+                    f32 => css.signfns.signF32(v),
+                    else => v.trySign(),
+                },
+                .number => |n| css.signfns.signF32(n),
+                else => null,
+            };
+        }
+
+        pub fn isSignNegative(this: *const @This()) bool {
+            return css.signfns.isSignNegative(this.trySign()) orelse return false;
+        }
+
+        pub fn mulF32(this: *const @This(), other: f32) This {
+            if (other == 1.0) {
+                return this.*;
+            }
+
+            return switch (this.*) {
+                .value => This{ .value = mulValueF32(this.value, other) },
+                .number => This{ .number = this.number * other },
+                .sum => This{ .sum = .{
+                    .left = bun.create(
+                        @compileError(css.todo_stuff.think_about_allocator),
+                        This,
+                        this.sum.left.mulF32(other),
+                    ),
+                    .right = bun.create(
+                        @compileError(css.todo_stuff.think_about_allocator),
+                        This,
+                        this.sum.right.mulF32(other),
+                    ),
+                } },
+                .product => {
+                    const num = this.product.number * other;
+                    if (num == 1.0) {
+                        return this.product.expression.*;
+                    }
+                    return This{
+                        .product = .{
+                            .number = num,
+                            .expression = this.product.expression,
+                        },
+                    };
+                },
+                .function => switch (this.function) {
+                    .calc => This{
+                        .function = bun.create(
+                            @compileError(css.todo_stuff.think_about_allocator),
+                            MathFunction(V),
+                            MathFunction(V){
+                                .calc = this.function.calc.mulF32(other),
+                            },
+                        ),
+                    },
+                    else => This{
+                        .product = .{
+                            .number = other,
+                            .expression = this,
+                        },
+                    },
+                },
+            };
+        }
     };
 }
 
@@ -996,6 +1129,99 @@ pub fn MathFunction(comptime V: type) type {
         sign: Calc(V),
         /// The `hypot()` function.
         hypot: ArrayList(Calc(V)),
+
+        pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+            return switch (this.*) {
+                .calc => |*calc| {
+                    try dest.writeStr("calc(");
+                    try calc.toCss(dest);
+                    try dest.writeChar(')');
+                },
+                .min => |*args| {
+                    try dest.writeStr("min(");
+                    var first = true;
+                    for (args.items) |*arg| {
+                        if (first) {
+                            first = false;
+                        } else {
+                            try dest.delim(',', false);
+                        }
+                        try arg.toCss(dest);
+                    }
+                    try dest.writeChar(')');
+                },
+                .max => |*args| {
+                    try dest.writeStr("max(");
+                    var first = true;
+                    for (args.items) |*arg| {
+                        if (first) {
+                            first = false;
+                        } else {
+                            try dest.delim(',', false);
+                        }
+                        try arg.toCss(dest);
+                    }
+                    try dest.writeChar(')');
+                },
+                .clamp => |*clamp| {
+                    try dest.writeStr("clamp(");
+                    try clamp.min.toCss(dest);
+                    try dest.delim(',', false);
+                    try clamp.center.toCss(dest);
+                    try dest.delim(',', false);
+                    try clamp.max.toCss(dest);
+                    try dest.writeChar(')');
+                },
+                .round => |*rnd| {
+                    try dest.writeStr("round(");
+                    if (rnd.strategy != RoundingStrategy.default()) {
+                        try rnd.strategy.toCss(dest);
+                        try dest.delim(',', false);
+                    }
+                    try rnd.value.toCss(dest);
+                    try dest.delim(',', false);
+                    try rnd.interval.toCss(dest);
+                    try dest.writeChar(')');
+                },
+                .rem => |*rem| {
+                    try dest.writeStr("rem(");
+                    try rem.dividend.toCss(dest);
+                    try dest.delim(',', false);
+                    try rem.divisor.toCss(dest);
+                    try dest.writeChar(')');
+                },
+                .mod_ => |*mod_| {
+                    try dest.writeStr("mod(");
+                    try mod_.dividend.toCss(dest);
+                    try dest.delim(',', false);
+                    try mod_.divisor.toCss(dest);
+                    try dest.writeChar(')');
+                },
+                .abs => |*v| {
+                    try dest.writeStr("abs(");
+                    try v.toCss(dest);
+                    try dest.writeChar(')');
+                },
+                .sign => |*v| {
+                    try dest.writeStr("sign(");
+                    try v.toCss(dest);
+                    try dest.writeChar(')');
+                },
+                .hypot => |*args| {
+                    try dest.writeStr("hypot(");
+                    var first = true;
+                    for (args.items) |*arg| {
+                        if (first) {
+                            first = false;
+                        } else {
+                            try dest.delim(',', false);
+                        }
+                        try arg.toCss(dest);
+                    }
+                    try dest.writeChar(')');
+                },
+            };
+        }
     };
 }
 

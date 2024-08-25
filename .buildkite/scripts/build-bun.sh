@@ -48,6 +48,10 @@ for name in bun bun-profile; do
   fi
   run_command chmod +x "$name"
   run_command "./$name" --revision
+  if [ "$name" == "bun-profile" ]; then
+    BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1 run_command "./$name" -e "require('fs').writeFileSync('./features.json', JSON.stringify(require('bun:internal-for-testing').crash_handler.getFeatureData()))"
+    source "$cwd/.buildkite/scripts/upload-artifact.sh" "features.json"
+  fi
   run_command mkdir -p "$dir"
   run_command mv "$name" "$dir/$name"
   run_command zip -r "$dir.zip" "$dir"

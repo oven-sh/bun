@@ -212,7 +212,7 @@ pub const TestRunner = struct {
 
     pub const Callback = struct {
         pub const OnUpdateCount = *const fn (this: *Callback, delta: u32, total: u32) void;
-        pub const OnTestStart = *const fn (this: *Callback, test_id: Test.ID) void;
+        pub const OnTestStart = *const fn (this: *Callback, test_id: Test.ID, file: string, label: string, byte_range: logger.Range, parent: ?*DescribeScope) void;
         pub const OnTestUpdate = *const fn (this: *Callback, test_id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*DescribeScope) void;
         onUpdateCount: OnUpdateCount,
         onTestStart: OnTestStart,
@@ -221,6 +221,10 @@ pub const TestRunner = struct {
         onTestSkip: OnTestUpdate,
         onTestTodo: OnTestUpdate,
     };
+
+    pub fn reportStart(this: *TestRunner, test_id: Test.ID, file: string, label: string, byte_range: logger.Range, parent: ?*DescribeScope) void {
+        this.callback.onTestStart(this.callback, test_id, file, label, byte_range, parent);
+    }
 
     pub fn reportPass(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*DescribeScope) void {
         this.tests.items(.status)[test_id] = .pass;
@@ -862,6 +866,7 @@ pub const DescribeScope = struct {
     skip_count: u32 = 0,
     tag: Tag = .pass,
     byte_range: logger.Range = .{},
+    reported: bool = false,
 
     fn isWithinOnlyScope(this: *const DescribeScope) bool {
         if (this.tag == .only) return true;
@@ -1415,9 +1420,11 @@ pub const TestRunnerTask = struct {
             const tag = if (!describe.shouldEvaluateScope()) describe.tag else test_.tag;
             switch (tag) {
                 .todo => {
+                    Jest.runner.?.callback.onTestStart(Jest.runner.?.callback, test_id, this.source_file_path, test_.label, test_.byte_range, describe);
                     this.processTestResult(globalThis, .{ .todo = {} }, test_, test_id, describe);
                 },
                 .skip => {
+                    Jest.runner.?.callback.onTestStart(Jest.runner.?.callback, test_id, this.source_file_path, test_.label, test_.byte_range, describe);
                     this.processTestResult(globalThis, .{ .skip = {} }, test_, test_id, describe);
                 },
                 else => {},
@@ -1428,6 +1435,7 @@ pub const TestRunnerTask = struct {
 
         jsc_vm.onUnhandledRejectionCtx = this;
         jsc_vm.onUnhandledRejection = onUnhandledRejection;
+        Jest.runner.?.callback.onTestStart(Jest.runner.?.callback, test_id, this.source_file_path, test_.label, test_.byte_range, describe);
 
         if (this.needs_before_each) {
             this.needs_before_each = false;
@@ -1441,7 +1449,6 @@ pub const TestRunnerTask = struct {
         }
 
         this.sync_state = .pending;
-
         var result = TestScope.run(&test_, this);
 
         if (this.describe.tests.items.len > test_id) {

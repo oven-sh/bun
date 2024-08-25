@@ -613,6 +613,27 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             return null;
         }
 
+        pub fn connectToAddress(
+            address: *const UnixOrHost,
+            socket_ctx: *SocketContext,
+            comptime Context: type,
+            ctx: *Context,
+            comptime socket_field_name: []const u8,
+        ) !ThisSocket {
+            switch (address.*) {
+                .unix => |path| {
+                    return try connectUnixAnon(path, socket_ctx, ctx);
+                },
+                .host => |host| {
+                    _ = try connectPtr(host.host, host.port, socket_ctx, Context, ctx, socket_field_name);
+                    return @field(ctx, socket_field_name);
+                },
+                .fd => |fd_| {
+                    return fromFd(socket_ctx, fd_, Context, ctx, socket_field_name) orelse error.FailedToOpenSocket;
+                },
+            }
+        }
+
         pub fn connect(
             host: []const u8,
             port: i32,
@@ -1438,7 +1459,7 @@ pub extern fn us_socket_context_remove_server_name(ssl: i32, context: ?*SocketCo
 extern fn us_socket_context_on_server_name(ssl: i32, context: ?*SocketContext, cb: ?*const fn (?*SocketContext, [*c]const u8) callconv(.C) void) void;
 extern fn us_socket_context_get_native_handle(ssl: i32, context: ?*SocketContext) ?*anyopaque;
 pub extern fn us_create_socket_context(ssl: i32, loop: ?*Loop, ext_size: i32, options: us_socket_context_options_t) ?*SocketContext;
-pub extern fn us_create_bun_socket_context(ssl: i32, loop: ?*Loop, ext_size: i32, options: us_bun_socket_context_options_t) ?*SocketContext;
+pub extern fn us_create_bun_socket_context(ssl: i32, loop: *Loop, ext_size: i32, options: us_bun_socket_context_options_t) ?*SocketContext;
 pub extern fn us_bun_socket_context_add_server_name(ssl: i32, context: ?*SocketContext, hostname_pattern: [*c]const u8, options: us_bun_socket_context_options_t, ?*anyopaque) void;
 pub extern fn us_socket_context_free(ssl: i32, context: ?*SocketContext) void;
 pub extern fn us_socket_context_ref(ssl: i32, context: ?*SocketContext) void;
@@ -3138,3 +3159,89 @@ extern fn bun_clear_loop_at_thread_exit() void;
 pub fn onThreadExit() void {
     bun_clear_loop_at_thread_exit();
 }
+
+pub const UnixOrHost = union(enum) {
+    unix: []const u8,
+    host: struct {
+        host: []const u8,
+        port: u16,
+    },
+    fd: bun.FileDescriptor,
+
+    pub fn format(this: UnixOrHost, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt; // autofix
+        _ = options; // autofix
+        switch (this) {
+            .unix => |u| {
+                try writer.print("unix:{s}", .{u});
+            },
+            .host => |h| {
+                try writer.print("{s}:{d}", .{ h.host, h.port });
+            },
+            .fd => |f| {
+                try writer.print("fd:{}", .{f});
+            },
+        }
+    }
+
+    pub fn parse(str: []const u8) ?UnixOrHost {
+        if (str.len == 0) {
+            return null;
+        }
+
+        if (bun.strings.hasPrefixComptime(str, "unix:") and str.len > 5) {
+            return .{ .unix = str[5..] };
+        }
+
+        if (bun.strings.hasPrefixComptime(str, "fd:")) {
+            return .{ .fd = bun.toFD(std.fmt.parseInt(i32, str[3..], 10) catch return null) };
+        }
+
+        if (bun.strings.indexOfChar(str, ':')) |i| {
+            const hostname = str[0..i];
+            if (i + 1 >= str.len) {
+                return null;
+            }
+            const port_string = str[i + 1 ..];
+            return .{
+                .host = .{
+                    .host = hostname,
+                    .port = std.fmt.parseInt(u16, port_string, 10) catch return null,
+                },
+            };
+        }
+
+        return null;
+    }
+
+    pub fn clone(this: UnixOrHost) UnixOrHost {
+        switch (this) {
+            .unix => |u| {
+                return .{
+                    .unix = (bun.default_allocator.dupe(u8, u) catch bun.outOfMemory()),
+                };
+            },
+            .host => |h| {
+                return .{
+                    .host = .{
+                        .host = (bun.default_allocator.dupe(u8, h.host) catch bun.outOfMemory()),
+                        .port = this.host.port,
+                    },
+                };
+            },
+            .fd => |f| return .{ .fd = f },
+        }
+    }
+
+    pub fn deinit(this: UnixOrHost) void {
+        switch (this) {
+            .unix => |u| {
+                bun.default_allocator.free(u);
+            },
+            .host => |h| {
+                bun.default_allocator.free(h.host);
+            },
+            .fd => {}, // this is an integer
+        }
+    }
+};

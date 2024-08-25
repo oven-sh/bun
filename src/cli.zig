@@ -275,6 +275,7 @@ pub const Arguments = struct {
         clap.parseParam("--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'.") catch unreachable,
         clap.parseParam("--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.") catch unreachable,
         clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
+        clap.parseParam("--listen <STR>                 Listen for test results on a socket") catch unreachable,
     };
     pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -477,6 +478,13 @@ pub const Arguments = struct {
                         Global.exit(1);
                     }
                 }
+            }
+
+            if (args.option("--listen")) |listen_address| {
+                ctx.test_options.listen_address = bun.uws.UnixOrHost.parse(listen_address) orelse {
+                    Output.prettyErrorln("<r><red>error<r>: --listen received invalid address: \"{s}\". Must be either a unix:path, fd:file_descriptor_number, or host:port pair", .{listen_address});
+                    Global.exit(1);
+                };
             }
 
             if (args.option("--coverage-dir")) |dir| {
@@ -1229,6 +1237,7 @@ pub const Command = struct {
         bail: u32 = 0,
         coverage: TestCommand.CodeCoverageOptions = .{},
         test_filter_regex: ?*RegularExpression = null,
+        listen_address: ?bun.uws.UnixOrHost = null,
     };
 
     pub const Debugger = union(enum) {

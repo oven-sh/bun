@@ -236,7 +236,7 @@ pub const OutdatedCommand = struct {
             else
                 manifest.findByDistTag(dep.version.value.dist_tag.tag.slice(string_buf)) orelse continue;
 
-            if (resolution.value.npm.version.order(latest.version, string_buf, string_buf) != .lt) continue;
+            if (resolution.value.npm.version.order(latest.version, string_buf, manifest.string_buf) != .lt) continue;
 
             const package_name_len = package_name.len +
                 if (dep.behavior.dev)

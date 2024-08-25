@@ -34,8 +34,68 @@ pub const Time = union(enum) {
     /// A time in milliseconds.
     milliseconds: CSSNumber,
 
+    pub fn parse(input: *css.Parser) Error!Time {
+        const calc_result = input.tryParse(Calc(Time), .{});
+        switch (calc_result) {
+            .value => |v| return .{ .seconds = v.* },
+            // Time is always compatible, so they will always compute to a value.
+            else => return input.newErrorForNextToken(),
+        }
+
+        const location = input.currentSourceLocation();
+        const token = try input.next();
+        switch (token.*) {
+            .dimension => |*dim| {
+                if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("s", dim.unit)) {
+                    return .{ .seconds = dim.value };
+                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("ms", dim.unit)) {
+                    return .{ .milliseconds = dim.value };
+                } else {
+                    return location.newUnexpectedTokenError(css.Token{ .ident = dim.unit });
+                }
+            },
+            else => return location.newUnexpectedTokenError(token),
+        }
+    }
+
+    pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+        // 0.1s is shorter than 100ms
+        // anything smaller is longer
+        switch (this.*) {
+            .seconds => |s| {
+                if (s > 0.0 and s < 0.1) {
+                    try CSSNumberFns.toCss(&(s * 1000.0), W, dest);
+                    try dest.writeStr("ms");
+                } else {
+                    try CSSNumberFns.toCss(&s, W, dest);
+                    try dest.writeStr("s");
+                }
+            },
+            .milliseconds => |ms| {
+                if (ms == 0.0 or ms >= 100.0) {
+                    try CSSNumberFns.toCss(&(ms / 1000.0), W, dest);
+                    try dest.writeStr("s");
+                } else {
+                    try CSSNumberFns.toCss(&ms, W, dest);
+                    try dest.writeStr("ms");
+                }
+            },
+        }
+    }
+
     pub fn tryFromToken(token: *const css.Token) Error!Time {
-        _ = token; // autofix
-        @compileError(css.todo_stuff.depth);
+        switch (token.*) {
+            .dimension => |*dim| {
+                // todo_stuff.match_ignore_ascii_case
+                if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("s", dim.unit)) {
+                    return .{ .seconds = dim.num.value };
+                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("ms", dim.unit)) {
+                    return .{ .milliseconds = dim.num.value };
+                }
+            },
+            else => {},
+        }
+
+        @compileError(css.todo_stuff.errors);
     }
 };

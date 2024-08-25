@@ -52,6 +52,10 @@ pub const Percentage = struct {
             try percent.toCss(W, dest);
         }
     }
+
+    pub fn mulF32(this: Percentage, other: f32) Percentage {
+        return Percentage{ .v = this.v * other };
+    }
 };
 
 pub fn DimensionPercentage(comptime D: type) type {

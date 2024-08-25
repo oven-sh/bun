@@ -5830,11 +5830,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return JSC.jsBoolean(false);
             }
 
-            if (upgrader.upgrade_context == null or @intFromPtr(upgrader.upgrade_context) == std.math.maxInt(usize) or upgrader.req == null) {
+            if (upgrader.upgrade_context == null or @intFromPtr(upgrader.upgrade_context) == std.math.maxInt(usize)) {
                 return JSC.jsBoolean(false);
             }
-
-            const req = upgrader.req.?;
 
             const resp = upgrader.resp.?;
             const ctx = upgrader.upgrade_context.?;
@@ -5851,22 +5849,23 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 sec_websocket_extensions = head.fastGet(.SecWebSocketExtensions) orelse ZigString.Empty;
             }
 
-            if (sec_websocket_key_str.len == 0) {
-                sec_websocket_key_str = ZigString.init(req.header("sec-websocket-key") orelse "");
+            if(upgrader.req) |req| {
+                if (sec_websocket_key_str.len == 0) {
+                    sec_websocket_key_str = ZigString.init(req.header("sec-websocket-key") orelse "");
+                }
+                if (sec_websocket_protocol.len == 0) {
+                    sec_websocket_protocol = ZigString.init(req.header("sec-websocket-protocol") orelse "");
+                }
+
+                if (sec_websocket_extensions.len == 0) {
+                    sec_websocket_extensions = ZigString.init(req.header("sec-websocket-extensions") orelse "");
+                }
             }
 
             if (sec_websocket_key_str.len == 0) {
                 return JSC.jsBoolean(false);
             }
-
-            if (sec_websocket_protocol.len == 0) {
-                sec_websocket_protocol = ZigString.init(req.header("sec-websocket-protocol") orelse "");
-            }
-
-            if (sec_websocket_extensions.len == 0) {
-                sec_websocket_extensions = ZigString.init(req.header("sec-websocket-extensions") orelse "");
-            }
-
+           
             if (sec_websocket_protocol.len > 0) {
                 sec_websocket_protocol.markUTF8();
             }

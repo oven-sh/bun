@@ -52,11 +52,9 @@ for name in bun bun-profile; do
   run_command mv "$name" "$dir/$name"
   run_command zip -r "$dir.zip" "$dir"
   source "$cwd/.buildkite/scripts/upload-artifact.sh" "$dir.zip"
-  # temporary disable this so CI can run
-  # this is failing because $name is now in $dir/$name and if changed to $dir/$name we get ENOENT reading "bun:internal-for-testing"
-  # if [ "$name" == "bun-profile" ]; then
-  #   export BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING="1"
-  #   run_command "./$name" -e "require('fs').writeFileSync('./features.json', JSON.stringify(require('bun:internal-for-testing').crash_handler.getFeatureData()))"
-  #   source "$cwd/.buildkite/scripts/upload-artifact.sh" "features.json"
-  # fi
+  if [ "$name" == "bun-profile" ]; then
+    export BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING="1"
+    run_command "./$name" -e "require('fs').writeFileSync('./features.json', JSON.stringify(require('bun:internal-for-testing').crash_handler.getFeatureData()))"
+    source "$cwd/.buildkite/scripts/upload-artifact.sh" "features.json"
+  fi
 done

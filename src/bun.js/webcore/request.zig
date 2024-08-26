@@ -59,7 +59,8 @@ pub const Request = struct {
     method: Method = Method.GET,
     request_context: JSC.API.AnyRequestContext = JSC.API.AnyRequestContext.Null,
     https: bool = false,
-
+    finalized: bool = false,
+    weak_refs: u32 = 0,
     // We must report a consistent value for this
     reported_estimated_size: usize = 0,
 
@@ -76,6 +77,25 @@ pub const Request = struct {
     pub const getBlob = RequestMixin.getBlob;
     pub const getFormData = RequestMixin.getFormData;
     pub const getBlobWithoutCallFrame = RequestMixin.getBlobWithoutCallFrame;
+    pub const WeakRef = struct {
+        value: ?*Request,
+        pub fn create(this: *Request) WeakRef {
+            this.weak_refs += 1;
+            return .{ .value = this };
+        }
+        pub fn deinit(this: *WeakRef) void {
+            if(this.value) |value| {
+                const count = value.weak_refs;
+                value.weak_refs -= 1;
+                if(value.finalized and count == 1) {
+                    this.destroy();
+                }
+            }
+        }
+        pub fn get(self: *WeakRef) ?*Request {
+            return self.value;
+        }
+    };
 
     pub export fn Request__getUWSRequest(
         this: *Request,
@@ -102,6 +122,7 @@ pub const Request = struct {
             .method = method,
         };
     }
+    
 
     pub fn getContentType(
         this: *Request,
@@ -292,9 +313,12 @@ pub const Request = struct {
     }
 
     pub fn finalize(this: *Request) void {
+        this.finalized = true;
         this.finalizeWithoutDeinit();
         _ = this.body.unref();
-        this.destroy();
+        if(this.weak_refs == 0) {
+            this.destroy();
+        }
     }
 
     pub fn getRedirect(

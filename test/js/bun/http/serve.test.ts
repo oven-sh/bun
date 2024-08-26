@@ -1860,7 +1860,7 @@ it("we should always send date", async () => {
 it("should allow use of custom timeout", async () => {
   using server = Bun.serve({
     port: 0,
-    idleTimeout: 4, // uws precision is in seconds, and lower than 4 seconds is not reliable its timer is not that accurate
+    idleTimeout: 5, // uws precision is in seconds, and lower than 4 seconds is not reliable its timer is not that accurate
     async fetch(req) {
       const url = new URL(req.url);
       return new Response(
@@ -1868,7 +1868,7 @@ it("should allow use of custom timeout", async () => {
           async pull(controller) {
             controller.enqueue("Hello,");
             if (url.pathname === "/timeout") {
-              await Bun.sleep(5000);
+              await Bun.sleep(7000);
             } else {
               await Bun.sleep(10);
             }

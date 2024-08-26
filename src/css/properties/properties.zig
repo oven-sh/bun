@@ -209,13 +209,11 @@ const SmallList = css.SmallList;
 
 pub const @"align" = @import("./align.zig");
 pub const animation = @import("./animation.zig");
-
 pub const background = @import("./background.zig");
 pub const border = @import("./border.zig");
 pub const border_image = @import("./border_image.zig");
 pub const border_radius = @import("./border_radius.zig");
 pub const box_shadow = @import("./box_shadow.zig");
-
 pub const contain = @import("./contain.zig");
 pub const css_modules = @import("./css_modules.zig");
 pub const custom = @import("./custom.zig");

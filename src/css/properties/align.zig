@@ -175,25 +175,136 @@ pub const GapValue = union(enum) {
 };
 
 /// A value for the [gap](https://www.w3.org/TR/css-align-3/#gap-shorthand) shorthand property.
-pub const Gap = @compileError(css.todo_stuff.depth);
+pub const Gap = struct {
+    /// The row gap.
+    row: GapValue,
+    /// The column gap.
+    column: GapValue,
+
+    pub usingnamespace css.DefineShorthand(@This());
+
+    const PropertyFieldMap = .{
+        .row = "row-gap",
+        .column = "column-gap",
+    };
+};
 
 /// A value for the [place-items](https://www.w3.org/TR/css-align-3/#place-items-property) shorthand property.
-pub const PlaceItems = @compileError(css.todo_stuff.depth);
+pub const PlaceItems = struct {
+    /// The item alignment.
+    @"align": AlignItems,
+    /// The item justification.
+    justify: JustifyItems,
+
+    pub usingnamespace css.DefineShorthand(@This());
+
+    const PropertyFieldMap = .{
+        .@"align" = "align-items",
+        .justify = "justify-items",
+    };
+
+    const VendorPrefixMap = .{
+        .@"align" = true,
+    };
+};
 
 /// A value for the [place-self](https://www.w3.org/TR/css-align-3/#place-self-property) shorthand property.
-pub const PlaceSelf = @compileError(css.todo_stuff.depth);
+pub const PlaceSelf = struct {
+    /// The item alignment.
+    @"align": AlignSelf,
+    /// The item justification.
+    justify: JustifySelf,
+
+    pub usingnamespace css.DefineShorthand(@This());
+
+    const PropertyFieldMap = .{
+        .@"align" = "align-self",
+        .justify = "justify-self",
+    };
+
+    const VendorPrefixMap = .{
+        .@"align" = true,
+    };
+};
 
 /// A [`<self-position>`](https://www.w3.org/TR/css-align-3/#typedef-self-position) value.
-pub const SelfPosition = @compileError(css.todo_stuff.depth);
+pub const SelfPosition = enum {
+    /// Item is centered within the container.
+    center,
+    /// Item is aligned to the start of the container.
+    start,
+    /// Item is aligned to the end of the container.
+    end,
+    /// Item is aligned to the edge of the container corresponding to the start side of the item.
+    @"self-start",
+    /// Item is aligned to the edge of the container corresponding to the end side of the item.
+    @"self-end",
+    /// Item  is aligned to the start of the container, within flexbox layouts.
+    @"flex-start",
+    /// Item  is aligned to the end of the container, within flexbox layouts.
+    @"flex-end",
+
+    pub usingnamespace css.DefineEnumProperty(@This());
+};
 
 /// A value for the [place-content](https://www.w3.org/TR/css-align-3/#place-content) shorthand property.
-pub const PlaceContent = @compileError(css.todo_stuff.depth);
+pub const PlaceContent = struct {
+    /// The content alignment.
+    @"align": AlignContent,
+    /// The content justification.
+    justify: JustifyContent,
+
+    pub usingnamespace css.DefineShorthand(@This());
+
+    const PropertyFieldMap = .{
+        .@"align" = "align-content",
+        .justify = "justify-content",
+    };
+
+    const VendorPrefixMap = .{
+        .@"align" = true,
+        .justify = true,
+    };
+};
 
 /// A [`<content-distribution>`](https://www.w3.org/TR/css-align-3/#typedef-content-distribution) value.
-pub const ContentDistribution = css.DefineEnumProperty(@compileError(css.todo_stuff.errors));
+pub const ContentDistribution = enum {
+    /// Items are spaced evenly, with the first and last items against the edge of the container.
+    @"space-between",
+    /// Items are spaced evenly, with half-size spaces at the start and end.
+    @"space-around",
+    /// Items are spaced evenly, with full-size spaces at the start and end.
+    @"space-evenly",
+    /// Items are stretched evenly to fill free space.
+    stretch,
+
+    pub usingnamespace css.DefineEnumProperty(@This());
+};
 
 /// An [`<overflow-position>`](https://www.w3.org/TR/css-align-3/#typedef-overflow-position) value.
-pub const OverflowPosition = css.DefineEnumProperty(@compileError(css.todo_stuff.errors));
+pub const OverflowPosition = enum {
+    /// If the size of the alignment subject overflows the alignment container,
+    /// the alignment subject is instead aligned as if the alignment mode were start.
+    safe,
+    /// Regardless of the relative sizes of the alignment subject and alignment
+    /// container, the given alignment value is honored.
+    unsafe,
+
+    pub usingnamespace css.DefineEnumProperty(@This());
+};
 
 /// A [`<content-position>`](https://www.w3.org/TR/css-align-3/#typedef-content-position) value.
-pub const ContentPosition = css.DefineEnumProperty(@compileError(css.todo_stuff.errors));
+pub const ContentPosition = enum {
+    /// Content is centered within the container.
+    center,
+    /// Content is aligned to the start of the container.
+    start,
+    /// Content is aligned to the end of the container.
+    end,
+    /// Same as `start` when within a flexbox container.
+    @"flex-start",
+    /// Same as `end` when within a flexbox container.
+    @"flex-end",
+
+    pub usingnamespace css.DefineEnumProperty(@This());
+};

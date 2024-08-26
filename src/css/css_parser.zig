@@ -253,6 +253,8 @@ pub fn voidWrap(comptime T: type, comptime parsefn: *const fn (*Parser) Error!T)
 }
 
 pub fn DefineShorthand(comptime T: type) type {
+    // TODO: validate map, make sure each field is set
+    _ = T.PropertyFieldMap;
     return struct {
         /// Returns a shorthand from the longhand properties defined in the given declaration block.
         pub fn fromLonghands(decls: *const DeclarationBlock, vendor_prefix: VendorPrefix) ?struct { T, bool } {

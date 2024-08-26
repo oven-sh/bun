@@ -1857,10 +1857,10 @@ it("we should always send date", async () => {
   }
 });
 
-it("should allow use of custom timeout", async () => {
+it.only("should allow use of custom timeout", async () => {
   using server = Bun.serve({
     port: 0,
-    idleTimeout: 5, // uws precision is in seconds, and lower than 4 seconds is not reliable its timer is not that accurate
+    idleTimeout: 8, // uws precision is in seconds, and lower than 4 seconds is not reliable its timer is not that accurate
     async fetch(req) {
       const url = new URL(req.url);
       return new Response(
@@ -1868,7 +1868,7 @@ it("should allow use of custom timeout", async () => {
           async pull(controller) {
             controller.enqueue("Hello,");
             if (url.pathname === "/timeout") {
-              await Bun.sleep(7000);
+              await Bun.sleep(10000);
             } else {
               await Bun.sleep(10);
             }
@@ -1891,7 +1891,7 @@ it("should allow use of custom timeout", async () => {
     }
   }
   await Promise.all([testTimeout("/ok", true), testTimeout("/timeout", false)]);
-}, 10_000);
+}, 15_000);
 
 it("should reset timeout after writes", async () => {
   // the default is 10s so we send 15

@@ -32,9 +32,36 @@ pub fn Size2D(comptime T: type) type {
         a: T,
         b: T,
 
+        fn parseVal(input: *css.Parser) Error!T {
+            switch (T) {
+                f32 => return CSSNumberFns.parse(input),
+                LengthPercentage => return LengthPercentage.parse(input),
+                else => @compileError("TODO implement parseVal() for " + @typeName(T)),
+            }
+        }
+
         pub fn parse(input: *css.Parser) Error!Size2D(T) {
-            _ = input; // autofix
-            @compileError(css.todo_stuff.depth);
+            const first = try parseVal(input);
+            const second = input.tryParse(parseVal, .{}) catch first;
+            return Size2D(T){
+                .a = first,
+                .b = second,
+            };
+        }
+
+        pub fn toCss(this: *const Size2D(T), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+            try valToCss(&this.a, W, dest);
+            if (this.b != this.a) {
+                try dest.writeStr(" ");
+                try valToCss(&this.b, W, dest);
+            }
+        }
+
+        pub fn valToCss(val: *const T, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+            return switch (T) {
+                f32 => CSSNumberFns.toCss(val, W, dest),
+                else => @compileError("TODO implement valToCss() for " + @typeName(T)),
+            };
         }
     };
 }

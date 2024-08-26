@@ -78,20 +78,23 @@ pub const Request = struct {
     pub const getFormData = RequestMixin.getFormData;
     pub const getBlobWithoutCallFrame = RequestMixin.getBlobWithoutCallFrame;
     pub const WeakRef = struct {
-        value: ?*Request,
+        value: ?*Request = null,
         pub fn create(this: *Request) WeakRef {
             this.weak_refs += 1;
             return .{ .value = this };
         }
+
         pub fn deinit(this: *WeakRef) void {
             if(this.value) |value| {
                 const count = value.weak_refs;
+                this.value = null;
                 value.weak_refs -= 1;
                 if(value.finalized and count == 1) {
-                    this.destroy();
+                    value.destroy();
                 }
             }
         }
+
         pub fn get(self: *WeakRef) ?*Request {
             return self.value;
         }

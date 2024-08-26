@@ -558,8 +558,29 @@ describe("WebSocket", () => {
   });
 
   it("should be able to send big messages", async () => {
+    using serve = Bun.serve({
+      port: 0,
+      tls,
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response("failed to upgrade", { status: 403 });
+      },
+      websocket: {
+        message(ws, message) {
+          if (ws.send(message) == 0) {
+            ws.data = ws.data || [];
+            ws.data.push(message);
+          }
+        },
+        drain(ws) {
+          while (ws.data && ws.data.length) {
+            if (ws.send(ws.data.shift()) == 0) break;
+          }
+        },
+      },
+    });
     const { promise, resolve, reject } = Promise.withResolvers();
-    const ws = new WebSocket("https://echo.websocket.org/");
+    const ws = new WebSocket(serve.url, { tls: { rejectUnauthorized: false } });
 
     const payload = crypto.randomBytes(1024 * 16);
     const iterations = 10;

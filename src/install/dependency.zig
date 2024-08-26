@@ -825,17 +825,9 @@ pub fn parseWithTag(
                 input,
                 sliced.sub(input),
             ) catch |err| {
-                if (log_) |log| log.addErrorFmt(
-                    null,
-                    logger.Loc.Empty,
-                    allocator,
-                    "{s} parsing version \"{s}\"",
-                    .{
-                        @errorName(err),
-                        dependency,
-                    },
-                ) catch unreachable;
-                return null;
+                switch (err) {
+                    error.OutOfMemory => bun.outOfMemory(),
+                }
             };
 
             const result = Version{

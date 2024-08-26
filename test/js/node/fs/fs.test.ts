@@ -2376,25 +2376,33 @@ describe("fs/promises", () => {
   }, 100000);
 
   for (let withFileTypes of [false, true] as const) {
-    const warmup = 1;
     const iterCount = 200;
     const full = resolve(import.meta.dir, "../");
 
     const doIt = async () => {
-      for (let i = 0; i < warmup; i++) {
-        await promises.readdir(full, { withFileTypes });
-      }
-
       const maxFD = getMaxFD();
+
+      await Promise.all(
+        Array.from({ length: iterCount }, () => promises.readdir(full, { withFileTypes, recursive: true })),
+      );
+
       const pending = new Array(iterCount);
       for (let i = 0; i < iterCount; i++) {
         pending[i] = promises.readdir(full, { recursive: true, withFileTypes });
       }
 
       const results = await Promise.all(pending);
-      for (let i = 0; i < iterCount; i++) {
-        results[i].sort();
+      // Sort the results for determinism.
+      if (withFileTypes) {
+        for (let i = 0; i < iterCount; i++) {
+          results[i].sort((a, b) => a.path.localeCompare(b.path));
+        }
+      } else {
+        for (let i = 0; i < iterCount; i++) {
+          results[i].sort();
+        }
       }
+
       expect(results[0].length).toBeGreaterThan(0);
       for (let i = 1; i < iterCount; i++) {
         expect(results[i]).toEqual(results[0]);
@@ -2407,7 +2415,11 @@ describe("fs/promises", () => {
       }
 
       const newMaxFD = getMaxFD();
-      expect(maxFD).toBe(newMaxFD); // assert we do not leak file descriptors
+
+      // assert we do not leak file descriptors
+      // but we might start some threads or create kqueue
+      // so we should allow *some* increase
+      expect(newMaxFD - maxFD).toBeLessThan(5);
     };
 
     const fail = async () => {
@@ -3289,4 +3301,26 @@ it("promises.appendFile should accept a FileHandle", async () => {
 it("chown should verify its arguments", () => {
   expect(() => fs.chown("doesnt-matter.txt", "a", 0)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
   expect(() => fs.chown("doesnt-matter.txt", 0, "a")).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+});
+
+it("open flags verification", async () => {
+  const invalid = 4_294_967_296;
+  expect(() => fs.open(__filename, invalid, () => {})).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
+  expect(() => fs.openSync(__filename, invalid)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
+  expect(async () => await fs.promises.open(__filename, invalid)).toThrow(RangeError);
+
+  expect(() => fs.open(__filename, 4294967298.5, () => {})).toThrow(
+    RangeError(`The value of "flags" is out of range. It must be an integer. Received 4294967298.5`),
+  );
+});
+
+it("open mode verification", async () => {
+  const invalid = 4_294_967_296;
+  expect(() => fs.open(__filename, 0, invalid, () => {})).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
+  expect(() => fs.openSync(__filename, 0, invalid)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
+  expect(async () => await fs.promises.open(__filename, 0, invalid)).toThrow(RangeError);
+
+  expect(() => fs.open(__filename, 0, 4294967298.5, () => {})).toThrow(
+    RangeError(`The value of "mode" is out of range. It must be an integer. Received 4294967298.5`),
+  );
 });

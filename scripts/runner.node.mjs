@@ -21,7 +21,7 @@ import {
 } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir, hostname, userInfo, homedir } from "node:os";
-import { join, basename, dirname, relative } from "node:path";
+import { join, basename, dirname, relative, sep } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
 import { isIP } from "node:net";
 import { parseArgs } from "node:util";
@@ -441,6 +441,8 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
     BUN_INSTALL_CACHE_DIR: tmpdirPath,
     SHELLOPTS: isWindows ? "igncr" : undefined, // ignore "\r" on Windows
+    // Used in Node.js tests.
+    TEST_TMPDIR: tmpdirPath,
   };
   if (env) {
     Object.assign(bunEnv, env);
@@ -529,10 +531,11 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
 async function spawnBunTest(execPath, testPath) {
   const timeout = getTestTimeout(testPath);
   const perTestTimeout = Math.ceil(timeout / 2);
+  const isReallyTest = isTestStrict(testPath);
   const { ok, error, stdout } = await spawnBun(execPath, {
-    args: ["test", `--timeout=${perTestTimeout}`, testPath],
+    args: isReallyTest ? ["test", `--timeout=${perTestTimeout}`, testPath] : [testPath],
     cwd: cwd,
-    timeout,
+    timeout: isReallyTest ? timeout : 30_000,
     env: {
       GITHUB_ACTIONS: "true", // always true so annotations are parsed
     },
@@ -811,6 +814,12 @@ function isJavaScript(path) {
  * @returns {boolean}
  */
 function isTest(path) {
+  if (path.replaceAll(sep, "/").includes("/test-cluster-") && path.endsWith(".js")) return true;
+  if (path.replaceAll(sep, "/").startsWith("js/node/cluster/test-") && path.endsWith(".ts")) return true;
+  return isTestStrict(path);
+}
+
+function isTestStrict(path) {
   return isJavaScript(path) && /\.test|spec\./.test(basename(path));
 }
 

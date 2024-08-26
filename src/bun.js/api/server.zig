@@ -89,6 +89,7 @@ const SendfileContext = struct {
 };
 const linux = std.os.linux;
 const Async = bun.Async;
+const httplog = Output.scoped(.Server, false);
 
 const BlobFileContentResult = struct {
     data: [:0]const u8,
@@ -142,7 +143,7 @@ pub const ServerConfig = struct {
     } = .{
         .tcp = .{},
     },
-
+    idleTimeout: u8 = 10, //TODO: should we match websocket default idleTimeout of 120?
     // TODO: use webkit URL parser instead of bun's
     base_url: URL = URL{},
     base_uri: string = "",
@@ -836,8 +837,8 @@ pub const ServerConfig = struct {
     };
 
     pub fn fromJS(global: *JSC.JSGlobalObject, arguments: *JSC.Node.ArgumentsSlice, exception: JSC.C.ExceptionRef) ServerConfig {
-        var env = arguments.vm.bundler.env;
-        const vm = JSC.VirtualMachine.get();
+        const vm = arguments.vm;
+        const env = vm.bundler.env;
 
         var args = ServerConfig{
             .address = .{
@@ -847,8 +848,13 @@ pub const ServerConfig = struct {
                 },
             },
             .development = true,
+
+            // If this is a node:cluster child, let's default to SO_REUSEPORT.
+            // That way you don't have to remember to set reusePort: true in Bun.serve() when using node:cluster.
+            .reuse_port = env.get("NODE_UNIQUE_ID") != null,
         };
         var has_hostname = false;
+
         if (strings.eqlComptime(env.get("NODE_ENV") orelse "", "production")) {
             args.development = false;
         }
@@ -886,6 +892,24 @@ pub const ServerConfig = struct {
             if (!arg.isObject()) {
                 JSC.throwInvalidArguments("Bun.serve expects an object", .{}, global, exception);
                 return args;
+            }
+
+            if (arg.get(global, "idleTimeout")) |value| {
+                if (!value.isUndefinedOrNull()) {
+                    if (!value.isAnyInt()) {
+                        JSC.throwInvalidArguments("Bun.serve expects idleTimeout to be an integer", .{}, global, exception);
+
+                        return args;
+                    }
+
+                    const idleTimeout: u64 = @intCast(@max(value.toInt64(), 0));
+                    if (idleTimeout > 255) {
+                        JSC.throwInvalidArguments("Bun.serve expects idleTimeout to be 255 or less", .{}, global, exception);
+                        return args;
+                    }
+
+                    args.idleTimeout = @truncate(idleTimeout);
+                }
             }
 
             if (arg.getTruthy(global, "webSocket") orelse arg.getTruthy(global, "websocket")) |websocket_object| {
@@ -2585,7 +2609,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             // we have to clone the request headers here since they will soon belong to a different request
             if (!request_object.hasFetchHeaders()) {
-                request_object.setFetchHeaders(JSC.FetchHeaders.createFromUWS(ctx.server.?.globalThis, req));
+                request_object.setFetchHeaders(JSC.FetchHeaders.createFromUWS(req));
             }
 
             // This object dies after the stack frame is popped
@@ -3893,7 +3917,7 @@ pub const WebSocketServer = struct {
                     globalObject.throwInvalidArguments("websocket expects idleTimeout to be 960 or less", .{});
                     return null;
                 } else if (idleTimeout > 0) {
-                    // uws does not allow idleTimeout to be between (0, 8],
+                    // uws does not allow idleTimeout to be between (0, 8),
                     // since its timer is not that accurate, therefore round up.
                     idleTimeout = @max(idleTimeout, 8);
                 }
@@ -4155,7 +4179,7 @@ pub const ServerWebSocket = struct {
             const globalObject = handler.globalObject;
 
             var corker = Corker{
-                .args = &[_]JSC.JSValue{this.this_value},
+                .args = &[_]JSC.JSValue{this.getThisValue()},
                 .globalObject = globalObject,
                 .callback = handler.onDrain,
             };
@@ -4207,7 +4231,7 @@ pub const ServerWebSocket = struct {
         _ = cb.call(
             globalThis,
             .undefined,
-            &[_]JSC.JSValue{ this.this_value, this.binaryToJS(globalThis, data) },
+            &[_]JSC.JSValue{ this.getThisValue(), this.binaryToJS(globalThis, data) },
         ) catch {
             const err = globalThis.takeException();
             log("onPing error", .{});
@@ -4235,7 +4259,7 @@ pub const ServerWebSocket = struct {
         _ = cb.call(
             globalThis,
             .undefined,
-            &[_]JSC.JSValue{ this.this_value, this.binaryToJS(globalThis, data) },
+            &[_]JSC.JSValue{ this.getThisValue(), this.binaryToJS(globalThis, data) },
         ) catch {
             const err = globalThis.takeException();
             log("onPong error", .{});
@@ -4267,7 +4291,7 @@ pub const ServerWebSocket = struct {
             _ = handler.onClose.call(
                 globalObject,
                 .undefined,
-                &[_]JSC.JSValue{ this.this_value, JSValue.jsNumber(code), str.toJS(globalObject) },
+                &[_]JSC.JSValue{ this.getThisValue(), JSValue.jsNumber(code), str.toJS(globalObject) },
             ) catch {
                 const err = globalObject.takeException();
                 log("onClose error", .{});
@@ -4298,7 +4322,6 @@ pub const ServerWebSocket = struct {
         callframe: *JSC.CallFrame,
     ) JSValue {
         const args = callframe.arguments(4);
-
         if (args.len < 1) {
             log("publish()", .{});
             globalThis.throw("publish requires at least 1 argument", .{});
@@ -4620,17 +4643,21 @@ pub const ServerWebSocket = struct {
         this: *ServerWebSocket,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
+        // Since we're passing the `this` value to the cork function, we need to
+        // make sure the `this` value is up to date.
+        this_value: JSC.JSValue,
     ) JSValue {
         const args = callframe.arguments(1);
+        this.this_value = this_value;
 
         if (args.len < 1) {
-            globalThis.throw("cork requires at least 1 argument", .{});
+            globalThis.throwNotEnoughArguments("cork", 1, 0);
             return .zero;
         }
+
         const callback = args.ptr[0];
         if (callback.isEmptyOrUndefinedOrNull() or !callback.isCallable(globalThis.vm())) {
-            globalThis.throw("cork requires a function", .{});
-            return .zero;
+            return globalThis.throwInvalidArgumentTypeValue("cork", "callback", callback);
         }
 
         if (this.isClosed()) {
@@ -4639,15 +4666,12 @@ pub const ServerWebSocket = struct {
 
         var corker = Corker{
             .globalObject = globalThis,
-            .this_value = this.this_value,
+            .this_value = this_value,
             .callback = callback,
         };
         this.websocket().cork(&corker, Corker.run);
 
         const result = corker.result;
-
-        if (result.isEmptyOrUndefinedOrNull())
-            return JSValue.jsUndefined();
 
         if (result.isAnyError()) {
             globalThis.throwValue(result);
@@ -5017,9 +5041,12 @@ pub const ServerWebSocket = struct {
         this: *ServerWebSocket,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
+        // Since close() can lead to the close() callback being called, let's always ensure the `this` value is up to date.
+        this_value: JSC.JSValue,
     ) JSValue {
         const args = callframe.arguments(2);
         log("close()", .{});
+        this.this_value = this_value;
 
         if (this.isClosed()) {
             return .undefined;
@@ -5061,11 +5088,15 @@ pub const ServerWebSocket = struct {
         this: *ServerWebSocket,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
+        // Since terminate() can lead to close() being called, let's always ensure the `this` value is up to date.
+        this_value: JSC.JSValue,
     ) JSValue {
         _ = globalThis;
         const args = callframe.arguments(2);
         _ = args;
         log("terminate()", .{});
+
+        this.this_value = this_value;
 
         if (this.isClosed()) {
             return .undefined;
@@ -5271,8 +5302,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
         pub const App = uws.NewApp(ssl_enabled);
 
-        const httplog = Output.scoped(.Server, false);
-
         listener: ?*App.ListenSocket = null,
         thisObject: JSC.JSValue = JSC.JSValue.zero,
         app: *App = undefined,
@@ -5282,6 +5311,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         config: ServerConfig = ServerConfig{},
         pending_requests: usize = 0,
         request_pool_allocator: *RequestContext.RequestContextStackAllocator = undefined,
+        all_closed_promise: JSC.JSPromise.Strong = .{},
 
         listen_callback: JSC.AnyTask = undefined,
         allocator: std.mem.Allocator,
@@ -5291,10 +5321,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         cached_hostname: bun.String = bun.String.empty,
         cached_protocol: bun.String = bun.String.empty,
 
-        flags: packed struct(u3) {
+        flags: packed struct(u4) {
             deinit_scheduled: bool = false,
             terminated: bool = false,
             has_js_deinited: bool = false,
+            has_handled_all_closed_promise: bool = false,
         } = .{},
 
         pub const doStop = JSC.wrapInstanceMethod(ThisServer, "stopFromJS", false);
@@ -5304,6 +5335,31 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub const doReload = onReload;
         pub const doFetch = onFetch;
         pub const doRequestIP = JSC.wrapInstanceMethod(ThisServer, "requestIP", false);
+
+        pub fn doSubscriberCount(this: *ThisServer, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+            const arguments = callframe.arguments(1);
+            if (arguments.len < 1) {
+                globalThis.throwNotEnoughArguments("subscriberCount", 1, 0);
+                return .zero;
+            }
+
+            if (arguments.ptr[0].isEmptyOrUndefinedOrNull()) {
+                globalThis.throwInvalidArguments("subscriberCount requires a topic name as a string", .{});
+                return .zero;
+            }
+
+            var topic = arguments.ptr[0].toSlice(globalThis, bun.default_allocator);
+            defer topic.deinit();
+            if (globalThis.hasException()) {
+                return .zero;
+            }
+
+            if (topic.len == 0) {
+                return JSValue.jsNumber(0);
+            }
+
+            return JSValue.jsNumber((this.app.num_subscribers(topic.slice())));
+        }
 
         pub usingnamespace NamespaceType;
         pub usingnamespace bun.New(@This());
@@ -5473,6 +5529,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         data_value = headers_value;
                     }
 
+                    if (globalThis.hasException()) {
+                        return JSValue.jsUndefined();
+                    }
+
                     if (opts.fastGet(globalThis, .headers)) |headers_value| {
                         if (headers_value.isEmptyOrUndefinedOrNull()) {
                             break :getter;
@@ -5487,9 +5547,15 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                             }
                             break :brk null;
                         } orelse {
-                            JSC.throwInvalidArguments("upgrade options.headers must be a Headers or an object", .{}, globalThis, exception);
+                            if (!globalThis.hasException()) {
+                                JSC.throwInvalidArguments("upgrade options.headers must be a Headers or an object", .{}, globalThis, exception);
+                            }
                             return JSValue.jsUndefined();
                         };
+
+                        if (globalThis.hasException()) {
+                            return JSValue.jsUndefined();
+                        }
 
                         if (fetch_headers_to_use.fastGet(.SecWebSocketProtocol)) |protocol| {
                             sec_websocket_protocol = protocol;
@@ -5503,6 +5569,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         // we must write the status first so that 200 OK isn't written
                         resp.writeStatus("101 Switching Protocols");
                         fetch_headers_to_use.toUWSResponse(comptime ssl_enabled, resp);
+                    }
+
+                    if (globalThis.hasException()) {
+                        return JSValue.jsUndefined();
                     }
                 }
             }
@@ -5731,7 +5801,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     break :brk false;
                 };
 
-                JSC.C.JSValueUnprotect(this.globalThis, this.thisObject.asObjectRef());
+                this.thisObject.unprotect();
                 this.thisObject = .undefined;
                 this.stop(abrupt);
             }
@@ -5741,7 +5811,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
         pub fn disposeFromJS(this: *ThisServer) JSC.JSValue {
             if (this.listener != null) {
-                JSC.C.JSValueUnprotect(this.globalThis, this.thisObject.asObjectRef());
+                this.thisObject.unprotect();
                 this.thisObject = .undefined;
                 this.stop(true);
             }
@@ -5926,6 +5996,24 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
         pub fn deinitIfWeCan(this: *ThisServer) void {
             httplog("deinitIfWeCan", .{});
+
+            const vm = this.globalThis.bunVM();
+
+            if (this.pending_requests == 0 and this.listener == null and !this.hasActiveWebSockets() and !this.flags.has_handled_all_closed_promise and this.all_closed_promise.strong.has()) {
+                const event_loop = vm.eventLoop();
+
+                // use a flag here instead of `this.all_closed_promise.get().isHandled(vm)` to prevent the race condition of this block being called
+                // again before the task has run.
+                this.flags.has_handled_all_closed_promise = true;
+
+                const task = ServerAllConnectionsClosedTask.new(.{
+                    .globalObject = this.globalThis,
+                    .promise = this.all_closed_promise,
+                    .tracker = JSC.AsyncTaskTracker.init(vm),
+                });
+                this.all_closed_promise = .{};
+                event_loop.enqueueTask(JSC.Task.init(task));
+            }
             if (this.pending_requests == 0 and this.listener == null and this.flags.has_js_deinited and !this.hasActiveWebSockets()) {
                 if (this.config.websocket) |*ws| {
                     ws.handler.app = null;
@@ -6243,8 +6331,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     this.vm.eventLoop().debug.exit();
                 }
             }
-
             req.setYield(false);
+            resp.timeout(this.config.idleTimeout);
+
             var ctx = this.request_pool_allocator.tryGet() catch bun.outOfMemory();
             ctx.create(this, req, resp);
             this.vm.jsc.reportExtraMemory(@sizeOf(RequestContext));
@@ -6528,6 +6617,32 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
     };
 }
+
+pub const ServerAllConnectionsClosedTask = struct {
+    globalObject: *JSC.JSGlobalObject,
+    promise: JSC.JSPromise.Strong,
+    tracker: JSC.AsyncTaskTracker,
+
+    pub usingnamespace bun.New(@This());
+
+    pub fn runFromJSThread(this: *ServerAllConnectionsClosedTask, vm: *JSC.VirtualMachine) void {
+        httplog("ServerAllConnectionsClosedTask runFromJSThread", .{});
+
+        const globalObject = this.globalObject;
+        const tracker = this.tracker;
+        tracker.willDispatch(globalObject);
+        defer tracker.didDispatch(globalObject);
+
+        var promise = this.promise;
+        this.destroy();
+
+        if (!vm.isShuttingDown()) {
+            promise.resolve(globalObject, .undefined);
+        } else {
+            promise.deinit();
+        }
+    }
+};
 
 pub const HTTPServer = NewServer(JSC.Codegen.JSHTTPServer, false, false);
 pub const HTTPSServer = NewServer(JSC.Codegen.JSHTTPSServer, true, false);

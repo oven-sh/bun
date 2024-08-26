@@ -135,15 +135,19 @@ var log = function log() {
   console.log("%s - %s", timestamp(), format.$apply(cjs_exports, arguments));
 };
 var inherits = function inherits(ctor, superCtor) {
+  if (ctor === undefined || ctor === null) {
+    throw ERR_INVALID_ARG_TYPE("ctor", "Function", ctor);
+  }
+
+  if (superCtor === undefined || superCtor === null) {
+    throw ERR_INVALID_ARG_TYPE("superCtor", "Function", superCtor);
+  }
+
+  if (superCtor.prototype === undefined) {
+    throw ERR_INVALID_ARG_TYPE("superCtor.prototype", "Object", superCtor.prototype);
+  }
   ctor.super_ = superCtor;
-  ctor.prototype = Object.create(superCtor.prototype, {
-    constructor: {
-      value: ctor,
-      enumerable: false,
-      writable: true,
-      configurable: true,
-    },
-  });
+  Object.setPrototypeOf(ctor.prototype, superCtor.prototype);
 };
 var _extend = function (origin, add) {
   if (!add || !isObject(add)) return origin;

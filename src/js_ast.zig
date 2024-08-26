@@ -2545,7 +2545,7 @@ pub const E = struct {
             if (s.isUTF8()) {
                 return JSC.ZigString.fromUTF8(s.slice(allocator));
             } else {
-                return JSC.ZigString.init16(s.slice16());
+                return JSC.ZigString.initUTF16(s.slice16());
             }
         }
 
@@ -5587,7 +5587,7 @@ pub const Expr = struct {
                 .e_utf8_string,
                 => true,
 
-                .e_template => |template| template.parts.len == 0,
+                .e_template => |template| template.tag == null and template.parts.len == 0,
 
                 .e_array => |array| array.was_originally_macro,
                 .e_object => |object| object.was_originally_macro,

@@ -40,6 +40,8 @@ const uid_t = if (Environment.isPosix) std.posix.uid_t else bun.windows.libuv.uv
 const gid_t = if (Environment.isPosix) std.posix.gid_t else bun.windows.libuv.uv_gid_t;
 const ReadPosition = i64;
 const StringOrBuffer = JSC.Node.StringOrBuffer;
+const NodeFSFunctionEnum = std.meta.DeclEnum(JSC.Node.NodeFS);
+const UvFsCallback = fn (*uv.fs_t) callconv(.C) void;
 
 const Stats = JSC.Node.Stats;
 const Dirent = JSC.Node.Dirent;
@@ -63,7 +65,7 @@ pub const Async = struct {
     pub const appendFile = NewAsyncFSTask(Return.AppendFile, Arguments.AppendFile, NodeFS.appendFile);
     pub const chmod = NewAsyncFSTask(Return.Chmod, Arguments.Chmod, NodeFS.chmod);
     pub const chown = NewAsyncFSTask(Return.Chown, Arguments.Chown, NodeFS.chown);
-    pub const close = NewAsyncFSTask(Return.Close, Arguments.Close, NodeFS.close);
+    pub const close = NewUVFSRequest(Return.Close, Arguments.Close, .close);
     pub const copyFile = NewAsyncFSTask(Return.CopyFile, Arguments.CopyFile, NodeFS.copyFile);
     pub const exists = NewAsyncFSTask(Return.Exists, Arguments.Exists, NodeFS.exists);
     pub const fchmod = NewAsyncFSTask(Return.Fchmod, Arguments.FChmod, NodeFS.fchmod);
@@ -80,12 +82,12 @@ pub const Async = struct {
     pub const lutimes = NewAsyncFSTask(Return.Lutimes, Arguments.Lutimes, NodeFS.lutimes);
     pub const mkdir = NewAsyncFSTask(Return.Mkdir, Arguments.Mkdir, NodeFS.mkdir);
     pub const mkdtemp = NewAsyncFSTask(Return.Mkdtemp, Arguments.MkdirTemp, NodeFS.mkdtemp);
-    pub const open = NewAsyncFSTask(Return.Open, Arguments.Open, NodeFS.open);
-    pub const read = NewAsyncFSTask(Return.Read, Arguments.Read, NodeFS.read);
+    pub const open = NewUVFSRequest(Return.Open, Arguments.Open, .open);
+    pub const read = NewUVFSRequest(Return.Read, Arguments.Read, .read);
     pub const readdir = NewAsyncFSTask(Return.Readdir, Arguments.Readdir, NodeFS.readdir);
     pub const readFile = NewAsyncFSTask(Return.ReadFile, Arguments.ReadFile, NodeFS.readFile);
     pub const readlink = NewAsyncFSTask(Return.Readlink, Arguments.Readlink, NodeFS.readlink);
-    pub const readv = NewAsyncFSTask(Return.Readv, Arguments.Readv, NodeFS.readv);
+    pub const readv = NewUVFSRequest(Return.Readv, Arguments.Readv, .readv);
     pub const realpath = NewAsyncFSTask(Return.Realpath, Arguments.Realpath, NodeFS.realpath);
     pub const rename = NewAsyncFSTask(Return.Rename, Arguments.Rename, NodeFS.rename);
     pub const rm = NewAsyncFSTask(Return.Rm, Arguments.Rm, NodeFS.rm);
@@ -95,9 +97,9 @@ pub const Async = struct {
     pub const truncate = NewAsyncFSTask(Return.Truncate, Arguments.Truncate, NodeFS.truncate);
     pub const unlink = NewAsyncFSTask(Return.Unlink, Arguments.Unlink, NodeFS.unlink);
     pub const utimes = NewAsyncFSTask(Return.Utimes, Arguments.Utimes, NodeFS.utimes);
-    pub const write = NewAsyncFSTask(Return.Write, Arguments.Write, NodeFS.write);
+    pub const write = NewUVFSRequest(Return.Write, Arguments.Write, .write);
     pub const writeFile = NewAsyncFSTask(Return.WriteFile, Arguments.WriteFile, NodeFS.writeFile);
-    pub const writev = NewAsyncFSTask(Return.Writev, Arguments.Writev, NodeFS.writev);
+    pub const writev = NewUVFSRequest(Return.Writev, Arguments.Writev, .writev);
 
     pub const cp = AsyncCpTask;
 
@@ -141,6 +143,195 @@ pub const Async = struct {
         }
     };
 
+    fn NewUVFSRequest(comptime ReturnType: type, comptime ArgumentType: type, comptime FunctionEnum: NodeFSFunctionEnum) type {
+        if (!Environment.isWindows) {
+            return NewAsyncFSTask(ReturnType, ArgumentType, @field(NodeFS, @tagName(FunctionEnum)));
+        }
+        switch (FunctionEnum) {
+            .open,
+            .close,
+            .read,
+            .write,
+            .readv,
+            .writev,
+            => {},
+            else => return NewAsyncFSTask(ReturnType, ArgumentType, @field(NodeFS, @tagName(FunctionEnum))),
+        }
+
+        comptime bun.assert(Environment.isWindows);
+        return struct {
+            promise: JSC.JSPromise.Strong,
+            args: ArgumentType,
+            globalObject: *JSC.JSGlobalObject,
+            req: uv.fs_t = std.mem.zeroes(uv.fs_t),
+            result: JSC.Maybe(ReturnType),
+            ref: bun.Async.KeepAlive = .{},
+            tracker: JSC.AsyncTaskTracker,
+
+            pub const Task = @This();
+
+            pub const heap_label = "Async" ++ bun.meta.typeBaseName(@typeName(ArgumentType)) ++ "UvTask";
+
+            pub usingnamespace bun.New(@This());
+
+            pub fn create(globalObject: *JSC.JSGlobalObject, this: *JSC.Node.NodeJSFS, args: ArgumentType, vm: *JSC.VirtualMachine) JSC.JSValue {
+                var task = Task.new(.{
+                    .promise = JSC.JSPromise.Strong.init(globalObject),
+                    .args = args,
+                    .result = undefined,
+                    .globalObject = globalObject,
+                    .tracker = JSC.AsyncTaskTracker.init(vm),
+                });
+                task.ref.ref(vm);
+                task.args.toThreadSafe();
+
+                task.tracker.didSchedule(globalObject);
+
+                const log = bun.sys.syslog;
+                const loop = uv.Loop.get();
+                task.req.data = task;
+                switch (comptime FunctionEnum) {
+                    .open => {
+                        const args_: Arguments.Open = task.args;
+                        const path = if (bun.strings.eqlComptime(args_.path.slice(), "/dev/null")) "\\\\.\\NUL" else args_.path.sliceZ(&this.node_fs.sync_error_buf);
+
+                        var flags: c_int = @intFromEnum(args_.flags);
+                        flags = uv.O.fromBunO(flags);
+
+                        var mode: c_int = args_.mode;
+                        if (mode == 0) mode = 0o644;
+
+                        const rc = uv.uv_fs_open(loop, &task.req, path.ptr, flags, mode, &uv_callback);
+                        bun.debugAssert(rc == .zero);
+                        log("uv open({s}, {d}, {d}) = ~~", .{ path, flags, mode });
+                    },
+                    .close => {
+                        const args_: Arguments.Close = task.args;
+                        const fd = args_.fd.impl().uv();
+
+                        if (fd == 1 or fd == 2) {
+                            log("uv close({}) SKIPPED", .{fd});
+                            task.result = Maybe(Return.Close).success;
+                            task.globalObject.bunVM().eventLoop().enqueueTask(JSC.Task.init(task));
+                            return task.promise.value();
+                        }
+
+                        const rc = uv.uv_fs_close(loop, &task.req, fd, &uv_callback);
+                        bun.debugAssert(rc == .zero);
+                        log("uv close({d}) = ~~", .{fd});
+                    },
+                    .read => {
+                        const args_: Arguments.Read = task.args;
+                        const B = uv.uv_buf_t.init;
+                        const fd = args_.fd.impl().uv();
+
+                        const rc = uv.uv_fs_read(loop, &task.req, fd, &.{B(args_.buffer.slice()[args_.offset..])}, 1, args_.position orelse -1, &uv_callback);
+                        bun.debugAssert(rc == .zero);
+                        log("uv read({d}) = ~~", .{fd});
+                    },
+                    .write => {
+                        const args_: Arguments.Write = task.args;
+                        const B = uv.uv_buf_t.init;
+                        const fd = args_.fd.impl().uv();
+
+                        const rc = uv.uv_fs_write(loop, &task.req, fd, &.{B(args_.buffer.slice()[args_.offset..])}, 1, args_.position orelse -1, &uv_callback);
+                        bun.debugAssert(rc == .zero);
+                        log("uv write({d}) = ~~", .{fd});
+                    },
+                    .readv => {
+                        const args_: Arguments.Readv = task.args;
+                        const fd = args_.fd.impl().uv();
+                        const bufs = args_.buffers.buffers.items;
+                        const pos: i64 = args_.position orelse -1;
+
+                        var sum: u64 = 0;
+                        for (bufs) |b| sum += b.slice().len;
+
+                        const rc = uv.uv_fs_read(loop, &task.req, fd, bufs.ptr, @intCast(bufs.len), pos, &uv_callback);
+                        bun.debugAssert(rc == .zero);
+                        log("uv readv({d}, {*}, {d}, {d}, {d} total bytes) = ~~", .{ fd, bufs.ptr, bufs.len, pos, sum });
+                    },
+                    .writev => {
+                        const args_: Arguments.Writev = task.args;
+                        const fd = args_.fd.impl().uv();
+                        const bufs = args_.buffers.buffers.items;
+                        const pos: i64 = args_.position orelse -1;
+
+                        var sum: u64 = 0;
+                        for (bufs) |b| sum += b.slice().len;
+
+                        const rc = uv.uv_fs_write(loop, &task.req, fd, bufs.ptr, @intCast(bufs.len), pos, &uv_callback);
+                        bun.debugAssert(rc == .zero);
+                        log("uv writev({d}, {*}, {d}, {d}, {d} total bytes) = ~~", .{ fd, bufs.ptr, bufs.len, pos, sum });
+                    },
+                    else => comptime unreachable,
+                }
+
+                return task.promise.value();
+            }
+
+            fn uv_callback(req: *uv.fs_t) callconv(.C) void {
+                defer uv.uv_fs_req_cleanup(req);
+                const this: *Task = @ptrCast(@alignCast(req.data.?));
+                var node_fs = NodeFS{};
+                this.result = @field(NodeFS, "uv_" ++ @tagName(FunctionEnum))(&node_fs, this.args, @intFromEnum(req.result));
+
+                if (this.result == .err) {
+                    this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
+                    std.mem.doNotOptimizeAway(&node_fs);
+                }
+
+                this.globalObject.bunVM().eventLoop().enqueueTask(JSC.Task.init(this));
+            }
+
+            pub fn runFromJSThread(this: *Task) void {
+                const globalObject = this.globalObject;
+                var success = @as(JSC.Maybe(ReturnType).Tag, this.result) == .result;
+                const result = switch (this.result) {
+                    .err => |err| err.toJSC(globalObject),
+                    .result => |*res| brk: {
+                        const out = globalObject.toJS(res, .temporary);
+                        success = out != .zero;
+
+                        break :brk out;
+                    },
+                };
+                var promise_value = this.promise.value();
+                var promise = this.promise.get();
+                promise_value.ensureStillAlive();
+
+                const tracker = this.tracker;
+                tracker.willDispatch(globalObject);
+                defer tracker.didDispatch(globalObject);
+
+                this.deinit();
+                switch (success) {
+                    false => {
+                        promise.reject(globalObject, result);
+                    },
+                    true => {
+                        promise.resolve(globalObject, result);
+                    },
+                }
+            }
+
+            pub fn deinit(this: *Task) void {
+                if (this.result == .err) {
+                    bun.default_allocator.free(this.result.err.path);
+                }
+
+                this.ref.unref(this.globalObject.bunVM());
+                if (@hasDecl(ArgumentType, "deinitAndUnprotect")) {
+                    this.args.deinitAndUnprotect();
+                } else {
+                    this.args.deinit();
+                }
+                this.promise.deinit();
+                this.destroy();
+            }
+        };
+    }
+
     fn NewAsyncFSTask(comptime ReturnType: type, comptime ArgumentType: type, comptime Function: anytype) type {
         return struct {
             promise: JSC.JSPromise.Strong,
@@ -157,6 +348,7 @@ pub const Async = struct {
 
             pub fn create(
                 globalObject: *JSC.JSGlobalObject,
+                _: *JSC.Node.NodeJSFS,
                 args: ArgumentType,
                 vm: *JSC.VirtualMachine,
             ) JSC.JSValue {
@@ -234,7 +426,7 @@ pub const Async = struct {
                 } else {
                     this.args.deinit();
                 }
-                this.promise.strong.deinit();
+                this.promise.deinit();
                 bun.destroy(this);
             }
         };
@@ -355,6 +547,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
 
         pub fn create(
             globalObject: *JSC.JSGlobalObject,
+            _: *JSC.Node.NodeJSFS,
             cp_args: Arguments.Cp,
             vm: *JSC.VirtualMachine,
             arena: bun.ArenaAllocator,
@@ -496,7 +689,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             this.deinitialized = true;
             if (comptime !is_shell) this.ref.unref(this.evtloop);
             this.args.deinit();
-            this.promise.strong.deinit();
+            this.promise.deinit();
             this.arena.deinit();
             bun.destroy(this);
         }
@@ -1059,7 +1252,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         this.args.deinit();
         bun.default_allocator.free(this.root_path.slice());
         this.clearResultList();
-        this.promise.strong.deinit();
+        this.promise.deinit();
         this.destroy();
     }
 };
@@ -2307,6 +2500,7 @@ pub const Arguments = struct {
 
                     if (val.getIfPropertyExists(ctx.ptr(), "mode")) |mode_| {
                         mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse mode;
+                        if (exception.* != null) return null;
                     }
                 }
             }
@@ -2543,18 +2737,23 @@ pub const Arguments = struct {
                 if (val.isObject()) {
                     if (val.getTruthy(ctx.ptr(), "flags")) |flags_| {
                         flags = FileSystemFlags.fromJS(ctx, flags_, exception) orelse flags;
+                        if (exception.* != null) return null;
                     }
 
                     if (val.getTruthy(ctx.ptr(), "mode")) |mode_| {
                         mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse mode;
+                        if (exception.* != null) return null;
                     }
                 } else if (!val.isEmpty()) {
-                    if (!val.isUndefinedOrNull())
+                    if (!val.isUndefinedOrNull()) {
                         // error is handled below
                         flags = FileSystemFlags.fromJS(ctx, val, exception) orelse flags;
+                        if (exception.* != null) return null;
+                    }
 
                     if (arguments.nextEat()) |next| {
                         mode = JSC.Node.modeFromJS(ctx, next, exception) orelse mode;
+                        if (exception.* != null) return null;
                     }
                 }
             }
@@ -3288,6 +3487,7 @@ pub const Arguments = struct {
             };
         }
     };
+
     pub const Exists = struct {
         path: ?PathLike,
 
@@ -3849,8 +4049,11 @@ pub const Arguments = struct {
     };
 
     pub const UnwatchFile = void;
+
     pub const Watch = JSC.Node.FSWatcher.Arguments;
+
     pub const WatchFile = JSC.Node.StatWatcher.Arguments;
+
     pub const Fsync = struct {
         fd: FileDescriptor,
 
@@ -3970,7 +4173,6 @@ const Return = struct {
             );
         }
     };
-
     pub const WritePromise = struct {
         bytes_written: u52,
         buffer: StringOrBuffer,
@@ -4008,7 +4210,6 @@ const Return = struct {
             return JSC.JSValue.jsNumberFromUint64(this.bytes_written);
         }
     };
-
     pub const Readdir = union(Tag) {
         with_file_types: []Dirent,
         buffers: []Buffer,
@@ -4049,7 +4250,6 @@ const Return = struct {
     pub const Rename = void;
     pub const Rmdir = void;
     pub const Stat = StatOrNotFound;
-
     pub const Symlink = void;
     pub const Truncate = void;
     pub const Unlink = void;
@@ -4057,10 +4257,8 @@ const Return = struct {
     pub const Watch = JSC.JSValue;
     pub const WatchFile = JSC.JSValue;
     pub const Utimes = void;
-
     pub const Chown = void;
     pub const Lutimes = void;
-
     pub const Writev = Write;
 };
 
@@ -4131,6 +4329,17 @@ pub const NodeFS = struct {
     pub fn close(_: *NodeFS, args: Arguments.Close, comptime flavor: Flavor) Maybe(Return.Close) {
         _ = flavor;
         return if (Syscall.close(args.fd)) |err| .{ .err = err } else Maybe(Return.Close).success;
+    }
+
+    pub fn uv_close(_: *NodeFS, args: Arguments.Close, rc: i64) Maybe(Return.Close) {
+        if (rc < 0) {
+            return Maybe(Return.Close){ .err = .{
+                .errno = @intCast(-rc),
+                .syscall = .close,
+                .fd = args.fd,
+            } };
+        }
+        return Maybe(Return.Close).success;
     }
 
     // since we use a 64 KB stack buffer, we should not let this function get inlined
@@ -4624,6 +4833,7 @@ pub const NodeFS = struct {
     pub fn mkdir(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor) Maybe(Return.Mkdir) {
         return if (args.recursive) mkdirRecursive(this, args, flavor) else mkdirNonRecursive(this, args, flavor);
     }
+
     // Node doesn't absolute the path so we don't have to either
     pub fn mkdirNonRecursive(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor) Maybe(Return.Mkdir) {
         _ = flavor;
@@ -4883,6 +5093,18 @@ pub const NodeFS = struct {
         };
     }
 
+    pub fn uv_open(this: *NodeFS, args: Arguments.Open, rc: i64) Maybe(Return.Open) {
+        _ = this;
+        if (rc < 0) {
+            return Maybe(Return.Open){ .err = .{
+                .errno = @intCast(-rc),
+                .syscall = .open,
+                .path = args.path.slice(),
+            } };
+        }
+        return Maybe(Return.Open).initResult(FDImpl.decode(bun.toFD(@as(u32, @intCast(rc)))));
+    }
+
     pub fn openDir(_: *NodeFS, _: Arguments.OpenDir, comptime _: Flavor) Maybe(Return.OpenDir) {
         return Maybe(Return.OpenDir).todo();
     }
@@ -4936,6 +5158,30 @@ pub const NodeFS = struct {
             );
     }
 
+    pub fn uv_read(this: *NodeFS, args: Arguments.Read, rc: i64) Maybe(Return.Read) {
+        _ = this;
+        if (rc < 0) {
+            return Maybe(Return.Read){ .err = .{
+                .errno = @intCast(-rc),
+                .syscall = .read,
+                .fd = args.fd,
+            } };
+        }
+        return Maybe(Return.Read).initResult(.{ .bytes_read = @intCast(rc) });
+    }
+
+    pub fn uv_readv(this: *NodeFS, args: Arguments.Readv, rc: i64) Maybe(Return.Readv) {
+        _ = this;
+        if (rc < 0) {
+            return Maybe(Return.Readv){ .err = .{
+                .errno = @intCast(-rc),
+                .syscall = .readv,
+                .fd = args.fd,
+            } };
+        }
+        return Maybe(Return.Readv).initResult(.{ .bytes_read = @intCast(rc) });
+    }
+
     pub fn readv(this: *NodeFS, args: Arguments.Readv, comptime flavor: Flavor) Maybe(Return.Readv) {
         return if (args.position != null) _preadv(this, args, flavor) else _readv(this, args, flavor);
     }
@@ -4946,6 +5192,30 @@ pub const NodeFS = struct {
 
     pub fn write(this: *NodeFS, args: Arguments.Write, comptime flavor: Flavor) Maybe(Return.Write) {
         return if (args.position != null) _pwrite(this, args, flavor) else _write(this, args, flavor);
+    }
+
+    pub fn uv_write(this: *NodeFS, args: Arguments.Write, rc: i64) Maybe(Return.Write) {
+        _ = this;
+        if (rc < 0) {
+            return Maybe(Return.Write){ .err = .{
+                .errno = @intCast(-rc),
+                .syscall = .write,
+                .fd = args.fd,
+            } };
+        }
+        return Maybe(Return.Write).initResult(.{ .bytes_written = @intCast(rc) });
+    }
+
+    pub fn uv_writev(this: *NodeFS, args: Arguments.Writev, rc: i64) Maybe(Return.Writev) {
+        _ = this;
+        if (rc < 0) {
+            return Maybe(Return.Writev){ .err = .{
+                .errno = @intCast(-rc),
+                .syscall = .writev,
+                .fd = args.fd,
+            } };
+        }
+        return Maybe(Return.Writev).initResult(.{ .bytes_written = @intCast(rc) });
     }
 
     fn _write(_: *NodeFS, args: Arguments.Write, comptime flavor: Flavor) Maybe(Return.Write) {

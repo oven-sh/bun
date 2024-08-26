@@ -113,6 +113,7 @@ pub const Features = struct {
     pub var no_avx2: usize = 0;
     pub var binlinks: usize = 0;
     pub var builtin_modules = std.enums.EnumSet(bun.JSC.HardcodedModule).initEmpty();
+    pub var standalone_executable: usize = 0;
 
     pub fn formatter() Formatter {
         return Formatter{};

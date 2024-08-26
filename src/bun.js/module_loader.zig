@@ -1789,6 +1789,17 @@ pub const ModuleLoader = struct {
                 }
 
                 if (loader == .json or loader == .toml) {
+                    if (parse_result.empty) {
+                        return ResolvedSource{
+                            .allocator = null,
+                            .specifier = input_specifier,
+                            .source_url = input_specifier.createIfDifferent(path.text),
+                            .hash = 0,
+                            .jsvalue_for_export = JSC.JSValue.createEmptyObject(jsc_vm.global, 0),
+                            .tag = .exports_object,
+                        };
+                    }
+
                     return ResolvedSource{
                         .allocator = null,
                         .specifier = input_specifier,

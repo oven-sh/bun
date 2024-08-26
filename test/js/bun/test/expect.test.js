@@ -783,6 +783,32 @@ describe("expect()", () => {
     });
   });
 
+  test("toThrow asymmetric matchers", () => {
+    expect(() => {
+      const err = new Error("foo");
+      err.code = "ERR_BAR";
+      throw err;
+    }).toThrow(expect.objectContaining({ code: "ERR_BAR" }));
+
+    expect(() => {
+      const err = new TypeError("foo");
+      err.code = "ERR_BAZ";
+      throw err;
+    }).not.toThrow(expect.objectContaining({ code: "ERR_BAR", name: "TypeError" }));
+
+    expect(() => {
+      const err = new TypeError("foo");
+      err.code = "ERR_BAZ";
+      throw err;
+    }).toThrow(expect.objectContaining({ code: "ERR_BAZ", name: "TypeError" }));
+
+    expect(() => {
+      const err = new TypeError("foo");
+      err.code = "ERR_BAZ";
+      throw err;
+    }).toThrow(expect.objectContaining({ code: "ERR_BAZ", name: "TypeError" }));
+  });
+
   test("toThrow", () => {
     expect(() => {
       throw new Error("hello");
@@ -4457,6 +4483,36 @@ describe("expect()", () => {
     expect("a").toEqual("a");
   });
 
+  test("expect.assertions doesn't throw when valid, async", async () => {
+    expect.assertions(1);
+    await new Promise(resolve => setTimeout(resolve, 1));
+    expect("a").toEqual("a");
+  });
+
+  test("expect.assertions doesn't throw when valid, callback", done => {
+    expect.assertions(1);
+    process.nextTick(() => {
+      expect("a").toEqual("a");
+      done();
+    });
+  });
+
+  test("expect.assertions doesn't throw when valid, setImmediate", done => {
+    expect.assertions(1);
+    setImmediate(() => {
+      expect("a").toEqual("a");
+      done();
+    });
+  });
+
+  test("expect.assertions doesn't throw when valid, queueMicrotask", done => {
+    expect.assertions(1);
+    queueMicrotask(() => {
+      expect("a").toEqual("a");
+      done();
+    });
+  });
+
   test("expect.hasAssertions returns undefined", () => {
     expect(expect.hasAssertions()).toBeUndefined();
   });
@@ -4670,6 +4726,25 @@ describe("expect()", () => {
 
   test(' " " to contain ""', () => {
     expect(" ").toContain("");
+  });
+
+  test("should work #13267", () => {
+    try {
+      expect(() => {
+        throw "!";
+      }).not.toThrow(/ball/);
+    } catch (e) {
+      expect(e).toBeUndefined();
+    }
+    try {
+      expect(() => {
+        throw "ball";
+      }).not.toThrow(/ball/);
+    } catch (e) {
+      expect(e).toBeDefined();
+      expect(e.message).toContain("Received message: ");
+      expect(e.message).toContain('"ball"');
+    }
   });
 });
 

@@ -75,13 +75,14 @@ export function checkAscii(str: string) {
 
 export function writeIfNotChanged(file: string, contents: string) {
   if (Array.isArray(contents)) contents = contents.join("");
+  contents = contents.replaceAll("\r\n", "\n").trim() + "\n";
 
-  if (fs.existsSync(file)) {
+  try {
     const oldContents = fs.readFileSync(file, "utf8");
     if (oldContents === contents) {
       return;
     }
-  }
+  } catch (e) {}
 
   try {
     fs.writeFileSync(file, contents);

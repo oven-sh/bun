@@ -342,7 +342,9 @@ fn NewHTTPContext(comptime ssl: bool) type {
         };
 
         pub fn markSocketAsDead(socket: HTTPSocket) void {
-            socket.ext(**anyopaque).* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
+            if (socket.ext(**anyopaque)) |ctx| {
+                ctx.* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
+            }
         }
 
         fn terminateSocket(socket: HTTPSocket) void {
@@ -461,7 +463,9 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
             if (hostname.len <= MAX_KEEPALIVE_HOSTNAME and !socket.isClosedOrHasError() and socket.isEstablished()) {
                 if (this.pending_sockets.get()) |pending| {
-                    socket.ext(**anyopaque).* = bun.cast(**anyopaque, ActiveSocket.init(pending).ptr());
+                    if (socket.ext(**anyopaque)) |ctx| {
+                        ctx.* = bun.cast(**anyopaque, ActiveSocket.init(pending).ptr());
+                    }
                     socket.flush();
                     socket.timeout(0);
                     socket.setTimeoutMinutes(5);
@@ -517,9 +521,9 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     // handshake completed but we may have ssl errors
                     client.flags.did_have_handshaking_error = handshake_error.error_no != 0;
                     if (handshake_success) {
-                        if(client.flags.reject_unauthorized) {
+                        if (client.flags.reject_unauthorized) {
                             // only reject the connection if reject_unauthorized == true
-                            if(client.flags.did_have_handshaking_error) {
+                            if (client.flags.did_have_handshaking_error) {
                                 client.closeAndFail(BoringSSL.getCertErrorFromNo(handshake_error.error_no), comptime ssl, socket);
                                 return;
                             }
@@ -527,7 +531,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                             // if checkServerIdentity returns false, we dont call open this means that the connection was rejected
                             if (!client.checkServerIdentity(comptime ssl, socket, handshake_error)) {
                                 client.flags.did_have_handshaking_error = true;
-
+                                client.unregisterAbortTracker();
                                 if (!socket.isClosed()) terminateSocket(socket);
                                 return;
                             }
@@ -537,7 +541,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     } else {
                         // if we are here is because server rejected us, and the error_no is the cause of this
                         // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS
-                        if(client.flags.did_have_handshaking_error) {
+                        if (client.flags.did_have_handshaking_error) {
                             client.closeAndFail(BoringSSL.getCertErrorFromNo(handshake_error.error_no), comptime ssl, socket);
                             return;
                         }
@@ -545,7 +549,6 @@ fn NewHTTPContext(comptime ssl: bool) type {
                         client.closeAndFail(error.ConnectionRefused, comptime ssl, socket);
                         return;
                     }
-                
                 }
 
                 if (socket.isClosed()) {
@@ -745,7 +748,9 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
             if (client.isKeepAlivePossible()) {
                 if (this.existingSocket(client.flags.reject_unauthorized, hostname, port)) |sock| {
-                    sock.ext(**anyopaque).* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
+                    if (sock.ext(**anyopaque)) |ctx| {
+                        ctx.* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
+                    }
                     client.allow_retry = true;
                     client.onOpen(comptime ssl, sock);
                     if (comptime ssl) {
@@ -786,12 +791,12 @@ pub const HTTPThread = struct {
 
     lazy_libdeflater: ?*LibdeflateState = null,
 
+    const threadlog = Output.scoped(.HTTPThread, true);
+
     const ShutdownMessage = struct {
         async_http_id: u32,
         is_tls: bool,
     };
-
-    const threadlog = Output.scoped(.HTTPThread, true);
 
     pub const LibdeflateState = struct {
         decompressor: *bun.libdeflate.Decompressor = undefined,
@@ -1081,6 +1086,24 @@ pub fn checkServerIdentity(
     return true;
 }
 
+fn registerAbortTracker(
+    client: *HTTPClient,
+    comptime is_ssl: bool,
+    socket: NewHTTPContext(is_ssl).HTTPSocket,
+) void {
+    if (client.signals.aborted != null) {
+        socket_async_http_abort_tracker.put(client.async_http_id, socket.socket) catch unreachable;
+    }
+}
+
+fn unregisterAbortTracker(
+    client: *HTTPClient,
+) void {
+    if (client.signals.aborted != null) {
+        _ = socket_async_http_abort_tracker.swapRemove(client.async_http_id);
+    }
+}
+
 pub fn onOpen(
     client: *HTTPClient,
     comptime is_ssl: bool,
@@ -1093,9 +1116,7 @@ pub fn onOpen(
             assert(is_ssl == client.url.isHTTPS());
         }
     }
-    if (client.signals.aborted != null) {
-        socket_async_http_abort_tracker.put(client.async_http_id, socket.socket) catch unreachable;
-    }
+    client.registerAbortTracker(is_ssl, socket);
     log("Connected {s} \n", .{client.url.href});
 
     if (client.signals.get(.aborted)) {
@@ -1155,6 +1176,12 @@ pub fn onClose(
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
     log("Closed  {s}\n", .{client.url.href});
+    // the socket is closed, we need to unregister the abort tracker
+    client.unregisterAbortTracker();
+    if (client.signals.get(.aborted)) {
+        client.fail(error.Aborted);
+        return;
+    }
 
     const in_progress = client.state.stage != .done and client.state.stage != .fail and client.state.flags.is_redirect_pending == false;
 
@@ -1198,19 +1225,15 @@ pub fn onTimeout(
 ) void {
     if (client.flags.disable_timeout) return;
     log("Timeout  {s}\n", .{client.url.href});
-
     defer NewHTTPContext(is_ssl).terminateSocket(socket);
 
-    if (client.state.stage != .done and client.state.stage != .fail) {
-        client.fail(error.Timeout);
-    }
+    client.fail(error.Timeout);
 }
 pub fn onConnectError(
     client: *HTTPClient,
 ) void {
     log("onConnectError  {s}\n", .{client.url.href});
-    if (client.state.stage != .done and client.state.stage != .fail)
-        client.fail(error.ConnectionRefused);
+    client.fail(error.ConnectionRefused);
 }
 
 pub inline fn getAllocator() std.mem.Allocator {
@@ -2424,6 +2447,7 @@ pub fn doRedirect(
     this.remaining_redirect_count -|= 1;
     this.flags.redirected = true;
     assert(this.redirect_type == FetchRedirect.follow);
+    this.unregisterAbortTracker();
 
     // we need to clean the client reference before closing the socket because we are going to reuse the same ref in a another request
     if (this.isKeepAlivePossible()) {
@@ -2452,9 +2476,6 @@ pub fn doRedirect(
         var tunnel = this.proxy_tunnel.?;
         tunnel.deinit();
         this.proxy_tunnel = null;
-    }
-    if (this.signals.aborted != null) {
-        _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
     }
 
     return this.start(.{ .bytes = request_body }, body_out_str);
@@ -2549,7 +2570,7 @@ fn printResponse(response: picohttp.Response) void {
 
 pub fn onPreconnect(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     log("onPreconnect({})", .{this.url});
-    _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
+    this.unregisterAbortTracker();
     const ctx = if (comptime is_ssl) &http_thread.https_context else &http_thread.http_context;
     ctx.releaseSocket(
         socket,
@@ -2858,13 +2879,11 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
 }
 
 pub fn closeAndFail(this: *HTTPClient, err: anyerror, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    log("closeAndFail: {s}", .{@errorName(err)});
     if (!socket.isClosed()) {
         NewHTTPContext(is_ssl).terminateSocket(socket);
     }
-    if (this.state.stage != .fail and this.state.stage != .done) {
-        log("closeAndFail: {s}", .{@errorName(err)});
-        this.fail(err);
-    }
+    this.fail(err);
 }
 
 fn startProxySendHeaders(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
@@ -2936,11 +2955,11 @@ inline fn handleShortRead(
 }
 pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u8, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     log("onData {}", .{incoming_data.len});
-
     if (this.signals.get(.aborted)) {
         this.closeAndAbort(is_ssl, socket);
         return;
     }
+
     switch (this.state.response_stage) {
         .pending, .headers, .proxy_decoded_headers => {
             var to_read = incoming_data;
@@ -3188,21 +3207,20 @@ pub fn closeAndAbort(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCo
 }
 
 fn fail(this: *HTTPClient, err: anyerror) void {
-    if (this.signals.aborted != null) {
-        _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
+    this.unregisterAbortTracker();
+    if (this.state.stage != .done and this.state.stage != .fail) {
+        this.state.request_stage = .fail;
+        this.state.response_stage = .fail;
+        this.state.fail = err;
+        this.state.stage = .fail;
+
+        const callback = this.result_callback;
+        const result = this.toResult();
+        this.state.reset(this.allocator);
+        this.flags.proxy_tunneling = false;
+
+        callback.run(@fieldParentPtr("client", this), result);
     }
-
-    this.state.request_stage = .fail;
-    this.state.response_stage = .fail;
-    this.state.fail = err;
-    this.state.stage = .fail;
-
-    const callback = this.result_callback;
-    const result = this.toResult();
-    this.state.reset(this.allocator);
-    this.flags.proxy_tunneling = false;
-
-    callback.run(@fieldParentPtr("client", this), result);
 }
 
 // We have to clone metadata immediately after use
@@ -3262,15 +3280,13 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
         const result = this.toResult();
         const is_done = !result.has_more;
 
-        if (this.signals.aborted != null and is_done) {
-            _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
-        }
-
         log("progressUpdate {}", .{is_done});
 
         const callback = this.result_callback;
 
         if (is_done) {
+            this.unregisterAbortTracker();
+
             if (this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
                 ctx.releaseSocket(
                     socket,
@@ -3401,7 +3417,7 @@ pub fn toResult(this: *HTTPClient) HTTPClientResult {
             .redirected = this.flags.redirected,
             .fail = this.state.fail,
             // check if we are reporting cert errors, do not have a fail state and we are not done
-            .has_more = this.state.fail == null and !this.state.isDone(),
+            .has_more = certificate_info != null or (this.state.fail == null and !this.state.isDone()),
             .body_size = body_size,
             .certificate_info = null,
         };

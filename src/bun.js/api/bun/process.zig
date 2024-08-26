@@ -980,6 +980,7 @@ pub const PosixSpawnOptions = struct {
         inherit: void,
         ignore: void,
         buffer: void,
+        ipc: void,
         pipe: bun.FileDescriptor,
         dup2: struct { out: bun.JSC.Subprocess.StdioKind, to: bun.JSC.Subprocess.StdioKind },
     };
@@ -1049,6 +1050,7 @@ pub const WindowsSpawnOptions = struct {
         inherit: void,
         ignore: void,
         buffer: *bun.windows.libuv.Pipe,
+        ipc: *bun.windows.libuv.Pipe,
         pipe: bun.FileDescriptor,
         dup2: struct { out: bun.JSC.Subprocess.StdioKind, to: bun.JSC.Subprocess.StdioKind },
 
@@ -1284,7 +1286,7 @@ pub fn spawnProcessPosix(
             .inherit => {
                 try actions.inherit(fileno);
             },
-            .ignore => {
+            .ipc, .ignore => {
                 try actions.openZ(fileno, "/dev/null", flag | bun.O.CREAT, 0o664);
             },
             .path => |path| {
@@ -1403,7 +1405,7 @@ pub fn spawnProcessPosix(
             .path => |path| {
                 try actions.open(fileno, path, bun.O.RDWR | bun.O.CREAT, 0o664);
             },
-            .buffer => {
+            .ipc, .buffer => {
                 const fds: [2]bun.FileDescriptor = brk: {
                     var fds_: [2]std.c.fd_t = undefined;
                     const rc = std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &fds_);
@@ -1584,6 +1586,11 @@ pub fn spawnProcessWindows(
                 stdio.flags = uv.UV_INHERIT_FD;
                 stdio.data.fd = fd_i;
             },
+            .ipc => |my_pipe| {
+                // ipc option inside stdin, stderr or stdout are not supported
+                bun.default_allocator.destroy(my_pipe);
+                stdio.flags = uv.UV_IGNORE;
+            },
             .ignore => {
                 stdio.flags = uv.UV_IGNORE;
             },
@@ -1651,6 +1658,11 @@ pub fn spawnProcessWindows(
                 const fd = rc.int();
                 try uv_files_to_close.append(fd);
                 stdio.data.fd = fd;
+            },
+            .ipc => |my_pipe| {
+                try my_pipe.init(loop, true).unwrap();
+                stdio.flags = uv.UV_CREATE_PIPE | uv.UV_WRITABLE_PIPE | uv.UV_READABLE_PIPE | uv.UV_OVERLAPPED_PIPE;
+                stdio.data.stream = @ptrCast(my_pipe);
             },
             .buffer => |my_pipe| {
                 try my_pipe.init(loop, false).unwrap();
@@ -1736,7 +1748,7 @@ pub fn spawnProcessWindows(
 
     for (options.extra_fds, 0..) |*input, i| {
         switch (input.*) {
-            .buffer => {
+            .ipc, .buffer => {
                 result.extra_pipes.appendAssumeCapacity(.{ .buffer = @ptrCast(stdio_containers.items[3 + i].data.stream) });
             },
             else => {

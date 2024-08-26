@@ -5158,6 +5158,7 @@ fn NewParser_(
         delete_target: Expr.Data,
         loop_body: Stmt.Data,
         module_scope: *js_ast.Scope = undefined,
+        module_scope_directive_loc: logger.Loc = .{},
         is_control_flow_dead: bool = false,
 
         /// We must be careful to avoid revisiting nodes that have scopes.
@@ -12503,6 +12504,8 @@ fn NewParser_(
                                             skip = true;
                                             // Track "use strict" directives
                                             p.current_scope.strict_mode = .explicit_strict_mode;
+                                            if (p.current_scope == p.module_scope)
+                                                p.module_scope_directive_loc = stmt.loc;
                                         } else if (str.eqlComptime("use asm")) {
                                             skip = true;
                                             stmt.data = Prefill.Data.SEmpty;
@@ -23459,9 +23462,26 @@ fn NewParser_(
                             total_stmts_count += part.stmts.len;
                         }
 
+                        const preserve_strict_mode = p.module_scope.strict_mode == .explicit_strict_mode and
+                            !(parts.len > 0 and
+                            parts[0].stmts.len > 0 and
+                            parts[0].stmts[0].data == .s_directive);
+
+                        total_stmts_count += @as(usize, @intCast(@intFromBool(preserve_strict_mode)));
+
                         const stmts_to_copy = allocator.alloc(Stmt, total_stmts_count) catch bun.outOfMemory();
                         {
                             var remaining_stmts = stmts_to_copy;
+                            if (preserve_strict_mode) {
+                                remaining_stmts[0] = p.s(
+                                    S.Directive{
+                                        .value = "use strict",
+                                    },
+                                    p.module_scope_directive_loc,
+                                );
+                                remaining_stmts = remaining_stmts[1..];
+                            }
+
                             for (parts) |part| {
                                 for (part.stmts, remaining_stmts[0..part.stmts.len]) |src, *dest| {
                                     dest.* = src;

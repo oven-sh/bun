@@ -42,7 +42,6 @@ const JSTypeOfMap = bun.ComptimeStringMap([]const u8, .{
 pub var active_test_expectation_counter: Counter = .{};
 pub var is_expecting_assertions: bool = false;
 pub var is_expecting_assertions_count: bool = false;
-pub var expected_assertions_number: u32 = 0;
 
 const log = bun.Output.scoped(.expect, false);
 
@@ -264,6 +263,28 @@ pub const Expect = struct {
         }
 
         return value;
+    }
+
+    pub fn isAsymmetricMatcher(value: JSValue) bool {
+        if (ExpectCustomAsymmetricMatcher.fromJS(value) != null) {
+            return true;
+        } else if (ExpectAny.fromJS(value) != null) {
+            return true;
+        } else if (ExpectAnything.fromJS(value) != null) {
+            return true;
+        } else if (ExpectStringMatching.fromJS(value) != null) {
+            return true;
+        } else if (ExpectCloseTo.fromJS(value) != null) {
+            return true;
+        } else if (ExpectObjectContaining.fromJS(value) != null) {
+            return true;
+        } else if (ExpectStringContaining.fromJS(value) != null) {
+            return true;
+        } else if (ExpectArrayContaining.fromJS(value) != null) {
+            return true;
+        }
+
+        return false;
     }
 
     /// Called by C++ when matching with asymmetric matchers
@@ -2380,7 +2401,13 @@ pub const Expect = struct {
             }
 
             if (expected_value.isString()) {
-                const received_message = result.fastGet(globalThis, .message) orelse .undefined;
+                const received_message: JSValue = (if (result.isObject())
+                    result.fastGet(globalThis, .message)
+                else if (result.toStringOrNull(globalThis)) |js_str|
+                    JSValue.fromCell(js_str)
+                else
+                    .undefined) orelse .undefined;
+                if (globalThis.hasException()) return .zero;
 
                 // TODO: remove this allocation
                 // partial match
@@ -2400,8 +2427,14 @@ pub const Expect = struct {
             }
 
             if (expected_value.isRegExp()) {
-                const received_message = result.fastGet(globalThis, .message) orelse .undefined;
+                const received_message: JSValue = (if (result.isObject())
+                    result.fastGet(globalThis, .message)
+                else if (result.toStringOrNull(globalThis)) |js_str|
+                    JSValue.fromCell(js_str)
+                else
+                    .undefined) orelse .undefined;
 
+                if (globalThis.hasException()) return .zero;
                 // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
                 if (expected_value.get(globalThis, "test")) |test_fn| {
                     const matches = test_fn.call(globalThis, expected_value, &.{received_message}) catch {
@@ -2420,7 +2453,14 @@ pub const Expect = struct {
             }
 
             if (expected_value.fastGet(globalThis, .message)) |expected_message| {
-                const received_message = result.fastGet(globalThis, .message) orelse .undefined;
+                const received_message: JSValue = (if (result.isObject())
+                    result.fastGet(globalThis, .message)
+                else if (result.toStringOrNull(globalThis)) |js_str|
+                    JSValue.fromCell(js_str)
+                else
+                    .undefined) orelse .undefined;
+                if (globalThis.hasException()) return .zero;
+
                 // no partial match for this case
                 if (!expected_message.isSameValue(received_message, globalThis)) return .undefined;
 
@@ -2511,6 +2551,25 @@ pub const Expect = struct {
                 const received_fmt = result.toFmt(&formatter);
                 const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
                 this.throw(globalThis, signature, "\n\n" ++ "Expected pattern: <green>{any}<r>\nReceived value: <red>{any}<r>", .{ expected_fmt, received_fmt });
+                return .zero;
+            }
+
+            if (Expect.isAsymmetricMatcher(expected_value)) {
+                const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
+                const is_equal = result.jestStrictDeepEquals(expected_value, globalThis);
+
+                if (globalThis.hasException()) {
+                    return .zero;
+                }
+
+                if (is_equal) {
+                    return .undefined;
+                }
+
+                var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                const received_fmt = result.toFmt(&formatter);
+                const expected_fmt = expected_value.toFmt(&formatter);
+                this.throw(globalThis, signature, "\n\nExpected value: <green>{any}<r>\nReceived value: <red>{any}<r>\n", .{ expected_fmt, received_fmt });
                 return .zero;
             }
 
@@ -4806,8 +4865,8 @@ pub const Expect = struct {
             return .zero;
         }
 
-        const expected_assertions: f64 = expected.asNumber();
-        if (@round(expected_assertions) != expected_assertions or std.math.isInf(expected_assertions) or std.math.isNan(expected_assertions) or expected_assertions < 0) {
+        const expected_assertions: f64 = expected.coerceToDouble(globalThis);
+        if (@round(expected_assertions) != expected_assertions or std.math.isInf(expected_assertions) or std.math.isNan(expected_assertions) or expected_assertions < 0 or expected_assertions > std.math.maxInt(u32)) {
             var fmt = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
             globalThis.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(&fmt)});
             return .zero;
@@ -4816,7 +4875,7 @@ pub const Expect = struct {
         const unsigned_expected_assertions: u32 = @intFromFloat(expected_assertions);
 
         is_expecting_assertions_count = true;
-        expected_assertions_number = unsigned_expected_assertions;
+        active_test_expectation_counter.expected = unsigned_expected_assertions;
 
         return .undefined;
     }

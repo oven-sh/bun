@@ -697,41 +697,37 @@ pub fn format2(
         };
         const tag = ConsoleObject.Formatter.Tag.get(vals[0], global);
 
-        var unbuffered_writer = if (comptime Writer != RawWriter)
-            if (@hasDecl(@TypeOf(writer.context.unbuffered_writer.context), "quietWriter"))
-                writer.context.unbuffered_writer.context.quietWriter()
-            else
-                writer.context.unbuffered_writer.context.writer()
-        else
-            writer;
-
         if (tag.tag == .String) {
             if (options.enable_colors) {
                 if (level == .Error) {
-                    unbuffered_writer.writeAll(comptime Output.prettyFmt("<r><red>", true)) catch {};
+                    writer.writeAll(comptime Output.prettyFmt("<r><red>", true)) catch {};
                 }
                 fmt.format(
                     tag,
-                    @TypeOf(unbuffered_writer),
-                    unbuffered_writer,
+                    Writer,
+                    writer,
                     vals[0],
                     global,
                     true,
                 );
                 if (level == .Error) {
-                    unbuffered_writer.writeAll(comptime Output.prettyFmt("<r>", true)) catch {};
+                    writer.writeAll(comptime Output.prettyFmt("<r>", true)) catch {};
                 }
             } else {
                 fmt.format(
                     tag,
-                    @TypeOf(unbuffered_writer),
-                    unbuffered_writer,
+                    Writer,
+                    writer,
                     vals[0],
                     global,
                     false,
                 );
             }
-            if (options.add_newline) _ = unbuffered_writer.write("\n") catch 0;
+            if (options.add_newline) {
+                _ = writer.write("\n") catch 0;
+            }
+
+            writer.context.flush() catch {};
         } else {
             defer {
                 if (comptime Writer != RawWriter) {
@@ -1077,6 +1073,7 @@ pub const Formatter = struct {
                         };
                     }
                 }
+                if (globalThis.hasException()) return .{ .tag = .RevokedProxy };
             }
 
             if (js_type == .DOMWrapper) {
@@ -1174,6 +1171,7 @@ pub const Formatter = struct {
                     .Uint16Array,
                     .Int32Array,
                     .Uint32Array,
+                    .Float16Array,
                     .Float32Array,
                     .Float64Array,
                     .BigInt64Array,
@@ -2121,7 +2119,7 @@ pub const Formatter = struct {
                 }
             },
             .Array => {
-                const len = @as(u32, @truncate(value.getLength(this.globalThis)));
+                const len = value.getLength(this.globalThis);
 
                 // TODO: DerivedArray does not get passed along in JSType, and it's not clear why.
                 // if (jsType == .DerivedArray) {
@@ -2186,6 +2184,7 @@ pub const Formatter = struct {
                     }
 
                     var i: u32 = 1;
+                    var nonempty_count: u32 = 1;
 
                     while (i < len) : (i += 1) {
                         const element = value.getDirectIndex(this.globalThis, i);
@@ -2195,6 +2194,15 @@ pub const Formatter = struct {
                             }
                             continue;
                         }
+                        if (nonempty_count >= 100) {
+                            this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
+                            writer.writeAll("\n"); // we want the line break to be unconditional here
+                            this.estimated_line_length = 0;
+                            this.writeIndent(Writer, writer_) catch unreachable;
+                            writer.pretty("<r><d>... {d} more items<r>", enable_ansi_colors, .{len - i});
+                            break;
+                        }
+                        nonempty_count += 1;
 
                         if (empty_start) |empty| {
                             if (empty > 0) {
@@ -3071,6 +3079,13 @@ pub const Formatter = struct {
                             &writer,
                             u32,
                             @as([]align(std.meta.alignment([]u32)) u32, @alignCast(std.mem.bytesAsSlice(u32, slice))),
+                            enable_ansi_colors,
+                        ),
+                        .Float16Array => this.writeTypedArray(
+                            *@TypeOf(writer),
+                            &writer,
+                            f16,
+                            @as([]align(std.meta.alignment([]f16)) f16, @alignCast(std.mem.bytesAsSlice(f16, slice))),
                             enable_ansi_colors,
                         ),
                         .Float32Array => this.writeTypedArray(

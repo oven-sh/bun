@@ -1,43 +1,53 @@
 #!/bin/bash
 
-set -eo pipefail
+set -euo pipefail
+
+export CMAKE_FLAGS=""
 source "$(dirname "$0")/env.sh"
+
+if [[ -n "$CMAKE_FLAGS" ]]; then
+  echo "CMAKE_FLAGS should not be empty"
+  exit 1
+fi
 
 function assert_target() {
   local arch="${2-$(uname -m)}"
   case "$(echo "$arch" | tr '[:upper:]' '[:lower:]')" in
-    x64 | x86_64 | amd64)
-      export ZIG_ARCH="x86_64"
-      if [[ "$BUILDKITE_STEP_KEY" == *"baseline"* ]]; then
-        export ZIG_CPU_TARGET="nehalem"
-      else
-        export ZIG_CPU_TARGET="haswell"
-      fi
-      ;;
-    aarch64 | arm64)
-      export ZIG_ARCH="aarch64"
-      export ZIG_CPU_TARGET="native"
-      ;;
-    *)
-      echo "error: Unsupported architecture: $arch" 1>&2
-      exit 1
-      ;;
+  x64 | x86_64 | amd64)
+    export ZIG_ARCH="x86_64"
+    if [[ "$BUILDKITE_STEP_KEY" == *"baseline"* ]]; then
+      export ZIG_CPU_TARGET="nehalem"
+    else
+      export ZIG_CPU_TARGET="haswell"
+    fi
+    ;;
+  aarch64 | arm64)
+    export ZIG_ARCH="aarch64"
+    export ZIG_CPU_TARGET="native"
+    ;;
+  *)
+    echo "error: Unsupported architecture: $arch" 1>&2
+    exit 1
+    ;;
   esac
   local os="${1-$(uname -s)}"
   case "$(echo "$os" | tr '[:upper:]' '[:lower:]')" in
-    linux)
-      export ZIG_OS="linux"
-      export ZIG_TARGET="$ZIG_ARCH-linux-gnu" ;;
-    darwin)
-      export ZIG_OS="macos"
-      export ZIG_TARGET="$ZIG_ARCH-macos-none" ;;
-    windows)
-      export ZIG_OS="windows"
-      export ZIG_TARGET="$ZIG_ARCH-windows-msvc" ;;
-    *)
-      echo "error: Unsupported operating system: $os" 1>&2
-      exit 1
-      ;;
+  linux)
+    export ZIG_OS="linux"
+    export ZIG_TARGET="$ZIG_ARCH-linux-gnu"
+    ;;
+  darwin)
+    export ZIG_OS="macos"
+    export ZIG_TARGET="$ZIG_ARCH-macos-none"
+    ;;
+  windows)
+    export ZIG_OS="windows"
+    export ZIG_TARGET="$ZIG_ARCH-windows-msvc"
+    ;;
+  *)
+    echo "error: Unsupported operating system: $os" 1>&2
+    exit 1
+    ;;
   esac
 }
 
@@ -63,8 +73,7 @@ cd build
 # in buildkite this script to compile for windows is run on a macos machine
 # so the cmake windows detection for this logic is not ran
 ZIG_OPTIMIZE="ReleaseFast"
-if [[ "$ZIG_OS" == "windows" ]]
-then
+if [[ "$ZIG_OS" == "windows" ]]; then
   ZIG_OPTIMIZE="ReleaseSafe"
 fi
 

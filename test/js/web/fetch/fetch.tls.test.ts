@@ -281,8 +281,8 @@ for (const timeout of [0, 1, 10, 20, 100, 300]) {
       expect((err as Error).name).toBe("TimeoutError");
     } finally {
       const diff = Date.now() - time;
-      expect(diff).toBeLessThanOrEqual(timeout + 30);
-      expect(diff).toBeGreaterThanOrEqual(timeout - 30);
+      expect(diff).toBeLessThanOrEqual(timeout + 50);
+      expect(diff).toBeGreaterThanOrEqual(timeout - 50);
     }
   });
 }

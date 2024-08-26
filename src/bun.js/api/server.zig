@@ -2002,7 +2002,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this.endRequestStreamingAndDrain();
             // TODO: has_marked_complete is doing something?
             this.flags.has_marked_complete = true;
-            
+
             if (this.defer_deinit_until_callback_completes) |defer_deinit| {
                 defer_deinit.* = true;
                 ctxLog("deferred deinit <d> ({*})<r>", .{this});
@@ -2399,7 +2399,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.response_jsvalue = JSC.JSValue.zero;
             }
 
-            if(this.request_weakref.get()) |request| {
+            if (this.request_weakref.get()) |request| {
                 request.request_context = AnyRequestContext.Null;
                 this.request_weakref.deinit();
             }
@@ -3527,7 +3527,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
 
                 if (!this.flags.has_abort_handler) {
-                    if(this.req) |req | {
+                    if (this.req) |req| {
                         try writer.writeAll(req.url());
                         return;
                     }
@@ -5842,7 +5842,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 sec_websocket_extensions = head.fastGet(.SecWebSocketExtensions) orelse ZigString.Empty;
             }
 
-            if(upgrader.req) |req| {
+            if (upgrader.req) |req| {
                 if (sec_websocket_key_str.len == 0) {
                     sec_websocket_key_str = ZigString.init(req.header("sec-websocket-key") orelse "");
                 }
@@ -5858,7 +5858,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             if (sec_websocket_key_str.len == 0) {
                 return JSC.jsBoolean(false);
             }
-           
+
             if (sec_websocket_protocol.len > 0) {
                 sec_websocket_protocol.markUTF8();
             }
@@ -6740,7 +6740,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 .body = body.ref(),
             });
             ctx.request_weakref = Request.WeakRef.create(request_object);
-
 
             if (comptime debug_mode) {
                 ctx.flags.is_web_browser_navigation = brk: {

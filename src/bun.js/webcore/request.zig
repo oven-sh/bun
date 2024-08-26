@@ -85,19 +85,21 @@ pub const Request = struct {
         }
 
         pub fn deinit(this: *WeakRef) void {
-            if(this.value) |value| {
+            if (this.value) |value| {
                 const count = value.weak_refs;
                 this.value = null;
                 value.weak_refs -= 1;
-                if(value.finalized and count == 1) {
+                if (value.finalized and count == 1) {
                     value.destroy();
                 }
             }
         }
 
         pub fn get(this: *WeakRef) ?*Request {
-            if(this.value) |value| {
-                if(!value.finalized) return value;
+            if (this.value) |value| {
+                if (!value.finalized) {
+                    return value;
+                }
             }
             return null;
         }
@@ -128,7 +130,6 @@ pub const Request = struct {
             .method = method,
         };
     }
-    
 
     pub fn getContentType(
         this: *Request,
@@ -322,7 +323,7 @@ pub const Request = struct {
         this.finalized = true;
         this.finalizeWithoutDeinit();
         _ = this.body.unref();
-        if(this.weak_refs == 0) {
+        if (this.weak_refs == 0) {
             this.destroy();
         }
     }

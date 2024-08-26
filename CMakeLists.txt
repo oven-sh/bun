@@ -580,23 +580,6 @@ else()
     endif()
 endif()
 
-if(USE_CUSTOM_BORINGSSL)
-    include_directories(${BUN_DEPS_DIR}/boringssl/include)
-
-    if(WIN32)
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/crypto.lib")
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/ssl.lib")
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/decrepit.lib")
-    else()
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libcrypto.a")
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libssl.a")
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libdecrepit.a")
-    endif()
-else()
-    include(FindBoringSSL)
-    FindBoringSSL(${bun})
-endif()
-
 if(USE_CUSTOM_LIBARCHIVE)
     include_directories(${BUN_DEPS_DIR}/libarchive/include)
 
@@ -734,8 +717,8 @@ else()
     target_compile_definitions(${bun} PRIVATE "LAZY_LOAD_SQLITE=1")
 endif()
 
-# -- Brotli --
 include(cmake/BuildBrotli.cmake)
+include(cmake/BuildBoringSSL.cmake)
 
 if(USE_CUSTOM_LSHPACK)
     include_directories(${BUN_DEPS_DIR}/ls-hpack)

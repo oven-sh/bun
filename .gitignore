@@ -117,6 +117,7 @@ sign.json
 src/bun.js/bindings-obj
 src/bun.js/bindings/GeneratedJS2Native.zig
 src/bun.js/debug-bindings-obj
+src/deps/boringssl
 src/deps/c-ares/build
 src/deps/libiconv
 src/deps/openssl

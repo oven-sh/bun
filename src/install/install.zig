@@ -8219,7 +8219,7 @@ pub const PackageManager = struct {
         ctx: Command.Context,
         cli: CommandLineArguments,
         subcommand: Subcommand,
-    ) !*PackageManager {
+    ) !struct { *PackageManager, string } {
         // assume that spawning a thread will take a lil so we do that asap
         HTTP.HTTPThread.init();
 
@@ -8247,6 +8247,7 @@ pub const PackageManager = struct {
 
         var original_package_json_path: stringZ = original_package_json_path_buf.items[0 .. top_level_dir_no_trailing_slash.len + "/package.json".len :0];
         const original_cwd = strings.withoutSuffixComptime(original_package_json_path, std.fs.path.sep_str ++ "package.json");
+        const original_cwd_clone = ctx.allocator.dupe(u8, original_cwd) catch bun.outOfMemory();
 
         var workspace_names = Package.WorkspaceMap.init(ctx.allocator);
         var workspace_package_json_cache: WorkspacePackageJSONCache = .{
@@ -8547,7 +8548,10 @@ pub const PackageManager = struct {
 
             break :brk @truncate(@as(u64, @intCast(@max(std.time.timestamp(), 0))));
         };
-        return manager;
+        return .{
+            manager,
+            original_cwd_clone,
+        };
     }
 
     pub fn initWithRuntime(
@@ -8745,7 +8749,7 @@ pub const PackageManager = struct {
 
     pub fn link(ctx: Command.Context) !void {
         const cli = try CommandLineArguments.parse(ctx.allocator, .link);
-        var manager = PackageManager.init(ctx, cli, .link) catch |err| brk: {
+        var manager, const original_cwd = PackageManager.init(ctx, cli, .link) catch |err| brk: {
             if (err == error.MissingPackageJSON) {
                 try attemptToCreatePackageJSON();
                 break :brk try PackageManager.init(ctx, cli, .link);
@@ -8753,6 +8757,7 @@ pub const PackageManager = struct {
 
             return err;
         };
+        defer ctx.allocator.free(original_cwd);
 
         if (manager.options.shouldPrintCommandName()) {
             Output.prettyErrorln("<r><b>bun link <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
@@ -8927,7 +8932,7 @@ pub const PackageManager = struct {
 
     pub fn unlink(ctx: Command.Context) !void {
         const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .unlink);
-        var manager = PackageManager.init(ctx, cli, .unlink) catch |err| brk: {
+        var manager, const original_cwd = PackageManager.init(ctx, cli, .unlink) catch |err| brk: {
             if (err == error.MissingPackageJSON) {
                 try attemptToCreatePackageJSON();
                 break :brk try PackageManager.init(ctx, cli, .unlink);
@@ -8935,6 +8940,7 @@ pub const PackageManager = struct {
 
             return err;
         };
+        defer ctx.allocator.free(original_cwd);
 
         if (manager.options.shouldPrintCommandName()) {
             Output.prettyErrorln("<r><b>bun unlink <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
@@ -9729,7 +9735,7 @@ pub const PackageManager = struct {
         const cli = switch (subcommand) {
             inline else => |cmd| try PackageManager.CommandLineArguments.parse(ctx.allocator, cmd),
         };
-        var manager = init(ctx, cli, subcommand) catch |err| brk: {
+        var manager, const original_cwd = init(ctx, cli, subcommand) catch |err| brk: {
             if (err == error.MissingPackageJSON) {
                 switch (subcommand) {
                     .update => {
@@ -9753,6 +9759,7 @@ pub const PackageManager = struct {
 
             return err;
         };
+        defer ctx.allocator.free(original_cwd);
 
         if (manager.options.shouldPrintCommandName()) {
             Output.prettyErrorln("<r><b>bun {s} <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{@tagName(subcommand)});
@@ -11489,7 +11496,7 @@ pub const PackageManager = struct {
 
     pub fn install(ctx: Command.Context) !void {
         const cli = try CommandLineArguments.parse(ctx.allocator, .install);
-        var manager = try init(ctx, cli, .install);
+        var manager, _ = try init(ctx, cli, .install);
 
         // switch to `bun add <package>`
         if (manager.options.positionals.len > 1) {

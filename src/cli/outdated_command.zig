@@ -121,7 +121,7 @@ pub const OutdatedCommand = struct {
 
         const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .outdated);
 
-        const manager = PackageManager.init(ctx, cli, .outdated) catch |err| {
+        const manager, const original_cwd = PackageManager.init(ctx, cli, .outdated) catch |err| {
             if (!cli.silent) {
                 if (err == error.MissingPackageJSON) {
                     Output.errGeneric("missing package.json, nothing outdated", .{});
@@ -131,13 +131,14 @@ pub const OutdatedCommand = struct {
 
             Global.crash();
         };
+        defer ctx.allocator.free(original_cwd);
 
         return switch (manager.options.log_level) {
-            inline else => |log_level| outdated(ctx, manager, log_level),
+            inline else => |log_level| outdated(ctx, original_cwd, manager, log_level),
         };
     }
 
-    fn outdated(ctx: Command.Context, manager: *PackageManager, comptime log_level: PackageManager.Options.LogLevel) !void {
+    fn outdated(ctx: Command.Context, original_cwd: string, manager: *PackageManager, comptime log_level: PackageManager.Options.LogLevel) !void {
         const load_lockfile_result = manager.lockfile.loadFromDisk(
             manager,
             manager.allocator,
@@ -188,7 +189,12 @@ pub const OutdatedCommand = struct {
         switch (Output.enable_ansi_colors) {
             inline else => |enable_ansi_colors| {
                 if (manager.options.filter_patterns.len > 0) {
-                    const workspace_pkg_ids = findMatchingWorkspaces(bun.default_allocator, manager, manager.options.filter_patterns) catch bun.outOfMemory();
+                    const workspace_pkg_ids = findMatchingWorkspaces(
+                        bun.default_allocator,
+                        original_cwd,
+                        manager,
+                        manager.options.filter_patterns,
+                    ) catch bun.outOfMemory();
                     defer bun.default_allocator.free(workspace_pkg_ids);
 
                     try updateManifestsIfNecessary(manager, log_level, workspace_pkg_ids);
@@ -207,6 +213,7 @@ pub const OutdatedCommand = struct {
 
     fn findMatchingWorkspaces(
         allocator: std.mem.Allocator,
+        original_cwd: string,
         manager: *PackageManager,
         filters: []const string,
     ) error{OutOfMemory}![]const PackageID {
@@ -225,23 +232,22 @@ pub const OutdatedCommand = struct {
         const converted_filters = converted_filters: {
             const buf = allocator.alloc(struct { []const u32, bool }, filters.len) catch bun.outOfMemory();
             for (filters, buf) |filter, *converted| {
-                var path_buf: PathBuffer = undefined;
                 const is_path = filter.len > 0 and filter[0] == '.';
 
-                const normalized_filter = if (is_path)
-                    bun.path.normalizeBuf(filter, &path_buf, .posix)
+                const joined_filter = if (is_path)
+                    path.joinAbsString(original_cwd, &[_]string{filter}, .posix)
                 else
                     filter;
 
-                if (normalized_filter.len == 0) {
+                if (joined_filter.len == 0) {
                     converted.* = .{ &.{}, is_path };
                     continue;
                 }
 
-                const length = bun.simdutf.length.utf32.from.utf8.le(normalized_filter);
+                const length = bun.simdutf.length.utf32.from.utf8.le(joined_filter);
                 const convert_buf = allocator.alloc(u32, length) catch bun.outOfMemory();
 
-                const convert_result = bun.simdutf.convert.utf8.to.utf32.with_errors.le(normalized_filter, convert_buf);
+                const convert_result = bun.simdutf.convert.utf8.to.utf32.with_errors.le(joined_filter, convert_buf);
                 if (!convert_result.isSuccessful()) {
                     // nothing would match
                     converted.* = .{ &.{}, false };
@@ -270,6 +276,7 @@ pub const OutdatedCommand = struct {
                     const filter, const is_path_filter = converted;
 
                     if (is_path_filter) {
+                        if (filter.len == 0) continue;
                         const res = pkg_resolutions[workspace_pkg_id];
 
                         const res_path = switch (res.tag) {
@@ -278,7 +285,9 @@ pub const OutdatedCommand = struct {
                             else => unreachable,
                         };
 
-                        if (glob.matchImpl(filter, res_path)) {
+                        const abs_res_path = path.joinAbsString(FileSystem.instance.top_level_dir, &[_]string{res_path}, .posix);
+
+                        if (glob.matchImpl(filter, strings.withoutTrailingSlash(abs_res_path))) {
                             break :matched true;
                         }
 

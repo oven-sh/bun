@@ -38,6 +38,8 @@ pub const CSSString = css_values.string.CSSString;
 pub const CSSStringFns = css_values.string.CSSStringFns;
 pub const CSSInteger = css_values.number.CSSInteger;
 pub const CSSIntegerFns = css_values.number.CSSIntegerFns;
+pub const CSSNumber = css_values.number.CSSNumber;
+pub const CSSNumberFns = css_values.number.CSSNumberFns;
 pub const Ident = css_values.ident.Ident;
 pub const IdentFns = css_values.ident.IdentFns;
 pub const CustomIdent = css_values.ident.CustomIdent;
@@ -4580,6 +4582,39 @@ pub const serializer = struct {
         _ = value; // autofix
         _ = dest; // autofix
         @compileError(todo_stuff.depth);
+    }
+};
+
+pub const generic = struct {
+    pub inline fn parse(comptime T: type, input: *Parser) Error!T {
+        return switch (T) {
+            f32 => CSSNumberFns.parse(input),
+            CSSInteger => CSSIntegerFns.parse(input),
+            CustomIdent => CustomIdentFns.parse(input),
+            DashedIdent => DashedIdentFns.parse(input),
+            Ident => IdentFns.parse(input),
+            else => T.parse(input),
+        };
+    }
+
+    pub inline fn toCss(comptime T: type, this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        return switch (T) {
+            f32 => CSSNumberFns.toCss(this, W, dest),
+            CSSInteger => CSSIntegerFns.toCss(this, W, dest),
+            CustomIdent => CustomIdentFns.toCss(this, W, dest),
+            DashedIdent => DashedIdentFns.toCss(this, W, dest),
+            Ident => IdentFns.toCss(this, W, dest),
+            else => T.toCss(this, W, dest),
+        };
+    }
+
+    pub inline fn eql(comptime T: type, lhs: *const T, rhs: *const T) bool {
+        return switch (T) {
+            f32 => lhs.* == rhs.*,
+            CSSInteger => lhs.* == rhs.*,
+            CustomIdent, DashedIdent, Ident => bun.strings.eql(lhs.*, rhs.*),
+            else => T.eql(lhs, rhs),
+        };
     }
 };
 

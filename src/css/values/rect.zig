@@ -39,5 +39,54 @@ pub fn Rect(comptime T: type) type {
         bottom: T,
         /// The left component.
         left: T,
+
+        const This = @This();
+
+        pub fn parse(input: *css.Parser) Error!This {
+            return This.parseWith(input, valParse);
+        }
+
+        pub fn parseWith(input: *css.Parser, comptime parse_fn: *const fn (*css.Parser) Error!T) Error!This {
+            const first = try parse_fn(input);
+            const second = input.tryParse(parse_fn, .{}) catch {
+                // <first>
+                return This{ .top = first, .right = first, .bottom = first, .left = first };
+            };
+            const third = input.tryParse(parse_fn, .{}) catch {
+                // <first> <second>
+                return This{ .top = first, .right = second, .bottom = first, .left = second };
+            };
+            const fourth = input.tryParse(parse_fn, .{}) catch {
+                // <first> <second> <third>
+                return This{ .top = first, .right = second, .bottom = third, .left = second };
+            };
+            // <first> <second> <third> <fourth>
+            return This{ .top = first, .right = second, .bottom = third, .left = fourth };
+        }
+
+        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+            try css.generic.toCss(T, &this.top, W, dest);
+            const same_vertical = css.generic.eql(T, &this.top, &this.bottom);
+            const same_horizontal = css.generic.eql(T, &this.right, &this.left);
+            if (same_vertical and same_horizontal and css.generic.eql(T, &this.top, &this.right)) {
+                return;
+            }
+            try dest.writeStr(" ");
+            try css.generic.toCss(T, &this.right, W, dest);
+            if (same_vertical and same_horizontal) {
+                return;
+            }
+            try dest.writeStr(" ");
+            try css.generic.toCss(T, &this.bottom, W, dest);
+            if (same_horizontal) {
+                return;
+            }
+            try dest.writeStr(" ");
+            try css.generic.toCss(T, &this.left, W, dest);
+        }
+
+        pub fn valParse(i: *css.Parser) Error!T {
+            return css.generic.parse(T, i);
+        }
     };
 }

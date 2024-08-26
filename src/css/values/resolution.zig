@@ -48,16 +48,40 @@ pub const Resolution = union(enum) {
     }
 
     pub fn tryFromToken(token: *const css.Token) Error!Resolution {
-        _ = token; // autofix
-        @compileError(css.todo_stuff.depth);
+        switch (token.*) {
+            .dimension => |dim| {
+                const value = dim.num.value;
+                const unit = dim.unit;
+                // todo_stuff.match_ignore_ascii_case
+                if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "dpi")) {
+                    return .{ .dpi = value };
+                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "dpcm")) {
+                    return .{ .dpcm = value };
+                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "dppx") or
+                    bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "x"))
+                {
+                    return .{ .dppx = value };
+                } else {
+                    @compileError(css.todo_stuff.errors);
+                }
+            },
+            else => @compileError(css.todo_stuff.errors),
+        }
     }
 
     // ~toCssImpl
     const This = @This();
 
     pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        _ = this; // autofix
-        _ = dest; // autofix
-        @compileError(css.todo_stuff.depth);
+        const value, const unit = switch (this.*) {
+            .dpi => |dpi| .{ dpi, "dpi" },
+            .dpcm => |dpcm| .{ dpcm, "dpcm" },
+            .dppx => |dppx| if (dest.targets.isCompatible(.XResolutionUnit))
+                .{ dppx, "x" }
+            else
+                .{ dppx, "dppx" },
+        };
+
+        return try css.serializer.serializeDimension(value, unit, W, dest);
     }
 };

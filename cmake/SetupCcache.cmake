@@ -3,10 +3,14 @@ find_program(
   NAMES ccache
 )
 
-if(CCACHE_PROGRAM)
-  set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_PROGRAM})
-  set(CMAKE_C_COMPILER_LAUNCHER ${CCACHE_PROGRAM})
-  message(STATUS "Set CCACHE_PROGRAM: ${CCACHE_PROGRAM}")
-elseif(ENV{CI} STREQUAL "true")
-  message(FATAL_ERROR "Did not find ccache, which is required for CI builds")
+if(NOT CCACHE_PROGRAM)
+  return()
 endif()
+
+set(CCACHE_ARGS CMAKE_C_COMPILER_LAUNCHER CMAKE_CXX_COMPILER_LAUNCHER)
+foreach(arg ${CCACHE_ARGS})
+  set(${arg} ${CCACHE_PROGRAM})
+  message(STATUS "Set ${arg}: ${${arg}}")
+
+  list(APPEND CMAKE_ARGS -D${arg}=${${arg}})
+endforeach()

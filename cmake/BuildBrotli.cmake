@@ -1,12 +1,10 @@
 include(cmake/Utils.cmake)
+include(cmake/GitClone.cmake)
+include(cmake/BuildLibrary.cmake)
 
-build_dependency(
-  NAME
+add_custom_library(
+  TARGET
     brotli
-  REPOSITORY
-    https://github.com/google/brotli.git
-  TAG
-    v1.1.0
   LIBRARIES
     brotlicommon
     brotlidec
@@ -19,3 +17,14 @@ build_dependency(
     -DBROTLI_EMSCRIPTEN=OFF
     -DBROTLI_DISABLE_TESTS=ON
 )
+
+parse_option(USE_CUSTOM_BROTLI BOOL "Use custom brotli build" OFF)
+
+if(NOT USE_CUSTOM_BROTLI)
+  add_custom_clone(brotli
+    REPOSITORY
+      google/brotli
+    TAG
+      v1.1.0
+  )
+endif()

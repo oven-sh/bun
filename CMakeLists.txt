@@ -6,6 +6,11 @@ set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
 set(Bun_VERSION "1.1.27")
 set(WEBKIT_TAG 147ed53838e21525677492c27099567a6cd19c6b)
 
+set(CI OFF)
+if(ENV{CI} MATCHES "^(1|true)$")
+  set(CI ON)
+endif()
+
 set(CWD ${CMAKE_SOURCE_DIR})
 set(BUILD_PATH ${CMAKE_BINARY_DIR})
 set(CACHE_PATH ${CWD}/.cache)
@@ -43,6 +48,7 @@ include(cmake/SetupCcache.cmake)
 
 project(Bun VERSION "${Bun_VERSION}")
 
+include(cmake/SetupGenerator.cmake)
 include(cmake/Options.cmake)
 
 find_program(BUN_EXECUTABLE bun ${REQUIRED_IF_NOT_ONLY_CPP_OR_LINK} DOC "Path to an already built release of Bun")
@@ -54,6 +60,10 @@ endif()
 
 if(NOT BUN_LINK_ONLY)
     include(cmake/BuildCodegen.cmake)
+endif()
+
+if(CI)
+    include(cmake/SetupCI.cmake)
 endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -85,12 +95,6 @@ else()
 
     # pwsh is the new powershell, powershell is the old one.
     find_program(SHELL NAMES pwsh powershell)
-endif()
-
-set(CI OFF)
-
-if(DEFINED ENV{CI} OR DEFINED ENV{GITHUB_ACTIONS})
-    set(CI ON)
 endif()
 
 if(WIN32 AND USE_LTO)

@@ -73,7 +73,7 @@ macro(set_if label regex value)
 endmacro()
 
 macro(build_dependency)
-  set(args NAME GIT_REPOSITORY GIT_TAG LIB)
+  set(args NAME REPOSITORY TAG LIB)
   set(multi_args LIBRARIES INCLUDES CMAKE_ARGS)
   cmake_parse_arguments(ARG "" "${args}" "${multi_args}" ${ARGN})
 

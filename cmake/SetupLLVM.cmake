@@ -80,7 +80,6 @@ macro(find_llvm_program variable program_name)
   endif()
 
   list(APPEND CMAKE_ARGS -D${variable}=${${variable}})
-  
   message(STATUS "Set ${variable}: ${${variable}}")
 endmacro()
 

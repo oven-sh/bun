@@ -4603,6 +4603,14 @@ pub const generic = struct {
         };
     }
 
+    pub inline fn parseFor(comptime T: type) *const fn (*Parser) Error!T {
+        return struct {
+            fn parsefn(input: *Parser) Error!T {
+                return generic.parse(T, input);
+            }
+        }.parsefn;
+    }
+
     pub inline fn toCss(comptime T: type, this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
         return switch (T) {
             f32 => CSSNumberFns.toCss(this, W, dest),

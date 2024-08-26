@@ -36,6 +36,96 @@ pub const Gradient = union(enum) {
     repeating_conic: ConicGradient,
     /// A legacy `-webkit-gradient()`.
     @"webkit-gradient": WebKitGradient,
+
+    pub fn parse(input: *css.Parser) Error!Gradient {
+        const location = input.currentSourceLocation();
+        const func = try input.expectFunction();
+        const Closure = struct { location: css.SourceLocation, func: []const u8 };
+        return try input.parseNestedBlock(Gradient, Closure{ .location = location, .func = func }, struct {
+            fn parse(
+                closure: struct { location: css.SourceLocation, func: []const u8 },
+                input_: *css.Parser,
+            ) Error!Gradient {
+                // css.todo_stuff.match_ignore_ascii_case
+                if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "linear-gradient")) {
+                    return .{ .linear = try LinearGradient.parse(input_, css.VendorPrefix{ .none = true }) };
+                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "repeating-linear-gradient")) {
+                    return .{ .repeating_linear = try LinearGradient.parse(input_, css.VendorPrefix{ .none = true }) };
+                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "radial-gradient")) {
+                    return .{ .radial = try RadialGradient.parse(input_, css.VendorPrefix{ .none = true }) };
+                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "repeating-radial-gradient")) {
+                    return .{ .repeating_radial = try RadialGradient.parse(input_, css.VendorPrefix{ .none = true }) };
+                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "conic-gradient")) {
+                    return .{ .conic = try ConicGradient.parse(input_) };
+                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "repeating-conic-gradient")) {
+                    return .{ .repeating_conic = try ConicGradient.parse(input_) };
+                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-webkit-linear-gradient")) {
+                    return .{ .linear = try LinearGradient.parse(input_, css.VendorPrefix{ .webkit = true }) };
+                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-webkit-repeating-linear-gradient")) {
+                    return .{ .repeating_linear = try LinearGradient.parse(input_, css.VendorPrefix{ .webkit = true }) };
+                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-webkit-radial-gradient")) {
+                    return .{ .radial = try RadialGradient.parse(input_, css.VendorPrefix{ .webkit = true }) };
+                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-webkit-repeating-radial-gradient")) {
+                    return .{ .repeating_radial = try RadialGradient.parse(input_, css.VendorPrefix{ .webkit = true }) };
+                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-moz-linear-gradient")) {
+                    return .{ .linear = try LinearGradient.parse(input_, css.VendorPrefix{ .mox = true }) };
+                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-moz-repeating-linear-gradient")) {
+                    return .{ .repeating_linear = try LinearGradient.parse(input_, css.VendorPrefix{ .mox = true }) };
+                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-moz-radial-gradient")) {
+                    return .{ .radial = try RadialGradient.parse(input_, css.VendorPrefix{ .mox = true }) };
+                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-moz-repeating-radial-gradient")) {
+                    return .{ .repeating_radial = try RadialGradient.parse(input_, css.VendorPrefix{ .mox = true }) };
+                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-o-linear-gradient")) {
+                    return .{ .linear = try LinearGradient.parse(input_, css.VendorPrefix{ .o = true }) };
+                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-o-repeating-linear-gradient")) {
+                    return .{ .repeating_linear = try LinearGradient.parse(input_, css.VendorPrefix{ .o = true }) };
+                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-o-radial-gradient")) {
+                    return .{ .radial = try RadialGradient.parse(input_, css.VendorPrefix{ .o = true }) };
+                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-o-repeating-radial-gradient")) {
+                    return .{ .repeating_radial = try RadialGradient.parse(input_, css.VendorPrefix{ .o = true }) };
+                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-webkit-gradient")) {
+                    return .{ .@"webkit-gradient" = try WebKitGradient.parse(input_) };
+                } else {
+                    return closure.location.newUnexpectedTokenError(.{ .ident = closure.func });
+                }
+            }
+        }.parse);
+    }
+
+    pub fn toCss(this: *const Gradient, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        const f: []const u8, const prefix: ?css.VendorPrefix = switch (this.*) {
+            .linear => |g| .{ "linear-gradient(", g.vendor_prefix },
+            .repeating_linear => |g| .{ "repeating-linear-gradient(", g.vendor_prefix },
+            .radial => |g| .{ "radial-gradient(", g.vendor_prefix },
+            .repeating_radial => |g| .{ "repeating-linear-gradient(", g.vendor_prefix },
+            .conic => .{ "conic-gradient(", null },
+            .repeating_conic => .{ "repeating-conic-gradient(", null },
+            .@"webkit-gradient" => .{ "-webkit-gradient(", null },
+        };
+
+        if (prefix) |p| {
+            try p.toCss(W, dest);
+        }
+
+        try dest.writeStr(f);
+
+        switch (this.*) {
+            .linear, .repeating_linear => |*linear| {
+                try linear.toCss(W, dest, linear.vendor_prefix.eq(css.VendorPrefix{ .none = true }));
+            },
+            .radial, .repeating_radial => |*radial| {
+                try radial.toCss(W, dest);
+            },
+            .conic, .repeating_conic => |*conic| {
+                try conic.toCss(W, dest);
+            },
+            .@"webkit-gradient" => |*g| {
+                try g.toCss(W, dest);
+            },
+        }
+
+        return dest.writeChar(')');
+    }
 };
 
 /// A CSS [`linear-gradient()`](https://www.w3.org/TR/css-images-3/#linear-gradients) or `repeating-linear-gradient()`.
@@ -46,6 +136,79 @@ pub const LinearGradient = struct {
     direction: LineDirection,
     /// The color stops and transition hints for the gradient.
     items: ArrayList(GradientItem(LengthPercentage)),
+
+    pub fn parse(input: *css.Parser, vendor_prefix: VendorPrefix) Error!LinearGradient {
+        const direction = if (input.tryParse(LineDirection.parse, .{vendor_prefix != VendorPrefix{ .none = true }})) |dir| direction: {
+            try input.expectComma();
+            break :direction dir;
+        } else .{ .vertical = .bottom };
+        const items = try parseItems(LengthPercentage, input);
+        return LinearGradient{ .direction = direction, .items = items, .vendor_prefix = vendor_prefix };
+    }
+
+    pub fn toCss(this: *const LinearGradient, comptime W: type, dest: *Printer(W), is_prefixed: bool) PrintErr!void {
+        const angle = switch (this.direction) {
+            .vertical => |v| switch (v) {
+                .bottom => 180.0,
+                .top => 0.0,
+            },
+            .angle => |a| a.toDegrees(),
+            else => -1.0,
+        };
+
+        // We can omit `to bottom` or `180deg` because it is the default.
+        if (angle == 180.0) {
+            // todo_stuff.depth
+            try serializeItems(&this.items, W, dest);
+        }
+        // If we have `to top` or `0deg`, and all of the positions and hints are percentages,
+        // we can flip the gradient the other direction and omit the direction.
+        else if (angle == 0.0 and dest.minify and brk: {
+            for (this.items.items) |*item| {
+                if (item.* == .hint and item.hint != .percentage) break :brk false;
+                if (item.* == .color_stop and item.color_stop.position != null and item.color_stop.position != .percetage) break :brk false;
+            }
+            break :brk true;
+        }) {
+            var flipped_items = ArrayList(GradientItem(LengthPercentage)).initCapacity(
+                @compileError(css.todo_stuff.think_about_allocator),
+                this.items.items.len,
+            ) catch bun.outOfMemory();
+            defer flipped_items.deinit();
+
+            var i: usize = this.items.items.len;
+            while (i > 0) {
+                i -= 1;
+                const item = &this.items.items[i];
+                switch (item.*) {
+                    .hint => |*h| switch (h.*) {
+                        .percentage => |p| try flipped_items.append(.{ .hint = .{ .percentage = .{ .value = 1.0 - p.v } } }),
+                        else => unreachable,
+                    },
+                    .color_stop => |*cs| try flipped_items.append(.{
+                        .color_stop = .{
+                            .color = cs.color,
+                            .position = if (cs.position) |*p| switch (p) {
+                                .percentage => |perc| .{ .percentage = .{ .value = 1.0 - perc.value } },
+                                else => unreachable,
+                            } else null,
+                        },
+                    }),
+                }
+            }
+
+            try serializeItems(&flipped_items, W, dest);
+        } else {
+            if ((this.direction != .vertical or this.direction.vertical != .bottom) and
+                (this.direction != .angle or this.direction.angle.deg != 180.0))
+            {
+                try this.direction.toCss(W, dest, is_prefixed);
+                try dest.delim(',', false);
+            }
+
+            try serializeItems(&this.items, W, dest);
+        }
+    }
 };
 
 /// A CSS [`radial-gradient()`](https://www.w3.org/TR/css-images-3/#radial-gradients) or `repeating-radial-gradient()`.
@@ -58,6 +221,50 @@ pub const RadialGradient = struct {
     position: Position,
     /// The color stops and transition hints for the gradient.
     items: ArrayList(GradientItem(LengthPercentage)),
+
+    pub fn parse(input: *css.Parser, vendor_prefix: VendorPrefix) Error!RadialGradient {
+        // todo_stuff.depth
+        const shape = input.tryParse(EndingShape.parse, .{}) catch null;
+        const position = input.tryParse(struct {
+            fn parse(input_: *css.Parser) Error!Position {
+                try input_.expectIdentMatching("at");
+                return Position.parse(input_);
+            }
+        }.parse, .{}) catch null;
+
+        if (shape != null or position != null) {
+            try input.expectComma();
+        }
+
+        const items = try parseItems(LengthPercentage, input);
+        return RadialGradient{
+            // todo_stuff.depth
+            .shape = shape orelse EndingShape.default(),
+            // todo_stuff.depth
+            .position = position orelse Position.center(),
+            .items = items,
+            .vendor_prefix = vendor_prefix,
+        };
+    }
+
+    pub fn toCss(this: *const RadialGradient, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        if (std.meta.eql(this.shape, EndingShape.default())) {
+            try this.shape.toCss(W, dest);
+            if (this.position.isCenter()) {
+                try dest.delim(',', false);
+            } else {
+                try dest.writeChar(' ');
+            }
+        }
+
+        if (!this.position.isCenter()) {
+            try dest.writeStr("at ");
+            try this.position.toCss(W, dest);
+            try dest.delim(',', false);
+        }
+
+        try serializeItems(&this.items, W, dest);
+    }
 };
 
 /// A CSS [`conic-gradient()`](https://www.w3.org/TR/css-images-4/#conic-gradients) or `repeating-conic-gradient()`.
@@ -68,6 +275,56 @@ pub const ConicGradient = struct {
     position: Position,
     /// The color stops and transition hints for the gradient.
     items: ArrayList(GradientItem(AnglePercentage)),
+
+    pub fn parse(input: *css.Parser) Error!ConicGradient {
+        const angle = input.tryParse(struct {
+            inline fn parse(i: *css.Parser) Error!Angle {
+                try i.expectIdentMatching("from");
+                // Spec allows unitless zero angles for gradients.
+                // https://w3c.github.io/csswg-drafts/css-images-4/#valdef-conic-gradient-angle
+                return Angle.parseWithUnitlessZero(i);
+            }
+        }.parse, .{}) catch Angle{ .deg = 0.0 };
+
+        const position = input.tryParse(struct {
+            inline fn parse(i: *css.Parser) Error!Position {
+                try i.expectIdentMatching("at");
+                return Position.parse(i);
+            }
+        }.parse, .{}) catch Position.center();
+
+        if (angle != .{ .deg = 0.0 } or !std.meta.eql(position, Position.center())) {
+            try input.expectComma();
+        }
+
+        const items = try parseItems(AnglePercentage, input);
+        return ConicGradient{
+            .angle = angle,
+            .position = position,
+            .items = items,
+        };
+    }
+
+    pub fn toCss(this: *const ConicGradient, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        if (!this.angle.isZero()) {
+            try dest.writeStr("from ");
+            try this.angle.toCss(W, dest);
+
+            if (this.position.isCenter()) {
+                try dest.delim(',', false);
+            } else {
+                try dest.writeChar(' ');
+            }
+        }
+
+        if (!this.position.isCenter()) {
+            try dest.writeStr("at ");
+            try this.position.toCss(W, dest);
+            try dest.delim(',', false);
+        }
+
+        return try serializeItems(AnglePercentage, &this.items, W, dest);
+    }
 };
 
 /// A legacy `-webkit-gradient()`.
@@ -94,6 +351,80 @@ pub const WebKitGradient = union(enum) {
         /// The color stops in the gradient.
         stops: ArrayList(WebKitColorStop),
     },
+
+    pub fn parse(input: *css.Parser) Error!WebKitGradient {
+        const location = input.currentSourceLocation();
+        const ident = try input.expectIdent();
+        try input.expectComma();
+
+        // todo_stuff.match_ignore_ascii_case
+        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "linear")) {
+            // todo_stuff.depth
+            const from = try WebKitGradientPoint.parse(input);
+            try input.expectComma();
+            const to = try WebKitGradientPoint.parse(input);
+            try input.expectComma();
+            const stops = try input.parseCommaSeparated(WebKitColorStop.parse);
+            return WebKitGradient{ .linear = .{
+                .from = from,
+                .to = to,
+                .stops = stops,
+            } };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "radial")) {
+            const from = try WebKitGradientPoint.parse(input);
+            try input.expectComma();
+            const r0 = try CSSNumberFns.parse(input);
+            try input.expectComma();
+            const to = try WebKitGradientPoint.parse(input);
+            try input.expectComma();
+            const r1 = try CSSNumberFns.parse(input);
+            try input.expectComma();
+            // todo_stuff.depth
+            const stops = try input.parseCommaSeparated(WebKitColorStop.parse);
+            return WebKitGradient{
+                .radial = .{
+                    .from = from,
+                    .r0 = r0,
+                    .to = to,
+                    .r1 = r1,
+                    .stops = stops,
+                },
+            };
+        } else {
+            return location.newUnexpectedTokenError(.{ .ident = ident });
+        }
+    }
+
+    pub fn toCss(this: *const WebKitGradient, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        switch (this.*) {
+            .linear => |*linear| {
+                try dest.writeStr("linear");
+                try dest.delim(',', false);
+                try linear.from.toCss(W, dest);
+                try dest.delim(',', false);
+                try linear.to.toCss(W, dest);
+                for (linear.stops.items) |*stop| {
+                    try dest.delim(',', false);
+                    try stop.toCss(W, dest);
+                }
+            },
+            .radial => |*radial| {
+                try dest.writeStr("radial");
+                try dest.delim(',', false);
+                try radial.from.toCss(W, dest);
+                try dest.delim(',', false);
+                try radial.r0.toCss(W, dest);
+                try dest.delim(',', false);
+                try radial.to.toCss(W, dest);
+                try dest.delim(',', false);
+                try radial.r1.toCss(W, dest);
+                for (radial.stops.items) |*stop| {
+                    try dest.delim(',', false);
+                    try stop.toCss(W, dest);
+                }
+            },
+        }
+    }
 };
 
 /// The direction of a CSS `linear-gradient()`.
@@ -113,6 +444,77 @@ pub const LineDirection = union(enum) {
         /// A vertical position keyword, e.g. `top` or `bottom`.
         vertical: VerticalPositionKeyword,
     },
+
+    pub fn parse(input: *css.Parser, is_prefixed: bool) Error!Position {
+        // Spec allows unitless zero angles for gradients.
+        // https://w3c.github.io/csswg-drafts/css-images-3/#linear-gradient-syntax
+        if (input.tryParse(Angle.parseWithUnitlessZero, .{})) |angle| {
+            return LineDirection{ .angle = angle };
+        }
+
+        if (!is_prefixed) {
+            try input.expectIdentMatching("to");
+        }
+
+        if (input.tryParse(HorizontalPositionKeyword.parse, .{})) |x| {
+            if (input.tryParse(VerticalPositionKeyword.parse, .{})) |y| {
+                return LineDirection{ .corner = .{
+                    .horizontal = x,
+                    .vertical = y,
+                } };
+            }
+            return LineDirection{ .horizontal = x };
+        }
+
+        const y = try VerticalPositionKeyword.parse(input);
+        if (input.tryParse(HorizontalPositionKeyword.parse, .{})) |x| {
+            return LineDirection{ .corner = .{
+                .horizontal = x,
+                .vertical = y,
+            } };
+        }
+        return LineDirection{ .vertical = y };
+    }
+
+    pub fn toCss(this: *const LineDirection, comptime W: type, dest: *Printer(W), is_prefixed: bool) PrintErr!void {
+        switch (this.*) {
+            .angle => |*angle| try angle.toCss(W, dest),
+            .horizontal => |*k| {
+                if (dest.minify) {
+                    try dest.writeStr(switch (k) {
+                        .left => "270deg",
+                        .right => "90deg",
+                    });
+                } else {
+                    if (!is_prefixed) {
+                        try dest.writeStr("to ");
+                    }
+                    try k.toCss(W, dest);
+                }
+            },
+            .vertical => |*k| {
+                if (dest.minify) {
+                    try dest.writeStr(switch (k) {
+                        .top => "0deg",
+                        .bottom => "180deg",
+                    });
+                } else {
+                    if (!is_prefixed) {
+                        try dest.writeStr("to ");
+                    }
+                    try k.toCss(W, dest);
+                }
+            },
+            .corner => |*c| {
+                if (!is_prefixed) {
+                    try dest.writeStr("to ");
+                }
+                try c.vertical.toCss(W, dest);
+                try dest.writeChar(' ');
+                try c.horizontal.toCss(W, dest);
+            },
+        }
+    }
 };
 
 /// Either a color stop or interpolation hint within a gradient.
@@ -125,6 +527,13 @@ pub fn GradientItem(comptime D: type) type {
         color_stop: ColorStop(D),
         /// A color interpolation hint.
         hint: D,
+
+        pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+            return switch (this.*) {
+                .color_stop => |*c| try c.toCss(W, dest),
+                .hint => |*h| try css.generic.toCss(D, h, W, dest),
+            };
+        }
     };
 }
 
@@ -136,6 +545,10 @@ pub const EndingShape = union(enum) {
     ellipse: Ellipse,
     /// A circle.
     circle: Circle,
+
+    pub fn default() EndingShape {
+        return .{ .ellipse = .{ .extent = .@"farthest-corner" } };
+    }
 };
 
 /// An x/y position within a legacy `-webkit-gradient()`.
@@ -144,6 +557,18 @@ pub const WebKitGradientPoint = struct {
     x: WebKitGradientPointComponent(HorizontalPositionKeyword),
     /// The y-position.
     y: WebKitGradientPointComponent(VerticalPositionKeyword),
+
+    pub fn parse(input: *css.Parser) Error!WebKitGradientPoint {
+        const x = try WebKitGradientPointComponent(HorizontalPositionKeyword).parse(input);
+        const y = try WebKitGradientPointComponent(VerticalPositionKeyword).parse(input);
+        return .{ .x = x, .y = y };
+    }
+
+    pub fn toCss(this: *const WebKitGradientPoint, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        try this.x.toCss(W, dest);
+        try dest.writeChar(' ');
+        return try this.y.toCss(W, dest);
+    }
 };
 
 /// A keyword or number within a [WebKitGradientPoint](WebKitGradientPoint).
@@ -155,6 +580,48 @@ pub fn WebKitGradientPointComponent(comptime S: type) type {
         number: NumberOrPercentage,
         /// A side keyword.
         side: S,
+
+        const This = @This();
+
+        pub fn parse(input: *css.Parser) Error!This {
+            if (input.tryParse(css.Parser.expectIdentMatching, .{"center"})) |_| {
+                return .center;
+            }
+
+            if (input.tryParse(NumberOrPercentage.parse, .{})) |number| {
+                return .{ .number = number };
+            }
+
+            const keyword = try css.generic.parse(S, input);
+            return .{ .side = keyword };
+        }
+
+        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+            switch (this.*) {
+                .center => {
+                    if (dest.minify) {
+                        try dest.writeStr("50%");
+                    } else {
+                        try dest.writeStr("center");
+                    }
+                },
+                .number => |*lp| {
+                    if (lp == .percentage and lp.percentage.value == 0.0) {
+                        try dest.writeChar('0');
+                    } else {
+                        try lp.toCss(W, dest);
+                    }
+                },
+                .side => |*s| {
+                    if (dest.minify) {
+                        const lp: LengthPercentage = s.intoLengthPercentage();
+                        try lp.toCss(W, dest);
+                    } else {
+                        try s.toCss(W, dest);
+                    }
+                },
+            }
+        }
     };
 }
 
@@ -164,6 +631,53 @@ pub const WebKitColorStop = struct {
     color: CssColor,
     /// The position of the color stop.
     position: CSSNumber,
+
+    pub fn parse(input: *css.Parser) Error!WebKitColorStop {
+        const location = input.currentSourceLocation();
+        const function = try input.expectFunction();
+        const Closure = struct { loc: css.SourceLocation, function: []const u8 };
+        return input.parseNestedBlock(
+            WebKitColorStop,
+            Closure{ .loc = location, .function = function },
+            struct {
+                fn parse(
+                    closure: Closure,
+                    i: *css.Parser,
+                ) Error!WebKitColorStop {
+                    // todo_stuff.match_ignore_ascii_case
+                    const position: f32 = if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "color-stop")) position: {
+                        const p: NumberOrPercentage = try @call(.auto, @field(NumberOrPercentage, "parse"), .{i});
+                        try i.expectComma();
+                        break :position p.intoF32();
+                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "from")) position: {
+                        break :position 0.0;
+                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "to")) position: {
+                        break :position 1.0;
+                    } else {
+                        return closure.loc.newUnexpectedTokenError(.{ .ident = closure.function });
+                    };
+                    const color = try CssColor.parse(i);
+                    return WebKitColorStop{ .color = color, .position = position };
+                }
+            }.parse,
+        );
+    }
+
+    pub fn toCss(this: *const WebKitColorStop, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        if (this.position == 0.0) {
+            try dest.writeStr("from(");
+            try this.color.toCss(W, dest);
+        } else if (this.position == 1.0) {
+            try dest.writeStr("to(");
+            try this.color.toCss(W, dest);
+        } else {
+            try dest.writeStr("color-stop(");
+            try css.generic.toCss(CSSNumber, &this.position, W, dest);
+            try dest.delim(',', false);
+            try this.color.toCss(W, dest);
+        }
+        try dest.writeChar(')');
+    }
 };
 
 /// A [`<color-stop>`](https://www.w3.org/TR/css-images-4/#color-stop-syntax) within a gradient.
@@ -175,7 +689,24 @@ pub fn ColorStop(comptime D: type) type {
         /// The color of the color stop.
         color: CssColor,
         /// The position of the color stop.
-        positoin: ?D,
+        position: ?D,
+
+        const This = @This();
+
+        pub fn parse(input: *css.Parser) Error!ColorStop(D) {
+            const color = try CssColor.parse(input);
+            const position = input.tryParse(css.generic.parseFor(D), .{}) catch null;
+            return .{ .color = color, .position = position };
+        }
+
+        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+            try this.color.toCss(W, dest);
+            if (this.position) |*position| {
+                try dest.delim(',', false);
+                try css.generic.toCss(D, position, W, dest);
+            }
+            return;
+        }
     };
 }
 
@@ -192,6 +723,53 @@ pub const Ellipse = union(enum) {
     },
     /// A shape extent keyword.
     extent: ShapeExtent,
+
+    pub fn parse(input: *css.Parser) Error!Ellipse {
+        if (input.tryParse(ShapeExtent.parse, .{})) |extent| {
+            // The `ellipse` keyword is optional, but only if the `circle` keyword is not present.
+            // If it is, then we'll re-parse as a circle.
+            if (input.tryParse(css.Parser.expectIdentMatching, .{"circle"})) |_| {
+                return input.newErrorForNextToken();
+            }
+            _ = input.tryParse(css.Parser.expectIdentMatching, .{"ellipse"});
+            return Ellipse{ .extent = extent };
+        }
+
+        if (input.tryParse(LengthPercentage.parse, .{})) |x| {
+            const y = try LengthPercentage.parse(input);
+            // The `ellipse` keyword is optional if there are two lengths.
+            _ = input.tryParse(css.Parser.expectIdentMatching, .{"ellipse"});
+            return Ellipse{ .size = .{ .x = x, .y = y } };
+        }
+
+        if (input.tryParse(css.Parser.expectIdentMatching, .{"ellipse"})) |_| {
+            if (input.tryParse(ShapeExtent.parse, .{})) |extent| {
+                return Ellipse{ .extent = extent };
+            }
+
+            if (input.tryParse(LengthPercentage.parse, .{})) |x| {
+                const y = try LengthPercentage.parse(input);
+                return Ellipse{ .size = .{ .x = x, .y = y } };
+            }
+
+            // Assume `farthest-corner` if only the `ellipse` keyword is present.
+            return Ellipse{ .extent = .@"farthest-corner" };
+        }
+
+        return input.newErrorForNextToken();
+    }
+
+    pub fn toCss(this: *const Ellipse, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        // The `ellipse` keyword is optional, so we don't emit it.
+        return switch (this.*) {
+            .size => |*s| {
+                try s.x.toCss(W, dest);
+                try dest.writeChar(' ');
+                return try s.y.toCss(W, dest);
+            },
+            .extent => |*e| try e.toCss(W, dest),
+        };
+    }
 };
 
 pub const ShapeExtent = enum {
@@ -214,4 +792,106 @@ pub const Circle = union(enum) {
     radius: Length,
     /// A shape extent keyword.
     extent: ShapeExtent,
+
+    pub fn parse(input: *css.Parser) Error!Circle {
+        if (input.tryParse(ShapeExtent.parse, .{})) |extent| {
+            // The `circle` keyword is required. If it's not there, then it's an ellipse.
+            try input.expectIdentMatching("circle");
+            return Circle{ .extent = extent };
+        }
+
+        if (input.tryParse(Length.parse, .{})) |length| {
+            // The `circle` keyword is optional if there is only a single length.
+            // We are assuming here that Ellipse.parse ran first.
+            _ = input.tryParse(css.Parser.expectIdentMatching, .{"circle"});
+            return Circle{ .radius = length };
+        }
+
+        if (input.tryParse(css.Parser.expectIdentMatching, .{"circle"})) |_| {
+            if (input.tryParse(ShapeExtent.parse, .{})) |extent| {
+                return Circle{ .extent = extent };
+            }
+
+            if (input.tryParse(Length.parse, .{})) |length| {
+                return Circle{ .radius = length };
+            }
+
+            // If only the `circle` keyword was given, default to `farthest-corner`.
+            return Circle{ .extent = .@"farthest-corner" };
+        }
+
+        return input.newErrorForNextToken();
+    }
+
+    pub fn toCss(this: *const Circle, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        return switch (this.*) {
+            .radius => |r| try r.toCss(W, dest),
+            .extent => |extent| {
+                try dest.writeStr("circle");
+                if (extent != .@"farthest-corner") {
+                    try dest.writeChar(' ');
+                    try extent.toCss(W, dest);
+                }
+            },
+        };
+    }
 };
+
+pub fn parseItems(comptime D: type, input: *css.Parser) Error!ArrayList(GradientItem(D)) {
+    var items = ArrayList(GradientItem(D)){};
+    var seen_stop = false;
+
+    while (true) {
+        const Closure = struct { items: *ArrayList(GradientItem(D)), seen_stop: *bool };
+        try input.parseUntilBefore(
+            css.Delimiters{ .comma = true },
+            Closure{ .items = &items, .seen_stop = &seen_stop },
+            struct {
+                fn parse(closure: Closure, i: *css.Parser) Error!void {
+                    if (closure.seen_stop.*) {
+                        if (i.tryParse(comptime css.generic.parseFor(D), .{})) |hint| {
+                            closure.seen_stop.* = false;
+                            closure.items.append(.{ .hint = hint }) catch bun.outOfMemory();
+                            return;
+                        }
+                    }
+
+                    const stop = try ColorStop(D).parse(i);
+
+                    if (i.tryParse(comptime css.generic.parseFor(D), .{})) |position| {
+                        const color = stop.color.clone(@compileError(css.todo_stuff.think_about_allocator));
+                        closure.items.append(.{ .color_stop = stop }) catch bun.outOfMemory();
+                        closure.items.append(.{ .color_stop = .{
+                            .color = color,
+                            .position = position,
+                        } }) catch bun.outOfMemory();
+                    } else {
+                        closure.items.append(.{ .color_stop = stop }) catch bun.outOfMemory();
+                    }
+
+                    closure.seen_stop.* = true;
+                }
+            }.parse,
+        );
+
+        if (input.next()) |tok| {
+            if (tok == .comma) continue;
+            bun.unreachablePanic("expected a comma after parsing a gradient", .{});
+        } else {
+            @compileError(css.todo_stuff.errors);
+        }
+    }
+
+    return items;
+}
+
+pub fn serializeItems(
+    comptime D: type,
+    items: *const ArrayList(GradientItem(D)),
+    comptime W: type,
+    dest: *Printer(W),
+) PrintErr!void {
+    _ = items; // autofix
+    _ = dest; // autofix
+    @compileError(css.todo_stuff.depth);
+}

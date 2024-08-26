@@ -130,4 +130,11 @@ pub const NumberOrPercentage = union(enum) {
 
     pub usingnamespace css.DeriveParse(@This());
     pub usingnamespace css.DeriveToCss(@This());
+
+    pub fn intoF32(this: *const @This()) f32 {
+        return switch (this.*) {
+            .number => this.number,
+            .percentage => this.percentage.v(),
+        };
+    }
 };

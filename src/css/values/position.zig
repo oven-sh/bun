@@ -24,6 +24,10 @@ pub const Position = struct {
         this.x.isCenter() and this.y.isCenter();
     }
 
+    pub fn center() Position {
+        return .{ .x = .center, .y = .center };
+    }
+
     pub fn parse(input: *css.Parser) Error!Position {
         // Try parsing a horizontal position first
         if (input.tryParse(HorizontalPosition.parse, .{})) |horizontal_pos| {

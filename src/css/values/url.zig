@@ -22,6 +22,7 @@ const Resolution = css.css_values.resolution.Resolution;
 const CustomIdent = css.css_values.ident.CustomIdent;
 const CustomIdentFns = css.css_values.ident.CustomIdentFns;
 const Ident = css.css_values.ident.Ident;
+const UrlDependency = css.dependencies.UrlDependency;
 
 /// A CSS [url()](https://www.w3.org/TR/css-values-4/#urls) value and its source location.
 pub const Url = struct {
@@ -30,18 +31,51 @@ pub const Url = struct {
     /// The location where the `url()` was seen in the CSS source file.
     loc: css.Location,
 
-    pub fn parse(input: *css.Parser) Error!Url {
-        _ = input; // autofix
-        @compileError(css.todo_stuff.depth);
-    }
-
     const This = @This();
+
+    pub fn parse(input: *css.Parser) Error!Url {
+        const loc = input.currentSourceLocation();
+        const url = try input.expectUrl();
+        return Url{ .url = url, .loc = loc };
+    }
 
     /// Returns whether the URL is absolute, and not relative.
     pub fn isAbsolute(this: *const This) bool {
-        _ = this; // autofix
+        const url = this.url;
 
-        @compileError(css.todo_stuff.depth);
+        // Quick checks. If the url starts with '.', it is relative.
+        if (bun.strings.startsWithChar('.')) {
+            return false;
+        }
+
+        // If the url starts with '/' it is absolute.
+        if (bun.strings.startsWithChar('/')) {
+            return true;
+        }
+
+        // If the url starts with '#' we have a fragment URL.
+        // These are resolved relative to the document rather than the CSS file.
+        // https://drafts.csswg.org/css-values-4/#local-urls
+        if (bun.strings.startsWithChar('#')) {
+            return true;
+        }
+
+        // Otherwise, we might have a scheme. These must start with an ascii alpha character.
+        // https://url.spec.whatwg.org/#scheme-start-state
+        if (url.len == 0 or !std.ascii.isAlphabetic(url[0])) {
+            return false;
+        }
+
+        // https://url.spec.whatwg.org/#scheme-state
+        for (url) |c| {
+            switch (c) {
+                'a'...'z', 'A'...'Z', '0'...'9', '+', '-', '.' => {},
+                ':' => return true,
+                else => break,
+            }
+        }
+
+        return false;
     }
 
     pub fn toCss(
@@ -49,8 +83,51 @@ pub const Url = struct {
         comptime W: type,
         dest: *Printer(W),
     ) PrintErr!void {
-        _ = this; // autofix
-        _ = dest; // autofix
-        @compileError(css.todo_stuff.depth);
+        const dep: ?UrlDependency = if (dest.dependencies != null)
+            UrlDependency.new(this, dest.filename())
+        else
+            null;
+
+        // If adding dependencies, always write url() with quotes so that the placeholder can
+        // be replaced without escaping more easily. Quotes may be removed later during minification.
+        if (dep) |d| {
+            try dest.writeStr("url(");
+            try css.serializer.serializeString(d.placeholder, W, dest);
+            try dest.writeChar(')');
+
+            if (dest.dependencies) |*dependencies| {
+                try dependencies.append(css.Dependency{ .Url = d });
+            }
+
+            return;
+        }
+
+        if (dest.minify) {
+            var buf = ArrayList(u8){};
+            var bufw = buf.writer(@compileError(css.todo_stuff.think_about_allocator));
+            const BufW = @TypeOf(bufw);
+            defer buf.deinit();
+            try (css.Token{ .unquoted_url = this.url }).toCss(BufW, &bufw);
+
+            // If the unquoted url is longer than it would be quoted (e.g. `url("...")`)
+            // then serialize as a string and choose the shorter version.
+            if (buf.items.len > this.url.len + 7) {
+                var buf2 = ArrayList(u8){};
+                defer buf2.deinit();
+                bufw = buf2.writer(@compileError(css.todo_stuff.think_about_allocator));
+                try css.serializer.serializeString(this.url, BufW, &bufw);
+                if (buf2.items.len + 5 < buf.items.len) {
+                    try dest.writeStr("url(");
+                    try dest.writeStr(buf2.items);
+                    return dest.writeChar(')');
+                }
+            }
+
+            try dest.writeStr(buf.items);
+        } else {
+            try dest.writeStr("url(");
+            try css.serializer.serializeString(this.url, W, dest);
+            try dest.writeChar(')');
+        }
     }
 };

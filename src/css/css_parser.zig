@@ -44,6 +44,7 @@ pub const Ident = css_values.ident.Ident;
 pub const IdentFns = css_values.ident.IdentFns;
 pub const CustomIdent = css_values.ident.CustomIdent;
 pub const CustomIdentFns = css_values.ident.CustomIdentFns;
+pub const Url = css_values.url.Url;
 
 pub const declaration = @import("./declaration.zig");
 
@@ -2323,6 +2324,11 @@ pub const Parser = struct {
             .open_curly => return,
             else => return start_location.newBasicUnexpectedTokenError(tok.*),
         }
+    }
+
+    pub fn expectUrl(this: *Parser) Error![]const u8 {
+        _ = this; // autofix
+        @compileError(todo_stuff.depth);
     }
 
     pub fn expectUrlOrString(this: *Parser) Error![]const u8 {

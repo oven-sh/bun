@@ -1857,7 +1857,7 @@ it("we should always send date", async () => {
   }
 });
 
-it.only("should allow use of custom timeout", async () => {
+it("should allow use of custom timeout", async () => {
   using server = Bun.serve({
     port: 0,
     idleTimeout: 8, // uws precision is in seconds, and lower than 4 seconds is not reliable its timer is not that accurate

@@ -136,6 +136,13 @@ pub fn build(b: *Build) !void {
 
     b.zig_lib_dir = b.zig_lib_dir orelse b.path("src/deps/zig/lib");
 
+    // TODO: Upgrade path for 0.14.0
+    // b.graph.zig_lib_directory = brk: {
+    //     const sub_path = "src/deps/zig/lib";
+    //     const dir = try b.build_root.handle.openDir(sub_path, .{});
+    //     break :brk .{ .handle = dir, .path = try b.build_root.join(b.graph.arena, &.{sub_path}) };
+    // };
+
     var target_query = b.standardTargetOptionsQueryOnly(.{});
     const optimize = b.standardOptimizeOption(.{});
 

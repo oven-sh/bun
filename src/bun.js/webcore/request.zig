@@ -79,9 +79,9 @@ pub const Request = struct {
     pub const getBlobWithoutCallFrame = RequestMixin.getBlobWithoutCallFrame;
     pub const WeakRef = struct {
         value: ?*Request = null,
-        pub fn create(this: *Request) WeakRef {
-            this.weak_refs += 1;
-            return .{ .value = this };
+        pub fn create(req: *Request) WeakRef {
+            req.weak_refs += 1;
+            return .{ .value = req };
         }
 
         pub fn deinit(this: *WeakRef) void {
@@ -95,8 +95,8 @@ pub const Request = struct {
             }
         }
 
-        pub fn get(self: *WeakRef) ?*Request {
-            return self.value;
+        pub fn get(this: *WeakRef) ?*Request {
+            return this.value;
         }
     };
 

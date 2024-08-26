@@ -96,7 +96,10 @@ pub const Request = struct {
         }
 
         pub fn get(this: *WeakRef) ?*Request {
-            return this.value;
+            if(this.value) |value| {
+                if(!value.finalized) return value;
+            }
+            return null;
         }
     };
 

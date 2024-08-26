@@ -80,7 +80,6 @@ pub const Request = struct {
     pub const WeakRef = struct {
         value: ?*Request = null,
         pub fn create(req: *Request) WeakRef {
-            bun.assert(!req.finalized);
             req.weak_refs += 1;
             return .{ .value = req };
         }

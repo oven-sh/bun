@@ -4,8 +4,8 @@ import { bunExe, bunEnv, tmpdirSync, isDebug, isWindows } from "harness";
 import { cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync, copyFileSync } from "fs";
 import { join } from "path";
 
-const timeout = (isDebug ? Infinity : (isWindows ? 20_000 : 10_000));
-const longTimeout = (isDebug ? Infinity : (isWindows ? 30_000 : 10_000));
+const timeout = isDebug ? Infinity : 10_000;
+const longTimeout = isDebug ? Infinity : 30_000;
 
 let hotRunnerRoot: string = "",
   cwd = "";

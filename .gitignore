@@ -117,7 +117,6 @@ sign.json
 src/bun.js/bindings-obj
 src/bun.js/bindings/GeneratedJS2Native.zig
 src/bun.js/debug-bindings-obj
-src/deps/boringssl
 src/deps/c-ares/build
 src/deps/libiconv
 src/deps/openssl
@@ -127,7 +126,6 @@ src/deps/zig-clap/.gitattributes
 src/deps/zig-clap/.github
 src/deps/zig-clap/example
 src/deps/zig-clap/README.md
-src/deps/brotli
 src/fallback.version
 src/js/out/DebugPath.h
 src/js/out/functions*
@@ -148,3 +146,8 @@ zig-out
 test/node.js/upstream
 .zig-cache
 scripts/env.local
+
+# Dependencies
+/src/deps/boringssl
+/src/deps/brotli
+/src/deps/c*ares

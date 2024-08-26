@@ -1,6 +1,6 @@
 macro(add_custom_library)
   set(args TARGET PREFIX)
-  set(multi_args LIBRARIES INCLUDES CMAKE_ARGS)
+  set(multi_args LIBRARIES INCLUDES CMAKE_TARGETS CMAKE_ARGS)
   cmake_parse_arguments(LIB "" "${args}" "${multi_args}" ${ARGN})
 
   if(NOT LIB_TARGET)
@@ -42,23 +42,34 @@ macro(add_custom_library)
   set(${LIB_ID}_LIBRARY_PATHS)  
   foreach(lib ${LIB_LIBRARIES})
     set(lib_path ${${LIB_ID}_LIB_PATH}/${CMAKE_STATIC_LIBRARY_PREFIX}${lib}${CMAKE_STATIC_LIBRARY_SUFFIX})
-    add_custom_command(
-      COMMENT
-        "Building ${lib}"
-      VERBATIM COMMAND
-        ${CMAKE_COMMAND}
-          --build ${${LIB_ID}_BUILD_PATH}
-          --config ${CMAKE_BUILD_TYPE}
-          --target ${lib}
-      WORKING_DIRECTORY
-        ${CWD}
-      OUTPUT
-        ${lib_path}
-      DEPENDS
-        ${${LIB_ID}_BUILD_PATH}/CMakeCache.txt
-    )
     list(APPEND ${LIB_ID}_LIBRARY_PATHS ${lib_path})
   endforeach()
+
+  if(NOT LIB_CMAKE_TARGETS)
+    set(LIB_CMAKE_TARGETS ${LIB_LIBRARIES})
+  endif()
+
+  set(${LIB_ID}_CMAKE_BUILD_ARGS
+    --build ${${LIB_ID}_BUILD_PATH}
+    --config ${CMAKE_BUILD_TYPE}
+  )
+  foreach(target ${LIB_CMAKE_TARGETS})
+    list(APPEND ${LIB_ID}_CMAKE_BUILD_ARGS --target ${target})
+  endforeach()
+
+  add_custom_command(
+    COMMENT
+      "Building ${LIB_NAME}"
+    VERBATIM COMMAND
+      ${CMAKE_COMMAND}
+        ${${LIB_ID}_CMAKE_BUILD_ARGS}
+    WORKING_DIRECTORY
+      ${CWD}
+    OUTPUT
+      ${${LIB_ID}_LIBRARY_PATHS}
+    DEPENDS
+      ${${LIB_ID}_BUILD_PATH}/CMakeCache.txt
+  )
   
   set(${LIB_ID}_INCLUDE_PATHS)
   foreach(include ${LIB_INCLUDES})

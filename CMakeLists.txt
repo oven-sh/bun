@@ -59,7 +59,7 @@ if(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY)
 endif()
 
 if(NOT BUN_LINK_ONLY)
-    include(cmake/BuildCodegen.cmake)
+    include(cmake/BuildBunCodegen.cmake)
 endif()
 
 if(CI)
@@ -646,19 +646,6 @@ else()
     target_link_libraries(${bun} PRIVATE zstd::libzstd)
 endif()
 
-if(USE_CUSTOM_CARES)
-    include_directories(${BUN_DEPS_DIR}/c-ares/include)
-
-    if(WIN32)
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/cares.lib")
-    else()
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libcares.a")
-    endif()
-else()
-    find_package(c-ares CONFIG REQUIRED)
-    target_link_libraries(${bun} PRIVATE c-ares::cares)
-endif()
-
 if(USE_CUSTOM_TINYCC)
     if(WIN32)
         target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/tcc.lib")
@@ -719,6 +706,7 @@ endif()
 
 include(cmake/BuildBrotli.cmake)
 include(cmake/BuildBoringSSL.cmake)
+include(cmake/BuildCares.cmake)
 
 if(USE_CUSTOM_LSHPACK)
     include_directories(${BUN_DEPS_DIR}/ls-hpack)

@@ -2380,20 +2380,29 @@ describe("fs/promises", () => {
     const full = resolve(import.meta.dir, "../");
 
     const doIt = async () => {
+      const maxFD = getMaxFD();
+
       await Promise.all(
         Array.from({ length: iterCount }, () => promises.readdir(full, { withFileTypes, recursive: true })),
       );
 
-      const maxFD = getMaxFD();
       const pending = new Array(iterCount);
       for (let i = 0; i < iterCount; i++) {
         pending[i] = promises.readdir(full, { recursive: true, withFileTypes });
       }
 
       const results = await Promise.all(pending);
-      for (let i = 0; i < iterCount; i++) {
-        results[i].sort();
+      // Sort the results for determinism.
+      if (withFileTypes) {
+        for (let i = 0; i < iterCount; i++) {
+          results[i].sort((a, b) => a.path.localeCompare(b.path));
+        }
+      } else {
+        for (let i = 0; i < iterCount; i++) {
+          results[i].sort();
+        }
       }
+
       expect(results[0].length).toBeGreaterThan(0);
       for (let i = 1; i < iterCount; i++) {
         expect(results[i]).toEqual(results[0]);
@@ -2406,7 +2415,11 @@ describe("fs/promises", () => {
       }
 
       const newMaxFD = getMaxFD();
-      expect(maxFD).toBe(newMaxFD); // assert we do not leak file descriptors
+
+      // assert we do not leak file descriptors
+      // but we might start some threads or create kqueue
+      // so we should allow *some* increase
+      expect(newMaxFD - maxFD).toBeLessThan(5);
     };
 
     const fail = async () => {

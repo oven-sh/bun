@@ -6890,6 +6890,9 @@ pub const PackageManager = struct {
             },
         } = .{ .nothing = .{} },
 
+        filter_patterns: []const string = &.{},
+        // json_output: bool = false,
+
         max_retry_count: u16 = 5,
         min_simultaneous_requests: usize = 4,
 
@@ -7218,6 +7221,9 @@ pub const PackageManager = struct {
                 if (cli.no_summary) {
                     this.do.summary = false;
                 }
+
+                this.filter_patterns = cli.filters;
+                // this.json_output = cli.json_output;
 
                 if (cli.no_cache) {
                     this.enable.manifest_cache = false;
@@ -9124,6 +9130,12 @@ pub const PackageManager = struct {
         clap.parseParam("--patches-dir <dir>                    The directory to put the patch file") catch unreachable,
     });
 
+    const outdated_params: []const ParamType = &(install_params_ ++ [_]ParamType{
+        // clap.parseParam("--json                                 Output outdated information in JSON format") catch unreachable,
+        clap.parseParam("--filter <STR>...                            Display outdated dependencies for each matching workspace") catch unreachable,
+        clap.parseParam("<POS> ...                              Package patterns to filter by") catch unreachable,
+    });
+
     pub const CommandLineArguments = struct {
         registry: string = "",
         cache_dir: string = "",
@@ -9152,6 +9164,7 @@ pub const PackageManager = struct {
         no_summary: bool = false,
         latest: bool = false,
         // json_output: bool = false,
+        filters: []const string = &.{},
 
         link_native_bins: []const string = &[_]string{},
 
@@ -9395,7 +9408,7 @@ pub const PackageManager = struct {
                     Output.pretty("\n" ++ intro_text ++ "\n", .{});
                     Output.flush();
                     Output.pretty("\n<b>Flags:<r>", .{});
-                    clap.simpleHelp(PackageManager.install_params);
+                    clap.simpleHelp(PackageManager.outdated_params);
                     Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
                     Output.flush();
                 },
@@ -9415,7 +9428,7 @@ pub const PackageManager = struct {
                 .unlink => unlink_params,
                 .patch => patch_params,
                 .@"patch-commit" => patch_commit_params,
-                .outdated => install_params,
+                .outdated => outdated_params,
             };
 
             var diag = clap.Diagnostic{};
@@ -9455,6 +9468,7 @@ pub const PackageManager = struct {
                 // fake --dry-run, we don't actually resolve+clean the lockfile
                 cli.dry_run = true;
                 // cli.json_output = args.flag("--json");
+                cli.filters = args.options("--filter");
             }
 
             // link and unlink default to not saving, all others default to

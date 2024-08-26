@@ -54,6 +54,143 @@ pub const EasingFunction = union(enum) {
         /// The step position.
         position: StepPosition = StepPosition.default,
     },
+
+    pub fn parse(input: *css.Parser) Error!EasingFunction {
+        const location = input.currentSourceLocation();
+        if (input.tryParse(struct {
+            fn parse(i: *css.Parser) Error![]const u8 {
+                return i.expectIdent();
+            }
+        }.parse, .{})) |ident| {
+            // todo_stuff.match_ignore_ascii_case
+            const keyword = if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "linear"))
+                EasingFunction.linear
+            else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "ease"))
+                EasingFunction.ease
+            else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "ease-in"))
+                EasingFunction.ease_in
+            else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "ease-out"))
+                EasingFunction.ease_out
+            else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "ease-in-out"))
+                EasingFunction.ease_in_out
+            else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "step-start"))
+                EasingFunction{ .steps = .{ .count = 1, .position = .start } }
+            else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "step-end"))
+                EasingFunction{ .steps = .{ .count = 1, .position = .end } }
+            else
+                return location.newUnexpectedTokenError(.{ .ident = ident });
+            return keyword;
+        }
+
+        const function = try input.expectFunction();
+        return input.parseNestedBlock(
+            EasingFunction,
+            .{ .loc = location, .function = function },
+            struct {
+                fn parse(
+                    closure: *const struct { loc: css.SourceLocation, function: []const u8 },
+                    i: *css.Parser,
+                ) Error!EasingFunction {
+                    if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "cubic-bezier")) {
+                        const x1 = try CSSNumberFns.parse(i);
+                        try i.expectComma();
+                        const y1 = try CSSNumberFns.parse(i);
+                        try i.expectComma();
+                        const x2 = try CSSNumberFns.parse(i);
+                        try i.expectComma();
+                        const y2 = try CSSNumberFns.parse(i);
+                        return EasingFunction{ .cubic_bezier = .{ .x1 = x1, .y1 = y1, .x2 = x2, .y2 = y2 } };
+                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "steps")) {
+                        const count = try CSSIntegerFns.parse(i);
+                        const position = i.tryParse(struct {
+                            fn parse(p: *css.Parser) Error!StepPosition {
+                                try p.expectComma();
+                                return StepPosition.parse(p);
+                            }
+                        }.parse, .{}) catch StepPosition.default;
+                        return EasingFunction{ .steps = .{ .count = count, .position = position } };
+                    } else {
+                        return closure.loc.newUnexpectedTokenError(.{ .ident = closure.function });
+                    }
+                }
+            }.parse,
+        );
+    }
+
+    pub fn toCss(this: *const EasingFunction, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+        return switch (this.*) {
+            .linear => try dest.writeStr("linear"),
+            .ease => try dest.writeStr("ease"),
+            .ease_in => try dest.writeStr("ease-in"),
+            .ease_out => try dest.writeStr("ease-out"),
+            .ease_in_out => try dest.writeStr("ease-in-out"),
+            else => {
+                if (this.isEase()) {
+                    return dest.writeStr("ease");
+                } else if (this == .cubic_bezier and std.meta.eql(this.cubic_bezier, .{
+                    .x1 = 0.42,
+                    .y1 = 0.0,
+                    .x2 = 1.0,
+                    .y2 = 1.0,
+                })) {
+                    return dest.writeStr("ease-in");
+                } else if (this == .cubic_bezier and std.meta.eql(this.cubic_bezier, .{
+                    .x1 = 0.0,
+                    .y1 = 0.0,
+                    .x2 = 0.58,
+                    .y2 = 1.0,
+                })) {
+                    return dest.writeStr("ease-out");
+                } else if (this == .cubic_bezier and std.meta.eql(this.cubic_bezier, .{
+                    .x1 = 0.42,
+                    .y1 = 0.0,
+                    .x2 = 0.58,
+                    .y2 = 1.0,
+                })) {
+                    return dest.writeStr("ease-in-out");
+                }
+
+                switch (this.*) {
+                    .cubic_bezier => |cb| {
+                        try dest.writeStr("cubic-bezier(");
+                        try css.generic.toCss(cb.x1, W, dest);
+                        try dest.writeChar(',');
+                        try css.generic.toCss(cb.y1, W, dest);
+                        try dest.writeChar(',');
+                        try css.generic.toCss(cb.x2, W, dest);
+                        try dest.writeChar(',');
+                        try css.generic.toCss(cb.y2, W, dest);
+                        try dest.writeChar(')');
+                    },
+                    .steps => {
+                        if (this.steps.count == 1 and this.steps.position == .start) {
+                            return try dest.writeStr("step-start");
+                        }
+                        if (this.steps.count == 1 and this.steps.position == .end) {
+                            return try dest.writeStr("step-end");
+                        }
+                        try dest.writeStr("steps(");
+                        try dest.writeFmt("steps({d}", .{this.steps.count});
+                        try dest.delim(',', false);
+                        try this.steps.position.toCss(W, dest);
+                        return try dest.writeChar(')');
+                    },
+                    .linear, .ease, .ease_in, .ease_out, .ease_in_out => unreachable,
+                }
+            },
+        };
+    }
+
+    /// Returns whether the easing function is equivalent to the `ease` keyword.
+    pub fn isEase(this: *const EasingFunction) bool {
+        return this.* == .ease or
+            (this.* == .cubic_bezier and std.meta.eql(this.cubic_bezier == .{
+            .x1 = 0.25,
+            .y1 = 0.1,
+            .x2 = 0.25,
+            .y2 = 1.0,
+        }));
+    }
 };
 
 /// A [step position](https://www.w3.org/TR/css-easing-1/#step-position), used within the `steps()` function.
@@ -66,4 +203,27 @@ pub const StepPosition = enum {
     jump_none,
     /// The first rise occurs at input progress value of 0 and the last rise occurs at input progress value of 1.
     jump_both,
+
+    pub usingnamespace css.DeriveToCss(@This());
+
+    pub fn parse(input: *css.Parser) Error!StepPosition {
+        const location = input.currentSourceLocation();
+        const ident = try input.expectIdent();
+        // todo_stuff.match_ignore_ascii_case
+        const keyword = if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "start"))
+            StepPosition.start
+        else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "end"))
+            StepPosition.end
+        else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "jump-start"))
+            StepPosition.start
+        else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "jump-end"))
+            StepPosition.end
+        else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "jump-none"))
+            StepPosition.jump_none
+        else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "jump-both"))
+            StepPosition.jump_both
+        else
+            return location.newUnexpectedTokenError(.{ .ident = ident });
+        return keyword;
+    }
 };

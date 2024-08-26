@@ -320,7 +320,7 @@ const StaticRoute = struct {
         resp.clearOnWritable();
 
         if (this.server) |server| {
-            server.onRequestComplete();
+            server.onStaticRequestComplete();
         }
 
         this.deref();
@@ -6367,6 +6367,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             return JSC.JSValue.jsBoolean(debug_mode);
         }
 
+        pub fn onStaticRequestComplete(this: *ThisServer) void {
+            this.pending_requests -= 1;
+            this.deinitIfWeCan();
+        }
+
         pub fn onRequestComplete(this: *ThisServer) void {
             this.vm.eventLoop().processGCTimer();
 
@@ -7084,6 +7089,12 @@ const AnyServer = union(enum) {
     pub fn onRequestComplete(this: AnyServer) void {
         switch (this) {
             inline else => |server| server.onRequestComplete(),
+        }
+    }
+
+    pub fn onStaticRequestComplete(this: AnyServer) void {
+        switch (this) {
+            inline else => |server| server.onStaticRequestComplete(),
         }
     }
 };

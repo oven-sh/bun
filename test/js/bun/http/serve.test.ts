@@ -1892,3 +1892,55 @@ it("should allow use of custom timeout", async () => {
   }
   await Promise.all([testTimeout("/ok", true), testTimeout("/timeout", false)]);
 }, 10_000);
+
+it("should reset timeout after writes", async () => {
+  // the default is 10s so we send 15
+  // this test should take 15s at most
+  const CHUNKS = 15;
+  const payload = Buffer.from(`data: ${Date.now()}\n\n`);
+  using server = Bun.serve({
+    idleTimeout: 5,
+    port: 0,
+    fetch(request, server) {
+      let controller!: ReadableStreamDefaultController;
+      let count = CHUNKS;
+      let interval = setInterval(() => {
+        controller.enqueue(payload);
+        count--;
+        if (count == 0) {
+          clearInterval(interval);
+          interval = null;
+          controller.close();
+          return;
+        }
+      }, 1000);
+      return new Response(
+        new ReadableStream({
+          start(_controller) {
+            controller = _controller;
+          },
+          cancel(controller) {
+            if (interval) clearInterval(interval);
+          },
+        }),
+        {
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+          },
+        },
+      );
+    },
+  });
+  let received = 0;
+  const response = await fetch(server.url);
+  const stream = response.body.getReader();
+  const decoder = new TextDecoder();
+  while (true) {
+    const { done, value } = await stream.read();
+    received += value?.length || 0;
+    if (done) break;
+  }
+
+  expect(received).toBe(CHUNKS * payload.byteLength);
+}, 20_000);

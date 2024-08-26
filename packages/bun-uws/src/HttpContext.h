@@ -305,7 +305,7 @@ private:
 
                 /* Timeout on uncork failure */
                 auto [written, failed] = ((AsyncSocket<SSL> *) returnedSocket)->uncork();
-                if (failed) {
+                if (written > 0 || failed) {
                     /* All Http sockets timeout by this, and this behavior match the one in HttpResponse::cork */
                     ((HttpResponse<SSL> *) s)->resetTimeout();
                 }

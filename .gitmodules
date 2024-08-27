@@ -41,13 +41,6 @@ ignore = dirty
 depth = 1
 shallow = true
 fetchRecurseSubmodules = false
-[submodule "src/deps/zstd"]
-path = src/deps/zstd
-url = https://github.com/facebook/zstd.git
-ignore = dirty
-depth = 1
-shallow = true
-fetchRecurseSubmodules = false
 [submodule "zig"]
 path = src/deps/zig
 url = https://github.com/oven-sh/zig

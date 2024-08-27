@@ -1,6 +1,6 @@
 macro(add_custom_library)
-  set(args TARGET PREFIX)
-  set(multi_args LIBRARIES INCLUDES CMAKE_TARGETS CMAKE_ARGS CMAKE_BUILD_TYPE)
+  set(args TARGET PREFIX CMAKE_BUILD_TYPE CMAKE_PATH)
+  set(multi_args LIBRARIES INCLUDES CMAKE_TARGETS CMAKE_ARGS)
   cmake_parse_arguments(LIB "" "${args}" "${multi_args}" ${ARGN})
 
   if(NOT LIB_TARGET)
@@ -27,18 +27,23 @@ macro(add_custom_library)
     ${LIB_CMAKE_ARGS}
   )
 
+  set(${LIB_ID}_CMAKE_PATH ${${LIB_ID}_SOURCE_PATH})
+  if(LIB_CMAKE_PATH)
+    set(${LIB_ID}_CMAKE_PATH ${${LIB_ID}_CMAKE_PATH}/${LIB_CMAKE_PATH})
+  endif()
+
   add_custom_command(
     COMMENT
       "Configuring ${LIB_NAME}"
     VERBATIM COMMAND
       ${CMAKE_COMMAND}
-        -S${${LIB_ID}_SOURCE_PATH}
+        -S${${LIB_ID}_CMAKE_PATH}
         -B${${LIB_ID}_BUILD_PATH}
         ${${LIB_ID}_CMAKE_ARGS}
     WORKING_DIRECTORY
       ${CWD}
     OUTPUT
-      ${${LIB_ID}_BUILD_PATH}/CMakeCache.txt
+      ${${LIB_ID}_CMAKE_PATH}/CMakeCache.txt
     DEPENDS
       ${${LIB_ID}_SOURCE_PATH}
   )
@@ -77,7 +82,7 @@ macro(add_custom_library)
     OUTPUT
       ${${LIB_ID}_LIBRARY_PATHS}
     DEPENDS
-      ${${LIB_ID}_BUILD_PATH}/CMakeCache.txt
+      ${${LIB_ID}_CMAKE_PATH}/CMakeCache.txt
   )
   
   set(${LIB_ID}_INCLUDE_PATHS)
@@ -95,7 +100,7 @@ macro(add_custom_library)
       "Building ${LIB_NAME}"
     DEPENDS
       ${${LIB_ID}_SOURCE_PATH}
-      ${${LIB_ID}_BUILD_PATH}/CMakeCache.txt
+      ${${LIB_ID}_CMAKE_PATH}/CMakeCache.txt
       ${${LIB_ID}_LIBRARY_PATHS}
   )
   

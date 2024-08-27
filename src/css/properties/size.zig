@@ -32,6 +32,14 @@ const Url = css.css_values.url.Url;
 const GenericBorder = css.css_properties.border.GenericBorder;
 const LineStyle = css.css_properties.border.LineStyle;
 
+pub const BoxSizing = enum {
+    /// Exclude the margin/border/padding from the width and height.
+    @"content-box",
+    /// Include the padding and border (but not the margin) in the width and height.
+    @"border-box",
+    pub usingnamespace css.DefineEnumProperty(@This());
+};
+
 pub const Size = union(enum) {
     /// The `auto` keyworda
     auto,

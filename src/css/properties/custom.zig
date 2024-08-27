@@ -980,6 +980,18 @@ pub const TokenOrValue = union(enum) {
     }
 };
 
+/// A known property with an unparsed value.
+///
+/// This type is used when the value of a known property could not
+/// be parsed, e.g. in the case css `var()` references are encountered.
+/// In this case, the raw tokens are stored instead.
+pub const UnparsedProperty = struct {
+    /// The id of the property.
+    property_id: css.PropertyId,
+    /// The property value, stored as a raw token list.
+    value: TokenList,
+};
+
 /// A CSS custom property, representing any unknown property.
 pub const CustomProperty = struct {
     /// The name of the property.

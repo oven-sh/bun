@@ -317,9 +317,6 @@ pub fn DeriveToCss(comptime T: type) type {
 
 pub fn DefineEnumProperty(comptime T: type) type {
     const fields: []const std.builtin.Type.EnumField = std.meta.fields(T);
-    // TODO: make it passed in as arguments
-    const CssCase = if (@hasDecl(T, "CssCase")) T.CssCase else "kebab";
-    _ = CssCase; // autofix
 
     return struct {
         pub fn asStr(this: *const T) []const u8 {

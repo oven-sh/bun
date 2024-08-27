@@ -62,7 +62,8 @@ pub const PackageManagerCommand = struct {
         lockfile_buffer[lockfile_.len] = 0;
         const lockfile = lockfile_buffer[0..lockfile_.len :0];
         const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .pm);
-        var pm = try PackageManager.init(ctx, cli, PackageManager.Subcommand.pm);
+        var pm, const cwd = try PackageManager.init(ctx, cli, PackageManager.Subcommand.pm);
+        defer ctx.allocator.free(cwd);
 
         const load_lockfile = pm.lockfile.loadFromDisk(pm, ctx.allocator, ctx.log, lockfile, true);
         handleLoadLockfileErrors(load_lockfile, pm);
@@ -122,7 +123,7 @@ pub const PackageManagerCommand = struct {
         var args = try std.process.argsAlloc(ctx.allocator);
         args = args[1..];
         const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .pm);
-        var pm = PackageManager.init(ctx, cli, PackageManager.Subcommand.pm) catch |err| {
+        var pm, const cwd = PackageManager.init(ctx, cli, PackageManager.Subcommand.pm) catch |err| {
             if (err == error.MissingPackageJSON) {
                 var cwd_buf: bun.PathBuffer = undefined;
                 if (bun.getcwd(&cwd_buf)) |cwd| {
@@ -135,6 +136,7 @@ pub const PackageManagerCommand = struct {
             }
             return err;
         };
+        defer ctx.allocator.free(cwd);
 
         const subcommand = getSubcommand(&pm.options.positionals);
         if (pm.options.global) {

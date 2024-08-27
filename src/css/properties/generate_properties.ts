@@ -43,36 +43,178 @@ async function generateCode(property_defs: Record<string, PropertyDef>) {
 function generateProperty(property_defs: Record<string, PropertyDef>): string {
   return `pub const Property = union(enum) {
 ${Object.entries(property_defs)
-  .map(([name, meta]) => generatePropertyImpl(name, meta))
+  .map(([name, meta]) => generatePropertyField(name, meta))
   .join("\n")}
   all: CSSWideKeyword,
   unparsed: UnparsedProperty,
   custom: CustomProperty,
+
+  ${generatePropertyImpl(property_defs)}
 };`;
 }
 
-function generatePropertyImpl(name: string, meta: PropertyDef): string {
+function generatePropertyImpl(property_defs: Record<string, PropertyDef>): string {
+  return `
+  /// Parses a CSS property by name.
+  pub fn parse(property_id: PropertyId, input: *css.Parser, options: *css.ParserOptions) Error!Property {
+    const state = input.state();
+
+    switch (property_id) {
+      ${generatePropertyImplParseCases(property_defs)}
+      .all => return .{ .all = try CSSWideKeyword.parse(input, options) },
+      .custom => |name| return .{ .custom = try CustomProperty.parse(name, input, options) },
+      else => {},
+    }
+
+    // If a value was unable to be parsed, treat as an unparsed property.
+    // This is different from a custom property, handled below, in that the property name is known
+    // and stored as an enum rather than a string. This lets property handlers more easily deal with it.
+    // Ideally we'd only do this if var() or env() references were seen, but err on the safe side for now.
+    input.reset(&state);
+    return .{ .unparsed = try UnparsedProperty.parse(property_id, input, options) };
+  }
+
+  pub inline fn __toCssHelper(this: *const Property) struct{[]const u8, VendorPrefix} {
+    return switch (this.*) {
+      ${generatePropertyImplToCssHelper(property_defs)}
+      .all => .{ "all", VendorPrefix{ .none = true } },
+      .unparsed => |*unparsed| brk: {
+        var prefix = unparsed.property_id.prefix();
+        if (prefix.isEmpty()) {
+          prefix = VendorPrefix{ .none = true };
+        }
+        break :brk .{ unparsed.property_id.name(), prefix };
+      },
+      .custom => unreachable,
+    };
+  }
+
+  /// Serializes the value of a CSS property without its name or \`!important\` flag.
+  pub fn valueToCss(this: *const Property, comptime W: type, dest: *css.Printer(W)) PrintErr!void {
+    return switch(this.*) {
+      ${Object.entries(property_defs)
+        .map(([name, meta]) => {
+          const value = meta.valid_prefixes === undefined ? "value" : "value[0]";
+          return `.${escapeIdent(name)} => |*value| ${value}.toCss(W, dest),`;
+        })
+        .join("\n")}
+      .all => |*keyword| keyword.toCss(W, dest),
+      .unparsed => |*unparsed| unparsed.value.toCss(W, dest, false),
+      .custom => |*c| c.value.toCss(W, dest, c.name == .custom),
+    };
+  }
+`;
+}
+
+function generatePropertyImplToCssHelper(property_defs: Record<string, PropertyDef>): string {
+  return Object.entries(property_defs)
+    .map(([name, meta]) => {
+      const capture = meta.valid_prefixes === undefined ? "" : "|pre|";
+      const prefix = meta.valid_prefixes === undefined ? "VendorPrefix{ .none = true }" : "pre";
+      return `.${escapeIdent(name)} => ${capture} .{"${name}", ${prefix}},`;
+    })
+    .join("\n");
+}
+
+function generatePropertyImplParseCases(property_defs: Record<string, PropertyDef>): string {
+  return Object.entries(property_defs)
+    .map(([name, meta]) => {
+      const capture = meta.valid_prefixes === undefined ? "" : "|pre|";
+      const ret =
+        meta.valid_prefixes === undefined
+          ? `.{ .${escapeIdent(name)} = c }`
+          : `.{ .${escapeIdent(name)} = .{ c, pre } }`;
+      return `.${escapeIdent(name)} => ${capture} {
+  if (css.generic.parseWithOptions(${meta.ty}, input, options)) |c| {
+    if (input.expectExhausted()) |_| {
+      return ${ret};
+    }
+  }
+},`;
+    })
+    .join("\n");
+}
+
+function generatePropertyField(name: string, meta: PropertyDef): string {
   if (meta.valid_prefixes !== undefined) {
     return ` ${escapeIdent(name)}: struct{ ${meta.ty}, VendorPrefix },`;
   }
-  return ` ${escapeIdent(name)},`;
+  return ` ${escapeIdent(name)}: ${meta.ty},`;
 }
 
 function generatePropertyId(property_defs: Record<string, PropertyDef>): string {
   return `pub const PropertyId = union(enum) {
 ${Object.entries(property_defs)
-  .map(([name, meta]) => generatePropertyIdImpl(name, meta))
+  .map(([name, meta]) => generatePropertyIdField(name, meta))
   .join("\n")}
   all,
   custom: CustomPropertyName,
+
+pub usingnamespace PropertyIdImpl();
+
+${generatePropertyIdImpl(property_defs)}
 };`;
 }
 
-function generatePropertyIdImpl(name: string, meta: PropertyDef): string {
+function generatePropertyIdField(name: string, meta: PropertyDef): string {
   if (meta.valid_prefixes !== undefined) {
     return ` ${escapeIdent(name)}: VendorPrefix,`;
   }
   return ` ${escapeIdent(name)},`;
+}
+
+function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): string {
+  return `
+  /// Returns the property name, without any vendor prefixes.
+  pub inline fn name(this: *const PropertyId) []const u8 {
+      return @tagName(this.*);
+  }
+
+  /// Returns the vendor prefix for this property id.
+  pub fn prefix(this: *const PropertyId) VendorPrefix {
+    return switch (this.*) {
+      ${generatePropertyIdImplPrefix(property_defs)}
+      .all, .custom => VendorPrefix.empty(),
+    };
+  }
+
+  pub fn fromNameAndPrefix(name1: []const u8, pre: VendorPrefix) ?PropertyId {
+    // TODO: todo_stuff.match_ignore_ascii_case
+    ${generatePropertyIdImplFromNameAndPrefix(property_defs)}
+    if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "all")) {
+    } else {
+      return null;
+    }
+
+    return null;
+  }
+`;
+}
+
+function generatePropertyIdImplPrefix(property_defs: Record<string, PropertyDef>): string {
+  return Object.entries(property_defs)
+    .map(([name, meta]) => {
+      if (meta.valid_prefixes === undefined) return `.${escapeIdent(name)} => VendorPrefix.empty(),`;
+      return `.${escapeIdent(name)} => |p| p,`;
+    })
+    .join("\n");
+}
+
+// TODO: todo_stuff.match_ignore_ascii_case
+function generatePropertyIdImplFromNameAndPrefix(property_defs: Record<string, PropertyDef>): string {
+  return Object.entries(property_defs)
+    .map(([name, meta]) => {
+      return `if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "${name}")) {
+  const allowed_prefixes = ${constructVendorPrefix(meta.valid_prefixes)};
+  if (allowed_prefixes.contains(pre)) return ${meta.valid_prefixes === undefined ? `.${escapeIdent(name)}` : `.{ .${escapeIdent(name)} = pre }`};
+} else `;
+    })
+    .join("\n");
+}
+
+function constructVendorPrefix(prefixes: VendorPrefixes[] | undefined): string {
+  if (prefixes === undefined) return `VendorPrefix{ .none = true }`;
+  return `VendorPrefix{ ${prefixes.map(prefix => `.${prefix} = true`).join(", ")} }`;
 }
 
 function needsEscaping(name: string): boolean {
@@ -262,7 +404,7 @@ generateCode({
     shorthand: true,
   },
   "border-spacing": {
-    ty: "css.css_values.size.Size(Length)",
+    ty: "css.css_values.size.Size2D(Length)",
   },
   "border-top-color": {
     ty: "CssColor",
@@ -1352,6 +1494,9 @@ const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const VendorPrefix = css.VendorPrefix;
 
+
+const PropertyIdImpl = @import("./properties_impl.zig").PropertyIdImpl;
+
 const CSSWideKeyword = css.css_properties.CSSWideKeyword;
 const UnparsedProperty = css.css_properties.custom.UnparsedProperty;
 const CustomProperty = css.css_properties.custom.CustomProperty;
@@ -1573,6 +1718,7 @@ const ContainerType = contain.ContainerType;
 const Container = contain.Container;
 const ContainerNameList = contain.ContainerNameList;
 const CustomPropertyName = custom.CustomPropertyName;
+const display = css.css_properties.display;
 
 const Position = position.Position;
 

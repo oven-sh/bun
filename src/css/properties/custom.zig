@@ -191,6 +191,10 @@ pub const TokenList = struct {
         return .{ .v = tokens };
     }
 
+    pub fn parseWithOptions(input: *css.Parser, options: *css.ParserOptions) Error!TokenList {
+        return parse(input, options, 0);
+    }
+
     pub fn parseRaw(
         input: *css.Parser,
         tokens: *ArrayList(TokenOrValue),

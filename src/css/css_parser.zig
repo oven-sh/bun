@@ -50,7 +50,7 @@ pub const declaration = @import("./declaration.zig");
 
 pub const css_properties = @import("./properties/properties.zig");
 pub const Property = css_properties.Property;
-pub const PropertyId = Property.Id;
+pub const PropertyId = css_properties.PropertyId;
 pub const TokenList = css_properties.custom.TokenList;
 pub const TokenListFns = css_properties.custom.TokenListFns;
 
@@ -4594,6 +4594,18 @@ pub const serializer = struct {
 };
 
 pub const generic = struct {
+    pub inline fn parseWithOptions(comptime T: type, input: *Parser, options: *ParserOptions) Error!T {
+        if (@hasDecl(T, "parseWithOptions")) return T.parseWithOptions(input, options);
+        return switch (T) {
+            f32 => CSSNumberFns.parse(input),
+            CSSInteger => CSSIntegerFns.parse(input),
+            CustomIdent => CustomIdentFns.parse(input),
+            DashedIdent => DashedIdentFns.parse(input),
+            Ident => IdentFns.parse(input),
+            else => T.parse(input),
+        };
+    }
+
     pub inline fn parse(comptime T: type, input: *Parser) Error!T {
         return switch (T) {
             f32 => CSSNumberFns.parse(input),

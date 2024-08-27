@@ -29,6 +29,9 @@ const CustomIdentList = css.css_values.ident.CustomIdentList;
 const Angle = css.css_values.angle.Angle;
 const Url = css.css_values.url.Url;
 
+/// A value for the [inset](https://drafts.csswg.org/css-logical/#propdef-inset) shorthand property.
+pub const Inset = @compileError(css.todo_stuff.depth);
+
 /// A value for the [inset-block](https://drafts.csswg.org/css-logical/#propdef-inset-block) shorthand property.
 pub const InsetBlock = @compileError(css.todo_stuff.depth);
 /// A value for the [inset-inline](https://drafts.csswg.org/css-logical/#propdef-inset-inline) shorthand property.

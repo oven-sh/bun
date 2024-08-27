@@ -1399,6 +1399,14 @@ pub const api = struct {
                 @compileError("Do not call this! Use `serializer.serializeSelectorList()` or `tocss_servo.toCss_SelectorList()` instead.");
             }
 
+            pub fn parseWithOptions(input: *css.Parser, options: *css.ParserOptions) Error!This {
+                var parser = SelectorParser{
+                    .options = options,
+                    .is_nesting_allowed = true,
+                };
+                return parse(&parser, input, .discard_list, .none);
+            }
+
             pub fn parse(
                 parser: *SelectorParser,
                 input: *css.Parser,
@@ -1577,6 +1585,14 @@ pub const api = struct {
             pub fn parse(parser: *SelectorParser, input: *css.Parser) Error!This {
                 var state = SelectorParsingState.empty();
                 return parse_selector(Impl, parser, input, &state, .none);
+            }
+
+            pub fn parseWithOptions(input: *css.Parser, options: *css.ParserOptions) Error!This {
+                var selector_parser = SelectorParser{
+                    .is_nesting_allowed = true,
+                    .options = options,
+                };
+                return parse(&selector_parser, input);
             }
 
             /// Returns an iterator over the sequence of simple selectors and

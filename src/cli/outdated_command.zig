@@ -272,6 +272,7 @@ pub const OutdatedCommand = struct {
             const workspace_pkg_id = workspace_pkg_ids.items[i];
 
             const matched = matched: {
+                var found = false;
                 for (converted_filters) |converted| {
                     const filter, const is_path_filter = converted;
 
@@ -287,20 +288,25 @@ pub const OutdatedCommand = struct {
 
                         const abs_res_path = path.joinAbsString(FileSystem.instance.top_level_dir, &[_]string{res_path}, .posix);
 
-                        if (glob.matchImpl(filter, strings.withoutTrailingSlash(abs_res_path))) {
-                            break :matched true;
+                        switch (glob.matchImpl(filter, strings.withoutTrailingSlash(abs_res_path))) {
+                            .match => found = true,
+                            .negated => break :matched false,
+                            else => {},
                         }
 
                         continue;
                     }
 
-                    const name = pkg_names[workspace_pkg_id];
-                    if (glob.matchImpl(filter, name.slice(string_buf))) {
-                        break :matched true;
+                    const name = pkg_names[workspace_pkg_id].slice(string_buf);
+
+                    switch (glob.matchImpl(filter, name)) {
+                        .match => found = true,
+                        .negated => break :matched false,
+                        else => {},
                     }
                 }
 
-                break :matched false;
+                break :matched found;
             };
 
             if (matched) {
@@ -392,18 +398,20 @@ pub const OutdatedCommand = struct {
 
                 // package patterns match against dependency name (name in package.json)
                 if (package_patterns) |patterns| {
-                    const found = found: {
+                    const match = match: {
+                        var found = false;
                         for (patterns) |pattern| {
                             if (pattern.len == 0) continue;
-                            if (glob.matchImpl(pattern, dep.name.slice(string_buf))) {
-                                // only one needs to match
-                                break :found true;
+                            switch (glob.matchImpl(pattern, dep.name.slice(string_buf))) {
+                                .match => found = true,
+                                .negated => break :match false,
+                                else => {},
                             }
                         }
 
-                        break :found false;
+                        break :match found;
                     };
-                    if (!found) {
+                    if (!match) {
                         continue;
                     }
                 }

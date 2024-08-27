@@ -480,7 +480,7 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame
         break :codepoints codepoints.items[0..codepoints.items.len];
     };
 
-    return JSC.JSValue.jsBoolean(globImpl.matchImpl(codepoints, str.slice()));
+    return if (globImpl.matchImpl(codepoints, str.slice()) == .match) .true else .false;
 }
 
 pub fn convertUtf8(codepoints: *std.ArrayList(u32), pattern: []const u8) !void {

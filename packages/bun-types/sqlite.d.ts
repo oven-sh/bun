@@ -536,7 +536,7 @@ declare module "bun:sqlite" {
      * // => [{bar: "baz"}]
      *
      * stmt.all();
-     * // => [{bar: "baz"}]
+     * // => []
      *
      * stmt.all("foo");
      * // => [{bar: "foo"}]
@@ -555,14 +555,14 @@ declare module "bun:sqlite" {
      * ```ts
      * const stmt = db.prepare("SELECT * FROM foo WHERE bar = ?");
      *
-     * stmt.all("baz");
-     * // => [{bar: "baz"}]
+     * stmt.get("baz");
+     * // => {bar: "baz"}
      *
-     * stmt.all();
-     * // => [{bar: "baz"}]
+     * stmt.get();
+     * // => null
      *
-     * stmt.all("foo");
-     * // => [{bar: "foo"}]
+     * stmt.get("foo");
+     * // => {bar: "foo"}
      * ```
      *
      * The following types can be used when binding parameters:

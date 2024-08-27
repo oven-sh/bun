@@ -9,7 +9,7 @@ on:
 jobs:
   on-bug:
     runs-on: ubuntu-latest
-    if: github.event.label.name == 'bug'
+    if: github.event.label.name == 'bug' || github.event.label.name == 'crash'
     permissions:
       issues: write
     steps:
@@ -26,7 +26,6 @@ jobs:
           bun-version: "1.1.24"
       - name: "categorize bug"
         id: add-labels
-        if: github.event.label.name == 'bug'
         env:
           GITHUB_ISSUE_BODY: ${{ github.event.issue.body }}
           GITHUB_ISSUE_TITLE: ${{ github.event.issue.title }}

@@ -189,11 +189,12 @@ pub const OutdatedCommand = struct {
         switch (Output.enable_ansi_colors) {
             inline else => |enable_ansi_colors| {
                 if (manager.options.filter_patterns.len > 0) {
+                    const filters = manager.options.filter_patterns;
                     const workspace_pkg_ids = findMatchingWorkspaces(
                         bun.default_allocator,
                         original_cwd,
                         manager,
-                        manager.options.filter_patterns,
+                        filters,
                     ) catch bun.outOfMemory();
                     defer bun.default_allocator.free(workspace_pkg_ids);
 
@@ -226,16 +227,16 @@ pub const OutdatedCommand = struct {
         var workspace_pkg_ids: std.ArrayListUnmanaged(PackageID) = .{};
         for (pkg_resolutions, 0..) |resolution, pkg_id| {
             if (resolution.tag != .workspace and resolution.tag != .root) continue;
-            workspace_pkg_ids.append(allocator, @intCast(pkg_id)) catch bun.outOfMemory();
+            try workspace_pkg_ids.append(allocator, @intCast(pkg_id));
         }
 
         const converted_filters = converted_filters: {
-            const buf = allocator.alloc(struct { []const u32, bool }, filters.len) catch bun.outOfMemory();
+            const buf = try allocator.alloc(struct { []const u32, bool }, filters.len);
             for (filters, buf) |filter, *converted| {
                 const is_path = filter.len > 0 and filter[0] == '.';
 
                 const joined_filter = if (is_path)
-                    path.joinAbsString(original_cwd, &[_]string{filter}, .posix)
+                    strings.withoutTrailingSlash(path.joinAbsString(original_cwd, &[_]string{filter}, .posix))
                 else
                     filter;
 
@@ -245,7 +246,7 @@ pub const OutdatedCommand = struct {
                 }
 
                 const length = bun.simdutf.length.utf32.from.utf8.le(joined_filter);
-                const convert_buf = allocator.alloc(u32, length) catch bun.outOfMemory();
+                const convert_buf = try allocator.alloc(u32, length);
 
                 const convert_result = bun.simdutf.convert.utf8.to.utf32.with_errors.le(joined_filter, convert_buf);
                 if (!convert_result.isSuccessful()) {
@@ -272,7 +273,6 @@ pub const OutdatedCommand = struct {
             const workspace_pkg_id = workspace_pkg_ids.items[i];
 
             const matched = matched: {
-                var found = false;
                 for (converted_filters) |converted| {
                     const filter, const is_path_filter = converted;
 
@@ -288,10 +288,8 @@ pub const OutdatedCommand = struct {
 
                         const abs_res_path = path.joinAbsString(FileSystem.instance.top_level_dir, &[_]string{res_path}, .posix);
 
-                        switch (glob.matchImpl(filter, strings.withoutTrailingSlash(abs_res_path))) {
-                            .match => found = true,
-                            .negated => break :matched false,
-                            else => {},
+                        if (!glob.matchImpl(filter, strings.withoutTrailingSlash(abs_res_path))) {
+                            break :matched false;
                         }
 
                         continue;
@@ -299,14 +297,12 @@ pub const OutdatedCommand = struct {
 
                     const name = pkg_names[workspace_pkg_id].slice(string_buf);
 
-                    switch (glob.matchImpl(filter, name)) {
-                        .match => found = true,
-                        .negated => break :matched false,
-                        else => {},
+                    if (!glob.matchImpl(filter, name)) {
+                        break :matched false;
                     }
                 }
 
-                break :matched found;
+                break :matched true;
             };
 
             if (matched) {
@@ -399,17 +395,14 @@ pub const OutdatedCommand = struct {
                 // package patterns match against dependency name (name in package.json)
                 if (package_patterns) |patterns| {
                     const match = match: {
-                        var found = false;
                         for (patterns) |pattern| {
                             if (pattern.len == 0) continue;
-                            switch (glob.matchImpl(pattern, dep.name.slice(string_buf))) {
-                                .match => found = true,
-                                .negated => break :match false,
-                                else => {},
+                            if (!glob.matchImpl(pattern, dep.name.slice(string_buf))) {
+                                break :match false;
                             }
                         }
 
-                        break :match found;
+                        break :match true;
                     };
                     if (!match) {
                         continue;

@@ -158,6 +158,7 @@ pub const ServerConfig = struct {
 
     websocket: ?WebSocketServer = null,
 
+    disable_abort_signal: bool = false,
     inspector: bool = false,
     reuse_port: bool = false,
     id: []const u8 = "",
@@ -930,6 +931,14 @@ pub const ServerConfig = struct {
                     return args;
                 }
             }
+            if (global.hasException()) return args;
+
+            if (arg.getTruthy(global, "disableAbortSignal")) |disable_abort_signal| {
+                if (disable_abort_signal.isBoolean()) {
+                    args.disable_abort_signal = disable_abort_signal.toBoolean();
+                }
+            }
+
             if (global.hasException()) return args;
 
             if (arg.getTruthy(global, "port")) |port_| {
@@ -6357,14 +6366,21 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             var body = this.vm.initRequestBodyValue(.{ .Null = {} }) catch unreachable;
 
             ctx.request_body = body;
-            var signal = JSC.WebCore.AbortSignal.new(this.globalThis);
-            ctx.signal = signal;
 
             const request_object = Request.new(.{
                 .method = ctx.method,
                 .request_context = AnyRequestContext.init(ctx),
                 .https = ssl_enabled,
-                .signal = signal.ref(),
+                .signal = brk: {
+                    if (this.config.disable_abort_signal) {
+                        break :brk null;
+                    }
+
+                    var signal = JSC.WebCore.AbortSignal.new(this.globalThis);
+                    ctx.signal = signal;
+
+                    break :brk signal.ref();
+                },
                 .body = body.ref(),
             });
 

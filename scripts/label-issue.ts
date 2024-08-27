@@ -309,11 +309,15 @@ async function categorizeLabelsByClaudeAI(
     model: "claude-3-5-sonnet-20240620",
     max_tokens: 2048,
     system: `Given this list of labels:
-    ${labels.map(label => `- ${label.name}: ${label.description}`).join("\n")}
-    
-    Please analyze the bug report and return a JSON array of label names that are most relevant to this issue. Only include labels that are highly relevant.
-    
-    Only output VALID JSON. It's okay if there are no relevant labels.
+${labels.map(label => `- ${label.name}: ${label.description}`).join("\n")}
+
+Please analyze the bug report and return a JSON array of label names that are most relevant to this issue. Only include labels that are highly relevant.
+
+Only output VALID JSON. It's okay if there are no relevant labels.
+
+The output should be a JSON array like so, with NO OTHER TEXT:
+
+["label1", "label2", "label3"]
 `,
     messages: [
       {
@@ -322,8 +326,13 @@ async function categorizeLabelsByClaudeAI(
       },
     ],
   });
+  let text = response.content[0].text;
+  const start = text?.indexOf("[");
+  if (start !== -1) {
+    text = text.slice(start);
+  }
 
-  return JSON.parse(response.content[0].text);
+  return JSON.parse(text);
 }
 
 const issue = {

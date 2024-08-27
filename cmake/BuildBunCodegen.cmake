@@ -231,7 +231,7 @@ add_custom_command(
 )
 
 # TODO: change custom commands defined above this, to use the codegen path instead of in-source 
-parse_option(CODEGEN_PATH FILEPATH "Path to the codegen directory" ${BUN_WORKDIR}/codegen)
+parse_option(CODEGEN_PATH FILEPATH "Path to the codegen directory" ${BUILD_PATH}/codegen)
 
 # --- ErrorCode.{zig,h} --
 

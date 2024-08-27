@@ -19,6 +19,78 @@ function(get_major_version version variable)
   set(${variable} ${major_version} PARENT_SCOPE)
 endfunction()
 
+# Set a variable, and print it to the console.
+macro(setx)
+  set(${ARGV})
+  message(STATUS "Set ${ARGV0}: ${${ARGV0}}")
+endmacro()
+
+# setif(variable value), if value is truthy, set the variable to be ON, otherwise OFF.
+macro(setif)
+  if("${ARGV1}" MATCHES "^(ON|on|YES|yes|TRUE|true|1)$")
+    set(${ARGV0} ON)
+  else()
+    set(${ARGV0} OFF)
+  endif()
+endmacro()
+
+macro(setnif)
+  if("${ARGV1}" MATCHES "^(OFF|off|NO|no|FALSE|false|0)$")
+    set(${ARGV0} OFF)
+  else()
+    set(${ARGV0} ON)
+  endif()
+endmacro()
+
+# optionx(variable type description [DEFAULT default] [PREVIEW value] [REGEX value] [REQUIRED])
+macro(optionx variable type description)
+  set(options REQUIRED)
+  set(oneValueArgs DEFAULT PREVIEW REGEX)
+  set(multiValueArgs)
+  cmake_parse_arguments(${variable} "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+  if(NOT ${type} MATCHES "^(BOOL|STRING|FILEPATH|PATH|INTERNAL)$")
+    set(${variable}_REGEX ${type})
+    set(${variable}_TYPE STRING)
+  else()
+    set(${variable}_TYPE ${type})
+  endif()
+
+  set(${variable} ${${variable}_DEFAULT} CACHE ${${variable}_TYPE} ${description})
+  set(${variable}_SOURCE "argument")
+  set(${variable}_PREVIEW -D${variable})
+
+  if(DEFINED ENV{${variable}})
+    if(DEFINED ${variable} AND NOT ${variable} STREQUAL $ENV{${variable}})
+      message(FATAL_ERROR "Invalid ${${variable}_SOURCE}: ${${variable}_PREVIEW}=\"${${variable}}\" conflicts with environment variable ${variable}=\"$ENV{${variable}}\"")
+    endif()
+
+    set(${variable} $ENV{${variable}} CACHE ${${variable}_TYPE} ${description} FORCE)
+    set(${variable}_SOURCE "environment variable")
+    set(${variable}_PREVIEW ${variable})
+  endif()
+
+  if("${${variable}}" STREQUAL "" AND ${${variable}_REQUIRED})
+    message(FATAL_ERROR "Required ${${variable}_SOURCE} is missing: please set, ${${variable}_PREVIEW}=<${${variable}_REGEX}>")
+  endif()
+
+  if(${type} STREQUAL "BOOL")
+    if("${${variable}}" MATCHES "^(TRUE|true|ON|on|YES|yes|1)$")
+      set(${variable} ON)
+    elseif("${${variable}}" MATCHES "^(FALSE|false|OFF|off|NO|no|0)$")
+      set(${variable} OFF)
+    else()
+      message(FATAL_ERROR "Invalid ${${variable}_SOURCE}: ${${variable}_PREVIEW}=\"${${variable}}\", please use ${${variable}_PREVIEW}=<ON|OFF>")
+    endif()
+  endif()
+
+  if(DEFINED ${variable}_REGEX AND NOT "^(${${variable}_REGEX})$" MATCHES "${${variable}}")
+    message(FATAL_ERROR "Invalid ${${variable}_SOURCE}: ${${variable}_PREVIEW}=\"${${variable}}\", please use ${${variable}_PREVIEW}=<${${variable}_REGEX}>")
+  endif()
+
+  message(STATUS "Set ${variable}: ${${variable}}")
+endmacro()
+
 macro(parse_option label type description)
   set(default "${ARGN}")
 

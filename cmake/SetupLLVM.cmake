@@ -1,4 +1,4 @@
-include(cmake/Utils.cmake)
+include(Utils)
 
 if(WIN32 OR APPLE)
   set(DEFAULT_LLVM_VERSION "18.1.8")
@@ -6,7 +6,7 @@ else()
   set(DEFAULT_LLVM_VERSION "16.0.6")
 endif()
 
-parse_option(LLVM_VERSION STRING "The version of LLVM to use" ${DEFAULT_LLVM_VERSION})
+optionx(LLVM_VERSION STRING "The version of LLVM to use" DEFAULT ${DEFAULT_LLVM_VERSION})
 parse_semver(${LLVM_VERSION} LLVM)
 
 if(APPLE)
@@ -25,7 +25,7 @@ else()
   set(DEFAULT_LLVM_PREFIX /usr)
 endif()
 
-parse_option(LLVM_PREFIX STRING "The path to the LLVM installation" ${DEFAULT_LLVM_PREFIX})
+optionx(LLVM_PREFIX FILEPATH "The path to the LLVM installation" DEFAULT ${DEFAULT_LLVM_PREFIX})
 set(LLVM_PATH ${LLVM_PREFIX}/bin)
 
 function(check_llvm_version found executable)

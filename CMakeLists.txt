@@ -1,52 +1,63 @@
 cmake_minimum_required(VERSION 3.22)
+message(STATUS "Configuring Bun")
+
+# Let the MSVC runtime be set using CMAKE_MSVC_RUNTIME_LIBRARY, instead of automatically. Since CMake 3.15.
 cmake_policy(SET CMP0091 NEW)
+
+# If INTERPROCEDURAL_OPTIMIZATION is enabled and not supported by the compiler, throw an error. Since CMake 3.9.
+cmake_policy(SET CMP0069 NEW)
+
+# Use CMAKE_{C,CXX}_STANDARD when evaluating try_compile(). Since CMake 3.8.
 cmake_policy(SET CMP0067 NEW)
 
-set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
-set(Bun_VERSION "1.1.27")
-set(WEBKIT_TAG 147ed53838e21525677492c27099567a6cd19c6b)
+# Include utilities, which include things like setx().
+set(CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake ${CMAKE_MODULE_PATH})
+include(Utils)
 
-set(CI OFF)
-if(ENV{CI} MATCHES "^(1|true)$")
-  set(CI ON)
+# Aliases for common CMake variables.
+# These must be set before include(), since they are widely used.
+setx(CWD ${CMAKE_SOURCE_DIR})
+setx(BUILD_PATH ${CMAKE_BINARY_DIR})
+optionx(CACHE_PATH STRING "The path to the cache directory" DEFAULT ${BUILD_PATH}/cache)
+
+# Modules that set CMake variables, such as CMAKE_C_COMPILER must be run before project().
+# Otherwise, CMake can select the wrong compiler or flags.
+if(APPLE)
+  include(SetupMacSDK)
 endif()
+include(SetupLLVM)
+include(SetupCcache)
 
-set(CWD ${CMAKE_SOURCE_DIR})
-set(BUILD_PATH ${CMAKE_BINARY_DIR})
-set(CACHE_PATH ${CWD}/.cache)
-
-set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
-message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
-
-set(CMAKE_ARGS "")
-set(CMAKE_COLOR_DIAGNOSTICS ON)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-# WebKit uses -std=gnu++20 on non-macOS non-Windows
+# WebKit uses -std=gnu++20 on non-macOS non-Windows.
 # If we do not set this, it will crash at startup on the first memory allocation.
 if(NOT WIN32 AND NOT APPLE)
-    set(CMAKE_CXX_EXTENSIONS ON)
-    set(CMAKE_POSITION_INDEPENDENT_CODE FALSE)
+  set(CMAKE_CXX_EXTENSIONS ON)
+  set(CMAKE_POSITION_INDEPENDENT_CODE FALSE)
 endif()
 
+# Workaround for CMake and clang-cl bug.
+# https://github.com/ninja-build/ninja/issues/2280
 if(WIN32 AND NOT CMAKE_CL_SHOWINCLUDES_PREFIX)
-    # workaround until cmake fix is shipped https://github.com/ninja-build/ninja/issues/2280
-    # './build/.ninja_deps' may need to be deleted, the bug is "Note: including file: ..." is saved
-    # as part of some file paths
-    set(CMAKE_CL_SHOWINCLUDES_PREFIX "Note: including file:")
+  set(CMAKE_CL_SHOWINCLUDES_PREFIX "Note: including file:")
 endif()
 
-# Must be called before project() so CMake doesn't pick its own compiler
-if(APPLE)
-    include(cmake/SetupMacSDK.cmake)
-endif()
-include(cmake/SetupLLVM.cmake)
-include(cmake/SetupCcache.cmake)
+project(Bun VERSION 0.0.0)
 
-project(Bun VERSION "${Bun_VERSION}")
+# See cmake/Options.cmake for build options.
+include(Options)
+
+if(WIN32)
+  if(DEBUG)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDebug")
+  else()
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
+  endif()
+endif()
 
 include(cmake/SetupGenerator.cmake)
 include(cmake/Options.cmake)
@@ -55,71 +66,50 @@ find_program(BUN_EXECUTABLE bun ${REQUIRED_IF_NOT_ONLY_CPP_OR_LINK} DOC "Path to
 message(STATUS "Found Bun: ${BUN_EXECUTABLE}")
 
 if(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY)
-    include(cmake/SetupZig.cmake)
+  include(cmake/SetupZig.cmake)
 endif()
 
 if(NOT BUN_LINK_ONLY)
-    include(cmake/BuildBunCodegen.cmake)
+  include(cmake/BuildBunCodegen.cmake)
 endif()
 
 if(CI)
-    include(cmake/SetupCI.cmake)
+  include(cmake/SetupCI.cmake)
 endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    set(DEBUG ON)
-    set(bun "bun-debug")
-
-    # COMPILE_COMMANDS
-    set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+  set(bun "bun-debug")
 elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
-    set(DEBUG OFF)
-
-    if(WIN32)
-        # Debug symbols are in a separate file: bun.pdb
-        set(bun "bun")
+  set(DEBUG OFF)
+  if(WIN32)
+    # Debug symbols are in a separate file: bun.pdb
+    set(bun "bun")
+  else()
+    if(ZIG_OPTIMIZE STREQUAL "Debug")
+      set(bun "bun-debug")
     else()
-        if(USE_ZIG_OPTIMIZE STREQUAL "Debug")
-            set(bun "bun-debug")
-        else()
-            set(bun "bun-profile")
-        endif()
+      set(bun "bun-profile")
     endif()
+  endif()
 endif()
 
-if(NOT WIN32)
-    set(SHELL "bash")
-    set(SCRIPT_EXTENSION "sh")
-else()
-    set(SCRIPT_EXTENSION "ps1")
-
-    # pwsh is the new powershell, powershell is the old one.
-    find_program(SHELL NAMES pwsh powershell)
-endif()
-
-if(WIN32 AND USE_LTO)
-    set(CMAKE_LINKER_TYPE LLD)
-    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
+if(WIN32 AND ENABLE_LTO)
+  set(CMAKE_LINKER_TYPE LLD)
+  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
 endif()
 
 option(BUN_TIDY_ONLY "Only run clang-tidy" OFF)
 option(BUN_TIDY_ONLY_EXTRA " Only run clang-tidy, with extra checks for local development" OFF)
 
-if(USE_VALGRIND)
-    if(ARCH STREQUAL "x86_64")
-        # This is for picohttpparser
-        # Valgrind cannot handle SSE4.2 instructions
-        add_compile_definitions("__SSE4_2__=0")
-    endif()
+if(ENABLE_VALGRIND)
+  if(ARCH STREQUAL "x86_64")
+    # This is for picohttpparser
+    # Valgrind cannot handle SSE4.2 instructions
+    add_compile_definitions("__SSE4_2__=0")
+  endif()
 endif()
 
 set(ERROR_LIMIT 100 CACHE STRING "Maximum number of errors to show when compiling C++ code")
-
-set(ARCH x86_64)
-
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|arm")
-    set(ARCH aarch64)
-endif()
 
 set(CONFIGURE_DEPENDS "CONFIGURE_DEPENDS")
 
@@ -127,7 +117,6 @@ if(NO_CONFIGURE_DEPENDS)
     set(CONFIGURE_DEPENDS "")
 endif()
 
-# --- CLI Paths ---
 set(REQUIRED_IF_NOT_ONLY_CPP_OR_LINK "")
 
 if(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY)
@@ -136,95 +125,84 @@ endif()
 
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
 
-# Bun
-
 # --- WebKit ---
-# WebKit is either prebuilt and distributed via NPM, or you can pass WEBKIT_DIR to use a local build.
+# WebKit is either prebuilt and distributed via NPM, or you can pass WEBKIT_PATH to use a local build.
 # We cannot include their CMake build files (TODO: explain why, for now ask @paperdave why)
 #
 # On Unix, this will pull from NPM the single package that is needed and use that
 if(WIN32)
-    set(STATIC_LIB_EXT "lib")
-    set(libJavaScriptCore "JavaScriptCore")
-    set(libWTF "WTF")
+  set(STATIC_LIB_EXT "lib")
+  set(libJavaScriptCore "JavaScriptCore")
+  set(libWTF "WTF")
 else()
-    set(STATIC_LIB_EXT "a")
-    set(libJavaScriptCore "libJavaScriptCore")
-    set(libWTF "libWTF")
+  set(STATIC_LIB_EXT "a")
+  set(libJavaScriptCore "libJavaScriptCore")
+  set(libWTF "libWTF")
 endif()
 
 if(ENABLE_ASSERTIONS)
-    add_compile_definitions("BUN_DEBUG=1")
+  add_compile_definitions("BUN_DEBUG=1")
 endif()
 
-include(cmake/SetupWebKit.cmake)
+include(SetupWebKit)
 
 if(WEBKIT_PREBUILT)
-    set(WEBKIT_INCLUDE_DIR ${WEBKIT_DIR}/include)
+    set(WEBKIT_INCLUDE_DIR ${WEBKIT_PATH}/include)
 
     if(APPLE)
         set(ICU_INCLUDE_DIR "")
     else()
-        set(ICU_INCLUDE_DIR ${WEBKIT_DIR}/include/wtf/unicode)
+        set(ICU_INCLUDE_DIR ${WEBKIT_PATH}/include/wtf/unicode)
     endif()
 
-    set(WEBKIT_LIB_DIR ${WEBKIT_DIR}/lib)
-elseif(WEBKIT_DIR STREQUAL "omit")
+    set(WEBKIT_LIB_DIR ${WEBKIT_PATH}/lib)
+elseif(WEBKIT_PATH STREQUAL "omit")
     # message(STATUS "Not using WebKit. This is only valid if you are only trying to build Zig code")
 else()
     # Expected to be WebKit/WebKitBuild/${CMAKE_BUILD_TYPE}
-    if(EXISTS "${WEBKIT_DIR}/cmakeconfig.h")
+    if(EXISTS "${WEBKIT_PATH}/cmakeconfig.h")
         # You may need to run:
         # make jsc-compile-debug jsc-copy-headers
         include_directories(
-            "${WEBKIT_DIR}/"
-            "${WEBKIT_DIR}/JavaScriptCore/Headers/JavaScriptCore"
-            "${WEBKIT_DIR}/JavaScriptCore/PrivateHeaders"
-            "${WEBKIT_DIR}/bmalloc/Headers"
-            "${WEBKIT_DIR}/WTF/Headers"
+            "${WEBKIT_PATH}/"
+            "${WEBKIT_PATH}/JavaScriptCore/Headers/JavaScriptCore"
+            "${WEBKIT_PATH}/JavaScriptCore/PrivateHeaders"
+            "${WEBKIT_PATH}/bmalloc/Headers"
+            "${WEBKIT_PATH}/WTF/Headers"
         )
-        set(WEBKIT_LIB_DIR "${WEBKIT_DIR}/lib")
+        set(WEBKIT_LIB_DIR "${WEBKIT_PATH}/lib")
 
         if(ENABLE_ASSERTIONS)
             add_compile_definitions("BUN_DEBUG=1")
         endif()
 
-        message(STATUS "Using WebKit from ${WEBKIT_DIR}")
+        message(STATUS "Using WebKit from ${WEBKIT_PATH}")
     else()
-        if(NOT EXISTS "${WEBKIT_DIR}/lib/${libWTF}.${STATIC_LIB_EXT}" OR NOT EXISTS "${WEBKIT_DIR}/lib/${libJavaScriptCore}.${STATIC_LIB_EXT}")
-            if(WEBKIT_DIR MATCHES "src/bun.js/WebKit$")
-                message(FATAL_ERROR "WebKit directory ${WEBKIT_DIR} does not contain all the required files for Bun. Did you forget to init submodules?")
+        if(NOT EXISTS "${WEBKIT_PATH}/lib/${libWTF}.${STATIC_LIB_EXT}" OR NOT EXISTS "${WEBKIT_PATH}/lib/${libJavaScriptCore}.${STATIC_LIB_EXT}")
+            if(WEBKIT_PATH MATCHES "src/bun.js/WebKit$")
+                message(FATAL_ERROR "WebKit directory ${WEBKIT_PATH} does not contain all the required files for Bun. Did you forget to init submodules?")
             endif()
 
-            message(FATAL_ERROR "WebKit directory ${WEBKIT_DIR} does not contain all the required files for Bun. Expected a path to the oven-sh/WebKit repository, or a path to a folder containing `include` and `lib`.")
+            message(FATAL_ERROR "WebKit directory ${WEBKIT_PATH} does not contain all the required files for Bun. Expected a path to the oven-sh/WebKit repository, or a path to a folder containing `include` and `lib`.")
         endif()
 
-        set(WEBKIT_INCLUDE_DIR "${WEBKIT_DIR}/include")
-        set(WEBKIT_LIB_DIR "${WEBKIT_DIR}/lib")
+        set(WEBKIT_INCLUDE_DIR "${WEBKIT_PATH}/include")
+        set(WEBKIT_LIB_DIR "${WEBKIT_PATH}/lib")
 
-        message(STATUS "Using specified WebKit directory: ${WEBKIT_DIR}")
+        message(STATUS "Using specified WebKit directory: ${WEBKIT_PATH}")
         message(STATUS "WebKit assertions: OFF")
     endif()
 endif()
 
-# --- BUILD ---
-set(BUN_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src")
-set(BUN_DEPS_DIR "${BUN_SRC}/deps")
-set(BUN_CODEGEN_SRC "${BUN_SRC}/codegen")
-
-if(NOT BUN_DEPS_OUT_DIR)
-    set(BUN_DEPS_OUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/build/bun-deps")
-endif()
-
 # --- Zig Object ---
 if(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY)
-  include(cmake/BuildBunZig.cmake)
+  include(BuildBunZig)
 endif()
 
-include(cmake/BuildBun.cmake)
+include(BuildBun)
 
 if(WIN32)
-    include_directories("${BUN_SRC}/bun.js/bindings/windows")
+  include_directories("${CWD}/src/bun.js/bindings/windows")
 endif()
 
 set_target_properties(${bun} PROPERTIES
@@ -238,7 +216,7 @@ set_target_properties(${bun} PROPERTIES
 )
 
 if(APPLE)
-    add_compile_definitions("__DARWIN_NON_CANCELABLE=1")
+  add_compile_definitions("__DARWIN_NON_CANCELABLE=1")
 endif()
 
 add_compile_definitions(
@@ -256,9 +234,9 @@ add_compile_definitions(
     "NOMINMAX"
     "IS_BUILD"
     "BUILDING_JSCONLY__"
-    "BUN_DYNAMIC_JS_LOAD_PATH=\"${BUN_WORKDIR}/js\""
-    "REPORTED_NODEJS_VERSION=\"${USE_NODEJS_VERSION}\""
-    "REPORTED_NODEJS_ABI_VERSION=${USE_NODEJS_ABI_VERSION}"
+    "BUN_DYNAMIC_JS_LOAD_PATH=\"${BUILD_PATH}/js\""
+    "REPORTED_NODEJS_VERSION=\"${NODEJS_VERSION}\""
+    "REPORTED_NODEJS_ABI_VERSION=${NODEJS_ABI_VERSION}"
 )
 
 if(ENABLE_ASSERTIONS)
@@ -297,7 +275,7 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/deps
     ${CMAKE_CURRENT_SOURCE_DIR}/src/deps/picohttpparser
     ${WEBKIT_INCLUDE_DIR}
-    "${BUN_WORKDIR}/codegen"
+    "${BUILD_PATH}/codegen"
 )
 
 # -- BUN_CPP_ONLY Target
@@ -343,7 +321,7 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
     set(LTO_FLAG "")
 
     if(NOT WIN32)
-        if(USE_LTO)
+        if(ENABLE_LTO)
             list(APPEND LTO_FLAG "-flto=full" "-emit-llvm" "-fwhole-program-vtables" "-fforce-emit-vtables")
         endif()
 
@@ -365,7 +343,7 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
     else()
         set(LTO_LINK_FLAG "")
 
-        if(USE_LTO)
+        if(ENABLE_LTO)
             target_compile_options(${bun} PUBLIC -Xclang -emit-llvm-bc)
 
             list(APPEND LTO_FLAG "-flto=full")
@@ -405,21 +383,21 @@ if(NOT CI AND NOT WIN32)
     target_compile_options(${bun} PRIVATE -fdiagnostics-color=always)
 endif()
 
-if(NOT USE_CPU STREQUAL "native")
-    # passing -march=native to clang will break older systems
-    # by default on x64, USE_CPU is set to "haswell" or "nehalem" depending on baseline
-    # on arm, this argument will not be passed.
-    target_compile_options(${bun} PUBLIC "-march=${USE_CPU}")
+if(NOT CPU STREQUAL "native")
+  # passing -march=native to clang will break older systems
+  # by default on x64, CPU is set to "haswell" or "nehalem" depending on baseline
+  # on arm, this argument will not be passed.
+  target_compile_options(${bun} PUBLIC "-march=${CPU}")
 else()
-    if(APPLE AND ARCH STREQUAL "aarch64")
-        # On arm macOS, we can set it to a minimum of the M1 cpu set. this might be the default already.
-        target_compile_options(${bun} PUBLIC "-mcpu=apple-m1")
-    endif()
+  if(APPLE AND ARCH STREQUAL "aarch64")
+    # On arm macOS, we can set it to a minimum of the M1 cpu set. this might be the default already.
+    target_compile_options(${bun} PUBLIC "-mcpu=apple-m1")
+  endif()
 
-    if(NOT WIN32 AND NOT APPLE AND ARCH STREQUAL "aarch64")
-        # on arm64 linux, we set a minimum of armv8
-        target_compile_options(${bun} PUBLIC -march=armv8-a+crc -mtune=ampere1)
-    endif()
+  if(NOT WIN32 AND NOT APPLE AND ARCH STREQUAL "aarch64")
+    # on arm64 linux, we set a minimum of armv8
+    target_compile_options(${bun} PUBLIC -march=armv8-a+crc -mtune=ampere1)
+  endif()
 endif()
 
 target_compile_options(${bun} PUBLIC -ferror-limit=${ERROR_LIMIT})
@@ -438,11 +416,11 @@ if(WIN32)
 
     target_compile_options(${bun} PUBLIC "/EHsc" "/GR-" -Xclang -fno-c++-static-destructors)
 
-    target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000" "/DEF:${BUN_SRC}/symbols.def" "/errorlimit:0")
+    target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000" "/DEF:${CWD}/src/symbols.def" "/errorlimit:0")
 else()
     # TODO: look at -fconstexpr-steps=2542484 -fconstexpr-depth=54
     target_compile_options(${bun} PUBLIC
-        -mtune=${USE_CPU}
+        -mtune=${CPU}
         -fconstexpr-steps=2542484
         -fconstexpr-depth=54
         -fno-exceptions
@@ -457,9 +435,7 @@ else()
         -fno-pic
         -fno-pie
         -faddrsig
-        -ffile-prefix-map="${CMAKE_CURRENT_SOURCE_DIR}"=.
-        -ffile-prefix-map="${BUN_DEPS_DIR}"=src/deps
-        -ffile-prefix-map="${BUN_DEPS_OUT_DIR}"=src/deps
+        -ffile-prefix-map="${CWD}"=.
     )
 endif()
 
@@ -467,8 +443,8 @@ if(APPLE)
     target_link_options(${bun} PUBLIC "-dead_strip")
     target_link_options(${bun} PUBLIC "-dead_strip_dylibs")
     target_link_options(${bun} PUBLIC "-Wl,-stack_size,0x1200000")
-    target_link_options(${bun} PUBLIC "-exported_symbols_list" "${BUN_SRC}/symbols.txt")
-    set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${BUN_SRC}/symbols.txt")
+    target_link_options(${bun} PUBLIC "-exported_symbols_list" "${CWD}/src/symbols.txt")
+    set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${CWD}/src/symbols.txt")
     target_link_options(${bun} PUBLIC "-fno-keep-static-consts")
     target_link_libraries(${bun} PRIVATE "resolv")
 endif()
@@ -507,8 +483,8 @@ if(UNIX AND NOT APPLE)
         "-Wl,--compress-debug-sections=zlib"
         "-Bsymbolics-functions"
         "-rdynamic"
-        "-Wl,--dynamic-list=${BUN_SRC}/symbols.dyn"
-        "-Wl,--version-script=${BUN_SRC}/linker.lds"
+        "-Wl,--dynamic-list=${CWD}/src/symbols.dyn"
+        "-Wl,--version-script=${CWD}/src/linker.lds"
         -Wl,-z,lazy
         -Wl,-z,norelro
     )
@@ -533,13 +509,13 @@ if(UNIX AND NOT APPLE)
         target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicuuc.a")
     endif()
 
-    set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${BUN_SRC}/linker.lds")
-    set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${BUN_SRC}/symbols.dyn")
+    set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${CWD}/src/linker.lds")
+    set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${CWD}/src/symbols.dyn")
 endif()
 
 # --- ICU ---
 if(APPLE)
-    target_link_libraries(${bun} PRIVATE "icucore")
+  target_link_libraries(${bun} PRIVATE "icucore")
 endif()
 
 # --- Stripped Binary "bun"
@@ -549,7 +525,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32 AND NOT ASSERT_ENABLED AND 
         add_custom_command(
             TARGET ${bun}
             POST_BUILD
-            COMMAND ${CMAKE_DSYMUTIL} -o ${BUN_WORKDIR}/${bun}.dSYM ${BUN_WORKDIR}/${bun}
+            COMMAND ${CMAKE_DSYMUTIL} -o ${BUILD_PATH}/${bun}.dSYM ${BUILD_PATH}/${bun}
             COMMENT "Generating .dSYM"
         )
     endif()
@@ -557,7 +533,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32 AND NOT ASSERT_ENABLED AND 
     add_custom_command(
         TARGET ${bun}
         POST_BUILD
-        COMMAND ${CMAKE_STRIP} -s -x -S -o ${BUN_WORKDIR}/bun ${BUN_WORKDIR}/${bun}
+        COMMAND ${CMAKE_STRIP} -s -x -S -o ${BUILD_PATH}/bun ${BUILD_PATH}/${bun}
         COMMENT "Stripping Symbols"
     )
 endif()
@@ -594,17 +570,6 @@ if(WIN32)
 >>>>>>> 558357408 (Migrate zlib)
 endif()
 
-if(USE_CUSTOM_TINYCC)
-    if(WIN32)
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/tcc.lib")
-    else()
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libtcc.a")
-    endif()
-else()
-    find_package(tinycc REQUIRED)
-    target_link_libraries(${bun} PRIVATE tinycc::tinycc)
-endif()
-
 if(USE_STATIC_SQLITE)
     add_library(sqlite3 STATIC src/bun.js/bindings/sqlite/sqlite3.c)
     target_include_directories(sqlite3 PUBLIC src/bun.js/bindings/sqlite)
@@ -631,18 +596,20 @@ else()
     target_compile_definitions(${bun} PRIVATE "LAZY_LOAD_SQLITE=1")
 endif()
 
-include(cmake/BuildBrotli.cmake)
-include(cmake/BuildBoringSSL.cmake)
-include(cmake/BuildCares.cmake)
-include(cmake/BuildLibArchive.cmake)
-include(cmake/BuildLibDeflate.cmake)
-include(cmake/BuildLolHtml.cmake)
-include(cmake/BuildLshpack.cmake)
-include(cmake/BuildMimalloc.cmake)
-include(cmake/BuildZlib.cmake)
-include(cmake/BuildZstd.cmake)
+include(BuildBrotli)
+include(BuildBoringSSL)
+include(BuildCares)
+include(BuildLibArchive)
+include(BuildLibDeflate)
+include(BuildLolHtml)
+include(BuildLshpack)
+include(BuildMimalloc)
+include(BuildTinyCC)
+include(BuildZlib)
+include(BuildZstd)
+
 if(WIN32)
-  include(cmake/BuildLibuv.cmake)
+  include(BuildLibuv)
 endif()
 
 if(NOT WIN32)

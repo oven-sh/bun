@@ -1,4 +1,4 @@
-include(cmake/Utils.cmake)
+include(Utils)
 
 set(MIN_OSX_DEPLOYMENT_TARGET "13.0")
 

@@ -6,7 +6,7 @@ parse_option(ZIG_OBJECT_PATH FILEPATH "Path to the Zig object file" ${BUILD_PATH
 parse_option(ZIG_OBJECT_FORMAT "obj|bc" "Output file format for Zig object files" obj)
 
 # TODO: if ZIG_OBJECT_PATH does not end with "bun-zig.o", we need to rename it
-get_filename_component(ZIG_OBJECT_DIR ${ZIG_OBJECT_PATH} DIRECTORY)
+get_filename_component(ZIG_OBJECT_PARENT_PATH ${ZIG_OBJECT_PATH} DIRECTORY)
 
 # TODO: src/deps/zig/*.zig files are currently included, but should be excluded
 file(GLOB_RECURSE BUN_ZIG_OBJECT_SOURCES 
@@ -41,17 +41,18 @@ add_custom_command(
     ${CMAKE_ZIG_COMPILER}
       build obj
       ${CMAKE_ZIG_FLAGS}
-      --prefix ${ZIG_OBJECT_DIR}
-      -Dgenerated-code=${CODEGEN_PATH}
-      -Dreported_nodejs_version=${USE_NODEJS_VERSION}
+      --prefix ${ZIG_OBJECT_PARENT_PATH}
       -Dobj_format=${ZIG_OBJECT_FORMAT}
-      -Dcpu=${USE_ZIG_CPU}
-      -Dtarget=${USE_ZIG_TARGET}
+      -Dtarget=${ZIG_TARGET}
+      -Doptimize=${ZIG_OPTIMIZE}
+      -Dcpu=${CPU}
       -Denable_logs=${ZIG_ENABLE_LOGS}
-      -Dversion=${USE_VERSION}
-      -Dsha=${USE_REVISION}
-      -Dcanary=${USE_CANARY_REVISION}
-      -Doptimize=${USE_ZIG_OPTIMIZE}
+      -Dversion=${VERSION}
+      -Dsha=${REVISION}
+      -Dreported_nodejs_version=${NODEJS_VERSION}
+      -Dcanary=${CANARY_REVISION}
+      -Dgenerated-code=${CODEGEN_PATH}
+      
   OUTPUT
     ${ZIG_OBJECT_PATH}
   MAIN_DEPENDENCY
@@ -68,3 +69,5 @@ add_custom_command(
     ${BUN_JAVASCRIPT_OUTPUTS}
   ${USES_TERMINAL_NOT_IN_CI}
 )
+
+add_custom_target(zig DEPENDS ${ZIG_OBJECT_PATH})

@@ -153,6 +153,7 @@ scripts/env.local
 /src/deps/c*ares
 /src/deps/libarchive
 /src/deps/libdeflate
+/src/deps/libuv
 /src/deps/ls*hpack
 /src/deps/mimalloc
 /src/deps/zstd

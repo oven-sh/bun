@@ -626,8 +626,24 @@ pub const ZlibDecoder = struct {
                             _ = this.decoder.pending_encode_job_count.fetchSub(1, .monotonic);
                             if (!this.is_async) {
                                 this.decoder.closed = true;
+                                switch (e) {
+                                    error.ZlibError => {
+                                        const message = std.mem.sliceTo(this.decoder.stream.err_msg.?, 0);
+                                        this.decoder.globalThis.throw("{s}", .{message});
+                                        return;
+                                    },
+                                    else => {},
+                                }
                                 this.decoder.globalThis.throw("ZlibError: {s}", .{@errorName(e)});
                                 return;
+                            }
+                            switch (e) {
+                                error.ZlibError => {
+                                    const message = std.mem.sliceTo(this.decoder.stream.err_msg.?, 0);
+                                    this.decoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "{s}", .{message});
+                                    return;
+                                },
+                                else => {},
                             }
                             this.decoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "ZlibError: {s}", .{@errorName(e)}); // TODO propogate better error
                             break :outer;

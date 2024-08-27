@@ -1087,6 +1087,13 @@ pub const ZlibDecompressorStreaming = struct {
         }
     }
 
+    fn error_for_message(this: *ZlibDecompressorStreaming, default: [*:0]const u8) error{ZlibError} {
+        var message = default;
+        if (this.state.err_msg) |msg| message = msg;
+        this.err_msg = message;
+        return error.ZlibError;
+    }
+
     pub fn writer(this: *ZlibDecompressorStreaming, out_writer: anytype) WriterImpl(@TypeOf(out_writer)).Writer {
         return (WriterImpl(@TypeOf(out_writer)){ .ctx = this, .out_writer = out_writer }).writer();
     }
@@ -1172,11 +1179,8 @@ pub const ZlibDecompressorStreaming = struct {
 
                     const ret = inflate(state, this.ctx.flush);
                     bun.assert(ret != .StreamError);
-                    if (ret == .NeedDict) return error.ZlibError2;
-                    if (ret == .DataError) {
-                        std.log.warn("Z_DATA_ERROR: {s}", .{std.mem.span(state.err_msg.?)});
-                        return error.ZlibError3;
-                    }
+                    if (ret == .NeedDict) return this.ctx.error_for_message((if (this.ctx.dictionary.len == 0) "Missing dictionary" else "Bad dictionary").ptr);
+                    if (ret == .DataError) return this.ctx.error_for_message("Zlib error");
                     if (ret == .MemError) return error.ZlibError4;
                     if (ret == .StreamEnd and this.ctx.mode == .GUNZIP and state.avail_in > 0 and state.next_in.?[0] != 0) {
                         _ = inflateReset(state);

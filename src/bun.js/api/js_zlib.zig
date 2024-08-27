@@ -703,6 +703,7 @@ const Options = struct {
     windowBits: c_int,
     memLevel: c_int,
     strategy: c_int,
+    dictionary: JSC.Buffer,
     maxOutputLength: usize,
     flush: u8,
     finishFlush: u8,
@@ -729,12 +730,30 @@ const Options = struct {
             .GUNZIP, .UNZIP => getWindowBits(globalThis, opts, "windowBits", i16, 9, 15, 15) orelse return null,
         };
 
+        const empty_buffer = JSC.Buffer.fromBytes(&.{}, bun.default_allocator, .Uint8Array);
+        const dictionary = blk: {
+            var exceptionref: JSC.C.JSValueRef = null;
+            const value = opts.get(globalThis, "dictionary") orelse {
+                if (globalThis.hasException()) return null;
+                break :blk empty_buffer;
+            };
+            const buffer = JSC.Buffer.fromJS(globalThis, value, &exceptionref) orelse {
+                break :blk empty_buffer;
+            };
+            if (exceptionref) |ptr| {
+                globalThis.throwValue(JSC.JSValue.c(ptr));
+                return null;
+            }
+            break :blk buffer;
+        };
+
         return .{
             .chunkSize = chunkSize,
             .level = level,
             .windowBits = windowBits,
             .memLevel = memLevel,
             .strategy = strategy,
+            .dictionary = dictionary,
             .maxOutputLength = maxOutputLength,
             .flush = flush,
             .finishFlush = finishFlush,

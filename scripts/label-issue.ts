@@ -55,10 +55,7 @@ const labels = [
     name: "bun:udp",
     description: "",
   },
-  {
-    name: "bun.js",
-    description: "Something to do with a Bun-specific API",
-  },
+
   {
     name: "bundler",
     description: "Something to do with the bundler",

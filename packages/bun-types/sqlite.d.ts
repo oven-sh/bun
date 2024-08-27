@@ -747,7 +747,7 @@ declare module "bun:sqlite" {
      * query.as(User);
      * const user = query.get();
      * console.log(user.birthdate);
-     * // => Date(1995, 11, 19)
+     * // => Date(1995, 12, 19)
      * ```
      */
     as<T = unknown>(Class: new (...args: any[]) => T): Statement<T, ParamsType>;

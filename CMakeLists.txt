@@ -562,6 +562,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32 AND NOT ASSERT_ENABLED AND 
     )
 endif()
 
+<<<<<<< HEAD
 # --- Dependencies ---
 if(USE_CUSTOM_ZLIB)
     include_directories(${BUN_DEPS_DIR}/zlib)
@@ -578,6 +579,19 @@ else()
         find_package(ZLIB REQUIRED)
         target_link_libraries(${bun} PRIVATE ZLIB::ZLIB)
     endif()
+=======
+if(WIN32)
+    # Kill all instances of bun before linking.
+    # This is necessary because the file is locked by the process.
+    add_custom_command(
+        TARGET ${bun}
+        PRE_LINK
+        COMMAND
+        "powershell"
+        "/C"
+        "Stop-Process -Name '${bun}' -Force -ErrorAction SilentlyContinue; exit 0"
+    )
+>>>>>>> 558357408 (Migrate zlib)
 endif()
 
 if(USE_CUSTOM_TINYCC)
@@ -625,6 +639,7 @@ include(cmake/BuildLibDeflate.cmake)
 include(cmake/BuildLolHtml.cmake)
 include(cmake/BuildLshpack.cmake)
 include(cmake/BuildMimalloc.cmake)
+include(cmake/BuildZlib.cmake)
 include(cmake/BuildZstd.cmake)
 if(WIN32)
   include(cmake/BuildLibuv.cmake)

@@ -9407,7 +9407,18 @@ pub const PackageManager = struct {
 
                     const outro_text =
                         \\<b>Examples:<r>
+                        \\  <d>Display outdated dependencies in the current workspace.<r>
                         \\  <b><green>bun outdated<r>
+                        \\
+                        \\  <d>Use --filter to include more than one workspace.<r>
+                        \\  <b><green>bun outdated --filter="*"<r>
+                        \\  <b><green>bun outdated --filter="./app/*"<r>
+                        \\  <b><green>bun outdated --filter="!frontend"<r>
+                        \\
+                        \\  <d>Filter dependencies with name patterns.<r>
+                        \\  <b><green>bun outdated jquery<r>
+                        \\  <b><green>bun outdated "is-*"<r>
+                        \\  <b><green>bun outdated "!is-even"<r>
                         \\
                     ;
 

@@ -56,6 +56,7 @@ pub const ZlibEncoder = struct {
 
         if (mode == .GZIP or mode == .GUNZIP) options.windowBits += 16;
         if (mode == .UNZIP) options.windowBits += 32;
+        if (mode == .DEFLATERAW or mode == .INFLATERAW) options.windowBits *= -1;
 
         var this: *ZlibEncoder = ZlibEncoder.new(.{
             .globalThis = globalThis,
@@ -401,6 +402,7 @@ pub const ZlibDecoder = struct {
 
         if (mode == .GZIP or mode == .GUNZIP) options.windowBits += 16;
         if (mode == .UNZIP) options.windowBits += 32;
+        if (mode == .DEFLATERAW or mode == .INFLATERAW) options.windowBits *= -1;
 
         var this: *ZlibDecoder = ZlibDecoder.new(.{
             .globalThis = globalThis,

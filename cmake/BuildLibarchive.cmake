@@ -1,0 +1,44 @@
+include(cmake/BuildLibrary.cmake)
+include(cmake/GitClone.cmake)
+
+add_custom_library(
+  TARGET
+    libarchive
+  PREFIX
+    libarchive
+  LIBRARIES
+    archive
+  INCLUDES
+    include
+  CMAKE_TARGETS
+    archive_static
+  CMAKE_ARGS
+    -DBUILD_SHARED_LIBS=OFF
+    -DENABLE_INSTALL=OFF
+    -DENABLE_TEST=OFF
+    -DENABLE_WERROR=OFF
+    -DENABLE_BZIP2=OFF
+    -DENABLE_CAT=OFF
+    -DENABLE_EXPAT=OFF
+    -DENABLE_ICONV=OFF
+    -DENABLE_LIBB2=OFF
+    -DENABLE_LibGCC=OFF
+    -DENABLE_LIBXML2=OFF
+    -DENABLE_LZ4=OFF
+    -DENABLE_LZMA=OFF
+    -DENABLE_LZO=OFF
+    -DENABLE_MBEDTLS=OFF
+    -DENABLE_NETTLE=OFF
+    -DENABLE_OPENSSL=OFF
+    -DENABLE_PCRE2POSIX=OFF
+    -DENABLE_PCREPOSIX=OFF
+    -DENABLE_ZLIB=OFF
+    -DENABLE_ZSTD=OFF
+)
+
+add_custom_clone(
+  REPOSITORY
+    libarchive/libarchive
+  COMMIT
+    898dc8319355b7e985f68a9819f182aaed61b53a
+)

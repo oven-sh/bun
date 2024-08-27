@@ -12,7 +12,7 @@ add_custom_library(
     include
 )
 
-add_custom_clone(boringssl
+add_custom_clone(
   REPOSITORY
     oven-sh/boringssl
   COMMIT

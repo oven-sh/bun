@@ -85,7 +85,7 @@ if(CMAKE_SCRIPT_MODE_FILE STREQUAL CMAKE_CURRENT_LIST_FILE)
   return()
 endif()
 
-macro(add_custom_clone target)
+macro(add_custom_clone)
   git_clone_args(${ARGN})
   
   add_custom_command(

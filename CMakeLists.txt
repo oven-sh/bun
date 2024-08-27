@@ -580,19 +580,6 @@ else()
     endif()
 endif()
 
-if(USE_CUSTOM_LIBARCHIVE)
-    include_directories(${BUN_DEPS_DIR}/libarchive/include)
-
-    if(WIN32)
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/archive.lib")
-    else()
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libarchive.a")
-    endif()
-else()
-    find_package(LibArchive REQUIRED)
-    target_link_libraries(${bun} PRIVATE LibArchive::LibArchive)
-endif()
-
 if(USE_CUSTOM_LIBDEFLATE)
     include_directories(${BUN_DEPS_DIR}/libdeflate)
 
@@ -707,6 +694,7 @@ endif()
 include(cmake/BuildBrotli.cmake)
 include(cmake/BuildBoringSSL.cmake)
 include(cmake/BuildCares.cmake)
+include(cmake/BuildLibarchive.cmake)
 
 if(USE_CUSTOM_LSHPACK)
     include_directories(${BUN_DEPS_DIR}/ls-hpack)

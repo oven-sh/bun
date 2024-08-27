@@ -151,3 +151,4 @@ scripts/env.local
 /src/deps/boringssl
 /src/deps/brotli
 /src/deps/c*ares
+/src/deps/libarchive

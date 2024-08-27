@@ -17,13 +17,9 @@ add_custom_library(
     -DBROTLI_DISABLE_TESTS=ON
 )
 
-parse_option(USE_CUSTOM_BROTLI BOOL "Use custom brotli build" OFF)
-
-if(NOT USE_CUSTOM_BROTLI)
-  add_custom_clone(brotli
-    REPOSITORY
-      google/brotli
-    TAG
-      v1.1.0
-  )
-endif()
+add_custom_clone(
+  REPOSITORY
+    google/brotli
+  TAG
+    v1.1.0
+)

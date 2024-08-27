@@ -19,7 +19,7 @@ add_custom_library(
     -DCARES_BUILD_TOOLS=OFF # this was set to ON?
 )
 
-add_custom_clone(cares
+add_custom_clone(
   NAME
     cares
   REPOSITORY

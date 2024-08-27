@@ -27,13 +27,6 @@ ignore = dirty
 depth = 1
 shallow = true
 fetchRecurseSubmodules = false
-[submodule "src/deps/libarchive"]
-path = src/deps/libarchive
-url = https://github.com/libarchive/libarchive.git
-ignore = dirty
-depth = 1
-shallow = true
-fetchRecurseSubmodules = false
 [submodule "src/deps/lol-html"]
 path = src/deps/lol-html
 url = https://github.com/cloudflare/lol-html

@@ -25,7 +25,7 @@ const labels = [
   },
   {
     name: "bun:http",
-    description: "",
+    description: "Bun.serve",
   },
   {
     name: "bun:jsc",
@@ -33,7 +33,7 @@ const labels = [
   },
   {
     name: "bun:semver",
-    description: "",
+    description: "Bun.semver",
   },
   {
     name: "bun:serve",
@@ -41,7 +41,7 @@ const labels = [
   },
   {
     name: "bun:spawn",
-    description: "",
+    description: "Bun.spawn, Bun.spawnSync",
   },
   {
     name: "bun:sqlite",
@@ -49,11 +49,11 @@ const labels = [
   },
   {
     name: "bun:tcp",
-    description: "",
+    description: "TCP sockets in Bun's API (Bun.connect, Bun.listen)",
   },
   {
     name: "bun:udp",
-    description: "",
+    description: "UDP sockets in Bun's API (Bun.udpSocket())",
   },
 
   {
@@ -70,15 +70,11 @@ const labels = [
   },
   {
     name: "cjs",
-    description: "",
+    description: "CommonJS module",
   },
   {
     name: "cli",
     description: "Something to do with CLI arguments",
-  },
-  {
-    name: "crash reporter bug",
-    description: "the stack trace given does not seem to be valid",
   },
   {
     name: "debugger",
@@ -198,7 +194,7 @@ const labels = [
   },
   {
     name: "npm",
-    description: "Something that relates to the npm-compatible client",
+    description: "Installing npm packages, npm registry, etc related to bun install",
   },
   {
     name: "npm:patch",

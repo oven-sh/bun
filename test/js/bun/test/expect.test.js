@@ -2643,6 +2643,44 @@ describe("expect()", () => {
     expect(o).toContainAnyValues([20.5]);
   });
 
+  test("toContainEntry", () => {
+    const o = {
+      a: [{ a: "hii", b: "hello" }],
+      b: "bar",
+      c: "baz",
+      d: [1, 2],
+      e: 100,
+      f: 20n,
+      g: 20.5,
+      h: "",
+    };
+    expect(o).toContainEntry(["a", [{ a: "hii", b: "hello" }]]);
+    expect(o).toContainEntry(["b", "bar"]);
+    expect(o).toContainEntry(["c", "baz"]);
+    expect(o).not.toContainEntry(["a", "qux"]);
+    expect(o).not.toContainEntry(["b", "barl"]);
+    expect(o).toContainEntry(["d", [1, 2]]);
+    expect(o).toContainEntry(["e", 100]);
+    expect(o).toContainEntry(["f", 20n]);
+    expect(o).toContainEntry(["g", 20.5]);
+
+    const shallow = {
+      hello: "world",
+      foo: 0,
+      bar: false,
+    };
+    const deep = {
+      message: shallow,
+      donald: "duck",
+    };
+    const deepArray = {
+      message: [shallow],
+      donald: "duck",
+    };
+    expect(deep).toContainEntry(["message", { hello: "world", foo: 0, bar: false }]);
+    expect(deepArray).toContainEntry(["message", [shallow]]);
+  });
+
   test("toBeTruthy()", () => {
     expect("test").toBeTruthy();
     expect(true).toBeTruthy();

@@ -151,6 +151,7 @@ scripts/env.local
 /src/deps/boringssl
 /src/deps/brotli
 /src/deps/c*ares
+/src/deps/lol*html
 /src/deps/libarchive
 /src/deps/libdeflate
 /src/deps/libuv

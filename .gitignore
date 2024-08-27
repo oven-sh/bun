@@ -152,3 +152,4 @@ scripts/env.local
 /src/deps/brotli
 /src/deps/c*ares
 /src/deps/libarchive
+/src/deps/libdeflate

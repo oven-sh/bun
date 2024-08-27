@@ -3427,8 +3427,9 @@ pub const Blob = struct {
             const vm = globalThis.bunVM();
             const fd: bun.FileDescriptor = if (pathlike == .fd) pathlike.fd else brk: {
                 var file_path: bun.PathBuffer = undefined;
+                const path = pathlike.path.sliceZ(&file_path);
                 switch (bun.sys.open(
-                    pathlike.path.sliceZ(&file_path),
+                    path,
                     bun.O.WRONLY | bun.O.CREAT | bun.O.NONBLOCK,
                     write_permissions,
                 )) {
@@ -3436,7 +3437,7 @@ pub const Blob = struct {
                         break :brk result;
                     },
                     .err => |err| {
-                        globalThis.throwInvalidArguments("Failed to create FileSink: {}", .{err.getErrno()});
+                        globalThis.throwValue(err.withPath(path).toJSC(globalThis));
                         return JSValue.jsUndefined();
                     },
                 }
@@ -3469,7 +3470,7 @@ pub const Blob = struct {
             if (is_stdout_or_stderr) {
                 switch (sink.writer.startSync(fd, false)) {
                     .err => |err| {
-                        globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
+                        globalThis.throwValue(err.toJSC(globalThis));
                         sink.deref();
 
                         return JSC.JSValue.zero;
@@ -3479,7 +3480,7 @@ pub const Blob = struct {
             } else {
                 switch (sink.writer.start(fd, true)) {
                     .err => |err| {
-                        globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
+                        globalThis.throwValue(err.toJSC(globalThis));
                         sink.deref();
 
                         return JSC.JSValue.zero;

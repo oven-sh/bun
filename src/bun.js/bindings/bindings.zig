@@ -2912,6 +2912,15 @@ pub const JSGlobalObject = opaque {
         this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be of type {s}. Received {}", .{ argname, typename, bun.fmt.quote(ty_str.slice()) }).throw();
         return .zero;
     }
+    pub fn throwInvalidArgumentRangeValue(
+        this: *JSGlobalObject,
+        argname: []const u8,
+        typename: []const u8,
+        value: i64,
+    ) JSValue {
+        this.ERR_OUT_OF_RANGE("The \"{s}\" is out of range. {s}. Received {}", .{ argname, typename, value }).throw();
+        return .zero;
+    }
 
     pub fn createNotEnoughArguments(
         this: *JSGlobalObject,
@@ -4422,7 +4431,7 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn jsNumberFromInt64(i: i64) JSValue {
-        if (i <= std.math.maxInt(i32)) {
+        if (i <= std.math.maxInt(i32) and i >= std.math.minInt(i32)) {
             return jsNumberFromInt32(@as(i32, @intCast(i)));
         }
 

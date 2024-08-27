@@ -164,6 +164,9 @@ export default {
     page("cli/update", "`bun update`", {
       description: "Update your project's dependencies.",
     }),
+    page("cli/outdated", "`bun outdated`", {
+      description: "Check for outdated dependencies.",
+    }),
     page("cli/link", "`bun link`", {
       description: "Install local packages as dependencies in your project.",
     }),

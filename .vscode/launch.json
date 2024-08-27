@@ -11,10 +11,10 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "bun test [file]",
+      "name": "bun build demo",
       "program": "${workspaceFolder}/build/bun-debug",
-      "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "args": ["build", "./other.tsx", "--format", "kit_internal_hmr"],
+      "cwd": "/Users/dave/kt",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",

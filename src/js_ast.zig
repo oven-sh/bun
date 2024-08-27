@@ -306,10 +306,6 @@ pub const Flags = struct {
         /// Only applicable to function statements.
         is_export,
 
-        /// Used for Hot Module Reloading's wrapper function
-        /// "iife" stands for "immediately invoked function expression"
-        print_as_iife,
-
         pub inline fn init(fields: Fields) Set {
             return Set.init(fields);
         }

@@ -591,14 +591,37 @@ pub const Target = enum {
 };
 
 pub const Format = enum {
+    /// ES module format
+    /// This is the default format
     esm,
-    cjs,
+
+    /// Immediately-invoked function expression
+    /// (function(){
+    ///     ...
+    /// })();
     iife,
+
+    /// CommonJS
+    cjs,
+
+    /// Used for internal details
+    kit_internal_hmr,
+
+    pub fn keepES6ImportExportSyntax(this: Format) bool {
+        return this == .esm;
+    }
+
+    pub inline fn isESM(this: Format) bool {
+        return this == .esm;
+    }
 
     pub const Map = bun.ComptimeStringMap(Format, .{
         .{ "esm", .esm },
         .{ "cjs", .cjs },
         .{ "iife", .iife },
+
+        // TODO: Disable this outside of debug builds
+        .{ "kit_internal_hmr", .kit_internal_hmr },
     });
 
     pub fn fromJS(global: *JSC.JSGlobalObject, format: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Format {
@@ -1404,29 +1427,6 @@ pub const PackagesOption = enum {
     });
 };
 
-pub const OutputFormat = enum {
-    preserve,
-
-    /// ES module format
-    /// This is the default format
-    esm,
-    /// Immediately-invoked function expression
-    /// (
-    ///   function(){}
-    /// )();
-    iife,
-    /// CommonJS
-    cjs,
-
-    pub fn keepES6ImportExportSyntax(this: OutputFormat) bool {
-        return this == .esm;
-    }
-
-    pub inline fn isESM(this: OutputFormat) bool {
-        return this == .esm;
-    }
-};
-
 /// BundleOptions is used when ResolveMode is not set to "disable".
 /// BundleOptions is effectively webpack + babel
 pub const BundleOptions = struct {
@@ -1462,7 +1462,7 @@ pub const BundleOptions = struct {
     serve: bool = false,
 
     // only used by bundle_v2
-    output_format: OutputFormat = .esm,
+    output_format: Format = .esm,
 
     append_package_version_in_query_string: bool = false,
 

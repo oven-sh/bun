@@ -800,12 +800,18 @@ pub const Arguments = struct {
                     Global.crash();
                 };
                 switch (format) {
-                    .esm => {},
-                    else => {
-                        Output.prettyErrorln("<r><red>error<r>: Formats besides 'esm' are not implemented", .{});
-                        Global.crash();
+                    .cjs => {
+                        // Make this a soft error in debug to allow experimenting with these flags.
+                        const function = if (Environment.isDebug) Output.debugWarn else Output.prettyErrorln;
+                        function("<r><red>error<r>: Format '{s}' are not implemented", .{@tagName(format)});
+                        if (!Environment.isDebug) {
+                            Global.crash();
+                        }
                     },
+                    else => {},
                 }
+
+                ctx.bundler_options.output_format = format;
             }
 
             if (args.flag("--splitting")) {
@@ -1295,6 +1301,7 @@ pub const Command = struct {
             minify_identifiers: bool = false,
             ignore_dce_annotations: bool = false,
             emit_dce_annotations: bool = true,
+            output_format: options.Format = .esm,
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {

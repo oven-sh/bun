@@ -23816,7 +23816,6 @@ fn NewParser_(
                                     .name = null,
                                     .open_parens_loc = logger.Loc.Empty,
                                     .flags = Flags.Function.init(.{
-                                        .print_as_iife = true,
                                         .is_async = is_async,
                                     }),
                                 },

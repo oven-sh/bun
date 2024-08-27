@@ -87,6 +87,17 @@ pub fn wipDevServer(options: DevServer.Options) noreturn {
     dev.runLoopForever();
 }
 
+pub const hmr_runtime_suffix = "\n]);";
+
+pub fn getHmrRuntime() []const u8 {
+    return 
+    \\((graph) => {
+    \\  console.log(1)
+    \\})([
+    \\
+    ;
+}
+
 pub const DevServer = @import("./DevServer.zig");
 
 const std = @import("std");

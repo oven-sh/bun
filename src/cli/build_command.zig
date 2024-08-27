@@ -185,6 +185,7 @@ pub const BuildCommand = struct {
         }
 
         this_bundler.options.output_dir = ctx.bundler_options.outdir;
+        this_bundler.options.output_format = ctx.bundler_options.output_format;
         this_bundler.resolver.opts.output_dir = ctx.bundler_options.outdir;
 
         var src_root_dir_buf: bun.PathBuffer = undefined;

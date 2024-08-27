@@ -731,12 +731,11 @@ pub const BundleV2 = struct {
     ) !*BundleV2 {
         bundler.env.loadTracy();
 
-        var generator = try allocator.create(BundleV2);
+        const this = try allocator.create(BundleV2);
         bundler.options.mark_builtins_as_external = bundler.options.target.isBun() or bundler.options.target == .node;
         bundler.resolver.opts.mark_builtins_as_external = bundler.options.target.isBun() or bundler.options.target == .node;
 
-        const this = generator;
-        generator.* = BundleV2{
+        this.* = BundleV2{
             .bundler = bundler,
             .client_bundler = bundler,
             .server_bundler = bundler,
@@ -753,49 +752,68 @@ pub const BundleV2 = struct {
                 },
             },
         };
-        generator.linker.graph.allocator = generator.graph.heap.allocator();
-        generator.graph.allocator = generator.linker.graph.allocator;
-        generator.bundler.allocator = generator.graph.allocator;
-        generator.bundler.resolver.allocator = generator.graph.allocator;
-        generator.bundler.linker.allocator = generator.graph.allocator;
-        generator.bundler.log.msgs.allocator = generator.graph.allocator;
-        generator.bundler.log.clone_line_text = true;
+        this.linker.graph.allocator = this.graph.heap.allocator();
+        this.graph.allocator = this.linker.graph.allocator;
+        this.bundler.allocator = this.graph.allocator;
+        this.bundler.resolver.allocator = this.graph.allocator;
+        this.bundler.linker.allocator = this.graph.allocator;
+        this.bundler.log.msgs.allocator = this.graph.allocator;
+        this.bundler.log.clone_line_text = true;
 
-        // We don't expose a way to disable this right now.
-        generator.bundler.options.tree_shaking = true;
-        generator.bundler.resolver.opts.tree_shaking = true;
+        // We don't expose an option to disable this. Kit requires tree-shaking
+        // disabled since every export is always referenced in case a future
+        // module depends on a previously unused export.
+        //
+        // TODO: tree-shaking could be applied still?
+        if (this.bundler.options.output_format == .kit_internal_hmr) {
+            this.bundler.options.tree_shaking = false;
+            this.bundler.resolver.opts.tree_shaking = false;
+            this.bundler.linker.options.tree_shaking = false;
+        } else {
+            this.bundler.options.tree_shaking = true;
+            this.bundler.resolver.opts.tree_shaking = true;
+            this.bundler.linker.options.tree_shaking = true;
+        }
 
-        generator.linker.graph.bundler_graph = &generator.graph;
-        generator.linker.resolver = &generator.bundler.resolver;
-        generator.linker.graph.code_splitting = bundler.options.code_splitting;
-        generator.graph.code_splitting = bundler.options.code_splitting;
+        this.linker.graph.bundler_graph = &this.graph;
+        this.linker.resolver = &this.bundler.resolver;
+        this.linker.graph.code_splitting = bundler.options.code_splitting;
+        this.graph.code_splitting = bundler.options.code_splitting;
 
-        generator.linker.options.minify_syntax = bundler.options.minify_syntax;
-        generator.linker.options.minify_identifiers = bundler.options.minify_identifiers;
-        generator.linker.options.minify_whitespace = bundler.options.minify_whitespace;
-        generator.linker.options.emit_dce_annotations = bundler.options.emit_dce_annotations;
-        generator.linker.options.ignore_dce_annotations = bundler.options.ignore_dce_annotations;
+        this.linker.options.minify_syntax = bundler.options.minify_syntax;
+        this.linker.options.minify_identifiers = bundler.options.minify_identifiers;
+        this.linker.options.minify_whitespace = bundler.options.minify_whitespace;
+        this.linker.options.emit_dce_annotations = bundler.options.emit_dce_annotations;
+        this.linker.options.ignore_dce_annotations = bundler.options.ignore_dce_annotations;
 
-        generator.linker.options.source_maps = bundler.options.source_map;
-        generator.linker.options.tree_shaking = bundler.options.tree_shaking;
-        generator.linker.options.public_path = bundler.options.public_path;
-        generator.linker.options.target = bundler.options.target;
+        this.linker.options.source_maps = bundler.options.source_map;
+        this.linker.options.tree_shaking = bundler.options.tree_shaking;
+        this.linker.options.public_path = bundler.options.public_path;
+        this.linker.options.target = bundler.options.target;
+        this.linker.options.output_format = bundler.options.output_format;
 
-        var pool = try generator.graph.allocator.create(ThreadPool);
+        var pool = try this.graph.allocator.create(ThreadPool);
         if (enable_reloading) {
-            Watcher.enableHotModuleReloading(generator);
+            Watcher.enableHotModuleReloading(this);
         }
         // errdefer pool.destroy();
-        errdefer generator.graph.heap.deinit();
+        errdefer this.graph.heap.deinit();
 
         pool.* = ThreadPool{};
-        generator.graph.pool = pool;
+        this.graph.pool = pool;
         try pool.start(
             this,
             thread_pool,
         );
 
-        return generator;
+        // sanity checks for kit
+        if (this.bundler.options.output_format == .kit_internal_hmr) {
+            if (this.bundler.options.compile) @panic("TODO: kit_internal_hmr does not support compile");
+            if (this.bundler.options.code_splitting) @panic("TODO: kit_internal_hmr does not support code splitting");
+            if (this.bundler.options.transform_only) @panic("TODO: kit_internal_hmr does not support transform_only");
+        }
+
+        return this;
     }
 
     pub fn enqueueEntryPoints(this: *BundleV2, user_entry_points: []const string) !ThreadPoolLib.Batch {
@@ -3936,7 +3954,7 @@ pub const LinkerContext = struct {
     pending_task_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
     pub const LinkerOptions = struct {
-        output_format: options.OutputFormat = .esm,
+        output_format: options.Format = .esm,
         ignore_dce_annotations: bool = false,
         emit_dce_annotations: bool = true,
         tree_shaking: bool = true,
@@ -4035,7 +4053,7 @@ pub const LinkerContext = struct {
             record.source_index.get() != source_index;
     }
 
-    inline fn shouldCallRuntimeRequire(format: options.OutputFormat) bool {
+    inline fn shouldCallRuntimeRequire(format: options.Format) bool {
         return format != .cjs;
     }
 
@@ -5032,7 +5050,7 @@ pub const LinkerContext = struct {
                     // then we'll be using the actual CommonJS "exports" and/or "module"
                     // symbols. In that case make sure to mark them as such so they don't
                     // get minified.
-                    if ((output_format == .cjs or output_format == .preserve) and
+                    if ((output_format == .cjs) and
                         entry_point_kinds[source_index].isEntryPoint() and
                         export_kind == .cjs and flag.wrap == .none)
                     {
@@ -6881,10 +6899,7 @@ pub const LinkerContext = struct {
         const runtimeRequireRef = if (c.resolver.opts.target.isBun()) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
         {
-            // TODO: IIFE indent
-
             const print_options = js_printer.Options{
-                // TODO: IIFE indent
                 .indent = .{},
                 .has_run_symbol_renamer = true,
 
@@ -6997,6 +7012,21 @@ pub const LinkerContext = struct {
 
         // TODO: IIFE wrap
 
+        switch (c.options.output_format) {
+            .kit_internal_hmr => {
+                const start = bun.kit.getHmrRuntime();
+                j.pushStatic(start);
+                line_offset.advance(start);
+            },
+            .iife => {
+                // Bun does not do arrow function lowering. So the wrapper can be an arrow.
+                const start = if (c.options.minify_whitespace) "(()=>{" else "(() => {\n";
+                j.pushStatic(start);
+                line_offset.advance(start);
+            },
+            else => {}, // no wrapper
+        }
+
         if (cross_chunk_prefix.len > 0) {
             newline_before_comment = true;
             line_offset.advance(cross_chunk_prefix);
@@ -7041,6 +7071,13 @@ pub const LinkerContext = struct {
                     CommentType.multiline
                 else
                     CommentType.single;
+
+                if (!c.options.minify_whitespace and
+                    (c.options.output_format == .iife or c.options.output_format == .kit_internal_hmr))
+                {
+                    j.pushStatic("  ");
+                    line_offset.advance("  ");
+                }
 
                 switch (comment_type) {
                     .multiline => {
@@ -7111,15 +7148,22 @@ pub const LinkerContext = struct {
             j.push(cross_chunk_suffix, bun.default_allocator);
         }
 
-        if (c.options.output_format == .iife) {
-            const without_newline = "})();";
+        switch (c.options.output_format) {
+            .iife => {
+                const without_newline = "})();";
 
-            const with_newline = if (newline_before_comment)
-                without_newline ++ "\n"
-            else
-                without_newline;
+                const with_newline = if (newline_before_comment)
+                    without_newline ++ "\n"
+                else
+                    without_newline;
 
-            j.pushStatic(with_newline);
+                j.pushStatic(with_newline);
+            },
+            .kit_internal_hmr => {
+                j.pushStatic(bun.kit.hmr_runtime_suffix);
+                line_offset.advance(bun.kit.hmr_runtime_suffix);
+            },
+            else => {},
         }
 
         j.ensureNewlineAtEnd();
@@ -7411,9 +7455,6 @@ pub const LinkerContext = struct {
         const ast: JSAst = c.graph.ast.get(source_index);
 
         switch (c.options.output_format) {
-            // TODO:
-            .preserve => {},
-
             .esm => {
                 switch (flags.wrap) {
                     .cjs => {
@@ -7727,6 +7768,11 @@ pub const LinkerContext = struct {
 
             // TODO: iife
             .iife => {},
+
+            .kit_internal_hmr => {
+                // nothing needs to be done here, as the exports are already
+                // forwarded in the module closure.
+            },
 
             .cjs => {
                 switch (flags.wrap) {
@@ -8584,10 +8630,7 @@ pub const LinkerContext = struct {
         allocator: std.mem.Allocator,
         temp_allocator: std.mem.Allocator,
     ) js_printer.PrintResult {
-
-        // var file = &c.graph.files.items(.input_file)[part.source_index.get()];
         const parts: []js_ast.Part = c.graph.ast.items(.parts)[part_range.source_index.get()].slice()[part_range.part_index_begin..part_range.part_index_end];
-        // const resolved_exports: []ResolvedExports = c.graph.meta.items(.resolved_exports);
         const all_flags: []const JSMeta.Flags = c.graph.meta.items(.flags);
         const flags = all_flags[part_range.source_index.get()];
         const wrapper_part_index = if (flags.wrap != .none)
@@ -8782,24 +8825,40 @@ pub const LinkerContext = struct {
 
         var out_stmts: []js_ast.Stmt = stmts.all_stmts.items;
 
+        // Turn each module into a function if this is Kit
+        var stmt_storage: Stmt = undefined;
+        if (c.options.output_format == .kit_internal_hmr) {
+            stmt_storage = Stmt.allocateExpr(temp_allocator, Expr.init(E.Arrow, .{
+                .args = temp_allocator.dupe(G.Arg, &.{.{
+                    .binding = Binding.alloc(temp_allocator, B.Identifier{
+                        .ref = ast.require_ref,
+                    }, Logger.Loc.Empty),
+                }}) catch bun.outOfMemory(),
+                .body = .{
+                    .stmts = stmts.all_stmts.items,
+                    .loc = Logger.Loc.Empty,
+                },
+            }, Logger.Loc.Empty));
+            out_stmts = (&stmt_storage)[0..1];
+        }
         // Optionally wrap all statements in a closure
-        if (needs_wrapper) {
+        else if (needs_wrapper) {
             switch (flags.wrap) {
                 .cjs => {
                     const uses_exports_ref = ast.uses_exports_ref();
 
                     // Only include the arguments that are actually used
-                    var args = std.ArrayList(js_ast.G.Arg).initCapacity(
+                    var args = std.ArrayList(G.Arg).initCapacity(
                         temp_allocator,
                         if (ast.uses_module_ref() or uses_exports_ref) 2 else 0,
                     ) catch unreachable;
 
                     if (ast.uses_module_ref() or uses_exports_ref) {
                         args.appendAssumeCapacity(
-                            js_ast.G.Arg{
-                                .binding = js_ast.Binding.alloc(
+                            G.Arg{
+                                .binding = Binding.alloc(
                                     temp_allocator,
-                                    js_ast.B.Identifier{
+                                    B.Identifier{
                                         .ref = ast.exports_ref,
                                     },
                                     Logger.Loc.Empty,
@@ -8809,10 +8868,10 @@ pub const LinkerContext = struct {
 
                         if (ast.uses_module_ref()) {
                             args.appendAssumeCapacity(
-                                js_ast.G.Arg{
-                                    .binding = js_ast.Binding.alloc(
+                                G.Arg{
+                                    .binding = Binding.alloc(
                                         temp_allocator,
-                                        js_ast.B.Identifier{
+                                        B.Identifier{
                                             .ref = ast.module_ref,
                                         },
                                         Logger.Loc.Empty,
@@ -11255,7 +11314,7 @@ pub const LinkerContext = struct {
         export_star_map: std.AutoHashMap(Index.Int, void),
         entry_point_kinds: []EntryPoint.Kind,
         export_star_records: [][]u32,
-        output_format: options.OutputFormat,
+        output_format: options.Format,
 
         pub fn hasDynamicExportsDueToExportStar(this: *DependencyWrapper, source_index: Index.Int) bool {
             // Terminate the traversal now if this file already has dynamic exports

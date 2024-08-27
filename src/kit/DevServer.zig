@@ -549,6 +549,9 @@ pub const BundleTask = struct {
             .loaders = task.route.dev.loaders,
             .log = &task.log,
             .output_dir = "", // this disables filesystem output
+            .output_format = .kit_internal_hmr,
+            .out_extensions = bun.StringHashMap([]const u8).init(bundler.allocator),
+
             .public_path = switch (task.kind) {
                 .client => task.route.clientPublicPath(),
                 .server => task.route.dev.cwd,
@@ -557,7 +560,13 @@ pub const BundleTask = struct {
                 .client => .browser,
                 .server => .bun,
             },
-            .out_extensions = bun.StringHashMap([]const u8).init(bundler.allocator),
+            .entry_naming = switch (task.kind) {
+                // Always name it "client.{js/css}" so that the server can know
+                // the entry-point script without waiting on a client bundle.
+                .client => "client.[ext]",
+                // For uniformity
+                .server => "server.[ext]",
+            },
 
             // unused by all code
             .resolve_mode = .dev,
@@ -566,6 +575,7 @@ pub const BundleTask = struct {
         };
 
         bundler.configureLinker();
+
         try bundler.configureDefines();
 
         // The following are from Vite: https://vitejs.dev/guide/env-and-mode
@@ -585,18 +595,6 @@ pub const BundleTask = struct {
             "import.meta.env.SSR",
             Define.Data.initBoolean(task.kind == .server),
         );
-
-        switch (task.kind) {
-            .client => {
-                // Always name it "client.{js/css}" so that the server can know
-                // the entry-point script without waiting on a client bundle.
-                bundler.options.entry_naming = "client.[ext]";
-            },
-            .server => {
-                bundler.options.entry_naming = "server.[ext]";
-                // bundler.options.target =.bun
-            },
-        }
 
         bundler.resolver.opts = bundler.options;
     }

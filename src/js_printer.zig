@@ -547,7 +547,7 @@ pub const Options = struct {
 
     require_or_import_meta_for_source_callback: RequireOrImportMeta.Callback = .{},
 
-    module_type: options.OutputFormat = .preserve,
+    module_type: options.Format = .esm,
 
     // /// Used for cross-module inlining of import items when bundling
     // const_values: Ast.ConstValuesMap = .{},
@@ -6419,15 +6419,28 @@ pub fn printWithWriterAndPlatform(
         imported_module_ids_list = printer.imported_module_ids;
     }
 
-    for (parts) |part| {
-        for (part.stmts) |stmt| {
-            printer.printStmt(stmt) catch |err| {
-                return .{ .err = err };
-            };
-            if (printer.writer.getError()) {} else |err| {
-                return .{ .err = err };
+    if (opts.module_type == .kit_internal_hmr) {
+        printer.indent();
+        printer.printIndent();
+        printer.printExpr(parts[0].stmts[0].data.s_expr.value, .comma, .{});
+        printer.print(",");
+    } else {
+        // The IIFE wrapper is done in `postProcessJSChunk`, so we just manually
+        // trigger an indent.
+        if (opts.module_type == .iife) {
+            printer.indent();
+        }
+
+        for (parts) |part| {
+            for (part.stmts) |stmt| {
+                printer.printStmt(stmt) catch |err| {
+                    return .{ .err = err };
+                };
+                if (printer.writer.getError()) {} else |err| {
+                    return .{ .err = err };
+                }
+                printer.printSemicolonIfNeeded();
             }
-            printer.printSemicolonIfNeeded();
         }
     }
 

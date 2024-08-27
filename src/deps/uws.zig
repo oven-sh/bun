@@ -1926,10 +1926,10 @@ pub const AnyResponse = union(enum) {
         };
     }
 
-    pub fn end(this: AnyResponse, data: []const u8) void {
+    pub fn end(this: AnyResponse, data: []const u8, close_connection: bool) void {
         return switch (this) {
-            .SSL => |resp| resp.end(data),
-            .TCP => |resp| resp.end(data),
+            .SSL => |resp| resp.end(data, close_connection),
+            .TCP => |resp| resp.end(data, close_connection),
         };
     }
 

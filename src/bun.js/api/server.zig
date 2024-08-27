@@ -181,10 +181,10 @@ const StaticRoute = struct {
     status_code: u16,
     blob: AnyBlob,
     cached_blob_size: u64 = 0,
-    content_type: MimeType,
-    content_type_needs_free: bool = false,
-    needs_content_type: bool = true,
-    headers: ?*JSC.FetchHeaders = null,
+    has_content_disposition: bool = false,
+    headers: Headers = .{
+        .allocator = bun.default_allocator,
+    },
     ref_count: u32 = 1,
 
     const HTTPResponse = uws.AnyResponse;
@@ -194,38 +194,19 @@ const StaticRoute = struct {
 
     fn deinit(this: *Route) void {
         this.blob.detach();
-        if (this.content_type_needs_free) {
-            this.content_type.deinit(bun.default_allocator);
-        }
-
-        if (this.headers) |headers| {
-            headers.deref();
-        }
+        this.headers.deinit();
 
         this.destroy();
     }
 
     pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) ?*Route {
         if (argument.as(JSC.WebCore.Response)) |response| {
-            const headers = if (response.init.headers) |headers| headers.cloneThis(globalThis) else null;
-
-            defer {
-                if (globalThis.hasException()) {
-                    if (headers) |h| {
-                        h.deref();
-                    }
-                }
-            }
-
-            if (globalThis.hasException()) {
-                return null;
-            }
 
             // The user may want to pass in the same Response object multiple endpoints
             // Let's let them do that.
             response.body.value.toBlobIfPossible();
 
-            const blob: AnyBlob = brk: {
+            var blob: AnyBlob = brk: {
                 switch (response.body.value) {
                     .Used => {
                         globalThis.throwInvalidArguments("Response body has already been used", .{});
@@ -259,14 +240,31 @@ const StaticRoute = struct {
                 }
             };
 
-            const content_type, const needs_content_type, const content_type_needs_free = getContentType(headers, &blob, bun.default_allocator);
+            var has_content_disposition = false;
+
+            if (response.init.headers) |headers| {
+                has_content_disposition = headers.fastHas(.ContentDisposition);
+                headers.fastRemove(.TransferEncoding);
+                headers.fastRemove(.ContentLength);
+            }
+
+            const headers: Headers = if (response.init.headers) |headers|
+                Headers.from(headers, bun.default_allocator, .{
+                    .body = &blob,
+                }) catch {
+                    blob.detach();
+                    globalThis.throwOutOfMemory();
+                    return null;
+                }
+            else
+                .{
+                    .allocator = bun.default_allocator,
+                };
 
             return Route.new(.{
                 .blob = blob,
                 .cached_blob_size = blob.size(),
-                .content_type = content_type,
-                .content_type_needs_free = content_type_needs_free,
-                .needs_content_type = needs_content_type,
+                .has_content_disposition = has_content_disposition,
                 .headers = headers,
                 .server = null,
                 .status_code = response.statusCode(),
@@ -286,6 +284,7 @@ const StaticRoute = struct {
             resp.timeout(server.config().idleTimeout);
         }
         resp.corked(renderMetadata, .{ this, resp });
+        resp.end("", resp.shouldCloseConnection());
         this.onResponseComplete(resp);
     }
 
@@ -377,10 +376,18 @@ const StaticRoute = struct {
         }
     }
 
-    fn doWriteHeaders(_: *StaticRoute, headers: *JSC.FetchHeaders, resp: HTTPResponse) void {
+    fn doWriteHeaders(this: *StaticRoute, resp: HTTPResponse) void {
         switch (resp) {
-            .SSL => |r| writeHeaders(headers, true, r),
-            .TCP => |r| writeHeaders(headers, false, r),
+            inline .SSL, .TCP => |s| {
+                const entries = this.headers.entries.slice();
+                const names: []const Api.StringPointer = entries.items(.name);
+                const values: []const Api.StringPointer = entries.items(.value);
+                const buf = this.headers.buf.items;
+
+                for (names, values) |name, value| {
+                    s.writeHeader(name.slice(buf), value.slice(buf));
+                }
+            },
         }
     }
 
@@ -397,37 +404,8 @@ const StaticRoute = struct {
         else
             status;
 
-        var has_content_disposition = false;
-
-        if (this.headers) |headers| {
-            has_content_disposition = headers.fastHas(.ContentDisposition);
-
-            this.doWriteStatus(status, resp);
-            this.doWriteHeaders(headers, resp);
-        } else {
-            this.doWriteStatus(status, resp);
-        }
-
-        if (this.needs_content_type and !this.blob.isDetached()) {
-            resp.writeHeader("content-type", this.content_type.value);
-        }
-
-        // automatically include the filename when:
-        // 1. Bun.file("foo")
-        // 2. The content-disposition header is not present
-        if (!has_content_disposition and this.content_type.category.autosetFilename()) {
-            if (this.blob.getFileName()) |filename| {
-                const basename = std.fs.path.basename(filename);
-                if (basename.len > 0) {
-                    var filename_buf: [1024]u8 = undefined;
-
-                    resp.writeHeader(
-                        "content-disposition",
-                        std.fmt.bufPrint(&filename_buf, "filename=\"{s}\"", .{basename[0..@min(basename.len, 1024 - 32)]}) catch "",
-                    );
-                }
-            }
-        }
+        this.doWriteStatus(status, resp);
+        this.doWriteHeaders(resp);
     }
 };
 

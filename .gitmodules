@@ -13,13 +13,6 @@ ignore = dirty
 depth = 1
 shallow = true
 fetchRecurseSubmodules = false
-[submodule "src/deps/mimalloc"]
-path = src/deps/mimalloc
-url = https://github.com/Jarred-Sumner/mimalloc.git
-ignore = dirty
-depth = 1
-shallow = true
-fetchRecurseSubmodules = false
 [submodule "src/deps/zlib"]
 path = src/deps/zlib
 url = https://github.com/cloudflare/zlib.git

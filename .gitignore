@@ -154,3 +154,6 @@ scripts/env.local
 /src/deps/libarchive
 /src/deps/libdeflate
 /src/deps/ls*hpack
+/src/deps/mimalloc
+/src/deps/zstd
+/src/deps/zlib

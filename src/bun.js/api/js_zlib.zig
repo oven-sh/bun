@@ -66,6 +66,7 @@ pub const ZlibEncoder = struct {
                 .flush = @enumFromInt(options.flush),
                 .finishFlush = @enumFromInt(options.finishFlush),
                 .fullFlush = @enumFromInt(options.fullFlush),
+                .dictionary = options.dictionary.slice(),
             },
         });
         this.stream.init(options.level, options.windowBits, options.memLevel, options.strategy) catch {
@@ -412,6 +413,7 @@ pub const ZlibDecoder = struct {
                 .flush = @enumFromInt(options.flush),
                 .finishFlush = @enumFromInt(options.finishFlush),
                 .fullFlush = @enumFromInt(options.fullFlush),
+                .dictionary = options.dictionary.slice(),
             },
         });
         this.stream.init(options.windowBits) catch {

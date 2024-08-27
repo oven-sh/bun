@@ -77,6 +77,16 @@ pub const ReturnCode = @import("zlib-internal").ReturnCode;
 pub extern fn inflateInit_(strm: z_streamp, version: [*c]const u8, stream_size: c_int) ReturnCode;
 pub extern fn inflateInit2_(strm: z_streamp, window_size: c_int, version: [*c]const u8, stream_size: c_int) ReturnCode;
 
+/// Initializes the compression dictionary from the given byte sequence without producing any compressed output. This function must be called immediately after deflateInit, deflateInit2 or deflateReset, before any call of deflate. The compressor and decompressor must use exactly the same dictionary (see inflateSetDictionary). without producing any compressed output. When using the zlib format, this function must be called immediately after deflateInit, deflateInit2 or deflateReset, and before any call of deflate. When doing raw deflate, this function must be called either before any call of deflate, or immediately after the completion of a deflate block, i.e. after all input has been consumed and all output has been delivered when using any of the flush options Z_BLOCK, Z_PARTIAL_FLUSH, Z_SYNC_FLUSH, or Z_FULL_FLUSH. The compressor and decompressor must use exactly the same dictionary (see inflateSetDictionary).
+/// The dictionary should consist of strings (byte sequences) that are likely to be encountered later in the data to be compressed, with the most commonly used strings preferably put towards the end of the dictionary. Using a dictionary is most useful when the data to be compressed is short and can be predicted with good accuracy; the data can then be compressed better than with the default empty dictionary.
+///
+/// Depending on the size of the compression data structures selected by deflateInit or deflateInit2, a part of the dictionary may in effect be discarded, for example if the dictionary is larger than the window size in deflateInit or deflateInit2. Thus the strings most likely to be useful should be put at the end of the dictionary, not at the front. In addition, the current implementation of deflate will use at most the window size minus 262 bytes of the provided dictionary.
+///
+/// Upon return of this function, strm->adler is set to the Adler-32 value of the dictionary; the decompressor may later use this value to determine which dictionary has been used by the compressor. (The Adler-32 value applies to the whole dictionary even if only a subset of the dictionary is actually used by the compressor.) If a raw deflate was requested, then the Adler-32 value is not computed and strm->adler is not set.
+///
+/// deflateSetDictionary returns Z_OK if success, or Z_STREAM_ERROR if a parameter is invalid (such as NULL dictionary) or the stream state is inconsistent (for example if deflate has already been called for this stream or if not at a block boundary for raw deflate). deflateSetDictionary does not perform any compression: this will be done by deflate().
+pub extern fn deflateSetDictionary(strm: z_streamp, dictionary: ?[*]const u8, length: c_uint) ReturnCode;
+
 /// inflate decompresses as much data as possible, and stops when the input buffer becomes empty or the output buffer becomes full. It may introduce some output latency (reading input without producing any output) except when forced to flush.
 /// The detailed semantics are as follows. inflate performs one or both of the following actions:
 ///
@@ -712,6 +722,11 @@ pub extern fn deflateBound(strm: z_streamp, sourceLen: u64) u64;
 ///   compression: this will be done by deflate().
 pub extern fn deflateInit2_(strm: z_streamp, level: c_int, method: c_int, windowBits: c_int, memLevel: c_int, strategy: c_int, version: [*c]const u8, stream_size: c_int) ReturnCode;
 
+/// Initializes the decompression dictionary from the given uncompressed byte sequence. This function must be called immediately after a call of inflate, if that call returned Z_NEED_DICT. The dictionary chosen by the compressor can be determined from the Adler-32 value returned by that call of inflate. The compressor and decompressor must use exactly the same dictionary (see deflateSetDictionary). For raw inflate, this function can be called at any time to set the dictionary. If the provided dictionary is smaller than the window and there is already data in the window, then the provided dictionary will amend what's there. The application must insure that the dictionary that was used for compression is provided.
+///
+/// inflateSetDictionary returns Z_OK if success, Z_STREAM_ERROR if a parameter is invalid (such as NULL dictionary) or the stream state is inconsistent, Z_DATA_ERROR if the given dictionary doesn't match the expected one (incorrect Adler-32 value). inflateSetDictionary does not perform any decompression: this will be done by subsequent calls of inflate().
+pub extern fn inflateSetDictionary(strm: z_streamp, dictionary: ?[*]const u8, length: c_uint) ReturnCode;
+
 pub const NodeMode = enum(u8) {
     NONE = 0,
     DEFLATE = 1,
@@ -933,6 +948,9 @@ pub const ZlibCompressorStreaming = struct {
     windowBits: c_int = -1,
     memLevel: c_int = -1,
     strategy: c_int = -1,
+    dictionary: []const u8,
+    err: ReturnCode = .Ok,
+    err_msg: ?[*:0]const u8 = null,
 
     pub fn init(this: *ZlibCompressorStreaming, level: c_int, windowBits: c_int, memLevel: c_int, strategy: c_int) !void {
         const ret_code = deflateInit2_(&this.state, level, 8, windowBits, memLevel, strategy, zlibVersion(), @sizeOf(z_stream));
@@ -941,7 +959,25 @@ pub const ZlibCompressorStreaming = struct {
         this.windowBits = windowBits;
         this.memLevel = memLevel;
         this.strategy = strategy;
+
+        this.setDictionary() catch {};
+        this.err_msg = null;
         return;
+    }
+
+    fn setDictionary(this: *ZlibCompressorStreaming) !void {
+        switch (this.mode) {
+            .DEFLATE, .DEFLATERAW => {
+                this.err = deflateSetDictionary(&this.state, this.dictionary.ptr, @intCast(this.dictionary.len));
+            },
+            .INFLATERAW => {
+                this.err = inflateSetDictionary(&this.state, this.dictionary.ptr, @intCast(this.dictionary.len));
+            },
+            else => {},
+        }
+        if (this.err != .Ok) {
+            return error.ZlibFailedSetDictionary;
+        }
     }
 
     pub fn writer(this: *ZlibCompressorStreaming, out_writer: anytype) WriterImpl(@TypeOf(out_writer)).Writer {
@@ -1017,6 +1053,9 @@ pub const ZlibDecompressorStreaming = struct {
     finishFlush: FlushValue = .Finish,
     fullFlush: FlushValue = .FullFlush,
     windowBits: c_int = -1,
+    dictionary: []const u8,
+    err: ReturnCode = .Ok,
+    err_msg: ?[*:0]const u8 = null,
 
     pub fn init(this: *ZlibDecompressorStreaming, windowBits: c_int) !void {
         const ret_code = inflateInit2_(&this.state, windowBits, zlibVersion(), @sizeOf(z_stream));
@@ -1025,7 +1064,27 @@ pub const ZlibDecompressorStreaming = struct {
         this.windowBits = windowBits;
         // this.memLevel = memLevel;
         // this.strategy = strategy;
+
+        this.setDictionary() catch {};
+        this.err_msg = null;
         return;
+    }
+
+    fn setDictionary(this: *ZlibDecompressorStreaming) !void {
+        this.err = .Ok;
+        const dictionary = this.dictionary;
+        switch (this.mode) {
+            .DEFLATE, .DEFLATERAW => {
+                if (dictionary.len > 0) this.err = deflateSetDictionary(&this.state, dictionary.ptr, @intCast(dictionary.len));
+            },
+            .INFLATERAW => {
+                if (dictionary.len > 0) this.err = inflateSetDictionary(&this.state, dictionary.ptr, @intCast(dictionary.len));
+            },
+            else => {},
+        }
+        if (this.err != .Ok) {
+            return this.error_for_message("Failed to set dictionary");
+        }
     }
 
     pub fn writer(this: *ZlibDecompressorStreaming, out_writer: anytype) WriterImpl(@TypeOf(out_writer)).Writer {

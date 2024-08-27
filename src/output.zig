@@ -387,17 +387,17 @@ pub fn resetTerminal() void {
     }
 
     if (enable_ansi_colors_stderr) {
-        _ = source.error_stream.write("\x1b[H\x1b[2J").unwrap() catch 0;
+        _ = source.error_stream.write("\x1B[2J\x1B[3J\x1B[H").unwrap() catch 0;
     } else {
-        _ = source.stream.write("\x1b[H\x1b[2J").unwrap() catch 0;
+        _ = source.stream.write("\x1B[2J\x1B[3J\x1B[H").unwrap() catch 0;
     }
 }
 
 pub fn resetTerminalAll() void {
     if (enable_ansi_colors_stderr)
-        _ = source.error_stream.write("\x1b[H\x1b[2J").unwrap() catch 0;
+        _ = source.error_stream.write("\x1B[2J\x1B[3J\x1B[H").unwrap() catch 0;
     if (enable_ansi_colors_stdout)
-        _ = source.stream.write("\x1b[H\x1b[2J").unwrap() catch 0;
+        _ = source.stream.write("\x1B[2J\x1B[3J\x1B[H").unwrap() catch 0;
 }
 
 /// Write buffered stdout & stderr to the terminal.

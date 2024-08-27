@@ -4,7 +4,7 @@ Use `bun outdated` to display a table of outdated dependencies with their latest
 $ bun outdated
 
 |--------------------------------------------------------------------|
-| Package                               | Current | Update | Latest |
+| Package                                | Current | Update | Latest |
 |----------------------------------------|---------|--------|--------|
 | @types/bun (dev)                       | 1.1.6   | 1.1.7  | 1.1.7  |
 |----------------------------------------|---------|--------|--------|

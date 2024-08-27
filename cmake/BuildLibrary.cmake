@@ -1,6 +1,6 @@
 macro(add_custom_library)
   set(args TARGET PREFIX)
-  set(multi_args LIBRARIES INCLUDES CMAKE_TARGETS CMAKE_ARGS)
+  set(multi_args LIBRARIES INCLUDES CMAKE_TARGETS CMAKE_ARGS CMAKE_BUILD_TYPE)
   cmake_parse_arguments(LIB "" "${args}" "${multi_args}" ${ARGN})
 
   if(NOT LIB_TARGET)
@@ -17,7 +17,16 @@ macro(add_custom_library)
   parse_option(${LIB_ID}_SOURCE_PATH FILEPATH "Path to the ${LIB_NAME} source" ${CWD}/src/deps/${LIB_NAME})
   parse_option(${LIB_ID}_BUILD_PATH FILEPATH "Path to the ${LIB_NAME} build" ${BUILD_PATH}/${LIB_NAME})
 
-  set(${LIB_ID}_CMAKE_ARGS ${CMAKE_ARGS} ${LIB_CMAKE_ARGS})
+  if(NOT LIB_CMAKE_BUILD_TYPE)
+    set(LIB_CMAKE_BUILD_TYPE ${CMAKE_BUILD_TYPE})
+  endif()
+
+  set(${LIB_ID}_CMAKE_ARGS
+    -DCMAKE_BUILD_TYPE=${LIB_CMAKE_BUILD_TYPE}
+    ${CMAKE_ARGS}
+    ${LIB_CMAKE_ARGS}
+  )
+
   add_custom_command(
     COMMENT
       "Configuring ${LIB_NAME}"
@@ -73,7 +82,11 @@ macro(add_custom_library)
   
   set(${LIB_ID}_INCLUDE_PATHS)
   foreach(include ${LIB_INCLUDES})
-    list(APPEND ${LIB_ID}_INCLUDE_PATHS ${${LIB_ID}_SOURCE_PATH}/${include})
+    if(include STREQUAL ".")
+      list(APPEND ${LIB_ID}_INCLUDE_PATHS ${${LIB_ID}_SOURCE_PATH})
+    else()
+      list(APPEND ${LIB_ID}_INCLUDE_PATHS ${${LIB_ID}_SOURCE_PATH}/${include})
+    endif()
   endforeach()
 
   add_custom_target(

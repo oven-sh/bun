@@ -2,10 +2,6 @@ include(cmake/Utils.cmake)
 
 parse_option(CMAKE_BUILD_TYPE "Debug|Release|RelWithDebInfo|MinSizeRel" "The build type to use" REQUIRED)
 
-list(APPEND CMAKE_ARGS
-  -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
-)
-
 set_if(DEFAULT_IF_RELEASE "Release|RelWithDebInfo|MinSizeRel" CMAKE_BUILD_TYPE)
 set_if(DEFAULT_IF_DEBUG "Debug|RelWithDebInfo" CMAKE_BUILD_TYPE)
 

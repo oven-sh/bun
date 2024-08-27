@@ -153,3 +153,4 @@ scripts/env.local
 /src/deps/c*ares
 /src/deps/libarchive
 /src/deps/libdeflate
+/src/deps/ls*hpack

@@ -393,10 +393,10 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
     auto* targetContext = NodeVMGlobalObject::create(
         vm, zigGlobal->NodeVMGlobalObjectStructure());
 
-    // auto proxyStructure = JSGlobalProxy::createStructure(vm, globalObject, JSC::jsNull());
-    // auto proxy = JSGlobalProxy::create(vm, proxyStructure);
-    // proxy->setTarget(vm, targetContext);
-    // context->setPrototypeDirect(vm, proxy);
+    auto proxyStructure = JSGlobalProxy::createStructure(vm, globalObject, JSC::jsNull());
+    auto proxy = JSGlobalProxy::create(vm, proxyStructure);
+    proxy->setTarget(vm, targetContext);
+    context->setPrototypeDirect(vm, proxy);
 
     JSScope* contextScope = JSWithScope::create(vm, targetContext, targetContext->globalScope(), context);
     return runInContext(globalObject, script, targetContext, contextScope, callFrame->argument(0));
@@ -422,8 +422,13 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
     }
 
     JSObject* context = asObject(contextArg);
-    JSWithScope* contextScope = JSWithScope::create(vm, globalObject, globalObject->globalScope(), context);
 
+    auto proxyStructure = JSGlobalProxy::createStructure(vm, globalObject, JSC::jsNull());
+    auto proxy = JSGlobalProxy::create(vm, proxyStructure);
+    proxy->setTarget(vm, globalObject);
+    context->setPrototypeDirect(vm, proxy);
+
+    JSWithScope* contextScope = JSWithScope::create(vm, globalObject, globalObject->globalScope(), context);
     return runInContext(globalObject, script, globalObject->globalThis(), contextScope, callFrame->argument(1));
 }
 

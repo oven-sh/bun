@@ -219,6 +219,12 @@ function testRunInContext(
     });
     expect(result).toContain("foo.js");
   });
+  test("can set context property", () => {
+    const word = "bunny";
+    const context = createContext({});
+    fn(`returnValue = '${word}';`, context);
+    expect(context.returnValue).toContain(word);
+  });
   test.skip("can specify a line offset", () => {
     // TODO: use test.todo
   });

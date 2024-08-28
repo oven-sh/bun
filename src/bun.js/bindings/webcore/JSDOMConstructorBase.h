@@ -27,7 +27,6 @@
 namespace WebCore {
 
 JSC_DECLARE_HOST_FUNCTION(callThrowTypeErrorForJSDOMConstructor);
-JSC_DECLARE_HOST_FUNCTION(callThrowTypeErrorForJSDOMConstructorNotConstructable);
 
 // Base class for all callable constructor objects in the JSC bindings.
 class JSDOMConstructorBase : public JSC::InternalFunction {
@@ -54,8 +53,8 @@ public:
 protected:
     JSDOMConstructorBase(JSC::VM& vm, JSC::Structure* structure, JSC::NativeFunction functionForConstruct, JSC::NativeFunction functionForCall = nullptr)
         : Base(vm, structure,
-              functionForCall ? functionForCall : callThrowTypeErrorForJSDOMConstructorNotConstructable,
-              functionForConstruct ? functionForConstruct : callThrowTypeErrorForJSDOMConstructorNotConstructable)
+              functionForCall ? functionForCall : callThrowTypeErrorForJSDOMConstructor,
+              functionForConstruct ? functionForConstruct : callThrowTypeErrorForJSDOMConstructor)
     {
     }
 };

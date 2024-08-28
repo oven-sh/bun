@@ -19,39 +19,8 @@ steps:
   - key: "darwin-aarch64"
     group: ":darwin: aarch64"
     steps:
-      - key: "darwin-aarch64-build-deps"
-        label: ":darwin: aarch64 - build-deps"
-        agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "aarch64"
-        command:
-          - "./.buildkite/scripts/build-deps.sh"
-
-      - key: "darwin-aarch64-build-zig"
-        label: ":darwin: aarch64 - build-zig"
-        agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "aarch64"
-        command:
-          - "./.buildkite/scripts/build-zig.sh darwin aarch64"
-
-      - key: "darwin-aarch64-build-cpp"
-        label: ":darwin: aarch64 - build-cpp"
-        agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "aarch64"
-        command:
-          - "./.buildkite/scripts/build-cpp.sh"
-
       - key: "darwin-aarch64-build-bun"
         label: ":darwin: aarch64 - build-bun"
-        depends_on:
-          - "darwin-aarch64-build-deps"
-          - "darwin-aarch64-build-zig"
-          - "darwin-aarch64-build-cpp"
         agents:
           queue: "build-darwin"
           os: "darwin"
@@ -119,39 +88,8 @@ steps:
   - key: "darwin-x64"
     group: ":darwin: x64"
     steps:
-      - key: "darwin-x64-build-deps"
-        label: ":darwin: x64 - build-deps"
-        agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "x64"
-        command:
-          - "./.buildkite/scripts/build-deps.sh"
-
-      - key: "darwin-x64-build-zig"
-        label: ":darwin: x64 - build-zig"
-        agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "aarch64"
-        command:
-          - "./.buildkite/scripts/build-zig.sh darwin x64"
-
-      - key: "darwin-x64-build-cpp"
-        label: ":darwin: x64 - build-cpp"
-        agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "x64"
-        command:
-          - "./.buildkite/scripts/build-cpp.sh"
-
       - key: "darwin-x64-build-bun"
         label: ":darwin: x64 - build-bun"
-        depends_on:
-          - "darwin-x64-build-deps"
-          - "darwin-x64-build-zig"
-          - "darwin-x64-build-cpp"
         agents:
           queue: "build-darwin"
           os: "darwin"
@@ -219,39 +157,8 @@ steps:
   - key: "linux-aarch64"
     group: ":linux: aarch64"
     steps:
-      - key: "linux-aarch64-build-deps"
-        label: ":linux: aarch64 - build-deps"
-        agents:
-          queue: "build-linux"
-          os: "linux"
-          arch: "aarch64"
-        command:
-          - "./.buildkite/scripts/build-deps.sh"
-
-      - key: "linux-aarch64-build-zig"
-        label: ":linux: aarch64 - build-zig"
-        agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "aarch64"
-        command:
-          - "./.buildkite/scripts/build-zig.sh linux aarch64"
-
-      - key: "linux-aarch64-build-cpp"
-        label: ":linux: aarch64 - build-cpp"
-        agents:
-          queue: "build-linux"
-          os: "linux"
-          arch: "aarch64"
-        command:
-          - "./.buildkite/scripts/build-cpp.sh"
-
       - key: "linux-aarch64-build-bun"
         label: ":linux: aarch64 - build-bun"
-        depends_on:
-          - "linux-aarch64-build-deps"
-          - "linux-aarch64-build-zig"
-          - "linux-aarch64-build-cpp"
         agents:
           queue: "build-linux"
           os: "linux"
@@ -350,39 +257,8 @@ steps:
   - key: "linux-x64"
     group: ":linux: x64"
     steps:
-      - key: "linux-x64-build-deps"
-        label: ":linux: x64 - build-deps"
-        agents:
-          queue: "build-linux"
-          os: "linux"
-          arch: "x64"
-        command:
-          - "./.buildkite/scripts/build-deps.sh"
-
-      - key: "linux-x64-build-zig"
-        label: ":linux: x64 - build-zig"
-        agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "aarch64"
-        command:
-          - "./.buildkite/scripts/build-zig.sh linux x64"
-
-      - key: "linux-x64-build-cpp"
-        label: ":linux: x64 - build-cpp"
-        agents:
-          queue: "build-linux"
-          os: "linux"
-          arch: "x64"
-        command:
-          - "./.buildkite/scripts/build-cpp.sh"
-
       - key: "linux-x64-build-bun"
         label: ":linux: x64 - build-bun"
-        depends_on:
-          - "linux-x64-build-deps"
-          - "linux-x64-build-zig"
-          - "linux-x64-build-cpp"
         agents:
           queue: "build-linux"
           os: "linux"
@@ -481,43 +357,14 @@ steps:
   - key: "linux-x64-baseline"
     group: ":linux: x64-baseline"
     steps:
-      - key: "linux-x64-baseline-build-deps"
-        label: ":linux: x64-baseline - build-deps"
-        agents:
-          queue: "build-linux"
-          os: "linux"
-          arch: "x64"
-        command:
-          - "./.buildkite/scripts/build-deps.sh"
-
-      - key: "linux-x64-baseline-build-zig"
-        label: ":linux: x64-baseline - build-zig"
-        agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "aarch64"
-        command:
-          - "./.buildkite/scripts/build-zig.sh linux x64"
-
-      - key: "linux-x64-baseline-build-cpp"
-        label: ":linux: x64-baseline - build-cpp"
-        agents:
-          queue: "build-linux"
-          os: "linux"
-          arch: "x64"
-        command:
-          - "./.buildkite/scripts/build-cpp.sh"
-
       - key: "linux-x64-baseline-build-bun"
         label: ":linux: x64-baseline - build-bun"
-        depends_on:
-          - "linux-x64-baseline-build-deps"
-          - "linux-x64-baseline-build-zig"
-          - "linux-x64-baseline-build-cpp"
         agents:
           queue: "build-linux"
           os: "linux"
           arch: "x64"
+        env:
+          ENABLE_BASELINE: "1"
         command:
           - "./.buildkite/scripts/build-bun.sh"
 
@@ -612,61 +459,14 @@ steps:
   - key: "windows-x64"
     group: ":windows: x64"
     steps:
-      - key: "windows-x64-build-deps"
-        label: ":windows: x64 - build-deps"
-        agents:
-          queue: "build-windows"
-          os: "windows"
-          arch: "x64"
-        artifact_paths:
-          - "build\\bun-deps\\*.lib"
-        env:
-          CCACHE_DISABLE: "1"
-        command:
-          - ".\\scripts\\all-dependencies.ps1"
-
-      - key: "windows-x64-build-zig"
-        label: ":windows: x64 - build-zig"
-        agents:
-          queue: "build-darwin"
-          os: "darwin" # cross-compile on Linux or Darwin
-          arch: "aarch64"
-        command:
-          - "./.buildkite/scripts/build-zig.sh windows x64"
-
-      - key: "windows-x64-build-cpp"
-        label: ":windows: x64 - build-cpp"
-        agents:
-          queue: "build-windows"
-          os: "windows"
-          arch: "x64"
-        artifact_paths:
-          # HACK: See scripts/build-bun-cpp.ps1
-          # - "build\\bun-cpp-objects.a"
-          - "build\\bun-cpp-objects.a.*"
-        env:
-          CCACHE_DISABLE: "1"
-        command:
-          - ".\\scripts\\build-bun-cpp.ps1"
-
       - key: "windows-x64-build-bun"
         label: ":windows: x64 - build-bun"
-        depends_on:
-          - "windows-x64-build-deps"
-          - "windows-x64-build-zig"
-          - "windows-x64-build-cpp"
         agents:
           queue: "build-windows"
           os: "windows"
           arch: "x64"
-        artifact_paths:
-          - "bun-windows-x64.zip"
-          - "bun-windows-x64-profile.zip"
-          - "features.json"
-        env:
-          CCACHE_DISABLE: "1"
         command:
-          - ".\\scripts\\buildkite-link-bun.ps1"
+          - ".\\buildkite\\scripts\\build-bun.ps1"
 
       - key: "windows-x64-test-bun"
         label: ":windows: x64 - test-bun"
@@ -697,64 +497,17 @@ steps:
   - key: "windows-x64-baseline"
     group: ":windows: x64-baseline"
     steps:
-      - key: "windows-x64-baseline-build-deps"
-        label: ":windows: x64-baseline - build-deps"
-        agents:
-          queue: "build-windows"
-          os: "windows"
-          arch: "x64"
-        artifact_paths:
-          - "build\\bun-deps\\*.lib"
-        env:
-          CCACHE_DISABLE: "1"
-          USE_BASELINE_BUILD: "1"
-        command:
-          - ".\\scripts\\all-dependencies.ps1"
-
-      - key: "windows-x64-baseline-build-zig"
-        label: ":windows: x64-baseline - build-zig"
-        agents:
-          queue: "build-darwin"
-          os: "darwin" # cross-compile on Linux or Darwin
-          arch: "aarch64"
-        command:
-          - "./.buildkite/scripts/build-zig.sh windows x64"
-
-      - key: "windows-x64-baseline-build-cpp"
-        label: ":windows: x64-baseline - build-cpp"
-        agents:
-          queue: "build-windows"
-          os: "windows"
-          arch: "x64"
-        artifact_paths:
-          # HACK: See scripts/build-bun-cpp.ps1
-          # - "build\\bun-cpp-objects.a"
-          - "build\\bun-cpp-objects.a.*"
-        env:
-          CCACHE_DISABLE: "1"
-          USE_BASELINE_BUILD: "1"
-        command:
-          - ".\\scripts\\build-bun-cpp.ps1"
-
       - key: "windows-x64-baseline-build-bun"
         label: ":windows: x64-baseline - build-bun"
-        depends_on:
-          - "windows-x64-baseline-build-deps"
-          - "windows-x64-baseline-build-zig"
-          - "windows-x64-baseline-build-cpp"
         agents:
           queue: "build-windows"
           os: "windows"
           arch: "x64"
-        artifact_paths:
-          - "bun-windows-x64-baseline.zip"
-          - "bun-windows-x64-baseline-profile.zip"
-          - "features.json"
         env:
           CCACHE_DISABLE: "1"
-          USE_BASELINE_BUILD: "1"
+          ENABLE_BASELINE: "1"
         command:
-          - ".\\scripts\\buildkite-link-bun.ps1 -Baseline $$True"
+          - ".\\buildkite\\scripts\\build-bun.ps1"
 
       - key: "windows-x64-baseline-test-bun"
         label: ":windows: x64-baseline - test-bun"

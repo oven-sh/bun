@@ -432,7 +432,9 @@ else()
         -fno-pic
         -fno-pie
         -faddrsig
-        -ffile-prefix-map="${CWD}"=.
+        -ffile-prefix-map=${CWD}=.
+        -ffile-prefix-map=${BUILD_PATH}=build
+        -ffile-prefix-map=${CACHE_PATH}=cache
     )
 endif()
 

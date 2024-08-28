@@ -19,7 +19,10 @@
     "@types/bun": "^1.1.3",
     "@types/react": "^18.3.3",
     "@typescript-eslint/eslint-plugin": "^7.11.0",
-    "@typescript-eslint/parser": "^7.11.0"
+    "@typescript-eslint/parser": "^7.11.0",
+    "caniuse-lite": "^1.0.30001620",
+    "autoprefixer": "^10.4.19",
+    "@mdn/browser-compat-data": "~5.5.28"
   },
   "resolutions": {
     "bun-types": "workspace:packages/bun-types"

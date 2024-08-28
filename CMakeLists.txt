@@ -546,6 +546,34 @@ if(APPLE)
   )
 endif()
 
+set(TRIPLET bun-${OS}-${ARCH})
+add_custom_command(
+  TARGET
+    ${bun} POST_BUILD
+  COMMAND
+    ${CMAKE_COMMAND} -E make_directory ${TRIPLET}
+    ${CMAKE_COMMAND} -E copy_if_different ${bun} ${TRIPLET}/bun
+    ${CMAKE_COMMAND} -E tar cfv ${TRIPLET}.zip --format=zip ${TRIPLET}
+    ${CMAKE_COMMAND} -E remove_directory ${TRIPLET}
+  WORKING_DIRECTORY
+    ${BUILD_PATH}
+  BYPRODUCTS
+    ${BUILD_PATH}/${TRIPLET}.zip
+)
+
+if(BUILDKITE)
+  add_custom_command(
+    TARGET
+      ${bun} POST_BUILD
+    DEPENDS
+      ${BUILD_PATH}/${TRIPLET}.zip
+    COMMAND
+      buildkite-agent artifact upload ${TRIPLET}.zip
+    WORKING_DIRECTORY
+      ${BUILD_PATH}
+  )
+endif()
+
 # --- Stripped Binary "bun"
 if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32 AND NOT ASSERT_ENABLED AND NOT BUN_CPP_ONLY)
   add_custom_command(

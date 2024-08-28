@@ -27,7 +27,7 @@ if($Env:VSCMD_ARG_TGT_ARCH -eq "x86") {
   throw "Visual Studio environment is targetting 32 bit. This configuration is definetly a mistake."
 }
 
-cmake -B build -GNinja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_VERBOSE_MAKEFILE=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+cmake -B build -GNinja -DCMAKE_BUILD_TYPE=Release -DCMAKE_VERBOSE_MAKEFILE=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed" }
 
 cmake --build build --verbose

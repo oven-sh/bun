@@ -260,8 +260,9 @@ pub const Blob = struct {
                     joiner.pushStatic("\r\n\r\n");
 
                     if (blob.store) |store| {
-                        blob.resolveSize();
-
+                        if (blob.size == Blob.max_size) {
+                            blob.resolveSize();
+                        }
                         switch (store.data) {
                             .file => |file| {
 

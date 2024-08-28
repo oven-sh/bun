@@ -15,6 +15,4 @@ add_custom_library(
     tinycc
   LIBRARIES
     tcc
-  CMAKE_ARGS
-    -DTCC_BUILD_STATIC=ON
 )

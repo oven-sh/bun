@@ -38,7 +38,7 @@ endif()
 
 # Workaround for linker issue on macOS and Linux x64
 # https://github.com/microsoft/mimalloc/issues/512
-if(APPLE OR (LINUX AND MIMALLOC_LIBRARY STREQUAL "mimalloc-debug"))
+if(NOT WIN32)
   set(MIMALLOC_OBJECT_FILE ${BUILD_PATH}/mimalloc/CMakeFiles/mimalloc-obj.dir/src/static.c.o)
 endif()
 

@@ -1182,12 +1182,12 @@ pub const ZlibDecompressorStreaming = struct {
                     if (ret == .NeedDict) return this.ctx.error_for_message((if (this.ctx.dictionary.len == 0) "Missing dictionary" else "Bad dictionary").ptr);
                     if (ret == .DataError) return this.ctx.error_for_message("Zlib error");
                     if (ret == .MemError) return error.ZlibError4;
+                    const have = CHUNK - state.avail_out;
+                    try this.out_writer.writeAll(out[0..have]);
                     if (ret == .StreamEnd and this.ctx.mode == .GUNZIP and state.avail_in > 0 and state.next_in.?[0] != 0) {
                         _ = inflateReset(state);
                         continue;
                     }
-                    const have = CHUNK - state.avail_out;
-                    try this.out_writer.writeAll(out[0..have]);
                     if (state.avail_out == 0) continue;
                     break;
                 }
@@ -1212,12 +1212,12 @@ pub const ZlibDecompressorStreaming = struct {
             if (ret == .NeedDict) return error.ZlibError5;
             if (ret == .DataError) return error.ZlibError6;
             if (ret == .MemError) return error.ZlibError7;
-            // if (ret == .StreamEnd and this.ctx.mode == .GUNZIP and state.avail_in > 0 and state.next_in.?[0] != 0) {
-            //     _ = inflateReset(state);
-            //     continue;
-            // }
             const have = CHUNK - state.avail_out;
             try output.appendSlice(bun.default_allocator, out[0..have]);
+            if (ret == .StreamEnd and this.mode == .GUNZIP and state.avail_in > 0 and state.next_in.?[0] != 0) {
+                _ = inflateReset(state);
+                continue;
+            }
             if (ret == .StreamEnd) break;
             if (state.avail_out == 0) continue;
             // if (ret == .BufError) return;

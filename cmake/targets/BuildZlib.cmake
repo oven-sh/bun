@@ -28,6 +28,16 @@ else()
   set(ZLIB_LIBRARY z)
 endif()
 
+set(ZLIB_CMAKE_ARGS
+  -DBUILD_SHARED_LIBS=OFF
+  -DBUILD_EXAMPLES=OFF
+)
+
+# https://gitlab.kitware.com/cmake/cmake/-/issues/25755
+if(APPLE)
+  list(APPEND ZLIB_CMAKE_ARGS -DCMAKE_C_FLAGS=\"-fno-define-target-os-macros\")
+endif()
+
 add_custom_library(
   TARGET
     zlib
@@ -38,8 +48,5 @@ add_custom_library(
   CMAKE_TARGETS
     zlib
   CMAKE_ARGS
-    -DBUILD_SHARED_LIBS=OFF
-    -DBUILD_EXAMPLES=OFF
-    # https://gitlab.kitware.com/cmake/cmake/-/issues/25755
-    -DCMAKE_C_FLAGS=\"-fno-define-target-os-macros\"
+    ${ZLIB_CMAKE_ARGS}
 )

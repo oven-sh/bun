@@ -12,7 +12,7 @@ add_custom_repository(
 
 set(LSHPACK_INCLUDES .)
 if(WIN32)
-  set(LSHPACK_INCLUDES compat/queue)
+  list(APPEND LSHPACK_INCLUDES compat/queue)
 endif()
 
 add_custom_library(

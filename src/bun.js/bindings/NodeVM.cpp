@@ -327,11 +327,6 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInThisContext, (JSGlobalObject * globalObjec
     auto* zigGlobal = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     JSObject* context = asObject(JSC::constructEmptyObject(globalObject));
 
-    auto proxyStructure = zigGlobal->globalProxyStructure();
-    auto proxy = JSGlobalProxy::create(vm, proxyStructure);
-    proxy->setTarget(vm, globalObject);
-    context->setPrototypeDirect(vm, proxy);
-
     auto* executable = JSC::DirectEvalExecutable::create(
         globalObject, source, NoLexicallyScopedFeatures, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
         false, false, EvalContextType::None, nullptr, nullptr);

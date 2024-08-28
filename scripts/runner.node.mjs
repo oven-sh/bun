@@ -146,7 +146,7 @@ async function runTests() {
           },
         });
         if (!error) {
-          break;
+          break downloadLoop;
         }
         const { code } = error;
         if (code === "EBUSY") {

@@ -10,18 +10,6 @@ add_custom_repository(
     886098f3f339617b4243b286f5ed364b9989e245
 )
 
-# TODO: make a patch upstream to change the line
-# `#ifdef _MSC_VER`
-# to account for clang-cl, which implements `__builtin_ctzl` and `__builtin_expect`
-# $textToReplace = [regex]::Escape("int __inline __builtin_ctzl(unsigned long mask)") + "[^}]*}"
-# $fileContent = Get-Content "deflate.h" -Raw
-# if ($fileContent -match $textToReplace) {
-#   Set-Content -Path "deflate.h" -Value ($fileContent -replace $textToReplace, "")
-# }
-# else {
-#   throw "Failed to patch deflate.h"
-# }
-
 if(WIN32)
   set(ZLIB_LIBRARY zlib)
 else()
@@ -31,6 +19,7 @@ endif()
 # https://gitlab.kitware.com/cmake/cmake/-/issues/25755
 if(APPLE)
   set(ZLIB_CMAKE_C_FLAGS "-fno-define-target-os-macros")
+  set(ZLIB_CMAKE_CXX_FLAGS "-fno-define-target-os-macros")
 endif()
 
 add_custom_library(
@@ -47,4 +36,6 @@ add_custom_library(
     -DBUILD_EXAMPLES=OFF
   CMAKE_C_FLAGS
     ${ZLIB_CMAKE_C_FLAGS}
+  CMAKE_CXX_FLAGS
+    ${ZLIB_CMAKE_CXX_FLAGS}
 )

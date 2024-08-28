@@ -3,40 +3,43 @@ import { createContext, runInContext, runInNewContext, runInThisContext, Script 
 
 function capture(_: any, _1?: any) {}
 describe("runInContext()", () => {
-  testRunInContext(runInContext, { isIsolated: true });
+  testRunInContext({ fn: runInContext, isIsolated: true });
 });
 
 describe("runInNewContext()", () => {
-  testRunInContext(runInNewContext, { isIsolated: true, isNew: true });
+  testRunInContext({ fn: runInNewContext, isIsolated: true, isNew: true });
 });
 
 describe("runInThisContext()", () => {
-  testRunInContext(runInThisContext);
+  testRunInContext({ fn: runInThisContext });
 });
 
 describe("Script", () => {
   describe("runInContext()", () => {
-    testRunInContext(
-      (code, context, options) => {
+    testRunInContext({
+      fn: (code, context, options) => {
         const script = new Script(code, options);
         return script.runInContext(context);
       },
-      { isIsolated: true },
-    );
+      isIsolated: true,
+    });
   });
   describe("runInNewContext()", () => {
-    testRunInContext(
-      (code, context, options) => {
+    testRunInContext({
+      fn: (code, context, options) => {
         const script = new Script(code, options);
         return script.runInNewContext(context);
       },
-      { isIsolated: true, isNew: true },
-    );
+      isIsolated: true,
+      isNew: true,
+    });
   });
   describe("runInThisContext()", () => {
-    testRunInContext((code, context, options) => {
-      const script = new Script(code, options);
-      return script.runInThisContext(context);
+    testRunInContext({
+      fn: (code: string, options: any) => {
+        const script = new Script(code, options);
+        return script.runInThisContext();
+      },
     });
   });
   test("can throw without new", () => {
@@ -49,16 +52,11 @@ describe("Script", () => {
   });
 });
 
-function testRunInContext(
-  fn: typeof runInContext,
-  {
-    isIsolated,
-    isNew,
-  }: {
-    isIsolated?: boolean;
-    isNew?: boolean;
-  } = {},
-) {
+type TestRunInContextArg =
+  | { fn: typeof runInContext; isIsolated: true; isNew?: boolean }
+  | { fn: typeof runInThisContext; isIsolated?: false; isNew?: boolean };
+
+function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
   test("can do nothing", () => {
     const context = createContext({});
     const result = fn("", context);
@@ -134,24 +132,6 @@ function testRunInContext(
       message: "Oops!",
     });
   });
-  test("can access the context", () => {
-    const context = createContext({
-      foo: "bar",
-      fizz: (n: number) => "buzz".repeat(n),
-    });
-    const result = fn("foo + fizz(2);", context);
-    expect(result).toBe("barbuzzbuzz");
-  });
-  test("can modify the context", () => {
-    const context = createContext({
-      foo: "bar",
-      baz: ["a", "b", "c"],
-    });
-    const result = fn("foo = 'baz'; delete baz[0];", context);
-    expect(context.foo).toBe("baz");
-    expect(context.baz).toEqual([undefined, "b", "c"]);
-    expect(result).toBe(true);
-  });
   test("can access `globalThis`", () => {
     const context = createContext({});
     const result = fn("typeof globalThis;", context);
@@ -165,12 +145,29 @@ function testRunInContext(
     expect(result).toBe("undefined");
   });
   if (isIsolated) {
+    test("can access context", () => {
+      const context = createContext({
+        foo: "bar",
+        fizz: (n: number) => "buzz".repeat(n),
+      });
+      const result = fn("foo + fizz(2);", context);
+      expect(result).toBe("barbuzzbuzz");
+    });
+    test("can modify context", () => {
+      const context = createContext({
+        baz: ["a", "b", "c"],
+      });
+      const result = fn("foo = 'baz'; delete baz[0];", context);
+      expect(context.foo).toBe("baz");
+      expect(context.baz).toEqual([undefined, "b", "c"]);
+      expect(result).toBe(true);
+    });
     test("cannot access `process`", () => {
       const context = createContext({});
       const result = fn("typeof process;", context);
       expect(result).toBe("undefined");
     });
-    test("cannot access this context", () => {
+    test("cannot access global scope", () => {
       const prop = randomProp();
       // @ts-expect-error
       globalThis[prop] = "fizz";
@@ -183,10 +180,54 @@ function testRunInContext(
         delete globalThis[prop];
       }
     });
-  } else {
-    test("can access `process`", () => {
+    test("can specify a filename", () => {
       const context = createContext({});
-      const result = fn("typeof process;", context);
+      const result = fn("new Error().stack;", context, {
+        filename: "foo.js",
+      });
+      expect(result).toContain("foo.js");
+    });
+  } else {
+    test("can access global context", () => {
+      const props = randomProps(2);
+      // @ts-expect-error
+      globalThis[props[0]] = "bar";
+      // @ts-expect-error
+      globalThis[props[1]] = (n: number) => "buzz".repeat(n);
+      try {
+        const result = fn(`${props[0]} + ${props[1]}(2);`);
+        expect(result).toBe("barbuzzbuzz");
+      } finally {
+        for (let prop of props) {
+          // @ts-expect-error
+          delete globalThis[prop];
+        }
+      }
+    });
+    test("can modify global context", () => {
+      const props = randomProps(3);
+      // @ts-expect-error
+      globalThis[props[0]] = ["a", "b", "c"];
+      // @ts-expect-error
+      globalThis[props[1]] = "initial value";
+      try {
+        const result = fn(`${props[1]} = 'baz'; ${props[2]} = 'bunny'; delete ${props[0]}[0];`);
+        // @ts-expect-error
+        expect(globalThis[props[1]]).toBe("baz");
+        // @ts-expect-error
+        expect(globalThis[props[2]]).toBe("bunny");
+        // @ts-expect-error
+        expect(globalThis[props[0]]).toEqual([undefined, "b", "c"]);
+        expect(result).toBe(true);
+      } finally {
+        for (let prop of props) {
+          // @ts-expect-error
+          delete globalThis[prop];
+        }
+      }
+    });
+    test("can access `process`", () => {
+      const result = fn("typeof process;");
       expect(result).toBe("object");
     });
     test("can access this context", () => {
@@ -194,8 +235,7 @@ function testRunInContext(
       // @ts-expect-error
       globalThis[prop] = "fizz";
       try {
-        const context = createContext({});
-        const result = fn(`${prop};`, context);
+        const result = fn(`${prop};`);
         expect(result).toBe("fizz");
       } finally {
         // @ts-expect-error
@@ -203,28 +243,20 @@ function testRunInContext(
       }
     });
     test.skip("can specify an error on SIGINT", () => {
-      const context = createContext({});
       const result = () =>
-        fn("process.kill(process.pid, 'SIGINT');", context, {
+        fn("process.kill(process.pid, 'SIGINT');", {
           breakOnSigint: true,
         });
       // TODO: process.kill() is not implemented
       expect(result).toThrow();
     });
-  }
-  test("can specify a filename", () => {
-    const context = createContext({});
-    const result = fn("new Error().stack;", context, {
-      filename: "foo.js",
+    test("can specify a filename", () => {
+      const result = fn("new Error().stack;", {
+        filename: "foo.js",
+      });
+      expect(result).toContain("foo.js");
     });
-    expect(result).toContain("foo.js");
-  });
-  test("can set context properties", () => {
-    const word = "bunny";
-    const context = createContext({});
-    fn(`returnValue = '${word}';`, context);
-    expect(context.returnValue).toContain(word);
-  });
+  }
   test.skip("can specify a line offset", () => {
     // TODO: use test.todo
   });
@@ -243,4 +275,11 @@ function testRunInContext(
 
 function randomProp() {
   return "prop" + crypto.randomUUID().replace(/-/g, "");
+}
+function randomProps(propsNumber = 0) {
+  let props = [];
+  for (let i = 0; i < propsNumber; i++) {
+    props.push(randomProp());
+  }
+  return props;
 }

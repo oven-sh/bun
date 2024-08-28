@@ -219,7 +219,7 @@ function testRunInContext(
     });
     expect(result).toContain("foo.js");
   });
-  test("can set context property", () => {
+  test("can set context properties", () => {
     const word = "bunny";
     const context = createContext({});
     fn(`returnValue = '${word}';`, context);

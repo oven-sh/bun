@@ -128,8 +128,20 @@ pub const NumberOrPercentage = union(enum) {
     /// A percentage.
     percentage: Percentage,
 
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    // TODO: implement this
+    // pub usingnamespace css.DeriveParse(@This());
+    // pub usingnamespace css.DeriveToCss(@This());
+
+    pub fn parse(input: *css.Parser) Error!NumberOrPercentage {
+        _ = input; // autofix
+        @panic(css.todo_stuff.depth);
+    }
+
+    pub fn toCss(this: *const NumberOrPercentage, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+        _ = this; // autofix
+        _ = dest; // autofix
+        @panic(css.todo_stuff.depth);
+    }
 
     pub fn intoF32(this: *const @This()) f32 {
         return switch (this.*) {

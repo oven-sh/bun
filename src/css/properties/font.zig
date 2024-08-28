@@ -46,11 +46,23 @@ pub const FontWeight = union(enum) {
     /// The `lighter` keyword.
     lighter,
 
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    // TODO: implement this
+    // pub usingnamespace css.DeriveParse(@This());
+    // pub usingnamespace css.DeriveToCss(@This());
 
     pub inline fn default() FontWeight {
         return .{ .absolute = AbsoluteFontWeight.default() };
+    }
+
+    pub fn parse(input: *css.Parser) Error!FontWeight {
+        _ = input; // autofix
+        @panic(css.todo_stuff.depth);
+    }
+
+    pub fn toCss(this: *const FontWeight, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+        _ = this; // autofix
+        _ = dest; // autofix
+        @panic(css.todo_stuff.depth);
     }
 };
 
@@ -80,8 +92,20 @@ pub const FontSize = union(enum) {
     /// A relative font size keyword.
     relative: RelativeFontSize,
 
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    // TODO: implement this
+    // pub usingnamespace css.DeriveParse(@This());
+    // pub usingnamespace css.DeriveToCss(@This());
+
+    pub fn parse(input: *css.Parser) Error!FontSize {
+        _ = input; // autofix
+        @panic(css.todo_stuff.depth);
+    }
+
+    pub fn toCss(this: *const FontSize, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+        _ = this; // autofix
+        _ = dest; // autofix
+        @panic(css.todo_stuff.depth);
+    }
 };
 
 /// An [absolute font size](https://www.w3.org/TR/css-fonts-3/#absolute-size-value),
@@ -127,7 +151,19 @@ pub const FontStretch = union(enum) {
     /// A percentage.
     percentage: Percentage,
 
-    pub usingnamespace css.DeriveParse(@This());
+    // TODO: implement this
+    // pub usingnamespace css.DeriveParse(@This());
+
+    pub fn parse(input: *css.Parser) Error!FontStretch {
+        _ = input; // autofix
+        @panic(css.todo_stuff.depth);
+    }
+
+    pub fn toCss(this: *const FontStretch, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+        _ = this; // autofix
+        _ = dest; // autofix
+        @panic(css.todo_stuff.depth);
+    }
 
     pub inline fn default() FontStretch {
         return .{ .keyword = FontStretchKeyword.default() };
@@ -379,8 +415,19 @@ pub const LineHeight = union(enum) {
     /// An explicit height.
     length: LengthPercentage,
 
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    // pub usingnamespace css.DeriveParse(@This());
+    // pub usingnamespace css.DeriveToCss(@This());
+
+    pub fn parse(input: *css.Parser) Error!LineHeight {
+        _ = input; // autofix
+        @panic(css.todo_stuff.depth);
+    }
+
+    pub fn toCss(this: *const LineHeight, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+        _ = this; // autofix
+        _ = dest; // autofix
+        @panic(css.todo_stuff.depth);
+    }
 
     pub fn default() LineHeight {
         return .normal;

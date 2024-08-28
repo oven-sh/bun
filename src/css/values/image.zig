@@ -25,8 +25,19 @@ pub const Image = union(enum) {
     /// An `image-set()`.
     image_set: *ImageSet,
 
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    // pub usingnamespace css.DeriveParse(@This());
+    // pub usingnamespace css.DeriveToCss(@This());
+
+    pub fn parse(input: *css.Parser) Error!Image {
+        _ = input; // autofix
+        @panic(css.todo_stuff.depth);
+    }
+
+    pub fn toCss(this: *const Image, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+        _ = this; // autofix
+        _ = dest; // autofix
+        @panic(css.todo_stuff.depth);
+    }
 };
 
 /// A CSS [`image-set()`](https://drafts.csswg.org/css-images-4/#image-set-notation) value.

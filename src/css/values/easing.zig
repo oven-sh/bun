@@ -204,7 +204,14 @@ pub const StepPosition = enum {
     /// The first rise occurs at input progress value of 0 and the last rise occurs at input progress value of 1.
     jump_both,
 
-    pub usingnamespace css.DeriveToCss(@This());
+    // TODO: implement this
+    // pub usingnamespace css.DeriveToCss(@This());
+
+    pub fn toCss(this: *const StepPosition, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+        _ = this; // autofix
+        _ = dest; // autofix
+        @panic(css.todo_stuff.depth);
+    }
 
     pub fn parse(input: *css.Parser) Error!StepPosition {
         const location = input.currentSourceLocation();

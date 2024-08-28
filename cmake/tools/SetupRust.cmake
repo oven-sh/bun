@@ -1,4 +1,4 @@
-include(cmake/Utils.cmake)
+include(Utils)
 
 find_program(
   CMAKE_CARGO

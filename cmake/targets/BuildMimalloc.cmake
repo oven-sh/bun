@@ -1,5 +1,5 @@
-include(cmake/BuildLibrary.cmake)
-include(cmake/GitClone.cmake)
+include(BuildLibrary)
+include(GitClone)
 
 set(MIMALLOC_CMAKE_ARGS
   -DMI_BUILD_STATIC=ON

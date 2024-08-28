@@ -1,5 +1,5 @@
-include(cmake/BuildLibrary.cmake)
-include(cmake/GitClone.cmake)
+include(BuildLibrary)
+include(GitClone)
 
 # TODO: make a patch upstream to change the line
 # `#ifdef _MSC_VER`

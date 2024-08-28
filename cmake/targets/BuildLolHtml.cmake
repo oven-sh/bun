@@ -1,6 +1,6 @@
-include(cmake/BuildLibrary.cmake)
-include(cmake/GitClone.cmake)
-include(cmake/SetupRust.cmake)
+include(BuildLibrary)
+include(GitClone)
+include(SetupRust)
 
 set(LOLHTML_BUILD_ARGS
   --target-dir ${BUILD_PATH}/lolhtml

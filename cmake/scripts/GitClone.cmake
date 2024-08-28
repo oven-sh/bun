@@ -77,6 +77,10 @@ macro(git_clone)
   file(GLOB GIT_TMP_PATH LIST_DIRECTORIES ON ${GIT_PARENT_PATH}/${GIT_ORIGINAL_NAME}-*)
   file(RENAME ${GIT_TMP_PATH} ${GIT_PATH})
   file(REMOVE ${GIT_DOWNLOAD_PATH})
+  file(GLOB_RECURSE GIT_PATCH_PATHS ${CMAKE_SOURCE_DIR}/patches/${GIT_NAME}/*)
+  foreach(GIT_PATCH_PATH ${GIT_PATCH_PATHS})
+    file(COPY ${GIT_PATCH_PATH} DESTINATION ${GIT_PATH})
+  endforeach()
   file(WRITE ${GIT_REF_PATH} ${GIT_REF})
 endmacro()
 
@@ -93,7 +97,7 @@ macro(add_custom_clone)
       "Cloning ${GIT_NAME}..."
     VERBATIM COMMAND
       ${CMAKE_COMMAND}
-        -P ${CMAKE_SOURCE_DIR}/cmake/GitClone.cmake
+        -P ${CMAKE_SOURCE_DIR}/cmake/scripts/GitClone.cmake
         -DGIT_NAME=${GIT_NAME}
         -DGIT_REPOSITORY=${GIT_REPOSITORY}
         -DGIT_COMMIT=${GIT_COMMIT}

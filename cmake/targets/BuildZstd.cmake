@@ -1,5 +1,5 @@
-include(cmake/BuildLibrary.cmake)
-include(cmake/GitClone.cmake)
+include(BuildLibrary)
+include(GitClone)
 
 add_custom_library(
   TARGET

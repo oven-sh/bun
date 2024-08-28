@@ -798,11 +798,11 @@ const Options = struct {
             if (level_f64 == 0) return 0;
             if (std.math.isNan(level_f64)) return default;
             if (level_f64 == std.math.inf(f64)) {
-                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d}. Received Infinity", .{ field_name, min }));
+                this.ERR_OUT_OF_RANGE("The value of \"options.{s}\" is out of range. It must be >= {d}. Received Infinity", .{ field_name, min }).throw();
                 return null;
             }
             if (level_f64 == -std.math.inf(f64)) {
-                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d}. Received -Infinity", .{ field_name, min }));
+                this.ERR_OUT_OF_RANGE("The value of \"options.{s}\" is out of range. It must be >= {d}. Received -Infinity", .{ field_name, min }).throw();
                 return null;
             }
             if (@floor(level_f64) != level_f64) {
@@ -810,12 +810,12 @@ const Options = struct {
                 return null;
             }
             if (level_f64 > std.math.maxInt(i32)) {
-                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d} and <= {d}. Received {d}", .{ field_name, min, max, level_f64 }));
+                this.ERR_OUT_OF_RANGE("The value of \"options.{s}\" is out of range. It must be >= {d} and <= {d}. Received {d}", .{ field_name, min, max, level_f64 }).throw();
                 return null;
             }
             const level_i32 = level_val.toInt32();
             if (level_i32 < min or level_i32 > max) {
-                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d} and <= {d}. Received {d}", .{ field_name, min, max, level_i32 }));
+                this.ERR_OUT_OF_RANGE("The value of \"options.{s}\" is out of range. It must be >= {d} and <= {d}. Received {d}", .{ field_name, min, max, level_i32 }).throw();
                 return null;
             }
             return @intCast(level_i32);

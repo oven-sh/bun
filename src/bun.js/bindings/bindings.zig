@@ -3323,11 +3323,11 @@ pub const JSGlobalObject = opaque {
                 return default;
             }
             if (level_f64 == std.math.inf(f64)) {
-                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d}. Received Infinity", .{ field_name, min }));
+                this.ERR_OUT_OF_RANGE("The value of \"options.{s}\" is out of range. It must be >= {d}. Received Infinity", .{ field_name, min }).throw();
                 return null;
             }
             if (level_f64 == -std.math.inf(f64)) {
-                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d}. Received -Infinity", .{ field_name, min }));
+                this.ERR_OUT_OF_RANGE("The value of \"options.{s}\" is out of range. It must be >= {d}. Received -Infinity", .{ field_name, min }).throw();
                 return null;
             }
             if (@floor(level_f64) != level_f64) {
@@ -3335,12 +3335,12 @@ pub const JSGlobalObject = opaque {
                 return null;
             }
             if (level_f64 > std.math.maxInt(i32)) {
-                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d} and <= {d}. Received {d}", .{ field_name, min, max, level_f64 }));
+                this.ERR_OUT_OF_RANGE("The value of \"options.{s}\" is out of range. It must be >= {d} and <= {d}. Received {d}", .{ field_name, min, max, level_f64 }).throw();
                 return null;
             }
             const level_i32 = level_val.toInt32();
             if (level_i32 < min or level_i32 > max) {
-                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d} and <= {d}. Received {d}", .{ field_name, min, max, level_i32 }));
+                this.ERR_OUT_OF_RANGE("The value of \"options.{s}\" is out of range. It must be >= {d} and <= {d}. Received {d}", .{ field_name, min, max, level_i32 }).throw();
                 return null;
             }
             return @intCast(level_i32);
@@ -3360,11 +3360,11 @@ pub const JSGlobalObject = opaque {
                 return default;
             }
             if (level_f64 == std.math.inf(f64)) {
-                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d}. Received Infinity", .{ field_name, min }));
+                this.ERR_OUT_OF_RANGE("The value of \"options.{s}\" is out of range. It must be >= {d}. Received Infinity", .{ field_name, min }).throw();
                 return null;
             }
             if (level_f64 == -std.math.inf(f64)) {
-                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d}. Received -Infinity", .{ field_name, min }));
+                this.ERR_OUT_OF_RANGE("The value of \"options.{s}\" is out of range. It must be >= {d}. Received -Infinity", .{ field_name, min }).throw();
                 return null;
             }
             if (@floor(level_f64) != level_f64) {
@@ -3372,12 +3372,12 @@ pub const JSGlobalObject = opaque {
                 return null;
             }
             if (level_f64 > std.math.maxInt(i32)) {
-                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d}. Received {d}", .{ field_name, min, level_f64 }));
+                this.ERR_OUT_OF_RANGE("The value of \"options.{s}\" is out of range. It must be >= {d}. Received {d}", .{ field_name, min, level_f64 }).throw();
                 return null;
             }
             const level_i32 = level_val.toInt32();
             if (level_i32 < min) {
-                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d}. Received {d}", .{ field_name, min, level_i32 }));
+                this.ERR_OUT_OF_RANGE("The value of \"options.{s}\" is out of range. It must be >= {d}. Received {d}", .{ field_name, min, level_i32 }).throw();
                 return null;
             }
             return @intCast(level_i32);
@@ -3394,16 +3394,16 @@ pub const JSGlobalObject = opaque {
             }
             const level_double = level_val.asNumber();
             if (level_double == std.math.inf(f64)) {
-                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d}. Received Infinity", .{ field_name, min }));
+                this.ERR_OUT_OF_RANGE("The value of \"options.{s}\" is out of range. It must be >= {d}. Received Infinity", .{ field_name, min }).throw();
                 return null;
             }
             if (level_double == -std.math.inf(f64)) {
-                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d}. Received -Infinity", .{ field_name, min }));
+                this.ERR_OUT_OF_RANGE("The value of \"options.{s}\" is out of range. It must be >= {d}. Received -Infinity", .{ field_name, min }).throw();
                 return null;
             }
             const level_int = level_val.to(i64);
             if (level_int < min) {
-                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d}. Received {d}", .{ field_name, min, level_int }));
+                this.ERR_OUT_OF_RANGE("The value of \"options.{s}\" is out of range. It must be >= {d}. Received {d}", .{ field_name, min, level_int }).throw();
                 return null;
             }
             return @intCast(level_int);

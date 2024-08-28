@@ -61,9 +61,9 @@ macro(optionx variable type description)
   set(${variable}_PREVIEW -D${variable})
 
   if(DEFINED ENV{${variable}})
-    if(DEFINED ${variable} AND NOT ${variable} STREQUAL $ENV{${variable}})
-      message(FATAL_ERROR "Invalid ${${variable}_SOURCE}: ${${variable}_PREVIEW}=\"${${variable}}\" conflicts with environment variable ${variable}=\"$ENV{${variable}}\"")
-    endif()
+    # if(DEFINED ${variable} AND NOT ${variable} STREQUAL $ENV{${variable}})
+    #   message(FATAL_ERROR "Invalid ${${variable}_SOURCE}: ${${variable}_PREVIEW}=\"${${variable}}\" conflicts with environment variable ${variable}=\"$ENV{${variable}}\"")
+    # endif()
 
     set(${variable} $ENV{${variable}} CACHE ${${variable}_TYPE} ${description} FORCE)
     set(${variable}_SOURCE "environment variable")

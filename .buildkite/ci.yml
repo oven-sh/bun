@@ -466,7 +466,7 @@ steps:
           os: "windows"
           arch: "x64"
         command:
-          - ".\\buildkite\\scripts\\build-bun.ps1"
+          - ".\\.buildkite\\scripts\\build-bun.ps1"
 
       - key: "windows-x64-test-bun"
         label: ":windows: x64 - test-bun"
@@ -507,7 +507,7 @@ steps:
           CCACHE_DISABLE: "1"
           ENABLE_BASELINE: "1"
         command:
-          - ".\\buildkite\\scripts\\build-bun.ps1"
+          - ".\\.buildkite\\scripts\\build-bun.ps1"
 
       - key: "windows-x64-baseline-test-bun"
         label: ":windows: x64-baseline - test-bun"

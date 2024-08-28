@@ -33,7 +33,7 @@ export default [
   ["ERR_STREAM_DESTROYED", TypeError, "TypeError"],
   ["ERR_STREAM_NULL_VALUES", TypeError, "TypeError"],
   ["ERR_STREAM_WRITE_AFTER_END", TypeError, "TypeError"],
-  ["ERR_ZLIB_INITIALIZATION_FAILED", TypeError, "TypeError"],
+  ["ERR_ZLIB_INITIALIZATION_FAILED", Error, "Error"],
   ["ERR_STRING_TOO_LONG", Error, "Error"],
   ["ERR_CRYPTO_SCRYPT_INVALID_PARAMETER", Error, "Error"],
   ["ERR_CRYPTO_INVALID_SCRYPT_PARAMS", RangeError, "RangeError"],

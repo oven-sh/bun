@@ -38,7 +38,11 @@ macro(add_custom_library)
 
   set(${LIB_ID}_LIBRARY_PATHS)  
   foreach(lib ${LIB_LIBRARIES})
-    set(lib_path ${${LIB_ID}_LIB_PATH}/${CMAKE_STATIC_LIBRARY_PREFIX}${lib}${CMAKE_STATIC_LIBRARY_SUFFIX})
+    if(lib MATCHES ".")
+      set(lib_path ${${LIB_ID}_LIB_PATH}/${lib})
+    else()
+      set(lib_path ${${LIB_ID}_LIB_PATH}/${CMAKE_STATIC_LIBRARY_PREFIX}${lib}${CMAKE_STATIC_LIBRARY_SUFFIX})
+    endif()
     list(APPEND ${LIB_ID}_LIBRARY_PATHS ${lib_path})
   endforeach()
 

@@ -38,8 +38,8 @@ endif()
 
 # Workaround for linker issue on macOS and Linux x64
 # https://github.com/microsoft/mimalloc/issues/512
-if(NOT WIN32)
-  set(MIMALLOC_OBJECT_FILE ${BUILD_PATH}/mimalloc/CMakeFiles/mimalloc-obj.dir/src/static.c.o)
+if(APPLE OR (LINUX AND NOT DEBUG))
+  set(MIMALLOC_LIBRARY CMakeFiles/mimalloc-obj.dir/src/static.c.o)
 endif()
 
 add_custom_library(
@@ -47,8 +47,6 @@ add_custom_library(
     mimalloc
   LIBRARIES
     ${MIMALLOC_LIBRARY}
-  BYPRODUCTS
-    ${MIMALLOC_OBJECT_FILE}
   INCLUDES
     include
   CMAKE_TARGETS
@@ -57,5 +55,3 @@ add_custom_library(
   CMAKE_ARGS
     ${MIMALLOC_CMAKE_ARGS}
 )
-
-target_link_libraries(${bun} PRIVATE ${MIMALLOC_OBJECT_FILE})

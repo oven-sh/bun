@@ -20,27 +20,19 @@ endif()
 
 if(NOT CMAKE_C_COMPILER_ID MATCHES "tcc")
   add_compile_options(
-    -Wall
-    -Wdeclaration-after-statement
     -fno-strict-aliasing
-    -Wpointer-sign
-    # -Wsign-compare
-    -Wunused-result
+    -Wdeclaration-after-statement
+    -Wno-pointer-sign
+    -Wno-sign-compare
+    -Wno-unused-result
   )
-  
-  if(CMAKE_C_COMPILER_ID MATCHES "GNU")
-    add_compile_options(
-      -Wformat-truncation
-      -Wstringop-truncation
-    )
-  endif()
 endif()
 
-if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+if(CMAKE_C_COMPILER_ID MATCHES "GNU")
   add_compile_options(
     -fheinous-gnu-extensions
-    -Wstring-plus-int
-    -Wdeprecated-declarations
+    -Wno-string-plus-int
+    -Wno-deprecated-declarations
   )
 endif()
 
@@ -61,14 +53,18 @@ endif()
 
 add_compile_definitions(
   ONE_SOURCE=0
-  CONFIG_TCC_STATIC=1
-  CONFIG_TCC_PREDEFS=1
+  CONFIG_TCC_STATIC
+  CONFIG_TCC_PREDEFS
   DWARF_VERSION=4
   TCC_LIBTCC1="\\0"
 )
 
 if(APPLE)
-  add_compile_definitions(CONFIG_CODESIGN=1)
+  add_compile_definitions(
+    TCC_TARGET_MACHO
+    CONFIG_CODESIGN
+    CONFIG_NEW_MACHO
+  )
   if(CMAKE_OSX_SYSROOT)
     add_compile_definitions(CONFIG_USR_INCLUDE=\"${CMAKE_OSX_SYSROOT}\")
   endif()
@@ -76,16 +72,16 @@ endif()
 
 if(WIN32)
   add_compile_definitions(
-    TCC_TARGET_PE=1
-    CONFIG_WIN32=1
+    TCC_TARGET_PE
+    CONFIG_WIN32
     CONFIG_TCCDIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"
   )
 endif()
 
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64|ARM64")
-  add_compile_definitions(TCC_TARGET_ARM64=1)
+  add_compile_definitions(TCC_TARGET_ARM64)
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|x64|amd64|AMD64")
-  add_compile_definitions(TCC_TARGET_X86_64=1)
+  add_compile_definitions(TCC_TARGET_X86_64)
 else()
   message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 endif()
@@ -110,7 +106,7 @@ elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|x64|amd64|AMD64")
   list(APPEND TCC_SOURCES
     x86_64-gen.c
     x86_64-link.c
-    x86_64-asm.c
+    i386-asm.c
   )
 else()
   message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
@@ -124,9 +120,29 @@ if(WIN32)
   list(APPEND TCC_SOURCES tccpe.c)
 endif()
 
+add_executable(c2str.exe conftest.c)
+target_compile_options(c2str.exe PRIVATE -DC2STR)
+
+add_custom_command(
+  TARGET
+    c2str.exe POST_BUILD
+  COMMAND
+    ${CMAKE_COMMAND}
+      -E make_directory
+      ${CMAKE_CURRENT_BINARY_DIR}/include
+  COMMAND
+    c2str.exe
+      ${CMAKE_CURRENT_SOURCE_DIR}/include/tccdefs.h
+      ${CMAKE_CURRENT_BINARY_DIR}/include/tccdefs_.h
+  WORKING_DIRECTORY
+    ${CMAKE_CURRENT_BINARY_DIR}
+)
+
 add_library(tcc STATIC ${TCC_SOURCES})
+add_dependencies(tcc c2str.exe)
 
 target_include_directories(tcc PUBLIC 
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${CMAKE_CURRENT_SOURCE_DIR}/include
+  ${CMAKE_CURRENT_BINARY_DIR}/include
 )

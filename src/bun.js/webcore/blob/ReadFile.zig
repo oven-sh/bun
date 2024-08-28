@@ -476,6 +476,10 @@ pub const ReadFile = struct {
                     // record the amount of data read
                     this.buffer.items.len += read.len;
                 }
+                if (!this.read_eof and this.buffer.items.len >= @min(this.max_length, this.total_size)) {
+                    this.read_eof = true; // already read the max amount
+                    break;
+                }
 
                 if (!continue_reading) {
                     // Stop reading, we errored

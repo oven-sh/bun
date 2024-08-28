@@ -95,7 +95,7 @@ macro(add_custom_repository)
   add_custom_target(
     clone-${GIT_NAME}
     COMMENT
-      "Cloning ${GIT_NAME}..."
+      "Cloning ${GIT_NAME}"
     VERBATIM COMMAND
       ${CMAKE_COMMAND}
         -P ${CMAKE_SOURCE_DIR}/cmake/scripts/GitClone.cmake

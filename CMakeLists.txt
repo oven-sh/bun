@@ -515,24 +515,45 @@ if(APPLE)
   target_link_libraries(${bun} PRIVATE "icucore")
 endif()
 
+add_custom_target(
+  features.json
+  COMMENT
+    "Generating features.json"
+  VERBATIM COMMAND
+    ${CMAKE_COMMAND}
+      -E env
+      BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1
+      BUN_DEBUG_QUIET_LOGS=1
+      ${BUILD_PATH}/${bun}
+      ${CWD}/scripts/features.mjs
+  WORKING_DIRECTORY
+    ${BUILD_PATH}
+)
+
+if(APPLE)
+  add_custom_target(
+    ${bun}.dSYM
+    COMMENT
+      "Generating ${bun}.dSYM"
+    COMMAND
+      ${CMAKE_DSYMUTIL}
+        ${bun}
+        --keep-function-for-static
+        --object-prefix-map .=${CWD}
+        -j ${CMAKE_BUILD_PARALLEL_LEVEL}
+    WORKING_DIRECTORY
+      ${BUILD_PATH}
+  )
+endif()
+
 # --- Stripped Binary "bun"
 if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32 AND NOT ASSERT_ENABLED AND NOT BUN_CPP_ONLY)
-    # if(CI AND APPLE)
-    if(APPLE)
-        add_custom_command(
-            TARGET ${bun}
-            POST_BUILD
-            COMMAND ${CMAKE_DSYMUTIL} -o ${BUILD_PATH}/${bun}.dSYM ${BUILD_PATH}/${bun}
-            COMMENT "Generating .dSYM"
-        )
-    endif()
-
-    add_custom_command(
-        TARGET ${bun}
-        POST_BUILD
-        COMMAND ${CMAKE_STRIP} -s -x -S -o ${BUILD_PATH}/bun ${BUILD_PATH}/${bun}
-        COMMENT "Stripping Symbols"
-    )
+  add_custom_command(
+    TARGET ${bun}
+    POST_BUILD
+    COMMAND ${CMAKE_STRIP} -s -x -S -o ${BUILD_PATH}/bun ${BUILD_PATH}/${bun}
+    COMMENT "Stripping Symbols"
+  )
 endif()
 
 <<<<<<< HEAD

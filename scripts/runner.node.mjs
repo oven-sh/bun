@@ -818,7 +818,6 @@ function isJavaScript(path) {
 function isTest(path) {
   if (path.replaceAll(sep, "/").includes("/test-cluster-") && path.endsWith(".js")) return true;
   if (path.replaceAll(sep, "/").startsWith("js/node/cluster/test-") && path.endsWith(".ts")) return true;
-  if (path.replaceAll(sep, "/").includes("/test-zlib-") && path.endsWith(".js")) return true;
   return isTestStrict(path);
 }
 

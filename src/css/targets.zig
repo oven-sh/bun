@@ -1,0 +1,51 @@
+const std = @import("std");
+const bun = @import("root").bun;
+const Allocator = std.mem.Allocator;
+
+pub const css = @import("./css_parser.zig");
+
+const Printer = css.Printer;
+const PrintErr = css.PrintErr;
+const VendorPrefix = css.VendorPrefix;
+
+pub const Browsers = struct {
+    android: ?u32 = null,
+    chrome: ?u32 = null,
+    edge: ?u32 = null,
+    firefox: ?u32 = null,
+    ie: ?u32 = null,
+    ios_saf: ?u32 = null,
+    opera: ?u32 = null,
+    safari: ?u32 = null,
+    samsung: ?u32 = null,
+    pub usingnamespace BrowsersImpl(@This());
+};
+
+pub const Features = packed struct(u32) {
+    nesting: bool = 1 << 0,
+    not_selector_list: bool = 1 << 1,
+    dir_selector: bool = 1 << 2,
+    lang_selector_list: bool = 1 << 3,
+    is_selector: bool = 1 << 4,
+    text_decoration_thickness_percent: bool = 1 << 5,
+    media_interval_syntax: bool = 1 << 6,
+    media_range_syntax: bool = 1 << 7,
+    custom_media_queries: bool = 1 << 8,
+    clamp_function: bool = 1 << 9,
+    color_function: bool = 1 << 10,
+    oklab_colors: bool = 1 << 11,
+    lab_colors: bool = 1 << 12,
+    p3_colors: bool = 1 << 13,
+    hex_alpha_colors: bool = 1 << 14,
+    space_separated_color_notation: bool = 1 << 15,
+    font_family_system_ui: bool = 1 << 16,
+    double_position_gradients: bool = 1 << 17,
+    vendor_prefixes: bool = 1 << 18,
+    logical_properties: bool = 1 << 19,
+    const selectors = Features.fromNames("nesting", "not_selector_list", "dir_selector", "lang_selector_list", "is_selector");
+    const media_queries = Features.fromNames("media_interval_syntax", "media_range_syntax", "custom_media_queries");
+    const colors = Features.fromNames("color_function", "oklab_colors", "lab_colors", "p3_colors", "hex_alpha_colors", "space_separated_color_notation");
+
+    pub usingnamespace css.Bitflags(@This());
+    pub usingnamespace FeaturesImpl(@This());
+};

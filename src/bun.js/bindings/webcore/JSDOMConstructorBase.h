@@ -52,10 +52,10 @@ public:
     ScriptExecutionContext* scriptExecutionContext() const { return globalObject()->scriptExecutionContext(); }
 
 protected:
-    JSDOMConstructorBase(JSC::VM& vm, JSC::Structure* structure, JSC::NativeFunction functionForConstruct)
+    JSDOMConstructorBase(JSC::VM& vm, JSC::Structure* structure, JSC::NativeFunction functionForConstruct, JSC::NativeFunction functionForCall = nullptr)
         : Base(vm, structure,
-            functionForConstruct ? functionForConstruct : callThrowTypeErrorForJSDOMConstructorNotConstructable,
-            functionForConstruct ? functionForConstruct : callThrowTypeErrorForJSDOMConstructorNotConstructable)
+              functionForCall ? functionForCall : callThrowTypeErrorForJSDOMConstructorNotConstructable,
+              functionForConstruct ? functionForConstruct : callThrowTypeErrorForJSDOMConstructorNotConstructable)
     {
     }
 };

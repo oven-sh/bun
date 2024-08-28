@@ -1220,7 +1220,7 @@ pub const ZlibDecompressorStreaming = struct {
             }
             if (ret == .StreamEnd) break;
             if (state.avail_out == 0) continue;
-            // if (ret == .BufError) return;
+            if (ret == .BufError and this.finishFlush == .Finish) return this.error_for_message("unexpected end of file");
             break;
         }
         // bun.assert(state.avail_in == 0);

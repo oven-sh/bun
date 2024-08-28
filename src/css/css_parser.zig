@@ -51,6 +51,7 @@ pub const declaration = @import("./declaration.zig");
 pub const css_properties = @import("./properties/properties.zig");
 pub const Property = css_properties.Property;
 pub const PropertyId = css_properties.PropertyId;
+pub const PropertyIdTag = css_properties.PropertyIdTag;
 pub const TokenList = css_properties.custom.TokenList;
 pub const TokenListFns = css_properties.custom.TokenListFns;
 
@@ -90,58 +91,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
     return ArrayList(T);
 }
 
-pub fn Bitflags(comptime T: type) type {
-    const tyinfo = @typeInfo(T);
-    const IntType = tyinfo.Struct.backing_integer.?;
-
-    return struct {
-        pub inline fn empty() T {
-            return @bitCast(0);
-        }
-
-        pub inline fn intersects(lhs: T, rhs: T) bool {
-            return asBits(lhs) & asBits(rhs) != 0;
-        }
-
-        pub inline fn fromName(comptime name: []const u8) T {
-            var this: T = .{};
-            @field(this, name) = true;
-            return this;
-        }
-
-        pub fn bitwiseOr(lhs: T, rhs: T) T {
-            return @bitCast(@as(IntType, @bitCast(lhs)) | @as(IntType, @bitCast(rhs)));
-        }
-
-        pub fn bitwiseAnd(lhs: T, rhs: T) T {
-            return asBits(lhs) & asBits(rhs);
-        }
-
-        pub fn insert(this: T, other: T) T {
-            return bitwiseOr(this, other);
-        }
-
-        pub fn contains(lhs: T, rhs: T) bool {
-            return @as(IntType, @bitCast(lhs)) & @as(IntType, @bitCast(rhs)) != 0;
-        }
-
-        pub inline fn asBits(this: T) IntType {
-            return @as(IntType, @bitCast(this));
-        }
-
-        pub fn isEmpty(this: T) bool {
-            return asBits(this) == 0;
-        }
-
-        pub fn eq(lhs: T, rhs: T) bool {
-            return asBits(lhs) == asBits(rhs);
-        }
-
-        pub fn neq(lhs: T, rhs: T) bool {
-            return asBits(lhs) != asBits(rhs);
-        }
-    };
-}
+pub const Bitflags = bun.Bitflags;
 
 pub const todo_stuff = struct {
     pub const think_about_allocator = "TODO: think about how to pass allocator";
@@ -252,35 +202,180 @@ pub fn voidWrap(comptime T: type, comptime parsefn: *const fn (*Parser) Error!T)
     return Wrapper.wrapped;
 }
 
-pub fn DefineShorthand(comptime T: type) type {
+pub fn DefineShorthand(comptime T: type, comptime property_name: PropertyIdTag) type {
     // TODO: validate map, make sure each field is set
+    // make sure each field is same index as in T
     _ = T.PropertyFieldMap;
+
     return struct {
         /// Returns a shorthand from the longhand properties defined in the given declaration block.
-        pub fn fromLonghands(decls: *const DeclarationBlock, vendor_prefix: VendorPrefix) ?struct { T, bool } {
-            _ = decls; // autofix
-            _ = vendor_prefix; // autofix
-            @compileError(todo_stuff.depth);
+        pub fn fromLonghands(allocator: Allocator, decls: *const DeclarationBlock, vendor_prefix: VendorPrefix) ?struct { T, bool } {
+            var count: usize = 0;
+            var important_count: usize = 0;
+            var this: T = undefined;
+            var set_fields = std.StaticBitSet(std.meta.fields(T).len).initEmpty();
+            const all_fields_set = std.StaticBitSet(std.meta.fields(T).len).initFull();
+
+            // Loop through each property in `decls.declarations` and then `decls.important_declarations`
+            // The inline for loop is so we can share the code for both
+            const DECL_FIELDS = &.{ "declarations", "important_declarations" };
+            inline for (DECL_FIELDS) |decl_field_name| {
+                const decl_list: *const ArrayList(css_properties.Property) = &@field(decls, decl_field_name);
+                const important = comptime std.mem.eql(u8, decl_field_name, "important_declarations");
+
+                // Now loop through each property in the list
+                main_loop: for (decl_list.items) |*property| {
+                    // The property field map maps each field in `T` to a tag of `Property`
+                    // Here we do `inline for` to basically switch on the tag of `property` to see
+                    // if it matches a field in `T` which maps to the same tag
+                    //
+                    // Basically, check that `@as(PropertyIdTag, property.*)` equals `T.PropertyFieldMap[field.name]`
+                    inline for (std.meta.fields(@TypeOf(T.PropertyFieldMap))) |field| {
+                        const tag: PropertyIdTag = @as(?*const PropertyIdTag, field.default_value).?.*;
+
+                        if (@intFromEnum(@as(PropertyIdTag, property.*)) == tag) {
+                            if (@hasField(T.VendorPrefixMap, field.name)) {
+                                if (@hasField(T.VendorPrefixMap, field.name) and
+                                    !VendorPrefix.eq(@field(property, field.name)[1], vendor_prefix))
+                                {
+                                    return null;
+                                }
+
+                                @field(this, field.name) = if (@hasDecl(@TypeOf(@field(property, field.name)[0]), "clone"))
+                                    @field(property, field.name)[0].clone(allocator)
+                                else
+                                    @field(property, field.name)[0];
+                            } else {
+                                @field(this, field.name) = if (@hasDecl(@TypeOf(@field(property, field.name)), "clone"))
+                                    @field(property, field.name).clone(allocator)
+                                else
+                                    @field(property, field.name);
+                            }
+
+                            set_fields.set(std.meta.fieldIndex(T, field.name));
+                            count += 1;
+                            if (important) {
+                                important_count += 1;
+                            }
+
+                            continue :main_loop;
+                        }
+                    }
+
+                    // If `property` matches none of the tags in `T.PropertyFieldMap` then let's try
+                    // if it matches the tag specified by `property_name`
+                    if (@as(PropertyIdTag, property.*) == property_name) {
+                        inline for (std.meta.fields(@TypeOf(T.PropertyFieldMap))) |field| {
+                            if (@hasField(T.VendorPrefixMap, field.name)) {
+                                @field(this, field.name) = if (@hasDecl(@TypeOf(@field(property, field.name)[0]), "clone"))
+                                    @field(property, field.name)[0].clone(allocator)
+                                else
+                                    @field(property, field.name)[0];
+                            } else {
+                                @field(this, field.name) = if (@hasDecl(@TypeOf(@field(property, field.name)), "clone"))
+                                    @field(property, field.name).clone(allocator)
+                                else
+                                    @field(property, field.name);
+                            }
+
+                            set_fields.set(std.meta.fieldIndex(T, field.name));
+                            count += 1;
+                            if (important) {
+                                important_count += 1;
+                            }
+                        }
+                        continue :main_loop;
+                    }
+
+                    // Otherwise, try to convert to te fields using `.longhand()`
+                    inline for (std.meta.fields(@TypeOf(T.PropertyFieldMap))) |field| {
+                        const property_id = @unionInit(
+                            PropertyId,
+                            field.name,
+                            if (@hasDecl(T.VendorPrefixMap, field.name)) vendor_prefix else {},
+                        );
+                        const value = property.longhand(&property_id);
+                        if (@as(PropertyIdTag, value) == @as(PropertyIdTag, property_id)) {
+                            @field(this, field.name) = if (@hasDecl(T.VendorPrefixMap, field.name))
+                                @field(value, field.name)[0]
+                            else
+                                @field(value, field.name);
+                            set_fields.set(std.meta.fieldIndex(T, field.name));
+                            count += 1;
+                            if (important) {
+                                important_count += 1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (important_count > 0 and important_count != count) {
+                return null;
+            }
+
+            // All properties in the group must have a matching value to produce a shorthand.
+            if (set_fields.eql(all_fields_set)) {
+                return .{ this, important_count > 0 };
+            }
+
+            return null;
         }
 
         /// Returns a shorthand from the longhand properties defined in the given declaration block.
-        pub fn longhands(vendor_prefix: VendorPrefix) ArrayList(PropertyId) {
-            _ = vendor_prefix; // autofix
-            @compileError(todo_stuff.depth);
+        pub fn longhands(vendor_prefix: VendorPrefix) []const PropertyId {
+            const out: []const PropertyId = comptime out: {
+                var out: [std.meta.fields(@TypeOf(T.PropertyFieldMap)).len]PropertyId = undefined;
+
+                for (std.meta.fields(@TypeOf(T.PropertyFieldMap)), 0..) |field, i| {
+                    out[i] = @unionInit(
+                        PropertyId,
+                        field.name,
+                        if (@hasField(T.VendorPrefixMap, field.name)) vendor_prefix else {},
+                    );
+                }
+
+                break :out out;
+            };
+            return out;
         }
 
         /// Returns a longhand property for this shorthand.
-        pub fn longhand(this: *const T, property_id: *const PropertyId) ?Property {
-            _ = this; // autofix
-            _ = property_id; // autofix
-            @compileError(todo_stuff.depth);
+        pub fn longhand(this: *const T, allocator: Allocator, property_id: *const PropertyId) ?Property {
+            inline for (std.meta.fields(@TypeOf(T.PropertyFieldMap))) |field| {
+                if (@as(PropertyIdTag, property_id.*) == @field(T.PropertyFieldMap, field.name)) {
+                    const val = if (@hasDecl(@TypeOf(@field(T, field.namee)), "clone"))
+                        @field(this, field.name).clone(allocator)
+                    else
+                        @field(this, field.name);
+                    return @unionInit(
+                        Property,
+                        field.name,
+                        if (@field(T.VendorPrefixMap, field.name))
+                            .{ val, @field(property_id, field.name)[1] }
+                        else
+                            val,
+                    );
+                }
+            }
+            return null;
         }
 
         /// Updates this shorthand from a longhand property.
-        pub fn setLonghand(this: *T, property: *const Property) Maybe(void, void) {
-            _ = this; // autofix
-            _ = property; // autofix
-            @compileError(todo_stuff.depth);
+        pub fn setLonghand(this: *T, allocator: Allocator, property: *const Property) bool {
+            inline for (std.meta.fields(T.PropertyFieldMap)) |field| {
+                if (@as(PropertyIdTag, property.*) == @field(T.PropertyFieldMap, field.name)) {
+                    const val = if (@hasDecl(@TypeOf(@field(T, field.name)), "clone"))
+                        @field(this, field.name).clone(allocator)
+                    else
+                        @field(this, field.name);
+
+                    @field(this, field.name) = val;
+
+                    return true;
+                }
+            }
+            return false;
         }
     };
 }

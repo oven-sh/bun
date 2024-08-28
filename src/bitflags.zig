@@ -1,0 +1,52 @@
+pub fn Bitflags(comptime T: type) type {
+    const tyinfo = @typeInfo(T);
+    const IntType = tyinfo.Struct.backing_integer.?;
+
+    return struct {
+        pub inline fn empty() T {
+            return @bitCast(0);
+        }
+
+        pub inline fn intersects(lhs: T, rhs: T) bool {
+            return asBits(lhs) & asBits(rhs) != 0;
+        }
+
+        pub inline fn fromName(comptime name: []const u8) T {
+            var this: T = .{};
+            @field(this, name) = true;
+            return this;
+        }
+
+        pub fn bitwiseOr(lhs: T, rhs: T) T {
+            return @bitCast(@as(IntType, @bitCast(lhs)) | @as(IntType, @bitCast(rhs)));
+        }
+
+        pub fn bitwiseAnd(lhs: T, rhs: T) T {
+            return asBits(lhs) & asBits(rhs);
+        }
+
+        pub fn insert(this: T, other: T) T {
+            return bitwiseOr(this, other);
+        }
+
+        pub fn contains(lhs: T, rhs: T) bool {
+            return @as(IntType, @bitCast(lhs)) & @as(IntType, @bitCast(rhs)) != 0;
+        }
+
+        pub inline fn asBits(this: T) IntType {
+            return @as(IntType, @bitCast(this));
+        }
+
+        pub fn isEmpty(this: T) bool {
+            return asBits(this) == 0;
+        }
+
+        pub fn eq(lhs: T, rhs: T) bool {
+            return asBits(lhs) == asBits(rhs);
+        }
+
+        pub fn neq(lhs: T, rhs: T) bool {
+            return asBits(lhs) != asBits(rhs);
+        }
+    };
+}

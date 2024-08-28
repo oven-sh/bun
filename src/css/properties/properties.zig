@@ -40,6 +40,7 @@ pub const ui = @import("./ui.zig");
 const generated = @import("./properties_generated.zig");
 pub const PropertyId = generated.PropertyId;
 pub const Property = generated.Property;
+pub const PropertyIdTag = generated.PropertyIdTag;
 
 // pub fn DefineProperties(comptime properties: anytype) type {
 //     const input_fields: []const std.builtin.Type.StructField = std.meta.fields(@TypeOf(properties));

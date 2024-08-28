@@ -254,11 +254,11 @@ pub const PlaceContent = struct {
     /// The content justification.
     justify: JustifyContent,
 
-    pub usingnamespace css.DefineShorthand(@This());
+    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"place-content");
 
     const PropertyFieldMap = .{
-        .@"align" = "align-content",
-        .justify = "justify-content",
+        .@"align" = css.PropertyIdTag.@"align-content",
+        .justify = css.PropertyIdTag.@"justify-content",
     };
 
     const VendorPrefixMap = .{

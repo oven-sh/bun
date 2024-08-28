@@ -37,11 +37,20 @@ async function generateCode(property_defs: Record<string, PropertyDef>) {
   await Bun.$`echo ${prelude()} > ${OUTPUT_FILE}`;
   await Bun.$`echo ${generateProperty(property_defs)} >> ${OUTPUT_FILE}`;
   await Bun.$`echo ${generatePropertyId(property_defs)} >> ${OUTPUT_FILE}`;
+  await Bun.$`echo ${generatePropertyIdTag(property_defs)} >> ${OUTPUT_FILE}`;
   await Bun.$`zig fmt ${OUTPUT_FILE}`;
 }
 
+function generatePropertyIdTag(property_defs: Record<string, PropertyDef>): string {
+  return `pub const PropertyIdTag = enum(u16) {
+  ${Object.keys(property_defs)
+    .map(key => `${escapeIdent(key)},`)
+    .join("\n")}
+};`;
+}
+
 function generateProperty(property_defs: Record<string, PropertyDef>): string {
-  return `pub const Property = union(enum) {
+  return `pub const Property = union(PropertyIdTag) {
 ${Object.entries(property_defs)
   .map(([name, meta]) => generatePropertyField(name, meta))
   .join("\n")}
@@ -103,6 +112,27 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
       .custom => |*c| c.value.toCss(W, dest, c.name == .custom),
     };
   }
+
+  /// Returns the given longhand property for a shorthand.
+  pub fn longhand(this: *const Property, property_id: *const PropertyId) ?Property {
+    switch (this.*) {
+      ${Object.entries(property_defs)
+        .filter(([_, meta]) => meta.shorthand)
+        .map(([name, meta]) => {
+          if (meta.valid_prefixes !== undefined) {
+            return `.${escapeIdent(name)} => |*v| {
+              if (!v[1].eq(property_id.prefix())) return null;
+              return v[0].longhand(property_id);
+            },`;
+          }
+
+          return `.${escapeIdent(name)} => |*v| return v.longhand(property_id),`;
+        })
+        .join("\n")}
+      else => {},
+    }
+    return null;
+  }
 `;
 }
 
@@ -143,7 +173,7 @@ function generatePropertyField(name: string, meta: PropertyDef): string {
 }
 
 function generatePropertyId(property_defs: Record<string, PropertyDef>): string {
-  return `pub const PropertyId = union(enum) {
+  return `pub const PropertyId = union(PropertyIdTag) {
 ${Object.entries(property_defs)
   .map(([name, meta]) => generatePropertyIdField(name, meta))
   .join("\n")}

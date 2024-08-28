@@ -1128,14 +1128,14 @@ describe("node:http", () => {
     const server = createServer((req, res) => {
       res.end();
     });
-    server.listen({ port: 42069 }, () => {
+    server.listen({ port: 0 }, () => {
       const server2 = createServer((_, res) => {
         res.end();
       });
       server2.on("error", err => {
         resolve(err);
       });
-      server2.listen({ port: 42069 }, () => {});
+      server2.listen({ port: server.address().port }, () => {});
     });
     const err = await promise;
     expect(err.code).toBe("EADDRINUSE");

@@ -52,7 +52,6 @@ macro(git_clone)
     file(DOWNLOAD
       ${GIT_DOWNLOAD_URL}
       ${GIT_DOWNLOAD_TMP_PATH}
-      SHOW_PROGRESS
       STATUS GIT_DOWNLOAD_STATUS
     )
 

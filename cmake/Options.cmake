@@ -132,6 +132,13 @@ endif()
 optionx(USE_STATIC_LIBATOMIC BOOL "If libatomic should be statically linked" DEFAULT ${DEFAULT_STATIC_LIBATOMIC})
 optionx(USE_SYSTEM_ICU BOOL "Use the system-provided libicu. May fix startup crashes when building WebKit yourself." DEFAULT OFF)
 
+# Set the CMAKE_C_FLAGS and CMAKE_CXX_FLAGS for building dependencies.
+# This is a mess, since it doesn't use the CMake add_compile_options or target_compile_options commands.
+# In the future, make some macros so we can set this automatically.
+# e.g.
+#       add_c_flags(-mtune=native) - applies to all dependencies
+#       add_c_flags({target} -fno-rtti) - applies to a specific target
+
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|arm|ARM64")
   if(APPLE)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mcpu=apple-m1")

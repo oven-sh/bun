@@ -16,7 +16,7 @@ add_custom_library(
   LIBRARIES
     libuv
   INCLUDES
-    c/include
+    include
   CMAKE_TARGETS
     uv
   CMAKE_C_FLAGS

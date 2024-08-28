@@ -2292,7 +2292,7 @@ pub const ModuleLoader = struct {
                     virtual_source = &virtual_source_to_use.?;
                 }
             } else {
-                ret.* = ErrorableResolvedSource.err(error.JSErrorObject, globalObject.createErrorInstanceWithCode(.MODULE_NOT_FOUND, "Blob not found", .{}).asVoid());
+                ret.* = ErrorableResolvedSource.err(error.JSErrorObject, globalObject.MODULE_NOT_FOUND("Blob not found", .{}).toJS().asVoid());
                 return null;
             }
         }

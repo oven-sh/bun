@@ -35,6 +35,9 @@ export default [
   ["ERR_STREAM_WRITE_AFTER_END", TypeError, "TypeError"],
   ["ERR_ZLIB_INITIALIZATION_FAILED", TypeError, "TypeError"],
   ["ERR_STRING_TOO_LONG", Error, "Error"],
+  ["ERR_CRYPTO_SCRYPT_INVALID_PARAMETER", Error, "Error"],
+  ["ERR_CRYPTO_INVALID_SCRYPT_PARAMS", RangeError, "RangeError"],
+  ["MODULE_NOT_FOUND", Error, "Error"],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError, "TypeError"],

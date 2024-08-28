@@ -44,10 +44,21 @@ const BunBuildOptions = struct {
     version: Version,
     canary_revision: ?u32,
     sha: []const u8,
+    /// enable debug logs in release builds
     enable_logs: bool = false,
     tracy_callstack_depth: u16,
     reported_nodejs_version: Version,
+    /// To make iterating on some '@embedFile's faster, we load them at runtime
+    /// instead of at compile time. This is disabled in release or if this flag
+    /// is set (to allow CI to build a portable executable). Affected files:
+    ///
+    /// - src/kit/runtime.ts (bundled)
+    /// - src/bun.js/api/FFI.h
+    ///
+    /// A similar technique is used in C++ code for JavaScript builtins
+    force_embed_code: bool = false,
 
+    /// `./build/codegen` or equivelent
     generated_code_dir: []const u8,
     no_llvm: bool,
 
@@ -59,6 +70,10 @@ const BunBuildOptions = struct {
             !Target.x86.featureSetHas(this.target.result.cpu.features, .avx2);
     }
 
+    pub fn shouldEmbedCode(opts: *const BunBuildOptions) bool {
+        return opts.optimize != .Debug or opts.force_embed_code;
+    }
+
     pub fn buildOptionsModule(this: *BunBuildOptions, b: *Build) *Module {
         if (this.cached_options_module) |mod| {
             return mod;
@@ -66,6 +81,12 @@ const BunBuildOptions = struct {
 
         var opts = b.addOptions();
         opts.addOption([]const u8, "base_path", b.pathFromRoot("."));
+        opts.addOption([]const u8, "codegen_path", std.fs.path.resolve(b.graph.arena, &.{
+            b.build_root.path.?,
+            this.generated_code_dir,
+        }) catch @panic("OOM"));
+
+        opts.addOption(bool, "embed_code", this.shouldEmbedCode());
         opts.addOption(u32, "canary_revision", this.canary_revision orelse 0);
         opts.addOption(bool, "is_canary", this.canary_revision != null);
         opts.addOption(Version, "version", this.version);
@@ -181,6 +202,7 @@ pub fn build(b: *Build) !void {
             "build/codegen",
     );
     const bun_version = b.option([]const u8, "version", "Value of `Bun.version`") orelse "0.0.0";
+    const force_embed_js_code = b.option(bool, "force_embed_js_code", "Always embed JavaScript builtins") orelse false;
 
     b.reference_trace = ref_trace: {
         const trace = b.option(u32, "reference-trace", "Set the reference trace") orelse 16;
@@ -199,6 +221,7 @@ pub fn build(b: *Build) !void {
         .arch = arch,
 
         .generated_code_dir = generated_code_dir,
+        .force_embed_code = force_embed_js_code,
         .no_llvm = no_llvm,
 
         .version = try Version.parse(bun_version),
@@ -448,23 +471,22 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
         .root_source_file = b.path(async_path),
     });
 
-    const zig_generated_classes_path = b.pathJoin(&.{ opts.generated_code_dir, "ZigGeneratedClasses.zig" });
-    validateGeneratedPath(zig_generated_classes_path);
-    obj.root_module.addAnonymousImport("ZigGeneratedClasses", .{
-        .root_source_file = .{ .cwd_relative = zig_generated_classes_path },
-    });
-
-    const resolved_source_tag_path = b.pathJoin(&.{ opts.generated_code_dir, "ResolvedSourceTag.zig" });
-    validateGeneratedPath(resolved_source_tag_path);
-    obj.root_module.addAnonymousImport("ResolvedSourceTag", .{
-        .root_source_file = .{ .cwd_relative = resolved_source_tag_path },
-    });
-
-    const error_code_path = b.pathJoin(&.{ opts.generated_code_dir, "ErrorCode.zig" });
-    validateGeneratedPath(error_code_path);
-    obj.root_module.addAnonymousImport("ErrorCode", .{
-        .root_source_file = .{ .cwd_relative = error_code_path },
-    });
+    // Generated code exposed as individual modules.
+    inline for (.{
+        .{ .file = "ZigGeneratedClasses.zig", .import = "ZigGeneratedClasses" },
+        .{ .file = "ResolvedSourceTag.zig", .import = "ResolvedSourceTag" },
+        .{ .file = "ErrorCode.zig", .import = "ErrorCode" },
+        .{ .file = "kit.client.js", .import = "kit-codegen/kit.client.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "kit.server.js", .import = "kit-codegen/kit.client.js", .enable = opts.shouldEmbedCode() },
+    }) |entry| {
+        if (!@hasField(@TypeOf(entry), "enable") or entry.enable) {
+            const path = b.pathJoin(&.{ opts.generated_code_dir, entry.file });
+            validateGeneratedPath(path);
+            obj.root_module.addAnonymousImport(entry.import, .{
+                .root_source_file = .{ .cwd_relative = path },
+            });
+        }
+    }
 
     if (os == .windows) {
         obj.root_module.addAnonymousImport("bun_shim_impl.exe", .{

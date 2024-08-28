@@ -89,13 +89,15 @@ pub fn wipDevServer(options: DevServer.Options) noreturn {
 
 pub const hmr_runtime_suffix = "\n]);";
 
-pub fn getHmrRuntime() []const u8 {
-    return 
-    \\((graph) => {
-    \\  console.log(1)
-    \\})([
-    \\
-    ;
+pub fn getHmrRuntime(mode: enum { server, client }) []const u8 {
+    return if (Environment.embed_code)
+        switch (mode) {
+            .client => @embedFile("kit-codegen/kit.client.js"),
+            .server => @embedFile("kit-codegen/kit.server.js"),
+        }
+    else switch (mode) {
+        inline else => |m| bun.runtimeEmbedFile(.codegen, "kit." ++ @tagName(m) ++ ".js"),
+    };
 }
 
 pub const DevServer = @import("./DevServer.zig");
@@ -103,6 +105,7 @@ pub const DevServer = @import("./DevServer.zig");
 const std = @import("std");
 
 const bun = @import("root").bun;
+const Environment = bun.Environment;
 
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;

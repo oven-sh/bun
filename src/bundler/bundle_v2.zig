@@ -7014,7 +7014,7 @@ pub const LinkerContext = struct {
 
         switch (c.options.output_format) {
             .kit_internal_hmr => {
-                const start = bun.kit.getHmrRuntime();
+                const start = bun.kit.getHmrRuntime(if (c.options.target.isBun()) .server else .client);
                 j.pushStatic(start);
                 line_offset.advance(start);
             },

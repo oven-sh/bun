@@ -10,11 +10,15 @@ declare const graph: ModuleLoad[];
 */
 declare const mode: 'client' | 'server';
 
+if (typeof IS_BUN_DEVELOPMENT !== 'boolean') { throw new Error('DCE is configured incorrectly') }
+
 type RequireFunction = (id: number) => void;
 type ModuleLoad = (require: RequireFunction, ctx: Hmr) => void;
 
 interface Hmr {
 
 }
+
+console.log(graph, 'mode: ' + mode);
 
 export {}

@@ -117,7 +117,7 @@ pub const Fallback = struct {
 
     pub inline fn scriptContent() string {
         if (comptime Environment.isDebug) {
-            const dirpath = comptime bun.Environment.base_path ++ (bun.Dirname.dirname(u8, @src().file) orelse "");
+            const dirpath = comptime bun.Environment.base_path ++ "/" ++ (bun.Dirname.dirname(u8, @src().file) orelse "");
             var buf: bun.PathBuffer = undefined;
             const user = bun.getUserName(&buf) orelse "";
             const dir = std.mem.replaceOwned(

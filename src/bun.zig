@@ -3239,6 +3239,46 @@ pub fn getUserName(output_buffer: []u8) ?[]const u8 {
     return output_buffer[0..size];
 }
 
+pub fn runtimeEmbedFile(
+    comptime root: enum { codegen, src },
+    comptime sub_path: []const u8,
+) []const u8 {
+    comptime assert(Environment.isDebug);
+    comptime assert(!Environment.embed_code);
+
+    const static = struct {
+        var storage: ?[]const u8 = null;
+    };
+
+    const abs_path = comptime path: {
+        var buf: bun.PathBuffer = undefined;
+        var fba = std.heap.FixedBufferAllocator.init(&buf);
+        const resolved = (std.fs.path.resolve(fba.allocator(), &.{
+            switch (root) {
+                .codegen => Environment.codegen_path,
+                .src => Environment.base_path ++ "/src",
+            },
+            sub_path,
+        }) catch
+            @compileError(unreachable))[0..].*;
+        break :path &resolved;
+    };
+
+    return static.storage orelse {
+        const contents = std.fs.cwd().readFileAlloc(default_allocator, abs_path, std.math.maxInt(usize)) catch |e| {
+            Output.panic(
+                \\Failed to load '{s}': {}
+                \\
+                \\To improve iteration speed, some files are not embedded but
+                \\loaded at runtime, at the cost of making the binary non-portable.
+                \\To fix this, pass -DFORCE_EMBED_CODE=1 to CMake
+            , .{ abs_path, e });
+        };
+        static.storage = contents;
+        return contents;
+    };
+}
+
 pub inline fn markWindowsOnly() if (Environment.isWindows) void else noreturn {
     if (Environment.isWindows) {
         return;

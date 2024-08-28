@@ -641,7 +641,7 @@ pub const ZlibDecoder = struct {
                                 error.ZlibError => {
                                     const message = std.mem.sliceTo(this.decoder.stream.err_msg.?, 0);
                                     this.decoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "{s}", .{message});
-                                    return;
+                                    break :outer;
                                 },
                                 else => {},
                             }

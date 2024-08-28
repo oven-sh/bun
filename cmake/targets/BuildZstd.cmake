@@ -10,13 +10,19 @@ add_custom_repository(
     794ea1b0afca0f020f4e57b6732332231fb23c70
 )
 
+if(WIN32)
+  set(ZSTD_LIBRARY zstd_static)
+else()
+  set(ZSTD_LIBRARY zstd)
+endif()
+
 add_custom_library(
   TARGET
     zstd
   PREFIX
     lib
   LIBRARIES
-    zstd
+    ${ZSTD_LIBRARY}
   CMAKE_PATH
     build/cmake
   CMAKE_TARGETS

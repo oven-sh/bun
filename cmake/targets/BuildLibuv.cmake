@@ -14,11 +14,9 @@ add_custom_library(
   TARGET
     libuv
   LIBRARIES
-    libuv
+    uv
   INCLUDES
     include
-  CMAKE_TARGETS
-    uv
   CMAKE_C_FLAGS
     "/DWIN32 /D_WINDOWS -Wno-int-conversion"
 )

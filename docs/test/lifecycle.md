@@ -39,6 +39,13 @@ describe("test group", () => {
 });
 ```
 
+{% callout %}
+Note, there is currently an issue with the execution order of the beforeAll hook.
+
+Please see [this issue](](https://github.com/oven-sh/bun/issues/5738)) for details
+
+{% /callout %}
+
 To scope the hooks to a test file:
 
 ```ts

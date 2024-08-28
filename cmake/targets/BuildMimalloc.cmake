@@ -22,11 +22,11 @@ set(MIMALLOC_CMAKE_ARGS
   -DMI_SKIP_COLLECT_ON_EXIT=ON
 )
 
-if(ENABLE_ASSERTIONS)
+if(DEBUG)
   list(APPEND MIMALLOC_CMAKE_ARGS -DMI_DEBUG_FULL=ON)
 endif()
 
-if(USE_VALGRIND)
+if(ENABLE_VALGRIND)
   list(APPEND MIMALLOC_CMAKE_ARGS -DMI_VALGRIND=ON)
 endif()
 
@@ -45,6 +45,13 @@ add_custom_library(
     include
   CMAKE_TARGETS
     mimalloc-static
+    mimalloc-obj
   CMAKE_ARGS
     ${MIMALLOC_CMAKE_ARGS}
 )
+
+# Workaround for linker issue on macOS and Linux x64
+# https://github.com/microsoft/mimalloc/issues/512
+if(APPLE OR (LINUX AND MIMALLOC_LIBRARY STREQUAL "mimalloc-debug"))
+  target_link_libraries(${bun} PRIVATE ${BUILD_PATH}/mimalloc/CMakeFiles/mimalloc-obj.dir/src/static.c.o)
+endif()

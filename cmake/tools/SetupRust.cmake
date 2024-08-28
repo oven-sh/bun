@@ -3,7 +3,7 @@ include(Utils)
 find_program(
   CMAKE_CARGO
   cargo
-  PATHS ENV PATH ENV${HOME}/.cargo/bin
+  PATHS ENV PATH $ENV{HOME}/.cargo/bin
 )
 
 if(CMAKE_CARGO)

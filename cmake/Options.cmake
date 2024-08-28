@@ -37,7 +37,7 @@ endif()
 
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|arm")
   setx(ARCH "aarch64")
-elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "amd64|x86_64|x64")
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "amd64|x86_64|x64|AMD64")
   setx(ARCH "x64")
 else()
   message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")

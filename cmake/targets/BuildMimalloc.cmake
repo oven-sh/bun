@@ -40,7 +40,6 @@ endif()
 # https://github.com/microsoft/mimalloc/issues/512
 if(APPLE OR (LINUX AND MIMALLOC_LIBRARY STREQUAL "mimalloc-debug"))
   set(MIMALLOC_OBJECT_FILE ${BUILD_PATH}/mimalloc/CMakeFiles/mimalloc-obj.dir/src/static.c.o)
-  target_link_libraries(${bun} PRIVATE ${MIMALLOC_OBJECT_FILE})
 endif()
 
 add_custom_library(
@@ -58,3 +57,5 @@ add_custom_library(
   CMAKE_ARGS
     ${MIMALLOC_CMAKE_ARGS}
 )
+
+target_link_libraries(${bun} PRIVATE ${MIMALLOC_OBJECT_FILE})

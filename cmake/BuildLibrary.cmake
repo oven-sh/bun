@@ -117,6 +117,7 @@ macro(add_custom_library)
         ${${LIB_ID}_WORKING_DIRECTORY}
       BYPRODUCTS
         ${${LIB_ID}_LIBRARY_PATHS}
+        ${LIB_BYPRODUCTS}
       DEPENDS
         configure-${LIB_NAME}
     )

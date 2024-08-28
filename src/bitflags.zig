@@ -17,6 +17,14 @@ pub fn Bitflags(comptime T: type) type {
             return this;
         }
 
+        pub inline fn fromNames(comptime names: []const []const u8) T {
+            var this: T = .{};
+            inline for (names) |name| {
+                @field(this, name) = true;
+            }
+            return this;
+        }
+
         pub fn bitwiseOr(lhs: T, rhs: T) T {
             return @bitCast(@as(IntType, @bitCast(lhs)) | @as(IntType, @bitCast(rhs)));
         }

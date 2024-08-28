@@ -1,5 +1,5 @@
 macro(add_custom_library)
-  set(args TARGET PREFIX CMAKE_BUILD_TYPE CMAKE_PATH WORKING_DIRECTORY)
+  set(args TARGET PREFIX CMAKE_BUILD_TYPE CMAKE_PATH WORKING_DIRECTORY SOURCE_PATH BUILD_PATH)
   set(multi_args LIBRARIES INCLUDES CMAKE_TARGETS CMAKE_ARGS COMMAND)
   cmake_parse_arguments(LIB "" "${args}" "${multi_args}" ${ARGN})
 
@@ -14,8 +14,17 @@ macro(add_custom_library)
   set(LIB_NAME ${LIB_TARGET})
   string(TOUPPER ${LIB_NAME} LIB_ID)
 
-  parse_option(${LIB_ID}_SOURCE_PATH FILEPATH "Path to the ${LIB_NAME} source" ${CWD}/src/deps/${LIB_NAME})
-  parse_option(${LIB_ID}_BUILD_PATH FILEPATH "Path to the ${LIB_NAME} build" ${BUILD_PATH}/${LIB_NAME})
+  if(LIB_SOURCE_PATH)
+    set(${LIB_ID}_SOURCE_PATH ${CWD}/${LIB_SOURCE_PATH})
+  else()
+    set(${LIB_ID}_SOURCE_PATH ${CWD}/src/deps/${LIB_NAME})
+  endif()
+
+  if(LIB_BUILD_PATH)
+    set(${LIB_ID}_BUILD_PATH ${BUILD_PATH}/${LIB_BUILD_PATH})
+  else()
+    set(${LIB_ID}_BUILD_PATH ${BUILD_PATH}/${LIB_NAME})
+  endif()
 
   set(${LIB_ID}_WORKING_DIRECTORY ${${LIB_ID}_SOURCE_PATH})
   if(LIB_WORKING_DIRECTORY)
@@ -34,18 +43,21 @@ macro(add_custom_library)
   endforeach()
 
   if(LIB_COMMAND)
-    add_custom_command(
+    add_custom_target(
+      build-${LIB_NAME}
       COMMENT
         "Building ${LIB_NAME}"
       VERBATIM COMMAND
         ${LIB_COMMAND}
       WORKING_DIRECTORY
         ${${LIB_ID}_WORKING_DIRECTORY}
-      OUTPUT
+      BYPRODUCTS
         ${${LIB_ID}_LIBRARY_PATHS}
-      DEPENDS
-        ${${LIB_ID}_SOURCE_PATH}
     )
+
+    if(TARGET clone-${LIB_NAME})
+      add_dependencies(build-${LIB_NAME} clone-${LIB_NAME})
+    endif()
   else()
     if(NOT LIB_CMAKE_BUILD_TYPE)
       set(LIB_CMAKE_BUILD_TYPE ${CMAKE_BUILD_TYPE})
@@ -62,7 +74,8 @@ macro(add_custom_library)
       set(${LIB_ID}_CMAKE_PATH ${${LIB_ID}_CMAKE_PATH}/${LIB_CMAKE_PATH})
     endif()
 
-    add_custom_command(
+    add_custom_target(
+      configure-${LIB_NAME}
       COMMENT
         "Configuring ${LIB_NAME}"
       VERBATIM COMMAND
@@ -72,11 +85,11 @@ macro(add_custom_library)
           ${${LIB_ID}_CMAKE_ARGS}
       WORKING_DIRECTORY
         ${${LIB_ID}_WORKING_DIRECTORY}
-      OUTPUT
-        ${${LIB_ID}_CMAKE_PATH}/CMakeCache.txt
-      DEPENDS
-        ${${LIB_ID}_SOURCE_PATH}
     )
+
+    if(TARGET clone-${LIB_NAME})
+      add_dependencies(configure-${LIB_NAME} clone-${LIB_NAME})
+    endif()
   endif()
 
   if(NOT LIB_COMMAND)
@@ -92,18 +105,19 @@ macro(add_custom_library)
       list(APPEND ${LIB_ID}_CMAKE_BUILD_ARGS --target ${target})
     endforeach()
 
-    add_custom_command(
+    add_custom_target(
+      build-${LIB_NAME}
       COMMENT
-        "Building ${LIB_NAME}"
+        "Compiling ${LIB_NAME}"
       VERBATIM COMMAND
         ${CMAKE_COMMAND}
           ${${LIB_ID}_CMAKE_BUILD_ARGS}
       WORKING_DIRECTORY
         ${${LIB_ID}_WORKING_DIRECTORY}
-      OUTPUT
+      BYPRODUCTS
         ${${LIB_ID}_LIBRARY_PATHS}
       DEPENDS
-        ${${LIB_ID}_CMAKE_PATH}/CMakeCache.txt
+        configure-${LIB_NAME}
     )
   endif()
   
@@ -121,8 +135,7 @@ macro(add_custom_library)
     COMMENT
       "Building ${LIB_NAME}"
     DEPENDS
-      ${${LIB_ID}_SOURCE_PATH}
-      ${${LIB_ID}_LIBRARY_PATHS}
+      build-${LIB_NAME}
   )
   
   include_directories(${${LIB_ID}_INCLUDE_PATHS})

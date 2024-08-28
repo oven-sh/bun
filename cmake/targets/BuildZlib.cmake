@@ -1,6 +1,15 @@
 include(BuildLibrary)
 include(GitClone)
 
+add_custom_repository(
+  NAME
+    zlib
+  REPOSITORY
+    cloudflare/zlib
+  COMMIT
+    886098f3f339617b4243b286f5ed364b9989e245
+)
+
 # TODO: make a patch upstream to change the line
 # `#ifdef _MSC_VER`
 # to account for clang-cl, which implements `__builtin_ctzl` and `__builtin_expect`
@@ -33,11 +42,4 @@ add_custom_library(
     -DBUILD_EXAMPLES=OFF
     # https://gitlab.kitware.com/cmake/cmake/-/issues/25755
     -DCMAKE_C_FLAGS=\"-fno-define-target-os-macros\"
-)
-
-add_custom_clone(
-  REPOSITORY
-    cloudflare/zlib
-  COMMIT
-    886098f3f339617b4243b286f5ed364b9989e245
 )

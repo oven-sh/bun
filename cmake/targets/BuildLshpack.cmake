@@ -1,6 +1,15 @@
 include(BuildLibrary)
 include(GitClone)
 
+add_custom_repository(
+  NAME
+    lshpack
+  REPOSITORY
+    litespeedtech/ls-hpack
+  COMMIT
+    3d0f1fc1d6e66a642e7a98c55deb38aa986eb4b0
+)
+
 set(LSHPACK_INCLUDES .)
 if(WIN32)
   set(LSHPACK_INCLUDES compat/queue)
@@ -24,13 +33,4 @@ add_custom_library(
   #     _update_hash in libls-hpack.a(lshpack.c.o)
   CMAKE_BUILD_TYPE
     Release
-)
-
-add_custom_clone(
-  NAME
-    lshpack
-  REPOSITORY
-    litespeedtech/ls-hpack
-  COMMIT
-    3d0f1fc1d6e66a642e7a98c55deb38aa986eb4b0
 )

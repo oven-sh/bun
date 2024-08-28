@@ -1,6 +1,15 @@
 include(BuildLibrary)
 include(GitClone)
 
+add_custom_repository(
+  NAME
+    zstd
+  REPOSITORY
+    facebook/zstd
+  COMMIT
+    794ea1b0afca0f020f4e57b6732332231fb23c70
+)
+
 add_custom_library(
   TARGET
     zstd
@@ -17,11 +26,4 @@ add_custom_library(
     -DZSTD_BUILD_PROGRAMS=OFF
     -DZSTD_BUILD_TESTS=OFF
     -DZSTD_BUILD_CONTRIB=OFF
-)
-
-add_custom_clone(
-  REPOSITORY
-    facebook/zstd
-  COMMIT
-    794ea1b0afca0f020f4e57b6732332231fb23c70
 )

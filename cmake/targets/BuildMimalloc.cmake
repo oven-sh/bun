@@ -1,6 +1,15 @@
 include(BuildLibrary)
 include(GitClone)
 
+add_custom_repository(
+  NAME
+    mimalloc
+  REPOSITORY
+    oven-sh/mimalloc
+  COMMIT
+    4c283af60cdae205df5a872530c77e2a6a307d43
+)
+
 set(MIMALLOC_CMAKE_ARGS
   -DMI_BUILD_STATIC=ON
   -DMI_BUILD_OBJECT=ON
@@ -38,11 +47,4 @@ add_custom_library(
     mimalloc-static
   CMAKE_ARGS
     ${MIMALLOC_CMAKE_ARGS}
-)
-
-add_custom_clone(
-  REPOSITORY
-    oven-sh/mimalloc
-  COMMIT
-    4c283af60cdae205df5a872530c77e2a6a307d43
 )

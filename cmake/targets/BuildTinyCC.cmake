@@ -1,16 +1,7 @@
 include(BuildLibrary)
 include(GitClone)
 
-add_custom_library(
-  TARGET
-    tinycc
-  LIBRARIES
-    tcc
-  CMAKE_ARGS
-    -DTCC_BUILD_STATIC=ON
-)
-
-add_custom_clone(
+add_custom_repository(
   NAME
     tinycc
   REPOSITORY
@@ -19,3 +10,11 @@ add_custom_clone(
     ab631362d839333660a265d3084d8ff060b96753
 )
 
+add_custom_library(
+  TARGET
+    tinycc
+  LIBRARIES
+    tcc
+  CMAKE_ARGS
+    -DTCC_BUILD_STATIC=ON
+)

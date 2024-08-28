@@ -1,6 +1,15 @@
 include(BuildLibrary)
 include(GitClone)
 
+add_custom_repository(
+  NAME
+    brotli
+  REPOSITORY
+    google/brotli
+  TAG
+    v1.1.0
+)
+
 add_custom_library(
   TARGET
     brotli
@@ -15,11 +24,4 @@ add_custom_library(
     -DBROTLI_BUILD_TOOLS=OFF
     -DBROTLI_EMSCRIPTEN=OFF
     -DBROTLI_DISABLE_TESTS=ON
-)
-
-add_custom_clone(
-  REPOSITORY
-    google/brotli
-  TAG
-    v1.1.0
 )

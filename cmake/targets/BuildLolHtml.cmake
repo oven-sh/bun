@@ -2,6 +2,15 @@ include(BuildLibrary)
 include(GitClone)
 include(SetupRust)
 
+add_custom_repository(
+  NAME
+    lolhtml
+  REPOSITORY
+    cloudflare/lol-html
+  COMMIT
+    8d4c273ded322193d017042d1f48df2766b0f88b
+)
+
 set(LOLHTML_BUILD_ARGS
   --target-dir ${BUILD_PATH}/lolhtml
 )
@@ -32,13 +41,4 @@ add_custom_library(
     ${CMAKE_CARGO}
       build
       ${LOLHTML_BUILD_ARGS}
-)
-
-add_custom_clone(
-  NAME
-    lolhtml
-  REPOSITORY
-    cloudflare/lol-html
-  COMMIT
-    8d4c273ded322193d017042d1f48df2766b0f88b
 )

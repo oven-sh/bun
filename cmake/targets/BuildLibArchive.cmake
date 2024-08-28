@@ -1,6 +1,16 @@
 include(BuildLibrary)
 include(GitClone)
 
+add_custom_repository(
+  NAME
+    libarchive
+  REPOSITORY
+    libarchive/libarchive
+  COMMIT
+    898dc8319355b7e985f68a9819f182aaed61b53a
+)
+
+
 add_custom_library(
   TARGET
     libarchive
@@ -34,11 +44,4 @@ add_custom_library(
     -DENABLE_PCREPOSIX=OFF
     -DENABLE_ZLIB=OFF
     -DENABLE_ZSTD=OFF
-)
-
-add_custom_clone(
-  REPOSITORY
-    libarchive/libarchive
-  COMMIT
-    898dc8319355b7e985f68a9819f182aaed61b53a
 )

@@ -89,10 +89,11 @@ if(CMAKE_SCRIPT_MODE_FILE STREQUAL CMAKE_CURRENT_LIST_FILE)
   return()
 endif()
 
-macro(add_custom_clone)
+macro(add_custom_repository)
   git_clone_args(${ARGN})
   
-  add_custom_command(
+  add_custom_target(
+    clone-${GIT_NAME}
     COMMENT
       "Cloning ${GIT_NAME}..."
     VERBATIM COMMAND
@@ -106,7 +107,7 @@ macro(add_custom_clone)
         -DGIT_PATH=${GIT_PATH}
     WORKING_DIRECTORY
       ${CMAKE_SOURCE_DIR}
-    OUTPUT
+    BYPRODUCTS
       ${GIT_PATH}
   )
 endmacro()

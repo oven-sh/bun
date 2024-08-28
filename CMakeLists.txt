@@ -108,10 +108,10 @@ endif()
 
 set(ERROR_LIMIT 100 CACHE STRING "Maximum number of errors to show when compiling C++ code")
 
-set(CONFIGURE_DEPENDS "CONFIGURE_DEPENDS")
-
-if(NO_CONFIGURE_DEPENDS)
-    set(CONFIGURE_DEPENDS "")
+if(NOT CONFIGURE_DEPENDS)
+  set(CONFIGURE_DEPENDS "")
+else()
+  set(CONFIGURE_DEPENDS "CONFIGURE_DEPENDS")
 endif()
 
 set(REQUIRED_IF_NOT_ONLY_CPP_OR_LINK "")

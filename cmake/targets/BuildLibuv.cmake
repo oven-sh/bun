@@ -17,6 +17,6 @@ add_custom_library(
     libuv
   INCLUDES
     c/include
-  CMAKE_ARGS
-    "-DCMAKE_C_FLAGS=\"/DWIN32 /D_WINDOWS -Wno-int-conversion\""
+  CMAKE_C_FLAGS
+    "/DWIN32 /D_WINDOWS -Wno-int-conversion"
 )

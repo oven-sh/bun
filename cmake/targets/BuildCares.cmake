@@ -26,4 +26,6 @@ add_custom_library(
     -DCARES_STATIC_PIC=ON # FORCE_PIC was set to 1, but CARES_STATIC_PIC was set to OFF??
     -DCARES_SHARED=OFF
     -DCARES_BUILD_TOOLS=OFF # this was set to ON?
+  CMAKE_POSITION_INDEPENDENT_CODE
+    ON
 )

@@ -151,6 +151,17 @@ macro(add_custom_library)
     DEPENDS
       build-${LIB_NAME}
   )
+
+  if(BUILDKITE)
+    add_custom_command(
+      TARGET
+        build-${LIB_NAME} POST_BUILD
+      VERBATIM COMMAND
+        buildkite-agent artifact upload ${${LIB_ID}_LIBRARY_PATHS}
+      WORKING_DIRECTORY
+        ${${LIB_ID}_LIB_PATH}
+    )
+  endif()
   
   include_directories(${${LIB_ID}_INCLUDE_PATHS})
   target_link_libraries(${bun} PRIVATE ${${LIB_ID}_LIBRARY_PATHS})

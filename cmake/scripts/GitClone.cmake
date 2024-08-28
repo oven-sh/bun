@@ -78,7 +78,18 @@ macro(git_clone)
   file(REMOVE ${GIT_DOWNLOAD_PATH})
   file(GLOB_RECURSE GIT_PATCH_PATHS ${CMAKE_SOURCE_DIR}/patches/${GIT_NAME}/*)
   foreach(GIT_PATCH_PATH ${GIT_PATCH_PATHS})
-    file(COPY ${GIT_PATCH_PATH} DESTINATION ${GIT_PATH})
+    if(GIT_PATCH_PATH MATCHES "\\.patch$")
+      execute_process(
+        COMMAND git apply --ignore-whitespace --ignore-space-change --no-index --verbose ${GIT_PATCH_PATH}
+        WORKING_DIRECTORY ${GIT_PATH}
+        RESULT_VARIABLE GIT_PATCH_RESULT
+      )
+      if(NOT GIT_PATCH_RESULT EQUAL 0)
+        message(FATAL_ERROR "git_clone: failed to apply patch: ${GIT_PATCH_PATH}")
+      endif()
+    else()
+      file(COPY ${GIT_PATCH_PATH} DESTINATION ${GIT_PATH})
+    endif()
   endforeach()
   file(WRITE ${GIT_REF_PATH} ${GIT_REF})
 endmacro()

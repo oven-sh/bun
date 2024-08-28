@@ -90,12 +90,34 @@ pub const Pattern = struct {
         closure: anytype,
         comptime writefn: *const fn (@TypeOf(closure), []const u8) PrintErr!void,
     ) PrintErr!void {
-        _ = this; // autofix
-        _ = _hash; // autofix
-        _ = path; // autofix
-        _ = local; // autofix
-        _ = writefn; // autofix
-        @compileError(css.todo_stuff.depth);
+        const alloc: Allocator = {
+            @compileError(css.todo_stuff.think_about_allocator);
+        };
+        for (this.segments.items) |*segment| {
+            switch (segment.*) {
+                .literal => |s| {
+                    try writefn(closure, s);
+                },
+                .name => {
+                    const stem = std.fs.path.stem(path);
+                    if (std.mem.indexOf(u8, stem, ".")) |_| {
+                        // PERF: stack buffer here if input smol
+                        const buf = alloc.alloc(u8, stem.len) catch bun.outOfMemory();
+                        defer alloc.free(buf);
+                        const replaced = std.mem.replace(u8, stem, ".", "-", buf);
+                        try writefn(closure, replaced);
+                    } else {
+                        try writefn(closure, stem);
+                    }
+                },
+                .local => {
+                    try writefn(closure, local);
+                },
+                .hash => {
+                    try writefn(closure, _hash);
+                },
+            }
+        }
     }
 };
 

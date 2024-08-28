@@ -547,13 +547,25 @@ if(APPLE)
 endif()
 
 set(TRIPLET bun-${OS}-${ARCH})
+
+if(ENABLE_BASELINE)
+  set(TRIPLET ${TRIPLET}-baseline)
+endif()
+
+message(STATUS "TRIPLET value: ${TRIPLET}")
+
 add_custom_command(
   TARGET
     ${bun} POST_BUILD
   COMMAND
+    ${CMAKE_COMMAND} -E rm -rf ${TRIPLET} ${TRIPLET}.zip
+  COMMAND
     ${CMAKE_COMMAND} -E make_directory ${TRIPLET}
+  COMMAND
     ${CMAKE_COMMAND} -E copy_if_different ${bun} ${TRIPLET}/bun
+  COMMAND
     ${CMAKE_COMMAND} -E tar cfv ${TRIPLET}.zip --format=zip ${TRIPLET}
+  COMMAND
     ${CMAKE_COMMAND} -E remove_directory ${TRIPLET}
   WORKING_DIRECTORY
     ${BUILD_PATH}

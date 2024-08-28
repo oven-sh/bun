@@ -423,11 +423,6 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
 
     JSObject* context = asObject(contextArg);
 
-    auto proxyStructure = JSGlobalProxy::createStructure(vm, globalObject, JSC::jsNull());
-    auto proxy = JSGlobalProxy::create(vm, proxyStructure);
-    proxy->setTarget(vm, globalObject);
-    context->setPrototypeDirect(vm, proxy);
-
     JSWithScope* contextScope = JSWithScope::create(vm, globalObject, globalObject->globalScope(), context);
     return runInContext(globalObject, script, globalObject->globalThis(), contextScope, callFrame->argument(1));
 }

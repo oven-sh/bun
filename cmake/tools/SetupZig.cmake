@@ -50,10 +50,6 @@ set(CMAKE_ZIG_FLAGS
   --zig-lib-dir ${ZIG_LIB_DIR}
 )
 
-if(CMAKE_VERBOSE_MAKEFILE)
-  list(APPEND CMAKE_ZIG_FLAGS --verbose)
-endif()
-
 function(check_zig_version found executable)
   set(${found} FALSE PARENT_SCOPE)
 

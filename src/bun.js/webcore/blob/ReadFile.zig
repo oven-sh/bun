@@ -476,8 +476,13 @@ pub const ReadFile = struct {
                     // record the amount of data read
                     this.buffer.items.len += read.len;
                 }
-                if (!this.read_eof and this.buffer.items.len >= @min(this.max_length, this.total_size)) {
-                    this.read_eof = true; // already read the max amount
+                // - If they DID set a max length, we should stop
+                //   reading after that.
+                //
+                // - If they DID NOT set a max_length, then it will
+                //   be Blob.max_size which is an impossibly large
+                //   amount to read.
+                if (!this.read_eof and this.buffer.items.len >= this.max_length) {
                     break;
                 }
 
@@ -500,14 +505,7 @@ pub const ReadFile = struct {
                 if ((retry or (this.could_block and
                     // If we received EOF, we can skip the poll() system
                     // call. We already know it's done.
-                    !this.read_eof)) and
-                    // - If they DID set a max length, we should stop
-                    //   reading after that.
-                    //
-                    // - If they DID NOT set a max_length, then it will
-                    //   be Blob.max_size which is an impossibly large
-                    //   amount to read.
-                    @as(usize, this.max_length) > this.buffer.items.len)
+                    !this.read_eof)))
                 {
                     if ((this.could_block and
                         // If we received EOF, we can skip the poll() system

@@ -36,11 +36,20 @@ else()
   set(MIMALLOC_LIBRARY "mimalloc")
 endif()
 
+# Workaround for linker issue on macOS and Linux x64
+# https://github.com/microsoft/mimalloc/issues/512
+if(APPLE OR (LINUX AND MIMALLOC_LIBRARY STREQUAL "mimalloc-debug"))
+  set(MIMALLOC_OBJECT_FILE ${BUILD_PATH}/mimalloc/CMakeFiles/mimalloc-obj.dir/src/static.c.o)
+  target_link_libraries(${bun} PRIVATE ${MIMALLOC_OBJECT_FILE})
+endif()
+
 add_custom_library(
   TARGET
     mimalloc
   LIBRARIES
     ${MIMALLOC_LIBRARY}
+  BYPRODUCTS
+    ${MIMALLOC_OBJECT_FILE}
   INCLUDES
     include
   CMAKE_TARGETS
@@ -49,9 +58,3 @@ add_custom_library(
   CMAKE_ARGS
     ${MIMALLOC_CMAKE_ARGS}
 )
-
-# Workaround for linker issue on macOS and Linux x64
-# https://github.com/microsoft/mimalloc/issues/512
-if(APPLE OR (LINUX AND MIMALLOC_LIBRARY STREQUAL "mimalloc-debug"))
-  target_link_libraries(${bun} PRIVATE ${BUILD_PATH}/mimalloc/CMakeFiles/mimalloc-obj.dir/src/static.c.o)
-endif()

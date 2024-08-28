@@ -1,6 +1,6 @@
 macro(add_custom_library)
   set(args TARGET PREFIX CMAKE_BUILD_TYPE CMAKE_PATH WORKING_DIRECTORY SOURCE_PATH BUILD_PATH)
-  set(multi_args LIBRARIES INCLUDES CMAKE_TARGETS CMAKE_ARGS COMMAND)
+  set(multi_args LIBRARIES BYPRODUCTS INCLUDES CMAKE_TARGETS CMAKE_ARGS COMMAND)
   cmake_parse_arguments(LIB "" "${args}" "${multi_args}" ${ARGN})
 
   if(NOT LIB_TARGET)
@@ -53,6 +53,7 @@ macro(add_custom_library)
         ${${LIB_ID}_WORKING_DIRECTORY}
       BYPRODUCTS
         ${${LIB_ID}_LIBRARY_PATHS}
+        ${LIB_BYPRODUCTS}
     )
 
     if(TARGET clone-${LIB_NAME})

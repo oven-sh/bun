@@ -58,6 +58,10 @@ pub const ZlibEncoder = struct {
         if (mode == .UNZIP) options.windowBits += 32;
         if (mode == .DEFLATERAW or mode == .INFLATERAW) options.windowBits *= -1;
 
+        // In zlib v1.2.9, 8 become an invalid value for this parameter, so we gracefully fix it.
+        // Ref: https://github.com/nodejs/node/commit/241eb6122ee6f36de16ee4ed4a6a291510b1807f
+        if (mode == .DEFLATERAW and options.windowBits == -8) options.windowBits = -9;
+
         var this: *ZlibEncoder = ZlibEncoder.new(.{
             .globalThis = globalThis,
             .maxOutputLength = options.maxOutputLength,

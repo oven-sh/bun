@@ -1207,8 +1207,13 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             if (!package_json_checker.has_found_version and resolution_tag != .workspace) return false;
 
             const found_version = package_json_checker.found_version;
+
+            // exclude build tags from comparsion
+            // https://github.com/oven-sh/bun/issues/13563
+            const found_version_end = strings.lastIndexOfChar(found_version, '+') orelse found_version.len;
+            const expected_version_end = strings.lastIndexOfChar(this.package_version, '+') orelse this.package_version.len;
             // Check if the version matches
-            if (!strings.eql(found_version, this.package_version)) {
+            if (!strings.eql(found_version[0..found_version_end], this.package_version[0..expected_version_end])) {
                 const offset = brk: {
                     // ASCII only.
                     for (0..found_version.len) |c| {

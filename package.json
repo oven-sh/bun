@@ -28,11 +28,11 @@
   "scripts": {
     "setup": "./scripts/setup.sh",
     "bump": "bun ./scripts/bump.ts",
-    "build": "if [ ! -e build ]; then bun setup; fi && ninja -C build",
+    "build": "cmake -Bbuild/debug -DCMAKE_BUILD_TYPE=Debug -GNinja && cmake --build build/debug",
+    "build:release": "cmake -Bbuild/release -DCMAKE_BUILD_TYPE=Release -GNinja && cmake --build build/release",
     "build:valgrind": "cmake . -DZIG_OPTIMIZE=Debug -DUSE_DEBUG_JSC=ON -DCMAKE_BUILD_TYPE=Debug -GNinja -Bbuild-valgrind && ninja -Cbuild-valgrind",
     "build:tidy": "bash ./scripts/env.sh && BUN_SILENT=1 cmake --log-level=WARNING . ${CMAKE_FLAGS[@]} -DZIG_OPTIMIZE=Debug -DUSE_DEBUG_JSC=ON -DBUN_TIDY_ONLY=ON -DCMAKE_BUILD_TYPE=Debug -GNinja -Bbuild-tidy && BUN_SILENT=1 ninja -Cbuild-tidy",
     "build:tidy-extra": "cmake . -DZIG_OPTIMIZE=Debug -DUSE_DEBUG_JSC=ON -DBUN_TIDY_ONLY_EXTRA=ON -DCMAKE_BUILD_TYPE=Debug -GNinja -Bbuild-tidy && ninja -Cbuild-tidy",
-    "build:release": "cmake . -DCMAKE_BUILD_TYPE=Release -GNinja -Bbuild-release && ninja -Cbuild-release",
     "build:release:local": "cmake . -DCMAKE_BUILD_TYPE=Release -DWEBKIT_DIR=$(pwd)/src/bun.js/WebKit/WebKitBuild/Release -GNinja -Bbuild-release-local && ninja -Cbuild-release-local",
     "build:release:with_logs": "cmake . -DCMAKE_BUILD_TYPE=Release -DENABLE_LOGS=true -GNinja -Bbuild-release && ninja -Cbuild-release",
     "build:debug-zig-release": "cmake . -DCMAKE_BUILD_TYPE=Release -DZIG_OPTIMIZE=Debug -GNinja -Bbuild-debug-zig-release && ninja -Cbuild-debug-zig-release",

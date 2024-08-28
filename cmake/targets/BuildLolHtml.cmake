@@ -15,15 +15,18 @@ set(LOLHTML_BUILD_ARGS
   --target-dir ${BUILD_PATH}/lolhtml
 )
 
-if(ENABLE_ASSERTIONS)
-  set(LOLHTML_PREFIX debug)
-else()
-  set(LOLHTML_PREFIX release)
-  set(LOLHTML_BUILD_ARGS --release)
+if(RELEASE)
+  list(APPEND LOLHTML_BUILD_ARGS --release)
 endif()
 
 if(CMAKE_VERBOSE_MAKEFILE)
   list(APPEND LOLHTML_BUILD_ARGS --verbose)
+endif()
+
+if(DEBUG)
+  set(LOLHTML_PREFIX debug)
+else()
+  set(LOLHTML_PREFIX release)
 endif()
 
 add_custom_library(

@@ -447,6 +447,10 @@ export default [
         fn: "toContainEntry",
         length: 1,
       },
+      toContainEntries: {
+        fn: "toContainEntries",
+        length: 1,
+      },
       toContainKeys: {
         fn: "toContainKeys",
         length: 1,

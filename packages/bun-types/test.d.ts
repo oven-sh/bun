@@ -1073,6 +1073,20 @@ declare module "bun:test" {
     toContainEntry(expected: unknown): void;
 
     /**
+     * Asserts that an `object` contain array of provided key value.
+     *
+     * The value must be an object
+     *
+     * @example
+     * const o = { a: 'foo', b: 'bar', c: 'baz' };
+     * expect(o).toContainEntries([['a', 'foo']]);
+     * expect(o).toContainEntries([['c', 'baz'],['a', 'foo']]);
+     * expect(o).not.toContainEntries([['b', 'qux'],['a', 'foo'],]);
+     * @param expected the expected value
+     */
+    toContainEntries(expected: unknown): void;
+
+    /**
      * Asserts that an `object` contains all the provided keys.
      * expect({ a: 'foo', b: 'bar', c: 'baz' }).toContainKeys(['a', 'b']);
      * expect({ a: 'foo', b: 'bar', c: 'baz' }).toContainKeys(['a', 'b', 'c']);

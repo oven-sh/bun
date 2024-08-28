@@ -95,14 +95,16 @@ else()
   message(FATAL_ERROR "Unsupported operating system: ${CMAKE_HOST_SYSTEM_NAME}")
 endif()
 
+set(ZIG_NAME zig-${ZIG_HOST_OS}-${ZIG_HOST_ARCH}-${ZIG_VERSION})
+
 if(CMAKE_HOST_WIN32)
   set(ZIG_EXE "zig.exe")
+  set(ZIG_FILENAME ${ZIG_NAME}.zip)
 else()
   set(ZIG_EXE "zig")
+  set(ZIG_FILENAME ${ZIG_NAME}.tar.xz)
 endif()
 
-set(ZIG_NAME zig-${ZIG_HOST_OS}-${ZIG_HOST_ARCH}-${ZIG_VERSION})
-set(ZIG_FILENAME ${ZIG_NAME}.tar.xz)
 setx(ZIG_DOWNLOAD_URL https://ziglang.org/download/${ZIG_VERSION}/${ZIG_FILENAME})
 
 file(DOWNLOAD ${ZIG_DOWNLOAD_URL} ${ZIG_BIN_CACHE_DIR}/${ZIG_FILENAME})

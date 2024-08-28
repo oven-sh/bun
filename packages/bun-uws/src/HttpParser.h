@@ -39,6 +39,8 @@
 #include "ProxyParser.h"
 #include "QueryParser.h"
 
+extern "C" size_t BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
+
 namespace uWS
 {
 
@@ -207,7 +209,7 @@ namespace uWS
          /* This guy really has only 30 bits since we reserve two highest bits to chunked encoding parsing state */
         uint64_t remainingStreamingBytes = 0;
 
-        const size_t MAX_FALLBACK_SIZE = 1024 * 8;
+        const size_t MAX_FALLBACK_SIZE = BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
 
         /* Returns UINT_MAX on error. Maximum 999999999 is allowed. */
         static uint64_t toUnsignedInteger(std::string_view str) {

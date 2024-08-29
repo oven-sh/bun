@@ -131,6 +131,8 @@ pub extern fn inflateEnd(stream: *zStream_struct) InflateEndResult;
 
 pub extern fn inflateReset(stream: *zStream_struct) InflateEndResult;
 
+pub extern fn crc32(crc: uLong, buf: [*]const Bytef, len: uInt) uLong;
+
 pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
     return struct {
         const ZlibReader = @This();

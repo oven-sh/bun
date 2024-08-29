@@ -364,6 +364,8 @@ function createCreator(method: number) {
 }
 
 const zlib = {
+  crc32: $newZigFunction("node_zlib_binding.zig", "crc32", 1),
+
   Deflate,
   Inflate,
   Gzip,

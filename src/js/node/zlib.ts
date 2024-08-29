@@ -30,7 +30,16 @@ const kFlushBuffers: Buffer[] = [];
 
 function Base(method, options) {
   if (options == null) options = {};
-  if ($isObject(options)) options.maxOutputLength ??= maxOutputLengthDefault;
+  if ($isObject(options)) {
+    options.maxOutputLength ??= maxOutputLengthDefault;
+
+    if (options.encoding || options.objectMode || options.writableObjectMode) {
+      options = { ...options };
+      options.encoding = null;
+      options.objectMode = false;
+      options.writableObjectMode = false;
+    }
+  }
   const [, , private_constructor] = methods[method];
   this[kHandle] = private_constructor(options, {}, null, method);
   stream.Transform.$call(this, options);

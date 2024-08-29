@@ -34,15 +34,14 @@ pub fn NewReadFileHandler(comptime Function: anytype) type {
                 .result => |result| {
                     const bytes = result.buf;
                     if (blob.size > 0)
-                        blob.size = @min(@as(u32, @truncate(bytes.len)), blob.size);
-                    const value = Function(&blob, globalThis, bytes, .temporary);
+                        blob.size = @min(@as(Blob.SizeType, @truncate(bytes.len)), blob.size);
+                    const WrappedFn = struct {
+                        pub fn wrapped(b: *Blob, g: *JSGlobalObject, by: []u8) JSC.JSValue {
+                            return Function(b, g, by, .temporary);
+                        }
+                    };
 
-                    // invalid JSON needs to be rejected
-                    if (value.isAnyError()) {
-                        promise.reject(globalThis, value);
-                    } else {
-                        promise.resolve(globalThis, value);
-                    }
+                    JSC.AnyPromise.wrap(.{ .Normal = promise }, globalThis, WrappedFn.wrapped, .{ &blob, globalThis, bytes });
                 },
                 .err => |err| {
                     promise.reject(globalThis, err.toErrorInstance(globalThis));

@@ -252,24 +252,24 @@ else()
 endif()
 
 if(ICU_INCLUDE_DIR)
-    include_directories(${ICU_INCLUDE_DIR})
+  include_directories(${ICU_INCLUDE_DIR})
 endif()
 
 include_directories(
-    ${CMAKE_CURRENT_SOURCE_DIR}/packages/
-    ${CMAKE_CURRENT_SOURCE_DIR}/packages/bun-usockets
-    ${CMAKE_CURRENT_SOURCE_DIR}/packages/bun-usockets/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/bindings
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/bindings/webcore
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/bindings/webcrypto
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/bindings/sqlite
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/modules
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/js/builtins
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/napi
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/deps
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/deps/picohttpparser
-    ${WEBKIT_INCLUDE_DIR}
-    "${BUILD_PATH}/codegen"
+  ${CMAKE_CURRENT_SOURCE_DIR}/packages/
+  ${CMAKE_CURRENT_SOURCE_DIR}/packages/bun-usockets
+  ${CMAKE_CURRENT_SOURCE_DIR}/packages/bun-usockets/src
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/bindings
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/bindings/webcore
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/bindings/webcrypto
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/bindings/sqlite
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/modules
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/js/builtins
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/napi
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/deps
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/deps/picohttpparser
+  ${WEBKIT_INCLUDE_DIR}
+  ${BUILD_PATH}/codegen
 )
 
 # -- BUN_CPP_ONLY Target

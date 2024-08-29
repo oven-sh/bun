@@ -330,6 +330,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInThisContext, (JSGlobalObject * globalObjec
         false, false, EvalContextType::None, nullptr, nullptr);
     RETURN_IF_EXCEPTION(throwScope, {});
 
+    JSObject* context = asObject(JSC::constructEmptyObject(globalObject));
     JSScope* contextScope = JSWithScope::create(vm, globalObject, globalObject->globalScope(), context);
     auto catchScope = DECLARE_CATCH_SCOPE(vm);
     JSValue result = vm.interpreter.executeEval(executable, globalObject, contextScope);

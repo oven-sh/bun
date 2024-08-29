@@ -169,9 +169,11 @@ macro(add_custom_library)
   
   include_directories(${${LIB_ID}_INCLUDE_PATHS})
   target_include_directories(${bun} PRIVATE ${${LIB_ID}_INCLUDE_PATHS})
+
   if(TARGET clone-${LIB_NAME})
     add_dependencies(${bun} clone-${LIB_NAME})
   endif()
+  add_dependencies(${bun} ${LIB_NAME})
 
   target_link_libraries(${bun} PRIVATE ${${LIB_ID}_LIBRARY_PATHS})
 endmacro()

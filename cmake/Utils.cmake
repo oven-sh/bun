@@ -143,3 +143,18 @@ macro(set_if label regex value)
     set(${label} FALSE)
   endif()
 endmacro()
+
+function(file_size file_path variable)
+  file(SIZE ${file_path} file_size)
+  
+  set(units "B" "KB" "MB" "GB" "TB")
+  set(unit_index 0)
+  
+  while(filesize GREATER 1024 AND unit_index LESS 4)
+    math(EXPR file_size "${file_size} / 1024")
+    math(EXPR unit_index "${unit_index} + 1")
+  endwhile()
+  
+  list(GET units ${unit_index} unit)
+  set(${variable} "${file_size} ${unit}" PARENT_SCOPE)
+endfunction()

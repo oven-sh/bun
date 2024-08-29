@@ -5,11 +5,8 @@ if(NOT CMAKE_SYSTEM_NAME OR NOT CMAKE_SYSTEM_PROCESSOR)
 endif()
 
 optionx(CI BOOL "If CI is enabled" DEFAULT OFF)
-
-if(CI)
-  optionx(BUILDKITE BOOL "If Buildkite is enabled" DEFAULT OFF)
-  optionx(GITHUB_ACTIONS BOOL "If GitHub Actions is enabled" DEFAULT OFF)
-endif()
+optionx(BUILDKITE BOOL "If Buildkite is enabled" DEFAULT OFF)
+optionx(GITHUB_ACTIONS BOOL "If GitHub Actions is enabled" DEFAULT OFF)
 
 optionx(CMAKE_BUILD_TYPE "Debug|Release|RelWithDebInfo|MinSizeRel" "The build type to use" REQUIRED)
 

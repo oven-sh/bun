@@ -46,8 +46,8 @@ endif()
 
 project(Bun VERSION 0.0.0)
 
-# See cmake/Options.cmake for build options.
 include(Options)
+include(SetupBuildkite)
 
 if(WIN32)
   if(DEBUG)
@@ -72,20 +72,12 @@ if(CI)
   include(SetupCI)
 endif()
 
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+if(RELEASE AND NOT WIN32)
+  set(bun "bun-profile")
+elseif()
   set(bun "bun-debug")
-elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
-  set(DEBUG OFF)
-  if(WIN32)
-    # Debug symbols are in a separate file: bun.pdb
-    set(bun "bun")
-  else()
-    if(ZIG_OPTIMIZE STREQUAL "Debug")
-      set(bun "bun-debug")
-    else()
-      set(bun "bun-profile")
-    endif()
-  endif()
+else()
+  set(bun "bun")
 endif()
 
 if(WIN32 AND ENABLE_LTO)
@@ -515,27 +507,29 @@ if(APPLE)
   target_link_libraries(${bun} PRIVATE "icucore")
 endif()
 
-add_custom_target(
-  features.json
-  COMMENT
-    "Generating features.json"
-  VERBATIM COMMAND
-    ${CMAKE_COMMAND}
-      -E env
-      BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1
-      BUN_DEBUG_QUIET_LOGS=1
-      ${BUILD_PATH}/${bun}
-      ${CWD}/scripts/features.mjs
-  WORKING_DIRECTORY
-    ${BUILD_PATH}
-)
+# add_custom_target(
+#   features.json
+#   COMMENT
+#     "Generating features.json"
+#   VERBATIM COMMAND
+#     ${CMAKE_COMMAND}
+#       -E env
+#       BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1
+#       BUN_DEBUG_QUIET_LOGS=1
+#       ${BUILD_PATH}/${bunExe}
+#       ${CWD}/scripts/features.mjs
+#   WORKING_DIRECTORY
+#     ${BUILD_PATH}
+#   DEPENDS
+#     ${bun}
+# )
 
-if(APPLE)
+if(NOT WIN32)
   add_custom_target(
-    ${bun}.dSYM
+    bun.dSYM
     COMMENT
       "Generating ${bun}.dSYM"
-    COMMAND
+    VERBATIM COMMAND
       ${CMAKE_DSYMUTIL}
         ${bun}
         --keep-function-for-static
@@ -546,85 +540,55 @@ if(APPLE)
   )
 endif()
 
-set(TRIPLET bun-${OS}-${ARCH})
-
-if(ENABLE_BASELINE)
-  set(TRIPLET ${TRIPLET}-baseline)
-endif()
-
-add_custom_command(
-  TARGET
-    ${bun} POST_BUILD
-  COMMAND
-    ${CMAKE_COMMAND} -E rm -rf ${TRIPLET} ${TRIPLET}.zip
-  COMMAND
-    ${CMAKE_COMMAND} -E make_directory ${TRIPLET}
-  COMMAND
-    ${CMAKE_COMMAND} -E copy_if_different ${bun} ${TRIPLET}/bun
-  COMMAND
-    ${CMAKE_COMMAND} -E tar cfv ${TRIPLET}.zip --format=zip ${TRIPLET}
-  COMMAND
-    ${CMAKE_COMMAND} -E remove_directory ${TRIPLET}
+add_custom_target(
+  bun.zip
+  COMMENT
+    "Generating ${bun}.zip"
+  VERBATIM COMMAND
+    ${CMAKE_COMMAND} -E rm -rf ${bun} ${bun}.zip
+  VERBATIM COMMAND
+    ${CMAKE_COMMAND} -E make_directory ${bun}
+  VERBATIM COMMAND
+    ${CMAKE_COMMAND} -E copy ${bunExe} ${bun}/${bunExe}
+  VERBATIM COMMAND
+    ${CMAKE_COMMAND} -E tar cfv ${bun}.zip --format=zip ${bun}
+  VERBATIM COMMAND
+    ${CMAKE_COMMAND} -E remove_directory ${bun}
   WORKING_DIRECTORY
     ${BUILD_PATH}
-  BYPRODUCTS
-    ${BUILD_PATH}/${TRIPLET}.zip
 )
 
-if(BUILDKITE)
-  add_custom_command(
-    TARGET
-      ${bun} POST_BUILD
-    DEPENDS
-      ${BUILD_PATH}/${TRIPLET}.zip
-    COMMAND
-      buildkite-agent artifact upload ${TRIPLET}.zip
+if(TARGET bun-profile)
+  add_custom_target(
+    bun
+    COMMENT
+      "Stripping ${bun}"
+    VERBATIM COMMAND
+      ${CMAKE_STRIP}
+        ${bun}
+        --strip-all
+        --strip-debug
+        --discard-all
+        -o bun
     WORKING_DIRECTORY
       ${BUILD_PATH}
+    DEPENDS
+      ${bun}
   )
 endif()
 
-# --- Stripped Binary "bun"
-if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32 AND NOT ASSERT_ENABLED AND NOT BUN_CPP_ONLY)
-  add_custom_command(
-    TARGET ${bun}
-    POST_BUILD
-    COMMAND ${CMAKE_STRIP} -s -x -S -o ${BUILD_PATH}/bun ${BUILD_PATH}/${bun}
-    COMMENT "Stripping Symbols"
-  )
-endif()
-
-<<<<<<< HEAD
-# --- Dependencies ---
-if(USE_CUSTOM_ZLIB)
-    include_directories(${BUN_DEPS_DIR}/zlib)
-
-    if(WIN32)
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/zlib.lib")
-    else()
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libz.a")
-    endif()
-else()
-    if(WIN32)
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_DIR}/zlib_maybethisworks.lib")
-    else()
-        find_package(ZLIB REQUIRED)
-        target_link_libraries(${bun} PRIVATE ZLIB::ZLIB)
-    endif()
-=======
-if(WIN32)
-    # Kill all instances of bun before linking.
-    # This is necessary because the file is locked by the process.
-    add_custom_command(
-        TARGET ${bun}
-        PRE_LINK
-        COMMAND
-        "powershell"
-        "/C"
-        "Stop-Process -Name '${bun}' -Force -ErrorAction SilentlyContinue; exit 0"
-    )
->>>>>>> 558357408 (Migrate zlib)
-endif()
+# if(BUILDKITE)
+#   add_custom_command(
+#     TARGET
+#       ${bun} POST_BUILD
+#     DEPENDS
+#       ${BUILD_PATH}/${TRIPLET}.zip
+#     COMMAND
+#       buildkite-agent artifact upload ${TRIPLET}.zip
+#     WORKING_DIRECTORY
+#       ${BUILD_PATH}
+#   )
+# endif()
 
 include(BuildBrotli)
 include(BuildBoringSSL)

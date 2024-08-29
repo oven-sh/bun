@@ -324,7 +324,7 @@ pub const BrotliEncoder = struct {
     }
 
     pub fn transformSync(this: *BrotliEncoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
-        const arguments = callframe.arguments(3);
+        const arguments = callframe.arguments(4);
 
         if (arguments.len < 3) {
             globalThis.throwNotEnoughArguments("BrotliEncoder.encode", 3, arguments.len);
@@ -339,6 +339,17 @@ pub const BrotliEncoder = struct {
         const input = callframe.argument(0);
         const optional_encoding = callframe.argument(1);
         const is_last = callframe.argument(2).toBoolean();
+        const optional_flushFlag = arguments.ptr[3];
+
+        const old_flushFlag = this.stream.flushOp;
+        defer this.stream.flushOp = old_flushFlag;
+        blk: {
+            if (!optional_flushFlag.isInt32()) break :blk;
+            const int = optional_flushFlag.asInt32();
+            if (int < 0) break :blk;
+            if (int > 3) break :blk;
+            this.stream.flushOp = @enumFromInt(int);
+        }
 
         const input_to_queue = JSC.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalThis, bun.default_allocator, input, optional_encoding, true) orelse {
             globalThis.throwInvalidArgumentType("BrotliEncoder.encode", "input", "Blob, String, or Buffer");
@@ -576,7 +587,7 @@ pub const BrotliDecoder = struct {
     }
 
     pub fn transformSync(this: *BrotliDecoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
-        const arguments = callframe.arguments(3);
+        const arguments = callframe.arguments(4);
 
         if (arguments.len < 3) {
             globalThis.throwNotEnoughArguments("BrotliEncoder.decode", 3, arguments.len);
@@ -591,6 +602,17 @@ pub const BrotliDecoder = struct {
         const input = callframe.argument(0);
         const optional_encoding = callframe.argument(1);
         const is_last = callframe.argument(2).toBoolean();
+        // const optional_flushFlag = arguments.ptr[3];
+
+        // const old_flushFlag = this.stream.flushOp;
+        // defer this.stream.flushOp = old_flushFlag;
+        // blk: {
+        //     if (!optional_flushFlag.isInt32()) break :blk;
+        //     const int = optional_flushFlag.asInt32();
+        //     if (int < 0) break :blk;
+        //     if (int > 3) break :blk;
+        //     this.stream.flushOp = @enumFromInt(int);
+        // }
 
         const input_to_queue = JSC.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalThis, bun.default_allocator, input, optional_encoding, true) orelse {
             globalThis.throwInvalidArgumentType("BrotliEncoder.decode", "input", "Blob, String, or Buffer");

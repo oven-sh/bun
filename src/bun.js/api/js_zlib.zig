@@ -96,7 +96,7 @@ pub const ZlibEncoder = struct {
     }
 
     pub fn transformSync(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        const arguments = callframe.arguments(3);
+        const arguments = callframe.arguments(4);
 
         if (arguments.len < 3) {
             globalThis.throwNotEnoughArguments("ZlibEncoder.encode", 3, arguments.len);
@@ -111,6 +111,17 @@ pub const ZlibEncoder = struct {
         const input = callframe.argument(0);
         const optional_encoding = callframe.argument(1);
         const is_last = callframe.argument(2).toBoolean();
+        const optional_flushFlag = arguments.ptr[3];
+
+        const old_flushFlag = this.stream.flush;
+        defer this.stream.flush = old_flushFlag;
+        blk: {
+            if (!optional_flushFlag.isInt32()) break :blk;
+            const int = optional_flushFlag.asInt32();
+            if (int < 0) break :blk;
+            if (int > 5) break :blk;
+            this.stream.flush = @enumFromInt(int);
+        }
 
         const input_to_queue = JSC.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalThis, bun.default_allocator, input, optional_encoding, true) orelse {
             return globalThis.throwInvalidArgumentTypeValue("buffer", "string or an instance of Buffer, TypedArray, DataView, or ArrayBuffer", input);
@@ -467,7 +478,7 @@ pub const ZlibDecoder = struct {
     }
 
     pub fn transformSync(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        const arguments = callframe.arguments(3);
+        const arguments = callframe.arguments(4);
 
         if (arguments.len < 3) {
             globalThis.throwNotEnoughArguments("ZlibDecoder.encode", 3, arguments.len);
@@ -482,6 +493,17 @@ pub const ZlibDecoder = struct {
         const input = callframe.argument(0);
         const optional_encoding = callframe.argument(1);
         const is_last = callframe.argument(2).toBoolean();
+        const optional_flushFlag = arguments.ptr[3];
+
+        const old_flushFlag = this.stream.flush;
+        defer this.stream.flush = old_flushFlag;
+        blk: {
+            if (!optional_flushFlag.isInt32()) break :blk;
+            const int = optional_flushFlag.asInt32();
+            if (int < 0) break :blk;
+            if (int > 5) break :blk;
+            this.stream.flush = @enumFromInt(int);
+        }
 
         const input_to_queue = JSC.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalThis, bun.default_allocator, input, optional_encoding, true) orelse {
             return globalThis.throwInvalidArgumentTypeValue("buffer", "string or an instance of Buffer, TypedArray, DataView, or ArrayBuffer", input);

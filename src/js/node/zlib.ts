@@ -114,12 +114,12 @@ Base.prototype._processChunk = function (chunk, flushFlag, cb) {
 };
 
 function processChunkSync(self, chunk, flushFlag) {
-  return self[kHandle].transformSync(chunk, undefined, true);
+  return self[kHandle].transformSync(chunk, undefined, false, flushFlag);
 }
 
 function processChunk(self, chunk, flushFlag, cb) {
   if (self._closed) return process.nextTick(cb);
-  self[kHandle].transformSync(chunk, undefined, false);
+  self[kHandle].transformSync(chunk, undefined, false, flushFlag);
 }
 
 //

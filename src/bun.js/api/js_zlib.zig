@@ -133,7 +133,7 @@ pub const ZlibEncoder = struct {
         }
         task.run();
         if (!is_last and this.output.items.len == 0) {
-            return .undefined;
+            return JSC.Buffer.fromBytes(&.{}, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
         }
         if (this.write_failure != null) {
             globalThis.vm().throwError(globalThis, this.write_failure.?.toError(globalThis));
@@ -504,7 +504,7 @@ pub const ZlibDecoder = struct {
         }
         task.run();
         if (!is_last and this.output.items.len == 0) {
-            return .undefined;
+            return JSC.Buffer.fromBytes(&.{}, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
         }
         if (this.write_failure != null) {
             globalThis.vm().throwError(globalThis, this.write_failure.?.toError(globalThis));

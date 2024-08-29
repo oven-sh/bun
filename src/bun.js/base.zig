@@ -641,11 +641,11 @@ pub const MarkedArrayBuffer = struct {
         return container;
     }
 
-    pub fn toNodeBuffer(this: MarkedArrayBuffer, ctx: js.JSContextRef) JSC.JSValue {
+    pub fn toNodeBuffer(this: *const MarkedArrayBuffer, ctx: js.JSContextRef) JSC.JSValue {
         return JSValue.createBufferWithCtx(ctx, this.buffer.byteSlice(), this.buffer.ptr, MarkedArrayBuffer_deallocator);
     }
 
-    pub fn toJSObjectRef(this: MarkedArrayBuffer, ctx: js.JSContextRef, exception: js.ExceptionRef) js.JSObjectRef {
+    pub fn toJSObjectRef(this: *const MarkedArrayBuffer, ctx: js.JSContextRef, exception: js.ExceptionRef) js.JSObjectRef {
         if (!this.buffer.value.isEmptyOrUndefinedOrNull()) {
             return this.buffer.value.asObjectRef();
         }

@@ -3,6 +3,7 @@
 const assert = require("node:assert");
 const stream = require("node:stream");
 const BufferModule = require("node:buffer");
+const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
 
 const ObjectDefineProperty = Object.defineProperty;
 
@@ -357,7 +358,7 @@ function createConvenienceMethod(method: number, is_sync: boolean) {
         }
         if (options == null) options = {};
         if ($isObject(options)) options.maxOutputLength ??= maxOutputLengthDefault;
-        if (typeof callback !== "function") throw new TypeError(`${name}Encoder callback is not callable`);
+        if (typeof callback !== "function") throw ERR_INVALID_ARG_TYPE("callback", "function", callback);
         const coder = private_constructor(options, {}, callback, method);
         coder.transform(buffer, undefined, true);
       };

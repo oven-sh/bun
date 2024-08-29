@@ -604,8 +604,16 @@ pub const Format = enum {
     /// CommonJS
     cjs,
 
-    /// Used for internal details
-    kit_internal_hmr,
+    /// Kit's uses a special module format for Hot-module-reloading. It includes a
+    /// runtime payload, sourced from src/kit/hmr-runtime.ts.
+    ///
+    /// ((input_graph, entry_point_key) => {
+    ///   ... runtime code ...
+    /// })([
+    ///   "module1.ts"(require, module) { ... },
+    ///   "module2.ts"(require, module) { ... },
+    /// ], "module1.ts");
+    internal_kit_dev,
 
     pub fn keepES6ImportExportSyntax(this: Format) bool {
         return this == .esm;
@@ -621,7 +629,7 @@ pub const Format = enum {
         .{ "iife", .iife },
 
         // TODO: Disable this outside of debug builds
-        .{ "kit_internal_hmr", .kit_internal_hmr },
+        .{ "internal_kit_dev", .internal_kit_dev },
     });
 
     pub fn fromJS(global: *JSC.JSGlobalObject, format: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Format {

@@ -2036,7 +2036,7 @@ fn NewPrinter(
                     p.print("(");
                 }
 
-                if (p.options.module_type == .kit_internal_hmr) {
+                if (p.options.module_type == .internal_kit_dev) {
                     p.printSymbol(p.options.require_ref.?);
                     p.print("(");
                     {
@@ -6433,7 +6433,7 @@ pub fn printWithWriterAndPlatform(
         imported_module_ids_list = printer.imported_module_ids;
     }
 
-    if (opts.module_type == .kit_internal_hmr) {
+    if (opts.module_type == .internal_kit_dev) {
         printer.indent();
         printer.printIndent();
         var str = E.String{ .data = source.path.pretty };

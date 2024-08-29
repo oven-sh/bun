@@ -549,7 +549,7 @@ pub const BundleTask = struct {
             .loaders = task.route.dev.loaders,
             .log = &task.log,
             .output_dir = "", // this disables filesystem output
-            .output_format = .kit_internal_hmr,
+            .output_format = .internal_kit_dev,
             .out_extensions = bun.StringHashMap([]const u8).init(bundler.allocator),
 
             .public_path = switch (task.kind) {

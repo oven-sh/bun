@@ -765,7 +765,7 @@ pub const BundleV2 = struct {
         // module depends on a previously unused export.
         //
         // TODO: tree-shaking could be applied still?
-        if (this.bundler.options.output_format == .kit_internal_hmr) {
+        if (this.bundler.options.output_format == .internal_kit_dev) {
             this.bundler.options.tree_shaking = false;
             this.bundler.resolver.opts.tree_shaking = false;
             this.bundler.linker.options.tree_shaking = false;
@@ -807,10 +807,10 @@ pub const BundleV2 = struct {
         );
 
         // sanity checks for kit
-        if (this.bundler.options.output_format == .kit_internal_hmr) {
-            if (this.bundler.options.compile) @panic("TODO: kit_internal_hmr does not support compile");
-            if (this.bundler.options.code_splitting) @panic("TODO: kit_internal_hmr does not support code splitting");
-            if (this.bundler.options.transform_only) @panic("TODO: kit_internal_hmr does not support transform_only");
+        if (this.bundler.options.output_format == .internal_kit_dev) {
+            if (this.bundler.options.compile) @panic("TODO: internal_kit_dev does not support compile");
+            if (this.bundler.options.code_splitting) @panic("TODO: internal_kit_dev does not support code splitting");
+            if (this.bundler.options.transform_only) @panic("TODO: internal_kit_dev does not support transform_only");
         }
 
         return this;
@@ -5140,7 +5140,7 @@ pub const LinkerContext = struct {
                         count += "init_".len + ident_fmt_len;
                     }
 
-                    if (wrap != .cjs and export_kind != .cjs and this.options.output_format != .kit_internal_hmr) {
+                    if (wrap != .cjs and export_kind != .cjs and this.options.output_format != .internal_kit_dev) {
                         count += "exports_".len + ident_fmt_len;
                         count += "module_".len + ident_fmt_len;
                     }
@@ -5188,7 +5188,7 @@ pub const LinkerContext = struct {
                 // actual CommonJS files from being renamed. This is purely about
                 // aesthetics and is not about correctness. This is done here because by
                 // this point, we know the CommonJS status will not change further.
-                if (wrap != .cjs and export_kind != .cjs and this.options.output_format != .kit_internal_hmr) {
+                if (wrap != .cjs and export_kind != .cjs and this.options.output_format != .internal_kit_dev) {
                     const exports_name = builder.fmt("exports_{}", .{source.fmtIdentifier()});
                     const module_name = builder.fmt("module_{}", .{source.fmtIdentifier()});
 
@@ -7012,7 +7012,7 @@ pub const LinkerContext = struct {
 
         // For Kit, hoist runtime.js outside of the IIFE
         const compile_results = chunk.compile_results_for_chunk;
-        if (c.options.output_format == .kit_internal_hmr) {
+        if (c.options.output_format == .internal_kit_dev) {
             for (compile_results) |compile_result| {
                 const source_index = compile_result.sourceIndex();
                 if (source_index != Index.runtime.value) break;
@@ -7022,7 +7022,7 @@ pub const LinkerContext = struct {
         }
 
         switch (c.options.output_format) {
-            .kit_internal_hmr => {
+            .internal_kit_dev => {
                 const start = bun.kit.getHmrRuntime(if (c.options.target.isBun()) .server else .client);
                 j.pushStatic(start);
                 line_offset.advance(start);
@@ -7050,7 +7050,7 @@ pub const LinkerContext = struct {
 
         const show_comments = c.options.mode == .bundle and
             !c.options.minify_whitespace and
-            c.options.output_format != .kit_internal_hmr; // includes every filename already
+            c.options.output_format != .internal_kit_dev; // includes every filename already
 
         const sources: []const Logger.Source = c.parse_graph.input_files.items(.source);
         for (compile_results) |compile_result| {
@@ -7083,7 +7083,7 @@ pub const LinkerContext = struct {
                     CommentType.single;
 
                 if (!c.options.minify_whitespace and
-                    (c.options.output_format == .iife or c.options.output_format == .kit_internal_hmr))
+                    (c.options.output_format == .iife or c.options.output_format == .internal_kit_dev))
                 {
                     j.pushStatic("  ");
                     line_offset.advance("  ");
@@ -7116,7 +7116,7 @@ pub const LinkerContext = struct {
             }
 
             if (is_runtime) {
-                if (c.options.output_format != .kit_internal_hmr) {
+                if (c.options.output_format != .internal_kit_dev) {
                     line_offset.advance(compile_result.code());
                     j.push(compile_result.code(), bun.default_allocator);
                 }
@@ -7170,7 +7170,7 @@ pub const LinkerContext = struct {
 
                 j.pushStatic(with_newline);
             },
-            .kit_internal_hmr => {
+            .internal_kit_dev => {
                 {
                     const str = "}, ";
                     j.pushStatic(str);
@@ -7796,7 +7796,7 @@ pub const LinkerContext = struct {
             // TODO: iife
             .iife => {},
 
-            .kit_internal_hmr => {
+            .internal_kit_dev => {
                 // nothing needs to be done here, as the exports are already
                 // forwarded in the module closure.
             },
@@ -8152,6 +8152,7 @@ pub const LinkerContext = struct {
         wrap: WrapKind,
         ast: *const JSAst,
     ) !void {
+        if (c.options.output_format == .internal_kit_dev) return c.convertStmtsForChunkKit(source_index, stmts, part_stmts, chunk, allocator, wrap, ast);
         const shouldExtractESMStmtsForWrap = wrap != .none;
         const shouldStripExports = c.options.mode != .passthrough or c.graph.files.items(.entry_point_kind)[source_index] != .none;
 
@@ -8462,7 +8463,6 @@ pub const LinkerContext = struct {
                     },
 
                     .s_function => |s| {
-
                         // Strip the "export" keyword while bundling
                         if (shouldStripExports and s.func.flags.contains(.is_export)) {
                             // Be c areful to not modify the original statement
@@ -8478,10 +8478,9 @@ pub const LinkerContext = struct {
                     },
 
                     .s_class => |s| {
-
                         // Strip the "export" keyword while bundling
                         if (shouldStripExports and s.is_export) {
-                            // Be c areful to not modify the original statement
+                            // Be careful to not modify the original statement
                             stmt = Stmt.alloc(
                                 S.Class,
                                 S.Class{
@@ -8496,7 +8495,7 @@ pub const LinkerContext = struct {
                     .s_local => |s| {
                         // Strip the "export" keyword while bundling
                         if (shouldStripExports and s.is_export) {
-                            // Be c areful to not modify the original statement
+                            // Be careful to not modify the original statement
                             stmt = Stmt.alloc(
                                 S.Local,
                                 s.*,
@@ -8640,6 +8639,76 @@ pub const LinkerContext = struct {
         }
     }
 
+    /// The conversion logic is completely different for format .kit_internal_hmr
+    fn convertStmtsForChunkKit(
+        c: *LinkerContext,
+        source_index: u32,
+        stmts: *StmtList,
+        part_stmts: []const js_ast.Stmt,
+        chunk: *Chunk,
+        allocator: std.mem.Allocator,
+        wrap: WrapKind,
+        ast: *const JSAst,
+    ) !void {
+        _ = c; // autofix
+        _ = source_index; // autofix
+        _ = chunk; // autofix
+        _ = allocator; // autofix
+        _ = wrap; // autofix
+        _ = ast; // autofix
+
+        for (part_stmts) |stmt| {
+            const new_stmt = switch (stmt.data) {
+                else => stmt,
+                // .s_local => |s| {
+                //     _ = s;
+                //     @panic("TODO s_local");
+                // },
+                // .s_export_default => |s| {
+                //     _ = s;
+                //     @panic("TODO s_export_default");
+                // },
+                .s_class => |s| stmt: {
+                    // Strip the "export" keyword
+                    if (s.is_export) {
+                        break :stmt Stmt.alloc(S.Class, .{
+                            .class = s.class,
+                            .is_export = false,
+                        }, stmt.loc);
+                    }
+                    break :stmt stmt;
+                },
+                .s_function => |s| stmt: {
+                    // Strip the "export" keyword
+                    if (s.is_export) {
+                        const dupe = Stmt.alloc(S.Function, s, stmt.loc);
+                        dupe.data.s_function.func.flags.remove(.is_export);
+                        break :stmt dupe;
+                    }
+                    break :stmt stmt;
+                },
+                // .s_export_clause => |s| {
+                //     _ = s;
+                //     @panic("TODO s_export_clause");
+                // },
+                // .s_export_from => |s| {
+                //     _ = s;
+                //     @panic("TODO s_export_from");
+                // },
+                // .s_export_star => |s| {
+                //     _ = s;
+                //     @panic("TODO s_export_star");
+                // },
+                // .s_import => |s| {
+                //     _ = s;
+                //     @panic("TODO s_import");
+                // },
+            };
+            try stmts.inside_wrapper_suffix.append(new_stmt);
+        }
+        //
+    }
+
     fn runtimeFunction(c: *LinkerContext, name: []const u8) Ref {
         return c.graph.runtimeFunction(name);
     }
@@ -8696,8 +8765,9 @@ pub const LinkerContext = struct {
                 temp_allocator,
                 flags.wrap,
                 &ast,
-            ) catch |err| return .{
-                .err = err,
+            ) catch |err| {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                return .{ .err = err };
             };
 
             switch (flags.wrap) {
@@ -8854,7 +8924,7 @@ pub const LinkerContext = struct {
 
         // Turn each module into a function if this is Kit
         var stmt_storage: Stmt = undefined;
-        if (c.options.output_format == .kit_internal_hmr and !part_range.source_index.isRuntime()) {
+        if (c.options.output_format == .internal_kit_dev and !part_range.source_index.isRuntime()) {
             var clousure_args = std.BoundedArray(G.Arg, 3).fromSlice(&.{
                 .{ .binding = Binding.alloc(temp_allocator, B.Identifier{
                     .ref = ast.require_ref,
@@ -9225,7 +9295,7 @@ pub const LinkerContext = struct {
             .minify_syntax = c.options.minify_syntax,
             .module_type = switch (c.options.output_format) {
                 else => |format| format,
-                .kit_internal_hmr => if (part_range.source_index.isRuntime()) .esm else .kit_internal_hmr,
+                .internal_kit_dev => if (part_range.source_index.isRuntime()) .esm else .internal_kit_dev,
             },
             .print_dce_annotations = c.options.emit_dce_annotations,
             .has_run_symbol_renamer = true,
@@ -9233,7 +9303,7 @@ pub const LinkerContext = struct {
             .allocator = allocator,
             .to_esm_ref = toESMRef,
             .to_commonjs_ref = toCommonJSRef,
-            .require_ref = if (c.options.output_format == .kit_internal_hmr) ast.require_ref else runtimeRequireRef,
+            .require_ref = if (c.options.output_format == .internal_kit_dev) ast.require_ref else runtimeRequireRef,
             .require_or_import_meta_for_source_callback = js_printer.RequireOrImportMeta.Callback.init(
                 LinkerContext,
                 requireOrImportMetaForSource,
@@ -9242,7 +9312,7 @@ pub const LinkerContext = struct {
             .line_offset_tables = c.graph.files.items(.line_offset_table)[part_range.source_index.get()],
             .target = c.options.target,
 
-            .input_files_for_kit = if (c.options.output_format == .kit_internal_hmr and !part_range.source_index.isRuntime())
+            .input_files_for_kit = if (c.options.output_format == .internal_kit_dev and !part_range.source_index.isRuntime())
                 c.parse_graph.input_files.items(.source)
             else
                 null,
@@ -10807,7 +10877,7 @@ pub const LinkerContext = struct {
                 }
 
                 // Generate a dummy part that depends on the "__commonJS" symbol.
-                const dependencies: []js_ast.Dependency = if (c.options.output_format != .kit_internal_hmr) brk: {
+                const dependencies: []js_ast.Dependency = if (c.options.output_format != .internal_kit_dev) brk: {
                     const dependencies = c.allocator.alloc(js_ast.Dependency, common_js_parts.len) catch bun.outOfMemory();
                     for (common_js_parts, dependencies) |part, *cjs| {
                         cjs.* = .{
@@ -10843,7 +10913,7 @@ pub const LinkerContext = struct {
                 wrapper_part_index.* = Index.part(part_index);
 
                 // Kit uses a wrapping approach that does not use __commonJS
-                if (c.options.output_format != .kit_internal_hmr) {
+                if (c.options.output_format != .internal_kit_dev) {
                     c.graph.generateSymbolImportAndUse(
                         source_index,
                         part_index,
@@ -10865,7 +10935,7 @@ pub const LinkerContext = struct {
                 //
                 // This depends on the "__esm" symbol and declares the "init_foo" symbol
                 // for similar reasons to the CommonJS closure above.
-                const esm_parts = if (wrapper_ref.isValid() and c.options.output_format != .kit_internal_hmr)
+                const esm_parts = if (wrapper_ref.isValid() and c.options.output_format != .internal_kit_dev)
                     c.topLevelSymbolsToPartsForRuntime(c.esm_runtime_ref)
                 else
                     &.{};
@@ -10897,7 +10967,7 @@ pub const LinkerContext = struct {
                 ) catch unreachable;
                 bun.assert(part_index != js_ast.namespace_export_part_index);
                 wrapper_part_index.* = Index.part(part_index);
-                if (wrapper_ref.isValid() and c.options.output_format != .kit_internal_hmr) {
+                if (wrapper_ref.isValid() and c.options.output_format != .internal_kit_dev) {
                     c.graph.generateSymbolImportAndUse(
                         source_index,
                         part_index,

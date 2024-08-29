@@ -801,7 +801,7 @@ pub const Arguments = struct {
                 };
 
                 switch (format) {
-                    .kit_internal_hmr => {
+                    .internal_kit_dev => {
                         if (!Environment.isDebug) {
                             bun.Output.warn("--format={s} is for debugging only, and may experience breaking changes at any moment", .{format_str});
                             bun.Output.flush();

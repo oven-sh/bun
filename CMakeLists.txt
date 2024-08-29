@@ -551,8 +551,6 @@ if(ENABLE_BASELINE)
   set(TRIPLET ${TRIPLET}-baseline)
 endif()
 
-message(STATUS "TRIPLET value: ${TRIPLET}")
-
 add_custom_command(
   TARGET
     ${bun} POST_BUILD

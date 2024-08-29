@@ -1304,11 +1304,11 @@ pub const VirtualMachine = struct {
         this.exit_handler.dispatchOnExit();
 
         const rare_data = this.rare_data orelse return;
-        var hook = rare_data.cleanup_hook orelse return;
-        hook.execute();
-        while (hook.next) |next| {
-            next.execute();
-            hook = next;
+        var hooks = rare_data.cleanup_hooks;
+        defer if (!is_main_thread_vm) hooks.clearAndFree(bun.default_allocator);
+        rare_data.cleanup_hooks = .{};
+        for (hooks.items) |hook| {
+            hook.execute();
         }
     }
 

@@ -2768,6 +2768,16 @@ declare module "bun" {
     ): ServerWebSocketSendStatus;
 
     /**
+     * A count of connections subscribed to a given topic
+     *
+     * This operation will loop through each topic internally to get the count.
+     *
+     * @param topic the websocket topic to check how many subscribers are connected to
+     * @returns the number of subscribers
+     */
+    subscriberCount(topic: string): number;
+
+    /**
      * Returns the client IP address and port of the given Request. If the request was closed or is a unix socket, returns null.
      *
      * @example

@@ -5,8 +5,6 @@ import { isAbsolute, join, dirname } from "path";
 import fs, { openSync, closeSync } from "node:fs";
 import os from "node:os";
 import { heapStats } from "bun:jsc";
-import { npm_manifest_test_helpers } from "bun:internal-for-testing";
-const { parseManifest } = npm_manifest_test_helpers;
 
 type Awaitable<T> = T | Promise<T>;
 
@@ -298,7 +296,7 @@ const binaryTypes = {
   "int8array": Int8Array,
   "int16array": Int16Array,
   "int32array": Int32Array,
-  "float16array": Float16Array,
+  "float16array": globalThis.Float16Array,
   "float32array": Float32Array,
   "float64array": Float64Array,
 } as const;
@@ -1268,6 +1266,9 @@ https://buildkite.com/docs/pipelines/security/secrets/buildkite-secrets`;
 }
 
 export function assertManifestsPopulated(absCachePath: string, registryUrl: string) {
+  const { npm_manifest_test_helpers } = require("bun:internal-for-testing");
+  const { parseManifest } = npm_manifest_test_helpers;
+
   for (const file of fs.readdirSync(absCachePath)) {
     if (!file.endsWith(".npm")) continue;
 

@@ -205,3 +205,15 @@ it("write result is not cummulative", async () => {
   await writer.end();
   await util.promisify(fs.close)(fd);
 });
+
+if (isWindows) {
+  it("ENOENT, Windows", () => {
+    expect(() => Bun.file("A:\\this-does-not-exist.txt").writer()).toThrow(
+      expect.objectContaining({
+        code: "ENOENT",
+        path: "A:\\this-does-not-exist.txt",
+        syscall: "open",
+      }),
+    );
+  });
+}

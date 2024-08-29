@@ -492,9 +492,11 @@ describe("ServerWebSocket", () => {
           }
         }
       };
-      test(label, (done, connect) => ({
+      test(label, (done, connect, options) => ({
         async open(ws) {
+          const initial = options.server.subscriberCount(topic);
           ws.subscribe(topic);
+          expect(options.server.subscriberCount(topic)).toBe(initial + 1);
           if (ws.data.id === 0) {
             await connect();
           } else if (ws.data.id === 1) {
@@ -525,10 +527,12 @@ describe("ServerWebSocket", () => {
           }
         }
       };
-      test(label, done => ({
+      test(label, (done, _, options) => ({
         publishToSelf: true,
         async open(ws) {
+          const initial = options.server.subscriberCount(topic);
           ws.subscribe(topic);
+          expect(options.server.subscriberCount(topic)).toBe(initial + 1);
           send(ws);
         },
         drain(ws) {
@@ -690,7 +694,11 @@ describe("ServerWebSocket", () => {
 
 function test(
   label: string,
-  fn: (done: (err?: unknown) => void, connect: () => Promise<void>) => Partial<WebSocketHandler<{ id: number }>>,
+  fn: (
+    done: (err?: unknown) => void,
+    connect: () => Promise<void>,
+    options: { server: Server },
+  ) => Partial<WebSocketHandler<{ id: number }>>,
   timeout?: number,
 ) {
   it(
@@ -705,6 +713,9 @@ function test(
         }
       };
       let id = 0;
+      var options = {
+        server: undefined,
+      };
       const server: Server = serve({
         port: 0,
         fetch(request, server) {
@@ -717,9 +728,11 @@ function test(
         websocket: {
           sendPings: false,
           message() {},
-          ...fn(done, () => connect(server)),
+          ...fn(done, () => connect(server), options as any),
         },
       });
+      options.server = server;
+      expect(server.subscriberCount("empty topic")).toBe(0);
       await connect(server);
     },
     { timeout: timeout ?? 1000 },

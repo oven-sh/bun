@@ -38,6 +38,7 @@ export default [
   ["ERR_CRYPTO_SCRYPT_INVALID_PARAMETER", Error, "Error"],
   ["ERR_CRYPTO_INVALID_SCRYPT_PARAMS", RangeError, "RangeError"],
   ["MODULE_NOT_FOUND", Error, "Error"],
+  ["ERR_ILLEGAL_CONSTRUCTOR", TypeError, "TypeError"],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError, "TypeError"],

@@ -353,10 +353,16 @@ pub const OutdatedCommand = struct {
 
             var at_least_one_greater_than_zero = false;
 
-            const patterns_buf = bun.default_allocator.alloc([]const u32, args.len) catch bun.outOfMemory();
+            const patterns_buf = bun.default_allocator.alloc(FilterType, args.len) catch bun.outOfMemory();
             for (args, patterns_buf) |arg, *converted| {
                 if (arg.len == 0) {
-                    converted.* = &.{};
+                    converted.* = FilterType.init(&.{}, false);
+                    continue;
+                }
+
+                if ((arg.len == 1 and arg[0] == '*') or strings.eqlComptime(arg, "**")) {
+                    converted.* = .all;
+                    at_least_one_greater_than_zero = at_least_one_greater_than_zero or converted.len > 0;
                     continue;
                 }
 
@@ -365,11 +371,11 @@ pub const OutdatedCommand = struct {
 
                 const convert_result = bun.simdutf.convert.utf8.to.utf32.with_errors.le(arg, convert_buf);
                 if (!convert_result.isSuccessful()) {
-                    converted.* = &.{};
+                    converted.* = FilterType.init(&.{}, false);
                     continue;
                 }
 
-                converted.* = convert_buf[0..convert_result.count];
+                converted.* = FilterType.init(convert_buf[0..convert_result.count], false);
                 at_least_one_greater_than_zero = at_least_one_greater_than_zero or converted.len > 0;
             }
 
@@ -381,7 +387,7 @@ pub const OutdatedCommand = struct {
         defer {
             if (package_patterns) |patterns| {
                 for (patterns) |pattern| {
-                    bun.default_allocator.free(pattern);
+                    pattern.deinit(bun.default_allocator);
                 }
                 bun.default_allocator.free(patterns);
             }
@@ -423,8 +429,14 @@ pub const OutdatedCommand = struct {
                     const match = match: {
                         for (patterns) |pattern| {
                             if (pattern.len == 0) continue;
-                            if (!glob.matchImpl(pattern, dep.name.slice(string_buf))) {
-                                break :match false;
+                            switch (pattern) {
+                                .path => unreachable,
+                                .name => |name_pattern| {
+                                    if (!glob.matchImpl(name_pattern, dep.name.slice(string_buf))) {
+                                        break :match false;
+                                    }
+                                },
+                                .all => {},
                             }
                         }
 

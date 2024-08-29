@@ -355,7 +355,6 @@ pub const Binding = struct {
             .b_missing => {
                 return Expr{ .data = .{ .e_missing = E.Missing{} }, .loc = loc };
             },
-
             .b_identifier => |b| {
                 return wrapper.wrapIdentifier(loc, b.ref);
             },
@@ -403,14 +402,12 @@ pub const Binding = struct {
                     loc,
                 );
             },
-            else => |tag| Output.panic("Unexpected binding .{s}", .{@tagName(tag)}),
         }
     }
 
     pub const Tag = enum(u5) {
         b_identifier,
         b_array,
-        b_property,
         b_object,
         b_missing,
 
@@ -429,9 +426,6 @@ pub const Binding = struct {
             },
             *B.Array => {
                 return Binding{ .loc = loc, .data = B{ .b_array = t } };
-            },
-            *B.Property => {
-                return Binding{ .loc = loc, .data = B{ .b_property = t } };
             },
             *B.Object => {
                 return Binding{ .loc = loc, .data = B{ .b_object = t } };
@@ -458,11 +452,6 @@ pub const Binding = struct {
                 data.* = t;
                 return Binding{ .loc = loc, .data = B{ .b_array = data } };
             },
-            B.Property => {
-                const data = allocator.create(B.Property) catch unreachable;
-                data.* = t;
-                return Binding{ .loc = loc, .data = B{ .b_property = data } };
-            },
             B.Object => {
                 const data = allocator.create(B.Object) catch unreachable;
                 data.* = t;
@@ -478,13 +467,31 @@ pub const Binding = struct {
     }
 };
 
-/// B is for Binding!
-/// These are the types of bindings that can be used in the AST.
+/// B is for Binding! Bindings are on the left side of variable
+/// declarations (s_local), which is how destructuring assignments
+/// are represented in memory. Consider a basic example.
+///
+///     let hello = world;
+///         ^       ^
+///         |       E.Identifier
+///         B.Identifier
+///
+/// Bindings can be nested
+///
+///                B.Array
+///                | B.Identifier
+///                | |
+///     let { foo: [ bar ] } = ...
+///         ----------------
+///         B.Object
 pub const B = union(Binding.Tag) {
+    // let x = ...
     b_identifier: *B.Identifier,
+    // let [a, b] = ...
     b_array: *B.Array,
-    b_property: *B.Property,
+    // let { a, b: c } = ...
     b_object: *B.Object,
+    // this is used to represent array holes
     b_missing: B.Missing,
 
     pub const Identifier = struct {
@@ -494,11 +501,14 @@ pub const B = union(Binding.Tag) {
     pub const Property = struct {
         flags: Flags.Property.Set = Flags.Property.None,
         key: ExprNodeIndex,
-        value: BindingNodeIndex,
-        default_value: ?ExprNodeIndex = null,
+        value: Binding,
+        default_value: ?Expr = null,
     };
 
-    pub const Object = struct { properties: []Property, is_single_line: bool = false };
+    pub const Object = struct {
+        properties: []Property,
+        is_single_line: bool = false,
+    };
 
     pub const Array = struct {
         items: []ArrayBinding,
@@ -811,7 +821,7 @@ pub const G = struct {
         flags: Flags.Property.Set = Flags.Property.None,
 
         class_static_block: ?*ClassStaticBlock = null,
-        ts_decorators: ExprNodeList = ExprNodeList{},
+        ts_decorators: ExprNodeList = .{},
         // Key is optional for spread
         key: ?ExprNodeIndex = null,
 
@@ -865,10 +875,10 @@ pub const G = struct {
     pub const Fn = struct {
         name: ?LocRef = null,
         open_parens_loc: logger.Loc = logger.Loc.Empty,
-        args: []Arg = &([_]Arg{}),
+        args: []Arg = &.{},
         // This was originally nullable, but doing so I believe caused a miscompilation
         // Specifically, the body was always null.
-        body: FnBody = FnBody{ .loc = logger.Loc.Empty, .stmts = &([_]StmtNodeIndex{}) },
+        body: FnBody = .{ .loc = logger.Loc.Empty, .stmts = &.{} },
         arguments_ref: ?Ref = null,
 
         flags: Flags.Function.Set = Flags.Function.None,
@@ -3222,7 +3232,7 @@ pub const Stmt = struct {
             },
 
             .s_local => |local| {
-                return local.kind != S.Kind.k_var;
+                return local.kind != .k_var;
             },
             else => {
                 return true;
@@ -6299,6 +6309,10 @@ pub const S = struct {
             pub fn isUsing(self: Kind) bool {
                 return self == .k_using or self == .k_await_using;
             }
+
+            pub fn isReassignable(kind: Kind) bool {
+                return kind == .k_var or kind == .k_let;
+            }
         };
     };
 
@@ -6811,13 +6825,6 @@ pub const BundledAst = struct {
     };
 
     pub const empty = BundledAst.init(Ast.empty);
-
-    pub inline fn uses_exports_ref(this: *const BundledAst) bool {
-        return this.flags.uses_exports_ref;
-    }
-    pub inline fn uses_module_ref(this: *const BundledAst) bool {
-        return this.flags.uses_module_ref;
-    }
 
     pub fn toAST(this: *const BundledAst) Ast {
         return .{
@@ -7344,8 +7351,19 @@ pub const Result = union(enum) {
 };
 
 pub const StmtOrExpr = union(enum) {
-    stmt: StmtNodeIndex,
-    expr: ExprNodeIndex,
+    stmt: Stmt,
+    expr: Expr,
+
+    pub fn toExpr(stmt_or_expr: StmtOrExpr) Expr {
+        return switch (stmt_or_expr) {
+            .expr => |expr| expr,
+            .stmt => |stmt| switch (stmt.data) {
+                .s_function => |s| Expr.init(E.Function, .{ .func = s.func }, stmt.loc),
+                .s_class => |s| Expr.init(E.Class, s.class, stmt.loc),
+                else => Output.panic("Unexpected statement type in default export: .{s}", .{@tagName(stmt.data)}),
+            },
+        };
+    }
 };
 
 pub const NamedImport = struct {

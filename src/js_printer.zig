@@ -3986,9 +3986,6 @@ fn NewPrinter(
                     }
                     p.print("}");
                 },
-                else => {
-                    Output.panic("Unexpected binding of type {any}", .{binding});
-                },
             }
         }
 

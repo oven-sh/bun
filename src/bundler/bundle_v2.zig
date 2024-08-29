@@ -2940,14 +2940,14 @@ pub const ParseTask = struct {
         const target = targetFromHashbang(entry.contents) orelse use_directive.target(task.known_target orelse bundler.options.target);
 
         var opts = js_parser.Parser.Options.init(task.jsx, loader);
-        opts.legacy_transform_require_to_import = false;
-        opts.features.allow_runtime = !source.index.isRuntime();
-        opts.features.use_import_meta_require = target.isBun();
+        opts.bundle = true;
         opts.warn_about_unbundled_modules = false;
         opts.macro_context = &this.data.macro_context;
-        opts.bundle = true;
         opts.package_version = task.package_version;
+        opts.legacy_transform_require_to_import = false;
 
+        opts.features.allow_runtime = !source.index.isRuntime();
+        opts.features.use_import_meta_require = target.isBun();
         opts.features.top_level_await = true;
         opts.features.jsx_optimization_inline = target.isBun() and (bundler.options.jsx_optimization_inline orelse !task.jsx.development);
         opts.features.auto_import_jsx = task.jsx.parse and bundler.options.auto_import_jsx;
@@ -2956,6 +2956,9 @@ pub const ParseTask = struct {
         opts.features.minify_syntax = bundler.options.minify_syntax;
         opts.features.minify_identifiers = bundler.options.minify_identifiers;
         opts.features.emit_decorator_metadata = bundler.options.emit_decorator_metadata;
+        opts.features.unwrap_commonjs_packages = bundler.options.unwrap_commonjs_packages;
+        opts.features.hot_module_reloading = bundler.options.output_format == .internal_kit_dev and !source.index.isRuntime();
+
         opts.ignore_dce_annotations = bundler.options.ignore_dce_annotations and !source.index.isRuntime();
 
         // For files that are not user-specified entrypoints, set `import.meta.main` to `false`.
@@ -2969,7 +2972,6 @@ pub const ParseTask = struct {
 
         opts.tree_shaking = if (source.index.isRuntime()) true else bundler.options.tree_shaking;
         opts.module_type = task.module_type;
-        opts.features.unwrap_commonjs_packages = bundler.options.unwrap_commonjs_packages;
 
         task.jsx.parse = loader.isJSX();
 
@@ -2990,7 +2992,7 @@ pub const ParseTask = struct {
 
         ast.target = target;
         if (ast.parts.len <= 1) {
-            task.side_effects = _resolver.SideEffects.no_side_effects__empty_ast;
+            task.side_effects = .no_side_effects__empty_ast;
         }
 
         if (task.presolved_source_indices.len > 0) {
@@ -8141,7 +8143,6 @@ pub const LinkerContext = struct {
     /// In that case, when bundling, we still need to preserve that module
     /// namespace object (foo) because we cannot know what they are going to
     /// attempt to access statically
-    ///
     fn convertStmtsForChunk(
         c: *LinkerContext,
         source_index: u32,
@@ -8150,9 +8151,11 @@ pub const LinkerContext = struct {
         chunk: *Chunk,
         allocator: std.mem.Allocator,
         wrap: WrapKind,
-        ast: *const JSAst,
+        ast: *JSAst,
     ) !void {
-        if (c.options.output_format == .internal_kit_dev) return c.convertStmtsForChunkKit(source_index, stmts, part_stmts, chunk, allocator, wrap, ast);
+        if (c.options.output_format == .internal_kit_dev and source_index != Index.runtime.value)
+            return c.convertStmtsForChunkKit(source_index, stmts, part_stmts, chunk, allocator, wrap, ast);
+
         const shouldExtractESMStmtsForWrap = wrap != .none;
         const shouldStripExports = c.options.mode != .passthrough or c.graph.files.items(.entry_point_kind)[source_index] != .none;
 
@@ -8648,44 +8651,140 @@ pub const LinkerContext = struct {
         chunk: *Chunk,
         allocator: std.mem.Allocator,
         wrap: WrapKind,
-        ast: *const JSAst,
+        ast: *JSAst,
     ) !void {
-        _ = c; // autofix
-        _ = source_index; // autofix
         _ = chunk; // autofix
-        _ = allocator; // autofix
         _ = wrap; // autofix
-        _ = ast; // autofix
+
+        var export_props: std.ArrayListUnmanaged(G.Property) = .{};
 
         for (part_stmts) |stmt| {
             const new_stmt = switch (stmt.data) {
                 else => stmt,
-                // .s_local => |s| {
-                //     _ = s;
-                //     @panic("TODO s_local");
-                // },
-                // .s_export_default => |s| {
-                //     _ = s;
-                //     @panic("TODO s_export_default");
-                // },
-                .s_class => |s| stmt: {
-                    // Strip the "export" keyword
-                    if (s.is_export) {
-                        break :stmt Stmt.alloc(S.Class, .{
-                            .class = s.class,
+                .s_local => |s| stmt: {
+                    if (!s.is_export) break :stmt stmt;
+
+                    if (s.kind.isReassignable()) {
+                        for (s.decls.slice()) |decl| {
+                            try c.visitBindingForKitModuleExports(decl.binding, &export_props, source_index, true);
+                        }
+
+                        break :stmt Stmt.alloc(S.Local, .{
+                            .kind = s.kind,
+                            .decls = s.decls,
                             .is_export = false,
+                            .was_ts_import_equals = s.was_ts_import_equals,
+                            .was_commonjs_export = s.was_commonjs_export,
+                        }, stmt.loc);
+                    } else {
+                        var dupe_decls = try std.ArrayListUnmanaged(G.Decl).initCapacity(allocator, s.decls.len);
+
+                        for (s.decls.slice()) |decl| {
+                            bun.assert(decl.value != null); // const must be initialized
+
+                            switch (decl.binding.data) {
+                                .b_missing => @panic("binding missing"),
+
+                                .b_identifier => |id| {
+                                    const symbol = c.graph.symbols.get(id.ref).?;
+
+                                    // if the symbol is not used, we don't need to preserve
+                                    // a binding in this scope. we can move it to the exports object.
+                                    if (symbol.use_count_estimate != 0 or !decl.value.?.canBeMoved()) {
+                                        dupe_decls.appendAssumeCapacity(decl);
+                                    }
+
+                                    try export_props.append(allocator, .{
+                                        .key = Expr.init(E.String, .{ .data = symbol.original_name }, decl.binding.loc),
+                                        .value = decl.value,
+                                    });
+                                },
+
+                                else => {
+                                    dupe_decls.appendAssumeCapacity(decl);
+                                    try c.visitBindingForKitModuleExports(decl.binding, &export_props, source_index, false);
+                                },
+                            }
+                        }
+
+                        if (dupe_decls.items.len == 0) {
+                            continue;
+                        }
+
+                        break :stmt Stmt.alloc(S.Local, .{
+                            .kind = s.kind,
+                            .decls = G.Decl.List.fromList(dupe_decls),
+                            .is_export = false,
+                            .was_ts_import_equals = s.was_ts_import_equals,
+                            .was_commonjs_export = s.was_commonjs_export,
                         }, stmt.loc);
                     }
-                    break :stmt stmt;
+
+                    @compileError(unreachable);
+                },
+                .s_export_default => |s| stmt: {
+                    // Simple case: we can move this to the default property of the exports object
+                    if (s.canBeMoved()) {
+                        try export_props.append(allocator, .{
+                            .key = Expr.init(E.String, .{ .data = "default" }, stmt.loc),
+                            .value = s.value.toExpr(),
+                        });
+                        // no statement emitted
+                        continue;
+                    }
+
+                    // Otherwise, we need a temporary
+                    const temp_id = c.graph.generateNewSymbol(source_index, .other, "default_export");
+                    try export_props.append(allocator, .{
+                        .key = Expr.init(E.String, .{ .data = "default" }, stmt.loc),
+                        .value = Expr.initIdentifier(temp_id, stmt.loc),
+                    });
+                    break :stmt Stmt.alloc(S.Local, .{
+                        .kind = .k_const,
+                        .decls = try G.Decl.List.fromSlice(allocator, &.{
+                            .{
+                                .binding = Binding.alloc(allocator, B.Identifier{ .ref = temp_id }, stmt.loc),
+                                .value = s.value.toExpr(),
+                            },
+                        }),
+                        .is_export = false,
+                        .was_ts_import_equals = false,
+                        .was_commonjs_export = false,
+                    }, stmt.loc);
+                },
+                .s_class => |s| stmt: {
+                    // Strip the "export" keyword
+                    if (!s.is_export) break :stmt stmt;
+
+                    // Export as CommonJS
+                    try export_props.append(allocator, .{
+                        .key = Expr.init(E.String, .{
+                            .data = c.graph.symbols.get(s.class.class_name.?.ref.?).?.original_name,
+                        }, stmt.loc),
+                        .value = Expr.initIdentifier(s.class.class_name.?.ref.?, stmt.loc),
+                    });
+
+                    break :stmt Stmt.alloc(S.Class, .{
+                        .class = s.class,
+                        .is_export = false,
+                    }, stmt.loc);
                 },
                 .s_function => |s| stmt: {
                     // Strip the "export" keyword
-                    if (s.is_export) {
-                        const dupe = Stmt.alloc(S.Function, s, stmt.loc);
-                        dupe.data.s_function.func.flags.remove(.is_export);
-                        break :stmt dupe;
-                    }
-                    break :stmt stmt;
+                    if (!s.func.flags.contains(.is_export)) break :stmt stmt;
+
+                    const dupe = Stmt.alloc(S.Function, s.*, stmt.loc);
+                    dupe.data.s_function.func.flags.remove(.is_export);
+
+                    // Export as CommonJS
+                    try export_props.append(allocator, .{
+                        .key = Expr.init(E.String, .{
+                            .data = c.graph.symbols.get(s.func.name.?.ref.?).?.original_name,
+                        }, stmt.loc),
+                        .value = Expr.initIdentifier(s.func.name.?.ref.?, stmt.loc),
+                    });
+
+                    break :stmt dupe;
                 },
                 // .s_export_clause => |s| {
                 //     _ = s;
@@ -8706,8 +8805,133 @@ pub const LinkerContext = struct {
             };
             try stmts.inside_wrapper_suffix.append(new_stmt);
         }
-        //
+
+        if (export_props.items.len > 0) {
+            // add a marker for the client runtime to tell that this is an ES module
+            try stmts.inside_wrapper_suffix.append(Stmt.alloc(S.SExpr, .{
+                .value = Expr.assign(
+                    Expr.init(E.Dot, .{
+                        .target = Expr.initIdentifier(ast.module_ref, Logger.Loc.Empty),
+                        .name = "esmodule",
+                        .name_loc = Logger.Loc.Empty,
+                    }, Logger.Loc.Empty),
+                    Expr.init(E.Boolean, .{ .value = true }, Logger.Loc.Empty),
+                ),
+            }, Logger.Loc.Empty));
+
+            // Note: this might not be good, we might have to do `exports.xyz = ` to let us override an older module?
+            try stmts.inside_wrapper_suffix.append(Stmt.alloc(S.SExpr, .{
+                .value = Expr.assign(
+                    Expr.init(E.Dot, .{
+                        .target = Expr.initIdentifier(ast.module_ref, Logger.Loc.Empty),
+                        .name = "exports",
+                        .name_loc = Logger.Loc.Empty,
+                    }, Logger.Loc.Empty),
+                    Expr.init(E.Object, .{
+                        .properties = G.Property.List.fromList(export_props),
+                    }, Logger.Loc.Empty),
+                ),
+            }, Logger.Loc.Empty));
+        }
     }
+
+    fn visitBindingForKitModuleExports(
+        c: *LinkerContext,
+        binding: Binding,
+        export_props: *std.ArrayListUnmanaged(G.Property),
+        source_index: u32,
+        is_live_binding: bool,
+    ) !void {
+        switch (binding.data) {
+            .b_missing => @panic("missing!"),
+            .b_identifier => |id| {
+                try c.visitRefForKitModuleExports(id.ref, binding.loc, export_props, source_index, is_live_binding);
+            },
+            .b_array => |array| {
+                for (array.items) |item| {
+                    try c.visitBindingForKitModuleExports(item.binding, export_props, source_index, is_live_binding);
+                }
+            },
+            .b_object => |object| {
+                for (object.properties) |item| {
+                    try c.visitBindingForKitModuleExports(item.value, export_props, source_index, is_live_binding);
+                }
+            },
+        }
+    }
+
+    fn visitRefForKitModuleExports(
+        c: *LinkerContext,
+        ref: Ref,
+        loc: Logger.Loc,
+        export_props: *std.ArrayListUnmanaged(G.Property),
+        source_index: u32,
+        is_live_binding: bool,
+    ) !void {
+        const symbol = c.graph.symbols.get(ref).?;
+        const id = Expr.initIdentifier(ref, loc);
+        if (is_live_binding) {
+            const key = Expr.init(E.String, .{
+                .data = symbol.original_name,
+            }, loc);
+            const arg1 = c.graph.generateNewSymbol(source_index, .other, symbol.original_name);
+
+            // Live bindings need to update the value internally and externally.
+            try export_props.append(c.allocator, .{
+                .kind = .get,
+                .key = key,
+                .value = Expr.init(E.Function, .{ .func = .{
+                    .body = .{
+                        .stmts = try c.allocator.dupe(Stmt, &.{
+                            Stmt.alloc(S.Return, .{ .value = id }, loc),
+                        }),
+                        .loc = loc,
+                    },
+                } }, loc),
+            });
+            try export_props.append(c.allocator, .{
+                .kind = .set,
+                .key = key,
+                .value = Expr.init(E.Function, .{ .func = .{
+                    .args = try c.allocator.dupe(G.Arg, &.{.{
+                        .binding = Binding.alloc(c.allocator, B.Identifier{ .ref = arg1 }, loc),
+                    }}),
+                    .body = .{
+                        .stmts = try c.allocator.dupe(Stmt, &.{
+                            Stmt.alloc(S.SExpr, .{
+                                .value = Expr.assign(id, Expr.initIdentifier(arg1, loc)),
+                            }, loc),
+                        }),
+                        .loc = loc,
+                    },
+                } }, loc),
+            });
+        } else {
+            try export_props.append(c.allocator, .{
+                .key = Expr.init(E.String, .{
+                    .data = symbol.original_name,
+                }, loc),
+                .value = id,
+            });
+        }
+    }
+    // fn appendCommonJSExportStmtWithRef(c: *LinkerContext, ast: *JSAst, stmts: *StmtList, ref: Ref, loc: Logger.Loc) !void {
+    //     try appendCommonJSExportStmt(ast, stmts, c.graph.symbols.get(ref).?.original_name, Expr.initIdentifier(ref, loc), loc);
+    // }
+
+    // fn appendCommonJSExportStmt(ast: *JSAst, stmts: *StmtList, name: []const u8, expr: Expr, loc: Logger.Loc) !void {
+    //     ast.flags.uses_exports_ref = true;
+    //     try stmts.inside_wrapper_suffix.append(Stmt.alloc(S.SExpr, .{
+    //         .value = Expr.assign(
+    //             Expr.init(E.Dot, .{
+    //                 .target = Expr.initIdentifier(ast.exports_ref, loc),
+    //                 .name = name,
+    //                 .name_loc = loc,
+    //             }, loc),
+    //             expr,
+    //         ),
+    //     }, loc));
+    // }
 
     fn runtimeFunction(c: *LinkerContext, name: []const u8) Ref {
         return c.graph.runtimeFunction(name);
@@ -8735,7 +8959,8 @@ pub const LinkerContext = struct {
             Index.invalid;
 
         // referencing everything by array makes the code a lot more annoying :(
-        const ast: JSAst = c.graph.ast.get(part_range.source_index.get());
+        // this is var so that convertStmtsForChunkKit can retroactively set `uses_exports_ref` late
+        var ast: JSAst = c.graph.ast.get(part_range.source_index.get());
 
         var needs_wrapper = false;
 
@@ -8934,30 +9159,21 @@ pub const LinkerContext = struct {
                 }, Logger.Loc.Empty) },
             }) catch unreachable; // is within bounds
 
-            switch (flags.wrap) {
-                .none => {
-                    // TODO:
-                },
-                .cjs => {
-                    if (ast.uses_exports_ref()) {
-                        clousure_args.appendAssumeCapacity(
-                            .{
-                                .binding = Binding.alloc(temp_allocator, B.Identifier{
-                                    .ref = ast.exports_ref,
-                                }, Logger.Loc.Empty),
-                                .default = Expr.allocate(temp_allocator, E.Dot, .{
-                                    .target = Expr.initIdentifier(ast.module_ref, Logger.Loc.Empty),
-                                    .name = "exports",
-                                    .name_loc = Logger.Loc.Empty,
-                                }, Logger.Loc.Empty),
-                            },
-                        );
-                    }
-                },
-                .esm => {
-                    // TODO:
-                },
+            if (ast.flags.uses_exports_ref) {
+                clousure_args.appendAssumeCapacity(
+                    .{
+                        .binding = Binding.alloc(temp_allocator, B.Identifier{
+                            .ref = ast.exports_ref,
+                        }, Logger.Loc.Empty),
+                        .default = Expr.allocate(temp_allocator, E.Dot, .{
+                            .target = Expr.initIdentifier(ast.module_ref, Logger.Loc.Empty),
+                            .name = "exports",
+                            .name_loc = Logger.Loc.Empty,
+                        }, Logger.Loc.Empty),
+                    },
+                );
             }
+
             stmt_storage = Stmt.allocateExpr(temp_allocator, Expr.init(E.Function, .{ .func = .{
                 .args = temp_allocator.dupe(G.Arg, clousure_args.slice()) catch bun.outOfMemory(),
                 .body = .{
@@ -8971,15 +9187,13 @@ pub const LinkerContext = struct {
         else if (needs_wrapper) {
             switch (flags.wrap) {
                 .cjs => {
-                    const uses_exports_ref = ast.uses_exports_ref();
-
                     // Only include the arguments that are actually used
                     var args = std.ArrayList(G.Arg).initCapacity(
                         temp_allocator,
-                        if (ast.uses_module_ref() or uses_exports_ref) 2 else 0,
+                        if (ast.flags.uses_module_ref or ast.flags.uses_exports_ref) 2 else 0,
                     ) catch unreachable;
 
-                    if (ast.uses_module_ref() or uses_exports_ref) {
+                    if (ast.flags.uses_module_ref or ast.flags.uses_exports_ref) {
                         args.appendAssumeCapacity(
                             G.Arg{
                                 .binding = Binding.alloc(
@@ -8992,7 +9206,7 @@ pub const LinkerContext = struct {
                             },
                         );
 
-                        if (ast.uses_module_ref()) {
+                        if (ast.flags.uses_module_ref) {
                             args.appendAssumeCapacity(
                                 G.Arg{
                                     .binding = Binding.alloc(

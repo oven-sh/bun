@@ -22,18 +22,43 @@ type RequireFunction = (id: string) => void;
 type ModuleLoadFunction = (require: RequireFunction, module) => void;
 
 interface ModuleEntry {
+  /**
+   * 'module.exports' as exposed inside of the module. for ES modules,
+   * this is the module namespace object
+   */
   exports: any;
+  /**
+   * For ES modules, 'require(...)' needs to return a slightly altered version
+   */
+  ext_exports: undefined | object;
+  /** is this an ES Module */
+  esmodule: boolean;
 }
 
-function loadModule(key: string) {
+function loadModule(key: string): ModuleEntry {
   let module = registry.get(key);
-  if(module) return module.exports;
+  if (module) return module;
   module = {
     exports: {},
+    ext_exports: undefined,
+    esmodule: false,
   };
   registry.set(key, module);
-  input_graph[key](loadModule, module);
-  return module.exports;
+  input_graph[key](requireInternal, module);
+  return module;
+}
+
+function requireInternal(key: string) {
+  return loadModule(key).exports;
+}
+requireInternal.import = importInternal;
+
+function importInternal(key: string) {
+  const module = loadModule(key);
+  const { exports, esmodule } = module;
+  return esmodule
+    ? module.ext_exports ??= { ...exports, default: exports }
+    : exports;
 }
 
 if (mode == 'client') {

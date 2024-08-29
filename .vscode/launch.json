@@ -13,7 +13,7 @@
       "request": "launch",
       "name": "bun build demo",
       "program": "${workspaceFolder}/build/bun-debug",
-      "args": ["build", "./other.tsx", "--format", "internal_kit_dev"],
+      "args": ["build", "./first.tsx", "--format", "internal_kit_dev"],
       "cwd": "/Users/dave/kt",
       "env": {
         "FORCE_COLOR": "1",

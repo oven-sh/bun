@@ -212,6 +212,28 @@ pub const OutdatedCommand = struct {
         }
     }
 
+    // TODO: use in `bun pack, publish, run, ...`
+    const FilterType = union(enum) {
+        all,
+        name: []const u32,
+        path: []const u32,
+
+        pub fn init(pattern: []const u32, is_path: bool) @This() {
+            return if (is_path) .{
+                .path = pattern,
+            } else .{
+                .name = pattern,
+            };
+        }
+
+        pub fn deinit(this: @This(), allocator: std.mem.Allocator) void {
+            switch (this) {
+                .path, .name => |pattern| allocator.free(pattern),
+                else => {},
+            }
+        }
+    };
+
     fn findMatchingWorkspaces(
         allocator: std.mem.Allocator,
         original_cwd: string,
@@ -231,8 +253,13 @@ pub const OutdatedCommand = struct {
         }
 
         const converted_filters = converted_filters: {
-            const buf = try allocator.alloc(struct { []const u32, bool }, filters.len);
+            const buf = try allocator.alloc(FilterType, filters.len);
             for (filters, buf) |filter, *converted| {
+                if ((filter.len == 1 and filter[0] == '*') or strings.eqlComptime(filter, "**")) {
+                    converted.* = .all;
+                    continue;
+                }
+
                 const is_path = filter.len > 0 and filter[0] == '.';
 
                 const joined_filter = if (is_path)
@@ -241,7 +268,7 @@ pub const OutdatedCommand = struct {
                     filter;
 
                 if (joined_filter.len == 0) {
-                    converted.* = .{ &.{}, is_path };
+                    converted.* = FilterType.init(&.{}, is_path);
                     continue;
                 }
 
@@ -251,18 +278,17 @@ pub const OutdatedCommand = struct {
                 const convert_result = bun.simdutf.convert.utf8.to.utf32.with_errors.le(joined_filter, convert_buf);
                 if (!convert_result.isSuccessful()) {
                     // nothing would match
-                    converted.* = .{ &.{}, false };
+                    converted.* = FilterType.init(&.{}, false);
                     continue;
                 }
 
-                converted.* = .{ convert_buf[0..convert_result.count], is_path };
+                converted.* = FilterType.init(convert_buf[0..convert_result.count], is_path);
             }
             break :converted_filters buf;
         };
         defer {
-            for (converted_filters) |converted| {
-                const filter, _ = converted;
-                allocator.free(filter);
+            for (converted_filters) |filter| {
+                filter.deinit(allocator);
             }
             allocator.free(converted_filters);
         }
@@ -273,32 +299,32 @@ pub const OutdatedCommand = struct {
             const workspace_pkg_id = workspace_pkg_ids.items[i];
 
             const matched = matched: {
-                for (converted_filters) |converted| {
-                    const filter, const is_path_filter = converted;
+                for (converted_filters) |filter| {
+                    switch (filter) {
+                        .path => |pattern| {
+                            if (pattern.len == 0) continue;
+                            const res = pkg_resolutions[workspace_pkg_id];
 
-                    if (is_path_filter) {
-                        if (filter.len == 0) continue;
-                        const res = pkg_resolutions[workspace_pkg_id];
+                            const res_path = switch (res.tag) {
+                                .workspace => res.value.workspace.slice(string_buf),
+                                .root => FileSystem.instance.top_level_dir,
+                                else => unreachable,
+                            };
 
-                        const res_path = switch (res.tag) {
-                            .workspace => res.value.workspace.slice(string_buf),
-                            .root => FileSystem.instance.top_level_dir,
-                            else => unreachable,
-                        };
+                            const abs_res_path = path.joinAbsString(FileSystem.instance.top_level_dir, &[_]string{res_path}, .posix);
 
-                        const abs_res_path = path.joinAbsString(FileSystem.instance.top_level_dir, &[_]string{res_path}, .posix);
+                            if (!glob.matchImpl(pattern, strings.withoutTrailingSlash(abs_res_path))) {
+                                break :matched false;
+                            }
+                        },
+                        .name => |pattern| {
+                            const name = pkg_names[workspace_pkg_id].slice(string_buf);
 
-                        if (!glob.matchImpl(filter, strings.withoutTrailingSlash(abs_res_path))) {
-                            break :matched false;
-                        }
-
-                        continue;
-                    }
-
-                    const name = pkg_names[workspace_pkg_id].slice(string_buf);
-
-                    if (!glob.matchImpl(filter, name)) {
-                        break :matched false;
+                            if (!glob.matchImpl(pattern, name)) {
+                                break :matched false;
+                            }
+                        },
+                        .all => {},
                     }
                 }
 

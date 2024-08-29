@@ -21,10 +21,8 @@ test("zlib sync compression and decompression without events", () => {
   const unzipped = unzipper._processChunk(zipped, zlib.constants.Z_FINISH);
 
   expect(zipped).toEqual(
-    Buffer.from([
-      31, 139, 8, 0, 0, 0, 0, 0, 0, 19, 115, 206, 207, 77, 85, 200, 207, 211, 81, 112, 203, 40, 44, 207, 72, 79, 76, 41,
-      214, 3, 0, 160, 120, 128, 220, 19, 0, 0, 0,
-    ]),
+    // prettier-ignore
+    Buffer.from([ 31, 139, 8, 0, 0, 0, 0, 0, 0, osbyte(), 115, 206, 207, 77, 85, 200, 207, 211, 81, 112, 203, 40, 44, 207, 72, 79, 76, 41, 214, 3, 0, 160, 120, 128, 220, 19, 0, 0, 0 ]),
   );
   expect(unzipped.toString()).toEqual(message);
 
@@ -33,3 +31,9 @@ test("zlib sync compression and decompression without events", () => {
 });
 
 //<#END_FILE: test-zlib-sync-no-event.js
+
+function osbyte() {
+  if (process.platform === "darwin") return 19;
+  if (process.platform === "linux") return 3;
+  if (process.platform === "win32") return 10;
+}

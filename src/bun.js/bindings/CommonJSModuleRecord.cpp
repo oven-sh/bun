@@ -29,12 +29,14 @@
  * different value. In that case, it will have a stale value.
  */
 
+#include "root.h"
 #include "headers.h"
 
+#include "JavaScriptCore/CatchScope.h"
+#include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/Synchronousness.h"
 #include "JavaScriptCore/JSCast.h"
 #include <JavaScriptCore/JSMapInlines.h>
-#include "root.h"
 #include "JavaScriptCore/SourceCode.h"
 #include "headers-handwritten.h"
 #include "ZigGlobalObject.h"
@@ -755,6 +757,147 @@ bool JSCommonJSModule::evaluate(
     RELEASE_AND_RETURN(throwScope, true);
 }
 
+template<bool checkForModuleMarker>
+void forEachModuleExportToESMExportsSlowPath(JSC::VM& vm, JSGlobalObject* globalObject, Structure* structure, const Identifier& esModuleMarker, JSObject* exports, Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues, JSC::CatchScope& catchScope, bool& needsToAssignDefault)
+{
+    const auto nonIndexedProperties = [&]() -> void {
+        JSC::PropertyNameArray properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+        exports->getOwnNonIndexPropertyNames(globalObject, properties, DontEnumPropertiesMode::Include);
+        if (catchScope.exception()) {
+            return;
+        }
+
+        for (auto property : properties) {
+            if (UNLIKELY(property.isEmpty() || property.isNull() || property.isSymbol()))
+                continue;
+
+            // ignore constructor
+            if (property == vm.propertyNames->constructor)
+                continue;
+
+            if constexpr (checkForModuleMarker) {
+                if (property == esModuleMarker)
+                    continue;
+            }
+
+            JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
+            if (!exports->getPropertySlot(globalObject, property, slot))
+                continue;
+
+            // Allow DontEnum properties which are not getter/setters
+            // https://github.com/oven-sh/bun/issues/4432
+            if (slot.attributes() & PropertyAttribute::DontEnum) {
+                if (!(slot.isValue() || slot.isCustom())) {
+                    continue;
+                }
+            }
+
+            exportNames.append(property);
+
+            JSValue getterResult = slot.getValue(globalObject, property);
+
+            // If it throws, we keep them in the exports list, but mark it as undefined
+            // This is consistent with what Node.js does.
+            if (catchScope.exception()) {
+                catchScope.clearException();
+                getterResult = jsUndefined();
+            }
+
+            exportValues.append(getterResult);
+
+            needsToAssignDefault = needsToAssignDefault && property != vm.propertyNames->defaultKeyword;
+        }
+    };
+
+    nonIndexedProperties();
+    if (catchScope.exception()) {
+        catchScope.clearExceptionExceptTermination();
+        return;
+    }
+
+    // Can we use the fast path for array-like objects?
+    // These conditions were copied from the assertions in forEachOwnIndexedProperty
+    if (structure->canPerformFastPropertyEnumerationCommon() && exports->canHaveExistingOwnIndexedProperties() && !exports->canHaveExistingOwnIndexedGetterSetterProperties() && !structure->hasNonEnumerableProperties()) {
+        exports->forEachOwnIndexedProperty(globalObject, [&](unsigned name, JSValue value) -> IterationStatus {
+            exportNames.append(Identifier::from(vm, name));
+            exportValues.append(value);
+            return IterationStatus::Continue;
+        });
+
+    } else {
+        JSC::PropertyNameArray properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+        exports->getOwnIndexedPropertyNames(globalObject, properties, DontEnumPropertiesMode::Include);
+        if (catchScope.exception()) {
+            catchScope.clearExceptionExceptTermination();
+            return;
+        }
+
+        for (auto property : properties) {
+            ASSERT(!property.isSymbol());
+            ASSERT(!property.isPrivateName());
+            ASSERT(!property.isEmpty());
+            ASSERT(!property.isNull());
+
+            JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
+            if (!exports->getPropertySlot(globalObject, property, slot))
+                continue;
+
+            // Allow DontEnum properties which are not getter/setters
+            // https://github.com/oven-sh/bun/issues/4432
+            if (slot.attributes() & PropertyAttribute::DontEnum) {
+                if (!(slot.isValue() || slot.isCustom())) {
+                    continue;
+                }
+            }
+
+            exportNames.append(property);
+
+            JSValue getterResult = slot.getValue(globalObject, property);
+
+            // If it throws, we keep them in the exports list, but mark it as undefined
+            // This is consistent with what Node.js does.
+            if (catchScope.exception()) {
+                catchScope.clearException();
+                getterResult = jsUndefined();
+            }
+
+            exportValues.append(getterResult);
+        }
+    }
+
+    if (catchScope.exception()) {
+        catchScope.clearExceptionExceptTermination();
+        return;
+    }
+}
+
+template<bool checkForModuleMarker>
+void forEachModuleExportToESMExports(JSC::VM& vm, JSGlobalObject* globalObject, Structure* structure, const Identifier& esModuleMarker, JSObject* exports, Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues, JSC::CatchScope& catchScope, bool& needsToAssignDefault)
+{
+    if (canPerformFastEnumeration(structure)) {
+        exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+            auto key = entry.key();
+            if (key->isSymbol())
+                return true;
+
+            if constexpr (checkForModuleMarker) {
+                if (key == esModuleMarker)
+                    return true;
+            }
+
+            needsToAssignDefault = needsToAssignDefault && key != vm.propertyNames->defaultKeyword;
+
+            JSValue value = exports->getDirect(entry.offset());
+
+            exportNames.append(Identifier::fromUid(vm, key));
+            exportValues.append(value);
+            return true;
+        });
+    } else {
+        forEachModuleExportToESMExportsSlowPath<checkForModuleMarker>(vm, globalObject, structure, esModuleMarker, exports, exportNames, exportValues, catchScope, needsToAssignDefault);
+    }
+}
+
 void populateESMExports(
     JSC::JSGlobalObject* globalObject,
     JSValue result,
@@ -796,133 +939,29 @@ void populateESMExports(
     bool needsToAssignDefault = true;
 
     if (result.isObject()) {
+        auto catchScope = DECLARE_CATCH_SCOPE(vm);
         auto* exports = result.getObject();
+        if (exports->hasNonReifiedStaticProperties()) {
+            exports->reifyAllStaticProperties(globalObject);
+            if (catchScope.exception()) {
+                catchScope.clearExceptionExceptTermination();
+            }
+        }
         bool hasESModuleMarker = !ignoreESModuleAnnotation && exports->hasProperty(globalObject, esModuleMarker);
+
+        if (catchScope.exception()) {
+            catchScope.clearExceptionExceptTermination();
+        }
 
         auto* structure = exports->structure();
         uint32_t size = structure->inlineSize() + structure->outOfLineSize();
         exportNames.reserveCapacity(size + 2);
         exportValues.ensureCapacity(size + 2);
 
-        auto catchScope = DECLARE_CATCH_SCOPE(vm);
-
-        if (catchScope.exception()) {
-            catchScope.clearException();
-        }
-
         if (hasESModuleMarker) {
-            if (canPerformFastEnumeration(structure)) {
-                exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
-                    auto key = entry.key();
-                    if (key->isSymbol() || key == esModuleMarker)
-                        return true;
-
-                    needsToAssignDefault = needsToAssignDefault && key != vm.propertyNames->defaultKeyword;
-
-                    JSValue value = exports->getDirect(entry.offset());
-
-                    exportNames.append(Identifier::fromUid(vm, key));
-                    exportValues.append(value);
-                    return true;
-                });
-            } else {
-                JSC::PropertyNameArray properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-                exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Exclude);
-                if (catchScope.exception()) {
-                    catchScope.clearExceptionExceptTermination();
-                    return;
-                }
-
-                for (auto property : properties) {
-                    if (UNLIKELY(property.isEmpty() || property.isNull() || property == esModuleMarker || property.isPrivateName() || property.isSymbol()))
-                        continue;
-
-                    // ignore constructor
-                    if (property == vm.propertyNames->constructor)
-                        continue;
-
-                    JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
-                    if (!exports->getPropertySlot(globalObject, property, slot))
-                        continue;
-
-                    // Allow DontEnum properties which are not getter/setters
-                    // https://github.com/oven-sh/bun/issues/4432
-                    if (slot.attributes() & PropertyAttribute::DontEnum) {
-                        if (!(slot.isValue() || slot.isCustom())) {
-                            continue;
-                        }
-                    }
-
-                    exportNames.append(property);
-
-                    JSValue getterResult = slot.getValue(globalObject, property);
-
-                    // If it throws, we keep them in the exports list, but mark it as undefined
-                    // This is consistent with what Node.js does.
-                    if (catchScope.exception()) {
-                        catchScope.clearException();
-                        getterResult = jsUndefined();
-                    }
-
-                    exportValues.append(getterResult);
-
-                    needsToAssignDefault = needsToAssignDefault && property != vm.propertyNames->defaultKeyword;
-                }
-            }
-
-        } else if (canPerformFastEnumeration(structure)) {
-            exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
-                auto key = entry.key();
-                if (key->isSymbol() || key == vm.propertyNames->defaultKeyword)
-                    return true;
-
-                JSValue value = exports->getDirect(entry.offset());
-
-                exportNames.append(Identifier::fromUid(vm, key));
-                exportValues.append(value);
-                return true;
-            });
+            forEachModuleExportToESMExports<true>(vm, globalObject, structure, esModuleMarker, exports, exportNames, exportValues, catchScope, needsToAssignDefault);
         } else {
-            JSC::PropertyNameArray properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-            exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Include);
-            if (catchScope.exception()) {
-                catchScope.clearExceptionExceptTermination();
-                return;
-            }
-
-            for (auto property : properties) {
-                if (UNLIKELY(property.isEmpty() || property.isNull() || property == vm.propertyNames->defaultKeyword || property.isPrivateName() || property.isSymbol()))
-                    continue;
-
-                // ignore constructor
-                if (property == vm.propertyNames->constructor)
-                    continue;
-
-                JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
-                if (!exports->getPropertySlot(globalObject, property, slot))
-                    continue;
-
-                if (slot.attributes() & PropertyAttribute::DontEnum) {
-                    // Allow DontEnum properties which are not getter/setters
-                    // https://github.com/oven-sh/bun/issues/4432
-                    if (!(slot.isValue() || slot.isCustom())) {
-                        continue;
-                    }
-                }
-
-                exportNames.append(property);
-
-                JSValue getterResult = slot.getValue(globalObject, property);
-
-                // If it throws, we keep them in the exports list, but mark it as undefined
-                // This is consistent with what Node.js does.
-                if (catchScope.exception()) {
-                    catchScope.clearException();
-                    getterResult = jsUndefined();
-                }
-
-                exportValues.append(getterResult);
-            }
+            forEachModuleExportToESMExports<false>(vm, globalObject, structure, esModuleMarker, exports, exportNames, exportValues, catchScope, needsToAssignDefault);
         }
     }
 

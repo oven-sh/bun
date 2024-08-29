@@ -3,7 +3,7 @@ import { css } from './runtime-macros' with { type: 'macro' };
 /**
  * All modules for the initial bundle. The first one is the entrypoint.
  */
-declare const graph: Record<string, ModuleLoadFunction>;
+declare const input_graph: Record<string, ModuleLoadFunction>;
 /** The entrypoint's key */
 declare const entry_point_key: string;
 /**
@@ -16,6 +16,8 @@ declare const mode: 'client' | 'server';
 declare const IS_BUN_DEVELOPMENT: any;
 if (typeof IS_BUN_DEVELOPMENT !== 'boolean') { throw new Error('DCE is configured incorrectly') }
 
+const registry = new Map<string, ModuleEntry>()
+
 type RequireFunction = (id: string) => void;
 type ModuleLoadFunction = (require: RequireFunction, module) => void;
 
@@ -23,18 +25,14 @@ interface ModuleEntry {
   exports: any;
 }
 
-console.log(graph, 'mode: ' + mode);
-
-const loaded_modules = new Map<string, ModuleEntry>()
-
 function loadModule(key: string) {
-  let module = loaded_modules.get(key);
+  let module = registry.get(key);
   if(module) return module.exports;
   module = {
     exports: {},
   };
-  loaded_modules.set(key, module);
-  graph[key](loadModule, module);
+  registry.set(key, module);
+  input_graph[key](loadModule, module);
   return module.exports;
 }
 

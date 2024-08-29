@@ -5140,7 +5140,7 @@ pub const LinkerContext = struct {
                         count += "init_".len + ident_fmt_len;
                     }
 
-                    if (wrap != .cjs and export_kind != .cjs) {
+                    if (wrap != .cjs and export_kind != .cjs and this.options.output_format != .kit_internal_hmr) {
                         count += "exports_".len + ident_fmt_len;
                         count += "module_".len + ident_fmt_len;
                     }
@@ -5188,7 +5188,7 @@ pub const LinkerContext = struct {
                 // actual CommonJS files from being renamed. This is purely about
                 // aesthetics and is not about correctness. This is done here because by
                 // this point, we know the CommonJS status will not change further.
-                if (wrap != .cjs and export_kind != .cjs) {
+                if (wrap != .cjs and export_kind != .cjs and this.options.output_format != .kit_internal_hmr) {
                     const exports_name = builder.fmt("exports_{}", .{source.fmtIdentifier()});
                     const module_name = builder.fmt("module_{}", .{source.fmtIdentifier()});
 
@@ -7010,7 +7010,16 @@ pub const LinkerContext = struct {
 
         // TODO: directive
 
-        // TODO: IIFE wrap
+        // For Kit, hoist runtime.js outside of the IIFE
+        const compile_results = chunk.compile_results_for_chunk;
+        if (c.options.output_format == .kit_internal_hmr) {
+            for (compile_results) |compile_result| {
+                const source_index = compile_result.sourceIndex();
+                if (source_index != Index.runtime.value) break;
+                line_offset.advance(compile_result.code());
+                j.push(compile_result.code(), bun.default_allocator);
+            }
+        }
 
         switch (c.options.output_format) {
             .kit_internal_hmr => {
@@ -7034,9 +7043,7 @@ pub const LinkerContext = struct {
         }
 
         // Concatenate the generated JavaScript chunks together
-
         var prev_filename_comment: Index.Int = 0;
-        const compile_results = chunk.compile_results_for_chunk;
 
         var compile_results_for_source_map: std.MultiArrayList(CompileResultForSourceMap) = .{};
         compile_results_for_source_map.setCapacity(worker.allocator, compile_results.len) catch bun.outOfMemory();
@@ -7109,8 +7116,10 @@ pub const LinkerContext = struct {
             }
 
             if (is_runtime) {
-                line_offset.advance(compile_result.code());
-                j.push(compile_result.code(), bun.default_allocator);
+                if (c.options.output_format != .kit_internal_hmr) {
+                    line_offset.advance(compile_result.code());
+                    j.push(compile_result.code(), bun.default_allocator);
+                }
             } else {
                 j.push(compile_result.code(), bun.default_allocator);
 
@@ -8845,7 +8854,7 @@ pub const LinkerContext = struct {
 
         // Turn each module into a function if this is Kit
         var stmt_storage: Stmt = undefined;
-        if (c.options.output_format == .kit_internal_hmr) {
+        if (c.options.output_format == .kit_internal_hmr and !part_range.source_index.isRuntime()) {
             var clousure_args = std.BoundedArray(G.Arg, 3).fromSlice(&.{
                 .{ .binding = Binding.alloc(temp_allocator, B.Identifier{
                     .ref = ast.require_ref,
@@ -9214,7 +9223,10 @@ pub const LinkerContext = struct {
 
             .minify_whitespace = c.options.minify_whitespace,
             .minify_syntax = c.options.minify_syntax,
-            .module_type = c.options.output_format,
+            .module_type = switch (c.options.output_format) {
+                else => |format| format,
+                .kit_internal_hmr => if (part_range.source_index.isRuntime()) .esm else .kit_internal_hmr,
+            },
             .print_dce_annotations = c.options.emit_dce_annotations,
             .has_run_symbol_renamer = true,
 
@@ -9230,7 +9242,7 @@ pub const LinkerContext = struct {
             .line_offset_tables = c.graph.files.items(.line_offset_table)[part_range.source_index.get()],
             .target = c.options.target,
 
-            .input_files_for_kit = if (c.options.output_format == .kit_internal_hmr)
+            .input_files_for_kit = if (c.options.output_format == .kit_internal_hmr and !part_range.source_index.isRuntime())
                 c.parse_graph.input_files.items(.source)
             else
                 null,

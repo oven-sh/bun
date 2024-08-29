@@ -21,14 +21,12 @@ if (debug === 'false' || debug === '0') debug = false;
 // The goal is to make the bundler emit an IIFE
 // with the following structure:
 //
-//   ((graph) => {
+//   ((input_graph, entry_point_key) => {
 //     ... runtime code ...
 //   })([
-//     // module 1
-//     (require, ...) => { ... },
-//     // module 2
-//     (require, ...) => { ... },
-//   ]);
+//     "module1.ts"(require, module) { ... },
+//     "module2.ts"(require, module) { ... },
+//   ], "module1.ts");
 //
 // Where the runtime code in ./runtime.ts controls loading modules, hot module
 // reloading, and displaying errors in browser. To make that code easier to
@@ -39,7 +37,7 @@ const kit_dir = join(import.meta.dirname, '../kit');
 process.chdir(kit_dir); // to make bun build predictable in development
 
 const runtime_source = readFileSync(join(kit_dir, 'runtime.ts'));
-const combined_source = `__marker__; let graph, entry_point_key; __marker__(graph, entry_point_key); ${runtime_source};`;
+const combined_source = `__marker__; let input_graph, entry_point_key; __marker__(input_graph, entry_point_key); ${runtime_source};`;
 const generated_entrypoint = join(kit_dir, ".runtime-entry.generated.ts");
 
 writeFileSync(generated_entrypoint, combined_source);

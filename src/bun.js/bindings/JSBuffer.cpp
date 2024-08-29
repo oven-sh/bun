@@ -1707,7 +1707,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeEncodingBody(JS
         return {};
     }
 
-    size_t max_length = std::min(max - offset, max);
+    size_t max_length = std::min(length - offset, max);
 
     RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, max_length, encoding));
 }

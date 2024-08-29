@@ -3425,6 +3425,39 @@ pub fn utf16EqlString(text: []const u16, str: string) bool {
     return j == str.len;
 }
 
+pub fn encodeUTF8Comptime(comptime cp: u32) []const u8 {
+    const HEADER_CONT_BYTE: u8 = 0b10000000;
+    const HEADER_2BYTE: u8 = 0b11000000;
+    const HEADER_3BYTE: u8 = 0b11100000;
+    const HEADER_4BYTE: u8 = 0b11100000;
+
+    return switch (cp) {
+        0x0...0x7F => return &[_]u8{@intCast(cp)},
+        0x80...0x7FF => {
+            return &[_]u8{
+                HEADER_2BYTE | @as(u8, cp >> 6),
+                HEADER_CONT_BYTE | @as(u8, cp & 0b00111111),
+            };
+        },
+        0x800...0xFFFF => {
+            return &[_]u8{
+                HEADER_3BYTE | @as(u8, cp >> 12),
+                HEADER_CONT_BYTE | @as(u8, (cp >> 6) & 0b00111111),
+                HEADER_CONT_BYTE | @as(u8, cp & 0b00111111),
+            };
+        },
+        0x10000...0x10FFFF => {
+            return &[_]u8{
+                HEADER_4BYTE | @as(u8, cp >> 18),
+                HEADER_CONT_BYTE | @as(u8, (cp >> 12) & 0b00111111),
+                HEADER_CONT_BYTE | @as(u8, (cp >> 6) & 0b00111111),
+                HEADER_CONT_BYTE | @as(u8, cp & 0b00111111),
+            };
+        },
+        else => @compileError("Invalid UTF-8 codepoint!"),
+    };
+}
+
 // This is a clone of golang's "utf8.EncodeRune" that has been modified to encode using
 // WTF-8 instead. See https://simonsapin.github.io/wtf-8/ for more info.
 pub fn encodeWTF8Rune(p: *[4]u8, r: i32) u3 {

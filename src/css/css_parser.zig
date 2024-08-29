@@ -4443,170 +4443,167 @@ pub const color = struct {
         },
     };
 
-    pub const named_colors = named_colors: {
-        {
-            break :named_colors;
-        }
+    // PERF: Make this faster?
+    pub const named_colors: std.StaticStringMap(struct { u8, u8, u8 }) = named_colors: {
         const defined_colors = .{
-            "black",                .{ 0, 0, 0 },
-            "silver",               .{ 192, 192, 192 },
-            "gray",                 .{ 128, 128, 128 },
-            "white",                .{ 255, 255, 255 },
-            "maroon",               .{ 128, 0, 0 },
-            "red",                  .{ 255, 0, 0 },
-            "purple",               .{ 128, 0, 128 },
-            "fuchsia",              .{ 255, 0, 255 },
-            "green",                .{ 0, 128, 0 },
-            "lime",                 .{ 0, 255, 0 },
-            "olive",                .{ 128, 128, 0 },
-            "yellow",               .{ 255, 255, 0 },
-            "navy",                 .{ 0, 0, 128 },
-            "blue",                 .{ 0, 0, 255 },
-            "teal",                 .{ 0, 128, 128 },
-            "aqua",                 .{ 0, 255, 255 },
+            .{ "black", .{ 0, 0, 0 } },
+            .{ "silver", .{ 192, 192, 192 } },
+            .{ "gray", .{ 128, 128, 128 } },
+            .{ "white", .{ 255, 255, 255 } },
+            .{ "maroon", .{ 128, 0, 0 } },
+            .{ "red", .{ 255, 0, 0 } },
+            .{ "purple", .{ 128, 0, 128 } },
+            .{ "fuchsia", .{ 255, 0, 255 } },
+            .{ "green", .{ 0, 128, 0 } },
+            .{ "lime", .{ 0, 255, 0 } },
+            .{ "olive", .{ 128, 128, 0 } },
+            .{ "yellow", .{ 255, 255, 0 } },
+            .{ "navy", .{ 0, 0, 128 } },
+            .{ "blue", .{ 0, 0, 255 } },
+            .{ "teal", .{ 0, 128, 128 } },
+            .{ "aqua", .{ 0, 255, 255 } },
 
-            "aliceblue",            .{ 240, 248, 255 },
-            "antiquewhite",         .{ 250, 235, 215 },
-            "aquamarine",           .{ 127, 255, 212 },
-            "azure",                .{ 240, 255, 255 },
-            "beige",                .{ 245, 245, 220 },
-            "bisque",               .{ 255, 228, 196 },
-            "blanchedalmond",       .{ 255, 235, 205 },
-            "blueviolet",           .{ 138, 43, 226 },
-            "brown",                .{ 165, 42, 42 },
-            "burlywood",            .{ 222, 184, 135 },
-            "cadetblue",            .{ 95, 158, 160 },
-            "chartreuse",           .{ 127, 255, 0 },
-            "chocolate",            .{ 210, 105, 30 },
-            "coral",                .{ 255, 127, 80 },
-            "cornflowerblue",       .{ 100, 149, 237 },
-            "cornsilk",             .{ 255, 248, 220 },
-            "crimson",              .{ 220, 20, 60 },
-            "cyan",                 .{ 0, 255, 255 },
-            "darkblue",             .{ 0, 0, 139 },
-            "darkcyan",             .{ 0, 139, 139 },
-            "darkgoldenrod",        .{ 184, 134, 11 },
-            "darkgray",             .{ 169, 169, 169 },
-            "darkgreen",            .{ 0, 100, 0 },
-            "darkgrey",             .{ 169, 169, 169 },
-            "darkkhaki",            .{ 189, 183, 107 },
-            "darkmagenta",          .{ 139, 0, 139 },
-            "darkolivegreen",       .{ 85, 107, 47 },
-            "darkorange",           .{ 255, 140, 0 },
-            "darkorchid",           .{ 153, 50, 204 },
-            "darkred",              .{ 139, 0, 0 },
-            "darksalmon",           .{ 233, 150, 122 },
-            "darkseagreen",         .{ 143, 188, 143 },
-            "darkslateblue",        .{ 72, 61, 139 },
-            "darkslategray",        .{ 47, 79, 79 },
-            "darkslategrey",        .{ 47, 79, 79 },
-            "darkturquoise",        .{ 0, 206, 209 },
-            "darkviolet",           .{ 148, 0, 211 },
-            "deeppink",             .{ 255, 20, 147 },
-            "deepskyblue",          .{ 0, 191, 255 },
-            "dimgray",              .{ 105, 105, 105 },
-            "dimgrey",              .{ 105, 105, 105 },
-            "dodgerblue",           .{ 30, 144, 255 },
-            "firebrick",            .{ 178, 34, 34 },
-            "floralwhite",          .{ 255, 250, 240 },
-            "forestgreen",          .{ 34, 139, 34 },
-            "gainsboro",            .{ 220, 220, 220 },
-            "ghostwhite",           .{ 248, 248, 255 },
-            "gold",                 .{ 255, 215, 0 },
-            "goldenrod",            .{ 218, 165, 32 },
-            "greenyellow",          .{ 173, 255, 47 },
-            "grey",                 .{ 128, 128, 128 },
-            "honeydew",             .{ 240, 255, 240 },
-            "hotpink",              .{ 255, 105, 180 },
-            "indianred",            .{ 205, 92, 92 },
-            "indigo",               .{ 75, 0, 130 },
-            "ivory",                .{ 255, 255, 240 },
-            "khaki",                .{ 240, 230, 140 },
-            "lavender",             .{ 230, 230, 250 },
-            "lavenderblush",        .{ 255, 240, 245 },
-            "lawngreen",            .{ 124, 252, 0 },
-            "lemonchiffon",         .{ 255, 250, 205 },
-            "lightblue",            .{ 173, 216, 230 },
-            "lightcoral",           .{ 240, 128, 128 },
-            "lightcyan",            .{ 224, 255, 255 },
-            "lightgoldenrodyellow", .{ 250, 250, 210 },
-            "lightgray",            .{ 211, 211, 211 },
-            "lightgreen",           .{ 144, 238, 144 },
-            "lightgrey",            .{ 211, 211, 211 },
-            "lightpink",            .{ 255, 182, 193 },
-            "lightsalmon",          .{ 255, 160, 122 },
-            "lightseagreen",        .{ 32, 178, 170 },
-            "lightskyblue",         .{ 135, 206, 250 },
-            "lightslategray",       .{ 119, 136, 153 },
-            "lightslategrey",       .{ 119, 136, 153 },
-            "lightsteelblue",       .{ 176, 196, 222 },
-            "lightyellow",          .{ 255, 255, 224 },
-            "limegreen",            .{ 50, 205, 50 },
-            "linen",                .{ 250, 240, 230 },
-            "magenta",              .{ 255, 0, 255 },
-            "mediumaquamarine",     .{ 102, 205, 170 },
-            "mediumblue",           .{ 0, 0, 205 },
-            "mediumorchid",         .{ 186, 85, 211 },
-            "mediumpurple",         .{ 147, 112, 219 },
-            "mediumseagreen",       .{ 60, 179, 113 },
-            "mediumslateblue",      .{ 123, 104, 238 },
-            "mediumspringgreen",    .{ 0, 250, 154 },
-            "mediumturquoise",      .{ 72, 209, 204 },
-            "mediumvioletred",      .{ 199, 21, 133 },
-            "midnightblue",         .{ 25, 25, 112 },
-            "mintcream",            .{ 245, 255, 250 },
-            "mistyrose",            .{ 255, 228, 225 },
-            "moccasin",             .{ 255, 228, 181 },
-            "navajowhite",          .{ 255, 222, 173 },
-            "oldlace",              .{ 253, 245, 230 },
-            "olivedrab",            .{ 107, 142, 35 },
-            "orange",               .{ 255, 165, 0 },
-            "orangered",            .{ 255, 69, 0 },
-            "orchid",               .{ 218, 112, 214 },
-            "palegoldenrod",        .{ 238, 232, 170 },
-            "palegreen",            .{ 152, 251, 152 },
-            "paleturquoise",        .{ 175, 238, 238 },
-            "palevioletred",        .{ 219, 112, 147 },
-            "papayawhip",           .{ 255, 239, 213 },
-            "peachpuff",            .{ 255, 218, 185 },
-            "peru",                 .{ 205, 133, 63 },
-            "pink",                 .{ 255, 192, 203 },
-            "plum",                 .{ 221, 160, 221 },
-            "powderblue",           .{ 176, 224, 230 },
-            "rebeccapurple",        .{ 102, 51, 153 },
-            "rosybrown",            .{ 188, 143, 143 },
-            "royalblue",            .{ 65, 105, 225 },
-            "saddlebrown",          .{ 139, 69, 19 },
-            "salmon",               .{ 250, 128, 114 },
-            "sandybrown",           .{ 244, 164, 96 },
-            "seagreen",             .{ 46, 139, 87 },
-            "seashell",             .{ 255, 245, 238 },
-            "sienna",               .{ 160, 82, 45 },
-            "skyblue",              .{ 135, 206, 235 },
-            "slateblue",            .{ 106, 90, 205 },
-            "slategray",            .{ 112, 128, 144 },
-            "slategrey",            .{ 112, 128, 144 },
-            "snow",                 .{ 255, 250, 250 },
-            "springgreen",          .{ 0, 255, 127 },
-            "steelblue",            .{ 70, 130, 180 },
-            "tan",                  .{ 210, 180, 140 },
-            "thistle",              .{ 216, 191, 216 },
-            "tomato",               .{ 255, 99, 71 },
-            "turquoise",            .{ 64, 224, 208 },
-            "violet",               .{ 238, 130, 238 },
-            "wheat",                .{ 245, 222, 179 },
-            "whitesmoke",           .{ 245, 245, 245 },
-            "yellowgreen",          .{ 154, 205, 50 },
+            .{ "aliceblue", .{ 240, 248, 255 } },
+            .{ "antiquewhite", .{ 250, 235, 215 } },
+            .{ "aquamarine", .{ 127, 255, 212 } },
+            .{ "azure", .{ 240, 255, 255 } },
+            .{ "beige", .{ 245, 245, 220 } },
+            .{ "bisque", .{ 255, 228, 196 } },
+            .{ "blanchedalmond", .{ 255, 235, 205 } },
+            .{ "blueviolet", .{ 138, 43, 226 } },
+            .{ "brown", .{ 165, 42, 42 } },
+            .{ "burlywood", .{ 222, 184, 135 } },
+            .{ "cadetblue", .{ 95, 158, 160 } },
+            .{ "chartreuse", .{ 127, 255, 0 } },
+            .{ "chocolate", .{ 210, 105, 30 } },
+            .{ "coral", .{ 255, 127, 80 } },
+            .{ "cornflowerblue", .{ 100, 149, 237 } },
+            .{ "cornsilk", .{ 255, 248, 220 } },
+            .{ "crimson", .{ 220, 20, 60 } },
+            .{ "cyan", .{ 0, 255, 255 } },
+            .{ "darkblue", .{ 0, 0, 139 } },
+            .{ "darkcyan", .{ 0, 139, 139 } },
+            .{ "darkgoldenrod", .{ 184, 134, 11 } },
+            .{ "darkgray", .{ 169, 169, 169 } },
+            .{ "darkgreen", .{ 0, 100, 0 } },
+            .{ "darkgrey", .{ 169, 169, 169 } },
+            .{ "darkkhaki", .{ 189, 183, 107 } },
+            .{ "darkmagenta", .{ 139, 0, 139 } },
+            .{ "darkolivegreen", .{ 85, 107, 47 } },
+            .{ "darkorange", .{ 255, 140, 0 } },
+            .{ "darkorchid", .{ 153, 50, 204 } },
+            .{ "darkred", .{ 139, 0, 0 } },
+            .{ "darksalmon", .{ 233, 150, 122 } },
+            .{ "darkseagreen", .{ 143, 188, 143 } },
+            .{ "darkslateblue", .{ 72, 61, 139 } },
+            .{ "darkslategray", .{ 47, 79, 79 } },
+            .{ "darkslategrey", .{ 47, 79, 79 } },
+            .{ "darkturquoise", .{ 0, 206, 209 } },
+            .{ "darkviolet", .{ 148, 0, 211 } },
+            .{ "deeppink", .{ 255, 20, 147 } },
+            .{ "deepskyblue", .{ 0, 191, 255 } },
+            .{ "dimgray", .{ 105, 105, 105 } },
+            .{ "dimgrey", .{ 105, 105, 105 } },
+            .{ "dodgerblue", .{ 30, 144, 255 } },
+            .{ "firebrick", .{ 178, 34, 34 } },
+            .{ "floralwhite", .{ 255, 250, 240 } },
+            .{ "forestgreen", .{ 34, 139, 34 } },
+            .{ "gainsboro", .{ 220, 220, 220 } },
+            .{ "ghostwhite", .{ 248, 248, 255 } },
+            .{ "gold", .{ 255, 215, 0 } },
+            .{ "goldenrod", .{ 218, 165, 32 } },
+            .{ "greenyellow", .{ 173, 255, 47 } },
+            .{ "grey", .{ 128, 128, 128 } },
+            .{ "honeydew", .{ 240, 255, 240 } },
+            .{ "hotpink", .{ 255, 105, 180 } },
+            .{ "indianred", .{ 205, 92, 92 } },
+            .{ "indigo", .{ 75, 0, 130 } },
+            .{ "ivory", .{ 255, 255, 240 } },
+            .{ "khaki", .{ 240, 230, 140 } },
+            .{ "lavender", .{ 230, 230, 250 } },
+            .{ "lavenderblush", .{ 255, 240, 245 } },
+            .{ "lawngreen", .{ 124, 252, 0 } },
+            .{ "lemonchiffon", .{ 255, 250, 205 } },
+            .{ "lightblue", .{ 173, 216, 230 } },
+            .{ "lightcoral", .{ 240, 128, 128 } },
+            .{ "lightcyan", .{ 224, 255, 255 } },
+            .{ "lightgoldenrodyellow", .{ 250, 250, 210 } },
+            .{ "lightgray", .{ 211, 211, 211 } },
+            .{ "lightgreen", .{ 144, 238, 144 } },
+            .{ "lightgrey", .{ 211, 211, 211 } },
+            .{ "lightpink", .{ 255, 182, 193 } },
+            .{ "lightsalmon", .{ 255, 160, 122 } },
+            .{ "lightseagreen", .{ 32, 178, 170 } },
+            .{ "lightskyblue", .{ 135, 206, 250 } },
+            .{ "lightslategray", .{ 119, 136, 153 } },
+            .{ "lightslategrey", .{ 119, 136, 153 } },
+            .{ "lightsteelblue", .{ 176, 196, 222 } },
+            .{ "lightyellow", .{ 255, 255, 224 } },
+            .{ "limegreen", .{ 50, 205, 50 } },
+            .{ "linen", .{ 250, 240, 230 } },
+            .{ "magenta", .{ 255, 0, 255 } },
+            .{ "mediumaquamarine", .{ 102, 205, 170 } },
+            .{ "mediumblue", .{ 0, 0, 205 } },
+            .{ "mediumorchid", .{ 186, 85, 211 } },
+            .{ "mediumpurple", .{ 147, 112, 219 } },
+            .{ "mediumseagreen", .{ 60, 179, 113 } },
+            .{ "mediumslateblue", .{ 123, 104, 238 } },
+            .{ "mediumspringgreen", .{ 0, 250, 154 } },
+            .{ "mediumturquoise", .{ 72, 209, 204 } },
+            .{ "mediumvioletred", .{ 199, 21, 133 } },
+            .{ "midnightblue", .{ 25, 25, 112 } },
+            .{ "mintcream", .{ 245, 255, 250 } },
+            .{ "mistyrose", .{ 255, 228, 225 } },
+            .{ "moccasin", .{ 255, 228, 181 } },
+            .{ "navajowhite", .{ 255, 222, 173 } },
+            .{ "oldlace", .{ 253, 245, 230 } },
+            .{ "olivedrab", .{ 107, 142, 35 } },
+            .{ "orange", .{ 255, 165, 0 } },
+            .{ "orangered", .{ 255, 69, 0 } },
+            .{ "orchid", .{ 218, 112, 214 } },
+            .{ "palegoldenrod", .{ 238, 232, 170 } },
+            .{ "palegreen", .{ 152, 251, 152 } },
+            .{ "paleturquoise", .{ 175, 238, 238 } },
+            .{ "palevioletred", .{ 219, 112, 147 } },
+            .{ "papayawhip", .{ 255, 239, 213 } },
+            .{ "peachpuff", .{ 255, 218, 185 } },
+            .{ "peru", .{ 205, 133, 63 } },
+            .{ "pink", .{ 255, 192, 203 } },
+            .{ "plum", .{ 221, 160, 221 } },
+            .{ "powderblue", .{ 176, 224, 230 } },
+            .{ "rebeccapurple", .{ 102, 51, 153 } },
+            .{ "rosybrown", .{ 188, 143, 143 } },
+            .{ "royalblue", .{ 65, 105, 225 } },
+            .{ "saddlebrown", .{ 139, 69, 19 } },
+            .{ "salmon", .{ 250, 128, 114 } },
+            .{ "sandybrown", .{ 244, 164, 96 } },
+            .{ "seagreen", .{ 46, 139, 87 } },
+            .{ "seashell", .{ 255, 245, 238 } },
+            .{ "sienna", .{ 160, 82, 45 } },
+            .{ "skyblue", .{ 135, 206, 235 } },
+            .{ "slateblue", .{ 106, 90, 205 } },
+            .{ "slategray", .{ 112, 128, 144 } },
+            .{ "slategrey", .{ 112, 128, 144 } },
+            .{ "snow", .{ 255, 250, 250 } },
+            .{ "springgreen", .{ 0, 255, 127 } },
+            .{ "steelblue", .{ 70, 130, 180 } },
+            .{ "tan", .{ 210, 180, 140 } },
+            .{ "thistle", .{ 216, 191, 216 } },
+            .{ "tomato", .{ 255, 99, 71 } },
+            .{ "turquoise", .{ 64, 224, 208 } },
+            .{ "violet", .{ 238, 130, 238 } },
+            .{ "wheat", .{ 245, 222, 179 } },
+            .{ "whitesmoke", .{ 245, 245, 245 } },
+            .{ "yellowgreen", .{ 154, 205, 50 } },
         };
-        @compileLog(defined_colors);
-        @compileError(todo_stuff.depth);
+        const map = std.StaticStringMap(struct { u8, u8, u8 }).initComptime(defined_colors);
+        break :named_colors map;
     };
 
     /// Returns the named color with the given name.
     /// <https://drafts.csswg.org/css-color-4/#typedef-named-color>
     pub fn parseNamedColor(ident: []const u8) ?struct { u8, u8, u8 } {
-        _ = ident; // autofix
-        @compileError(todo_stuff.depth);
+        return named_colors.get(ident);
     }
 
     /// Parse a color hash, without the leading '#' character.
@@ -4687,20 +4684,6 @@ pub const color = struct {
         const green = Helpers.hueToRgb(m1, m2, hue_times_3);
         const blue = Helpers.hueToRgb(m1, m2, hue_times_3 - 1.0);
         return .{ red, green, blue };
-    }
-};
-
-pub const enum_property = struct {
-    pub fn as_str(comptime T: type, val: T) []const u8 {
-        _ = val; // autofix
-        @compileError(todo_stuff.depth);
-    }
-};
-
-pub const comptime_parse = struct {
-    pub fn parse(comptime T: type, input: *Parser) Error!T {
-        _ = input; // autofix
-        @compileError(todo_stuff.depth);
     }
 };
 
@@ -4790,44 +4773,166 @@ pub const serializer = struct {
     /// You should only use this when you know what you're doing, when in doubt,
     /// consider using `serialize_identifier`.
     pub fn serializeName(value: []const u8, comptime W: type, dest: *W) !void {
-        _ = value; // autofix
-        _ = dest; // autofix
-        @compileError(todo_stuff.depth);
+        var chunk_start: usize = 0;
+        for (value, 0..) |b, i| {
+            const escaped: ?[]const u8 = switch (b) {
+                '0'...'9', 'A'...'Z', 'a'...'z', '_', '-' => continue,
+                // the unicode replacement character
+                0 => bun.strings.encodeUTF8Comptime(0xFFD),
+                else => if (!std.ascii.isASCII(b)) continue else null,
+            };
+
+            try dest.writeStr(value[chunk_start..i]);
+            if (escaped) |esc| {
+                try dest.writeStr(esc);
+            } else if ((b >= 0x01 and b <= 0x1F) or b == 0x7F) {
+                try hexEscape(b, W, dest);
+            } else {
+                try charEscape(b, W, dest);
+            }
+            chunk_start = i + 1;
+        }
+        try dest.writeStr(value[chunk_start..]);
     }
 
     /// Write a double-quoted CSS string token, escaping content as necessary.
     pub fn serializeString(value: []const u8, comptime W: type, dest: *W) !void {
-        _ = value; // autofix
-        _ = dest; // autofix
-        @compileError(todo_stuff.depth);
+        try dest.writeStr("\"");
+        try CssStringWriter(W).new(dest).writeStr(value);
+        try dest.writeStr("\"");
     }
 
     pub fn serializeDimension(value: f32, unit: []const u8, comptime W: type, dest: *W) PrintErr!void {
-        _ = value; // autofix
-        _ = unit; // autofix
-        _ = dest; // autofix
-        @compileError(todo_stuff.depth);
+        // const int_value: ?i32 = if (@rem(value, 1) == 0.0) @as(i32, @intFromFloat(value)) else null;
+        const int_value: ?i32 = if (1.0 - @trunc(value) == 0.0) @intCast(value) else null;
+        const token = Token{ .dimension = .{
+            .num = .{
+                .has_sign = value < 0.0,
+                .value = value,
+                .int_value = int_value,
+            },
+            .unit = unit,
+        } };
+        if (value != 0.0 and @abs(value) < 1.0) {
+            // TODO: calculate the actual number of chars here
+            var buf: [64]u8 = undefined;
+            var fbs = std.io.fixedBufferStream(&buf);
+            try token.toCss(W, fbs.writer());
+            const s = fbs.getWritten();
+            if (value < 0.0) {
+                try dest.writeStr("-");
+                try dest.writeStr(bun.strings.trimLeadingPattern2(s, '-', '0'));
+            } else {
+                try dest.writeStr(bun.strings.trimLeadingChar(s, '0'));
+            }
+        } else {
+            try token.toCss(W, dest);
+        }
     }
 
     /// Write a CSS identifier, escaping characters as necessary.
     pub fn serializeIdentifier(value: []const u8, comptime W: type, dest: *W) PrintErr!void {
-        _ = value; // autofix
-        _ = dest; // autofix
-        @compileError(todo_stuff.depth);
+        if (value.len == 0) {
+            return;
+        }
+
+        if (bun.strings.startsWith(value, "--")) {
+            try dest.writeStr("--");
+            return try serializeName(value[2..], W, dest);
+        } else if (bun.strings.eql(value, "-")) {
+            return try dest.writeStr("\\-");
+        } else {
+            var slice = value;
+            if (slice[0] == '-') {
+                try dest.writeStr("-");
+                slice = slice[1..];
+            }
+            if (slice.len > 0 and slice[0] >= '0' and slice[0] <= '9') {
+                try hexEscape(slice[0], W, dest);
+                slice = slice[1..];
+            }
+            return try serializeName(slice, W, dest);
+        }
     }
 
     pub fn serializeUnquotedUrl(value: []const u8, comptime W: type, dest: *W) PrintErr!void {
-        _ = value; // autofix
-        _ = dest; // autofix
-        @compileError(todo_stuff.depth);
+        var chunk_start: usize = 0;
+        for (value, 0..) |b, i| {
+            const hex = switch (b) {
+                0...' ', 0x7F => true,
+                '(', ')', '"', '\'', '\\' => false,
+                else => continue,
+            };
+            try dest.writeStr(value[chunk_start..i]);
+            if (hex) {
+                try hexEscape(b, W, dest);
+            } else {
+                try charEscape(b, W, dest);
+            }
+            chunk_start = i + 1;
+        }
+        try dest.writeStr(value[chunk_start..]);
     }
 
     pub fn writeNumeric(value: f32, int_value: ?i32, has_sign: bool, comptime W: type, dest: *W) !void {
-        _ = int_value; // autofix
-        _ = has_sign; // autofix
-        _ = value; // autofix
-        _ = dest; // autofix
-        @compileError(todo_stuff.depth);
+        // `value >= 0` is true for negative 0.
+        if (has_sign and !std.math.signbit(value)) {
+            try dest.writeStr("+");
+        }
+
+        const notation = if (value == 0.0 and std.math.signbit(value)) notation: {
+            // Negative zero. Work around #20596.
+            try dest.writeStr("-0");
+            break :notation .{
+                .decimal_point = false,
+                .scientific = false,
+            };
+        } else notation: {
+            // TODO: calculate the actual number of chars here
+            var buf: [64]u8 = undefined;
+            // PERF/TODO: Compare this to Rust dtoa-short crate
+            const floats = std.fmt.formatFloat(buf[0..], value, .{
+                .mode = .scientific,
+                .precision = 6,
+            }) catch unreachable;
+            try dest.writeStr(floats);
+            // TODO: this is not correct, might need to copy impl from dtoa_short here
+            break :notation .{
+                .decimal_point = true,
+                .scientific = false,
+            };
+        };
+
+        if (int_value == null and @mod(value, 1) == 0) {
+            if (!notation.decimal_point and !notation.scientific) {
+                try dest.writeStr(".0");
+            }
+        }
+    }
+
+    pub fn hexEscape(ascii_byte: u8, comptime W: type, dest: *W) !void {
+        const HEX_DIGITS = "0123456789abcdef";
+        var bytes: [4]u8 = undefined;
+        const slice: []const u8 = if (ascii_byte > 0x0F) slice: {
+            const high: usize = @intCast(ascii_byte >> 4);
+            const low: usize = @intCast(ascii_byte & 0x0F);
+            bytes[0] = '\\';
+            bytes[1] = HEX_DIGITS[high];
+            bytes[2] = HEX_DIGITS[low];
+            bytes[3] = ' ';
+            break :slice bytes[0..4];
+        } else slice: {
+            bytes[0] = '\\';
+            bytes[1] = HEX_DIGITS[ascii_byte];
+            bytes[2] = ' ';
+            break :slice bytes[0..3];
+        };
+        try dest.writeStr(slice);
+    }
+
+    pub fn charEscape(ascii_byte: u8, comptime W: type, dest: *W) !void {
+        const bytes = [_]u8{ '\\', ascii_byte };
+        try dest.writeStr(&bytes);
     }
 
     pub fn CssStringWriter(comptime W: type) type {
@@ -4840,9 +4945,25 @@ pub const serializer = struct {
             }
 
             pub fn writeStr(this: *@This(), str: []const u8) !void {
-                _ = this; // autofix
-                _ = str; // autofix
-                @compileError(todo_stuff.depth);
+                var chunk_start: usize = 0;
+                for (str, 0..) |b, i| {
+                    const escaped = switch (b) {
+                        '"' => "\\\"",
+                        '\\' => "\\\\",
+                        // replacement character
+                        0 => bun.strings.encodeUTF8Comptime(0xFFD),
+                        0x01...0x1F, 0x7F => null,
+                        else => continue,
+                    };
+                    try this.inner.writeStr(str[chunk_start..i]);
+                    if (escaped) |e| {
+                        try this.inner.writeStr(e);
+                    } else {
+                        try serializer.hexEscape(b, W, this.inner);
+                    }
+                    chunk_start = i + 1;
+                }
+                return try this.inner.writeStr(str[chunk_start..]);
             }
         };
     }
@@ -4958,7 +5079,7 @@ pub const to_css = struct {
 
     pub fn float32(this: f32, comptime W: type, dest: *Printer(W)) PrintErr!void {
         var scratch: [26]u8 = undefined;
-        // PERF: Compare this to Rust dtoa-short crate
+        // PERF/TODO: Compare this to Rust dtoa-short crate
         const floats = std.fmt.formatFloat(scratch[0..], this, .{
             .mode = .scientific,
             .precision = 6,

@@ -108,6 +108,10 @@ export default [
       closed: {
         getter: "getClosed",
       },
+      params: {
+        fn: "params",
+        length: 3,
+      },
     },
   }),
   define({
@@ -148,6 +152,10 @@ export default [
       },
       closed: {
         getter: "getClosed",
+      },
+      params: {
+        fn: "params",
+        length: 3,
       },
     },
   }),

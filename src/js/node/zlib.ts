@@ -107,7 +107,7 @@ ObjectDefineProperty(Zlib.prototype, "_strategy", {
   },
 });
 Zlib.prototype.params = function (level, strategy, callback) {
-  // TODO:
+  return this[kHandle].params(level, strategy, callback);
 };
 
 //

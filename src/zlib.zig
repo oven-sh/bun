@@ -87,6 +87,14 @@ pub extern fn inflateInit2_(strm: z_streamp, window_size: c_int, version: [*c]co
 /// deflateSetDictionary returns Z_OK if success, or Z_STREAM_ERROR if a parameter is invalid (such as NULL dictionary) or the stream state is inconsistent (for example if deflate has already been called for this stream or if not at a block boundary for raw deflate). deflateSetDictionary does not perform any compression: this will be done by deflate().
 pub extern fn deflateSetDictionary(strm: z_streamp, dictionary: ?[*]const u8, length: c_uint) ReturnCode;
 
+/// Dynamically update the compression level and compression strategy. The interpretation of level and strategy is as in deflateInit2(). This can be used to switch between compression and straight copy of the input data, or to switch to a different kind of input data requiring a different strategy. If the compression approach (which is a function of the level) or the strategy is changed, and if there have been any deflate() calls since the state was initialized or reset, then the input available so far is compressed with the old level and strategy using deflate(strm, Z_BLOCK). There are three approaches for the compression levels 0, 1..3, and 4..9 respectively. The new level and strategy will take effect at the next call of deflate().
+/// If a deflate(strm, Z_BLOCK) is performed by deflateParams(), and it does not have enough output space to complete, then the parameter change will not take effect. In this case, deflateParams() can be called again with the same parameters and more output space to try again.
+///
+/// In order to assure a change in the parameters on the first try, the deflate stream should be flushed using deflate() with Z_BLOCK or other flush request until strm.avail_out is not zero, before calling deflateParams(). Then no more input data should be provided before the deflateParams() call. If this is done, the old level and strategy will be applied to the data compressed before deflateParams(), and the new level and strategy will be applied to the data compressed after deflateParams().
+///
+/// deflateParams returns Z_OK on success, Z_STREAM_ERROR if the source stream state was inconsistent or if a parameter was invalid, or Z_BUF_ERROR if there was not enough output space to complete the compression of the available input data before a change in the strategy or approach. Note that in the case of a Z_BUF_ERROR, the parameters are not changed. A return value of Z_BUF_ERROR is not fatal, in which case deflateParams() can be retried with more output space.
+pub extern fn deflateParams(strm: z_streamp, level: c_int, strategy: c_int) ReturnCode;
+
 /// inflate decompresses as much data as possible, and stops when the input buffer becomes empty or the output buffer becomes full. It may introduce some output latency (reading input without producing any output) except when forced to flush.
 /// The detailed semantics are as follows. inflate performs one or both of the following actions:
 ///
@@ -978,6 +986,13 @@ pub const ZlibCompressorStreaming = struct {
         if (this.err != .Ok) {
             return error.ZlibFailedSetDictionary;
         }
+    }
+
+    pub fn params(this: *ZlibCompressorStreaming, level: c_int, strategy: c_int) void {
+        const err = deflateParams(&this.state, level, strategy);
+        bun.debugAssert(err == .Ok);
+        this.level = level;
+        this.strategy = strategy;
     }
 
     pub fn writer(this: *ZlibCompressorStreaming, out_writer: anytype) WriterImpl(@TypeOf(out_writer)).Writer {

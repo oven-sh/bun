@@ -355,6 +355,24 @@ pub const ZlibEncoder = struct {
         _ = globalObject;
         return JSC.JSValue.jsBoolean(this.closed);
     }
+
+    pub fn params(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const arguments = callframe.arguments(3).ptr;
+        if (this.stream.mode != .DEFLATE) return .undefined;
+
+        const level = if (arguments[0] != .zero) (globalThis.checkRanges(arguments[0], "level", i16, -1, 9, -1) orelse return .zero) else this.stream.level;
+        const strategy = if (arguments[1] != .zero) (globalThis.checkRanges(arguments[1], "strategy", u8, 0, 4, 0) orelse return .zero) else this.stream.strategy;
+        this.stream.params(level, strategy);
+
+        if (arguments[2] != .zero) {
+            if (!arguments[2].isFunction()) {
+                return globalThis.throwInvalidArgumentTypeValue("callback", "function", arguments[2]);
+            }
+            this.callback_value.set(globalThis, arguments[2]);
+        }
+
+        return .undefined;
+    }
 };
 
 pub const ZlibDecoder = struct {
@@ -724,6 +742,13 @@ pub const ZlibDecoder = struct {
         _ = globalObject;
         return JSC.JSValue.jsBoolean(this.closed);
     }
+
+    pub fn params(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        _ = this;
+        _ = globalThis;
+        _ = callframe;
+        return .undefined;
+    }
 };
 
 const Options = struct {
@@ -759,15 +784,17 @@ const Options = struct {
             .GUNZIP, .UNZIP => getWindowBits(globalThis, opts, "windowBits", i16, 9, 15, 15) orelse return null,
         };
 
-        const empty_buffer = JSC.Buffer.fromBytes(&.{}, bun.default_allocator, .Uint8Array);
         const dictionary = blk: {
             var exceptionref: JSC.C.JSValueRef = null;
-            const value = opts.get(globalThis, "dictionary") orelse {
+            const value: JSC.JSValue = opts.get(globalThis, "dictionary") orelse {
                 if (globalThis.hasException()) return null;
-                break :blk empty_buffer;
+                break :blk JSC.Buffer.fromBytes(&.{}, bun.default_allocator, .Uint8Array);
             };
             const buffer = JSC.Buffer.fromJS(globalThis, value, &exceptionref) orelse {
-                break :blk empty_buffer;
+                const ty_str = value.jsTypeString(globalThis).toSlice(globalThis, bun.default_allocator);
+                defer ty_str.deinit();
+                globalThis.ERR_INVALID_ARG_TYPE("The \"options.dictionary\" property must be an instance of Buffer, TypedArray, DataView, or ArrayBuffer. Received {s}", .{ty_str.slice()}).throw();
+                return null;
             };
             if (exceptionref) |ptr| {
                 globalThis.throwValue(JSC.JSValue.c(ptr));

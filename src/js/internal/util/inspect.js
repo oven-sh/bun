@@ -133,6 +133,16 @@ const {
   Uint8Array,
 } = primordials;
 
+const kCustomPromisifyArgsSymbol = Symbol('customPromisifyArgs');
+function defineCustomPromisifyArgs(target, args) {
+  Object.defineProperty(target, kCustomPromisifyArgsSymbol, {
+    __proto__: null,
+    value: args,
+    enumerable: false,
+  });
+  return args;
+}
+
 const customInspectSymbol = Symbol.for("nodejs.util.inspect.custom");
 const kPending = Symbol("kPending"); // state ID 0
 const kFulfilled = Symbol("kFulfilled"); // state ID 1
@@ -2671,6 +2681,8 @@ export default {
   format,
   formatWithOptions,
   stripVTControlCharacters,
+  customPromisifyArgs: kCustomPromisifyArgsSymbol,
+  defineCustomPromisifyArgs,
   //! non-standard properties, should these be kept? (not currently exposed)
   //stylizeWithColor,
   //stylizeWithHTML(str, styleType) {

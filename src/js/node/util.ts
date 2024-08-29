@@ -208,6 +208,8 @@ var promisify = function promisify(original) {
     return defineCustomPromisify(custom, custom);
   }
 
+  const callbackArgs = original[utl.customPromisifyArgs];
+
   function fn(...originalArgs) {
     const { promise, resolve, reject } = Promise.withResolvers();
     try {
@@ -218,7 +220,21 @@ var promisify = function promisify(original) {
             return reject(err);
           }
 
-          resolve(values[0]);
+          if (callbackArgs !== undefined && values.length > 0) {
+            if (!Array.isArray(callbackArgs)) {
+              throw new TypeError('The "customPromisifyArgs" argument must be of type Array');
+            }
+            if (callbackArgs.length !== values.length) {
+              throw new Error("Mismatched length in promisify callback args");
+            }
+            const result = {};
+            for (let i = 0; i < callbackArgs.length; i++) {
+              result[callbackArgs[i]] = values[i];
+            }
+            resolve(result);
+          } else {
+            resolve(values[0]);
+          }
         },
       ]);
     } catch (err) {

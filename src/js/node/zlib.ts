@@ -105,9 +105,19 @@ Base.prototype._final = function (callback) {
   callback();
 };
 Base.prototype._processChunk = function (chunk, flushFlag, cb) {
-  // TODO:
+  // _processChunk() is left for backwards compatibility
+  if (typeof cb === "function") processChunk(this, chunk, flushFlag, cb);
+  else return processChunkSync(this, chunk, flushFlag);
 };
 
+function processChunkSync(self, chunk, flushFlag) {
+  return self[kHandle].transformSync(chunk, undefined, true);
+}
+
+function processChunk(self, chunk, flushFlag, cb) {
+  if (self._closed) return process.nextTick(cb);
+  self[kHandle].transformSync(chunk, undefined, false);
+}
 
 //
 

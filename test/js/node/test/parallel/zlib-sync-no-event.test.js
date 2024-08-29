@@ -7,7 +7,7 @@ const zlib = require("zlib");
 const message = "Come on, Fhqwhgads.";
 const buffer = Buffer.from(message);
 
-test.todo("zlib sync compression and decompression without events", () => {
+test("zlib sync compression and decompression without events", () => {
   const zipper = new zlib.Gzip();
   const closeSpy = jest.fn();
   zipper.on("close", closeSpy);

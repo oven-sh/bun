@@ -30,7 +30,7 @@ const CssModule = struct {
         _ = sources; // autofix
         _ = project_root; // autofix
         _ = references; // autofix
-        @compileError(css.todo_stuff.errors);
+        @compileError(css.todo_stuff.depth);
     }
 
     pub fn handleComposes(
@@ -43,14 +43,22 @@ const CssModule = struct {
         _ = selectors; // autofix
         _ = composes; // autofix
         _ = source_index; // autofix
-        @compileError(css.todo_stuff.errors);
+        @compileError(css.todo_stuff.depth);
     }
 
     pub fn addDashed(this: *CssModule, local: []const u8, source_index: u32) void {
         _ = this; // autofix
         _ = local; // autofix
         _ = source_index; // autofix
-        @compileError(css.todo_stuff.errors);
+        @compileError(css.todo_stuff.depth);
+    }
+
+    pub fn addLocal(this: *CssModule, exported: []const u8, local: []const u8, source_index: u32) void {
+        _ = this; // autofix
+        _ = exported; // autofix
+        _ = local; // autofix
+        _ = source_index; // autofix
+        @compileError(css.todo_stuff.depth);
     }
 };
 

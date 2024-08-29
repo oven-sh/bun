@@ -69,6 +69,7 @@ pub const LogicalGroup = logical.LogicalGroup;
 pub const css_printer = @import("./printer.zig");
 pub const Printer = css_printer.Printer;
 pub const PrinterOptions = css_printer.PrinterOptions;
+pub const targets = @import("./targets.zig");
 pub const Targets = css_printer.Targets;
 pub const Features = css_printer.Features;
 

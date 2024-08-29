@@ -56,62 +56,11 @@ const PseudoClasses = struct {
     focus_within: ?[]const u8 = null,
 };
 
-/// Target browsers and features to compile.
-pub const Targets = struct {
-    /// Browser targets to compile the CSS for.
-    browsers: ?Browsers = null,
-    /// Features that should always be compiled, even when supported by targets.
-    include: Features = 0,
-    /// Features that should never be compiled, even when unsupported by targets.
-    exclude: Features = 0,
+pub const Targets = css.targets.Targets;
 
-    pub fn shouldCompile(this: *const Targets, feature: css.compat.Feature, flag: Features) bool {
-        _ = this; // autofix
-        _ = feature; // autofix
-        _ = flag; // autofix
-        @compileError(css.todo_stuff.depth);
-    }
+pub const Features = css.targets.Features;
 
-    pub fn isCompatible(this: *const Targets, feature: css.compat.Feature) bool {
-        _ = this; // autofix
-        _ = feature; // autofix
-        @compileError(css.todo_stuff.depth);
-    }
-};
-
-pub const Features = packed struct(u32) {
-    pub usingnamespace css.Bitflags(@This());
-    comptime {
-        @compileError(css.todo_stuff.depth);
-    }
-};
-
-/// Browser versions to compile CSS for.
-///
-/// Versions are represented as a single 24-bit integer, with one byte
-/// per `major.minor.patch` component.
-///
-/// # Example
-///
-/// This example represents a target of Safari 13.2.0.
-///
-/// ```
-/// const Browsers = struct {
-///   safari: ?u32 = (13 << 16) | (2 << 8),
-///   ..Browsers{}
-/// };
-/// ```
-const Browsers = struct {
-    android: ?u32 = null,
-    chrome: ?u32 = null,
-    edge: ?u32 = null,
-    firefox: ?u32 = null,
-    ie: ?u32 = null,
-    ios_saf: ?u32 = null,
-    opera: ?u32 = null,
-    safari: ?u32 = null,
-    samsung: ?u32 = null,
-};
+const Browsers = css.targets.Browsers;
 
 /// A `Printer` represents a destination to output serialized CSS, as used in
 /// the [ToCss](super::traits::ToCss) trait. It can wrap any destination that
@@ -141,6 +90,7 @@ pub fn Printer(comptime Writer: type) type {
         pseudo_classes: ?PseudoClasses,
         indentation_buf: std.ArrayList(u8),
         ctx: ?*const css.StyleContext,
+        scratchbuf: std.ArrayList(u8),
         // TODO: finish the fields
 
         const This = @This();
@@ -175,54 +125,7 @@ pub fn Printer(comptime Writer: type) type {
             @compileError(css.todo_stuff.depth);
         }
 
-        /// Increases the current indent level.
-        pub fn indent(this: *This) void {
-            this.indent_amt += 2;
-        }
-
-        /// Decreases the current indent level.
-        pub fn dedent(this: *This) void {
-            this.indent_amt -= 2;
-        }
-
-        const INDENTS: []const []const u8 = indents: {
-            const levels = 32;
-            var indents: [levels][]const u8 = undefined;
-            for (0..levels) |i| {
-                const n = i * 2;
-                var str: [n]u8 = undefined;
-                for (0..n) |j| {
-                    str[j] = ' ';
-                }
-                indents[i] = str;
-            }
-            break :indents indents;
-        };
-
-        fn getIndent(this: *This, idnt: u8) []const u8 {
-            // divide by 2 to get index into table
-            const i = idnt >> 1;
-            // PERF: may be faster to just do `i < (IDENTS.len - 1) * 2` (e.g. 62 if IDENTS.len == 32) here
-            if (i < INDENTS.len) {
-                return INDENTS[i];
-            }
-            if (this.indentation_buf.items.len < idnt) {
-                this.indentation_buf.appendNTimes(' ', this.indentation_buf.items.len - idnt) catch unreachable;
-            } else {
-                this.indentation_buf.items = this.indentation_buf.items[0..idnt];
-            }
-            return this.indentation_buf.items;
-        }
-
-        fn writeIndent(this: *This) !void {
-            bun.debugAssert(!this.minify);
-            if (this.ident > 0) {
-                // try this.writeStr(this.getIndent(this.ident));
-                try this.dest.writeByteNTimes(' ', this.ident);
-            }
-        }
-
-        pub fn new(allocator: Allocator, dest: Writer, options: PrinterOptions) This {
+        pub fn new(allocator: Allocator, scratchbuf: std.ArrayList(u8), dest: Writer, options: PrinterOptions) This {
             return .{
                 .sources = null,
                 .dest = dest,
@@ -232,6 +135,7 @@ pub fn Printer(comptime Writer: type) type {
                 .remove_imports = options.analyze_dependencies != null and options.analyze_dependencies.?.remove_imports,
                 .pseudo_classes = options.pseudo_classes,
                 .indentation_buf = std.ArrayList(u8).init(allocator),
+                .scratchbuf = scratchbuf,
             };
         }
 
@@ -245,24 +149,53 @@ pub fn Printer(comptime Writer: type) type {
         /// If such a string is written, it will break source maps.
         pub fn writeStr(this: *This, s: []const u8) void {
             this.col += s.len;
-            this.dest.writeAll(s) catch bun.outOfMemory();
+            this.dest.writeStr(s) catch bun.outOfMemory();
         }
 
+        /// Writes a formatted string to the underlying destination.
+        ///
+        /// NOTE: Is is assumed that the formatted string does not contain any newline characters.
+        /// If such a string is written, it will break source maps.
         pub fn writeFmt(this: *This, comptime fmt: []const u8, args: anytype) void {
-            _ = this; // autofix
-            _ = fmt; // autofix
-            _ = args; // autofix
-            @compileError(css.todo_stuff.depth);
+            // assuming the writer comes from an ArrayList
+            const start: usize = this.dest.context.self.items.len;
+            this.dest.print(fmt, args) catch bun.outOfMemory();
+            const written = this.dest.context.self.items.len - start;
+            this.col += written;
         }
 
         /// Writes a CSS identifier to the underlying destination, escaping it
         /// as appropriate. If the `css_modules` option was enabled, then a hash
         /// is added, and the mapping is added to the CSS module.
         pub fn writeIdent(this: *This, ident: []const u8, handle_css_module: bool) !void {
-            _ = this; // autofix
-            _ = ident; // autofix
-            _ = handle_css_module; // autofix
-            @compileError(css.todo_stuff.depth);
+            if (handle_css_module) {
+                if (this.css_module) |*css_module| {
+                    const Closure = struct { first: bool, printer: *This };
+                    try css_module.config.pattern.write(
+                        &css_module.hashes.items[this.loc.source_index],
+                        &css_module.sources.items[this.loc.source_index],
+                        ident,
+                        this,
+                        Closure{ .first = true, .printer = this },
+                        struct {
+                            pub fn writeFn(self: *Closure, s: []const u8) PrintErr!void {
+                                self.printer.col += s.len;
+                                if (self.first) {
+                                    self.first = false;
+                                    try css.serializer.serializeIdentifier(s, Writer, self.printer);
+                                } else {
+                                    try css.serializer.serializeName(s, Writer, self.printer);
+                                }
+                            }
+                        },
+                    );
+
+                    css_module.addLocal(ident, ident, this.loc.source_index);
+                    return;
+                }
+            }
+
+            return try css.serializer.serializeIdentifier(ident, Writer, this);
         }
 
         pub fn writeDashedIdent(this: *This, ident: []const u8, is_declaration: bool) !void {
@@ -343,10 +276,19 @@ pub fn Printer(comptime Writer: type) type {
             comptime func: anytype,
             args: anytype,
         ) bun.meta.ReturnOfType(@TypeOf(func)) {
-            _ = this; // autofix
-            _ = selectors; // autofix
-            _ = args; // autofix
-            @compileError(css.todo_stuff.depth);
+            const parent = if (this.ctx) |ctx| parent: {
+                this.ctx = null;
+                break :parent ctx;
+            } else null;
+
+            const ctx = css.StyleContext{ .selectors = selectors, .parent = parent };
+
+            this.ctx = &ctx;
+            const actual_args = bun.meta.ConcatArgs1(func, this, args);
+            const res = @call(.auto, func, actual_args);
+            this.ctx = parent;
+
+            return res;
         }
 
         pub fn withClearedContext(
@@ -354,9 +296,61 @@ pub fn Printer(comptime Writer: type) type {
             comptime func: anytype,
             args: anytype,
         ) bun.meta.ReturnOfType(@TypeOf(func)) {
-            _ = this; // autofix
-            _ = args; // autofix
-            @compileError(css.todo_stuff.depth);
+            const parent = if (this.ctx) |ctx| parent: {
+                this.ctx = null;
+                break :parent ctx;
+            } else null;
+            const actual_args = bun.meta.ConcatArgs1(func, this, args);
+            const res = @call(.auto, func, actual_args);
+            this.ctx = parent;
+            return res;
+        }
+
+        /// Increases the current indent level.
+        pub fn indent(this: *This) void {
+            this.indent_amt += 2;
+        }
+
+        /// Decreases the current indent level.
+        pub fn dedent(this: *This) void {
+            this.indent_amt -= 2;
+        }
+
+        const INDENTS: []const []const u8 = indents: {
+            const levels = 32;
+            var indents: [levels][]const u8 = undefined;
+            for (0..levels) |i| {
+                const n = i * 2;
+                var str: [n]u8 = undefined;
+                for (0..n) |j| {
+                    str[j] = ' ';
+                }
+                indents[i] = str;
+            }
+            break :indents indents;
+        };
+
+        fn getIndent(this: *This, idnt: u8) []const u8 {
+            // divide by 2 to get index into table
+            const i = idnt >> 1;
+            // PERF: may be faster to just do `i < (IDENTS.len - 1) * 2` (e.g. 62 if IDENTS.len == 32) here
+            if (i < INDENTS.len) {
+                return INDENTS[i];
+            }
+            if (this.indentation_buf.items.len < idnt) {
+                this.indentation_buf.appendNTimes(' ', this.indentation_buf.items.len - idnt) catch unreachable;
+            } else {
+                this.indentation_buf.items = this.indentation_buf.items[0..idnt];
+            }
+            return this.indentation_buf.items;
+        }
+
+        fn writeIndent(this: *This) !void {
+            bun.debugAssert(!this.minify);
+            if (this.ident > 0) {
+                // try this.writeStr(this.getIndent(this.ident));
+                try this.dest.writeByteNTimes(' ', this.ident);
+            }
         }
     };
 }

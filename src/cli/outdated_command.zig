@@ -362,7 +362,7 @@ pub const OutdatedCommand = struct {
 
                 if ((arg.len == 1 and arg[0] == '*') or strings.eqlComptime(arg, "**")) {
                     converted.* = .all;
-                    at_least_one_greater_than_zero = at_least_one_greater_than_zero or converted.len > 0;
+                    at_least_one_greater_than_zero = true;
                     continue;
                 }
 
@@ -376,7 +376,7 @@ pub const OutdatedCommand = struct {
                 }
 
                 converted.* = FilterType.init(convert_buf[0..convert_result.count], false);
-                at_least_one_greater_than_zero = at_least_one_greater_than_zero or converted.len > 0;
+                at_least_one_greater_than_zero = at_least_one_greater_than_zero or convert_result.count > 0;
             }
 
             // nothing will match
@@ -428,10 +428,10 @@ pub const OutdatedCommand = struct {
                 if (package_patterns) |patterns| {
                     const match = match: {
                         for (patterns) |pattern| {
-                            if (pattern.len == 0) continue;
                             switch (pattern) {
                                 .path => unreachable,
                                 .name => |name_pattern| {
+                                    if (name_pattern.len == 0) continue;
                                     if (!glob.matchImpl(name_pattern, dep.name.slice(string_buf))) {
                                         break :match false;
                                     }

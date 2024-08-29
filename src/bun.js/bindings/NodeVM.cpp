@@ -324,8 +324,6 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInThisContext, (JSGlobalObject * globalObjec
     SourceCode source(
         JSC::StringSourceProvider::create(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename)), options.filename, JSC::SourceTaintedOrigin::Untainted, TextPosition(options.lineOffset, options.columnOffset)),
         options.lineOffset.zeroBasedInt(), options.columnOffset.zeroBasedInt());
-    auto* zigGlobal = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-    JSObject* context = asObject(JSC::constructEmptyObject(globalObject));
 
     auto* executable = JSC::DirectEvalExecutable::create(
         globalObject, source, NoLexicallyScopedFeatures, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,

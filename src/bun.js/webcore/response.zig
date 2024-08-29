@@ -2124,7 +2124,7 @@ pub const Fetch = struct {
 
         if (url_str.isEmpty()) {
             is_error = true;
-            const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
+            const err = JSC.toTypeError(.ERR_INVALID_URL, fetch_error_blank_url, .{}, ctx);
             return JSPromise.rejectedPromiseValue(globalThis, err);
         }
 
@@ -2143,7 +2143,7 @@ pub const Fetch = struct {
         }
 
         url = ZigURL.fromString(allocator, url_str) catch {
-            const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "fetch() URL is invalid", .{}, ctx);
+            const err = JSC.toTypeError(.ERR_INVALID_URL, "fetch() URL is invalid", .{}, ctx);
             is_error = true;
             return JSPromise.rejectedPromiseValue(
                 globalThis,

@@ -2297,8 +2297,31 @@ pub const Parser = struct {
     ///
     /// See `Token::is_parse_error`. This also checks nested blocks and functions recursively.
     pub fn expectNoErrorToken(this: *Parser) Error!void {
-        _ = this; // autofix
-        @compileError(todo_stuff.depth);
+        while (true) {
+            const tok = this.nextIncludingWhitespaceAndComments() catch return;
+            switch (tok.*) {
+                .function, .open_paren, .open_square, .open_curly => {
+                    this.parseNestedBlock(void, {}, struct {
+                        pub fn parse(i: *Parser) Error!void {
+                            i.expectNoErrorToken() catch {
+                                @compileError(todo_stuff.errors);
+                            };
+                        }
+                    }.parse) catch |err| {
+                        _ = err; // autofix
+                        // FIXME: maybe these should be separate variants of
+                        // BasicParseError instead?
+                        @compileError(todo_stuff.errors);
+                        // return this.newBasicUnexpectedTokenError(tok.*);
+                    };
+                },
+                else => {
+                    if (tok.isParseError()) {
+                        return this.newBasicUnexpectedTokenError(tok.*);
+                    }
+                },
+            }
+        }
     }
 
     pub fn expectPercentage(this: *Parser) Error!f32 {
@@ -2420,14 +2443,49 @@ pub const Parser = struct {
         }
     }
 
+    /// Parse a <url-token> and return the unescaped value.
     pub fn expectUrl(this: *Parser) Error![]const u8 {
-        _ = this; // autofix
-        @compileError(todo_stuff.depth);
+        const start_location = this.currentSourceLocation();
+        const tok = try this.next();
+        switch (tok.*) {
+            .unquoted_url => |value| return value,
+            .function => |name| {
+                if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("url", name)) {
+                    return this.parseNestedBlock([]const u8, {}, struct {
+                        fn parse(parser: *Parser) Error![]const u8 {
+                            return parser.expectString();
+                        }
+                    }.parse) catch {
+                        @compileError(todo_stuff.errors);
+                    };
+                }
+            },
+            else => {},
+        }
+        return start_location.newBasicUnexpectedTokenError(tok.*);
     }
 
+    /// Parse either a <url-token> or a <string-token>, and return the unescaped value.
     pub fn expectUrlOrString(this: *Parser) Error![]const u8 {
-        _ = this; // autofix
-        @compileError(todo_stuff.depth);
+        const start_location = this.currentSourceLocation();
+        const tok = try this.next();
+        switch (tok.*) {
+            .unquoted_url => |value| return value,
+            .quoted_string => |value| return value,
+            .function => |name| {
+                if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("url", name)) {
+                    return this.parseNestedBlock([]const u8, {}, struct {
+                        fn parse(parser: *Parser) Error![]const u8 {
+                            return parser.expectString();
+                        }
+                    }.parse) catch {
+                        @compileError(todo_stuff.errors);
+                    };
+                }
+            },
+            else => {},
+        }
+        return start_location.newBasicUnexpectedTokenError(tok.*);
     }
 
     pub fn position(this: *Parser) usize {
@@ -4245,9 +4303,83 @@ pub const Token = union(TokenKind) {
     const This = @This();
 
     pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        _ = this; // autofix
-        _ = dest; // autofix
-        @compileError(todo_stuff.depth);
+        // zack is here: verify this is correct
+        return switch (this.*) {
+            .ident => |value| try serializer.serializeIdentifier(value, dest),
+            .at_keyword => |value| {
+                try dest.writeStr("@");
+                return try serializer.serializeIdentifier(value, dest);
+            },
+            .hash => |value| {
+                try dest.writeStr("#");
+                return try serializer.serializeName(value, dest);
+            },
+            .id_hash => |value| {
+                try dest.writeStr("#");
+                return try serializer.serializeIdentifier(value, dest);
+            },
+            .quoted_string => |value| try serializer.serializeString(value, dest),
+            .unquoted_url => |value| {
+                try dest.writeStr("url(");
+                try serializer.serializeUnquotedUrl(value, dest);
+                return try dest.writeStr(")");
+            },
+            .delim => |value| try dest.writeChar(value),
+            .number => |num| try serializer.writeNumeric(num.value, num.int_value, num.has_sign, dest),
+            .percentage => |num| {
+                try serializer.writeNumeric(num.value * 100, num.int_value, num.has_sign, dest);
+                try dest.writeStr("%");
+            },
+            .dimension => |dim| {
+                try serializer.writeNumeric(dim.num.value, dim.num.int_value, dim.num.has_sign, dest);
+                // Disambiguate with scientific notation.
+                const unit = dim.unit;
+                if (std.mem.eql(u8, unit, "e") or std.mem.eql(u8, unit, "E") or
+                    std.mem.startsWith(u8, unit, "e-") or std.mem.startsWith(u8, unit, "E-"))
+                {
+                    try dest.writeStr("\\65 ");
+                    try serializer.serializeName(unit[1..], dest);
+                } else {
+                    try serializer.serializeIdentifier(unit, dest);
+                }
+            },
+            .white_space => |content| try dest.writeStr(content),
+            .comment => |content| {
+                try dest.writeStr("/*");
+                try dest.writeStr(content);
+                return try dest.writeStr("*/");
+            },
+            .colon => try dest.writeStr(":"),
+            .semicolon => try dest.writeStr(";"),
+            .comma => try dest.writeStr(","),
+            .include_match => try dest.writeStr("~="),
+            .dash_match => try dest.writeStr("|="),
+            .prefix_match => try dest.writeStr("^="),
+            .suffix_match => try dest.writeStr("$="),
+            .substring_match => try dest.writeStr("*="),
+            .cdo => try dest.writeStr("<!--"),
+            .cdc => try dest.writeStr("-->"),
+            .function => |name| {
+                try serializer.serializeIdentifier(name, dest);
+                try dest.writeStr("(");
+            },
+            .open_paren => try dest.writeStr("("),
+            .open_square => try dest.writeStr("["),
+            .open_curly => try dest.writeStr("{"),
+            .bad_url => |contents| {
+                try dest.writeStr("url(");
+                try dest.writeStr(contents);
+                try dest.writeChar(')');
+            },
+            .bad_string => |value| {
+                try dest.writeChar('"');
+                var writer = serializer.CssStringWriter(Printer(W)).new(dest);
+                return try writer.writeStr(value);
+            },
+            .close_paren => try dest.writeStr(")"),
+            .close_square => try dest.writeStr("]"),
+            .close_curly => try dest.writeStr("}"),
+        };
     }
 };
 
@@ -4682,6 +4814,37 @@ pub const serializer = struct {
         _ = value; // autofix
         _ = dest; // autofix
         @compileError(todo_stuff.depth);
+    }
+
+    pub fn serializeUnquotedUrl(value: []const u8, comptime W: type, dest: *W) PrintErr!void {
+        _ = value; // autofix
+        _ = dest; // autofix
+        @compileError(todo_stuff.depth);
+    }
+
+    pub fn writeNumeric(value: f32, int_value: ?i32, has_sign: bool, comptime W: type, dest: *W) !void {
+        _ = int_value; // autofix
+        _ = has_sign; // autofix
+        _ = value; // autofix
+        _ = dest; // autofix
+        @compileError(todo_stuff.depth);
+    }
+
+    pub fn CssStringWriter(comptime W: type) type {
+        return struct {
+            inner: *W,
+
+            /// Wrap a text writer to create a `CssStringWriter`.
+            pub fn new(inner: *W) @This() {
+                return .{ .inner = inner };
+            }
+
+            pub fn writeStr(this: *@This(), str: []const u8) !void {
+                _ = this; // autofix
+                _ = str; // autofix
+                @compileError(todo_stuff.depth);
+            }
+        };
     }
 };
 

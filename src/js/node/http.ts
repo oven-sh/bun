@@ -2250,6 +2250,9 @@ function emitAbortNextTick(self) {
   self.emit("abort");
 }
 
+const setMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "setMaxHTTPHeaderSize", 1);
+const getMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "getMaxHTTPHeaderSize", 0);
+
 var globalAgent = new Agent();
 export default {
   Agent,
@@ -2261,7 +2264,12 @@ export default {
   IncomingMessage,
   request,
   get,
-  maxHeaderSize: 16384,
+  get maxHeaderSize() {
+    return getMaxHTTPHeaderSize();
+  },
+  set maxHeaderSize(value) {
+    setMaxHTTPHeaderSize(value);
+  },
   validateHeaderName,
   validateHeaderValue,
   setMaxIdleHTTPParsers(max) {

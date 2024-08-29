@@ -11998,7 +11998,11 @@ pub const PackageManager = struct {
 
             if (!this.installEnqueuedPackagesImpl(name, task_id, log_level)) {
                 if (comptime Environment.allow_assert) {
-                    Output.panic("Ran callback to install enqueued packages, but there was no task associated with it. {d} {any}", .{ dependency_id, data.* });
+                    Output.panic("Ran callback to install enqueued packages, but there was no task associated with it. {}:{} (dependency_id: {d})", .{
+                        bun.fmt.quote(name),
+                        bun.fmt.quote(data.url),
+                        dependency_id,
+                    });
                 }
             }
         }

@@ -104,6 +104,10 @@ Base.prototype._flush = function _flush(callback) {
 Base.prototype._final = function (callback) {
   callback();
 };
+Base.prototype._processChunk = function (chunk, flushFlag, cb) {
+  // TODO:
+};
+
 
 //
 

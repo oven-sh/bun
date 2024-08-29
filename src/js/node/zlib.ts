@@ -45,6 +45,11 @@ function Base(method, options) {
   stream.Transform.$call(this, options);
 }
 Base.prototype = Object.create(stream.Transform.prototype);
+ObjectDefineProperty(Base.prototype, "_handle", {
+  get: function () {
+    return this[kHandle];
+  },
+});
 ObjectDefineProperty(Base.prototype, "bytesWritten", {
   get: function () {
     return this[kHandle].bytesWritten;

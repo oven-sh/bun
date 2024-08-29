@@ -389,6 +389,13 @@ pub const BrotliEncoder = struct {
         _ = globalObject;
         return JSC.JSValue.jsBoolean(this.closed);
     }
+
+    pub fn close(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        _ = this;
+        _ = globalThis;
+        _ = callframe;
+        return .undefined;
+    }
 };
 
 pub const BrotliDecoder = struct {
@@ -728,5 +735,12 @@ pub const BrotliDecoder = struct {
     pub fn getClosed(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         _ = globalObject;
         return JSC.JSValue.jsBoolean(this.closed);
+    }
+
+    pub fn close(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        _ = this;
+        _ = globalThis;
+        _ = callframe;
+        return .undefined;
     }
 };

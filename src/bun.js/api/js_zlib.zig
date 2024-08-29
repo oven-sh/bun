@@ -356,6 +356,13 @@ pub const ZlibEncoder = struct {
         return JSC.JSValue.jsBoolean(this.closed);
     }
 
+    pub fn close(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        _ = this;
+        _ = globalThis;
+        _ = callframe;
+        return .undefined;
+    }
+
     pub fn params(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         const arguments = callframe.arguments(3).ptr;
         if (this.stream.mode != .DEFLATE) return .undefined;
@@ -741,6 +748,13 @@ pub const ZlibDecoder = struct {
     pub fn getClosed(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         _ = globalObject;
         return JSC.JSValue.jsBoolean(this.closed);
+    }
+
+    pub fn close(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        _ = this;
+        _ = globalThis;
+        _ = callframe;
+        return .undefined;
     }
 
     pub fn params(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {

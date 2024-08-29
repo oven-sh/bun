@@ -838,6 +838,10 @@ if(NOT NO_CODEGEN)
         "${BUN_SRC}/js/thirdparty/*.ts"
         "${BUN_SRC}/js/internal-for-testing.ts"
     )
+    file(GLOB BUN_KIT_TS_FILES ${CONFIGURE_DEPENDS}
+        "${BUN_SRC}/kit/*.ts"
+        "${BUN_SRC}/kit/*/*.ts"
+    )
 
     file(GLOB CODEGEN_FILES ${CONFIGURE_DEPENDS} "${BUN_CODEGEN_SRC}/*.ts")
 
@@ -859,11 +863,26 @@ if(NOT NO_CODEGEN)
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         COMMENT "Bundling JS"
     )
+
+    add_custom_command(
+        OUTPUT
+        "${BUN_WORKDIR}/codegen/kit.client.js"
+        "${BUN_WORKDIR}/codegen/kit.server.js"
+        "${BUN_WORKDIR}/codegen/kit_empty_file"
+        COMMAND ${BUN_EXECUTABLE} run "${BUN_SRC}/codegen/kit-codegen.ts" "--debug=${DEBUG}" "--codegen_root=${BUN_WORKDIR}/codegen"
+        DEPENDS ${BUN_KIT_TS_FILES} ${CODEGEN_FILES}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMENT "Bundling Kit Code"
+    )
 endif()
 
 WEBKIT_ADD_SOURCE_DEPENDENCIES(
     "${BUN_SRC}/bun.js/bindings/InternalModuleRegistry.cpp"
     "${BUN_WORKDIR}/codegen/InternalModuleRegistryConstants.h"
+)
+WEBKIT_ADD_SOURCE_DEPENDENCIES(
+    "${BUN_SRC}/bun.js/bindings/InternalModuleRegistry.cpp"
+    "${BUN_WORKDIR}/codegen/kit_empty_file"
 )
 list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp")
 

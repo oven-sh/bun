@@ -87,8 +87,6 @@ pub fn wipDevServer(options: DevServer.Options) noreturn {
     dev.runLoopForever();
 }
 
-pub const hmr_runtime_suffix = "\n]);";
-
 pub fn getHmrRuntime(mode: enum { server, client }) []const u8 {
     return if (Environment.embed_code)
         switch (mode) {

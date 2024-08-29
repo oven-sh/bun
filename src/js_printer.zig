@@ -529,6 +529,7 @@ pub const Options = struct {
     target: options.Target = .browser,
 
     runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
+    input_files_for_kit: ?[]logger.Source = null,
 
     commonjs_named_exports: js_ast.Ast.CommonJSNamedExports = .{},
     commonjs_named_exports_deoptimized: bool = false,
@@ -2035,7 +2036,20 @@ fn NewPrinter(
                     p.print("(");
                 }
 
-                if (!meta.was_unwrapped_require) {
+                if (p.options.module_type == .kit_internal_hmr) {
+                    p.printSymbol(p.options.require_ref.?);
+                    p.print("(");
+                    {
+                        var e = E.String{
+                            .data = p.options.input_files_for_kit.?[record.source_index.get()].path.pretty,
+                        };
+                        const c = bestQuoteCharForEString(&e, true);
+                        p.print(c);
+                        p.printStringContent(&e, c);
+                        p.print(c);
+                    }
+                    p.print(")");
+                } else if (!meta.was_unwrapped_require) {
                     // Call the wrapper
                     if (meta.wrapper_ref.isValid()) {
                         p.printSpaceBeforeIdentifier();
@@ -6422,8 +6436,15 @@ pub fn printWithWriterAndPlatform(
     if (opts.module_type == .kit_internal_hmr) {
         printer.indent();
         printer.printIndent();
-        printer.printExpr(parts[0].stmts[0].data.s_expr.value, .comma, .{});
-        printer.print(",");
+        var str = E.String{ .data = source.path.pretty };
+        printer.printExpr(.{
+            .data = .{
+                .e_string = &str,
+            },
+            .loc = logger.Loc.Empty,
+        }, .comma, .{});
+        printer.printFunc(parts[0].stmts[0].data.s_expr.value.data.e_function.func);
+        printer.print(",\n");
     } else {
         // The IIFE wrapper is done in `postProcessJSChunk`, so we just manually
         // trigger an indent.

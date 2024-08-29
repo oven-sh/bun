@@ -7037,28 +7037,31 @@ pub const LinkerContext = struct {
 
         var prev_filename_comment: Index.Int = 0;
         const compile_results = chunk.compile_results_for_chunk;
-        var compile_results_for_source_map = std.MultiArrayList(CompileResultForSourceMap){};
 
-        compile_results_for_source_map.ensureUnusedCapacity(worker.allocator, compile_results.len) catch unreachable;
+        var compile_results_for_source_map: std.MultiArrayList(CompileResultForSourceMap) = .{};
+        compile_results_for_source_map.setCapacity(worker.allocator, compile_results.len) catch bun.outOfMemory();
+
+        const show_comments = c.options.mode == .bundle and
+            !c.options.minify_whitespace and
+            c.options.output_format != .kit_internal_hmr; // includes every filename already
 
         const sources: []const Logger.Source = c.parse_graph.input_files.items(.source);
-        for (@as([]CompileResult, compile_results)) |compile_result| {
+        for (compile_results) |compile_result| {
             const source_index = compile_result.sourceIndex();
             const is_runtime = source_index == Index.runtime.value;
 
             // TODO: extracated legal comments
 
             // Add a comment with the file path before the file contents
-            if (c.options.mode == .bundle and !c.options.minify_whitespace and source_index != prev_filename_comment and compile_result.code().len > 0) {
+            if (show_comments and source_index != prev_filename_comment and compile_result.code().len > 0) {
                 prev_filename_comment = source_index;
+
                 if (newline_before_comment) {
                     j.pushStatic("\n");
                     line_offset.advance("\n");
                 }
 
-                // Make sure newlines in the path can't cause a syntax error. This does
-                // not minimize allocations because it's expected that this case never
-                // comes up in practice.
+                // Make sure newlines in the path can't cause a syntax error.
                 const CommentType = enum {
                     multiline,
                     single,
@@ -7103,7 +7106,6 @@ pub const LinkerContext = struct {
                         line_offset.advance("\n");
                     },
                 }
-                prev_filename_comment = source_index;
             }
 
             if (is_runtime) {
@@ -7160,8 +7162,24 @@ pub const LinkerContext = struct {
                 j.pushStatic(with_newline);
             },
             .kit_internal_hmr => {
-                j.pushStatic(bun.kit.hmr_runtime_suffix);
-                line_offset.advance(bun.kit.hmr_runtime_suffix);
+                {
+                    const str = "}, ";
+                    j.pushStatic(str);
+                    line_offset.advance(str);
+                }
+                {
+                    const input = c.parse_graph.input_files.items(.source)[chunk.entry_point.source_index].path.pretty;
+                    var buf = MutableString.initEmpty(c.allocator);
+                    js_printer.quoteForJSONBuffer(input, &buf, true) catch bun.outOfMemory();
+                    const str = buf.toOwnedSliceLeaky(); // c.allocator is an arena
+                    j.pushStatic(str);
+                    line_offset.advance(str);
+                }
+                {
+                    const str = ");";
+                    j.pushStatic(str);
+                    line_offset.advance(str);
+                }
             },
             else => {},
         }
@@ -8828,17 +8846,46 @@ pub const LinkerContext = struct {
         // Turn each module into a function if this is Kit
         var stmt_storage: Stmt = undefined;
         if (c.options.output_format == .kit_internal_hmr) {
-            stmt_storage = Stmt.allocateExpr(temp_allocator, Expr.init(E.Arrow, .{
-                .args = temp_allocator.dupe(G.Arg, &.{.{
-                    .binding = Binding.alloc(temp_allocator, B.Identifier{
-                        .ref = ast.require_ref,
-                    }, Logger.Loc.Empty),
-                }}) catch bun.outOfMemory(),
+            var clousure_args = std.BoundedArray(G.Arg, 3).fromSlice(&.{
+                .{ .binding = Binding.alloc(temp_allocator, B.Identifier{
+                    .ref = ast.require_ref,
+                }, Logger.Loc.Empty) },
+                .{ .binding = Binding.alloc(temp_allocator, B.Identifier{
+                    .ref = ast.module_ref,
+                }, Logger.Loc.Empty) },
+            }) catch unreachable; // is within bounds
+
+            switch (flags.wrap) {
+                .none => {
+                    // TODO:
+                },
+                .cjs => {
+                    if (ast.uses_exports_ref()) {
+                        clousure_args.appendAssumeCapacity(
+                            .{
+                                .binding = Binding.alloc(temp_allocator, B.Identifier{
+                                    .ref = ast.exports_ref,
+                                }, Logger.Loc.Empty),
+                                .default = Expr.allocate(temp_allocator, E.Dot, .{
+                                    .target = Expr.initIdentifier(ast.module_ref, Logger.Loc.Empty),
+                                    .name = "exports",
+                                    .name_loc = Logger.Loc.Empty,
+                                }, Logger.Loc.Empty),
+                            },
+                        );
+                    }
+                },
+                .esm => {
+                    // TODO:
+                },
+            }
+            stmt_storage = Stmt.allocateExpr(temp_allocator, Expr.init(E.Function, .{ .func = .{
+                .args = temp_allocator.dupe(G.Arg, clousure_args.slice()) catch bun.outOfMemory(),
                 .body = .{
                     .stmts = stmts.all_stmts.items,
                     .loc = Logger.Loc.Empty,
                 },
-            }, Logger.Loc.Empty));
+            } }, Logger.Loc.Empty));
             out_stmts = (&stmt_storage)[0..1];
         }
         // Optionally wrap all statements in a closure
@@ -9174,7 +9221,7 @@ pub const LinkerContext = struct {
             .allocator = allocator,
             .to_esm_ref = toESMRef,
             .to_commonjs_ref = toCommonJSRef,
-            .require_ref = runtimeRequireRef,
+            .require_ref = if (c.options.output_format == .kit_internal_hmr) ast.require_ref else runtimeRequireRef,
             .require_or_import_meta_for_source_callback = js_printer.RequireOrImportMeta.Callback.init(
                 LinkerContext,
                 requireOrImportMetaForSource,
@@ -9182,6 +9229,11 @@ pub const LinkerContext = struct {
             ),
             .line_offset_tables = c.graph.files.items(.line_offset_table)[part_range.source_index.get()],
             .target = c.options.target,
+
+            .input_files_for_kit = if (c.options.output_format == .kit_internal_hmr)
+                c.parse_graph.input_files.items(.source)
+            else
+                null,
         };
 
         writer.buffer.reset();
@@ -9278,7 +9330,7 @@ pub const LinkerContext = struct {
                 for (chunks, chunk_contexts) |*chunk, *chunk_ctx| {
                     chunk_ctx.* = .{ .wg = wait_group, .c = c, .chunks = chunks, .chunk = chunk };
                     total_count += chunk.content.javascript.parts_in_chunk_in_order.len;
-                    chunk.compile_results_for_chunk = c.allocator.alloc(CompileResult, chunk.content.javascript.parts_in_chunk_in_order.len) catch unreachable;
+                    chunk.compile_results_for_chunk = c.allocator.alloc(CompileResult, chunk.content.javascript.parts_in_chunk_in_order.len) catch bun.outOfMemory();
                 }
 
                 debug(" START {d} compiling part ranges", .{total_count});
@@ -10733,26 +10785,26 @@ pub const LinkerContext = struct {
             .cjs => {
                 const common_js_parts = c.topLevelSymbolsToPartsForRuntime(c.cjs_runtime_ref);
 
-                var total_dependencies_count = common_js_parts.len;
-                var runtime_parts = c.graph.ast.items(.parts)[Index.runtime.get()].slice();
-
                 for (common_js_parts) |part_id| {
-                    var part: *js_ast.Part = &runtime_parts[part_id];
+                    const runtime_parts = c.graph.ast.items(.parts)[Index.runtime.get()].slice();
+                    const part: *js_ast.Part = &runtime_parts[part_id];
                     const symbol_refs = part.symbol_uses.keys();
                     for (symbol_refs) |ref| {
                         if (ref.eql(c.cjs_runtime_ref)) continue;
-                        total_dependencies_count += c.topLevelSymbolsToPartsForRuntime(ref).len;
                     }
                 }
 
-                // generate a dummy part that depends on the "__commonJS" symbol
-                const dependencies = c.allocator.alloc(js_ast.Dependency, common_js_parts.len) catch unreachable;
-                for (common_js_parts, dependencies) |part, *cjs| {
-                    cjs.* = .{
-                        .part_index = part,
-                        .source_index = Index.runtime,
-                    };
-                }
+                // Generate a dummy part that depends on the "__commonJS" symbol.
+                const dependencies: []js_ast.Dependency = if (c.options.output_format != .kit_internal_hmr) brk: {
+                    const dependencies = c.allocator.alloc(js_ast.Dependency, common_js_parts.len) catch bun.outOfMemory();
+                    for (common_js_parts, dependencies) |part, *cjs| {
+                        cjs.* = .{
+                            .part_index = part,
+                            .source_index = Index.runtime,
+                        };
+                    }
+                    break :brk dependencies;
+                } else &.{};
                 const part_index = c.graph.addPartToFile(
                     source_index,
                     .{
@@ -10777,13 +10829,17 @@ pub const LinkerContext = struct {
                 ) catch unreachable;
                 bun.assert(part_index != js_ast.namespace_export_part_index);
                 wrapper_part_index.* = Index.part(part_index);
-                c.graph.generateSymbolImportAndUse(
-                    source_index,
-                    part_index,
-                    c.cjs_runtime_ref,
-                    1,
-                    Index.runtime,
-                ) catch unreachable;
+
+                // Kit uses a wrapping approach that does not use __commonJS
+                if (c.options.output_format != .kit_internal_hmr) {
+                    c.graph.generateSymbolImportAndUse(
+                        source_index,
+                        part_index,
+                        c.cjs_runtime_ref,
+                        1,
+                        Index.runtime,
+                    ) catch unreachable;
+                }
             },
 
             .esm => {
@@ -10797,7 +10853,7 @@ pub const LinkerContext = struct {
                 //
                 // This depends on the "__esm" symbol and declares the "init_foo" symbol
                 // for similar reasons to the CommonJS closure above.
-                const esm_parts = if (wrapper_ref.isValid())
+                const esm_parts = if (wrapper_ref.isValid() and c.options.output_format != .kit_internal_hmr)
                     c.topLevelSymbolsToPartsForRuntime(c.esm_runtime_ref)
                 else
                     &.{};
@@ -10829,15 +10885,14 @@ pub const LinkerContext = struct {
                 ) catch unreachable;
                 bun.assert(part_index != js_ast.namespace_export_part_index);
                 wrapper_part_index.* = Index.part(part_index);
-
-                if (wrapper_ref.isValid()) {
+                if (wrapper_ref.isValid() and c.options.output_format != .kit_internal_hmr) {
                     c.graph.generateSymbolImportAndUse(
                         source_index,
                         part_index,
                         c.esm_runtime_ref,
                         1,
                         Index.runtime,
-                    ) catch unreachable;
+                    ) catch bun.outOfMemory();
                 }
             },
             else => {},

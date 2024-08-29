@@ -14,8 +14,6 @@ for (const arg of process.argv.slice(2)) {
   options[split[0].slice(2)] = value;
 }
 
-console.log(options);
-
 let { codegen_root, debug } = options as any;
 if (!codegen_root) {console.error('Missing --codegen_root=...'); process.exit(1);}
 if (debug === 'false' || debug === '0') debug = false;
@@ -41,7 +39,7 @@ const kit_dir = join(import.meta.dirname, '../kit');
 process.chdir(kit_dir); // to make bun build predictable in development
 
 const runtime_source = readFileSync(join(kit_dir, 'runtime.ts'));
-const combined_source = `__marker__; let graph; __marker__(graph); ${runtime_source};`;
+const combined_source = `__marker__; let graph, entry_point_key; __marker__(graph, entry_point_key); ${runtime_source};`;
 const generated_entrypoint = join(kit_dir, ".runtime-entry.generated.ts");
 
 writeFileSync(generated_entrypoint, combined_source);
@@ -64,15 +62,15 @@ const results = await Promise.allSettled(['client', 'server'].map(async mode => 
   // @ts-ignore
   let code = await result.outputs[0].text();
   
-  let name: string = '';
+  let names: string = '';
   code = code
-    .replace(/\s*__marker__.*__marker__\((.+?)\);\s*/s, (_, captured) => {
-      name = captured;
-      return '';
+    .replace(/(\n?)\s*__marker__.*__marker__\((.+?)\);\s*/s, (_, n, captured) => {
+      names = captured;
+      return n;
     })
     .replace('// .runtime-entry.generated.ts', '')
     .trim();
-  assert(name, 'missing name');
+  assert(names, 'missing name');
 
   if (debug) {
     code = '\n  ' + code.replace(/\n/g, '\n  ') + '\n';
@@ -81,8 +79,8 @@ const results = await Promise.allSettled(['client', 'server'].map(async mode => 
   if (code[code.length - 1] === ';') code = code.slice(0, -1);
 
   code = debug
-    ? `((${name}) => {${code}})([\n`
-    : `((${name})=>{${code}})([`;
+    ? `((${names}) => {${code}})({\n`
+    : `((${names})=>{${code}})({`;
 
   writeFileSync(join(codegen_root, `kit.${mode}.js`), code);
 }));
@@ -124,6 +122,6 @@ if(failed.length > 0) {
     console.error(err);
   }
 } else {
-  console.log('Success');
   console.log('-> kit.client.js, kit.server.js');
+  writeFileSync(join(codegen_root, 'kit_empty_file'), 'this is used to fufill a cmake dependency');
 }

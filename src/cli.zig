@@ -799,7 +799,14 @@ pub const Arguments = struct {
                     Output.prettyErrorln("<r><red>error<r>: Invalid format - must be esm, cjs, or iife", .{});
                     Global.crash();
                 };
+
                 switch (format) {
+                    .kit_internal_hmr => {
+                        if (!Environment.isDebug) {
+                            bun.Output.warn("--format={s} is for debugging only, and may experience breaking changes at any moment", .{format_str});
+                            bun.Output.flush();
+                        }
+                    },
                     .cjs => {
                         // Make this a soft error in debug to allow experimenting with these flags.
                         const function = if (Environment.isDebug) Output.debugWarn else Output.prettyErrorln;

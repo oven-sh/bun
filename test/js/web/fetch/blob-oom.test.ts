@@ -126,19 +126,19 @@ describe("Bun.file", () => {
     }
   });
 
-  test("should throw an OOM without crashing the process.", () => {
+  test("text() should throw an OOM without crashing the process.", () => {
     expect(async () => await Bun.file(tmpFile).text()).toThrow();
   });
 
-  test("should throw an OOM without crashing the process.", () => {
+  test("bytes() should throw an OOM without crashing the process.", () => {
     expect(async () => await Bun.file(tmpFile).bytes()).toThrow();
   });
 
-  test("should throw an OOM without crashing the process.", () => {
+  test("json() should throw an OOM without crashing the process.", () => {
     expect(async () => await Bun.file(tmpFile).json()).toThrow();
   });
 
-  test("should throw an OOM without crashing the process.", () => {
+  test("arrayBuffer() should NOT throw an OOM.", () => {
     expect(async () => await Bun.file(tmpFile).arrayBuffer()).not.toThrow();
   });
 });

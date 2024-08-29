@@ -4365,15 +4365,10 @@ pub const ServerWebSocket = struct {
             return .zero;
         }
 
-        if (this.isClosed() and !publish_to_self) {
-            // We can't access the socket context on a closed socket.
-            return JSValue.jsNumber(0);
-        }
-
         if (message_value.asArrayBuffer(globalThis)) |array_buffer| {
             const buffer = array_buffer.slice();
 
-            const result = if (!publish_to_self)
+            const result = if (!publish_to_self and !this.isClosed())
                 this.websocket().publish(topic_slice.slice(), buffer, .binary, compress)
             else
                 uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .binary, compress);
@@ -4391,7 +4386,7 @@ pub const ServerWebSocket = struct {
 
             const buffer = string_slice.slice();
 
-            const result = if (!publish_to_self)
+            const result = if (!publish_to_self and !this.isClosed())
                 this.websocket().publish(topic_slice.slice(), buffer, .text, compress)
             else
                 uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .text, compress);
@@ -4452,17 +4447,12 @@ pub const ServerWebSocket = struct {
             return .zero;
         }
 
-        if (this.isClosed() and !publish_to_self) {
-            // Can't publish on a closed socket.
-            return JSValue.jsNumber(0);
-        }
-
         var string_slice = message_value.toSlice(globalThis, bun.default_allocator);
         defer string_slice.deinit();
 
         const buffer = string_slice.slice();
 
-        const result = if (!publish_to_self)
+        const result = if (!publish_to_self and !this.isClosed())
             this.websocket().publish(topic_slice.slice(), buffer, .text, compress)
         else
             uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .text, compress);
@@ -4523,18 +4513,13 @@ pub const ServerWebSocket = struct {
             return .zero;
         }
 
-        if (this.isClosed() and !publish_to_self) {
-            // Can't publish on a closed socket.
-            return JSValue.jsNumber(0);
-        }
-
         const array_buffer = message_value.asArrayBuffer(globalThis) orelse {
             globalThis.throw("publishBinary expects an ArrayBufferView", .{});
             return .zero;
         };
         const buffer = array_buffer.slice();
 
-        const result = if (!publish_to_self)
+        const result = if (!publish_to_self and !this.isClosed())
             this.websocket().publish(topic_slice.slice(), buffer, .binary, compress)
         else
             uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .binary, compress);
@@ -4574,12 +4559,7 @@ pub const ServerWebSocket = struct {
             return JSC.JSValue.jsNumber(0);
         }
 
-        if (this.isClosed() and !publish_to_self) {
-            // We can't access the socket context on a closed socket.
-            return JSValue.jsNumber(0);
-        }
-
-        const result = if (!publish_to_self)
+        const result = if (!publish_to_self and !this.isClosed())
             this.websocket().publish(topic_slice.slice(), buffer, .binary, compress)
         else
             uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .binary, compress);
@@ -4622,12 +4602,7 @@ pub const ServerWebSocket = struct {
             return JSC.JSValue.jsNumber(0);
         }
 
-        if (this.isClosed() and !publish_to_self) {
-            // We can't access the socket context on a closed socket.
-            return JSValue.jsNumber(0);
-        }
-
-        const result = if (!publish_to_self)
+        const result = if (!publish_to_self and !this.isClosed())
             this.websocket().publish(topic_slice.slice(), buffer, .text, compress)
         else
             uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .text, compress);
@@ -6035,6 +6010,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             if (!abrupt) {
                 listener.close();
             } else if (!this.flags.terminated) {
+                if (this.config.websocket) |*ws| {
+                    ws.handler.app = null;
+                }
                 this.flags.terminated = true;
                 this.app.close();
             }

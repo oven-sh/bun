@@ -73,6 +73,7 @@ enum ExceptionCode {
     ExistingExceptionError,
 
     InvalidThisError,
+    InvalidURLError,
 };
 
 } // namespace WebCore
@@ -119,7 +120,8 @@ template<> struct EnumTraits<WebCore::ExceptionCode> {
         WebCore::ExceptionCode::JSSyntaxError,
         WebCore::ExceptionCode::StackOverflowError,
         WebCore::ExceptionCode::ExistingExceptionError,
-        WebCore::ExceptionCode::InvalidThisError>;
+        WebCore::ExceptionCode::InvalidThisError,
+        WebCore::ExceptionCode::InvalidURLError>;
 };
 
 } // namespace WTF

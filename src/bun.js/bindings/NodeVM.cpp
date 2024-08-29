@@ -45,15 +45,20 @@ public:
     {
         auto& vm = globalObject->vm();
         ScriptOptions opts;
+        JSObject* options;
         bool any = false;
         if (!optionsArg.isUndefined()) {
-            if (!optionsArg.isObject()) {
+            if (optionsArg.isObject()) {
+                options = asObject(optionsArg);
+            } else if (optionsArg.isString()) {
+                options = constructEmptyObject(globalObject);
+                options->putDirect(vm, Identifier::fromString(vm, "filename"_s), optionsArg);
+            } else {
                 auto scope = DECLARE_THROW_SCOPE(vm);
-                throwVMTypeError(globalObject, scope, "options must be an object"_s);
+                throwVMTypeError(globalObject, scope, "options must be an object or a string"_s);
                 failed = true;
                 return std::nullopt;
             }
-            JSObject* options = asObject(optionsArg);
 
             if (JSValue filenameOpt = options->getIfPropertyExists(globalObject, builtinNames(vm).filenamePublicName())) {
                 if (filenameOpt.isString()) {

@@ -26,7 +26,7 @@ steps:
           os: "darwin"
           arch: "aarch64"
         command:
-          - "./.buildkite/scripts/build-bun.sh"
+          - "./scripts/build.sh"
 
       - key: "darwin-aarch64-test-macos-14"
         label: ":darwin: 14 aarch64 - test-bun"
@@ -95,7 +95,7 @@ steps:
           os: "linux"
           arch: "aarch64"
         command:
-          - "./.buildkite/scripts/build-bun.sh"
+          - "./scripts/build.sh"
 
       - key: "linux-aarch64-test-debian-12"
         label: ":debian: 12 aarch64 - test-bun"
@@ -195,7 +195,7 @@ steps:
           os: "linux"
           arch: "x64"
         command:
-          - "./.buildkite/scripts/build-bun.sh"
+          - "./scripts/build.sh"
 
       - key: "linux-x64-test-debian-12"
         label: ":debian: 12 x64 - test-bun"
@@ -297,7 +297,7 @@ steps:
         env:
           ENABLE_BASELINE: "1"
         command:
-          - "./.buildkite/scripts/build-bun.sh"
+          - "./scripts/build.sh"
 
       - key: "linux-x64-baseline-test-debian-12"
         label: ":debian: 12 x64-baseline - test-bun"
@@ -397,7 +397,7 @@ steps:
           os: "windows"
           arch: "x64"
         command:
-          - ".\\.buildkite\\scripts\\build-bun.ps1"
+          - ".\\scripts\\build.ps1"
 
       - key: "windows-x64-test-bun"
         label: ":windows: x64 - test-bun"
@@ -438,7 +438,7 @@ steps:
           CCACHE_DISABLE: "1"
           ENABLE_BASELINE: "1"
         command:
-          - ".\\.buildkite\\scripts\\build-bun.ps1"
+          - ".\\scripts\\build.ps1"
 
       - key: "windows-x64-baseline-test-bun"
         label: ":windows: x64-baseline - test-bun"

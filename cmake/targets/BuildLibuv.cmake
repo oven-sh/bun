@@ -21,6 +21,8 @@ add_custom_library(
     uv
   INCLUDES
     include
+  CMAKE_TARGETS
+    uv_a
   CMAKE_ARGS
     -DLIBUV_BUILD_SHARED=OFF
     -DLIBUV_BUILD_TESTS=OFF

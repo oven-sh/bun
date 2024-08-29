@@ -68,19 +68,15 @@ beforeAll(async () => {
   directories.node = tmpdirSync();
   directories.badModules = tmpdirSync();
 
-  // run installs sequentially and builds in parallel due to bug with simultaneous
-  // bun install invocations
   await install(srcDir, directories.bunRelease, Runtime.bun);
   await install(srcDir, directories.bunDebug, Runtime.bun);
   await install(srcDir, directories.node, Runtime.node);
   await install(join(__dirname, "bad-modules"), directories.badModules, Runtime.node);
 
-  await Promise.all([
-    build(srcDir, directories.bunRelease, Runtime.bun, BuildMode.release),
-    build(srcDir, directories.bunDebug, Runtime.bun, BuildMode.debug),
-    build(srcDir, directories.node, Runtime.node, BuildMode.release),
-    build(join(__dirname, "bad-modules"), directories.badModules, Runtime.node, BuildMode.release),
-  ]);
+  await build(srcDir, directories.bunRelease, Runtime.bun, BuildMode.release);
+  await build(srcDir, directories.bunDebug, Runtime.bun, BuildMode.debug);
+  await build(srcDir, directories.node, Runtime.node, BuildMode.release);
+  await build(join(__dirname, "bad-modules"), directories.badModules, Runtime.node, BuildMode.release);
 });
 
 describe("module lifecycle", () => {
@@ -192,15 +188,6 @@ describe("HandleScope", () => {
   it("keeps GC objects alive", () => {
     checkSameOutput("test_handle_scope_gc", []);
   }, 10000);
-});
-
-afterAll(async () => {
-  await Promise.all([
-    fs.rm(directories.bunRelease, { recursive: true, force: true }),
-    fs.rm(directories.bunDebug, { recursive: true, force: true }),
-    fs.rm(directories.node, { recursive: true, force: true }),
-    fs.rm(directories.badModules, { recursive: true, force: true }),
-  ]);
 });
 
 enum Runtime {

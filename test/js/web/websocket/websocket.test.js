@@ -147,7 +147,7 @@ describe("WebSocket", () => {
       const url = `wss://127.0.0.1:${server.address.port}`;
       {
         // by default rejectUnauthorized is true
-        const client = WebSocket(url);
+        const client = new WebSocket(url);
         const { result, messages } = await testClient(client);
         expect(["Hello from Bun!", "Hello from client!"]).not.toEqual(messages);
         expect(result.code).toBe(1015);
@@ -156,7 +156,7 @@ describe("WebSocket", () => {
 
       {
         // just in case we change the default to true and test
-        const client = WebSocket(url, { tls: { rejectUnauthorized: true } });
+        const client = new WebSocket(url, { tls: { rejectUnauthorized: true } });
         const { result, messages } = await testClient(client);
         expect(["Hello from Bun!", "Hello from client!"]).not.toEqual(messages);
         expect(result.code).toBe(1015);
@@ -208,7 +208,7 @@ describe("WebSocket", () => {
 
       {
         // should allow self-signed certs when rejectUnauthorized is false
-        const client = WebSocket(url, { tls: { rejectUnauthorized: false } });
+        const client = new WebSocket(url, { tls: { rejectUnauthorized: false } });
         const { result, messages } = await testClient(client);
         expect(["Hello from Bun!", "Hello from client!"]).toEqual(messages);
         expect(result.code).toBe(1000);
@@ -263,7 +263,7 @@ describe("WebSocket", () => {
       }
       const url = `wss://localhost:${server.address.port}`;
       {
-        const client = WebSocket(url);
+        const client = new WebSocket(url);
         const { result, messages } = await testClient(client);
         expect(["Hello from Bun!", "Hello from client!"]).not.toEqual(messages);
         expect(result.code).toBe(1015);

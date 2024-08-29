@@ -198,7 +198,7 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
         const result = fn(`${props[0]} + ${props[1]}(2);`);
         expect(result).toBe("barbuzzbuzz");
       } finally {
-        for (let prop of props) {
+        for (const prop of props) {
           // @ts-expect-error
           delete globalThis[prop];
         }
@@ -220,7 +220,7 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
         expect(globalThis[props[0]]).toEqual([undefined, "b", "c"]);
         expect(result).toBe(true);
       } finally {
-        for (let prop of props) {
+        for (const prop of props) {
           // @ts-expect-error
           delete globalThis[prop];
         }
@@ -277,7 +277,7 @@ function randomProp() {
   return "prop" + crypto.randomUUID().replace(/-/g, "");
 }
 function randomProps(propsNumber = 0) {
-  let props = [];
+  const props = [];
   for (let i = 0; i < propsNumber; i++) {
     props.push(randomProp());
   }

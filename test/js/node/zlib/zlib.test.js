@@ -114,7 +114,7 @@ describe("zlib.brotli", () => {
     for (const chunk of window(inputString, 55)) {
       encoder._transform(chunk, undefined, (err, data) => {
         expect(err).toBeUndefined();
-        expect(data).toBeUndefined();
+        expect(data).toEqual(Buffer(0));
       });
     }
     encoder._flush((err, data) => {
@@ -128,7 +128,7 @@ describe("zlib.brotli", () => {
     for (const chunk of window(compressedBuffer, 10)) {
       decoder._transform(chunk, undefined, (err, data) => {
         expect(err).toBeUndefined();
-        expect(data).toBeUndefined();
+        expect(data).toEqual(Buffer(0));
       });
     }
     decoder._flush((err, data) => {
@@ -150,7 +150,7 @@ describe("zlib.brotli", () => {
     for (const chunk of window(inputString+inputString+inputString+inputString, 65)) {
       encoder._transform(chunk, undefined, (err, data) => {
         expect(err).toBeUndefined();
-        expect(data).toBeUndefined();
+        expect(data).toEqual(Buffer(0));
       });
     }
     encoder._flush((err, data) => {

@@ -50,6 +50,9 @@ ObjectDefineProperty(Base.prototype, "_handle", {
   get: function () {
     return this[kHandle];
   },
+  set: function (newval) {
+    //noop
+  },
 });
 ObjectDefineProperty(Base.prototype, "bytesWritten", {
   get: function () {

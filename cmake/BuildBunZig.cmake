@@ -52,7 +52,6 @@ add_custom_command(
       -Dreported_nodejs_version=${NODEJS_VERSION}
       -Dcanary=${CANARY_REVISION}
       -Dgenerated-code=${CODEGEN_PATH}
-      
   OUTPUT
     ${ZIG_OBJECT_PATH}
   MAIN_DEPENDENCY
@@ -67,6 +66,7 @@ add_custom_command(
     ${BUN_ERROR_CODE_OUTPUTS}
     ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}
     ${BUN_JAVASCRIPT_OUTPUTS}
+    clone-zig
   ${USES_TERMINAL_NOT_IN_CI}
 )
 

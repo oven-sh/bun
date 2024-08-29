@@ -148,6 +148,7 @@ test/node.js/upstream
 scripts/env.local
 
 # Dependencies
+/src/bun.js/WebKit
 /src/deps/boringssl
 /src/deps/brotli
 /src/deps/c*ares
@@ -160,3 +161,4 @@ scripts/env.local
 /src/deps/tinycc
 /src/deps/zstd
 /src/deps/zlib
+/src/deps/zig

@@ -1,4 +1,5 @@
 include(Utils)
+include(GitClone)
 
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
   set(DEFAULT_ZIG_ARCH "aarch64")
@@ -37,17 +38,27 @@ if(WIN32 AND DEFAULT_ZIG_OPTIMIZE STREQUAL "ReleaseFast")
 endif()
 
 optionx(ZIG_OPTIMIZE "ReleaseFast|ReleaseSafe|MinSizeRel|Debug" "The Zig optimize level to use" DEFAULT ${DEFAULT_ZIG_OPTIMIZE})
-
 optionx(ZIG_VERSION STRING "The version of zig to use" DEFAULT "0.13.0")
 optionx(ZIG_LOCAL_CACHE_DIR FILEPATH "The path to local the zig cache directory" DEFAULT ${CACHE_PATH}/zig/local)
 optionx(ZIG_GLOBAL_CACHE_DIR FILEPATH "The path to the global zig cache directory" DEFAULT ${CACHE_PATH}/zig/global)
-optionx(ZIG_LIB_DIR FILEPATH "The path to the Zig library directory" DEFAULT ${CWD}/src/deps/zig/lib)
 optionx(ZIG_BIN_CACHE_DIR FILEPATH "The path to the zig binary cache directory" DEFAULT ${CACHE_PATH}/zig/bin)
+optionx(ZIG_REPOSITORY_PATH FILEPATH "The path to the Zig repository" DEFAULT ${CWD}/src/deps/zig)
+
+add_custom_repository(
+  NAME
+    zig
+  REPOSITORY
+    oven-sh/zig
+  COMMIT
+    131a009ba2eb127a3447d05b9e12f710429aa5ee
+  PATH
+    ${ZIG_REPOSITORY_PATH}
+)
 
 set(CMAKE_ZIG_FLAGS
   --cache-dir ${ZIG_LOCAL_CACHE_DIR}
   --global-cache-dir ${ZIG_GLOBAL_CACHE_DIR}
-  --zig-lib-dir ${ZIG_LIB_DIR}
+  --zig-lib-dir ${ZIG_REPOSITORY_PATH}/lib
 )
 
 function(check_zig_version found executable)

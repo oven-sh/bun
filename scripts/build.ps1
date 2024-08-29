@@ -30,5 +30,5 @@ if($Env:VSCMD_ARG_TGT_ARCH -eq "x86") {
 cmake -B build -GNinja -DCMAKE_BUILD_TYPE=Release -DCMAKE_VERBOSE_MAKEFILE=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed" }
 
-cmake --build build --verbose
+cmake --build build @args
 if ($LASTEXITCODE -ne 0) { throw "C++ compilation failed" }

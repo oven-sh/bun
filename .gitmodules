@@ -1,21 +1,7 @@
-[submodule "src/javascript/jsc/WebKit"]
-path = src/bun.js/WebKit
-url = https://github.com/oven-sh/WebKit.git
-ignore = dirty
-depth = 1
-update = none
-shallow = true
-fetchRecurseSubmodules = false
 [submodule "src/deps/picohttpparser"]
 path = src/deps/picohttpparser
 url = https://github.com/h2o/picohttpparser.git
 ignore = dirty
-depth = 1
-shallow = true
-fetchRecurseSubmodules = false
-[submodule "zig"]
-path = src/deps/zig
-url = https://github.com/oven-sh/zig
 depth = 1
 shallow = true
 fetchRecurseSubmodules = false

@@ -65,6 +65,7 @@ add_custom_command(
     ${BUN_ZIG_IDENTIFIER_SCRIPT}
   DEPENDS
     ${BUN_ZIG_IDENTIFIER_SOURCES}
+    clone-zig
 )
 
 # --- packages/bun-error ---

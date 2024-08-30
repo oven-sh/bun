@@ -34,45 +34,25 @@ const buildFlags = [
   "-v", // same as --verbose
 ];
 
-function readFlag(flag, args) {
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === flag) {
-      return args.splice(i, 2);
-    }
-    if (arg.startsWith(flag)) {
-      return args.splice(i, 1);
+const args = process.argv.slice(2);
+const generateArgs = [];
+const buildArgs = [];
+
+for (let i = 0; i < args.length; i++) {
+  const arg = args[i];
+  for (const [flags, result] of [
+    [generateFlags, generateArgs],
+    [buildFlags, buildArgs],
+  ]) {
+    for (const flag of flags) {
+      if (arg === flag) {
+        result.push(...args.slice(i, i + 2));
+        i++;
+      } else if (arg.startsWith(flag)) {
+        result.push(...args.slice(i, i + 1));
+      }
     }
   }
-  return [];
-}
-
-const args = process.argv.slice(2);
-
-const generateArgs = [];
-for (const flag of generateFlags) {
-  generateArgs.push(...readFlag(flag, args));
-}
-
-if (!generateArgs.some(arg => arg.startsWith("-G"))) {
-  generateArgs.push("-GNinja");
-}
-
-if (!generateArgs.some(arg => arg.startsWith("-B"))) {
-  generateArgs.push("-B", "build");
-}
-
-if (!generateArgs.some(arg => arg.startsWith("-DCMAKE_BUILD_TYPE"))) {
-  generateArgs.push("-DCMAKE_BUILD_TYPE=Debug");
-}
-
-const buildArgs = [];
-for (const flag of buildFlags) {
-  buildArgs.push(...readFlag(flag, args));
-}
-
-if (args.length) {
-  buildArgs.push("--", ...args.splice(0));
 }
 
 for (const args of [generateArgs, buildArgs]) {

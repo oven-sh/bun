@@ -1,6 +1,5 @@
 include(Utils)
 
-# Append the given dependencies to the source file
 macro(WEBKIT_ADD_SOURCE_DEPENDENCIES _source _deps)
   set(_tmp)
   get_source_file_property(_tmp ${_source} OBJECT_DEPENDS)
@@ -17,7 +16,10 @@ macro(WEBKIT_ADD_SOURCE_DEPENDENCIES _source _deps)
   unset(_tmp)
 endmacro()
 
-add_bun_install(NAME bun)
+add_bun_install(
+  WORKING_DIRECTORY
+    ${CWD}
+)
 
 set(BUN_ZIG_IDENTIFIER_SOURCE ${CWD}/src/js_lexer)
 set(BUN_ZIG_IDENTIFIER_SCRIPT ${BUN_ZIG_IDENTIFIER_SOURCE}/identifier_data.zig)
@@ -57,8 +59,7 @@ add_target(
 
 set(BUN_ERROR_SOURCE ${CWD}/packages/bun-error)
 
-file(GLOB BUN_ERROR_SOURCES
-  ${CONFIGURE_DEPENDS}
+file(GLOB BUN_ERROR_SOURCES ${CONFIGURE_DEPENDS}
   ${BUN_ERROR_SOURCE}/*.json
   ${BUN_ERROR_SOURCE}/*.ts
   ${BUN_ERROR_SOURCE}/*.tsx
@@ -69,6 +70,11 @@ file(GLOB BUN_ERROR_SOURCES
 set(BUN_ERROR_OUTPUTS
   ${BUN_ERROR_SOURCE}/dist/index.js
   ${BUN_ERROR_SOURCE}/dist/bun-error.css
+)
+
+add_bun_install(
+  WORKING_DIRECTORY
+    ${BUN_ERROR_SOURCE}
 )
 
 add_target(
@@ -95,15 +101,8 @@ add_target(
     ${BUN_ERROR_SOURCES}
   OUTPUTS
     ${BUN_ERROR_OUTPUTS}
-  DEPENDS
-    install-bun
-)
-
-add_bun_install(
-  NAME
-    bun-codegen-bun-error
-  WORKING_DIRECTORY
-    ${BUN_ERROR_SOURCE}
+  NODE_MODULES
+    ON
 )
 
 set(BUN_FALLBACK_DECODER_SOURCE ${CWD}/src/fallback.ts)
@@ -130,8 +129,8 @@ add_target(
     ${BUN_FALLBACK_DECODER_SOURCE}
   OUTPUTS
     ${BUN_FALLBACK_DECODER_OUTPUT}
-  DEPENDS
-    install-bun
+  NODE_MODULES
+    ON
 )
 
 set(BUN_RUNTIME_JS_SOURCE ${CWD}/src/runtime.bun.js)
@@ -160,8 +159,8 @@ add_target(
     ${BUN_RUNTIME_JS_SOURCE}
   OUTPUTS
     ${BUN_RUNTIME_JS_OUTPUT}
-  DEPENDS
-    install-bun
+  NODE_MODULES
+    ON
 )
 
 set(BUN_NODE_FALLBACKS_SOURCE ${CWD}/src/node-fallbacks)
@@ -171,7 +170,17 @@ file(GLOB BUN_NODE_FALLBACKS_SOURCES
   ${BUN_NODE_FALLBACKS_SOURCE}/*.js
 )
 
-set(BUN_NODE_FALLBACKS_OUTPUTS ${BUN_NODE_FALLBACKS_SOURCES})
+set(BUN_NODE_FALLBACKS_OUTPUT ${BUN_NODE_FALLBACKS_SOURCE}/out)
+set(BUN_NODE_FALLBACKS_OUTPUTS)
+foreach(source ${BUN_NODE_FALLBACKS_SOURCES})
+  get_filename_component(filename ${source} NAME)
+  list(APPEND BUN_NODE_FALLBACKS_OUTPUTS ${BUN_NODE_FALLBACKS_OUTPUT}/${filename})
+endforeach()
+
+add_bun_install(
+  WORKING_DIRECTORY
+    ${BUN_NODE_FALLBACKS_SOURCE}
+)
 
 add_target(
   NAME
@@ -186,7 +195,7 @@ add_target(
     ${BUN_EXECUTABLE} x
     esbuild
       ${BUN_NODE_FALLBACKS_SOURCES}
-      --outdir=out
+      --outdir=${BUN_NODE_FALLBACKS_OUTPUT}
       --format=esm
       --minify
       --bundle
@@ -195,17 +204,12 @@ add_target(
     ${BUN_NODE_FALLBACKS_SOURCES}
   OUTPUTS
     ${BUN_NODE_FALLBACKS_OUTPUTS}
-)
-
-add_bun_install(
-  NAME
-    bun-codegen-node-fallbacks
-  WORKING_DIRECTORY
-    ${BUN_NODE_FALLBACKS_SOURCE}
+  NODE_MODULES
+    ON
 )
 
 # TODO: change custom commands defined above this, to use the codegen path instead of in-source 
-parse_option(CODEGEN_PATH FILEPATH "Path to the codegen directory" ${BUILD_PATH}/codegen)
+optionx(CODEGEN_PATH FILEPATH "Path to the codegen directory" DEFAULT ${BUILD_PATH}/codegen)
 
 # --- ErrorCode.{zig,h} --
 
@@ -344,7 +348,7 @@ add_target(
     ${BUN_JAVASCRIPT_SOURCES}
     ${BUN_JAVASCRIPT_CODEGEN_SOURCES}
     ${BUN_JAVASCRIPT_CODEGEN_SCRIPT}
-  OUTPUT
+  OUTPUTS
     ${BUN_JAVASCRIPT_OUTPUTS}
 )
 
@@ -357,7 +361,6 @@ set(BUN_JS_SINK_SCRIPT ${CWD}/src/codegen/generate-jssink.ts)
 
 set(BUN_JS_SINK_SOURCES
   ${BUN_JS_SINK_SCRIPT}
-  ${CWD}/src/codegen/create-hash-table
   ${CWD}/src/codegen/create-hash-table.ts
 )
 
@@ -388,8 +391,6 @@ add_target(
 set(BUN_OBJECT_LUT_SCRIPT ${CWD}/src/codegen/create-hash-table.ts)
 
 set(BUN_OBJECT_LUT_SOURCES
-  ${BUN_OBJECT_LUT_SCRIPT}
-  ${CWD}/src/codegen/create-hash-table
   ${CWD}/src/bun.js/bindings/BunObject.cpp
   ${CWD}/src/bun.js/bindings/ZigGlobalObject.lut.txt
   ${CWD}/src/bun.js/bindings/JSBuffer.cpp
@@ -408,9 +409,9 @@ set(BUN_OBJECT_LUT_OUTPUTS
 )
 
 list(LENGTH BUN_OBJECT_LUT_SOURCES BUN_OBJECT_LUT_SOURCES_COUNT)
+math(EXPR BUN_OBJECT_LUT_SOURCES_MAX_INDEX "${BUN_OBJECT_LUT_SOURCES_COUNT} - 1")
 
-foreach(i RANGE ${BUN_OBJECT_LUT_SOURCES_COUNT})
-  math(EXPR i "${i} - 1")
+foreach(i RANGE 0 ${BUN_OBJECT_LUT_SOURCES_MAX_INDEX})
   list(GET BUN_OBJECT_LUT_SOURCES ${i} BUN_OBJECT_LUT_SOURCE)
   list(GET BUN_OBJECT_LUT_OUTPUTS ${i} BUN_OBJECT_LUT_OUTPUT)
 

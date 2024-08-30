@@ -1,5 +1,4 @@
 include(CMakeParseArguments)
-include(ExternalProject)
 
 function(parse_semver value variable)
   string(REGEX MATCH "([0-9]+)\\.([0-9]+)\\.([0-9]+)" match "${value}")
@@ -23,23 +22,6 @@ endfunction()
 macro(setx)
   set(${ARGV})
   message(STATUS "Set ${ARGV0}: ${${ARGV0}}")
-endmacro()
-
-# setif(variable value), if value is truthy, set the variable to be ON, otherwise OFF.
-macro(setif)
-  if("${ARGV1}" MATCHES "^(ON|on|YES|yes|TRUE|true|1)$")
-    set(${ARGV0} ON)
-  else()
-    set(${ARGV0} OFF)
-  endif()
-endmacro()
-
-macro(setnif)
-  if("${ARGV1}" MATCHES "^(OFF|off|NO|no|FALSE|false|0)$")
-    set(${ARGV0} OFF)
-  else()
-    set(${ARGV0} ON)
-  endif()
 endmacro()
 
 # optionx(variable type description [DEFAULT default] [PREVIEW value] [REGEX value] [REQUIRED])
@@ -91,74 +73,6 @@ macro(optionx variable type description)
   message(STATUS "Set ${variable}: ${${variable}}")
 endmacro()
 
-macro(parse_option label type description)
-  set(default "${ARGN}")
-
-  if(NOT ${type} MATCHES "^(BOOL|STRING|FILEPATH|PATH|INTERNAL)$")
-    set(${label}_REGEX "${type}")
-    set(${label}_TYPE STRING)
-  else()
-    set(${label}_TYPE ${type})
-  endif()
-
-  set(${label} ${default} CACHE ${${label}_TYPE} "${description}")
-  set(${label}_SOURCE "argument")
-  set(${label}_PREVIEW "-D${label}")
-
-  if(DEFINED ENV{${label}})
-    if(DEFINED ${label} AND NOT ${label} STREQUAL $ENV{${label}})
-      message(FATAL_ERROR "Invalid ${${label}_SOURCE}: ${${label}_PREVIEW}=\"${${label}}\" conflicts with environment variable ${label}=\"$ENV{${label}}\"")
-    endif()
-
-    set(${label} $ENV{${label}} CACHE ${${label}_TYPE} "${description}" FORCE)
-    set(${label}_SOURCE "environment variable")
-    set(${label}_PREVIEW "${label}")
-  endif()
-
-  if("${${label}}" STREQUAL "" AND ${default} STREQUAL "REQUIRED")
-    message(FATAL_ERROR "Required ${${label}_SOURCE} is missing: please set, ${${label}_PREVIEW}=<${${label}_REGEX}>")
-  endif()
-
-  if(${type} STREQUAL "BOOL")
-    if(${${label}} MATCHES "^(TRUE|ON|YES|1)$")
-      set(${label} ON)
-    elseif(${${label}} MATCHES "^(FALSE|OFF|NO|0)$")
-      set(${label} OFF)
-    else()
-      message(FATAL_ERROR "Invalid ${${label}_SOURCE}: ${${label}_PREVIEW}=\"${${label}}\", please use ${${label}_PREVIEW}=<ON|OFF>")
-    endif()
-  endif()
-
-  if(DEFINED ${label}_REGEX AND NOT "^(${${label}_REGEX})$" MATCHES "${${label}}")
-    message(FATAL_ERROR "Invalid ${${label}_SOURCE}: ${${label}_PREVIEW}=\"${${label}}\", please use ${${label}_PREVIEW}=<${${label}_REGEX}>")
-  endif()
-
-  message(STATUS "Set ${label}: ${${label}}")
-endmacro()
-
-macro(set_if label regex value)
-  if(${value} MATCHES "^(${regex})$")
-    set(${label} TRUE)
-  else()
-    set(${label} FALSE)
-  endif()
-endmacro()
-
-function(file_size file_path variable)
-  file(SIZE ${file_path} file_size)
-  
-  set(units "B" "KB" "MB" "GB" "TB")
-  set(unit_index 0)
-  
-  while(filesize GREATER 1024 AND unit_index LESS 4)
-    math(EXPR file_size "${file_size} / 1024")
-    math(EXPR unit_index "${unit_index} + 1")
-  endwhile()
-  
-  list(GET units ${unit_index} unit)
-  set(${variable} "${file_size} ${unit}" PARENT_SCOPE)
-endfunction()
-
 macro(find_llvm_program variable program_name)
   set(args OPTIONAL)
   cmake_parse_arguments(ARG "${args}" "" "" ${ARGN})
@@ -197,104 +111,144 @@ macro(find_llvm_program variable program_name)
 endmacro()
 
 macro(add_target)
+  set(options NODE_MODULES)
   set(args NAME COMMENT WORKING_DIRECTORY)
-  set(multiArgs ALIASES COMMAND DEPENDS SOURCES OUTPUTS)
-  cmake_parse_arguments(TARGET "${args}" "" "${multiArgs}" ${ARGN})
+  set(multiArgs ALIASES COMMAND DEPENDS SOURCES OUTPUTS ARTIFACTS)
+  cmake_parse_arguments(ARG "${options}" "${args}" "${multiArgs}" ${ARGN})
 
-  if(NOT TARGET_NAME)
+  if(NOT ARG_NAME)
     message(FATAL_ERROR "add_target: NAME is required")
   endif()
 
-  if(NOT TARGET_COMMAND)
+  if(NOT ARG_COMMAND)
     message(FATAL_ERROR "add_target: COMMAND is required")
   endif()
 
-  if(NOT TARGET_COMMENT)
-    set(TARGET_COMMENT "Running ${TARGET_NAME}")
+  if(NOT ARG_COMMENT)
+    set(ARG_COMMENT "Running ${ARG_NAME}")
   endif()
 
-  if(NOT TARGET_WORKING_DIRECTORY)
-    set(TARGET_WORKING_DIRECTORY ${CWD})
+  if(NOT ARG_WORKING_DIRECTORY)
+    set(ARG_WORKING_DIRECTORY ${CWD})
+  endif()
+
+  if(ARG_NODE_MODULES)
+    get_filename_component(ARG_INSTALL_NAME ${ARG_WORKING_DIRECTORY} NAME_WE)
+    list(APPEND ARG_DEPENDS bun-install-${ARG_INSTALL_NAME})
   endif()
 
   add_custom_command(
     VERBATIM COMMAND
-      ${TARGET_COMMAND}
+      ${ARG_COMMAND}
     WORKING_DIRECTORY
-      ${TARGET_WORKING_DIRECTORY}
+      ${ARG_WORKING_DIRECTORY}
     OUTPUT
-      ${TARGET_OUTPUTS}
+      ${ARG_OUTPUTS}
     DEPENDS
-      ${TARGET_SOURCES}
-      ${TARGET_DEPENDS}
+      ${ARG_SOURCES}
+      ${ARG_DEPENDS}
   )
 
-  add_custom_target(${TARGET_NAME}
+  add_custom_target(${ARG_NAME}
     COMMENT
-      ${TARGET_COMMENT}
+      ${ARG_COMMENT}
     DEPENDS
-      ${TARGET_OUTPUTS}
+      ${ARG_DEPENDS}
     SOURCES
-      ${TARGET_SOURCES}
+      ${ARG_SOURCES}
   )
 
-  foreach(alias ${TARGET_ALIASES})
-    if(NOT TARGET ${alias})
-      add_custom_target(${alias} DEPENDS ${TARGET_NAME})
-    else()
-      add_dependencies(${alias} ${TARGET_NAME})
-    endif()
+  foreach(artifact ${ARG_ARTIFACTS})
+    upload_artifact(
+      NAME
+        ${artifact}
+    )
   endforeach()
 
-  if(TARGET install-${TARGET_NAME})
-    add_dependencies(install-${TARGET_NAME} ${TARGET_NAME})
-  endif()
-
-  if(TARGET clone-${TARGET_NAME})
-    if(TARGET install-${TARGET_NAME})
-      add_dependencies(clone-${TARGET_NAME} install-${TARGET_NAME})
+  foreach(alias ${ARG_ALIASES})
+    if(NOT TARGET ${alias})
+      add_custom_target(${alias} DEPENDS ${ARG_NAME})
     else()
-      add_dependencies(clone-${TARGET_NAME} ${TARGET_NAME})
+      add_dependencies(${alias} ${ARG_NAME})
     endif()
-  endif()
+  endforeach()
 endmacro()
 
 macro(add_bun_install)
-  set(args NAME WORKING_DIRECTORY)
-  cmake_parse_arguments(TARGET "${args}" "" "" ${ARGN})
+  set(args WORKING_DIRECTORY)
+  cmake_parse_arguments(ARG "" "${args}" "" ${ARGN})
 
-  if(NOT TARGET_NAME)
-    message(FATAL_ERROR "add_bun_install: NAME is required")
+  if(NOT ARG_WORKING_DIRECTORY)
+    message(FATAL_ERROR "add_bun_install: WORKING_DIRECTORY is required")
   endif()
 
-  if(TARGET install-${TARGET_NAME})
-    return()
-  endif()
-
-  if(NOT TARGET_WORKING_DIRECTORY OR TARGET_WORKING_DIRECTORY STREQUAL ${CWD})
-    set(TARGET_COMMENT "bun install")
+  if(ARG_WORKING_DIRECTORY STREQUAL ${CWD})
+    set(ARG_COMMENT "bun install")
   else()
-    set(TARGET_COMMENT "bun install --cwd ${TARGET_WORKING_DIRECTORY}")
+    set(ARG_COMMENT "bun install --cwd ${ARG_WORKING_DIRECTORY}")
   endif()
 
+  get_filename_component(ARG_NAME ${ARG_WORKING_DIRECTORY} NAME_WE)
   add_target(
     NAME
-      install-${TARGET_NAME}
-    COMMENT
-      ${TARGET_COMMENT}
+      bun-install-${ARG_NAME}
+    ALIASES
+      bun-install
     COMMAND
       ${BUN_EXECUTABLE}
         install
         --frozen-lockfile
     WORKING_DIRECTORY
-      ${TARGET_WORKING_DIRECTORY}
-    INPUTS
+      ${ARG_WORKING_DIRECTORY}
+    SOURCES
       ${CWD}/package.json
     OUTPUTS
       ${CWD}/bun.lockb
+      ${CWD}/node_modules
   )
-  
-  if(TARGET ${TARGET_NAME})
-    add_dependencies(install-${TARGET_NAME} ${TARGET_NAME})
+endmacro()
+
+macro(upload_artifact)
+  set(args NAME WORKING_DIRECTORY)
+  cmake_parse_arguments(ARTIFACT "" "${args}" "" ${ARGN})
+
+  if(NOT ARTIFACT_NAME)
+    message(FATAL_ERROR "upload_artifact: NAME is required")
   endif()
+
+  if(NOT ARTIFACT_WORKING_DIRECTORY)
+    set(ARTIFACT_WORKING_DIRECTORY ${BUILD_PATH})
+  endif()
+
+  if(ARTIFACT_NAME MATCHES "^${ARTIFACT_WORKING_DIRECTORY}")
+    file(RELATIVE_PATH ARTIFACT_NAME ${ARTIFACT_WORKING_DIRECTORY} ${ARTIFACT_NAME})
+  endif()
+
+  if(BUILDKITE)
+    set(ARTIFACT_UPLOAD_COMMAND
+      buildkite-agent
+        artifact
+        upload
+        ${ARTIFACT_NAME}
+    )
+  else()
+    set(ARTIFACT_UPLOAD_COMMAND
+      ${CMAKE_COMMAND}
+        -E copy
+        ${ARTIFACT_NAME}
+        ${BUILD_PATH}/artifacts/${ARTIFACT_NAME}
+    )
+  endif()
+
+  get_filename_component(ARTIFACT_FILENAME ${ARTIFACT_NAME} NAME_WE)
+  add_target(
+    NAME
+      upload-${ARTIFACT_FILENAME}
+    COMMENT
+      "Uploading ${ARTIFACT_NAME}"
+    COMMAND
+      ${ARTIFACT_UPLOAD_COMMAND}
+    WORKING_DIRECTORY
+      ${ARTIFACT_WORKING_DIRECTORY}
+  )
 endmacro()

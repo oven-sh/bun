@@ -850,10 +850,8 @@ pub const Arguments = struct {
                 ctx.bundler_options.asset_naming = try strings.concat(allocator, &.{ "./", bun.strings.removeLeadingDotSlash(asset_naming) });
             }
 
-            if (comptime FeatureFlags.react_server_components) {
-                if (args.flag("--server-components")) {
-                    ctx.bundler_options.react_server_components = true;
-                }
+            if (args.flag("--server-components")) {
+                ctx.bundler_options.react_server_components = true;
             }
 
             if (args.option("--sourcemap")) |setting| {

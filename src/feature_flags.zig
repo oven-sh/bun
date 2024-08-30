@@ -1,27 +1,19 @@
 const env = @import("env.zig");
 const bun = @import("root").bun;
 
-pub const strong_etags_for_built_files = true;
-pub const keep_alive = false;
-
-// Debug helpers
-pub const print_ast = false;
-pub const disable_printing_null = false;
+/// Enable breaking changes for the next major release of Bun
+// TODO: Make this a CLI flag / runtime var so that we can verify disabled code paths can compile
+pub const breaking_changes_1_2 = false;
 
 /// Store and reuse file descriptors during module resolution
 /// This was a ~5% performance improvement
 pub const store_file_descriptors = !env.isBrowser;
 
-pub const css_in_js_import_behavior = CSSInJSImportBehavior.facade;
-
-pub const only_output_esm = true;
-
 pub const jsx_runtime_is_cjs = true;
-
-pub const bundle_node_modules = true;
 
 pub const tracing = true;
 
+/// Disabled due to bugs
 pub const minify_javascript_string_length = false;
 
 pub const verbose_watcher = false;
@@ -29,33 +21,15 @@ pub const verbose_watcher = false;
 pub const css_supports_fence = true;
 
 pub const enable_entry_cache = true;
-pub const enable_bytecode_caching = false;
-
-pub const dev_only = true;
 
 pub const verbose_fs = false;
 
 pub const watch_directories = true;
 
-pub const tailwind_css_at_keyword = true;
-
-pub const bundle_dynamic_import = true;
-
 // This feature flag exists so when you have defines inside package.json, you can use single quotes in nested strings.
 pub const allow_json_single_quotes = true;
 
 pub const react_specific_warnings = true;
-
-pub const CSSInJSImportBehavior = enum {
-    // When you import a .css file and you reference the import in JavaScript
-    // Just return whatever the property key they referenced was
-    facade,
-    facade_onimportcss,
-};
-
-// having issues compiling WebKit with this enabled
-pub const remote_inspector = false;
-pub const auto_import_buffer = false;
 
 pub const is_macro_enabled = !env.isWasm and !env.isWasi;
 
@@ -72,9 +46,6 @@ pub const disable_compression_in_http_client = false;
 pub const enable_keepalive = true;
 
 pub const atomic_file_watcher = env.isLinux;
-
-pub const node_streams = false;
-pub const simd = true;
 
 // This change didn't seem to make a meaningful difference in microbenchmarks
 pub const latin1_is_now_ascii = false;
@@ -99,8 +70,6 @@ pub const use_simdutf = bun.Environment.isNative and !bun.JSC.is_bindgen;
 pub const inline_properties_in_transpiler = true;
 
 pub const same_target_becomes_destructuring = true;
-
-pub const react_server_components = true;
 
 pub const help_catch_memory_issues = bun.Environment.allow_assert;
 
@@ -142,8 +111,6 @@ pub const help_catch_memory_issues = bun.Environment.allow_assert;
 /// In that case, we wrap it again in the printer.
 pub const unwrap_commonjs_to_esm = true;
 
-pub const boundary_based_chunking = true;
-
 /// https://sentry.engineering/blog/the-case-for-debug-ids
 /// https://github.com/mitsuhiko/source-map-rfc/blob/proposals/debug-id/proposals/debug-id.md
 /// https://github.com/source-map/source-map-rfc/pull/20
@@ -169,10 +136,6 @@ pub const runtime_transpiler_cache = true;
 /// When debugging weird script runner issues, it may be worth disabling this in
 /// order to isolate your bug.
 pub const windows_bunx_fast_path = true;
-
-/// Enable breaking changes for the next major release of Bun
-// TODO: Make this a CLI flag / runtime var so that we can verify disabled code paths can compile
-pub const breaking_changes_1_2 = false;
 
 // This causes strange bugs where writing via console.log (sync) has a different
 // order than via Bun.file.writer() so we turn it off until there's a unified,

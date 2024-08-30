@@ -408,7 +408,7 @@ public:
 
     // The original, unmodified Error.prepareStackTrace.
     //
-    // We set a default value for this to mimick Node.js behavior It is a
+    // We set a default value for this to mimic Node.js behavior It is a
     // separate from the user-facing value so that we can tell if the user
     // really set it or if it's just the default value.
     //

@@ -2037,11 +2037,12 @@ fn NewPrinter(
                 }
 
                 if (p.options.module_type == .internal_kit_dev) {
-                    p.printSymbol(p.options.require_ref.?);
-                    p.print("(");
+                    p.printSpaceBeforeIdentifier();
+                    p.printSymbol(p.options.commonjs_module_ref);
+                    p.print(".require(");
                     {
                         var e = E.String{
-                            .data = p.options.input_files_for_kit.?[record.source_index.get()].path.pretty,
+                            .data = p.options.input_files_for_kit.?[record.source_index.get()].path.text,
                         };
                         const c = bestQuoteCharForEString(&e, true);
                         p.print(c);
@@ -3193,6 +3194,7 @@ fn NewPrinter(
                     // }
 
                     if (!didPrint) {
+                        assert(p.options.module_type != .internal_kit_dev);
                         p.printSpaceBeforeIdentifier();
                         p.addSourceMapping(expr.loc);
                         p.printSymbol(e.ref);
@@ -5772,12 +5774,6 @@ pub fn NewWriter(
         }
 
         pub inline fn print(writer: *Self, comptime ValueType: type, str: ValueType) void {
-            if (FeatureFlags.disable_printing_null) {
-                if (str == 0) {
-                    Output.panic("Attempted to print null char", .{});
-                }
-            }
-
             switch (ValueType) {
                 comptime_int, u16, u8 => {
                     const written = writeByte(&writer.ctx, @as(u8, @intCast(str))) catch |err| brk: {

@@ -8153,7 +8153,7 @@ pub const LinkerContext = struct {
         wrap: WrapKind,
         ast: *const JSAst,
     ) !void {
-        // for Bun Kit, all wrapping work has already been done in the parser
+        // for Bun Kit, export wrapping is already done. Import wrapping is special cased.
         if (c.options.output_format == .internal_kit_dev and source_index != Index.runtime.value) {
             try c.convertStmtsForChunkKit(source_index, stmts, part_stmts, allocator, ast);
             return;
@@ -8669,8 +8669,8 @@ pub const LinkerContext = struct {
                 .s_local => |st| {
                     // TODO: check if this local is immediately assigned
                     // `require()` if so, we will instrument it with hot module
-                    // reloading.  all other cases of hot module reloading will
-                    // not have automatic acceptance
+                    // reloading. other cases of `require` won't receive receive
+                    // updates.
                     _ = st; // autofix
 
                     try stmts.inside_wrapper_suffix.append(stmt);
@@ -9311,7 +9311,10 @@ pub const LinkerContext = struct {
             .indent = .{},
             .commonjs_named_exports = ast.commonjs_named_exports,
             .commonjs_named_exports_ref = ast.exports_ref,
-            .commonjs_module_ref = if (ast.flags.uses_module_ref) ast.module_ref else Ref.None,
+            .commonjs_module_ref = if (ast.flags.uses_module_ref or c.options.output_format == .internal_kit_dev)
+                ast.module_ref
+            else
+                Ref.None,
             .commonjs_named_exports_deoptimized = flags.wrap == .cjs,
             .commonjs_module_exports_assigned_deoptimized = ast.flags.commonjs_module_exports_assigned_deoptimized,
             // .const_values = c.graph.const_values,

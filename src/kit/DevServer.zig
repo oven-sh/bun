@@ -9,6 +9,7 @@ pub const Options = struct {
     cwd: []u8,
     routes: []Route,
     listen_config: uws.AppListenConfig = .{ .port = 3000 },
+    dump_sources: ?[]const u8 = if (Environment.isDebug) ".kit-debug" else null,
 };
 
 /// Accepting a custom allocator for all of DevServer would be misleading
@@ -16,6 +17,7 @@ pub const Options = struct {
 const default_allocator = bun.default_allocator;
 
 cwd: []const u8,
+dump_dir: ?std.fs.Dir,
 
 // UWS App
 app: *App,
@@ -81,6 +83,15 @@ pub fn init(options: Options) *DevServer {
     if (JSC.VirtualMachine.VMHolder.vm != null)
         @panic("Assertion failed: cannot initialize kit.DevServer on a thread with an active JSC.VirtualMachine");
 
+    const dump_dir = if (options.dump_sources) |dir|
+        std.fs.cwd().makeOpenPath(dir, .{}) catch |err| dir: {
+            bun.handleErrorReturnTrace(err, @errorReturnTrace());
+            Output.warn("Could not open directory for dumping sources: {}", .{err});
+            break :dir null;
+        }
+    else
+        null;
+
     const app = App.create(.{});
 
     const loaders = bun.options.loadersFromTransformOptions(default_allocator, null, .bun) catch
@@ -98,6 +109,7 @@ pub fn init(options: Options) *DevServer {
         .bundle_thread = .{},
         .server_global = undefined,
         .vm = undefined,
+        .dump_dir = dump_dir,
     });
 
     dev.vm = VirtualMachine.initKit(.{
@@ -458,6 +470,14 @@ pub const BundleTask = struct {
         const files = task.result.value.output_files.items;
         bun.assert(files.len > 0);
 
+        const dev = route.dev;
+        if (dev.dump_dir) |dump_dir| {
+            dumpBundle(dump_dir, route, kind, files) catch |err| {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                Output.warn("Could not dump bundle: {}", .{err});
+            };
+        }
+
         switch (kind) {
             .client => {
                 // Set the capacity to the exact size required to avoid over-allocation
@@ -479,8 +499,6 @@ pub const BundleTask = struct {
                 } };
             },
             .server => {
-                const dev = route.dev;
-
                 const entry_point = files[0];
                 const code = entry_point.value.buffer.bytes;
 
@@ -549,10 +567,7 @@ pub const BundleTask = struct {
             .loaders = task.route.dev.loaders,
             .log = &task.log,
             .output_dir = "", // this disables filesystem output
-            .output_format = switch (task.kind) {
-                .server => .esm, // TODO: Re-enable once server runtime can participate in HMR
-                .client => .internal_kit_dev,
-            },
+            .output_format = .internal_kit_dev,
             .out_extensions = bun.StringHashMap([]const u8).init(bundler.allocator),
 
             .public_path = switch (task.kind) {
@@ -743,6 +758,26 @@ const Failure = union(enum) {
         resp.end(message, true); // TODO: "You should never call res.end(huge buffer)"
     }
 };
+
+// For debugging, it is helpful to be able to see bundles.
+fn dumpBundle(dump_dir: std.fs.Dir, route: *Route, kind: BundleKind, files: []OutputFile) !void {
+    for (files) |file| {
+        const name = bun.path.joinAbsString("/", &.{
+            route.pattern,
+            @tagName(kind),
+            file.dest_path,
+        }, .auto)[1..];
+        var inner_dir = try dump_dir.makeOpenPath(bun.Dirname.dirname(u8, name).?, .{});
+        defer inner_dir.close();
+
+        switch (file.value) {
+            .buffer => |buf| {
+                try inner_dir.writeFile(.{ .data = buf.bytes, .sub_path = bun.path.basename(name) });
+            },
+            else => |t| Output.panic("TODO: implement dumping .{s}", .{@tagName(t)}),
+        }
+    }
+}
 
 /// Kit uses a special global object extending Zig::GlobalObject
 pub const DevGlobalObject = opaque {

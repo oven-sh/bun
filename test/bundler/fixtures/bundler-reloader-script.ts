@@ -11,7 +11,7 @@ import { realpathSync, unlinkSync } from "fs";
 import { join } from "path";
 import { openSync, closeSync } from "fs";
 
-const tmp = realpathSync(tmpdir());
+const tmp = realpathSync(process.env.BUNDLER_RELOADER_SCRIPT_TMP_DIR || tmpdir());
 const input = join(tmp, "input.js");
 const mutate = join(tmp, "mutate.js");
 try {

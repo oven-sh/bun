@@ -3,9 +3,9 @@
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 
-if (process.platform === "win32") {
+if (process.platform === "win32" && !process.env["VSINSTALLDIR"]) {
   const shellPath = join(import.meta.dirname, "vs-shell.ps1");
-  const { status } = spawnSync("pwsh", ["-NoProfile", "-NoLogo", "-File", shellPath], {
+  const { status } = spawnSync("pwsh", ["-NoProfile", "-NoLogo", "-File", shellPath, ...process.argv], {
     stdio: "inherit",
   });
   process.exit(status ?? 1);

@@ -1169,19 +1169,7 @@ pub const BundleV2 = struct {
         // conditions from creating two
         _ = JSC.WorkPool.get();
 
-        if (BundleThread.instance) |existing| {
-            existing.queue.push(completion);
-            existing.waker.?.wake();
-        } else {
-            var instance = bun.default_allocator.create(BundleThread) catch unreachable;
-            instance.queue = .{};
-            instance.waker = null;
-            instance.queue.push(completion);
-            BundleThread.instance = instance;
-
-            var thread = try std.Thread.spawn(.{}, generateInNewThreadWrap, .{instance});
-            thread.detach();
-        }
+        BundleThread.enqueue(completion);
 
         completion.poll_ref.ref(globalThis.bunVM());
 
@@ -1565,6 +1553,7 @@ pub const BundleV2 = struct {
 
         instance.waker = bun.Async.Waker.init() catch @panic("Failed to create waker");
 
+        // 3. Unblock the calling thread so it can continue.
         instance.waker_waiter.unlock();
 
         var timer: bun.windows.libuv.Timer = undefined;
@@ -1609,7 +1598,10 @@ pub const BundleV2 = struct {
             instance.?.waker = null;
             BundleThread.instance = instance;
 
+            // 1. Block the calling thread until the waker has loaded.
             instance.?.waker_waiter.lock();
+
+            // 2. Spawn the bun build thread.
             var thread = std.Thread.spawn(.{}, generateInNewThreadWrap, .{instance.?}) catch Output.panic("Failed to spawn bun build thread", .{});
             thread.detach();
         }

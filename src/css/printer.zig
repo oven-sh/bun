@@ -11,6 +11,7 @@ const Ident = css_values.ident.Ident;
 pub const Error = css.Error;
 const Location = css.Location;
 const PrintErr = css.PrintErr;
+const PrintResult = css.PrintResult;
 
 const ArrayList = std.ArrayListUnmanaged;
 
@@ -147,27 +148,29 @@ pub fn Printer(comptime Writer: type) type {
         ///
         /// NOTE: Is is assumed that the string does not contain any newline characters.
         /// If such a string is written, it will break source maps.
-        pub fn writeStr(this: *This, s: []const u8) void {
+        pub fn writeStr(this: *This, s: []const u8) PrintResult(void) {
             this.col += s.len;
             this.dest.writeStr(s) catch bun.outOfMemory();
+            return PrintResult(void).success;
         }
 
         /// Writes a formatted string to the underlying destination.
         ///
         /// NOTE: Is is assumed that the formatted string does not contain any newline characters.
         /// If such a string is written, it will break source maps.
-        pub fn writeFmt(this: *This, comptime fmt: []const u8, args: anytype) void {
+        pub fn writeFmt(this: *This, comptime fmt: []const u8, args: anytype) PrintResult(void) {
             // assuming the writer comes from an ArrayList
             const start: usize = this.dest.context.self.items.len;
             this.dest.print(fmt, args) catch bun.outOfMemory();
             const written = this.dest.context.self.items.len - start;
             this.col += written;
+            return PrintResult(void).success;
         }
 
         /// Writes a CSS identifier to the underlying destination, escaping it
         /// as appropriate. If the `css_modules` option was enabled, then a hash
         /// is added, and the mapping is added to the CSS module.
-        pub fn writeIdent(this: *This, ident: []const u8, handle_css_module: bool) !void {
+        pub fn writeIdent(this: *This, ident: []const u8, handle_css_module: bool) PrintResult(void) {
             if (handle_css_module) {
                 if (this.css_module) |*css_module| {
                     const Closure = struct { first: bool, printer: *This };

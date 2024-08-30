@@ -76,7 +76,7 @@ pub const Features = css_printer.Features;
 pub const Maybe = bun.JSC.Node.Maybe;
 // TODO: Remove existing Error defined here and replace it with these
 const errors_ = @import("./error.zig");
-pub const Err = errors_.Error;
+pub const Err = errors_.Err;
 pub const PrinterErrorKind = errors_.PrinterErrorKind;
 pub const PrinterError = errors_.PrinterError;
 
@@ -132,7 +132,7 @@ pub const VendorPrefix = packed struct(u8) {
 
     pub usingnamespace Bitflags(@This());
 
-    pub fn toCss(this: *const VendorPrefix, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const VendorPrefix, comptime W: type, dest: *Printer(W)) PrintResult(void) {
         return switch (this.asBits()) {
             VendorPrefix.asBits(.{ .webkit = true }) => dest.writeStr("-webkit"),
             VendorPrefix.asBits(.{ .moz = true }) => dest.writeStr("-moz-"),
@@ -163,10 +163,15 @@ pub const SourceLocation = struct {
 };
 pub const Location = css_rules.Location;
 
-/// do not add any more errors
-pub const Error = error{
-    ParsingError,
-};
+pub const Error = Err(ParserError);
+
+pub fn Result(comptime T: type) type {
+    return Maybe(T, Error);
+}
+
+pub fn PrintResult(comptime T: type) type {
+    return Maybe(T, PrinterError);
+}
 
 /// Details about a `BasicParseError`
 pub const BasicParseErrorKind = union(enum) {
@@ -194,9 +199,9 @@ pub fn todo2(comptime fmt: []const u8) void {
     std.debug.panic("TODO: " ++ fmt);
 }
 
-pub fn voidWrap(comptime T: type, comptime parsefn: *const fn (*Parser) Error!T) *const fn (void, *Parser) Error!T {
+pub fn voidWrap(comptime T: type, comptime parsefn: *const fn (*Parser) Result(T)) *const fn (void, *Parser) Result(T) {
     const Wrapper = struct {
-        fn wrapped(_: void, p: *Parser) Error!T {
+        fn wrapped(_: void, p: *Parser) Result(T) {
             parsefn(p);
         }
     };
@@ -384,13 +389,13 @@ pub fn DefineShorthand(comptime T: type, comptime property_name: PropertyIdTag) 
 pub fn DeriveParse(comptime T: type) type {
     // TODO: this has to work for enums and union(enums)
     return struct {
-        pub fn parse(input: *Parser) Error!T {
+        pub fn parse(input: *Parser) Result(T) {
             // to implement this, we need to cargo expand the derive macro
             _ = input; // autofix
             @compileError(todo_stuff.depth);
         }
 
-        // pub fn parse(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        // pub fn parse(this: *const T, comptime W: type, dest: *Printer(W)) PrintResult(void) {
         //     // to implement this, we need to cargo expand the derive macro
         //     _ = this; // autofix
         //     _ = dest; // autofix
@@ -402,7 +407,7 @@ pub fn DeriveParse(comptime T: type) type {
 pub fn DeriveToCss(comptime T: type) type {
     // TODO: this has to work for enums and union(enums)
     return struct {
-        pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintResult(void) {
             // to implement this, we need to cargo expand the derive macro
             _ = this; // autofix
             _ = dest; // autofix
@@ -423,9 +428,12 @@ pub fn DefineEnumProperty(comptime T: type) type {
             unreachable;
         }
 
-        pub fn parse(input: *Parser) Error!T {
+        pub fn parse(input: *Parser) Result(T) {
             const location = input.currentSourceLocation();
-            const ident = try input.expectIdent();
+            const ident = switch (input.expectIdent()) {
+                .err => |e| return e,
+                .result => |v| v,
+            };
 
             // todo_stuff.match_ignore_ascii_case
             inline for (fields) |field| {
@@ -435,8 +443,8 @@ pub fn DefineEnumProperty(comptime T: type) type {
             return location.newUnexpectedTokenError(.{ .ident = ident });
         }
 
-        pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            try dest.writeStr(asStr(this));
+        pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintResult(void) {
+            return dest.writeStr(asStr(this));
         }
     };
 }
@@ -488,14 +496,14 @@ fn parse_at_rule(
     input: *Parser,
     comptime P: type,
     parser: *P,
-) Error!P.AtRuleParser.AtRule {
+) Result(P.AtRuleParser.AtRule) {
     ValidAtRuleParser(P);
     const delimiters = Delimiters{ .semicolon = true, .curly_bracket = true };
     const Closure = struct {
         name: []const u8,
         parser: *P,
 
-        pub fn parsefn(this: *@This(), input2: *Parser) Error!P.AtRuleParser.Prelude {
+        pub fn parsefn(this: *@This(), input2: *Parser) Result(P.AtRuleParser.Prelude) {
             return this.parser.AtRuleParser.parsePrelude(this.name, input2);
         }
     };
@@ -519,7 +527,7 @@ fn parse_at_rule(
                 prelude: *P.AtRuleParser.Prelude,
                 start: *const ParserState,
                 parser: *P,
-                pub fn parsefn(this: *@This(), input2: *Parser) Error!P.AtRuleParser.AtRule {
+                pub fn parsefn(this: *@This(), input2: *Parser) Result(P.AtRuleParser.AtRule) {
                     return P.AtRuleParser.parseBlock(this.parser, this.prelude, this.start, input2);
                 }
             };
@@ -533,7 +541,7 @@ fn parse_at_rule(
     }
 }
 
-fn parse_custom_at_rule_prelude(name: []const u8, input: *Parser, options: *ParserOptions, comptime T: type, at_rule_parser: *T) Error!AtRulePrelude(T.AtRuleParser.AtRule) {
+fn parse_custom_at_rule_prelude(name: []const u8, input: *Parser, options: *ParserOptions, comptime T: type, at_rule_parser: *T) Result(AtRulePrelude(T.AtRuleParser.AtRule)) {
     ValidCustomAtRuleParser(T);
     if (at_rule_parser.CustomAtRuleParser.parsePrelude(at_rule_parser, name, input, options)) |prelude| {
         return .{ .custom = prelude };
@@ -546,7 +554,10 @@ fn parse_custom_at_rule_prelude(name: []const u8, input: *Parser, options: *Pars
 
     options.warn(input.newError(.{ .at_rule_invalid = name }));
     input.skipWhitespace();
-    const tokens = try TokenListFns.parse(input, options, 0);
+    const tokens = switch (TokenListFns.parse(input, options, 0)) {
+        .err => |e| return e,
+        .result => |v| v,
+    };
     return .{ .unknown = .{
         .name = name,
         .tokens = tokens,
@@ -561,7 +572,7 @@ fn parse_custom_at_rule_body(
     options: *ParserOptions,
     at_rule_parser: *T,
     is_nested: bool,
-) Error!T.CustomAtRuleParser.AtRule {
+) Result(T.CustomAtRuleParser.AtRule) {
     const result = T.CustomAtRuleParser.parseBlock(at_rule_parser, prelude, start, input, options, is_nested) catch |e| {
         _ = e; // autofix
         // match &err.kind {
@@ -582,20 +593,23 @@ fn parse_qualified_rule(
     comptime P: type,
     parser: *P,
     delimiters: Delimiters,
-) Error!P.QualifiedRuleParser.QualifiedRule {
+) Result(P.QualifiedRuleParser.QualifiedRule) {
     ValidQualifiedRuleParser(P);
     const prelude_result = brk: {
         const prelude = input.parseUntilBefore(delimiters, P.QualifiedRuleParser.Prelude, parser, parser.QualifiedRuleParser.parsePrelude);
         break :brk prelude;
     };
-    try input.expectCurlyBracketBlock();
-    const prelude = try prelude_result;
+    if (input.expectCurlyBracketBlock().asErr()) |e| return e;
+    const prelude = switch (prelude_result) {
+        .err => |e| return e,
+        .result => |v| v,
+    };
     const Closure = struct {
         start: *const ParserState,
         prelude: P.QualifiedRuleParser.Prelude,
         parser: *P,
 
-        pub fn parsefn(this: *@This(), input2: *Parser) Error!P.QualifiedRuleParser.QualifiedRule {
+        pub fn parsefn(this: *@This(), input2: *Parser) Result(P.QualifiedRuleParser.QualifiedRule) {
             P.QualifiedRuleParser.parseBlock(this.parser, this.prelude, this.start, input2);
         }
     };
@@ -613,8 +627,8 @@ fn parse_until_before(
     error_behavior: ParseUntilErrorBehavior,
     comptime T: type,
     closure: anytype,
-    comptime parse_fn: *const fn (@TypeOf(closure), *Parser) Error!T,
-) Error!T {
+    comptime parse_fn: *const fn (@TypeOf(closure), *Parser) Result(T),
+) Result(T) {
     const delimiters = parser.stop_before.bitwiseOr(delimiters_);
     const result = result: {
         var delimited_parser = Parser{
@@ -659,8 +673,8 @@ pub fn parse_until_after(
     error_behavior: ParseUntilErrorBehavior,
     comptime T: type,
     closure: anytype,
-    comptime parsefn: *const fn (@TypeOf(closure), *Parser) Error!T,
-) Error!T {
+    comptime parsefn: *const fn (@TypeOf(closure), *Parser) Result(T),
+) Result(T) {
     const result = parse_until_before(parser, delimiters, error_behavior, T, closure, parsefn);
     const is_err = if (result) |_| false else true;
     if (error_behavior == .stop and is_err) {
@@ -678,7 +692,7 @@ pub fn parse_until_after(
     return result;
 }
 
-fn parse_nested_block(parser: *Parser, comptime T: type, closure: anytype, comptime parsefn: *const fn (@TypeOf(closure), *Parser) Error!T) Error!T {
+fn parse_nested_block(parser: *Parser, comptime T: type, closure: anytype, comptime parsefn: *const fn (@TypeOf(closure), *Parser) Result(T)) Error!T {
     const block_type: BlockType = if (parser.at_start_of) |block_type| brk: {
         parser.at_start_of = null;
         break :brk block_type;
@@ -764,7 +778,7 @@ pub fn ValidCustomAtRuleParser(comptime T: type) void {
     // that ends wherever the prelude should end.
     // (Before the next semicolon, the next `{`, or the end of the current block.)
     //
-    // pub fn parsePrelude(this: *T, allocator: Allocator, name: []const u8, *Parser, options: *ParserOptions) Error!T.CustomAtRuleParser.Prelude {}
+    // pub fn parsePrelude(this: *T, allocator: Allocator, name: []const u8, *Parser, options: *ParserOptions) Result(T.CustomAtRuleParser.Prelude) {}
     _ = T.CustomAtRuleParser.parsePrelude;
 
     // End an at-rule which doesn't have block. Return the finished
@@ -810,7 +824,7 @@ pub fn ValidAtRuleParser(comptime T: type) void {
     // that ends wherever the prelude should end.
     // (Before the next semicolon, the next `{`, or the end of the current block.)
     //
-    // pub fn parsePrelude(this: *T, allocator: Allocator, name: []const u8, *Parser) Error!T.AtRuleParser.Prelude {}
+    // pub fn parsePrelude(this: *T, allocator: Allocator, name: []const u8, *Parser) Result(T.AtRuleParser.Prelude) {}
     _ = T.AtRuleParser.parsePrelude;
 
     // End an at-rule which doesn't have block. Return the finished
@@ -928,7 +942,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
             pub const Prelude = AtRulePreludeT;
             pub const AtRule = void;
 
-            pub fn parsePrelude(this: *This, name: []const u8, input: *Parser) Error!Prelude {
+            pub fn parsePrelude(this: *This, name: []const u8, input: *Parser) Result(Prelude) {
                 // TODO: optimize string switch
                 // So rust does the strategy of:
                 // 1. switch (or if branches) on the length of the input string
@@ -956,28 +970,33 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                         input.newCustomError(.unexpected_import_rule);
                         return Error.ParsingError;
                     }
-
-                    const url_str = try input.expectUrlOrString();
+                    const url_str = switch (input.expectUrlOrString()) {
+                        .err => |e| return e,
+                        .result => |v| v,
+                    };
 
                     const layer: ?struct { value: ?LayerName } =
                         if (input.tryParse(Parser.expectIdentMatching, .{"layer"}) != Error.ParsingError)
                         .{ .value = null }
                     else if (input.tryParse(Parser.expectFunctionMatching, .{"layer"}) != Error.ParsingError) brk: {
-                        break :brk .{ .value = try input.parseNestedBlock(LayerName, void, voidWrap(LayerName, LayerName.parse)) };
+                        break :brk .{ .value = if (input.parseNestedBlock(LayerName, void, voidWrap(LayerName, LayerName.parse)).asErr()) |e| return e };
                     } else null;
 
                     const supports = if (input.tryParse(Parser.expectFunctionMatching, .{"supports"}) != Error.ParsingError) brk: {
                         const Func = struct {
-                            pub fn do(p: *Parser) Error!SupportsCondition {
+                            pub fn do(p: *Parser) Result(SupportsCondition) {
                                 return p.tryParse(SupportsCondition.parse, .{}) catch {
                                     return SupportsCondition.parseDeclaration(p);
                                 };
                             }
                         };
-                        break :brk try input.parseNestedBlock(SupportsCondition, void, voidWrap(SupportsCondition, Func.do));
+                        break :brk input.parseNestedBlock(SupportsCondition, void, voidWrap(SupportsCondition, Func.do));
                     } else null;
 
-                    const media = try MediaList.parse(input);
+                    const media = switch (MediaList.parse(input)) {
+                        .err => |e| return e,
+                        .result => |v| v,
+                    };
 
                     return .{
                         .import = .{
@@ -994,17 +1013,26 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                     }
 
                     const prefix = input.tryParse(Parser.expectIdent, .{}) catch null;
-                    const namespace = try input.expectUrlOrString();
+                    const namespace = switch (input.expectUrlOrString()) {
+                        .err => |e| return e,
+                        .result => |v| v,
+                    };
                     return .{ .namespace = .{ prefix, namespace } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "charset")) {
                     // @charset is removed by rust-cssparser if it’s the first rule in the stylesheet.
                     // Anything left is technically invalid, however, users often concatenate CSS files
                     // together, so we are more lenient and simply ignore @charset rules in the middle of a file.
-                    try input.expectString();
+                    if (input.expectString().asErr()) |e| return e;
                     return .charset;
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "custom-media")) {
-                    const custom_media_name = try DashedIdent.parse(input);
-                    const media = try MediaList.parse(input);
+                    const custom_media_name = switch (DashedIdentFns.parse(input)) {
+                        .err => |e| return e,
+                        .result => |v| v,
+                    };
+                    const media = switch (MediaList.parse(input)) {
+                        .err => |e| return e,
+                        .result => |v| v,
+                    };
                     return .{
                         .custom_media = .{
                             .name = custom_media_name,
@@ -1012,7 +1040,10 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                         },
                     };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "property")) {
-                    const property_name = try DashedIdent.parse(input);
+                    const property_name = switch (DashedIdent.parse(input)) {
+                        .err => |e| return e,
+                        .result => |v| v,
+                    };
                     return .{ .property = property_name };
                 } else {
                     const Nested = NestedRuleParser(AtRuleParserT);
@@ -1021,13 +1052,13 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                 }
             }
 
-            pub fn parseBlock(this: *This, prelude: AtRuleParser.Prelude, start: *const ParserState, input: *Parser) Error!AtRuleParser.AtRule {
+            pub fn parseBlock(this: *This, prelude: AtRuleParser.Prelude, start: *const ParserState, input: *Parser) Result(AtRuleParser.AtRule) {
                 this.state = .body;
                 const nested_parser = this.nested();
                 return NestedRuleParser(AtRuleParserT).AtRuleParser.parseBlock(nested_parser, prelude, start, input);
             }
 
-            pub fn ruleWithoutBlock(this: *This, prelude: AtRuleParser.Prelude, start: *const ParserState) Error!AtRuleParser.AtRule {
+            pub fn ruleWithoutBlock(this: *This, prelude: AtRuleParser.Prelude, start: *const ParserState) Result(AtRuleParser.AtRule) {
                 const loc_ = start.sourceLocation();
                 const loc = css_rules.Location{
                     .source_index = this.options.source_index,
@@ -1111,13 +1142,13 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
             pub const Prelude = selector.api.SelectorList;
             pub const QualifiedRule = void;
 
-            pub fn parsePrelude(this: *This, input: *Parser) Error!Prelude {
+            pub fn parsePrelude(this: *This, input: *Parser) Result(Prelude) {
                 this.state = .body;
                 var nested_parser = this.nested();
                 return nested_parser.QualifiedRuleParser.parsePrelude(&nested_parser, input);
             }
 
-            pub fn parseBlock(this: *This, prelude: Prelude, start: *const ParserState, input: *Parser) Error!QualifiedRule {
+            pub fn parseBlock(this: *This, prelude: Prelude, start: *const ParserState, input: *Parser) Result(QualifiedRule) {
                 var nested_parser = this.nested();
                 return nested_parser.QualifiedRuleParser.parseBlock(&nested_parser, prelude, start, input);
             }
@@ -1176,21 +1207,33 @@ pub fn NestedRuleParser(comptime T: type) type {
             pub const Prelude = AtRulePrelude(T.CustomAtRuleParser.Prelude);
             pub const AtRule = void;
 
-            pub fn parsePrelude(this: *This, name: []const u8, input: *Parser) Error!Prelude {
+            pub fn parsePrelude(this: *This, name: []const u8, input: *Parser) Result(Prelude) {
                 const result: Prelude = brk: {
                     if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "media")) {
-                        const media = try MediaList.parse(input);
+                        const media = switch (MediaList.parse(input)) {
+                            .err => |e| return e,
+                            .result => |v| v,
+                        };
                         break :brk .{ .media = media };
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "supports")) {
-                        const cond = try SupportsCondition.parse(input);
+                        const cond = switch (SupportsCondition.parse(input)) {
+                            .err => |e| return e,
+                            .result => |v| v,
+                        };
                         break :brk .{ .supports = cond };
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "font-face")) {
                         break :brk .font_face;
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "font-palette-values")) {
-                        const dashed_ident_name = try DashedIdentFns.parse(input);
+                        const dashed_ident_name = switch (DashedIdentFns.parse(input)) {
+                            .err => |e| return e,
+                            .result => |v| v,
+                        };
                         break :brk .{ .font_palette_values = dashed_ident_name };
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "counter-style")) {
-                        const custom_name = try CustomIdentFns.parse(input);
+                        const custom_name = switch (CustomIdentFns.parse(input)) {
+                            .err => |e| return e,
+                            .result => |v| v,
+                        };
                         break :brk .{ .counter_style = custom_name };
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "viewport") or bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-ms-viewport")) {
                         const prefix: VendorPrefix = if (bun.strings.startsWithCaseInsensitiveAscii(name, "-ms")) .ms else .none;
@@ -1209,11 +1252,14 @@ pub fn NestedRuleParser(comptime T: type) type {
                             .o
                         else if (bun.strings.startsWithCaseInsensitiveAscii(name, "-ms-")) .ms else .none;
 
-                        const keyframes_name = try input.tryParse(css_rules.keyframes.KeyframesName.parse, .{});
+                        const keyframes_name = switch (input.tryParse(css_rules.keyframes.KeyframesName.parse, .{})) {
+                            .err => |e| return e,
+                            .result => |v| v,
+                        };
                         break :brk .{ .keyframes = .{ .name = keyframes_name, .prefix = prefix } };
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "page")) {
                         const Fn = struct {
-                            pub fn parsefn(input2: *Parser) Error!css_rules.page.PageSelector {
+                            pub fn parsefn(input2: *Parser) Result(css_rules.page.PageSelector) {
                                 return input2.parseCommaSeparated(css_rules.page.PageSelector.parse);
                             }
                         };
@@ -1222,16 +1268,19 @@ pub fn NestedRuleParser(comptime T: type) type {
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-moz-document")) {
                         // Firefox only supports the url-prefix() function with no arguments as a legacy CSS hack.
                         // See https://css-tricks.com/snippets/css/css-hacks-targeting-firefox/
-                        try input.expectFunctionMatching("url-prefix");
+                        if (input.expectFunctionMatching("url-prefix").asErr()) |e| return e;
                         const Fn = struct {
-                            pub fn parsefn(_: void, input2: *Parser) Error!void {
+                            pub fn parsefn(_: void, input2: *Parser) Result(void) {
                                 // Firefox also allows an empty string as an argument...
                                 // https://github.com/mozilla/gecko-dev/blob/0077f2248712a1b45bf02f0f866449f663538164/servo/components/style/stylesheets/document_rule.rs#L303
                                 _ = input2.tryParse(parseInner, .{});
-                                try input2.expectExhausted();
+                                if (input2.expectExhausted().asErr()) |e| return e;
                             }
-                            fn parseInner(input2: *Parser) Error!void {
-                                const s = try input2.expectString();
+                            fn parseInner(input2: *Parser) Result(void) {
+                                const s = switch (input2.expectString()) {
+                                    .err => |e| return e,
+                                    .result => |v| v,
+                                };
                                 if (s.len > 0) {
                                     input2.newCustomError(.invalid_value);
                                     return error.ParsingError;
@@ -1239,7 +1288,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 return;
                             }
                         };
-                        try input.parseNestedBlock(void, void, Fn.parsefn);
+                        if (input.parseNestedBlock(void, void, Fn.parsefn).asErr()) |e| return e;
                         break :brk .moz_document;
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "layer")) {
                         const names = input.parseList(LayerName) catch |e| {
@@ -1251,7 +1300,10 @@ pub fn NestedRuleParser(comptime T: type) type {
                         break :brk .{ .layer = names };
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "container")) {
                         const container_name = input.tryParse(css_rules.container.ContainerName.parse, .{}) catch null;
-                        const condition = try css_rules.container.ContainerCondition.parse(input);
+                        const condition = switch (css_rules.container.ContainerCondition.parse(input)) {
+                            .err => |e| return e,
+                            .result => |v| v,
+                        };
                         break :brk .{ .container = .{ .name = container_name, .condition = condition } };
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "starting-style")) {
                         break :brk .starting_style;
@@ -1262,7 +1314,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                         };
                         const Closure = struct {
                             selector_parser: *selector.api.SelectorParser,
-                            pub fn parsefn(_: void, input2: *Parser) Error!selector.api.SelectorList {
+                            pub fn parsefn(_: void, input2: *Parser) Result(selector.api.SelectorList) {
                                 return selector.api.SelectorList.parseRelative(&this.selector_parser, input2, .ignore_invalid_selector, .none);
                             }
                         };
@@ -1271,12 +1323,12 @@ pub fn NestedRuleParser(comptime T: type) type {
                         };
 
                         const scope_start = if (input.tryParse(Parser.expectParenthesisBlock, .{})) scope_start: {
-                            break :scope_start try input.parseNestedBlock(selector.api.SelectorList, &closure, Closure.parsefn);
+                            break :scope_start if (input.parseNestedBlock(selector.api.SelectorList, &closure, Closure.parsefn).asErr()) |e| return e;
                         } else null;
 
                         const scope_end = if (input.tryParse(Parser.expectIdentMatching, .{"to"})) scope_end: {
-                            try input.expectParenthesisBlock();
-                            break :scope_end try input.parseNestedBlock(selector.api.SelectorList, &closure, Closure.parsefn);
+                            if (input.expectParenthesisBlock().asErr()) |e| return e;
+                            break :scope_end if (input.parseNestedBlock(selector.api.SelectorList, &closure, Closure.parsefn).asErr()) |e| return e;
                         } else null;
 
                         break :brk .{
@@ -1291,10 +1343,13 @@ pub fn NestedRuleParser(comptime T: type) type {
                             .is_nesting_allowed = true,
                             .options = this.options,
                         };
-                        const selectors = try selector.api.SelectorList.parse(&selector_parser, input, .discard_list, .contained);
+                        const selectors = switch (selector.api.SelectorList.parse(&selector_parser, input, .discard_list, .contained)) {
+                            .err => |e| return e,
+                            .result => |v| v,
+                        };
                         break :brk .{ .nest = selectors };
                     } else {
-                        break :brk try parse_custom_at_rule_prelude(name, input, this.options, this.at_rule_parser);
+                        break :brk if (parse_custom_at_rule_prelude(name, input, this.options, this.at_rule_parser).asErr()) |e| return e;
                     }
                 };
 
@@ -1306,7 +1361,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                 return result;
             }
 
-            pub fn parseBlock(this: *This, prelude: AtRuleParser.Prelude, start: *const ParserState, input: *Parser) Error!AtRuleParser.AtRule {
+            pub fn parseBlock(this: *This, prelude: AtRuleParser.Prelude, start: *const ParserState, input: *Parser) Result(AtRuleParser.AtRule) {
                 defer {
                     // how should we think about deinitializing this?
                     // do it like this defer thing going on here?
@@ -1341,7 +1396,10 @@ pub fn NestedRuleParser(comptime T: type) type {
                     },
                     .font_palette_values => {
                         const name = prelude.font_palette_values;
-                        const rule = try css_rules.font_palette_values.FontPaletteValuesRule.parse(name, input, loc);
+                        const rule = switch (css_rules.font_palette_values.FontPaletteValuesRule.parse(name, input, loc)) {
+                            .err => |e| return e,
+                            .result => |v| v,
+                        };
                         this.rules.v.append(
                             @compileError(todo_stuff.think_about_allocator),
                             .{ .font_palette_values = rule },
@@ -1354,7 +1412,10 @@ pub fn NestedRuleParser(comptime T: type) type {
                             .{
                                 .counter_style = css_rules.counter_style.CounterStyleRule{
                                     .name = name,
-                                    .declarations = try DeclarationBlock.parse(input, this.options),
+                                    .declarations = switch (DeclarationBlock.parse(input, this.options)) {
+                                        .err => |e| return e,
+                                        .result => |v| v,
+                                    },
                                     .loc = loc,
                                 },
                             },
@@ -1362,7 +1423,10 @@ pub fn NestedRuleParser(comptime T: type) type {
                     },
                     .media => {
                         const query = prelude.media;
-                        const rules = try this.parseStyleBlock(input);
+                        const rules = switch (this.parseStyleBlock(input)) {
+                            .err => |e| return e,
+                            .result => |v| v,
+                        };
                         this.rules.v.append(
                             @compileError(todo_stuff.think_about_allocator),
                             .{
@@ -1376,7 +1440,10 @@ pub fn NestedRuleParser(comptime T: type) type {
                     },
                     .supports => {
                         const condition = prelude.supports;
-                        const rules = try this.parseStyleBlock(input);
+                        const rules = switch (this.parseStyleBlock(input)) {
+                            .err => |e| return e,
+                            .result => |v| v,
+                        };
                         this.rules.v.append(@compileError(todo_stuff.think_about_allocator), .{
                             .supports = css_rules.supports.SupportsRule{
                                 .condition = condition,
@@ -1386,7 +1453,10 @@ pub fn NestedRuleParser(comptime T: type) type {
                         }) catch bun.outOfMemory();
                     },
                     .container => {
-                        const rules = try this.parseStyleBlock(input);
+                        const rules = switch (this.parseStyleBlock(input)) {
+                            .err => |e| return e,
+                            .result => |v| v,
+                        };
                         this.rules.v.append(
                             @compileError(todo_stuff.think_about_allocator),
                             .{
@@ -1400,7 +1470,10 @@ pub fn NestedRuleParser(comptime T: type) type {
                         ) catch bun.outOfMemory();
                     },
                     .scope => {
-                        const rules = try this.parseStyleBlock(input);
+                        const rules = switch (this.parseStyleBlock(input)) {
+                            .err => |e| return e,
+                            .result => |v| v,
+                        };
                         this.rules.v.append(
                             @compileError(todo_stuff.think_about_allocator),
                             .{
@@ -1417,7 +1490,10 @@ pub fn NestedRuleParser(comptime T: type) type {
                         this.rules.v.append(@compileError(todo_stuff.think_about_allocator), .{
                             .viewport = css_rules.viewport.ViewportRule{
                                 .vendor_prefix = prelude.viewport,
-                                .declarations = try DeclarationBlock.parse(input, this.options),
+                                .declarations = switch (DeclarationBlock.parse(input, this.options)) {
+                                    .err => |e| return e,
+                                    .result => |v| v,
+                                },
                                 .loc = loc,
                             },
                         }) catch bun.outOfMemory();
@@ -1448,14 +1524,20 @@ pub fn NestedRuleParser(comptime T: type) type {
                     },
                     .page => {
                         const selectors = prelude.page;
-                        const rule = try css_rules.page.PageRule.parse(selectors, input, loc, this.options);
+                        const rule = switch (css_rules.page.PageRule.parse(selectors, input, loc, this.options)) {
+                            .err => |e| return e,
+                            .result => |v| v,
+                        };
                         this.rules.v.append(
                             @compileError(todo_stuff.think_about_allocator),
                             .{ .page = rule },
                         ) catch bun.outOfMemory();
                     },
                     .moz_document => {
-                        const rules = try this.parseStyleBlock(input);
+                        const rules = switch (this.parseStyleBlock(input)) {
+                            .err => |e| return e,
+                            .result => |v| v,
+                        };
                         this.rules.v.append(@compileError(todo_stuff.think_about_allocator), .{
                             .moz_document = css_rules.document.MozDocumentRule(T.CustomAtRuleParser.AtRule){
                                 .rules = rules,
@@ -1470,7 +1552,10 @@ pub fn NestedRuleParser(comptime T: type) type {
                             break :names out;
                         } else return input.newError(.at_rule_body_invalid);
 
-                        const rules = try this.parseStyleBlock(input);
+                        const rules = switch (this.parseStyleBlock(input)) {
+                            .err => |e| return e,
+                            .result => |v| v,
+                        };
 
                         this.rules.v.append(@compileError(todo_stuff.think_about_allocator), .{
                             .layer_block = css_rules.layer.LayerBlockRule{ .name = name, .rules = rules, .loc = loc },
@@ -1479,7 +1564,10 @@ pub fn NestedRuleParser(comptime T: type) type {
                     .property => {
                         const name = prelude.property[0];
                         this.rules.v.append(@compileError(todo_stuff.think_about_allocator), .{
-                            .property = try css_rules.property.PropertyRule.parse(name, input, loc),
+                            .property = switch (css_rules.property.PropertyRule.parse(name, input, loc)) {
+                                .err => |e| return e,
+                                .result => |v| v,
+                            },
                         });
                     },
                     .import, .namespace, .custom_media, .charset => {
@@ -1487,7 +1575,10 @@ pub fn NestedRuleParser(comptime T: type) type {
                         return input.newUnexpectedTokenError(.curly_bracket_block);
                     },
                     .starting_style => {
-                        const rules = try this.parseStyleBlock(input);
+                        const rules = switch (this.parseStyleBlock(input)) {
+                            .err => |e| return e,
+                            .result => |v| v,
+                        };
                         this.rules.v.append(
                             @compileError(todo_stuff.think_about_allocator),
                             .{
@@ -1500,7 +1591,10 @@ pub fn NestedRuleParser(comptime T: type) type {
                     },
                     .nest => {
                         const selectors = prelude.nest;
-                        const result = try this.parseNested(input, true);
+                        const result = switch (this.parseNested(input, true)) {
+                            .err => |e| return e,
+                            .result => |v| v,
+                        };
                         const declarations = result[0];
                         const rules = result[1];
                         this.rules.v.append(
@@ -1527,7 +1621,10 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 .unknown = css_rules.unknown.UnknownAtRule{
                                     .name = prelude.unknown.name,
                                     .prelude = prelude.unknown.tokens,
-                                    .block = try TokenListFns.parse(input, this.options, 0),
+                                    .block = switch (TokenListFns.parse(input, this.options, 0)) {
+                                        .err => |e| return e,
+                                        .result => |v| v,
+                                    },
                                     .loc = loc,
                                 },
                             },
@@ -1537,22 +1634,17 @@ pub fn NestedRuleParser(comptime T: type) type {
                         this.rules.v.append(
                             @compileError(todo_stuff.think_about_allocator),
                             .{
-                                .custom = try parse_custom_at_rule_body(
-                                    T,
-                                    prelude,
-                                    input,
-                                    start,
-                                    this.options,
-                                    this.at_rule_parser,
-                                    this.is_in_style_rule,
-                                ),
+                                .custom = switch (parse_custom_at_rule_body(T, prelude, input, start, this.options, this.at_rule_parser, this.is_in_style_rule)) {
+                                    .err => |e| return e,
+                                    .result => |v| v,
+                                },
                             },
                         ) catch bun.outOfMemory();
                     },
                 }
             }
 
-            pub fn ruleWithoutBlock(this: *This, prelude: AtRuleParser.Prelude, start: *const ParserState) Error!AtRuleParser.AtRule {
+            pub fn ruleWithoutBlock(this: *This, prelude: AtRuleParser.Prelude, start: *const ParserState) Result(AtRuleParser.AtRule) {
                 // TODO: finish
                 const loc = this.getLoc(start);
                 switch (prelude) {
@@ -1591,15 +1683,10 @@ pub fn NestedRuleParser(comptime T: type) type {
                         this.rules.v.append(
                             @compileError(todo_stuff.think_about_allocator),
                             .{
-                                .custom = try parse_custom_at_rule_body(
-                                    T,
-                                    prelude,
-                                    null,
-                                    start,
-                                    this.options,
-                                    this.at_rule_parser,
-                                    this.is_in_style_rule,
-                                ),
+                                .custom = switch (parse_custom_at_rule_body(T, prelude, null, start, this.options, this.at_rule_parser, this.is_in_style_rule)) {
+                                    .err => |e| return e,
+                                    .result => |v| v,
+                                },
                             },
                         ) catch bun.outOfMemory();
                     },
@@ -1617,7 +1704,7 @@ pub fn NestedRuleParser(comptime T: type) type {
             pub const Prelude = selector.api.SelectorList;
             pub const QualifiedRule = void;
 
-            pub fn parsePrelude(this: *This, input: *Parser) Error!Prelude {
+            pub fn parsePrelude(this: *This, input: *Parser) Result(Prelude) {
                 var selector_parser = selector.SelectorParser{
                     .is_nesting_allowed = true,
                     .options = this.options,
@@ -1630,9 +1717,12 @@ pub fn NestedRuleParser(comptime T: type) type {
                 }
             }
 
-            pub fn parseBlock(this: *This, selectors: Prelude, start: *const ParserState, input: *Parser) Error!QualifiedRule {
+            pub fn parseBlock(this: *This, selectors: Prelude, start: *const ParserState, input: *Parser) Result(QualifiedRule) {
                 const loc = this.getLoc(start);
-                const result = try this.parseNested(input, true);
+                const result = switch (this.parseNested(input, true)) {
+                    .err => |e| return e,
+                    .result => |v| v,
+                };
                 const declarations = result[0];
                 const rules = result[1];
 
@@ -1662,7 +1752,7 @@ pub fn NestedRuleParser(comptime T: type) type {
         pub const DeclarationParser = struct {
             pub const Declaration = void;
 
-            fn parseValue(this: *This, name: []const u8, input: *Parser) Error!Declaration {
+            fn parseValue(this: *This, name: []const u8, input: *Parser) Result(Declaration) {
                 return css_decls.parse_declaration(
                     name,
                     input,
@@ -1673,7 +1763,7 @@ pub fn NestedRuleParser(comptime T: type) type {
             }
         };
 
-        pub fn parseNested(this: *This, input: *Parser, is_style_rule: bool) Error!struct { DeclarationBlock, CssRuleList(T.CustomAtRuleParser.AtRule) } {
+        pub fn parseNested(this: *This, input: *Parser, is_style_rule: bool) Result(struct { DeclarationBlock, CssRuleList(T.CustomAtRuleParser.AtRule) }) {
             // TODO: think about memory management in error cases
             var rules = CssRuleList(T.CustomAtRuleParser.AtRule){};
             var nested_parser = This{
@@ -1731,7 +1821,7 @@ pub fn NestedRuleParser(comptime T: type) type {
             };
         }
 
-        pub fn parseStyleBlock(this: *This, input: *Parser) Error!CssRuleList(T.CustomAtRuleParser.AtRule) {
+        pub fn parseStyleBlock(this: *This, input: *Parser) Result(CssRuleList(T.CustomAtRuleParser.AtRule)) {
             const srcloc = input.currentSourceLocation();
             const loc = Location{
                 .source_index = this.options.source_index,
@@ -1741,7 +1831,10 @@ pub fn NestedRuleParser(comptime T: type) type {
 
             // Declarations can be immediately within @media and @supports blocks that are nested within a parent style rule.
             // These act the same way as if they were nested within a `& { ... }` block.
-            const declarations, var rules = try this.parseNested(input, false);
+            const declarations, var rules = switch (this.parseNested(input, false)) {
+                .err => |e| return e,
+                .result => |v| v,
+            };
 
             if (declarations.len() > 0) {
                 rules.v.insert(
@@ -1789,7 +1882,7 @@ pub fn StyleSheetParser(comptime P: type) type {
             };
         }
 
-        pub fn next(this: *@This(), allocator: Allocator) ?(Error!Item) {
+        pub fn next(this: *@This(), allocator: Allocator) ?(Result(Item)) {
             _ = allocator; // autofix
             while (true) {
                 this.input.@"skip cdc and cdo"();
@@ -1886,8 +1979,8 @@ pub fn StyleSheet(comptime AtRule: type) type {
                 var references = std.StringArrayHashMap(CssModuleReferences).init(allocator);
                 printer.css_module = CssModule.new(config, &this.sources, project_root, &references);
 
-                try this.rules.toCss(&printer);
-                try printer.newline();
+                if (this.rules.toCss(&printer).asErr()) |e| return e;
+                if (printer.newline().asErr()) |e| return e;
 
                 return ToCssResult{
                     .dependencies = printer.dependencies,
@@ -1900,7 +1993,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
                     .references = references,
                 };
             } else {
-                try this.rules.toCss(&printer);
+                if (this.rules.toCss(&printer).asErr()) |e| return e;
                 return ToCssResult{
                     .dependencies = printer.dependencies,
                     .code = dest,
@@ -1916,7 +2009,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
             options: ParserOptions,
             comptime P: type,
             at_rule_parser: *P,
-        ) Error!This {
+        ) Result(This) {
             var input = ParserInput.new(allocator, code);
             var parser = Parser.new(allocator, &input);
 
@@ -2042,7 +2135,7 @@ pub fn RuleBodyParser(comptime P: type) type {
         ///     type Item = Result<I, (ParseError<'i, E>, &'i str)>;
         ///
         /// but nowhere in the source do i actually see it using the string part of the tuple
-        pub fn next(this: *This) ?(Error!I) {
+        pub fn next(this: *This) ?(Result(I)) {
             while (true) {
                 this.input.skipWhitespace();
                 const start = this.input.state();
@@ -2066,12 +2159,12 @@ pub fn RuleBodyParser(comptime P: type) type {
                         if (P.RuleBodyItemParser.parseDeclarations(this.parser)) {
                             const name = tok.ident;
                             const parse_qualified = P.RuleBodyItemParser.parseQualified(this.parser);
-                            const result: Error!I = result: {
+                            const result: Result(I) = result: {
                                 const error_behavior: ParseUntilErrorBehavior = if (parse_qualified) .stop else .consume;
                                 const Closure = struct {
                                     parser: *P,
-                                    pub fn parsefn(self: *@This(), input: *Parser) Error!I {
-                                        try input.expectColon();
+                                    pub fn parsefn(self: *@This(), input: *Parser) Result(I) {
+                                        if (input.expectColon().asErr()) |e| return e;
                                         return P.DeclarationParser.parseValue(self.parser, name, input);
                                     }
                                 };
@@ -2100,7 +2193,7 @@ pub fn RuleBodyParser(comptime P: type) type {
                     else => {},
                 }
 
-                const result: Error!I = if (P.RuleBodyItemParser.parseQualified(this.parser)) result: {
+                const result: Result(I) = if (P.RuleBodyItemParser.parseQualified(this.parser)) result: {
                     this.input.reset(&start);
                     const delimiters = if (P.RuleBodyItemParser.parseDeclarations(this.parser)) Delimiters{
                         .semicolon = true,
@@ -2112,7 +2205,7 @@ pub fn RuleBodyParser(comptime P: type) type {
                     _ = token; // autofix
                     const Fn = struct {
                         token: Token,
-                        fn parsefn(input: *Parser) Error!I {
+                        fn parsefn(input: *Parser) Result(I) {
                             _ = input; // autofix
                             // TODO: implement this
                             // Err(start.source_location().new_unexpected_token_error(token))
@@ -2196,7 +2289,7 @@ pub const Parser = struct {
     }
 
     /// Implementation of Vec::<T>::parse
-    pub fn parseList(this: *Parser, comptime T: type, comptime parse_one: *const fn (*Parser) Error!T) Error!ArrayList(T) {
+    pub fn parseList(this: *Parser, comptime T: type, comptime parse_one: *const fn (*Parser) Result(T)) Result(ArrayList(T)) {
         return this.parseCommaSeparated(T, parse_one);
     }
 
@@ -2214,8 +2307,8 @@ pub const Parser = struct {
     pub fn parseCommaSeparated(
         this: *Parser,
         comptime T: type,
-        comptime parse_one: *const fn (*Parser) Error!T,
-    ) Error!ArrayList(T) {
+        comptime parse_one: *const fn (*Parser) Result(T),
+    ) Result(ArrayList(T)) {
         return this.parseCommaSeparatedInternal(T, {}, voidWrap(T, parse_one), false);
     }
 
@@ -2223,8 +2316,8 @@ pub const Parser = struct {
         this: *Parser,
         comptime T: type,
         closure: anytype,
-        comptime parse_one: *const fn (@TypeOf(closure), *Parser) Error!T,
-    ) Error!ArrayList(T) {
+        comptime parse_one: *const fn (@TypeOf(closure), *Parser) Result(T),
+    ) Result(ArrayList(T)) {
         return this.parseCommaSeparatedInternal(T, closure, parse_one, false);
     }
 
@@ -2232,9 +2325,9 @@ pub const Parser = struct {
         this: *Parser,
         comptime T: type,
         closure: anytype,
-        comptime parse_one: *const fn (@TypeOf(closure), *Parser) Error!T,
+        comptime parse_one: *const fn (@TypeOf(closure), *Parser) Result(T),
         ignore_errors: bool,
-    ) Error!ArrayList(T) {
+    ) Result(ArrayList(T)) {
         // Vec grows from 0 to 4 by default on first push().  So allocate with
         // capacity 1, so in the somewhat common case of only one item we don't
         // way overallocate.  Note that we always push at least one item if
@@ -2264,7 +2357,7 @@ pub const Parser = struct {
     /// is restored to what it was before the call.
     ///
     /// func needs to be a funtion like this: `fn func(*ParserInput, ...@TypeOf(args_)) T`
-    pub inline fn tryParse(this: *Parser, comptime func: anytype, args_: anytype) Error!bun.meta.ReturnOf(func) {
+    pub inline fn tryParse(this: *Parser, comptime func: anytype, args_: anytype) Result(bun.meta.ReturnOf(func)) {
         const start = this.state();
         const result = result: {
             const args = brk: {
@@ -2286,7 +2379,7 @@ pub const Parser = struct {
         return result;
     }
 
-    pub inline fn parseNestedBlock(this: *Parser, comptime T: type, closure: anytype, comptime parsefn: *const fn (@TypeOf(closure), *Parser) Error!T) Error!T {
+    pub inline fn parseNestedBlock(this: *Parser, comptime T: type, closure: anytype, comptime parsefn: *const fn (@TypeOf(closure), *Parser) Result(T)) Result(T) {
         return parse_nested_block(this, T, closure, parsefn);
     }
 
@@ -2297,13 +2390,13 @@ pub const Parser = struct {
     /// Parse the input until exhaustion and check that it contains no “error” token.
     ///
     /// See `Token::is_parse_error`. This also checks nested blocks and functions recursively.
-    pub fn expectNoErrorToken(this: *Parser) Error!void {
+    pub fn expectNoErrorToken(this: *Parser) Result(void) {
         while (true) {
             const tok = this.nextIncludingWhitespaceAndComments() catch return;
             switch (tok.*) {
                 .function, .open_paren, .open_square, .open_curly => {
                     this.parseNestedBlock(void, {}, struct {
-                        pub fn parse(i: *Parser) Error!void {
+                        pub fn parse(i: *Parser) Result(void) {
                             i.expectNoErrorToken() catch {
                                 @compileError(todo_stuff.errors);
                             };
@@ -2325,16 +2418,22 @@ pub const Parser = struct {
         }
     }
 
-    pub fn expectPercentage(this: *Parser) Error!f32 {
+    pub fn expectPercentage(this: *Parser) Result(f32) {
         const start_location = this.currentSourceLocation();
-        const tok = try this.next();
+        const tok = switch (this.next()) {
+            .err => |e| return e,
+            .result => |v| v,
+        };
         if (tok.* == .percentage) return tok.percentage.unit_value;
         return start_location.newBasicUnexpectedTokenError(tok.*);
     }
 
-    pub fn expectComma(this: *Parser) Error!void {
+    pub fn expectComma(this: *Parser) Result(void) {
         const start_location = this.currentSourceLocation();
-        const tok = try this.next();
+        const tok = switch (this.next()) {
+            .err => |e| return e,
+            .result => |v| v,
+        };
         switch (tok.*) {
             .semicolon => return,
             else => {},
@@ -2343,60 +2442,84 @@ pub const Parser = struct {
     }
 
     /// Parse a <number-token> that does not have a fractional part, and return the integer value.
-    pub fn expectInteger(this: *Parser) Error!i32 {
+    pub fn expectInteger(this: *Parser) Result(i32) {
         const start_location = this.currentSourceLocation();
-        const tok = try this.next();
+        const tok = switch (this.next()) {
+            .err => |e| return e,
+            .result => |v| v,
+        };
         if (tok.* == .number and tok.number.int_value != null) return tok.number.int_value.?;
         return start_location.newBasicUnexpectedTokenError(tok.*);
     }
 
     /// Parse a <number-token> and return the integer value.
-    pub fn expectNumber(this: *Parser) Error!f32 {
+    pub fn expectNumber(this: *Parser) Result(f32) {
         const start_location = this.currentSourceLocation();
-        const tok = try this.next();
+        const tok = switch (this.next()) {
+            .err => |e| return e,
+            .result => |v| v,
+        };
         if (tok.* == .number) return tok.number.value;
         return start_location.newBasicUnexpectedTokenError(tok.*);
     }
 
-    pub fn expectDelim(this: *Parser, delim: u8) Error!void {
+    pub fn expectDelim(this: *Parser, delim: u8) Result(void) {
         const start_location = this.currentSourceLocation();
-        const tok = try this.next();
+        const tok = switch (this.next()) {
+            .err => |e| return e,
+            .result => |v| v,
+        };
         if (tok.* == .delim and tok.delim == delim) return;
         return start_location.newBasicUnexpectedTokenError(tok.*);
     }
 
-    pub fn expectParenthesisBlock(this: *Parser) Error!void {
+    pub fn expectParenthesisBlock(this: *Parser) Result(void) {
         const start_location = this.currentSourceLocation();
-        const tok = try this.next();
+        const tok = switch (this.next()) {
+            .err => |e| return e,
+            .result => |v| v,
+        };
         if (tok.* == .open_paren) return;
         return start_location.newBasicUnexpectedTokenError(tok.*);
     }
 
-    pub fn expectColon(this: *Parser) Error!void {
+    pub fn expectColon(this: *Parser) Result(void) {
         const start_location = this.currentSourceLocation();
-        const tok = try this.next();
+        const tok = switch (this.next()) {
+            .err => |e| return e,
+            .result => |v| v,
+        };
         if (tok.* == .colon) return;
         return start_location.newBasicUnexpectedTokenError(tok.*);
     }
 
-    pub fn expectString(this: *Parser) Error![]const u8 {
+    pub fn expectString(this: *Parser) Result([]const u8) {
         const start_location = this.currentSourceLocation();
-        const tok = try this.next();
+        const tok = switch (this.next()) {
+            .err => |e| return e,
+            .result => |v| v,
+        };
         if (tok.* == .string) return tok.string;
         return start_location.newBasicUnexpectedTokenError(tok.*);
     }
 
-    pub fn expectIdent(this: *Parser) Error![]const u8 {
+    pub fn expectIdent(this: *Parser) Result([]const u8) {
         const start_location = this.currentSourceLocation();
-        const tok = try this.next();
+        const tok = switch (this.next()) {
+            .err => |e| return e,
+            .result => |v| v,
+        };
         if (tok.* == .ident) return tok.ident;
         return start_location.newBasicUnexpectedTokenError(tok.*);
     }
 
     /// Parse either a <ident-token> or a <string-token>, and return the unescaped value.
-    pub fn expectIdentOrString(this: *Parser) Error![]const u8 {
+    pub fn expectIdentOrString(this: *Parser) Result([]const u8) {
         const start_location = this.currentSourceLocation();
-        const tok = try this.next();
+        const tok = switch (this.next()) {
+            .err => |e| return e,
+            .result => |v| v,
+        };
         switch (tok.*) {
             .ident => |i| return i,
             .string => |s| return s,
@@ -2405,9 +2528,12 @@ pub const Parser = struct {
         return start_location.newBasicUnexpectedTokenError(tok.*);
     }
 
-    pub fn expectIdentMatching(this: *Parser, name: []const u8) Error!void {
+    pub fn expectIdentMatching(this: *Parser, name: []const u8) Result(void) {
         const start_location = this.currentSourceLocation();
-        const tok = try this.next();
+        const tok = switch (this.next()) {
+            .err => |e| return e,
+            .result => |v| v,
+        };
         switch (tok.*) {
             .ident => |i| if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, i)) return,
             else => {},
@@ -2415,9 +2541,12 @@ pub const Parser = struct {
         return start_location.newBasicUnexpectedTokenError(tok.*);
     }
 
-    pub fn expectFunction(this: *Parser) Error![]const u8 {
+    pub fn expectFunction(this: *Parser) Result([]const u8) {
         const start_location = this.currentSourceLocation();
-        const tok = try this.next();
+        const tok = switch (this.next()) {
+            .err => |e| return e,
+            .result => |v| v,
+        };
         switch (tok.*) {
             .function => |fn_name| return fn_name,
             else => {},
@@ -2425,9 +2554,12 @@ pub const Parser = struct {
         return start_location.newBasicUnexpectedTokenError(tok.*);
     }
 
-    pub fn expectFunctionMatching(this: *Parser, name: []const u8) Error!void {
+    pub fn expectFunctionMatching(this: *Parser, name: []const u8) Result(void) {
         const start_location = this.currentSourceLocation();
-        const tok = try this.next();
+        const tok = switch (this.next()) {
+            .err => |e| return e,
+            .result => |v| v,
+        };
         switch (tok.*) {
             .function => |fn_name| if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, fn_name)) return,
             else => {},
@@ -2435,9 +2567,12 @@ pub const Parser = struct {
         return start_location.newBasicUnexpectedTokenError(tok.*);
     }
 
-    pub fn expectCurlyBracketBlock(this: *Parser) Error!void {
+    pub fn expectCurlyBracketBlock(this: *Parser) Result(void) {
         const start_location = this.currentSourceLocation();
-        const tok = try this.next();
+        const tok = switch (this.next()) {
+            .err => |e| return e,
+            .result => |v| v,
+        };
         switch (tok.*) {
             .open_curly => return,
             else => return start_location.newBasicUnexpectedTokenError(tok.*),
@@ -2445,15 +2580,18 @@ pub const Parser = struct {
     }
 
     /// Parse a <url-token> and return the unescaped value.
-    pub fn expectUrl(this: *Parser) Error![]const u8 {
+    pub fn expectUrl(this: *Parser) Result([]const u8) {
         const start_location = this.currentSourceLocation();
-        const tok = try this.next();
+        const tok = switch (this.next()) {
+            .err => |e| return e,
+            .result => |v| v,
+        };
         switch (tok.*) {
             .unquoted_url => |value| return value,
             .function => |name| {
                 if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("url", name)) {
                     return this.parseNestedBlock([]const u8, {}, struct {
-                        fn parse(parser: *Parser) Error![]const u8 {
+                        fn parse(parser: *Parser) Result([]const u8) {
                             return parser.expectString();
                         }
                     }.parse) catch {
@@ -2467,16 +2605,19 @@ pub const Parser = struct {
     }
 
     /// Parse either a <url-token> or a <string-token>, and return the unescaped value.
-    pub fn expectUrlOrString(this: *Parser) Error![]const u8 {
+    pub fn expectUrlOrString(this: *Parser) Result([]const u8) {
         const start_location = this.currentSourceLocation();
-        const tok = try this.next();
+        const tok = switch (this.next()) {
+            .err => |e| return e,
+            .result => |v| v,
+        };
         switch (tok.*) {
             .unquoted_url => |value| return value,
             .quoted_string => |value| return value,
             .function => |name| {
                 if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("url", name)) {
                     return this.parseNestedBlock([]const u8, {}, struct {
-                        fn parse(parser: *Parser) Error![]const u8 {
+                        fn parse(parser: *Parser) Result([]const u8) {
                             return parser.expectString();
                         }
                     }.parse) catch {
@@ -2494,7 +2635,7 @@ pub const Parser = struct {
         return this.input.tokenizer.position;
     }
 
-    fn parseEmpty(_: *Parser) Error!void {}
+    fn parseEmpty(_: *Parser) Result(void) {}
 
     /// Like `parse_until_before`, but also consume the delimiter token.
     ///
@@ -2505,10 +2646,10 @@ pub const Parser = struct {
         this: *Parser,
         delimiters: Delimiters,
         comptime T: type,
-        comptime parse_fn: *const fn (*Parser) Error!T,
-    ) Error!T {
+        comptime parse_fn: *const fn (*Parser) Result(T),
+    ) Result(T) {
         const Fn = struct {
-            pub fn parsefn(_: void, p: *Parser) Error!T {
+            pub fn parsefn(_: void, p: *Parser) Result(T) {
                 return parse_fn(p);
             }
         };
@@ -2522,13 +2663,16 @@ pub const Parser = struct {
         );
     }
 
-    pub fn parseUntilBefore(this: *Parser, delimiters: Delimiters, comptime T: type, closure: anytype, comptime parse_fn: *const fn (@TypeOf(closure), *Parser) Error!T) Error!T {
+    pub fn parseUntilBefore(this: *Parser, delimiters: Delimiters, comptime T: type, closure: anytype, comptime parse_fn: *const fn (@TypeOf(closure), *Parser) Result(T)) Result(T) {
         return parse_until_before(this, delimiters, .consume, T, closure, parse_fn);
     }
 
-    pub fn parseEntirely(this: *Parser, comptime T: type, closure: anytype, comptime parsefn: *const fn (@TypeOf(closure), *Parser) Error!T) Error!T {
-        const result = try parsefn(closure, this);
-        try this.expectExhausted();
+    pub fn parseEntirely(this: *Parser, comptime T: type, closure: anytype, comptime parsefn: *const fn (@TypeOf(closure), *Parser) Result(T)) Result(T) {
+        const result = switch (parsefn(closure, this)) {
+            .err => |e| return e,
+            .result => |v| v,
+        };
+        if (this.expectExhausted().asErr()) |e| return e;
         return result;
     }
 
@@ -2536,7 +2680,7 @@ pub const Parser = struct {
     /// Return a `Result` so that the `?` operator can be used: `input.expect_exhausted()?`
     ///
     /// This ignores whitespace and comments.
-    pub fn expectExhausted(this: *Parser) Error!void {
+    pub fn expectExhausted(this: *Parser) Result(void) {
         const start = this.state();
         const result = result: {
             if (this.next()) |t| {
@@ -2568,13 +2712,13 @@ pub const Parser = struct {
         this.input.tokenizer.skipWhitespace();
     }
 
-    pub fn next(this: *@This()) Error!*Token {
+    pub fn next(this: *@This()) Result(*Token) {
         this.skipWhitespace();
         this.nextIncludingWhitespaceAndComments();
     }
 
     /// Same as `Parser::next`, but does not skip whitespace tokens.
-    pub fn nextIncludingWhitespace(this: *@This()) Error!*Token {
+    pub fn nextIncludingWhitespace(this: *@This()) Result(*Token) {
         while (true) {
             if (this.nextIncludingWhitespaceAndComments()) |tok| {
                 if (tok.* == .comment) {} else break;
@@ -2611,7 +2755,7 @@ pub const Parser = struct {
     /// where comments are preserved.
     /// When parsing higher-level values, per the CSS Syntax specification,
     /// comments should always be ignored between tokens.
-    pub fn nextIncludingWhitespaceAndComments(this: *Parser) error.ParseError!*Token {
+    pub fn nextIncludingWhitespaceAndComments(this: *Parser) Result(*Token) {
         if (this.at_start_of) |block_type| {
             this.at_start_of = null;
             consume_until_end_of_block(block_type, *this.input.tokenizer);
@@ -2633,7 +2777,10 @@ pub const Parser = struct {
             }
             break :token cached_token.token;
         } else token: {
-            const new_token = try (this.input.tokenizer.next() catch this.newBasicError(BasicParseErrorKind{ .end_of_input = true }));
+            const new_token = switch (this.input.tokenizer.next()) {
+                .result => |v| v,
+                .err => this.newBasicError(BasicParseErrorKind{ .end_of_input = true }),
+            };
             this.input.cached_token = CachedToken{
                 .token = new_token,
                 .start_position = token_start_position,
@@ -2783,8 +2930,11 @@ pub const nth = struct {
     /// The input is typically the arguments of a function,
     /// in which case the caller needs to check if the arguments’ parser is exhausted.
     /// Return `Ok((A, B))`, or `Err(())` for a syntax error.
-    pub fn parse_nth(input: *Parser) Error!struct { i32, i32 } {
-        const tok = try input.next();
+    pub fn parse_nth(input: *Parser) Result(struct { i32, i32 }) {
+        const tok = switch (input.next()) {
+            .err => |e| return e,
+            .result => |v| v,
+        };
         switch (tok.*) {
             .number => {
                 if (tok.number.int_value) |b| return .{ 0, b };
@@ -2794,9 +2944,9 @@ pub const nth = struct {
                     // @compileError(todo_stuff.match_ignore_ascii_case);
                     const unit = tok.dimension.unit;
                     if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "n")) {
-                        return try parse_b(input, a);
+                        return if (parse_b(input, a).asErr()) |e| return e;
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "n-")) {
-                        return try parse_signless_b(input, a);
+                        return if (parse_signless_b(input, a).asErr()) |e| return e;
                     } else {
                         if (parse_n_dash_digits(unit)) |b| {
                             return .{ a, b };
@@ -2814,13 +2964,13 @@ pub const nth = struct {
                 } else if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(value, "odd")) {
                     return .{ 2, 1 };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(value, "n")) {
-                    return try parse_b(input, 1);
+                    return if (parse_b(input, 1).asErr()) |e| return e;
                 } else if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(value, "-n")) {
-                    return try parse_b(input, -1);
+                    return if (parse_b(input, -1).asErr()) |e| return e;
                 } else if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(value, "n-")) {
-                    return try parse_signless_b(input, 1, -1);
+                    return if (parse_signless_b(input, 1, -1).asErr()) |e| return e;
                 } else if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(value, "-n-")) {
-                    return try parse_signless_b(input, -1, -1);
+                    return if (parse_signless_b(input, -1, -1).asErr()) |e| return e;
                 } else {
                     const slice, const a = if (bun.strings.startsWithChar(value, '-')) .{ value[1..], -1 } else .{ value, 1 };
                     if (parse_n_dash_digits(slice)) |b| return .{ a, b };
@@ -2828,13 +2978,16 @@ pub const nth = struct {
                 }
             },
             .delim => {
-                const next_tok = try input.nextIncludingWhitespace();
+                const next_tok = switch (input.nextIncludingWhitespace()) {
+                    .err => |e| return e,
+                    .result => |v| v,
+                };
                 if (next_tok.* == .ident) {
                     const value = next_tok.ident;
                     if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(value, "n")) {
-                        return try parse_b(input, 1);
+                        return if (parse_b(input, 1).asErr()) |e| return e;
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(value, "-n")) {
-                        return try parse_signless_b(input, 1, -1);
+                        return if (parse_signless_b(input, 1, -1).asErr()) |e| return e;
                     } else {
                         if (parse_n_dash_digits(value)) |b| {
                             return .{ 1, b };
@@ -2851,7 +3004,7 @@ pub const nth = struct {
         return input.newBasicUnexpectedTokenError(tok.*);
     }
 
-    fn parse_b(input: *Parser, a: i23) Error!struct { i32, i32 } {
+    fn parse_b(input: *Parser, a: i23) Result(struct { i32, i32 }) {
         const start = input.state();
         const tok = input.next() catch {
             input.reset(&start);
@@ -2865,8 +3018,11 @@ pub const nth = struct {
         return .{ a, 0 };
     }
 
-    fn parse_signless_b(input: *Parser, a: i32, b_sign: i32) Error!struct { i32, i32 } {
-        const tok = try input.next();
+    fn parse_signless_b(input: *Parser, a: i32, b_sign: i32) Result(struct { i32, i32 }) {
+        const tok = switch (input.next()) {
+            .err => |e| return e,
+            .result => |v| v,
+        };
         if (tok.* == .number and !tok.number.has_sign and tok.number.int_value != null) {
             const b = tok.number.int_value.?;
             return .{ a, b_sign * b };
@@ -2874,7 +3030,7 @@ pub const nth = struct {
         return input.newBasicUnexpectedTokenError(tok.*);
     }
 
-    fn parse_n_dash_digits(str: []const u8) Error!i32 {
+    fn parse_n_dash_digits(str: []const u8) Result(i32) {
         const bytes = str;
         if (bytes.len >= 3 and
             bun.strings.eqlCaseInsensitiveASCIIICheckLength(bytes[0..2], "n-") and
@@ -2891,7 +3047,7 @@ pub const nth = struct {
         }
     }
 
-    fn parse_number_saturate(string: []const u8) Error!i32 {
+    fn parse_number_saturate(string: []const u8) Result(i32) {
         var input = ParserInput.new(@compileError(todo_stuff.think_about_allocator), string);
         var parser = Parser.new(&input);
         const tok = parser.nextIncludingWhitespaceAndComments() catch {
@@ -4303,83 +4459,84 @@ pub const Token = union(TokenKind) {
     // ~toCssImpl
     const This = @This();
 
-    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintResult(void) {
         // zack is here: verify this is correct
         return switch (this.*) {
-            .ident => |value| try serializer.serializeIdentifier(value, dest),
+            .ident => |value| if (serializer.serializeIdentifier(value, dest).asErr()) |e| return e,
             .at_keyword => |value| {
-                try dest.writeStr("@");
-                return try serializer.serializeIdentifier(value, dest);
+                if (dest.writeStr("@").asErr()) |e| return e;
+                return serializer.serializeIdentifier(value, dest);
             },
             .hash => |value| {
-                try dest.writeStr("#");
-                return try serializer.serializeName(value, dest);
+                if (dest.writeStr("#").asErr()) |e| return e;
+                return serializer.serializeName(value, dest);
             },
             .id_hash => |value| {
-                try dest.writeStr("#");
-                return try serializer.serializeIdentifier(value, dest);
+                if (dest.writeStr("#").asErr()) |e| return e;
+                return serializer.serializeIdentifier(value, dest);
             },
-            .quoted_string => |value| try serializer.serializeString(value, dest),
+            .quoted_string => |value| serializer.serializeString(value, dest),
             .unquoted_url => |value| {
-                try dest.writeStr("url(");
-                try serializer.serializeUnquotedUrl(value, dest);
-                return try dest.writeStr(")");
+                if (dest.writeStr("url(").asErr()) |e| return e;
+                if (serializer.serializeUnquotedUrl(value, dest).asErr()) |e| return e;
+                return dest.writeStr(")");
             },
-            .delim => |value| try dest.writeChar(value),
-            .number => |num| try serializer.writeNumeric(num.value, num.int_value, num.has_sign, dest),
+            .delim => |value| dest.writeChar(value),
+            .number => |num| serializer.writeNumeric(num.value, num.int_value, num.has_sign, dest),
             .percentage => |num| {
-                try serializer.writeNumeric(num.value * 100, num.int_value, num.has_sign, dest);
-                try dest.writeStr("%");
+                if (serializer.writeNumeric(num.value * 100, num.int_value, num.has_sign, dest).asErr()) |e| return e;
+                return dest.writeStr("%");
             },
             .dimension => |dim| {
-                try serializer.writeNumeric(dim.num.value, dim.num.int_value, dim.num.has_sign, dest);
+                if (serializer.writeNumeric(dim.num.value, dim.num.int_value, dim.num.has_sign, dest).asErr()) |e| return e;
                 // Disambiguate with scientific notation.
                 const unit = dim.unit;
                 if (std.mem.eql(u8, unit, "e") or std.mem.eql(u8, unit, "E") or
                     std.mem.startsWith(u8, unit, "e-") or std.mem.startsWith(u8, unit, "E-"))
                 {
-                    try dest.writeStr("\\65 ");
-                    try serializer.serializeName(unit[1..], dest);
+                    if (dest.writeStr("\\65 ").asErr()) |e| return e;
+                    if (serializer.serializeName(unit[1..], dest).asErr()) |e| return e;
                 } else {
-                    try serializer.serializeIdentifier(unit, dest);
+                    if (serializer.serializeIdentifier(unit, dest).asErr()) |e| return e;
                 }
+                return PrintResult(void).success;
             },
-            .white_space => |content| try dest.writeStr(content),
+            .white_space => |content| dest.writeStr(content),
             .comment => |content| {
-                try dest.writeStr("/*");
-                try dest.writeStr(content);
-                return try dest.writeStr("*/");
+                if (dest.writeStr("/*").asErr()) |e| return e;
+                if (dest.writeStr(content).asErr()) |e| return e;
+                return dest.writeStr("*/");
             },
-            .colon => try dest.writeStr(":"),
-            .semicolon => try dest.writeStr(";"),
-            .comma => try dest.writeStr(","),
-            .include_match => try dest.writeStr("~="),
-            .dash_match => try dest.writeStr("|="),
-            .prefix_match => try dest.writeStr("^="),
-            .suffix_match => try dest.writeStr("$="),
-            .substring_match => try dest.writeStr("*="),
-            .cdo => try dest.writeStr("<!--"),
-            .cdc => try dest.writeStr("-->"),
+            .colon => dest.writeStr(":"),
+            .semicolon => dest.writeStr(";"),
+            .comma => dest.writeStr(","),
+            .include_match => dest.writeStr("~="),
+            .dash_match => dest.writeStr("|="),
+            .prefix_match => dest.writeStr("^="),
+            .suffix_match => dest.writeStr("$="),
+            .substring_match => dest.writeStr("*="),
+            .cdo => dest.writeStr("<!--"),
+            .cdc => dest.writeStr("-->"),
             .function => |name| {
-                try serializer.serializeIdentifier(name, dest);
-                try dest.writeStr("(");
+                if (serializer.serializeIdentifier(name, dest).asErr()) |e| return e;
+                return dest.writeStr("(");
             },
-            .open_paren => try dest.writeStr("("),
-            .open_square => try dest.writeStr("["),
-            .open_curly => try dest.writeStr("{"),
+            .open_paren => dest.writeStr("("),
+            .open_square => dest.writeStr("["),
+            .open_curly => dest.writeStr("{"),
             .bad_url => |contents| {
-                try dest.writeStr("url(");
-                try dest.writeStr(contents);
-                try dest.writeChar(')');
+                if (dest.writeStr("url(").asErr()) |e| return e;
+                if (dest.writeStr(contents).asErr()) |e| return e;
+                return dest.writeChar(')');
             },
             .bad_string => |value| {
-                try dest.writeChar('"');
+                if (dest.writeChar('"').asErr()) |e| return e;
                 var writer = serializer.CssStringWriter(Printer(W)).new(dest);
-                return try writer.writeStr(value);
+                return writer.writeStr(value);
             },
-            .close_paren => try dest.writeStr(")"),
-            .close_square => try dest.writeStr("]"),
-            .close_curly => try dest.writeStr("}"),
+            .close_paren => dest.writeStr(")"),
+            .close_square => dest.writeStr("]"),
+            .close_curly => dest.writeStr("}"),
         };
     }
 };
@@ -4773,7 +4930,7 @@ pub const serializer = struct {
     ///
     /// You should only use this when you know what you're doing, when in doubt,
     /// consider using `serialize_identifier`.
-    pub fn serializeName(value: []const u8, comptime W: type, dest: *W) !void {
+    pub fn serializeName(value: []const u8, comptime W: type, dest: *W) PrintResult(void) {
         var chunk_start: usize = 0;
         for (value, 0..) |b, i| {
             const escaped: ?[]const u8 = switch (b) {
@@ -4783,27 +4940,27 @@ pub const serializer = struct {
                 else => if (!std.ascii.isASCII(b)) continue else null,
             };
 
-            try dest.writeStr(value[chunk_start..i]);
+            if (dest.writeStr(value[chunk_start..i]).asErr()) |e| return e;
             if (escaped) |esc| {
-                try dest.writeStr(esc);
+                if (dest.writeStr(esc).asErr()) |e| return e;
             } else if ((b >= 0x01 and b <= 0x1F) or b == 0x7F) {
-                try hexEscape(b, W, dest);
+                if (hexEscape(b, W, dest).asErr()) |e| return e;
             } else {
-                try charEscape(b, W, dest);
+                if (charEscape(b, W, dest).asErr()) |e| return e;
             }
             chunk_start = i + 1;
         }
-        try dest.writeStr(value[chunk_start..]);
+        return dest.writeStr(value[chunk_start..]);
     }
 
     /// Write a double-quoted CSS string token, escaping content as necessary.
-    pub fn serializeString(value: []const u8, comptime W: type, dest: *W) !void {
-        try dest.writeStr("\"");
-        try CssStringWriter(W).new(dest).writeStr(value);
-        try dest.writeStr("\"");
+    pub fn serializeString(value: []const u8, comptime W: type, dest: *W) PrintResult(void) {
+        if (dest.writeStr("\"").asErr()) |e| return e;
+        if (CssStringWriter(W).new(dest).writeStr(value).asErr()) |e| return e;
+        return dest.writeStr("\"");
     }
 
-    pub fn serializeDimension(value: f32, unit: []const u8, comptime W: type, dest: *W) PrintErr!void {
+    pub fn serializeDimension(value: f32, unit: []const u8, comptime W: type, dest: *W) PrintResult(void) {
         // const int_value: ?i32 = if (@rem(value, 1) == 0.0) @as(i32, @intFromFloat(value)) else null;
         const int_value: ?i32 = if (1.0 - @trunc(value) == 0.0) @intCast(value) else null;
         const token = Token{ .dimension = .{
@@ -4818,45 +4975,45 @@ pub const serializer = struct {
             // TODO: calculate the actual number of chars here
             var buf: [64]u8 = undefined;
             var fbs = std.io.fixedBufferStream(&buf);
-            try token.toCss(W, fbs.writer());
+            if (token.toCss(W, fbs.writer()).asErr()) |e| return e;
             const s = fbs.getWritten();
             if (value < 0.0) {
-                try dest.writeStr("-");
-                try dest.writeStr(bun.strings.trimLeadingPattern2(s, '-', '0'));
+                if (dest.writeStr("-").asErr()) |e| return e;
+                return dest.writeStr(bun.strings.trimLeadingPattern2(s, '-', '0'));
             } else {
-                try dest.writeStr(bun.strings.trimLeadingChar(s, '0'));
+                return dest.writeStr(bun.strings.trimLeadingChar(s, '0'));
             }
         } else {
-            try token.toCss(W, dest);
+            return token.toCss(W, dest);
         }
     }
 
     /// Write a CSS identifier, escaping characters as necessary.
-    pub fn serializeIdentifier(value: []const u8, comptime W: type, dest: *W) PrintErr!void {
+    pub fn serializeIdentifier(value: []const u8, comptime W: type, dest: *W) PrintResult(void) {
         if (value.len == 0) {
             return;
         }
 
         if (bun.strings.startsWith(value, "--")) {
-            try dest.writeStr("--");
-            return try serializeName(value[2..], W, dest);
+            if (dest.writeStr("--").asErr()) |e| return e;
+            return serializeName(value[2..], W, dest);
         } else if (bun.strings.eql(value, "-")) {
-            return try dest.writeStr("\\-");
+            return dest.writeStr("\\-");
         } else {
             var slice = value;
             if (slice[0] == '-') {
-                try dest.writeStr("-");
+                if (dest.writeStr("-").asErr()) |e| return e;
                 slice = slice[1..];
             }
             if (slice.len > 0 and slice[0] >= '0' and slice[0] <= '9') {
-                try hexEscape(slice[0], W, dest);
+                if (hexEscape(slice[0], W, dest).asErr()) |e| return e;
                 slice = slice[1..];
             }
-            return try serializeName(slice, W, dest);
+            return serializeName(slice, W, dest);
         }
     }
 
-    pub fn serializeUnquotedUrl(value: []const u8, comptime W: type, dest: *W) PrintErr!void {
+    pub fn serializeUnquotedUrl(value: []const u8, comptime W: type, dest: *W) PrintResult(void) {
         var chunk_start: usize = 0;
         for (value, 0..) |b, i| {
             const hex = switch (b) {
@@ -4864,26 +5021,26 @@ pub const serializer = struct {
                 '(', ')', '"', '\'', '\\' => false,
                 else => continue,
             };
-            try dest.writeStr(value[chunk_start..i]);
+            if (dest.writeStr(value[chunk_start..i]).asErr()) |e| return e;
             if (hex) {
-                try hexEscape(b, W, dest);
+                if (hexEscape(b, W, dest).asErr()) |e| return e;
             } else {
-                try charEscape(b, W, dest);
+                if (charEscape(b, W, dest).asErr()) |e| return e;
             }
             chunk_start = i + 1;
         }
-        try dest.writeStr(value[chunk_start..]);
+        return dest.writeStr(value[chunk_start..]);
     }
 
-    pub fn writeNumeric(value: f32, int_value: ?i32, has_sign: bool, comptime W: type, dest: *W) !void {
+    pub fn writeNumeric(value: f32, int_value: ?i32, has_sign: bool, comptime W: type, dest: *W) PrintResult(void) {
         // `value >= 0` is true for negative 0.
         if (has_sign and !std.math.signbit(value)) {
-            try dest.writeStr("+");
+            if (dest.writeStr("+").asErr()) |e| return e;
         }
 
         const notation = if (value == 0.0 and std.math.signbit(value)) notation: {
             // Negative zero. Work around #20596.
-            try dest.writeStr("-0");
+            if (dest.writeStr("-0").asErr()) |e| return e;
             break :notation .{
                 .decimal_point = false,
                 .scientific = false,
@@ -4896,7 +5053,7 @@ pub const serializer = struct {
                 .mode = .scientific,
                 .precision = 6,
             }) catch unreachable;
-            try dest.writeStr(floats);
+            if (dest.writeStr(floats).asErr()) |e| return e;
             // TODO: this is not correct, might need to copy impl from dtoa_short here
             break :notation .{
                 .decimal_point = true,
@@ -4906,9 +5063,11 @@ pub const serializer = struct {
 
         if (int_value == null and @mod(value, 1) == 0) {
             if (!notation.decimal_point and !notation.scientific) {
-                try dest.writeStr(".0");
+                if (dest.writeStr(".0").asErr()) |e| return e;
             }
         }
+
+        return PrintResult(void).success;
     }
 
     pub fn hexEscape(ascii_byte: u8, comptime W: type, dest: *W) !void {
@@ -4928,12 +5087,12 @@ pub const serializer = struct {
             bytes[2] = ' ';
             break :slice bytes[0..3];
         };
-        try dest.writeStr(slice);
+        return dest.writeStr(slice);
     }
 
     pub fn charEscape(ascii_byte: u8, comptime W: type, dest: *W) !void {
         const bytes = [_]u8{ '\\', ascii_byte };
-        try dest.writeStr(&bytes);
+        return dest.writeStr(&bytes);
     }
 
     pub fn CssStringWriter(comptime W: type) type {
@@ -4956,22 +5115,22 @@ pub const serializer = struct {
                         0x01...0x1F, 0x7F => null,
                         else => continue,
                     };
-                    try this.inner.writeStr(str[chunk_start..i]);
+                    if (this.inner.writeStr(str[chunk_start..i]).asErr()) |e| return e;
                     if (escaped) |e| {
-                        try this.inner.writeStr(e);
+                        if (this.inner.writeStr(e).asErr()) |ee| return ee;
                     } else {
-                        try serializer.hexEscape(b, W, this.inner);
+                        if (serializer.hexEscape(b, W, this.inner).asErr()) |e| return e;
                     }
                     chunk_start = i + 1;
                 }
-                return try this.inner.writeStr(str[chunk_start..]);
+                return this.inner.writeStr(str[chunk_start..]);
             }
         };
     }
 };
 
 pub const generic = struct {
-    pub inline fn parseWithOptions(comptime T: type, input: *Parser, options: *ParserOptions) Error!T {
+    pub inline fn parseWithOptions(comptime T: type, input: *Parser, options: *ParserOptions) Result(T) {
         if (@hasDecl(T, "parseWithOptions")) return T.parseWithOptions(input, options);
         return switch (T) {
             f32 => CSSNumberFns.parse(input),
@@ -4983,7 +5142,7 @@ pub const generic = struct {
         };
     }
 
-    pub inline fn parse(comptime T: type, input: *Parser) Error!T {
+    pub inline fn parse(comptime T: type, input: *Parser) Result(T) {
         return switch (T) {
             f32 => CSSNumberFns.parse(input),
             CSSInteger => CSSIntegerFns.parse(input),
@@ -4994,15 +5153,15 @@ pub const generic = struct {
         };
     }
 
-    pub inline fn parseFor(comptime T: type) *const fn (*Parser) Error!T {
+    pub inline fn parseFor(comptime T: type) *const fn (*Parser) Result(T) {
         return struct {
-            fn parsefn(input: *Parser) Error!T {
+            fn parsefn(input: *Parser) Result(T) {
                 return generic.parse(T, input);
             }
         }.parsefn;
     }
 
-    pub inline fn toCss(comptime T: type, this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub inline fn toCss(comptime T: type, this: *const T, comptime W: type, dest: *Printer(W)) PrintResult(void) {
         return switch (T) {
             f32 => CSSNumberFns.toCss(this, W, dest),
             CSSInteger => CSSIntegerFns.toCss(this, W, dest),
@@ -5034,12 +5193,15 @@ pub const parse_utility = struct {
         allocator: Allocator,
         comptime T: type,
         input: []const u8,
-        comptime parse_one: *const fn (*Parser) Error!T,
-    ) Error!T {
+        comptime parse_one: *const fn (*Parser) Result(T),
+    ) Result(T) {
         var i = ParserInput.new(allocator, input);
         var parser = Parser.new(&i);
-        const result = try parse_one(&parser);
-        try parser.expectExhausted();
+        const result = switch (parse_one(&parser)) {
+            .err => |e| return e,
+            .result => |v| v,
+        };
+        if (parser.expectExhausted().asErr()) |e| return e;
         return result;
     }
 };
@@ -5048,37 +5210,38 @@ pub const to_css = struct {
     /// Serialize `self` in CSS syntax and return a string.
     ///
     /// (This is a convenience wrapper for `to_css` and probably should not be overridden.)
-    pub fn string(allocator: Allocator, comptime T: type, this: *T, options: PrinterOptions) PrintErr![]const u8 {
+    pub fn string(allocator: Allocator, comptime T: type, this: *T, options: PrinterOptions) PrintResult([]const u8) {
         var s = ArrayList(u8){};
         const writer = s.writer(allocator);
         const W = @TypeOf(writer);
         var printer = Printer(W).new(allocator, writer, options);
         defer printer.deinit();
         switch (T) {
-            CSSString => try CSSStringFns.toCss(W, printer),
-            else => try this.toCss(W, printer),
+            CSSString => if (CSSStringFns.toCss(W, printer).asErr()) |e| return e,
+            else => if (this.toCss(W, printer).asErr()) |e| return e,
         }
         return s;
     }
 
-    pub fn fromList(comptime T: type, this: *const ArrayList(T), comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn fromList(comptime T: type, this: *const ArrayList(T), comptime W: type, dest: *Printer(W)) PrintResult(void) {
         const len = this.items.len;
         for (this.items, 0..) |*val, idx| {
-            try val.toCss(W, dest);
+            if (val.toCss(W, dest).asErr()) |e| return e;
             if (idx < len - 1) {
-                try dest.delim(',', false);
+                if (dest.delim(',', false).asErr()) |e| return e;
             }
         }
+        return PrintResult(void).success;
     }
 
-    pub fn integer(comptime T: type, this: T, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn integer(comptime T: type, this: T, comptime W: type, dest: *Printer(W)) PrintResult(void) {
         const MAX_LEN = comptime maxDigits(T);
         var buf: [MAX_LEN]u8 = undefined;
         const str = std.fmt.bufPrint(buf[0..], "{d}", .{this}) catch unreachable;
-        try dest.writeStr(str);
+        return dest.writeStr(str);
     }
 
-    pub fn float32(this: f32, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn float32(this: f32, comptime W: type, dest: *Printer(W)) PrintResult(void) {
         var scratch: [26]u8 = undefined;
         // PERF/TODO: Compare this to Rust dtoa-short crate
         const floats = std.fmt.formatFloat(scratch[0..], this, .{
@@ -5098,9 +5261,9 @@ pub const to_css = struct {
 ///
 /// Typical usage is `input.try_parse(parse_important).is_ok()`
 /// at the end of a `DeclarationParser::parse_value` implementation.
-pub fn parseImportant(input: *Parser) Error!void {
-    try input.expectDelim('!');
-    return try input.expectIdentMatch("important");
+pub fn parseImportant(input: *Parser) Result(void) {
+    if (input.expectDelim('!').asErr()) |e| return e;
+    return input.expectIdentMatch("important");
 }
 
 pub const signfns = struct {

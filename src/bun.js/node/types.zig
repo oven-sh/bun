@@ -123,6 +123,11 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             return null;
         }
 
+        pub inline fn asValue(this: *const @This()) ?ReturnType {
+            if (this.* == .result) return this.result;
+            return null;
+        }
+
         pub inline fn initResult(result: ReturnType) Maybe(ReturnType, ErrorType) {
             return .{ .result = result };
         }

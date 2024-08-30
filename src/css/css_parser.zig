@@ -433,7 +433,7 @@ pub fn DefineEnumProperty(comptime T: type) type {
         pub fn parse(input: *Parser) Result(T) {
             const location = input.currentSourceLocation();
             const ident = switch (input.expectIdent()) {
-                .err => |e| return e,
+                .err => |e| return .{ .err = e },
                 .result => |v| v,
             };
 
@@ -557,7 +557,7 @@ fn parse_custom_at_rule_prelude(name: []const u8, input: *Parser, options: *Pars
     options.warn(input.newError(.{ .at_rule_invalid = name }));
     input.skipWhitespace();
     const tokens = switch (TokenListFns.parse(input, options, 0)) {
-        .err => |e| return e,
+        .err => |e| return .{ .err = e },
         .result => |v| v,
     };
     return .{ .unknown = .{
@@ -601,9 +601,9 @@ fn parse_qualified_rule(
         const prelude = input.parseUntilBefore(delimiters, P.QualifiedRuleParser.Prelude, parser, parser.QualifiedRuleParser.parsePrelude);
         break :brk prelude;
     };
-    if (input.expectCurlyBracketBlock().asErr()) |e| return e;
+    if (input.expectCurlyBracketBlock().asErr()) |e| return .{ .err = e };
     const prelude = switch (prelude_result) {
-        .err => |e| return e,
+        .err => |e| return .{ .err = e },
         .result => |v| v,
     };
     const Closure = struct {
@@ -973,7 +973,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                         return Error.ParsingError;
                     }
                     const url_str = switch (input.expectUrlOrString()) {
-                        .err => |e| return e,
+                        .err => |e| return .{ .err = e },
                         .result => |v| v,
                     };
 
@@ -981,7 +981,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                         if (input.tryParse(Parser.expectIdentMatching, .{"layer"}) != Error.ParsingError)
                         .{ .value = null }
                     else if (input.tryParse(Parser.expectFunctionMatching, .{"layer"}) != Error.ParsingError) brk: {
-                        break :brk .{ .value = if (input.parseNestedBlock(LayerName, void, voidWrap(LayerName, LayerName.parse)).asErr()) |e| return e };
+                        break :brk .{ .value = if (input.parseNestedBlock(LayerName, void, voidWrap(LayerName, LayerName.parse)).asErr()) |e| return .{ .err = e } };
                     } else null;
 
                     const supports = if (input.tryParse(Parser.expectFunctionMatching, .{"supports"}) != Error.ParsingError) brk: {
@@ -996,7 +996,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                     } else null;
 
                     const media = switch (MediaList.parse(input)) {
-                        .err => |e| return e,
+                        .err => |e| return .{ .err = e },
                         .result => |v| v,
                     };
 
@@ -1011,12 +1011,13 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "namespace")) {
                     if (@intFromEnum(this.state) > @intFromEnum(State.namespaces)) {
                         input.newCustomError(.unexpected_namespace_rule);
+                        // todo_stuff.errors
                         return Error.ParsingError;
                     }
 
                     const prefix = input.tryParse(Parser.expectIdent, .{}) catch null;
                     const namespace = switch (input.expectUrlOrString()) {
-                        .err => |e| return e,
+                        .err => |e| return .{ .err = e },
                         .result => |v| v,
                     };
                     return .{ .namespace = .{ prefix, namespace } };
@@ -1024,15 +1025,15 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                     // @charset is removed by rust-cssparser if it’s the first rule in the stylesheet.
                     // Anything left is technically invalid, however, users often concatenate CSS files
                     // together, so we are more lenient and simply ignore @charset rules in the middle of a file.
-                    if (input.expectString().asErr()) |e| return e;
+                    if (input.expectString().asErr()) |e| return .{ .err = e };
                     return .charset;
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "custom-media")) {
                     const custom_media_name = switch (DashedIdentFns.parse(input)) {
-                        .err => |e| return e,
+                        .err => |e| return .{ .err = e },
                         .result => |v| v,
                     };
                     const media = switch (MediaList.parse(input)) {
-                        .err => |e| return e,
+                        .err => |e| return .{ .err = e },
                         .result => |v| v,
                     };
                     return .{
@@ -1043,7 +1044,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                     };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "property")) {
                     const property_name = switch (DashedIdent.parse(input)) {
-                        .err => |e| return e,
+                        .err => |e| return .{ .err = e },
                         .result => |v| v,
                     };
                     return .{ .property = property_name };
@@ -1213,13 +1214,13 @@ pub fn NestedRuleParser(comptime T: type) type {
                 const result: Prelude = brk: {
                     if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "media")) {
                         const media = switch (MediaList.parse(input)) {
-                            .err => |e| return e,
+                            .err => |e| return .{ .err = e },
                             .result => |v| v,
                         };
                         break :brk .{ .media = media };
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "supports")) {
                         const cond = switch (SupportsCondition.parse(input)) {
-                            .err => |e| return e,
+                            .err => |e| return .{ .err = e },
                             .result => |v| v,
                         };
                         break :brk .{ .supports = cond };
@@ -1227,13 +1228,13 @@ pub fn NestedRuleParser(comptime T: type) type {
                         break :brk .font_face;
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "font-palette-values")) {
                         const dashed_ident_name = switch (DashedIdentFns.parse(input)) {
-                            .err => |e| return e,
+                            .err => |e| return .{ .err = e },
                             .result => |v| v,
                         };
                         break :brk .{ .font_palette_values = dashed_ident_name };
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "counter-style")) {
                         const custom_name = switch (CustomIdentFns.parse(input)) {
-                            .err => |e| return e,
+                            .err => |e| return .{ .err = e },
                             .result => |v| v,
                         };
                         break :brk .{ .counter_style = custom_name };
@@ -1255,7 +1256,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                         else if (bun.strings.startsWithCaseInsensitiveAscii(name, "-ms-")) .ms else .none;
 
                         const keyframes_name = switch (input.tryParse(css_rules.keyframes.KeyframesName.parse, .{})) {
-                            .err => |e| return e,
+                            .err => |e| return .{ .err = e },
                             .result => |v| v,
                         };
                         break :brk .{ .keyframes = .{ .name = keyframes_name, .prefix = prefix } };
@@ -1270,17 +1271,17 @@ pub fn NestedRuleParser(comptime T: type) type {
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-moz-document")) {
                         // Firefox only supports the url-prefix() function with no arguments as a legacy CSS hack.
                         // See https://css-tricks.com/snippets/css/css-hacks-targeting-firefox/
-                        if (input.expectFunctionMatching("url-prefix").asErr()) |e| return e;
+                        if (input.expectFunctionMatching("url-prefix").asErr()) |e| return .{ .err = e };
                         const Fn = struct {
                             pub fn parsefn(_: void, input2: *Parser) Result(void) {
                                 // Firefox also allows an empty string as an argument...
                                 // https://github.com/mozilla/gecko-dev/blob/0077f2248712a1b45bf02f0f866449f663538164/servo/components/style/stylesheets/document_rule.rs#L303
                                 _ = input2.tryParse(parseInner, .{});
-                                if (input2.expectExhausted().asErr()) |e| return e;
+                                if (input2.expectExhausted().asErr()) |e| return .{ .err = e };
                             }
                             fn parseInner(input2: *Parser) Result(void) {
                                 const s = switch (input2.expectString()) {
-                                    .err => |e| return e,
+                                    .err => |e| return .{ .err = e },
                                     .result => |v| v,
                                 };
                                 if (s.len > 0) {
@@ -1290,20 +1291,20 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 return;
                             }
                         };
-                        if (input.parseNestedBlock(void, void, Fn.parsefn).asErr()) |e| return e;
+                        if (input.parseNestedBlock(void, void, Fn.parsefn).asErr()) |e| return .{ .err = e };
                         break :brk .moz_document;
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "layer")) {
                         const names = input.parseList(LayerName) catch |e| {
                             // TODO: error does not exist
                             // but it should exist
                             // if (e == Error.EndOfInput) {}
-                            return e;
+                            return .{ .err = e };
                         };
                         break :brk .{ .layer = names };
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "container")) {
                         const container_name = input.tryParse(css_rules.container.ContainerName.parse, .{}) catch null;
                         const condition = switch (css_rules.container.ContainerCondition.parse(input)) {
-                            .err => |e| return e,
+                            .err => |e| return .{ .err = e },
                             .result => |v| v,
                         };
                         break :brk .{ .container = .{ .name = container_name, .condition = condition } };
@@ -1325,12 +1326,12 @@ pub fn NestedRuleParser(comptime T: type) type {
                         };
 
                         const scope_start = if (input.tryParse(Parser.expectParenthesisBlock, .{})) scope_start: {
-                            break :scope_start if (input.parseNestedBlock(selector.api.SelectorList, &closure, Closure.parsefn).asErr()) |e| return e;
+                            break :scope_start if (input.parseNestedBlock(selector.api.SelectorList, &closure, Closure.parsefn).asErr()) |e| return .{ .err = e };
                         } else null;
 
                         const scope_end = if (input.tryParse(Parser.expectIdentMatching, .{"to"})) scope_end: {
-                            if (input.expectParenthesisBlock().asErr()) |e| return e;
-                            break :scope_end if (input.parseNestedBlock(selector.api.SelectorList, &closure, Closure.parsefn).asErr()) |e| return e;
+                            if (input.expectParenthesisBlock().asErr()) |e| return .{ .err = e };
+                            break :scope_end if (input.parseNestedBlock(selector.api.SelectorList, &closure, Closure.parsefn).asErr()) |e| return .{ .err = e };
                         } else null;
 
                         break :brk .{
@@ -1346,12 +1347,12 @@ pub fn NestedRuleParser(comptime T: type) type {
                             .options = this.options,
                         };
                         const selectors = switch (selector.api.SelectorList.parse(&selector_parser, input, .discard_list, .contained)) {
-                            .err => |e| return e,
+                            .err => |e| return .{ .err = e },
                             .result => |v| v,
                         };
                         break :brk .{ .nest = selectors };
                     } else {
-                        break :brk if (parse_custom_at_rule_prelude(name, input, this.options, this.at_rule_parser).asErr()) |e| return e;
+                        break :brk if (parse_custom_at_rule_prelude(name, input, this.options, this.at_rule_parser).asErr()) |e| return .{ .err = e };
                     }
                 };
 
@@ -1399,7 +1400,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                     .font_palette_values => {
                         const name = prelude.font_palette_values;
                         const rule = switch (css_rules.font_palette_values.FontPaletteValuesRule.parse(name, input, loc)) {
-                            .err => |e| return e,
+                            .err => |e| return .{ .err = e },
                             .result => |v| v,
                         };
                         this.rules.v.append(
@@ -1415,7 +1416,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 .counter_style = css_rules.counter_style.CounterStyleRule{
                                     .name = name,
                                     .declarations = switch (DeclarationBlock.parse(input, this.options)) {
-                                        .err => |e| return e,
+                                        .err => |e| return .{ .err = e },
                                         .result => |v| v,
                                     },
                                     .loc = loc,
@@ -1426,7 +1427,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                     .media => {
                         const query = prelude.media;
                         const rules = switch (this.parseStyleBlock(input)) {
-                            .err => |e| return e,
+                            .err => |e| return .{ .err = e },
                             .result => |v| v,
                         };
                         this.rules.v.append(
@@ -1443,7 +1444,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                     .supports => {
                         const condition = prelude.supports;
                         const rules = switch (this.parseStyleBlock(input)) {
-                            .err => |e| return e,
+                            .err => |e| return .{ .err = e },
                             .result => |v| v,
                         };
                         this.rules.v.append(@compileError(todo_stuff.think_about_allocator), .{
@@ -1456,7 +1457,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                     },
                     .container => {
                         const rules = switch (this.parseStyleBlock(input)) {
-                            .err => |e| return e,
+                            .err => |e| return .{ .err = e },
                             .result => |v| v,
                         };
                         this.rules.v.append(
@@ -1473,7 +1474,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                     },
                     .scope => {
                         const rules = switch (this.parseStyleBlock(input)) {
-                            .err => |e| return e,
+                            .err => |e| return .{ .err = e },
                             .result => |v| v,
                         };
                         this.rules.v.append(
@@ -1493,7 +1494,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                             .viewport = css_rules.viewport.ViewportRule{
                                 .vendor_prefix = prelude.viewport,
                                 .declarations = switch (DeclarationBlock.parse(input, this.options)) {
-                                    .err => |e| return e,
+                                    .err => |e| return .{ .err = e },
                                     .result => |v| v,
                                 },
                                 .loc = loc,
@@ -1527,7 +1528,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                     .page => {
                         const selectors = prelude.page;
                         const rule = switch (css_rules.page.PageRule.parse(selectors, input, loc, this.options)) {
-                            .err => |e| return e,
+                            .err => |e| return .{ .err = e },
                             .result => |v| v,
                         };
                         this.rules.v.append(
@@ -1537,7 +1538,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                     },
                     .moz_document => {
                         const rules = switch (this.parseStyleBlock(input)) {
-                            .err => |e| return e,
+                            .err => |e| return .{ .err = e },
                             .result => |v| v,
                         };
                         this.rules.v.append(@compileError(todo_stuff.think_about_allocator), .{
@@ -1555,7 +1556,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                         } else return input.newError(.at_rule_body_invalid);
 
                         const rules = switch (this.parseStyleBlock(input)) {
-                            .err => |e| return e,
+                            .err => |e| return .{ .err = e },
                             .result => |v| v,
                         };
 
@@ -1567,7 +1568,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                         const name = prelude.property[0];
                         this.rules.v.append(@compileError(todo_stuff.think_about_allocator), .{
                             .property = switch (css_rules.property.PropertyRule.parse(name, input, loc)) {
-                                .err => |e| return e,
+                                .err => |e| return .{ .err = e },
                                 .result => |v| v,
                             },
                         });
@@ -1578,7 +1579,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                     },
                     .starting_style => {
                         const rules = switch (this.parseStyleBlock(input)) {
-                            .err => |e| return e,
+                            .err => |e| return .{ .err = e },
                             .result => |v| v,
                         };
                         this.rules.v.append(
@@ -1594,7 +1595,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                     .nest => {
                         const selectors = prelude.nest;
                         const result = switch (this.parseNested(input, true)) {
-                            .err => |e| return e,
+                            .err => |e| return .{ .err = e },
                             .result => |v| v,
                         };
                         const declarations = result[0];
@@ -1624,7 +1625,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                     .name = prelude.unknown.name,
                                     .prelude = prelude.unknown.tokens,
                                     .block = switch (TokenListFns.parse(input, this.options, 0)) {
-                                        .err => |e| return e,
+                                        .err => |e| return .{ .err = e },
                                         .result => |v| v,
                                     },
                                     .loc = loc,
@@ -1637,7 +1638,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                             @compileError(todo_stuff.think_about_allocator),
                             .{
                                 .custom = switch (parse_custom_at_rule_body(T, prelude, input, start, this.options, this.at_rule_parser, this.is_in_style_rule)) {
-                                    .err => |e| return e,
+                                    .err => |e| return .{ .err = e },
                                     .result => |v| v,
                                 },
                             },
@@ -1686,7 +1687,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                             @compileError(todo_stuff.think_about_allocator),
                             .{
                                 .custom = switch (parse_custom_at_rule_body(T, prelude, null, start, this.options, this.at_rule_parser, this.is_in_style_rule)) {
-                                    .err => |e| return e,
+                                    .err => |e| return .{ .err = e },
                                     .result => |v| v,
                                 },
                             },
@@ -1722,7 +1723,7 @@ pub fn NestedRuleParser(comptime T: type) type {
             pub fn parseBlock(this: *This, selectors: Prelude, start: *const ParserState, input: *Parser) Result(QualifiedRule) {
                 const loc = this.getLoc(start);
                 const result = switch (this.parseNested(input, true)) {
-                    .err => |e| return e,
+                    .err => |e| return .{ .err = e },
                     .result => |v| v,
                 };
                 const declarations = result[0];
@@ -1834,7 +1835,7 @@ pub fn NestedRuleParser(comptime T: type) type {
             // Declarations can be immediately within @media and @supports blocks that are nested within a parent style rule.
             // These act the same way as if they were nested within a `& { ... }` block.
             const declarations, var rules = switch (this.parseNested(input, false)) {
-                .err => |e| return e,
+                .err => |e| return .{ .err = e },
                 .result => |v| v,
             };
 
@@ -1981,8 +1982,8 @@ pub fn StyleSheet(comptime AtRule: type) type {
                 var references = std.StringArrayHashMap(CssModuleReferences).init(allocator);
                 printer.css_module = CssModule.new(config, &this.sources, project_root, &references);
 
-                if (this.rules.toCss(&printer).asErr()) |e| return e;
-                if (printer.newline().asErr()) |e| return e;
+                if (this.rules.toCss(&printer).asErr()) |e| return .{ .err = e };
+                if (printer.newline().asErr()) |e| return .{ .err = e };
 
                 return ToCssResult{
                     .dependencies = printer.dependencies,
@@ -1995,7 +1996,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
                     .references = references,
                 };
             } else {
-                if (this.rules.toCss(&printer).asErr()) |e| return e;
+                if (this.rules.toCss(&printer).asErr()) |e| return .{ .err = e };
                 return ToCssResult{
                     .dependencies = printer.dependencies,
                     .code = dest,
@@ -2166,7 +2167,7 @@ pub fn RuleBodyParser(comptime P: type) type {
                                 const Closure = struct {
                                     parser: *P,
                                     pub fn parsefn(self: *@This(), input: *Parser) Result(I) {
-                                        if (input.expectColon().asErr()) |e| return e;
+                                        if (input.expectColon().asErr()) |e| return .{ .err = e };
                                         return P.DeclarationParser.parseValue(self.parser, name, input);
                                     }
                                 };
@@ -2423,7 +2424,7 @@ pub const Parser = struct {
     pub fn expectPercentage(this: *Parser) Result(f32) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
-            .err => |e| return e,
+            .err => |e| return .{ .err = e },
             .result => |v| v,
         };
         if (tok.* == .percentage) return tok.percentage.unit_value;
@@ -2433,7 +2434,7 @@ pub const Parser = struct {
     pub fn expectComma(this: *Parser) Result(void) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
-            .err => |e| return e,
+            .err => |e| return .{ .err = e },
             .result => |v| v,
         };
         switch (tok.*) {
@@ -2447,7 +2448,7 @@ pub const Parser = struct {
     pub fn expectInteger(this: *Parser) Result(i32) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
-            .err => |e| return e,
+            .err => |e| return .{ .err = e },
             .result => |v| v,
         };
         if (tok.* == .number and tok.number.int_value != null) return tok.number.int_value.?;
@@ -2458,7 +2459,7 @@ pub const Parser = struct {
     pub fn expectNumber(this: *Parser) Result(f32) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
-            .err => |e| return e,
+            .err => |e| return .{ .err = e },
             .result => |v| v,
         };
         if (tok.* == .number) return tok.number.value;
@@ -2468,7 +2469,7 @@ pub const Parser = struct {
     pub fn expectDelim(this: *Parser, delim: u8) Result(void) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
-            .err => |e| return e,
+            .err => |e| return .{ .err = e },
             .result => |v| v,
         };
         if (tok.* == .delim and tok.delim == delim) return;
@@ -2478,7 +2479,7 @@ pub const Parser = struct {
     pub fn expectParenthesisBlock(this: *Parser) Result(void) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
-            .err => |e| return e,
+            .err => |e| return .{ .err = e },
             .result => |v| v,
         };
         if (tok.* == .open_paren) return;
@@ -2488,7 +2489,7 @@ pub const Parser = struct {
     pub fn expectColon(this: *Parser) Result(void) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
-            .err => |e| return e,
+            .err => |e| return .{ .err = e },
             .result => |v| v,
         };
         if (tok.* == .colon) return;
@@ -2498,7 +2499,7 @@ pub const Parser = struct {
     pub fn expectString(this: *Parser) Result([]const u8) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
-            .err => |e| return e,
+            .err => |e| return .{ .err = e },
             .result => |v| v,
         };
         if (tok.* == .string) return tok.string;
@@ -2508,7 +2509,7 @@ pub const Parser = struct {
     pub fn expectIdent(this: *Parser) Result([]const u8) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
-            .err => |e| return e,
+            .err => |e| return .{ .err = e },
             .result => |v| v,
         };
         if (tok.* == .ident) return tok.ident;
@@ -2519,7 +2520,7 @@ pub const Parser = struct {
     pub fn expectIdentOrString(this: *Parser) Result([]const u8) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
-            .err => |e| return e,
+            .err => |e| return .{ .err = e },
             .result => |v| v,
         };
         switch (tok.*) {
@@ -2533,7 +2534,7 @@ pub const Parser = struct {
     pub fn expectIdentMatching(this: *Parser, name: []const u8) Result(void) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
-            .err => |e| return e,
+            .err => |e| return .{ .err = e },
             .result => |v| v,
         };
         switch (tok.*) {
@@ -2546,7 +2547,7 @@ pub const Parser = struct {
     pub fn expectFunction(this: *Parser) Result([]const u8) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
-            .err => |e| return e,
+            .err => |e| return .{ .err = e },
             .result => |v| v,
         };
         switch (tok.*) {
@@ -2559,7 +2560,7 @@ pub const Parser = struct {
     pub fn expectFunctionMatching(this: *Parser, name: []const u8) Result(void) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
-            .err => |e| return e,
+            .err => |e| return .{ .err = e },
             .result => |v| v,
         };
         switch (tok.*) {
@@ -2572,7 +2573,7 @@ pub const Parser = struct {
     pub fn expectCurlyBracketBlock(this: *Parser) Result(void) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
-            .err => |e| return e,
+            .err => |e| return .{ .err = e },
             .result => |v| v,
         };
         switch (tok.*) {
@@ -2585,7 +2586,7 @@ pub const Parser = struct {
     pub fn expectUrl(this: *Parser) Result([]const u8) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
-            .err => |e| return e,
+            .err => |e| return .{ .err = e },
             .result => |v| v,
         };
         switch (tok.*) {
@@ -2610,7 +2611,7 @@ pub const Parser = struct {
     pub fn expectUrlOrString(this: *Parser) Result([]const u8) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
-            .err => |e| return e,
+            .err => |e| return .{ .err = e },
             .result => |v| v,
         };
         switch (tok.*) {
@@ -2671,10 +2672,10 @@ pub const Parser = struct {
 
     pub fn parseEntirely(this: *Parser, comptime T: type, closure: anytype, comptime parsefn: *const fn (@TypeOf(closure), *Parser) Result(T)) Result(T) {
         const result = switch (parsefn(closure, this)) {
-            .err => |e| return e,
+            .err => |e| return .{ .err = e },
             .result => |v| v,
         };
-        if (this.expectExhausted().asErr()) |e| return e;
+        if (this.expectExhausted().asErr()) |e| return .{ .err = e };
         return result;
     }
 
@@ -2934,7 +2935,7 @@ pub const nth = struct {
     /// Return `Ok((A, B))`, or `Err(())` for a syntax error.
     pub fn parse_nth(input: *Parser) Result(struct { i32, i32 }) {
         const tok = switch (input.next()) {
-            .err => |e| return e,
+            .err => |e| return .{ .err = e },
             .result => |v| v,
         };
         switch (tok.*) {
@@ -2946,9 +2947,9 @@ pub const nth = struct {
                     // @compileError(todo_stuff.match_ignore_ascii_case);
                     const unit = tok.dimension.unit;
                     if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "n")) {
-                        return if (parse_b(input, a).asErr()) |e| return e;
+                        return if (parse_b(input, a).asErr()) |e| return .{ .err = e };
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "n-")) {
-                        return if (parse_signless_b(input, a).asErr()) |e| return e;
+                        return if (parse_signless_b(input, a).asErr()) |e| return .{ .err = e };
                     } else {
                         if (parse_n_dash_digits(unit)) |b| {
                             return .{ a, b };
@@ -2966,13 +2967,13 @@ pub const nth = struct {
                 } else if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(value, "odd")) {
                     return .{ 2, 1 };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(value, "n")) {
-                    return if (parse_b(input, 1).asErr()) |e| return e;
+                    return if (parse_b(input, 1).asErr()) |e| return .{ .err = e };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(value, "-n")) {
-                    return if (parse_b(input, -1).asErr()) |e| return e;
+                    return if (parse_b(input, -1).asErr()) |e| return .{ .err = e };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(value, "n-")) {
-                    return if (parse_signless_b(input, 1, -1).asErr()) |e| return e;
+                    return if (parse_signless_b(input, 1, -1).asErr()) |e| return .{ .err = e };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(value, "-n-")) {
-                    return if (parse_signless_b(input, -1, -1).asErr()) |e| return e;
+                    return if (parse_signless_b(input, -1, -1).asErr()) |e| return .{ .err = e };
                 } else {
                     const slice, const a = if (bun.strings.startsWithChar(value, '-')) .{ value[1..], -1 } else .{ value, 1 };
                     if (parse_n_dash_digits(slice)) |b| return .{ a, b };
@@ -2981,15 +2982,15 @@ pub const nth = struct {
             },
             .delim => {
                 const next_tok = switch (input.nextIncludingWhitespace()) {
-                    .err => |e| return e,
+                    .err => |e| return .{ .err = e },
                     .result => |v| v,
                 };
                 if (next_tok.* == .ident) {
                     const value = next_tok.ident;
                     if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(value, "n")) {
-                        return if (parse_b(input, 1).asErr()) |e| return e;
+                        return if (parse_b(input, 1).asErr()) |e| return .{ .err = e };
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(value, "-n")) {
-                        return if (parse_signless_b(input, 1, -1).asErr()) |e| return e;
+                        return if (parse_signless_b(input, 1, -1).asErr()) |e| return .{ .err = e };
                     } else {
                         if (parse_n_dash_digits(value)) |b| {
                             return .{ 1, b };
@@ -3022,7 +3023,7 @@ pub const nth = struct {
 
     fn parse_signless_b(input: *Parser, a: i32, b_sign: i32) Result(struct { i32, i32 }) {
         const tok = switch (input.next()) {
-            .err => |e| return e,
+            .err => |e| return .{ .err = e },
             .result => |v| v,
         };
         if (tok.* == .number and !tok.number.has_sign and tok.number.int_value != null) {
@@ -4464,49 +4465,49 @@ pub const Token = union(TokenKind) {
     pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintResult(void) {
         // zack is here: verify this is correct
         return switch (this.*) {
-            .ident => |value| if (serializer.serializeIdentifier(value, dest).asErr()) |e| return e,
+            .ident => |value| if (serializer.serializeIdentifier(value, dest).asErr()) |e| return .{ .err = e },
             .at_keyword => |value| {
-                if (dest.writeStr("@").asErr()) |e| return e;
+                if (dest.writeStr("@").asErr()) |e| return .{ .err = e };
                 return serializer.serializeIdentifier(value, dest);
             },
             .hash => |value| {
-                if (dest.writeStr("#").asErr()) |e| return e;
+                if (dest.writeStr("#").asErr()) |e| return .{ .err = e };
                 return serializer.serializeName(value, dest);
             },
             .id_hash => |value| {
-                if (dest.writeStr("#").asErr()) |e| return e;
+                if (dest.writeStr("#").asErr()) |e| return .{ .err = e };
                 return serializer.serializeIdentifier(value, dest);
             },
             .quoted_string => |value| serializer.serializeString(value, dest),
             .unquoted_url => |value| {
-                if (dest.writeStr("url(").asErr()) |e| return e;
-                if (serializer.serializeUnquotedUrl(value, dest).asErr()) |e| return e;
+                if (dest.writeStr("url(").asErr()) |e| return .{ .err = e };
+                if (serializer.serializeUnquotedUrl(value, dest).asErr()) |e| return .{ .err = e };
                 return dest.writeStr(")");
             },
             .delim => |value| dest.writeChar(value),
             .number => |num| serializer.writeNumeric(num.value, num.int_value, num.has_sign, dest),
             .percentage => |num| {
-                if (serializer.writeNumeric(num.value * 100, num.int_value, num.has_sign, dest).asErr()) |e| return e;
+                if (serializer.writeNumeric(num.value * 100, num.int_value, num.has_sign, dest).asErr()) |e| return .{ .err = e };
                 return dest.writeStr("%");
             },
             .dimension => |dim| {
-                if (serializer.writeNumeric(dim.num.value, dim.num.int_value, dim.num.has_sign, dest).asErr()) |e| return e;
+                if (serializer.writeNumeric(dim.num.value, dim.num.int_value, dim.num.has_sign, dest).asErr()) |e| return .{ .err = e };
                 // Disambiguate with scientific notation.
                 const unit = dim.unit;
                 if (std.mem.eql(u8, unit, "e") or std.mem.eql(u8, unit, "E") or
                     std.mem.startsWith(u8, unit, "e-") or std.mem.startsWith(u8, unit, "E-"))
                 {
-                    if (dest.writeStr("\\65 ").asErr()) |e| return e;
-                    if (serializer.serializeName(unit[1..], dest).asErr()) |e| return e;
+                    if (dest.writeStr("\\65 ").asErr()) |e| return .{ .err = e };
+                    if (serializer.serializeName(unit[1..], dest).asErr()) |e| return .{ .err = e };
                 } else {
-                    if (serializer.serializeIdentifier(unit, dest).asErr()) |e| return e;
+                    if (serializer.serializeIdentifier(unit, dest).asErr()) |e| return .{ .err = e };
                 }
                 return PrintResult(void).success;
             },
             .white_space => |content| dest.writeStr(content),
             .comment => |content| {
-                if (dest.writeStr("/*").asErr()) |e| return e;
-                if (dest.writeStr(content).asErr()) |e| return e;
+                if (dest.writeStr("/*").asErr()) |e| return .{ .err = e };
+                if (dest.writeStr(content).asErr()) |e| return .{ .err = e };
                 return dest.writeStr("*/");
             },
             .colon => dest.writeStr(":"),
@@ -4520,19 +4521,19 @@ pub const Token = union(TokenKind) {
             .cdo => dest.writeStr("<!--"),
             .cdc => dest.writeStr("-->"),
             .function => |name| {
-                if (serializer.serializeIdentifier(name, dest).asErr()) |e| return e;
+                if (serializer.serializeIdentifier(name, dest).asErr()) |e| return .{ .err = e };
                 return dest.writeStr("(");
             },
             .open_paren => dest.writeStr("("),
             .open_square => dest.writeStr("["),
             .open_curly => dest.writeStr("{"),
             .bad_url => |contents| {
-                if (dest.writeStr("url(").asErr()) |e| return e;
-                if (dest.writeStr(contents).asErr()) |e| return e;
+                if (dest.writeStr("url(").asErr()) |e| return .{ .err = e };
+                if (dest.writeStr(contents).asErr()) |e| return .{ .err = e };
                 return dest.writeChar(')');
             },
             .bad_string => |value| {
-                if (dest.writeChar('"').asErr()) |e| return e;
+                if (dest.writeChar('"').asErr()) |e| return .{ .err = e };
                 var writer = serializer.CssStringWriter(Printer(W)).new(dest);
                 return writer.writeStr(value);
             },
@@ -4942,13 +4943,13 @@ pub const serializer = struct {
                 else => if (!std.ascii.isASCII(b)) continue else null,
             };
 
-            if (dest.writeStr(value[chunk_start..i]).asErr()) |e| return e;
+            if (dest.writeStr(value[chunk_start..i]).asErr()) |e| return .{ .err = e };
             if (escaped) |esc| {
-                if (dest.writeStr(esc).asErr()) |e| return e;
+                if (dest.writeStr(esc).asErr()) |e| return .{ .err = e };
             } else if ((b >= 0x01 and b <= 0x1F) or b == 0x7F) {
-                if (hexEscape(b, W, dest).asErr()) |e| return e;
+                if (hexEscape(b, W, dest).asErr()) |e| return .{ .err = e };
             } else {
-                if (charEscape(b, W, dest).asErr()) |e| return e;
+                if (charEscape(b, W, dest).asErr()) |e| return .{ .err = e };
             }
             chunk_start = i + 1;
         }
@@ -4957,8 +4958,8 @@ pub const serializer = struct {
 
     /// Write a double-quoted CSS string token, escaping content as necessary.
     pub fn serializeString(value: []const u8, comptime W: type, dest: *W) PrintResult(void) {
-        if (dest.writeStr("\"").asErr()) |e| return e;
-        if (CssStringWriter(W).new(dest).writeStr(value).asErr()) |e| return e;
+        if (dest.writeStr("\"").asErr()) |e| return .{ .err = e };
+        if (CssStringWriter(W).new(dest).writeStr(value).asErr()) |e| return .{ .err = e };
         return dest.writeStr("\"");
     }
 
@@ -4977,10 +4978,10 @@ pub const serializer = struct {
             // TODO: calculate the actual number of chars here
             var buf: [64]u8 = undefined;
             var fbs = std.io.fixedBufferStream(&buf);
-            if (token.toCss(W, fbs.writer()).asErr()) |e| return e;
+            if (token.toCss(W, fbs.writer()).asErr()) |e| return .{ .err = e };
             const s = fbs.getWritten();
             if (value < 0.0) {
-                if (dest.writeStr("-").asErr()) |e| return e;
+                if (dest.writeStr("-").asErr()) |e| return .{ .err = e };
                 return dest.writeStr(bun.strings.trimLeadingPattern2(s, '-', '0'));
             } else {
                 return dest.writeStr(bun.strings.trimLeadingChar(s, '0'));
@@ -4997,18 +4998,18 @@ pub const serializer = struct {
         }
 
         if (bun.strings.startsWith(value, "--")) {
-            if (dest.writeStr("--").asErr()) |e| return e;
+            if (dest.writeStr("--").asErr()) |e| return .{ .err = e };
             return serializeName(value[2..], W, dest);
         } else if (bun.strings.eql(value, "-")) {
             return dest.writeStr("\\-");
         } else {
             var slice = value;
             if (slice[0] == '-') {
-                if (dest.writeStr("-").asErr()) |e| return e;
+                if (dest.writeStr("-").asErr()) |e| return .{ .err = e };
                 slice = slice[1..];
             }
             if (slice.len > 0 and slice[0] >= '0' and slice[0] <= '9') {
-                if (hexEscape(slice[0], W, dest).asErr()) |e| return e;
+                if (hexEscape(slice[0], W, dest).asErr()) |e| return .{ .err = e };
                 slice = slice[1..];
             }
             return serializeName(slice, W, dest);
@@ -5023,11 +5024,11 @@ pub const serializer = struct {
                 '(', ')', '"', '\'', '\\' => false,
                 else => continue,
             };
-            if (dest.writeStr(value[chunk_start..i]).asErr()) |e| return e;
+            if (dest.writeStr(value[chunk_start..i]).asErr()) |e| return .{ .err = e };
             if (hex) {
-                if (hexEscape(b, W, dest).asErr()) |e| return e;
+                if (hexEscape(b, W, dest).asErr()) |e| return .{ .err = e };
             } else {
-                if (charEscape(b, W, dest).asErr()) |e| return e;
+                if (charEscape(b, W, dest).asErr()) |e| return .{ .err = e };
             }
             chunk_start = i + 1;
         }
@@ -5037,12 +5038,12 @@ pub const serializer = struct {
     pub fn writeNumeric(value: f32, int_value: ?i32, has_sign: bool, comptime W: type, dest: *W) PrintResult(void) {
         // `value >= 0` is true for negative 0.
         if (has_sign and !std.math.signbit(value)) {
-            if (dest.writeStr("+").asErr()) |e| return e;
+            if (dest.writeStr("+").asErr()) |e| return .{ .err = e };
         }
 
         const notation = if (value == 0.0 and std.math.signbit(value)) notation: {
             // Negative zero. Work around #20596.
-            if (dest.writeStr("-0").asErr()) |e| return e;
+            if (dest.writeStr("-0").asErr()) |e| return .{ .err = e };
             break :notation .{
                 .decimal_point = false,
                 .scientific = false,
@@ -5055,7 +5056,7 @@ pub const serializer = struct {
                 .mode = .scientific,
                 .precision = 6,
             }) catch unreachable;
-            if (dest.writeStr(floats).asErr()) |e| return e;
+            if (dest.writeStr(floats).asErr()) |e| return .{ .err = e };
             // TODO: this is not correct, might need to copy impl from dtoa_short here
             break :notation .{
                 .decimal_point = true,
@@ -5065,7 +5066,7 @@ pub const serializer = struct {
 
         if (int_value == null and @mod(value, 1) == 0) {
             if (!notation.decimal_point and !notation.scientific) {
-                if (dest.writeStr(".0").asErr()) |e| return e;
+                if (dest.writeStr(".0").asErr()) |e| return .{ .err = e };
             }
         }
 
@@ -5117,11 +5118,11 @@ pub const serializer = struct {
                         0x01...0x1F, 0x7F => null,
                         else => continue,
                     };
-                    if (this.inner.writeStr(str[chunk_start..i]).asErr()) |e| return e;
+                    if (this.inner.writeStr(str[chunk_start..i]).asErr()) |e| return .{ .err = e };
                     if (escaped) |e| {
-                        if (this.inner.writeStr(e).asErr()) |ee| return ee;
+                        if (this.inner.writeStr(e).asErr()) |ee| return .{ .err = ee };
                     } else {
-                        if (serializer.hexEscape(b, W, this.inner).asErr()) |e| return e;
+                        if (serializer.hexEscape(b, W, this.inner).asErr()) |e| return .{ .err = e };
                     }
                     chunk_start = i + 1;
                 }
@@ -5200,10 +5201,10 @@ pub const parse_utility = struct {
         var i = ParserInput.new(allocator, input);
         var parser = Parser.new(&i);
         const result = switch (parse_one(&parser)) {
-            .err => |e| return e,
+            .err => |e| return .{ .err = e },
             .result => |v| v,
         };
-        if (parser.expectExhausted().asErr()) |e| return e;
+        if (parser.expectExhausted().asErr()) |e| return .{ .err = e };
         return result;
     }
 };
@@ -5219,8 +5220,8 @@ pub const to_css = struct {
         var printer = Printer(W).new(allocator, writer, options);
         defer printer.deinit();
         switch (T) {
-            CSSString => if (CSSStringFns.toCss(W, printer).asErr()) |e| return e,
-            else => if (this.toCss(W, printer).asErr()) |e| return e,
+            CSSString => if (CSSStringFns.toCss(W, printer).asErr()) |e| return .{ .err = e },
+            else => if (this.toCss(W, printer).asErr()) |e| return .{ .err = e },
         }
         return s;
     }
@@ -5228,9 +5229,9 @@ pub const to_css = struct {
     pub fn fromList(comptime T: type, this: *const ArrayList(T), comptime W: type, dest: *Printer(W)) PrintResult(void) {
         const len = this.items.len;
         for (this.items, 0..) |*val, idx| {
-            if (val.toCss(W, dest).asErr()) |e| return e;
+            if (val.toCss(W, dest).asErr()) |e| return .{ .err = e };
             if (idx < len - 1) {
-                if (dest.delim(',', false).asErr()) |e| return e;
+                if (dest.delim(',', false).asErr()) |e| return .{ .err = e };
             }
         }
         return PrintResult(void).success;
@@ -5264,7 +5265,7 @@ pub const to_css = struct {
 /// Typical usage is `input.try_parse(parse_important).is_ok()`
 /// at the end of a `DeclarationParser::parse_value` implementation.
 pub fn parseImportant(input: *Parser) Result(void) {
-    if (input.expectDelim('!').asErr()) |e| return e;
+    if (input.expectDelim('!').asErr()) |e| return .{ .err = e };
     return input.expectIdentMatch("important");
 }
 

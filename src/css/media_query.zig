@@ -78,10 +78,10 @@ pub const MediaList = struct {
         var first = true;
         for (this.media_queries.items) |*query| {
             if (!first) {
-                if (dest.delim(',', false).asErr()) |e| return e;
+                if (dest.delim(',', false).asErr()) |e| return .{ .err = e };
             }
             first = false;
-            if (query.toCss(W, dest).asErr()) |e| return e;
+            if (query.toCss(W, dest).asErr()) |e| return .{ .err = e };
         }
         return PrintResult(void).success;
     }
@@ -303,7 +303,7 @@ pub const MediaCondition = struct {
     /// QueryCondition.parseFeature
     pub fn parseFeature(input: *css.Parser) Result(MediaCondition) {
         const feature = switch (MediaFeature.parse(input)) {
-            .err => |e| return e,
+            .err => |e| return .{ .err = e },
             .result => |v| v,
         };
         return MediaCondition{ .feature = feature };
@@ -352,7 +352,7 @@ pub fn parseQueryCondition(
     const location = input.currentSourceLocation();
     const is_negation, const is_style = brk: {
         const tok = switch (input.next()) {
-            .err => |e| return e,
+            .err => |e| return .{ .err = e },
             .result => |v| v,
         };
         switch (tok.*) {
@@ -383,7 +383,7 @@ pub fn parseQueryCondition(
             // (true, false)
             0b10 => {
                 const inner_condition = switch (parseParensOrFunction(QueryCondition, input, flags)) {
-                    .err => |e| return e,
+                    .err => |e| return .{ .err = e },
                     .result => |v| v,
                 };
                 return QueryCondition.createNegation(bun.create(alloc, QueryCondition, inner_condition));
@@ -391,17 +391,17 @@ pub fn parseQueryCondition(
             // (true, true)
             0b11 => {
                 const inner_condition = switch (QueryCondition.parseStyleQuery(input)) {
-                    .err => |e| return e,
+                    .err => |e| return .{ .err = e },
                     .result => |v| v,
                 };
                 return QueryCondition.createNegation(bun.create(alloc, QueryCondition, inner_condition));
             },
             0b00 => break :first_condition switch (parseParenBlock(QueryCondition, input, flags)) {
-                .err => |e| return e,
+                .err => |e| return .{ .err = e },
                 .result => |v| v,
             },
             0b01 => break :first_condition switch (QueryCondition.parseStyleQuery(input)) {
-                .err => |e| return e,
+                .err => |e| return .{ .err = e },
                 .result => |v| v,
             },
             else => unreachable,
@@ -425,7 +425,7 @@ pub fn parseQueryCondition(
     conditions.append(
         @compileError(css.todo_stuff.think_about_allocator),
         switch (parseParensOrFunction(QueryCondition, input, flags)) {
-            .err => |e| return e,
+            .err => |e| return .{ .err = e },
             .result => |v| v,
         },
     ) catch unreachable;
@@ -443,7 +443,7 @@ pub fn parseQueryCondition(
         conditions.append(
             @compileError(css.todo_stuff.think_about_allocator),
             switch (parseParensOrFunction(QueryCondition, input, flags)) {
-                .err => |e| return e,
+                .err => |e| return .{ .err = e },
                 .result => |v| v,
             },
         ) catch unreachable;
@@ -458,7 +458,7 @@ pub fn parseParensOrFunction(
 ) Result(QueryCondition) {
     const location = input.currentSourceLocation();
     const t = switch (input.next()) {
-        .err => |e| return e,
+        .err => |e| return .{ .err = e },
         .result => |v| v,
     };
     switch (t.*) {

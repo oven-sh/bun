@@ -1555,7 +1555,7 @@ pub const BundleV2 = struct {
 
         var timer: bun.windows.libuv.Timer = undefined;
         if (bun.Environment.isWindows) {
-            timer.init(instance.waker.?.loop.uv_loop);
+            timer.init(instance.waker.loop.uv_loop);
             timer.start(std.math.maxInt(u64), std.math.maxInt(u64), &timerCallback);
         }
 
@@ -1581,23 +1581,27 @@ pub const BundleV2 = struct {
                 has_bundled = false;
             }
 
-            _ = instance.waker.?.wait();
+            _ = instance.waker.wait();
         }
     }
 
     pub const BundleThread = struct {
         /// Must be created on the BundleThread.
-        waker: ?bun.Async.Waker,
+        /// Uninitialized until `wait_for_thread_to_have_created_the_waker` is set to 0.
+        waker: bun.Async.Waker,
         queue: bun.UnboundedQueue(JSBundleCompletionTask, .next),
         generation: bun.Generation,
         wait_for_thread_to_have_created_the_waker: std.atomic.Value(u32),
 
         pub var instance: ?*BundleThread = undefined;
         pub var load_once = std.once(loadOnce);
-        pub fn loadOnce() void {
+
+        // Blocks the calling thread until the bun build thread is created.
+        // std.once also blocks other callers of this function until the first caller is done.
+        fn loadOnce() void {
             const this = bun.default_allocator.create(BundleThread) catch bun.outOfMemory();
             this.* = .{
-                .waker = null,
+                .waker = undefined,
                 .queue = .{},
                 .generation = 0,
                 .wait_for_thread_to_have_created_the_waker = .{
@@ -1619,9 +1623,7 @@ pub const BundleV2 = struct {
         pub fn enqueue(task: *JSBundleCompletionTask) void {
             const this = get();
             this.queue.push(task);
-            if (this.waker) |*waker| {
-                waker.wake();
-            }
+            this.waker.wake();
         }
     };
 

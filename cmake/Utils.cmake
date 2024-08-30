@@ -195,3 +195,106 @@ macro(find_llvm_program variable program_name)
   list(APPEND CMAKE_ARGS "-D${variable}=${${variable}}")
   message(STATUS "Set ${variable}: ${${variable}}")
 endmacro()
+
+macro(add_target)
+  set(args NAME COMMENT WORKING_DIRECTORY)
+  set(multiArgs ALIASES COMMAND DEPENDS SOURCES OUTPUTS)
+  cmake_parse_arguments(TARGET "${args}" "" "${multiArgs}" ${ARGN})
+
+  if(NOT TARGET_NAME)
+    message(FATAL_ERROR "add_target: NAME is required")
+  endif()
+
+  if(NOT TARGET_COMMAND)
+    message(FATAL_ERROR "add_target: COMMAND is required")
+  endif()
+
+  if(NOT TARGET_COMMENT)
+    set(TARGET_COMMENT "Running ${TARGET_NAME}")
+  endif()
+
+  if(NOT TARGET_WORKING_DIRECTORY)
+    set(TARGET_WORKING_DIRECTORY ${CWD})
+  endif()
+
+  add_custom_command(
+    VERBATIM COMMAND
+      ${TARGET_COMMAND}
+    WORKING_DIRECTORY
+      ${TARGET_WORKING_DIRECTORY}
+    OUTPUT
+      ${TARGET_OUTPUTS}
+    DEPENDS
+      ${TARGET_SOURCES}
+      ${TARGET_DEPENDS}
+  )
+
+  add_custom_target(${TARGET_NAME}
+    COMMENT
+      ${TARGET_COMMENT}
+    DEPENDS
+      ${TARGET_OUTPUTS}
+    SOURCES
+      ${TARGET_SOURCES}
+  )
+
+  foreach(alias ${TARGET_ALIASES})
+    if(NOT TARGET ${alias})
+      add_custom_target(${alias} DEPENDS ${TARGET_NAME})
+    else()
+      add_dependencies(${alias} ${TARGET_NAME})
+    endif()
+  endforeach()
+
+  if(TARGET install-${TARGET_NAME})
+    add_dependencies(install-${TARGET_NAME} ${TARGET_NAME})
+  endif()
+
+  if(TARGET clone-${TARGET_NAME})
+    if(TARGET install-${TARGET_NAME})
+      add_dependencies(clone-${TARGET_NAME} install-${TARGET_NAME})
+    else()
+      add_dependencies(clone-${TARGET_NAME} ${TARGET_NAME})
+    endif()
+  endif()
+endmacro()
+
+macro(add_bun_install)
+  set(args NAME WORKING_DIRECTORY)
+  cmake_parse_arguments(TARGET "${args}" "" "" ${ARGN})
+
+  if(NOT TARGET_NAME)
+    message(FATAL_ERROR "add_bun_install: NAME is required")
+  endif()
+
+  if(TARGET install-${TARGET_NAME})
+    return()
+  endif()
+
+  if(NOT TARGET_WORKING_DIRECTORY OR TARGET_WORKING_DIRECTORY STREQUAL ${CWD})
+    set(TARGET_COMMENT "bun install")
+  else()
+    set(TARGET_COMMENT "bun install --cwd ${TARGET_WORKING_DIRECTORY}")
+  endif()
+
+  add_target(
+    NAME
+      install-${TARGET_NAME}
+    COMMENT
+      ${TARGET_COMMENT}
+    COMMAND
+      ${BUN_EXECUTABLE}
+        install
+        --frozen-lockfile
+    WORKING_DIRECTORY
+      ${TARGET_WORKING_DIRECTORY}
+    INPUTS
+      ${CWD}/package.json
+    OUTPUTS
+      ${CWD}/bun.lockb
+  )
+  
+  if(TARGET ${TARGET_NAME})
+    add_dependencies(install-${TARGET_NAME} ${TARGET_NAME})
+  endif()
+endmacro()

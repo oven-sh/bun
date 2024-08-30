@@ -1,3 +1,5 @@
+include(Utils)
+
 # Append the given dependencies to the source file
 macro(WEBKIT_ADD_SOURCE_DEPENDENCIES _source _deps)
   set(_tmp)
@@ -15,30 +17,14 @@ macro(WEBKIT_ADD_SOURCE_DEPENDENCIES _source _deps)
   unset(_tmp)
 endmacro()
 
-# --- package.json ---
-
-add_custom_command(
-  COMMENT
-    "Installing dependencies"
-  WORKING_DIRECTORY
-    ${CWD}
-  VERBATIM COMMAND
-    ${BUN_EXECUTABLE}
-      install
-      --frozen-lockfile
-  OUTPUT
-    ${CWD}/bun.lockb
-  MAIN_DEPENDENCY
-    ${CWD}/package.json
-)
-
-# --- src/ls_lexer ---
+add_bun_install(NAME bun)
 
 set(BUN_ZIG_IDENTIFIER_SOURCE ${CWD}/src/js_lexer)
 set(BUN_ZIG_IDENTIFIER_SCRIPT ${BUN_ZIG_IDENTIFIER_SOURCE}/identifier_data.zig)
 
 file(GLOB BUN_ZIG_IDENTIFIER_SOURCES
   ${CONFIGURE_DEPENDS}
+  ${BUN_ZIG_IDENTIFIER_SCRIPT}
   ${BUN_ZIG_IDENTIFIER_SOURCE}/*.zig
 )
 
@@ -49,43 +35,27 @@ set(BUN_ZIG_IDENTIFIER_OUTPUTS
   ${BUN_ZIG_IDENTIFIER_SOURCE}/id_start_bitset.meta.blob
 )
 
-add_custom_command(
+add_target(
+  NAME  
+    bun-codegen-identifier-data
+  ALIASES
+    bun-codegen
   COMMENT
     "Generating src/js_lexer/*.blob"
-  WORKING_DIRECTORY
-    ${CWD}
-  VERBATIM COMMAND
+  COMMAND
     ${CMAKE_ZIG_COMPILER}
-    run
-    ${CMAKE_ZIG_FLAGS}
-    ${BUN_ZIG_IDENTIFIER_SCRIPT}
-  OUTPUT
-    ${BUN_ZIG_IDENTIFIER_OUTPUTS}
-  MAIN_DEPENDENCY
-    ${BUN_ZIG_IDENTIFIER_SCRIPT}
-  DEPENDS
+      run
+      ${CMAKE_ZIG_FLAGS}
+      ${BUN_ZIG_IDENTIFIER_SCRIPT}
+  SOURCES
     ${BUN_ZIG_IDENTIFIER_SOURCES}
+  OUTPUTS
+    ${BUN_ZIG_IDENTIFIER_OUTPUTS}
+  DEPENDS
     clone-zig
 )
 
-# --- packages/bun-error ---
-
 set(BUN_ERROR_SOURCE ${CWD}/packages/bun-error)
-
-add_custom_command(
-  COMMENT
-    "Installing bun-error"
-  WORKING_DIRECTORY
-    ${BUN_ERROR_SOURCE}
-  VERBATIM COMMAND
-    ${BUN_EXECUTABLE}
-      install
-      --frozen-lockfile
-  OUTPUT
-    ${BUN_ERROR_SOURCE}/bun.lockb
-  MAIN_DEPENDENCY
-    ${BUN_ERROR_SOURCE}/package.json
-)
 
 file(GLOB BUN_ERROR_SOURCES
   ${CONFIGURE_DEPENDS}
@@ -101,12 +71,16 @@ set(BUN_ERROR_OUTPUTS
   ${BUN_ERROR_SOURCE}/dist/bun-error.css
 )
 
-add_custom_command(
+add_target(
+  NAME
+    bun-codegen-bun-error
+  ALIASES
+    bun-codegen
   COMMENT
     "Building bun-error"
   WORKING_DIRECTORY
     ${BUN_ERROR_SOURCE}
-  VERBATIM COMMAND
+  COMMAND
     ${BUN_EXECUTABLE} x
     esbuild
       index.tsx
@@ -117,90 +91,80 @@ add_custom_command(
       --bundle
       --platform=browser
       --format=esm
-  OUTPUT
-    ${BUN_ERROR_OUTPUTS}
-  MAIN_DEPENDENCY
-    ${BUN_ERROR_SOURCE}/bun.lockb
-  DEPENDS
+  SOURCES
     ${BUN_ERROR_SOURCES}
+  OUTPUTS
+    ${BUN_ERROR_OUTPUTS}
+  DEPENDS
+    install-bun
 )
 
-# --- src/fallback.out.js ---
+add_bun_install(
+  NAME
+    bun-codegen-bun-error
+  WORKING_DIRECTORY
+    ${BUN_ERROR_SOURCE}
+)
 
 set(BUN_FALLBACK_DECODER_SOURCE ${CWD}/src/fallback.ts)
 set(BUN_FALLBACK_DECODER_OUTPUT ${CWD}/src/fallback.out.js)
 
-add_custom_command(
+add_target(
+  NAME
+    bun-codegen-fallback-decoder
+  ALIASES
+    bun-codegen
   COMMENT
     "Building src/fallback.out.js"
-  WORKING_DIRECTORY
-    ${CWD}
-  VERBATIM COMMAND
+  COMMAND
     ${BUN_EXECUTABLE} x
-      esbuild
-        ${BUN_FALLBACK_DECODER_SOURCE}
-        --outfile=${BUN_FALLBACK_DECODER_OUTPUT}
-        --target=esnext
-        --bundle
-        --format=iife
-        --platform=browser
-        --minify
-  OUTPUT
-    ${BUN_FALLBACK_DECODER_OUTPUT}
-  MAIN_DEPENDENCY
+    esbuild
+      ${BUN_FALLBACK_DECODER_SOURCE}
+      --outfile=${BUN_FALLBACK_DECODER_OUTPUT}
+      --target=esnext
+      --bundle
+      --format=iife
+      --platform=browser
+      --minify
+  SOURCES
     ${BUN_FALLBACK_DECODER_SOURCE}
+  OUTPUTS
+    ${BUN_FALLBACK_DECODER_OUTPUT}
   DEPENDS
-    ${CWD}/bun.lockb
+    install-bun
 )
-
-# --- src/runtime.out.js ---
 
 set(BUN_RUNTIME_JS_SOURCE ${CWD}/src/runtime.bun.js)
 set(BUN_RUNTIME_JS_OUTPUT ${CWD}/src/runtime.out.js)
 
-add_custom_command(
+add_target(
+  NAME
+    bun-codegen-runtime-js
+  ALIASES
+    bun-codegen
   COMMENT
     "Building src/runtime.out.js"
-  WORKING_DIRECTORY
-    ${CWD}
-  VERBATIM COMMAND
+  COMMAND
     ${BUN_EXECUTABLE} x
-      esbuild
-        ${BUN_RUNTIME_JS_SOURCE}
-        --outfile=${BUN_RUNTIME_JS_OUTPUT}
-        --define:process.env.NODE_ENV=\"'production'\"
-        --target=esnext
-        --bundle
-        --format=esm
-        --platform=node
-        --minify
-        --external:/bun:*
-  OUTPUT
-    ${BUN_RUNTIME_JS_OUTPUT}
-  MAIN_DEPENDENCY
+    esbuild
+      ${BUN_RUNTIME_JS_SOURCE}
+      --outfile=${BUN_RUNTIME_JS_OUTPUT}
+      --define:process.env.NODE_ENV=\"'production'\"
+      --target=esnext
+      --bundle
+      --format=esm
+      --platform=node
+      --minify
+      --external:/bun:*
+  SOURCES
     ${BUN_RUNTIME_JS_SOURCE}
+  OUTPUTS
+    ${BUN_RUNTIME_JS_OUTPUT}
   DEPENDS
-    ${CWD}/bun.lockb
+    install-bun
 )
-
-# --- src/node-fallbacks ---
 
 set(BUN_NODE_FALLBACKS_SOURCE ${CWD}/src/node-fallbacks)
-
-add_custom_command(
-  COMMENT
-    "Installing src/node-fallbacks"
-  WORKING_DIRECTORY
-    ${BUN_NODE_FALLBACKS_SOURCE}
-  VERBATIM COMMAND
-    ${BUN_EXECUTABLE}
-      install
-      --frozen-lockfile
-  OUTPUT
-    ${BUN_NODE_FALLBACKS_SOURCE}/bun.lockb
-  MAIN_DEPENDENCY
-    ${BUN_NODE_FALLBACKS_SOURCE}/package.json
-)
 
 file(GLOB BUN_NODE_FALLBACKS_SOURCES
   ${CONFIGURE_DEPENDS}
@@ -209,26 +173,35 @@ file(GLOB BUN_NODE_FALLBACKS_SOURCES
 
 set(BUN_NODE_FALLBACKS_OUTPUTS ${BUN_NODE_FALLBACKS_SOURCES})
 
-add_custom_command(
+add_target(
+  NAME
+    bun-codegen-node-fallbacks
+  ALIASES
+    bun-codegen
   COMMENT
     "Building src/node-fallbacks"
   WORKING_DIRECTORY
     ${BUN_NODE_FALLBACKS_SOURCE}
-  VERBATIM COMMAND
+  COMMAND
     ${BUN_EXECUTABLE} x
-      esbuild
-        ${BUN_NODE_FALLBACKS_SOURCES}
-        --outdir=out
-        --format=esm
-        --minify
-        --bundle
-        --platform=browser
-  OUTPUT
+    esbuild
+      ${BUN_NODE_FALLBACKS_SOURCES}
+      --outdir=out
+      --format=esm
+      --minify
+      --bundle
+      --platform=browser
+  SOURCES
+    ${BUN_NODE_FALLBACKS_SOURCES}
+  OUTPUTS
     ${BUN_NODE_FALLBACKS_OUTPUTS}
-  MAIN_DEPENDENCY
-    ${BUN_NODE_FALLBACKS_SOURCE}/bun.lockb
-  DEPENDS
-    ${BUN_NODE_FALLBACKS_SOURCE}/package.json
+)
+
+add_bun_install(
+  NAME
+    bun-codegen-node-fallbacks
+  WORKING_DIRECTORY
+    ${BUN_NODE_FALLBACKS_SOURCE}
 )
 
 # TODO: change custom commands defined above this, to use the codegen path instead of in-source 
@@ -239,6 +212,7 @@ parse_option(CODEGEN_PATH FILEPATH "Path to the codegen directory" ${BUILD_PATH}
 set(BUN_ERROR_CODE_SCRIPT ${CWD}/src/codegen/generate-node-errors.ts)
 
 set(BUN_ERROR_CODE_SOURCES
+  ${BUN_ERROR_CODE_SCRIPT}
   ${CWD}/src/bun.js/bindings/ErrorCode.ts
   ${CWD}/src/bun.js/bindings/ErrorCode.cpp
   ${CWD}/src/bun.js/bindings/ErrorCode.h
@@ -250,22 +224,22 @@ set(BUN_ERROR_CODE_OUTPUTS
   ${CODEGEN_PATH}/ErrorCode.zig
 )
 
-add_custom_command(
+add_target(
+  NAME
+    bun-codegen-error-code
+  ALIASES
+    bun-codegen
   COMMENT
     "Generating ErrorCode.{zig,h}"
-  WORKING_DIRECTORY
-    ${CWD}
-  VERBATIM COMMAND
+  COMMAND
     ${BUN_EXECUTABLE}
       run
       ${BUN_ERROR_CODE_SCRIPT}
       ${CODEGEN_PATH}
-  OUTPUT
-    ${BUN_ERROR_CODE_OUTPUTS}
-  MAIN_DEPENDENCY
-    ${BUN_ERROR_CODE_SCRIPT}
-  DEPENDS
+  SOURCES
     ${BUN_ERROR_CODE_SOURCES}
+  OUTPUTS
+    ${BUN_ERROR_CODE_OUTPUTS}
 )
 
 # This needs something to force it to be regenerated
@@ -283,8 +257,7 @@ WEBKIT_ADD_SOURCE_DEPENDENCIES(
 
 set(BUN_ZIG_GENERATED_CLASSES_SCRIPT ${CWD}/src/codegen/generate-classes.ts)
 
-file(GLOB BUN_ZIG_GENERATED_CLASSES_SOURCES
-  ${CONFIGURE_DEPENDS}
+file(GLOB BUN_ZIG_GENERATED_CLASSES_SOURCES ${CONFIGURE_DEPENDS}
   ${CWD}/src/bun.js/*.classes.ts
   ${CWD}/src/bun.js/api/*.classes.ts
   ${CWD}/src/bun.js/node/*.classes.ts
@@ -302,28 +275,27 @@ set(BUN_ZIG_GENERATED_CLASSES_OUTPUTS
   ${CODEGEN_PATH}/ZigGeneratedClasses.zig
 )
 
-add_custom_command(
+add_target(
+  NAME
+    bun-codegen-zig-generated-classes
+  ALIASES
+    bun-codegen
   COMMENT
     "Generating ZigGeneratedClasses.{zig,cpp,h}"
-  WORKING_DIRECTORY
-    ${CWD}
-  VERBATIM COMMAND
+  COMMAND
     ${BUN_EXECUTABLE}
       run
       ${BUN_ZIG_GENERATED_CLASSES_SCRIPT}
       ${BUN_ZIG_GENERATED_CLASSES_SOURCES}
       ${CODEGEN_PATH}
-  OUTPUT
-    ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}
-  MAIN_DEPENDENCY
+  SOURCES
     ${BUN_ZIG_GENERATED_CLASSES_SCRIPT}
-  DEPENDS
     ${BUN_ZIG_GENERATED_CLASSES_SOURCES}
+  OUTPUTS
+    ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}
 )
 
-# --- src/js/*.{js,ts} ---
-
-set(BUN_JAVASCRIPT_SCRIPT ${CWD}/src/codegen/bundle-modules.ts)
+set(BUN_JAVASCRIPT_CODEGEN_SCRIPT ${CWD}/src/codegen/bundle-modules.ts)
 
 file(GLOB_RECURSE BUN_JAVASCRIPT_SOURCES
   ${CONFIGURE_DEPENDS}
@@ -355,24 +327,25 @@ set(BUN_JAVASCRIPT_OUTPUTS
   ${CWD}/src/bun.js/bindings/GeneratedJS2Native.zig
 )
 
-add_custom_command(
+add_target(
+  NAME
+    bun-codegen-js-modules
+  ALIASES
+    bun-codegen
   COMMENT
     "Generating JavaScript modules"
-  WORKING_DIRECTORY
-    ${CWD}
-  VERBATIM COMMAND
+  COMMAND
     ${BUN_EXECUTABLE}
       run
-      ${BUN_JAVASCRIPT_SCRIPT}
-      --debug=${ENABLE_ASSERTIONS}
-      ${BUILD_PATH}
-  OUTPUT
-    ${BUN_JAVASCRIPT_OUTPUTS}
-  MAIN_DEPENDENCY
-    ${BUN_JAVASCRIPT_SCRIPT}
-  DEPENDS
+      ${BUN_JAVASCRIPT_CODEGEN_SCRIPT}
+        --debug=${DEBUG}
+        ${BUILD_PATH}
+  SOURCES
     ${BUN_JAVASCRIPT_SOURCES}
     ${BUN_JAVASCRIPT_CODEGEN_SOURCES}
+    ${BUN_JAVASCRIPT_CODEGEN_SCRIPT}
+  OUTPUT
+    ${BUN_JAVASCRIPT_OUTPUTS}
 )
 
 WEBKIT_ADD_SOURCE_DEPENDENCIES(
@@ -380,36 +353,43 @@ WEBKIT_ADD_SOURCE_DEPENDENCIES(
   ${CODEGEN_PATH}/InternalModuleRegistryConstants.h
 )
 
-# --- JSSink.{cpp,h} ---
-
 set(BUN_JS_SINK_SCRIPT ${CWD}/src/codegen/generate-jssink.ts)
+
+set(BUN_JS_SINK_SOURCES
+  ${BUN_JS_SINK_SCRIPT}
+  ${CWD}/src/codegen/create-hash-table
+  ${CWD}/src/codegen/create-hash-table.ts
+)
 
 set(BUN_JS_SINK_OUTPUTS
   ${CODEGEN_PATH}/JSSink.cpp
   ${CODEGEN_PATH}/JSSink.h
+  ${CODEGEN_PATH}/JSSink.lut.h
 )
 
-add_custom_command(
+add_target(
+  NAME
+    bun-codegen-js-sink
+  ALIASES
+    bun-codegen
   COMMENT
     "Generating JSSink.{cpp,h}"
-  WORKING_DIRECTORY
-    ${CWD}
-  VERBATIM COMMAND
+  COMMAND
     ${BUN_EXECUTABLE}
       run
       ${BUN_JS_SINK_SCRIPT}
       ${CODEGEN_PATH}
-  OUTPUT
+  SOURCES
+    ${BUN_JS_SINK_SOURCES}
+  OUTPUTS
     ${BUN_JS_SINK_OUTPUTS}
-  MAIN_DEPENDENCY
-    ${BUN_JS_SINK_SCRIPT}
 )
-
-# --- *.lut.h ---
 
 set(BUN_OBJECT_LUT_SCRIPT ${CWD}/src/codegen/create-hash-table.ts)
 
 set(BUN_OBJECT_LUT_SOURCES
+  ${BUN_OBJECT_LUT_SCRIPT}
+  ${CWD}/src/codegen/create-hash-table
   ${CWD}/src/bun.js/bindings/BunObject.cpp
   ${CWD}/src/bun.js/bindings/ZigGlobalObject.lut.txt
   ${CWD}/src/bun.js/bindings/JSBuffer.cpp
@@ -435,23 +415,25 @@ foreach(i RANGE ${BUN_OBJECT_LUT_SOURCES_COUNT})
   list(GET BUN_OBJECT_LUT_OUTPUTS ${i} BUN_OBJECT_LUT_OUTPUT)
 
   get_filename_component(filename ${BUN_OBJECT_LUT_SOURCE} NAME_WE)
-  add_custom_command(
+  add_target(
+    NAME
+      bun-codegen-lut-${filename}
+    ALIASES
+      bun-codegen-lut
+      bun-codegen
     COMMENT
       "Generating ${filename}.lut.h"
-    WORKING_DIRECTORY
-      ${CWD}
-    VERBATIM COMMAND
+    COMMAND
       ${BUN_EXECUTABLE}
         run
         ${BUN_OBJECT_LUT_SCRIPT}
         ${BUN_OBJECT_LUT_SOURCE}
         ${BUN_OBJECT_LUT_OUTPUT}
-    OUTPUT
-      ${BUN_OBJECT_LUT_OUTPUT}
-    MAIN_DEPENDENCY
+    SOURCES
       ${BUN_OBJECT_LUT_SCRIPT}
-    DEPENDS
       ${BUN_OBJECT_LUT_SOURCE}
+    OUTPUTS
+      ${BUN_OBJECT_LUT_OUTPUT}
   )
 
   WEBKIT_ADD_SOURCE_DEPENDENCIES(${BUN_OBJECT_LUT_SOURCE} ${BUN_OBJECT_LUT_OUTPUT})
@@ -460,19 +442,4 @@ endforeach()
 WEBKIT_ADD_SOURCE_DEPENDENCIES(
   ${CWD}/src/bun.js/bindings/ZigGlobalObject.cpp
   ${CODEGEN_PATH}/ZigGlobalObject.lut.h
-)
-
-# --- target: codegen ---
-
-add_custom_target(
-  codegen
-  COMMENT
-    "Running codegen"
-  DEPENDS
-    ${BUN_OBJECT_LUT_OUTPUTS}
-    ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}
-    ${BUN_JS_SINK_OUTPUTS}
-    ${BUN_JAVASCRIPT_OUTPUTS}
-    ${BUN_ERROR_CODE_OUTPUTS}
-    ${BUN_ZIG_OBJECT_OUTPUTS}
 )

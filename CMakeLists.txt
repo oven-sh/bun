@@ -508,24 +508,25 @@ if(APPLE)
   target_link_libraries(${bun} PRIVATE "icucore")
 endif()
 
-# add_custom_target(
-#   features.json
-#   COMMENT
-#     "Generating features.json"
-#   VERBATIM COMMAND
-#     ${CMAKE_COMMAND}
-#       -E env
-#       BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1
-#       BUN_DEBUG_QUIET_LOGS=1
-#       ${BUILD_PATH}/${bunExe}
-#       ${CWD}/scripts/features.mjs
-#   WORKING_DIRECTORY
-#     ${BUILD_PATH}
-#   DEPENDS
-#     ${bun}
-# )
+add_custom_target(
+  features.json
+  COMMENT
+    "Generating features.json"
+  VERBATIM COMMAND
+    ${CMAKE_COMMAND}
+      -E env
+      BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1
+      BUN_DEBUG_QUIET_LOGS=1
+      ${BUILD_PATH}/${bunExe}
+      ${CWD}/scripts/features.mjs
+  WORKING_DIRECTORY
+    ${BUILD_PATH}
+  DEPENDS
+    ${bun}
+    ${CWD}/scripts/features.mjs
+)
 
-if(NOT WIN32)
+if(APPLE)
   add_custom_target(
     bun.dSYM
     COMMENT
@@ -615,25 +616,25 @@ else()
 endif()
 
 if(NOT WIN32)
-    target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libWTF.a")
-    target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libJavaScriptCore.a")
+  target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_DIR}/libWTF.a)
+  target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_DIR}/libJavaScriptCore.a)
 
-    if(NOT APPLE OR EXISTS "${WEBKIT_LIB_DIR}/libbmalloc.a")
-        target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libbmalloc.a")
-    endif()
+  if(NOT APPLE OR EXISTS ${WEBKIT_LIB_DIR}/libbmalloc.a)
+    target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_DIR}/libbmalloc.a)
+  endif()
 else()
-    target_link_libraries(${bun} PRIVATE
-        "${WEBKIT_LIB_DIR}/WTF.lib"
-        "${WEBKIT_LIB_DIR}/JavaScriptCore.lib"
-        "${WEBKIT_LIB_DIR}/sicudt.lib"
-        "${WEBKIT_LIB_DIR}/sicuin.lib"
-        "${WEBKIT_LIB_DIR}/sicuuc.lib"
-        winmm
-        bcrypt
-        ntdll
-        userenv
-        dbghelp
-        wsock32 # ws2_32 required by TransmitFile aka sendfile on windows
-        delayimp.lib
-    )
+  target_link_libraries(${bun} PRIVATE
+    ${WEBKIT_LIB_DIR}/WTF.lib
+    ${WEBKIT_LIB_DIR}/JavaScriptCore.lib
+    ${WEBKIT_LIB_DIR}/sicudt.lib
+    ${WEBKIT_LIB_DIR}/sicuin.lib
+    ${WEBKIT_LIB_DIR}/sicuuc.lib
+    winmm
+    bcrypt
+    ntdll
+    userenv
+    dbghelp
+    wsock32 # ws2_32 required by TransmitFile aka sendfile on windows
+    delayimp.lib
+  )
 endif()

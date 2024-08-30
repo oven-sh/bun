@@ -549,7 +549,10 @@ pub const BundleTask = struct {
             .loaders = task.route.dev.loaders,
             .log = &task.log,
             .output_dir = "", // this disables filesystem output
-            .output_format = .internal_kit_dev,
+            .output_format = switch (task.kind) {
+                .server => .esm, // TODO: Re-enable once server runtime can participate in HMR
+                .client => .internal_kit_dev,
+            },
             .out_extensions = bun.StringHashMap([]const u8).init(bundler.allocator),
 
             .public_path = switch (task.kind) {

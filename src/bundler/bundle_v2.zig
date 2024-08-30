@@ -8155,7 +8155,7 @@ pub const LinkerContext = struct {
     ) !void {
         // for Bun Kit, all wrapping work has already been done in the parser
         if (c.options.output_format == .internal_kit_dev and source_index != Index.runtime.value) {
-            try stmts.inside_wrapper_suffix.appendSlice(part_stmts);
+            try c.convertStmtsForChunkKit(source_index, stmts, part_stmts, allocator, ast);
             return;
         }
 
@@ -8651,190 +8651,101 @@ pub const LinkerContext = struct {
         source_index: u32,
         stmts: *StmtList,
         part_stmts: []const js_ast.Stmt,
-        chunk: *Chunk,
         allocator: std.mem.Allocator,
-        wrap: WrapKind,
-        ast: *JSAst,
+        ast: *const JSAst,
     ) !void {
-        _ = chunk; // autofix
-        _ = wrap; // autofix
+        _ = c; // autofix
+        _ = source_index; // autofix
 
-        var export_props: std.ArrayListUnmanaged(G.Property) = .{};
-
+        const receiver_args = try allocator.dupe(G.Arg, &.{
+            .{ .binding = Binding.alloc(allocator, B.Identifier{ .ref = ast.module_ref }, Logger.Loc.Empty) },
+        });
+        const module_id = Expr.initIdentifier(ast.module_ref, Logger.Loc.Empty);
         for (part_stmts) |stmt| {
-            const new_stmt = switch (stmt.data) {
-                else => stmt,
-                .s_local => |s| stmt: {
-                    if (!s.is_export) break :stmt stmt;
-
-                    if (s.kind.isReassignable()) {
-                        for (s.decls.slice()) |decl| {
-                            try c.visitBindingForKitModuleExports(decl.binding, &export_props, source_index, true);
-                        }
-
-                        break :stmt Stmt.alloc(S.Local, .{
-                            .kind = s.kind,
-                            .decls = s.decls,
-                            .is_export = false,
-                            .was_ts_import_equals = s.was_ts_import_equals,
-                            .was_commonjs_export = s.was_commonjs_export,
-                        }, stmt.loc);
-                    } else {
-                        var dupe_decls = try std.ArrayListUnmanaged(G.Decl).initCapacity(allocator, s.decls.len);
-
-                        for (s.decls.slice()) |decl| {
-                            bun.assert(decl.value != null); // const must be initialized
-
-                            switch (decl.binding.data) {
-                                .b_missing => @panic("binding missing"),
-
-                                .b_identifier => |id| {
-                                    const symbol = c.graph.symbols.get(id.ref).?;
-
-                                    // if the symbol is not used, we don't need to preserve
-                                    // a binding in this scope. we can move it to the exports object.
-                                    if (symbol.use_count_estimate != 0 or !decl.value.?.canBeMoved()) {
-                                        dupe_decls.appendAssumeCapacity(decl);
-                                    }
-
-                                    try export_props.append(allocator, .{
-                                        .key = Expr.init(E.String, .{ .data = symbol.original_name }, decl.binding.loc),
-                                        .value = decl.value,
-                                    });
-                                },
-
-                                else => {
-                                    dupe_decls.appendAssumeCapacity(decl);
-                                    try c.visitBindingForKitModuleExports(decl.binding, &export_props, source_index, false);
-                                },
-                            }
-                        }
-
-                        if (dupe_decls.items.len == 0) {
-                            continue;
-                        }
-
-                        break :stmt Stmt.alloc(S.Local, .{
-                            .kind = s.kind,
-                            .decls = G.Decl.List.fromList(dupe_decls),
-                            .is_export = false,
-                            .was_ts_import_equals = s.was_ts_import_equals,
-                            .was_commonjs_export = s.was_commonjs_export,
-                        }, stmt.loc);
-                    }
-
-                    @compileError(unreachable);
+            switch (stmt.data) {
+                else => {
+                    try stmts.inside_wrapper_suffix.append(stmt);
                 },
-                .s_export_default => |s| stmt: {
-                    // Simple case: we can move this to the default property of the exports object
-                    if (s.canBeMoved()) {
-                        try export_props.append(allocator, .{
-                            .key = Expr.init(E.String, .{ .data = "default" }, stmt.loc),
-                            .value = s.value.toExpr(),
-                        });
-                        // no statement emitted
+                .s_local => |st| {
+                    // TODO: check if this local is immediately assigned
+                    // `require()` if so, we will instrument it with hot module
+                    // reloading.  all other cases of hot module reloading will
+                    // not have automatic acceptance
+                    _ = st; // autofix
+
+                    try stmts.inside_wrapper_suffix.append(stmt);
+                },
+                .s_import => |st| {
+                    // hmr-runtime.ts defines `module.importSync` to be
+                    // a synchronous import. this is different from
+                    // require in that esm <-> cjs is handled
+                    // automatically, instead of with bundler-added
+                    // annotations like '__commonJS'.
+                    //
+                    // this is not done in the parse step because the final
+                    // pretty path is not yet known. the other statement types
+                    // are not handled here because some of those generate
+                    // new local variables (it is too late to do that here).
+                    //
+                    // TODO: attempt to batch some of these allocs together
+                    const record = ast.import_records.at(st.import_record_index);
+
+                    const is_bare_import = st.star_name_loc == null and st.items.len == 0 and st.default_name == null;
+
+                    const path_string = Expr.init(E.String, .{ .data = record.path.pretty }, stmt.loc);
+
+                    // module.importSync('path', (module) => ns = module)
+                    const call = Expr.init(E.Call, .{
+                        .target = Expr.init(E.Dot, .{
+                            .target = module_id,
+                            .name = "importSync",
+                            .name_loc = stmt.loc,
+                        }, stmt.loc),
+                        .args = js_ast.ExprNodeList.init(
+                            try allocator.dupe(Expr, if (is_bare_import)
+                                &.{path_string}
+                            else
+                                &.{
+                                    path_string,
+                                    Expr.init(E.Arrow, .{
+                                        .args = receiver_args,
+                                        .body = .{
+                                            .stmts = try allocator.dupe(Stmt, &.{Stmt.alloc(S.Return, .{
+                                                .value = Expr.assign(
+                                                    Expr.initIdentifier(st.namespace_ref, st.star_name_loc orelse stmt.loc),
+                                                    module_id,
+                                                ),
+                                            }, stmt.loc)}),
+                                            .loc = stmt.loc,
+                                        },
+                                        .prefer_expr = true,
+                                    }, stmt.loc),
+                                }),
+                        ),
+                    }, stmt.loc);
+
+                    if (is_bare_import) {
+                        // the import value is never read
+                        try stmts.inside_wrapper_prefix.append(Stmt.alloc(S.SExpr, .{ .value = call }, stmt.loc));
                         continue;
                     }
 
-                    // Otherwise, we need a temporary
-                    const temp_id = c.graph.generateNewSymbol(source_index, .other, "default_export");
-                    try export_props.append(allocator, .{
-                        .key = Expr.init(E.String, .{ .data = "default" }, stmt.loc),
-                        .value = Expr.initIdentifier(temp_id, stmt.loc),
-                    });
-                    break :stmt Stmt.alloc(S.Local, .{
-                        .kind = .k_const,
-                        .decls = try G.Decl.List.fromSlice(allocator, &.{
-                            .{
-                                .binding = Binding.alloc(allocator, B.Identifier{ .ref = temp_id }, stmt.loc),
-                                .value = s.value.toExpr(),
-                            },
-                        }),
-                        .is_export = false,
-                        .was_ts_import_equals = false,
-                        .was_commonjs_export = false,
-                    }, stmt.loc);
+                    // 'let namespace = module.importSync(...)'
+                    try stmts.inside_wrapper_prefix.append(Stmt.alloc(S.Local, .{
+                        .kind = .k_let,
+                        .decls = try G.Decl.List.fromSlice(allocator, &.{.{
+                            .binding = Binding.alloc(
+                                allocator,
+                                B.Identifier{ .ref = st.namespace_ref },
+                                st.star_name_loc orelse stmt.loc,
+                            ),
+                            .value = call,
+                        }}),
+                    }, stmt.loc));
+
+                    continue;
                 },
-                .s_class => |s| stmt: {
-                    // Strip the "export" keyword
-                    if (!s.is_export) break :stmt stmt;
-
-                    // Export as CommonJS
-                    try export_props.append(allocator, .{
-                        .key = Expr.init(E.String, .{
-                            .data = c.graph.symbols.get(s.class.class_name.?.ref.?).?.original_name,
-                        }, stmt.loc),
-                        .value = Expr.initIdentifier(s.class.class_name.?.ref.?, stmt.loc),
-                    });
-
-                    break :stmt Stmt.alloc(S.Class, .{
-                        .class = s.class,
-                        .is_export = false,
-                    }, stmt.loc);
-                },
-                .s_function => |s| stmt: {
-                    // Strip the "export" keyword
-                    if (!s.func.flags.contains(.is_export)) break :stmt stmt;
-
-                    const dupe = Stmt.alloc(S.Function, s.*, stmt.loc);
-                    dupe.data.s_function.func.flags.remove(.is_export);
-
-                    // Export as CommonJS
-                    try export_props.append(allocator, .{
-                        .key = Expr.init(E.String, .{
-                            .data = c.graph.symbols.get(s.func.name.?.ref.?).?.original_name,
-                        }, stmt.loc),
-                        .value = Expr.initIdentifier(s.func.name.?.ref.?, stmt.loc),
-                    });
-
-                    break :stmt dupe;
-                },
-                // .s_export_clause => |s| {
-                //     _ = s;
-                //     @panic("TODO s_export_clause");
-                // },
-                // .s_export_from => |s| {
-                //     _ = s;
-                //     @panic("TODO s_export_from");
-                // },
-                // .s_export_star => |s| {
-                //     _ = s;
-                //     @panic("TODO s_export_star");
-                // },
-                // .s_import => |s| {
-                //     _ = s;
-                //     @panic("TODO s_import");
-                // },
-            };
-            try stmts.inside_wrapper_suffix.append(new_stmt);
-        }
-
-        if (export_props.items.len > 0) {
-            // add a marker for the client runtime to tell that this is an ES module
-            try stmts.inside_wrapper_suffix.append(Stmt.alloc(S.SExpr, .{
-                .value = Expr.assign(
-                    Expr.init(E.Dot, .{
-                        .target = Expr.initIdentifier(ast.module_ref, Logger.Loc.Empty),
-                        .name = "esmodule",
-                        .name_loc = Logger.Loc.Empty,
-                    }, Logger.Loc.Empty),
-                    Expr.init(E.Boolean, .{ .value = true }, Logger.Loc.Empty),
-                ),
-            }, Logger.Loc.Empty));
-
-            // Note: this might not be good, we might have to do `exports.xyz = ` to let us override an older module?
-            try stmts.inside_wrapper_suffix.append(Stmt.alloc(S.SExpr, .{
-                .value = Expr.assign(
-                    Expr.init(E.Dot, .{
-                        .target = Expr.initIdentifier(ast.module_ref, Logger.Loc.Empty),
-                        .name = "exports",
-                        .name_loc = Logger.Loc.Empty,
-                    }, Logger.Loc.Empty),
-                    Expr.init(E.Object, .{
-                        .properties = G.Property.List.fromList(export_props),
-                    }, Logger.Loc.Empty),
-                ),
-            }, Logger.Loc.Empty));
+            }
         }
     }
 
@@ -9054,10 +8965,7 @@ pub const LinkerContext = struct {
         // Turn each module into a function if this is Kit
         var stmt_storage: Stmt = undefined;
         if (c.options.output_format == .internal_kit_dev and !part_range.source_index.isRuntime()) {
-            var clousure_args = std.BoundedArray(G.Arg, 3).fromSlice(&.{
-                .{ .binding = Binding.alloc(temp_allocator, B.Identifier{
-                    .ref = ast.require_ref,
-                }, Logger.Loc.Empty) },
+            var clousure_args = std.BoundedArray(G.Arg, 2).fromSlice(&.{
                 .{ .binding = Binding.alloc(temp_allocator, B.Identifier{
                     .ref = ast.module_ref,
                 }, Logger.Loc.Empty) },

@@ -23224,8 +23224,11 @@ fn NewParser_(
                         parts.len = 1;
                     }
                 },
-                .kit_dev_hmr => try p.esmToCommonJsForHotModuleReloading(parts),
+                .kit_dev_hmr => {
+                    parts = try p.esmToCommonJsForHotModuleReloading(parts);
+                },
             }
+
             var top_level_symbols_to_parts = js_ast.Ast.TopLevelSymbolToParts{};
             var top_level = &top_level_symbols_to_parts;
 
@@ -23397,273 +23400,212 @@ fn NewParser_(
             return false;
         }
 
-        // TODO: consider if this pass can be merged in with other code
+        // TODO: consider if this pass can be merged in with other code.
         fn esmToCommonJsForHotModuleReloading(p: *P, parts: []js_ast.Part) ![]js_ast.Part {
-            bun.assert(parts.len > 0);
+            // these two are what seem to happen when tree-shaking is disabled
+            // we assume everything is in part 2
+            bun.assert(parts.len == 2);
+            bun.assert(parts[0].stmts.len == 0);
 
             var export_props: std.ArrayListUnmanaged(G.Property) = .{};
 
-            var stmts = std.ArrayListUnmanaged(Stmt).initCapacity(p.allocator, prealloc_count: {
-                var count = 0;
+            var stmts = try std.ArrayListUnmanaged(Stmt).initCapacity(p.allocator, prealloc_count: {
+                // get a estimate on how many statements there are going to be
+                var count: usize = 0;
                 for (parts) |part| count += part.stmts.len;
                 break :prealloc_count count + 3;
             });
 
-            var import_function_ref: ?Ref = null;
+            for (parts[1].stmts) |stmt| {
+                const new_stmt = switch (stmt.data) {
+                    else => stmt,
+                    .s_local => |st| stmt: {
+                        if (!st.is_export) break :stmt stmt;
 
-            for (parts, 0..) |*part, part_index| {
-                var i: usize = 0;
-                for (part.stmts) |stmt| {
-                    const new_stmt = switch (stmt.data) {
-                        else => stmt,
-                        .s_local => |st| stmt: {
-                            if (!st.is_export) break :stmt stmt;
+                        st.is_export = false;
 
-                            st.is_export = false;
+                        if (st.kind.isReassignable()) {
+                            for (st.decls.slice()) |decl| {
+                                try p.visitBindingForKitModuleExports(decl.binding, &export_props, &parts[1], true);
+                            }
+                        } else {
+                            var dupe_decls = try std.ArrayListUnmanaged(G.Decl).initCapacity(p.allocator, st.decls.len);
 
-                            if (st.kind.isReassignable()) {
-                                for (st.decls.slice()) |decl| {
-                                    try p.visitBindingForKitModuleExports(decl.binding, &export_props, true);
-                                }
-                            } else {
-                                var dupe_decls = try std.ArrayListUnmanaged(G.Decl).initCapacity(p.allocator, st.decls.len);
+                            for (st.decls.slice()) |decl| {
+                                bun.assert(decl.value != null); // const must be initialized
 
-                                for (st.decls.slice()) |decl| {
-                                    bun.assert(decl.value != null); // const must be initialized
+                                switch (decl.binding.data) {
+                                    .b_missing => @panic("binding missing"),
 
-                                    switch (decl.binding.data) {
-                                        .b_missing => @panic("binding missing"),
+                                    .b_identifier => |id| {
+                                        const symbol = p.symbols.items[id.ref.inner_index];
 
-                                        .b_identifier => |id| {
-                                            const symbol = p.symbols.items[id.ref.inner_index];
-
-                                            // if the symbol is not used, we don't need to preserve
-                                            // a binding in this scope. we can move it to the exports object.
-                                            if (symbol.use_count_estimate != 0 or !decl.value.?.canBeMoved()) {
-                                                dupe_decls.appendAssumeCapacity(decl);
-                                            }
-
-                                            try export_props.append(p.allocator, .{
-                                                .key = Expr.init(E.String, .{ .data = symbol.original_name }, decl.binding.loc),
-                                                .value = decl.value,
-                                            });
-                                        },
-
-                                        else => {
+                                        // if the symbol is not used, we don't need to preserve
+                                        // a binding in this scope. we can move it to the exports object.
+                                        if (symbol.use_count_estimate != 0 or !decl.value.?.canBeMoved()) {
                                             dupe_decls.appendAssumeCapacity(decl);
-                                            try p.visitBindingForKitModuleExports(decl.binding, &export_props, false);
-                                        },
-                                    }
-                                }
+                                        }
 
-                                if (dupe_decls.items.len == 0) {
-                                    continue;
-                                }
+                                        try export_props.append(p.allocator, .{
+                                            .key = Expr.init(E.String, .{ .data = symbol.original_name }, decl.binding.loc),
+                                            .value = decl.value,
+                                        });
+                                    },
 
-                                st.decls = G.Decl.List.fromList(dupe_decls);
+                                    else => {
+                                        dupe_decls.appendAssumeCapacity(decl);
+                                        try p.visitBindingForKitModuleExports(decl.binding, &export_props, &parts[1], false);
+                                    },
+                                }
                             }
 
-                            break :stmt stmt;
-                        },
-                        .s_export_default => |st| stmt: {
-                            // Simple case: we can move this to the default property of the exports object
-                            if (st.canBeMoved()) {
-                                try export_props.append(p.allocator, .{
-                                    .key = Expr.init(E.String, .{ .data = "default" }, stmt.loc),
-                                    .value = st.value.toExpr(),
-                                });
-                                // no statement emitted
+                            if (dupe_decls.items.len == 0) {
                                 continue;
                             }
 
-                            // Otherwise, we need a temporary
-                            const temp_id = p.generateTempRef("default_export");
+                            st.decls = G.Decl.List.fromList(dupe_decls);
+                        }
+
+                        break :stmt stmt;
+                    },
+                    .s_export_default => |st| stmt: {
+                        // Simple case: we can move this to the default property of the exports object
+                        if (st.canBeMoved()) {
                             try export_props.append(p.allocator, .{
                                 .key = Expr.init(E.String, .{ .data = "default" }, stmt.loc),
-                                .value = Expr.initIdentifier(temp_id, stmt.loc),
+                                .value = st.value.toExpr(),
                             });
+                            // no statement emitted
+                            continue;
+                        }
 
-                            break :stmt Stmt.alloc(S.Local, .{
-                                .kind = .k_const,
-                                .decls = try G.Decl.List.fromSlice(p.allocator, &.{
-                                    .{
-                                        .binding = Binding.alloc(p.allocator, B.Identifier{ .ref = temp_id }, stmt.loc),
-                                        .value = st.value.toExpr(),
-                                    },
-                                }),
-                            }, stmt.loc);
-                        },
-                        .s_class => |st| stmt: {
-                            // Strip the "export" keyword
-                            if (!st.is_export) break :stmt stmt;
+                        // Otherwise, we need a temporary
+                        const temp_id = p.generateTempRef("default_export");
+                        try parts[1].declared_symbols.append(p.allocator, .{ .ref = temp_id, .is_top_level = true });
+                        try parts[1].symbol_uses.putNoClobber(p.allocator, temp_id, .{ .count_estimate = 1 });
+                        try p.module_scope.generated.push(p.allocator, temp_id);
 
-                            // Export as CommonJS
-                            try export_props.append(p.allocator, .{
-                                .key = Expr.init(E.String, .{
-                                    .data = p.symbols.items[st.class.class_name.?.ref.?.inner_index].original_name,
-                                }, stmt.loc),
-                                .value = Expr.initIdentifier(st.class.class_name.?.ref.?, stmt.loc),
-                            });
+                        try export_props.append(p.allocator, .{
+                            .key = Expr.init(E.String, .{ .data = "default" }, stmt.loc),
+                            .value = Expr.initIdentifier(temp_id, stmt.loc),
+                        });
 
-                            st.is_export = false;
+                        break :stmt Stmt.alloc(S.Local, .{
+                            .kind = .k_const,
+                            .decls = try G.Decl.List.fromSlice(p.allocator, &.{
+                                .{
+                                    .binding = Binding.alloc(p.allocator, B.Identifier{ .ref = temp_id }, stmt.loc),
+                                    .value = st.value.toExpr(),
+                                },
+                            }),
+                        }, stmt.loc);
+                    },
+                    .s_class => |st| stmt: {
+                        // Strip the "export" keyword
+                        if (!st.is_export) break :stmt stmt;
 
-                            break :stmt stmt;
-                        },
-                        .s_function => |st| stmt: {
-                            // Strip the "export" keyword
-                            if (!st.func.flags.contains(.is_export)) break :stmt stmt;
+                        // Export as CommonJS
+                        try export_props.append(p.allocator, .{
+                            .key = Expr.init(E.String, .{
+                                .data = p.symbols.items[st.class.class_name.?.ref.?.inner_index].original_name,
+                            }, stmt.loc),
+                            .value = Expr.initIdentifier(st.class.class_name.?.ref.?, stmt.loc),
+                        });
 
-                            st.func.flags.remove(.is_export);
+                        st.is_export = false;
 
-                            // Export as CommonJS
-                            try export_props.append(p.allocator, .{
-                                .key = Expr.init(E.String, .{
-                                    .data = p.symbols.items[st.func.name.?.ref.?.inner_index].original_name,
-                                }, stmt.loc),
-                                .value = Expr.initIdentifier(st.func.name.?.ref.?, stmt.loc),
-                            });
+                        break :stmt stmt;
+                    },
+                    .s_function => |st| stmt: {
+                        // Strip the "export" keyword
+                        if (!st.func.flags.contains(.is_export)) break :stmt stmt;
 
-                            break :stmt stmt;
-                        },
-                        .s_export_clause => |st| {
-                            _ = st; // autofix
-                            @panic("TODO s_export_clause");
-                        },
-                        .s_export_from => |st| {
-                            _ = st; // autofix
-                            @panic("TODO s_export_from");
-                        },
-                        .s_export_star => |st| {
-                            _ = st; // autofix
-                            @panic("TODO s_export_star");
-                        },
-                        .s_import => |st| stmt: {
-                            // hmr-runtime.ts defines `require.importSync` to be
-                            // a synchronous import.  this is different from
-                            // require in that esm <-> cjs is handled
-                            // automatically, instead of with bundler-added
-                            // annotations.
-                            const call_target = Expr.initIdentifier(import_function_ref orelse get: {
-                                const temp_id = p.generateTempRef("load");
-                                stmts.appendAssumeCapacity(Stmt.alloc(S.Local, .{
-                                    .kind = .k_const,
-                                    .decls = try G.Decl.List.fromSlice(p.allocator, &.{
-                                        .{
-                                            .binding = Binding.alloc(p.allocator, B.Identifier{ .ref = temp_id }, logger.Loc.Empty),
-                                            .value = Expr.init(E.Dot, .{
-                                                .target = p.require_ref,
-                                                .name = "importSync",
-                                                .name_loc = logger.Loc.Empty,
-                                            }, logger.Loc.Emptyc),
-                                        },
-                                    }),
-                                }, logger.Loc.Empty));
-                                break :get temp_id;
-                            }, logger.Loc.Empty);
+                        st.func.flags.remove(.is_export);
 
-                            const record: *ImportRecord = &p.import_records.items[st.import_record_index];
+                        // Export as CommonJS
+                        try export_props.append(p.allocator, .{
+                            .key = Expr.init(E.String, .{
+                                .data = p.symbols.items[st.func.name.?.ref.?.inner_index].original_name,
+                            }, stmt.loc),
+                            .value = Expr.initIdentifier(st.func.name.?.ref.?, stmt.loc),
+                        });
 
-                            const call = Expr.init(E.Call, .{
-                                .target = call_target,
-                                .args = &p.allocator.dupe(Expr, &.{
-                                    Expr.init(E.String, .{ .data = record.path.pretty }, stmt.loc),
-                                }),
-                            }, logger.Loc.Empty);
+                        break :stmt stmt;
+                    },
+                    .s_export_clause => |st| {
+                        _ = st; // autofix
+                        @panic("TODO s_export_clause");
+                    },
 
-                            // TODO: considerations for hot-reloading. these values will probably have to be re-assigned
-                            if (st.star_name_loc == null) {
-                                if (st.items.len == 0 and st.default_name == null) {
-                                    // the import value is never read
-                                    break :stmt Stmt.alloc(S.SExpr, .{ .value = call }, stmt.loc);
-                                }
+                    .s_export_from => |st| {
+                        _ = st; // autofix
+                        @panic("TODO s_export_from");
+                    },
+                    .s_export_star => |st| {
+                        _ = st; // autofix
+                        @panic("TODO s_export_star");
+                    },
+                };
 
-                                // namespace reference is not needed, we can make this with just the binding
-                                @panic("TODO");
-                            } else {
-                                // when the namespace ref is required, up to two statements are emitted
-                                // - 'let namespace = load("module")'
-                                // - 'let { ... } = namespace'
-                                stmts.appendAssumeCapacity(Stmt.alloc(S.Local, .{
-                                    .kind = .k_let,
-                                    .decls = try G.Decl.List.fromSlice(p.allocator, &.{
-                                        .{
-                                            .binding = Binding.alloc(p.allocator, B.Identifier{ .ref = st.namespace_ref }, logger.Loc.Empty),
-                                            .value = call,
-                                        },
-                                    }),
-                                }, logger.Loc.Empty));
-
-                                if (st.items.len > 0) {
-                                    @panic("TODO");
-                                }
-                            }
-                        },
-                    };
-
-                    try stmts.append(new_stmt);
-                }
-
-                if (part_index == parts.len - 1 and export_props.items.len > 0) {
-                    if (part.stmts.len >= i + 2) {
-                        part.stmts.len = i + 2;
-                    } else {
-                        const new_stmts = try p.allocator.alloc(Stmt, i + 2);
-                        @memcpy(new_stmts[0..part.stmts.len], part.stmts);
-                    }
-                } else {
-                    part.stmts.len = i;
-                }
+                try stmts.append(p.allocator, new_stmt);
             }
 
-            // add a marker for the client runtime to tell that this is an ES module
-            try stmts.append(Stmt.alloc(S.SExpr, .{
-                .value = Expr.assign(
-                    Expr.init(E.Dot, .{
-                        .target = Expr.initIdentifier(p.module_ref, logger.Loc.Empty),
-                        .name = "esmodule",
-                        .name_loc = logger.Loc.Empty,
-                    }, logger.Loc.Empty),
-                    Expr.init(E.Boolean, .{ .value = true }, logger.Loc.Empty),
-                ),
-            }, logger.Loc.Empty));
+            if (export_props.items.len > 0) {
+                // add a marker for the client runtime to tell that this is an ES module
+                try stmts.append(p.allocator, Stmt.alloc(S.SExpr, .{
+                    .value = Expr.assign(
+                        Expr.init(E.Dot, .{
+                            .target = Expr.initIdentifier(p.module_ref, logger.Loc.Empty),
+                            .name = "__esModule",
+                            .name_loc = logger.Loc.Empty,
+                        }, logger.Loc.Empty),
+                        Expr.init(E.Boolean, .{ .value = true }, logger.Loc.Empty),
+                    ),
+                }, logger.Loc.Empty));
 
-            // Note: this might not be good, we might have to do `exports.xyz = ` to let us override an older module?
-            try stmts.append(Stmt.alloc(S.SExpr, .{
-                .value = Expr.assign(
-                    Expr.init(E.Dot, .{
-                        .target = Expr.initIdentifier(p.module_ref, logger.Loc.Empty),
-                        .name = "exports",
-                        .name_loc = logger.Loc.Empty,
-                    }, logger.Loc.Empty),
-                    Expr.init(E.Object, .{
-                        .properties = G.Property.List.fromList(export_props),
-                    }, logger.Loc.Empty),
-                ),
-            }, logger.Loc.Empty));
+                // Note: this might not be good, we might have to do `exports.xyz = ` to let us override an older module?
+                try stmts.append(p.allocator, Stmt.alloc(S.SExpr, .{
+                    .value = Expr.assign(
+                        Expr.init(E.Dot, .{
+                            .target = Expr.initIdentifier(p.module_ref, logger.Loc.Empty),
+                            .name = "exports",
+                            .name_loc = logger.Loc.Empty,
+                        }, logger.Loc.Empty),
+                        Expr.init(E.Object, .{
+                            .properties = G.Property.List.fromList(export_props),
+                        }, logger.Loc.Empty),
+                    ),
+                }, logger.Loc.Empty));
 
-            parts[0].stmts = stmts.items;
-            return parts[0..1];
+                // mark a dependency on module_ref so it is renamed
+                try parts[1].symbol_uses.put(p.allocator, p.module_ref, .{ .count_estimate = 1 });
+                try parts[1].declared_symbols.append(p.allocator, .{ .ref = p.module_ref, .is_top_level = true });
+            }
+
+            parts[1].stmts = stmts.items;
+            return parts;
         }
 
         fn visitBindingForKitModuleExports(
             p: *P,
             binding: Binding,
             export_props: *std.ArrayListUnmanaged(G.Property),
+            part: *js_ast.Part,
             is_live_binding: bool,
         ) !void {
             switch (binding.data) {
                 .b_missing => @panic("missing!"),
                 .b_identifier => |id| {
-                    try p.visitRefForKitModuleExports(id.ref, binding.loc, export_props, is_live_binding);
+                    try p.visitRefForKitModuleExports(id.ref, binding.loc, export_props, part, is_live_binding);
                 },
                 .b_array => |array| {
                     for (array.items) |item| {
-                        try p.visitBindingForKitModuleExports(item.binding, export_props, is_live_binding);
+                        try p.visitBindingForKitModuleExports(item.binding, export_props, part, is_live_binding);
                     }
                 },
                 .b_object => |object| {
                     for (object.properties) |item| {
-                        try p.visitBindingForKitModuleExports(item.value, export_props, is_live_binding);
+                        try p.visitBindingForKitModuleExports(item.value, export_props, part, is_live_binding);
                     }
                 },
             }
@@ -23674,6 +23616,7 @@ fn NewParser_(
             ref: Ref,
             loc: logger.Loc,
             export_props: *std.ArrayListUnmanaged(G.Property),
+            part: *js_ast.Part,
             is_live_binding: bool,
         ) !void {
             const symbol = p.symbols.items[ref.inner_index];
@@ -23682,9 +23625,17 @@ fn NewParser_(
                 const key = Expr.init(E.String, .{
                     .data = symbol.original_name,
                 }, loc);
+
+                // This is technically incorrect in that we've marked this as a
+                // top level symbol. but all we care about is preventing name
+                // collisions, not necessarily the best minificaiton (dev only)
                 const arg1 = p.generateTempRef(symbol.original_name);
+                try part.declared_symbols.append(p.allocator, .{ .ref = arg1, .is_top_level = true });
+                try part.symbol_uses.putNoClobber(p.allocator, arg1, .{ .count_estimate = 1 });
+                try p.module_scope.generated.push(p.allocator, arg1);
 
                 // Live bindings need to update the value internally and externally.
+                // 'get abc() { return abc }'
                 try export_props.append(p.allocator, .{
                     .kind = .get,
                     .key = key,
@@ -23697,6 +23648,7 @@ fn NewParser_(
                         },
                     } }, loc),
                 });
+                // 'set abc(abc2) { abc = abc2 }'
                 try export_props.append(p.allocator, .{
                     .kind = .set,
                     .key = key,
@@ -23715,6 +23667,7 @@ fn NewParser_(
                     } }, loc),
                 });
             } else {
+                // 'abc,'
                 try export_props.append(p.allocator, .{
                     .key = Expr.init(E.String, .{
                         .data = symbol.original_name,

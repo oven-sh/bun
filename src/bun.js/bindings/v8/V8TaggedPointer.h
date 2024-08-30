@@ -1,6 +1,6 @@
 #pragma once
 
-#include "v8.h"
+#include <root.h>
 
 namespace v8 {
 
@@ -77,15 +77,6 @@ struct TaggedPointer {
     {
         ASSERT(type() == Type::Smi);
         return static_cast<int32_t>(value >> 32);
-    }
-
-    JSC::JSValue getJSValue() const
-    {
-        int32_t smi;
-        if (getSmi(smi)) {
-            return JSC::jsNumber(smi);
-        }
-        return getPtr();
     }
 };
 

@@ -1169,19 +1169,7 @@ pub const BundleV2 = struct {
         // conditions from creating two
         _ = JSC.WorkPool.get();
 
-        if (BundleThread.instance) |existing| {
-            existing.queue.push(completion);
-            existing.waker.?.wake();
-        } else {
-            var instance = bun.default_allocator.create(BundleThread) catch unreachable;
-            instance.queue = .{};
-            instance.waker = null;
-            instance.queue.push(completion);
-            BundleThread.instance = instance;
-
-            var thread = try std.Thread.spawn(.{}, generateInNewThreadWrap, .{instance});
-            thread.detach();
-        }
+        BundleThread.enqueue(completion);
 
         completion.poll_ref.ref(globalThis.bunVM());
 

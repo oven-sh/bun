@@ -34,7 +34,6 @@ public:
     }
 
     TaggedPointer* createHandle(JSC::JSCell* object, const Map* map, JSC::VM& vm);
-    TaggedPointer* createRawHandle(void* ptr);
     TaggedPointer* createSmiHandle(int32_t smi);
     TaggedPointer* createDoubleHandle(double value);
     TaggedPointer* createHandleFromExistingHandle(TaggedPointer address);

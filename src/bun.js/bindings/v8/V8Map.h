@@ -36,8 +36,6 @@ struct Map {
     static const Map map_map;
     // the map used by objects inheriting JSCell
     static const Map object_map;
-    // the map used by pointers to non-JSCell objects stored in handles
-    static const Map raw_ptr_map;
     // the map used by oddballs (null, undefined)
     static const Map oddball_map;
     // the map used by booleans

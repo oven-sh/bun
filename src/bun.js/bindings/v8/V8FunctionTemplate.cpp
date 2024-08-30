@@ -113,7 +113,8 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
     ImplicitArgs implicit_args = {
         .holder = nullptr,
         .isolate = isolate,
-        .context = reinterpret_cast<Context*>(isolate),
+        // set to nullptr to catch any case where this is actually used
+        .context = nullptr,
         .return_value = TaggedPointer(),
         // data may be an object
         // put it in the handle scope so that it has a map ptr

@@ -117,7 +117,7 @@ struct Handle {
         // TODO(@190n) exhaustively switch on InstanceType
         if (map_ptr == &Map::object_map || map_ptr == &Map::string_map) {
             return true;
-        } else if (map_ptr == &Map::map_map || map_ptr == &Map::raw_ptr_map || map_ptr == &Map::oddball_map
+        } else if (map_ptr == &Map::map_map || map_ptr == &Map::oddball_map
             || map_ptr == &Map::boolean_map || map_ptr == &Map::heap_number_map) {
             return false;
         } else {

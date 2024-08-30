@@ -1634,6 +1634,12 @@ pub const BundleV2 = struct {
         bundler.options.chunk_naming = config.names.chunk.data;
         bundler.options.asset_naming = config.names.asset.data;
 
+        if (config.compile_target) |compile_target| {
+            _ = compile_target; // autofix
+
+            bundler.options.compile = true;
+        }
+
         bundler.options.public_path = config.public_path.list.items;
 
         bundler.options.output_dir = config.outdir.toOwnedSliceLeaky();
@@ -1762,7 +1768,71 @@ pub const BundleV2 = struct {
             return error.BuildFailed;
         }
 
-        return try this.linker.generateChunksInParallel(chunks);
+        var output_files = try this.linker.generateChunksInParallel(chunks);
+        const compile_target = &(config.compile_target orelse
+            // --- compile: false ----
+            return output_files);
+        // --- compile: true ----
+        var outfile = std.fs.path.basename(config.entry_points.keys()[0]);
+        const ext = std.fs.path.extension(outfile);
+        if (ext.len > 0) {
+            outfile = outfile[0 .. outfile.len - ext.len];
+        }
+
+        if (strings.eqlComptime(outfile, "index")) {
+            outfile = std.fs.path.basename(std.fs.path.dirname(config.entry_points.keys()[0]) orelse "index");
+        }
+
+        if (strings.eqlComptime(outfile, "bun")) {
+            outfile = std.fs.path.basename(std.fs.path.dirname(config.entry_points.keys()[0]) orelse "bun");
+        }
+
+        errdefer {
+            for (output_files.items) |*file| {
+                file.deinit();
+            }
+            output_files.deinit();
+        }
+        if (outfile.len == 0 or strings.eqlComptime(outfile, ".") or strings.eqlComptime(outfile, "..") or strings.eqlComptime(outfile, "../")) {
+            outfile = "index";
+        }
+
+        if (compile_target.os == .windows and !strings.hasSuffixComptime(outfile, ".exe")) {
+            const old_dest_path = output_files.items[0].dest_path;
+            defer bun.default_allocator.free(old_dest_path);
+            output_files.items[0].dest_path = try std.fmt.allocPrint(bun.default_allocator, "{s}.exe", .{old_dest_path});
+            outfile = output_files.items[0].dest_path;
+        }
+
+        const root_path = std.fs.path.dirname(outfile) orelse ".";
+
+        const root_dir = if (root_path.len == 0 or strings.eqlComptime(root_path, "."))
+            std.fs.cwd()
+        else
+            std.fs.cwd().makeOpenPath(root_path, .{}) catch |err| {
+                this.bundler.log.output().err(err, "attempting to open {} output directory", .{bun.fmt.quote(root_path)});
+                return error.BuildFailed;
+            };
+
+        bun.StandaloneModuleGraph.toExecutable(
+            compile_target,
+            bun.default_allocator,
+            output_files.items,
+            root_dir,
+            this.bundler.options.public_path,
+            outfile,
+            this.bundler.env,
+            this.bundler.log.output(),
+            &output_files.items[0].hash,
+        ) catch |err| {
+            if (err == error.Fatal) {
+                return error.BuildFailed;
+            }
+
+            return err;
+        };
+
+        return output_files;
     }
 
     pub fn enqueueOnResolvePluginIfNeeded(
@@ -11792,7 +11862,7 @@ const CompileResultForSourceMap = struct {
     source_index: u32,
 };
 
-const ContentHasher = struct {
+pub const ContentHasher = struct {
     // xxhash64 outperforms Wyhash if the file is > 1KB or so
     hasher: std.hash.XxHash64 = std.hash.XxHash64.init(0),
 

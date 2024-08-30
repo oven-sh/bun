@@ -28,9 +28,9 @@
   "scripts": {
     "setup": "./scripts/setup.sh",
     "bump": "bun ./scripts/bump.ts",
-    "build": "bun ./scripts/build.mjs -DCMAKE_BUILD_TYPE=Debug -B build/debug --build build/debug",
-    "build:release": "bun ./scripts/build.mjs -DCMAKE_BUILD_TYPE=Release -B build/release --build build/release",
-    "build:ci": "bun ./scripts/build.mjs -DCI=true -DCMAKE_BUILD_TYPE=Release -B build/ci --build build/ci",
+    "build": "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Debug -B build/debug --build build/debug",
+    "build:release": "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -B build/release --build build/release",
+    "build:ci": "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -DCI=true -B build/ci --build build/ci",
     "build:valgrind": "cmake . -DZIG_OPTIMIZE=Debug -DUSE_DEBUG_JSC=ON -DCMAKE_BUILD_TYPE=Debug -GNinja -Bbuild-valgrind && ninja -Cbuild-valgrind",
     "build:tidy": "bash ./scripts/env.sh && BUN_SILENT=1 cmake --log-level=WARNING . ${CMAKE_FLAGS[@]} -DZIG_OPTIMIZE=Debug -DUSE_DEBUG_JSC=ON -DBUN_TIDY_ONLY=ON -DCMAKE_BUILD_TYPE=Debug -GNinja -Bbuild-tidy && BUN_SILENT=1 ninja -Cbuild-tidy",
     "build:tidy-extra": "cmake . -DZIG_OPTIMIZE=Debug -DUSE_DEBUG_JSC=ON -DBUN_TIDY_ONLY_EXTRA=ON -DCMAKE_BUILD_TYPE=Debug -GNinja -Bbuild-tidy && ninja -Cbuild-tidy",

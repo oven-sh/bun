@@ -1553,14 +1553,15 @@ pub const BundleV2 = struct {
 
         instance.waker = bun.Async.Waker.init() catch @panic("Failed to create waker");
 
-        // 3. Unblock the calling thread so it can continue.
-        instance.waker_waiter.unlock();
-
         var timer: bun.windows.libuv.Timer = undefined;
         if (bun.Environment.isWindows) {
             timer.init(instance.waker.?.loop.uv_loop);
             timer.start(std.math.maxInt(u64), std.math.maxInt(u64), &timerCallback);
         }
+
+        // 3. Unblock the calling thread so it can continue.
+        instance.wait_for_thread_to_have_created_the_waker.store(0, .monotonic);
+        std.Thread.Futex.wake(&instance.wait_for_thread_to_have_created_the_waker, 10);
 
         var has_bundled = false;
         while (true) {
@@ -1585,30 +1586,40 @@ pub const BundleV2 = struct {
     }
 
     pub const BundleThread = struct {
+        /// Must be created on the BundleThread.
         waker: ?bun.Async.Waker,
-        queue: bun.UnboundedQueue(JSBundleCompletionTask, .next) = .{},
-        generation: bun.Generation = 0,
-        waker_waiter: bun.Lock = .{},
+        queue: bun.UnboundedQueue(JSBundleCompletionTask, .next),
+        generation: bun.Generation,
+        wait_for_thread_to_have_created_the_waker: std.atomic.Value(u32),
 
         pub var instance: ?*BundleThread = undefined;
         pub var load_once = std.once(loadOnce);
         pub fn loadOnce() void {
-            instance = bun.default_allocator.create(BundleThread) catch unreachable;
-            instance.?.queue = .{};
-            instance.?.waker = null;
-            BundleThread.instance = instance;
-
-            // 1. Block the calling thread until the waker has loaded.
-            instance.?.waker_waiter.lock();
+            const this = bun.default_allocator.create(BundleThread) catch bun.outOfMemory();
+            this.* = .{
+                .waker = null,
+                .queue = .{},
+                .generation = 0,
+                .wait_for_thread_to_have_created_the_waker = .{
+                    .raw = 1,
+                },
+            };
+            BundleThread.instance = this;
 
             // 2. Spawn the bun build thread.
             var thread = std.Thread.spawn(.{}, generateInNewThreadWrap, .{instance.?}) catch Output.panic("Failed to spawn bun build thread", .{});
             thread.detach();
+
+            while (this.wait_for_thread_to_have_created_the_waker.load(.monotonic) > 0) std.Thread.Futex.wait(&this.wait_for_thread_to_have_created_the_waker, 1);
+        }
+        fn get() *BundleThread {
+            load_once.call();
+            return instance.?;
         }
         pub fn enqueue(task: *JSBundleCompletionTask) void {
-            load_once.call();
-            instance.?.queue.push(task);
-            if (instance.?.waker) |*waker| {
+            const this = get();
+            this.queue.push(task);
+            if (this.waker) |*waker| {
                 waker.wake();
             }
         }

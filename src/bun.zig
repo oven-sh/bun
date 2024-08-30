@@ -3699,8 +3699,9 @@ pub fn WeakPtr(comptime T: type, comptime weakable_field: std.meta.FieldEnum(T))
             const weak_data: *WeakPtrData = &@field(value, @tagName(weakable_field));
 
             this.value = null;
-            weak_data.reference_count -= 1;
-            if (weak_data.finalized and weak_data.reference_count == 1) {
+            const count = weak_data.reference_count - 1;
+            weak_data.reference_count = count;
+            if (weak_data.finalized and count == 0) {
                 value.destroy();
             }
         }

@@ -191,7 +191,7 @@ pub fn Printer(comptime Writer: type) type {
                                 }
                             }
                         },
-                    ).asErr()) |e| return e;
+                    ).asErr()) |e| return .{ .err = e };
 
                     css_module.addLocal(ident, ident, this.loc.source_index);
                     return;
@@ -202,7 +202,7 @@ pub fn Printer(comptime Writer: type) type {
         }
 
         pub fn writeDashedIdent(this: *This, ident: []const u8, is_declaration: bool) !void {
-            if (this.writeStr("--").asErr()) |e| return e;
+            if (this.writeStr("--").asErr()) |e| return .{ .err = e };
 
             if (this.css_module) |*css_module| {
                 if (css_module.config.dashed_idents) {
@@ -218,7 +218,7 @@ pub fn Printer(comptime Writer: type) type {
                         ident[2..],
                         this,
                         Fn.writeFn,
-                    ).asErr()) |e| return e;
+                    ).asErr()) |e| return .{ .err = e };
 
                     if (is_declaration) {
                         css_module.addDashed(ident, this.loc.source_index);
@@ -247,7 +247,7 @@ pub fn Printer(comptime Writer: type) type {
                 return;
             }
 
-            if (this.writeChar('\n').asErr()) |e| return e;
+            if (this.writeChar('\n').asErr()) |e| return .{ .err = e };
             return this.writeIndent();
         }
 
@@ -255,9 +255,9 @@ pub fn Printer(comptime Writer: type) type {
         /// If `ws_before` is true, then whitespace is also written before the delimiter.
         pub fn delim(this: *This, delim_: u8, ws_before: bool) PrintResult(void) {
             if (ws_before) {
-                if (this.whitespace().asErr()) |e| return e;
+                if (this.whitespace().asErr()) |e| return .{ .err = e };
             }
-            if (this.writeChar(delim_).asErr()) |e| return e;
+            if (this.writeChar(delim_).asErr()) |e| return .{ .err = e };
             return this.whitespace();
         }
 
@@ -267,7 +267,7 @@ pub fn Printer(comptime Writer: type) type {
         /// regardless of the `minify` option.
         pub fn whitespace(this: *This) PrintResult(void) {
             if (this.minify) return PrintResult(void).success;
-            return if (this.writeChar(' ').asErr()) |e| return e;
+            return this.writeChar(' ');
         }
 
         pub fn withContext(

@@ -281,6 +281,22 @@ void test_v8_object(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
+void set_field_from_js(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Local<Object> obj = info[0].As<Object>();
+  Local<Value> key = info[1];
+  Local<Number> value = Number::New(isolate, 321.0);
+  Maybe<bool> ret = obj->Set(context, key, value);
+  LOG_EXPR(ret.IsJust());
+  if (ret.IsJust()) {
+    LOG_EXPR(ret.ToChecked());
+  }
+
+  return ok(info);
+}
+
 void test_v8_array_new(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
 
@@ -695,6 +711,7 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_string_write_utf8);
   NODE_SET_METHOD(exports, "test_v8_external", test_v8_external);
   NODE_SET_METHOD(exports, "test_v8_object", test_v8_object);
+  NODE_SET_METHOD(exports, "set_field_from_js", set_field_from_js);
   NODE_SET_METHOD(exports, "test_v8_array_new", test_v8_array_new);
   NODE_SET_METHOD(exports, "test_v8_object_template", test_v8_object_template);
   NODE_SET_METHOD(exports, "create_function_with_data",

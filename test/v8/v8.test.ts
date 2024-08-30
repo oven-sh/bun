@@ -166,6 +166,9 @@ describe("Object", () => {
   it("can create an object and set properties", () => {
     checkSameOutput("test_v8_object", []);
   });
+  it("can handle failure in Set()", () => {
+    checkSameOutput("test_v8_object_set_failure", []);
+  });
 });
 describe("Array", () => {
   // v8::Array::New is broken as it still tries to reinterpret locals as JSValues

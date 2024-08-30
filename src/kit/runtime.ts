@@ -38,13 +38,13 @@ class HotModule {
     return loadModule(key).exports;
   }
 
-  importSync(key: string, callbacks: null | ExportsCallbackFunction) {
+  importSync(key: string, onReload: null | ExportsCallbackFunction) {
     const module = loadModule(key);
-    if (callbacks) {
+    if (onReload) {
       const { exports, __esModule } = module;
       return __esModule
-        ? module._ext_exports ??= { ...exports, default: exports }
-        : exports;
+        ? exports
+        : module._ext_exports ??= { ...exports, default: exports };
     }
   }
 }
@@ -61,6 +61,14 @@ function loadModule(key: string): HotModule {
   load(module);
   return module;
 }
+
+function name(fn, name) {
+  Object.defineProperty(fn, 'name', { value: name });
+}
+
+name(HotModule.prototype.importSync, '<HMR runtime> importSync')
+name(HotModule.prototype.require, '<HMR runtime> require')
+name(loadModule, '<HMR runtime> loadModule')
 
 // if (mode == 'client') {
 //   const style = document.createElement('style');

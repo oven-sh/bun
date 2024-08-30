@@ -4497,48 +4497,6 @@ const ParserFeatures = struct {
     jsx: JSXTransformType = JSXTransformType.none,
     scan_only: bool = false,
 
-    // *** How React Fast Refresh works ***
-    //
-    //  Implementations:
-    //   [0]: https://github.com/facebook/react/blob/master/packages/react-refresh/src/ReactFreshBabelPlugin.js
-    //   [1]: https://github.com/swc-project/swc/blob/master/ecmascript/transforms/react/src/refresh/mod.rs
-    //
-    //  Additional reading:
-    //   - https://github.com/facebook/react/issues/16604#issuecomment-528663101
-    //   - https://github.com/facebook/react/blob/master/packages/react-refresh/src/__tests__/ReactFreshIntegration-test.js
-    //
-    //  From reading[0] and Dan Abramov's comment, there are really five parts.
-    //  1. At the top of the file:
-    //      1. Declare a $RefreshReg$ if it doesn't exist
-    //         - This really just does "RefreshRuntime.register(ComponentIdentifier, ComponentIdentifier.name);"
-    //      2. Run "var _s${componentIndex} = $RefreshSig$()" to generate a function for updating react refresh scoped to the component. So it's one per *component*.
-    //         - This really just does "RefreshRuntime.createSignatureFunctionForTransform();"
-    //  2. Register all React components[2] defined in the module scope by calling the equivalent of $RefreshReg$(ComponentIdentifier, "ComponentName")
-    //  3. For each registered component:
-    //    1. Call "_s()" to mark the first render of this component for "react-refresh/runtime". Call this at the start of the React component's function body
-    //    2. Track every call expression to a hook[3] inside the component, including:
-    //        - Identifier of the hook function
-    //        - Arguments passed
-    //    3. For each hook's call expression, generate a signature key which is
-    //        - The hook's identifier ref
-    //        - The S.Decl ("VariableDeclarator")'s source
-    //           "var [foo, bar] = useFooBar();"
-    //                ^--------^ This region, I think. Judging from this line: https://github.com/facebook/react/blob/master/packages/react-refresh/src/ReactFreshBabelPlugin.js#L407
-    //        - For the "useState" hook, also hash the source of the first argument if it exists e.g. useState(foo => true);
-    //        - For the "useReducer" hook, also hash the source of the second argument if it exists e.g. useReducer({}, () => ({}));
-    //    4. If the hook component is not builtin and is defined inside a component, always reset the component state
-    //        - See this test: https://github.com/facebook/react/blob/568dc3532e25b30eee5072de08503b1bbc4f065d/packages/react-refresh/src/__tests__/ReactFreshIntegration-test.js#L909
-    //  4. From the signature key generated in 3., call one of the following:
-    //     - _s(ComponentIdentifier, hash(signature));
-    //     - _s(ComponentIdentifier, hash(signature), true /* forceReset */);
-    //     - _s(ComponentIdentifier, hash(signature), false /* forceReset */, () => [customHook1, customHook2, customHook3]);
-    //     Note: This step is only strictly required on rebuild.
-    //  5. if (isReactComponentBoundary(exports)) enqueueUpdateAndHandleErrors();
-    // **** FAQ ****
-    //  [2]: Q: From a parser's perspective, what's a component?
-    //       A: typeof name === 'string' && name[0] >= 'A' && name[0] <= 'Z -- https://github.com/facebook/react/blob/568dc3532e25b30eee5072de08503b1bbc4f065d/packages/react-refresh/src/ReactFreshBabelPlugin.js#L42-L44
-    //  [3]: Q: From a parser's perspective, what's a hook?
-    //       A: /^use[A-Z]/ -- https://github.com/facebook/react/blob/568dc3532e25b30eee5072de08503b1bbc4f065d/packages/react-refresh/src/ReactFreshBabelPlugin.js#L390
     //
     //
     //
@@ -9008,7 +8966,7 @@ fn NewParser_(
                     }) catch unreachable;
                 }
             } else {
-                var path_name = fs.PathName.init(strings.append(p.allocator, "import_", path.text) catch unreachable);
+                var path_name = fs.PathName.init(path.text);
                 const name = try path_name.nonUniqueNameString(p.allocator);
                 stmt.namespace_ref = try p.newSymbol(.other, name);
                 var scope: *Scope = p.current_scope;
@@ -9032,6 +8990,15 @@ fn NewParser_(
                     const ref = try p.declareSymbol(.import, name_loc.loc, name);
                     name_loc.ref = ref;
                     try p.is_import_item.put(p.allocator, ref, {});
+
+                    // ensure every e_import_identifier holds the namespace
+                    if (p.options.features.hot_module_reloading) {
+                        p.symbols.items[ref.inner_index].namespace_alias = .{
+                            .namespace_ref = stmt.namespace_ref,
+                            .alias = "default",
+                            .import_record_index = stmt.import_record_index,
+                        };
+                    }
 
                     if (macro_remap) |*remap| {
                         if (remap.get("default")) |remapped_path| {
@@ -9083,6 +9050,15 @@ fn NewParser_(
 
                 try p.is_import_item.put(p.allocator, ref, {});
                 p.checkForNonBMPCodePoint(item.alias_loc, item.alias);
+
+                // ensure every e_import_identifier holds the namespace
+                if (p.options.features.hot_module_reloading) {
+                    p.symbols.items[ref.inner_index].namespace_alias = .{
+                        .namespace_ref = stmt.namespace_ref,
+                        .alias = name,
+                        .import_record_index = stmt.import_record_index,
+                    };
+                }
 
                 if (macro_remap) |*remap| {
                     if (remap.get(item.alias)) |remapped_path| {
@@ -22740,6 +22716,11 @@ fn NewParser_(
         }
 
         pub fn computeTsEnumsMap(p: *const P, allocator: Allocator) !js_ast.Ast.TsEnumsMap {
+            // When hot module reloading is enabled, we disable enum inlining
+            // to avoid making the hmr graph more complicated.
+            if (p.options.features.hot_module_reloading)
+                return .{};
+
             const InlinedEnumValue = js_ast.InlinedEnumValue;
             var map: js_ast.Ast.TsEnumsMap = .{};
             try map.ensureTotalCapacity(allocator, @intCast(p.top_level_enums.items.len));

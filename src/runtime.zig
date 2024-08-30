@@ -208,8 +208,56 @@ pub const Runtime = struct {
     }
 
     pub const Features = struct {
+        // TODO(@paperdave): would this comment be better located at the implementation for react fast refresh?
+        // *** How React Fast Refresh works ***
+        //
+        //  Implementations:
+        //   [0]: https://github.com/facebook/react/blob/master/packages/react-refresh/src/ReactFreshBabelPlugin.js
+        //   [1]: https://github.com/swc-project/swc/blob/master/ecmascript/transforms/react/src/refresh/mod.rs
+        //
+        //  Additional reading:
+        //   - https://github.com/facebook/react/issues/16604#issuecomment-528663101
+        //   - https://github.com/facebook/react/blob/master/packages/react-refresh/src/__tests__/ReactFreshIntegration-test.js
+        //
+        //  From reading[0] and Dan Abramov's comment, there are really five parts.
+        //  1. At the top of the file:
+        //      1. Declare a $RefreshReg$ if it doesn't exist
+        //         - This really just does "RefreshRuntime.register(ComponentIdentifier, ComponentIdentifier.name);"
+        //      2. Run "var _s${componentIndex} = $RefreshSig$()" to generate a function for updating react refresh scoped to the component. So it's one per *component*.
+        //         - This really just does "RefreshRuntime.createSignatureFunctionForTransform();"
+        //  2. Register all React components[2] defined in the module scope by calling the equivalent of $RefreshReg$(ComponentIdentifier, "ComponentName")
+        //  3. For each registered component:
+        //    1. Call "_s()" to mark the first render of this component for "react-refresh/runtime". Call this at the start of the React component's function body
+        //    2. Track every call expression to a hook[3] inside the component, including:
+        //        - Identifier of the hook function
+        //        - Arguments passed
+        //    3. For each hook's call expression, generate a signature key which is
+        //        - The hook's identifier ref
+        //        - The S.Decl ("VariableDeclarator")'s source
+        //           "var [foo, bar] = useFooBar();"
+        //                ^--------^ This region, I think. Judging from this line: https://github.com/facebook/react/blob/master/packages/react-refresh/src/ReactFreshBabelPlugin.js#L407
+        //        - For the "useState" hook, also hash the source of the first argument if it exists e.g. useState(foo => true);
+        //        - For the "useReducer" hook, also hash the source of the second argument if it exists e.g. useReducer({}, () => ({}));
+        //    4. If the hook component is not builtin and is defined inside a component, always reset the component state
+        //        - See this test: https://github.com/facebook/react/blob/568dc3532e25b30eee5072de08503b1bbc4f065d/packages/react-refresh/src/__tests__/ReactFreshIntegration-test.js#L909
+        //  4. From the signature key generated in 3., call one of the following:
+        //     - _s(ComponentIdentifier, hash(signature));
+        //     - _s(ComponentIdentifier, hash(signature), true /* forceReset */);
+        //     - _s(ComponentIdentifier, hash(signature), false /* forceReset */, () => [customHook1, customHook2, customHook3]);
+        //     Note: This step is only strictly required on rebuild.
+        //  5. if (isReactComponentBoundary(exports)) enqueueUpdateAndHandleErrors();
+        // **** FAQ ****
+        //  [2]: Q: From a parser's perspective, what's a component?
+        //       A: typeof name === 'string' && name[0] >= 'A' && name[0] <= 'Z -- https://github.com/facebook/react/blob/568dc3532e25b30eee5072de08503b1bbc4f065d/packages/react-refresh/src/ReactFreshBabelPlugin.js#L42-L44
+        //  [3]: Q: From a parser's perspective, what's a hook?
+        //       A: /^use[A-Z]/ -- https://github.com/facebook/react/blob/568dc3532e25b30eee5072de08503b1bbc4f065d/packages/react-refresh/src/ReactFreshBabelPlugin.js#L390
         react_fast_refresh: bool = false,
+        /// `hot_module_reloading` is specific to if we are bundling from Kit.
+        /// This only properly works when using --format=internal_kit_dev, as
+        /// you want to use the rest of the bundler code for that format to get
+        /// a useful result.
         hot_module_reloading: bool = false,
+
         is_macro_runtime: bool = false,
         top_level_await: bool = false,
         auto_import_jsx: bool = false,
@@ -246,11 +294,16 @@ pub const Runtime = struct {
         trim_unused_imports: bool = false,
 
         /// Use `import.meta.require()` instead of require()?
-        /// This is only supported in Bun.
+        /// This is only supported with --target=bun
         use_import_meta_require: bool = false,
 
         replace_exports: ReplaceableExport.Map = .{},
 
+        /// Scan for '// @bun' at the top of this file, halting a parse if it is
+        /// seen. This is used in `bun run` after a `bun build --target=bun`,
+        /// and you know the contents is already correct.
+        ///
+        /// This comment must never be used manually.
         dont_bundle_twice: bool = false,
 
         /// This is a list of packages which even when require() is used, we will

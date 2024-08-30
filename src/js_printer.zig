@@ -3106,7 +3106,10 @@ fn NewPrinter(
                     // Potentially use a property access instead of an identifier
                     var didPrint = false;
 
-                    const ref = p.symbols().follow(e.ref);
+                    const ref = if (p.options.module_type != .internal_kit_dev)
+                        p.symbols().follow(e.ref)
+                    else
+                        e.ref;
                     const symbol = p.symbols().get(ref).?;
 
                     if (symbol.import_item_status == .missing) {

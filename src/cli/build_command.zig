@@ -394,7 +394,7 @@ pub const BuildCommand = struct {
                             outfile = try std.fmt.allocPrint(allocator, "{s}.exe", .{outfile});
                         }
 
-                        try bun.StandaloneModuleGraph.toExecutable(
+                        bun.StandaloneModuleGraph.toExecutable(
                             compile_target,
                             allocator,
                             output_files,
@@ -402,7 +402,15 @@ pub const BuildCommand = struct {
                             this_bundler.options.public_path,
                             outfile,
                             this_bundler.env,
-                        );
+                            Output.interface(),
+                            null,
+                        ) catch |err| {
+                            if (err == error.Fatal) {
+                                Global.exit(1);
+                            }
+
+                            return err;
+                        };
                         const compiled_elapsed = @divTrunc(@as(i64, @truncate(std.time.nanoTimestamp() - bundled_end)), @as(i64, std.time.ns_per_ms));
                         const compiled_elapsed_digit_count: isize = switch (compiled_elapsed) {
                             0...9 => 3,

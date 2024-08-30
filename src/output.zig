@@ -897,8 +897,17 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
     const T = @TypeOf(error_name);
     const info = @typeInfo(T);
 
-    if (comptime T == bun.sys.Error or info == .Pointer and info.Pointer.child == bun.sys.Error) {
-        prettyErrorln("<r><red>error:<r><d>:<r> " ++ fmt, args ++ .{error_name});
+    if (comptime T == *bun.sys.Error or T == *const bun.sys.Error) {
+        return err(error_name.*, fmt, args);
+    }
+
+    if (comptime T == bun.sys.Error) {
+        if (std.meta.declarations(@TypeOf(args)).len == 0 and std.meta.fields(@TypeOf(args)).len == 0) {
+            prettyErrorln("<red>{s}<r><d>:<r> " ++ fmt, .{error_name.name()});
+            return;
+        }
+
+        prettyErrorln(fmt, args ++ .{error_name});
         return;
     }
 
@@ -1019,3 +1028,23 @@ pub inline fn errGeneric(comptime fmt: []const u8, args: anytype) void {
 pub var buffered_stdin = std.io.BufferedReader(4096, File.Reader){
     .unbuffered_reader = File.Reader{ .context = .{ .handle = if (Environment.isWindows) undefined else bun.toFD(0) } },
 };
+
+const OutputInterface = struct {
+    pub fn err(this: @This(), error_name: anytype, comptime fmt: []const u8, args: anytype) void {
+        _ = this; // autofix
+        Output.err(error_name, fmt, args);
+    }
+
+    pub fn errGeneric(this: @This(), comptime fmt: []const u8, args: anytype) void {
+        _ = this; // autofix
+        Output.errGeneric(fmt, args);
+    }
+
+    pub fn prettyErrorln(this: @This(), comptime fmt: []const u8, args: anytype) void {
+        _ = this; // autofix
+        Output.prettyErrorln(fmt, args);
+    }
+};
+pub fn interface() OutputInterface {
+    return .{};
+}

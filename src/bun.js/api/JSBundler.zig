@@ -42,7 +42,7 @@ const Runtime = @import("../../runtime.zig").Runtime;
 const JSLexer = bun.js_lexer;
 const Expr = JSAst.Expr;
 const Index = @import("../../ast/base.zig").Index;
-
+const CompileTarget = @import("../../compile_target.zig");
 pub const JSBundler = struct {
     const OwnedString = bun.MutableString;
 
@@ -69,6 +69,9 @@ pub const JSBundler = struct {
         public_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         conditions: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         packages: options.PackagesOption = .bundle,
+        compile_target: ?CompileTarget = null,
+        outfile: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+        write: bool = true,
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
@@ -359,6 +362,26 @@ pub const JSBundler = struct {
                 }
             }
 
+            if (config.getTruthy(globalThis, "compile")) |compile_value| {
+                if (compile_value.isString()) {
+                    var slice = compile_value.toSliceOrNull(globalThis) orelse {
+                        globalThis.throwInvalidArguments("Expected compile to be a string", .{});
+                        return error.JSException;
+                    };
+                    defer slice.deinit();
+                    this.compile_target = CompileTarget.fromString(slice.slice(), globalThis.output()) catch return error.JSException;
+                } else if (compile_value.isBoolean()) {
+                    if (compile_value == .true) {
+                        this.compile_target = CompileTarget{};
+                    }
+                } else if (compile_value.jsType().isArray()) {
+                    globalThis.throwTODO("Multiple cross-compilation targets are not implemented yet.");
+                } else {
+                    globalThis.throwInvalidArguments("Expected compile to be a boolean or a string", .{});
+                    return error.JSException;
+                }
+            }
+
             // if (try config.getOptional(globalThis, "dir", ZigString.Slice)) |slice| {
             //     defer slice.deinit();
             //     this.appendSliceExact(slice.slice()) catch unreachable;
@@ -366,9 +389,27 @@ pub const JSBundler = struct {
             //     this.appendSliceExact(globalThis.bunVM().bundler.fs.top_level_dir) catch unreachable;
             // }
 
-            if (try config.getOptional(globalThis, "publicPath", ZigString.Slice)) |slice| {
-                defer slice.deinit();
-                this.public_path.appendSliceExact(slice.slice()) catch unreachable;
+            if (this.compile_target) |compile_target| {
+                const base_public_path = bun.StandaloneModuleGraph.targetBasePublicPath(compile_target.os, "root/");
+
+                this.public_path.appendSliceExact(base_public_path) catch unreachable;
+
+                if (!this.outdir.isEmpty()) {
+                    globalThis.throwInvalidArguments("Cannot use both outdir and compile", .{});
+                    return error.JSException;
+                }
+
+                if (this.code_splitting) {
+                    globalThis.throwInvalidArguments("Cannot use both code splitting and compile", .{});
+                    return error.JSException;
+                }
+
+                this.target = .bun;
+            } else {
+                if (try config.getOptional(globalThis, "publicPath", ZigString.Slice)) |slice| {
+                    defer slice.deinit();
+                    this.public_path.appendSliceExact(slice.slice()) catch unreachable;
+                }
             }
 
             if (config.getTruthy(globalThis, "naming")) |naming| {
@@ -414,6 +455,10 @@ pub const JSBundler = struct {
                 }
             }
 
+            if (try config.getOptional(globalThis, "write", bool)) |write| {
+                this.write = write;
+            }
+
             if (try config.getObject(globalThis, "define")) |define| {
                 if (!define.isObject()) {
                     globalThis.throwInvalidArguments("define must be an object", .{});
@@ -449,6 +494,20 @@ pub const JSBundler = struct {
 
                     // .insert clones the value, but not the key
                     try this.define.insert(key, value.slice());
+                }
+
+                if (this.compile_target) |compile_target| {
+                    const compile_define_keys = &.{
+                        "process.platform",
+                        "process.arch",
+                    };
+
+                    const compile_define_values = compile_target.defineValues();
+
+                    inline for (compile_define_keys, compile_define_values) |key, value| {
+                        // .insert clones the value, but not the key
+                        try this.define.insert(bun.default_allocator.dupe(u8, key) catch bun.outOfMemory(), value);
+                    }
                 }
             }
 

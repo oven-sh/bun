@@ -2856,6 +2856,28 @@ pub const JSGlobalObject = opaque {
         this.throwValue(err);
     }
 
+    const OutputInterface = struct {
+        globalObject: *JSGlobalObject,
+        pub fn err(this: OutputInterface, error_name: anytype, comptime fmt: []const u8, args: anytype) void {
+            const msg = std.fmt.allocPrint(bun.default_allocator, fmt, args) catch unreachable;
+            defer bun.default_allocator.free(msg);
+            const value = this.globalObject.createErrorInstance("{s}", .{msg});
+            value.put(this.globalObject, ZigString.static("name"), @errorName(error_name));
+            this.globalObject.throwValue(value);
+        }
+
+        pub fn errGeneric(this: OutputInterface, comptime fmt: []const u8, args: anytype) void {
+            const msg = std.fmt.allocPrint(bun.default_allocator, fmt, args) catch unreachable;
+            defer bun.default_allocator.free(msg);
+            const value = this.globalObject.createErrorInstance("{s}", .{msg});
+            this.globalObject.throwValue(value);
+        }
+    };
+
+    pub fn output(this: *JSGlobalObject) OutputInterface {
+        return .{ .globalObject = this };
+    }
+
     extern fn JSGlobalObject__clearTerminationException(this: *JSGlobalObject) void;
     extern fn JSGlobalObject__throwTerminationException(this: *JSGlobalObject) void;
     pub const throwTerminationException = JSGlobalObject__throwTerminationException;

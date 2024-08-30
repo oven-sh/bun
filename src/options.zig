@@ -1877,6 +1877,16 @@ pub const OutputFile = struct {
     output_kind: JSC.API.BuildArtifact.OutputKind = .chunk,
     dest_path: []const u8 = "",
 
+    pub fn deinit(this: *OutputFile) void {
+        if (this.value != .saved) {
+            bun.default_allocator.free(this.dest_path);
+        }
+
+        if (this.value == .buffer) {
+            this.value.buffer.deinit();
+        }
+    }
+
     // Depending on:
     // - The target
     // - The number of open file handles
@@ -1914,6 +1924,10 @@ pub const OutputFile = struct {
         buffer: struct {
             allocator: std.mem.Allocator,
             bytes: []const u8,
+
+            pub fn deinit(this: *@This()) void {
+                this.allocator.free(this.bytes);
+            }
         },
         pending: resolver.Result,
         saved: SavedFile,

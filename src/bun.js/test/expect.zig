@@ -1497,7 +1497,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        const expected_line = "Expected object to contain all of the given entries <green>{any}<r>\n";
+        const expected_line = "Expected object to contain all of the given entries: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = "\n\n" ++ expected_line ++ received_line;
         this.throw(globalObject, comptime getSignature("toContainEntries", "<green>expected<r>", false), fmt, .{ expected_fmt, value_fmt });
@@ -1576,6 +1576,73 @@ pub const Expect = struct {
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = "\n\n" ++ expected_line ++ received_line;
         this.throw(globalObject, comptime getSignature("toContainAllEntries", "<green>expected<r>", false), fmt, .{ expected_fmt, value_fmt });
+        return .zero;
+    }
+
+    pub fn toContainAnyEntries(
+        this: *Expect,
+        globalObject: *JSGlobalObject,
+        callFrame: *CallFrame,
+    ) JSValue {
+        defer this.postMatch(globalObject);
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.slice();
+
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("toContainAnyEntries() takes 1 argument", .{});
+            return .zero;
+        }
+
+        incrementExpectCallCounter();
+
+        const expected = arguments[0];
+        if (!expected.jsType().isArray()) {
+            globalObject.throwInvalidArgumentType("toContainAnyEntries", "expected", "array");
+            return .zero;
+        }
+        expected.ensureStillAlive();
+        const value: JSValue = this.getValue(globalObject, thisValue, "toContainAnyEntries", "<green>expected<r>") orelse return .zero;
+
+        const not = this.flags.not;
+        var pass = false;
+
+        if (!value.isUndefinedOrNull()) {
+            var itr = expected.arrayIterator(globalObject);
+
+            while (itr.next()) |item| {
+                const key = item.getIndex(globalObject, 0);
+                const key_string = key.toBunString(globalObject);
+                defer key_string.deref();
+
+                const property_value = item.getIndex(globalObject, 1);
+                const accessed_property_value = value.getOwn(globalObject, key_string) orelse JSValue.undefined;
+                if (property_value.jestDeepEquals(accessed_property_value, globalObject)) {
+                    pass = true;
+                    break;
+                }
+            }
+        }
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        const value_fmt = value.toFmt(&formatter);
+        const expected_fmt = expected.toFmt(&formatter);
+        if (not) {
+            const received_fmt = value.toFmt(&formatter);
+            const expected_line = "Expected object to not contain any of the provided entries: <green>{any}<r>\nReceived: <red>{any}<r>\n";
+            const fmt = "\n\n" ++ expected_line;
+            this.throw(globalObject, comptime getSignature("toContainAnyEntries", "<green>expected<r>", true), fmt, .{ expected_fmt, received_fmt });
+            return .zero;
+        }
+
+        const expected_line = "Expected object to contain any of the provided entries: <green>{any}<r>\n";
+        const received_line = "Received: <red>{any}<r>\n";
+        const fmt = "\n\n" ++ expected_line ++ received_line;
+        this.throw(globalObject, comptime getSignature("toContainAnyEntries", "<green>expected<r>", false), fmt, .{ expected_fmt, value_fmt });
         return .zero;
     }
 

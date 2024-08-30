@@ -4334,10 +4334,13 @@ pub const Blob = struct {
     pub fn toArrayBufferViewWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime lifetime: Lifetime, comptime TypedArrayView: JSC.JSValue.JSType) JSValue {
         switch (comptime lifetime) {
             .clone => {
-                if (buf.len > JSC.synthetic_allocation_limit) {
-                    global.throwOutOfMemory();
-                    this.detach();
-                    return JSValue.zero;
+                if (TypedArrayView != .ArrayBuffer) {
+                    // ArrayBuffer doesn't have this limit.
+                    if (buf.len > JSC.synthetic_allocation_limit) {
+                        global.throwOutOfMemory();
+                        this.detach();
+                        return JSValue.zero;
+                    }
                 }
 
                 if (comptime Environment.isLinux) {
@@ -4374,7 +4377,7 @@ pub const Blob = struct {
                 return JSC.ArrayBuffer.create(global, buf, TypedArrayView);
             },
             .share => {
-                if (buf.len > JSC.synthetic_allocation_limit) {
+                if (buf.len > JSC.synthetic_allocation_limit and TypedArrayView != .ArrayBuffer) {
                     global.throwOutOfMemory();
                     return JSValue.zero;
                 }
@@ -4388,7 +4391,7 @@ pub const Blob = struct {
                 );
             },
             .transfer => {
-                if (buf.len > JSC.synthetic_allocation_limit) {
+                if (buf.len > JSC.synthetic_allocation_limit and TypedArrayView != .ArrayBuffer) {
                     global.throwOutOfMemory();
                     this.detach();
                     return JSValue.zero;
@@ -4404,7 +4407,7 @@ pub const Blob = struct {
                 );
             },
             .temporary => {
-                if (buf.len > JSC.synthetic_allocation_limit) {
+                if (buf.len > JSC.synthetic_allocation_limit and TypedArrayView != .ArrayBuffer) {
                     global.throwOutOfMemory();
                     bun.default_allocator.free(buf);
                     return JSValue.zero;

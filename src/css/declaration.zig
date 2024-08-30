@@ -47,7 +47,7 @@ pub const DeclarationBlock = struct {
                     options.warn(e);
                     continue;
                 }
-                return e;
+                return .{ .err = e };
             };
         }
 
@@ -63,8 +63,8 @@ pub const DeclarationBlock = struct {
 
     /// Writes the declarations to a CSS block, including starting and ending braces.
     pub fn toCssBlock(this: *const This, comptime W: type, dest: *Printer(W)) PrintResult(void) {
-        if (dest.whitespace().asErr()) |e| return e;
-        if (dest.writeChar('{').asErr()) |e| return e;
+        if (dest.whitespace().asErr()) |e| return .{ .err = e };
+        if (dest.writeChar('{').asErr()) |e| return .{ .err = e };
         dest.indent();
 
         var i: usize = 0;
@@ -76,17 +76,17 @@ pub const DeclarationBlock = struct {
             const decls = &@field(this, decl_field_name);
             const is_important = comptime std.mem.eql(u8, decl_field_name, "important_declarations");
             for (decls.items) |*decl| {
-                if (dest.newline().asErr()) |e| return e;
-                if (decl.toCss(W, dest, is_important).asErr()) |e| return e;
+                if (dest.newline().asErr()) |e| return .{ .err = e };
+                if (decl.toCss(W, dest, is_important).asErr()) |e| return .{ .err = e };
                 if (i != length - 1 or !dest.minify) {
-                    if (dest.writeChar(';').asErr()) |e| return e;
+                    if (dest.writeChar(';').asErr()) |e| return .{ .err = e };
                 }
                 i += 1;
             }
         }
 
         dest.dedent();
-        if (dest.newline().asErr()) |e| return e;
+        if (dest.newline().asErr()) |e| return .{ .err = e };
         return dest.writeChar('}');
     }
 };
@@ -186,17 +186,17 @@ pub fn parse_declaration(
         .options = options,
     };
     const property = switch (input.parseUntilBefore(delimiters, css.Property, &closure, closure.parsefn)) {
-        .err => |e| return e,
+        .err => |e| return .{ .err = e },
         .result => |v| v,
     };
     const Fn = struct {
         pub fn parsefn(input2: *css.Parser) Result(void) {
-            if (input2.expectDelim('?').asErr()) |e| return e;
+            if (input2.expectDelim('?').asErr()) |e| return .{ .err = e };
             return input2.expectIdentMatching("important");
         }
     };
     const important = if (input.tryParse(Fn.parsefn, .{})) true else false;
-    if (input.expectExhausted().asErr()) |e| return e;
+    if (input.expectExhausted().asErr()) |e| return .{ .err = e };
     if (important) {
         important_declarations.append(comptime {
             @compileError(css.todo_stuff.think_about_allocator);

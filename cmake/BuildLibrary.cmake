@@ -157,14 +157,17 @@ macro(add_custom_library)
   )
 
   if(BUILDKITE)
-    add_custom_command(
-      TARGET
-        build-${LIB_NAME} POST_BUILD
-      VERBATIM COMMAND
-        buildkite-agent artifact upload ${${LIB_ID}_LIBRARY_PATHS}
-      WORKING_DIRECTORY
-        ${${LIB_ID}_BUILD_PATH}
-    )
+    foreach(lib ${${LIB_ID}_LIBRARY_PATHS})
+      file(RELATIVE_PATH filename ${${LIB_ID}_BUILD_PATH} ${lib})
+      add_custom_command(
+        TARGET
+          build-${LIB_NAME} POST_BUILD
+        VERBATIM COMMAND
+          buildkite-agent artifact upload "${filename}"
+        WORKING_DIRECTORY
+          ${${LIB_ID}_BUILD_PATH}
+      )
+    endforeach()
   endif()
   
   include_directories(${${LIB_ID}_INCLUDE_PATHS})

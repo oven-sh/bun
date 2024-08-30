@@ -5891,13 +5891,16 @@ pub const NodeFS = struct {
         }
         // For certain files, the size might be 0 but the file might still have contents.
         // https://github.com/oven-sh/bun/issues/1220
+        const max_size = args.max_size orelse std.math.maxInt(JSC.WebCore.Blob.SizeType);
+        const has_max_size = args.max_size != null;
+
         const size = @as(
             u64,
             @max(
                 @min(
                     stat_.size,
                     // Only used in DOMFormData
-                    args.max_size orelse std.math.maxInt(JSC.WebCore.Blob.SizeType),
+                    max_size,
                 ),
                 0,
             ),
@@ -5922,7 +5925,7 @@ pub const NodeFS = struct {
         var total: usize = 0;
 
         while (total < size) {
-            switch (Syscall.read(fd, buf.items.ptr[total..buf.capacity])) {
+            switch (Syscall.read(fd, buf.items.ptr[total..@min(buf.capacity, max_size)])) {
                 .err => |err| return .{
                     .err = err,
                 },
@@ -5938,7 +5941,7 @@ pub const NodeFS = struct {
                     }
 
                     // There are cases where stat()'s size is wrong or out of date
-                    if (total > size and amt != 0) {
+                    if (total > size and amt != 0 and !has_max_size) {
                         buf.items.len = total;
                         buf.ensureUnusedCapacity(8192) catch {
                             return .{ .err = Syscall.Error.fromCode(.NOMEM, .read).withPathLike(args.path) };
@@ -5954,7 +5957,7 @@ pub const NodeFS = struct {
             }
         } else {
             while (true) {
-                switch (Syscall.read(fd, buf.items.ptr[total..buf.capacity])) {
+                switch (Syscall.read(fd, buf.items.ptr[total..@min(buf.capacity, max_size)])) {
                     .err => |err| return .{
                         .err = err,
                     },
@@ -5967,7 +5970,7 @@ pub const NodeFS = struct {
                             }
                         }
 
-                        if (total > size and amt != 0) {
+                        if (total > size and amt != 0 and !has_max_size) {
                             buf.items.len = total;
                             buf.ensureUnusedCapacity(8192) catch {
                                 return .{ .err = Syscall.Error.fromCode(.NOMEM, .read).withPathLike(args.path) };

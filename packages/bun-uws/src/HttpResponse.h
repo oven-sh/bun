@@ -188,11 +188,8 @@ public:
 
             /* Success is when we wrote the entire thing without any failures */
             bool success = written == data.length() && !failed;
-
-            /* If we are now at the end, start a timeout. Also start a timeout if we failed. */
-            if (!success || httpResponseData->offset == totalSize) {
-                this->resetTimeout();
-            }
+            /* Reset the timeout on each tryEnd */
+            this->resetTimeout();
 
             /* Remove onAborted function if we reach the end */
             if (httpResponseData->offset == totalSize) {
@@ -482,9 +479,8 @@ public:
         Super::write("\r\n", 2);
 
         auto [written, failed] = Super::write(data.data(), (int) data.length());
-        if (failed) {
-            this->resetTimeout();
-        }
+        /* Reset timeout on each sended chunk */
+        this->resetTimeout();
 
         /* If we did not fail the write, accept more */
         return !failed;
@@ -539,7 +535,7 @@ public:
                 return static_cast<HttpResponse *>(newCorkedSocket);
             }
 
-            if (failed) {
+            if (written > 0 || failed) {
                 /* For now we only have one single timeout so let's use it */
                 /* This behavior should equal the behavior in HttpContext when uncorking fails */
                 this->resetTimeout();

@@ -1207,8 +1207,13 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             if (!package_json_checker.has_found_version and resolution_tag != .workspace) return false;
 
             const found_version = package_json_checker.found_version;
+
+            // exclude build tags from comparsion
+            // https://github.com/oven-sh/bun/issues/13563
+            const found_version_end = strings.lastIndexOfChar(found_version, '+') orelse found_version.len;
+            const expected_version_end = strings.lastIndexOfChar(this.package_version, '+') orelse this.package_version.len;
             // Check if the version matches
-            if (!strings.eql(found_version, this.package_version)) {
+            if (!strings.eql(found_version[0..found_version_end], this.package_version[0..expected_version_end])) {
                 const offset = brk: {
                     // ASCII only.
                     for (0..found_version.len) |c| {
@@ -6890,6 +6895,9 @@ pub const PackageManager = struct {
             },
         } = .{ .nothing = .{} },
 
+        filter_patterns: []const string = &.{},
+        // json_output: bool = false,
+
         max_retry_count: u16 = 5,
         min_simultaneous_requests: usize = 4,
 
@@ -7218,6 +7226,9 @@ pub const PackageManager = struct {
                 if (cli.no_summary) {
                     this.do.summary = false;
                 }
+
+                this.filter_patterns = cli.filters;
+                // this.json_output = cli.json_output;
 
                 if (cli.no_cache) {
                     this.enable.manifest_cache = false;
@@ -8213,7 +8224,7 @@ pub const PackageManager = struct {
         ctx: Command.Context,
         cli: CommandLineArguments,
         subcommand: Subcommand,
-    ) !*PackageManager {
+    ) !struct { *PackageManager, string } {
         // assume that spawning a thread will take a lil so we do that asap
         HTTP.HTTPThread.init();
 
@@ -8241,6 +8252,7 @@ pub const PackageManager = struct {
 
         var original_package_json_path: stringZ = original_package_json_path_buf.items[0 .. top_level_dir_no_trailing_slash.len + "/package.json".len :0];
         const original_cwd = strings.withoutSuffixComptime(original_package_json_path, std.fs.path.sep_str ++ "package.json");
+        const original_cwd_clone = ctx.allocator.dupe(u8, original_cwd) catch bun.outOfMemory();
 
         var workspace_names = Package.WorkspaceMap.init(ctx.allocator);
         var workspace_package_json_cache: WorkspacePackageJSONCache = .{
@@ -8541,7 +8553,10 @@ pub const PackageManager = struct {
 
             break :brk @truncate(@as(u64, @intCast(@max(std.time.timestamp(), 0))));
         };
-        return manager;
+        return .{
+            manager,
+            original_cwd_clone,
+        };
     }
 
     pub fn initWithRuntime(
@@ -8739,7 +8754,7 @@ pub const PackageManager = struct {
 
     pub fn link(ctx: Command.Context) !void {
         const cli = try CommandLineArguments.parse(ctx.allocator, .link);
-        var manager = PackageManager.init(ctx, cli, .link) catch |err| brk: {
+        var manager, const original_cwd = PackageManager.init(ctx, cli, .link) catch |err| brk: {
             if (err == error.MissingPackageJSON) {
                 try attemptToCreatePackageJSON();
                 break :brk try PackageManager.init(ctx, cli, .link);
@@ -8747,6 +8762,7 @@ pub const PackageManager = struct {
 
             return err;
         };
+        defer ctx.allocator.free(original_cwd);
 
         if (manager.options.shouldPrintCommandName()) {
             Output.prettyErrorln("<r><b>bun link <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
@@ -8921,7 +8937,7 @@ pub const PackageManager = struct {
 
     pub fn unlink(ctx: Command.Context) !void {
         const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .unlink);
-        var manager = PackageManager.init(ctx, cli, .unlink) catch |err| brk: {
+        var manager, const original_cwd = PackageManager.init(ctx, cli, .unlink) catch |err| brk: {
             if (err == error.MissingPackageJSON) {
                 try attemptToCreatePackageJSON();
                 break :brk try PackageManager.init(ctx, cli, .unlink);
@@ -8929,6 +8945,7 @@ pub const PackageManager = struct {
 
             return err;
         };
+        defer ctx.allocator.free(original_cwd);
 
         if (manager.options.shouldPrintCommandName()) {
             Output.prettyErrorln("<r><b>bun unlink <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
@@ -9124,6 +9141,12 @@ pub const PackageManager = struct {
         clap.parseParam("--patches-dir <dir>                    The directory to put the patch file") catch unreachable,
     });
 
+    const outdated_params: []const ParamType = &(install_params_ ++ [_]ParamType{
+        // clap.parseParam("--json                                 Output outdated information in JSON format") catch unreachable,
+        clap.parseParam("--filter <STR>...                            Display outdated dependencies for each matching workspace") catch unreachable,
+        clap.parseParam("<POS> ...                              Package patterns to filter by") catch unreachable,
+    });
+
     pub const CommandLineArguments = struct {
         registry: string = "",
         cache_dir: string = "",
@@ -9152,6 +9175,7 @@ pub const PackageManager = struct {
         no_summary: bool = false,
         latest: bool = false,
         // json_output: bool = false,
+        filters: []const string = &.{},
 
         link_native_bins: []const string = &[_]string{},
 
@@ -9388,14 +9412,25 @@ pub const PackageManager = struct {
 
                     const outro_text =
                         \\<b>Examples:<r>
+                        \\  <d>Display outdated dependencies in the current workspace.<r>
                         \\  <b><green>bun outdated<r>
+                        \\
+                        \\  <d>Use --filter to include more than one workspace.<r>
+                        \\  <b><green>bun outdated --filter="*"<r>
+                        \\  <b><green>bun outdated --filter="./app/*"<r>
+                        \\  <b><green>bun outdated --filter="!frontend"<r>
+                        \\
+                        \\  <d>Filter dependencies with name patterns.<r>
+                        \\  <b><green>bun outdated jquery<r>
+                        \\  <b><green>bun outdated "is-*"<r>
+                        \\  <b><green>bun outdated "!is-even"<r>
                         \\
                     ;
 
                     Output.pretty("\n" ++ intro_text ++ "\n", .{});
                     Output.flush();
                     Output.pretty("\n<b>Flags:<r>", .{});
-                    clap.simpleHelp(PackageManager.install_params);
+                    clap.simpleHelp(PackageManager.outdated_params);
                     Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
                     Output.flush();
                 },
@@ -9415,7 +9450,7 @@ pub const PackageManager = struct {
                 .unlink => unlink_params,
                 .patch => patch_params,
                 .@"patch-commit" => patch_commit_params,
-                .outdated => install_params,
+                .outdated => outdated_params,
             };
 
             var diag = clap.Diagnostic{};
@@ -9455,6 +9490,7 @@ pub const PackageManager = struct {
                 // fake --dry-run, we don't actually resolve+clean the lockfile
                 cli.dry_run = true;
                 // cli.json_output = args.flag("--json");
+                cli.filters = args.options("--filter");
             }
 
             // link and unlink default to not saving, all others default to
@@ -9715,7 +9751,7 @@ pub const PackageManager = struct {
         const cli = switch (subcommand) {
             inline else => |cmd| try PackageManager.CommandLineArguments.parse(ctx.allocator, cmd),
         };
-        var manager = init(ctx, cli, subcommand) catch |err| brk: {
+        var manager, const original_cwd = init(ctx, cli, subcommand) catch |err| brk: {
             if (err == error.MissingPackageJSON) {
                 switch (subcommand) {
                     .update => {
@@ -9739,6 +9775,7 @@ pub const PackageManager = struct {
 
             return err;
         };
+        defer ctx.allocator.free(original_cwd);
 
         if (manager.options.shouldPrintCommandName()) {
             Output.prettyErrorln("<r><b>bun {s} <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{@tagName(subcommand)});
@@ -11475,7 +11512,7 @@ pub const PackageManager = struct {
 
     pub fn install(ctx: Command.Context) !void {
         const cli = try CommandLineArguments.parse(ctx.allocator, .install);
-        var manager = try init(ctx, cli, .install);
+        var manager, _ = try init(ctx, cli, .install);
 
         // switch to `bun add <package>`
         if (manager.options.positionals.len > 1) {
@@ -11961,7 +11998,11 @@ pub const PackageManager = struct {
 
             if (!this.installEnqueuedPackagesImpl(name, task_id, log_level)) {
                 if (comptime Environment.allow_assert) {
-                    Output.panic("Ran callback to install enqueued packages, but there was no task associated with it. {d} {any}", .{ dependency_id, data.* });
+                    Output.panic("Ran callback to install enqueued packages, but there was no task associated with it. {}:{} (dependency_id: {d})", .{
+                        bun.fmt.quote(name),
+                        bun.fmt.quote(data.url),
+                        dependency_id,
+                    });
                 }
             }
         }

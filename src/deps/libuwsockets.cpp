@@ -183,8 +183,9 @@ extern "C"
     }
   }
 
-  void uws_app_head(int ssl, uws_app_t *app, const char *pattern, uws_method_handler handler, void *user_data)
+  void uws_app_head(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
   {
+    std::string pattern = std::string(pattern_ptr, pattern_len);
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
@@ -194,7 +195,7 @@ extern "C"
         return;
       }
       uwsApp->head(pattern, [handler, user_data](auto *res, auto *req)
-                   { handler((uws_res_t *)res, (uws_req_t *)req, user_data); });
+                  { handler((uws_res_t *)res, (uws_req_t *)req, user_data); });
     }
     else
     {
@@ -205,10 +206,9 @@ extern "C"
         return;
       }
       uwsApp->head(pattern, [handler, user_data](auto *res, auto *req)
-                   { handler((uws_res_t *)res, (uws_req_t *)req, user_data); });
+                  { handler((uws_res_t *)res, (uws_req_t *)req, user_data); });
     }
   }
-
   void uws_app_connect(int ssl, uws_app_t *app, const char *pattern, uws_method_handler handler, void *user_data)
   {
     if (ssl)
@@ -261,8 +261,9 @@ extern "C"
     }
   }
 
-  void uws_app_any(int ssl, uws_app_t *app, const char *pattern, uws_method_handler handler, void *user_data)
+  void uws_app_any(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
   {
+    std::string pattern = std::string(pattern_ptr, pattern_len);
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
@@ -1161,7 +1162,15 @@ extern "C"
       uwsRes->resetTimeout();
     }
   }
-
+  void uws_res_reset_timeout(int ssl, uws_res_r res) {
+    if (ssl) {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->resetTimeout();
+    } else {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->resetTimeout();
+    }
+  }
   void uws_res_timeout(int ssl, uws_res_r res, uint8_t seconds) {
     if (ssl) {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;

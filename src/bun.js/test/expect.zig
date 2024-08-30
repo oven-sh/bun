@@ -1534,23 +1534,25 @@ pub const Expect = struct {
 
         const count = expected.getLength(globalObject);
 
-        var objValues = value.values(globalObject);
-        if (!value.isUndefinedOrNull() and objValues.getLength(globalObject) == count) {
-            var i: u32 = 0;
-            while (i < count) : (i += 1) {
-                var j: u32 = 0;
-                while (j < count) : (j += 1) {
-                    const expectedElement = expected.getIndex(globalObject, j);
-                    const property_key = expectedElement.getIndex(globalObject, 0);
-                    const property_value = expectedElement.getIndex(globalObject, 1);
-                    const objValue = objValues.getIndex(globalObject, i);
-                    if (value.hasOwnPropertyValue(globalObject, property_key) and property_value.jestDeepEquals(objValue, globalObject)) {
-                        pass = true;
+        if (!value.isUndefinedOrNull()) {
+            var objValues = value.values(globalObject);
+            if (objValues.getLength(globalObject) == count) {
+                var i: u32 = 0;
+                while (i < count) : (i += 1) {
+                    var j: u32 = 0;
+                    while (j < count) : (j += 1) {
+                        const expectedElement = expected.getIndex(globalObject, j);
+                        const property_key = expectedElement.getIndex(globalObject, 0);
+                        const property_value = expectedElement.getIndex(globalObject, 1);
+                        const objValue = objValues.getIndex(globalObject, i);
+                        if (value.hasOwnPropertyValue(globalObject, property_key) and property_value.jestDeepEquals(objValue, globalObject)) {
+                            pass = true;
+                            break;
+                        }
+                    } else {
+                        pass = false;
                         break;
                     }
-                } else {
-                    pass = false;
-                    break;
                 }
             }
         }

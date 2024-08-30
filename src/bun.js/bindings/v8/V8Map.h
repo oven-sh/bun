@@ -32,17 +32,18 @@ struct Map {
     // (v8::internal::Internals::CanHaveInternalField, in v8-internal.h)
     InstanceType instance_type;
 
-    // the map used by maps
+    // Since maps are V8 objects, they each also have a map pointer at the start, which is this one
     static const Map map_map;
-    // the map used by objects inheriting JSCell
+    // All V8 values not covered by a more specific map use this one
     static const Map object_map;
-    // the map used by oddballs (null, undefined)
+    // The map used by null, undefined, true, and false. Required since V8 checks these values'
+    // instance type in the inline QuickIs* functions
     static const Map oddball_map;
-    // the map used by booleans
-    static const Map boolean_map;
-    // the map used by strings
+    // All strings use this map. Required since V8's inline QuickIsString() checks the instance
+    // type.
     static const Map string_map;
-    // the map used by heap numbers
+    // Handles containing a double instead of a JSCell pointer use this map so that we can tell they
+    // are numbers.
     static const Map heap_number_map;
 
     Map(InstanceType instance_type_)
@@ -54,5 +55,7 @@ struct Map {
 };
 
 static_assert(sizeof(Map) == 16, "Map has wrong layout");
+static_assert(offsetof(Map, meta_map) == 0, "Map has wrong layout");
+static_assert(offsetof(Map, instance_type) == 12, "Map has wrong layout");
 
 }

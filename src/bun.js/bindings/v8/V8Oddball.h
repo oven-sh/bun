@@ -18,8 +18,8 @@ struct Oddball {
     uintptr_t unused[4];
     TaggedPointer kind;
 
-    Oddball(Kind kind_, const Map* map_ = &Map::oddball_map)
-        : map(const_cast<Map*>(map_))
+    Oddball(Kind kind_)
+        : map(const_cast<Map*>(&Map::oddball_map))
         , kind(TaggedPointer(static_cast<int>(kind_)))
     {
     }

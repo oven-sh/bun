@@ -97,8 +97,8 @@ private:
         , m_CurrentHandleScope(nullptr)
         , undefinedValue(Oddball::Kind::kUndefined)
         , nullValue(Oddball::Kind::kNull)
-        , trueValue(Oddball::Kind::kTrue, &Map::boolean_map)
-        , falseValue(Oddball::Kind::kFalse, &Map::boolean_map)
+        , trueValue(Oddball::Kind::kTrue)
+        , falseValue(Oddball::Kind::kFalse)
         , roots(this)
         , globalObject(globalObject_)
     {

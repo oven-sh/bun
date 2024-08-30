@@ -118,7 +118,7 @@ struct Handle {
         if (map_ptr == &Map::object_map || map_ptr == &Map::string_map) {
             return true;
         } else if (map_ptr == &Map::map_map || map_ptr == &Map::oddball_map
-            || map_ptr == &Map::boolean_map || map_ptr == &Map::heap_number_map) {
+            || map_ptr == &Map::heap_number_map) {
             return false;
         } else {
             RELEASE_ASSERT_NOT_REACHED("unknown Map at %p with instance type %" PRIx16,

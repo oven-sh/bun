@@ -221,21 +221,21 @@ pub const Pattern = struct {
         for (this.segments.items) |*segment| {
             switch (segment.*) {
                 .literal => |s| {
-                    if (writefn(closure, s).asErr()) |e| return e;
+                    if (writefn(closure, s).asErr()) |e| return .{ .err = e };
                 },
                 .name => {
                     const stem = std.fs.path.stem(path);
                     if (std.mem.indexOf(u8, stem, ".")) |_| {
-                        if (writefn(closure, stem, true).asErr()) |e| return e;
+                        if (writefn(closure, stem, true).asErr()) |e| return .{ .err = e };
                     } else {
-                        if (writefn(closure, stem, false).asErr()) |e| return e;
+                        if (writefn(closure, stem, false).asErr()) |e| return .{ .err = e };
                     }
                 },
                 .local => {
-                    if (writefn(closure, local, false).asErr()) |e| return e;
+                    if (writefn(closure, local, false).asErr()) |e| return .{ .err = e };
                 },
                 .hash => {
-                    if (writefn(closure, hash_, false).asErr()) |e| return e;
+                    if (writefn(closure, hash_, false).asErr()) |e| return .{ .err = e };
                 },
             }
         }

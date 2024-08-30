@@ -70,6 +70,28 @@ const server = Bun.serve({
 });
 ```
 
+### `static` responses
+
+Serve static responses by route with the `static` option
+
+```ts
+Bun.serve({
+  static: {
+    "/api/health-check": new Response("All good!"),
+    "/old-link": Response.redirect("/new-link", 301),
+    "/": new Response("Hello World"),
+  },
+
+  fetch(req) {
+    return new Response("404!");
+  },
+});
+```
+
+{% note %}
+`static` is experimental and may change in the future.
+{% /note %}
+
 ### Changing the `port` and `hostname`
 
 To configure which port and hostname the server will listen on, set `port` and `hostname` in the options object.

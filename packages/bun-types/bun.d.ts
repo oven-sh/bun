@@ -2298,6 +2298,26 @@ declare module "bun" {
      * This string will currently do nothing. But in the future it could be useful for logs or metrics.
      */
     id?: string | null;
+
+    /**
+     * Server static Response objects by route.
+     *
+     * @example
+     * ```ts
+     * Bun.serve({
+     *   static: {
+     *     "/": new Response("Hello World"),
+     *     "/about": new Response("About"),
+     *   },
+     *   fetch(req) {
+     *     return new Response("Fallback response");
+     *   },
+     * });
+     * ```
+     *
+     * @experimental
+     */
+    static?: Record<`/${string}`, Response>;
   }
 
   interface ServeOptions extends GenericServeOptions {

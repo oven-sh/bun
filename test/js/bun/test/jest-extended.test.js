@@ -661,7 +661,74 @@ describe("jest-extended", () => {
     expect(deepArray).toContainEntries([["message", [shallow]]]);
   });
 
-  // test("toContainAllEntries()")
+  test("toContainAllEntries", () => {
+    const obj = { a: "foo", b: "bar", c: "baz" };
+    expect(obj).toContainAllEntries([
+      ["c", "baz"],
+      ["b", "bar"],
+      ["a", "foo"],
+    ]);
+
+    expect(obj).not.toContainAllEntries([
+      ["b", "qux"],
+      ["a", "foo"],
+    ]);
+
+    const o = {
+      a: [{ a: "hii", b: "hello" }],
+      b: "bar",
+      c: "baz",
+      d: [1, 2],
+      e: 100,
+      f: 20n,
+      g: 20.5,
+      h: "",
+    };
+
+    expect(o).toContainAllEntries([
+      ["a", [{ a: "hii", b: "hello" }]],
+      ["b", "bar"],
+      ["c", "baz"],
+      ["d", [1, 2]],
+      ["e", 100],
+      ["f", 20n],
+      ["g", 20.5],
+      ["h", ""],
+    ]);
+    expect(o).not.toContainAllEntries([
+      ["a", [{ a: "hii", b: "hello" }]],
+      ["b", "bar"],
+      ["c", "baz"],
+      ["d", [1, 2]],
+      ["e", 100],
+      ["f", 20n],
+      ["g", 20.5],
+      //one entry is missing here
+    ]);
+
+    const shallow = {
+      hello: "world",
+      foo: 0,
+      bar: false,
+    };
+    const deep = {
+      message: shallow,
+      donald: "duck",
+    };
+    const deepArray = {
+      message: [shallow],
+      donald: "duck",
+    };
+    expect(deep).toContainAllEntries([
+      ["message", { hello: "world", foo: 0, bar: false }],
+      ["donald", "duck"],
+    ]);
+    expect(deepArray).toContainAllEntries([
+      ["message", [shallow]],
+      ["donald", "duck"],
+    ]);
+  });
+
   // test("toContainAnyEntries()")
   // test("toBeExtensible()")
   // test("toBeFrozen()")

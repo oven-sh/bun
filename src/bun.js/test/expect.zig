@@ -1504,6 +1504,79 @@ pub const Expect = struct {
         return .zero;
     }
 
+    pub fn toContainAllEntries(
+        this: *Expect,
+        globalObject: *JSGlobalObject,
+        callFrame: *CallFrame,
+    ) JSValue {
+        defer this.postMatch(globalObject);
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.slice();
+
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("toContainAllEntries() takes 1 argument", .{});
+            return .zero;
+        }
+
+        incrementExpectCallCounter();
+
+        const expected = arguments[0];
+        if (!expected.jsType().isArray()) {
+            globalObject.throwInvalidArgumentType("toContainAllEntries", "expected", "array");
+            return .zero;
+        }
+        expected.ensureStillAlive();
+        const value: JSValue = this.getValue(globalObject, thisValue, "toContainAllEntries", "<green>expected<r>") orelse return .zero;
+
+        const not = this.flags.not;
+        var pass = false;
+
+        const count = expected.getLength(globalObject);
+
+        var objValues = value.values(globalObject);
+        if (!value.isUndefinedOrNull() and objValues.getLength(globalObject) == count) {
+            var i: u32 = 0;
+            while (i < count) : (i += 1) {
+                var j: u32 = 0;
+                while (j < count) : (j += 1) {
+                    const expectedElement = expected.getIndex(globalObject, j);
+                    const property_key = expectedElement.getIndex(globalObject, 0);
+                    const property_value = expectedElement.getIndex(globalObject, 1);
+                    const objValue = objValues.getIndex(globalObject, i);
+                    if (value.hasOwnPropertyValue(globalObject, property_key) and property_value.jestDeepEquals(objValue, globalObject)) {
+                        pass = true;
+                        break;
+                    }
+                } else {
+                    pass = false;
+                    break;
+                }
+            }
+        }
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        const value_fmt = value.toFmt(&formatter);
+        const expected_fmt = expected.toFmt(&formatter);
+        if (not) {
+            const received_fmt = value.toFmt(&formatter);
+            const expected_line = "Expected object to not only contain all of the given entries: <green>{any}<r>\nReceived: <red>{any}<r>\n";
+            const fmt = "\n\n" ++ expected_line;
+            this.throw(globalObject, comptime getSignature("toContainAllEntries", "<green>expected<r>", true), fmt, .{ expected_fmt, received_fmt });
+            return .zero;
+        }
+
+        const expected_line = "Expected object to only contain all of the given entries: <green>{any}<r>\n";
+        const received_line = "Received: <red>{any}<r>\n";
+        const fmt = "\n\n" ++ expected_line ++ received_line;
+        this.throw(globalObject, comptime getSignature("toContainAllEntries", "<green>expected<r>", false), fmt, .{ expected_fmt, value_fmt });
+        return .zero;
+    }
+
     pub fn toContainEqual(
         this: *Expect,
         globalThis: *JSGlobalObject,

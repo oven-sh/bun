@@ -158,3 +158,40 @@ function(file_size file_path variable)
   list(GET units ${unit_index} unit)
   set(${variable} "${file_size} ${unit}" PARENT_SCOPE)
 endfunction()
+
+macro(find_llvm_program variable program_name)
+  set(args OPTIONAL)
+  cmake_parse_arguments(ARG "${args}" "" "" ${ARGN})
+
+  set(${variable}_NAMES
+    ${program_name}
+    ${program_name}-${LLVM_VERSION_MAJOR}
+    ${program_name}-${LLVM_VERSION}
+  )
+
+  find_program(
+    ${variable}
+    NAMES ${${variable}_NAMES}
+    PATHS ENV PATH ${LLVM_PATH}
+    VALIDATOR check_llvm_version
+  )
+
+  if(NOT ${variable})
+    if(ARG_OPTIONAL)
+      return()
+    endif()
+    if(CMAKE_HOST_APPLE)
+      set(LLVM_INSTALL_COMMAND "brew install llvm@${LLVM_VERSION_MAJOR} --force")
+    elseif(CMAKE_HOST_WIN32)
+      set(LLVM_INSTALL_COMMAND "choco install llvm@${LLVM_VERSION}")
+    else()
+      set(LLVM_INSTALL_COMMAND "curl -fsSL https://apt.llvm.org/llvm.sh | bash -s ${LLVM_VERSION}")
+    endif()
+    message(FATAL_ERROR "Command not found: ${program_name}\n"
+      "Do you have LLVM ${LLVM_VERSION} installed? To fix this, try running:\n"
+      "   ${LLVM_INSTALL_COMMAND}\n")
+  endif()
+
+  list(APPEND CMAKE_ARGS "-D${variable}=${${variable}}")
+  message(STATUS "Set ${variable}: ${${variable}}")
+endmacro()

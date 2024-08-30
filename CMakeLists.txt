@@ -5,6 +5,7 @@ list(APPEND CMAKE_MODULE_PATH
   ${CMAKE_SOURCE_DIR}/cmake
   ${CMAKE_SOURCE_DIR}/cmake/targets
   ${CMAKE_SOURCE_DIR}/cmake/tools
+  ${CMAKE_SOURCE_DIR}/cmake/analysis
   ${CMAKE_SOURCE_DIR}/cmake/scripts
 )
 
@@ -30,6 +31,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # WebKit uses -std=gnu++20 on non-macOS non-Windows.
 # If we do not set this, it will crash at startup on the first memory allocation.
@@ -74,7 +76,7 @@ endif()
 
 if(RELEASE AND NOT WIN32)
   set(bun "bun-profile")
-elseif()
+elseif(DEBUG)
   set(bun "bun-debug")
 else()
   set(bun "bun")
@@ -405,7 +407,6 @@ if(WIN32)
 
     target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000" "/DEF:${CWD}/src/symbols.def" "/errorlimit:0")
 else()
-    # TODO: look at -fconstexpr-steps=2542484 -fconstexpr-depth=54
     target_compile_options(${bun} PUBLIC
         -mtune=${CPU}
         -fconstexpr-steps=2542484
@@ -635,30 +636,4 @@ else()
         wsock32 # ws2_32 required by TransmitFile aka sendfile on windows
         delayimp.lib
     )
-endif()
-
-if(BUN_LINK_ONLY)
-    message(STATUS "NOTE: BUN_LINK_ONLY is ON, this build config will only link the Bun executable")
-endif()
-
-if(BUN_CPP_ONLY)
-    message(STATUS "NOTE: BUN_CPP_ONLY is ON, this build will only work with 'compile-cpp-only.${SCRIPT_EXTENSION}'")
-endif()
-
-if(NO_CODEGEN)
-    message(STATUS "NOTE: NO_CODEGEN is ON, this build expects ./codegen to exist")
-endif()
-
-if(BUN_TIDY_ONLY)
-    find_program(CLANG_TIDY_EXE NAMES "clang-tidy")
-
-    # webkit ones are disabled disabled because it's noisy, e.g. for JavaScriptCore/Lookup.h
-    set(CLANG_TIDY_COMMAND "${CLANG_TIDY_EXE}" "-checks=-*,clang-analyzer-*,-clang-analyzer-webkit.UncountedLambdaCapturesChecker,-clang-analyzer-optin.core.EnumCastOutOfRange,-clang-analyzer-webkit.RefCntblBaseVirtualDtor" "--fix" "--fix-errors" "--format-style=webkit" "--warnings-as-errors=*")
-    set_target_properties(${bun} PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_COMMAND}")
-endif()
-
-if(BUN_TIDY_ONLY_EXTRA)
-    find_program(CLANG_TIDY_EXE NAMES "clang-tidy")
-    set(CLANG_TIDY_COMMAND "${CLANG_TIDY_EXE}" "-checks=-*,clang-analyzer-*,performance-*,-clang-analyzer-webkit.UncountedLambdaCapturesChecker,-clang-analyzer-optin.core.EnumCastOutOfRange,-clang-analyzer-webkit.RefCntblBaseVirtualDtor" "--fix" "--fix-errors" "--format-style=webkit" "--warnings-as-errors=*")
-    set_target_properties(${bun} PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_COMMAND}")
 endif()

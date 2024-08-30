@@ -21,7 +21,9 @@ Isolate* Isolate::GetCurrent()
 
 Local<Context> Isolate::GetCurrentContext()
 {
-    return currentHandleScope()->createRawLocal<Context>(this);
+    auto* globalInternals = reinterpret_cast<Roots*>(this)->parent;
+    auto* globalObject = globalInternals->globalObject;
+    return globalInternals->currentHandleScope()->createLocal<Context>(globalObject->vm(), globalObject);
 }
 
 }

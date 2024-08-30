@@ -52,13 +52,6 @@ TaggedPointer* HandleScopeBuffer::createHandle(JSCell* ptr, const Map* map, JSC:
     return &handle.to_v8_object;
 }
 
-TaggedPointer* HandleScopeBuffer::createRawHandle(void* ptr)
-{
-    auto& handle = createEmptyHandle();
-    handle = Handle(ptr);
-    return &handle.to_v8_object;
-}
-
 TaggedPointer* HandleScopeBuffer::createSmiHandle(int32_t smi)
 {
     auto& handle = createEmptyHandle();

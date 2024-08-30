@@ -4,7 +4,7 @@ namespace v8 {
 
 Isolate* Context::GetIsolate()
 {
-    return reinterpret_cast<Isolate*>(localToPointer());
+    return reinterpret_cast<Isolate*>(&globalObject()->V8GlobalInternals()->roots);
 }
 
 }

@@ -39,12 +39,6 @@ public:
         }
     }
 
-    template<typename T> Local<T> createRawLocal(void* ptr)
-    {
-        TaggedPointer* handle = buffer->createRawHandle(ptr);
-        return Local<T>(handle);
-    }
-
     friend class EscapableHandleScopeBase;
 
 protected:

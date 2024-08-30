@@ -98,6 +98,7 @@ private:
             // second is a pointer to some object we have stored. So we ignore the map and recover
             // the object pointer.
             ObjectLayout* v8_object = root.getPtr<ObjectLayout>();
+            // REFACTOR
             return TaggedPointer(v8_object->asRaw());
         }
     }

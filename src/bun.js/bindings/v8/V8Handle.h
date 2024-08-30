@@ -11,7 +11,6 @@ private:
     union {
         JSC::WriteBarrier<JSC::JSCell> cell;
         double number;
-        void* raw;
     } contents;
 
 public:
@@ -19,7 +18,7 @@ public:
         // using a smi value for map is most likely to catch bugs as almost every access will expect
         // map to be a pointer (and even if the assertion is bypassed, it'll be a null pointer)
         : tagged_map(0)
-        , contents({ .raw = nullptr })
+        , contents({ .cell = {} })
     {
     }
 
@@ -35,19 +34,11 @@ public:
     {
     }
 
-    ObjectLayout(void* raw)
-        : tagged_map(const_cast<Map*>(&Map::raw_ptr_map))
-        , contents({ .raw = raw })
-    {
-    }
-
     const Map* map() const { return tagged_map.getPtr<Map>(); }
 
     double asDouble() const { return contents.number; }
 
     JSC::JSCell* asCell() const { return contents.cell.get(); }
-
-    void* asRaw() const { return contents.raw; }
 
     friend class Handle;
     friend class HandleScopeBuffer;
@@ -80,12 +71,6 @@ struct Handle {
     Handle(double number)
         : to_v8_object(&this->object)
         , object(number)
-    {
-    }
-
-    Handle(void* raw)
-        : to_v8_object(&this->object)
-        , object(raw)
     {
     }
 

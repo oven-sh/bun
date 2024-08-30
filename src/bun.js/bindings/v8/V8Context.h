@@ -8,8 +8,8 @@ namespace v8 {
 
 class Isolate;
 
-// Context is always a reinterpret pointer to V8::Roots, so that inlined V8 functions can find
-// values they expect to find at fixed offsets
+// Context is always a reinterpret pointer to Zig::GlobalObject, so that functions accepting a
+// Context can quickly access JSC data
 class Context : public Data {
 public:
     BUN_EXPORT Isolate* GetIsolate();
@@ -21,12 +21,12 @@ public:
 
     const Zig::GlobalObject* globalObject() const
     {
-        return reinterpret_cast<const Roots*>(localToCell())->parent->globalObject;
+        return JSC::jsDynamicCast<const Zig::GlobalObject*>(localToCell());
     }
 
     Zig::GlobalObject* globalObject()
     {
-        return reinterpret_cast<const Roots*>(localToCell())->parent->globalObject;
+        return JSC::jsDynamicCast<Zig::GlobalObject*>(localToCell());
     }
 
     HandleScope* currentHandleScope() const

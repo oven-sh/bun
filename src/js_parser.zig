@@ -1072,8 +1072,7 @@ pub const ImportScanner = struct {
         const is_typescript_enabled: bool = comptime P.parser_features.typescript;
 
         for (stmts) |_stmt| {
-            // zls needs the hint, it seems.
-            var stmt: Stmt = _stmt;
+            var stmt = _stmt; // copy
             switch (stmt.data) {
                 .s_import => |st__| {
                     var st = st__.*;
@@ -1491,7 +1490,7 @@ pub const ImportScanner = struct {
                     // Rewrite this export to be:
                     // exports.default =
                     // But only if it's anonymous
-                    if (will_transform_to_common_js) {
+                    if (will_transform_to_common_js and !p.options.features.hot_module_reloading) {
                         const expr: js_ast.Expr = switch (st.value) {
                             .expr => |exp| exp,
                             .stmt => |s2| brk2: {
@@ -3943,7 +3942,7 @@ pub const Parser = struct {
 
         const uses_module_ref = p.symbols.items[p.module_ref.innerIndex()].use_count_estimate > 0;
 
-        var wrapper_expr: CommonJSWrapper = .{ .none = {} };
+        var wrap_mode: WrapMode = .none;
 
         if (p.isDeoptimizedCommonJS()) {
             exports_kind = .cjs;
@@ -3952,9 +3951,7 @@ pub const Parser = struct {
         } else if (uses_exports_ref or uses_module_ref or p.has_top_level_return or p.has_with_scope) {
             exports_kind = .cjs;
             if (p.options.features.commonjs_at_runtime) {
-                wrapper_expr = .{
-                    .bun_js = {},
-                };
+                wrap_mode = .bun_commonjs;
 
                 const import_record: ?*const ImportRecord = brk: {
                     for (p.import_records.items) |*import_record| {
@@ -4044,10 +4041,12 @@ pub const Parser = struct {
             }
 
             if (exports_kind == .cjs and p.options.features.commonjs_at_runtime) {
-                wrapper_expr = .{
-                    .bun_js = {},
-                };
+                wrap_mode = .bun_commonjs;
             }
+        }
+
+        if (p.options.features.hot_module_reloading and exports_kind == .esm) {
+            wrap_mode = .kit_dev_hmr;
         }
 
         // Handle dirname and filename at runtime.
@@ -4330,7 +4329,7 @@ pub const Parser = struct {
             }
         }
 
-        return js_ast.Result{ .ast = try p.toAST(parts_slice, exports_kind, wrapper_expr, hashbang) };
+        return js_ast.Result{ .ast = try p.toAST(parts_slice, exports_kind, wrap_mode, hashbang) };
     }
 
     pub fn init(_options: Options, log: *logger.Log, source: *const logger.Source, define: *Define, allocator: Allocator) !Parser {
@@ -23055,13 +23054,13 @@ fn NewParser_(
 
         pub fn toAST(
             p: *P,
-            _parts: []js_ast.Part,
+            input_parts: []js_ast.Part,
             exports_kind: js_ast.ExportsKind,
-            commonjs_wrapper_expr: CommonJSWrapper,
+            wrap_mode: WrapMode,
             hashbang: []const u8,
         ) !js_ast.Ast {
             const allocator = p.allocator;
-            var parts = _parts;
+            var parts = input_parts;
 
             // if (p.options.tree_shaking and p.options.features.trim_unused_imports) {
             //     p.treeShake(&parts, false);
@@ -23084,7 +23083,7 @@ fn NewParser_(
                     p.import_records_for_current_part.clearRetainingCapacity();
                     p.declared_symbols.clearRetainingCapacity();
 
-                    const result = try ImportScanner.scan(P, p, part.stmts, commonjs_wrapper_expr != .none);
+                    const result = try ImportScanner.scan(P, p, part.stmts, wrap_mode != .none);
                     kept_import_equals = kept_import_equals or result.kept_import_equals;
                     removed_import_equals = removed_import_equals or result.removed_import_equals;
 
@@ -23141,110 +23140,12 @@ fn NewParser_(
                 }
             }
 
-            switch (commonjs_wrapper_expr) {
-                .bun_dev => |commonjs_wrapper| {
-                    {
-                        @panic("is this ever hit?");
-                    }
-                    var require_function_args = allocator.alloc(Arg, 2) catch unreachable;
-                    var final_part_stmts_count: usize = 0;
-
-                    var imports_count: u32 = 0;
-                    // We have to also move export from, since we will preserve those
-                    var exports_from_count: u32 = 0;
-
-                    // Two passes. First pass just counts.
-                    for (parts) |part| {
-                        for (part.stmts) |stmt| {
-                            imports_count += switch (stmt.data) {
-                                .s_import => @as(u32, 1),
-                                else => @as(u32, 0),
-                            };
-
-                            exports_from_count += switch (stmt.data) {
-                                .s_export_star, .s_export_from => @as(u32, 1),
-                                else => @as(u32, 0),
-                            };
-
-                            final_part_stmts_count += switch (stmt.data) {
-                                .s_import, .s_export_star, .s_export_from => @as(usize, 0),
-                                else => @as(usize, 1),
-                            };
-                        }
-                    }
-
-                    var new_stmts_list = allocator.alloc(Stmt, exports_from_count + imports_count + 1) catch unreachable;
-                    const final_stmts_list = allocator.alloc(Stmt, final_part_stmts_count) catch unreachable;
-                    var remaining_final_stmts = final_stmts_list;
-                    var imports_list = new_stmts_list[0..imports_count];
-
-                    var exports_list: []Stmt = if (exports_from_count > 0) new_stmts_list[imports_list.len + 1 ..] else &[_]Stmt{};
-
-                    require_function_args[0] = G.Arg{ .binding = p.b(B.Identifier{ .ref = p.module_ref }, logger.Loc.Empty) };
-                    require_function_args[1] = G.Arg{ .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty) };
-
-                    var imports_list_i: u32 = 0;
-                    var exports_list_i: u32 = 0;
-
-                    for (parts) |part| {
-                        for (part.stmts) |*stmt| {
-                            switch (stmt.data) {
-                                .s_import => {
-                                    imports_list[imports_list_i] = stmt.*;
-                                    stmt.loc = imports_list[imports_list_i].loc;
-                                    imports_list_i += 1;
-                                },
-
-                                .s_export_star, .s_export_from => {
-                                    exports_list[exports_list_i] = stmt.*;
-                                    stmt.loc = exports_list[exports_list_i].loc;
-                                    exports_list_i += 1;
-                                },
-                                else => {
-                                    remaining_final_stmts[0] = stmt.*;
-                                    remaining_final_stmts = remaining_final_stmts[1..];
-                                },
-                            }
-                            stmt.* = Stmt.empty();
-                        }
-                    }
-
-                    commonjs_wrapper.data.e_call.args.ptr[0] = p.newExpr(
-                        E.Function{ .func = G.Fn{
-                            .name = null,
-                            .open_parens_loc = logger.Loc.Empty,
-                            .args = require_function_args,
-                            .body = .{ .loc = logger.Loc.Empty, .stmts = final_stmts_list },
-                            .flags = Flags.Function.init(.{ .is_export = true }),
-                        } },
-                        logger.Loc.Empty,
-                    );
-                    var sourcefile_name = p.source.path.pretty;
-                    if (strings.lastIndexOf(sourcefile_name, "node_modules")) |node_modules_i| {
-                        // 1 for the separator
-                        const end = node_modules_i + 1 + "node_modules".len;
-                        // If you were to name your file "node_modules.js" it shouldn't appear as ".js"
-                        if (end < sourcefile_name.len) {
-                            sourcefile_name = sourcefile_name[end..];
-                        }
-                    }
-                    commonjs_wrapper.data.e_call.args.ptr[1] = p.newExpr(E.String{ .data = sourcefile_name }, logger.Loc.Empty);
-
-                    new_stmts_list[imports_list.len] = p.s(
-                        S.ExportDefault{
-                            .value = .{
-                                .expr = commonjs_wrapper,
-                            },
-                            .default_name = LocRef{ .ref = null, .loc = logger.Loc.Empty },
-                        },
-                        logger.Loc.Empty,
-                    );
-                    parts[parts.len - 1].stmts = new_stmts_list;
-                },
-
-                .bun_js => {
+            switch (wrap_mode) {
+                .none => {},
+                .bun_commonjs => {
                     // if remove_cjs_module_wrapper is true, `evaluateCommonJSModuleOnce` will put exports, require, module, __filename, and
                     // __dirname on the globalObject.
+                    bun.assert(!p.options.features.remove_cjs_module_wrapper);
                     if (!p.options.features.remove_cjs_module_wrapper) {
                         // This transforms the user's code into.
                         //
@@ -23323,8 +23224,7 @@ fn NewParser_(
                         parts.len = 1;
                     }
                 },
-
-                .none => {},
+                .kit_dev_hmr => try p.esmToCommonJsForHotModuleReloading(parts),
             }
             var top_level_symbols_to_parts = js_ast.Ast.TopLevelSymbolToParts{};
             var top_level = &top_level_symbols_to_parts;
@@ -23382,7 +23282,7 @@ fn NewParser_(
             }
 
             const wrapper_ref: Ref = brk: {
-                if (p.options.bundle and p.needsWrapperRef(parts)) {
+                if (p.options.bundle and !p.options.features.hot_module_reloading and p.needsWrapperRef(parts)) {
                     break :brk p.newSymbol(
                         .other,
                         std.fmt.allocPrint(
@@ -23495,6 +23395,333 @@ fn NewParser_(
                 }
             }
             return false;
+        }
+
+        // TODO: consider if this pass can be merged in with other code
+        fn esmToCommonJsForHotModuleReloading(p: *P, parts: []js_ast.Part) ![]js_ast.Part {
+            bun.assert(parts.len > 0);
+
+            var export_props: std.ArrayListUnmanaged(G.Property) = .{};
+
+            var stmts = std.ArrayListUnmanaged(Stmt).initCapacity(p.allocator, prealloc_count: {
+                var count = 0;
+                for (parts) |part| count += part.stmts.len;
+                break :prealloc_count count + 3;
+            });
+
+            var import_function_ref: ?Ref = null;
+
+            for (parts, 0..) |*part, part_index| {
+                var i: usize = 0;
+                for (part.stmts) |stmt| {
+                    const new_stmt = switch (stmt.data) {
+                        else => stmt,
+                        .s_local => |st| stmt: {
+                            if (!st.is_export) break :stmt stmt;
+
+                            st.is_export = false;
+
+                            if (st.kind.isReassignable()) {
+                                for (st.decls.slice()) |decl| {
+                                    try p.visitBindingForKitModuleExports(decl.binding, &export_props, true);
+                                }
+                            } else {
+                                var dupe_decls = try std.ArrayListUnmanaged(G.Decl).initCapacity(p.allocator, st.decls.len);
+
+                                for (st.decls.slice()) |decl| {
+                                    bun.assert(decl.value != null); // const must be initialized
+
+                                    switch (decl.binding.data) {
+                                        .b_missing => @panic("binding missing"),
+
+                                        .b_identifier => |id| {
+                                            const symbol = p.symbols.items[id.ref.inner_index];
+
+                                            // if the symbol is not used, we don't need to preserve
+                                            // a binding in this scope. we can move it to the exports object.
+                                            if (symbol.use_count_estimate != 0 or !decl.value.?.canBeMoved()) {
+                                                dupe_decls.appendAssumeCapacity(decl);
+                                            }
+
+                                            try export_props.append(p.allocator, .{
+                                                .key = Expr.init(E.String, .{ .data = symbol.original_name }, decl.binding.loc),
+                                                .value = decl.value,
+                                            });
+                                        },
+
+                                        else => {
+                                            dupe_decls.appendAssumeCapacity(decl);
+                                            try p.visitBindingForKitModuleExports(decl.binding, &export_props, false);
+                                        },
+                                    }
+                                }
+
+                                if (dupe_decls.items.len == 0) {
+                                    continue;
+                                }
+
+                                st.decls = G.Decl.List.fromList(dupe_decls);
+                            }
+
+                            break :stmt stmt;
+                        },
+                        .s_export_default => |st| stmt: {
+                            // Simple case: we can move this to the default property of the exports object
+                            if (st.canBeMoved()) {
+                                try export_props.append(p.allocator, .{
+                                    .key = Expr.init(E.String, .{ .data = "default" }, stmt.loc),
+                                    .value = st.value.toExpr(),
+                                });
+                                // no statement emitted
+                                continue;
+                            }
+
+                            // Otherwise, we need a temporary
+                            const temp_id = p.generateTempRef("default_export");
+                            try export_props.append(p.allocator, .{
+                                .key = Expr.init(E.String, .{ .data = "default" }, stmt.loc),
+                                .value = Expr.initIdentifier(temp_id, stmt.loc),
+                            });
+
+                            break :stmt Stmt.alloc(S.Local, .{
+                                .kind = .k_const,
+                                .decls = try G.Decl.List.fromSlice(p.allocator, &.{
+                                    .{
+                                        .binding = Binding.alloc(p.allocator, B.Identifier{ .ref = temp_id }, stmt.loc),
+                                        .value = st.value.toExpr(),
+                                    },
+                                }),
+                            }, stmt.loc);
+                        },
+                        .s_class => |st| stmt: {
+                            // Strip the "export" keyword
+                            if (!st.is_export) break :stmt stmt;
+
+                            // Export as CommonJS
+                            try export_props.append(p.allocator, .{
+                                .key = Expr.init(E.String, .{
+                                    .data = p.symbols.items[st.class.class_name.?.ref.?.inner_index].original_name,
+                                }, stmt.loc),
+                                .value = Expr.initIdentifier(st.class.class_name.?.ref.?, stmt.loc),
+                            });
+
+                            st.is_export = false;
+
+                            break :stmt stmt;
+                        },
+                        .s_function => |st| stmt: {
+                            // Strip the "export" keyword
+                            if (!st.func.flags.contains(.is_export)) break :stmt stmt;
+
+                            st.func.flags.remove(.is_export);
+
+                            // Export as CommonJS
+                            try export_props.append(p.allocator, .{
+                                .key = Expr.init(E.String, .{
+                                    .data = p.symbols.items[st.func.name.?.ref.?.inner_index].original_name,
+                                }, stmt.loc),
+                                .value = Expr.initIdentifier(st.func.name.?.ref.?, stmt.loc),
+                            });
+
+                            break :stmt stmt;
+                        },
+                        .s_export_clause => |st| {
+                            _ = st; // autofix
+                            @panic("TODO s_export_clause");
+                        },
+                        .s_export_from => |st| {
+                            _ = st; // autofix
+                            @panic("TODO s_export_from");
+                        },
+                        .s_export_star => |st| {
+                            _ = st; // autofix
+                            @panic("TODO s_export_star");
+                        },
+                        .s_import => |st| stmt: {
+                            // hmr-runtime.ts defines `require.importSync` to be
+                            // a synchronous import.  this is different from
+                            // require in that esm <-> cjs is handled
+                            // automatically, instead of with bundler-added
+                            // annotations.
+                            const call_target = Expr.initIdentifier(import_function_ref orelse get: {
+                                const temp_id = p.generateTempRef("load");
+                                stmts.appendAssumeCapacity(Stmt.alloc(S.Local, .{
+                                    .kind = .k_const,
+                                    .decls = try G.Decl.List.fromSlice(p.allocator, &.{
+                                        .{
+                                            .binding = Binding.alloc(p.allocator, B.Identifier{ .ref = temp_id }, logger.Loc.Empty),
+                                            .value = Expr.init(E.Dot, .{
+                                                .target = p.require_ref,
+                                                .name = "importSync",
+                                                .name_loc = logger.Loc.Empty,
+                                            }, logger.Loc.Emptyc),
+                                        },
+                                    }),
+                                }, logger.Loc.Empty));
+                                break :get temp_id;
+                            }, logger.Loc.Empty);
+
+                            const record: *ImportRecord = &p.import_records.items[st.import_record_index];
+
+                            const call = Expr.init(E.Call, .{
+                                .target = call_target,
+                                .args = &p.allocator.dupe(Expr, &.{
+                                    Expr.init(E.String, .{ .data = record.path.pretty }, stmt.loc),
+                                }),
+                            }, logger.Loc.Empty);
+
+                            // TODO: considerations for hot-reloading. these values will probably have to be re-assigned
+                            if (st.star_name_loc == null) {
+                                if (st.items.len == 0 and st.default_name == null) {
+                                    // the import value is never read
+                                    break :stmt Stmt.alloc(S.SExpr, .{ .value = call }, stmt.loc);
+                                }
+
+                                // namespace reference is not needed, we can make this with just the binding
+                                @panic("TODO");
+                            } else {
+                                // when the namespace ref is required, up to two statements are emitted
+                                // - 'let namespace = load("module")'
+                                // - 'let { ... } = namespace'
+                                stmts.appendAssumeCapacity(Stmt.alloc(S.Local, .{
+                                    .kind = .k_let,
+                                    .decls = try G.Decl.List.fromSlice(p.allocator, &.{
+                                        .{
+                                            .binding = Binding.alloc(p.allocator, B.Identifier{ .ref = st.namespace_ref }, logger.Loc.Empty),
+                                            .value = call,
+                                        },
+                                    }),
+                                }, logger.Loc.Empty));
+
+                                if (st.items.len > 0) {
+                                    @panic("TODO");
+                                }
+                            }
+                        },
+                    };
+
+                    try stmts.append(new_stmt);
+                }
+
+                if (part_index == parts.len - 1 and export_props.items.len > 0) {
+                    if (part.stmts.len >= i + 2) {
+                        part.stmts.len = i + 2;
+                    } else {
+                        const new_stmts = try p.allocator.alloc(Stmt, i + 2);
+                        @memcpy(new_stmts[0..part.stmts.len], part.stmts);
+                    }
+                } else {
+                    part.stmts.len = i;
+                }
+            }
+
+            // add a marker for the client runtime to tell that this is an ES module
+            try stmts.append(Stmt.alloc(S.SExpr, .{
+                .value = Expr.assign(
+                    Expr.init(E.Dot, .{
+                        .target = Expr.initIdentifier(p.module_ref, logger.Loc.Empty),
+                        .name = "esmodule",
+                        .name_loc = logger.Loc.Empty,
+                    }, logger.Loc.Empty),
+                    Expr.init(E.Boolean, .{ .value = true }, logger.Loc.Empty),
+                ),
+            }, logger.Loc.Empty));
+
+            // Note: this might not be good, we might have to do `exports.xyz = ` to let us override an older module?
+            try stmts.append(Stmt.alloc(S.SExpr, .{
+                .value = Expr.assign(
+                    Expr.init(E.Dot, .{
+                        .target = Expr.initIdentifier(p.module_ref, logger.Loc.Empty),
+                        .name = "exports",
+                        .name_loc = logger.Loc.Empty,
+                    }, logger.Loc.Empty),
+                    Expr.init(E.Object, .{
+                        .properties = G.Property.List.fromList(export_props),
+                    }, logger.Loc.Empty),
+                ),
+            }, logger.Loc.Empty));
+
+            parts[0].stmts = stmts.items;
+            return parts[0..1];
+        }
+
+        fn visitBindingForKitModuleExports(
+            p: *P,
+            binding: Binding,
+            export_props: *std.ArrayListUnmanaged(G.Property),
+            is_live_binding: bool,
+        ) !void {
+            switch (binding.data) {
+                .b_missing => @panic("missing!"),
+                .b_identifier => |id| {
+                    try p.visitRefForKitModuleExports(id.ref, binding.loc, export_props, is_live_binding);
+                },
+                .b_array => |array| {
+                    for (array.items) |item| {
+                        try p.visitBindingForKitModuleExports(item.binding, export_props, is_live_binding);
+                    }
+                },
+                .b_object => |object| {
+                    for (object.properties) |item| {
+                        try p.visitBindingForKitModuleExports(item.value, export_props, is_live_binding);
+                    }
+                },
+            }
+        }
+
+        fn visitRefForKitModuleExports(
+            p: *P,
+            ref: Ref,
+            loc: logger.Loc,
+            export_props: *std.ArrayListUnmanaged(G.Property),
+            is_live_binding: bool,
+        ) !void {
+            const symbol = p.symbols.items[ref.inner_index];
+            const id = Expr.initIdentifier(ref, loc);
+            if (is_live_binding) {
+                const key = Expr.init(E.String, .{
+                    .data = symbol.original_name,
+                }, loc);
+                const arg1 = p.generateTempRef(symbol.original_name);
+
+                // Live bindings need to update the value internally and externally.
+                try export_props.append(p.allocator, .{
+                    .kind = .get,
+                    .key = key,
+                    .value = Expr.init(E.Function, .{ .func = .{
+                        .body = .{
+                            .stmts = try p.allocator.dupe(Stmt, &.{
+                                Stmt.alloc(S.Return, .{ .value = id }, loc),
+                            }),
+                            .loc = loc,
+                        },
+                    } }, loc),
+                });
+                try export_props.append(p.allocator, .{
+                    .kind = .set,
+                    .key = key,
+                    .value = Expr.init(E.Function, .{ .func = .{
+                        .args = try p.allocator.dupe(G.Arg, &.{.{
+                            .binding = Binding.alloc(p.allocator, B.Identifier{ .ref = arg1 }, loc),
+                        }}),
+                        .body = .{
+                            .stmts = try p.allocator.dupe(Stmt, &.{
+                                Stmt.alloc(S.SExpr, .{
+                                    .value = Expr.assign(id, Expr.initIdentifier(arg1, loc)),
+                                }, loc),
+                            }),
+                            .loc = loc,
+                        },
+                    } }, loc),
+                });
+            } else {
+                try export_props.append(p.allocator, .{
+                    .key = Expr.init(E.String, .{
+                        .data = symbol.original_name,
+                    }, loc),
+                    .value = id,
+                });
+            }
         }
 
         pub fn init(
@@ -23689,10 +23916,10 @@ pub fn newLazyExportAST(
     return result.ast;
 }
 
-const CommonJSWrapper = union(enum) {
-    none: void,
-    bun_dev: Expr,
-    bun_js: void,
+const WrapMode = union(enum) {
+    none,
+    bun_commonjs,
+    kit_dev_hmr,
 };
 
 /// Equivalent of esbuild's js_ast_helpers.ToInt32

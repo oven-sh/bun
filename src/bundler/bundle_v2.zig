@@ -8151,10 +8151,13 @@ pub const LinkerContext = struct {
         chunk: *Chunk,
         allocator: std.mem.Allocator,
         wrap: WrapKind,
-        ast: *JSAst,
+        ast: *const JSAst,
     ) !void {
-        if (c.options.output_format == .internal_kit_dev and source_index != Index.runtime.value)
-            return c.convertStmtsForChunkKit(source_index, stmts, part_stmts, chunk, allocator, wrap, ast);
+        // for Bun Kit, all wrapping work has already been done in the parser
+        if (c.options.output_format == .internal_kit_dev and source_index != Index.runtime.value) {
+            try stmts.inside_wrapper_suffix.appendSlice(part_stmts);
+            return;
+        }
 
         const shouldExtractESMStmtsForWrap = wrap != .none;
         const shouldStripExports = c.options.mode != .passthrough or c.graph.files.items(.entry_point_kind)[source_index] != .none;
@@ -8835,104 +8838,6 @@ pub const LinkerContext = struct {
         }
     }
 
-    fn visitBindingForKitModuleExports(
-        c: *LinkerContext,
-        binding: Binding,
-        export_props: *std.ArrayListUnmanaged(G.Property),
-        source_index: u32,
-        is_live_binding: bool,
-    ) !void {
-        switch (binding.data) {
-            .b_missing => @panic("missing!"),
-            .b_identifier => |id| {
-                try c.visitRefForKitModuleExports(id.ref, binding.loc, export_props, source_index, is_live_binding);
-            },
-            .b_array => |array| {
-                for (array.items) |item| {
-                    try c.visitBindingForKitModuleExports(item.binding, export_props, source_index, is_live_binding);
-                }
-            },
-            .b_object => |object| {
-                for (object.properties) |item| {
-                    try c.visitBindingForKitModuleExports(item.value, export_props, source_index, is_live_binding);
-                }
-            },
-        }
-    }
-
-    fn visitRefForKitModuleExports(
-        c: *LinkerContext,
-        ref: Ref,
-        loc: Logger.Loc,
-        export_props: *std.ArrayListUnmanaged(G.Property),
-        source_index: u32,
-        is_live_binding: bool,
-    ) !void {
-        const symbol = c.graph.symbols.get(ref).?;
-        const id = Expr.initIdentifier(ref, loc);
-        if (is_live_binding) {
-            const key = Expr.init(E.String, .{
-                .data = symbol.original_name,
-            }, loc);
-            const arg1 = c.graph.generateNewSymbol(source_index, .other, symbol.original_name);
-
-            // Live bindings need to update the value internally and externally.
-            try export_props.append(c.allocator, .{
-                .kind = .get,
-                .key = key,
-                .value = Expr.init(E.Function, .{ .func = .{
-                    .body = .{
-                        .stmts = try c.allocator.dupe(Stmt, &.{
-                            Stmt.alloc(S.Return, .{ .value = id }, loc),
-                        }),
-                        .loc = loc,
-                    },
-                } }, loc),
-            });
-            try export_props.append(c.allocator, .{
-                .kind = .set,
-                .key = key,
-                .value = Expr.init(E.Function, .{ .func = .{
-                    .args = try c.allocator.dupe(G.Arg, &.{.{
-                        .binding = Binding.alloc(c.allocator, B.Identifier{ .ref = arg1 }, loc),
-                    }}),
-                    .body = .{
-                        .stmts = try c.allocator.dupe(Stmt, &.{
-                            Stmt.alloc(S.SExpr, .{
-                                .value = Expr.assign(id, Expr.initIdentifier(arg1, loc)),
-                            }, loc),
-                        }),
-                        .loc = loc,
-                    },
-                } }, loc),
-            });
-        } else {
-            try export_props.append(c.allocator, .{
-                .key = Expr.init(E.String, .{
-                    .data = symbol.original_name,
-                }, loc),
-                .value = id,
-            });
-        }
-    }
-    // fn appendCommonJSExportStmtWithRef(c: *LinkerContext, ast: *JSAst, stmts: *StmtList, ref: Ref, loc: Logger.Loc) !void {
-    //     try appendCommonJSExportStmt(ast, stmts, c.graph.symbols.get(ref).?.original_name, Expr.initIdentifier(ref, loc), loc);
-    // }
-
-    // fn appendCommonJSExportStmt(ast: *JSAst, stmts: *StmtList, name: []const u8, expr: Expr, loc: Logger.Loc) !void {
-    //     ast.flags.uses_exports_ref = true;
-    //     try stmts.inside_wrapper_suffix.append(Stmt.alloc(S.SExpr, .{
-    //         .value = Expr.assign(
-    //             Expr.init(E.Dot, .{
-    //                 .target = Expr.initIdentifier(ast.exports_ref, loc),
-    //                 .name = name,
-    //                 .name_loc = loc,
-    //             }, loc),
-    //             expr,
-    //         ),
-    //     }, loc));
-    // }
-
     fn runtimeFunction(c: *LinkerContext, name: []const u8) Ref {
         return c.graph.runtimeFunction(name);
     }
@@ -8959,8 +8864,7 @@ pub const LinkerContext = struct {
             Index.invalid;
 
         // referencing everything by array makes the code a lot more annoying :(
-        // this is var so that convertStmtsForChunkKit can retroactively set `uses_exports_ref` late
-        var ast: JSAst = c.graph.ast.get(part_range.source_index.get());
+        const ast: JSAst = c.graph.ast.get(part_range.source_index.get());
 
         var needs_wrapper = false;
 
@@ -9159,7 +9063,7 @@ pub const LinkerContext = struct {
                 }, Logger.Loc.Empty) },
             }) catch unreachable; // is within bounds
 
-            if (ast.flags.uses_exports_ref) {
+            if (flags.wrap == .cjs and ast.flags.uses_exports_ref) {
                 clousure_args.appendAssumeCapacity(
                     .{
                         .binding = Binding.alloc(temp_allocator, B.Identifier{

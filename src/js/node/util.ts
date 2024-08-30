@@ -1,7 +1,6 @@
 // Hardcoded module "node:util"
 const types = require("node:util/types");
-/** @type {import('node-inspect-extracted')} */
-const utl = require("internal/util/inspect");
+
 const { ERR_INVALID_ARG_TYPE, ERR_OUT_OF_RANGE } = require("internal/errors");
 
 const internalErrorName = $newZigFunction("node_util_binding.zig", "internalErrorName", 1);
@@ -23,10 +22,9 @@ var getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 
 const parseArgs = $newZigFunction("parse_args.zig", "parseArgs", 1);
 
-const inspect = utl.inspect;
-const formatWithOptions = utl.formatWithOptions;
-const format = utl.format;
-const stripVTControlCharacters = utl.stripVTControlCharacters;
+function format() {
+  return lazyLoadInspect().format(...arguments);
+}
 
 function deprecate(fn, msg, code) {
   if (process.noDeprecation === true) {
@@ -278,7 +276,7 @@ function styleText(format, text) {
     e.code = "ERR_INVALID_ARG_TYPE";
     throw e;
   }
-  const formatCodes = inspect.colors[format];
+  const formatCodes = lazyLoadInspect().colors[format];
   if (formatCodes == null) {
     const e = new Error(
       `The value "${typeof format === "symbol" ? format.description : format}" is invalid for argument 'format'. Reason: must be one of: ${Object.keys(inspect.colors).join(", ")}`,
@@ -350,15 +348,30 @@ function aborted(signal: AbortSignal, resource: object) {
   return promise;
 }
 
+var lazyInspect;
+function lazyLoadInspect() {
+  return (lazyInspect ??= require("internal/util/inspect"));
+}
+
 cjs_exports = {
   format,
-  formatWithOptions,
-  stripVTControlCharacters,
+  formatWithOptions() {
+    cjs_exports.formatWithOptions = lazyLoadInspect().formatWithOptions;
+    return cjs_exports.formatWithOptions(...arguments);
+  },
+  stripVTControlCharacters() {
+    return lazyLoadInspect().stripVTControlCharacters(...arguments);
+  },
   deprecate,
   debug: debuglog,
   debuglog,
   _extend,
-  inspect,
+  get inspect() {
+    return lazyLoadInspect();
+  },
+  set inspect(fn) {
+    lazyInspect = fn;
+  },
   types,
   isArray: $isArray,
   isBoolean,

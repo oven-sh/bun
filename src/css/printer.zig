@@ -253,7 +253,7 @@ pub fn Printer(comptime Writer: type) type {
 
         /// Writes a delimiter character, followed by whitespace (depending on the `minify` option).
         /// If `ws_before` is true, then whitespace is also written before the delimiter.
-        pub fn delim(this: *This, delim_: u8, ws_before: bool) !void {
+        pub fn delim(this: *This, delim_: u8, ws_before: bool) PrintResult(void) {
             if (ws_before) {
                 if (this.whitespace().asErr()) |e| return e;
             }

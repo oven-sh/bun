@@ -24,6 +24,8 @@ const DashedIdentFns = css.css_values.ident.DashedIdentFns;
 
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
+const PrintResult = css.PrintResult;
+const Result = css.Result;
 
 pub fn ValidQueryCondition(comptime T: type) void {
     //   fn parse_feature<'t>(input: &mut Parser<'i, 't>) -> Result<Self, ParseError<'i, ParserError<'i>>>;
@@ -44,7 +46,7 @@ pub const MediaList = struct {
     media_queries: ArrayList(MediaQuery),
 
     /// Parse a media query list from CSS.
-    pub fn parse(input: *css.Parser) Error!MediaList {
+    pub fn parse(input: *css.Parser) Result(MediaList) {
         var media_queries = ArrayList(MediaList){};
         while (true) {
             const mq = input.parseUntilBefore(
@@ -68,20 +70,20 @@ pub const MediaList = struct {
         return MediaList{ .media_queries = media_queries };
     }
 
-    pub fn toCss(this: *const MediaList, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const MediaList, comptime W: type, dest: *css.Printer(W)) css.PrintResult(void) {
         if (this.media_queries.items.len == 0) {
-            try dest.writeStr("not all");
-            return;
+            return dest.writeStr("not all");
         }
 
         var first = true;
         for (this.media_queries.items) |*query| {
             if (!first) {
-                try dest.delim(',', false);
+                if (dest.delim(',', false).asErr()) |e| return e;
             }
             first = false;
-            try query.toCss(W, dest);
+            if (query.toCss(W, dest).asErr()) |e| return e;
         }
+        return PrintResult(void).success;
     }
 
     /// Returns whether the media query list always matches.
@@ -122,15 +124,18 @@ pub const MediaQuery = struct {
         return this.qualifier == null and this.media_type == .all and this.condition == null;
     }
 
-    pub fn parse(input: *css.Parser) Error!MediaQuery {
+    pub fn parse(input: *css.Parser) Result(MediaQuery) {
         const Fn = struct {
-            pub fn tryParseFn(i: *css.Parser) Error!struct { ?Qualifier, ?MediaType } {
+            pub fn tryParseFn(i: *css.Parser) Result(struct { ?Qualifier, ?MediaType }) {
                 const qualifier = i.tryParse(Qualifier.parse, .{}) catch null;
-                const media_type = try MediaType.parse(i);
+                const media_type = if (MediaType.parse(i).asErr()) |e| return .{ .err = e };
                 return .{ qualifier, media_type };
             }
         };
-        const qualifier, const explicit_media_type = (try input.tryParse(Fn.tryParseFn, .{})) catch .{ null, null };
+        const qualifier, const explicit_media_type = switch (input.tryParse(Fn.tryParseFn, .{})) {
+            .result => |v| v,
+            .err => return .{ null, null },
+        };
 
         const condition = if (explicit_media_type == null)
             MediaCondition.parseWithFlags(input, QueryConditionFlags{ .allow_or = true })
@@ -148,10 +153,10 @@ pub const MediaQuery = struct {
         };
     }
 
-    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintResult(void) {
         if (this.qualifier) |qual| {
-            try qual.toCss(W, dest);
-            try dest.writeChar(' ');
+            if (qual.toCss(W, dest).asErr()) |e| return .{ .err = e };
+            if (dest.writeChar(' ').asErr()) |e| return .{ .err = e };
         }
 
         switch (this.media_type) {
@@ -162,17 +167,17 @@ pub const MediaQuery = struct {
                 // Otherwise, we'd serialize media queries like "(min-width:
                 // 40px)" in "all (min-width: 40px)", which is unexpected.
                 if (this.qualifier != null or this.condition != null) {
-                    try dest.writeStr("all");
+                    if (dest.writeStr("all").asErr()) |e| return .{ .err = e };
                 }
             },
             .print => {
-                try dest.writeStr("print");
+                if (dest.writeStr("print").asErr()) |e| return .{ .err = e };
             },
             .screen => {
-                try dest.writeStr("screen");
+                if (dest.writeStr("screen").asErr()) |e| return .{ .err = e };
             },
             .custom => |desc| {
-                try dest.writeStr(desc);
+                if (dest.writeStr(desc).asErr()) |e| return .{ .err = e };
             },
         }
 
@@ -201,14 +206,15 @@ pub fn toCssWithParensIfNeeded(
     comptime W: type,
     dest: *Printer(W),
     needs_parens: bool,
-) PrintErr!void {
+) PrintResult(void) {
     if (needs_parens) {
-        try dest.writeChar('(');
+        if (dest.writeChar('(').asErr()) |e| return .{ .err = e };
     }
-    try v.toCss(W, dest);
+    if (v.toCss(W, dest).asErr()) |e| return .{ .err = e };
     if (needs_parens) {
-        try dest.writeChar(')');
+        if (dest.writeChar(')').asErr()) |e| return .{ .err = e };
     }
+    return PrintResult(void).success;
 }
 
 /// A [media query qualifier](https://drafts.csswg.org/mediaqueries/#mq-prefix).
@@ -236,8 +242,8 @@ pub const MediaType = union(enum) {
     /// An unknown media type.
     custom: []const u8,
 
-    pub fn parse(input: *css.Parser) Error!MediaType {
-        const name = try input.expectIdent();
+    pub fn parse(input: *css.Parser) Result(MediaType) {
+        const name = if (input.expectIdent().asErr()) |e| return .{ .err = e };
         return MediaType.fromStr(name);
     }
 
@@ -250,17 +256,18 @@ pub const MediaType = union(enum) {
     }
 };
 
-pub fn operationToCss(comptime QueryCondition: type, operator: Operator, conditions: *const ArrayList(QueryCondition), comptime W: type, dest: *Printer(W)) PrintErr!void {
+pub fn operationToCss(comptime QueryCondition: type, operator: Operator, conditions: *const ArrayList(QueryCondition), comptime W: type, dest: *Printer(W)) PrintResult(void) {
     ValidQueryCondition(QueryCondition);
     const first = &conditions.items[0];
-    try toCssWithParensIfNeeded(first, W, dest, first.needsParens(operator, &dest.targets));
+    if (toCssWithParensIfNeeded(first, W, dest, first.needsParens(operator, &dest.targets)).asErr()) |e| return .{ .err = e };
     if (conditions.items.len == 1) return;
     for (conditions.items[1..]) |*item| {
-        try dest.writeChar(' ');
-        try operator.toCss(W, dest);
-        try dest.writeChar(' ');
-        try toCssWithParensIfNeeded(item, W, dest, item.needsParens(operator, &dest.targets));
+        if (dest.writeChar(' ').asErr()) |e| return .{ .err = e };
+        if (operator.toCss(W, dest).asErr()) |e| return .{ .err = e };
+        if (dest.writeChar(' ').asErr()) |e| return .{ .err = e };
+        if (toCssWithParensIfNeeded(item, W, dest, item.needsParens(operator, &dest.targets)).asErr()) |e| return .{ .err = e };
     }
+    return PrintResult(void).success;
 }
 
 /// Represents a media condition.
@@ -276,24 +283,29 @@ pub const MediaCondition = struct {
 
     const This = @This();
 
-    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintResult(void) {
         switch (this.*) {
             .feature => |*f| {
-                try f.toCss(W, dest);
+                if (f.toCss(W, dest).asErr()) |e| return .{ .err = e };
             },
             .not => |*c| {
-                try dest.writeStr("not ");
-                try toCssWithParensIfNeeded(c, W, dest, c.needsParens(null, &dest.targets));
+                if (dest.writeStr("not ").asErr()) |e| return .{ .err = e };
+                if (toCssWithParensIfNeeded(c, W, dest, c.needsParens(null, &dest.targets)).asErr()) |e| return .{ .err = e };
             },
             .operation => |operation| {
                 operationToCss(operation.operator, &operation.conditions, W, dest);
             },
         }
+
+        return PrintResult(void).success;
     }
 
     /// QueryCondition.parseFeature
-    pub fn parseFeature(input: *css.Parser) Error!MediaCondition {
-        const feature = try MediaFeature.parse(input);
+    pub fn parseFeature(input: *css.Parser) Result(MediaCondition) {
+        const feature = switch (MediaFeature.parse(input)) {
+            .err => |e| return e,
+            .result => |v| v,
+        };
         return MediaCondition{ .feature = feature };
     }
 
@@ -313,8 +325,8 @@ pub const MediaCondition = struct {
     }
 
     /// QueryCondition.parseStyleQuery
-    pub fn parseStyleQuery(input: *css.Parser) Error!MediaCondition {
-        return try input.newErrorForNextToken();
+    pub fn parseStyleQuery(input: *css.Parser) Result(MediaCondition) {
+        return input.newErrorForNextToken();
     }
 
     /// QueryCondition.needsParens
@@ -326,7 +338,7 @@ pub const MediaCondition = struct {
         };
     }
 
-    pub fn parseWithFlags(input: *css.Parser, flags: QueryConditionFlags) Error!MediaCondition {
+    pub fn parseWithFlags(input: *css.Parser, flags: QueryConditionFlags) Result(MediaCondition) {
         return parseQueryCondition(MediaCondition, input, flags);
     }
 };
@@ -336,10 +348,13 @@ pub fn parseQueryCondition(
     comptime QueryCondition: type,
     input: *css.Parser,
     flags: QueryConditionFlags,
-) Error!QueryCondition {
+) Result(QueryCondition) {
     const location = input.currentSourceLocation();
     const is_negation, const is_style = brk: {
-        const tok = try input.next();
+        const tok = switch (input.next()) {
+            .err => |e| return e,
+            .result => |v| v,
+        };
         switch (tok.*) {
             .open_paren => break :brk .{ false, false },
             .ident => |ident| {
@@ -367,16 +382,28 @@ pub fn parseQueryCondition(
         switch (val) {
             // (true, false)
             0b10 => {
-                const inner_condition = try parseParensOrFunction(QueryCondition, input, flags);
+                const inner_condition = switch (parseParensOrFunction(QueryCondition, input, flags)) {
+                    .err => |e| return e,
+                    .result => |v| v,
+                };
                 return QueryCondition.createNegation(bun.create(alloc, QueryCondition, inner_condition));
             },
             // (true, true)
             0b11 => {
-                const inner_condition = try QueryCondition.parseStyleQuery(input);
+                const inner_condition = switch (QueryCondition.parseStyleQuery(input)) {
+                    .err => |e| return e,
+                    .result => |v| v,
+                };
                 return QueryCondition.createNegation(bun.create(alloc, QueryCondition, inner_condition));
             },
-            0b00 => break :first_condition try parseParenBlock(QueryCondition, input, flags),
-            0b01 => break :first_condition try QueryCondition.parseStyleQuery(input),
+            0b00 => break :first_condition switch (parseParenBlock(QueryCondition, input, flags)) {
+                .err => |e| return e,
+                .result => |v| v,
+            },
+            0b01 => break :first_condition switch (QueryCondition.parseStyleQuery(input)) {
+                .err => |e| return e,
+                .result => |v| v,
+            },
             else => unreachable,
         }
     };
@@ -397,7 +424,10 @@ pub fn parseQueryCondition(
     ) catch unreachable;
     conditions.append(
         @compileError(css.todo_stuff.think_about_allocator),
-        try parseParensOrFunction(QueryCondition, input, flags),
+        switch (parseParensOrFunction(QueryCondition, input, flags)) {
+            .err => |e| return e,
+            .result => |v| v,
+        },
     ) catch unreachable;
 
     const delim = switch (operator) {
@@ -412,7 +442,10 @@ pub fn parseQueryCondition(
 
         conditions.append(
             @compileError(css.todo_stuff.think_about_allocator),
-            try parseParensOrFunction(QueryCondition, input, flags),
+            switch (parseParensOrFunction(QueryCondition, input, flags)) {
+                .err => |e| return e,
+                .result => |v| v,
+            },
         ) catch unreachable;
     }
 }
@@ -422,9 +455,12 @@ pub fn parseParensOrFunction(
     comptime QueryCondition: type,
     input: *css.Parser,
     flags: QueryConditionFlags,
-) Error!QueryCondition {
+) Result(QueryCondition) {
     const location = input.currentSourceLocation();
-    const t = try input.next();
+    const t = switch (input.next()) {
+        .err => |e| return e,
+        .result => |v| v,
+    };
     switch (t.*) {
         .open_paren => return parseParenBlock(QueryCondition, input, flags),
         .function => |f| {
@@ -443,10 +479,10 @@ fn parseParenBlock(
     comptime QueryCondition: type,
     input: *css.Parser,
     flags: QueryConditionFlags,
-) Error!QueryCondition {
+) Result(QueryCondition) {
     const Closure = struct {
         flags: QueryConditionFlags,
-        pub fn parseNestedBlockFn(this: *@This(), i: *css.Parser) Error!QueryCondition {
+        pub fn parseNestedBlockFn(this: *@This(), i: *css.Parser) Result(QueryCondition) {
             if (i.tryParse(@This().tryParseFn, .{this})) |inner| {
                 return inner;
             }
@@ -454,7 +490,7 @@ fn parseParenBlock(
             return QueryCondition.parseFeature(i);
         }
 
-        pub fn tryParseFn(i: *css.Parser, this: *@This()) Error!QueryCondition {
+        pub fn tryParseFn(i: *css.Parser, this: *@This()) Result(QueryCondition) {
             return parseQueryCondition(QueryCondition, i, this.flags);
         }
     };
@@ -462,7 +498,7 @@ fn parseParenBlock(
     var closure = Closure{
         .flags = flags,
     };
-    return try input.parseNestedBlock(QueryCondition, &closure, Closure.parseNestedBlockFn);
+    return input.parseNestedBlock(QueryCondition, &closure, Closure.parseNestedBlockFn);
 }
 
 /// A [media feature](https://drafts.csswg.org/mediaqueries/#typedef-media-feature)
@@ -599,14 +635,14 @@ const MediaFeatureId = union(enum) {
         prefix: []const u8,
         comptime W: type,
         dest: *Printer(W),
-    ) PrintErr!void {
+    ) PrintResult(void) {
         switch (this.*) {
             .@"-webkit-device-pixel-ratio" => {
-                try dest.writeFmt("-webkit-{s}device-pixel-ratio", .{prefix});
+                return dest.writeFmt("-webkit-{s}device-pixel-ratio", .{prefix});
             },
             else => {
-                try dest.writeStr(prefix);
-                return try this.toCss(W, dest);
+                if (dest.writeStr(prefix).asErr()) |e| return .{ .err = e };
+                return this.toCss(W, dest);
             },
         }
     }
@@ -660,22 +696,22 @@ pub fn QueryFeature(comptime FeatureId: type) type {
                 targets.shouldCompile(css.Features{ .media_interval_syntax = true });
         }
 
-        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            try dest.writeChar('(');
+        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintResult(void) {
+            if (dest.writeChar('(').asErr()) |e| return .{ .err = e };
 
             switch (this.*) {
                 .boolean => {
-                    try this.boolean.name.toCss(W, dest);
+                    if (this.boolean.name.toCss(W, dest).asErr()) |e| return .{ .err = e };
                 },
                 .plain => {
-                    try this.plain.name.toCss(W, dest);
-                    try dest.delim(':', false);
-                    try this.plain.value.toCss(W, dest);
+                    if (this.plain.name.toCss(W, dest).asErr()) |e| return .{ .err = e };
+                    if (dest.delim(':', false).asErr()) |e| return .{ .err = e };
+                    if (this.plain.value.toCss(W, dest).asErr()) |e| return .{ .err = e };
                 },
                 .range => {
                     // If range syntax is unsupported, use min/max prefix if possible.
                     if (dest.targets.shouldCompile(.media_range_syntax, .media_range_syntax)) {
-                        return try writeMinMax(
+                        return writeMinMax(
                             &this.range.operator,
                             FeatureId,
                             &this.range.name,
@@ -684,21 +720,21 @@ pub fn QueryFeature(comptime FeatureId: type) type {
                             dest,
                         );
                     }
-                    try this.range.name.toCss(W, dest);
-                    try this.range.operator.toCss(W, dest);
-                    try this.range.value.toCss(W, dest);
+                    if (this.range.name.toCss(W, dest).asErr()) |e| return .{ .err = e };
+                    if (this.range.operator.toCss(W, dest).asErr()) |e| return .{ .err = e };
+                    if (this.range.value.toCss(W, dest).asErr()) |e| return .{ .err = e };
                 },
                 .interval => |interval| {
                     if (dest.targets.shouldCompile(.media_interval_syntax, .media_interval_syntax)) {
-                        try writeMinMax(
+                        if (writeMinMax(
                             &interval.start_operator.opposite(),
                             FeatureId,
                             &interval.name,
                             &interval.start,
                             W,
                             dest,
-                        );
-                        try dest.writeStr(" and (");
+                        ).asErr()) |e| return .{ .err = e };
+                        if (dest.writeStr(" and (").asErr()) |e| return .{ .err = e };
                         return writeMinMax(
                             &interval.end_operator,
                             FeatureId,
@@ -709,18 +745,18 @@ pub fn QueryFeature(comptime FeatureId: type) type {
                         );
                     }
 
-                    try interval.start.toCss(W, dest);
-                    try interval.start_operator.toCss(W, dest);
-                    try interval.name.toCss(W, dest);
-                    try interval.end_operator.toCss(W, dest);
-                    try interval.end.toCss(W, dest);
+                    if (interval.start.toCss(W, dest).asErr()) |e| return .{ .err = e };
+                    if (interval.start_operator.toCss(W, dest).asErr()) |e| return .{ .err = e };
+                    if (interval.name.toCss(W, dest).asErr()) |e| return .{ .err = e };
+                    if (interval.end_operator.toCss(W, dest).asErr()) |e| return .{ .err = e };
+                    if (interval.end.toCss(W, dest).asErr()) |e| return .{ .err = e };
                 },
             }
 
-            return try dest.writeChar(')');
+            return dest.writeChar(')');
         }
 
-        pub fn parse(input: *css.Parser) Error!This {
+        pub fn parse(input: *css.Parser) Result(This) {
             if (input.tryParse(parseNameFirst, .{})) |res| {
                 return res;
             } else |e| {
@@ -729,27 +765,34 @@ pub fn QueryFeature(comptime FeatureId: type) type {
                 }
                 return parseValueFirst(input);
             }
+            return Result(This).success;
         }
 
-        pub fn parseNameFirst(input: *css.Parser) Error!This {
-            const name, const legacy_op = try MediaFeatureName(FeatureId).parse(input);
+        pub fn parseNameFirst(input: *css.Parser) Result(This) {
+            const name, const legacy_op = switch (MediaFeatureName(FeatureId).parse(input)) {
+                .err => |e| return .{ .err = e },
+                .result => |v| v,
+            };
 
             const operator = if (input.tryParse(consumeOperationOrColon, .{true})) |operator| operator else return .{
                 .boolean = .{ .name = name },
             };
 
             if (operator != null and legacy_op != null) {
-                return try input.newCustomError(css.ParserError.invalid_media_query);
+                return input.newCustomError(css.ParserError.invalid_media_query);
             }
 
-            const value = try MediaFeatureValue.parse(input, name.valueType());
+            const value = switch (MediaFeatureValue.parse(input, name.valueType())) {
+                .err => |e| return .{ .err = e },
+                .result => |v| v,
+            };
             if (!value.checkType(name.valueType())) {
-                return try input.newCustomError(css.ParserError.invalid_media_query);
+                return input.newCustomError(css.ParserError.invalid_media_query);
             }
 
             if (operator orelse legacy_op) |op| {
                 if (!name.valueType().allowsRanges()) {
-                    return try input.newCustomError(css.ParserError.invalid_media_query);
+                    return input.newCustomError(css.ParserError.invalid_media_query);
                 }
 
                 return .{
@@ -769,7 +812,7 @@ pub fn QueryFeature(comptime FeatureId: type) type {
             }
         }
 
-        pub fn parseValueFirst(input: *css.Parser) Error!This {
+        pub fn parseValueFirst(input: *css.Parser) Result(This) {
             // We need to find the feature name first so we know the type.
             const start = input.state();
             const name = name: {
@@ -791,12 +834,21 @@ pub fn QueryFeature(comptime FeatureId: type) type {
             input.reset(&start);
 
             // Now we can parse the first value.
-            const value = try MediaFeatureValue.parse(input, name.valueType());
-            const operator = try consumeOperationOrColon(input, false);
+            const value = switch (MediaFeatureValue.parse(input, name.valueType())) {
+                .err => |e| return .{ .err = e },
+                .result => |v| v,
+            };
+            const operator = switch (consumeOperationOrColon(input, false)) {
+                .err => |e| return .{ .err = e },
+                .result => |v| v,
+            };
 
             // Skip over the feature name again.
             {
-                const feature_name, const blah = try MediaFeatureName(FeatureId).parse(input);
+                const feature_name, const blah = switch (MediaFeatureName(FeatureId).parse(input)) {
+                    .err => |e| return .{ .err = e },
+                    .result => |v| v,
+                };
                 _ = blah;
                 bun.debugAssert(bun.strings.eql(feature_name, name));
             }
@@ -825,7 +877,10 @@ pub fn QueryFeature(comptime FeatureId: type) type {
                     else => return input.newCustomError(css.ParserError.invalid_media_query),
                 }
 
-                const end_value = try MediaFeatureValue.parse(input, name.valueType());
+                const end_value = switch (MediaFeatureValue.parse(input, name.valueType())) {
+                    .err => |e| return .{ .err = e },
+                    .result => |v| v,
+                };
                 if (!end_value.checkType(name.valueType())) {
                     return input.newCustomError(css.ParserError.invalid_media_query);
                 }
@@ -854,11 +909,14 @@ pub fn QueryFeature(comptime FeatureId: type) type {
 }
 
 /// Consumes an operation or a colon, or returns an error.
-fn consumeOperationOrColon(input: *css.Parser, allow_colon: bool) Error!(?MediaFeatureComparison) {
+fn consumeOperationOrColon(input: *css.Parser, allow_colon: bool) Result(?MediaFeatureComparison) {
     const location = input.currentSourceLocation();
     const first_delim = first_delim: {
         const loc = input.currentSourceLocation();
-        const next_token = try input.next();
+        const next_token = switch (input.next()) {
+            .err => |e| return .{ .err = e },
+            .result => |v| v,
+        };
         switch (next_token.*) {
             .colon => if (allow_colon) return null,
             .delim => |oper| break :first_delim oper,
@@ -935,16 +993,16 @@ pub const MediaFeatureValue = union(enum) {
         this: *const MediaFeatureValue,
         comptime W: type,
         dest: *Printer(W),
-    ) PrintErr!void {
+    ) PrintResult(void) {
         switch (this.*) {
             .length => |len| return len.toCss(W, dest),
             .number => |num| return CSSNumberFns.toCss(&num, W, dest),
             .integer => |int| return CSSIntegerFns.toCss(&int, W, dest),
             .boolean => |b| {
                 if (b.*) {
-                    return try dest.writeChar('1');
+                    return dest.writeChar('1');
                 } else {
-                    return try dest.writeChar('0');
+                    return dest.writeChar('0');
                 }
             },
             .resolution => |res| return res.toCss(W, dest),
@@ -962,7 +1020,7 @@ pub const MediaFeatureValue = union(enum) {
 
     /// Parses a single media query feature value, with an expected type.
     /// If the type is unknown, pass MediaFeatureType::Unknown instead.
-    pub fn parse(input: *css.Parser, expected_type: MediaFeatureType) Error!MediaFeatureValue {
+    pub fn parse(input: *css.Parser, expected_type: MediaFeatureType) Result(MediaFeatureValue) {
         if (input.tryParse(parseKnown, .{expected_type})) |value| {
             return value;
         }
@@ -970,20 +1028,23 @@ pub const MediaFeatureValue = union(enum) {
         return parseUnknown(input);
     }
 
-    pub fn parseKnown(input: *css.Parser, expected_type: MediaFeatureType) Error!MediaFeatureValue {
+    pub fn parseKnown(input: *css.Parser, expected_type: MediaFeatureType) Result(MediaFeatureValue) {
         return switch (expected_type) {
             .bool => {
-                const value = try CSSIntegerFns.parse(input);
+                const value = switch (CSSIntegerFns.parse(input)) {
+                    .err => |e| return .{ .err = e },
+                    .result => |v| v,
+                };
                 if (value != 0 and value != 1) return input.newCustomError(css.ParserError.invalid_value);
                 return .{ .boolean = value == 1 };
             },
-            .number => .{ .number = try CSSNumberFns.parse(input) },
-            .integer => .{ .integer = try CSSIntegerFns.parse(input) },
-            .length => .{ .integer = try Length.parse(input) },
+            .number => .{ .number = CSSNumberFns.parse(input) },
+            .integer => .{ .integer = CSSIntegerFns.parse(input) },
+            .length => .{ .integer = Length.parse(input) },
         };
     }
 
-    pub fn parseUnknown(input: *css.Parser) Error!MediaFeatureValue {
+    pub fn parseUnknown(input: *css.Parser) Result(MediaFeatureValue) {
         // Ratios are ambiguous with numbers because the second param is optional (e.g. 2/1 == 2).
         // We require the / delimiter when parsing ratios so that 2/1 ends up as a ratio and 2 is
         // parsed as a number.
@@ -998,7 +1059,10 @@ pub const MediaFeatureValue = union(enum) {
 
         if (input.tryParse(EnvironmentVariable.parse, .{})) |env| return .{ .env = env };
 
-        const ident = try IdentFns.parse(input);
+        const ident = switch (IdentFns.parse(input)) {
+            .err => |e| return .{ .err = e },
+            .result => |v| v,
+        };
         return .{ .ident = ident };
     }
 };
@@ -1050,7 +1114,7 @@ pub fn MediaFeatureName(comptime FeatureId: type) type {
             };
         }
 
-        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintResult(void) {
             return switch (this.*) {
                 .standard => |v| v.toCss(W, dest),
                 .custom => |d| DashedIdentFns.toCss(&d, W, dest),
@@ -1058,26 +1122,29 @@ pub fn MediaFeatureName(comptime FeatureId: type) type {
             };
         }
 
-        pub fn toCssWithPrefix(this: *const This, prefix: []const u8, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            switch (this.*) {
-                .standard => |v| try v.toCssWithPrefix(prefix, W, dest),
+        pub fn toCssWithPrefix(this: *const This, prefix: []const u8, comptime W: type, dest: *Printer(W)) PrintResult(void) {
+            return switch (this.*) {
+                .standard => |v| v.toCssWithPrefix(prefix, W, dest),
                 .custom => |d| {
-                    try dest.writeStr(prefix);
-                    return try DashedIdentFns.toCss(&d, W, dest);
+                    if (dest.writeStr(prefix).asErr()) |e| return .{ .err = e };
+                    return DashedIdentFns.toCss(&d, W, dest);
                 },
                 .unknown => |v| {
-                    try dest.writeStr(prefix);
-                    return try IdentFns.toCss(&v, W, dest);
+                    if (dest.writeStr(prefix).asErr()) |e| return .{ .err = e };
+                    return IdentFns.toCss(&v, W, dest);
                 },
-            }
+            };
         }
 
         /// Parses a media feature name.
-        pub fn parse(input: *css.Parser) Error!struct { This, ?MediaFeatureComparison } {
+        pub fn parse(input: *css.Parser) Result(struct { This, ?MediaFeatureComparison }) {
             const alloc: Allocator = {
                 @compileError(css.todo_stuff.think_about_allocator);
             };
-            const ident = try input.expectIdent();
+            const ident = switch (input.expectIdent()) {
+                .err => |e| return .{ .err = e },
+                .result => |v| v,
+            };
 
             if (bun.strings.startsWith(ident, "--")) {
                 return .{
@@ -1136,7 +1203,7 @@ fn writeMinMax(
     value: *const MediaFeatureValue,
     comptime W: type,
     dest: *Printer(W),
-) PrintErr!void {
+) PrintResult(void) {
     const prefix = switch (operator.*) {
         .@"greater-than", .@"greater-than-equal" => "min-",
         .@"less-than", .@"less-than-equal" => "max-",
@@ -1144,12 +1211,12 @@ fn writeMinMax(
     };
 
     if (prefix) |p| {
-        try name.toCssWithPrefix(p, W, dest);
+        if (name.toCssWithPrefix(p, W, dest).asErr()) |e| return .{ .err = e };
     } else {
-        try name.toCss(W, dest);
+        if (name.toCss(W, dest).asErr()) |e| return .{ .err = e };
     }
 
-    try dest.delim(':', false);
+    if (dest.delim(':', false).asErr()) |e| return .{ .err = e };
 
     const adjusted = switch (operator.*) {
         .@"greater-than" => value.add(0.001),
@@ -1158,10 +1225,10 @@ fn writeMinMax(
     };
 
     if (adjusted) |val| {
-        try val.toCss(W, dest);
+        if (val.toCss(W, dest).asErr()) |e| return .{ .err = e };
     } else {
-        try value.toCss(W, dest);
+        if (value.toCss(W, dest).asErr()) |e| return .{ .err = e };
     }
 
-    return try dest.writeChar(')');
+    return dest.writeChar(')');
 }

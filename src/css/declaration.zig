@@ -8,6 +8,8 @@ pub const css = @import("./css_parser.zig");
 pub const Error = css.Error;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
+const PrintResult = css.PrintResult;
+const Result = css.Result;
 
 const ArrayList = std.ArrayListUnmanaged;
 pub const DeclarationList = ArrayList(css.Property);
@@ -28,7 +30,7 @@ pub const DeclarationBlock = struct {
 
     const This = @This();
 
-    pub fn parse(input: *css.Parser, options: *css.ParserOptions) Error!DeclarationBlock {
+    pub fn parse(input: *css.Parser, options: *css.ParserOptions) Result(DeclarationBlock) {
         var important_declarations = DeclarationList{};
         var declarations = DeclarationList{};
         var decl_parser = PropertyDeclarationParser{
@@ -60,9 +62,9 @@ pub const DeclarationBlock = struct {
     }
 
     /// Writes the declarations to a CSS block, including starting and ending braces.
-    pub fn toCssBlock(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        try dest.whitespace();
-        try dest.writeChar('{');
+    pub fn toCssBlock(this: *const This, comptime W: type, dest: *Printer(W)) PrintResult(void) {
+        if (dest.whitespace().asErr()) |e| return e;
+        if (dest.writeChar('{').asErr()) |e| return e;
         dest.indent();
 
         var i: usize = 0;
@@ -74,17 +76,17 @@ pub const DeclarationBlock = struct {
             const decls = &@field(this, decl_field_name);
             const is_important = comptime std.mem.eql(u8, decl_field_name, "important_declarations");
             for (decls.items) |*decl| {
-                try dest.newline();
-                try decl.toCss(W, dest, is_important);
+                if (dest.newline().asErr()) |e| return e;
+                if (decl.toCss(W, dest, is_important).asErr()) |e| return e;
                 if (i != length - 1 or !dest.minify) {
-                    try dest.writeChar(';');
+                    if (dest.writeChar(';').asErr()) |e| return e;
                 }
                 i += 1;
             }
         }
 
         dest.dedent();
-        try dest.newline();
+        if (dest.newline().asErr()) |e| return e;
         return dest.writeChar('}');
     }
 };
@@ -100,14 +102,14 @@ pub const PropertyDeclarationParser = struct {
         pub const Prelude = void;
         pub const AtRule = void;
 
-        pub fn parsePrelude(this: *This, name: []const u8, input: *css.Parser) Error!Prelude {
+        pub fn parsePrelude(this: *This, name: []const u8, input: *css.Parser) Result(Prelude) {
             _ = input; // autofix
             _ = this; // autofix
             _ = name; // autofix
             @compileError(css.todo_stuff.errors);
         }
 
-        pub fn parseBlock(this: *This, prelude: Prelude, start: *const css.ParserState, input: *css.Parser) Error!AtRule {
+        pub fn parseBlock(this: *This, prelude: Prelude, start: *const css.ParserState, input: *css.Parser) Result(AtRule) {
             _ = this; // autofix
             _ = prelude; // autofix
             _ = start; // autofix
@@ -119,12 +121,12 @@ pub const PropertyDeclarationParser = struct {
         pub const Prelude = void;
         pub const QualifiedRule = void;
 
-        pub fn parsePrelude(this: *This, input: *css.Parser) Error!Prelude {
+        pub fn parsePrelude(this: *This, input: *css.Parser) Result(Prelude) {
             _ = this; // autofix
             return input.newError(css.BasicParseErrorKind.qualified_rule_invalid);
         }
 
-        pub fn parseBlock(this: *This, prelude: Prelude, start: *const css.ParserState, input: *css.Parser) Error!QualifiedRule {
+        pub fn parseBlock(this: *This, prelude: Prelude, start: *const css.ParserState, input: *css.Parser) Result(QualifiedRule) {
             _ = this; // autofix
             _ = prelude; // autofix
             _ = start; // autofix
@@ -135,7 +137,7 @@ pub const PropertyDeclarationParser = struct {
     pub const DeclarationParser = struct {
         pub const Declaration = void;
 
-        fn parseValue(this: *This, name: []const u8, input: *css.Parser) Error!Declaration {
+        fn parseValue(this: *This, name: []const u8, input: *css.Parser) Result(Declaration) {
             parse_declaration(
                 name,
                 input,
@@ -165,7 +167,7 @@ pub fn parse_declaration(
     declarations: *DeclarationList,
     important_declarations: *DeclarationList,
     options: *css.ParserOptions,
-) Error!void {
+) Result(void) {
     const property_id = css.PropertyId.fromStr(name);
     var delimiters = css.Delimiters{ .bang = true };
     if (property_id != .custom and property_id.custom != .custom) {
@@ -175,7 +177,7 @@ pub fn parse_declaration(
         property_id: css.PropertyId,
         options: *css.ParserOptions,
 
-        pub fn parsefn(this: *@This(), input2: *css.Parser) Error!css.Property {
+        pub fn parsefn(this: *@This(), input2: *css.Parser) Result(css.Property) {
             return css.Property.parse(this.property_id, input2, this.options);
         }
     };
@@ -183,15 +185,18 @@ pub fn parse_declaration(
         .property_id = property_id,
         .options = options,
     };
-    const property = try input.parseUntilBefore(delimiters, css.Property, &closure, closure.parsefn);
+    const property = switch (input.parseUntilBefore(delimiters, css.Property, &closure, closure.parsefn)) {
+        .err => |e| return e,
+        .result => |v| v,
+    };
     const Fn = struct {
-        pub fn parsefn(input2: *css.Parser) Error!void {
-            try input2.expectDelim('?');
-            try input2.expectIdentMatching("important");
+        pub fn parsefn(input2: *css.Parser) Result(void) {
+            if (input2.expectDelim('?').asErr()) |e| return e;
+            return input2.expectIdentMatching("important");
         }
     };
     const important = if (input.tryParse(Fn.parsefn, .{})) true else false;
-    try input.expectExhausted();
+    if (input.expectExhausted().asErr()) |e| return e;
     if (important) {
         important_declarations.append(comptime {
             @compileError(css.todo_stuff.think_about_allocator);

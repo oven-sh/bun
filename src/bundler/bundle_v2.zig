@@ -1565,6 +1565,8 @@ pub const BundleV2 = struct {
 
         instance.waker = bun.Async.Waker.init() catch @panic("Failed to create waker");
 
+        instance.waker_waiter.unlock();
+
         var timer: bun.windows.libuv.Timer = undefined;
         if (bun.Environment.isWindows) {
             timer.init(instance.waker.?.loop.uv_loop);
@@ -1597,8 +1599,27 @@ pub const BundleV2 = struct {
         waker: ?bun.Async.Waker,
         queue: bun.UnboundedQueue(JSBundleCompletionTask, .next) = .{},
         generation: bun.Generation = 0,
+        waker_waiter: bun.Lock = .{},
 
         pub var instance: ?*BundleThread = undefined;
+        pub var load_once = std.once(loadOnce);
+        pub fn loadOnce() void {
+            instance = bun.default_allocator.create(BundleThread) catch unreachable;
+            instance.?.queue = .{};
+            instance.?.waker = null;
+            BundleThread.instance = instance;
+
+            instance.?.waker_waiter.lock();
+            var thread = std.Thread.spawn(.{}, generateInNewThreadWrap, .{instance.?}) catch Output.panic("Failed to spawn bun build thread", .{});
+            thread.detach();
+        }
+        pub fn enqueue(task: *JSBundleCompletionTask) void {
+            load_once.call();
+            instance.?.queue.push(task);
+            if (instance.?.waker) |*waker| {
+                waker.wake();
+            }
+        }
     };
 
     /// This is called from `Bun.build` in JavaScript.

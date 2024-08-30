@@ -60,7 +60,7 @@ const SloppyGlobalGitConfig = struct {
 
         if (comptime Environment.isWindows) {
             if (strings.BOM.detect(source.contents)) |bom| {
-                source.contents = bom.removeAndConvertToUTF8AndFree(bun.default_allocator, source.contents) catch bun.outOfMemory();
+                source.contents = bom.removeAndConvertToUTF8AndFree(allocator, @constCast(source.contents)) catch bun.outOfMemory();
             }
         }
 

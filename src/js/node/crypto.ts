@@ -11943,7 +11943,7 @@ function _generateKeyPair(algorithm, options, callback) {
     typeof callback === "function" && callback(err);
   }
 }
-const { defineCustomPromisifyArgs } = require("internal/util/inspect");
+const { defineCustomPromisifyArgs } = require("internal/promisify");
 defineCustomPromisifyArgs(_generateKeyPair, ["publicKey", "privateKey"]);
 crypto_exports.generateKeyPair = _generateKeyPair;
 

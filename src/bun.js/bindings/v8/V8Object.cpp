@@ -50,13 +50,11 @@ Maybe<bool> Object::Set(Local<Context> context, Local<Value> key, Local<Value> v
     RETURN_IF_EXCEPTION(scope, Nothing<bool>());
 
     if (!object->put(object, globalObject, identifier, v, slot)) {
-        scope.clearExceptionExceptTermination();
-        return Nothing<bool>();
+        RETURN_IF_EXCEPTION(scope, Nothing<bool>());
+        // TODO(@190n): this is reached. object->put can return false without throwing an exception.
+        ASSERT_NOT_REACHED();
     }
-    if (scope.exception()) {
-        scope.clearException();
-        return Nothing<bool>();
-    }
+    RETURN_IF_EXCEPTION(scope, Nothing<bool>());
     return Just(true);
 }
 

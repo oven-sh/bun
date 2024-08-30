@@ -38,6 +38,8 @@ public:
     TaggedPointer* createDoubleHandle(double value);
     TaggedPointer* createHandleFromExistingHandle(TaggedPointer address);
 
+    void clear();
+
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 

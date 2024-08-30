@@ -407,15 +407,16 @@ void test_handle_scope_gc(const FunctionCallbackInfo<Value> &info) {
         String::NewFromUtf8(isolate, cpp_str.c_str()).ToLocalChecked();
   }
 
-  // allocate some objects with internal fields, to check that those are traced
+  // allocate some objects with internal fields, to check that those are
+  // traced
   Local<ObjectTemplate> tmp = ObjectTemplate::New(isolate);
   tmp->SetInternalFieldCount(2);
   Local<Object> objects[num_small_allocs];
 
   for (size_t i = 0; i < num_small_allocs; i++) {
     std::string cpp_str = std::to_string(i + num_small_allocs);
-    // this uses a function so that the strings aren't kept alive by the current
-    // handle scope
+    // this uses a function so that the strings aren't kept alive by the
+    // current handle scope
     objects[i] =
         setup_object_with_string_field(isolate, context, tmp, i, cpp_str);
   }
@@ -466,6 +467,23 @@ void test_handle_scope_gc(const FunctionCallbackInfo<Value> &info) {
   delete[] string_data;
 }
 
+Local<String> return_escaped_handle(Isolate *isolate) {
+  EscapableHandleScope ehs(isolate);
+  Local<String> s = String::NewFromUtf8(isolate, "hello").ToLocalChecked();
+  return ehs.Escape(s);
+}
+
+void test_v8_escapable_handle_scope(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<String> s = return_escaped_handle(isolate);
+  // n should overwrite the handle from s if s is stale
+  Local<Number> n = Number::New(isolate, 6.5);
+  char buf[16];
+  s->WriteUtf8(isolate, buf);
+  LOG_EXPR(buf);
+  LOG_EXPR(n->Value());
+}
+
 void initialize(Local<Object> exports, Local<Value> module,
                 Local<Context> context) {
   NODE_SET_METHOD(exports, "test_v8_native_call", test_v8_native_call);
@@ -492,6 +510,8 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "global_set", GlobalTestWrapper::set);
   NODE_SET_METHOD(exports, "test_many_v8_locals", test_many_v8_locals);
   NODE_SET_METHOD(exports, "test_handle_scope_gc", test_handle_scope_gc);
+  NODE_SET_METHOD(exports, "test_v8_escapable_handle_scope",
+                  test_v8_escapable_handle_scope);
 
   // without this, node hits a UAF deleting the Global
   node::AddEnvironmentCleanupHook(context->GetIsolate(),

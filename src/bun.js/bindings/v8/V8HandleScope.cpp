@@ -15,6 +15,7 @@ HandleScope::HandleScope(Isolate* isolate_)
 HandleScope::~HandleScope()
 {
     isolate->globalInternals()->setCurrentHandleScope(prev);
+    buffer->clear();
     buffer = nullptr;
 }
 

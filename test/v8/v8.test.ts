@@ -194,6 +194,12 @@ describe("HandleScope", () => {
   }, 10000);
 });
 
+describe("EscapableHandleScope", () => {
+  it("keeps handles alive in the outer scope", () => {
+    checkSameOutput("test_v8_escapable_handle_scope", []);
+  });
+});
+
 afterAll(async () => {
   await Promise.all([
     fs.rm(directories.bunRelease, { recursive: true, force: true }),

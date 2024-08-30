@@ -79,4 +79,14 @@ TaggedPointer* HandleScopeBuffer::createHandleFromExistingHandle(TaggedPointer a
     return &handle.to_v8_object;
 }
 
+void HandleScopeBuffer::clear()
+{
+    // detect use-after-free of handles
+    WTF::Locker locker { gc_lock };
+    for (auto& handle : storage) {
+        handle = Handle();
+    }
+    storage.clear();
+}
+
 }

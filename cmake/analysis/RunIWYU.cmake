@@ -1,7 +1,7 @@
 # IWYU = "Include What You Use"
 # https://include-what-you-use.org/
 
-include(Utils)
+include(Macros)
 include(GitClone)
 
 setx(IWYU_SOURCE_PATH ${CACHE_PATH}/iwyu-${LLVM_VERSION_MAJOR})

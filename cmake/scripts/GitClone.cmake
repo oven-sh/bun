@@ -1,4 +1,4 @@
-include(cmake/SetupScript.cmake)
+include(cmake/scripts/RunScript.cmake)
 
 macro(git_clone_args)
   if(NOT CMAKE_SCRIPT_MODE_FILE STREQUAL CMAKE_CURRENT_LIST_FILE)

@@ -1,4 +1,4 @@
-include(Utils)
+include(Macros)
 
 if(NOT CMAKE_SYSTEM_NAME OR NOT CMAKE_SYSTEM_PROCESSOR)
   message(FATAL_ERROR "CMake included this file before project() was called")

@@ -1,6 +1,6 @@
 # https://cppcheck.sourceforge.io/
 
-include(Utils)
+include(Macros)
 
 find_program(CPPCHECK_PROGRAM "cppcheck")
 

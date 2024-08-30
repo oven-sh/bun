@@ -1,4 +1,4 @@
-include(BuildLibrary)
+include(Macros)
 
 add_custom_library(
   TARGET

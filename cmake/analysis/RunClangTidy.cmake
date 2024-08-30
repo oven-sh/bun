@@ -1,6 +1,6 @@
 # https://clang.llvm.org/extra/clang-tidy/
 
-include(Utils)
+include(Macros)
 
 find_llvm_program(CLANG_TIDY_PROGRAM "clang-tidy" OPTIONAL)
 

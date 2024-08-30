@@ -1,4 +1,4 @@
-include(Utils)
+include(Macros)
 
 macro(WEBKIT_ADD_SOURCE_DEPENDENCIES _source _deps)
   set(_tmp)

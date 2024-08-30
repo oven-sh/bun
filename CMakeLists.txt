@@ -10,7 +10,7 @@ list(APPEND CMAKE_MODULE_PATH
 )
 
 include(Policies)
-include(Utils)
+include(Macros)
 
 # Aliases for common CMake variables.
 # These must be set before include(), since they are widely used.
@@ -87,9 +87,6 @@ if(WIN32 AND ENABLE_LTO)
   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
 endif()
 
-option(BUN_TIDY_ONLY "Only run clang-tidy" OFF)
-option(BUN_TIDY_ONLY_EXTRA " Only run clang-tidy, with extra checks for local development" OFF)
-
 if(ENABLE_VALGRIND)
   if(ARCH STREQUAL "x86_64")
     # This is for picohttpparser
@@ -129,7 +126,7 @@ else()
   set(libWTF "libWTF")
 endif()
 
-if(ENABLE_ASSERTIONS)
+if(DEBUG)
   add_compile_definitions("BUN_DEBUG=1")
 endif()
 

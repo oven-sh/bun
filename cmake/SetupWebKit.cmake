@@ -1,4 +1,4 @@
-include(Utils)
+include(Macros)
 
 optionx(WEBKIT_VERSION STRING "The version of WebKit to use" DEFAULT "21fc366db3de8f30dbb7f5997b9b9f5cf422ff1e")
 optionx(WEBKIT_PREBUILT BOOL "If a pre-built version of WebKit should be used" DEFAULT ON)
@@ -43,7 +43,6 @@ endif()
 
 if(DEBUG)
   set(WEBKIT_SUFFIX "-debug")
-  add_compile_definitions("BUN_DEBUG=1")
 elseif(ENABLE_LTO AND NOT WIN32)
   set(WEBKIT_SUFFIX "-lto")
 else()

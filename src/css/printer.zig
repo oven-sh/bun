@@ -174,51 +174,51 @@ pub fn Printer(comptime Writer: type) type {
             if (handle_css_module) {
                 if (this.css_module) |*css_module| {
                     const Closure = struct { first: bool, printer: *This };
-                    try css_module.config.pattern.write(
+                    if (css_module.config.pattern.write(
                         &css_module.hashes.items[this.loc.source_index],
                         &css_module.sources.items[this.loc.source_index],
                         ident,
                         this,
                         Closure{ .first = true, .printer = this },
                         struct {
-                            pub fn writeFn(self: *Closure, s: []const u8) PrintErr!void {
+                            pub fn writeFn(self: *Closure, s: []const u8) PrintResult(void) {
                                 self.printer.col += s.len;
                                 if (self.first) {
                                     self.first = false;
-                                    try css.serializer.serializeIdentifier(s, Writer, self.printer);
+                                    return css.serializer.serializeIdentifier(s, Writer, self.printer);
                                 } else {
-                                    try css.serializer.serializeName(s, Writer, self.printer);
+                                    return css.serializer.serializeName(s, Writer, self.printer);
                                 }
                             }
                         },
-                    );
+                    ).asErr()) |e| return e;
 
                     css_module.addLocal(ident, ident, this.loc.source_index);
                     return;
                 }
             }
 
-            return try css.serializer.serializeIdentifier(ident, Writer, this);
+            return css.serializer.serializeIdentifier(ident, Writer, this);
         }
 
         pub fn writeDashedIdent(this: *This, ident: []const u8, is_declaration: bool) !void {
-            try this.writeStr("--");
+            if (this.writeStr("--").asErr()) |e| return e;
 
             if (this.css_module) |*css_module| {
                 if (css_module.config.dashed_idents) {
                     const Fn = struct {
-                        pub fn writeFn(self: *This, s: []const u8) PrintErr!void {
+                        pub fn writeFn(self: *This, s: []const u8) PrintResult(void) {
                             self.col += s.len;
                             return css.serializer.serializeName(s, Writer, self);
                         }
                     };
-                    try css_module.config.pattern.write(
+                    if (css_module.config.pattern.write(
                         css_module.hashes.items[this.loc.source_index],
                         css_module.sources.items[this.loc.source_index],
                         ident[2..],
                         this,
                         Fn.writeFn,
-                    );
+                    ).asErr()) |e| return e;
 
                     if (is_declaration) {
                         css_module.addDashed(ident, this.loc.source_index);
@@ -226,41 +226,38 @@ pub fn Printer(comptime Writer: type) type {
                 }
             }
 
-            return try css.serializer.serializeName(ident[2..], Writer, this);
+            return css.serializer.serializeName(ident[2..], Writer, this);
         }
 
         /// Write a single character to the underlying destination.
-        pub fn writeChar(this: *This, char: u8) void {
+        pub fn writeChar(this: *This, char: u8) PrintResult(void) {
             if (char == '\n') {
                 this.line += 1;
                 this.col = 0;
             } else {
                 this.col += 1;
             }
-            try this.dest.writeByte(char);
-            // var p: [4]u8 = undefined;
-            // const len = bun.strings.encodeWTF8RuneT(&p, u32, char);
-            // try this.dest.writeAll(p[0..len]) catch bun.outOfMemory();
+            return this.dest.writeByte(char) catch return css.fmtPrinterError();
         }
 
         /// Writes a newline character followed by indentation.
         /// If the `minify` option is enabled, then nothing is printed.
-        pub fn newline(this: *This) !void {
+        pub fn newline(this: *This) PrintResult(void) {
             if (this.minify) {
                 return;
             }
 
-            try this.writeChar('\n');
-            try this.writeIndent();
+            if (this.writeChar('\n').asErr()) |e| return e;
+            return this.writeIndent();
         }
 
         /// Writes a delimiter character, followed by whitespace (depending on the `minify` option).
         /// If `ws_before` is true, then whitespace is also written before the delimiter.
         pub fn delim(this: *This, delim_: u8, ws_before: bool) !void {
             if (ws_before) {
-                try this.whitespace();
+                if (this.whitespace().asErr()) |e| return e;
             }
-            try this.writeChar(delim_);
+            if (this.writeChar(delim_).asErr()) |e| return e;
             return this.whitespace();
         }
 
@@ -268,9 +265,9 @@ pub fn Printer(comptime Writer: type) type {
         ///
         /// Use `write_char` instead if you wish to force a space character to be written,
         /// regardless of the `minify` option.
-        pub fn whitespace(this: *This) !void {
-            if (this.minify) return;
-            return try this.writeChar(' ');
+        pub fn whitespace(this: *This) PrintResult(void) {
+            if (this.minify) return PrintResult(void).success;
+            return if (this.writeChar(' ').asErr()) |e| return e;
         }
 
         pub fn withContext(
@@ -348,11 +345,11 @@ pub fn Printer(comptime Writer: type) type {
             return this.indentation_buf.items;
         }
 
-        fn writeIndent(this: *This) !void {
+        fn writeIndent(this: *This) PrintResult(void) {
             bun.debugAssert(!this.minify);
             if (this.ident > 0) {
                 // try this.writeStr(this.getIndent(this.ident));
-                try this.dest.writeByteNTimes(' ', this.ident);
+                this.dest.writeByteNTimes(' ', this.ident) catch return css.fmtPrinterError();
             }
         }
     };

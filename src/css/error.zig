@@ -16,6 +16,13 @@ const ArrayList = std.ArrayListUnmanaged;
 /// A printer error.
 pub const PrinterError = Err(PrinterErrorKind);
 
+pub fn fmtPrinterError() PrinterError {
+    return .{
+        .kind = .fmt_error,
+        .loc = null,
+    };
+}
+
 /// An error with a source location.
 pub fn Err(comptime T: type) type {
     return struct {

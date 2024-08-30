@@ -82,6 +82,8 @@ pub const PrinterError = errors_.PrinterError;
 
 const compat = @import("./compat.zig");
 
+pub const fmtPrinterError = errors_.fmtPrinterError;
+
 pub const PrintErr = error{};
 
 pub fn SmallList(comptime T: type, comptime N: comptime_int) type {

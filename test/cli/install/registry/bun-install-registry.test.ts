@@ -10165,6 +10165,40 @@ describe("outdated", () => {
     expect(out).toContain("a-dep");
     expect(out).toContain("prereleases-1");
   });
+
+  test("scoped workspace names", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "@foo/bar",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({
+          name: "@scope/pkg1",
+          dependencies: {
+            "a-dep": "1.0.1",
+          },
+        }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir);
+
+    let out = await runBunOutdated(env, packageDir, "--filter", "*");
+    expect(out).toContain("@foo/bar");
+    expect(out).toContain("@scope/pkg1");
+
+    out = await runBunOutdated(env, packageDir, "--filter", "*", "--filter", "!@foo/*");
+    expect(out).not.toContain("@foo/bar");
+    expect(out).toContain("@scope/pkg1");
+  });
 });
 
 // TODO: setup verdaccio to run across multiple test files, then move this and a few other describe

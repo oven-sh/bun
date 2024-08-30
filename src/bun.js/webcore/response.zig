@@ -3005,6 +3005,11 @@ pub const Headers = struct {
     buf: std.ArrayListUnmanaged(u8) = .{},
     allocator: std.mem.Allocator,
 
+    pub fn deinit(this: *Headers) void {
+        this.entries.deinit(this.allocator);
+        this.buf.clearAndFree(this.allocator);
+    }
+
     pub fn asStr(this: *const Headers, ptr: Api.StringPointer) []const u8 {
         return if (ptr.offset + ptr.length <= this.buf.items.len)
             this.buf.items[ptr.offset..][0..ptr.length]

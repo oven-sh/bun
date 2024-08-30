@@ -891,7 +891,35 @@ pub fn serializeItems(
     comptime W: type,
     dest: *Printer(W),
 ) PrintErr!void {
-    _ = items; // autofix
-    _ = dest; // autofix
-    @compileError(css.todo_stuff.depth);
+    var first = true;
+    var last: ?*const GradientItem(D) = null;
+    for (items.items) |*item| {
+        // Skip useless hints
+        if (item.* == .hint and item.hint == .percentage and item.hint.percentage.value == 0.5) {
+            continue;
+        }
+
+        // Use double position stop if the last stop is the same color and all targets support it.
+        if (last) |prev| {
+            if (!dest.targets.shouldCompile(.double_position_gradients, .{ .double_position_gradients = true })) {
+                if (prev.* == .color_stop and prev.color_stop.position != null and
+                    item.* == .color_stop and item.color_stop.position != null and
+                    prev.color_stop.color.eql(&item.color_stop.color))
+                {
+                    try dest.writeChar(' ');
+                    try item.color_stop.position.?.toCss(W, dest);
+                    last = null;
+                    continue;
+                }
+            }
+        }
+
+        if (first) {
+            first = false;
+        } else {
+            try dest.delim(',', false);
+        }
+        try item.toCss(W, dest);
+        last = item;
+    }
 }

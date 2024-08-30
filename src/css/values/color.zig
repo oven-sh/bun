@@ -77,6 +77,20 @@ pub const CssColor = union(enum) {
 
     const This = @This();
 
+    pub fn eql(this: *const This, other: *const This) bool {
+        if (@intFromEnum(this.*) != @intFromEnum(other.*)) return false;
+
+        return switch (this.*) {
+            .current_color => true,
+            .rgba => std.meta.eql(this.rgba, other.rgba),
+            .lab => std.meta.eql(this.lab.*, other.lab.*),
+            .predefined => std.meta.eql(this.predefined.*, other.predefined.*),
+            .float => std.meta.eql(this.float.*, other.float.*),
+            .light_dark => this.light_dark.light.eql(other.light_dark.light) and this.light_dark.dark.eql(other.light_dark.dark),
+            .system => this.system == other.system,
+        };
+    }
+
     pub fn toCss(
         this: *const This,
         comptime W: type,

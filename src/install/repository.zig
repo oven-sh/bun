@@ -39,40 +39,43 @@ const SloppyGlobalGitConfig = struct {
         const home_dir_path = brk: {
             if (comptime Environment.isWindows) {
                 if (bun.getenvZ("USERPROFILE")) |env|
-                    break :brk bun.asByteSlice(env);
+                    break :brk env;
             } else {
                 if (bun.getenvZ("HOME")) |env|
-                    break :brk bun.asByteSlice(env);
+                    break :brk env;
             }
 
             // won't find anything
             return;
         };
 
-        var home_dir = std.fs.openDirAbsolute(home_dir_path, .{}) catch return;
-        defer home_dir.close();
-        const config_file = home_dir.openFileZ(".gitconfig", .{}) catch return;
-        defer config_file.close();
-
-        var original_input = File.from(config_file).readToEnd(bun.default_allocator).unwrap() catch return;
-        defer bun.default_allocator.free(original_input);
+        var config_file_path_buf: bun.PathBuffer = undefined;
+        const config_file_path = bun.path.joinAbsStringBufZ(home_dir_path, &config_file_path_buf, &.{".gitconfig"}, .auto);
+        var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
+        const allocator = stack_fallback.get();
+        var source = File.toSource(config_file_path, allocator).unwrap() catch {
+            return;
+        };
+        defer allocator.free(source.contents);
 
         if (comptime Environment.isWindows) {
-            if (strings.BOM.detect(original_input)) |bom| {
-                original_input = bom.removeAndConvertToUTF8AndFree(bun.default_allocator, original_input) catch bun.outOfMemory();
+            if (strings.BOM.detect(source.contents)) |bom| {
+                source.contents = bom.removeAndConvertToUTF8AndFree(bun.default_allocator, source.contents) catch bun.outOfMemory();
             }
         }
 
-        var remaining = bun.strings.split(original_input, "\n");
+        var remaining = bun.strings.split(source.contents, "\n");
         var found_askpass = false;
         var found_ssh_command = false;
         var @"[core]" = false;
         while (remaining.next()) |line_| {
             if (found_askpass and found_ssh_command) break;
 
-            const line = strings.trim(line_, " \r");
+            const line = strings.trim(line_, "\t \r");
 
             if (line.len == 0) continue;
+            // skip comments
+            if (line[0] == '#') continue;
 
             if (line[0] == '[') {
                 if (strings.indexOfChar(line, ']')) |end_bracket| {
@@ -105,19 +108,23 @@ const SloppyGlobalGitConfig = struct {
                     }
                 }
             } else {
-                if (line.len > "core.askpass".len and strings.eqlCaseInsensitiveASCIIIgnoreLength(line[0.."core.askpass".len], "core.askpass") and switch (line["sshCommand".len]) {
-                    ' ', '\t', '=' => true,
-                    else => false,
-                }) {
-                    found_askpass = true;
-                    continue;
+                if (!found_askpass) {
+                    if (line.len > "core.askpass".len and strings.eqlCaseInsensitiveASCIIIgnoreLength(line[0.."core.askpass".len], "core.askpass") and switch (line["sshCommand".len]) {
+                        ' ', '\t', '=' => true,
+                        else => false,
+                    }) {
+                        found_askpass = true;
+                        continue;
+                    }
                 }
 
-                if (line.len > "core.sshCommand".len and strings.eqlCaseInsensitiveASCIIIgnoreLength(line[0.."core.sshCommand".len], "core.sshCommand") and switch (line["sshCommand".len]) {
-                    ' ', '\t', '=' => true,
-                    else => false,
-                }) {
-                    found_ssh_command = true;
+                if (!found_ssh_command) {
+                    if (line.len > "core.sshCommand".len and strings.eqlCaseInsensitiveASCIIIgnoreLength(line[0.."core.sshCommand".len], "core.sshCommand") and switch (line["sshCommand".len]) {
+                        ' ', '\t', '=' => true,
+                        else => false,
+                    }) {
+                        found_ssh_command = true;
+                    }
                 }
             }
         }

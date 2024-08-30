@@ -163,7 +163,7 @@ macro(add_custom_library)
       VERBATIM COMMAND
         buildkite-agent artifact upload ${${LIB_ID}_LIBRARY_PATHS}
       WORKING_DIRECTORY
-        ${${LIB_ID}_LIB_PATH}
+        ${${LIB_ID}_BUILD_PATH}
     )
   endif()
   

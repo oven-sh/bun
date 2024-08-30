@@ -158,14 +158,14 @@ macro(add_custom_library)
 
   if(BUILDKITE)
     foreach(lib ${${LIB_ID}_LIBRARY_PATHS})
-      file(RELATIVE_PATH filename ${${LIB_ID}_BUILD_PATH} ${lib})
+      file(RELATIVE_PATH filename ${BUILD_PATH} ${lib})
       add_custom_command(
         TARGET
           build-${LIB_NAME} POST_BUILD
         VERBATIM COMMAND
           buildkite-agent artifact upload "${filename}"
         WORKING_DIRECTORY
-          ${${LIB_ID}_BUILD_PATH}
+          ${BUILD_PATH}
       )
     endforeach()
   endif()

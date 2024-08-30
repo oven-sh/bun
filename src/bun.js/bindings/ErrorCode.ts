@@ -35,7 +35,8 @@ export default [
   ["ERR_STREAM_WRITE_AFTER_END", TypeError, "TypeError"],
   ["ERR_ZLIB_INITIALIZATION_FAILED", TypeError, "TypeError"],
   ["ERR_STRING_TOO_LONG", Error, "Error"],
-
+  ["ERR_ILLEGAL_CONSTRUCTOR", TypeError, "TypeError"],
+  ["ERR_INVALID_URL", TypeError, "TypeError"],
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError, "TypeError"],
   ["ERR_BODY_ALREADY_USED", Error, "Error"],

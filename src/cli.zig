@@ -209,6 +209,7 @@ pub const Arguments = struct {
         clap.parseParam("-u, --origin <STR>") catch unreachable,
         clap.parseParam("--conditions <STR>...             Pass custom conditions to resolve") catch unreachable,
         clap.parseParam("--fetch-preconnect <STR>...       Preconnect to a URL while code is loading") catch unreachable,
+        clap.parseParam("--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -617,6 +618,18 @@ pub const Arguments = struct {
                         Output.note("To evaluate TypeScript here, use 'bun --print'", .{});
                         Global.exit(1);
                     };
+                }
+            }
+
+            if (args.option("--max-http-header-size")) |size_str| {
+                const size = std.fmt.parseInt(usize, size_str, 10) catch {
+                    Output.errGeneric("Invalid value for --max-http-header-size: \"{s}\". Must be a positive integer\n", .{size_str});
+                    Global.exit(1);
+                };
+                if (size == 0) {
+                    bun.http.max_http_header_size = 1024 * 1024 * 1024;
+                } else {
+                    bun.http.max_http_header_size = size;
                 }
             }
 

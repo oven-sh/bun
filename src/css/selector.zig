@@ -1563,6 +1563,11 @@ pub const api = struct {
                 @compileError("Do not call this! Use `serializer.serializeSelector()` or `tocss_servo.toCss_Selector()` instead.");
             }
 
+            /// Returns count of simple selectors and combinators in the Selector.
+            pub fn len(this: *const This) usize {
+                return this.components.items.len;
+            }
+
             pub fn fromComponent(component: GenericComponent(Impl)) This {
                 var builder = SelectorBuilder(Impl).default();
                 if (component.asCombinator()) |combinator| {

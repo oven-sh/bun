@@ -3673,6 +3673,7 @@ pub const WeakPtrData = packed struct(u32) {
     finalized: bool = false,
 
     pub fn onFinalize(this: *WeakPtrData) bool {
+        bun.debugAssert(!this.finalized);
         this.finalized = true;
         return this.reference_count == 0;
     }

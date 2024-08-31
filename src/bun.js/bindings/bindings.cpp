@@ -5410,7 +5410,12 @@ restart:
 
                 if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
                     if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
-                        propertyValue = slot.getPureResult();
+                        // If we can't use getPureResult, let's at least say it was a [Getter]
+                        if (!slot.isCacheableGetter()) {
+                            propertyValue = slot.getterSetter();
+                        } else {
+                            propertyValue = slot.getPureResult();
+                        }
                     } else if (slot.attributes() & PropertyAttribute::BuiltinOrFunction) {
                         propertyValue = slot.getValue(globalObject, property);
                     } else if (slot.isCustom()) {
@@ -5420,8 +5425,13 @@ restart:
                     } else if (object->getOwnPropertySlot(object, globalObject, property, slot)) {
                         propertyValue = slot.getValue(globalObject, property);
                     }
-                } else if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
-                    propertyValue = slot.getPureResult();
+                } else if (slot.isAccessor()) {
+                    // If we can't use getPureResult, let's at least say it was a [Getter]
+                    if (!slot.isCacheableGetter()) {
+                        propertyValue = slot.getterSetter();
+                    } else {
+                        propertyValue = slot.getPureResult();
+                    }
                 } else {
                     propertyValue = slot.getValue(globalObject, property);
                 }

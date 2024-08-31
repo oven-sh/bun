@@ -24,6 +24,7 @@ describe("--watch works", async () => {
           env: bunEnv,
           stdio: ["ignore", "pipe", "inherit"],
         });
+        process.unref();
         const { stdout } = process;
 
         const iter = forEachLine(stdout);

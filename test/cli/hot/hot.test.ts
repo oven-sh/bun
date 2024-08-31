@@ -255,7 +255,7 @@ it(
 
       async function onReload() {
         const contents = readFileSync(root, "utf-8");
-        rmSync(root);
+        rmSync(root, { force: true, recursive: true });
         writeFileSync(root, contents);
       }
 
@@ -282,7 +282,7 @@ it(
 
         if (any) await onReload();
       }
-      rmSync(root);
+      rmSync(root, { force: true, recursive: true });
       expect(reloadCounter).toBe(3);
     } finally {
       // @ts-ignore
@@ -317,7 +317,7 @@ it(
         await 1;
         writeFileSync(root + ".tmpfile", contents);
         await 1;
-        rmSync(root);
+        rmSync(root, { force: true, recursive: true });
         await 1;
         renameSync(root + ".tmpfile", root);
         await 1;
@@ -346,7 +346,7 @@ it(
 
         if (any) await onReload();
       }
-      rmSync(root);
+      rmSync(root, { force: true, recursive: true });
       expect(reloadCounter).toBe(3);
     } finally {
       // @ts-ignore
@@ -436,7 +436,7 @@ it(
   async () => {
     const root = hotRunnerRoot;
     let bundleIn = join(cwd, "bundle_in.ts");
-    rmSync(root);
+    rmSync(root, { force: true, recursive: true });
     writeFileSync(
       bundleIn,
       `// source content
@@ -520,7 +520,7 @@ it(
   async () => {
     const root = hotRunnerRoot;
     let bundleIn = join(cwd, "bundle_in.ts");
-    rmSync(root);
+    rmSync(root, { force: true, recursive: true });
     writeFileSync(
       bundleIn,
       `// ${long_comment}

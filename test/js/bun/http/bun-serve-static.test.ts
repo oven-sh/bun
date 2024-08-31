@@ -11,11 +11,12 @@ const routes = {
   }),
   "/big": new Response(
     (() => {
-      const buf = Buffer.alloc(1024 * 1024 * 8);
-      for (let i = 0; i < 256; i++) {
-        buf[i] = i;
+      const buf = Buffer.alloc(1024 * 1024 * 4);
+
+      for (let i = 0; i < 1024; i++) {
+        buf[i] = (Math.random() * 256) | 0;
       }
-      fillRepeating(buf, 0, 256);
+      fillRepeating(buf, 0, 1024);
       return buf;
     })(),
   ),
@@ -92,8 +93,8 @@ describe("static", () => {
         const bytes = await static_responses[path].arrayBuffer();
         // macOS limits backlog to 128.
         // When we do the big request, reduce number of connections but increase number of iterations
-        const batchSize = bytes.size > 1024 * 1024 ? 32 : 64;
-        const iterations = bytes.size > 1024 * 1024 ? 24 : 12;
+        const batchSize = bytes.size > 1024 * 1024 ? 48 : 64;
+        const iterations = bytes.size > 1024 * 1024 ? 10 : 12;
 
         async function iterate() {
           let array = new Array(batchSize);

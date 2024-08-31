@@ -11,7 +11,7 @@ const routes = {
   }),
   "/big": new Response(
     (() => {
-      const buf = Buffer.allocUnsafe(1024 * 1024 * 8);
+      const buf = Buffer.alloc(1024 * 1024 * 8);
       for (let i = 0; i < 256; i++) {
         buf[i] = i;
       }

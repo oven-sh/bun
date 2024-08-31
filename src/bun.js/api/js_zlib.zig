@@ -127,22 +127,16 @@ pub const ZlibEncoder = struct {
             return globalThis.throwInvalidArgumentTypeValue("buffer", "string or an instance of Buffer, TypedArray, DataView, or ArrayBuffer", input);
         };
 
-        _ = this.has_pending_activity.fetchAdd(1, .monotonic);
         if (is_last)
             this.has_called_end = true;
 
-        var task: EncodeJob = .{
-            .encoder = this,
-            .is_async = false,
-        };
-
         {
-            this.input_lock.lock();
-            defer this.input_lock.unlock();
-
-            this.input.writeItem(input_to_queue) catch unreachable;
+            this.stream.write(input_to_queue.slice(), &this.output) catch |err| return handleTransformSyncStreamError(err, globalThis, this.stream.err_msg, &this.closed);
         }
-        task.run();
+        if (is_last) {
+            this.stream.end(&this.output) catch |err| return handleTransformSyncStreamError(err, globalThis, this.stream.err_msg, &this.closed);
+        }
+
         if (!is_last and this.output.items.len == 0) {
             return JSC.Buffer.fromBytes(&.{}, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
         }
@@ -497,22 +491,16 @@ pub const ZlibDecoder = struct {
             return globalThis.throwInvalidArgumentTypeValue("buffer", "string or an instance of Buffer, TypedArray, DataView, or ArrayBuffer", input);
         };
 
-        _ = this.has_pending_activity.fetchAdd(1, .monotonic);
         if (is_last)
             this.has_called_end = true;
 
-        var task: DecodeJob = .{
-            .decoder = this,
-            .is_async = false,
-        };
-
         {
-            this.input_lock.lock();
-            defer this.input_lock.unlock();
-
-            this.input.writeItem(input_to_queue) catch unreachable;
+            this.stream.writeAll(input_to_queue.slice(), &this.output) catch |err| return handleTransformSyncStreamError(err, globalThis, this.stream.err_msg, &this.closed);
         }
-        task.run();
+        if (is_last) {
+            this.stream.end(&this.output) catch |err| return handleTransformSyncStreamError(err, globalThis, this.stream.err_msg, &this.closed);
+        }
+
         if (!is_last and this.output.items.len == 0) {
             return JSC.Buffer.fromBytes(&.{}, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
         }
@@ -866,3 +854,16 @@ const Options = struct {
         return default;
     }
 };
+
+fn handleTransformSyncStreamError(err: anyerror, globalThis: *JSC.JSGlobalObject, err_msg: ?[*:0]const u8, closed: *bool) JSC.JSValue {
+    switch (err) {
+        error.ZlibError => {
+            globalThis.throw("{s}", .{std.mem.sliceTo(err_msg.?, 0)});
+        },
+        else => {
+            globalThis.throw("ZlibError: {s}", .{@errorName(err)});
+        },
+    }
+    closed.* = true;
+    return .zero;
+}

@@ -964,7 +964,7 @@ pub const ZlibCompressorStreaming = struct {
 
     pub fn init(this: *ZlibCompressorStreaming, level: c_int, windowBits: c_int, memLevel: c_int, strategy: c_int) !void {
         const ret_code = deflateInit2_(&this.state, level, 8, windowBits, memLevel, strategy, zlibVersion(), @sizeOf(z_stream));
-        if (ret_code != .Ok) return error.ZlibError;
+        if (ret_code != .Ok) return error.ZlibError9;
         this.level = level;
         this.windowBits = windowBits;
         this.memLevel = memLevel;
@@ -1035,7 +1035,7 @@ pub const ZlibCompressorStreaming = struct {
         // bun.assert(state.avail_in == 0);
 
         _ = deflateEnd(&this.state);
-        if (this.err != .StreamEnd and this.finishFlush == .Finish) return error.ZlibError;
+        if (this.err != .StreamEnd and this.finishFlush == .Finish) return error.ZlibError10;
     }
 };
 

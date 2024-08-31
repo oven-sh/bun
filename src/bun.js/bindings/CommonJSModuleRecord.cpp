@@ -814,12 +814,13 @@ void populateESMExports(
             if (canPerformFastEnumeration(structure)) {
                 exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                     auto key = entry.key();
-                    if (key->isSymbol() || entry.attributes() & PropertyAttribute::DontEnum || key == esModuleMarker)
+                    if (key->isSymbol() || key == esModuleMarker)
                         return true;
 
                     needsToAssignDefault = needsToAssignDefault && key != vm.propertyNames->defaultKeyword;
 
                     JSValue value = exports->getDirect(entry.offset());
+
                     exportNames.append(Identifier::fromUid(vm, key));
                     exportValues.append(value);
                     return true;
@@ -844,6 +845,14 @@ void populateESMExports(
                     if (!exports->getPropertySlot(globalObject, property, slot))
                         continue;
 
+                    // Allow DontEnum properties which are not getter/setters
+                    // https://github.com/oven-sh/bun/issues/4432
+                    if (slot.attributes() & PropertyAttribute::DontEnum) {
+                        if (!(slot.isValue() || slot.isCustom())) {
+                            continue;
+                        }
+                    }
+
                     exportNames.append(property);
 
                     JSValue getterResult = slot.getValue(globalObject, property);
@@ -864,7 +873,7 @@ void populateESMExports(
         } else if (canPerformFastEnumeration(structure)) {
             exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                 auto key = entry.key();
-                if (key->isSymbol() || entry.attributes() & PropertyAttribute::DontEnum || key == vm.propertyNames->defaultKeyword)
+                if (key->isSymbol() || key == vm.propertyNames->defaultKeyword)
                     return true;
 
                 JSValue value = exports->getDirect(entry.offset());
@@ -875,7 +884,7 @@ void populateESMExports(
             });
         } else {
             JSC::PropertyNameArray properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-            exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Exclude);
+            exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Include);
             if (catchScope.exception()) {
                 catchScope.clearExceptionExceptTermination();
                 return;
@@ -892,6 +901,14 @@ void populateESMExports(
                 JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
                 if (!exports->getPropertySlot(globalObject, property, slot))
                     continue;
+
+                if (slot.attributes() & PropertyAttribute::DontEnum) {
+                    // Allow DontEnum properties which are not getter/setters
+                    // https://github.com/oven-sh/bun/issues/4432
+                    if (!(slot.isValue() || slot.isCustom())) {
+                        continue;
+                    }
+                }
 
                 exportNames.append(property);
 

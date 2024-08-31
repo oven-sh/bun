@@ -39,6 +39,7 @@ export default [
   ["ERR_CRYPTO_INVALID_SCRYPT_PARAMS", RangeError, "RangeError"],
   ["MODULE_NOT_FOUND", Error, "Error"],
   ["ERR_ILLEGAL_CONSTRUCTOR", TypeError, "TypeError"],
+  ["ERR_INVALID_URL", TypeError, "TypeError"],
   ["ERR_BUFFER_TOO_LARGE", RangeError, "RangeError"],
 
   // Bun-specific

@@ -2944,7 +2944,6 @@ pub const ParseTask = struct {
         opts.warn_about_unbundled_modules = false;
         opts.macro_context = &this.data.macro_context;
         opts.package_version = task.package_version;
-        opts.legacy_transform_require_to_import = false;
 
         opts.features.allow_runtime = !source.index.isRuntime();
         opts.features.use_import_meta_require = target.isBun();
@@ -5774,7 +5773,7 @@ pub const LinkerContext = struct {
             // Initialize the part that was allocated for us earlier. The information
             // here will be used after this during tree shaking.
             c.graph.ast.items(.parts)[id].slice()[js_ast.namespace_export_part_index] = .{
-                .stmts = all_export_stmts,
+                .stmts = if (c.options.output_format != .internal_kit_dev) all_export_stmts else &.{},
                 .symbol_uses = ns_export_symbol_uses,
                 .dependencies = js_ast.Dependency.List.fromList(ns_export_dependencies),
                 .declared_symbols = declared_symbols,

@@ -1481,7 +1481,7 @@ pub const ImportScanner = struct {
 
                     // when bundling, all top-level variables become var
                     // TODO(@paperdave): we already do this earlier in visiting?
-                    if (p.options.bundle and !p.options.features.hot_module_reloading and !st.kind.isUsing()) {
+                    if (!hot_module_reloading_transformations and p.options.bundle and !st.kind.isUsing()) {
                         st.kind = .k_var;
                     }
                 },
@@ -1496,21 +1496,8 @@ pub const ImportScanner = struct {
                     // Rewrite this export to be:
                     // exports.default =
                     // But only if it's anonymous
-                    if (will_transform_to_common_js and !p.options.features.hot_module_reloading) {
-                        const expr: js_ast.Expr = switch (st.value) {
-                            .expr => |exp| exp,
-                            .stmt => |s2| brk2: {
-                                switch (s2.data) {
-                                    .s_function => |func| {
-                                        break :brk2 p.newExpr(E.Function{ .func = func.func }, s2.loc);
-                                    },
-                                    .s_class => |class| {
-                                        break :brk2 p.newExpr(class.class, s2.loc);
-                                    },
-                                    else => unreachable,
-                                }
-                            },
-                        };
+                    if (!hot_module_reloading_transformations and will_transform_to_common_js) {
+                        const expr = st.value.toExpr();
                         var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
                         export_default_args[0] = p.@"module.exports"(expr.loc);
                         export_default_args[1] = expr;
@@ -2959,8 +2946,6 @@ pub const Parser = struct {
 
         warn_about_unbundled_modules: bool = true,
 
-        legacy_transform_require_to_import: bool = true,
-
         module_type: options.ModuleType = .unknown,
 
         transform_only: bool = false,
@@ -3652,7 +3637,7 @@ pub const Parser = struct {
         // https://github.com/lodash/lodash/issues/5660
         var force_esm = false;
 
-        if (comptime FeatureFlags.unwrap_commonjs_to_esm) {
+        if (p.shouldUnwrapCommonJSToESM()) {
             if (p.imports_to_convert_from_require.items.len > 0) {
                 const all_stmts = p.allocator.alloc(Stmt, p.imports_to_convert_from_require.items.len) catch unreachable;
                 before.ensureUnusedCapacity(p.imports_to_convert_from_require.items.len) catch unreachable;
@@ -4204,27 +4189,27 @@ pub const Parser = struct {
         }
 
         // TODO(@paperdave): decide if to delete this?
-        if (p.legacy_cjs_import_stmts.items.len > 0 and p.options.legacy_transform_require_to_import) {
-            var import_records = try bun.BabyList(u32).initCapacity(p.allocator, p.legacy_cjs_import_stmts.items.len);
-            var declared_symbols = DeclaredSymbol.List{};
-            try declared_symbols.ensureTotalCapacity(p.allocator, p.legacy_cjs_import_stmts.items.len);
+        // if (p.legacy_cjs_import_stmts.items.len > 0 and p.options.legacy_transform_require_to_import) {
+        //     var import_records = try bun.BabyList(u32).initCapacity(p.allocator, p.legacy_cjs_import_stmts.items.len);
+        //     var declared_symbols = DeclaredSymbol.List{};
+        //     try declared_symbols.ensureTotalCapacity(p.allocator, p.legacy_cjs_import_stmts.items.len);
 
-            for (p.legacy_cjs_import_stmts.items) |entry| {
-                const import_statement: *S.Import = entry.data.s_import;
-                import_records.appendAssumeCapacity(import_statement.import_record_index);
-                declared_symbols.appendAssumeCapacity(.{
-                    .ref = import_statement.namespace_ref,
-                    .is_top_level = true,
-                });
-            }
+        //     for (p.legacy_cjs_import_stmts.items) |entry| {
+        //         const import_statement: *S.Import = entry.data.s_import;
+        //         import_records.appendAssumeCapacity(import_statement.import_record_index);
+        //         declared_symbols.appendAssumeCapacity(.{
+        //             .ref = import_statement.namespace_ref,
+        //             .is_top_level = true,
+        //         });
+        //     }
 
-            before.append(js_ast.Part{
-                .stmts = p.legacy_cjs_import_stmts.items,
-                .declared_symbols = declared_symbols,
-                .import_record_indices = import_records,
-                .tag = .cjs_imports,
-            }) catch unreachable;
-        }
+        //     before.append(js_ast.Part{
+        //         .stmts = p.legacy_cjs_import_stmts.items,
+        //         .declared_symbols = declared_symbols,
+        //         .import_record_indices = import_records,
+        //         .tag = .cjs_imports,
+        //     }) catch unreachable;
+        // }
 
         if (p.has_called_runtime) {
             var runtime_imports: [RuntimeImports.all.len]u8 = undefined;
@@ -5250,22 +5235,22 @@ fn NewParser_(
 
                     // For unwrapping CommonJS into ESM to fully work
                     // we must also unwrap requires into imports.
-                    const should_unwrap_require = p.unwrap_all_requires or
-                        if (path.packageName()) |pkg| p.options.features.shouldUnwrapRequire(pkg) else false;
-
-                    if (should_unwrap_require and
+                    const should_unwrap_require = p.options.features.hot_module_reloading and
+                        (p.unwrap_all_requires or
+                        if (path.packageName()) |pkg| p.options.features.shouldUnwrapRequire(pkg) else false) and
                         // We cannot unwrap a require wrapped in a try/catch because
                         // import statements cannot be wrapped in a try/catch and
                         // require cannot return a promise.
-                        !handles_import_errors)
-                    {
+                        !handles_import_errors;
+
+                    if (should_unwrap_require) {
                         const import_record_index = p.addImportRecordByRangeAndPath(.stmt, p.source.rangeOfString(arg.loc), path);
                         p.import_records.items[import_record_index].handles_import_errors = handles_import_errors;
 
                         // Note that this symbol may be completely removed later.
-                        var path_name = fs.PathName.init(strings.append(p.allocator, "import_", path.text) catch unreachable);
-                        const name = path_name.nonUniqueNameString(p.allocator) catch unreachable;
-                        const namespace_ref = p.newSymbol(.other, name) catch unreachable;
+                        var path_name = fs.PathName.init(path.text);
+                        const name = path_name.nonUniqueNameString(p.allocator) catch bun.outOfMemory();
+                        const namespace_ref = p.newSymbol(.other, name) catch bun.outOfMemory();
 
                         p.imports_to_convert_from_require.append(p.allocator, .{
                             .namespace = .{
@@ -5273,8 +5258,8 @@ fn NewParser_(
                                 .loc = arg.loc,
                             },
                             .import_record_id = import_record_index,
-                        }) catch unreachable;
-                        p.import_items_for_namespace.put(p.allocator, namespace_ref, ImportItemForNamespaceMap.init(p.allocator)) catch unreachable;
+                        }) catch bun.outOfMemory();
+                        p.import_items_for_namespace.put(p.allocator, namespace_ref, ImportItemForNamespaceMap.init(p.allocator)) catch bun.outOfMemory();
                         p.recordUsage(namespace_ref);
 
                         if (!state.is_require_immediately_assigned_to_decl) {
@@ -5296,60 +5281,59 @@ fn NewParser_(
                     p.import_records.items[import_record_index].handles_import_errors = handles_import_errors;
                     p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
 
-                    if (!p.options.legacy_transform_require_to_import) {
-                        return p.newExpr(E.RequireString{ .import_record_index = import_record_index }, arg.loc);
-                    }
+                    return p.newExpr(E.RequireString{ .import_record_index = import_record_index }, arg.loc);
+                    // }
 
-                    p.import_records.items[import_record_index].was_originally_require = true;
-                    p.import_records.items[import_record_index].contains_import_star = true;
+                    // p.import_records.items[import_record_index].was_originally_require = true;
+                    // p.import_records.items[import_record_index].contains_import_star = true;
 
-                    const symbol_name = p.import_records.items[import_record_index].path.name.nonUniqueNameString(p.allocator) catch unreachable;
-                    const hash_value = @as(
-                        u16,
-                        @truncate(bun.hash(p.import_records.items[import_record_index].path.text)),
-                    );
+                    // const symbol_name = p.import_records.items[import_record_index].path.name.nonUniqueNameString(p.allocator) catch unreachable;
+                    // const hash_value = @as(
+                    //     u16,
+                    //     @truncate(bun.hash(p.import_records.items[import_record_index].path.text)),
+                    // );
 
-                    const cjs_import_name = std.fmt.allocPrint(
-                        p.allocator,
-                        "{s}_{any}_{d}",
-                        .{
-                            symbol_name,
-                            bun.fmt.hexIntLower(hash_value),
-                            p.legacy_cjs_import_stmts.items.len,
-                        },
-                    ) catch unreachable;
+                    // const cjs_import_name = std.fmt.allocPrint(
+                    //     p.allocator,
+                    //     "{s}_{any}_{d}",
+                    //     .{
+                    //         symbol_name,
+                    //         bun.fmt.hexIntLower(hash_value),
+                    //         p.legacy_cjs_import_stmts.items.len,
+                    //     },
+                    // ) catch unreachable;
 
-                    const namespace_ref = p.declareSymbol(.hoisted, arg.loc, cjs_import_name) catch unreachable;
+                    // const namespace_ref = p.declareSymbol(.hoisted, arg.loc, cjs_import_name) catch unreachable;
 
-                    p.legacy_cjs_import_stmts.append(
-                        p.s(
-                            S.Import{
-                                .namespace_ref = namespace_ref,
-                                .star_name_loc = arg.loc,
-                                .is_single_line = true,
-                                .import_record_index = import_record_index,
-                            },
-                            arg.loc,
-                        ),
-                    ) catch unreachable;
+                    // p.legacy_cjs_import_stmts.append(
+                    //     p.s(
+                    //         S.Import{
+                    //             .namespace_ref = namespace_ref,
+                    //             .star_name_loc = arg.loc,
+                    //             .is_single_line = true,
+                    //             .import_record_index = import_record_index,
+                    //         },
+                    //         arg.loc,
+                    //     ),
+                    // ) catch unreachable;
 
-                    const args = p.allocator.alloc(Expr, 1) catch unreachable;
-                    args[0] = p.newExpr(
-                        E.ImportIdentifier{
-                            .ref = namespace_ref,
-                        },
-                        arg.loc,
-                    );
+                    // const args = p.allocator.alloc(Expr, 1) catch unreachable;
+                    // args[0] = p.newExpr(
+                    //     E.ImportIdentifier{
+                    //         .ref = namespace_ref,
+                    //     },
+                    //     arg.loc,
+                    // );
 
-                    // require(import_object_assign)
-                    p.recordUsageOfRuntimeRequire();
-                    return p.newExpr(
-                        E.Call{
-                            .target = p.valueForRequire(arg.loc),
-                            .args = ExprNodeList.init(args),
-                        },
-                        arg.loc,
-                    );
+                    // // require(import_object_assign)
+                    // p.recordUsageOfRuntimeRequire();
+                    // return p.newExpr(
+                    //     E.Call{
+                    //         .target = p.valueForRequire(arg.loc),
+                    //         .args = ExprNodeList.init(args),
+                    //     },
+                    //     arg.loc,
+                    // );
                 },
                 else => {
                     p.recordUsageOfRuntimeRequire();
@@ -5364,6 +5348,11 @@ fn NewParser_(
                     );
                 },
             }
+        }
+
+        pub fn shouldUnwrapCommonJSToESM(p: *P) bool {
+            // hot module loading opts out of this because we want to produce a cjs bundle at the end
+            return FeatureFlags.unwrap_commonjs_to_esm and !p.options.features.hot_module_reloading;
         }
 
         fn isBindingUsed(p: *P, binding: Binding, default_export_ref: Ref) bool {
@@ -18709,7 +18698,7 @@ fn NewParser_(
                         }
                     }
 
-                    if (comptime FeatureFlags.unwrap_commonjs_to_esm) {
+                    if (p.shouldUnwrapCommonJSToESM()) {
                         if (!p.is_control_flow_dead and id.ref.eql(p.exports_ref)) {
                             if (!p.commonjs_named_exports_deoptimized) {
                                 if (identifier_opts.is_delete_target) {
@@ -18856,7 +18845,7 @@ fn NewParser_(
                     }
                 },
                 .e_module_dot_exports => {
-                    if (comptime FeatureFlags.unwrap_commonjs_to_esm) {
+                    if (p.shouldUnwrapCommonJSToESM()) {
                         if (!p.is_control_flow_dead) {
                             if (!p.commonjs_named_exports_deoptimized) {
                                 if (identifier_opts.is_delete_target) {
@@ -19486,7 +19475,7 @@ fn NewParser_(
                     defer p.stmt_expr_value = .{ .e_missing = .{} };
 
                     const is_top_level = p.current_scope == p.module_scope;
-                    if (comptime FeatureFlags.unwrap_commonjs_to_esm) {
+                    if (p.shouldUnwrapCommonJSToESM()) {
                         p.commonjs_named_exports_needs_conversion = if (is_top_level)
                             std.math.maxInt(u32)
                         else
@@ -19502,7 +19491,7 @@ fn NewParser_(
                     // simplify unused
                     data.value = SideEffects.simplifyUnusedExpr(p, data.value) orelse return;
 
-                    if (comptime FeatureFlags.unwrap_commonjs_to_esm) {
+                    if (p.shouldUnwrapCommonJSToESM()) {
                         if (is_top_level) {
                             if (data.value.data == .e_binary) {
                                 const to_convert = p.commonjs_named_exports_needs_conversion;
@@ -20344,7 +20333,7 @@ fn NewParser_(
                         .is_immediately_assigned_to_decl = true,
                     });
 
-                    if (comptime FeatureFlags.unwrap_commonjs_to_esm) {
+                    if (p.shouldUnwrapCommonJSToESM()) {
                         if (prev_require_to_convert_count < p.imports_to_convert_from_require.items.len) {
                             if (decl.binding.data == .b_identifier) {
                                 const ref = decl.binding.data.b_identifier.ref;
@@ -23073,9 +23062,6 @@ fn NewParser_(
                     break :prealloc_count count + 2;
                 });
 
-                p.import_records_for_current_part.clearRetainingCapacity();
-                p.declared_symbols.clearRetainingCapacity();
-
                 for (parts) |part| {
                     // Kit does not care about 'import =', as it handles it on it's own
                     _ = try ImportScanner.scan(P, p, part.stmts, wrap_mode != .none, true, &hmr_transform_ctx);
@@ -23157,91 +23143,87 @@ fn NewParser_(
                 }
             }
 
-            switch (wrap_mode) {
-                .none => {},
-                .kit_dev_hmr => {},
-                .bun_commonjs => {
-                    // if remove_cjs_module_wrapper is true, `evaluateCommonJSModuleOnce` will put exports, require, module, __filename, and
-                    // __dirname on the globalObject.
-                    bun.assert(!p.options.features.remove_cjs_module_wrapper);
-                    if (!p.options.features.remove_cjs_module_wrapper) {
-                        // This transforms the user's code into.
-                        //
-                        //   (function (exports, require, module, __filename, __dirname) {
-                        //      ...
-                        //   })
-                        //
-                        //  which is then called in `evaluateCommonJSModuleOnce`
-                        var args = allocator.alloc(Arg, 5 + @as(usize, @intFromBool(p.has_import_meta))) catch bun.outOfMemory();
-                        args[0..5].* = .{
-                            Arg{ .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty) },
-                            Arg{ .binding = p.b(B.Identifier{ .ref = p.require_ref }, logger.Loc.Empty) },
-                            Arg{ .binding = p.b(B.Identifier{ .ref = p.module_ref }, logger.Loc.Empty) },
-                            Arg{ .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty) },
-                            Arg{ .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty) },
-                        };
-                        if (p.has_import_meta) {
-                            p.import_meta_ref = p.newSymbol(.other, "$Bun_import_meta") catch bun.outOfMemory();
-                            args[5] = Arg{ .binding = p.b(B.Identifier{ .ref = p.import_meta_ref }, logger.Loc.Empty) };
-                        }
-
-                        var total_stmts_count: usize = 0;
-                        for (parts) |part| {
-                            total_stmts_count += part.stmts.len;
-                        }
-
-                        const preserve_strict_mode = p.module_scope.strict_mode == .explicit_strict_mode and
-                            !(parts.len > 0 and
-                            parts[0].stmts.len > 0 and
-                            parts[0].stmts[0].data == .s_directive);
-
-                        total_stmts_count += @as(usize, @intCast(@intFromBool(preserve_strict_mode)));
-
-                        const stmts_to_copy = allocator.alloc(Stmt, total_stmts_count) catch bun.outOfMemory();
-                        {
-                            var remaining_stmts = stmts_to_copy;
-                            if (preserve_strict_mode) {
-                                remaining_stmts[0] = p.s(
-                                    S.Directive{
-                                        .value = "use strict",
-                                    },
-                                    p.module_scope_directive_loc,
-                                );
-                                remaining_stmts = remaining_stmts[1..];
-                            }
-
-                            for (parts) |part| {
-                                for (part.stmts, remaining_stmts[0..part.stmts.len]) |src, *dest| {
-                                    dest.* = src;
-                                }
-                                remaining_stmts = remaining_stmts[part.stmts.len..];
-                            }
-                        }
-
-                        const wrapper = p.newExpr(
-                            E.Function{
-                                .func = G.Fn{
-                                    .name = null,
-                                    .open_parens_loc = logger.Loc.Empty,
-                                    .args = args,
-                                    .body = .{ .loc = logger.Loc.Empty, .stmts = stmts_to_copy },
-                                    .flags = Flags.Function.init(.{ .is_export = false }),
-                                },
-                            },
-                            logger.Loc.Empty,
-                        );
-
-                        var top_level_stmts = p.allocator.alloc(Stmt, 1) catch bun.outOfMemory();
-                        parts[0].stmts = top_level_stmts;
-                        top_level_stmts[0] = p.s(
-                            S.SExpr{
-                                .value = wrapper,
-                            },
-                            logger.Loc.Empty,
-                        );
-                        parts.len = 1;
+            if (wrap_mode == .bun_commonjs) {
+                // if remove_cjs_module_wrapper is true, `evaluateCommonJSModuleOnce` will put exports, require, module, __filename, and
+                // __dirname on the globalObject.
+                bun.assert(!p.options.features.remove_cjs_module_wrapper);
+                if (!p.options.features.remove_cjs_module_wrapper) {
+                    // This transforms the user's code into.
+                    //
+                    //   (function (exports, require, module, __filename, __dirname) {
+                    //      ...
+                    //   })
+                    //
+                    //  which is then called in `evaluateCommonJSModuleOnce`
+                    var args = allocator.alloc(Arg, 5 + @as(usize, @intFromBool(p.has_import_meta))) catch bun.outOfMemory();
+                    args[0..5].* = .{
+                        Arg{ .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty) },
+                        Arg{ .binding = p.b(B.Identifier{ .ref = p.require_ref }, logger.Loc.Empty) },
+                        Arg{ .binding = p.b(B.Identifier{ .ref = p.module_ref }, logger.Loc.Empty) },
+                        Arg{ .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty) },
+                        Arg{ .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty) },
+                    };
+                    if (p.has_import_meta) {
+                        p.import_meta_ref = p.newSymbol(.other, "$Bun_import_meta") catch bun.outOfMemory();
+                        args[5] = Arg{ .binding = p.b(B.Identifier{ .ref = p.import_meta_ref }, logger.Loc.Empty) };
                     }
-                },
+
+                    var total_stmts_count: usize = 0;
+                    for (parts) |part| {
+                        total_stmts_count += part.stmts.len;
+                    }
+
+                    const preserve_strict_mode = p.module_scope.strict_mode == .explicit_strict_mode and
+                        !(parts.len > 0 and
+                        parts[0].stmts.len > 0 and
+                        parts[0].stmts[0].data == .s_directive);
+
+                    total_stmts_count += @as(usize, @intCast(@intFromBool(preserve_strict_mode)));
+
+                    const stmts_to_copy = allocator.alloc(Stmt, total_stmts_count) catch bun.outOfMemory();
+                    {
+                        var remaining_stmts = stmts_to_copy;
+                        if (preserve_strict_mode) {
+                            remaining_stmts[0] = p.s(
+                                S.Directive{
+                                    .value = "use strict",
+                                },
+                                p.module_scope_directive_loc,
+                            );
+                            remaining_stmts = remaining_stmts[1..];
+                        }
+
+                        for (parts) |part| {
+                            for (part.stmts, remaining_stmts[0..part.stmts.len]) |src, *dest| {
+                                dest.* = src;
+                            }
+                            remaining_stmts = remaining_stmts[part.stmts.len..];
+                        }
+                    }
+
+                    const wrapper = p.newExpr(
+                        E.Function{
+                            .func = G.Fn{
+                                .name = null,
+                                .open_parens_loc = logger.Loc.Empty,
+                                .args = args,
+                                .body = .{ .loc = logger.Loc.Empty, .stmts = stmts_to_copy },
+                                .flags = Flags.Function.init(.{ .is_export = false }),
+                            },
+                        },
+                        logger.Loc.Empty,
+                    );
+
+                    var top_level_stmts = p.allocator.alloc(Stmt, 1) catch bun.outOfMemory();
+                    parts[0].stmts = top_level_stmts;
+                    top_level_stmts[0] = p.s(
+                        S.SExpr{
+                            .value = wrapper,
+                        },
+                        logger.Loc.Empty,
+                    );
+                    parts.len = 1;
+                }
             }
 
             var top_level_symbols_to_parts = js_ast.Ast.TopLevelSymbolToParts{};
@@ -23700,6 +23682,7 @@ fn NewParser_(
                 for (all_parts[0 .. all_parts.len - 1]) |*part| {
                     // todo: prealloc
                     try ctx.last_part.declared_symbols.appendList(p.allocator, part.declared_symbols);
+                    try ctx.last_part.import_record_indices.append(p.allocator, part.import_record_indices.slice());
                     for (part.symbol_uses.keys(), part.symbol_uses.values()) |k, v| {
                         const gop = try ctx.last_part.symbol_uses.getOrPut(p.allocator, k);
                         if (!gop.found_existing) {
@@ -23713,11 +23696,11 @@ fn NewParser_(
                     part.tag = .dead_due_to_inlining;
                 }
 
-                ctx.last_part.import_record_indices = bun.BabyList(u32).fromList(p.import_records_for_current_part);
+                try ctx.last_part.import_record_indices.append(p.allocator, p.import_records_for_current_part.items);
                 try ctx.last_part.declared_symbols.appendList(p.allocator, p.declared_symbols);
 
                 ctx.last_part.stmts = ctx.stmts.items;
-                ctx.last_part.is_live = true;
+                ctx.last_part.tag = .none;
 
                 return all_parts;
             }
@@ -23735,9 +23718,9 @@ fn NewParser_(
             var scope_order = try ScopeOrderList.initCapacity(allocator, 1);
             const scope = try allocator.create(Scope);
             scope.* = Scope{
-                .members = @TypeOf(scope.members){},
-                .children = @TypeOf(scope.children){},
-                .generated = @TypeOf(scope.generated){},
+                .members = .{},
+                .children = .{},
+                .generated = .{},
                 .kind = .entry,
                 .label_ref = null,
                 .parent = null,

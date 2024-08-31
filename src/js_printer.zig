@@ -2042,7 +2042,7 @@ fn NewPrinter(
                     p.print(".require(");
                     {
                         var e = E.String{
-                            .data = p.options.input_files_for_kit.?[record.source_index.get()].path.text,
+                            .data = p.options.input_files_for_kit.?[record.source_index.get()].path.pretty,
                         };
                         const c = bestQuoteCharForEString(&e, true);
                         p.print(c);

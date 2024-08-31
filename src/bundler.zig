@@ -1399,7 +1399,6 @@ pub const Bundler = struct {
 
                 var opts = js_parser.Parser.Options.init(jsx, loader);
 
-                opts.legacy_transform_require_to_import = bundler.options.allow_runtime and !bundler.options.target.isBun();
                 opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;
                 opts.features.allow_runtime = bundler.options.allow_runtime;
                 opts.features.set_breakpoint_on_first_line = this_parse.set_breakpoint_on_first_line;

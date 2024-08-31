@@ -849,6 +849,15 @@ class Server extends EventEmitter {
     return this;
   }
 
+  [Symbol.asyncDispose]() {
+    const { resolve, reject, promise } = Promise.withResolvers();
+    this.close(function (err, ...args) {
+      if (err) reject(err);
+      else resolve(...args);
+    });
+    return promise;
+  }
+
   _emitCloseIfDrained() {
     if (this[bunSocketInternal] || this[bunSocketServerConnections] > 0) {
       return;

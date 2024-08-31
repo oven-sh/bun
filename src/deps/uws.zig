@@ -1894,6 +1894,153 @@ pub const SocketAddress = struct {
     is_ipv6: bool,
 };
 
+pub const AnyResponse = union(enum) {
+    SSL: *NewApp(true).Response,
+    TCP: *NewApp(false).Response,
+
+    pub fn timeout(this: AnyResponse, seconds: u8) void {
+        switch (this) {
+            .SSL => |resp| resp.timeout(seconds),
+            .TCP => |resp| resp.timeout(seconds),
+        }
+    }
+
+    pub fn writeStatus(this: AnyResponse, status: []const u8) void {
+        return switch (this) {
+            .SSL => |resp| resp.writeStatus(status),
+            .TCP => |resp| resp.writeStatus(status),
+        };
+    }
+
+    pub fn writeHeader(this: AnyResponse, key: []const u8, value: []const u8) void {
+        return switch (this) {
+            .SSL => |resp| resp.writeHeader(key, value),
+            .TCP => |resp| resp.writeHeader(key, value),
+        };
+    }
+
+    pub fn write(this: AnyResponse, data: []const u8) void {
+        return switch (this) {
+            .SSL => |resp| resp.write(data),
+            .TCP => |resp| resp.write(data),
+        };
+    }
+
+    pub fn end(this: AnyResponse, data: []const u8, close_connection: bool) void {
+        return switch (this) {
+            .SSL => |resp| resp.end(data, close_connection),
+            .TCP => |resp| resp.end(data, close_connection),
+        };
+    }
+
+    pub fn shouldCloseConnection(this: AnyResponse) bool {
+        return switch (this) {
+            .SSL => |resp| resp.shouldCloseConnection(),
+            .TCP => |resp| resp.shouldCloseConnection(),
+        };
+    }
+
+    pub fn tryEnd(this: AnyResponse, data: []const u8, total_size: usize, close_connection: bool) bool {
+        return switch (this) {
+            .SSL => |resp| resp.tryEnd(data, total_size, close_connection),
+            .TCP => |resp| resp.tryEnd(data, total_size, close_connection),
+        };
+    }
+
+    pub fn pause(this: AnyResponse) void {
+        return switch (this) {
+            .SSL => |resp| resp.pause(),
+            .TCP => |resp| resp.pause(),
+        };
+    }
+
+    pub fn @"resume"(this: AnyResponse) void {
+        return switch (this) {
+            .SSL => |resp| resp.@"resume"(),
+            .TCP => |resp| resp.@"resume"(),
+        };
+    }
+
+    pub fn writeOrEndWithoutBody(this: AnyResponse, data: []const u8) void {
+        return switch (this) {
+            .SSL => |resp| resp.writeOrEndWithoutBody(data),
+            .TCP => |resp| resp.writeOrEndWithoutBody(data),
+        };
+    }
+
+    pub fn onWritable(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, u64, AnyResponse) bool, opcional_data: UserDataType) void {
+        const wrapper = struct {
+            pub fn ssl_handler(user_data: UserDataType, offset: u64, resp: *NewApp(true).Response) bool {
+                return handler(user_data, offset, .{ .SSL = resp });
+            }
+
+            pub fn tcp_handler(user_data: UserDataType, offset: u64, resp: *NewApp(false).Response) bool {
+                return handler(user_data, offset, .{ .TCP = resp });
+            }
+        };
+        return switch (this) {
+            .SSL => |resp| resp.onWritable(UserDataType, wrapper.ssl_handler, opcional_data),
+            .TCP => |resp| resp.onWritable(UserDataType, wrapper.tcp_handler, opcional_data),
+        };
+    }
+
+    pub fn onAborted(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, AnyResponse) void, opcional_data: UserDataType) void {
+        const wrapper = struct {
+            pub fn ssl_handler(user_data: UserDataType, resp: *NewApp(true).Response) void {
+                handler(user_data, .{ .SSL = resp });
+            }
+            pub fn tcp_handler(user_data: UserDataType, resp: *NewApp(false).Response) void {
+                handler(user_data, .{ .TCP = resp });
+            }
+        };
+        return switch (this) {
+            .SSL => |resp| resp.onAborted(UserDataType, wrapper.ssl_handler, opcional_data),
+            .TCP => |resp| resp.onAborted(UserDataType, wrapper.tcp_handler, opcional_data),
+        };
+    }
+
+    pub fn clearAborted(this: AnyResponse) void {
+        return switch (this) {
+            .SSL => |resp| resp.clearAborted(),
+            .TCP => |resp| resp.clearAborted(),
+        };
+    }
+
+    pub fn clearOnWritable(this: AnyResponse) void {
+        return switch (this) {
+            .SSL => |resp| resp.clearOnWritable(),
+            .TCP => |resp| resp.clearOnWritable(),
+        };
+    }
+
+    pub fn clearOnData(this: AnyResponse) void {
+        return switch (this) {
+            .SSL => |resp| resp.clearOnData(),
+            .TCP => |resp| resp.clearOnData(),
+        };
+    }
+
+    pub fn endStream(this: AnyResponse, close_connection: bool) void {
+        return switch (this) {
+            .SSL => |resp| resp.endStream(close_connection),
+            .TCP => |resp| resp.endStream(close_connection),
+        };
+    }
+
+    pub fn corked(this: AnyResponse, comptime handler: anytype, args_tuple: anytype) void {
+        return switch (this) {
+            .SSL => |resp| resp.corked(handler, args_tuple),
+            .TCP => |resp| resp.corked(handler, args_tuple),
+        };
+    }
+
+    pub fn runCorkedWithType(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType) void, opcional_data: UserDataType) void {
+        return switch (this) {
+            .SSL => |resp| resp.runCorkedWithType(UserDataType, handler, opcional_data),
+            .TCP => |resp| resp.runCorkedWithType(UserDataType, handler, opcional_data),
+        };
+    }
+};
 pub fn NewApp(comptime ssl: bool) type {
     return opaque {
         const ssl_flag = @as(i32, @intFromBool(ssl));
@@ -2046,7 +2193,7 @@ pub fn NewApp(comptime ssl: bool) type {
         }
         pub fn head(
             app: *ThisApp,
-            pattern: [:0]const u8,
+            pattern: []const u8,
             comptime UserDataType: type,
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
@@ -2054,7 +2201,7 @@ pub fn NewApp(comptime ssl: bool) type {
             if (comptime is_bindgen) {
                 unreachable;
             }
-            uws_app_head(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, user_data);
+            uws_app_head(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern.ptr, pattern.len, RouteHandler(UserDataType, handler).handle, user_data);
         }
         pub fn connect(
             app: *ThisApp,
@@ -2082,7 +2229,7 @@ pub fn NewApp(comptime ssl: bool) type {
         }
         pub fn any(
             app: *ThisApp,
-            pattern: [:0]const u8,
+            pattern: []const u8,
             comptime UserDataType: type,
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
@@ -2090,7 +2237,7 @@ pub fn NewApp(comptime ssl: bool) type {
             if (comptime is_bindgen) {
                 unreachable;
             }
-            uws_app_any(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, user_data);
+            uws_app_any(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern.ptr, pattern.len, RouteHandler(UserDataType, handler).handle, user_data);
         }
         pub fn domain(app: *ThisApp, pattern: [:0]const u8) void {
             uws_app_domain(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern);
@@ -2233,6 +2380,10 @@ pub fn NewApp(comptime ssl: bool) type {
                 return uws_res_state(ssl_flag, @as(*const uws_res, @ptrCast(@alignCast(res))));
             }
 
+            pub fn shouldCloseConnection(this: *const Response) bool {
+                return this.state().isHttpConnectionClose();
+            }
+
             pub fn prepareForSendfile(res: *Response) void {
                 return uws_res_prepare_for_sendfile(ssl_flag, res.downcast());
             }
@@ -2324,7 +2475,7 @@ pub fn NewApp(comptime ssl: bool) type {
             pub fn onWritable(
                 res: *Response,
                 comptime UserDataType: type,
-                comptime handler: fn (UserDataType, u64, *Response) callconv(.C) bool,
+                comptime handler: fn (UserDataType, u64, *Response) bool,
                 user_data: UserDataType,
             ) void {
                 const Wrapper = struct {
@@ -2407,22 +2558,19 @@ pub fn NewApp(comptime ssl: bool) type {
 
             pub fn corked(
                 res: *Response,
-                comptime Function: anytype,
-                args: anytype,
-            ) @typeInfo(@TypeOf(Function)).Fn.return_type.? {
+                comptime handler: anytype,
+                args_tuple: anytype,
+            ) void {
                 const Wrapper = struct {
-                    opts: @TypeOf(args),
-                    result: @typeInfo(@TypeOf(Function)).Fn.return_type.? = undefined,
-                    pub fn run(this: *@This()) void {
-                        this.result = Function(this.opts);
+                    const handler_fn = handler;
+                    const Args = *@TypeOf(args_tuple);
+                    pub fn handle(user_data: ?*anyopaque) callconv(.C) void {
+                        const args: Args = @alignCast(@ptrCast(user_data.?));
+                        @call(.always_inline, handler_fn, args.*);
                     }
                 };
-                var wrapped = Wrapper{
-                    .opts = args,
-                    .result = undefined,
-                };
-                runCorkedWithType(res, *Wrapper, Wrapper.run, &wrapped);
-                return wrapped.result;
+
+                uws_res_cork(ssl_flag, res.downcast(), @constCast(@ptrCast(&args_tuple)), Wrapper.handle);
             }
 
             pub fn runCorkedWithType(
@@ -2618,10 +2766,10 @@ extern fn uws_app_options(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, hand
 extern fn uws_app_delete(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
 extern fn uws_app_patch(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
 extern fn uws_app_put(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
-extern fn uws_app_head(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
+extern fn uws_app_head(ssl: i32, app: *uws_app_t, pattern: [*]const u8, pattern_len: usize, handler: uws_method_handler, user_data: ?*anyopaque) void;
 extern fn uws_app_connect(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
 extern fn uws_app_trace(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
-extern fn uws_app_any(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
+extern fn uws_app_any(ssl: i32, app: *uws_app_t, pattern: [*]const u8, pattern_len: usize, handler: uws_method_handler, user_data: ?*anyopaque) void;
 extern fn uws_app_run(ssl: i32, *uws_app_t) void;
 extern fn uws_app_domain(ssl: i32, app: *uws_app_t, domain: [*c]const u8) void;
 extern fn uws_app_listen(ssl: i32, app: *uws_app_t, port: i32, handler: uws_listen_handler, user_data: ?*anyopaque) void;

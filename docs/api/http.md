@@ -120,6 +120,10 @@ Bun.serve({
       },
     }),
   },
+
+  fetch(req) {
+    return new Response("404!");
+  },
 });
 ```
 

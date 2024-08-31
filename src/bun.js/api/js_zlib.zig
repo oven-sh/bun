@@ -133,8 +133,16 @@ pub const ZlibEncoder = struct {
         {
             this.stream.write(input_to_queue.slice(), &this.output) catch |err| return handleTransformSyncStreamError(err, globalThis, this.stream.err_msg, &this.closed);
         }
+        if (this.output.items.len > this.maxOutputLength) {
+            globalThis.ERR_BUFFER_TOO_LARGE("Cannot create a Buffer larger than {d} bytes", .{this.maxOutputLength}).throw();
+            return .zero;
+        }
         if (is_last) {
             this.stream.end(&this.output) catch |err| return handleTransformSyncStreamError(err, globalThis, this.stream.err_msg, &this.closed);
+        }
+        if (this.output.items.len > this.maxOutputLength) {
+            globalThis.ERR_BUFFER_TOO_LARGE("Cannot create a Buffer larger than {d} bytes", .{this.maxOutputLength}).throw();
+            return .zero;
         }
 
         if (!is_last and this.output.items.len == 0) {
@@ -497,8 +505,16 @@ pub const ZlibDecoder = struct {
         {
             this.stream.writeAll(input_to_queue.slice(), &this.output) catch |err| return handleTransformSyncStreamError(err, globalThis, this.stream.err_msg, &this.closed);
         }
+        if (this.output.items.len > this.maxOutputLength) {
+            globalThis.ERR_BUFFER_TOO_LARGE("Cannot create a Buffer larger than {d} bytes", .{this.maxOutputLength}).throw();
+            return .zero;
+        }
         if (is_last) {
             this.stream.end(&this.output) catch |err| return handleTransformSyncStreamError(err, globalThis, this.stream.err_msg, &this.closed);
+        }
+        if (this.output.items.len > this.maxOutputLength) {
+            globalThis.ERR_BUFFER_TOO_LARGE("Cannot create a Buffer larger than {d} bytes", .{this.maxOutputLength}).throw();
+            return .zero;
         }
 
         if (!is_last and this.output.items.len == 0) {

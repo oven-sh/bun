@@ -70,16 +70,19 @@ const server = Bun.serve({
 });
 ```
 
-### `static` responses
+### Static routes
 
-Serve static responses by route with the `static` option
+Use the `static` option to serve static `Response` objects by route.
 
 ```ts
+// Bun v1.1.27+ required
 Bun.serve({
   static: {
     "/api/health-check": new Response("All good!"),
     "/old-link": Response.redirect("/new-link", 301),
     "/": new Response("Hello World"),
+    "/index.html": new Response(await Bun.file("./index.html").bytes()),
+    "/api/version.json": Response.json({ version: "1.0.0" }),
   },
 
   fetch(req) {
@@ -88,9 +91,72 @@ Bun.serve({
 });
 ```
 
+Static routes support headers, status code, and other `Response` options.
+
+```ts
+Bun.serve({
+  static: {
+    "/api/time": new Response(new Date().toISOString(), {
+      headers: {
+        "X-Custom-Header": "Bun!",
+      },
+    }),
+  },
+});
+```
+
+Static routes can serve Response bodies faster than `fetch` handlers because they don't create `Request` objects, they don't create `AbortSignal`, they don't create additional `Response` objects. The only per-request memory allocation is the TCP/TLS socket data needed for each request.
+
 {% note %}
-`static` is experimental and may change in the future.
+`static` is experimental
 {% /note %}
+
+Static route responses are cached for the lifetime of the server object. To reload static routes, call `server.reload(options)`.
+
+```ts
+const server = Bun.serve({
+  static: {
+    "/api/time": new Response(new Date().toISOString()),
+  },
+
+  fetch(req) {
+    return new Response("404!");
+  },
+});
+
+// Update the time every second.
+setInterval(() => {
+  server.reload({
+    static: {
+      "/api/time": new Response(new Date().toISOString()),
+    },
+
+    fetch(req) {
+      return new Response("404!");
+    },
+  });
+}, 1000);
+```
+
+Reloading static routes only impact the next request. In-flight requests continue to use the old static routes. After in-flight requests to old static routes are finished, the old static routes are freed from memory.
+
+To simplify error handling, static routes do not support streaming response bodies from `ReadableStream` or an `AsyncIterator`. Fortunately, you can still buffer the response in memory first:
+
+```ts
+const time = await fetch("https://api.example.com/v1/data");
+// Buffer the response in memory first.
+const blob = await time.blob();
+
+const server = Bun.serve({
+  static: {
+    "/api/data": new Response(blob),
+  },
+
+  fetch(req) {
+    return new Response("404!");
+  },
+});
+```
 
 ### Changing the `port` and `hostname`
 
@@ -348,7 +414,24 @@ Bun.serve({
 });
 ```
 
-## Object syntax
+## idleTimeout
+
+To configure the idle timeout, set the `idleTimeout` field in Bun.serve.
+
+```ts
+Bun.serve({
+  // 10 seconds:
+  idleTimeout: 10,
+
+  fetch(req) {
+    return new Response("Bun!");
+  },
+});
+```
+
+This is the maximum amount of time a connection is allowed to be idle before the server closes it. A connection is idling if there is no data sent or received.
+
+## export default syntax
 
 Thus far, the examples on this page have used the explicit `Bun.serve` API. Bun also supports an alternate syntax.
 

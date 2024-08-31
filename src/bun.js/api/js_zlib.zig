@@ -651,26 +651,14 @@ pub const ZlibDecoder = struct {
                     defer this.decoder.input.discard(readable.len);
                     const pending = readable;
 
-                    const Writer = struct {
-                        decoder: *ZlibDecoder,
-
-                        pub const Error = error{OutOfMemory};
-                        pub fn writeAll(writer: @This(), chunk: []const u8) Error!void {
-                            writer.decoder.output_lock.lock();
-                            defer writer.decoder.output_lock.unlock();
-
-                            try writer.decoder.output.appendSlice(bun.default_allocator, chunk);
-                        }
-                    };
-
                     defer {
                         this.decoder.freelist_write_lock.lock();
                         this.decoder.freelist.write(pending) catch unreachable;
                         this.decoder.freelist_write_lock.unlock();
                     }
                     for (pending) |input| {
-                        var writer = this.decoder.stream.writer(Writer{ .decoder = this.decoder });
-                        writer.writeAll(input.slice()) catch |e| {
+                        const output = &this.decoder.output;
+                        this.decoder.stream.writeAll(input.slice(), output) catch |e| {
                             any = true;
                             _ = this.decoder.pending_encode_job_count.fetchSub(1, .monotonic);
                             if (!this.is_async) {
@@ -719,10 +707,11 @@ pub const ZlibDecoder = struct {
                                 this.decoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "{s}", .{message});
                                 break :outer;
                             },
-                            else => {},
+                            else => {
+                                this.decoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "ZlibError: {s}", .{@errorName(e)}); // TODO propogate better error
+                                break :outer;
+                            },
                         }
-                        this.decoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "ZlibError: {s}", .{@errorName(e)}); // TODO propogate better error
-                        break :outer;
                     };
                     if (output.items.len > this.decoder.maxOutputLength) {
                         any = true;

@@ -1111,139 +1111,120 @@ pub const ZlibDecompressorStreaming = struct {
         return error.ZlibError;
     }
 
-    pub fn writer(this: *ZlibDecompressorStreaming, out_writer: anytype) WriterImpl(@TypeOf(out_writer)).Writer {
-        return (WriterImpl(@TypeOf(out_writer)){ .ctx = this, .out_writer = out_writer }).writer();
+    pub fn writeAll(this: *ZlibDecompressorStreaming, bytes: []const u8, output: *std.ArrayListUnmanaged(u8)) !void {
+        var index: usize = 0;
+        while (index != bytes.len) {
+            index += try this.write(bytes[index..], output);
+        }
     }
 
-    fn WriterImpl(comptime T: type) type {
-        return struct {
-            ctx: *ZlibDecompressorStreaming,
-            out_writer: T,
+    fn write(this: *ZlibDecompressorStreaming, bytes: []const u8, output: *std.ArrayListUnmanaged(u8)) !usize {
+        const state = &this.state;
+        state.next_in = bytes.ptr;
+        state.avail_in = @intCast(bytes.len);
+        if (state.avail_in == 0) state.next_in = null;
 
-            const WriteError = std.mem.Allocator.Error || error{ZlibError} || anyerror;
-            const Writer = std.io.Writer(@This(), WriteError, write);
+        if (this.mode == .UNZIP) {
+            var redd: usize = 0;
 
-            fn writer(this: @This()) Writer {
-                return .{ .context = this };
+            if (bytes.len > 0) {
+                this.next_expected_header_byte = state.next_in;
             }
-
-            fn write(this: @This(), bytes: []const u8) WriteError!usize {
-                const state = &this.ctx.state;
-                state.next_in = bytes.ptr;
-                state.avail_in = @intCast(bytes.len);
-                if (state.avail_in == 0) state.next_in = null;
-
-                if (this.ctx.mode == .UNZIP) {
-                    var redd: usize = 0;
-
-                    if (bytes.len > 0) {
-                        this.ctx.next_expected_header_byte = state.next_in;
-                    }
-                    if (this.ctx.gzip_id_bytes_read == 0) {
-                        if (this.ctx.next_expected_header_byte == null) {
-                            return 0;
-                        }
-
-                        if (this.ctx.next_expected_header_byte.?[redd] == GZIP_HEADER_ID1) {
-                            this.ctx.gzip_id_bytes_read += 1;
-                            redd += 1;
-                            // next_expected_header_byte++;
-
-                            if (bytes.len == 1) {
-                                // The only available byte was already read.
-                                return 1;
-                            }
-                        } else {
-                            this.ctx.mode = .INFLATE;
-                            return 0;
-                        }
-                    }
-                    if (this.ctx.gzip_id_bytes_read == 1) {
-                        if (this.ctx.next_expected_header_byte == null) {
-                            return 0;
-                        }
-
-                        if (this.ctx.next_expected_header_byte.?[redd] == GZIP_HEADER_ID2) {
-                            this.ctx.gzip_id_bytes_read += 1;
-                            redd += 1;
-                            // next_expected_header_byte++;
-
-                            this.ctx.mode = .GUNZIP;
-                            {
-                                const header = &[_]u8{ 0x1f, 0x8b };
-                                state.next_in = header.ptr;
-                                state.avail_in = @intCast(header.len);
-                                var out: [CHUNK]u8 = undefined;
-                                state.avail_out = CHUNK;
-                                state.next_out = &out;
-                                const ret = inflate(state, this.ctx.flush);
-                                bun.assert(ret == .Ok);
-                            }
-                        } else {
-                            // There is no actual difference between INFLATE and INFLATERAW (after initialization).
-                            this.ctx.mode = .INFLATE;
-                        }
-                        return redd;
-                    }
-
-                    bun.assert(false); // invalid number of gzip magic number bytes read
+            if (this.gzip_id_bytes_read == 0) {
+                if (this.next_expected_header_byte == null) {
+                    return 0;
                 }
 
-                while (true) {
-                    var out: [CHUNK]u8 = undefined;
-                    state.avail_out = CHUNK;
-                    state.next_out = &out;
+                if (this.next_expected_header_byte.?[redd] == GZIP_HEADER_ID1) {
+                    this.gzip_id_bytes_read += 1;
+                    redd += 1;
+                    // next_expected_header_byte++;
 
-                    const ret = inflate(state, this.ctx.flush);
-                    bun.assert(ret != .StreamError);
-                    if (ret == .NeedDict) return this.ctx.error_for_message((if (this.ctx.dictionary.len == 0) "Missing dictionary" else "Bad dictionary").ptr);
-                    if (ret == .DataError) return this.ctx.error_for_message("Zlib error");
-                    if (ret == .MemError) return error.ZlibError4;
-                    const have = CHUNK - state.avail_out;
-                    try this.out_writer.writeAll(out[0..have]);
-                    if (ret == .StreamEnd and this.ctx.mode == .GUNZIP and state.avail_in > 0 and state.next_in.?[0] != 0) {
-                        _ = inflateReset(state);
-                        continue;
+                    if (bytes.len == 1) {
+                        // The only available byte was already read.
+                        return 1;
                     }
-                    if (state.avail_out == 0) continue;
-                    break;
+                } else {
+                    this.mode = .INFLATE;
+                    return 0;
                 }
-                // bun.assert(state.avail_in == 0);
-
-                return bytes.len;
             }
-        };
+            if (this.gzip_id_bytes_read == 1) {
+                if (this.next_expected_header_byte == null) {
+                    return 0;
+                }
+
+                if (this.next_expected_header_byte.?[redd] == GZIP_HEADER_ID2) {
+                    this.gzip_id_bytes_read += 1;
+                    redd += 1;
+                    // next_expected_header_byte++;
+
+                    this.mode = .GUNZIP;
+                    {
+                        const header = &[_]u8{ 0x1f, 0x8b };
+                        state.next_in = header.ptr;
+                        state.avail_in = @intCast(header.len);
+                        var out: [CHUNK]u8 = undefined;
+                        state.avail_out = CHUNK;
+                        state.next_out = &out;
+                        const ret = inflate(state, this.flush);
+                        bun.assert(ret == .Ok);
+                    }
+                } else {
+                    // There is no actual difference between INFLATE and INFLATERAW (after initialization).
+                    this.mode = .INFLATE;
+                }
+                return redd;
+            }
+
+            bun.assert(false); // invalid number of gzip magic number bytes read
+        }
+
+        while (true) {
+            if (try this.doWork(output)) {
+                break;
+            }
+        }
+        // bun.assert(state.avail_in == 0);
+
+        return bytes.len;
+    }
+
+    fn doWork(this: *ZlibDecompressorStreaming, output: *std.ArrayListUnmanaged(u8)) !bool {
+        const state = &this.state;
+        var out: [CHUNK]u8 = undefined;
+        state.avail_out = CHUNK;
+        state.next_out = &out;
+
+        this.err = inflate(state, this.flush);
+        const ret = this.err;
+        bun.assert(ret != .StreamError);
+        if (ret == .NeedDict) return this.error_for_message((if (this.dictionary.len == 0) "Missing dictionary" else "Bad dictionary").ptr);
+        if (ret == .DataError) return this.error_for_message("Zlib error");
+        if (ret == .MemError) return error.ZlibError4;
+        const have = CHUNK - state.avail_out;
+        try output.appendSlice(bun.default_allocator, out[0..have]);
+        if (ret == .StreamEnd and this.mode == .GUNZIP and state.avail_in > 0 and state.next_in.?[0] != 0) {
+            _ = inflateReset(state);
+            return false;
+        }
+        if (ret == .StreamEnd) return true;
+        if (state.avail_out == 0) return false;
+        if (ret == .BufError and this.finishFlush == .Finish) return this.error_for_message("unexpected end of file");
+        return true;
     }
 
     pub fn end(this: *ZlibDecompressorStreaming, output: *std.ArrayListUnmanaged(u8)) !void {
         const state = &this.state;
         state.next_in = null;
         state.avail_in = 0;
-        var ret: ReturnCode = .Ok;
-        while (true) {
-            var out: [CHUNK]u8 = undefined;
-            state.avail_out = CHUNK;
-            state.next_out = &out;
-            ret = inflate(state, this.finishFlush);
-            bun.assert(ret != .StreamError);
-            if (ret == .NeedDict) return error.ZlibError5;
-            if (ret == .DataError) return error.ZlibError6;
-            if (ret == .MemError) return error.ZlibError7;
-            const have = CHUNK - state.avail_out;
-            try output.appendSlice(bun.default_allocator, out[0..have]);
-            if (ret == .StreamEnd and this.mode == .GUNZIP and state.avail_in > 0 and state.next_in.?[0] != 0) {
-                _ = inflateReset(state);
-                continue;
-            }
-            if (ret == .StreamEnd) break;
-            if (state.avail_out == 0) continue;
-            if (ret == .BufError and this.finishFlush == .Finish) return this.error_for_message("unexpected end of file");
-            break;
-        }
+
+        const done = try this.doWork(output);
+        bun.assert(done);
         // bun.assert(state.avail_in == 0);
 
         _ = inflateEnd(&this.state);
-        if (ret != .StreamEnd and this.finishFlush == .Finish) return error.ZlibError8;
+        if (this.err != .StreamEnd and this.finishFlush == .Finish) return error.ZlibError8;
     }
 };
 

@@ -9,7 +9,7 @@
 extern "C" void WTF__dtoa(char* buf_124_bytes, double number)
 {
     NumberToStringBuffer& buf = *reinterpret_cast<NumberToStringBuffer*>(buf_124_bytes);
-    WTF::numberToString(number, buf);
+    WTF::numberToStringAndSize(number, buf);
 }
 
 /// This is the equivalent of the unary '+' operator on a JS string

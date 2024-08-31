@@ -366,7 +366,7 @@ ifeq ($(OS_NAME),linux)
 endif
 
 ifeq ($(OS_NAME),darwin)
-MACOS_MIN_FLAG=-mmacosx-version-min=$(MIN_MACOS_VERSION)
+MACOS_MIN_FLAG=-mmacos-version-min=$(MIN_MACOS_VERSION)
 POSIX_PKG_MANAGER=brew
 INCLUDE_DIRS += $(MAC_INCLUDE_DIRS)
 endif

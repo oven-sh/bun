@@ -344,6 +344,10 @@ const StaticRoute = struct {
     }
 
     fn onWritable(this: *Route, write_offset: u64, resp: HTTPResponse) void {
+        if (this.server) |server| {
+            resp.timeout(server.config().idleTimeout);
+        }
+
         if (!this.onWritableBytes(write_offset, resp)) {
             this.toAsync(resp);
             return;
@@ -5980,6 +5984,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub fn onReloadFromZig(this: *ThisServer, new_config: *ServerConfig, globalThis: *JSC.JSGlobalObject) void {
             httplog("onReload", .{});
 
+            this.app.clearRoutes();
+
             // only reload those two
             if (this.config.onRequest != new_config.onRequest) {
                 this.config.onRequest.unprotect();
@@ -5995,12 +6001,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 if (ws.handler.onMessage != .zero or ws.handler.onOpen != .zero) {
                     if (this.config.websocket) |old_ws| {
                         old_ws.unprotect();
-                    } else {
-                        this.app.ws("/*", this, 0, ServerWebSocket.behavior(
-                            ThisServer,
-                            ssl_enabled,
-                            ws.toBehavior(),
-                        ));
                     }
 
                     ws.globalObject = globalThis;
@@ -6008,17 +6008,13 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 } // we don't remove it
             }
 
-            if (this.config.static_routes.items.len > 0) {
-                // TODO: clear old static routes
+            for (this.config.static_routes.items) |*route| {
+                route.deinit();
             }
+            this.config.static_routes.deinit();
+            this.config.static_routes = new_config.static_routes;
 
-            if (new_config.static_routes.items.len > 0) {
-                new_config.applyStaticRoutes(
-                    ssl_enabled,
-                    AnyServer.from(this),
-                    this.app,
-                );
-            }
+            this.setRoutes();
         }
 
         pub fn onReload(

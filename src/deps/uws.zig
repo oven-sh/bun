@@ -2068,6 +2068,14 @@ pub fn NewApp(comptime ssl: bool) type {
             return uws_app_destroy(ssl_flag, @as(*uws_app_s, @ptrCast(app)));
         }
 
+        pub fn clearRoutes(app: *ThisApp) void {
+            if (comptime is_bindgen) {
+                unreachable;
+            }
+
+            return uws_app_clear_routes(ssl_flag, @as(*uws_app_t, @ptrCast(app)));
+        }
+
         fn RouteHandler(comptime UserDataType: type, comptime handler: fn (UserDataType, *Request, *Response) void) type {
             return struct {
                 pub fn handle(res: *uws_res, req: *Request, user_data: ?*anyopaque) callconv(.C) void {
@@ -3289,3 +3297,5 @@ extern fn bun_clear_loop_at_thread_exit() void;
 pub fn onThreadExit() void {
     bun_clear_loop_at_thread_exit();
 }
+
+extern fn uws_app_clear_routes(ssl_flag: c_int, app: *uws_app_t) void;

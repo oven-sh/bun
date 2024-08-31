@@ -382,7 +382,7 @@ throw new Error('0');`,
         stdin: "ignore",
       });
       let reloadCounter = 0;
-      function onReload() {
+      async function onReload() {
         writeFileSync(
           root,
           `// source content

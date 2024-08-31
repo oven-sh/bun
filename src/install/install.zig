@@ -14214,7 +14214,7 @@ pub const PackageManager = struct {
                     Output.pretty("<green>{d}<r> package{s}<r> installed ", .{ pkgs_installed, if (pkgs_installed == 1) "" else "s" });
                     Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                     printed_timestamp = true;
-                    printBlockedPackagesInfo(install_summary);
+                    printBlockedPackagesInfo(install_summary, manager.options.global);
 
                     if (manager.summary.remove > 0) {
                         Output.pretty("Removed: <cyan>{d}<r>\n", .{manager.summary.remove});
@@ -14229,7 +14229,7 @@ pub const PackageManager = struct {
                     Output.pretty("<r><b>{d}<r> package{s} removed ", .{ manager.summary.remove, if (manager.summary.remove == 1) "" else "s" });
                     Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                     printed_timestamp = true;
-                    printBlockedPackagesInfo(install_summary);
+                    printBlockedPackagesInfo(install_summary, manager.options.global);
                 } else if (install_summary.skipped > 0 and install_summary.fail == 0 and manager.update_requests.len == 0) {
                     const count = @as(PackageID, @truncate(manager.lockfile.packages.len));
                     if (count != install_summary.skipped) {
@@ -14241,7 +14241,7 @@ pub const PackageManager = struct {
                         });
                         Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                         printed_timestamp = true;
-                        printBlockedPackagesInfo(install_summary);
+                        printBlockedPackagesInfo(install_summary, manager.options.global);
                     } else {
                         Output.pretty("<r><green>Done<r>! Checked {d} package{s}<r> <d>(no changes)<r> ", .{
                             install_summary.skipped,
@@ -14249,7 +14249,7 @@ pub const PackageManager = struct {
                         });
                         Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                         printed_timestamp = true;
-                        printBlockedPackagesInfo(install_summary);
+                        printBlockedPackagesInfo(install_summary, manager.options.global);
                     }
                 }
 
@@ -14277,7 +14277,7 @@ pub const PackageManager = struct {
         Output.flush();
     }
 
-    fn printBlockedPackagesInfo(summary: PackageInstall.Summary) void {
+    fn printBlockedPackagesInfo(summary: PackageInstall.Summary, global: bool) void {
         const packages_count = summary.packages_with_blocked_scripts.count();
         var scripts_count: usize = 0;
         for (summary.packages_with_blocked_scripts.values()) |count| scripts_count += count;
@@ -14290,9 +14290,10 @@ pub const PackageManager = struct {
         }
 
         if (packages_count > 0) {
-            Output.prettyln("\n\n<d>Blocked {d} postinstall{s}. Run `bun pm untrusted` for details.<r>\n", .{
+            Output.prettyln("\n\n<d>Blocked {d} postinstall{s}. Run `bun pm {s}untrusted` for details.<r>\n", .{
                 scripts_count,
                 if (scripts_count > 1) "s" else "",
+                if (global) "-g " else "",
             });
         } else {
             Output.pretty("<r>\n", .{});

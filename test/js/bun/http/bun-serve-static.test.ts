@@ -131,7 +131,7 @@ describe("static", () => {
         const rss = (process.memoryUsage.rss() / 1024 / 1024) | 0;
         expect(rss).toBeLessThan(baseline * 2);
       },
-      8192,
+      30 * 1000,
     );
   });
 

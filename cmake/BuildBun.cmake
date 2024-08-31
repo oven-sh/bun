@@ -34,9 +34,9 @@ endif()
 if(WIN32)
   set(BUN_ICO_PATH ${CWD}/src/bun.ico)
   if(ENABLE_CANARY)
-    set(Bun_VERSION_WITH_TAG "${USE_VERSION}-canary.${USE_CANARY_REVISION}")
+    set(Bun_VERSION_WITH_TAG "${VERSION}-canary.${CANARY_REVISION}")
   else()
-    set(Bun_VERSION_WITH_TAG "${USE_VERSION}")
+    set(Bun_VERSION_WITH_TAG "${VERSION}")
   endif()
 
   # Does string interpolation with CMake variables, then copies the file
@@ -53,13 +53,23 @@ if(BUN_CPP_ARCHIVE)
 endif()
 
 if(NOT BUN_CPP_ONLY)
-  add_executable(${bun} ${BUN_CPP_SOURCES} ${ZIG_OBJECT_PATH})
+  add_executable(bun-lib ${BUN_CPP_SOURCES} ${ZIG_OBJECT_PATH})
 else()
-  add_library(${bun} STATIC ${BUN_CPP_SOURCES})
-  set_target_properties(${bun} PROPERTIES OUTPUT_NAME bun)
+  add_library(bun-lib STATIC ${BUN_CPP_SOURCES})
+  set_target_properties(bun-lib PROPERTIES OUTPUT_NAME bun)
 endif()
 
-include(RunClangTidy)
-include(RunCppCheck)
-include(RunIWYU)
-include(RunCppLint)
+add_custom_command(
+  TARGET
+    bun-lib POST_BUILD
+  COMMAND
+    ${CMAKE_COMMAND}
+      -E rename
+      bun-lib${CMAKE_EXECUTABLE_SUFFIX}
+      ${bunExe}
+)
+
+# include(RunClangTidy)
+# include(RunCppCheck)
+# include(RunIWYU)
+# include(RunCppLint)

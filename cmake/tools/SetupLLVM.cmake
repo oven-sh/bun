@@ -69,6 +69,3 @@ else()
     find_llvm_program(CMAKE_DSYMUTIL "dsymutil")
   endif()
 endif()
-
-enable_language(C)
-enable_language(CXX)

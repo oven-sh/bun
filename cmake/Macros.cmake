@@ -110,12 +110,13 @@ macro(find_llvm_program variable program_name)
   message(STATUS "Set ${variable}: ${${variable}}")
 endmacro()
 
-macro(add_target)
+function(add_target)
   set(options NODE_MODULES USES_TERMINAL)
   set(args NAME COMMENT WORKING_DIRECTORY)
   set(multiArgs ALIASES COMMAND DEPENDS SOURCES OUTPUTS ARTIFACTS)
   cmake_parse_arguments(ARG "${options}" "${args}" "${multiArgs}" ${ARGN})
 
+  message(STATUS "add_target: ${ARG_NAME}")
   if(NOT ARG_NAME)
     message(FATAL_ERROR "add_target: NAME is required")
   endif()
@@ -150,6 +151,7 @@ macro(add_target)
       ${ARG_WORKING_DIRECTORY}
     OUTPUT
       ${ARG_OUTPUTS}
+      ${ARG_ARTIFACTS}
     DEPENDS
       ${ARG_SOURCES}
       ${ARG_DEPENDS}
@@ -161,6 +163,7 @@ macro(add_target)
       ${ARG_COMMENT}
     DEPENDS
       ${ARG_OUTPUTS}
+      ${ARG_ARTIFACTS}
       ${ARG_DEPENDS}
     SOURCES
       ${ARG_SOURCES}
@@ -173,6 +176,7 @@ macro(add_target)
     )
   endforeach()
 
+  message(STATUS "add_target: ${ARG_NAME} with aliases: ${ARG_ALIASES}")
   foreach(alias ${ARG_ALIASES})
     if(NOT TARGET ${alias})
       add_custom_target(${alias} DEPENDS ${ARG_NAME})
@@ -180,9 +184,9 @@ macro(add_target)
       add_dependencies(${alias} ${ARG_NAME})
     endif()
   endforeach()
-endmacro()
+endfunction()
 
-macro(add_bun_install)
+function(add_bun_install)
   set(args WORKING_DIRECTORY)
   cmake_parse_arguments(ARG "" "${args}" "" ${ARGN})
 
@@ -214,9 +218,9 @@ macro(add_bun_install)
       ${ARG_WORKING_DIRECTORY}/bun.lockb
       ${ARG_WORKING_DIRECTORY}/node_modules
   )
-endmacro()
+endfunction()
 
-macro(upload_artifact)
+function(upload_artifact)
   set(args NAME WORKING_DIRECTORY)
   cmake_parse_arguments(ARTIFACT "" "${args}" "" ${ARGN})
 
@@ -248,7 +252,8 @@ macro(upload_artifact)
     )
   endif()
 
-  get_filename_component(ARTIFACT_FILENAME ${ARTIFACT_NAME} NAME_WE)
+  get_filename_component(ARTIFACT_FILENAME ${ARTIFACT_NAME} NAME)
+  string(REGEX REPLACE "\\." "-" ARTIFACT_FILENAME ${ARTIFACT_FILENAME})
   add_target(
     NAME
       upload-${ARTIFACT_FILENAME}
@@ -258,12 +263,14 @@ macro(upload_artifact)
       ${ARTIFACT_UPLOAD_COMMAND}
     WORKING_DIRECTORY
       ${ARTIFACT_WORKING_DIRECTORY}
+    OUTPUTS
+      ${ARTIFACT_WORKING_DIRECTORY}/.fixme/${ARTIFACT_FILENAME}
   )
-endmacro()
+endfunction()
 
-macro(add_custom_library)
+function(add_custom_library)
   set(args TARGET PREFIX CMAKE_BUILD_TYPE CMAKE_POSITION_INDEPENDENT_CODE CMAKE_C_FLAGS CMAKE_CXX_FLAGS CMAKE_LINKER_FLAGS CMAKE_PATH WORKING_DIRECTORY SOURCE_PATH BUILD_PATH)
-  set(multi_args LIBRARIES BYPRODUCTS INCLUDES CMAKE_TARGETS CMAKE_ARGS COMMAND)
+  set(multi_args LIBRARIES INCLUDES CMAKE_TARGETS CMAKE_ARGS COMMAND)
   cmake_parse_arguments(LIB "" "${args}" "${multi_args}" ${ARGN})
 
   if(NOT LIB_TARGET)
@@ -310,17 +317,17 @@ macro(add_custom_library)
   endforeach()
 
   if(LIB_COMMAND)
-    add_custom_target(
-      build-${LIB_NAME}
+    add_target(
+      NAME
+        build-${LIB_NAME}
       COMMENT
         "Building ${LIB_NAME}"
-      VERBATIM COMMAND
+      COMMAND
         ${LIB_COMMAND}
       WORKING_DIRECTORY
         ${${LIB_ID}_WORKING_DIRECTORY}
-      BYPRODUCTS
+      ARTIFACTS
         ${${LIB_ID}_LIBRARY_PATHS}
-        ${LIB_BYPRODUCTS}
     )
 
     if(TARGET clone-${LIB_NAME})
@@ -354,17 +361,20 @@ macro(add_custom_library)
       set(${LIB_ID}_CMAKE_PATH ${${LIB_ID}_CMAKE_PATH}/${LIB_CMAKE_PATH})
     endif()
 
-    add_custom_target(
-      configure-${LIB_NAME}
+    add_target(
+      NAME
+        configure-${LIB_NAME}
       COMMENT
         "Configuring ${LIB_NAME}"
-      VERBATIM COMMAND
+      COMMAND
         ${CMAKE_COMMAND}
           -S${${LIB_ID}_CMAKE_PATH}
           -B${${LIB_ID}_BUILD_PATH}
           ${${LIB_ID}_CMAKE_ARGS}
       WORKING_DIRECTORY
         ${${LIB_ID}_WORKING_DIRECTORY}
+      OUTPUTS
+        ${${LIB_ID}_WORKING_DIRECTORY}/CMakeCache.txt
     )
 
     if(TARGET clone-${LIB_NAME})
@@ -385,18 +395,18 @@ macro(add_custom_library)
       list(APPEND ${LIB_ID}_CMAKE_BUILD_ARGS --target ${target})
     endforeach()
 
-    add_custom_target(
-      build-${LIB_NAME}
+    add_target(
+      NAME
+        build-${LIB_NAME}
       COMMENT
         "Compiling ${LIB_NAME}"
-      VERBATIM COMMAND
+      COMMAND
         ${CMAKE_COMMAND}
           ${${LIB_ID}_CMAKE_BUILD_ARGS}
       WORKING_DIRECTORY
         ${${LIB_ID}_WORKING_DIRECTORY}
-      BYPRODUCTS
+      ARTIFACTS
         ${${LIB_ID}_LIBRARY_PATHS}
-        ${LIB_BYPRODUCTS}
       DEPENDS
         configure-${LIB_NAME}
     )
@@ -434,12 +444,12 @@ macro(add_custom_library)
   endif()
   
   include_directories(${${LIB_ID}_INCLUDE_PATHS})
-  target_include_directories(${bun} PRIVATE ${${LIB_ID}_INCLUDE_PATHS})
+  target_include_directories(bun-lib PRIVATE ${${LIB_ID}_INCLUDE_PATHS})
 
   if(TARGET clone-${LIB_NAME})
-    add_dependencies(${bun} clone-${LIB_NAME})
+    add_dependencies(bun-lib clone-${LIB_NAME})
   endif()
-  add_dependencies(${bun} ${LIB_NAME})
+  add_dependencies(bun-lib ${LIB_NAME})
 
-  target_link_libraries(${bun} PRIVATE ${${LIB_ID}_LIBRARY_PATHS})
-endmacro()
+  target_link_libraries(bun-lib PRIVATE ${${LIB_ID}_LIBRARY_PATHS})
+endfunction()

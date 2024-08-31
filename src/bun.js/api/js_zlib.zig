@@ -183,7 +183,6 @@ pub const ZlibEncoder = struct {
 
         var task = EncodeJob.new(.{
             .encoder = this,
-            .is_async = true,
         });
 
         {
@@ -243,7 +242,6 @@ pub const ZlibEncoder = struct {
     const EncodeJob = struct {
         task: JSC.WorkPoolTask = .{ .callback = &runTask },
         encoder: *ZlibEncoder,
-        is_async: bool,
 
         pub usingnamespace bun.New(@This());
 
@@ -281,11 +279,6 @@ pub const ZlibEncoder = struct {
                         this.encoder.stream.write(input.slice(), output) catch |e| {
                             any = true;
                             _ = this.encoder.pending_encode_job_count.fetchSub(1, .monotonic);
-                            if (!this.is_async) {
-                                this.encoder.closed = true;
-                                this.encoder.globalThis.throw("ZlibError: {s}", .{@errorName(e)});
-                                return;
-                            }
                             this.encoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "ZlibError: {s}", .{@errorName(e)}); // TODO propogate better error
                             break :outer;
                         };
@@ -321,7 +314,7 @@ pub const ZlibEncoder = struct {
                 }
             }
 
-            if (this.is_async and any) {
+            if (any) {
                 _ = this.encoder.has_pending_activity.fetchAdd(1, .monotonic);
                 this.encoder.poll_ref.refConcurrently(vm);
                 this.encoder.poll_ref.refConcurrently(vm);
@@ -555,7 +548,6 @@ pub const ZlibDecoder = struct {
 
         var task = DecodeJob.new(.{
             .decoder = this,
-            .is_async = true,
         });
 
         {
@@ -615,7 +607,6 @@ pub const ZlibDecoder = struct {
     const DecodeJob = struct {
         task: JSC.WorkPoolTask = .{ .callback = &runTask },
         decoder: *ZlibDecoder,
-        is_async: bool,
 
         pub usingnamespace bun.New(@This());
 
@@ -653,19 +644,6 @@ pub const ZlibDecoder = struct {
                         this.decoder.stream.writeAll(input.slice(), output) catch |e| {
                             any = true;
                             _ = this.decoder.pending_encode_job_count.fetchSub(1, .monotonic);
-                            if (!this.is_async) {
-                                this.decoder.closed = true;
-                                switch (e) {
-                                    error.ZlibError => {
-                                        const message = std.mem.sliceTo(this.decoder.stream.err_msg.?, 0);
-                                        this.decoder.globalThis.throw("{s}", .{message});
-                                        return;
-                                    },
-                                    else => {},
-                                }
-                                this.decoder.globalThis.throw("ZlibError: {s}", .{@errorName(e)});
-                                return;
-                            }
                             switch (e) {
                                 error.ZlibError => {
                                     const message = std.mem.sliceTo(this.decoder.stream.err_msg.?, 0);
@@ -714,7 +692,7 @@ pub const ZlibDecoder = struct {
                 }
             }
 
-            if (this.is_async and any) {
+            if (any) {
                 _ = this.decoder.has_pending_activity.fetchAdd(1, .monotonic);
                 this.decoder.poll_ref.refConcurrently(vm);
                 this.decoder.poll_ref.refConcurrently(vm);

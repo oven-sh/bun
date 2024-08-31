@@ -1205,11 +1205,11 @@ pub fn checkServerIdentity(
     comptime is_ssl: bool,
     socket: NewHTTPContext(is_ssl).HTTPSocket,
     certError: HTTPCertError,
-    ssl_ptr: *BoringSSL.SSL,
-    allow_proxy_url: bool,
+    sslPtr: *BoringSSL.SSL,
+    allowProxyUrl: bool,
 ) bool {
     if (client.flags.reject_unauthorized) {
-        if (BoringSSL.SSL_get_peer_cert_chain(ssl_ptr)) |cert_chain| {
+        if (BoringSSL.SSL_get_peer_cert_chain(sslPtr)) |cert_chain| {
             if (BoringSSL.sk_X509_value(cert_chain, 0)) |x509| {
 
                 // check if we need to report the error (probably to `checkServerIdentity` was informed from JS side)
@@ -1223,7 +1223,7 @@ pub fn checkServerIdentity(
                     assert(result_size == cert_size);
 
                     var hostname = client.hostname orelse client.url.hostname;
-                    if (allow_proxy_url) {
+                    if (allowProxyUrl) {
                         if (client.http_proxy) |proxy| {
                             hostname = proxy.hostname;
                         }
@@ -1248,7 +1248,7 @@ pub fn checkServerIdentity(
                     // fast path
 
                     var hostname = client.hostname orelse client.url.hostname;
-                    if (allow_proxy_url) {
+                    if (allowProxyUrl) {
                         if (client.http_proxy) |proxy| {
                             hostname = proxy.hostname;
                         }

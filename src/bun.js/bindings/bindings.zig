@@ -2912,6 +2912,15 @@ pub const JSGlobalObject = opaque {
         this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be of type {s}. Received {}", .{ argname, typename, bun.fmt.quote(ty_str.slice()) }).throw();
         return .zero;
     }
+    pub fn throwInvalidArgumentRangeValue(
+        this: *JSGlobalObject,
+        argname: []const u8,
+        typename: []const u8,
+        value: i64,
+    ) JSValue {
+        this.ERR_OUT_OF_RANGE("The \"{s}\" is out of range. {s}. Received {}", .{ argname, typename, value }).throw();
+        return .zero;
+    }
 
     pub fn createNotEnoughArguments(
         this: *JSGlobalObject,
@@ -3476,21 +3485,21 @@ pub const JSValue = enum(JSValueReprInt) {
         JSGenerator = 63,
         JSAsyncGenerator = 64,
         JSArrayIterator = 65,
-        JSMapIterator = 66,
-        JSSetIterator = 67,
-        JSStringIterator = 68,
-        JSPromise = 69,
-        JSMap = 70,
-        JSSet = 71,
-        JSWeakMap = 72,
-        JSWeakSet = 73,
-        WebAssemblyModule = 74,
-        WebAssemblyInstance = 75,
-        WebAssemblyGCObject = 76,
-        StringObject = 77,
-        DerivedStringObject = 78,
-
-        InternalFieldTuple = 79,
+        JSIterator = 66,
+        JSMapIterator = 67,
+        JSSetIterator = 68,
+        JSStringIterator = 69,
+        JSPromise = 70,
+        JSMap = 71,
+        JSSet = 72,
+        JSWeakMap = 73,
+        JSWeakSet = 74,
+        WebAssemblyModule = 75,
+        WebAssemblyInstance = 76,
+        WebAssemblyGCObject = 77,
+        StringObject = 78,
+        DerivedStringObject = 79,
+        InternalFieldTuple = 80,
 
         MaxJS = 0b11111111,
         Event = 0b11101111,
@@ -4422,7 +4431,7 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn jsNumberFromInt64(i: i64) JSValue {
-        if (i <= std.math.maxInt(i32)) {
+        if (i <= std.math.maxInt(i32) and i >= std.math.minInt(i32)) {
             return jsNumberFromInt32(@as(i32, @intCast(i)));
         }
 

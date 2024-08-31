@@ -76,9 +76,6 @@ const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 
 const kRealListen = Symbol("kRealListen");
 
-function closeNT(self) {
-  self.emit("close");
-}
 function endNT(socket, callback, err) {
   socket.end();
   callback(err);
@@ -308,6 +305,7 @@ const Socket = (function (InternalSocket) {
           _socket.resume();
         }
       },
+
       handshake(socket, success, verifyError) {
         const { data: self } = socket;
         self._securePending = false;
@@ -642,6 +640,14 @@ const Socket = (function (InternalSocket) {
     }
 
     _destroy(err, callback) {
+      const socket = this[bunSocketInternal];
+      if (socket) {
+        this[bunSocketInternal] = null;
+        // we still have a socket, call end before destroy
+        process.nextTick(endNT, socket, callback, err);
+        return;
+      }
+      // no socket, just destroy
       process.nextTick(closeNT, callback, err);
     }
 
@@ -655,6 +661,7 @@ const Socket = (function (InternalSocket) {
         this.#final_callback = callback;
       } else {
         // emit FIN not allowing half open
+        this[bunSocketInternal] = null;
         process.nextTick(endNT, socket, callback);
       }
     }
@@ -738,6 +745,14 @@ const Socket = (function (InternalSocket) {
       }
       socket.unref();
       return this;
+    }
+
+    // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/net.js#L785
+    destroySoon() {
+      if (this.writable) this.end();
+
+      if (this.writableFinished) this.destroy();
+      else this.once("finish", this.destroy);
     }
 
     _write(chunk, encoding, callback) {
@@ -1196,4 +1211,6 @@ export default {
   setDefaultAutoSelectFamilyAttemptTimeout: $zig("node_net_binding.zig", "setDefaultAutoSelectFamilyAttemptTimeout"),
 
   BlockList,
+  // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/net.js#L2456
+  Stream: Socket,
 };

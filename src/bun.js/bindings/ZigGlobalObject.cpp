@@ -958,7 +958,7 @@ extern "C" bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject* g
 
 String GlobalObject::defaultAgentClusterID()
 {
-    return makeString(ProcessIdent::identifier().toUInt64(), "-default"_s);
+    return makeString(WebCore::Process::identifier().toUInt64(), "-default"_s);
 }
 
 String GlobalObject::agentClusterID() const

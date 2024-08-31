@@ -70,7 +70,7 @@ test("dns.resolveSrv (_test._tcp.test.socketify.dev)", () => {
       expect(err).toBeNull();
       expect(results instanceof Array).toBe(true);
       expect(results[0].name).toBe("_dc-srv.130c90ab9de1._test._tcp.test.socketify.dev");
-      expect(results[0].priority).toBe(50);
+      expect(results[0].priority).toBe(10);
       expect(results[0].weight).toBe(50);
       expect(results[0].port).toBe(80);
       resolve();

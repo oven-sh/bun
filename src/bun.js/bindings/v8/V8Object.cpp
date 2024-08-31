@@ -32,7 +32,7 @@ static FieldContainer* getInternalFieldsContainer(Object* object)
 Local<Object> Object::New(Isolate* isolate)
 {
     JSFinalObject* object = JSC::constructEmptyObject(isolate->globalObject());
-    return isolate->currentHandleScope()->createLocal<Object>(object);
+    return isolate->currentHandleScope()->createLocal<Object>(isolate->vm(), object);
 }
 
 Maybe<bool> Object::Set(Local<Context> context, Local<Value> key, Local<Value> value)
@@ -65,7 +65,9 @@ void Object::SetInternalField(int index, Local<Data> data)
     auto* fields = getInternalFieldsContainer(this);
     RELEASE_ASSERT(fields, "object has no internal fields");
     RELEASE_ASSERT(index >= 0 && index < fields->size(), "internal field index is out of bounds");
-    fields->at(index) = data->localToJSValue(Isolate::GetCurrent()->globalInternals());
+    JSObject* js_object = localToObjectPointer<JSObject>();
+    auto* globalObject = JSC::jsDynamicCast<Zig::GlobalObject*>(js_object->globalObject());
+    fields->at(index).set(globalObject->vm(), localToCell(), data->localToJSValue(globalObject->V8GlobalInternals()));
 }
 
 Local<Data> Object::GetInternalField(int index)
@@ -77,12 +79,13 @@ Local<Data> Object::SlowGetInternalField(int index)
 {
     auto* fields = getInternalFieldsContainer(this);
     JSObject* js_object = localToObjectPointer<JSObject>();
-    HandleScope* handleScope = Isolate::fromGlobalObject(JSC::jsDynamicCast<Zig::GlobalObject*>(js_object->globalObject()))->currentHandleScope();
+    auto* globalObject = JSC::jsDynamicCast<Zig::GlobalObject*>(js_object->globalObject());
+    HandleScope* handleScope = Isolate::fromGlobalObject(globalObject)->currentHandleScope();
     if (fields && index >= 0 && index < fields->size()) {
         auto& field = fields->at(index);
-        return handleScope->createLocal<Data>(field);
+        return handleScope->createLocal<Data>(globalObject->vm(), field.get());
     }
-    return handleScope->createLocal<Data>(JSC::jsUndefined());
+    return handleScope->createLocal<Data>(globalObject->vm(), JSC::jsUndefined());
 }
 
 }

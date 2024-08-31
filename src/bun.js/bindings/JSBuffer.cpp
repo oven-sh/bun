@@ -77,6 +77,7 @@ using namespace JSC;
 using namespace WebCore;
 
 JSC_DECLARE_HOST_FUNCTION(constructJSBuffer);
+JSC_DECLARE_HOST_FUNCTION(callJSBuffer);
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-function"
@@ -1706,7 +1707,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeEncodingBody(JS
         return {};
     }
 
-    size_t max_length = std::min(max - offset, max);
+    size_t max_length = std::min(length - offset, max);
 
     RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, max_length, encoding));
 }
@@ -1901,7 +1902,7 @@ public:
 
 private:
     JSBufferConstructor(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
-        : Base(vm, structure, constructJSBuffer, constructJSBuffer)
+        : Base(vm, structure, callJSBuffer, constructJSBuffer)
 
     {
     }
@@ -2268,16 +2269,16 @@ JSC::JSObject* createBufferConstructor(JSC::VM& vm, JSC::JSGlobalObject* globalO
 
 } // namespace WebCore
 
-JSC_DEFINE_HOST_FUNCTION(constructJSBuffer, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+static inline JSC::EncodedJSValue createJSBufferFromJS(JSC::JSGlobalObject* lexicalGlobalObject, JSValue newTarget, ArgList args)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    size_t argsCount = callFrame->argumentCount();
+    size_t argsCount = args.size();
     if (argsCount == 0) {
         RELEASE_AND_RETURN(throwScope, constructBufferEmpty(lexicalGlobalObject));
     }
-    JSValue distinguishingArg = callFrame->uncheckedArgument(0);
-    JSValue encodingArg = argsCount > 1 ? callFrame->uncheckedArgument(1) : JSValue();
+    JSValue distinguishingArg = args.at(0);
+    JSValue encodingArg = argsCount > 1 ? args.at(1) : JSValue();
     auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
 
     if (distinguishingArg.isAnyInt()) {
@@ -2354,14 +2355,14 @@ JSC_DEFINE_HOST_FUNCTION(constructJSBuffer, (JSC::JSGlobalObject * lexicalGlobal
             std::optional<size_t> length;
             if (argsCount > 1) {
 
-                offset = callFrame->uncheckedArgument(1).toTypedArrayIndex(globalObject, "byteOffset"_s);
+                offset = args.at(1).toTypedArrayIndex(globalObject, "byteOffset"_s);
 
                 // TOOD: return Node.js error
                 RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
 
                 if (argsCount > 2) {
                     // If the length value is present but undefined, treat it as missing.
-                    JSValue lengthValue = callFrame->uncheckedArgument(2);
+                    JSValue lengthValue = args.at(2);
                     if (!lengthValue.isUndefined()) {
                         length = lengthValue.toTypedArrayIndex(globalObject, "length"_s);
 
@@ -2409,13 +2410,13 @@ JSC_DEFINE_HOST_FUNCTION(constructJSBuffer, (JSC::JSGlobalObject * lexicalGlobal
 
     JSC::JSObject* constructor = lexicalGlobalObject->m_typedArrayUint8.constructor(lexicalGlobalObject);
 
-    MarkedArgumentBuffer args;
-    args.append(distinguishingArg);
+    MarkedArgumentBuffer argsBuffer;
+    argsBuffer.append(distinguishingArg);
     for (size_t i = 1; i < argsCount; ++i)
-        args.append(callFrame->uncheckedArgument(i));
+        argsBuffer.append(args.at(i));
 
-    JSValue target = callFrame->newTarget();
-    if (!target) {
+    JSValue target = newTarget;
+    if (!target || !target.isCell()) {
         target = globalObject->JSBufferConstructor();
     }
 
@@ -2425,6 +2426,16 @@ JSC_DEFINE_HOST_FUNCTION(constructJSBuffer, (JSC::JSGlobalObject * lexicalGlobal
     }
 
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(object));
+}
+
+JSC_DEFINE_HOST_FUNCTION(callJSBuffer, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    return createJSBufferFromJS(lexicalGlobalObject, callFrame->thisValue(), ArgList(callFrame));
+}
+
+JSC_DEFINE_HOST_FUNCTION(constructJSBuffer, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    return createJSBufferFromJS(lexicalGlobalObject, callFrame->newTarget(), ArgList(callFrame));
 }
 
 bool JSBuffer__isBuffer(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue value)

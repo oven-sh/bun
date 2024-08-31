@@ -259,9 +259,9 @@ function Agent(options = kEmptyObject) {
   if (options.noDelay === undefined) options.noDelay = true;
 
   // Don't confuse net and make it think that we're connecting to a pipe
-  this.requests = kEmptyObject;
-  this.sockets = kEmptyObject;
-  this.freeSockets = kEmptyObject;
+  this.requests = Object.create(null);
+  this.sockets = Object.create(null);
+  this.freeSockets = Object.create(null);
 
   this.keepAliveMsecs = options.keepAliveMsecs || 1000;
   this.keepAlive = options.keepAlive || false;
@@ -1133,6 +1133,16 @@ Object.defineProperty(OutgoingMessage.prototype, "finished", {
   },
 });
 
+function emitContinueAndSocketNT(self) {
+  if (self.destroyed) return;
+  // Ref: https://github.com/nodejs/node/blob/f63e8b7fa7a4b5e041ddec67307609ec8837154f/lib/_http_client.js#L803-L839
+  self.emit("socket", self.socket);
+
+  //Emit continue event for the client (internally we auto handle it)
+  if (!self._closed && self.getHeader("expect") === "100-continue") {
+    self.emit("continue");
+  }
+}
 function emitCloseNT(self) {
   if (!self._closed) {
     self._closed = true;
@@ -1888,11 +1898,7 @@ class ClientRequest extends OutgoingMessage {
 
     this._httpMessage = this;
 
-    process.nextTick(() => {
-      // Ref: https://github.com/nodejs/node/blob/f63e8b7fa7a4b5e041ddec67307609ec8837154f/lib/_http_client.js#L803-L839
-      if (this.destroyed) return;
-      this.emit("socket", this.socket);
-    });
+    process.nextTick(emitContinueAndSocketNT, this);
   }
 
   setSocketKeepAlive(enable = true, initialDelay = 0) {
@@ -2155,7 +2161,7 @@ function _writeHead(statusCode, reason, obj, response) {
   } else {
     // writeHead(statusCode[, headers])
     if (!response.statusMessage) response.statusMessage = STATUS_CODES[statusCode] || "unknown";
-    obj = reason;
+    obj ??= reason;
   }
   response.statusCode = statusCode;
 
@@ -2244,6 +2250,9 @@ function emitAbortNextTick(self) {
   self.emit("abort");
 }
 
+const setMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "setMaxHTTPHeaderSize", 1);
+const getMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "getMaxHTTPHeaderSize", 0);
+
 var globalAgent = new Agent();
 export default {
   Agent,
@@ -2255,7 +2264,12 @@ export default {
   IncomingMessage,
   request,
   get,
-  maxHeaderSize: 16384,
+  get maxHeaderSize() {
+    return getMaxHTTPHeaderSize();
+  },
+  set maxHeaderSize(value) {
+    setMaxHTTPHeaderSize(value);
+  },
   validateHeaderName,
   validateHeaderValue,
   setMaxIdleHTTPParsers(max) {

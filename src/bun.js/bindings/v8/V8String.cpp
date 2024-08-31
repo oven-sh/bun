@@ -1,6 +1,7 @@
 #include "V8String.h"
 
 #include "V8HandleScope.h"
+#include "wtf/SIMDUTF.h"
 
 using JSC::JSString;
 
@@ -22,12 +23,103 @@ MaybeLocal<String> String::NewFromUtf8(Isolate* isolate, char const* data, NewSt
         return MaybeLocal<String>();
     }
 
+    auto& vm = isolate->vm();
     std::span<const unsigned char> span(reinterpret_cast<const unsigned char*>(data), length);
     // ReplacingInvalidSequences matches how v8 behaves here
     auto string = WTF::String::fromUTF8ReplacingInvalidSequences(span);
-    RELEASE_ASSERT(!string.isNull());
-    JSString* jsString = JSC::jsString(isolate->vm(), string);
-    return MaybeLocal<String>(isolate->globalInternals()->currentHandleScope()->createLocal<String>(jsString));
+    JSString* jsString = JSC::jsString(vm, string);
+    return MaybeLocal<String>(isolate->currentHandleScope()->createLocal<String>(vm, jsString));
+}
+
+MaybeLocal<String> String::NewFromOneByte(Isolate* isolate, const uint8_t* data, NewStringType type, int signed_length)
+{
+    (void)type;
+    size_t length = 0;
+    if (signed_length < 0) {
+        length = strlen(reinterpret_cast<const char*>(data));
+    } else {
+        length = static_cast<int>(signed_length);
+    }
+
+    if (length > JSString::MaxLength) {
+        // empty
+        return MaybeLocal<String>();
+    }
+
+    auto& vm = isolate->vm();
+    std::span<const unsigned char> span(data, length);
+    WTF::String string(span);
+    JSString* jsString = JSC::jsString(vm, string);
+    return MaybeLocal<String>(isolate->currentHandleScope()->createLocal<String>(vm, jsString));
+}
+
+int String::Utf8Length(Isolate* isolate) const
+{
+    auto jsString = localToObjectPointer<JSString>();
+    if (jsString->length() == 0) {
+        return 0;
+    }
+
+    auto str = jsString->view(isolate->globalObject());
+    if (str->is8Bit()) {
+        const auto span = str->span8();
+        size_t len = simdutf::utf8_length_from_latin1(reinterpret_cast<const char*>(span.data()), span.size());
+        return static_cast<int>(len);
+    } else {
+        const auto span = str->span16();
+        size_t len = simdutf::utf8_length_from_utf16(span.data(), span.size());
+        return static_cast<int>(len);
+    }
+}
+
+bool String::IsOneByte() const
+{
+    auto jsString = localToObjectPointer<JSString>();
+    if (jsString->length() == 0) {
+        return true;
+    }
+    auto impl = jsString->tryGetValue();
+    return impl->is8Bit();
+}
+
+bool String::ContainsOnlyOneByte() const
+{
+    auto jsString = localToObjectPointer<JSString>();
+    if (jsString->length() == 0) {
+        return true;
+    }
+    auto impl = jsString->tryGetValue();
+    return impl->containsOnlyLatin1();
+}
+
+bool String::IsExternal() const
+{
+    auto jsString = localToObjectPointer<JSString>();
+    if (jsString->length() == 0) {
+        return false;
+    }
+    auto impl = jsString->tryGetValue();
+    return !impl->isNull() && impl->impl()->isExternal();
+}
+
+bool String::IsExternalTwoByte() const
+{
+    auto jsString = localToObjectPointer<JSString>();
+    if (jsString->length() == 0) {
+        return false;
+    }
+    auto impl = jsString->tryGetValue();
+    return !impl->isNull() && impl->impl()->isExternal() && !impl->is8Bit();
+}
+
+bool String::IsExternalOneByte() const
+{
+    auto jsString = localToObjectPointer<JSString>();
+    if (jsString->length() == 0) {
+        return false;
+    }
+    auto impl = jsString->tryGetValue();
+    return !impl->isNull() && impl->impl()->isExternal() && impl->is8Bit();
 }
 
 extern "C" size_t TextEncoder__encodeInto8(const LChar* stringPtr, size_t stringLen, void* ptr, size_t len);
@@ -69,9 +161,7 @@ int String::WriteUtf8(Isolate* isolate, char* buffer, int length, int* nchars_re
 int String::Length() const
 {
     auto jsString = localToObjectPointer<JSString>();
-    RELEASE_ASSERT(jsString->isString());
-    WTF::String s = jsString->getString(Isolate::GetCurrent()->globalObject());
-    return s.length();
+    return static_cast<int>(jsString->length());
 }
 
 }

@@ -15,14 +15,13 @@ HandleScope::HandleScope(Isolate* isolate_)
 HandleScope::~HandleScope()
 {
     isolate->globalInternals()->setCurrentHandleScope(prev);
+    buffer = nullptr;
 }
 
 uintptr_t* HandleScope::CreateHandle(internal::Isolate* isolate, uintptr_t value)
 {
-    // TODO figure out if this is actually used directly
-    V8_UNIMPLEMENTED();
-    // return buffer->createHandle(value);
-    return nullptr;
+    auto* handleScope = reinterpret_cast<Isolate*>(isolate)->globalInternals()->currentHandleScope();
+    return &handleScope->buffer->createHandleFromExistingHandle(TaggedPointer::fromRaw(value))->value;
 }
 
 }

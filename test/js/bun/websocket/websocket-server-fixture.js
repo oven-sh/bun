@@ -8,6 +8,7 @@
 
 let pending = [];
 using server = Bun.serve({
+  port: 0,
   websocket: {
     open(ws) {
       globalThis.sockets ??= [];

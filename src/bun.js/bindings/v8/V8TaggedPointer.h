@@ -81,13 +81,10 @@ struct TaggedPointer {
 
     JSC::JSValue getJSValue() const
     {
-        // TODO handle heap doubles
         int32_t smi;
         if (getSmi(smi)) {
             return JSC::jsNumber(smi);
         }
-        // TODO(@190n) this needs to be a pointer to a specific class for v8 objects
-        // maybe not?
         return getPtr();
     }
 };

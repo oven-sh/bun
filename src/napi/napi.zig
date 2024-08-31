@@ -1335,28 +1335,24 @@ pub export fn napi_add_env_cleanup_hook(env: napi_env, fun: ?*const fn (?*anyopa
 }
 pub export fn napi_remove_env_cleanup_hook(env: napi_env, fun: ?*const fn (?*anyopaque) callconv(.C) void, arg: ?*anyopaque) napi_status {
     log("napi_remove_env_cleanup_hook", .{});
-    if (env.bunVM().rare_data == null or fun == null)
+
+    // Avoid looking up env.bunVM().
+    if (bun.Global.isExiting()) {
+        return .ok;
+    }
+
+    const vm = JSC.VirtualMachine.get();
+
+    if (vm.rare_data == null or fun == null or vm.isShuttingDown())
         return .ok;
 
-    var rare_data = env.bunVM().rare_data.?;
-    var hook = rare_data.cleanup_hook orelse return .ok;
-    const cmp = JSC.RareData.CleanupHook.from(env, arg, fun.?);
-    if (hook.eql(cmp)) {
-        env.bunVM().allocator.destroy(hook);
-        rare_data.cleanup_hook = null;
-        rare_data.tail_cleanup_hook = null;
-    }
-    while (hook.next) |current| {
+    var rare_data = vm.rare_data.?;
+    const cmp = JSC.RareData.CleanupHook.init(env, arg, fun.?);
+    for (rare_data.cleanup_hooks.items, 0..) |*hook, i| {
         if (hook.eql(cmp)) {
-            if (current.next) |next| {
-                hook.next = next;
-            } else {
-                hook.next = null;
-            }
-            env.bunVM().allocator.destroy(current);
-            return .ok;
+            _ = rare_data.cleanup_hooks.orderedRemove(i);
+            break;
         }
-        hook = current;
     }
 
     return .ok;
@@ -1744,6 +1740,16 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn _ZNK2v85Value8IsStringEv() *anyopaque;
     pub extern fn _ZN2v87Boolean3NewEPNS_7IsolateEb() *anyopaque;
     pub extern fn _ZN2v86Object16GetInternalFieldEi() *anyopaque;
+    pub extern fn _ZN2v87Context10GetIsolateEv() *anyopaque;
+    pub extern fn _ZN2v86String14NewFromOneByteEPNS_7IsolateEPKhNS_13NewStringTypeEi() *anyopaque;
+    pub extern fn _ZNK2v86String10Utf8LengthEPNS_7IsolateE() *anyopaque;
+    pub extern fn _ZNK2v86String10IsExternalEv() *anyopaque;
+    pub extern fn _ZNK2v86String17IsExternalOneByteEv() *anyopaque;
+    pub extern fn _ZNK2v86String17IsExternalTwoByteEv() *anyopaque;
+    pub extern fn _ZNK2v86String9IsOneByteEv() *anyopaque;
+    pub extern fn _ZNK2v86String19ContainsOnlyOneByteEv() *anyopaque;
+    pub extern fn _ZN2v812api_internal18GlobalizeReferenceEPNS_8internal7IsolateEm() *anyopaque;
+    pub extern fn _ZN2v812api_internal13DisposeGlobalEPm() *anyopaque;
 } else struct {
     // MSVC name mangling is different than it is on unix.
     // To make this easier to deal with, I have provided a script to generate the list of functions.
@@ -1768,7 +1774,7 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"?Set@Object@v8@@QEAA?AV?$Maybe@_N@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@1@Z"() *anyopaque;
     pub extern fn @"?SetInternalField@Object@v8@@QEAAXHV?$Local@VData@v8@@@2@@Z"() *anyopaque;
     pub extern fn @"?SlowGetInternalField@Object@v8@@AEAA?AV?$Local@VData@v8@@@2@H@Z"() *anyopaque;
-    pub extern fn @"?CreateHandle@HandleScope@v8@@QEAAPEA_KPEAVIsolate@internal@2@_K@Z"() *anyopaque;
+    pub extern fn @"?CreateHandle@HandleScope@v8@@KAPEA_KPEAVIsolate@internal@2@_K@Z"() *anyopaque;
     pub extern fn @"??0HandleScope@v8@@QEAA@PEAVIsolate@1@@Z"() *anyopaque;
     pub extern fn @"??1HandleScope@v8@@QEAA@XZ"() *anyopaque;
     pub extern fn @"?GetFunction@FunctionTemplate@v8@@QEAA?AV?$MaybeLocal@VFunction@v8@@@2@V?$Local@VContext@v8@@@2@@Z"() *anyopaque;
@@ -1800,6 +1806,16 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"?IsString@Value@v8@@QEBA_NXZ"() *anyopaque;
     pub extern fn @"?New@Boolean@v8@@SA?AV?$Local@VBoolean@v8@@@2@PEAVIsolate@2@_N@Z"() *anyopaque;
     pub extern fn @"?GetInternalField@Object@v8@@QEAA?AV?$Local@VData@v8@@@2@H@Z"() *anyopaque;
+    pub extern fn @"?GetIsolate@Context@v8@@QEAAPEAVIsolate@2@XZ"() *anyopaque;
+    pub extern fn @"?NewFromOneByte@String@v8@@SA?AV?$MaybeLocal@VString@v8@@@2@PEAVIsolate@2@PEBEW4NewStringType@2@H@Z"() *anyopaque;
+    pub extern fn @"?IsExternal@String@v8@@QEBA_NXZ"() *anyopaque;
+    pub extern fn @"?IsExternalOneByte@String@v8@@QEBA_NXZ"() *anyopaque;
+    pub extern fn @"?IsExternalTwoByte@String@v8@@QEBA_NXZ"() *anyopaque;
+    pub extern fn @"?IsOneByte@String@v8@@QEBA_NXZ"() *anyopaque;
+    pub extern fn @"?Utf8Length@String@v8@@QEBAHPEAVIsolate@2@@Z"() *anyopaque;
+    pub extern fn @"?ContainsOnlyOneByte@String@v8@@QEBA_NXZ"() *anyopaque;
+    pub extern fn @"?GlobalizeReference@api_internal@v8@@YAPEA_KPEAVIsolate@internal@2@_K@Z"() *anyopaque;
+    pub extern fn @"?DisposeGlobal@api_internal@v8@@YAXPEA_K@Z"() *anyopaque;
 };
 
 pub fn fixDeadCodeElimination() void {

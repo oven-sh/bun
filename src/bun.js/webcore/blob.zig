@@ -260,8 +260,9 @@ pub const Blob = struct {
                     joiner.pushStatic("\r\n\r\n");
 
                     if (blob.store) |store| {
-                        blob.resolveSize();
-
+                        if (blob.size == Blob.max_size) {
+                            blob.resolveSize();
+                        }
                         switch (store.data) {
                             .file => |file| {
 
@@ -650,8 +651,12 @@ pub const Blob = struct {
         _ = Blob__getFileNameString;
     }
 
-    pub fn writeFormatForSize(size: usize, writer: anytype, comptime enable_ansi_colors: bool) !void {
-        try writer.writeAll(comptime Output.prettyFmt("<r>Blob<r>", enable_ansi_colors));
+    pub fn writeFormatForSize(is_jdom_file: bool, size: usize, writer: anytype, comptime enable_ansi_colors: bool) !void {
+        if (is_jdom_file) {
+            try writer.writeAll(comptime Output.prettyFmt("<r>File<r>", enable_ansi_colors));
+        } else {
+            try writer.writeAll(comptime Output.prettyFmt("<r>Blob<r>", enable_ansi_colors));
+        }
         try writer.print(
             comptime Output.prettyFmt(" (<yellow>{any}<r>)", enable_ansi_colors),
             .{
@@ -660,11 +665,15 @@ pub const Blob = struct {
         );
     }
 
-    pub fn writeFormat(this: *const Blob, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
+    pub fn writeFormat(this: *Blob, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         const Writer = @TypeOf(writer);
 
         if (this.isDetached()) {
-            try writer.writeAll(comptime Output.prettyFmt("<d>[<r>Blob<r> detached<d>]<r>", enable_ansi_colors));
+            if (this.is_jsdom_file) {
+                try writer.writeAll(comptime Output.prettyFmt("<d>[<r>File<r> detached<d>]<r>", enable_ansi_colors));
+            } else {
+                try writer.writeAll(comptime Output.prettyFmt("<d>[<r>Blob<r> detached<d>]<r>", enable_ansi_colors));
+            }
             return;
         }
 
@@ -687,7 +696,7 @@ pub const Blob = struct {
                             if (comptime Environment.isWindows) {
                                 if (fd_impl.kind == .uv) {
                                     try writer.print(
-                                        comptime Output.prettyFmt(" (<r>fd: <yellow>{d}<r>)<r>", enable_ansi_colors),
+                                        comptime Output.prettyFmt(" (<r>fd<d>:<r> <yellow>{d}<r>)<r>", enable_ansi_colors),
                                         .{fd_impl.uv()},
                                     );
                                 } else {
@@ -696,13 +705,13 @@ pub const Blob = struct {
                                         @panic("this shouldn't be reachable.");
                                     }
                                     try writer.print(
-                                        comptime Output.prettyFmt(" (<r>fd: <yellow>{any}<r>)<r>", enable_ansi_colors),
+                                        comptime Output.prettyFmt(" (<r>fd<d>:<r> <yellow>{any}<r>)<r>", enable_ansi_colors),
                                         .{fd_impl.system()},
                                     );
                                 }
                             } else {
                                 try writer.print(
-                                    comptime Output.prettyFmt(" (<r>fd: <yellow>{d}<r>)<r>", enable_ansi_colors),
+                                    comptime Output.prettyFmt(" (<r>fd<d>:<r> <yellow>{d}<r>)<r>", enable_ansi_colors),
                                     .{fd_impl.system()},
                                 );
                             }
@@ -710,28 +719,46 @@ pub const Blob = struct {
                     }
                 },
                 .bytes => {
-                    try writeFormatForSize(this.size, writer, enable_ansi_colors);
+                    try writeFormatForSize(this.is_jsdom_file, this.size, writer, enable_ansi_colors);
                 },
             }
         }
 
-        if (this.content_type.len > 0 or this.offset > 0) {
+        const show_name = (this.is_jsdom_file and this.getNameString() != null) or (!this.name.isEmpty() and this.store != null and this.store.?.data == .bytes);
+        if (this.content_type.len > 0 or this.offset > 0 or show_name or this.last_modified != 0.0) {
             try writer.writeAll(" {\n");
             {
                 formatter.indent += 1;
                 defer formatter.indent -= 1;
 
+                if (show_name) {
+                    try formatter.writeIndent(Writer, writer);
+
+                    try writer.print(
+                        comptime Output.prettyFmt("name<d>:<r> <green>\"{}\"<r>", enable_ansi_colors),
+                        .{
+                            this.getNameString() orelse bun.String.empty,
+                        },
+                    );
+
+                    if (this.content_type.len > 0 or this.offset > 0 or this.last_modified != 0) {
+                        try formatter.printComma(Writer, writer, enable_ansi_colors);
+                    }
+
+                    try writer.writeAll("\n");
+                }
+
                 if (this.content_type.len > 0) {
                     try formatter.writeIndent(Writer, writer);
                     try writer.print(
-                        comptime Output.prettyFmt("type: <green>\"{s}\"<r>", enable_ansi_colors),
+                        comptime Output.prettyFmt("type<d>:<r> <green>\"{s}\"<r>", enable_ansi_colors),
                         .{
                             this.content_type,
                         },
                     );
 
-                    if (this.offset > 0) {
-                        formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+                    if (this.offset > 0 or this.last_modified != 0) {
+                        try formatter.printComma(Writer, writer, enable_ansi_colors);
                     }
 
                     try writer.writeAll("\n");
@@ -741,9 +768,26 @@ pub const Blob = struct {
                     try formatter.writeIndent(Writer, writer);
 
                     try writer.print(
-                        comptime Output.prettyFmt("offset: <yellow>{d}<r>\n", enable_ansi_colors),
+                        comptime Output.prettyFmt("offset<d>:<r> <yellow>{d}<r>\n", enable_ansi_colors),
                         .{
                             this.offset,
+                        },
+                    );
+
+                    if (this.last_modified != 0) {
+                        try formatter.printComma(Writer, writer, enable_ansi_colors);
+                    }
+
+                    try writer.writeAll("\n");
+                }
+
+                if (this.last_modified != 0) {
+                    try formatter.writeIndent(Writer, writer);
+
+                    try writer.print(
+                        comptime Output.prettyFmt("lastModified<d>:<r> <yellow>{d}<r>\n", enable_ansi_colors),
+                        .{
+                            this.last_modified,
                         },
                     );
                 }
@@ -3384,8 +3428,9 @@ pub const Blob = struct {
             const vm = globalThis.bunVM();
             const fd: bun.FileDescriptor = if (pathlike == .fd) pathlike.fd else brk: {
                 var file_path: bun.PathBuffer = undefined;
+                const path = pathlike.path.sliceZ(&file_path);
                 switch (bun.sys.open(
-                    pathlike.path.sliceZ(&file_path),
+                    path,
                     bun.O.WRONLY | bun.O.CREAT | bun.O.NONBLOCK,
                     write_permissions,
                 )) {
@@ -3393,7 +3438,7 @@ pub const Blob = struct {
                         break :brk result;
                     },
                     .err => |err| {
-                        globalThis.throwInvalidArguments("Failed to create FileSink: {}", .{err.getErrno()});
+                        globalThis.throwValue(err.withPath(path).toJSC(globalThis));
                         return JSValue.jsUndefined();
                     },
                 }
@@ -3426,7 +3471,7 @@ pub const Blob = struct {
             if (is_stdout_or_stderr) {
                 switch (sink.writer.startSync(fd, false)) {
                     .err => |err| {
-                        globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
+                        globalThis.throwValue(err.toJSC(globalThis));
                         sink.deref();
 
                         return JSC.JSValue.zero;
@@ -3436,7 +3481,7 @@ pub const Blob = struct {
             } else {
                 switch (sink.writer.start(fd, true)) {
                     .err => |err| {
-                        globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
+                        globalThis.throwValue(err.toJSC(globalThis));
                         sink.deref();
 
                         return JSC.JSValue.zero;
@@ -3640,21 +3685,24 @@ pub const Blob = struct {
         return ZigString.Empty.toJS(globalThis);
     }
 
+    pub fn getNameString(this: *Blob) ?bun.String {
+        if (this.name.tag != .Dead) return this.name;
+
+        if (this.getFileName()) |path| {
+            this.name = bun.String.createUTF8(path);
+            return this.name;
+        }
+
+        return null;
+    }
+
     // TODO: Move this to a separate `File` object or BunFile
     pub fn getName(
         this: *Blob,
         _: JSC.JSValue,
         globalThis: *JSC.JSGlobalObject,
     ) JSValue {
-        if (this.name.tag != .Dead) return this.name.toJS(globalThis);
-
-        if (this.getFileName()) |path| {
-            var str = bun.String.createUTF8(path);
-            this.name = str;
-            return str.toJS(globalThis);
-        }
-
-        return JSValue.undefined;
+        return if (this.getNameString()) |name| name.toJS(globalThis) else .undefined;
     }
 
     pub fn setName(
@@ -3672,8 +3720,13 @@ pub const Blob = struct {
         }
         if (value.isString()) {
             this.name.deref();
-            this.name = bun.String.tryFromJS(value, globalThis) orelse return false;
-            this.name.ref();
+
+            this.name = bun.String.tryFromJS(value, globalThis) orelse {
+                // Handle allocation failure.
+                this.name = bun.String.empty;
+                return false;
+            };
+            // We don't need to increment the reference count since tryFromJS already did it.
             Blob.nameSetCached(jsThis, globalThis, value);
             return true;
         }
@@ -4282,10 +4335,13 @@ pub const Blob = struct {
     pub fn toArrayBufferViewWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime lifetime: Lifetime, comptime TypedArrayView: JSC.JSValue.JSType) JSValue {
         switch (comptime lifetime) {
             .clone => {
-                if (buf.len > JSC.synthetic_allocation_limit) {
-                    global.throwOutOfMemory();
-                    this.detach();
-                    return JSValue.zero;
+                if (TypedArrayView != .ArrayBuffer) {
+                    // ArrayBuffer doesn't have this limit.
+                    if (buf.len > JSC.synthetic_allocation_limit) {
+                        global.throwOutOfMemory();
+                        this.detach();
+                        return JSValue.zero;
+                    }
                 }
 
                 if (comptime Environment.isLinux) {
@@ -4322,7 +4378,7 @@ pub const Blob = struct {
                 return JSC.ArrayBuffer.create(global, buf, TypedArrayView);
             },
             .share => {
-                if (buf.len > JSC.synthetic_allocation_limit) {
+                if (buf.len > JSC.synthetic_allocation_limit and TypedArrayView != .ArrayBuffer) {
                     global.throwOutOfMemory();
                     return JSValue.zero;
                 }
@@ -4336,7 +4392,7 @@ pub const Blob = struct {
                 );
             },
             .transfer => {
-                if (buf.len > JSC.synthetic_allocation_limit) {
+                if (buf.len > JSC.synthetic_allocation_limit and TypedArrayView != .ArrayBuffer) {
                     global.throwOutOfMemory();
                     this.detach();
                     return JSValue.zero;
@@ -4352,7 +4408,7 @@ pub const Blob = struct {
                 );
             },
             .temporary => {
-                if (buf.len > JSC.synthetic_allocation_limit) {
+                if (buf.len > JSC.synthetic_allocation_limit and TypedArrayView != .ArrayBuffer) {
                     global.throwOutOfMemory();
                     bun.default_allocator.free(buf);
                     return JSValue.zero;

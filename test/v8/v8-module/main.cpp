@@ -2,85 +2,57 @@
 
 #include <cinttypes>
 #include <cstdarg>
+#include <iomanip>
+#include <iostream>
 
 using namespace v8;
 
+#define LOG_EXPR(e) std::cout << #e << " = " << (e) << std::endl
+
+#define LOG_VALUE_KIND(v)                                                      \
+  do {                                                                         \
+    LOG_EXPR(v->IsUndefined());                                                \
+    LOG_EXPR(v->IsNull());                                                     \
+    LOG_EXPR(v->IsNullOrUndefined());                                          \
+    LOG_EXPR(v->IsTrue());                                                     \
+    LOG_EXPR(v->IsFalse());                                                    \
+    LOG_EXPR(v->IsBoolean());                                                  \
+    LOG_EXPR(v->IsString());                                                   \
+    LOG_EXPR(v->IsObject());                                                   \
+    LOG_EXPR(v->IsNumber());                                                   \
+  } while (0)
+
 namespace v8tests {
 
-enum class ValueKind : uint16_t {
-  Undefined = 1 << 0,
-  Null = 1 << 1,
-  NullOrUndefined = 1 << 2,
-  True = 1 << 3,
-  False = 1 << 4,
-  Boolean = 1 << 5,
-  String = 1 << 6,
-  Object = 1 << 7,
-  Number = 1 << 8,
-};
+static void log_buffer(const char *buf, int len) {
+  for (int i = 0; i < len; i++) {
+    printf("buf[%d] = 0x%02x\n", i, buf[i]);
+  }
+}
 
-static bool check_value_kind(Local<Value> value, ValueKind kind) {
-  uint16_t matched_kinds = 0;
+static std::string describe(Isolate *isolate, Local<Value> value) {
   if (value->IsUndefined()) {
-    matched_kinds |= static_cast<uint16_t>(ValueKind::Undefined);
+    return "undefined";
+  } else if (value->IsNull()) {
+    return "null";
+  } else if (value->IsTrue()) {
+    return "true";
+  } else if (value->IsFalse()) {
+    return "false";
+  } else if (value->IsString()) {
+    char buf[1024] = {0};
+    value.As<String>()->WriteUtf8(isolate, buf, sizeof(buf) - 1);
+    std::string result = "\"";
+    result += buf;
+    result += "\"";
+    return result;
+  } else if (value->IsObject()) {
+    return "[object Object]";
+  } else if (value->IsNumber()) {
+    return std::to_string(value.As<Number>()->Value());
+  } else {
+    return "unknown";
   }
-  if (value->IsNull()) {
-    matched_kinds |= static_cast<uint16_t>(ValueKind::Null);
-  }
-  if (value->IsNullOrUndefined()) {
-    matched_kinds |= static_cast<uint16_t>(ValueKind::NullOrUndefined);
-  }
-  if (value->IsTrue()) {
-    matched_kinds |= static_cast<uint16_t>(ValueKind::True);
-  }
-  if (value->IsFalse()) {
-    matched_kinds |= static_cast<uint16_t>(ValueKind::False);
-  }
-  if (value->IsBoolean()) {
-    matched_kinds |= static_cast<uint16_t>(ValueKind::Boolean);
-  }
-  if (value->IsString()) {
-    matched_kinds |= static_cast<uint16_t>(ValueKind::String);
-  }
-  if (value->IsObject()) {
-    matched_kinds |= static_cast<uint16_t>(ValueKind::Object);
-  }
-  if (value->IsNumber()) {
-    matched_kinds |= static_cast<uint16_t>(ValueKind::Number);
-  }
-
-  switch (kind) {
-  case ValueKind::Undefined:
-    return matched_kinds == (static_cast<uint16_t>(ValueKind::Undefined) |
-                             static_cast<uint16_t>(ValueKind::NullOrUndefined));
-  case ValueKind::Null:
-    return matched_kinds == (static_cast<uint16_t>(ValueKind::Null) |
-                             static_cast<uint16_t>(ValueKind::NullOrUndefined));
-  case ValueKind::True:
-    return matched_kinds == (static_cast<uint16_t>(ValueKind::True) |
-                             static_cast<uint16_t>(ValueKind::Boolean));
-  case ValueKind::False:
-    return matched_kinds == (static_cast<uint16_t>(ValueKind::False) |
-                             static_cast<uint16_t>(ValueKind::Boolean));
-  case ValueKind::String:
-    return matched_kinds == static_cast<uint16_t>(ValueKind::String);
-  case ValueKind::Object:
-    return matched_kinds == static_cast<uint16_t>(ValueKind::Object);
-  case ValueKind::Number:
-    return matched_kinds == static_cast<uint16_t>(ValueKind::Number);
-  case ValueKind::NullOrUndefined:
-    return (matched_kinds ==
-            (static_cast<uint16_t>(ValueKind::Undefined) |
-             static_cast<uint16_t>(ValueKind::NullOrUndefined))) ||
-           ((static_cast<uint16_t>(ValueKind::Null) |
-             static_cast<uint16_t>(ValueKind::NullOrUndefined)));
-  case ValueKind::Boolean:
-    return (matched_kinds == (static_cast<uint16_t>(ValueKind::True) |
-                              static_cast<uint16_t>(ValueKind::Boolean))) ||
-           (matched_kinds == (static_cast<uint16_t>(ValueKind::False) |
-                              static_cast<uint16_t>(ValueKind::Boolean)));
-  }
-  return false;
 }
 
 void fail(const FunctionCallbackInfo<Value> &info, const char *fmt, ...) {
@@ -108,24 +80,13 @@ void test_v8_primitives(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
 
   Local<Primitive> v8_undefined = Undefined(isolate);
-  if (!check_value_kind(v8_undefined, ValueKind::Undefined)) {
-    return fail(info, "undefined is not undefined");
-  }
-
+  LOG_VALUE_KIND(v8_undefined);
   Local<Primitive> v8_null = Null(isolate);
-  if (!check_value_kind(v8_null, ValueKind::Null)) {
-    return fail(info, "null is not null");
-  }
-
+  LOG_VALUE_KIND(v8_null);
   Local<Boolean> v8_true = Boolean::New(isolate, true);
-  if (!check_value_kind(v8_true, ValueKind::True)) {
-    return fail(info, "true is not true");
-  }
-
+  LOG_VALUE_KIND(v8_true);
   Local<Boolean> v8_false = Boolean::New(isolate, false);
-  if (!check_value_kind(v8_false, ValueKind::False)) {
-    return fail(info, "false is not false");
-  }
+  LOG_VALUE_KIND(v8_false);
 
   return ok(info);
 }
@@ -135,13 +96,8 @@ static void perform_number_test(const FunctionCallbackInfo<Value> &info,
   Isolate *isolate = info.GetIsolate();
 
   Local<Number> v8_number = Number::New(isolate, number);
-  if (v8_number->Value() != number) {
-    return fail(info, "wrong v8 number value: expected %f got %f", number,
-                v8_number->Value());
-  }
-  if (!check_value_kind(v8_number, ValueKind::Number)) {
-    return fail(info, "number is not a number");
-  }
+  LOG_EXPR(v8_number->Value());
+  LOG_VALUE_KIND(v8_number);
 
   return ok(info);
 }
@@ -159,119 +115,50 @@ void test_v8_number_fraction(const FunctionCallbackInfo<Value> &info) {
   perform_number_test(info, 2.5);
 }
 
-static bool perform_string_test(const FunctionCallbackInfo<Value> &info,
-                                const char *c_string, int utf_16_code_units,
-                                int encoded_utf_8_length,
-                                const char *encoded_utf_8_data) {
+static void perform_string_test(const FunctionCallbackInfo<Value> &info,
+                                Local<String> v8_string) {
   Isolate *isolate = info.GetIsolate();
-  char buf[256] = {0};
+  char buf[256] = {0x7f};
   int retval;
   int nchars;
 
-  Local<String> v8_string =
-      String::NewFromUtf8(isolate, c_string).ToLocalChecked();
+  LOG_VALUE_KIND(v8_string);
+  LOG_EXPR(v8_string->Length());
+  LOG_EXPR(v8_string->Utf8Length(isolate));
+  LOG_EXPR(v8_string->IsOneByte());
+  LOG_EXPR(v8_string->ContainsOnlyOneByte());
+  LOG_EXPR(v8_string->IsExternal());
+  LOG_EXPR(v8_string->IsExternalTwoByte());
+  LOG_EXPR(v8_string->IsExternalOneByte());
 
-  if (!check_value_kind(v8_string, ValueKind::String)) {
-    fail(info, "string is not a string");
-    return false;
-  }
+  // check string has the right contents
+  LOG_EXPR(retval = v8_string->WriteUtf8(isolate, buf, sizeof buf, &nchars));
+  LOG_EXPR(nchars);
+  log_buffer(buf, retval + 1);
 
-  if (v8_string->Length() != utf_16_code_units) {
-    fail(info, "String::Length return: expected %d got %d", utf_16_code_units,
-         v8_string->Length());
-    return false;
-  }
-
-  if ((retval = v8_string->WriteUtf8(isolate, buf, sizeof buf, &nchars)) !=
-      encoded_utf_8_length + 1) {
-    fail(info, "String::WriteUtf8 return: expected %d got %d",
-         encoded_utf_8_length + 1, retval);
-    return false;
-  }
-  if (nchars != utf_16_code_units) {
-    fail(info,
-         "String::WriteUtf8 set nchars to wrong value: expected %d got %d",
-         utf_16_code_units, nchars);
-    return false;
-  }
-  // cmp including terminator
-  if (memcmp(buf, encoded_utf_8_data, encoded_utf_8_length + 1) != 0) {
-    fail(info,
-         "String::WriteUtf8 stored wrong data in buffer: expected %s got %s",
-         c_string, buf);
-    return false;
-  }
+  memset(buf, 0x7f, sizeof buf);
 
   // try with assuming the buffer is large enough
-  if ((retval = v8_string->WriteUtf8(isolate, buf, -1, &nchars)) !=
-      encoded_utf_8_length + 1) {
-    fail(info, "String::WriteUtf8 return: expected %d got %d",
-         encoded_utf_8_length + 1, retval);
-    return false;
-  }
-  if (nchars != utf_16_code_units) {
-    fail(info,
-         "String::WriteUtf8 set nchars to wrong value: expected %d got %d",
-         utf_16_code_units, nchars);
-    return false;
-  }
-  // cmp including terminator
-  if (memcmp(buf, encoded_utf_8_data, encoded_utf_8_length + 1) != 0) {
-    fail(info,
-         "String::WriteUtf8 stored wrong data in buffer: expected %s got %s",
-         c_string, buf);
-    return false;
-  }
+  LOG_EXPR(retval = v8_string->WriteUtf8(isolate, buf, -1, &nchars));
+  LOG_EXPR(nchars);
+  log_buffer(buf, retval + 1);
 
-  // try with ignoring nchars (it should not try to store anything in a nullptr)
-  if ((retval = v8_string->WriteUtf8(isolate, buf, sizeof buf, nullptr)) !=
-      encoded_utf_8_length + 1) {
-    fail(info, "String::WriteUtf8 return: expected %d got %d",
-         encoded_utf_8_length + 1, retval);
-    return false;
-  }
-  // cmp including terminator
-  if (memcmp(buf, encoded_utf_8_data, encoded_utf_8_length + 1) != 0) {
-    fail(info,
-         "String::WriteUtf8 stored wrong data in buffer: expected %s got %s",
-         c_string, buf);
-    return false;
-  }
+  memset(buf, 0x7f, sizeof buf);
 
-  ok(info);
-  return true;
+  // try with ignoring nchars (it should not try to store anything in a
+  // nullptr)
+  LOG_EXPR(retval = v8_string->WriteUtf8(isolate, buf, sizeof buf, nullptr));
+  log_buffer(buf, retval + 1);
+
+  memset(buf, 0x7f, sizeof buf);
+
+  return ok(info);
 }
 
 void test_v8_string_ascii(const FunctionCallbackInfo<Value> &info) {
-  if (!perform_string_test(info, "hello world", 11, 11, "hello world")) {
-    // if perform_string_test failed, don't replace the return value with
-    // success in the below truncated test
-    return;
-  }
-
-  // try with a length shorter than the string
-  Isolate *isolate = info.GetIsolate();
-  Local<String> v8_string =
+  auto string =
       String::NewFromUtf8(info.GetIsolate(), "hello world").ToLocalChecked();
-  char buf[256];
-  memset(buf, 0xaa, sizeof buf);
-  int retval;
-  int nchars;
-  if ((retval = v8_string->WriteUtf8(isolate, buf, 5, &nchars)) != 5) {
-    return fail(info, "String::WriteUtf8 return: expected 5 got %d", retval);
-  }
-  if (nchars != 5) {
-    return fail(
-        info, "String::WriteUtf8 set nchars to wrong value: expected 5 got %d",
-        nchars);
-  }
-  // check it did not write a terminator
-  if (memcmp(buf, "hello\xaa", 6) != 0) {
-    return fail(info,
-                "String::WriteUtf8 stored wrong data in buffer: expected "
-                "hello\\xaa got %s",
-                buf);
-  }
+  perform_string_test(info, string);
 }
 
 void test_v8_string_utf8(const FunctionCallbackInfo<Value> &info) {
@@ -279,7 +166,9 @@ void test_v8_string_utf8(const FunctionCallbackInfo<Value> &info) {
                                                143, 226, 128, 141, 226, 154,
                                                167, 239, 184, 143, 0};
   const char *trans_flag = reinterpret_cast<const char *>(trans_flag_unsigned);
-  perform_string_test(info, trans_flag, 6, 16, trans_flag);
+  auto string =
+      String::NewFromUtf8(info.GetIsolate(), trans_flag).ToLocalChecked();
+  perform_string_test(info, string);
 }
 
 void test_v8_string_invalid_utf8(const FunctionCallbackInfo<Value> &info) {
@@ -287,12 +176,20 @@ void test_v8_string_invalid_utf8(const FunctionCallbackInfo<Value> &info) {
                                                    'o', 0xc2, '!', 0xf5, 0};
   const char *mixed_sequence =
       reinterpret_cast<const char *>(mixed_sequence_unsigned);
-  const unsigned char replaced_sequence_unsigned[] = {
-      'o',  'h',  ' ',  0xef, 0xbf, 0xbd, 'n',  'o',
-      0xef, 0xbf, 0xbd, '!',  0xef, 0xbf, 0xbd, 0};
-  const char *replaced_sequence =
-      reinterpret_cast<const char *>(replaced_sequence_unsigned);
-  perform_string_test(info, mixed_sequence, 9, 15, replaced_sequence);
+  auto string =
+      String::NewFromUtf8(info.GetIsolate(), mixed_sequence).ToLocalChecked();
+  perform_string_test(info, string);
+}
+
+void test_v8_string_latin1(const FunctionCallbackInfo<Value> &info) {
+  const unsigned char latin1[] = {0xa1, 'b', 'u', 'n', '!', 0};
+  auto string =
+      String::NewFromOneByte(info.GetIsolate(), latin1).ToLocalChecked();
+  perform_string_test(info, string);
+  string = String::NewFromOneByte(info.GetIsolate(), latin1,
+                                  NewStringType::kNormal, 1)
+               .ToLocalChecked();
+  perform_string_test(info, string);
 }
 
 void test_v8_string_write_utf8(const FunctionCallbackInfo<Value> &info) {
@@ -325,6 +222,7 @@ void test_v8_external(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
   int x = 5;
   Local<External> external = External::New(isolate, &x);
+  LOG_EXPR(*reinterpret_cast<int *>(external->Value()));
   if (external->Value() != &x) {
     return fail(info,
                 "External::Value() returned wrong pointer: expected %p got %p",
@@ -335,43 +233,19 @@ void test_v8_external(const FunctionCallbackInfo<Value> &info) {
 
 void test_v8_object(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
 
   Local<Object> obj = Object::New(isolate);
   auto key = String::NewFromUtf8(isolate, "key").ToLocalChecked();
   auto val = Number::New(isolate, 5.0);
-  Maybe<bool> retval = Nothing<bool>();
-  if ((retval = obj->Set(isolate->GetCurrentContext(), key, val)) !=
-      Just<bool>(true)) {
-    return fail(info, "Object::Set wrong return: expected Just(true), got %s",
-                retval.IsNothing() ? "Nothing" : "Just(false)");
-  }
+  Maybe<bool> set_status = obj->Set(context, key, val);
+  LOG_EXPR(set_status.IsJust());
+  LOG_EXPR(set_status.FromJust());
+
+  // Local<Value> retval = obj->Get(context, key).ToLocalChecked();
+  // LOG_EXPR(describe(isolate, retval));
 
   return ok(info);
-}
-
-static std::string describe(Isolate *isolate, Local<Value> value) {
-  if (value->IsUndefined()) {
-    return "undefined";
-  } else if (value->IsNull()) {
-    return "null";
-  } else if (value->IsTrue()) {
-    return "true";
-  } else if (value->IsFalse()) {
-    return "false";
-  } else if (value->IsString()) {
-    char buf[1024] = {0};
-    value.As<String>()->WriteUtf8(isolate, buf, sizeof(buf) - 1);
-    std::string result = "\"";
-    result += buf;
-    result += "\"";
-    return result;
-  } else if (value->IsObject()) {
-    return "[object Object]";
-  } else if (value->IsNumber()) {
-    return std::to_string(value.As<Number>()->Value());
-  } else {
-    return "unknown";
-  }
 }
 
 void test_v8_array_new(const FunctionCallbackInfo<Value> &info) {
@@ -387,18 +261,15 @@ void test_v8_array_new(const FunctionCallbackInfo<Value> &info) {
   Local<Array> v8_array =
       Array::New(isolate, vals, sizeof(vals) / sizeof(Local<Value>));
 
-  if (v8_array->Length() != 5) {
-    return fail(info, "Array::Length wrong return: expected 5, got %" PRIu32,
-                v8_array->Length());
-  }
+  LOG_EXPR(v8_array->Length());
 
   for (uint32_t i = 0; i < 5; i++) {
     Local<Value> array_value =
         v8_array->Get(isolate->GetCurrentContext(), i).ToLocalChecked();
     if (!array_value->StrictEquals(vals[i])) {
-      return fail(info, "array has wrong value at index %" PRIu32 ": %s", i,
-                  describe(isolate, array_value).c_str());
+      printf("array[%u] does not match\n", i);
     }
+    LOG_EXPR(describe(isolate, array_value));
   }
 
   return ok(info);
@@ -410,12 +281,7 @@ void test_v8_object_template(const FunctionCallbackInfo<Value> &info) {
 
   Local<ObjectTemplate> obj_template = ObjectTemplate::New(isolate);
   obj_template->SetInternalFieldCount(2);
-  if (obj_template->InternalFieldCount() != 2) {
-    return fail(info,
-                "ObjectTemplate did not remember internal field count: "
-                "expected 2, got %d",
-                obj_template->InternalFieldCount());
-  }
+  LOG_EXPR(obj_template->InternalFieldCount());
 
   Local<Object> obj1 = obj_template->NewInstance(context).ToLocalChecked();
   obj1->SetInternalField(0, Number::New(isolate, 3.0));
@@ -425,30 +291,25 @@ void test_v8_object_template(const FunctionCallbackInfo<Value> &info) {
   obj2->SetInternalField(0, Number::New(isolate, 5.0));
   obj2->SetInternalField(1, Number::New(isolate, 6.0));
 
-  double value = obj1->GetInternalField(0).As<Number>()->Value();
-  if (value != 3.0) {
-    return fail(info,
-                "obj1 internal field 0 has wrong value: expected 3.0, got %f",
-                value);
-  }
-  value = obj1->GetInternalField(1).As<Number>()->Value();
-  if (value != 4.0) {
-    return fail(info,
-                "obj1 internal field 1 has wrong value: expected 4.0, got %f",
-                value);
-  }
-  value = obj2->GetInternalField(0).As<Number>()->Value();
-  if (value != 5.0) {
-    return fail(info,
-                "obj2 internal field 0 has wrong value: expected 5.0, got %f",
-                value);
-  }
-  value = obj2->GetInternalField(1).As<Number>()->Value();
-  if (value != 6.0) {
-    return fail(info,
-                "obj2 internal field 1 has wrong value: expected 6.0, got %f",
-                value);
-  }
+  LOG_EXPR(obj1->GetInternalField(0).As<Number>()->Value());
+  LOG_EXPR(obj1->GetInternalField(1).As<Number>()->Value());
+  LOG_EXPR(obj2->GetInternalField(0).As<Number>()->Value());
+  LOG_EXPR(obj2->GetInternalField(1).As<Number>()->Value());
+}
+
+void return_data_callback(const FunctionCallbackInfo<Value> &info) {
+  info.GetReturnValue().Set(info.Data());
+}
+
+void create_function_with_data(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<String> s =
+      String::NewFromUtf8(isolate, "hello world").ToLocalChecked();
+  Local<FunctionTemplate> tmp =
+      FunctionTemplate::New(isolate, return_data_callback, s);
+  Local<Function> f = tmp->GetFunction(context).ToLocalChecked();
+  info.GetReturnValue().Set(f);
 }
 
 void print_values_from_js(const FunctionCallbackInfo<Value> &info) {
@@ -461,7 +322,152 @@ void print_values_from_js(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
-void initialize(Local<Object> exports) {
+class GlobalTestWrapper {
+public:
+  static void set(const FunctionCallbackInfo<Value> &info);
+  static void get(const FunctionCallbackInfo<Value> &info);
+  static void cleanup(void *unused);
+
+private:
+  static Global<Value> value;
+};
+
+Global<Value> GlobalTestWrapper::value;
+
+void GlobalTestWrapper::set(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  if (value.IsEmpty()) {
+    info.GetReturnValue().Set(Undefined(isolate));
+  } else {
+    info.GetReturnValue().Set(value.Get(isolate));
+  }
+  value.Reset(isolate, info[0]);
+}
+
+void GlobalTestWrapper::get(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  if (value.IsEmpty()) {
+    info.GetReturnValue().Set(Undefined(isolate));
+  } else {
+    info.GetReturnValue().Set(value.Get(isolate));
+  }
+}
+
+void GlobalTestWrapper::cleanup(void *unused) { value.Reset(); }
+
+void test_many_v8_locals(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Number> nums[1000];
+  for (int i = 0; i < 1000; i++) {
+    nums[i] = Number::New(isolate, (double)i + 0.5);
+  }
+  // try accessing them all to make sure the pointers are stable
+  for (int i = 0; i < 1000; i++) {
+    LOG_EXPR(nums[i]->Value());
+  }
+}
+
+static Local<Object> setup_object_with_string_field(Isolate *isolate,
+                                                    Local<Context> context,
+                                                    Local<ObjectTemplate> tmp,
+                                                    int i,
+                                                    const std::string &str) {
+  EscapableHandleScope ehs(isolate);
+  Local<Object> o = tmp->NewInstance(context).ToLocalChecked();
+  // print_cell_location(o, "objects[%5d]          ", i);
+  Local<String> value =
+      String::NewFromUtf8(isolate, str.c_str()).ToLocalChecked();
+
+  o->SetInternalField(0, value);
+  return ehs.Escape(o);
+}
+
+static void examine_object_fields(Isolate *isolate, Local<Object> o) {
+  char buf[16];
+  HandleScope hs(isolate);
+  o->GetInternalField(0).As<String>()->WriteUtf8(isolate, buf);
+
+  Local<Data> field1 = o->GetInternalField(1);
+  if (field1.As<Value>()->IsString()) {
+    field1.As<String>()->WriteUtf8(isolate, buf);
+  }
+}
+
+void test_handle_scope_gc(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  // allocate a ton of objects
+  constexpr size_t num_small_allocs = 10000;
+
+  Local<String> mini_strings[num_small_allocs];
+  for (size_t i = 0; i < num_small_allocs; i++) {
+    std::string cpp_str = std::to_string(i);
+    mini_strings[i] =
+        String::NewFromUtf8(isolate, cpp_str.c_str()).ToLocalChecked();
+  }
+
+  // allocate some objects with internal fields, to check that those are traced
+  Local<ObjectTemplate> tmp = ObjectTemplate::New(isolate);
+  tmp->SetInternalFieldCount(2);
+  Local<Object> objects[num_small_allocs];
+
+  for (size_t i = 0; i < num_small_allocs; i++) {
+    std::string cpp_str = std::to_string(i + num_small_allocs);
+    // this uses a function so that the strings aren't kept alive by the current
+    // handle scope
+    objects[i] =
+        setup_object_with_string_field(isolate, context, tmp, i, cpp_str);
+  }
+
+  // allocate some massive strings
+  // this should cause GC to start looking for objects to free
+  // after each big string allocation, we try reading all of the strings we
+  // created above to ensure they are still alive
+  constexpr size_t num_strings = 100;
+  constexpr size_t string_size = 20 * 1000 * 1000;
+
+  auto string_data = new char[string_size];
+  string_data[string_size - 1] = 0;
+
+  Local<String> huge_strings[num_strings];
+  for (size_t i = 0; i < num_strings; i++) {
+    printf("%zu\n", i);
+    memset(string_data, i + 1, string_size - 1);
+    huge_strings[i] =
+        String::NewFromUtf8(isolate, string_data).ToLocalChecked();
+
+    // try to use all mini strings
+    for (size_t j = 0; j < num_small_allocs; j++) {
+      char buf[16];
+      mini_strings[j]->WriteUtf8(isolate, buf);
+    }
+
+    for (size_t j = 0; j < num_small_allocs; j++) {
+      examine_object_fields(isolate, objects[j]);
+    }
+
+    if (i == 1) {
+      // add more internal fields to the objects a long time after they were
+      // created, to ensure these can also be traced
+      // make a new handlescope here so that the new strings we allocate are
+      // only referenced by the objects
+      HandleScope inner_hs(isolate);
+      for (auto &o : objects) {
+        int i = &o - &objects[0];
+        auto cpp_str = std::to_string(i + 2 * num_small_allocs);
+        Local<String> field =
+            String::NewFromUtf8(isolate, cpp_str.c_str()).ToLocalChecked();
+        o->SetInternalField(1, field);
+      }
+    }
+  }
+
+  delete[] string_data;
+}
+
+void initialize(Local<Object> exports, Local<Value> module,
+                Local<Context> context) {
   NODE_SET_METHOD(exports, "test_v8_native_call", test_v8_native_call);
   NODE_SET_METHOD(exports, "test_v8_primitives", test_v8_primitives);
   NODE_SET_METHOD(exports, "test_v8_number_int", test_v8_number_int);
@@ -472,15 +478,26 @@ void initialize(Local<Object> exports) {
   NODE_SET_METHOD(exports, "test_v8_string_utf8", test_v8_string_utf8);
   NODE_SET_METHOD(exports, "test_v8_string_invalid_utf8",
                   test_v8_string_invalid_utf8);
+  NODE_SET_METHOD(exports, "test_v8_string_latin1", test_v8_string_latin1);
   NODE_SET_METHOD(exports, "test_v8_string_write_utf8",
                   test_v8_string_write_utf8);
   NODE_SET_METHOD(exports, "test_v8_external", test_v8_external);
   NODE_SET_METHOD(exports, "test_v8_object", test_v8_object);
   NODE_SET_METHOD(exports, "test_v8_array_new", test_v8_array_new);
   NODE_SET_METHOD(exports, "test_v8_object_template", test_v8_object_template);
+  NODE_SET_METHOD(exports, "create_function_with_data",
+                  create_function_with_data);
   NODE_SET_METHOD(exports, "print_values_from_js", print_values_from_js);
+  NODE_SET_METHOD(exports, "global_get", GlobalTestWrapper::get);
+  NODE_SET_METHOD(exports, "global_set", GlobalTestWrapper::set);
+  NODE_SET_METHOD(exports, "test_many_v8_locals", test_many_v8_locals);
+  NODE_SET_METHOD(exports, "test_handle_scope_gc", test_handle_scope_gc);
+
+  // without this, node hits a UAF deleting the Global
+  node::AddEnvironmentCleanupHook(context->GetIsolate(),
+                                  GlobalTestWrapper::cleanup, nullptr);
 }
 
-NODE_MODULE(NODE_GYP_MODULE_NAME, initialize)
+NODE_MODULE_CONTEXT_AWARE(NODE_GYP_MODULE_NAME, initialize)
 
 } // namespace v8tests

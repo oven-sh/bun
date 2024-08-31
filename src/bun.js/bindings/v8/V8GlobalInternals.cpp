@@ -12,6 +12,7 @@
 
 using JSC::ClassInfo;
 using JSC::LazyClassStructure;
+using JSC::LazyProperty;
 using JSC::Structure;
 using JSC::VM;
 
@@ -44,6 +45,10 @@ void GlobalInternals::finishCreation(VM& vm)
     m_V8FunctionStructure.initLater([](LazyClassStructure::Initializer& init) {
         init.setStructure(Function::createStructure(init.vm, init.global));
     });
+    m_GlobalHandles.initLater([](const LazyProperty<GlobalInternals, HandleScopeBuffer>::Initializer& init) {
+        init.set(HandleScopeBuffer::create(init.vm,
+            init.owner->handleScopeBufferStructure(init.owner->globalObject)));
+    });
 }
 
 template<typename Visitor>
@@ -57,6 +62,7 @@ void GlobalInternals::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_HandleScopeBufferStructure.visit(visitor);
     thisObject->m_FunctionTemplateStructure.visit(visitor);
     thisObject->m_V8FunctionStructure.visit(visitor);
+    thisObject->m_GlobalHandles.visit(visitor);
 }
 
 DEFINE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE, GlobalInternals);

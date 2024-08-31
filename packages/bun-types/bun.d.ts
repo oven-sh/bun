@@ -2298,6 +2298,26 @@ declare module "bun" {
      * This string will currently do nothing. But in the future it could be useful for logs or metrics.
      */
     id?: string | null;
+
+    /**
+     * Server static Response objects by route.
+     *
+     * @example
+     * ```ts
+     * Bun.serve({
+     *   static: {
+     *     "/": new Response("Hello World"),
+     *     "/about": new Response("About"),
+     *   },
+     *   fetch(req) {
+     *     return new Response("Fallback response");
+     *   },
+     * });
+     * ```
+     *
+     * @experimental
+     */
+    static?: Record<`/${string}`, Response>;
   }
 
   interface ServeOptions extends GenericServeOptions {
@@ -2341,6 +2361,14 @@ declare module "bun" {
      * (Cannot be used with hostname+port)
      */
     unix?: never;
+
+    /**
+     * Sets the the number of seconds to wait before timing out a connection
+     * due to inactivity.
+     *
+     * Default is `10` seconds.
+     */
+    idleTimeout?: number;
 
     /**
      * Handle HTTP requests
@@ -2760,6 +2788,16 @@ declare module "bun" {
     ): ServerWebSocketSendStatus;
 
     /**
+     * A count of connections subscribed to a given topic
+     *
+     * This operation will loop through each topic internally to get the count.
+     *
+     * @param topic the websocket topic to check how many subscribers are connected to
+     * @returns the number of subscribers
+     */
+    subscriberCount(topic: string): number;
+
+    /**
      * Returns the client IP address and port of the given Request. If the request was closed or is a unix socket, returns null.
      *
      * @example
@@ -2859,6 +2897,13 @@ declare module "bun" {
    */
   // tslint:disable-next-line:unified-signatures
   function file(path: string | URL, options?: BlobPropertyBag): BunFile;
+
+  /**
+   * A list of files embedded into the standalone executable. Lexigraphically sorted by name.
+   *
+   * If the process is not a standalone executable, this returns an empty array.
+   */
+  const embeddedFiles: ReadonlyArray<Blob>;
 
   /**
    * `Blob` that leverages the fastest system calls available to operate on files.

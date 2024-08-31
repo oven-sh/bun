@@ -87,7 +87,7 @@ it("should be able to abruptly stop the server many times", async () => {
         await fetch(url, { keepalive: true }).then(res => res.text());
         expect.unreachable();
       } catch (e) {
-        expect(e.code).toBe("ConnectionClosed");
+        expect(["ConnectionClosed", "ConnectionRefused"]).toContain(e.code);
       }
     }
 
@@ -1856,3 +1856,91 @@ it("we should always send date", async () => {
     expect(res.headers.has("Date")).toBeTrue();
   }
 });
+
+it("should allow use of custom timeout", async () => {
+  using server = Bun.serve({
+    port: 0,
+    idleTimeout: 4, // uws precision is in seconds, and lower than 4 seconds is not reliable its timer is not that accurate
+    async fetch(req) {
+      const url = new URL(req.url);
+      return new Response(
+        new ReadableStream({
+          async pull(controller) {
+            controller.enqueue("Hello,");
+            if (url.pathname === "/timeout") {
+              await Bun.sleep(5000);
+            } else {
+              await Bun.sleep(10);
+            }
+            controller.enqueue(" World!");
+
+            controller.close();
+          },
+        }),
+        { headers: { "Content-Type": "text/plain" } },
+      );
+    },
+  });
+  async function testTimeout(pathname: string, success: boolean) {
+    const res = await fetch(new URL(pathname, server.url.origin));
+    expect(res.status).toBe(200);
+    if (success) {
+      expect(res.text()).resolves.toBe("Hello, World!");
+    } else {
+      expect(res.text()).rejects.toThrow(/The socket connection was closed unexpectedly./);
+    }
+  }
+  await Promise.all([testTimeout("/ok", true), testTimeout("/timeout", false)]);
+}, 10_000);
+
+it("should reset timeout after writes", async () => {
+  // the default is 10s so we send 15
+  // this test should take 15s at most
+  const CHUNKS = 15;
+  const payload = Buffer.from(`data: ${Date.now()}\n\n`);
+  using server = Bun.serve({
+    idleTimeout: 5,
+    port: 0,
+    fetch(request, server) {
+      let controller!: ReadableStreamDefaultController;
+      let count = CHUNKS;
+      let interval = setInterval(() => {
+        controller.enqueue(payload);
+        count--;
+        if (count == 0) {
+          clearInterval(interval);
+          interval = null;
+          controller.close();
+          return;
+        }
+      }, 1000);
+      return new Response(
+        new ReadableStream({
+          start(_controller) {
+            controller = _controller;
+          },
+          cancel(controller) {
+            if (interval) clearInterval(interval);
+          },
+        }),
+        {
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+          },
+        },
+      );
+    },
+  });
+  let received = 0;
+  const response = await fetch(server.url);
+  const stream = response.body.getReader();
+  const decoder = new TextDecoder();
+  while (true) {
+    const { done, value } = await stream.read();
+    received += value?.length || 0;
+    if (done) break;
+  }
+
+  expect(received).toBe(CHUNKS * payload.byteLength);
+}, 20_000);

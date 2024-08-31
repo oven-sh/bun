@@ -16,7 +16,7 @@ const routes = {
         buf[i] = i;
       }
       fillRepeating(buf, 0, 256);
-      return buf;
+      return new Blob([buf], { type: "text/plain" });
     })(),
   ),
   "/redirect": Response.redirect("/foo/bar", 302),
@@ -91,8 +91,9 @@ describe("static", () => {
       async path => {
         const bytes = static_responses[path];
         // macOS limits backlog to 128.
-        const batchSize = 64;
-        const iterations = 10;
+        // When we do the big request, reduce number of connections but increase number of iterations
+        const batchSize = bytes.size > 1024 * 1024 ? 32 : 64;
+        const iterations = bytes.size > 1024 * 1024 ? 24 : 12;
 
         async function iterate() {
           let array = new Array(batchSize);

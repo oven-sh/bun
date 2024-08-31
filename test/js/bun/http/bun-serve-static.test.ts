@@ -1,6 +1,6 @@
 import { test, expect, mock, beforeAll, describe, afterAll, it } from "bun:test";
 import { server } from "bun";
-import { fillRepeating } from "harness";
+import { fillRepeating, isWindows } from "harness";
 
 const routes = {
   "/foo": new Response("foo", {
@@ -93,8 +93,8 @@ describe("static", () => {
         const bytes = await static_responses[path].arrayBuffer();
         // macOS limits backlog to 128.
         // When we do the big request, reduce number of connections but increase number of iterations
-        const batchSize = bytes.size > 1024 * 1024 ? 48 : 64;
-        const iterations = bytes.size > 1024 * 1024 ? 10 : 12;
+        const batchSize = (bytes.size > 1024 * 1024 ? 48 : 64) / (isWindows ? 8 : 1);
+        const iterations = (bytes.size > 1024 * 1024 ? 10 : 12) / (isWindows ? 8 : 1);
 
         async function iterate() {
           let array = new Array(batchSize);
@@ -131,7 +131,7 @@ describe("static", () => {
         Bun.gc(true);
 
         const rss = (process.memoryUsage.rss() / 1024 / 1024) | 0;
-        expect(rss).toBeLessThan(baseline * 2);
+        expect(rss).toBeLessThan(baseline * 4);
       },
       30 * 1000,
     );

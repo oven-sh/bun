@@ -1340,10 +1340,36 @@ pub const Fetch = struct {
             else
                 bun.String.empty;
 
+            const verbose_fetch = brk2: {
+                if (this.http) |http_| {
+                    if (http_.verbose != .none) {
+                        break :brk2 http_.verbose;
+                    }
+                }
+                break :brk2 this.javascript_vm.getVerboseFetch();
+            };
+
+            const more_info =
+                \\
+                \\For more information, try:
+                \\- `BUN_CONFIG_VERBOSE_FETCH=1` in your environment
+                \\- `verbose: true` in the second argument to fetch()
+            ;
+
             const fetch_error = JSC.SystemError{
                 .code = bun.String.static(@errorName(this.result.fail.?)),
                 .message = switch (this.result.fail.?) {
-                    error.ConnectionClosed => bun.String.static("The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"),
+                    error.ConnectionClosed => brk: {
+                        if (verbose_fetch != .none) {
+                            break :brk bun.String.static("Server closed the connection unexpectedly");
+                        }
+
+                        break :brk bun.String.static("Server closed the connection unexpectedly" ++ more_info);
+                    },
+                    error.ConnectionFailed => if (path.len > 0)
+                        bun.String.createFormat("Failed to connect to the server \"{}\"", .{path}) catch bun.outOfMemory()
+                    else
+                        bun.String.static("Failed to connect to the server"),
                     error.FailedToOpenSocket => bun.String.static("Was there a typo in the url or port?"),
                     error.TooManyRedirects => bun.String.static("The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()"),
                     error.ConnectionRefused => bun.String.static("Unable to connect. Is the computer able to access the url?"),
@@ -1416,10 +1442,16 @@ pub const Fetch = struct {
                     error.NAME_CONSTRAINTS_WITHOUT_SANS => bun.String.static("Issuer has name constraints but leaf has no SANs"),
                     error.UNKKNOW_CERTIFICATE_VERIFICATION_ERROR => bun.String.static("unknown certificate verification error"),
 
-                    else => |e| bun.String.createFormat("{s} fetching \"{}\". For more information, pass `verbose: true` in the second argument to fetch()", .{
-                        @errorName(e),
-                        path,
-                    }) catch bun.outOfMemory(),
+                    else => |e| if (verbose_fetch == .none)
+                        bun.String.createFormat("{s} fetching \"{}\"" ++ more_info, .{
+                            @errorName(e),
+                            path,
+                        }) catch bun.outOfMemory()
+                    else
+                        bun.String.createFormat("{s} fetching \"{}\"", .{
+                            @errorName(e),
+                            path,
+                        }) catch bun.outOfMemory(),
                 },
                 .path = path,
             };

@@ -1063,7 +1063,7 @@ pub const HTTPThread = struct {
                 client.flags.disable_keepalive = true;
                 if (client.http_proxy) |url| {
                     // https://github.com/oven-sh/bun/issues/11343
-                    if (strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http")) {
+                    if (url.protocol.len == 0 or strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http")) {
                         return try this.context(is_ssl).connect(client, url.hostname, url.getPortAuto());
                     }
                     return error.UnsupportedProxyProtocol;
@@ -1073,7 +1073,7 @@ pub const HTTPThread = struct {
         }
         if (client.http_proxy) |url| {
             // https://github.com/oven-sh/bun/issues/11343
-            if (strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http")) {
+            if (url.protocol.len == 0 or strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http")) {
                 return try this.context(is_ssl).connect(client, url.hostname, url.getPortAuto());
             }
             return error.UnsupportedProxyProtocol;

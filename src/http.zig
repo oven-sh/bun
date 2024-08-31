@@ -1248,8 +1248,10 @@ pub fn checkServerIdentity(
                     // fast path
 
                     var hostname = client.hostname orelse client.url.hostname;
-                    if (client.http_proxy) |proxy| {
-                        hostname = proxy.hostname;
+                    if (allow_proxy_url) {
+                        if (client.http_proxy) |proxy| {
+                            hostname = proxy.hostname;
+                        }
                     }
 
                     if (BoringSSL.checkX509ServerIdentity(x509, hostname)) {

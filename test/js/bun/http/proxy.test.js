@@ -6,7 +6,6 @@ import path from "path";
 import { bunExe } from "harness";
 
 let proxy, auth_proxy, server;
-
 beforeAll(() => {
   proxy = Bun.serve({
     port: 0,

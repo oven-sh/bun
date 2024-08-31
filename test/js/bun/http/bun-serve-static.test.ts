@@ -16,7 +16,7 @@ const routes = {
         buf[i] = i;
       }
       fillRepeating(buf, 0, 256);
-      return new Blob([buf], { type: "text/plain" });
+      return buf;
     })(),
   ),
   "/redirect": Response.redirect("/foo/bar", 302),

@@ -7,6 +7,11 @@ describe("url", () => {
     expect(() => new URL("boop", "http!/example.com")).toThrow(
       '"boop" cannot be parsed as a URL against "http!/example.com"',
     );
+    expect(() => new URL("boop", "http!/example.com")).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_URL",
+      }),
+    );
 
     // redact
     expect(() => new URL("boop", "https!!username:password@example.com")).toThrow(

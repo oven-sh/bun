@@ -16,11 +16,125 @@ const string = @import("../string_types.zig").string;
 const strings = @import("../string_immutable.zig");
 const GitSHA = String;
 const Path = bun.path;
+const File = bun.sys.File;
 
 threadlocal var final_path_buf: bun.PathBuffer = undefined;
 threadlocal var ssh_path_buf: bun.PathBuffer = undefined;
 threadlocal var folder_name_buf: bun.PathBuffer = undefined;
 threadlocal var json_path_buf: bun.PathBuffer = undefined;
+
+const SloppyGlobalGitConfig = struct {
+    has_askpass: bool = false,
+    has_ssh_command: bool = false,
+
+    var holder: SloppyGlobalGitConfig = .{};
+    var load_and_parse_once = std.once(loadAndParse);
+
+    pub fn get() SloppyGlobalGitConfig {
+        load_and_parse_once.call();
+        return holder;
+    }
+
+    pub fn loadAndParse() void {
+        const home_dir_path = brk: {
+            if (comptime Environment.isWindows) {
+                if (bun.getenvZ("USERPROFILE")) |env|
+                    break :brk env;
+            } else {
+                if (bun.getenvZ("HOME")) |env|
+                    break :brk env;
+            }
+
+            // won't find anything
+            return;
+        };
+
+        var config_file_path_buf: bun.PathBuffer = undefined;
+        const config_file_path = bun.path.joinAbsStringBufZ(home_dir_path, &config_file_path_buf, &.{".gitconfig"}, .auto);
+        var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
+        const allocator = stack_fallback.get();
+        var source = File.toSource(config_file_path, allocator).unwrap() catch {
+            return;
+        };
+        defer allocator.free(source.contents);
+
+        if (comptime Environment.isWindows) {
+            if (strings.BOM.detect(source.contents)) |bom| {
+                source.contents = bom.removeAndConvertToUTF8AndFree(allocator, @constCast(source.contents)) catch bun.outOfMemory();
+            }
+        }
+
+        var remaining = bun.strings.split(source.contents, "\n");
+        var found_askpass = false;
+        var found_ssh_command = false;
+        var @"[core]" = false;
+        while (remaining.next()) |line_| {
+            if (found_askpass and found_ssh_command) break;
+
+            const line = strings.trim(line_, "\t \r");
+
+            if (line.len == 0) continue;
+            // skip comments
+            if (line[0] == '#') continue;
+
+            if (line[0] == '[') {
+                if (strings.indexOfChar(line, ']')) |end_bracket| {
+                    if (strings.eqlComptime(line[0 .. end_bracket + 1], "[core]")) {
+                        @"[core]" = true;
+                        continue;
+                    }
+                }
+                @"[core]" = false;
+                continue;
+            }
+
+            if (@"[core]") {
+                if (!found_askpass) {
+                    if (line.len > "askpass".len and strings.eqlCaseInsensitiveASCIIIgnoreLength(line[0.."askpass".len], "askpass") and switch (line["askpass".len]) {
+                        ' ', '\t', '=' => true,
+                        else => false,
+                    }) {
+                        found_askpass = true;
+                        continue;
+                    }
+                }
+
+                if (!found_ssh_command) {
+                    if (line.len > "sshCommand".len and strings.eqlCaseInsensitiveASCIIIgnoreLength(line[0.."sshCommand".len], "sshCommand") and switch (line["sshCommand".len]) {
+                        ' ', '\t', '=' => true,
+                        else => false,
+                    }) {
+                        found_ssh_command = true;
+                    }
+                }
+            } else {
+                if (!found_askpass) {
+                    if (line.len > "core.askpass".len and strings.eqlCaseInsensitiveASCIIIgnoreLength(line[0.."core.askpass".len], "core.askpass") and switch (line["sshCommand".len]) {
+                        ' ', '\t', '=' => true,
+                        else => false,
+                    }) {
+                        found_askpass = true;
+                        continue;
+                    }
+                }
+
+                if (!found_ssh_command) {
+                    if (line.len > "core.sshCommand".len and strings.eqlCaseInsensitiveASCIIIgnoreLength(line[0.."core.sshCommand".len], "core.sshCommand") and switch (line["sshCommand".len]) {
+                        ' ', '\t', '=' => true,
+                        else => false,
+                    }) {
+                        found_ssh_command = true;
+                    }
+                }
+            }
+        }
+
+        holder = .{
+            .has_askpass = found_askpass,
+            .has_ssh_command = found_ssh_command,
+        };
+    }
+};
 
 pub const Repository = extern struct {
     owner: String = .{},
@@ -41,22 +155,18 @@ pub const Repository = extern struct {
                 // below will cause no prompt and throw instead.
                 var cloned = other.map.cloneWithAllocator(allocator) catch bun.outOfMemory();
 
-                const askpass_entry = cloned.getOrPutWithoutValue("GIT_ASKPASS") catch bun.outOfMemory();
-                if (!askpass_entry.found_existing) {
-                    askpass_entry.key_ptr.* = allocator.dupe(u8, "GIT_ASKPASS") catch bun.outOfMemory();
-                    askpass_entry.value_ptr.* = .{
-                        .value = allocator.dupe(u8, "echo") catch bun.outOfMemory(),
-                        .conditional = false,
-                    };
+                if (cloned.get("GIT_ASKPASS") == null) {
+                    const config = SloppyGlobalGitConfig.get();
+                    if (!config.has_askpass) {
+                        cloned.put("GIT_ASKPASS", "echo") catch bun.outOfMemory();
+                    }
                 }
 
-                const git_ssh_command_entry = cloned.getOrPutWithoutValue("GIT_SSH_COMMAND") catch bun.outOfMemory();
-                if (!git_ssh_command_entry.found_existing) {
-                    git_ssh_command_entry.key_ptr.* = allocator.dupe(u8, "GIT_SSH_COMMAND") catch bun.outOfMemory();
-                    git_ssh_command_entry.value_ptr.* = .{
-                        .value = allocator.dupe(u8, "ssh -oStrictHostKeyChecking=accept-new") catch bun.outOfMemory(),
-                        .conditional = false,
-                    };
+                if (cloned.get("GIT_SSH_COMMAND") == null) {
+                    const config = SloppyGlobalGitConfig.get();
+                    if (!config.has_ssh_command) {
+                        cloned.put("GIT_SSH_COMMAND", "ssh -oStrictHostKeyChecking=accept-new") catch bun.outOfMemory();
+                    }
                 }
 
                 this.env = cloned;

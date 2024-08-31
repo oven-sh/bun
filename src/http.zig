@@ -53,6 +53,11 @@ var async_http_id: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
 const MAX_REDIRECT_URL_LENGTH = 128 * 1024;
 var custom_ssl_context_map = std.AutoArrayHashMap(*SSLConfig, *NewHTTPContext(true)).init(bun.default_allocator);
 
+pub var max_http_header_size: usize = 16 * 1024;
+comptime {
+    @export(max_http_header_size, .{ .name = "BUN_DEFAULT_MAX_HTTP_HEADER_SIZE" });
+}
+
 const print_every = 0;
 var print_every_i: usize = 0;
 

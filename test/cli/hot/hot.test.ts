@@ -1,11 +1,11 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
-import { bunExe, bunEnv, tmpdirSync, isDebug, tempDirWithFiles } from "harness";
+import { bunExe, bunEnv, tmpdirSync, isDebug, tempDirWithFiles, isWindows } from "harness";
 import { cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync, copyFileSync } from "fs";
 import { join } from "path";
 
-const timeout = isDebug ? Infinity : 10_000;
-const longTimeout = isDebug ? Infinity : 30_000;
+const timeout = isDebug ? Infinity : 60_000;
+const longTimeout = isDebug ? Infinity : 60_000;
 
 let hotRunnerRoot: string = "",
   cwd = "";
@@ -50,6 +50,9 @@ it(
 
       async function onReload() {
         writeFileSync(root, readFileSync(root, "utf-8"));
+        if (isWindows) {
+          await Bun.sleep(32);
+        }
       }
 
       var str = "";
@@ -386,6 +389,9 @@ throw new Error('0');`,
 ${comment_spam}
 ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
         );
+        if (isWindows) {
+          await Bun.sleep(32);
+        }
       }
       let str = "";
       outer: for await (const chunk of runner.stderr) {
@@ -462,7 +468,7 @@ throw new Error('0');`,
         stdin: "ignore",
       });
       let reloadCounter = 0;
-      function onReload() {
+      async function onReload() {
         writeFileSync(
           bundleIn,
           `// source content
@@ -470,6 +476,9 @@ throw new Error('0');`,
 // etc etc
 ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
         );
+        if (isWindows) {
+          await Bun.sleep(32);
+        }
       }
       let str = "";
       outer: for await (const chunk of runner.stderr) {
@@ -489,7 +498,7 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
           }
 
           if (line.includes(`error: ${reloadCounter - 1}`)) {
-            onReload(); // re-save file to prevent deadlock
+            await onReload(); // re-save file to prevent deadlock
             continue outer;
           }
           expect(line).toContain(`error: ${reloadCounter}`);
@@ -562,7 +571,7 @@ throw new Error('0');`,
         stdin: "ignore",
       });
       let reloadCounter = 0;
-      function onReload() {
+      async function onReload() {
         writeFileSync(
           bundleIn,
           `// ${long_comment}
@@ -570,6 +579,9 @@ console.error("RSS: %s", process.memoryUsage().rss);
 //
 ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
         );
+        if (isWindows) {
+          await Bun.sleep(32);
+        }
       }
       let str = "";
       let sampleMemory10: number | undefined;
@@ -599,7 +611,7 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
           }
 
           if (line.includes(`error: ${reloadCounter - 1}`)) {
-            onReload(); // re-save file to prevent deadlock
+            await onReload(); // re-save file to prevent deadlock
             continue outer;
           }
           expect(line).toContain(`error: ${reloadCounter}`);

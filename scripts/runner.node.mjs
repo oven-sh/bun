@@ -418,6 +418,15 @@ async function spawnSafe(options) {
   };
 }
 
+const windowsOnlyEnv = isWindows
+  ? {
+      SHELLOPTS: "igncr",
+
+      // experiment:
+      BUN_JSC_useJIT: "0",
+    }
+  : {};
+
 /**
  * @param {string} execPath
  * @param {SpawnOptions} options
@@ -429,6 +438,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
   const { username } = userInfo();
   const bunEnv = {
     ...process.env,
+    ...windowsOnlyEnv,
     PATH: path,
     TMPDIR: tmpdirPath,
     USER: username,
@@ -440,7 +450,6 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     BUN_ENABLE_CRASH_REPORTING: "0", // change this to '1' if https://github.com/oven-sh/bun/issues/13012 is implemented
     BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
     BUN_INSTALL_CACHE_DIR: tmpdirPath,
-    SHELLOPTS: isWindows ? "igncr" : undefined, // ignore "\r" on Windows
     // Used in Node.js tests.
     TEST_TMPDIR: tmpdirPath,
   };

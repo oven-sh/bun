@@ -89,7 +89,7 @@ describe("static", () => {
     it.each(["/foo", "/big", "/foo/bar"])(
       "%s",
       async path => {
-        const bytes = static_responses[path];
+        const bytes = await static_responses[path].arrayBuffer();
         // macOS limits backlog to 128.
         // When we do the big request, reduce number of connections but increase number of iterations
         const batchSize = bytes.size > 1024 * 1024 ? 32 : 64;
@@ -104,7 +104,7 @@ describe("static", () => {
                 expect(res.status).toBe(200);
 
                 expect(res.url).toBe(route);
-                return res.blob();
+                return res.arrayBuffer();
               })
               .then(output => {
                 expect(output).toStrictEqual(bytes);

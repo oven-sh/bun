@@ -1963,10 +1963,17 @@ pub const AnyResponse = union(enum) {
         };
     }
 
-    pub fn writeOrEndWithoutBody(this: AnyResponse, data: []const u8) void {
+    pub fn writeHeaderInt(this: AnyResponse, key: []const u8, value: u64) void {
         return switch (this) {
-            .SSL => |resp| resp.writeOrEndWithoutBody(data),
-            .TCP => |resp| resp.writeOrEndWithoutBody(data),
+            .SSL => |resp| resp.writeHeaderInt(key, value),
+            .TCP => |resp| resp.writeHeaderInt(key, value),
+        };
+    }
+
+    pub fn endWithoutBody(this: AnyResponse, close_connection: bool) void {
+        return switch (this) {
+            .SSL => |resp| resp.endWithoutBody(close_connection),
+            .TCP => |resp| resp.endWithoutBody(close_connection),
         };
     }
 

@@ -79,17 +79,29 @@ describe("static", () => {
     });
   });
 
-  it.each(["/foo", "/big", "/foo/bar"])("-> %s", async path => {
-    const previousCallCount = handler.mock.calls.length;
-    const res = await fetch(`${server.url}${path}`);
-    expect(res.status).toBe(200);
-    expect(await res.bytes()).toEqual(await static_responses[path].bytes());
-    expect(handler.mock.calls.length, "Handler should not be called").toBe(previousCallCount);
-  });
-  describe("stress test", () => {
-    it.each(["/foo", "/big", "/foo/bar"])(
-      "%s",
-      async path => {
+  describe.each(["/foo", "/big", "/foo/bar"])("%s", path => {
+    it("GET", async () => {
+      const previousCallCount = handler.mock.calls.length;
+
+      const res = await fetch(`${server.url}${path}`);
+      expect(res.status).toBe(200);
+      expect(await res.bytes()).toEqual(await static_responses[path].bytes());
+      expect(handler.mock.calls.length, "Handler should not be called").toBe(previousCallCount);
+    });
+
+    it("HEAD", async () => {
+      const previousCallCount = handler.mock.calls.length;
+
+      const res = await fetch(`${server.url}${path}`, { method: "HEAD" });
+      expect(res.status).toBe(200);
+      expect(await res.bytes()).toHaveLength(0);
+      expect(res.headers.get("Content-Length")).toBe(static_responses[path].size.toString());
+      expect(handler.mock.calls.length, "Handler should not be called").toBe(previousCallCount);
+    });
+
+    it(
+      "stress",
+      async () => {
         const bytes = await static_responses[path].arrayBuffer();
         // macOS limits backlog to 128.
         // When we do the big request, reduce number of connections but increase number of iterations

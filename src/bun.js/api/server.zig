@@ -283,9 +283,14 @@ const StaticRoute = struct {
             server.onPendingRequest();
             resp.timeout(server.config().idleTimeout);
         }
-        resp.corked(renderMetadata, .{ this, resp });
-        resp.end("", resp.shouldCloseConnection());
+        resp.corked(renderMetadataAndEnd, .{ this, resp });
         this.onResponseComplete(resp);
+    }
+
+    fn renderMetadataAndEnd(this: *Route, resp: HTTPResponse) void {
+        this.renderMetadata(resp);
+        resp.writeHeaderInt("Content-Length", this.cached_blob_size);
+        resp.endWithoutBody(resp.shouldCloseConnection());
     }
 
     pub fn onRequest(this: *Route, req: *uws.Request, resp: HTTPResponse) void {

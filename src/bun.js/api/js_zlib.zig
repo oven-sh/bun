@@ -269,26 +269,14 @@ pub const ZlibEncoder = struct {
                     defer this.encoder.input.discard(readable.len);
                     const pending = readable;
 
-                    const Writer = struct {
-                        encoder: *ZlibEncoder,
-
-                        pub const Error = error{OutOfMemory};
-                        pub fn writeAll(writer: @This(), chunk: []const u8) Error!void {
-                            writer.encoder.output_lock.lock();
-                            defer writer.encoder.output_lock.unlock();
-
-                            try writer.encoder.output.appendSlice(bun.default_allocator, chunk);
-                        }
-                    };
-
                     defer {
                         this.encoder.freelist_write_lock.lock();
                         this.encoder.freelist.write(pending) catch unreachable;
                         this.encoder.freelist_write_lock.unlock();
                     }
                     for (pending) |input| {
-                        var writer = this.encoder.stream.writer(Writer{ .encoder = this.encoder });
-                        writer.writeAll(input.slice()) catch |e| {
+                        const output = &this.encoder.output;
+                        this.encoder.stream.write(input.slice(), output) catch |e| {
                             any = true;
                             _ = this.encoder.pending_encode_job_count.fetchSub(1, .monotonic);
                             if (!this.is_async) {

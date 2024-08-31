@@ -997,67 +997,45 @@ pub const ZlibCompressorStreaming = struct {
         this.strategy = strategy;
     }
 
-    pub fn writer(this: *ZlibCompressorStreaming, out_writer: anytype) WriterImpl(@TypeOf(out_writer)).Writer {
-        return (WriterImpl(@TypeOf(out_writer)){ .ctx = this, .out_writer = out_writer }).writer();
+    pub fn write(this: *ZlibCompressorStreaming, bytes: []const u8, output: *std.ArrayListUnmanaged(u8)) !void {
+        const state = &this.state;
+        state.next_in = bytes.ptr;
+        state.avail_in = @intCast(bytes.len);
+        if (state.avail_in == 0) state.next_in = null;
+
+        while (true) {
+            if (try this.doWork(output, this.flush)) {
+                break;
+            }
+        }
+        // bun.assert(state.avail_in == 0);
     }
 
-    fn WriterImpl(comptime T: type) type {
-        return struct {
-            ctx: *ZlibCompressorStreaming,
-            out_writer: T,
+    fn doWork(this: *ZlibCompressorStreaming, output: *std.ArrayListUnmanaged(u8), flush: FlushValue) !bool {
+        const state = &this.state;
+        var out: [CHUNK]u8 = undefined;
+        state.avail_out = CHUNK;
+        state.next_out = &out;
 
-            const WriteError = std.mem.Allocator.Error;
-            const Writer = std.io.Writer(@This(), WriteError, write);
-
-            fn writer(this: @This()) Writer {
-                return .{ .context = this };
-            }
-
-            fn write(this: @This(), bytes: []const u8) WriteError!usize {
-                const state = &this.ctx.state;
-                state.next_in = bytes.ptr;
-                state.avail_in = @intCast(bytes.len);
-                if (state.avail_in == 0) state.next_in = null;
-
-                while (true) {
-                    var out: [CHUNK]u8 = undefined;
-                    state.avail_out = CHUNK;
-                    state.next_out = &out;
-
-                    const ret = deflate(state, this.ctx.flush);
-                    bun.assert(ret != .StreamError);
-                    const have = CHUNK - state.avail_out;
-                    try this.out_writer.writeAll(out[0..have]);
-                    if (state.avail_out == 0) continue;
-                    break;
-                }
-                // bun.assert(state.avail_in == 0);
-
-                return bytes.len;
-            }
-        };
+        this.err = deflate(state, flush);
+        bun.assert(this.err != .StreamError);
+        const have = CHUNK - state.avail_out;
+        try output.appendSlice(bun.default_allocator, out[0..have]);
+        if (state.avail_out == 0) return false;
+        return true;
     }
 
     pub fn end(this: *ZlibCompressorStreaming, output: *std.ArrayListUnmanaged(u8)) !void {
         const state = &this.state;
         state.next_in = null;
         state.avail_in = 0;
-        var ret: ReturnCode = .Ok;
-        while (true) {
-            var out: [CHUNK]u8 = undefined;
-            state.avail_out = CHUNK;
-            state.next_out = &out;
-            ret = deflate(state, this.finishFlush);
-            bun.assert(ret != .StreamError);
-            const have = CHUNK - state.avail_out;
-            try output.appendSlice(bun.default_allocator, out[0..have]);
-            if (state.avail_out == 0) continue;
-            break;
-        }
+
+        const done = try this.doWork(output, this.finishFlush);
+        bun.assert(done);
         // bun.assert(state.avail_in == 0);
 
         _ = deflateEnd(&this.state);
-        if (ret != .StreamEnd and this.finishFlush == .Finish) return error.ZlibError;
+        if (this.err != .StreamEnd and this.finishFlush == .Finish) return error.ZlibError;
     }
 };
 
@@ -1181,7 +1159,7 @@ pub const ZlibDecompressorStreaming = struct {
         }
 
         while (true) {
-            if (try this.doWork(output)) {
+            if (try this.doWork(output, this.flush)) {
                 break;
             }
         }
@@ -1190,13 +1168,13 @@ pub const ZlibDecompressorStreaming = struct {
         return bytes.len;
     }
 
-    fn doWork(this: *ZlibDecompressorStreaming, output: *std.ArrayListUnmanaged(u8)) !bool {
+    fn doWork(this: *ZlibDecompressorStreaming, output: *std.ArrayListUnmanaged(u8), flush: FlushValue) !bool {
         const state = &this.state;
         var out: [CHUNK]u8 = undefined;
         state.avail_out = CHUNK;
         state.next_out = &out;
 
-        this.err = inflate(state, this.flush);
+        this.err = inflate(state, flush);
         const ret = this.err;
         bun.assert(ret != .StreamError);
         if (ret == .NeedDict) return this.error_for_message((if (this.dictionary.len == 0) "Missing dictionary" else "Bad dictionary").ptr);
@@ -1219,7 +1197,7 @@ pub const ZlibDecompressorStreaming = struct {
         state.next_in = null;
         state.avail_in = 0;
 
-        const done = try this.doWork(output);
+        const done = try this.doWork(output, this.finishFlush);
         bun.assert(done);
         // bun.assert(state.avail_in == 0);
 

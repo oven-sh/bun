@@ -1729,7 +1729,9 @@ pub const AnyRequestContext = struct {
     pub fn init(request_ctx: anytype) AnyRequestContext {
         return .{ .tagged_pointer = Pointer.init(request_ctx) };
     }
-
+    pub fn get(self: AnyRequestContext, comptime T: type) ?*T {
+        return self.tagged_pointer.get(T);
+    }
     pub fn getRemoteSocketInfo(self: AnyRequestContext) ?uws.SocketAddress {
         if (self.tagged_pointer.isNull()) {
             return null;
@@ -1747,6 +1749,27 @@ pub const AnyRequestContext = struct {
             },
             @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
                 return self.tagged_pointer.as(DebugHTTPSServer.RequestContext).getRemoteSocketInfo();
+            },
+            else => @panic("Unexpected AnyRequestContext tag"),
+        }
+    }
+
+    pub fn detachRequest(self: AnyRequestContext) void {
+        if (self.tagged_pointer.isNull()) {
+            return;
+        }
+        switch (self.tagged_pointer.tag()) {
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
+                self.tagged_pointer.as(HTTPServer.RequestContext).req = null;
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
+                self.tagged_pointer.as(HTTPSServer.RequestContext).req = null;
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
+                self.tagged_pointer.as(DebugHTTPServer.RequestContext).req = null;
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
+                self.tagged_pointer.as(DebugHTTPSServer.RequestContext).req = null;
             },
             else => @panic("Unexpected AnyRequestContext tag"),
         }
@@ -1819,7 +1842,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         /// thread-local default heap allocator
         /// this prevents an extra pthread_getspecific() call which shows up in profiling
         allocator: std.mem.Allocator,
-        req: *uws.Request,
+        req: ?*uws.Request,
+        request_weakref: Request.WeakRef = .{},
         signal: ?*JSC.WebCore.AbortSignal = null,
         method: HTTP.Method,
 
@@ -2375,6 +2399,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.response_jsvalue = JSC.JSValue.zero;
             }
 
+            if (this.request_weakref.get()) |request| {
+                request.request_context = AnyRequestContext.Null;
+                this.request_weakref.deinit();
+            }
+
             // if signal is not aborted, abort the signal
             if (this.signal) |signal| {
                 this.signal = null;
@@ -2751,7 +2780,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (this.blob.needsToReadFile()) {
-                this.req.setYield(false);
                 if (!this.flags.has_sendfile_ctx)
                     this.doSendfile(this.blob.Blob);
                 return;
@@ -2969,7 +2997,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             // This object dies after the stack frame is popped
             // so we have to clear it in here too
-            request_object.request_context = JSC.API.AnyRequestContext.Null;
+            request_object.request_context.detachRequest();
         }
 
         fn toAsync(
@@ -3499,8 +3527,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
 
                 if (!this.flags.has_abort_handler) {
-                    try writer.writeAll(this.req.url());
-                    return;
+                    if (this.req) |req| {
+                        try writer.writeAll(req.url());
+                        return;
+                    }
                 }
 
                 try writer.writeAll("/");
@@ -5787,11 +5817,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return JSValue.jsUndefined();
             };
 
-            if (request.upgrader == null) {
-                return JSC.jsBoolean(false);
-            }
-
-            var upgrader = bun.cast(*RequestContext, request.upgrader.?);
+            var upgrader = request.request_context.get(RequestContext) orelse return JSC.jsBoolean(false);
 
             if (upgrader.isAbortedOrEnded()) {
                 return JSC.jsBoolean(false);
@@ -5800,6 +5826,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             if (upgrader.upgrade_context == null or @intFromPtr(upgrader.upgrade_context) == std.math.maxInt(usize)) {
                 return JSC.jsBoolean(false);
             }
+
             const resp = upgrader.resp.?;
             const ctx = upgrader.upgrade_context.?;
 
@@ -5815,20 +5842,21 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 sec_websocket_extensions = head.fastGet(.SecWebSocketExtensions) orelse ZigString.Empty;
             }
 
-            if (sec_websocket_key_str.len == 0) {
-                sec_websocket_key_str = ZigString.init(upgrader.req.header("sec-websocket-key") orelse "");
+            if (upgrader.req) |req| {
+                if (sec_websocket_key_str.len == 0) {
+                    sec_websocket_key_str = ZigString.init(req.header("sec-websocket-key") orelse "");
+                }
+                if (sec_websocket_protocol.len == 0) {
+                    sec_websocket_protocol = ZigString.init(req.header("sec-websocket-protocol") orelse "");
+                }
+
+                if (sec_websocket_extensions.len == 0) {
+                    sec_websocket_extensions = ZigString.init(req.header("sec-websocket-extensions") orelse "");
+                }
             }
 
             if (sec_websocket_key_str.len == 0) {
                 return JSC.jsBoolean(false);
-            }
-
-            if (sec_websocket_protocol.len == 0) {
-                sec_websocket_protocol = ZigString.init(upgrader.req.header("sec-websocket-protocol") orelse "");
-            }
-
-            if (sec_websocket_extensions.len == 0) {
-                sec_websocket_extensions = ZigString.init(upgrader.req.header("sec-websocket-extensions") orelse "");
             }
 
             if (sec_websocket_protocol.len > 0) {
@@ -5922,7 +5950,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             upgrader.setAbortHandler();
             // after upgrading we should not use the response anymore
             upgrader.resp = null;
-            request.upgrader = null;
+            request.request_context = AnyRequestContext.Null;
+            upgrader.request_weakref.deinit();
 
             data_value.ensureStillAlive();
             const ws = ServerWebSocket.new(.{
@@ -6710,10 +6739,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 .signal = signal.ref(),
                 .body = body.ref(),
             });
+            ctx.request_weakref = Request.WeakRef.create(request_object);
 
             if (comptime debug_mode) {
                 ctx.flags.is_web_browser_navigation = brk: {
-                    if (ctx.req.header("sec-fetch-dest")) |fetch_dest| {
+                    if (req.header("sec-fetch-dest")) |fetch_dest| {
                         if (strings.eqlComptime(fetch_dest, "document")) {
                             break :brk true;
                         }
@@ -6761,10 +6791,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     resp.onData(*RequestContext, RequestContext.onBufferedBodyChunk, ctx);
                 }
             }
+            const js_request = request_object.toJS(this.globalThis);
+            js_request.ensureStillAlive();
 
             // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
             var args = [_]JSC.JSValue{
-                request_object.toJS(this.globalThis),
+                js_request,
                 this.thisObject,
             };
 
@@ -6774,7 +6806,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             const response_value = this.config.onRequest.call(this.globalThis, this.thisObject, &args);
             defer {
                 // uWS request will not live longer than this function
-                request_object.request_context = JSC.API.AnyRequestContext.Null;
+                request_object.request_context.detachRequest();
             }
             const original_state = ctx.defer_deinit_until_callback_completes;
             var should_deinit_context = false;
@@ -6789,7 +6821,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             ctx.defer_deinit_until_callback_completes = original_state;
 
             if (should_deinit_context) {
-                request_object.request_context = JSC.API.AnyRequestContext.Null;
                 ctx.deinit();
                 return;
             }
@@ -6823,13 +6854,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             var request_object = Request.new(.{
                 .method = ctx.method,
                 .request_context = AnyRequestContext.init(ctx),
-                .upgrader = ctx,
                 .https = ssl_enabled,
                 .signal = signal.ref(),
                 .body = body.ref(),
             });
             ctx.upgrade_context = upgrade_ctx;
-
+            ctx.request_weakref = Request.WeakRef.create(request_object);
             // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
             var args = [_]JSC.JSValue{
                 request_object.toJS(this.globalThis),
@@ -6840,7 +6870,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             const response_value = this.config.onRequest.call(this.globalThis, this.thisObject, &args);
             defer {
                 // uWS request will not live longer than this function
-                request_object.request_context = JSC.API.AnyRequestContext.Null;
+                request_object.request_context.detachRequest();
             }
 
             const original_state = ctx.defer_deinit_until_callback_completes;
@@ -6856,7 +6886,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             ctx.defer_deinit_until_callback_completes = original_state;
 
             if (should_deinit_context) {
-                request_object.request_context = JSC.API.AnyRequestContext.Null;
                 ctx.deinit();
                 return;
             }

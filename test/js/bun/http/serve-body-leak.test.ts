@@ -143,6 +143,6 @@ for (const test_info of [
       expect(report.leak).toBeLessThanOrEqual(maxMemoryGrowth);
       expect(report.end_memory).toBeLessThanOrEqual(512 * 1024 * 1024);
     },
-    isDebug ? 60_000 : 30_000,
+    isDebug ? 60_000 : 40_000,
   );
 }

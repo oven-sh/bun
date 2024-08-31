@@ -19,10 +19,11 @@ HandleScope::~HandleScope()
     buffer = nullptr;
 }
 
-uintptr_t* HandleScope::CreateHandle(internal::Isolate* isolate, uintptr_t value)
+uintptr_t* HandleScope::CreateHandle(internal::Isolate* i_isolate, uintptr_t value)
 {
-    auto* handleScope = reinterpret_cast<Isolate*>(isolate)->globalInternals()->currentHandleScope();
-    TaggedPointer* newSlot = handleScope->buffer->createHandleFromExistingObject(TaggedPointer::fromRaw(value), reinterpret_cast<Roots*>(isolate));
+    auto* isolate = reinterpret_cast<Isolate*>(i_isolate);
+    auto* handleScope = isolate->globalInternals()->currentHandleScope();
+    TaggedPointer* newSlot = handleScope->buffer->createHandleFromExistingObject(TaggedPointer::fromRaw(value), isolate);
     // basically a reinterpret
     return &newSlot->value;
 }

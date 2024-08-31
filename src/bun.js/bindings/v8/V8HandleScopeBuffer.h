@@ -4,9 +4,10 @@
 #include "V8TaggedPointer.h"
 #include "V8Map.h"
 #include "V8Handle.h"
-#include "V8Roots.h"
 
 namespace v8 {
+
+class Isolate;
 
 // An array used by HandleScope to store the items. Must keep pointer stability when resized, since
 // v8::Locals point inside this array.
@@ -42,10 +43,10 @@ public:
     // numeric value
     //
     // address:     V8 object pointer or Smi
-    // roots:       for now, a reinterpreted Isolate pointer
+    // isolate:     received in any V8 method
     // reuseHandle: if nonnull, change this handle instead of creating a new one
     // returns the location of the new handle's V8 object pointer or Smi
-    TaggedPointer* createHandleFromExistingObject(TaggedPointer address, Roots* roots, Handle* reuseHandle = nullptr);
+    TaggedPointer* createHandleFromExistingObject(TaggedPointer address, Isolate* isolate, Handle* reuseHandle = nullptr);
 
     void clear();
 

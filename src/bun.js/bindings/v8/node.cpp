@@ -38,14 +38,6 @@ void node_module_register(void* opaque_mod)
     auto* globalObject = Bun__getDefaultGlobalObject();
     auto& vm = globalObject->vm();
     auto* mod = reinterpret_cast<struct node_module*>(opaque_mod);
-    // Error: The module '/Users/ben/code/bun/test/v8/v8-module/build/Release/v8tests.node'
-    // was compiled against a different Node.js version using
-    // NODE_MODULE_VERSION 127. This version of Node.js requires
-    // NODE_MODULE_VERSION 108. Please try re-compiling or re-installing
-    // the module (for instance, using `npm rebuild` or `npm install`).
-
-    if (mod->nm_version != REPORTED_NODEJS_ABI_VERSION) {
-    }
 
     auto keyStr = WTF::String::fromUTF8(mod->nm_modname);
     globalObject->napiModuleRegisterCallCount++;
@@ -86,12 +78,13 @@ void node_module_register(void* opaque_mod)
 
     JSC::Strong<JSC::JSObject> strongObject = { vm, object };
 
-    HandleScope hs(Isolate::fromGlobalObject(globalObject));
+    auto* isolate = globalObject->V8GlobalInternals()->isolate();
+    HandleScope hs(isolate);
 
     // exports, module
     Local<Object> exports = hs.createLocal<Object>(vm, *strongExportsObject);
     Local<Value> module = hs.createLocal<Value>(vm, object);
-    Local<Context> context = Isolate::fromGlobalObject(globalObject)->GetCurrentContext();
+    Local<Context> context = isolate->GetCurrentContext();
     if (mod->nm_context_register_func) {
         mod->nm_context_register_func(exports, module, context, mod->nm_priv);
     } else if (mod->nm_register_func) {

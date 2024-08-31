@@ -342,7 +342,7 @@ public:
         NAPICallFrame frame(JSC::ArgList(args), function->m_dataPtr);
 
         auto scope = DECLARE_THROW_SCOPE(vm);
-        v8::HandleScope handleScope(v8::Isolate::fromGlobalObject(static_cast<Zig::GlobalObject*>(globalObject)));
+        v8::HandleScope handleScope(jsCast<Zig::GlobalObject*>(globalObject)->V8GlobalInternals()->isolate());
 
         auto result = callback(env, NAPICallFrame::toNapiCallbackInfo(frame));
 
@@ -1238,7 +1238,6 @@ static JSValue createErrorForNapi(napi_env env, napi_value code, napi_value msg,
             return {};
         }
     }
-
 
     auto* error = constructor(globalObject, message);
 

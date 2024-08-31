@@ -4,6 +4,7 @@
 #include "V8Isolate.h"
 #include "v8_internal.h"
 #include "V8HandleScopeBuffer.h"
+#include "V8GlobalInternals.h"
 
 namespace v8 {
 

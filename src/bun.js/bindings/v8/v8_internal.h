@@ -5,6 +5,7 @@
 namespace v8 {
 namespace internal {
 
+// identical to v8::Isolate
 class Isolate {};
 
 BUN_EXPORT Isolate* IsolateFromNeverReadOnlySpaceObject(uintptr_t obj);

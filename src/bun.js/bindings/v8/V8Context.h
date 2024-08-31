@@ -1,7 +1,6 @@
 #pragma once
 
 #include "ZigGlobalObject.h"
-#include "V8GlobalInternals.h"
 #include "V8Data.h"
 
 namespace v8 {
@@ -16,7 +15,7 @@ public:
 
     JSC::VM& vm() const
     {
-        return globalObject()->vm();
+        return localToCell()->vm();
     }
 
     const Zig::GlobalObject* globalObject() const

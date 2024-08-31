@@ -2,7 +2,7 @@
 
 #include "BunClientData.h"
 
-#include "V8Roots.h"
+#include "V8Isolate.h"
 #include "V8Oddball.h"
 
 namespace v8 {
@@ -36,37 +36,39 @@ public:
 
     JSC::Structure* objectTemplateStructure(JSC::JSGlobalObject* globalObject) const
     {
-        return m_ObjectTemplateStructure.getInitializedOnMainThread(globalObject);
+        return m_objectTemplateStructure.getInitializedOnMainThread(globalObject);
     }
 
     JSC::Structure* handleScopeBufferStructure(JSC::JSGlobalObject* globalObject) const
     {
-        return m_HandleScopeBufferStructure.getInitializedOnMainThread(globalObject);
+        return m_handleScopeBufferStructure.getInitializedOnMainThread(globalObject);
     }
 
     JSC::Structure* functionTemplateStructure(JSC::JSGlobalObject* globalObject) const
     {
-        return m_FunctionTemplateStructure.getInitializedOnMainThread(globalObject);
+        return m_functionTemplateStructure.getInitializedOnMainThread(globalObject);
     }
 
     JSC::Structure* v8FunctionStructure(JSC::JSGlobalObject* globalObject) const
     {
-        return m_V8FunctionStructure.getInitializedOnMainThread(globalObject);
+        return m_v8FunctionStructure.getInitializedOnMainThread(globalObject);
     }
 
-    HandleScopeBuffer* globalHandles() const { return m_GlobalHandles.getInitializedOnMainThread(this); }
+    HandleScopeBuffer* globalHandles() const { return m_globalHandles.getInitializedOnMainThread(this); }
 
-    HandleScope* currentHandleScope() const { return m_CurrentHandleScope; }
+    HandleScope* currentHandleScope() const { return m_currentHandleScope; }
 
-    void setCurrentHandleScope(HandleScope* handleScope) { m_CurrentHandleScope = handleScope; }
+    void setCurrentHandleScope(HandleScope* handleScope) { m_currentHandleScope = handleScope; }
 
-    TaggedPointer* undefinedSlot() { return &roots.roots[Roots::kUndefinedValueRootIndex]; }
+    TaggedPointer* undefinedSlot() { return m_isolate.getRoot(Isolate::kUndefinedValueRootIndex); }
 
-    TaggedPointer* nullSlot() { return &roots.roots[Roots::kNullValueRootIndex]; }
+    TaggedPointer* nullSlot() { return m_isolate.getRoot(Isolate::kNullValueRootIndex); }
 
-    TaggedPointer* trueSlot() { return &roots.roots[Roots::kTrueValueRootIndex]; }
+    TaggedPointer* trueSlot() { return m_isolate.getRoot(Isolate::kTrueValueRootIndex); }
 
-    TaggedPointer* falseSlot() { return &roots.roots[Roots::kFalseValueRootIndex]; }
+    TaggedPointer* falseSlot() { return m_isolate.getRoot(Isolate::kFalseValueRootIndex); }
+
+    Isolate* isolate() { return &m_isolate; }
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE);
@@ -76,31 +78,31 @@ public:
     friend class Context;
 
 private:
-    Zig::GlobalObject* globalObject;
-    JSC::LazyClassStructure m_ObjectTemplateStructure;
-    JSC::LazyClassStructure m_HandleScopeBufferStructure;
-    JSC::LazyClassStructure m_FunctionTemplateStructure;
-    JSC::LazyClassStructure m_V8FunctionStructure;
-    HandleScope* m_CurrentHandleScope;
-    JSC::LazyProperty<GlobalInternals, HandleScopeBuffer> m_GlobalHandles;
+    Zig::GlobalObject* m_globalObject;
+    JSC::LazyClassStructure m_objectTemplateStructure;
+    JSC::LazyClassStructure m_handleScopeBufferStructure;
+    JSC::LazyClassStructure m_functionTemplateStructure;
+    JSC::LazyClassStructure m_v8FunctionStructure;
+    HandleScope* m_currentHandleScope;
+    JSC::LazyProperty<GlobalInternals, HandleScopeBuffer> m_globalHandles;
 
-    Oddball undefinedValue;
-    Oddball nullValue;
-    Oddball trueValue;
-    Oddball falseValue;
+    Oddball m_undefinedValue;
+    Oddball m_nullValue;
+    Oddball m_trueValue;
+    Oddball m_falseValue;
 
-    Roots roots;
+    Isolate m_isolate;
 
     void finishCreation(JSC::VM& vm);
-    GlobalInternals(JSC::VM& vm, JSC::Structure* structure, Zig::GlobalObject* globalObject_)
+    GlobalInternals(JSC::VM& vm, JSC::Structure* structure, Zig::GlobalObject* globalObject)
         : Base(vm, structure)
-        , m_CurrentHandleScope(nullptr)
-        , undefinedValue(Oddball::Kind::kUndefined)
-        , nullValue(Oddball::Kind::kNull)
-        , trueValue(Oddball::Kind::kTrue)
-        , falseValue(Oddball::Kind::kFalse)
-        , roots(this)
-        , globalObject(globalObject_)
+        , m_currentHandleScope(nullptr)
+        , m_undefinedValue(Oddball::Kind::kUndefined)
+        , m_nullValue(Oddball::Kind::kNull)
+        , m_trueValue(Oddball::Kind::kTrue)
+        , m_falseValue(Oddball::Kind::kFalse)
+        , m_isolate(this)
+        , m_globalObject(globalObject)
     {
     }
 };

@@ -1,5 +1,6 @@
 #include "V8HandleScopeBuffer.h"
 #include "V8GlobalInternals.h"
+#include "V8Isolate.h"
 
 namespace v8 {
 
@@ -67,7 +68,7 @@ TaggedPointer* HandleScopeBuffer::createDoubleHandle(double value)
     return &handle.to_v8_object;
 }
 
-TaggedPointer* HandleScopeBuffer::createHandleFromExistingObject(TaggedPointer address, Roots* roots, Handle* reuseHandle)
+TaggedPointer* HandleScopeBuffer::createHandleFromExistingObject(TaggedPointer address, Isolate* isolate, Handle* reuseHandle)
 {
     int32_t smi;
     if (address.getSmi(smi)) {
@@ -81,9 +82,9 @@ TaggedPointer* HandleScopeBuffer::createHandleFromExistingObject(TaggedPointer a
         auto* v8_object = address.getPtr<ObjectLayout>();
         if (v8_object->tagged_map.getPtr<Map>()->instance_type == InstanceType::Oddball) {
             // find which oddball this is
-            for (int i = 0; i < Roots::rootsSize; i++) {
-                if (roots->roots[i] == address) {
-                    return &roots->roots[i];
+            for (auto& root : isolate->m_roots) {
+                if (root == address) {
+                    return &root;
                 }
             }
             RELEASE_ASSERT_NOT_REACHED("HandleScopeBuffer::createHandleFromExistingObject passed an Oddball which does not exist in Roots");

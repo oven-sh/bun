@@ -334,14 +334,14 @@ const ProxyTunnel = struct {
 
                     switch (proxy.socket) {
                         .ssl => |socket| {
-                            if (!this.checkServerIdentity(true, socket, handshake_error, ssl_ptr)) {
+                            if (!this.checkServerIdentity(true, socket, handshake_error, ssl_ptr, false)) {
                                 this.flags.did_have_handshaking_error = true;
                                 this.unregisterAbortTracker();
                                 return;
                             }
                         },
                         .tcp => |socket| {
-                            if (!this.checkServerIdentity(false, socket, handshake_error, ssl_ptr)) {
+                            if (!this.checkServerIdentity(false, socket, handshake_error, ssl_ptr, false)) {
                                 this.flags.did_have_handshaking_error = true;
                                 this.unregisterAbortTracker();
                                 return;
@@ -694,7 +694,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
                             // if checkServerIdentity returns false, we dont call open this means that the connection was rejected
                             const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(socket.getNativeHandle()));
-                            if (!client.checkServerIdentity(comptime ssl, socket, handshake_error, ssl_ptr)) {
+                            if (!client.checkServerIdentity(comptime ssl, socket, handshake_error, ssl_ptr, true)) {
                                 client.flags.did_have_handshaking_error = true;
                                 client.unregisterAbortTracker();
                                 if (!socket.isClosed()) terminateSocket(socket);
@@ -1206,6 +1206,7 @@ pub fn checkServerIdentity(
     socket: NewHTTPContext(is_ssl).HTTPSocket,
     certError: HTTPCertError,
     ssl_ptr: *BoringSSL.SSL,
+    allow_proxy_url: bool,
 ) bool {
     if (client.flags.reject_unauthorized) {
         if (BoringSSL.SSL_get_peer_cert_chain(ssl_ptr)) |cert_chain| {
@@ -1222,8 +1223,10 @@ pub fn checkServerIdentity(
                     assert(result_size == cert_size);
 
                     var hostname = client.hostname orelse client.url.hostname;
-                    if (client.http_proxy) |proxy| {
-                        hostname = proxy.hostname;
+                    if (allow_proxy_url) {
+                        if (client.http_proxy) |proxy| {
+                            hostname = proxy.hostname;
+                        }
                     }
 
                     client.state.certificate_info = .{

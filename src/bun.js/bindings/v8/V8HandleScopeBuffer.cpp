@@ -1,4 +1,5 @@
 #include "V8HandleScopeBuffer.h"
+#include "V8GlobalInternals.h"
 
 namespace v8 {
 
@@ -66,17 +67,34 @@ TaggedPointer* HandleScopeBuffer::createDoubleHandle(double value)
     return &handle.to_v8_object;
 }
 
-TaggedPointer* HandleScopeBuffer::createHandleFromExistingHandle(TaggedPointer address)
+TaggedPointer* HandleScopeBuffer::createHandleFromExistingObject(TaggedPointer address, Roots* roots, Handle* reuseHandle)
 {
-    auto& handle = createEmptyHandle();
     int32_t smi;
     if (address.getSmi(smi)) {
-        handle = Handle(smi);
+        if (reuseHandle) {
+            *reuseHandle = Handle(smi);
+            return &reuseHandle->to_v8_object;
+        } else {
+            return createSmiHandle(smi);
+        }
     } else {
         auto* v8_object = address.getPtr<ObjectLayout>();
-        handle = Handle(v8_object);
+        if (v8_object->tagged_map.getPtr<Map>()->instance_type == InstanceType::Oddball) {
+            // find which oddball this is
+            for (int i = 0; i < Roots::rootsSize; i++) {
+                if (roots->roots[i] == address) {
+                    return &roots->roots[i];
+                }
+            }
+            RELEASE_ASSERT_NOT_REACHED("HandleScopeBuffer::createHandleFromExistingObject passed an Oddball which does not exist in Roots");
+        }
+        if (reuseHandle) {
+            *reuseHandle = Handle(v8_object->map(), v8_object->asCell(), vm(), this);
+            return &reuseHandle->to_v8_object;
+        } else {
+            return createHandle(v8_object->asCell(), v8_object->map(), vm());
+        }
     }
-    return &handle.to_v8_object;
 }
 
 void HandleScopeBuffer::clear()

@@ -13,7 +13,8 @@ void ToLocalEmpty()
 uintptr_t* GlobalizeReference(v8::internal::Isolate* isolate, uintptr_t address)
 {
     auto* globalHandles = reinterpret_cast<Isolate*>(isolate)->globalInternals()->globalHandles();
-    return &globalHandles->createHandleFromExistingHandle(TaggedPointer::fromRaw(address))->value;
+    TaggedPointer* newSlot = globalHandles->createHandleFromExistingObject(TaggedPointer::fromRaw(address), reinterpret_cast<Roots*>(isolate));
+    return &newSlot->value;
 }
 
 void DisposeGlobal(uintptr_t* location)

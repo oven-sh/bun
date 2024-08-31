@@ -467,17 +467,38 @@ void test_handle_scope_gc(const FunctionCallbackInfo<Value> &info) {
   delete[] string_data;
 }
 
-Local<String> return_escaped_handle(Isolate *isolate) {
+Local<String> escape_object(Isolate *isolate) {
   EscapableHandleScope ehs(isolate);
-  Local<String> s = String::NewFromUtf8(isolate, "hello").ToLocalChecked();
-  return ehs.Escape(s);
+  Local<String> invalidated =
+      String::NewFromUtf8(isolate, "hello").ToLocalChecked();
+  Local<String> escaped = ehs.Escape(invalidated);
+  return escaped;
+}
+
+Local<Number> escape_smi(Isolate *isolate) {
+  EscapableHandleScope ehs(isolate);
+  Local<Number> invalidated = Number::New(isolate, 3.0);
+  Local<Number> escaped = ehs.Escape(invalidated);
+  return escaped;
+}
+
+Local<Boolean> escape_true(Isolate *isolate) {
+  EscapableHandleScope ehs(isolate);
+  Local<Boolean> invalidated = v8::True(isolate);
+  Local<Boolean> escaped = ehs.Escape(invalidated);
+  return escaped;
 }
 
 void test_v8_escapable_handle_scope(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
-  Local<String> s = return_escaped_handle(isolate);
-  // n should overwrite the handle from s if s is stale
-  Local<Number> n = Number::New(isolate, 6.5);
+  Local<String> s = escape_object(isolate);
+  Local<Number> n = escape_smi(isolate);
+  Local<Boolean> t = escape_true(isolate);
+
+  LOG_VALUE_KIND(s);
+  LOG_VALUE_KIND(n);
+  LOG_VALUE_KIND(t);
+
   char buf[16];
   s->WriteUtf8(isolate, buf);
   LOG_EXPR(buf);

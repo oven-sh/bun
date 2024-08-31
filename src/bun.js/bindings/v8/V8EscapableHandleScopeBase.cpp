@@ -15,8 +15,13 @@ EscapableHandleScopeBase::EscapableHandleScopeBase(Isolate* isolate)
 // HandleScope, and return the escape slot
 uintptr_t* EscapableHandleScopeBase::EscapeSlot(uintptr_t* escape_value)
 {
-    *escape_slot = *reinterpret_cast<Handle*>(escape_value);
-    return &escape_slot->to_v8_object.value;
+    RELEASE_ASSERT(escape_slot != nullptr, "EscapableHandleScope::Escape called multiple times");
+    TaggedPointer* newHandle = prev->buffer->createHandleFromExistingObject(
+        TaggedPointer::fromRaw(*escape_value),
+        reinterpret_cast<Roots*>(isolate),
+        escape_slot);
+    escape_slot = nullptr;
+    return &newHandle->value;
 }
 
 }

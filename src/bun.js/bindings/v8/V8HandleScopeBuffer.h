@@ -4,6 +4,7 @@
 #include "V8TaggedPointer.h"
 #include "V8Map.h"
 #include "V8Handle.h"
+#include "V8Roots.h"
 
 namespace v8 {
 
@@ -36,7 +37,15 @@ public:
     TaggedPointer* createHandle(JSC::JSCell* object, const Map* map, JSC::VM& vm);
     TaggedPointer* createSmiHandle(int32_t smi);
     TaggedPointer* createDoubleHandle(double value);
-    TaggedPointer* createHandleFromExistingHandle(TaggedPointer address);
+
+    // Given a tagged pointer from V8, create a handle around the same object or the same
+    // numeric value
+    //
+    // address:     V8 object pointer or Smi
+    // roots:       for now, a reinterpreted Isolate pointer
+    // reuseHandle: if nonnull, change this handle instead of creating a new one
+    // returns the location of the new handle's V8 object pointer or Smi
+    TaggedPointer* createHandleFromExistingObject(TaggedPointer address, Roots* roots, Handle* reuseHandle = nullptr);
 
     void clear();
 

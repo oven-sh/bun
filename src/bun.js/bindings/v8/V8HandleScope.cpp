@@ -22,7 +22,9 @@ HandleScope::~HandleScope()
 uintptr_t* HandleScope::CreateHandle(internal::Isolate* isolate, uintptr_t value)
 {
     auto* handleScope = reinterpret_cast<Isolate*>(isolate)->globalInternals()->currentHandleScope();
-    return &handleScope->buffer->createHandleFromExistingHandle(TaggedPointer::fromRaw(value))->value;
+    TaggedPointer* newSlot = handleScope->buffer->createHandleFromExistingObject(TaggedPointer::fromRaw(value), reinterpret_cast<Roots*>(isolate));
+    // basically a reinterpret
+    return &newSlot->value;
 }
 
 }

@@ -11,17 +11,19 @@ class GlobalInternals;
 // the layout is correct.
 struct Roots {
     // v8-internal.h:775
-    static const int kUndefinedValueRootIndex = 4;
-    static const int kTheHoleValueRootIndex = 5;
-    static const int kNullValueRootIndex = 6;
-    static const int kTrueValueRootIndex = 7;
-    static const int kFalseValueRootIndex = 8;
+    static constexpr int kUndefinedValueRootIndex = 4;
+    static constexpr int kTheHoleValueRootIndex = 5;
+    static constexpr int kNullValueRootIndex = 6;
+    static constexpr int kTrueValueRootIndex = 7;
+    static constexpr int kFalseValueRootIndex = 8;
+
+    static constexpr int rootsSize = 9;
 
     GlobalInternals* parent;
 
     uintptr_t padding[73];
 
-    TaggedPointer roots[9];
+    TaggedPointer roots[rootsSize];
 
     Roots(GlobalInternals* parent);
 };

@@ -46,8 +46,7 @@ function getURLSearchParams() {
 
 const type = process.argv[4];
 
-// allow caching of everything except Blob.
-// Don't cache blob because we also want to test that the Blob gets freed.
+// Cache only buffer/string since those aren't reference counted the same way.
 let cachedBody;
 function getBody() {
   let body;
@@ -62,10 +61,10 @@ function getBody() {
       body = cachedBody ??= getString();
       break;
     case "formdata":
-      body = cachedBody ??= getFormData();
+      body = getFormData();
       break;
     case "urlsearchparams":
-      body = cachedBody ??= getURLSearchParams();
+      body = getURLSearchParams();
       break;
     default:
       throw new Error(`Invalid type: ${type}`);

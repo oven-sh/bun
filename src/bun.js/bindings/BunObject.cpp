@@ -474,14 +474,13 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepMatch, (JSGlobalObject * globalObject, J
 
 JSC_DEFINE_HOST_FUNCTION(functionBunNanoseconds, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto* global = reinterpret_cast<GlobalObject*>(globalObject);
-    uint64_t time = Bun__readOriginTimer(global->bunVM());
+    uint64_t time = Bun__readOriginTimer(bunVM(globalObject));
     return JSValue::encode(jsNumber(time));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    auto& globalObject = *reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto& globalObject = *defaultGlobalObject(lexicalGlobalObject);
     auto& vm = globalObject.vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto pathValue = callFrame->argument(0);

@@ -312,7 +312,7 @@ test("can extend generated globals & WebCore globals", async () => {
     });
 
     const code = /*js*/ `
-class FooURL extends URL {
+class ExtendedDOMGlobal extends URL {
   constructor(url) {
     super(url);
   }
@@ -322,8 +322,18 @@ class FooURL extends URL {
   }
 }
 
+class ExtendedExtendedDOMGlobal extends ExtendedDOMGlobal {
+  constructor(url) {
+    super(url);
+  }
+
+  get wowSuchGetter() {
+    return "wow such getter";
+  }
+}
+
 const response = new Response();
-class FooResponse extends Response {
+class ExtendedZigGeneratedClass extends Response {
   constructor(body) {
     super(body);
   }
@@ -337,11 +347,30 @@ class FooResponse extends Response {
   }
 }
 
-const resp = new FooResponse("empty");
+class ExtendedExtendedZigGeneratedClass extends ExtendedZigGeneratedClass {
+  constructor(body) {
+    super(body);
+  }
 
-const url = new FooURL("https://example.com/path?foo=bar&baz=qux");
+  get custom() {
+    return 42;
+  }
+}
 
+const resp = new ExtendedZigGeneratedClass("empty");
+const resp2 = new ExtendedExtendedZigGeneratedClass("empty");
+
+const url = new ExtendedDOMGlobal("https://example.com/path?foo=bar&baz=qux");
+const url2 = new ExtendedExtendedDOMGlobal("https://example.com/path?foo=bar&baz=qux");
 if (url.ok !== true) {
+  throw new Error("bad");
+}
+  
+if (url2.wowSuchGetter !== "wow such getter") {
+  throw new Error("bad");
+}
+
+if (!response.ok) {
   throw new Error("bad");
 }
 
@@ -355,6 +384,34 @@ url.searchParams.get("foo");
 
 if (!resp.custom) {
   throw new Error("expected getter");
+}
+
+if (resp2.custom !== 42) {
+  throw new Error("expected getter");
+}
+
+if (!resp2.ok) {
+  throw new Error("expected ok");
+}
+
+if (!(resp instanceof ExtendedZigGeneratedClass)) {
+  throw new Error("expected ExtendedZigGeneratedClass");
+}
+
+if (!(resp instanceof Response)) {
+  throw new Error("expected Response");
+}
+
+if (!(resp2 instanceof ExtendedExtendedZigGeneratedClass)) {
+  throw new Error("expected ExtendedExtendedZigGeneratedClass");
+}
+
+if (!(resp2 instanceof ExtendedZigGeneratedClass)) {
+  throw new Error("expected ExtendedZigGeneratedClass");
+}
+
+if (!(resp2 instanceof Response)) {
+  throw new Error("expected Response");
 }
 
 if (!resp.ok) {

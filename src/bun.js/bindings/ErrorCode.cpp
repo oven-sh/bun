@@ -36,7 +36,6 @@ static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* glo
     // But preserve the error.stack property.
     if (isDOMExceptionPrototype) {
         auto* domGlobalObject = defaultGlobalObject(globalObject);
-        // TODO: node:vm?
         prototype = JSC::constructEmptyObject(globalObject, WebCore::JSDOMException::prototype(vm, *domGlobalObject));
     } else {
         switch (type) {

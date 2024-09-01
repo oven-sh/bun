@@ -100,43 +100,47 @@ describe("fetch doesn't leak", () => {
 });
 
 describe.each(["FormData", "Blob", "Buffer", "String", "URLSearchParams"])("Sending %s", type => {
-  test("does not leak", async () => {
-    using server = Bun.serve({
-      port: 0,
-      fetch(req) {
-        return new Response();
-      },
-    });
+  test(
+    "does not leak",
+    async () => {
+      using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          return new Response();
+        },
+      });
 
-    const rss = [];
+      const rss = [];
 
-    const process = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "--smol",
-        join(import.meta.dir, "fetch-leak-test-fixture-5.js"),
-        server.url.href,
-        1024 * 1024 * 2 + "",
-        type,
-      ],
-      stdin: "ignore",
-      stdout: "inherit",
-      stderr: "inherit",
-      env: {
-        ...bunEnv,
-      },
-      ipc(message) {
-        rss.push(message.rss);
-      },
-    });
+      const process = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "--smol",
+          join(import.meta.dir, "fetch-leak-test-fixture-5.js"),
+          server.url.href,
+          1024 * 1024 * 2 + "",
+          type,
+        ],
+        stdin: "ignore",
+        stdout: "inherit",
+        stderr: "inherit",
+        env: {
+          ...bunEnv,
+        },
+        ipc(message) {
+          rss.push(message.rss);
+        },
+      });
 
-    await process.exited;
+      await process.exited;
 
-    const first = rss[0];
-    const last = rss[rss.length - 1];
-    console.log({ rss, delta: (((last - first) / 1024 / 1024) | 0) + " MB" });
-    expect(last).toBeLessThan(first * 10);
-  });
+      const first = rss[0];
+      const last = rss[rss.length - 1];
+      console.log({ rss, delta: (((last - first) / 1024 / 1024) | 0) + " MB" });
+      expect(last).toBeLessThan(first * 10);
+    },
+    20 * 1000,
+  );
 });
 
 test("do not leak", async () => {

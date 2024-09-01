@@ -252,6 +252,11 @@ pub const String = extern struct {
         return @as(Pointer, @bitCast(@as(u64, @as(u63, @truncate(@as(u64, @bitCast(this)))))));
     }
 
+    pub fn toJS(this: *const String, buffer: []const u8, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        var str = bun.String.init(this.slice(buffer));
+        return str.transferToJS(globalThis);
+    }
+
     // String must be a pointer because we reference it as a slice. It will become a dead pointer if it is copied.
     pub fn slice(this: *const String, buf: string) string {
         switch (this.bytes[max_inline_len - 1] & 128) {

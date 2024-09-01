@@ -78,7 +78,7 @@ void Performance::contextDestroyed()
 
 DOMHighResTimeStamp Performance::now() const
 {
-    auto* bunVM = scriptExecutionContext()->bunVM();
+    auto* bunVM = bunVM(scriptExecutionContext()->vm());
     auto nowNano = Bun__readOriginTimer(bunVM);
     return static_cast<double>(nowNano) / 1000000.0;
 }

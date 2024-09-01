@@ -654,4 +654,9 @@ inline void* bunVM(JSC::JSGlobalObject* lexicalGlobalObject)
     return WebCore::clientData(lexicalGlobalObject->vm())->bunVM;
 }
 
+inline void* bunVM(Zig::GlobalObject* globalObject)
+{
+    return globalObject->bunVM();
+}
+
 #endif

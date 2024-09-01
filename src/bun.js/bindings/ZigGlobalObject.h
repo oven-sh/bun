@@ -623,4 +623,35 @@ using JSDOMGlobalObject = Zig::GlobalObject;
 }
 #endif
 
+// Do not use this directly.
+namespace ___private___ {
+extern "C" Zig::GlobalObject* Bun__getDefaultGlobalObject();
+inline Zig::GlobalObject* getDefaultGlobalObject()
+{
+    return Bun__getDefaultGlobalObject();
+}
+}
+
+inline Zig::GlobalObject* defaultGlobalObject(JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    auto* globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    if (!globalObject) {
+        return ___private___::getDefaultGlobalObject();
+    }
+    return globalObject;
+}
+inline Zig::GlobalObject* defaultGlobalObject()
+{
+    return ___private___::getDefaultGlobalObject();
+}
+
+inline void* bunVM(JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    if (auto* globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject)) {
+        return globalObject->bunVM();
+    }
+
+    return WebCore::clientData(lexicalGlobalObject->vm())->bunVM;
+}
+
 #endif

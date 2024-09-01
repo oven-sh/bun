@@ -1,6 +1,7 @@
 
 #include "root.h"
 
+#include "ZigGlobalObject.h"
 #include "DOMException.h"
 #include "JavaScriptCore/Error.h"
 #include "JavaScriptCore/ErrorType.h"
@@ -27,8 +28,6 @@
 
 #include "ErrorCode.h"
 
-extern "C" Zig::GlobalObject* Bun__getDefaultGlobalObject();
-
 static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code, bool isDOMExceptionPrototype = false)
 {
     JSC::JSObject* prototype;
@@ -36,10 +35,7 @@ static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* glo
     // Inherit from DOMException
     // But preserve the error.stack property.
     if (isDOMExceptionPrototype) {
-        auto* domGlobalObject = JSC::jsDynamicCast<Zig::GlobalObject*>(globalObject);
-        if (UNLIKELY(!domGlobalObject)) {
-            domGlobalObject = Bun__getDefaultGlobalObject();
-        }
+        auto* domGlobalObject = defaultGlobalObject(globalObject);
         // TODO: node:vm?
         prototype = JSC::constructEmptyObject(globalObject, WebCore::JSDOMException::prototype(vm, *domGlobalObject));
     } else {

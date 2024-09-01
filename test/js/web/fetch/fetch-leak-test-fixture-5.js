@@ -20,13 +20,17 @@ function getFormData() {
   formData.set("file", getBlob());
   return formData;
 }
+let cachedBlobBuffer;
 function getBlob() {
-  const buf = new Uint8Array(BODY_SIZE);
-  buf.fill(42);
-  for (let i = 0; i < 256; i++) {
-    buf[i] = i;
+  if (!cachedBlobBuffer) {
+    const buf = new Uint8Array(BODY_SIZE);
+    buf.fill(42);
+    for (let i = 0; i < 256; i++) {
+      buf[i] = i;
+    }
+    cachedBlobBuffer = buf;
   }
-  return new Blob([buf], { type: "application/octet-stream" });
+  return new Blob([cachedBlobBuffer], { type: "application/octet-stream" });
 }
 function getBuffer() {
   return Buffer.alloc(BODY_SIZE, "abcdefghijklmnopqrstuvwxyz");
@@ -41,25 +45,33 @@ function getURLSearchParams() {
 }
 
 const type = process.argv[4];
-let body;
-switch (type.toLowerCase()) {
-  case "blob":
-    body = getBlob();
-    break;
-  case "buffer":
-    body = getBuffer();
-    break;
-  case "string":
-    body = getString();
-    break;
-  case "formdata":
-    body = getFormData();
-    break;
-  case "urlsearchparams":
-    body = getURLSearchParams();
-    break;
-  default:
-    throw new Error(`Invalid type: ${type}`);
+
+// allow caching of everything except Blob.
+// Don't cache blob because we also want to test that the Blob gets freed.
+let cachedBody;
+function getBody() {
+  let body;
+  switch (type.toLowerCase()) {
+    case "blob":
+      body = getBlob();
+      break;
+    case "buffer":
+      body = cachedBody ??= getBuffer();
+      break;
+    case "string":
+      body = cachedBody ??= getString();
+      break;
+    case "formdata":
+      body = cachedBody ??= getFormData();
+      break;
+    case "urlsearchparams":
+      body = cachedBody ??= getURLSearchParams();
+      break;
+    default:
+      throw new Error(`Invalid type: ${type}`);
+  }
+
+  return body;
 }
 
 try {
@@ -67,7 +79,7 @@ try {
     {
       const promises = [];
       for (let j = 0; j < batch; j++) {
-        promises.push(fetch(server, { method: "POST", body }));
+        promises.push(fetch(server, { method: "POST", body: getBody() }));
       }
       await Promise.all(promises);
     }

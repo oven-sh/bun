@@ -111,7 +111,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_IPC_DISCONNECTED, (JSC::JSGlobalObject *
 static bool processIsExiting = false;
 
 extern "C" uint8_t Bun__getExitCode(void*);
-extern "C" uint8_t Bun__setExitCode(void*, uint8_t);
+extern "C" uint8_t Bun__setExitCode(void*, uint8_t, bool);
 extern "C" void* Bun__getVM();
 extern "C" bool Bun__closeChildIPC(JSGlobalObject*);
 extern "C" Zig::GlobalObject* Bun__getDefaultGlobalObject();
@@ -230,7 +230,6 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
 
 static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)
 {
-
     if (processIsExiting)
         return;
     processIsExiting = true;
@@ -504,18 +503,16 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
 {
     auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
     uint8_t exitCode = 0;
+    bool is_explicit = false;
     JSValue arg0 = callFrame->argument(0);
     if (arg0.isAnyInt()) {
         int extiCode32 = arg0.toInt32(globalObject) % 256;
         RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
-
         exitCode = static_cast<uint8_t>(extiCode32);
-        Bun__setExitCode(Bun__getVM(), exitCode);
+        is_explicit = true;
     } else if (!arg0.isUndefinedOrNull()) {
         throwTypeError(globalObject, throwScope, "The \"code\" argument must be an integer"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
-    } else {
-        exitCode = Bun__getExitCode(Bun__getVM());
     }
 
     auto* zigGlobal = jsDynamicCast<Zig::GlobalObject*>(globalObject);
@@ -525,8 +522,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
     auto process = jsCast<Process*>(zigGlobal->processObject());
     process->m_isExitCodeObservable = true;
 
-    Process__dispatchOnExit(zigGlobal, exitCode);
-    Bun__Process__exit(zigGlobal, exitCode);
+    Bun__Process__exit(zigGlobal, exitCode, is_explicit);
     return JSC::JSValue::encode(jsUndefined());
 }
 
@@ -868,7 +864,7 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
             scope.clearException();
             // if an exception is thrown in the uncaughtException handler, we abort
             Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
-            Bun__Process__exit(lexicalGlobalObject, 1);
+            Bun__Process__exit(lexicalGlobalObject, 1, true);
         }
     } else if (wrapped.listenerCount(uncaughtExceptionIdent) > 0) {
         wrapped.emit(uncaughtExceptionIdent, args);
@@ -1154,7 +1150,7 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessExitCode, (JSC::JSGlobalObject * lexicalGloba
 
     process->m_isExitCodeObservable = true;
     void* ptr = jsCast<Zig::GlobalObject*>(process->globalObject())->bunVM();
-    Bun__setExitCode(ptr, static_cast<uint8_t>(exitCodeInt));
+    Bun__setExitCode(ptr, static_cast<uint8_t>(exitCodeInt), true);
 
     return true;
 }
@@ -2228,22 +2224,22 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
     auto& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     uint8_t exitCode = 0;
+    bool is_explicit = false;
     JSValue arg0 = callFrame->argument(0);
     if (arg0.isAnyInt()) {
         exitCode = static_cast<uint8_t>(arg0.toInt32(globalObject) % 256);
+        is_explicit = true;
         RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
     } else if (!arg0.isUndefinedOrNull()) {
         throwTypeError(globalObject, throwScope, "The \"code\" argument must be an integer"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
-    } else {
-        exitCode = Bun__getExitCode(Bun__getVM());
     }
 
     auto* zigGlobal = jsDynamicCast<Zig::GlobalObject*>(globalObject);
     if (UNLIKELY(!zigGlobal)) {
         zigGlobal = Bun__getDefaultGlobalObject();
     }
-    Bun__Process__exit(zigGlobal, exitCode);
+    Bun__Process__exit(zigGlobal, exitCode, is_explicit);
     return JSC::JSValue::encode(jsUndefined());
 }
 

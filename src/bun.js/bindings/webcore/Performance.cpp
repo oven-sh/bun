@@ -52,6 +52,7 @@
 // #include "ResourceResponse.h"
 #include "ScriptExecutionContext.h"
 #include <wtf/IsoMallocInlines.h>
+#include "BunClientData.h"
 
 namespace WebCore {
 
@@ -78,8 +79,7 @@ void Performance::contextDestroyed()
 
 DOMHighResTimeStamp Performance::now() const
 {
-    auto* bunVM = bunVM(scriptExecutionContext()->vm());
-    auto nowNano = Bun__readOriginTimer(bunVM);
+    auto nowNano = Bun__readOriginTimer(bunVM(scriptExecutionContext()->vm()));
     return static_cast<double>(nowNano) / 1000000.0;
 }
 

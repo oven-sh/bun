@@ -62,6 +62,11 @@ public:
 };
 
 
+// This is essentially JSC::JSWeakValue, except with a JSCell* instead of a
+// JSObject*. Sometimes, a napi embedder might want to store a JSC::Exception, a
+// JSC::HeapBigInt, JSC::Symbol, etc inside of a NapiRef. So we can't limit it
+// to just JSObject*. It has to be JSCell*. It's not clear that we benefit from
+// not simply making this JSC::Unknown.
 class NapiWeakValue {
 public:
     NapiWeakValue() = default;

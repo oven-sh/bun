@@ -61,6 +61,82 @@ public:
     void call(JSC::JSGlobalObject* globalObject, void* data);
 };
 
+
+class NapiWeakValue {
+public:
+    NapiWeakValue() = default;
+    ~NapiWeakValue();
+
+    void clear();
+    bool isClear() const;
+
+    bool isSet() const { return m_tag != WeakTypeTag::NotSet; }
+    bool isPrimitive() const { return m_tag == WeakTypeTag::Primitive; }
+    bool isCell() const { return m_tag == WeakTypeTag::Cell; }
+    bool isString() const { return m_tag == WeakTypeTag::String; }
+
+    void setPrimitive(JSValue);
+    void setCell(JSCell*, WeakHandleOwner&, void* context);
+    void setString(JSString*, WeakHandleOwner&, void* context);
+    void set(JSValue, WeakHandleOwner&, void* context);
+
+    JSValue get() const
+    {
+        switch (m_tag) {
+        case WeakTypeTag::Primitive:
+            return m_value.primitive;
+        case WeakTypeTag::Cell:
+            return JSC::JSValue(m_value.cell.get());
+        case WeakTypeTag::String:
+            return JSC::JSValue(m_value.string.get());
+        default:
+            return JSC::JSValue();
+        }
+    }
+
+    JSCell* cell() const
+    {
+        ASSERT(isCell());
+        return m_value.cell.get();
+    }
+
+    JSValue primitive() const
+    {
+        ASSERT(isPrimitive());
+        return m_value.primitive;
+    }
+
+    JSString* string() const
+    {
+        ASSERT(isString());
+        return m_value.string.get();
+    }
+
+private:
+    enum class WeakTypeTag { NotSet,
+        Primitive,
+        Cell,
+        String };
+
+    WeakTypeTag m_tag { WeakTypeTag::NotSet };
+
+    union WeakValueUnion {
+        WeakValueUnion()
+            : primitive(JSValue())
+        {
+        }
+
+        ~WeakValueUnion()
+        {
+            ASSERT(!primitive);
+        }
+
+        JSValue primitive;
+        JSC::Weak<JSCell> cell;
+        JSC::Weak<JSString> string;
+    } m_value;
+};
+
 class NapiRef {
     WTF_MAKE_ISO_ALLOCATED(NapiRef);
 
@@ -80,22 +156,7 @@ public:
     JSC::JSValue value() const
     {
         if (refCount == 0) {
-            // isSet() can return true even if the value was cleared
-            // so we must check if the value is clear
-            // if the value is unset, isClear() will return true
-            if (weakValueRef.isClear()) {
-                return JSC::JSValue {};
-            }
-
-            if (weakValueRef.isString()) {
-                return JSC::JSValue(weakValueRef.string());
-            }
-
-            if (weakValueRef.isObject()) {
-                return JSC::JSValue(weakValueRef.object());
-            }
-
-            return weakValueRef.primitive();
+            return weakValueRef.get();
         }
 
         return strongRef.get();
@@ -110,7 +171,7 @@ public:
     }
 
     JSC::Weak<JSC::JSGlobalObject> globalObject;
-    JSC::JSWeakValue weakValueRef;
+    NapiWeakValue weakValueRef;
     JSC::Strong<JSC::Unknown> strongRef;
     NapiFinalizer finalizer;
     void* data = nullptr;

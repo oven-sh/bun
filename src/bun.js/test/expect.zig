@@ -1412,6 +1412,7 @@ pub const Expect = struct {
 
             const property_value = expected.getIndex(globalObject, 1);
             const accessed_property_value = value.getOwn(globalObject, key_string) orelse JSValue.undefined;
+            if (globalObject.hasException()) return .zero;
             if (property_value.jestDeepEquals(accessed_property_value, globalObject)) pass = true;
         }
 
@@ -1469,15 +1470,20 @@ pub const Expect = struct {
             var itr = expected.arrayIterator(globalObject);
 
             while (itr.next()) |item| {
-                const key = item.getIndex(globalObject, 0);
-                const key_string = key.toBunString(globalObject);
-                defer key_string.deref();
+                if (!item.isUndefinedOrNull()) {
+                    const key = item.getIndex(globalObject, 0);
+                    const key_string = key.toBunString(globalObject);
+                    defer key_string.deref();
 
-                const property_value = item.getIndex(globalObject, 1);
-                const accessed_property_value = value.getOwn(globalObject, key_string) orelse JSValue.undefined;
-                if (!property_value.jestDeepEquals(accessed_property_value, globalObject)) {
-                    pass = false;
-                    break;
+                    const property_value = item.getIndex(globalObject, 1);
+                    if (globalObject.hasException()) return .zero;
+                    const accessed_property_value = value.getOwn(globalObject, key_string) orelse JSValue.undefined;
+                    if (globalObject.hasException()) return .zero;
+
+                    if (!property_value.jestDeepEquals(accessed_property_value, globalObject)) {
+                        pass = false;
+                        break;
+                    }
                 }
             }
         }
@@ -1530,31 +1536,29 @@ pub const Expect = struct {
         const value: JSValue = this.getValue(globalObject, thisValue, "toContainAllEntries", "<green>expected<r>") orelse return .zero;
 
         const not = this.flags.not;
-        var pass = false;
+        var pass = true;
 
         const count = expected.getLength(globalObject);
-
         if (!value.isUndefinedOrNull()) {
-            var objValues = value.values(globalObject);
-            if (objValues.getLength(globalObject) == count) {
-                var i: u32 = 0;
-                while (i < count) : (i += 1) {
-                    var j: u32 = 0;
-                    while (j < count) : (j += 1) {
-                        const expectedElement = expected.getIndex(globalObject, j);
-                        const property_key = expectedElement.getIndex(globalObject, 0);
-                        const property_value = expectedElement.getIndex(globalObject, 1);
-                        const objValue = objValues.getIndex(globalObject, i);
-                        if (value.hasOwnPropertyValue(globalObject, property_key) and property_value.jestDeepEquals(objValue, globalObject)) {
-                            pass = true;
+            if (value.keys(globalObject).getLength(globalObject) == count) {
+                var itr = expected.arrayIterator(globalObject);
+
+                while (itr.next()) |item| {
+                    if (!item.isUndefinedOrNull()) {
+                        const property_key = item.getIndex(globalObject, 0);
+                        const key_string = property_key.toBunString(globalObject);
+                        defer key_string.deref();
+
+                        const property_value = item.getIndex(globalObject, 1);
+                        const accessed_property_value = value.getOwn(globalObject, key_string) orelse JSValue.undefined;
+                        if (globalObject.hasException()) return .zero;
+                        if (!accessed_property_value.jestDeepEquals(property_value, globalObject)) {
+                            pass = false;
                             break;
                         }
-                    } else {
-                        pass = false;
-                        break;
                     }
                 }
-            }
+            } else pass = false;
         }
 
         if (not) pass = !pass;
@@ -1611,15 +1615,18 @@ pub const Expect = struct {
             var itr = expected.arrayIterator(globalObject);
 
             while (itr.next()) |item| {
-                const key = item.getIndex(globalObject, 0);
-                const key_string = key.toBunString(globalObject);
-                defer key_string.deref();
+                if (!item.isUndefinedOrNull()) {
+                    const key = item.getIndex(globalObject, 0);
+                    const key_string = key.toBunString(globalObject);
+                    defer key_string.deref();
 
-                const property_value = item.getIndex(globalObject, 1);
-                const accessed_property_value = value.getOwn(globalObject, key_string) orelse JSValue.undefined;
-                if (property_value.jestDeepEquals(accessed_property_value, globalObject)) {
-                    pass = true;
-                    break;
+                    const property_value = item.getIndex(globalObject, 1);
+                    const accessed_property_value = value.getOwn(globalObject, key_string) orelse JSValue.undefined;
+                    if (globalObject.hasException()) return .zero;
+                    if (property_value.jestDeepEquals(accessed_property_value, globalObject)) {
+                        pass = true;
+                        break;
+                    }
                 }
             }
         }

@@ -664,9 +664,21 @@ describe("jest-extended", () => {
   test("toContainAllEntries", () => {
     const obj = { a: "foo", b: "bar", c: "baz" };
     expect(obj).toContainAllEntries([
-      ["c", "baz"],
-      ["b", "bar"],
       ["a", "foo"],
+      ["b", "bar"],
+      ["c", "baz"],
+    ]);
+
+    expect(obj).not.toContainAllEntries([
+      ["a", "foo"],
+      ["b", "baz"],
+      ["c", "bar"],
+    ]);
+
+    expect(obj).not.toContainAllEntries([
+      ["a", "foo"],
+      ["b", "baz"],
+      ["b", "baz"],
     ]);
 
     expect(obj).not.toContainAllEntries([
@@ -732,8 +744,8 @@ describe("jest-extended", () => {
   test("toContainAnyEntries", () => {
     const obj = { a: "foo", b: "bar", c: "baz" };
     expect(obj).toContainAnyEntries([
-      ["c", "invalid"],
-      ["b", "value"],
+      ["c", "bar"],
+      ["b", "bax"],
       ["a", "foo"],
     ]);
 

@@ -1061,7 +1061,10 @@ pub fn BodyMixin(comptime Type: type) type {
                     return handleBodyAlreadyUsed(globalObject);
                 }
 
-                return value.Locked.setPromise(globalObject, .{ .getText = {} });
+                value.toBlobIfPossible();
+                if (value.* == .Locked) {
+                    return value.Locked.setPromise(globalObject, .{ .getText = {} });
+                }
             }
 
             var blob = value.useAsAnyBlobAllowNonUTF8String();
@@ -1122,7 +1125,10 @@ pub fn BodyMixin(comptime Type: type) type {
                 if (value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
                     return handleBodyAlreadyUsed(globalObject);
                 }
-                return value.Locked.setPromise(globalObject, .{ .getJSON = {} });
+                value.toBlobIfPossible();
+                if (value.* == .Locked) {
+                    return value.Locked.setPromise(globalObject, .{ .getJSON = {} });
+                }
             }
 
             var blob = value.useAsAnyBlobAllowNonUTF8String();
@@ -1149,7 +1155,10 @@ pub fn BodyMixin(comptime Type: type) type {
                 if (value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
                     return handleBodyAlreadyUsed(globalObject);
                 }
-                return value.Locked.setPromise(globalObject, .{ .getArrayBuffer = {} });
+                value.toBlobIfPossible();
+                if (value.* == .Locked) {
+                    return value.Locked.setPromise(globalObject, .{ .getArrayBuffer = {} });
+                }
             }
 
             // toArrayBuffer in AnyBlob checks for non-UTF8 strings
@@ -1173,7 +1182,10 @@ pub fn BodyMixin(comptime Type: type) type {
                 if (value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
                     return handleBodyAlreadyUsed(globalObject);
                 }
-                return value.Locked.setPromise(globalObject, .{ .getBytes = {} });
+                value.toBlobIfPossible();
+                if (value.* == .Locked) {
+                    return value.Locked.setPromise(globalObject, .{ .getBytes = {} });
+                }
             }
 
             // toArrayBuffer in AnyBlob checks for non-UTF8 strings
@@ -1252,6 +1264,7 @@ pub fn BodyMixin(comptime Type: type) type {
                 if (value.Locked.promise == null or value.Locked.promise.?.isEmptyOrUndefinedOrNull()) {
                     return value.Locked.setPromise(globalObject, .{ .getBlob = {} });
                 }
+
                 return handleBodyAlreadyUsed(globalObject);
             }
 

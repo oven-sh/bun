@@ -392,23 +392,24 @@ JSC_DEFINE_HOST_FUNCTION(functionBunEscapeHTML, (JSC::JSGlobalObject * lexicalGl
     JSC::JSValue argument = callFrame->argument(0);
     if (argument.isEmpty())
         return JSValue::encode(jsEmptyString(vm));
-    if (argument.isNumber() || argument.isBoolean())
+    if (argument.isNumber() || argument.isBoolean() || argument.isUndefined() || argument.isNull())
         return JSValue::encode(argument.toString(lexicalGlobalObject));
 
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto string = argument.toString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    size_t length = string->length();
-    if (!length)
+    if (string->length() == 0)
         RELEASE_AND_RETURN(scope, JSValue::encode(string));
 
-    String resolvedString = string->value(lexicalGlobalObject);
+    auto resolvedString = string->value(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
     JSC::EncodedJSValue encodedInput = JSValue::encode(string);
-    if (!resolvedString.is8Bit()) {
-        const auto span = resolvedString.span16();
+    if (!resolvedString->is8Bit()) {
+        const auto span = resolvedString->span16();
         RELEASE_AND_RETURN(scope, Bun__escapeHTML16(lexicalGlobalObject, encodedInput, span.data(), span.size()));
     } else {
-        const auto span = resolvedString.span8();
+        const auto span = resolvedString->span8();
         RELEASE_AND_RETURN(scope, Bun__escapeHTML8(lexicalGlobalObject, encodedInput, span.data(), span.size()));
     }
 }

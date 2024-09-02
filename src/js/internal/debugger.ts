@@ -1,5 +1,4 @@
 import type { Server as WebSocketServer, WebSocketHandler, ServerWebSocket, SocketHandler, Socket } from "bun";
-
 export default function (
   executionContextId: string,
   url: string,
@@ -129,7 +128,7 @@ class Debugger {
         return Response.json(versionInfo());
       case "/json":
       case "/json/list":
-      // TODO?
+        return Response.json(debuggerInfo(this));
     }
 
     if (!this.#url.protocol.includes("unix") && this.#url.pathname !== pathname) {
@@ -213,6 +212,24 @@ function versionInfo(): unknown {
     "Bun-Version": Bun.version,
     "Bun-Revision": Bun.revision,
   };
+}
+
+function debuggerInfo(d: Debugger): unknown {
+    const ws = `${d.url}`.replace(/wss?:\/\//, '')
+    const id = `${ws}`.split('/').pop()
+
+    return [
+        {
+            "description": `Bun instance (version: ${Bun.version}, revision: ${Bun.revision})`,
+            "devtoolsFrontendUrl": `https://debug.bun.sh/#${ws}`,
+            "faviconUrl": "https://bun.sh/logo_avatar.svg",
+            id,
+            "title": Bun.main,
+            "type": "bun",
+            "url": Bun.pathToFileURL(Bun.main),
+            "webSocketDebuggerUrl": d.url
+        }
+    ]
 }
 
 function webSocketWriter(ws: ServerWebSocket<unknown>): Writer {

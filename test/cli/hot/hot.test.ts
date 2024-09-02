@@ -72,6 +72,62 @@ it(
   timeout,
 );
 
+it.each(["hot-file-loader.file", "hot-file-loader.css"])(
+  "should hot reload when `%s` is overwritten",
+  async (targetFilename: string) => {
+    const root = hotRunnerRoot;
+    const target = join(cwd, targetFilename);
+    try {
+      var runner = spawn({
+        cmd: [bunExe(), "--hot", "run", root],
+        env: bunEnv,
+        cwd,
+        stdout: "pipe",
+        stderr: "inherit",
+        stdin: "ignore",
+      });
+
+      var reloadCounter = 0;
+
+      async function onReload() {
+        writeFileSync(target, readFileSync(target, "utf-8"));
+      }
+
+      var str = "";
+      for await (const line of runner.stdout) {
+        str += new TextDecoder().decode(line);
+        var any = false;
+        if (!/\[#!root\].*[0-9]\n/g.test(str)) continue;
+
+        for (let line of str.split("\n")) {
+          if (!line.includes("[#!root]")) continue;
+          reloadCounter++;
+          str = "";
+
+          if (reloadCounter === 3) {
+            runner.unref();
+            runner.kill();
+            break;
+          }
+
+          expect(line).toContain(`[#!root] Reloaded: ${reloadCounter}`);
+          any = true;
+        }
+
+        if (any) await onReload();
+      }
+
+      expect(reloadCounter).toBeGreaterThanOrEqual(3);
+    } finally {
+      // @ts-ignore
+      runner?.unref?.();
+      // @ts-ignore
+      runner?.kill?.(9);
+    }
+  },
+  timeout,
+);
+
 it(
   "should recover from errors",
   async () => {

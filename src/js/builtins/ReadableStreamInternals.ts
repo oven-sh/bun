@@ -702,15 +702,15 @@ export async function readStreamIntoSink(stream, sink, isNative) {
   var didThrow = false;
   var started = false;
   const highWaterMark = $getByIdDirectPrivate(stream, "highWaterMark") || 0;
+  function onSinkClose(stream, reason) {
+    if (!didThrow && !didClose && stream && stream.$state !== $streamClosed) {
+      $readableStreamCancel(stream, reason);
+    }
+  }
 
   try {
     var reader = stream.getReader();
     var many = reader.readMany();
-    function onSinkClose(stream, reason) {
-      if (!didThrow && !didClose && stream && stream.$state !== $streamClosed) {
-        $readableStreamCancel(stream, reason);
-      }
-    }
 
     if (many && $isPromise(many)) {
       // Some time may pass before this Promise is fulfilled. The sink may
@@ -737,7 +737,6 @@ export async function readStreamIntoSink(stream, sink, isNative) {
     for (var i = 0, values = many.value, length = many.value.length; i < length; i++) {
       sink.write(values[i]);
     }
-
     var streamState = $getByIdDirectPrivate(stream, "state");
     if (streamState === $streamClosed) {
       didClose = true;
@@ -754,26 +753,22 @@ export async function readStreamIntoSink(stream, sink, isNative) {
       sink.write(value);
     }
   } catch (e) {
-    didThrow = true;
+    onSinkClose(stream, e);
 
-    try {
-      reader = undefined;
-      const prom = stream.cancel(e);
-      if ($isPromise(prom)) {
-        $markPromiseAsHandled(prom);
-      }
-    } catch (j) {}
+    didThrow = true;
+    var rethrow = true;
 
     if (sink && !didClose) {
       didClose = true;
       try {
         sink.close(e);
+        rethrow = false;
       } catch (j) {
         throw new globalThis.AggregateError([e, j]);
       }
     }
 
-    throw e;
+    if (rethrow) throw e;
   } finally {
     if (reader) {
       try {

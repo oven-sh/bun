@@ -1315,7 +1315,10 @@ pub const Fetch = struct {
         fn clearAbortSignal(this: *FetchTasklet) void {
             const signal = this.signal orelse return;
             this.signal = null;
-            defer signal.unref();
+            defer {
+                signal.pendingActivityUnref();
+                signal.unref();
+            }
 
             signal.cleanNativeBindings(this);
         }
@@ -1707,6 +1710,7 @@ pub const Fetch = struct {
             }
 
             if (fetch_tasklet.signal) |signal| {
+                signal.pendingActivityRef();
                 fetch_tasklet.signal = signal.listen(FetchTasklet, fetch_tasklet, FetchTasklet.abortListener);
             }
             return fetch_tasklet;

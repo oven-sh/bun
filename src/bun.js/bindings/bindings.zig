@@ -2071,6 +2071,17 @@ pub const AbortSignal = extern opaque {
         return WebCore__AbortSignal__signal(this, globalObject, reason);
     }
 
+    extern fn WebCore__AbortSignal__incrementPendingActivity(*AbortSignal) void;
+    extern fn WebCore__AbortSignal__decrementPendingActivity(*AbortSignal) void;
+
+    pub fn pendingActivityRef(this: *AbortSignal) void {
+        return WebCore__AbortSignal__incrementPendingActivity(this);
+    }
+
+    pub fn pendingActivityUnref(this: *AbortSignal) void {
+        return WebCore__AbortSignal__decrementPendingActivity(this);
+    }
+
     /// This function is not threadsafe. aborted is a boolean, not an atomic!
     pub fn aborted(this: *AbortSignal) bool {
         return cppFn("aborted", .{this});

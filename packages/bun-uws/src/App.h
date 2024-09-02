@@ -514,6 +514,13 @@ public:
         return std::move(*this);
     }
 
+    void clearRoutes() {
+        if (httpContext) {
+            httpContext->getSocketContextData()->clearRoutes();
+        }
+    }
+
+
     TemplatedApp &&head(std::string pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
         if (httpContext) {
             httpContext->onHttp("HEAD", pattern, std::move(handler));

@@ -3667,3 +3667,61 @@ extern "C" fn Bun__ramSize() usize;
 pub fn getTotalMemorySize() usize {
     return Bun__ramSize();
 }
+
+pub const WeakPtrData = packed struct(u32) {
+    reference_count: u31 = 0,
+    finalized: bool = false,
+
+    pub fn onFinalize(this: *WeakPtrData) bool {
+        bun.debugAssert(!this.finalized);
+        this.finalized = true;
+        return this.reference_count == 0;
+    }
+};
+
+pub fn WeakPtr(comptime T: type, comptime weakable_field: std.meta.FieldEnum(T)) type {
+    return struct {
+        const WeakRef = @This();
+
+        value: ?*T = null,
+        pub fn create(req: *T) WeakRef {
+            bun.debugAssert(!@field(req, @tagName(weakable_field)).finalized);
+            @field(req, @tagName(weakable_field)).reference_count += 1;
+            return .{ .value = req };
+        }
+
+        comptime {
+            if (@TypeOf(@field(@as(T, undefined), @tagName(weakable_field))) != WeakPtrData) {
+                @compileError("Expected " ++ @typeName(T) ++ " to have a " ++ @typeName(WeakPtrData) ++ " field named " ++ @tagName(weakable_field));
+            }
+        }
+
+        fn deinitInternal(this: *WeakRef, value: *T) void {
+            const weak_data: *WeakPtrData = &@field(value, @tagName(weakable_field));
+
+            this.value = null;
+            const count = weak_data.reference_count - 1;
+            weak_data.reference_count = count;
+            if (weak_data.finalized and count == 0) {
+                value.destroy();
+            }
+        }
+
+        pub fn deinit(this: *WeakRef) void {
+            if (this.value) |value| {
+                this.deinitInternal(value);
+            }
+        }
+
+        pub fn get(this: *WeakRef) ?*T {
+            if (this.value) |value| {
+                if (!@field(value, @tagName(weakable_field)).finalized) {
+                    return value;
+                }
+
+                this.deinitInternal(value);
+            }
+            return null;
+        }
+    };
+}

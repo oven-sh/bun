@@ -1409,12 +1409,14 @@ pub const us_bun_socket_context_options_t = extern struct {
     client_renegotiation_limit: u32 = 3,
     client_renegotiation_window: u32 = 600,
 };
+pub extern fn create_ssl_context_from_bun_options(options: us_bun_socket_context_options_t) ?*BoringSSL.SSL_CTX;
 
 pub const us_bun_verify_error_t = extern struct {
     error_no: i32 = 0,
     code: [*c]const u8 = null,
     reason: [*c]const u8 = null,
 };
+pub extern fn us_ssl_socket_verify_error_from_ssl(ssl: *BoringSSL.SSL) us_bun_verify_error_t;
 
 pub const us_socket_events_t = extern struct {
     on_open: ?*const fn (*Socket, i32, [*c]u8, i32) callconv(.C) ?*Socket = null,
@@ -1961,10 +1963,17 @@ pub const AnyResponse = union(enum) {
         };
     }
 
-    pub fn writeOrEndWithoutBody(this: AnyResponse, data: []const u8) void {
+    pub fn writeHeaderInt(this: AnyResponse, key: []const u8, value: u64) void {
         return switch (this) {
-            .SSL => |resp| resp.writeOrEndWithoutBody(data),
-            .TCP => |resp| resp.writeOrEndWithoutBody(data),
+            .SSL => |resp| resp.writeHeaderInt(key, value),
+            .TCP => |resp| resp.writeHeaderInt(key, value),
+        };
+    }
+
+    pub fn endWithoutBody(this: AnyResponse, close_connection: bool) void {
+        return switch (this) {
+            .SSL => |resp| resp.endWithoutBody(close_connection),
+            .TCP => |resp| resp.endWithoutBody(close_connection),
         };
     }
 
@@ -2066,6 +2075,14 @@ pub fn NewApp(comptime ssl: bool) type {
             }
 
             return uws_app_destroy(ssl_flag, @as(*uws_app_s, @ptrCast(app)));
+        }
+
+        pub fn clearRoutes(app: *ThisApp) void {
+            if (comptime is_bindgen) {
+                unreachable;
+            }
+
+            return uws_app_clear_routes(ssl_flag, @as(*uws_app_t, @ptrCast(app)));
         }
 
         fn RouteHandler(comptime UserDataType: type, comptime handler: fn (UserDataType, *Request, *Response) void) type {
@@ -3289,3 +3306,5 @@ extern fn bun_clear_loop_at_thread_exit() void;
 pub fn onThreadExit() void {
     bun_clear_loop_at_thread_exit();
 }
+
+extern fn uws_app_clear_routes(ssl_flag: c_int, app: *uws_app_t) void;

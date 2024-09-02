@@ -159,12 +159,23 @@ describe("node:http", () => {
     });
 
     it("should use the provided port", async () => {
-      const server = http.createServer(() => {});
-      const random_port = randomPort();
-      server.listen(random_port);
-      const { port } = server.address();
-      expect(port).toEqual(random_port);
-      server.close();
+      while (true) {
+        try {
+          const server = http.createServer(() => {});
+          const random_port = randomPort();
+          server.listen(random_port);
+          const { port } = server.address();
+          expect(port).toEqual(random_port);
+          server.close();
+          break;
+        } catch (err) {
+          // Address in use try another port
+          if (err.code === "EADDRINUSE") {
+            continue;
+          }
+          throw err;
+        }
+      }
     });
 
     it("should assign a random port when undefined", async () => {

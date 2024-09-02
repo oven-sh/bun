@@ -63,7 +63,7 @@ Bun requires LLVM 16 (`clang` is part of LLVM). This version requirement is to m
 {% codetabs %}
 
 ```bash#macOS (Homebrew)
-$ brew install llvm@16
+$ brew install llvm@18
 ```
 
 ```bash#Ubuntu/Debian

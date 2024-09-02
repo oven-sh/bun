@@ -26,6 +26,20 @@ extern "C"
     return (uws_app_t *)new uWS::App();
   }
 
+  void uws_app_clear_routes(int ssl, uws_app_t *app)
+  {
+    if (ssl)
+    {
+      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+      uwsApp->clearRoutes();
+    }
+    else
+    {
+      uWS::App *uwsApp = (uWS::App *)app;
+      uwsApp->clearRoutes();
+    }
+  }
+
   void uws_app_get(int ssl, uws_app_t *app, const char *pattern, uws_method_handler handler, void *user_data)
   {
     if (ssl)

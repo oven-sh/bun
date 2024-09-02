@@ -92,6 +92,11 @@
           "description": "If the debugger should stop on the first line when used in the JavaScript Debug Terminal.",
           "scope": "window",
           "default": false
+        },
+        "bun.test.filePattern": {
+          "type": "string",
+          "default": "**/*.{test,spec}.{js,ts,tsx,jsx}",
+          "description": "Glob pattern to match test files (e.g., **/*.test.{js,ts,tsx,jsx})"
         }
       }
     },
@@ -111,6 +116,20 @@
         "category": "Bun",
         "enablement": "!inDebugMode",
         "icon": "$(debug-alt)"
+      },
+      {
+        "command": "extension.bun.runTest",
+        "title": "Run File Test",
+        "shortTitle": "Run Test",
+        "category": "Bun",
+        "icon": "$(play)"
+      },
+      {
+        "command": "extension.bun.watchTest",
+        "title": "Run File Test in watch mode",
+        "shortTitle": "Run Test Watch",
+        "category": "Bun",
+        "icon": "$(sync)"
       }
     ],
     "menus": {

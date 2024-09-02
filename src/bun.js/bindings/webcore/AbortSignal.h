@@ -102,6 +102,11 @@ public:
     const AbortSignalSet& sourceSignals() const { return m_sourceSignals; }
     AbortSignalSet& sourceSignals() { return m_sourceSignals; }
 
+    // https://github.com/oven-sh/bun/issues/4517
+    void incrementPendingActivityCount() { ++pendingActivityCount; }
+    void decrementPendingActivityCount() { --pendingActivityCount; }
+    bool hasPendingActivity() const { return pendingActivityCount > 0; }
+
 private:
     enum class Aborted : bool {
         No,
@@ -130,11 +135,12 @@ private:
     JSValueInWrappedObject m_reason;
     CommonAbortReason m_commonReason { CommonAbortReason::None };
     Vector<NativeCallbackTuple, 2> m_native_callbacks;
+    std::atomic<uint32_t> pendingActivityCount { 0 };
     uint32_t m_algorithmIdentifier { 0 };
-    bool m_aborted { false };
-    bool m_hasActiveTimeoutTimer { false };
-    bool m_hasAbortEventListener { false };
-    bool m_isDependent { false };
+    bool m_aborted : 1 = false;
+    bool m_hasActiveTimeoutTimer : 1 = false;
+    bool m_hasAbortEventListener : 1 = false;
+    bool m_isDependent : 1 = false;
 };
 
 WebCoreOpaqueRoot root(AbortSignal*);

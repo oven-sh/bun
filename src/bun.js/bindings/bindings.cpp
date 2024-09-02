@@ -5666,6 +5666,18 @@ extern "C" JSC__JSValue WebCore__AbortSignal__toJS(WebCore__AbortSignal* arg0, J
     return JSValue::encode(toJS<IDLInterface<WebCore__AbortSignal>>(*globalObject, *jsCast<JSDOMGlobalObject*>(globalObject), *abortSignal));
 }
 
+extern "C" void WebCore__AbortSignal__incrementPendingActivity(WebCore__AbortSignal* arg0)
+{
+    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
+    abortSignal->incrementPendingActivityCount();
+}
+
+extern "C" void WebCore__AbortSignal__decrementPendingActivity(WebCore__AbortSignal* arg0)
+{
+    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
+    abortSignal->decrementPendingActivityCount();
+}
+
 extern "C" WebCore__AbortSignal* WebCore__AbortSignal__signal(WebCore__AbortSignal* arg0, JSC::JSGlobalObject* globalObject, uint8_t reason)
 {
 

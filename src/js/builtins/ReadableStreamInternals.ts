@@ -65,7 +65,7 @@ export function privateInitializeReadableStreamDefaultController(this, stream, u
 
 export function readableStreamDefaultControllerError(controller, error) {
   const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
-  if ($getByIdDirectPrivate(stream, "state") !== $streamReadable) return;
+  if (!$isObject(stream) || $getByIdDirectPrivate(stream, "state") !== $streamReadable) return;
   $putByIdDirectPrivate(controller, "queue", $newQueue());
 
   $readableStreamError(stream, error);
@@ -591,6 +591,7 @@ export function readableStreamTeeBranch2CancelFunction(teeState, stream) {
   };
 }
 
+$alwaysInline = true;
 export function isReadableStream(stream) {
   // Spec tells to return true only if stream has a readableStreamController internal slot.
   // However, since it is a private slot, it cannot be checked using hasOwnProperty().
@@ -598,6 +599,7 @@ export function isReadableStream(stream) {
   return $isObject(stream) && $getByIdDirectPrivate(stream, "readableStreamController") !== undefined;
 }
 
+$alwaysInline = true;
 export function isReadableStreamDefaultReader(reader) {
   // Spec tells to return true only if reader has a readRequests internal slot.
   // However, since it is a private slot, it cannot be checked using hasOwnProperty().
@@ -605,6 +607,7 @@ export function isReadableStreamDefaultReader(reader) {
   return $isObject(reader) && !!$getByIdDirectPrivate(reader, "readRequests");
 }
 
+$alwaysInline = true;
 export function isReadableStreamDefaultController(controller) {
   // Spec tells to return true only if controller has an underlyingSource internal slot.
   // However, since it is a private slot, it cannot be checked using hasOwnProperty().
@@ -617,10 +620,13 @@ export function readDirectStream(stream, sink, underlyingSource) {
   $putByIdDirectPrivate(stream, "underlyingSource", undefined);
   $putByIdDirectPrivate(stream, "start", undefined);
   function close(stream, reason) {
-    if (reason && underlyingSource?.cancel) {
+    const cancelFn = underlyingSource?.cancel;
+    if (cancelFn) {
       try {
-        var prom = underlyingSource.cancel(reason);
-        $markPromiseAsHandled(prom);
+        var prom = cancelFn.$call(underlyingSource, reason);
+        if ($isPromise(prom)) {
+          $markPromiseAsHandled(prom);
+        }
       } catch (e) {}
 
       underlyingSource = undefined;
@@ -694,10 +700,27 @@ export function assignToStream(stream, sink) {
 export async function readStreamIntoSink(stream, sink, isNative) {
   var didClose = false;
   var didThrow = false;
+  var started = false;
+  const highWaterMark = $getByIdDirectPrivate(stream, "highWaterMark") || 0;
+
   try {
     var reader = stream.getReader();
     var many = reader.readMany();
+    function onSinkClose(stream, reason) {
+      if (!didThrow && !didClose && stream && stream.$state !== $streamClosed) {
+        $readableStreamCancel(stream, reason);
+      }
+    }
+
     if (many && $isPromise(many)) {
+      // Some time may pass before this Promise is fulfilled. The sink may
+      // abort, for example. So we have to start it, if only so that we can
+      // receive a notification when it closes or cancels.
+      // https://github.com/oven-sh/bun/issues/6758
+      if (isNative) $startDirectStream.$call(sink, stream, undefined, onSinkClose, stream.$asyncContext);
+      sink.start({ highWaterMark });
+      started = true;
+
       many = await many;
     }
     if (many.done) {
@@ -705,17 +728,11 @@ export async function readStreamIntoSink(stream, sink, isNative) {
       return sink.end();
     }
     var wroteCount = many.value.length;
-    const highWaterMark = $getByIdDirectPrivate(stream, "highWaterMark");
-    if (isNative)
-      $startDirectStream.$call(
-        sink,
-        stream,
-        undefined,
-        () => !didThrow && stream.$state !== $streamClosed && $markPromiseAsHandled(stream.cancel()),
-        stream.$asyncContext,
-      );
 
-    sink.start({ highWaterMark: highWaterMark || 0 });
+    if (!started) {
+      if (isNative) $startDirectStream.$call(sink, stream, undefined, onSinkClose, stream.$asyncContext);
+      sink.start({ highWaterMark });
+    }
 
     for (var i = 0, values = many.value, length = many.value.length; i < length; i++) {
       sink.write(values[i]);
@@ -742,7 +759,9 @@ export async function readStreamIntoSink(stream, sink, isNative) {
     try {
       reader = undefined;
       const prom = stream.cancel(e);
-      $markPromiseAsHandled(prom);
+      if ($isPromise(prom)) {
+        $markPromiseAsHandled(prom);
+      }
     } catch (j) {}
 
     if (sink && !didClose) {
@@ -1308,7 +1327,6 @@ export function readableStreamDefaultControllerCallPullIfNeeded(controller) {
 
   $assert(!$getByIdDirectPrivate(controller, "pullAgain"));
   $putByIdDirectPrivate(controller, "pulling", true);
-
   $getByIdDirectPrivate(controller, "pullAlgorithm")
     .$call(undefined)
     .$then(
@@ -1326,6 +1344,7 @@ export function readableStreamDefaultControllerCallPullIfNeeded(controller) {
     );
 }
 
+$alwaysInline = true;
 export function isReadableStreamLocked(stream) {
   $assert($isReadableStream(stream));
   return (
@@ -1347,6 +1366,7 @@ export function readableStreamDefaultControllerGetDesiredSize(controller) {
   return $getByIdDirectPrivate(controller, "strategy").highWaterMark - $getByIdDirectPrivate(controller, "queue").size;
 }
 
+$alwaysInline = true;
 export function readableStreamReaderGenericCancel(reader, reason) {
   const stream = $getByIdDirectPrivate(reader, "ownerReadableStream");
   $assert(!!stream);
@@ -1372,6 +1392,7 @@ export function readableStreamCancel(stream, reason) {
   $throwTypeError("ReadableStreamController has no cancel or close method");
 }
 
+$alwaysInline = true;
 export function readableStreamDefaultControllerCancel(controller, reason) {
   $putByIdDirectPrivate(controller, "queue", $newQueue());
   return $getByIdDirectPrivate(controller, "cancelAlgorithm").$call(undefined, reason);
@@ -1557,8 +1578,20 @@ export function readableStreamFromAsyncIterator(target, fn) {
       cancelled = true;
 
       if (iter) {
-        iter.throw?.((reason ||= new DOMException("ReadableStream has been cancelled", "AbortError")));
+        const thisIter = iter;
         iter = undefined;
+        if (reason) {
+          // We return the value so that the caller can await it.
+          return thisIter.throw?.(reason);
+        } else {
+          // undefined === Abort.
+          //
+          // We don't want to throw here because it will almost
+          // inevitably become an uncatchable exception. So instead, we call the
+          // synthetic return method if it exists to signal that the stream is
+          // done.
+          return thisIter?.return?.();
+        }
       }
     },
 
@@ -1572,6 +1605,7 @@ export function readableStreamFromAsyncIterator(target, fn) {
       try {
         while (!cancelled && !done) {
           const promise = iter.next(controller);
+
           if (cancelled) {
             return;
           }
@@ -1601,10 +1635,11 @@ export function readableStreamFromAsyncIterator(target, fn) {
       } finally {
         clearImmediate(immediateTask);
         immediateTask = undefined;
+        // "iter" will be undefined if the stream was closed above.
 
         // Stream was closed before we tried writing to it.
         if (closingError?.code === "ERR_INVALID_THIS") {
-          await iter.return?.();
+          await iter?.return?.();
           return;
         }
 
@@ -1617,7 +1652,9 @@ export function readableStreamFromAsyncIterator(target, fn) {
           }
         } else {
           await controller.end();
-          await iter.return?.();
+          if (iter) {
+            await iter.return?.();
+          }
         }
         iter = undefined;
       }
@@ -2017,7 +2054,6 @@ export function readableStreamDefineLazyIterators(prototype) {
       if (deferredError) {
         throw deferredError;
       }
-
     }
   };
   var createAsyncIterator = function asyncIterator() {

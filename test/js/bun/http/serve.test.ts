@@ -135,6 +135,95 @@ it("should be able to abruptly stop the server", async () => {
   }
 });
 
+// https://github.com/oven-sh/bun/issues/6758
+// https://github.com/oven-sh/bun/issues/4517
+it("should call cancel() on ReadableStream when the Request is aborted", async () => {
+  let waitForCancel = Promise.withResolvers();
+  const abortedFn = mock(() => {
+    console.log("'abort' event fired", new Date());
+  });
+  const cancelledFn = mock(() => {
+    console.log("'cancel' function called", new Date());
+    waitForCancel.resolve();
+  });
+  let onIncomingRequest = Promise.withResolvers();
+  await runTest(
+    {
+      async fetch(req) {
+        req.signal.addEventListener("abort", abortedFn);
+        // Give it a chance to start the stream so that the cancel function can be called.
+        setTimeout(() => {
+          console.log("'onIncomingRequest' function called", new Date());
+          onIncomingRequest.resolve();
+        }, 0);
+        return new Response(
+          new ReadableStream({
+            async pull(controller) {
+              await waitForCancel.promise;
+            },
+            cancel: cancelledFn,
+          }),
+        );
+      },
+    },
+    async server => {
+      const controller = new AbortController();
+      const signal = controller.signal;
+      const request = fetch(server.url, { signal });
+      await onIncomingRequest.promise;
+      controller.abort();
+      expect(async () => await request).toThrow();
+      // Delay for one run of the event loop.
+      await Bun.sleep(1);
+
+      expect(abortedFn).toHaveBeenCalled();
+      expect(cancelledFn).toHaveBeenCalled();
+    },
+  );
+});
+for (let withDelay of [true, false]) {
+  for (let connectionHeader of ["keepalive", "not keepalive"] as const) {
+    it(`should NOT call cancel() on ReadableStream that finished normally for ${connectionHeader} request and ${withDelay ? "with" : "without"} delay`, async () => {
+      const cancelledFn = mock(() => {
+        console.log("'cancel' function called", new Date());
+      });
+      let onIncomingRequest = Promise.withResolvers();
+      await runTest(
+        {
+          async fetch(req) {
+            return new Response(
+              new ReadableStream({
+                async pull(controller) {
+                  controller.enqueue(new Uint8Array([1, 2, 3]));
+                  if (withDelay) await Bun.sleep(1);
+                  controller.close();
+                },
+                cancel: cancelledFn,
+              }),
+            );
+          },
+        },
+        async server => {
+          const resp = await fetch(
+            server.url,
+            connectionHeader === "keepalive"
+              ? {}
+              : {
+                  headers: {
+                    "Connection": "close",
+                  },
+                  keepalive: false,
+                },
+          );
+          await resp.blob();
+          // Delay for one run of the event loop.
+          await Bun.sleep(1);
+          expect(cancelledFn).not.toHaveBeenCalled();
+        },
+      );
+    });
+  }
+}
 describe("1000 uploads & downloads in batches of 64 do not leak ReadableStream", () => {
   for (let isDirect of [true, false] as const) {
     it(

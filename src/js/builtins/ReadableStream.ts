@@ -55,10 +55,11 @@ export function initializeReadableStream(
   // direct streams are always lazy
   const isUnderlyingSourceLazy = !!underlyingSource.$lazy;
   const isLazy = isDirect || isUnderlyingSourceLazy;
+  let pullFn;
 
   // FIXME: We should introduce https://streams.spec.whatwg.org/#create-readable-stream.
   // For now, we emulate this with underlyingSource with private properties.
-  if ($getByIdDirectPrivate(underlyingSource, "pull") !== undefined && !isLazy) {
+  if (!isLazy && (pullFn = $getByIdDirectPrivate(underlyingSource, "pull")) !== undefined) {
     const size = $getByIdDirectPrivate(strategy, "size");
     const highWaterMark = $getByIdDirectPrivate(strategy, "highWaterMark");
     $putByIdDirectPrivate(this, "highWaterMark", highWaterMark);
@@ -69,7 +70,7 @@ export function initializeReadableStream(
       size,
       highWaterMark !== undefined ? highWaterMark : 1,
       $getByIdDirectPrivate(underlyingSource, "start"),
-      $getByIdDirectPrivate(underlyingSource, "pull"),
+      pullFn,
       $getByIdDirectPrivate(underlyingSource, "cancel"),
     );
 

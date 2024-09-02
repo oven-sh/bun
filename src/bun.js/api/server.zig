@@ -2351,7 +2351,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // if signal is not aborted, abort the signal
             if (this.signal) |signal| {
                 this.signal = null;
-                defer signal.unref();
+                defer {
+                    signal.pendingActivityUnref();
+                    signal.unref();
+                }
                 if (!signal.aborted()) {
                     signal.signal(globalThis, .ConnectionClosed);
                     any_js_calls = true;
@@ -2416,7 +2419,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // if signal is not aborted, abort the signal
             if (this.signal) |signal| {
                 this.signal = null;
-                defer signal.unref();
+                defer {
+                    signal.pendingActivityUnref();
+                    signal.unref();
+                }
                 if (this.flags.aborted and !signal.aborted()) {
                     signal.signal(globalThis, .ConnectionClosed);
                 }
@@ -6732,6 +6738,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             ctx.request_body = body;
             var signal = JSC.WebCore.AbortSignal.new(this.globalThis);
             ctx.signal = signal;
+            signal.pendingActivityRef();
 
             const request_object = Request.new(.{
                 .method = ctx.method,

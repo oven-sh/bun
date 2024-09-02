@@ -609,13 +609,13 @@ pub const Body = struct {
 
             if (value.as(JSC.DOMFormData)) |form_data| {
                 return Body.Value{
-                    .Blob = Blob.fromDOMFormData(globalThis, globalThis.allocator(), form_data),
+                    .Blob = Blob.fromDOMFormData(globalThis, bun.default_allocator, form_data),
                 };
             }
 
             if (value.as(JSC.URLSearchParams)) |search_params| {
                 return Body.Value{
-                    .Blob = Blob.fromURLSearchParams(globalThis, globalThis.allocator(), search_params),
+                    .Blob = Blob.fromURLSearchParams(globalThis, bun.default_allocator, search_params),
                 };
             }
 

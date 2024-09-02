@@ -133,7 +133,7 @@ for (const test_info of [
   ["should not leak memory when streaming the body and echoing it back", callStreamingEcho, false, 64],
 ] as const) {
   const [testName, fn, skip, maxMemoryGrowth] = test_info;
-  it.todoIf(skip)(
+  it(
     testName,
     async () => {
       const report = await calculateMemoryLeak(fn);

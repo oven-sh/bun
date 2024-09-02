@@ -406,9 +406,9 @@ if(NOT CPU_TARGET)
 
         if(ARCH STREQUAL "x86_64")
             if(USE_BASELINE_BUILD)
-                set(CPU_TARGET "nehalem")
+                set(CPU_TARGET "x86_64")
             else()
-                set(CPU_TARGET "haswell")
+                set(CPU_TARGET "x86_64-v3")
             endif()
         endif()
     endif()
@@ -1224,7 +1224,7 @@ endif()
 
 if(NOT CPU_TARGET STREQUAL "native")
     # passing -march=native to clang will break older systems
-    # by default on x64, CPU_TARGET is set to "haswell" or "nehalem" depending on baseline
+    # by default on x64, CPU_TARGET is set to "x86_64-v3" or "x86_64" depending on baseline
     # on arm, this argument will not be passed.
     target_compile_options(${bun} PUBLIC "-march=${CPU_TARGET}")
 else()

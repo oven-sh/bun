@@ -55,7 +55,7 @@ if ($Lto) {
   $CFLAGS += " -fuse-ld=lld -flto -Xclang -emit-llvm-bc"
 }
 
-$CPU_NAME = if ($Baseline) { "nehalem" } else { "haswell" };
+$CPU_NAME = if ($Baseline) { "x86_64" } else { "x86_64-v3" };
 $env:CPU_TARGET = $CPU_NAME
 
 $CFLAGS += " -march=${CPU_NAME}"

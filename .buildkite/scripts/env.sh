@@ -120,9 +120,9 @@ function export_environment() {
   if [ "$(assert_arch)" == "aarch64" ]; then
     export CPU_TARGET="native"
   elif [[ "$BUILDKITE_STEP_KEY" == *"baseline"* ]]; then
-    export CPU_TARGET="nehalem"
+    export CPU_TARGET="x86_64"
   else
-    export CPU_TARGET="haswell"
+    export CPU_TARGET="x86_64-v3"
   fi
   if $(buildkite-agent meta-data exists release &>/dev/null); then
     export CMAKE_BUILD_TYPE="$(buildkite-agent meta-data get release)"

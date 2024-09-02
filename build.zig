@@ -480,7 +480,7 @@ const WindowsShim = struct {
 
     fn create(b: *Build) WindowsShim {
         const target = b.resolveTargetQuery(.{
-            .cpu_model = .{ .explicit = &std.Target.x86.cpu.nehalem },
+            .cpu_model = .{ .explicit = &std.Target.x86.cpu.x86_64 },
             .cpu_arch = .x86_64,
             .os_tag = .windows,
             .os_version_min = getOSVersionMin(.windows),

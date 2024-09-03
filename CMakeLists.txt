@@ -50,6 +50,7 @@ project(Bun VERSION 0.0.0)
 
 include(BuildOptions)
 include(SetupBuildkite)
+include(SetupJavaScript)
 
 if(WIN32)
   if(DEBUG)

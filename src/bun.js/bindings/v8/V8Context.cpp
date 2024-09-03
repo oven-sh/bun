@@ -7,4 +7,4 @@ Isolate* Context::GetIsolate()
     return globalObject()->V8GlobalInternals()->isolate();
 }
 
-}
+} // namespace v8

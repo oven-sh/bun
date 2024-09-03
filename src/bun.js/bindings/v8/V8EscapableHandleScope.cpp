@@ -12,4 +12,4 @@ EscapableHandleScope::~EscapableHandleScope()
     EscapableHandleScopeBase::~EscapableHandleScopeBase();
 }
 
-}
+} // namespace v8

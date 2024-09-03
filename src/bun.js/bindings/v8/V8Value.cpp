@@ -73,4 +73,4 @@ bool Value::FullIsFalse() const
     return localToJSValue(Isolate::GetCurrent()->globalInternals()).isFalse();
 }
 
-}
+} // namespace v8

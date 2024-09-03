@@ -1,9 +1,10 @@
 #pragma once
 
-#include "V8TaggedPointer.h"
-#include "V8Map.h"
+#include "TaggedPointer.h"
+#include "Map.h"
 
 namespace v8 {
+namespace shim {
 
 struct Oddball {
     enum class Kind : int {
@@ -25,4 +26,5 @@ struct Oddball {
     }
 };
 
-}
+} // namespace shim
+} // namespace v8

@@ -1,6 +1,6 @@
 #include "V8Isolate.h"
 #include "V8HandleScope.h"
-#include "V8GlobalInternals.h"
+#include "shim/GlobalInternals.h"
 
 namespace v8 {
 
@@ -25,7 +25,7 @@ Local<Context> Isolate::GetCurrentContext()
     return currentHandleScope()->createLocal<Context>(m_globalObject->vm(), m_globalObject);
 }
 
-Isolate::Isolate(GlobalInternals* globalInternals)
+Isolate::Isolate(shim::GlobalInternals* globalInternals)
     : m_globalInternals(globalInternals)
     , m_globalObject(globalInternals->m_globalObject)
 {
@@ -40,4 +40,4 @@ HandleScope* Isolate::currentHandleScope()
     return m_globalInternals->currentHandleScope();
 }
 
-}
+} // namespace v8

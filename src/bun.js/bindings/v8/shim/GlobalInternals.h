@@ -2,12 +2,15 @@
 
 #include "BunClientData.h"
 
-#include "V8Isolate.h"
-#include "V8Oddball.h"
+#include "../V8Isolate.h"
+#include "Oddball.h"
 
 namespace v8 {
 
 class HandleScope;
+
+namespace shim {
+
 class HandleScopeBuffer;
 
 class GlobalInternals : public JSC::JSCell {
@@ -73,9 +76,8 @@ public:
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE);
 
-    friend struct Roots;
-    friend class Isolate;
-    friend class Context;
+    friend class ::v8::Isolate;
+    friend class ::v8::Context;
 
 private:
     Zig::GlobalObject* m_globalObject;
@@ -107,4 +109,5 @@ private:
     }
 };
 
-}
+} // namespace shim
+} // namespace v8

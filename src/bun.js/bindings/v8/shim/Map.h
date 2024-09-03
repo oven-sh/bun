@@ -1,8 +1,9 @@
 #pragma once
 
-#include "V8TaggedPointer.h"
+#include "TaggedPointer.h"
 
 namespace v8 {
+namespace shim {
 
 enum class InstanceType : uint16_t {
     // v8-internal.h:787, kFirstNonstringType is 0x80
@@ -58,4 +59,5 @@ static_assert(sizeof(Map) == 16, "Map has wrong layout");
 static_assert(offsetof(Map, m_metaMap) == 0, "Map has wrong layout");
 static_assert(offsetof(Map, m_instanceType) == 12, "Map has wrong layout");
 
-}
+} // namespace shim
+} // namespace v8

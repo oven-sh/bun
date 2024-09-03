@@ -1,5 +1,5 @@
 #include "V8Object.h"
-#include "V8InternalFieldObject.h"
+#include "shim/InternalFieldObject.h"
 #include "V8HandleScope.h"
 
 #include "JavaScriptCore/ConstructData.h"
@@ -14,7 +14,7 @@ using JSC::PutPropertySlot;
 
 namespace v8 {
 
-using FieldContainer = InternalFieldObject::FieldContainer;
+using FieldContainer = shim::InternalFieldObject::FieldContainer;
 
 static FieldContainer* getInternalFieldsContainer(Object* object)
 {
@@ -22,7 +22,7 @@ static FieldContainer* getInternalFieldsContainer(Object* object)
 
     // TODO(@190n): do we need to unwrap proxies like node-jsc did?
 
-    if (auto ifo = JSC::jsDynamicCast<InternalFieldObject*>(js_object)) {
+    if (auto ifo = JSC::jsDynamicCast<shim::InternalFieldObject*>(js_object)) {
         return ifo->internalFields();
     }
 
@@ -88,4 +88,4 @@ Local<Data> Object::SlowGetInternalField(int index)
     return handleScope->createLocal<Data>(globalObject->vm(), JSC::jsUndefined());
 }
 
-}
+} // namespace v8

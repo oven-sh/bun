@@ -13,4 +13,4 @@ double Number::Value() const
     return localToJSValue(Isolate::GetCurrent()->globalInternals()).asNumber();
 }
 
-}
+} // namespace v8

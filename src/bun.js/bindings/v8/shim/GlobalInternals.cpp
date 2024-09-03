@@ -1,10 +1,10 @@
-#include "V8GlobalInternals.h"
+#include "GlobalInternals.h"
 
-#include "V8ObjectTemplate.h"
-#include "V8InternalFieldObject.h"
-#include "V8HandleScopeBuffer.h"
-#include "V8FunctionTemplate.h"
-#include "V8Function.h"
+#include "../V8ObjectTemplate.h"
+#include "InternalFieldObject.h"
+#include "HandleScopeBuffer.h"
+#include "../V8FunctionTemplate.h"
+#include "../V8Function.h"
 
 #include "JavaScriptCore/FunctionPrototype.h"
 #include "JavaScriptCore/LazyClassStructureInlines.h"
@@ -17,6 +17,7 @@ using JSC::Structure;
 using JSC::VM;
 
 namespace v8 {
+namespace shim {
 
 // for CREATE_METHOD_TABLE
 namespace JSCastingHelpers = JSC::JSCastingHelpers;
@@ -67,4 +68,5 @@ void GlobalInternals::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE, GlobalInternals);
 
-}
+} // namespace shim
+} // namespace v8

@@ -13,4 +13,4 @@ Local<Boolean> Boolean::New(Isolate* isolate, bool value)
     return isolate->currentHandleScope()->createLocal<Boolean>(isolate->vm(), JSC::jsBoolean(value));
 }
 
-}
+} // namespace v8

@@ -24,4 +24,4 @@ uintptr_t* EscapableHandleScopeBase::EscapeSlot(uintptr_t* escape_value)
     return &newHandle->m_value;
 }
 
-}
+} // namespace v8

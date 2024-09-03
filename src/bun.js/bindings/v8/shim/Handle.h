@@ -1,8 +1,10 @@
 #pragma once
 
-#include "V8Map.h"
+#include "Map.h"
+#include <root.h>
 
 namespace v8 {
+namespace shim {
 
 class ObjectLayout {
 private:
@@ -131,4 +133,5 @@ struct Handle {
     ObjectLayout m_object;
 };
 
-}
+} // namespace shim
+} // namespace v8

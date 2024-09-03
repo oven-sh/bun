@@ -12,4 +12,4 @@ public:
 
 static_assert(sizeof(EscapableHandleScope) == 32, "EscapableHandleScope has wrong layout");
 
-}
+} // namespace v8

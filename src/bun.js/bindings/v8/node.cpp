@@ -100,4 +100,4 @@ void node_module_register(void* opaque_mod)
     globalObject->m_pendingNapiModuleAndExports[1].set(vm, globalObject, object);
 }
 
-}
+} // namespace node

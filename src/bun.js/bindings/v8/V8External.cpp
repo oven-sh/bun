@@ -23,4 +23,4 @@ void* External::Value() const
     return external->value();
 }
 
-}
+} // namespace v8

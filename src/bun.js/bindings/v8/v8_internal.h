@@ -10,5 +10,5 @@ class Isolate {};
 
 BUN_EXPORT Isolate* IsolateFromNeverReadOnlySpaceObject(uintptr_t obj);
 
-}
-}
+} // namespace internal
+} // namespace v8

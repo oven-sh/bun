@@ -1,13 +1,14 @@
 #pragma once
 
 #include "root.h"
-#include "V8TaggedPointer.h"
-#include "V8Handle.h"
-#include "V8GlobalInternals.h"
+#include "shim/TaggedPointer.h"
+#include "shim/Handle.h"
+#include "shim/GlobalInternals.h"
 
 namespace v8 {
 
 class Data {
+
 public:
     // Functions beginning with "localTo" must only be used when "this" comes from a v8::Local (i.e.
     // in public V8 functions), as they make assumptions about how V8 lays out local handles. They
@@ -36,7 +37,7 @@ public:
     }
 
     // Get this as a JSValue when this is a v8::Local
-    JSC::JSValue localToJSValue(GlobalInternals* globalInternals) const
+    JSC::JSValue localToJSValue(shim::GlobalInternals* globalInternals) const
     {
         TaggedPointer root = *reinterpret_cast<const TaggedPointer*>(this);
         if (root.type() == TaggedPointer::Type::Smi) {
@@ -55,8 +56,8 @@ public:
                 return JSC::jsBoolean(false);
             }
 
-            ObjectLayout* v8_object = reinterpret_cast<ObjectLayout*>(raw_ptr);
-            if (v8_object->map()->m_instanceType == InstanceType::HeapNumber) {
+            shim::ObjectLayout* v8_object = reinterpret_cast<shim::ObjectLayout*>(raw_ptr);
+            if (v8_object->map()->m_instanceType == shim::InstanceType::HeapNumber) {
                 return JSC::jsDoubleNumber(v8_object->asDouble());
             } else {
                 return JSC::JSValue(v8_object->asCell());
@@ -97,10 +98,10 @@ private:
             // root points to the V8 object. The first field of the V8 object is the map, and the
             // second is a pointer to some object we have stored. So we ignore the map and recover
             // the object pointer.
-            ObjectLayout* v8_object = root.getPtr<ObjectLayout>();
+            shim::ObjectLayout* v8_object = root.getPtr<shim::ObjectLayout>();
             return TaggedPointer(v8_object->asCell());
         }
     }
 };
 
-}
+} // namespace v8

@@ -1,7 +1,8 @@
-#include "V8InternalFieldObject.h"
+#include "InternalFieldObject.h"
+#include "ObjectTemplate.h"
 
 namespace v8 {
-
+namespace shim {
 // for CREATE_METHOD_TABLE
 namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
@@ -13,11 +14,11 @@ const JSC::ClassInfo InternalFieldObject::s_info = {
     CREATE_METHOD_TABLE(InternalFieldObject)
 };
 
-InternalFieldObject* InternalFieldObject::create(JSC::VM& vm, JSC::Structure* structure, Local<ObjectTemplate> objectTemplate)
+InternalFieldObject* InternalFieldObject::create(JSC::VM& vm, JSC::Structure* structure, int internalFieldCount)
 {
     // TODO figure out how this works with __internals
     // maybe pass a Local<ObjectTemplate>
-    auto object = new (NotNull, JSC::allocateCell<InternalFieldObject>(vm)) InternalFieldObject(vm, structure, objectTemplate->InternalFieldCount());
+    auto object = new (NotNull, JSC::allocateCell<InternalFieldObject>(vm)) InternalFieldObject(vm, structure, internalFieldCount);
     object->finishCreation(vm);
     return object;
 }
@@ -36,4 +37,5 @@ void InternalFieldObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(InternalFieldObject);
 
-}
+} // namespace shim
+} // namespace v8

@@ -1,8 +1,14 @@
 #pragma once
 
-#include "v8.h"
+#include "wtf/Assertions.h"
+#include <cstdint>
+
+namespace JSC {
+class JSCell;
+}
 
 namespace v8 {
+namespace shim {
 
 struct TaggedPointer {
     uintptr_t m_value;
@@ -75,4 +81,8 @@ struct TaggedPointer {
     }
 };
 
-}
+} // namespace shim
+
+using shim::TaggedPointer;
+
+} // namespace v8

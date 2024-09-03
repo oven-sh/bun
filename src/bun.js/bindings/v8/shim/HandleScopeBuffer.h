@@ -1,13 +1,17 @@
 #pragma once
 
-#include "v8.h"
-#include "V8TaggedPointer.h"
-#include "V8Map.h"
-#include "V8Handle.h"
+#include "../v8.h"
+#include "TaggedPointer.h"
+#include "Map.h"
+#include "Handle.h"
+#include <JavaScriptCore/JSCell.h>
 
 namespace v8 {
 
 class Isolate;
+class EscapableHandleScopeBase;
+
+namespace shim {
 
 // An array used by HandleScope to store the items. Must keep pointer stability when resized, since
 // v8::Locals point inside this array.
@@ -53,7 +57,7 @@ public:
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
-    friend class EscapableHandleScopeBase;
+    friend class ::v8::EscapableHandleScopeBase;
 
 private:
     WTF::Lock m_gcLock;
@@ -67,4 +71,5 @@ private:
     }
 };
 
-}
+} // namespace shim
+} // namespace v8

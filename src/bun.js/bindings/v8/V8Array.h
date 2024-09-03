@@ -13,4 +13,4 @@ public:
     BUN_EXPORT static Local<Array> New(Isolate* isolate, Local<Value>* elements, size_t length);
 };
 
-}
+} // namespace v8

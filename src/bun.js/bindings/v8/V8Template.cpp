@@ -8,4 +8,4 @@ JSC::EncodedJSValue Template::DummyCallback(JSC::JSGlobalObject* globalObject, J
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-}
+} // namespace v8

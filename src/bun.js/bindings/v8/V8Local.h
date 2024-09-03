@@ -2,7 +2,7 @@
 
 #include "root.h"
 
-#include "V8TaggedPointer.h"
+#include "shim/TaggedPointer.h"
 
 namespace v8 {
 
@@ -39,4 +39,4 @@ private:
     TaggedPointer* m_location;
 };
 
-}
+} // namespace v8

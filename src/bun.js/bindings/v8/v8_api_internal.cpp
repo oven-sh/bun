@@ -1,9 +1,10 @@
 #include "v8_api_internal.h"
 #include "V8Isolate.h"
-#include "V8HandleScopeBuffer.h"
-#include "V8GlobalInternals.h"
+#include "shim/HandleScopeBuffer.h"
+#include "shim/GlobalInternals.h"
 
 namespace v8 {
+
 namespace api_internal {
 
 void ToLocalEmpty()
@@ -25,5 +26,5 @@ void DisposeGlobal(uintptr_t* location)
     (void)location;
 }
 
-}
-}
+} // namespace api_internal
+} // namespace v8

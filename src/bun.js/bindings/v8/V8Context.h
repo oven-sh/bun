@@ -5,7 +5,9 @@
 
 namespace v8 {
 
+namespace shim {
 class Isolate;
+}
 
 // Context is always a reinterpret pointer to Zig::GlobalObject, so that functions accepting a
 // Context can quickly access JSC data
@@ -34,4 +36,4 @@ public:
     };
 };
 
-}
+} // namespace v8

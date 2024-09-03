@@ -164,4 +164,4 @@ int String::Length() const
     return static_cast<int>(jsString->length());
 }
 
-}
+} // namespace v8

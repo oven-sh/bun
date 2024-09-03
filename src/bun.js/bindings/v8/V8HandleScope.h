@@ -3,8 +3,9 @@
 #include "v8.h"
 #include "V8Isolate.h"
 #include "v8_internal.h"
-#include "V8HandleScopeBuffer.h"
-#include "V8GlobalInternals.h"
+#include "shim/HandleScopeBuffer.h"
+#include "shim/GlobalInternals.h"
+#include "shim/Map.h"
 
 namespace v8 {
 
@@ -19,9 +20,9 @@ public:
     {
         // TODO(@190n) handle more types
         if (value.isString()) {
-            return Local<T>(m_buffer->createHandle(value.asCell(), &Map::string_map, vm));
+            return Local<T>(m_buffer->createHandle(value.asCell(), &shim::Map::string_map, vm));
         } else if (value.isCell()) {
-            return Local<T>(m_buffer->createHandle(value.asCell(), &Map::object_map, vm));
+            return Local<T>(m_buffer->createHandle(value.asCell(), &shim::Map::object_map, vm));
         } else if (value.isInt32()) {
             return Local<T>(m_buffer->createSmiHandle(value.asInt32()));
         } else if (value.isNumber()) {
@@ -46,7 +47,7 @@ protected:
     // must be 24 bytes to match V8 layout
     Isolate* m_isolate;
     HandleScope* m_previousHandleScope;
-    HandleScopeBuffer* m_buffer;
+    shim::HandleScopeBuffer* m_buffer;
 
     // is protected in v8, which matters on windows
     BUN_EXPORT static uintptr_t* CreateHandle(internal::Isolate* isolate, uintptr_t value);
@@ -54,4 +55,4 @@ protected:
 
 static_assert(sizeof(HandleScope) == 24, "HandleScope has wrong layout");
 
-}
+} // namespace v8

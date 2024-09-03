@@ -21,4 +21,4 @@ private:
     Local<T> m_local;
 };
 
-}
+} // namespace v8

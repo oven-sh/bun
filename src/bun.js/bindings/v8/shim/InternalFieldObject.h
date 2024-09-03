@@ -1,8 +1,12 @@
 #pragma once
 
-#include "V8ObjectTemplate.h"
+#include "BunClientData.h"
 
 namespace v8 {
+
+namespace shim {
+
+class ObjectTemplate;
 
 class InternalFieldObject : public JSC::JSDestructibleObject {
 public:
@@ -27,7 +31,7 @@ public:
     using FieldContainer = WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>>;
 
     FieldContainer* internalFields() { return &m_fields; }
-    static InternalFieldObject* create(JSC::VM& vm, JSC::Structure* structure, Local<ObjectTemplate> objectTemplate);
+    static InternalFieldObject* create(JSC::VM& vm, JSC::Structure* structure, int internalFieldCount);
 
     DECLARE_VISIT_CHILDREN;
 
@@ -42,4 +46,5 @@ private:
     FieldContainer m_fields;
 };
 
-}
+} // namespace shim
+} // namespace v8

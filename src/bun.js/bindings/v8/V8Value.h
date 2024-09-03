@@ -29,4 +29,4 @@ private:
     BUN_EXPORT bool FullIsFalse() const;
 };
 
-}
+} // namespace v8

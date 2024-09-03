@@ -1,13 +1,15 @@
 #include "V8HandleScope.h"
 
-#include "V8GlobalInternals.h"
+#include "shim/GlobalInternals.h"
 
 namespace v8 {
 
-HandleScope::HandleScope(Isolate* isolate_)
-    : m_isolate(isolate_)
+HandleScope::HandleScope(Isolate* isolate)
+    : m_isolate(isolate)
     , m_previousHandleScope(m_isolate->globalInternals()->currentHandleScope())
-    , m_buffer(HandleScopeBuffer::create(isolate_->vm(), isolate_->globalInternals()->handleScopeBufferStructure(isolate_->globalObject())))
+    , m_buffer(shim::HandleScopeBuffer::create(
+          isolate->vm(),
+          isolate->globalInternals()->handleScopeBufferStructure(isolate->globalObject())))
 {
     m_isolate->globalInternals()->setCurrentHandleScope(this);
 }
@@ -28,4 +30,4 @@ uintptr_t* HandleScope::CreateHandle(internal::Isolate* i_isolate, uintptr_t val
     return &newSlot->m_value;
 }
 
-}
+} // namespace v8

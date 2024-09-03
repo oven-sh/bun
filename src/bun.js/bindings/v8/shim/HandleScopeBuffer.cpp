@@ -1,8 +1,9 @@
-#include "V8HandleScopeBuffer.h"
-#include "V8GlobalInternals.h"
-#include "V8Isolate.h"
+#include "HandleScopeBuffer.h"
+#include "GlobalInternals.h"
+#include "../V8Isolate.h"
 
 namespace v8 {
+namespace shim {
 
 // for CREATE_METHOD_TABLE
 namespace JSCastingHelpers = JSC::JSCastingHelpers;
@@ -108,4 +109,5 @@ void HandleScopeBuffer::clear()
     m_storage.clear();
 }
 
-}
+} // namespace shim
+} // namespace v8

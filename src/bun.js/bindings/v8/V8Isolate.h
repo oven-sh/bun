@@ -7,7 +7,10 @@ namespace v8 {
 
 class HandleScope;
 class Context;
+
+namespace shim {
 class GlobalInternals;
+}
 
 // The only fields here are "roots," which are the global locations of V8's versions of nullish and
 // boolean values. These are computed as offsets from an Isolate pointer in many V8 functions so
@@ -21,7 +24,7 @@ public:
     static constexpr int kTrueValueRootIndex = 7;
     static constexpr int kFalseValueRootIndex = 8;
 
-    Isolate(GlobalInternals* globalInternals);
+    Isolate(shim::GlobalInternals* globalInternals);
 
     // Returns the isolate inside which the current thread is running or nullptr.
     BUN_EXPORT static Isolate* TryGetCurrent();
@@ -33,12 +36,12 @@ public:
 
     Zig::GlobalObject* globalObject() { return m_globalObject; }
     JSC::VM& vm() { return globalObject()->vm(); }
-    GlobalInternals* globalInternals() { return m_globalInternals; }
+    shim::GlobalInternals* globalInternals() { return m_globalInternals; }
     HandleScope* currentHandleScope();
 
     TaggedPointer* getRoot(int index) { return &m_roots[index]; }
 
-    GlobalInternals* m_globalInternals;
+    shim::GlobalInternals* m_globalInternals;
     Zig::GlobalObject* m_globalObject;
 
     uintptr_t m_padding[72];
@@ -48,4 +51,4 @@ public:
 
 static_assert(offsetof(Isolate, m_roots) == 592, "Isolate has wrong layout");
 
-}
+} // namespace v8

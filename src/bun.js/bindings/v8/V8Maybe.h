@@ -30,4 +30,4 @@ inline Maybe<T> Just(const T& t)
     return Maybe<T>(t);
 }
 
-}
+} // namespace v8

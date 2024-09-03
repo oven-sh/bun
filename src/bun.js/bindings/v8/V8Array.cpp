@@ -20,4 +20,4 @@ Local<Array> Array::New(Isolate* isolate, Local<Value>* elements, size_t length)
     return isolate->currentHandleScope()->createLocal<Array>(isolate->vm(), array);
 }
 
-}
+} // namespace v8

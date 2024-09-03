@@ -131,7 +131,7 @@ pub const ZlibEncoder = struct {
             this.has_called_end = true;
 
         {
-            this.stream.write(input_to_queue.slice(), &this.output) catch |err| return handleTransformSyncStreamError(err, globalThis, this.stream.err_msg, &this.closed);
+            this.stream.write(input_to_queue.slice(), &this.output, true) catch |err| return handleTransformSyncStreamError(err, globalThis, this.stream.err_msg, &this.closed);
         }
         if (this.output.items.len > this.maxOutputLength) {
             globalThis.ERR_BUFFER_TOO_LARGE("Cannot create a Buffer larger than {d} bytes", .{this.maxOutputLength}).throw();
@@ -153,6 +153,70 @@ pub const ZlibEncoder = struct {
             return .zero;
         }
         return this.collectOutputValue();
+    }
+
+    pub fn transformWith(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const arguments = callframe.arguments(4);
+        const vm = globalThis.bunVM();
+        const event_loop = vm.eventLoop();
+
+        if (arguments.len < 4) {
+            globalThis.throwNotEnoughArguments("ZlibEncoder.encode", 4, arguments.len);
+            return .zero;
+        }
+
+        if (this.has_called_end) {
+            globalThis.throw("ZlibEncoder.encodeSync called after ZlibEncoder.end", .{});
+            return .zero;
+        }
+
+        const input = callframe.argument(0);
+        const optional_encoding = callframe.argument(1);
+        const thisctx = arguments.ptr[2];
+        const is_last = callframe.argument(3).toBoolean();
+
+        const push_fn = thisctx.get(globalThis, "push") orelse {
+            globalThis.throw("are you sure this is a stream.Transform?", .{});
+            return .zero;
+        };
+        if (globalThis.hasException()) return .zero;
+
+        const input_to_queue = JSC.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalThis, bun.default_allocator, input, optional_encoding, true) orelse {
+            return globalThis.throwInvalidArgumentTypeValue("buffer", "string or an instance of Buffer, TypedArray, DataView, or ArrayBuffer", input);
+        };
+
+        if (is_last)
+            this.has_called_end = true;
+
+        const err_buffer_too_large = globalThis.ERR_BUFFER_TOO_LARGE("Cannot create a Buffer larger than {d} bytes", .{this.maxOutputLength});
+
+        {
+            this.stream.write(input_to_queue.slice(), &this.output, false) catch |err| return handleTransformSyncStreamError(err, globalThis, this.stream.err_msg, &this.closed);
+            if (this.output.items.len > this.maxOutputLength) {
+                err_buffer_too_large.throw();
+                return .zero;
+            }
+            if (this.output.items.len > 0) event_loop.runCallback(push_fn, globalThis, thisctx, &.{this.collectOutputValue()});
+
+            while (!this.stream.broke_on_first_iter) {
+                const done = this.stream.doWork(&this.output, this.stream.flush) catch |err| return handleTransformSyncStreamError(err, globalThis, this.stream.err_msg, &this.closed);
+                if (this.output.items.len > this.maxOutputLength) {
+                    err_buffer_too_large.throw();
+                    return .zero;
+                }
+                if (this.output.items.len > 0) event_loop.runCallback(push_fn, globalThis, thisctx, &.{this.collectOutputValue()});
+                if (done) break;
+            }
+        }
+        if (is_last) {
+            this.stream.end(&this.output) catch |err| return handleTransformSyncStreamError(err, globalThis, this.stream.err_msg, &this.closed);
+            if (this.output.items.len > this.maxOutputLength) {
+                globalThis.ERR_BUFFER_TOO_LARGE("Cannot create a Buffer larger than {d} bytes", .{this.maxOutputLength}).throw();
+                return .zero;
+            }
+            if (this.output.items.len > 0) event_loop.runCallback(push_fn, globalThis, thisctx, &.{this.collectOutputValue()});
+        }
+        return .undefined;
     }
 
     pub fn transform(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -276,7 +340,7 @@ pub const ZlibEncoder = struct {
                     }
                     for (pending) |input| {
                         const output = &this.encoder.output;
-                        this.encoder.stream.write(input.slice(), output) catch |e| {
+                        this.encoder.stream.write(input.slice(), output, true) catch |e| {
                             any = true;
                             _ = this.encoder.pending_encode_job_count.fetchSub(1, .monotonic);
                             this.encoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "ZlibError: {s}", .{@errorName(e)}); // TODO propogate better error
@@ -496,7 +560,7 @@ pub const ZlibDecoder = struct {
             this.has_called_end = true;
 
         {
-            this.stream.writeAll(input_to_queue.slice(), &this.output) catch |err| return handleTransformSyncStreamError(err, globalThis, this.stream.err_msg, &this.closed);
+            this.stream.writeAll(input_to_queue.slice(), &this.output, true) catch |err| return handleTransformSyncStreamError(err, globalThis, this.stream.err_msg, &this.closed);
         }
         if (this.output.items.len > this.maxOutputLength) {
             globalThis.ERR_BUFFER_TOO_LARGE("Cannot create a Buffer larger than {d} bytes", .{this.maxOutputLength}).throw();
@@ -518,6 +582,71 @@ pub const ZlibDecoder = struct {
             return .zero;
         }
         return this.collectOutputValue();
+    }
+
+    pub fn transformWith(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const arguments = callframe.arguments(4);
+        const vm = globalThis.bunVM();
+        const event_loop = vm.eventLoop();
+
+        if (arguments.len < 4) {
+            globalThis.throwNotEnoughArguments("ZlibEncoder.encode", 4, arguments.len);
+            return .zero;
+        }
+
+        if (this.has_called_end) {
+            globalThis.throw("ZlibEncoder.encodeSync called after ZlibEncoder.end", .{});
+            return .zero;
+        }
+
+        const input = callframe.argument(0);
+        const optional_encoding = callframe.argument(1);
+        const thisctx = arguments.ptr[2];
+        const is_last = callframe.argument(3).toBoolean();
+
+        const push_fn = thisctx.get(globalThis, "push") orelse {
+            globalThis.throw("are you sure this is a stream.Transform?", .{});
+            return .zero;
+        };
+        if (globalThis.hasException()) return .zero;
+
+        const input_to_queue = JSC.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalThis, bun.default_allocator, input, optional_encoding, true) orelse {
+            return globalThis.throwInvalidArgumentTypeValue("buffer", "string or an instance of Buffer, TypedArray, DataView, or ArrayBuffer", input);
+        };
+
+        if (is_last)
+            this.has_called_end = true;
+
+        const err_buffer_too_large = globalThis.ERR_BUFFER_TOO_LARGE("Cannot create a Buffer larger than {d} bytes", .{this.maxOutputLength});
+
+        {
+            const input_slice = input_to_queue.slice();
+            this.stream.writeAll(input_slice, &this.output, false) catch |err| return handleTransformSyncStreamError(err, globalThis, this.stream.err_msg, &this.closed);
+            if (this.output.items.len > this.maxOutputLength) {
+                err_buffer_too_large.throw();
+                return .zero;
+            }
+            if (this.output.items.len > 0) event_loop.runCallback(push_fn, globalThis, thisctx, &.{this.collectOutputValue()});
+
+            while (this.stream.do_dowork) {
+                const done = this.stream.doWork(&this.output, this.stream.flush) catch |err| return handleTransformSyncStreamError(err, globalThis, this.stream.err_msg, &this.closed);
+                if (this.output.items.len > this.maxOutputLength) {
+                    err_buffer_too_large.throw();
+                    return .zero;
+                }
+                if (this.output.items.len > 0) event_loop.runCallback(push_fn, globalThis, thisctx, &.{this.collectOutputValue()});
+                if (done) break;
+            }
+        }
+        if (is_last) {
+            this.stream.end(&this.output) catch |err| return handleTransformSyncStreamError(err, globalThis, this.stream.err_msg, &this.closed);
+            if (this.output.items.len > this.maxOutputLength) {
+                globalThis.ERR_BUFFER_TOO_LARGE("Cannot create a Buffer larger than {d} bytes", .{this.maxOutputLength}).throw();
+                return .zero;
+            }
+            if (this.output.items.len > 0) event_loop.runCallback(push_fn, globalThis, thisctx, &.{this.collectOutputValue()});
+        }
+        return .undefined;
     }
 
     pub fn transform(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -641,7 +770,7 @@ pub const ZlibDecoder = struct {
                     }
                     for (pending) |input| {
                         const output = &this.decoder.output;
-                        this.decoder.stream.writeAll(input.slice(), output) catch |e| {
+                        this.decoder.stream.writeAll(input.slice(), output, true) catch |e| {
                             any = true;
                             _ = this.decoder.pending_encode_job_count.fetchSub(1, .monotonic);
                             switch (e) {

@@ -97,6 +97,10 @@ export default [
         fn: "transformSync",
         length: 2,
       },
+      transformWith: {
+        fn: "transformWith",
+        length: 4,
+      },
       reset: {
         fn: "reset",
         length: 0,
@@ -145,6 +149,10 @@ export default [
       transformSync: {
         fn: "transformSync",
         length: 2,
+      },
+      transformWith: {
+        fn: "transformWith",
+        length: 4,
       },
       reset: {
         fn: "reset",

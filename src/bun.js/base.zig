@@ -671,7 +671,7 @@ pub const MarkedArrayBuffer = struct {
     }
 
     // TODO: refactor this
-    pub fn toJS(this: *MarkedArrayBuffer, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJS(this: *const MarkedArrayBuffer, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         var exception = [_]JSC.C.JSValueRef{null};
         const obj = this.toJSObjectRef(globalObject, &exception);
 

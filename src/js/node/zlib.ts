@@ -141,6 +141,14 @@ ObjectDefineProperty(Zlib.prototype, "_strategy", {
 Zlib.prototype.params = function (level, strategy, callback) {
   return this[kHandle].params(level, strategy, callback);
 };
+Zlib.prototype._transform = function _transform(chunk, encoding, callback) {
+  try {
+    this[kHandle].transformWith(chunk, encoding, this, false);
+    callback();
+  } catch (err) {
+    callback(err, undefined);
+  }
+};
 
 //
 

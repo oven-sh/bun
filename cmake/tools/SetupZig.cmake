@@ -81,7 +81,7 @@ find_command(
     OFF
 )
 
-if(EXISTS CMAKE_ZIG_COMPILER)
+if(EXISTS ${CMAKE_ZIG_COMPILER})
   return()
 endif()
 

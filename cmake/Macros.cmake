@@ -189,7 +189,7 @@ function(find_command)
     ${CMD_VALIDATOR}
   )
 
-  if(NOT CMD_REQUIRED AND ${CMD_VARIABLE} MATCHES "NOTFOUND")
+  if(NOT CMD_REQUIRED STREQUAL "OFF" AND ${CMD_VARIABLE} MATCHES "NOTFOUND")
     if(CMD_VERSION)
       message(FATAL_ERROR "Command not found: \"${CMD_COMMAND}\" that matches version \"${CHECK_COMMAND_VERSION}\"")
     endif()

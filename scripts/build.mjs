@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
 
 // https://cmake.org/cmake/help/latest/manual/cmake.1.html#generate-a-project-buildsystem
@@ -26,6 +27,8 @@ const buildFlags = [
   ["-v", "boolean", "same as --verbose"],
 ];
 
+const extraFlags = [["--clean", "boolean", "clean the build directory before building"]];
+
 function build(args) {
   if (process.platform === "win32" && !process.env["VSINSTALLDIR"]) {
     const shellPath = join(import.meta.dirname, "vs-shell.ps1");
@@ -46,11 +49,16 @@ function build(args) {
   const generateArgs = Object.entries(generateOptions).flatMap(([flag, value]) =>
     flag.startsWith("-D") ? [`${flag}=${value}`] : [flag, value],
   );
+
+  const buildPath = generateOptions["-B"] || "build";
+  const extraOptions = parseOptions(args, extraFlags);
+  if ("--clean" in extraOptions) {
+    rmSync(buildPath, { recursive: true, force: true });
+  }
   spawn("cmake", generateArgs, { stdio: "inherit", env });
 
   const buildOptions = parseOptions(args, buildFlags);
   const buildArgs = Object.entries(buildOptions).flatMap(([flag, value]) => [flag, value]);
-  const buildPath = generateOptions["-B"] || "build";
   spawn("cmake", ["--build", buildPath, ...buildArgs], { stdio: "inherit", env });
 }
 

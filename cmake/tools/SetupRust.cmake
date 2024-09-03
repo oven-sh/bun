@@ -11,7 +11,7 @@ find_command(
     OFF
 )
 
-if(EXISTS CARGO_EXECUTABLE)
+if(EXISTS ${CARGO_EXECUTABLE})
   return()
 endif()
 

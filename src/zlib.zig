@@ -951,6 +951,7 @@ const CHUNK = 1024 * 64;
 pub const ZlibCompressorStreaming = struct {
     mode: NodeMode,
     state: z_stream = std.mem.zeroes(z_stream),
+    chunkSize: c_uint,
     flush: FlushValue = .NoFlush,
     finishFlush: FlushValue = .Finish,
     fullFlush: FlushValue = .FullFlush,
@@ -1046,6 +1047,7 @@ pub const ZlibCompressorStreaming = struct {
 pub const ZlibDecompressorStreaming = struct {
     mode: NodeMode,
     state: z_stream = std.mem.zeroes(z_stream),
+    chunkSize: c_uint,
     next_expected_header_byte: ?[*]const u8 = null,
     gzip_id_bytes_read: u16 = 0,
     flush: FlushValue = .NoFlush,

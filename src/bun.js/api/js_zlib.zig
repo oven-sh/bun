@@ -67,6 +67,7 @@ pub const ZlibEncoder = struct {
             .maxOutputLength = options.maxOutputLength,
             .stream = .{
                 .mode = mode,
+                .chunkSize = options.chunkSize,
                 .flush = @enumFromInt(options.flush),
                 .finishFlush = @enumFromInt(options.finishFlush),
                 .fullFlush = @enumFromInt(options.fullFlush),
@@ -496,6 +497,7 @@ pub const ZlibDecoder = struct {
             .maxOutputLength = options.maxOutputLength,
             .stream = .{
                 .mode = mode,
+                .chunkSize = options.chunkSize,
                 .flush = @enumFromInt(options.flush),
                 .finishFlush = @enumFromInt(options.finishFlush),
                 .fullFlush = @enumFromInt(options.fullFlush),
@@ -875,7 +877,7 @@ pub const ZlibDecoder = struct {
 };
 
 const Options = struct {
-    chunkSize: usize,
+    chunkSize: c_uint,
     level: c_int,
     windowBits: c_int,
     memLevel: c_int,
@@ -887,7 +889,7 @@ const Options = struct {
     fullFlush: u8,
 
     pub fn fromJS(globalThis: *JSC.JSGlobalObject, mode: bun.zlib.NodeMode, opts: JSC.JSValue) ?Options {
-        const chunkSize = globalThis.checkMinOrGetDefault(opts, "chunkSize", usize, 64, 1024 * 16) orelse return null;
+        const chunkSize = globalThis.checkMinOrGetDefault(opts, "chunkSize", c_uint, 64, 1024 * 16) orelse return null;
         const level = globalThis.checkRangesOrGetDefault(opts, "level", i16, -1, 9, -1) orelse return null;
         const memLevel = globalThis.checkRangesOrGetDefault(opts, "memLevel", u8, 1, 9, 8) orelse return null;
         const strategy = globalThis.checkRangesOrGetDefault(opts, "strategy", u8, 0, 4, 0) orelse return null;

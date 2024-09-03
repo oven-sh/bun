@@ -691,48 +691,47 @@ if(CI)
       ${BUILD_PATH}
   )
   set_property(TARGET ${bun} PROPERTY OUTPUT ${BUILD_PATH}/${bunPath}.zip APPEND)
-
-  if(bunStrip)
-    string(REPLACE bun ${bunTriplet} bunPath ${bunStrip})
+  if(BUILDKITE)
     add_custom_command(
       TARGET
         ${bun} POST_BUILD
       COMMENT
-        "Generating ${bunPath}.zip"
+        "Uploading ${bunPath}.zip"
       VERBATIM COMMAND
-        ${CMAKE_COMMAND} -E rm -rf ${bunPath} ${bunPath}.zip
-          && ${CMAKE_COMMAND} -E make_directory ${bunPath}
-          && ${CMAKE_COMMAND} -E copy ${bunStripExe} ${bunPath}
-          && ${CMAKE_COMMAND} -E tar cfv ${bunPath}.zip --format=zip ${bunPath}
-          && ${CMAKE_COMMAND} -E rm -rf ${bunPath}
+        buildkite-agent artifact upload ${bunPath}.zip
       WORKING_DIRECTORY
         ${BUILD_PATH}
     )
-    set_property(TARGET ${bun} PROPERTY OUTPUT ${BUILD_PATH}/${bunPath}.zip APPEND)
   endif()
-endif()
 
-if(BUILDKITE)
-  add_custom_command(
-    TARGET
-      ${bun} POST_BUILD
-    COMMENT
-      "Uploading ${bun}"
-    VERBATIM COMMAND
-      buildkite-agent artifact upload ${bun}.zip
-    WORKING_DIRECTORY
-      ${BUILD_PATH}
-  )
   if(bunStrip)
+    string(REPLACE bun ${bunTriplet} bunStripPath ${bunStrip})
     add_custom_command(
       TARGET
         ${bun} POST_BUILD
       COMMENT
-        "Uploading ${bunStrip}"
+        "Generating ${bunStripPath}.zip"
       VERBATIM COMMAND
-        buildkite-agent artifact upload ${bunStrip}.zip
+        ${CMAKE_COMMAND} -E rm -rf ${bunStripPath} ${bunStripPath}.zip
+          && ${CMAKE_COMMAND} -E make_directory ${bunStripPath}
+          && ${CMAKE_COMMAND} -E copy ${bunStripExe} ${bunStripPath}
+          && ${CMAKE_COMMAND} -E tar cfv ${bunStripPath}.zip --format=zip ${bunStripPath}
+          && ${CMAKE_COMMAND} -E rm -rf ${bunStripPath}
       WORKING_DIRECTORY
         ${BUILD_PATH}
     )
+    set_property(TARGET ${bun} PROPERTY OUTPUT ${BUILD_PATH}/${bunStripPath}.zip APPEND)
+    if(BUILDKITE)
+      add_custom_command(
+        TARGET
+          ${bun} POST_BUILD
+        COMMENT
+          "Uploading ${bunStripPath}.zip"
+        VERBATIM COMMAND
+          buildkite-agent artifact upload ${bunStripPath}.zip
+        WORKING_DIRECTORY
+          ${BUILD_PATH}
+      )
+    endif()
   endif()
 endif()

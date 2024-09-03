@@ -11,7 +11,6 @@ const Ident = css_values.ident.Ident;
 pub const Error = css.Error;
 const Location = css.Location;
 const PrintErr = css.PrintErr;
-const PrintResult = css.PrintResult;
 
 const ArrayList = std.ArrayListUnmanaged;
 
@@ -92,6 +91,7 @@ pub fn Printer(comptime Writer: type) type {
         indentation_buf: std.ArrayList(u8),
         ctx: ?*const css.StyleContext,
         scratchbuf: std.ArrayList(u8),
+        err: ?css.PrinterError,
         // TODO: finish the fields
 
         const This = @This();
@@ -107,6 +107,14 @@ pub fn Printer(comptime Writer: type) type {
         /// Returns whether the indent level is greater than one.
         pub fn isNested(this: *const This) bool {
             return this.ident > 2;
+        }
+
+        /// Add an error related to std lib fmt errors
+        pub fn addFmtError(this: *This) css.PrinterError {
+            this.error_kind = css.PrinterError{
+                .kind = .fmt_error,
+                .loc = null,
+            };
         }
 
         /// Returns an error of the given kind at the provided location in the current source file.
@@ -148,29 +156,28 @@ pub fn Printer(comptime Writer: type) type {
         ///
         /// NOTE: Is is assumed that the string does not contain any newline characters.
         /// If such a string is written, it will break source maps.
-        pub fn writeStr(this: *This, s: []const u8) PrintResult(void) {
+        pub fn writeStr(this: *This, s: []const u8) PrintErr!void {
             this.col += s.len;
             this.dest.writeStr(s) catch bun.outOfMemory();
-            return PrintResult(void).success;
+            return;
         }
 
         /// Writes a formatted string to the underlying destination.
         ///
         /// NOTE: Is is assumed that the formatted string does not contain any newline characters.
         /// If such a string is written, it will break source maps.
-        pub fn writeFmt(this: *This, comptime fmt: []const u8, args: anytype) PrintResult(void) {
+        pub fn writeFmt(this: *This, comptime fmt: []const u8, args: anytype) PrintErr!void {
             // assuming the writer comes from an ArrayList
             const start: usize = this.dest.context.self.items.len;
             this.dest.print(fmt, args) catch bun.outOfMemory();
             const written = this.dest.context.self.items.len - start;
             this.col += written;
-            return PrintResult(void).success;
         }
 
         /// Writes a CSS identifier to the underlying destination, escaping it
         /// as appropriate. If the `css_modules` option was enabled, then a hash
         /// is added, and the mapping is added to the CSS module.
-        pub fn writeIdent(this: *This, ident: []const u8, handle_css_module: bool) PrintResult(void) {
+        pub fn writeIdent(this: *This, ident: []const u8, handle_css_module: bool) PrintErr!void {
             if (handle_css_module) {
                 if (this.css_module) |*css_module| {
                     const Closure = struct { first: bool, printer: *This };
@@ -181,7 +188,7 @@ pub fn Printer(comptime Writer: type) type {
                         this,
                         Closure{ .first = true, .printer = this },
                         struct {
-                            pub fn writeFn(self: *Closure, s: []const u8) PrintResult(void) {
+                            pub fn writeFn(self: *Closure, s: []const u8) PrintErr!void {
                                 self.printer.col += s.len;
                                 if (self.first) {
                                     self.first = false;
@@ -207,18 +214,18 @@ pub fn Printer(comptime Writer: type) type {
             if (this.css_module) |*css_module| {
                 if (css_module.config.dashed_idents) {
                     const Fn = struct {
-                        pub fn writeFn(self: *This, s: []const u8) PrintResult(void) {
+                        pub fn writeFn(self: *This, s: []const u8) PrintErr!void {
                             self.col += s.len;
                             return css.serializer.serializeName(s, Writer, self);
                         }
                     };
-                    if (css_module.config.pattern.write(
+                    try css_module.config.pattern.write(
                         css_module.hashes.items[this.loc.source_index],
                         css_module.sources.items[this.loc.source_index],
                         ident[2..],
                         this,
                         Fn.writeFn,
-                    ).asErr()) |e| return .{ .err = e };
+                    );
 
                     if (is_declaration) {
                         css_module.addDashed(ident, this.loc.source_index);
@@ -230,34 +237,36 @@ pub fn Printer(comptime Writer: type) type {
         }
 
         /// Write a single character to the underlying destination.
-        pub fn writeChar(this: *This, char: u8) PrintResult(void) {
+        pub fn writeChar(this: *This, char: u8) PrintErr!void {
             if (char == '\n') {
                 this.line += 1;
                 this.col = 0;
             } else {
                 this.col += 1;
             }
-            return this.dest.writeByte(char) catch return css.fmtPrinterError();
+            return this.dest.writeByte(char) catch {
+                return this.addFmtError();
+            };
         }
 
         /// Writes a newline character followed by indentation.
         /// If the `minify` option is enabled, then nothing is printed.
-        pub fn newline(this: *This) PrintResult(void) {
+        pub fn newline(this: *This) PrintErr!void {
             if (this.minify) {
                 return;
             }
 
-            if (this.writeChar('\n').asErr()) |e| return .{ .err = e };
+            try this.writeChar('\n');
             return this.writeIndent();
         }
 
         /// Writes a delimiter character, followed by whitespace (depending on the `minify` option).
         /// If `ws_before` is true, then whitespace is also written before the delimiter.
-        pub fn delim(this: *This, delim_: u8, ws_before: bool) PrintResult(void) {
+        pub fn delim(this: *This, delim_: u8, ws_before: bool) PrintErr!void {
             if (ws_before) {
-                if (this.whitespace().asErr()) |e| return .{ .err = e };
+                try this.whitespace();
             }
-            if (this.writeChar(delim_).asErr()) |e| return .{ .err = e };
+            try this.writeChar(delim_);
             return this.whitespace();
         }
 
@@ -265,8 +274,8 @@ pub fn Printer(comptime Writer: type) type {
         ///
         /// Use `write_char` instead if you wish to force a space character to be written,
         /// regardless of the `minify` option.
-        pub fn whitespace(this: *This) PrintResult(void) {
-            if (this.minify) return PrintResult(void).success;
+        pub fn whitespace(this: *This) PrintErr!void {
+            if (this.minify) return;
             return this.writeChar(' ');
         }
 
@@ -345,11 +354,11 @@ pub fn Printer(comptime Writer: type) type {
             return this.indentation_buf.items;
         }
 
-        fn writeIndent(this: *This) PrintResult(void) {
+        fn writeIndent(this: *This) PrintErr!void {
             bun.debugAssert(!this.minify);
             if (this.ident > 0) {
                 // try this.writeStr(this.getIndent(this.ident));
-                this.dest.writeByteNTimes(' ', this.ident) catch return css.fmtPrinterError();
+                this.dest.writeByteNTimes(' ', this.ident) catch return this.addFmtError();
             }
         }
     };

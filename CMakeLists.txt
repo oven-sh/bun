@@ -46,7 +46,8 @@ if(WIN32 AND NOT CMAKE_CL_SHOWINCLUDES_PREFIX)
   set(CMAKE_CL_SHOWINCLUDES_PREFIX "Note: including file:")
 endif()
 
-project(Bun VERSION 0.0.0)
+project(Bun)
+parse_package_json(VERSION_VARIABLE Bun_VERSION)
 
 include(BuildOptions)
 include(SetupBuildkite)

@@ -111,21 +111,22 @@ macro(find_llvm_program variable program_name)
 endmacro()
 
 # register_command
-#   COMMAND     string[] - The command to run
-#   COMMENT     string   - The comment to display in the log
-#   CWD         string   - The working directory to run the command in
-#   ENVIRONMENT string[] - The environment variables to set (e.g. "DEBUG=1")
-#   TARGETS     string[] - The targets that this command depends on
-#   SOURCES     string[] - The files that this command depends on
-#   OUTPUTS     string[] - The files that this command produces
-#   ARTIFACTS   string[] - The files that this command produces, and uploads as an artifact in CI
-#   BYPRODUCTS  string[] - The files that this command produces, but are not used as inputs (e.g. "node_modules")
-#   ALWAYS_RUN  bool     - If true, the command will always run
-#   TARGET      string   - The target to register the command with
-#   GROUP       string   - The group to register the command with (e.g. similar to JOB_POOL)
+#   COMMAND      string[] - The command to run
+#   COMMENT      string   - The comment to display in the log
+#   CWD          string   - The working directory to run the command in
+#   ENVIRONMENT  string[] - The environment variables to set (e.g. "DEBUG=1")
+#   TARGETS      string[] - The targets that this command depends on
+#   SOURCES      string[] - The files that this command depends on
+#   OUTPUTS      string[] - The files that this command produces
+#   ARTIFACTS    string[] - The files that this command produces, and uploads as an artifact in CI
+#   BYPRODUCTS   string[] - The files that this command produces, but are not used as inputs (e.g. "node_modules")
+#   ALWAYS_RUN   bool     - If true, the command will always run
+#   TARGET       string   - The target to register the command with
+#   TARGET_PHASE string   - The target phase to register the command with (e.g. PRE_BUILD, PRE_LINK, POST_BUILD)
+#   GROUP        string   - The group to register the command with (e.g. similar to JOB_POOL)
 function(register_command)
   set(options ALWAYS_RUN)
-  set(args COMMENT CWD TARGET GROUP)
+  set(args COMMENT CWD TARGET TARGET_PHASE GROUP)
   set(multiArgs COMMAND ENVIRONMENT TARGETS SOURCES OUTPUTS BYPRODUCTS ARTIFACTS)
   cmake_parse_arguments(CMD "${options}" "${args}" "${multiArgs}" ${ARGN})
 
@@ -202,6 +203,26 @@ function(register_command)
     list(APPEND CMD_EFFECTIVE_OUTPUTS ${CMD_CWD}/.1)
   endif()
 
+  if(CMD_TARGET_PHASE)
+    message(STATUS "register_command: target: ${CMD_TARGET} phase: ${CMD_TARGET_PHASE} commands: ${CMD_COMMANDS}")
+    if(NOT CMD_TARGET)
+      message(FATAL_ERROR "register_command: TARGET is required when TARGET_PHASE is set")
+    endif()
+    if(NOT TARGET ${CMD_TARGET})
+      message(FATAL_ERROR "register_command: TARGET is not a valid target: ${CMD_TARGET}")
+    endif()
+    add_custom_command(
+      TARGET ${CMD_TARGET} ${CMD_TARGET_PHASE}
+      COMMENT ${CMD_COMMENT}
+      WORKING_DIRECTORY ${CMD_CWD}
+      BYPRODUCTS ${CMD_BYPRODUCTS}
+      VERBATIM ${CMD_COMMANDS}
+    )
+    set_property(TARGET ${CMD_TARGET} PROPERTY OUTPUT ${CMD_EFFECTIVE_OUTPUTS} APPEND)
+    set_property(TARGET ${CMD_TARGET} PROPERTY DEPENDS ${CMD_EFFECTIVE_DEPENDS} APPEND)
+    return()
+  endif()
+
   if(NOT CMD_EFFECTIVE_OUTPUTS)
     message(FATAL_ERROR "register_command: OUTPUTS or ARTIFACTS is required, or set ALWAYS_RUN")
   endif()
@@ -212,14 +233,12 @@ function(register_command)
     endif()
     add_custom_target(${CMD_TARGET}
       COMMENT ${CMD_COMMENT}
-      SOURCES ${CMD_EFFECTIVE_SOURCES}
       DEPENDS ${CMD_EFFECTIVE_OUTPUTS}
       BYPRODUCTS ${CMD_EFFECTIVE_BYPRODUCTS}
       JOB_POOL ${CMD_GROUP}
     )
   endif()
 
-  message(STATUS "register_command: ${CMD_COMMANDS}")
   add_custom_command(
     VERBATIM ${CMD_COMMANDS}
     WORKING_DIRECTORY ${CMD_CWD}

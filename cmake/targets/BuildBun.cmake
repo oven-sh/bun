@@ -582,12 +582,17 @@ endif()
 
 # Since linking locks the file, we need to kill all instances of bun before linking.
 if(WIN32)
-  add_custom_command(
+  find_program(POWERSHELL_EXECUTABLE
+    NAMES pwsh powershell
+    REQUIRED
+  )
+  register_command(
     TARGET
-      ${bun} PRE_LINK
-    VERBATIM COMMAND
-      powershell
-      /C
+      ${bun}
+    TARGET_PHASE
+      PRE_LINK
+    COMMAND
+      ${POWERSHELL_EXECUTABLE} /C
       "Stop-Process -Name '${bun}' -Force -ErrorAction SilentlyContinue; exit 0"
   )
 endif()
@@ -595,46 +600,53 @@ endif()
 # --- Packaging ---
 
 if(bunStrip)
-  add_custom_command(
+  register_command(
     TARGET
-      ${bun} POST_BUILD
+      ${bun}
+    TARGET_PHASE
+      POST_BUILD
     COMMENT
       "Stripping ${bun}"
-    VERBATIM COMMAND
+    COMMAND
       ${CMAKE_STRIP}
         ${bunExe}
         --strip-all
         --strip-debug
         --discard-all
         -o ${bunStripExe}
-    WORKING_DIRECTORY
+    CWD
       ${BUILD_PATH}
+    OUTPUTS
+      ${BUILD_PATH}/${bunStripExe}
   )
-  set_property(TARGET ${bun} PROPERTY OUTPUT ${bunStripExe} APPEND)
 endif()
 
-add_custom_command(
+register_command(
   TARGET
-    ${bun} POST_BUILD
+    ${bun}
+  TARGET_PHASE
+    POST_BUILD
   COMMENT
     "Testing ${bun}"
-  VERBATIM COMMAND
+  COMMAND
     ${CMAKE_COMMAND}
     -E env BUN_DEBUG_QUIET_LOGS=1
     ${BUILD_PATH}/${bunExe}
       --revision
-  WORKING_DIRECTORY
+  CWD
     ${BUILD_PATH}
 )
 
 if(CI)
   set(BUN_FEATURES_SCRIPT ${CWD}/scripts/features.mjs)
-  add_custom_command(
+  register_command(
     TARGET
-      ${bun} POST_BUILD
+      ${bun}
+    TARGET_PHASE
+      POST_BUILD
     COMMENT
       "Generating features.json"
-    VERBATIM COMMAND
+    COMMAND
       ${CMAKE_COMMAND}
         -E env
           BUN_GARBAGE_COLLECTOR_LEVEL=1
@@ -642,16 +654,19 @@ if(CI)
           BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1
         ${BUILD_PATH}/${bunExe}
         ${BUN_FEATURES_SCRIPT}
-    WORKING_DIRECTORY
+    CWD
       ${BUILD_PATH}
+    OUTPUTS
+      ${BUILD_PATH}/features.json
   )
-  set_property(TARGET ${bun} PROPERTY OUTPUT ${BUILD_PATH}/features.json APPEND)
 endif()
 
 if(APPLE AND bunStrip)
-  add_custom_command(
+  register_command(
     TARGET
-      ${bun} POST_BUILD
+      ${bun}
+    TARGET_PHASE
+      POST_BUILD
     COMMENT
       "Generating ${bun}.dSYM"
     COMMAND
@@ -662,10 +677,11 @@ if(APPLE AND bunStrip)
         --object-prefix-map .=${CWD}
         -o ${bun}.dSYM
         -j ${CMAKE_BUILD_PARALLEL_LEVEL}
-    WORKING_DIRECTORY
+    CWD
       ${BUILD_PATH}
+    OUTPUTS
+      ${BUILD_PATH}/${bun}.dSYM
   )
-  set_property(TARGET ${bun} PROPERTY OUTPUT ${bun}.dSYM APPEND)
 endif()
 
 if(CI)
@@ -676,62 +692,44 @@ if(CI)
   endif()
 
   string(REPLACE bun ${bunTriplet} bunPath ${bun})
-  add_custom_command(
+  register_command(
     TARGET
-      ${bun} POST_BUILD
+      ${bun}
+    TARGET_PHASE
+      POST_BUILD
     COMMENT
       "Generating ${bunPath}.zip"
-    VERBATIM COMMAND
+    COMMAND
       ${CMAKE_COMMAND} -E rm -rf ${bunPath} ${bunPath}.zip
-        && ${CMAKE_COMMAND} -E make_directory ${bunPath}
-        && ${CMAKE_COMMAND} -E copy ${bunExe} ${bunPath}
-        && ${CMAKE_COMMAND} -E tar cfv ${bunPath}.zip --format=zip ${bunPath}
-        && ${CMAKE_COMMAND} -E rm -rf ${bunPath}
-    WORKING_DIRECTORY
+      && ${CMAKE_COMMAND} -E make_directory ${bunPath}
+      && ${CMAKE_COMMAND} -E copy ${bunExe} ${bunPath}
+      && ${CMAKE_COMMAND} -E tar cfv ${bunPath}.zip --format=zip ${bunPath}
+      && ${CMAKE_COMMAND} -E rm -rf ${bunPath}
+    CWD
       ${BUILD_PATH}
+    ARTIFACTS
+      ${BUILD_PATH}/${bunPath}.zip
   )
-  set_property(TARGET ${bun} PROPERTY OUTPUT ${BUILD_PATH}/${bunPath}.zip APPEND)
-  if(BUILDKITE)
-    add_custom_command(
-      TARGET
-        ${bun} POST_BUILD
-      COMMENT
-        "Uploading ${bunPath}.zip"
-      VERBATIM COMMAND
-        buildkite-agent artifact upload ${bunPath}.zip
-      WORKING_DIRECTORY
-        ${BUILD_PATH}
-    )
-  endif()
 
   if(bunStrip)
     string(REPLACE bun ${bunTriplet} bunStripPath ${bunStrip})
-    add_custom_command(
+    register_command(
       TARGET
-        ${bun} POST_BUILD
+        ${bun}
+      TARGET_PHASE
+        POST_BUILD
       COMMENT
         "Generating ${bunStripPath}.zip"
-      VERBATIM COMMAND
+      COMMAND
         ${CMAKE_COMMAND} -E rm -rf ${bunStripPath} ${bunStripPath}.zip
-          && ${CMAKE_COMMAND} -E make_directory ${bunStripPath}
-          && ${CMAKE_COMMAND} -E copy ${bunStripExe} ${bunStripPath}
-          && ${CMAKE_COMMAND} -E tar cfv ${bunStripPath}.zip --format=zip ${bunStripPath}
-          && ${CMAKE_COMMAND} -E rm -rf ${bunStripPath}
-      WORKING_DIRECTORY
+        && ${CMAKE_COMMAND} -E make_directory ${bunStripPath}
+        && ${CMAKE_COMMAND} -E copy ${bunStripExe} ${bunStripPath}
+        && ${CMAKE_COMMAND} -E tar cfv ${bunStripPath}.zip --format=zip ${bunStripPath}
+        && ${CMAKE_COMMAND} -E rm -rf ${bunStripPath}
+      CWD
         ${BUILD_PATH}
+      ARTIFACTS
+        ${BUILD_PATH}/${bunStripPath}.zip
     )
-    set_property(TARGET ${bun} PROPERTY OUTPUT ${BUILD_PATH}/${bunStripPath}.zip APPEND)
-    if(BUILDKITE)
-      add_custom_command(
-        TARGET
-          ${bun} POST_BUILD
-        COMMENT
-          "Uploading ${bunStripPath}.zip"
-        VERBATIM COMMAND
-          buildkite-agent artifact upload ${bunStripPath}.zip
-        WORKING_DIRECTORY
-          ${BUILD_PATH}
-      )
-    endif()
   endif()
 endif()

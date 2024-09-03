@@ -454,20 +454,13 @@ list(APPEND BUN_ZIG_SOURCES
 
 set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.o)
 
-# TODO: change build.zig to support ON/OFF as a boolean argument
-if(ENABLE_LOGS)
-  set(ZIG_ENABLE_LOGS "true")
-else()
-  set(ZIG_ENABLE_LOGS "false")
-endif()
-
 register_command(
   TARGET
     bun-zig
   GROUP
     console
   COMMENT
-    "Building Zig object"
+    "Building src/*.zig"
   COMMAND
     ${CMAKE_ZIG_COMPILER}
       build obj
@@ -727,6 +720,8 @@ if(BUILDKITE)
       "Uploading ${bun}"
     VERBATIM COMMAND
       buildkite-agent artifact upload ${bun}.zip
+    WORKING_DIRECTORY
+      ${BUILD_PATH}
   )
   if(bunStrip)
     add_custom_command(
@@ -736,6 +731,8 @@ if(BUILDKITE)
         "Uploading ${bunStrip}"
       VERBATIM COMMAND
         buildkite-agent artifact upload ${bunStrip}.zip
+      WORKING_DIRECTORY
+        ${BUILD_PATH}
     )
   endif()
 endif()

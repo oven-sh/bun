@@ -918,14 +918,27 @@ describe("fetch() with streaming", () => {
         const content = "a".repeat(64 * 1024);
         using server = Bun.serve({
           port: 0,
-          fetch(req) {
-            return new Response(compress(compression, Buffer.from(content)), {
-              status: 200,
-              headers: {
-                "Content-Type": "text/plain",
-                ...headers,
+          async fetch(req) {
+            const data = compress(compression, Buffer.from(content));
+            return new Response(
+              new ReadableStream({
+                async pull(controller) {
+                  const firstChunk = data.slice(0, 64);
+                  const secondChunk = data.slice(firstChunk.length);
+                  controller.enqueue(firstChunk);
+                  await Bun.sleep(1);
+                  controller.enqueue(secondChunk);
+                  controller.close();
+                },
+              }),
+              {
+                status: 200,
+                headers: {
+                  "Content-Type": "text/plain",
+                  ...headers,
+                },
               },
-            });
+            );
           },
         });
         let res = await fetch(`http://${server.hostname}:${server.port}`, {});

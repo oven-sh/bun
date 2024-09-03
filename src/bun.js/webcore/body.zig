@@ -197,7 +197,7 @@ pub const Body = struct {
             if (value.readable.get()) |readable| handle_stream: {
                 switch (action) {
                     .getFormData, .getText, .getJSON, .getBlob, .getArrayBuffer, .getBytes => {
-                        value.promise = switch (action) {
+                        const promise = switch (action) {
                             .getJSON => globalThis.readableStreamToJSON(readable.value),
                             .getArrayBuffer => globalThis.readableStreamToArrayBuffer(readable.value),
                             .getBytes => globalThis.readableStreamToBytes(readable.value),
@@ -228,13 +228,8 @@ pub const Body = struct {
                             },
                             else => unreachable,
                         };
-                        value.promise.?.ensureStillAlive();
-
-                        readable.detachIfPossible(globalThis);
                         value.readable.deinit();
-                        value.promise.?.protect();
-
-                        return value.promise.?;
+                        return promise;
                     },
 
                     .none => {},
@@ -747,7 +742,7 @@ pub const Body = struct {
                             defer async_form_data.deinit();
                             async_form_data.toJS(global, blob.slice(), promise);
                         },
-                        else => {
+                        .none, .getBlob => {
                             var blob = Blob.new(new.use());
                             blob.allocator = bun.default_allocator;
                             if (headers) |fetch_headers| {

@@ -1033,9 +1033,18 @@ pub const Fetch = struct {
                         var prev = this.readable_stream_ref;
                         this.readable_stream_ref = .{};
                         defer prev.deinit();
+                        buffer_reset = false;
+                        this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
+                        this.scheduled_response_buffer = .{
+                            .allocator = bun.default_allocator,
+                            .list = .{
+                                .items = &.{},
+                                .capacity = 0,
+                            },
+                        };
                         readable.ptr.Bytes.onData(
                             .{
-                                .temporary_and_done = bun.ByteList.initConst(chunk),
+                                .owned_and_done = bun.ByteList.initConst(chunk),
                             },
                             bun.default_allocator,
                         );

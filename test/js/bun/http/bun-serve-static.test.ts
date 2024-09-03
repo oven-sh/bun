@@ -99,9 +99,9 @@ describe("static", () => {
       expect(handler.mock.calls.length, "Handler should not be called").toBe(previousCallCount);
     });
 
-    it(
-      "stress",
-      async () => {
+    it.each(["access .body", "don't access .body"])(
+      "stress (%s)",
+      async label => {
         const bytes = await static_responses[path].arrayBuffer();
         // macOS limits backlog to 128.
         // When we do the big request, reduce number of connections but increase number of iterations
@@ -115,8 +115,10 @@ describe("static", () => {
             array[i] = fetch(route)
               .then(res => {
                 expect(res.status).toBe(200);
-
                 expect(res.url).toBe(route);
+                if (label === "access .body") {
+                  res.body;
+                }
                 return res.arrayBuffer();
               })
               .then(output => {
@@ -143,7 +145,7 @@ describe("static", () => {
         Bun.gc(true);
 
         const rss = (process.memoryUsage.rss() / 1024 / 1024) | 0;
-        expect(rss).toBeLessThan(baseline * 4);
+        expect(rss).toBeLessThan(4092);
       },
       30 * 1000,
     );

@@ -9,7 +9,7 @@ find_command(
     ${CI}
 )
 
-if(NOT CCACHE_PROGRAM)
+if(NOT EXISTS CCACHE_PROGRAM)
   return()
 endif()
 

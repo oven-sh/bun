@@ -7,9 +7,11 @@ find_command(
     cargo
   PATHS
     $ENV{HOME}/.cargo/bin
+  REQUIRED
+    OFF
 )
 
-if(CARGO_EXECUTABLE)
+if(EXISTS CARGO_EXECUTABLE)
   return()
 endif()
 

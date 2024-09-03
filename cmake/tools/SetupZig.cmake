@@ -77,10 +77,11 @@ find_command(
     ${ZIG_BIN_CACHE_DIR}
   VERSION
     ${ZIG_VERSION}
+  REQUIRED
+    OFF
 )
 
-if(CMAKE_ZIG_COMPILER)
-  setx(CMAKE_ZIG_COMPILER ${CMAKE_ZIG_COMPILER})
+if(EXISTS CMAKE_ZIG_COMPILER)
   return()
 endif()
 

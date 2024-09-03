@@ -916,6 +916,7 @@ describe("fetch() with streaming", () => {
     test(`Content-Length response works (multiple parts) with ${compression} compression`, async () => {
       {
         const content = "a".repeat(64 * 1024);
+        var onReceivedHeaders = Promise.withResolvers();
         using server = Bun.serve({
           port: 0,
           async fetch(req) {
@@ -926,6 +927,7 @@ describe("fetch() with streaming", () => {
                   const firstChunk = data.slice(0, 64);
                   const secondChunk = data.slice(firstChunk.length);
                   controller.enqueue(firstChunk);
+                  await onReceivedHeaders.promise;
                   await Bun.sleep(1);
                   controller.enqueue(secondChunk);
                   controller.close();
@@ -942,12 +944,16 @@ describe("fetch() with streaming", () => {
           },
         });
         let res = await fetch(`http://${server.hostname}:${server.port}`, {});
+        onReceivedHeaders.resolve();
+        onReceivedHeaders = Promise.withResolvers();
         gcTick(false);
         const result = await res.text();
         gcTick(false);
         expect(result).toBe(content);
 
         res = await fetch(`http://${server.hostname}:${server.port}`, {});
+        onReceivedHeaders.resolve();
+        onReceivedHeaders = Promise.withResolvers();
         gcTick(false);
         const reader = res.body?.getReader();
 

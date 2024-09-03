@@ -108,6 +108,7 @@ pub const PackageManagerCommand = struct {
             \\  bun pm <b>hash-print<r>         print the hash stored in the current lockfile
             \\  bun pm <b>cache<r>              print the path to the cache folder
             \\  bun pm <b>cache rm<r>           clear the cache
+            \\  bun pm <b>version<r>            bump a package version
             \\  bun pm <b>migrate<r>            migrate another package manager's lockfile without installing anything
             \\  bun pm <b>untrusted<r>          print current untrusted dependencies with scripts
             \\  bun pm <b>trust<r> <d>names ...<r>    run scripts for untrusted dependencies and add to `trustedDependencies`
@@ -252,6 +253,9 @@ pub const PackageManagerCommand = struct {
             }
 
             Output.writer().writeAll(outpath) catch {};
+            Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "version")) {
+            try Output.writer().print("test", .{});
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "default-trusted")) {
             try DefaultTrustedCommand.exec();

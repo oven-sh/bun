@@ -57,6 +57,14 @@ pub const ReadableStream = struct {
             return this.held.globalThis;
         }
 
+        pub fn isDisturbed(this: *const Strong, global: *JSC.JSGlobalObject) bool {
+            if (this.get()) |stream| {
+                return stream.isDisturbed(global);
+            }
+
+            return false;
+        }
+
         pub fn init(this: ReadableStream, global: *JSGlobalObject) Strong {
             return .{
                 .held = JSC.Strong.create(this.value, global),
@@ -4766,6 +4774,7 @@ pub const ByteStream = struct {
             this.done = true;
             this.pending.result.deinit();
             this.pending.result = .{ .done = {} };
+            this.parent().is_closed = true;
             return AnyBlob{
                 .InternalBlob = JSC.WebCore.InternalBlob{
                     .bytes = buffer,

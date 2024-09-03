@@ -194,7 +194,7 @@ pub const Body = struct {
 
         pub fn setPromise(value: *PendingValue, globalThis: *JSC.JSGlobalObject, action: Action) JSValue {
             value.action = action;
-            if (value.readable.get()) |readable| handle_stream: {
+            if (value.readable.get()) |readable| {
                 switch (action) {
                     .getFormData, .getText, .getJSON, .getBlob, .getArrayBuffer, .getBytes => {
                         const promise = switch (action) {
@@ -204,18 +204,6 @@ pub const Body = struct {
                             .getText => globalThis.readableStreamToText(readable.value),
                             .getBlob => globalThis.readableStreamToBlob(readable.value),
                             .getFormData => |form_data| brk: {
-                                if (value.onStartBuffering != null) {
-                                    if (readable.isDisturbed(globalThis)) {
-                                        form_data.?.deinit();
-                                        value.readable.deinit();
-                                        value.action = .{ .none = {} };
-                                        return JSC.JSPromise.rejectedPromiseValue(globalThis, globalThis.createErrorInstance("ReadableStream is already used", .{}));
-                                    } else {
-                                        value.readable.deinit();
-                                    }
-
-                                    break :handle_stream;
-                                }
                                 defer {
                                     form_data.?.deinit();
                                     value.action.getFormData = null;
@@ -1125,7 +1113,10 @@ pub fn BodyMixin(comptime Type: type) type {
                     return handleBodyAlreadyUsed(globalObject);
                 }
 
-                return value.Locked.setPromise(globalObject, .{ .getJSON = {} });
+                value.toBlobIfPossible();
+                if (value.* == .Locked) {
+                    return value.Locked.setPromise(globalObject, .{ .getJSON = {} });
+                }
             }
 
             var blob = value.useAsAnyBlobAllowNonUTF8String();
@@ -1152,7 +1143,11 @@ pub fn BodyMixin(comptime Type: type) type {
                 if (value.Locked.action != .none or value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
                     return handleBodyAlreadyUsed(globalObject);
                 }
-                return value.Locked.setPromise(globalObject, .{ .getArrayBuffer = {} });
+                value.toBlobIfPossible();
+
+                if (value.* == .Locked) {
+                    return value.Locked.setPromise(globalObject, .{ .getArrayBuffer = {} });
+                }
             }
 
             // toArrayBuffer in AnyBlob checks for non-UTF8 strings
@@ -1176,7 +1171,10 @@ pub fn BodyMixin(comptime Type: type) type {
                 if (value.Locked.action != .none or value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
                     return handleBodyAlreadyUsed(globalObject);
                 }
-                return value.Locked.setPromise(globalObject, .{ .getBytes = {} });
+                value.toBlobIfPossible();
+                if (value.* == .Locked) {
+                    return value.Locked.setPromise(globalObject, .{ .getBytes = {} });
+                }
             }
 
             // toArrayBuffer in AnyBlob checks for non-UTF8 strings
@@ -1199,6 +1197,7 @@ pub fn BodyMixin(comptime Type: type) type {
                 if (value.Locked.action != .none or value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
                     return handleBodyAlreadyUsed(globalObject);
                 }
+                value.toBlobIfPossible();
             }
 
             var encoder = this.getFormDataEncoding() orelse {
@@ -1236,14 +1235,15 @@ pub fn BodyMixin(comptime Type: type) type {
         pub fn getBlob(
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
+            callframe: *JSC.CallFrame,
         ) JSC.JSValue {
-            return this.getBlobWithoutCallFrame(globalObject);
+            return getBlobWithThisValue(this, globalObject, callframe.this());
         }
 
-        pub fn getBlobWithoutCallFrame(
+        pub fn getBlobWithThisValue(
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
+            this_value: JSValue,
         ) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
 
@@ -1252,13 +1252,18 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
-                if (value.Locked.action != .none) {
+                if (value.Locked.action != .none or
+                    ((this_value != .zero and value.Locked.isDisturbed(Type, globalObject, this_value)) or
+                    (this_value == .zero and value.Locked.readable.isDisturbed(globalObject))))
+                {
                     return handleBodyAlreadyUsed(globalObject);
                 }
-                if (value.Locked.promise == null or value.Locked.promise.?.isEmptyOrUndefinedOrNull()) {
+
+                value.toBlobIfPossible();
+
+                if (value.* == .Locked) {
                     return value.Locked.setPromise(globalObject, .{ .getBlob = {} });
                 }
-                return handleBodyAlreadyUsed(globalObject);
             }
 
             var blob = Blob.new(value.use());
@@ -1286,6 +1291,13 @@ pub fn BodyMixin(comptime Type: type) type {
                 }
             }
             return JSC.JSPromise.resolvedPromiseValue(globalObject, blob.toJS(globalObject));
+        }
+
+        pub fn getBlobWithoutCallFrame(
+            this: *Type,
+            globalObject: *JSC.JSGlobalObject,
+        ) JSC.JSValue {
+            return getBlobWithThisValue(this, globalObject, .zero);
         }
     };
 }

@@ -9638,6 +9638,64 @@ pub const PackageManager = struct {
                 this.resolved_name.slice(this.version_buf);
         }
 
+        pub fn fromJS(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue) JSC.JSValue {
+            var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+            defer arena.deinit();
+            var stack = std.heap.stackFallback(1024, arena.allocator());
+            const allocator = stack.get();
+            var all_positionals = std.ArrayList([]const u8).init(allocator);
+
+            var log = logger.Log.init(allocator);
+
+            if (input.isString()) {
+                var input_str = input.toSliceCloneWithAllocator(
+                    globalThis,
+                    allocator,
+                ) orelse return .zero;
+                if (input_str.len > 0)
+                    all_positionals.append(input_str.slice()) catch bun.outOfMemory();
+            } else if (input.isArray()) {
+                var iter = input.arrayIterator(globalThis);
+                while (iter.next()) |item| {
+                    const slice = item.toSliceCloneWithAllocator(globalThis, allocator) orelse return .zero;
+                    if (globalThis.hasException()) return .zero;
+                    if (slice.len == 0) continue;
+                    all_positionals.append(slice.slice()) catch bun.outOfMemory();
+                }
+                if (globalThis.hasException()) return .zero;
+            } else {
+                return .undefined;
+            }
+
+            if (all_positionals.items.len == 0) {
+                return .undefined;
+            }
+
+            var array = Array{};
+
+            const update_requests = parseWithError(allocator, &log, all_positionals.items, &array, .add, false) catch {
+                globalThis.throwValue(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependencies"));
+                return .zero;
+            };
+            if (update_requests.len == 0) return .undefined;
+
+            if (log.msgs.items.len > 0) {
+                globalThis.throwValue(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependencies"));
+                return .zero;
+            }
+
+            if (update_requests[0].failed) {
+                globalThis.throw("Failed to parse dependencies", .{});
+                return .zero;
+            }
+
+            var object = JSC.JSValue.createEmptyObject(globalThis, 2);
+            var name_str = bun.String.init(update_requests[0].name);
+            object.put(globalThis, "name", name_str.transferToJS(globalThis));
+            object.put(globalThis, "version", update_requests[0].version.toJS(update_requests[0].version_buf, globalThis));
+            return object;
+        }
+
         pub fn parse(
             allocator: std.mem.Allocator,
             log: *logger.Log,
@@ -9645,6 +9703,17 @@ pub const PackageManager = struct {
             update_requests: *Array,
             subcommand: Subcommand,
         ) []UpdateRequest {
+            return parseWithError(allocator, log, positionals, update_requests, subcommand, true) catch Global.crash();
+        }
+
+        fn parseWithError(
+            allocator: std.mem.Allocator,
+            log: *logger.Log,
+            positionals: []const string,
+            update_requests: *Array,
+            subcommand: Subcommand,
+            fatal: bool,
+        ) ![]UpdateRequest {
             // first one is always either:
             // add
             // remove
@@ -9690,10 +9759,17 @@ pub const PackageManager = struct {
                     &SlicedString.init(input, value),
                     log,
                 ) orelse {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> unrecognised dependency format: {s}", .{
-                        positional,
-                    });
-                    Global.crash();
+                    if (fatal) {
+                        Output.errGeneric("unrecognised dependency format: {s}", .{
+                            positional,
+                        });
+                    } else {
+                        log.addErrorFmt(null, logger.Loc.Empty, allocator, "unrecognised dependency format: {s}", .{
+                            positional,
+                        }) catch bun.outOfMemory();
+                    }
+
+                    return error.UnrecognizedDependencyFormat;
                 };
                 if (alias != null and version.tag == .git) {
                     if (Dependency.parseWithOptionalTag(
@@ -9714,10 +9790,17 @@ pub const PackageManager = struct {
                     .npm => version.value.npm.name.eql(placeholder, input, input),
                     else => false,
                 }) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> unrecognised dependency format: {s}", .{
-                        positional,
-                    });
-                    Global.crash();
+                    if (fatal) {
+                        Output.errGeneric("unrecognised dependency format: {s}", .{
+                            positional,
+                        });
+                    } else {
+                        log.addErrorFmt(null, logger.Loc.Empty, allocator, "unrecognised dependency format: {s}", .{
+                            positional,
+                        }) catch bun.outOfMemory();
+                    }
+
+                    return error.UnrecognizedDependencyFormat;
                 }
 
                 var request = UpdateRequest{
@@ -14214,7 +14297,7 @@ pub const PackageManager = struct {
                     Output.pretty("<green>{d}<r> package{s}<r> installed ", .{ pkgs_installed, if (pkgs_installed == 1) "" else "s" });
                     Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                     printed_timestamp = true;
-                    printBlockedPackagesInfo(install_summary);
+                    printBlockedPackagesInfo(install_summary, manager.options.global);
 
                     if (manager.summary.remove > 0) {
                         Output.pretty("Removed: <cyan>{d}<r>\n", .{manager.summary.remove});
@@ -14229,7 +14312,7 @@ pub const PackageManager = struct {
                     Output.pretty("<r><b>{d}<r> package{s} removed ", .{ manager.summary.remove, if (manager.summary.remove == 1) "" else "s" });
                     Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                     printed_timestamp = true;
-                    printBlockedPackagesInfo(install_summary);
+                    printBlockedPackagesInfo(install_summary, manager.options.global);
                 } else if (install_summary.skipped > 0 and install_summary.fail == 0 and manager.update_requests.len == 0) {
                     const count = @as(PackageID, @truncate(manager.lockfile.packages.len));
                     if (count != install_summary.skipped) {
@@ -14241,7 +14324,7 @@ pub const PackageManager = struct {
                         });
                         Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                         printed_timestamp = true;
-                        printBlockedPackagesInfo(install_summary);
+                        printBlockedPackagesInfo(install_summary, manager.options.global);
                     } else {
                         Output.pretty("<r><green>Done<r>! Checked {d} package{s}<r> <d>(no changes)<r> ", .{
                             install_summary.skipped,
@@ -14249,7 +14332,7 @@ pub const PackageManager = struct {
                         });
                         Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                         printed_timestamp = true;
-                        printBlockedPackagesInfo(install_summary);
+                        printBlockedPackagesInfo(install_summary, manager.options.global);
                     }
                 }
 
@@ -14277,7 +14360,7 @@ pub const PackageManager = struct {
         Output.flush();
     }
 
-    fn printBlockedPackagesInfo(summary: PackageInstall.Summary) void {
+    fn printBlockedPackagesInfo(summary: PackageInstall.Summary, global: bool) void {
         const packages_count = summary.packages_with_blocked_scripts.count();
         var scripts_count: usize = 0;
         for (summary.packages_with_blocked_scripts.values()) |count| scripts_count += count;
@@ -14290,9 +14373,10 @@ pub const PackageManager = struct {
         }
 
         if (packages_count > 0) {
-            Output.prettyln("\n\n<d>Blocked {d} postinstall{s}. Run `bun pm untrusted` for details.<r>\n", .{
+            Output.prettyln("\n\n<d>Blocked {d} postinstall{s}. Run `bun pm {s}untrusted` for details.<r>\n", .{
                 scripts_count,
                 if (scripts_count > 1) "s" else "",
+                if (global) "-g " else "",
             });
         } else {
             Output.pretty("<r>\n", .{});

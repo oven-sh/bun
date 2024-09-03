@@ -1171,8 +1171,7 @@ pub const BundleV2 = struct {
         }
     }
 
-    const JSBundleThread = BundleThread(JSBundleCompletionTask);
-    var global_js_bundle_thread: ?*JSBundleThread = null;
+    pub const JSBundleThread = BundleThread(JSBundleCompletionTask);
 
     pub fn generateFromJavaScript(
         config: bun.JSC.API.JSBundler.Config,
@@ -1201,19 +1200,7 @@ pub const BundleV2 = struct {
         // conditions from creating two
         _ = JSC.WorkPool.get();
 
-        if (global_js_bundle_thread) |existing| {
-            existing.queue.push(completion);
-            existing.waker.?.wake();
-        } else {
-            var instance = bun.default_allocator.create(JSBundleThread) catch unreachable;
-            instance.queue = .{};
-            instance.waker = null;
-            instance.queue.push(completion);
-            global_js_bundle_thread = instance;
-
-            const thread = try instance.spawn();
-            thread.detach();
-        }
+        JSBundleThread.singleton.enqueue(completion);
 
         completion.poll_ref.ref(globalThis.bunVM());
 
@@ -2267,22 +2254,71 @@ pub fn BundleThread(CompletionStruct: type) type {
     return struct {
         const Self = @This();
 
-        waker: ?bun.Async.Waker = null,
-        queue: bun.UnboundedQueue(CompletionStruct, .next) = .{},
+        waker: bun.Async.Waker,
+        ready_event: std.Thread.ResetEvent,
+        queue: bun.UnboundedQueue(CompletionStruct, .next),
         generation: bun.Generation = 0,
 
+        /// To initialize, put this somewhere in memory, and then call `spawn()`
+        pub const uninitialized: Self = .{
+            .waker = undefined,
+            .queue = .{},
+            .generation = 0,
+            .ready_event = .{},
+        };
+
         pub fn spawn(instance: *Self) !std.Thread {
-            return std.Thread.spawn(.{}, threadMain, .{instance});
+            const thread = try std.Thread.spawn(.{}, threadMain, .{instance});
+            instance.ready_event.wait();
+            return thread;
+        }
+
+        /// Lazily-initialized singleton. This is used for `Bun.build` since the
+        /// bundle thread may not be needed. Kit always uses the bundler, so it
+        /// just initializes `BundleThread`
+        pub const singleton = struct {
+            var once = std.once(loadOnceImpl);
+            var instance: ?*Self = null;
+
+            // Blocks the calling thread until the bun build thread is created.
+            // std.once also blocks other callers of this function until the first caller is done.
+            fn loadOnceImpl() void {
+                const bundle_thread = bun.default_allocator.create(Self) catch bun.outOfMemory();
+                bundle_thread.* = uninitialized;
+                instance = bundle_thread;
+
+                // 2. Spawn the bun build thread.
+                const os_thread = bundle_thread.spawn() catch
+                    Output.panic("Failed to spawn bun build thread", .{});
+                os_thread.detach();
+            }
+
+            pub fn get() *Self {
+                once.call();
+                return instance.?;
+            }
+
+            pub fn enqueue(completion: *CompletionStruct) void {
+                get().enqueue(completion);
+            }
+        };
+
+        pub fn enqueue(instance: *Self, completion: *CompletionStruct) void {
+            instance.queue.push(completion);
+            instance.waker.wake();
         }
 
         fn threadMain(instance: *Self) void {
-            Output.Source.configureNamedThread("BundleThread");
+            Output.Source.configureNamedThread("Bundler");
 
             instance.waker = bun.Async.Waker.init() catch @panic("Failed to create waker");
 
+            // Unblock the calling thread so it can continue.
+            instance.ready_event.set();
+
             var timer: bun.windows.libuv.Timer = undefined;
             if (bun.Environment.isWindows) {
-                timer.init(instance.waker.?.loop.uv_loop);
+                timer.init(instance.waker.loop.uv_loop);
                 timer.start(std.math.maxInt(u64), std.math.maxInt(u64), &timerCallback);
             }
 
@@ -2302,7 +2338,7 @@ pub fn BundleThread(CompletionStruct: type) type {
                     has_bundled = false;
                 }
 
-                _ = instance.waker.?.wait();
+                _ = instance.waker.wait();
             }
         }
 

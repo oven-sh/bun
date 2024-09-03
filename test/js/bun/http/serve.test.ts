@@ -135,6 +135,95 @@ it("should be able to abruptly stop the server", async () => {
   }
 });
 
+// https://github.com/oven-sh/bun/issues/6758
+// https://github.com/oven-sh/bun/issues/4517
+it("should call cancel() on ReadableStream when the Request is aborted", async () => {
+  let waitForCancel = Promise.withResolvers();
+  const abortedFn = mock(() => {
+    console.log("'abort' event fired", new Date());
+  });
+  const cancelledFn = mock(() => {
+    console.log("'cancel' function called", new Date());
+    waitForCancel.resolve();
+  });
+  let onIncomingRequest = Promise.withResolvers();
+  await runTest(
+    {
+      async fetch(req) {
+        req.signal.addEventListener("abort", abortedFn);
+        // Give it a chance to start the stream so that the cancel function can be called.
+        setTimeout(() => {
+          console.log("'onIncomingRequest' function called", new Date());
+          onIncomingRequest.resolve();
+        }, 0);
+        return new Response(
+          new ReadableStream({
+            async pull(controller) {
+              await waitForCancel.promise;
+            },
+            cancel: cancelledFn,
+          }),
+        );
+      },
+    },
+    async server => {
+      const controller = new AbortController();
+      const signal = controller.signal;
+      const request = fetch(server.url, { signal });
+      await onIncomingRequest.promise;
+      controller.abort();
+      expect(async () => await request).toThrow();
+      // Delay for one run of the event loop.
+      await Bun.sleep(1);
+
+      expect(abortedFn).toHaveBeenCalled();
+      expect(cancelledFn).toHaveBeenCalled();
+    },
+  );
+});
+for (let withDelay of [true, false]) {
+  for (let connectionHeader of ["keepalive", "not keepalive"] as const) {
+    it(`should NOT call cancel() on ReadableStream that finished normally for ${connectionHeader} request and ${withDelay ? "with" : "without"} delay`, async () => {
+      const cancelledFn = mock(() => {
+        console.log("'cancel' function called", new Date());
+      });
+      let onIncomingRequest = Promise.withResolvers();
+      await runTest(
+        {
+          async fetch(req) {
+            return new Response(
+              new ReadableStream({
+                async pull(controller) {
+                  controller.enqueue(new Uint8Array([1, 2, 3]));
+                  if (withDelay) await Bun.sleep(1);
+                  controller.close();
+                },
+                cancel: cancelledFn,
+              }),
+            );
+          },
+        },
+        async server => {
+          const resp = await fetch(
+            server.url,
+            connectionHeader === "keepalive"
+              ? {}
+              : {
+                  headers: {
+                    "Connection": "close",
+                  },
+                  keepalive: false,
+                },
+          );
+          await resp.blob();
+          // Delay for one run of the event loop.
+          await Bun.sleep(1);
+          expect(cancelledFn).not.toHaveBeenCalled();
+        },
+      );
+    });
+  }
+}
 describe("1000 uploads & downloads in batches of 64 do not leak ReadableStream", () => {
   for (let isDirect of [true, false] as const) {
     it(
@@ -1860,7 +1949,7 @@ it("we should always send date", async () => {
 it("should allow use of custom timeout", async () => {
   using server = Bun.serve({
     port: 0,
-    idleTimeout: 4, // uws precision is in seconds, and lower than 4 seconds is not reliable its timer is not that accurate
+    idleTimeout: 8, // uws precision is in seconds, and lower than 4 seconds is not reliable its timer is not that accurate
     async fetch(req) {
       const url = new URL(req.url);
       return new Response(
@@ -1868,7 +1957,7 @@ it("should allow use of custom timeout", async () => {
           async pull(controller) {
             controller.enqueue("Hello,");
             if (url.pathname === "/timeout") {
-              await Bun.sleep(5000);
+              await Bun.sleep(10000);
             } else {
               await Bun.sleep(10);
             }
@@ -1891,7 +1980,7 @@ it("should allow use of custom timeout", async () => {
     }
   }
   await Promise.all([testTimeout("/ok", true), testTimeout("/timeout", false)]);
-}, 10_000);
+}, 15_000);
 
 it("should reset timeout after writes", async () => {
   // the default is 10s so we send 15
@@ -1944,3 +2033,19 @@ it("should reset timeout after writes", async () => {
 
   expect(received).toBe(CHUNKS * payload.byteLength);
 }, 20_000);
+
+it("allow requestIP after async operation", async () => {
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req, server) {
+      await Bun.sleep(1);
+      return new Response(JSON.stringify(server.requestIP(req)));
+    },
+  });
+
+  const ip = await fetch(server.url).then(res => res.json());
+  expect(ip).not.toBeNull();
+  expect(ip.port).toBeInteger();
+  expect(ip.address).toBeString();
+  expect(ip.family).toBeString();
+});

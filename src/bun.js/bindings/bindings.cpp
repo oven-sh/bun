@@ -39,12 +39,14 @@
 #include "JavaScriptCore/JSClassRef.h"
 #include "JavaScriptCore/JSInternalPromise.h"
 #include "JavaScriptCore/JSMap.h"
+#include "JavaScriptCore/JSMapIterator.h"
 #include "JavaScriptCore/JSModuleLoader.h"
 #include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JavaScriptCore/JSONObject.h"
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/JSSet.h"
+#include "JavaScriptCore/JSSetIterator.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/ProxyObject.h"
 #include "JavaScriptCore/Microtask.h"
@@ -734,97 +736,28 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
-        // bool canPerformFastSet = JSSet::isAddFastAndNonObservable(set1->structure()) && JSSet::isAddFastAndNonObservable(set2->structure());
-
-        // // This code is loosely based on
-        // // https://github.com/oven-sh/WebKit/blob/657558d4d4c9c33f41b9670e72d96a5a39fe546e/Source/JavaScriptCore/runtime/HashMapImplInlines.h#L203-L211
-        // if (canPerformFastSet && set1->isIteratorProtocolFastAndNonObservable() && set2->isIteratorProtocolFastAndNonObservable()) {
-        //     auto* bucket = set1->head();
-        //     while (bucket) {
-        //         if (!bucket->deleted()) {
-        //             auto key = bucket->key();
-        //             RETURN_IF_EXCEPTION(*scope, false);
-        //             auto** bucket2ptr = set2->findBucket(globalObject, key);
-
-        //             if (bucket2ptr && (*bucket2ptr)->deleted()) {
-        //                 bucket2ptr = nullptr;
-        //             }
-
-        //             if (!bucket2ptr) {
-        //                 auto findDeepEqualKey = [&]() -> bool {
-        //                     auto* bucket = set2->head();
-        //                     while (bucket) {
-        //                         if (!bucket->deleted()) {
-        //                             auto key2 = bucket->key();
-        //                             if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key, key2, gcBuffer, stack, scope, false)) {
-        //                                 return true;
-        //                             }
-        //                         }
-        //                         bucket = bucket->next();
-        //                     }
-
-        //                     return false;
-        //                 };
-
-        //                 if (!findDeepEqualKey()) {
-        //                     return false;
-        //                 }
-        //             }
-        //         }
-        //         bucket = bucket->next();
-        //     }
-
-        //     return true;
-        // }
-
-        // This code path can be triggered when it is a class that extends from Set.
-        //
-        //    class MySet extends Set {}
-        //
-        IterationRecord iterationRecord1 = iteratorForIterable(globalObject, v1);
-        bool isEqual = true;
-
-        // https://github.com/oven-sh/bun/issues/7736
-        DeferGC deferGC(vm);
-
-        while (true) {
-            JSValue next1 = iteratorStep(globalObject, iterationRecord1);
-            if (next1.isFalse()) {
-                break;
+        auto iter1 = JSSetIterator::create(globalObject, set1->structure(), set1, IterationKind::Keys);
+        JSValue key1;
+        while (iter1->next(globalObject, key1)) {
+            if (set2->has(globalObject, key1)) {
+                continue;
             }
 
-            JSValue nextValue1 = iteratorValue(globalObject, next1);
-            RETURN_IF_EXCEPTION(*scope, false);
-
-            bool found = false;
-            IterationRecord iterationRecord2 = iteratorForIterable(globalObject, v2);
-            while (true) {
-                JSValue next2 = iteratorStep(globalObject, iterationRecord2);
-                if (UNLIKELY(next2.isFalse())) {
-                    break;
-                }
-
-                JSValue nextValue2 = iteratorValue(globalObject, next2);
-                RETURN_IF_EXCEPTION(*scope, false);
-
-                // set has unique values, no need to count
-                if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, nextValue1, nextValue2, gcBuffer, stack, scope, false)) {
-                    found = true;
-                    if (!nextValue1.isPrimitive()) {
-                        stack.append({ nextValue1, nextValue2 });
-                    }
+            // We couldn't find the key in the second set. This may be a false positive due to how
+            // JSValues are represented in JSC, so we need to fall back to a linear search to be sure.
+            auto iter2 = JSSetIterator::create(globalObject, set2->structure(), set2, IterationKind::Keys);
+            JSValue key2;
+            bool foundMatchingKey = false;
+            while (iter2->next(globalObject, key2)) {
+                if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false)) {
+                    foundMatchingKey = true;
                     break;
                 }
             }
 
-            if (!found) {
-                isEqual = false;
-                break;
+            if (!foundMatchingKey) {
+                return false;
             }
-        }
-
-        if (!isEqual) {
-            return false;
         }
 
         return true;
@@ -842,127 +775,34 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
-        // bool canPerformFastSet = JSMap::isSetFastAndNonObservable(map1->structure()) && JSMap::isSetFastAndNonObservable(map2->structure());
-
-        // // This code is loosely based on
-        // // https://github.com/oven-sh/WebKit/blob/657558d4d4c9c33f41b9670e72d96a5a39fe546e/Source/JavaScriptCore/runtime/HashMapImplInlines.h#L203-L211
-        // if (canPerformFastSet && map1->isIteratorProtocolFastAndNonObservable() && map2->isIteratorProtocolFastAndNonObservable()) {
-        //     auto* bucket = map1->head();
-        //     while (bucket) {
-        //         if (!bucket->deleted()) {
-        //             auto key = bucket->key();
-        //             auto value = bucket->value();
-        //             RETURN_IF_EXCEPTION(*scope, false);
-        //             auto** bucket2ptr = map2->findBucket(globalObject, key);
-        //             JSMap::BucketType* bucket2 = nullptr;
-
-        //             if (bucket2ptr) {
-        //                 bucket2 = *bucket2ptr;
-
-        //                 if (bucket2->deleted()) {
-        //                     bucket2 = nullptr;
-        //                 }
-        //             }
-
-        //             if (!bucket2) {
-        //                 auto findDeepEqualKey = [&]() -> JSMap::BucketType* {
-        //                     auto* bucket = map2->head();
-        //                     while (bucket) {
-        //                         if (!bucket->deleted()) {
-        //                             auto key2 = bucket->key();
-        //                             if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key, key2, gcBuffer, stack, scope, false)) {
-        //                                 return bucket;
-        //                             }
-        //                         }
-        //                         bucket = bucket->next();
-        //                     }
-
-        //                     return nullptr;
-        //                 };
-
-        //                 bucket2 = findDeepEqualKey();
-        //             }
-
-        //             if (!bucket2 || !Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, value, bucket2->value(), gcBuffer, stack, scope, false)) {
-        //                 return false;
-        //             }
-        //         }
-        //         bucket = bucket->next();
-        //     }
-
-        //     return true;
-        // }
-
-        // This code path can be triggered when it is a class that extends from Map.
-        //
-        //    class MyMap extends Map {}
-        //
-        IterationRecord iterationRecord1 = iteratorForIterable(globalObject, v1);
-        bool isEqual = true;
-
-        // https://github.com/oven-sh/bun/issues/7736
-        DeferGC deferGC(vm);
-
-        while (true) {
-            JSValue next1 = iteratorStep(globalObject, iterationRecord1);
-            if (next1.isFalse()) {
-                break;
-            }
-
-            JSValue nextValue1 = iteratorValue(globalObject, next1);
-            RETURN_IF_EXCEPTION(*scope, false);
-
-            if (UNLIKELY(!nextValue1.isObject())) {
-                return false;
-            }
-
-            JSObject* nextValueObject1 = asObject(nextValue1);
-
-            JSValue key1 = nextValueObject1->getIndex(globalObject, static_cast<unsigned>(0));
-            RETURN_IF_EXCEPTION(*scope, false);
-
-            bool found = false;
-
-            IterationRecord iterationRecord2 = iteratorForIterable(globalObject, v2);
-
-            while (true) {
-
-                JSValue next2 = iteratorStep(globalObject, iterationRecord2);
-                if (UNLIKELY(next2.isFalse())) {
-                    break;
-                }
-
-                JSValue nextValue2 = iteratorValue(globalObject, next2);
-                RETURN_IF_EXCEPTION(*scope, false);
-
-                if (UNLIKELY(!nextValue2.isObject())) {
-                    return false;
-                }
-
-                JSObject* nextValueObject2 = asObject(nextValue2);
-
-                JSValue key2 = nextValueObject2->getIndex(globalObject, static_cast<unsigned>(0));
-                RETURN_IF_EXCEPTION(*scope, false);
-
-                if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false)) {
-                    if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, nextValue1, nextValue2, gcBuffer, stack, scope, false)) {
-                        found = true;
-                        if (!nextValue1.isPrimitive()) {
-                            stack.append({ nextValue1, nextValue2 });
-                        }
+        auto iter1 = JSMapIterator::create(globalObject, map1->structure(), map1, IterationKind::Entries);
+        JSValue key1, value1;
+        while (iter1->nextKeyValue(globalObject, key1, value1)) {
+            JSValue value2 = map2->get(globalObject, key1);
+            if (value2.isUndefined()) {
+                // We couldn't find the key in the second map. This may be a false positive due to
+                // how JSValues are represented in JSC, so we need to fall back to a linear search
+                // to be sure.
+                auto iter2 = JSMapIterator::create(globalObject, map2->structure(), map2, IterationKind::Entries);
+                JSValue key2;
+                bool foundMatchingKey = false;
+                while (iter2->nextKeyValue(globalObject, key2, value2)) {
+                    if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false)) {
+                        foundMatchingKey = true;
                         break;
                     }
                 }
+
+                if (!foundMatchingKey) {
+                    return false;
+                }
+
+                // Compare both values below.
             }
 
-            if (!found) {
-                isEqual = false;
-                break;
+            if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, value1, value2, gcBuffer, stack, scope, false)) {
+                return false;
             }
-        }
-
-        if (!isEqual) {
-            return false;
         }
 
         return true;
@@ -5421,7 +5261,12 @@ restart:
 
                 if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
                     if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
-                        propertyValue = slot.getPureResult();
+                        // If we can't use getPureResult, let's at least say it was a [Getter]
+                        if (!slot.isCacheableGetter()) {
+                            propertyValue = slot.getterSetter();
+                        } else {
+                            propertyValue = slot.getPureResult();
+                        }
                     } else if (slot.attributes() & PropertyAttribute::BuiltinOrFunction) {
                         propertyValue = slot.getValue(globalObject, property);
                     } else if (slot.isCustom()) {
@@ -5431,8 +5276,13 @@ restart:
                     } else if (object->getOwnPropertySlot(object, globalObject, property, slot)) {
                         propertyValue = slot.getValue(globalObject, property);
                     }
-                } else if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
-                    propertyValue = slot.getPureResult();
+                } else if (slot.isAccessor()) {
+                    // If we can't use getPureResult, let's at least say it was a [Getter]
+                    if (!slot.isCacheableGetter()) {
+                        propertyValue = slot.getterSetter();
+                    } else {
+                        propertyValue = slot.getPureResult();
+                    }
                 } else {
                     propertyValue = slot.getValue(globalObject, property);
                 }
@@ -5665,6 +5515,18 @@ extern "C" JSC__JSValue WebCore__AbortSignal__toJS(WebCore__AbortSignal* arg0, J
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
 
     return JSValue::encode(toJS<IDLInterface<WebCore__AbortSignal>>(*globalObject, *jsCast<JSDOMGlobalObject*>(globalObject), *abortSignal));
+}
+
+extern "C" void WebCore__AbortSignal__incrementPendingActivity(WebCore__AbortSignal* arg0)
+{
+    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
+    abortSignal->incrementPendingActivityCount();
+}
+
+extern "C" void WebCore__AbortSignal__decrementPendingActivity(WebCore__AbortSignal* arg0)
+{
+    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
+    abortSignal->decrementPendingActivityCount();
 }
 
 extern "C" WebCore__AbortSignal* WebCore__AbortSignal__signal(WebCore__AbortSignal* arg0, JSC::JSGlobalObject* globalObject, uint8_t reason)

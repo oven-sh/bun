@@ -27,7 +27,7 @@
 #pragma once
 
 #include "JSDOMConvert.h"
-#include <JavaScriptCore/IteratorPrototype.h>
+#include <JavaScriptCore/JSIteratorPrototype.h>
 #include <JavaScriptCore/PropertySlot.h>
 #include <type_traits>
 #include "ErrorCode.h"

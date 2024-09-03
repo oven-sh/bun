@@ -2581,7 +2581,7 @@ pub const Fetch = struct {
             }
 
             if (request) |req| {
-                if (req.body.value == .Used or (req.body.value == .Locked and req.body.value.Locked.isDisturbed(Request, globalThis, first_arg))) {
+                if (req.body.value == .Used or (req.body.value == .Locked and (req.body.value.Locked.action != .none or req.body.value.Locked.isDisturbed(Request, globalThis, first_arg)))) {
                     globalThis.ERR_BODY_ALREADY_USED("Request body already used", .{}).throw();
                     is_error = true;
                     return .zero;

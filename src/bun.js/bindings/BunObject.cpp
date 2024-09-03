@@ -86,6 +86,14 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
 
     size_t arrayLength = array->length();
     if (arrayLength < 1) {
+        if (asUint8Array) {
+            return JSValue::encode(
+                JSC::JSUint8Array::create(
+                    lexicalGlobalObject,
+                    lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject),
+                    0));
+        }
+
         RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSArrayBuffer::create(vm, lexicalGlobalObject->arrayBufferStructure(), JSC::ArrayBuffer::create(static_cast<size_t>(0), 1))));
     }
 

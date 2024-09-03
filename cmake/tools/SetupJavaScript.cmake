@@ -9,11 +9,7 @@ find_program(
 
 setx(BUN_EXECUTABLE ${BUN_EXECUTABLE})
 
-if(CMAKE_HOST_WIN32)
-  setx(ESBUILD_EXECUTABLE ${CWD}/node_modules/esbuild/bin/esbuild.cmd)
-else()
-  setx(ESBUILD_EXECUTABLE ${CWD}/node_modules/esbuild/bin/esbuild)
-endif()
+setx(ESBUILD_EXECUTABLE ${CWD}/node_modules/esbuild/bin/esbuild)
 
 if(CMAKE_COLOR_DIAGNOSTICS)
   set(ESBUILD_ARGS --color)

@@ -9,7 +9,6 @@ EscapableHandleScope::EscapableHandleScope(Isolate* isolate)
 
 EscapableHandleScope::~EscapableHandleScope()
 {
-    EscapableHandleScopeBase::~EscapableHandleScopeBase();
 }
 
 } // namespace v8

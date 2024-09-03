@@ -137,12 +137,17 @@ pub const MediaQuery = struct {
             .err => return .{ null, null },
         };
 
-        const condition = if (explicit_media_type == null)
+        const condition_result = if (explicit_media_type == null)
             MediaCondition.parseWithFlags(input, QueryConditionFlags{ .allow_or = true })
         else if (input.tryParse(css.Parser.expectIdentMatching, .{"and"}))
             MediaCondition.parseWithFlags(input, QueryConditionFlags.empty())
         else
             null;
+
+        const condition = switch (condition_result) {
+            .err => |e| return .{ .err = e },
+            .result => |v| v,
+        };
 
         const media_type = explicit_media_type orelse MediaType.all;
 

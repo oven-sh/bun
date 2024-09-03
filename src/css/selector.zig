@@ -11,6 +11,9 @@ pub const Error = css.Error;
 pub const Printer = css.Printer;
 pub const PrintErr = css.PrintErr;
 
+const Result = css.Result;
+const PrintResult = css.PrintResult;
+
 const ArrayList = std.ArrayListUnmanaged;
 
 pub const impl = struct {
@@ -235,35 +238,35 @@ pub const api = struct {
                 operation: ParsedAttrSelectorOperation(Impl.SelectorImpl.AttrValue),
                 never_matches: bool,
 
-                pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
-                    try dest.writeChar('[');
+                pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintResult(void) {
+                    if (dest.writeChar('[').asErr()) |e| return .{ .err = e };
                     if (this.namespace) |nsp| switch (nsp) {
                         .specific => |v| {
-                            try css.IdentFns.toCss(&v.prefix, W, dest);
-                            try dest.writeChar('|');
+                            if (css.IdentFns.toCss(&v.prefix, W, dest).asErr()) |e| return .{ .err = e };
+                            if (dest.writeChar('|').asErr()) |e| return .{ .err = e };
                         },
                         .any => {
-                            try dest.writeStr("*|");
+                            if (dest.writeStr("*|").asErr()) |e| return .{ .err = e };
                         },
                     };
-                    try css.IdentFns.toCss(&this.local_name, W, dest);
+                    if (css.IdentFns.toCss(&this.local_name, W, dest).asErr()) |e| return .{ .err = e };
                     switch (this.operation) {
                         .exists => {},
                         .with_value => |v| {
-                            try v.operator.toCss(W, dest);
-                            try v.expected_value.toCss(dest);
+                            if (v.operator.toCss(W, dest).asErr()) |e| return .{ .err = e };
+                            if (v.expected_value.toCss(dest).asErr()) |e| return .{ .err = e };
                             switch (v.case_sensitivity) {
                                 .case_sensitive, .ascii_case_insensitive_if_in_html_element_in_html_document => {},
                                 .ascii_case_insensitive => {
-                                    try dest.writeChar(" i");
+                                    if (dest.writeChar(" i").asErr()) |e| return .{ .err = e };
                                 },
                                 .explicit_case_sensitive => {
-                                    try dest.writeStr(" s");
+                                    if (dest.writeStr(" s").asErr()) |e| return .{ .err = e };
                                 },
                             }
                         },
                     }
-                    try dest.writeChar(']');
+                    return dest.writeChar(']');
                 }
             };
         }
@@ -296,10 +299,10 @@ pub const api = struct {
             suffix,
 
             const This = @This();
-            pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+            pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintResult(void) {
                 // https://drafts.csswg.org/cssom/#serializing-selectors
                 // See "attribute selector".
-                try dest.writeStr(switch (this.*) {
+                return dest.writeStr(switch (this.*) {
                     .equal => "=",
                     .includes => "~=",
                     .dash_match => "|=",
@@ -478,7 +481,7 @@ pub const api = struct {
         input: *css.Parser,
         state: *SelectorParsingState,
         nesting_requirement: NestingRequirement,
-    ) Error!GenericSelector(Impl) {
+    ) Result(GenericSelector(Impl)) {
         if (nesting_requirement == .prefixed) {
             const parser_state = input.state();
             if (!(if (input.expectDelim('&')) |_| true else false)) {
@@ -495,7 +498,10 @@ pub const api = struct {
 
         outer_loop: while (true) {
             // Parse a sequence of simple selectors.
-            const empty = try parse_compound_selector(parser, state, input, &builder);
+            const empty = switch (parse_compound_selector(parser, state, input, &builder)) {
+                .err => |e| return .{ .err = e },
+                .result => |v| v,
+            };
             if (empty) {
                 const kind: SelectorParseErrorKind = if (builder.hasCombinators())
                     .dangling_combinator
@@ -596,7 +602,7 @@ pub const api = struct {
         state: *SelectorParsingState,
         input: *css.Parser,
         builder: *SelectorBuilder(Impl),
-    ) Error!bool {
+    ) Result(bool) {
         input.skipWhitespace();
 
         var empty: bool = true;
@@ -606,12 +612,12 @@ pub const api = struct {
             empty = false;
         }
 
-        if (try parse_type_selector(Impl, parser, input, state.*, builder)) {
+        if (parse_type_selector(Impl, parser, input, state.*, builder).asValue()) |_| {
             empty = false;
         }
 
         while (true) {
-            const result: SimpleSelectorParseResult(Impl) = if (try parse_one_simple_selector(Impl, parser, input, state)) |result| result else break;
+            const result: SimpleSelectorParseResult(Impl) = if (parse_one_simple_selector(Impl, parser, input, state).asValue()) |result| result else break;
 
             if (empty) {
                 if (parser.defaultNamespace()) |url| {
@@ -701,13 +707,17 @@ pub const api = struct {
         input: *css.Parser,
         state: *SelectorParsingState,
         nesting_requirement_: NestingRequirement,
-    ) Error!GenericSelector(Impl) {
+    ) Result(GenericSelector(Impl)) {
         // https://www.w3.org/TR/selectors-4/#parse-relative-selector
         var nesting_requirement = nesting_requirement_;
         const s = input.state();
 
         const combinator: ?Combinator = combinator: {
-            switch ((try input.next()).*) {
+            const tok = switch (input.next()) {
+                .err => |e| return .{ .err = e },
+                .result => |v| v,
+            };
+            switch (tok.*) {
                 .delim => |c| {
                     switch (c) {
                         '>' => break :combinator Combinator.child,
@@ -727,7 +737,10 @@ pub const api = struct {
             nesting_requirement = .none;
         }
 
-        var selector = try parse_selector(Impl, parser, input, state, nesting_requirement);
+        var selector = switch (parse_selector(Impl, parser, input, state, nesting_requirement)) {
+            .err => |e| return .{ .err = e },
+            .result => |v| v,
+        };
         if (combinator) |wombo_combo| {
             // https://www.w3.org/TR/selectors/#absolutizing
             selector.components.append(
@@ -933,13 +946,13 @@ pub const api = struct {
             arguments: css.TokenList,
         },
 
-        pub fn toCss(this: *const PseudoClass, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        pub fn toCss(this: *const PseudoClass, comptime W: type, dest: *Printer(W)) PrintResult(void) {
             var s = std.ArrayList(u8){};
             const writer = s.writer();
             const W2 = @TypeOf(writer);
             var printer = Printer(W2).new(@compileError(css.todo_stuff.think_about_allocator), css.PrinterOptions{});
-            try serialize.serializePseudoClass(this, W2, &printer, null);
-            try dest.writeStr(s.items);
+            if (serialize.serializePseudoClass(this, W2, &printer, null).asErr()) |e| return .{ .err = e };
+            return dest.writeStr(s.items);
         }
     };
 
@@ -1002,7 +1015,7 @@ pub const api = struct {
             this: *SelectorParser,
             loc: css.SourceLocation,
             name: []const u8,
-        ) Error!PseudoClass {
+        ) Result(PseudoClass) {
             // @compileError(css.todo_stuff.match_ignore_ascii_case);
             const pseudo_class: PseudoClass = pseudo_class: {
                 if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "hover")) {
@@ -1224,26 +1237,35 @@ pub const api = struct {
             this: *SelectorParser,
             name: []const u8,
             parser: *css.Parser,
-        ) Error!PseudoClass {
+        ) Result(PseudoClass) {
 
             // todo_stuff.match_ignore_ascii_case
             const pseudo_class = pseudo_class: {
                 if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "lang")) {
-                    const languages = try parser.parseCommaSeparated([]const u8, css.Parser.expectIdentOrString);
+                    const languages = switch (parser.parseCommaSeparated([]const u8, css.Parser.expectIdentOrString)) {
+                        .err => |e| return .{ .err = e },
+                        .result => |v| v,
+                    };
                     return PseudoClass{
                         .lang = .{ .languages = languages },
                     };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "dir")) {
                     break :pseudo_class PseudoClass{
                         .dir = .{
-                            .direction = try Direction.parse(parser),
+                            .direction = switch (Direction.parse(parser)) {
+                                .err => |e| return .{ .err = e },
+                                .result => |v| v,
+                            },
                         },
                     };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "local") and this.options.css_modules != null) {
                     break :pseudo_class PseudoClass{
                         .local = .{
                             .selector = brk: {
-                                const selector = try Selector.parse();
+                                const selector = switch (Selector.parse()) {
+                                    .err => |e| return .{ .err = e },
+                                    .result => |v| v,
+                                };
                                 const alloc: Allocator = {
                                     @compileError(css.todo_stuff.think_about_allocator);
                                 };
@@ -1258,7 +1280,10 @@ pub const api = struct {
                     break :pseudo_class PseudoClass{
                         .global = .{
                             .selector = brk: {
-                                const selector = try Selector.parse();
+                                const selector = switch (Selector.parse()) {
+                                    .err => |e| return .{ .err = e },
+                                    .result => |v| v,
+                                };
                                 const alloc: Allocator = {
                                     @compileError(css.todo_stuff.think_about_allocator);
                                 };
@@ -1274,7 +1299,10 @@ pub const api = struct {
                         this.options.warn(parser.newCustomError(SelectorParseErrorKind{ .unsupported_pseudo_class_or_element = name }));
                     }
                     var args = ArrayList(css.css_properties.custom.TokenOrValue){};
-                    _ = try css.TokenListFns.parseRaw(parser, &args, this.options, 0);
+                    _ = switch (css.TokenListFns.parseRaw(parser, &args, this.options, 0)) {
+                        .err => |e| return .{ .err = e },
+                        .result => |v| v,
+                    };
                     break :pseudo_class PseudoClass{
                         .custom_function = .{
                             .name = name,
@@ -1316,7 +1344,7 @@ pub const api = struct {
             return .ignore_invalid_selector;
         }
 
-        pub fn parsePseudoElement(this: *SelectorParser, loc: css.SourceLocation, name: []const u8) Error!PseudoElement {
+        pub fn parsePseudoElement(this: *SelectorParser, loc: css.SourceLocation, name: []const u8) Result(PseudoElement) {
             const pseudo_element: PseudoElement = pseudo_element: {
                 if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "before")) {
                     break :pseudo_element .before;
@@ -1393,13 +1421,13 @@ pub const api = struct {
 
             const This = @This();
 
-            pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+            pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintResult(void) {
                 _ = this; // autofix
                 _ = dest; // autofix
                 @compileError("Do not call this! Use `serializer.serializeSelectorList()` or `tocss_servo.toCss_SelectorList()` instead.");
             }
 
-            pub fn parseWithOptions(input: *css.Parser, options: *css.ParserOptions) Error!This {
+            pub fn parseWithOptions(input: *css.Parser, options: *css.ParserOptions) Result(This) {
                 var parser = SelectorParser{
                     .options = options,
                     .is_nesting_allowed = true,
@@ -1412,7 +1440,7 @@ pub const api = struct {
                 input: *css.Parser,
                 error_recovery: ParseErrorRecovery,
                 nesting_requirement: NestingRequirement,
-            ) Error!This {
+            ) Result(This) {
                 var state = SelectorParsingState.empty();
                 return parseWithState(parser, input, &state, error_recovery, nesting_requirement);
             }
@@ -1422,7 +1450,7 @@ pub const api = struct {
                 input: *css.Parser,
                 error_recovery: ParseErrorRecovery,
                 nesting_requirement: NestingRequirement,
-            ) Error!This {
+            ) Result(This) {
                 var state = SelectorParsingState.empty();
                 return parseRelativeWithState(parser, input, &state, error_recovery, nesting_requirement);
             }
@@ -1433,7 +1461,7 @@ pub const api = struct {
                 state: *SelectorParsingState,
                 recovery: ParseErrorRecovery,
                 nesting_requirement: NestingRequirement,
-            ) Error!This {
+            ) Result(This) {
                 const original_state = state.*;
                 // TODO: Think about deinitialization in error cases
                 var values = ArrayList(SelectorT){};
@@ -1444,7 +1472,7 @@ pub const api = struct {
                         original_state: SelectorParsingState,
                         nesting_requirement: NestingRequirement,
 
-                        pub fn parsefn(this: *@This(), input2: *css.Parser) Error!SelectorT {
+                        pub fn parsefn(this: *@This(), input2: *css.Parser) Result(SelectorT) {
                             var selector_state = this.original_state;
                             const result = parse_selector(Impl, parser, input2, &selector_state, this.nesting_requirement);
                             if (selector_state.after_nesting) {
@@ -1490,7 +1518,7 @@ pub const api = struct {
                 state: *SelectorParsingState,
                 recovery: ParseErrorRecovery,
                 nesting_requirement: NestingRequirement,
-            ) Error!This {
+            ) Result(This) {
                 const original_state = state.*;
                 // TODO: Think about deinitialization in error cases
                 var values = ArrayList(SelectorT){};
@@ -1501,7 +1529,7 @@ pub const api = struct {
                         original_state: SelectorParsingState,
                         nesting_requirement: NestingRequirement,
 
-                        pub fn parsefn(this: *@This(), input2: *css.Parser) Error!SelectorT {
+                        pub fn parsefn(this: *@This(), input2: *css.Parser) Result(SelectorT) {
                             var selector_state = this.original_state;
                             const result = parse_relative_selector(Impl, parser, input2, &selector_state, this.nesting_requirement);
                             if (selector_state.after_nesting) {
@@ -1557,7 +1585,7 @@ pub const api = struct {
 
             const This = @This();
 
-            pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+            pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintResult(void) {
                 _ = this; // autofix
                 _ = dest; // autofix
                 @compileError("Do not call this! Use `serializer.serializeSelector()` or `tocss_servo.toCss_Selector()` instead.");
@@ -1587,12 +1615,12 @@ pub const api = struct {
             }
 
             /// Parse a selector, without any pseudo-element.
-            pub fn parse(parser: *SelectorParser, input: *css.Parser) Error!This {
+            pub fn parse(parser: *SelectorParser, input: *css.Parser) Result(This) {
                 var state = SelectorParsingState.empty();
                 return parse_selector(Impl, parser, input, &state, .none);
             }
 
-            pub fn parseWithOptions(input: *css.Parser, options: *css.ParserOptions) Error!This {
+            pub fn parseWithOptions(input: *css.Parser, options: *css.ParserOptions) Result(This) {
                 var selector_parser = SelectorParser{
                     .is_nesting_allowed = true,
                     .options = options,
@@ -1754,7 +1782,7 @@ pub const api = struct {
                 return this.* == .combinator;
             }
 
-            pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+            pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintResult(void) {
                 _ = this; // autofix
                 _ = dest; // autofix
                 @compileError("Do not call this! Use `serializer.serializeComponent()` or `tocss_servo.toCss_Component()` instead.");
@@ -1964,7 +1992,7 @@ pub const api = struct {
         /// And still supported as an alias for >>> by Vue.
         deep,
 
-        pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+        pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintResult(void) {
             _ = this; // autofix
             _ = dest; // autofix
             @compileError("Do not call this! Use `serializer.serializeCombinator()` or `tocss_servo.toCss_Combinator()` instead.");
@@ -2082,13 +2110,13 @@ pub const api = struct {
             return true;
         }
 
-        pub fn toCss(this: *const PseudoElement, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        pub fn toCss(this: *const PseudoElement, comptime W: type, dest: *Printer(W)) PrintResult(void) {
             var s = std.ArrayList(u8){};
             const writer = s.writer();
             const W2 = @TypeOf(writer);
             var printer = Printer(W2).new(@compileError(css.todo_stuff.think_about_allocator), css.PrinterOptions{});
-            try serialize.serializePseudoElement(this, W2, &printer, null);
-            try dest.writeStr(s.items);
+            if (serialize.serializePseudoElement(this, W2, &printer, null).asErr()) |e| return .{ .err = e };
+            return dest.writeStr(s.items);
         }
     };
 
@@ -2129,7 +2157,7 @@ pub const api = struct {
         input: *css.Parser,
         state: SelectorParsingState,
         sink: *SelectorBuilder(Impl),
-    ) Error!bool {
+    ) Result(bool) {
         const result = parse_qualified_name(
             Impl,
             parser,
@@ -2233,7 +2261,7 @@ pub const api = struct {
         parser: *SelectorParser,
         input: *css.Parser,
         state: *SelectorParsingState,
-    ) Error!(?SimpleSelectorParseResult(Impl)) {
+    ) Result(?SimpleSelectorParseResult(Impl)) {
         const S = SimpleSelectorParseResult(Impl);
 
         const start = input.state();
@@ -2258,20 +2286,29 @@ pub const api = struct {
                 }
                 const Closure = struct {
                     parser: *SelectorParser,
-                    pub fn parsefn(this: *@This(), input2: *css.Parser) Error!GenericComponent(Impl) {
-                        return try parse_attribute_selector(Impl, this.parser, input2);
+                    pub fn parsefn(this: *@This(), input2: *css.Parser) Result(GenericComponent(Impl)) {
+                        return parse_attribute_selector(Impl, this.parser, input2);
                     }
                 };
                 var closure = Closure{
                     .parser = parser,
                 };
-                const attr = try input.parseNestedBlock(GenericComponent(Impl), &closure, Closure.parsefn);
+                const attr = switch (input.parseNestedBlock(GenericComponent(Impl), &closure, Closure.parsefn)) {
+                    .err => |e| return .{ .err = e },
+                    .result => |v| v,
+                };
                 return .{ .simple_selector = attr };
             },
             .colon => {
                 const location = input.currentSourceLocation();
-                const is_single_colon: bool, const next_token: css.Token = switch ((try input.nextIncludingWhitespace()).*) {
-                    .colon => .{ false, (try input.nextIncludingWhitespace()).* },
+                const is_single_colon: bool, const next_token: css.Token = switch ((switch (input.nextIncludingWhitespace()) {
+                    .err => |e| return .{ .err = e },
+                    .result => |v| v,
+                }).*) {
+                    .colon => .{ false, (switch (input.nextIncludingWhitespace()) {
+                        .err => |e| return .{ .err = e },
+                        .result => |v| v,
+                    }).* },
                     else => |t| .{ true, t },
                 };
                 const name: []const u8, const is_functional = switch (next_token) {
@@ -2294,7 +2331,7 @@ pub const api = struct {
                             }
 
                             const Fn = struct {
-                                pub fn parsefn(_: void, input2: *css.Parser) Error![]Impl.SelectorImpl.Identifier {
+                                pub fn parsefn(_: void, input2: *css.Parser) Result([]Impl.SelectorImpl.Identifier) {
                                     // todo_stuff.think_about_mem_mgmt
                                     var result = ArrayList(Impl.SelectorImpl.Identifier).initCapacity(
                                         @compileError(css.todo_stuff.think_about_allocator),
@@ -2306,13 +2343,19 @@ pub const api = struct {
 
                                     result.append(
                                         @compileError(css.todo_stuff.think_about_allocator),
-                                        try input2.expectIdent(),
+                                        switch (input2.expectIdent()) {
+                                            .err => |e| return .{ .err = e },
+                                            .result => |v| v,
+                                        },
                                     ) catch unreachable;
 
                                     while (!input.isExhausted()) {
                                         result.append(
                                             @compileError(css.todo_stuff.think_about_allocator),
-                                            try input.expectIdent(),
+                                            switch (input.expectIdent()) {
+                                                .err => |e| return .{ .err = e },
+                                                .result => |v| v,
+                                            },
                                         ) catch unreachable;
                                     }
 
@@ -2320,7 +2363,10 @@ pub const api = struct {
                                 }
                             };
 
-                            const names = try input.parseNestedBlock([]Impl.SelectorImpl.Identifier, {}, Fn.parsefn);
+                            const names = switch (input.parseNestedBlock([]Impl.SelectorImpl.Identifier, {}, Fn.parsefn)) {
+                                .err => |e| return .{ .err = e },
+                                .result => |v| v,
+                            };
 
                             break :pseudo_element .{ .part_pseudo = names };
                         }
@@ -2332,7 +2378,7 @@ pub const api = struct {
                             const Closure = struct {
                                 parser: *SelectorParser,
                                 state: *SelectorParsingState,
-                                pub fn parsefn(this: *@This(), input2: *css.Parser) Error!GenericSelector(Impl) {
+                                pub fn parsefn(this: *@This(), input2: *css.Parser) Result(GenericSelector(Impl)) {
                                     return parse_inner_compound_selector(this.parser, input2, this.state);
                                 }
                             };
@@ -2340,11 +2386,17 @@ pub const api = struct {
                                 .parser = parser,
                                 .state = state,
                             };
-                            const selector = try input.parseNestedBlock(GenericSelector(Impl), &closure, Closure.parsefn);
+                            const selector = switch (input.parseNestedBlock(GenericSelector(Impl), &closure, Closure.parsefn)) {
+                                .err => |e| return .{ .err = e },
+                                .result => |v| v,
+                            };
                             return .{ .slotted_pseudo = selector };
                         }
                     } else pseudo_element: {
-                        break :pseudo_element try parser.parsePseudoElement(location, name);
+                        break :pseudo_element switch (parser.parsePseudoElement(location, name)) {
+                            .err => |e| return .{ .err = e },
+                            .result => |v| v,
+                        };
                     };
 
                     if (state.intersects(.{ .after_slotted = true }) and pseudo_element.validAfterSlotted()) {
@@ -2356,8 +2408,8 @@ pub const api = struct {
                             parser: *SelectorParser,
                             name: []const u8,
                             state: *SelectorParsingState,
-                            pub fn parsefn(this: *@This(), input2: *css.Parser) Error!GenericComponent(Impl) {
-                                return try parse_functional_pseudo_class(Impl, this.parser, input2, this.name, this.state);
+                            pub fn parsefn(this: *@This(), input2: *css.Parser) Result(GenericComponent(Impl)) {
+                                return parse_functional_pseudo_class(Impl, this.parser, input2, this.name, this.state);
                             }
                         };
                         var closure = Closure{
@@ -2366,8 +2418,14 @@ pub const api = struct {
                             .state = state,
                         };
 
-                        break :pseudo_class try input.parseNestedBlock(GenericComponent(Impl), &closure, Closure.parsefn);
-                    } else try parse_simple_pseudo_class(Impl, parser, location, name, state.*);
+                        break :pseudo_class switch (input.parseNestedBlock(GenericComponent(Impl), &closure, Closure.parsefn)) {
+                            .err => |e| return .{ .err = e },
+                            .result => |v| v,
+                        };
+                    } else switch (parse_simple_pseudo_class(Impl, parser, location, name, state.*)) {
+                        .err => |e| return .{ .err = e },
+                        .result => |v| v,
+                    };
                     return .{ .simple_selector = pseudo_class };
                 }
             },
@@ -2378,7 +2436,10 @@ pub const api = struct {
                             return input.newCustomError(SelectorParseErrorKind.invalid_state);
                         }
                         const location = input.currentSourceLocation();
-                        const class = switch ((try input.nextIncludingWhitespace()).*) {
+                        const class = switch ((switch (input.nextIncludingWhitespace()) {
+                            .err => |e| return .{ .err = e },
+                            .result => |v| v,
+                        }).*) {
                             .ident => |class| class,
                             else => |t| {
                                 const e = SelectorParseErrorKind{ .class_needs_ident = t };
@@ -2405,7 +2466,7 @@ pub const api = struct {
         return null;
     }
 
-    pub fn parse_attribute_selector(comptime Impl: type, parser: *SelectorParser, input: *css.Parser) Error!GenericComponent(Impl) {
+    pub fn parse_attribute_selector(comptime Impl: type, parser: *SelectorParser, input: *css.Parser) Result(GenericComponent(Impl)) {
         const alloc: std.mem.Allocator = {
             @compileError(css.todo_stuff.think_about_allocator);
         };
@@ -2418,7 +2479,11 @@ pub const api = struct {
         const namespace: ?N, const local_name: []const u8 = brk: {
             input.skipWhitespace();
 
-            switch (try parse_qualified_name(Impl, parser, input, true)) {
+            const _qname = switch (parse_qualified_name(Impl, parser, input, true)) {
+                .err => |e| return .{ .err = e },
+                .result => |v| v,
+            };
+            switch (_qname) {
                 .none => |t| return input.newCustomError(SelectorParseErrorKind{ .no_qualified_name_in_attribute_selector = t }),
                 .some => |qname| {
                     if (qname[1] == null) {
@@ -2502,7 +2567,10 @@ pub const api = struct {
             .prefix, .substring, .suffix => value_str.len == 0,
         };
 
-        const attribute_flags = try parse_attribute_flags(input);
+        const attribute_flags = switch (parse_attribute_flags(input)) {
+            .err => |e| return .{ .err = e },
+            .result => |v| v,
+        };
 
         const value: Impl.SelectorImpl.AttrValue = value_str;
         const local_name_lower: Impl.SelectorImpl.LocalName, const local_name_is_ascii_lowercase: bool = brk: {
@@ -2572,14 +2640,17 @@ pub const api = struct {
         parser: *SelectorParser,
         input: *css.Parser,
         state: *SelectorParsingState,
-    ) Error!GenericSelector(Impl) {
+    ) Result(GenericSelector(Impl)) {
         var child_state = brk: {
             var child_state = state.*;
             child_state.disallow_pseudos = true;
             child_state.disallow_combinators = true;
             break :brk child_state;
         };
-        const result = try parse_selector(Impl, parser, input, &child_state, NestingRequirement.none);
+        const result = switch (parse_selector(Impl, parser, input, &child_state, NestingRequirement.none)) {
+            .err => |e| return .{ .err = e },
+            .result => |v| v,
+        };
         if (child_state.after_nesting) {
             state.after_nesting = true;
         }
@@ -2592,7 +2663,7 @@ pub const api = struct {
         input: *css.Parser,
         name: []const u8,
         state: *SelectorParsingState,
-    ) Error!GenericComponent(Impl) {
+    ) Result(GenericComponent(Impl)) {
         // todo_stuff.match_ignore_ascii_case
         if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "nth-child")) {
             return parse_nth_pseudo_class(Impl, parser, input, state.*, .child);
@@ -2617,7 +2688,10 @@ pub const api = struct {
                 return input.newCustomError(SelectorParseErrorKind.invalid_state);
             }
             return .{
-                .host = try parse_inner_compound_selector(Impl, parser, input, state),
+                .host = switch (parse_inner_compound_selector(Impl, parser, input, state)) {
+                    .err => |e| return .{ .err = e },
+                    .result => |v| v,
+                },
             };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "not")) {
             return parse_negation(Impl, parser, input, state);
@@ -2633,7 +2707,10 @@ pub const api = struct {
             return input.newCustomError(SelectorParseErrorKind.invalid_state);
         }
 
-        const result = try parser.parseNonTsFunctionalPseudoClass(Impl, name, input);
+        const result = switch (parser.parseNonTsFunctionalPseudoClass(Impl, name, input)) {
+            .err => |e| return .{ .err = e },
+            .result => |v| v,
+        };
         return .{ .non_ts_pseudo_class = result };
     }
 
@@ -2643,7 +2720,7 @@ pub const api = struct {
         location: css.SourceLocation,
         name: []const u8,
         state: SelectorParsingState,
-    ) Error!GenericComponent(Impl) {
+    ) Result(GenericComponent(Impl)) {
         if (state.allowsNonFunctionalPseudoClasses()) {
             return location.newCustomError(SelectorParseErrorKind.invalid_state);
         }
@@ -2681,7 +2758,10 @@ pub const api = struct {
             }
         }
 
-        const pseudo_class = try parser.parseNonTsPseudoClass(location, name);
+        const pseudo_class = switch (parser.parseNonTsPseudoClass(location, name)) {
+            .err => |e| return .{ .err = e },
+            .result => |v| v,
+        };
         if (state.intersects(SelectorParsingState{ .after_webkit_scrollbar = true })) {
             if (!pseudo_class.isValidAterWebkitScrollbar()) {
                 return location.newCustomError(SelectorParseErrorKind{ .invalid_pseudo_class_after_webkit_scrollbar = true });
@@ -2703,12 +2783,15 @@ pub const api = struct {
         input: *css.Parser,
         state: SelectorParsingState,
         ty: NthType,
-    ) Error!GenericComponent(Impl) {
+    ) Result(GenericComponent(Impl)) {
         if (!state.allowsTreeStructuralPseudoClasses()) {
             return input.newCustomError(SelectorParseErrorKind.invalid_state);
         }
 
-        const a, const b = try css.nth.parse_nth(input);
+        const a, const b = switch (css.nth.parse_nth(input)) {
+            .err => |e| return .{ .err = e },
+            .result => |v| v,
+        };
         const nth_data = NthSelectorData{
             .ty = ty,
             .is_function = true,
@@ -2734,7 +2817,10 @@ pub const api = struct {
             break :child_state s;
         };
 
-        const selectors = try SelectorList.parseWithState(
+        const selectors = switch (SelectorList.parseWithState) {
+            .err => |e| return .{ .err = e },
+            .result => |v| v,
+        }(
             parser,
             input,
             &child_state,
@@ -2758,7 +2844,7 @@ pub const api = struct {
         state: *SelectorParsingState,
         comptime func: anytype,
         args_: anytype,
-    ) Error!GenericComponent(Impl) {
+    ) Result(GenericComponent(Impl)) {
         bun.debugAssert(parser.parseIsAndWhere());
         // https://drafts.csswg.org/selectors/#matches-pseudo:
         //
@@ -2772,7 +2858,10 @@ pub const api = struct {
             break :brk child_state;
         };
 
-        const inner = try SelectorList.parseWithState(parser, input, &child_state, parser.isAndWhereRecovery(), NestingRequirement.none);
+        const inner = switch (SelectorList.parseWithState(parser, input, &child_state, parser.isAndWhereRecovery(), NestingRequirement.none)) {
+            .err => |e| return .{ .err = e },
+            .result => |v| v,
+        };
         if (child_state.after_nesting) {
             state.after_nesting = true;
         }
@@ -2802,15 +2891,18 @@ pub const api = struct {
         parser: *SelectorParser,
         input: *css.Parser,
         state: *SelectorParsingState,
-    ) Error!GenericComponent(Impl) {
+    ) Result(GenericComponent(Impl)) {
         var child_state = state.*;
-        const inner = try SelectorList.parseRelativeWithState(
+        const inner = switch (SelectorList.parseRelativeWithState(
             parser,
             input,
             &child_state,
             parser.isAndWhereErrorRecovery(),
             .none,
-        );
+        )) {
+            .err => |e| return .{ .err = e },
+            .result => |v| v,
+        };
 
         if (child_state.after_nesting) {
             state.after_nesting = true;
@@ -2825,12 +2917,15 @@ pub const api = struct {
         parser: *SelectorParser,
         input: *css.Parser,
         state: *SelectorParsingState,
-    ) Error!GenericComponent(Impl) {
+    ) Result(GenericComponent(Impl)) {
         var child_state = state.*;
         child_state.skip_default_namespace = true;
         child_state.disallow_pseudos = true;
 
-        const list = try SelectorList.parseWithState(parser, input, &child_state, .discard_list, .none);
+        const list = switch (SelectorList.parseWithState(parser, input, &child_state, .discard_list, .none)) {
+            .err => |e| return .{ .err = e },
+            .result => |v| v,
+        };
 
         if (child_state.after_nesting) {
             state.after_nesting = true;
@@ -2866,7 +2961,7 @@ pub const api = struct {
         parser: *SelectorParser,
         input: *css.Parser,
         in_attr_selector: bool,
-    ) Error!OptionalQName(Impl) {
+    ) Result(OptionalQName(Impl)) {
         const start = input.state();
 
         const tok = input.nextIncludingWhitespace() catch |e| {
@@ -2880,7 +2975,7 @@ pub const api = struct {
                 if (n) {
                     const prefix: Impl.SelectorImpl.NamespacePrefix = value;
                     const result: ?Impl.SelectorImpl.NamespaceUrl = parser.namespaceForPrefix(prefix);
-                    const url: Impl.SelectorImpl.NamespaceUrl = try brk: {
+                    const url: Impl.SelectorImpl.NamespaceUrl = brk: {
                         if (result) break :brk result.*;
                         return input.newCustomError(SelectorParseErrorKind{ .unsupported_pseudo_class_or_element = value });
                     };
@@ -2950,7 +3045,7 @@ pub const api = struct {
         input: *css.Parser,
         namespace: QNamePrefix(Impl),
         in_attr_selector: bool,
-    ) Error!OptionalQName(Impl) {
+    ) Result(OptionalQName(Impl)) {
         const location = input.currentSourceLocation();
         const t = input.nextIncludingWhitespace() catch |e| return e;
         switch (t) {
@@ -2974,8 +3069,8 @@ pub const api = struct {
             name: Impl.SelectorImpl.LocalName,
             lower_name: Impl.SelectorImpl.LocalName,
 
-            pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
-                try css.IdentFns.toCss(&this.name, W, dest);
+            pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintResult(void) {
+                return css.IdentFns.toCss(&this.name, W, dest);
             }
         };
     }
@@ -3010,7 +3105,7 @@ pub const api = struct {
         name: css.css_values.ident.CustomIdent,
     };
 
-    pub fn parse_attribute_flags(input: *css.Parser) Error!AttributeFlags {
+    pub fn parse_attribute_flags(input: *css.Parser) Result(AttributeFlags) {
         const location = input.currentSourceLocation();
         const token = input.next() catch {
             // Selectors spec says language-defined; HTML says it depends on the
@@ -3037,14 +3132,14 @@ pub const serialize = struct {
         dest: *Printer(W),
         context: ?*const css.StyleContext,
         is_relative: bool,
-    ) PrintErr!void {
+    ) PrintResult(void) {
         var first = true;
         for (list) |*selector| {
             if (!first) {
-                try dest.delim(',', false);
+                if (dest.delim(',', false).asErr()) |e| return .{ .err = e };
             }
             first = false;
-            try serializeSelector(selector, W, dest, context, is_relative);
+            if (serializeSelector(selector, W, dest, context, is_relative).asErr()) |e| return .{ .err = e };
         }
     }
 
@@ -3054,7 +3149,7 @@ pub const serialize = struct {
         dest: *css.Printer(W),
         context: ?*const css.StyleContext,
         is_relative: bool,
-    ) PrintErr!void {
+    ) PrintResult(void) {
         const CombinatorIter = struct {
             sel: *const api.Selector,
             i: usize = 0,
@@ -3137,7 +3232,7 @@ pub const serialize = struct {
             // Skip implicit :scope in relative selectors (e.g. :has(:scope > foo) -> :has(> foo))
             if (is_relative and compound.len >= 1 and compound[0] == .scope) {
                 if (combinators.next()) |*combinator| {
-                    try serializeCombinator(combinator, W, dest);
+                    if (serializeCombinator(combinator, W, dest).asErr()) |e| return .{ .err = e };
                 }
                 compound = compound[1..];
                 is_relative = false;
@@ -3188,11 +3283,11 @@ pub const serialize = struct {
                     } else compound;
 
                     for (slice) |simple| {
-                        try serializeComponent(simple, W, dest, context);
+                        if (serializeComponent(simple, W, dest, context).asErr()) |e| return .{ .err = e };
                     }
 
                     if (swap_nesting) {
-                        try serializeNesting(W, dest, context, false);
+                        if (serializeNesting(W, dest, context, false).asErr()) |e| return .{ .err = e };
                     }
 
                     // Skip step 2, which is an "otherwise".
@@ -3224,20 +3319,20 @@ pub const serialize = struct {
                     i += 1;
                     const local = iter[i];
                     i += 1;
-                    try serializeComponent(local, W, dest, context);
+                    if (serializeComponent(local, W, dest, context).asErr()) |e| return .{ .err = e };
 
                     // Also check the next item in case of namespaces.
                     if (first_non_namespace > first_index) {
                         const local2 = iter[i];
                         i += 1;
-                        try serializeComponent(local2, W, dest, context);
+                        if (serializeComponent(local2, W, dest, context).asErr()) |e| return .{ .err = e };
                     }
 
-                    try serializeComponent(nesting, W, dest, context);
+                    if (serializeComponent(nesting, W, dest, context).asErr()) |e| return .{ .err = e };
                 } else if (has_leading_nesting and should_compile_nesting) {
                     // Nesting selector may serialize differently if it is leading, due to type selectors.
                     i += 1;
-                    try serializeNesting(W, dest, context, true);
+                    if (serializeNesting(W, dest, context, true).asErr()) |e| return .{ .err = e };
                 }
 
                 if (i < compound.len) {
@@ -3251,7 +3346,7 @@ pub const serialize = struct {
                                 continue;
                             }
                         }
-                        try serializeComponent(simple, W, dest, context);
+                        if (serializeComponent(simple, W, dest, context).asErr()) |e| return .{ .err = e };
                     }
                 }
             }
@@ -3262,7 +3357,7 @@ pub const serialize = struct {
             //    single SPACE (U+0020) if the combinator was not whitespace, to
             //    s.
             if (next_combinator) |c| {
-                try serializeCombinator(&c, W, dest);
+                if (serializeCombinator(&c, W, dest).asErr()) |e| return .{ .err = e };
             } else {
                 combinators_exhausted = true;
             }
@@ -3280,13 +3375,13 @@ pub const serialize = struct {
         comptime W: type,
         dest: *css.Printer(W),
         context: ?*const css.StyleContext,
-    ) PrintErr!void {
+    ) PrintResult(void) {
         switch (component.*) {
-            .combinator => |c| return try serializeCombinator(&c, W, dest),
+            .combinator => |c| return serializeCombinator(&c, W, dest),
             .attribute_in_no_namespace => |*v| {
-                try dest.writeChar('[');
-                try css.css_values.ident.IdentFns.toCss(&v.local_name, W, dest);
-                try v.operator.toCss(W, dest);
+                if (dest.writeChar('[').asErr()) |e| return .{ .err = e };
+                if (css.css_values.ident.IdentFns.toCss(&v.local_name, W, dest).asErr()) |e| return .{ .err = e };
+                if (v.operator.toCss(W, dest).asErr()) |e| return .{ .err = e };
 
                 if (dest.minify) {
                     // PERF: should we put a scratch buffer in the printer
@@ -3295,99 +3390,97 @@ pub const serialize = struct {
                     const writer = id.writer();
                     css.serializer.serializeIdentifier(v.value, W, writer);
 
-                    const s = try css.to_css.string(
-                        @compileError(css.todo_stuff.think_about_allocator),
-                        CSSString,
-                        &v.value,
-                        css.PrinterOptions{},
-                    );
+                    const s = switch (css.to_css.string(@compileError(css.todo_stuff.think_about_allocator), CSSString, &v.value, css.PrinterOptions{})) {
+                        .err => |e| return .{ .err = e },
+                        .result => |v2| v2,
+                    };
 
                     if (id.items.len > 0 and id.items.len < s.len) {
-                        try dest.writeStr(id.items);
+                        if (dest.writeStr(id.items).asErr()) |e| return .{ .err = e };
                     } else {
-                        try dest.writeStr(s);
+                        if (dest.writeStr(s).asErr()) |e| return .{ .err = e };
                     }
                 } else {
-                    try css.CSSStringFns.toCss(&v.value, W, dest);
+                    if (css.CSSStringFns.toCss(&v.value, W, dest).asErr()) |e| return .{ .err = e };
                 }
 
                 switch (v.case_sensitivity) {
                     .case_sensitive, .ascii_case_insensitive_if_in_html_element_in_html_document => {},
-                    .ascii_case_insensitive => try dest.writeStr(" i"),
-                    .explicit_case_sensitive => try dest.writeStr(" s"),
+                    .ascii_case_insensitive => if (dest.writeStr(" i").asErr()) |e| return .{ .err = e },
+                    .explicit_case_sensitive => if (dest.writeStr(" s").asErr()) |e| return .{ .err = e },
                 }
-                try dest.writeChar(']');
+                return dest.writeChar(']');
             },
             .is, .where, .negation, .any => {
                 switch (component.*) {
-                    .where => try dest.writeStr(":where("),
+                    .where => if (dest.writeStr(":where(").asErr()) |e| return .{ .err = e },
                     .is => |selectors| {
                         // If there's only one simple selector, serialize it directly.
                         if (shouldUnwrapIs(selectors)) {
-                            try serializeSelector(&selectors[0], W, dest, context, false);
-                            return;
+                            return serializeSelector(&selectors[0], W, dest, context, false);
                         }
 
                         const vp = dest.vendor_prefix;
                         if (vp.intersects(css.VendorPrefix{ .webkit = true, .moz = true })) {
-                            try dest.writeChar(':');
-                            try vp.toCss(W, dest);
-                            try dest.writeStr("any(");
+                            if (dest.writeChar(':').asErr()) |e| return .{ .err = e };
+                            if (vp.toCss(W, dest).asErr()) |e| return .{ .err = e };
+                            if (dest.writeStr("any(").asErr()) |e| return .{ .err = e };
                         } else {
-                            try dest.writeStr(":is(");
+                            if (dest.writeStr(":is(").asErr()) |e| return .{ .err = e };
                         }
                     },
                     .negation => {
-                        try dest.writeStr(":not(");
+                        if (dest.writeStr(":not(").asErr()) |e| return .{ .err = e };
                     },
                     .any => |v| {
                         const vp = dest.vendor_prefix.bitwiseOr(v.vendor_prefix);
                         if (vp.intersects(css.VendorPrefix{ .webkit = true, .mox = true })) {
-                            try dest.writeChar(':');
-                            try vp.toCss(W, dest);
-                            try dest.writeStr("any(");
+                            if (dest.writeChar(':').asErr()) |e| return .{ .err = e };
+                            if (vp.toCss(W, dest).asErr()) |e| return .{ .err = e };
+                            if (dest.writeStr("any(").asErr()) |e| return .{ .err = e };
                         } else {
-                            try dest.writeStr(":is(");
+                            if (dest.writeStr(":is(").asErr()) |e| return .{ .err = e };
                         }
                     },
                     else => unreachable,
                 }
-                try serializeSelectorList(switch (component.*) {
+                if (serializeSelectorList(switch (component.*) {
                     .where, .is, .negation => |list| list,
                     .any => |v| v.selectors,
                     else => unreachable,
-                }, W, dest, context, false);
-                try dest.writeStr(")");
+                }, W, dest, context, false).asErr()) |e| return .{ .err = e };
+                return dest.writeStr(")");
             },
             .has => |list| {
-                try dest.writeStr(":has(");
-                try serializeSelectorList(list, W, dest, context, true);
-                try dest.writeStr(")");
+                if (dest.writeStr(":has(").asErr()) |e| return .{ .err = e };
+                if (serializeSelectorList(list, W, dest, context, true).asErr()) |e| return .{ .err = e };
+                return dest.writeStr(")");
             },
             .non_ts_pseudo_class => |pseudo| {
-                try serializePseudoClass(pseudo, W, dest, context);
+                return serializePseudoClass(pseudo, W, dest, context);
             },
             .pseudo_element => |pseudo| {
-                try serializePseudoElement(pseudo, W, dest, context);
+                return serializePseudoElement(pseudo, W, dest, context);
             },
             .nesting => {
-                try serializeNesting(W, dest, context, false);
+                return serializeNesting(W, dest, context, false);
             },
             .class => |class| {
-                try dest.writeChar('.');
-                try dest.writeIdent(class, true);
+                if (dest.writeChar('.').asErr()) |e| return .{ .err = e };
+                return dest.writeIdent(class, true);
             },
             .id => |id| {
-                try dest.writeChar('#');
-                try dest.writeIdent(id, true);
+                if (dest.writeChar('#').asErr()) |e| return .{ .err = e };
+                return dest.writeIdent(id, true);
             },
             .host => |selector| {
-                try dest.writeStr(":host");
+                if (dest.writeStr(":host").asErr()) |e| return .{ .err = e };
                 if (selector) |*sel| {
-                    try dest.writeChar('(');
-                    try sel.toCss(W, dest);
-                    try dest.writeChar(')');
+                    if (dest.writeChar('(').asErr()) |e| return .{ .err = e };
+                    if (sel.toCss(W, dest).asErr()) |e| return .{ .err = e };
+                    if (dest.writeChar(')').asErr()) |e| return .{ .err = e };
                 }
+                return PrintResult(void).success;
             },
             .slotted => |selector| {
                 try dest.writeStr("::slotted(");
@@ -3412,7 +3505,7 @@ pub const serialize = struct {
         combinator: *api.Combinator,
         comptime W: type,
         dest: *Printer(W),
-    ) PrintErr!void {
+    ) PrintResult(void) {
         switch (combinator.*) {
             .child => try dest.delim('>', true),
             .descendant => try dest.writeStr(" "),
@@ -3433,7 +3526,7 @@ pub const serialize = struct {
         comptime W: type,
         dest: *Printer(W),
         context: ?*css.StyleContext,
-    ) PrintErr!void {
+    ) PrintResult(void) {
         switch (pseudo_class.*) {
             .lang => {
                 try dest.writeStr(":lang(");
@@ -3462,7 +3555,7 @@ pub const serialize = struct {
                 d: *Printer(W),
                 prefix: css.VendorPrefix,
                 comptime val: []const u8,
-            ) PrintErr!void {
+            ) PrintResult(void) {
                 try d.writeChar(':');
                 // If the printer has a vendor prefix override, use that.
                 const vp = if (!dest.vendor_prefix.isEmpty())
@@ -3477,7 +3570,7 @@ pub const serialize = struct {
                 d: *Printer(W),
                 comptime key: []const u8,
                 comptime s: []const u8,
-            ) PrintErr!void {
+            ) PrintResult(void) {
                 const _class = if (dest.pseudo_classes) |*pseudo_classes| @field(pseudo_classes, key) else null;
 
                 if (_class) |class| {
@@ -3613,9 +3706,9 @@ pub const serialize = struct {
         comptime W: type,
         dest: *Printer(W),
         context: ?*css.StyleContext,
-    ) PrintErr!void {
+    ) PrintResult(void) {
         const Helpers = struct {
-            pub fn writePrefix(d: *Printer(W), prefix: css.VendorPrefix) PrintErr!css.VendorPrefix {
+            pub fn writePrefix(d: *Printer(W), prefix: css.VendorPrefix) PrintResult(css.VendorPrefix) {
                 try d.writeStr("::");
                 // If the printer has a vendor prefix override, use that.
                 const vp = if (!d.vendor_prefix.isEmpty()) dest.vendor_prefix.bitwiseAnd(prefix).orNone() else prefix;
@@ -3623,7 +3716,7 @@ pub const serialize = struct {
                 return vp;
             }
 
-            pub fn writePrefixed(d: *Printer(W), prefix: css.VendorPrefix, comptime val: []const u8) PrintErr!void {
+            pub fn writePrefixed(d: *Printer(W), prefix: css.VendorPrefix, comptime val: []const u8) PrintResult(void) {
                 _ = writePrefix(d, prefix);
                 try d.writeStr(val);
             }
@@ -3737,7 +3830,7 @@ pub const serialize = struct {
         dest: *Printer(W),
         context: ?*css.StyleContext,
         first: bool,
-    ) PrintErr!void {
+    ) PrintResult(void) {
         if (context) |ctx| {
             // If there's only one simple selector, just serialize it directly.
             // Otherwise, use an :is() pseudo class.
@@ -3770,7 +3863,7 @@ const tocss_servo = struct {
         selectors: []const api.Selector,
         comptime W: type,
         dest: *css.Printer(W),
-    ) PrintErr!void {
+    ) PrintResult(void) {
         var first = true;
         for (selectors) |*selector| {
             if (!first) {
@@ -3785,7 +3878,7 @@ const tocss_servo = struct {
         selector: *const api.Selector,
         comptime W: type,
         dest: *css.Printer(W),
-    ) PrintErr!void {
+    ) PrintResult(void) {
         const CombinatorIter = struct {
             sel: *const api.Selector,
             i: usize = 0,
@@ -3953,7 +4046,7 @@ const tocss_servo = struct {
         component: *const api.Component,
         comptime W: type,
         dest: *Printer(W),
-    ) PrintErr!void {
+    ) PrintResult(void) {
         switch (component.*) {
             .combinator => |c| try toCss_Combinator(&c, W, dest),
             .slotted => |selector| {
@@ -4094,7 +4187,7 @@ const tocss_servo = struct {
         combinator: *api.Combinator,
         comptime W: type,
         dest: *Printer(W),
-    ) PrintErr!void {
+    ) PrintResult(void) {
         switch (combinator.*) {
             .child => try dest.writeStr(" > "),
             .descendant => try dest.writeStr(" "),
@@ -4112,7 +4205,7 @@ const tocss_servo = struct {
         pseudo_element: *const api.PseudoElement,
         comptime W: type,
         dest: *Printer(W),
-    ) PrintErr!void {
+    ) PrintResult(void) {
         switch (pseudo_element.*) {
             .before => try dest.writeStr("::before"),
             .after => try dest.writeStr("::after"),

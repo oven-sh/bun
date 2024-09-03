@@ -115,7 +115,7 @@ pub const Body = struct {
         /// used in HTTP server to ignore request bodies unless asked for it
         onStartBuffering: ?*const fn (ctx: *anyopaque) void = null,
         onStartStreaming: ?*const fn (ctx: *anyopaque) JSC.WebCore.DrainResult = null,
-        onReadableStreamAvailable: ?*const fn (ctx: *anyopaque, readable: JSC.WebCore.ReadableStream) void = null,
+        onReadableStreamAvailable: ?*const fn (ctx: *anyopaque, globalThis: *JSC.JSGlobalObject, readable: JSC.WebCore.ReadableStream) void = null,
         size_hint: Blob.SizeType = 0,
 
         deinit: bool = false,
@@ -532,7 +532,7 @@ pub const Body = struct {
                     }, globalThis);
 
                     if (locked.onReadableStreamAvailable) |onReadableStreamAvailable| {
-                        onReadableStreamAvailable(locked.task.?, locked.readable.get().?);
+                        onReadableStreamAvailable(locked.task.?, globalThis, locked.readable.get().?);
                     }
 
                     return locked.readable.get().?.value;

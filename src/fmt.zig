@@ -97,6 +97,25 @@ pub inline fn utf16(slice_: []const u16) FormatUTF16 {
     return FormatUTF16{ .buf = slice_ };
 }
 
+/// Debug, this does not handle invalid utf32
+pub inline fn debugUtf32PathFormatter(path: []const u32) DebugUTF32PathFormatter {
+    return DebugUTF32PathFormatter{ .path = path };
+}
+
+pub const DebugUTF32PathFormatter = struct {
+    path: []const u32,
+    pub fn format(this: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+        var path_buf: bun.PathBuffer = undefined;
+        const result = bun.simdutf.convert.utf32.to.utf8.with_errors.le(this.path, &path_buf);
+        const converted = if (result.isSuccessful())
+            path_buf[0..result.count]
+        else
+            "Invalid UTF32!";
+
+        try writer.writeAll(converted);
+    }
+};
+
 pub const FormatUTF16 = struct {
     buf: []const u16,
     path_fmt_opts: ?PathFormatOptions = null,

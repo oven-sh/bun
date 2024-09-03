@@ -1,0 +1,1035 @@
+const std = @import("std");
+const bun = @import("root").bun;
+const Global = bun.Global;
+const Output = bun.Output;
+const Command = bun.CLI.Command;
+const Install = bun.install;
+const Bin = Install.Bin;
+const PackageManager = Install.PackageManager;
+const Lockfile = Install.Lockfile;
+const PackageID = Install.PackageID;
+const DependencyID = Install.DependencyID;
+const Behavior = Install.Dependency.Behavior;
+const string = bun.string;
+const stringZ = bun.stringZ;
+const libarchive = @import("../libarchive/libarchive.zig").lib;
+const Expr = bun.js_parser.Expr;
+const Semver = @import("../install/semver.zig");
+const File = bun.sys.File;
+const FD = bun.FD;
+const strings = bun.strings;
+const glob = bun.glob;
+const PathBuffer = bun.PathBuffer;
+const DirIterator = bun.DirIterator;
+const Environment = bun.Environment;
+const RunCommand = bun.RunCommand;
+const FileSystem = bun.fs.FileSystem;
+const OOM = bun.OOM;
+
+pub const PackCommand = struct {
+    pub const Context = struct {
+        manager: *PackageManager,
+        allocator: std.mem.Allocator,
+        command_ctx: Command.Context,
+        stats: struct {
+            total_unpacked_size: usize = 0,
+            total_files: usize = 0,
+            ignored_files: usize = 0,
+            ignored_directories: usize = 0,
+        } = .{},
+
+        pub fn printStats(this: *const Context) void {
+            const stats = this.stats;
+            Output.pretty(
+                \\total_unpacked_size: {}
+                \\total_files: {d}
+                \\ignored_files: {d}
+                \\ignored_directories: {d}
+                \\
+            , .{
+                bun.fmt.size(stats.total_unpacked_size),
+                stats.total_files,
+                stats.ignored_files,
+                stats.ignored_directories,
+            });
+        }
+    };
+    pub fn exec(ctx: Command.Context) !void {
+        Output.prettyErrorln("<r><b>bun pack <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+        Output.flush();
+
+        const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .pack);
+
+        const manager, const original_cwd = PackageManager.init(ctx, cli, .pack) catch |err| {
+            if (!cli.silent) {
+                switch (err) {
+                    error.MissingPackageJSON => Output.errGeneric("missing package.json, no package to pack", .{}),
+                    else => Output.errGeneric("failed to initialize bun install: {s}", .{@errorName(err)}),
+                }
+            }
+
+            Global.crash();
+        };
+        defer ctx.allocator.free(original_cwd);
+
+        var pack_ctx: Context = .{
+            .manager = manager,
+            .allocator = ctx.allocator,
+            .command_ctx = ctx,
+        };
+
+        switch (Output.enable_ansi_colors) {
+            inline else => |enable_ansi_colors| {
+                // var arena = std.heap.ArenaAllocator.init(ctx.allocator);
+                // defer arena.deinit();
+
+                if (manager.options.filter_patterns.len > 0) {
+                    // loop, convert, find matching workspaces, then pack each
+                    return;
+                }
+
+                // just pack the current workspace
+                pack(&pack_ctx, manager.original_package_json_path, enable_ansi_colors) catch |err| {
+                    switch (err) {
+                        error.OutOfMemory => bun.outOfMemory(),
+                        error.MissingName, error.MissingVersion => {
+                            Output.errGeneric("invalid package, must have name and version", .{});
+                            Global.crash();
+                        },
+                        error.MissingPackageJSON => {
+                            Output.errGeneric("invalid package, missing package.json", .{});
+                            Global.crash();
+                        },
+                    }
+                };
+            },
+        }
+
+        pack_ctx.printStats();
+    }
+
+    const PackError = OOM || error{
+        MissingName,
+        MissingVersion,
+        MissingPackageJSON,
+    };
+
+    const package_prefix = "package/";
+
+    const root_default_ignore_patterns = [_][]const u32{
+        // TODO: might need more special rules for node_modules due to bundledDependencies
+        &.{ 110, 111, 100, 101, 95, 109, 111, 100, 117, 108, 101, 115 }, // node_modules
+        &.{ 112, 97, 99, 107, 97, 103, 101, 45, 108, 111, 99, 107, 46, 106, 115, 111, 110 }, // package-lock.json
+        &.{ 121, 97, 114, 110, 46, 108, 111, 99, 107 }, // yarn.lock
+        &.{ 112, 110, 112, 109, 45, 108, 111, 99, 107, 46, 121, 97, 109, 108 }, // pnpm-lock.yaml
+        &.{ 'b', 'u', 'n', '.', 'l', 'o', 'c', 'k', 'b' }, // bun.lockb
+    };
+
+    // pattern, can override
+    const default_ignore_patterns = [_]struct { []const u32, bool }{
+        .{ &.{ '.', '*', '.', 's', 'w', 'p' }, true },
+        .{ &.{ 46, 95, 42 }, true }, // "._*",
+        .{ &.{ 46, 68, 83, 95, 83, 116, 111, 114, 101 }, true }, // ".DS_Store",
+        .{ &.{ 46, 103, 105, 116 }, false }, // ".git",
+        .{ &.{ 46, 103, 105, 116, 105, 103, 110, 111, 114, 101 }, true }, // ".gitignore",
+        .{ &.{ 46, 104, 103 }, false }, // ".hg",
+        .{ &.{ 46, 110, 112, 109, 105, 103, 110, 111, 114, 101 }, true }, // ".npmignore",
+        .{ &.{ 46, 110, 112, 109, 114, 99 }, false }, // ".npmrc",
+        .{ &.{ 46, 108, 111, 99, 107, 45, 119, 115, 99, 114, 105, 112, 116 }, true }, // ".lock-wscript",
+        .{ &.{ 46, 115, 118, 110 }, true }, // ".svn",
+        .{ &.{ 46, 119, 97, 102, 112, 105, 99, 107, 108, 101, 45, 42 }, true }, // ".wafpickle-*",
+        .{ &.{ 67, 86, 83 }, true }, // "CVS",
+        .{ &.{ 110, 112, 109, 45, 100, 101, 98, 117, 103, 46, 108, 111, 103 }, true }, // "npm-debug.log",
+
+        // mentioned in the docs but does not appear to be ignored by default
+        // .{ &.{ 99, 111, 110, 102, 105, 103, 46, 103, 121, 112, 105 }, false }, // "config.gypi",
+    };
+
+    const DirInfo = struct {
+        std.fs.Dir, // the dir
+        string, // the dir subpath
+        usize, // dir depth. used to shrink ignore stack
+    };
+
+    fn iterateIncludedProjectTree(
+        ctx: *Context,
+        // includes: []const Pattern,
+        includes: []const stringZ,
+        root_dir_info: DirInfo,
+        comptime close_root_dir: bool,
+    ) OOM!std.ArrayListUnmanaged(stringZ) {
+        const pack_list: std.ArrayListUnmanaged(stringZ) = .{};
+
+        var dirs: std.ArrayListUnmanaged(DirInfo) = .{};
+        defer dirs.deinit(ctx.allocator);
+
+        try dirs.append(ctx.allocator, root_dir_info);
+
+        var included_files: std.ArrayListUnmanaged(stringZ) = .{};
+        defer included_files.deinit(ctx.allocator);
+        var included_dirs: std.ArrayListUnmanaged(stringZ) = .{};
+        defer included_dirs.deinit(ctx.allocator);
+
+        const root_dir_depth = root_dir_info[2];
+        while (dirs.popOrNull()) |dir_info| {
+            var dir, const dir_subpath, const dir_depth = dir_info;
+            defer {
+                if (comptime close_root_dir) {
+                    dir.close();
+                } else if (dir_depth != root_dir_depth) {
+                    dir.close();
+                }
+            }
+
+            var dir_iter = DirIterator.iterate(dir, .u8);
+            while (dir_iter.next().unwrap() catch null) |entry| {
+                if (entry.kind != .file and entry.kind != .directory) continue;
+
+                const entry_name = entry.name.slice();
+                const entry_subpath = try std.fmt.allocPrintZ(ctx.allocator, "{s}{s}{s}", .{
+                    dir_subpath,
+                    if (dir_subpath.len == 0) "" else "/",
+                    entry_name,
+                });
+
+                var included = false;
+                for (includes) |include| {
+                    if (include.dirs_only and entry.kind != .directory) continue;
+                    const match_path = if (!include.rel_path) entry_name else entry_subpath;
+                    switch (glob.matchImpl(include.glob, match_path)) {
+                        .match => {
+                            included = true;
+                        },
+                        .negate_no_match => included = false,
+                    }
+                }
+            }
+        }
+
+        return pack_list;
+    }
+
+    /// Returns an array of filenames to include in the archive
+    fn iterateProjectTree(
+        ctx: *Context,
+        root_dir_info: DirInfo,
+        comptime close_root_dir: bool,
+    ) OOM!std.ArrayListUnmanaged(stringZ) {
+        var pack_list: std.ArrayListUnmanaged(stringZ) = .{};
+
+        var ignores: std.ArrayListUnmanaged(IgnorePatterns) = .{};
+        defer ignores.deinit(ctx.allocator);
+
+        // Stacks and depth-first traversal. Doing so means we can push and pop from
+        // ignore patterns without needing to clone the entire list for future use.
+        var dirs: std.ArrayListUnmanaged(DirInfo) = .{};
+        defer dirs.deinit(ctx.allocator);
+
+        try dirs.append(ctx.allocator, root_dir_info);
+
+        const root_dir_depth = root_dir_info[2];
+        while (dirs.popOrNull()) |dir_info| {
+            var dir, const dir_subpath, const dir_depth = dir_info;
+            defer {
+                if (comptime close_root_dir) {
+                    dir.close();
+                } else if (dir_depth != root_dir_depth) {
+                    dir.close();
+                }
+            }
+
+            while (ignores.items.len != 0) {
+                // pop patterns from files greater than or equal to the current depth.
+                if (ignores.getLast().depth >= dir_depth) {
+                    const last = ignores.pop();
+                    last.deinit(ctx.allocator);
+                    continue;
+                }
+
+                break;
+            }
+
+            if (try IgnorePatterns.readFromDisk(ctx, dir, dir_depth)) |patterns| {
+                try ignores.append(ctx.allocator, patterns);
+            }
+
+            if (comptime Environment.isDebug) {
+                // make sure depths are in order
+                if (ignores.items.len > 0) {
+                    for (1..ignores.items.len) |i| {
+                        bun.assertWithLocation(ignores.items[i - 1].depth < ignores.items[i].depth, @src());
+                    }
+                }
+            }
+
+            var dir_iter = DirIterator.iterate(dir, .u8);
+            while (dir_iter.next().unwrap() catch null) |entry| {
+                if (entry.kind != .file and entry.kind != .directory) continue;
+
+                const entry_name = entry.name.slice();
+                const entry_subpath = try std.fmt.allocPrintZ(ctx.allocator, "{s}{s}{s}", .{
+                    dir_subpath,
+                    if (dir_subpath.len == 0) "" else "/",
+                    entry_name,
+                });
+
+                if (isExcluded(entry, entry_subpath, dir_depth, ignores.items)) |used_pattern_info| {
+                    if (ctx.manager.options.log_level.isVerbose()) {
+                        const pattern, const kind = used_pattern_info;
+                        Output.prettyln("<r><blue>ignore<r><d>[{s}:{}]<r> {s}{s}", .{
+                            @tagName(kind),
+                            bun.fmt.debugUtf32PathFormatter(pattern),
+                            entry_subpath,
+                            if (entry.kind == .directory) "/" else "",
+                        });
+                        Output.flush();
+                    }
+                    continue;
+                }
+
+                switch (entry.kind) {
+                    .file => {
+                        try pack_list.append(ctx.allocator, entry_subpath);
+                    },
+                    .directory => {
+                        const entry_name_z = entry_subpath[entry_subpath.len - entry_name.len ..][0..entry_name.len :0];
+                        const subdir = dir.openDirZ(entry_name_z, .{ .iterate = true }) catch |err| {
+                            Output.warn("failed to open \"{s}\" for packing: {s}", .{ entry_name, @errorName(err) });
+                            ctx.allocator.free(entry_subpath);
+                            continue;
+                        };
+
+                        try dirs.append(ctx.allocator, .{
+                            subdir,
+                            entry_subpath,
+                            dir_depth + 1,
+                        });
+                    },
+                    else => unreachable,
+                }
+            }
+        }
+
+        return pack_list;
+    }
+
+    const BinInfo = struct {
+        path: string,
+        type: Type,
+
+        const Type = enum {
+            file,
+            dir,
+        };
+    };
+
+    fn getPackageBins(
+        ctx: *Context,
+        json: Expr,
+    ) OOM![]const BinInfo {
+        var bins: std.ArrayListUnmanaged(BinInfo) = .{};
+
+        var path_buf: PathBuffer = undefined;
+
+        if (json.asProperty("bin")) |bin| {
+            if (bin.expr.asString(ctx.allocator)) |bin_str| {
+                const normalized = bun.path.normalizeBuf(bin_str, &path_buf, .posix);
+                try bins.append(ctx.allocator, .{
+                    .path = try ctx.allocator.dupe(u8, normalized),
+                    .type = .file,
+                });
+                return bins.items;
+            }
+
+            switch (bin.expr.data) {
+                .e_object => |bin_obj| {
+                    if (bin_obj.properties.len == 0) return &.{};
+
+                    for (bin_obj.properties.slice()) |bin_prop| {
+                        if (bin_prop.value) |bin_prop_value| {
+                            if (bin_prop_value.asString(ctx.allocator)) |bin_str| {
+                                const normalized = bun.path.normalizeBuf(bin_str, &path_buf, .posix);
+                                try bins.append(ctx.allocator, .{
+                                    .path = try ctx.allocator.dupe(u8, normalized),
+                                    .type = .file,
+                                });
+                            }
+                        }
+                    }
+                },
+                else => {},
+            }
+
+            return bins.items;
+        }
+
+        if (json.asProperty("directories")) |directories| {
+            switch (directories.expr.data) {
+                .e_object => |directories_obj| {
+                    if (directories_obj.asProperty("bin")) |bin| {
+                        if (bin.expr.asString(ctx.allocator)) |bin_str| {
+                            const normalized = bun.path.normalizeBuf(bin_str, &path_buf, .posix);
+                            try bins.append(ctx.allocator, .{
+                                .path = try ctx.allocator.dupe(u8, normalized),
+                                .type = .dir,
+                            });
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
+
+        return bins.items;
+    }
+
+    fn isPackageBin(bins: []const BinInfo, maybe_bin_path: string) bool {
+        for (bins) |bin| {
+            switch (bin.type) {
+                .file => {
+                    if (strings.eqlLong(bin.path, maybe_bin_path, true)) {
+                        return true;
+                    }
+                },
+                .dir => {
+                    const bin_without_trailing = strings.withoutTrailingSlash(bin.path);
+                    if (strings.hasPrefix(maybe_bin_path, bin_without_trailing)) {
+                        const remain = maybe_bin_path[bin_without_trailing.len..];
+                        if (remain.len > 1 and remain[0] == '/' and !strings.containsChar(remain[1..], '/')) {
+                            return true;
+                        }
+                    }
+                },
+            }
+        }
+
+        return false;
+    }
+
+    fn isExcluded(
+        entry: DirIterator.IteratorResult,
+        entry_subpath: stringZ,
+        dir_depth: usize,
+        ignores: []const IgnorePatterns,
+    ) ?struct { []const u32, IgnorePatterns.Kind } {
+        const entry_name = entry.name.slice();
+
+        if (dir_depth == 1) {
+
+            // TODO: should this be case insensitive on all platforms?
+            const eql = if (comptime Environment.isLinux)
+                strings.eqlComptime
+            else
+                strings.eqlCaseInsensitiveASCIIICheckLength;
+
+            // first, check files that can never be ignored. project root directory only
+            if (entry.kind == .file and
+                (eql(entry_name, "package.json") or
+                eql(entry_name, "LICENSE") or
+                eql(entry_name, "LICENCE") or
+                eql(entry_name, "README") or
+                entry_name.len > "README.".len and eql(entry_name[0.."README.".len], "README.") or
+                eql(entry_name, "CHANGELOG") or
+                entry_name.len > "CHANGELOG.".len and eql(entry_name[0.."CHANGELOG.".len], "CHANGELOG.")))
+                return null;
+
+            // check default ignores that only apply to the root project directory
+            for (root_default_ignore_patterns) |pattern| {
+                switch (glob.matchImpl(pattern, entry_name)) {
+                    .match => {
+                        // cannot be reversed
+                        return .{
+                            pattern,
+                            .default,
+                        };
+                    },
+
+                    .no_match => {},
+
+                    // default patterns don't use `!`
+                    .negate_no_match => unreachable,
+                    .negate_match => unreachable,
+                }
+            }
+        }
+
+        var ignore_pattern: []const u32 = &.{};
+        var ignore_kind: IgnorePatterns.Kind = .@".npmignore";
+
+        // then check default ignore list. None of the defaults contain slashes
+        // so just match agaist entry name
+        var ignored = false;
+
+        for (default_ignore_patterns) |pattern_info| {
+            const pattern, const can_override = pattern_info;
+            switch (glob.matchImpl(pattern, entry_name)) {
+                .match => {
+                    if (can_override) {
+                        ignored = true;
+                        ignore_pattern = pattern;
+                        ignore_kind = .default;
+
+                        // break. doesnt matter if more default patterns
+                        // match this path
+                        break;
+                    }
+
+                    return .{
+                        pattern,
+                        .default,
+                    };
+                },
+                .no_match => {},
+
+                // default patterns don't use `!`
+                .negate_no_match => unreachable,
+                .negate_match => unreachable,
+            }
+        }
+
+        // lastly, check each .npmignore/.gitignore from root directory to
+        // the current directory.
+        for (ignores) |ignore| {
+            var rel = entry_subpath;
+            if (ignore.has_rel_path) {
+                // trim parent directories up to the directory
+                // containing this ignore file
+                for (1..ignore.depth) |_| {
+                    if (strings.indexOfChar(rel, '/')) |sep| {
+                        rel = rel[sep + 1 ..];
+                    }
+                }
+            }
+            for (ignore.list) |pattern| {
+                if (pattern.dirs_only and entry.kind != .directory) continue;
+
+                const match_path = if (pattern.rel_path) rel else entry_name;
+                switch (glob.matchImpl(pattern.glob, match_path)) {
+                    .match => {
+                        ignored = true;
+                        ignore_pattern = pattern.glob;
+                        ignore_kind = ignore.kind;
+                    },
+                    .negate_no_match => ignored = false,
+                    else => {},
+                }
+            }
+        }
+
+        return if (!ignored)
+            null
+        else
+            .{
+                ignore_pattern,
+                ignore_kind,
+            };
+    }
+
+    fn pack(
+        ctx: *Context,
+        package_json_path: stringZ,
+        comptime enable_ansi_colors: bool,
+    ) PackError!void {
+        _ = enable_ansi_colors;
+        const manager = ctx.manager;
+        const json = switch (manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, package_json_path, .{})) {
+            .read_err => |err| {
+                Output.err(err, "failed to read package.json: {s}", .{package_json_path});
+                Global.crash();
+            },
+            .parse_err => |err| {
+                Output.err(err, "failed to parse package.json: {s}", .{package_json_path});
+                Global.crash();
+            },
+            .entry => |entry| entry,
+        };
+
+        var this_bundler: bun.bundler.Bundler = undefined;
+
+        _ = RunCommand.configureEnvForRun(
+            ctx.command_ctx,
+            &this_bundler,
+            manager.env,
+            manager.options.log_level != .silent,
+            false,
+        ) catch |err| {
+            switch (err) {
+                error.OutOfMemory => |oom| return oom,
+                else => {
+                    Output.errGeneric("failed to run pack scripts due to error: {s}\n", .{@errorName(err)});
+                    Global.crash();
+                },
+            }
+        };
+
+        const postpack_script: ?string = find_pack_scripts: {
+            if (json.root.asProperty("scripts")) |scripts| {
+                if (scripts.expr.data != .e_object) break :find_pack_scripts null;
+
+                if (scripts.expr.get("prepack")) |prepack_script| {
+                    if (prepack_script.asString(ctx.allocator)) |prepack_script_str| {
+                        _ = RunCommand.runPackageScriptForeground(
+                            ctx.command_ctx,
+                            ctx.allocator,
+                            prepack_script_str,
+                            "prepack",
+                            FileSystem.instance.top_level_dir,
+                            this_bundler.env,
+                            &.{},
+                            manager.options.log_level == .silent,
+                            ctx.command_ctx.debug.use_system_shell,
+                        ) catch |err| {
+                            switch (err) {
+                                error.MissingShell => {
+                                    Output.errGeneric("failed to find shell executable to run prepack script", .{});
+                                    Global.crash();
+                                },
+                                error.OutOfMemory => |oom| return oom,
+                            }
+                        };
+                    }
+                }
+
+                if (scripts.expr.get("prepare")) |prepare_script| {
+                    if (prepare_script.asString(ctx.allocator)) |prepare_script_str| {
+                        _ = RunCommand.runPackageScriptForeground(
+                            ctx.command_ctx,
+                            ctx.allocator,
+                            prepare_script_str,
+                            "prepare",
+                            FileSystem.instance.top_level_dir,
+                            this_bundler.env,
+                            &.{},
+                            manager.options.log_level == .silent,
+                            ctx.command_ctx.debug.use_system_shell,
+                        ) catch |err| {
+                            switch (err) {
+                                error.MissingShell => {
+                                    Output.errGeneric("failed to find shell executable to run prepare script", .{});
+                                    Global.crash();
+                                },
+                                error.OutOfMemory => |oom| return oom,
+                            }
+                        };
+                    }
+                }
+
+                if (scripts.expr.get("postpack")) |postpack| {
+                    if (postpack.asString(ctx.allocator)) |postpack_str| {
+                        break :find_pack_scripts postpack_str;
+                    }
+                }
+            }
+
+            break :find_pack_scripts null;
+        };
+
+        const package_json_dir = std.fs.path.dirname(package_json_path) orelse @panic("ooops");
+        var root_dir = root_dir: {
+            var path_buf: PathBuffer = undefined;
+            @memcpy(path_buf[0..package_json_dir.len], package_json_dir);
+            path_buf[package_json_dir.len] = 0;
+            break :root_dir std.fs.openDirAbsoluteZ(path_buf[0..package_json_dir.len :0], .{
+                .iterate = true,
+            }) catch |err| {
+                Output.err(err, "failed to open root directory: {s}\n", .{package_json_dir});
+                Global.crash();
+            };
+        };
+        defer root_dir.close();
+
+        var pack_list: std.ArrayListUnmanaged(stringZ) = pack_list: {
+            if (json.root.get("files")) |files| {
+                files_error: {
+                    if (files.asArray()) |_files_array| {
+                        var includes: std.ArrayListUnmanaged(stringZ) = .{};
+                        defer includes.deinit(ctx.allocator);
+
+                        var files_array = _files_array;
+                        while (files_array.next()) |files_entry| {
+                            if (files_entry.asStringZ(ctx.allocator)) |file_entry_str| {
+                                if (glob.detectGlobSyntax(file_entry_str)) {
+                                    Output.errGeneric("glob syntax is unsupported in package.json `files`", .{});
+                                    Global.crash();
+                                }
+
+                                // TODO: support pattern matching in `files`
+                                // const parsed = try Pattern.fromUTF8(ctx, file_entry_str) orelse continue;
+
+                                try includes.append(ctx.allocator, file_entry_str);
+                                continue;
+                            }
+
+                            break :files_error;
+                        }
+
+                        // break :pack_list try iterateIncludedProjectTree(
+                        //     ctx,
+                        //     includes.items,
+                        //     .{
+                        //         root_dir,
+                        //         "",
+                        //         1,
+                        //     },
+                        //     false,
+                        // );
+                    }
+                }
+
+                Output.errGeneric("expected `files` to be an array of string values", .{});
+                Global.crash();
+            }
+
+            // pack from project root
+            break :pack_list try iterateProjectTree(
+                ctx,
+                .{
+                    root_dir,
+                    "",
+                    1,
+                },
+                false,
+            );
+        };
+        defer pack_list.deinit(ctx.allocator);
+
+        if (manager.options.dry_run) {
+            // don't create the tarball
+            for (pack_list.items) |filename| {
+                Output.prettyln("<r><b><cyan>packing<r> {s}", .{filename});
+            }
+            return;
+        }
+
+        const bins = try getPackageBins(ctx, json.root);
+        defer for (bins) |bin| ctx.allocator.free(bin.path);
+
+        var read_buf: [8192]u8 = undefined;
+
+        var print_buf = std.ArrayList(u8).init(ctx.allocator);
+        defer print_buf.deinit();
+
+        const archive = libarchive.archive_write_new();
+        defer {
+            _ = libarchive.archive_write_close(archive);
+            _ = libarchive.archive_free(archive);
+        }
+        _ = libarchive.archive_write_set_format_pax_restricted(archive);
+        _ = libarchive.archive_write_set_compression_gzip(archive);
+        _ = libarchive.archive_write_add_filter_gzip(archive);
+
+        // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L12
+        _ = libarchive.archive_write_set_filter_option(archive, null, "compression-level", "9");
+
+        const package_name_expr: Expr = json.root.get("name") orelse return error.MissingName;
+        const package_name = package_name_expr.asStringCloned(ctx.allocator) orelse return error.MissingName;
+        defer ctx.allocator.free(package_name);
+
+        const package_version_expr: Expr = json.root.get("version") orelse return error.MissingVersion;
+        const package_version = package_version_expr.asStringCloned(ctx.allocator) orelse return error.MissingVersion;
+        defer ctx.allocator.free(package_version);
+
+        {
+            var dest_buf: PathBuffer = undefined;
+            const tarball_destination_dir = bun.path.joinAbsStringBufZ(
+                FileSystem.instance.top_level_dir,
+                &dest_buf,
+                &.{manager.options.pack_destination},
+                .posix,
+            );
+
+            // create the directory if it doesn't exist
+            std.fs.makeDirAbsoluteZ(tarball_destination_dir) catch {};
+
+            const tarball_name = std.fmt.bufPrint(dest_buf[strings.withoutTrailingSlash(tarball_destination_dir).len..], "/{s}-{s}.tgz\x00", .{
+                package_name,
+                package_version,
+            }) catch {
+                Output.errGeneric("archive destination name too long: \"{s}/{s}-{s}.tgz\"", .{
+                    strings.withoutTrailingSlash(tarball_destination_dir),
+                    package_name,
+                    package_version,
+                });
+                Global.crash();
+            };
+            const tarball_destination: stringZ = dest_buf[0 .. strings.withoutTrailingSlash(tarball_destination_dir).len + tarball_name.len - 1 :0];
+            _ = libarchive.archive_write_open_filename(archive, tarball_destination);
+        }
+
+        var entry = libarchive.archive_entry_new();
+        defer libarchive.archive_entry_free(entry);
+
+        for (pack_list.items) |filename| {
+            const file = File.openat(root_dir, filename, bun.O.RDONLY, 0).unwrap() catch |err| {
+                Output.err(err, "failed to open file: \"{s}\"\n", .{filename});
+                Global.crash();
+            };
+            defer file.close();
+            Output.prettyln("<r><b><cyan>packing<r> {s}", .{filename});
+            Output.flush();
+            entry = try addArchiveEntry(ctx, file, filename, &read_buf, archive, entry, &print_buf, bins);
+        }
+
+        if (postpack_script) |postpack_script_str| {
+            _ = RunCommand.runPackageScriptForeground(
+                ctx.command_ctx,
+                ctx.allocator,
+                postpack_script_str,
+                "postpack",
+                FileSystem.instance.top_level_dir,
+                manager.env,
+                &.{},
+                manager.options.log_level == .silent,
+                ctx.command_ctx.debug.use_system_shell,
+            ) catch |err| {
+                switch (err) {
+                    error.MissingShell => {
+                        Output.errGeneric("failed to find shell executable to run postpack script", .{});
+                        Global.crash();
+                    },
+                    error.OutOfMemory => |oom| return oom,
+                }
+            };
+        }
+    }
+
+    fn addArchiveEntry(
+        ctx: *Context,
+        file: File,
+        filename: stringZ,
+        read_buf: []u8,
+        archive: *libarchive.archive,
+        entry: *libarchive.archive_entry,
+        print_buf: *std.ArrayList(u8),
+        bins: []const BinInfo,
+    ) OOM!*libarchive.archive_entry {
+        const print_buf_writer = print_buf.writer();
+
+        try print_buf_writer.print("{s}{s}\x00", .{ package_prefix, filename });
+        libarchive.archive_entry_set_pathname(entry, print_buf_writer.context.items.ptr);
+        print_buf_writer.context.clearRetainingCapacity();
+
+        const stat = file.stat().unwrap() catch |err| {
+            Output.err(err, "failed to stat file: {}", .{file.handle});
+            Global.crash();
+        };
+        libarchive.archive_entry_set_size(entry, stat.size);
+        libarchive.archive_entry_set_filetype(entry, std.posix.S.IFREG);
+
+        var perm: bun.Mode = stat.mode;
+        if (isPackageBin(bins, filename)) perm |= 0o111;
+        libarchive.archive_entry_set_perm(entry, perm);
+
+        // '1985-10-26T08:15:00.000Z'
+        // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L28
+        libarchive.archive_entry_set_mtime(entry, 499162500, 0);
+
+        _ = libarchive.archive_write_header(archive, entry);
+
+        var read = file.read(read_buf).unwrap() catch |err| {
+            Output.err(err, "failed to read file: {s}", .{filename});
+            Global.crash();
+        };
+        while (read > 0) {
+            ctx.stats.total_unpacked_size += read;
+            _ = libarchive.archive_write_data(archive, read_buf.ptr, read);
+            read = file.read(read_buf).unwrap() catch |err| {
+                Output.err(err, "failed to read file: {s}", .{filename});
+                Global.crash();
+            };
+        }
+
+        ctx.stats.total_files += 1;
+
+        return libarchive.archive_entry_clear(entry);
+    }
+
+    /// A pattern used to ignore or include
+    /// files in the project tree. Might come
+    /// from .npmignore, .gitignore, or `files`
+    /// in package.json
+    const Pattern = struct {
+        glob: []const u32,
+        /// beginning or middle slash (leading slash was trimmed)
+        rel_path: bool,
+        // can only match directories (had an ending slash, also trimmed)
+        dirs_only: bool,
+
+        pub fn fromUTF8(ctx: *Context, pattern: string) OOM!?Pattern {
+            var remain = pattern;
+            const has_leading_or_middle_slash, const has_trailing_slash, const add_negate = check_slashes: {
+                const before_length = remain.len;
+
+                // strip `!` and add one if any existed
+                while (remain.len > 0 and remain[0] == '!') remain = remain[1..];
+
+                const skipped_negate = before_length != remain.len;
+
+                if (remain.len == 0) return null;
+
+                // `**/foo` matches the same as `foo`
+                if (strings.hasPrefixComptime(remain, "**/")) {
+                    remain = remain["**/".len..];
+                    if (remain.len == 0) return null;
+                }
+
+                const trailing_slash = remain[remain.len - 1] == '/';
+                if (trailing_slash) {
+                    // trim trailing slash
+                    remain = remain[0 .. remain.len - 1];
+                    if (remain.len == 0) return null;
+                }
+
+                var leading_or_middle_slash = remain[0] == '/';
+                if (!leading_or_middle_slash) {
+                    // check for middle slash
+                    if (strings.indexOfChar(remain, '/')) |slash_index| {
+                        leading_or_middle_slash = slash_index != remain.len - 1;
+                    }
+                } else {
+                    // trim leading slash
+                    remain = remain[1..];
+                    if (remain.len == 0) return null;
+                }
+
+                break :check_slashes .{ leading_or_middle_slash, trailing_slash, skipped_negate };
+            };
+
+            const length = bun.simdutf.length.utf32.from.utf8.le(remain) + @intFromBool(add_negate);
+            const buf = try ctx.allocator.alloc(u32, length);
+            const result = bun.simdutf.convert.utf8.to.utf32.with_errors.le(remain, buf[@intFromBool(add_negate)..]);
+            if (!result.isSuccessful()) {
+                ctx.allocator.free(buf);
+                return null;
+            }
+
+            if (add_negate) {
+                buf[0] = '!';
+            }
+
+            return .{
+                .glob = buf[0 .. result.count + @intFromBool(add_negate)],
+                .rel_path = has_leading_or_middle_slash,
+                .dirs_only = has_trailing_slash,
+            };
+        }
+
+        pub fn deinit(this: Pattern, allocator: std.mem.Allocator) void {
+            allocator.free(this.glob);
+        }
+    };
+
+    pub const IgnorePatterns = struct {
+        list: []const Pattern,
+        kind: Kind,
+        depth: usize,
+
+        // At least one of the patterns has a leading
+        // or middle slash. A relative path will need to
+        // be created
+        has_rel_path: bool,
+
+        pub const Kind = enum {
+            default,
+            @".npmignore",
+            @".gitignore",
+        };
+
+        pub const List = std.ArrayListUnmanaged(IgnorePatterns);
+
+        fn ignoreFileFail(dir: std.fs.Dir, ignore_kind: Kind, reason: enum { read, open }, err: anyerror) noreturn {
+            var buf: PathBuffer = undefined;
+            const dir_path = bun.getFdPath(dir, &buf) catch "";
+            Output.err(err, "failed to {s} {s} file at: \"{s}{s}{s}\"", .{
+                @tagName(reason),
+                @tagName(ignore_kind),
+                strings.withoutTrailingSlash(dir_path),
+                std.fs.path.sep_str,
+                @tagName(ignore_kind),
+            });
+            Global.crash();
+        }
+
+        fn trimTrailingSpaces(line: string) string {
+            // TODO: copy this function
+            // https://github.com/git/git/blob/17d4b10aea6bda2027047a0e3548a6f8ad667dde/dir.c#L986
+            return line;
+        }
+
+        fn maybeTrimLeadingSpaces(line: string) string {
+            // npm will trim, git will not
+            return line;
+        }
+
+        pub fn readFromDisk(ctx: *Context, dir: std.fs.Dir, dir_depth: usize) OOM!?IgnorePatterns {
+            var patterns: std.ArrayListUnmanaged(Pattern) = .{};
+            errdefer patterns.deinit(ctx.allocator);
+
+            var ignore_kind: Kind = .@".npmignore";
+
+            const ignore_file = dir.openFileZ(".npmignore", .{}) catch |err| ignore_file: {
+                if (err != error.FileNotFound) {
+                    // Crash if the file exists and fails to open. Don't want to create a tarball
+                    // with files you want to ignore.
+                    ignoreFileFail(dir, ignore_kind, .open, err);
+                }
+                ignore_kind = .@".gitignore";
+                break :ignore_file dir.openFileZ(".gitignore", .{}) catch |err2| {
+                    if (err2 != error.FileNotFound) {
+                        ignoreFileFail(dir, ignore_kind, .open, err2);
+                    }
+
+                    return null;
+                };
+            };
+            defer ignore_file.close();
+
+            const contents = File.from(ignore_file).readToEnd(ctx.allocator).unwrap() catch |err| {
+                ignoreFileFail(dir, ignore_kind, .read, err);
+            };
+            defer ctx.allocator.free(contents);
+
+            var has_rel_path = false;
+
+            var iter = std.mem.tokenizeScalar(u8, contents, '\n');
+            while (iter.next()) |line| {
+                if (line.len == 0) continue;
+
+                // comment
+                if (line[0] == '#') continue;
+
+                const trimmed = trimmed: {
+                    var remain = line;
+                    if (remain[remain.len - 1] == '\r') {
+                        remain = remain[0 .. remain.len - 1];
+                    }
+
+                    break :trimmed trimTrailingSpaces(remain);
+                };
+
+                if (trimmed.len == 0) continue;
+
+                const parsed = try Pattern.fromUTF8(ctx, trimmed) orelse continue;
+                try patterns.append(ctx.allocator, parsed);
+
+                has_rel_path = has_rel_path or parsed.rel_path;
+            }
+
+            if (patterns.items.len == 0) return null;
+
+            return .{
+                .list = patterns.items,
+                .kind = ignore_kind,
+                .depth = dir_depth,
+                .has_rel_path = has_rel_path,
+            };
+        }
+
+        pub fn deinit(this: *const IgnorePatterns, allocator: std.mem.Allocator) void {
+            for (this.list) |pattern_info| {
+                allocator.free(pattern_info.glob);
+            }
+            allocator.free(this.list);
+        }
+    };
+};

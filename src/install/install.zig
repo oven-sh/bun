@@ -140,7 +140,7 @@ const String = Semver.String;
 const GlobalStringBuilder = @import("../string_builder.zig");
 const SlicedString = Semver.SlicedString;
 const Repository = @import("./repository.zig").Repository;
-const Bin = @import("./bin.zig").Bin;
+pub const Bin = @import("./bin.zig").Bin;
 pub const Dependency = @import("./dependency.zig");
 const Behavior = @import("./dependency.zig").Behavior;
 const FolderResolution = @import("./resolvers/folder_resolver.zig").FolderResolution;
@@ -6896,6 +6896,7 @@ pub const PackageManager = struct {
         } = .{ .nothing = .{} },
 
         filter_patterns: []const string = &.{},
+        pack_destination: string = "",
         // json_output: bool = false,
 
         max_retry_count: u16 = 5,
@@ -7228,6 +7229,7 @@ pub const PackageManager = struct {
                 }
 
                 this.filter_patterns = cli.filters;
+                this.pack_destination = cli.pack_destination;
                 // this.json_output = cli.json_output;
 
                 if (cli.no_cache) {
@@ -8211,10 +8213,18 @@ pub const PackageManager = struct {
         patch,
         @"patch-commit",
         outdated,
+        pack,
 
         pub fn canGloballyInstallPackages(this: Subcommand) bool {
             return switch (this) {
                 .install, .update, .add => true,
+                else => false,
+            };
+        }
+
+        pub fn supportsWorkspaceFiltering(this: Subcommand) bool {
+            return switch (this) {
+                .outdated, .pack => true,
                 else => false,
             };
         }
@@ -9147,6 +9157,12 @@ pub const PackageManager = struct {
         clap.parseParam("<POS> ...                              Package patterns to filter by") catch unreachable,
     });
 
+    const pack_params: []const ParamType = &(install_params_ ++ [_]ParamType{
+        clap.parseParam("--filter <STR>...                      Pack each matching workspace") catch unreachable,
+        clap.parseParam("--pack-destination <STR>               The directory the tarball will be saved in") catch unreachable,
+        clap.parseParam("<POS> ...                              ") catch unreachable,
+    });
+
     pub const CommandLineArguments = struct {
         registry: string = "",
         cache_dir: string = "",
@@ -9176,6 +9192,8 @@ pub const PackageManager = struct {
         latest: bool = false,
         // json_output: bool = false,
         filters: []const string = &.{},
+
+        pack_destination: string = "",
 
         link_native_bins: []const string = &[_]string{},
 
@@ -9434,6 +9452,24 @@ pub const PackageManager = struct {
                     Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
                     Output.flush();
                 },
+                .pack => {
+                    const intro_text =
+                        \\<b>Usage<r>: <b><green>bun pack<r> <cyan>[flags]<r>
+                    ;
+
+                    const outro_text =
+                        \\<b>Examples:<r>
+                        \\  <b><green>bun pack<r>
+                        \\
+                    ;
+
+                    Output.pretty("\n" ++ intro_text ++ "\n", .{});
+                    Output.flush();
+                    Output.pretty("\n<b>Flags:<r>", .{});
+                    clap.simpleHelp(PackageManager.pack_params);
+                    Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
+                    Output.flush();
+                },
             }
         }
 
@@ -9451,6 +9487,7 @@ pub const PackageManager = struct {
                 .patch => patch_params,
                 .@"patch-commit" => patch_commit_params,
                 .outdated => outdated_params,
+                .pack => pack_params,
             };
 
             var diag = clap.Diagnostic{};
@@ -9486,11 +9523,21 @@ pub const PackageManager = struct {
             cli.trusted = args.flag("--trust");
             cli.no_summary = args.flag("--no-summary");
 
+            // commands that support --filter
+            if (comptime subcommand.supportsWorkspaceFiltering()) {
+                cli.filters = args.options("--filter");
+            }
+
             if (comptime subcommand == .outdated) {
                 // fake --dry-run, we don't actually resolve+clean the lockfile
                 cli.dry_run = true;
                 // cli.json_output = args.flag("--json");
-                cli.filters = args.options("--filter");
+            }
+
+            if (comptime subcommand == .pack) {
+                if (args.option("--pack-destination")) |dest| {
+                    cli.pack_destination = dest;
+                }
             }
 
             // link and unlink default to not saving, all others default to

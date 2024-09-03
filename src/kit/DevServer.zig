@@ -106,7 +106,7 @@ pub fn init(options: Options) *DevServer {
             .hostname = options.listen_config.host orelse "localhost",
         },
         .loaders = loaders,
-        .bundle_thread = .{},
+        .bundle_thread = BundleThread.uninitialized,
         .server_global = undefined,
         .vm = undefined,
         .dump_dir = dump_dir,
@@ -370,8 +370,7 @@ fn getOrEnqueueBundle(
                 .handlers = .{ .first = cb },
             });
             bundle.* = .{ .pending = task };
-            dev.bundle_thread.queue.push(task);
-            dev.bundle_thread.waker.?.wake();
+            dev.bundle_thread.enqueue(task);
         },
         .pending => |task| {
             const cb = BundleTask.DeferredRequest.newNode(resp, kind.initAnyContext(ctx));

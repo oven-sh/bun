@@ -8,7 +8,7 @@ find_command(
   PATHS
     $ENV{HOME}/.bun/bin
   VERSION
-    >=1.1.24
+    >=1.1.0
 )
 
 if(CMAKE_HOST_WIN32)

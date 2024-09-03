@@ -85,7 +85,7 @@ void FunctionTemplate::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(fn, info());
     Base::visitChildren(fn, visitor);
 
-    visitor.append(fn->__internals.data);
+    visitor.append(fn->__internals.m_data);
 }
 
 DEFINE_VISIT_CHILDREN(FunctionTemplate);
@@ -108,7 +108,7 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
         args[i + 1] = argValue.tagged();
     }
 
-    Local<Value> data = hs.createLocal<Value>(vm, functionTemplate->__internals.data.get());
+    Local<Value> data = hs.createLocal<Value>(vm, functionTemplate->__internals.m_data.get());
 
     ImplicitArgs implicit_args = {
         .holder = nullptr,
@@ -124,7 +124,7 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
 
     FunctionCallbackInfo<Value> info(&implicit_args, args.data() + 1, callFrame->argumentCount());
 
-    functionTemplate->__internals.callback(info);
+    functionTemplate->__internals.m_callback(info);
 
     if (implicit_args.return_value.type() != TaggedPointer::Type::Smi && implicit_args.return_value.getPtr() == nullptr) {
         // callback forgot to set a return value, so return undefined

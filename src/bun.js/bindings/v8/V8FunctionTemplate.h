@@ -104,25 +104,26 @@ public:
 
     FunctionCallback callback() const
     {
-        return __internals.callback;
+        return __internals.m_callback;
     }
 
 private:
     class Internals {
     private:
-        FunctionCallback callback;
-        JSC::WriteBarrier<JSC::Unknown> data;
+        FunctionCallback m_callback;
+        JSC::WriteBarrier<JSC::Unknown> m_data;
 
-        Internals(FunctionCallback callback_, JSC::VM& vm, FunctionTemplate* owner, JSC::JSValue data_)
-            : callback(callback_)
-            , data(vm, owner, data_)
+        Internals(FunctionCallback callback, JSC::VM& vm, FunctionTemplate* owner, JSC::JSValue data)
+            : m_callback(callback)
+            , m_data(vm, owner, data)
         {
         }
 
         friend class FunctionTemplate;
     };
 
-    // only use from functions called directly on FunctionTemplate
+    // Only access this directly in functions called by JSC code, or on a valid v8::FunctionTemplate
+    // pointer. In functions called on a Local<FunctionTemplate>, use internals()
     Internals __internals;
 
     FunctionTemplate* localToObjectPointer()
@@ -135,7 +136,8 @@ private:
         return reinterpret_cast<const Data*>(this)->localToObjectPointer<FunctionTemplate>();
     }
 
-    // only use from functions called on Local<FunctionTemplate>
+    // Only call this in functions called on a Local<FunctionTemplate>. When you have a valid
+    // v8::FunctionTemplate pointer, use __internals
     Internals& internals()
     {
         return localToObjectPointer()->__internals;
@@ -148,8 +150,6 @@ private:
         , Base(vm, structure, functionCall, JSC::callHostFunctionAsConstructor)
     {
     }
-
-    // some kind of static trampoline
 };
 
 }

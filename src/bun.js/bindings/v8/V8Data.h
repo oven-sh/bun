@@ -56,7 +56,7 @@ public:
             }
 
             ObjectLayout* v8_object = reinterpret_cast<ObjectLayout*>(raw_ptr);
-            if (v8_object->map()->instance_type == InstanceType::HeapNumber) {
+            if (v8_object->map()->m_instanceType == InstanceType::HeapNumber) {
                 return JSC::jsDoubleNumber(v8_object->asDouble());
             } else {
                 return JSC::JSValue(v8_object->asCell());

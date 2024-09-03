@@ -29,11 +29,11 @@ void HandleScopeBuffer::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    WTF::Locker locker { thisObject->gc_lock };
+    WTF::Locker locker { thisObject->m_gcLock };
 
-    for (auto& handle : thisObject->storage) {
+    for (auto& handle : thisObject->m_storage) {
         if (handle.isCell()) {
-            visitor.append(handle.object.contents.cell);
+            visitor.append(handle.m_object.m_contents.cell);
         }
     }
 }
@@ -42,30 +42,30 @@ DEFINE_VISIT_CHILDREN(HandleScopeBuffer);
 
 Handle& HandleScopeBuffer::createEmptyHandle()
 {
-    WTF::Locker locker { gc_lock };
-    storage.append(Handle {});
-    return storage.last();
+    WTF::Locker locker { m_gcLock };
+    m_storage.append(Handle {});
+    return m_storage.last();
 }
 
 TaggedPointer* HandleScopeBuffer::createHandle(JSCell* ptr, const Map* map, JSC::VM& vm)
 {
     auto& handle = createEmptyHandle();
     handle = Handle(map, ptr, vm, this);
-    return &handle.to_v8_object;
+    return &handle.m_toV8Object;
 }
 
 TaggedPointer* HandleScopeBuffer::createSmiHandle(int32_t smi)
 {
     auto& handle = createEmptyHandle();
     handle = Handle(smi);
-    return &handle.to_v8_object;
+    return &handle.m_toV8Object;
 }
 
 TaggedPointer* HandleScopeBuffer::createDoubleHandle(double value)
 {
     auto& handle = createEmptyHandle();
     handle = Handle(value);
-    return &handle.to_v8_object;
+    return &handle.m_toV8Object;
 }
 
 TaggedPointer* HandleScopeBuffer::createHandleFromExistingObject(TaggedPointer address, Isolate* isolate, Handle* reuseHandle)
@@ -74,13 +74,13 @@ TaggedPointer* HandleScopeBuffer::createHandleFromExistingObject(TaggedPointer a
     if (address.getSmi(smi)) {
         if (reuseHandle) {
             *reuseHandle = Handle(smi);
-            return &reuseHandle->to_v8_object;
+            return &reuseHandle->m_toV8Object;
         } else {
             return createSmiHandle(smi);
         }
     } else {
         auto* v8_object = address.getPtr<ObjectLayout>();
-        if (v8_object->tagged_map.getPtr<Map>()->instance_type == InstanceType::Oddball) {
+        if (v8_object->m_taggedMap.getPtr<Map>()->m_instanceType == InstanceType::Oddball) {
             // find which oddball this is
             for (auto& root : isolate->m_roots) {
                 if (root == address) {
@@ -91,7 +91,7 @@ TaggedPointer* HandleScopeBuffer::createHandleFromExistingObject(TaggedPointer a
         }
         if (reuseHandle) {
             *reuseHandle = Handle(v8_object->map(), v8_object->asCell(), vm(), this);
-            return &reuseHandle->to_v8_object;
+            return &reuseHandle->m_toV8Object;
         } else {
             return createHandle(v8_object->asCell(), v8_object->map(), vm());
         }
@@ -101,11 +101,11 @@ TaggedPointer* HandleScopeBuffer::createHandleFromExistingObject(TaggedPointer a
 void HandleScopeBuffer::clear()
 {
     // detect use-after-free of handles
-    WTF::Locker locker { gc_lock };
-    for (auto& handle : storage) {
+    WTF::Locker locker { m_gcLock };
+    for (auto& handle : m_storage) {
         handle = Handle();
     }
-    storage.clear();
+    m_storage.clear();
 }
 
 }

@@ -23,14 +23,14 @@ enum class InstanceType : uint16_t {
 // V8's description of the structure of an object
 struct Map {
     // the structure of the map itself (always points to map_map)
-    TaggedPointer meta_map;
+    TaggedPointer m_metaMap;
     // TBD whether we need to put anything here to please inlined V8 functions
-    uint32_t unused;
+    uint32_t m_unused;
     // describes which kind of object this is. we shouldn't actually need to create very many
     // instance types -- only ones for primitives, and one to make sure V8 thinks it cannot take the
     // fast path when accessing internal fields
     // (v8::internal::Internals::CanHaveInternalField, in v8-internal.h)
-    InstanceType instance_type;
+    InstanceType m_instanceType;
 
     // Since maps are V8 objects, they each also have a map pointer at the start, which is this one
     static const Map map_map;
@@ -46,16 +46,16 @@ struct Map {
     // are numbers.
     static const Map heap_number_map;
 
-    Map(InstanceType instance_type_)
-        : meta_map(const_cast<Map*>(&map_map))
-        , unused(0xaaaaaaaa)
-        , instance_type(instance_type_)
+    Map(InstanceType instance_type)
+        : m_metaMap(const_cast<Map*>(&map_map))
+        , m_unused(0xaaaaaaaa)
+        , m_instanceType(instance_type)
     {
     }
 };
 
 static_assert(sizeof(Map) == 16, "Map has wrong layout");
-static_assert(offsetof(Map, meta_map) == 0, "Map has wrong layout");
-static_assert(offsetof(Map, instance_type) == 12, "Map has wrong layout");
+static_assert(offsetof(Map, m_metaMap) == 0, "Map has wrong layout");
+static_assert(offsetof(Map, m_instanceType) == 12, "Map has wrong layout");
 
 }

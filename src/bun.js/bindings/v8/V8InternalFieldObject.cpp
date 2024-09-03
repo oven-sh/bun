@@ -29,7 +29,7 @@ void InternalFieldObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    for (auto& value : thisObject->fields) {
+    for (auto& value : thisObject->m_fields) {
         visitor.append(value);
     }
 }

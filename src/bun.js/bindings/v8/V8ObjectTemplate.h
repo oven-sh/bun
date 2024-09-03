@@ -44,12 +44,13 @@ public:
 
 private:
     class Internals {
-        int internalFieldCount = 0;
-        JSC::LazyProperty<ObjectTemplate, JSC::Structure> objectStructure;
+        int m_internalFieldCount = 0;
+        JSC::LazyProperty<ObjectTemplate, JSC::Structure> m_objectStructure;
         friend class ObjectTemplate;
     };
 
-    // do not use directly inside exported V8 functions, use internals()
+    // Only access this directly in functions called by JSC code, or on a valid v8::ObjectTemplate
+    // pointer. In functions called on a Local<ObjectTemplate>, use internals()
     Internals __internals;
 
     ObjectTemplate* localToObjectPointer()
@@ -62,6 +63,8 @@ private:
         return reinterpret_cast<const Data*>(this)->localToObjectPointer<ObjectTemplate>();
     }
 
+    // Only call this in functions called on a Local<ObjectTemplate>. When you have a valid
+    // v8::ObjectTemplate pointer, use __internals
     Internals& internals()
     {
         return localToObjectPointer()->__internals;

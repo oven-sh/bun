@@ -37,17 +37,19 @@ public:
 
     FunctionTemplate* functionTemplate() const
     {
-        return __internals.functionTemplate.get();
+        return __internals.m_functionTemplate.get();
     }
 
 private:
     class Internals {
     private:
-        JSC::WriteBarrier<FunctionTemplate> functionTemplate;
+        JSC::WriteBarrier<FunctionTemplate> m_functionTemplate;
         friend class Function;
         friend class FunctionTemplate;
     };
 
+    // Only access this directly in functions called by JSC code, or on a valid v8::Function
+    // pointer. In functions called on a Local<Function>, use internals()
     Internals __internals;
 
     Function(JSC::VM& vm, JSC::Structure* structure)
@@ -65,6 +67,8 @@ private:
         return reinterpret_cast<const Data*>(this)->localToObjectPointer<Function>();
     }
 
+    // Only call this in functions called on a Local<Function>. When you have a valid v8::Function
+    // pointer, use __internals
     Internals& internals()
     {
         return localToObjectPointer()->__internals;

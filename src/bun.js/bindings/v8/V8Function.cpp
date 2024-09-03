@@ -37,7 +37,7 @@ void Function::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(fn, info());
     Base::visitChildren(fn, visitor);
 
-    visitor.append(fn->__internals.functionTemplate);
+    visitor.append(fn->__internals.m_functionTemplate);
 }
 
 DEFINE_VISIT_CHILDREN(Function);
@@ -52,7 +52,7 @@ Function* Function::create(VM& vm, Structure* structure, FunctionTemplate* funct
 void Function::finishCreation(VM& vm, FunctionTemplate* functionTemplate)
 {
     Base::finishCreation(vm, 0, "Function"_s);
-    __internals.functionTemplate.set(vm, this, functionTemplate);
+    __internals.m_functionTemplate.set(vm, this, functionTemplate);
 }
 
 void Function::SetName(Local<String> name)

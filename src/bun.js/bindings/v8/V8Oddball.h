@@ -14,13 +14,13 @@ struct Oddball {
         kFalse = 0,
     };
 
-    TaggedPointer map;
-    uintptr_t unused[4];
-    TaggedPointer kind;
+    TaggedPointer m_map;
+    uintptr_t m_unused[4];
+    TaggedPointer m_kind;
 
-    Oddball(Kind kind_)
-        : map(const_cast<Map*>(&Map::oddball_map))
-        , kind(TaggedPointer(static_cast<int>(kind_)))
+    Oddball(Kind kind)
+        : m_map(const_cast<Map*>(&Map::oddball_map))
+        , m_kind(TaggedPointer(static_cast<int>(kind)))
     {
     }
 };

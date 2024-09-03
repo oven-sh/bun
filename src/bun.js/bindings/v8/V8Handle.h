@@ -7,38 +7,38 @@ namespace v8 {
 class ObjectLayout {
 private:
     // these two fields are laid out so that V8 can find the map
-    TaggedPointer tagged_map;
+    TaggedPointer m_taggedMap;
     union {
         JSC::WriteBarrier<JSC::JSCell> cell;
         double number;
-    } contents;
+    } m_contents;
 
 public:
     ObjectLayout()
         // using a smi value for map is most likely to catch bugs as almost every access will expect
         // map to be a pointer (and even if the assertion is bypassed, it'll be a null pointer)
-        : tagged_map(0)
-        , contents({ .cell = {} })
+        : m_taggedMap(0)
+        , m_contents({ .cell = {} })
     {
     }
 
     ObjectLayout(const Map* map_ptr, JSC::JSCell* cell, JSC::VM& vm, const JSC::JSCell* owner)
-        : tagged_map(const_cast<Map*>(map_ptr))
-        , contents({ .cell = JSC::WriteBarrier<JSC::JSCell>(vm, owner, cell) })
+        : m_taggedMap(const_cast<Map*>(map_ptr))
+        , m_contents({ .cell = JSC::WriteBarrier<JSC::JSCell>(vm, owner, cell) })
     {
     }
 
     ObjectLayout(double number)
-        : tagged_map(const_cast<Map*>(&Map::heap_number_map))
-        , contents({ .number = number })
+        : m_taggedMap(const_cast<Map*>(&Map::heap_number_map))
+        , m_contents({ .number = number })
     {
     }
 
-    const Map* map() const { return tagged_map.getPtr<Map>(); }
+    const Map* map() const { return m_taggedMap.getPtr<Map>(); }
 
-    double asDouble() const { return contents.number; }
+    double asDouble() const { return m_contents.number; }
 
-    JSC::JSCell* asCell() const { return contents.cell.get(); }
+    JSC::JSCell* asCell() const { return m_contents.cell.get(); }
 
     friend class Handle;
     friend class HandleScopeBuffer;
@@ -58,25 +58,25 @@ public:
 //   the third field to get the actual object (either a JSCell* or a void*, depending on whether map
 //   points to Map::object_map or Map::raw_ptr_map).
 struct Handle {
-    static_assert(offsetof(ObjectLayout, tagged_map) == 0, "ObjectLayout is wrong");
-    static_assert(offsetof(ObjectLayout, contents) == 8, "ObjectLayout is wrong");
+    static_assert(offsetof(ObjectLayout, m_taggedMap) == 0, "ObjectLayout is wrong");
+    static_assert(offsetof(ObjectLayout, m_contents) == 8, "ObjectLayout is wrong");
     static_assert(sizeof(ObjectLayout) == 16, "ObjectLayout is wrong");
 
     Handle(const Map* map, JSC::JSCell* cell, JSC::VM& vm, const JSC::JSCell* owner)
-        : to_v8_object(&this->object)
-        , object(map, cell, vm, owner)
+        : m_toV8Object(&this->m_object)
+        , m_object(map, cell, vm, owner)
     {
     }
 
     Handle(double number)
-        : to_v8_object(&this->object)
-        , object(number)
+        : m_toV8Object(&this->m_object)
+        , m_object(number)
     {
     }
 
     Handle(int32_t smi)
-        : to_v8_object(smi)
-        , object()
+        : m_toV8Object(smi)
+        , m_object()
     {
     }
 
@@ -86,34 +86,34 @@ struct Handle {
     }
 
     Handle(const ObjectLayout* that)
-        : to_v8_object(&this->object)
+        : m_toV8Object(&this->m_object)
     {
-        object = *that;
+        m_object = *that;
     }
 
     Handle& operator=(const Handle& that)
     {
-        object = that.object;
-        if (that.to_v8_object.type() == TaggedPointer::Type::Smi) {
-            to_v8_object = that.to_v8_object;
+        m_object = that.m_object;
+        if (that.m_toV8Object.type() == TaggedPointer::Type::Smi) {
+            m_toV8Object = that.m_toV8Object;
         } else {
-            to_v8_object = &this->object;
+            m_toV8Object = &this->m_object;
         }
         return *this;
     }
 
     Handle()
-        : to_v8_object(0)
-        , object()
+        : m_toV8Object(0)
+        , m_object()
     {
     }
 
     bool isCell() const
     {
-        if (to_v8_object.type() == TaggedPointer::Type::Smi) {
+        if (m_toV8Object.type() == TaggedPointer::Type::Smi) {
             return false;
         }
-        const Map* map_ptr = object.map();
+        const Map* map_ptr = m_object.map();
         // TODO(@190n) exhaustively switch on InstanceType
         if (map_ptr == &Map::object_map || map_ptr == &Map::string_map) {
             return true;
@@ -122,13 +122,13 @@ struct Handle {
             return false;
         } else {
             RELEASE_ASSERT_NOT_REACHED("unknown Map at %p with instance type %" PRIx16,
-                map_ptr, map_ptr->instance_type);
+                map_ptr, map_ptr->m_instanceType);
         }
     }
 
     // if not SMI, holds &this->map so that V8 can see what kind of object this is
-    TaggedPointer to_v8_object;
-    ObjectLayout object;
+    TaggedPointer m_toV8Object;
+    ObjectLayout m_object;
 };
 
 }

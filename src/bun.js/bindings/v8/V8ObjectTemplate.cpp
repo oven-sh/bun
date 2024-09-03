@@ -17,7 +17,7 @@ namespace v8 {
 void ObjectTemplate::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    __internals.objectStructure.initLater([](const LazyProperty<ObjectTemplate, Structure>::Initializer& init) {
+    __internals.m_objectStructure.initLater([](const LazyProperty<ObjectTemplate, Structure>::Initializer& init) {
         init.set(JSC::Structure::create(
             init.vm,
             init.owner->globalObject(),
@@ -61,7 +61,7 @@ MaybeLocal<Object> ObjectTemplate::NewInstance(Local<Context> context)
 
     // get a structure
     // must take thisObj because JSC needs the native pointer
-    auto structure = internals().objectStructure.get(thisObj);
+    auto structure = internals().m_objectStructure.get(thisObj);
 
     // create object from it
     // InternalFieldObject needs a Local<ObjectTemplate>, which we can create using the `this`
@@ -80,19 +80,19 @@ void ObjectTemplate::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(fn, info());
     Base::visitChildren(fn, visitor);
 
-    fn->__internals.objectStructure.visit(visitor);
+    fn->__internals.m_objectStructure.visit(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(ObjectTemplate);
 
 void ObjectTemplate::SetInternalFieldCount(int value)
 {
-    internals().internalFieldCount = value;
+    internals().m_internalFieldCount = value;
 }
 
 int ObjectTemplate::InternalFieldCount() const
 {
-    return internals().internalFieldCount;
+    return internals().m_internalFieldCount;
 }
 
 Structure* ObjectTemplate::createStructure(JSC::VM& vm, JSGlobalObject* globalObject, JSValue prototype)

@@ -14,7 +14,7 @@ protected:
     BUN_EXPORT uintptr_t* EscapeSlot(uintptr_t* escape_value);
 
 private:
-    Handle* escape_slot;
+    Handle* m_escapeSlot;
 };
 
 }

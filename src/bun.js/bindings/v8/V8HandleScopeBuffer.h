@@ -56,8 +56,8 @@ public:
     friend class EscapableHandleScopeBase;
 
 private:
-    WTF::Lock gc_lock;
-    WTF::SegmentedVector<Handle, 16> storage;
+    WTF::Lock m_gcLock;
+    WTF::SegmentedVector<Handle, 16> m_storage;
 
     Handle& createEmptyHandle();
 

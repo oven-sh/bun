@@ -12,6 +12,9 @@ const server = Bun.serve({
     }
     if (req.url.endsWith("/buffering")) {
       await req.text();
+    } else if (req.url.endsWith("/buffering+body-getter")) {
+      req.body;
+      await req.text();
     } else if (req.url.endsWith("/streaming")) {
       const reader = req.body?.getReader();
       while (reader) {

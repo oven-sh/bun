@@ -57,6 +57,14 @@ async function callBuffering() {
   }).then(res => res.text());
   expect(result).toBe("Ok");
 }
+
+async function callBufferingBodyGetter() {
+  const result = await fetch(`${url.origin}/buffering+body-getter`, {
+    method: "POST",
+    body: zeroCopyPayload,
+  }).then(res => res.text());
+  expect(result).toBe("Ok");
+}
 async function callStreaming() {
   const result = await fetch(`${url.origin}/streaming`, {
     method: "POST",
@@ -128,6 +136,7 @@ async function calculateMemoryLeak(fn: () => Promise<void>) {
 for (const test_info of [
   ["#10265 should not leak memory when ignoring the body", callIgnore, false, 64],
   ["should not leak memory when buffering the body", callBuffering, false, 64],
+  ["should not leak memory when buffering the body and accessing req.body", callBufferingBodyGetter, false, 64],
   ["should not leak memory when streaming the body", callStreaming, false, 64],
   ["should not leak memory when streaming the body incompletely", callIncompleteStreaming, false, 64],
   ["should not leak memory when streaming the body and echoing it back", callStreamingEcho, false, 64],

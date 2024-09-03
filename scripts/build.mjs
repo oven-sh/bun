@@ -20,6 +20,7 @@ const generateFlags = [
   "-W", // enable warnings (e.g. -Wno-dev)
   "--fresh", // force a fresh build
   "--log-level", // set the log level
+  "--debug-output", // print debug output
 ];
 
 // https://cmake.org/cmake/help/latest/manual/cmake.1.html#generate-a-project-buildsystem

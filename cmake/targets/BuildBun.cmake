@@ -1,31 +1,43 @@
 include(Macros)
 
-macro(WEBKIT_ADD_SOURCE_DEPENDENCIES _source _deps)
-  set(_tmp)
-  get_source_file_property(_tmp ${_source} OBJECT_DEPENDS)
+if(DEBUG)
+  setx(bun bun-debug)
+elseif(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
+  setx(bun bun-smol-profile)
+  setx(bunStrip bun-smol)
+elseif(ENABLE_VALGRIND)
+  setx(bun bun-valgrind)
+elseif(ENABLE_ASSERTIONS)
+  setx(bun bun-assertions)
+else()
+  setx(bun bun-profile)
+  setx(bunStrip bun)
+endif()
 
-  if(NOT _tmp)
-    set(_tmp "")
-  endif()
+setx(bunExe ${bun}${CMAKE_EXECUTABLE_SUFFIX})
 
-  foreach(f ${_deps})
-    list(APPEND _tmp "${f}")
-  endforeach()
+if(bunStrip)
+  setx(buns ${bun} ${bunStrip})
+else()
+  setx(buns ${bun})
+endif()
 
-  set_source_files_properties(${_source} PROPERTIES OBJECT_DEPENDS "${_tmp}")
-  unset(_tmp)
-endmacro()
+if(ENABLE_BASELINE)
+  setx(bunTriplet bun-${OS}-${ARCH}-baseline)
+else()
+  setx(bunTriplet bun-${OS}-${ARCH})
+endif()
 
-add_bun_install(
-  WORKING_DIRECTORY
-    ${CWD}
-)
+# Some commands use this path, and some do not.
+# In the future, change those commands so that generated files are written to this path.
+optionx(CODEGEN_PATH FILEPATH "Path to the codegen directory" DEFAULT ${BUILD_PATH}/codegen)
+
+# --- Codegen ---
 
 set(BUN_ZIG_IDENTIFIER_SOURCE ${CWD}/src/js_lexer)
 set(BUN_ZIG_IDENTIFIER_SCRIPT ${BUN_ZIG_IDENTIFIER_SOURCE}/identifier_data.zig)
 
-file(GLOB BUN_ZIG_IDENTIFIER_SOURCES
-  ${CONFIGURE_DEPENDS}
+file(GLOB BUN_ZIG_IDENTIFIER_SOURCES ${CONFIGURE_DEPENDS}
   ${BUN_ZIG_IDENTIFIER_SCRIPT}
   ${BUN_ZIG_IDENTIFIER_SOURCE}/*.zig
 )
@@ -37,11 +49,9 @@ set(BUN_ZIG_IDENTIFIER_OUTPUTS
   ${BUN_ZIG_IDENTIFIER_SOURCE}/id_start_bitset.meta.blob
 )
 
-add_target(
-  NAME  
-    bun-codegen-identifier-data
-  ALIASES
-    bun-codegen
+register_command(
+  TARGET
+    bun-identifier-data
   COMMENT
     "Generating src/js_lexer/*.blob"
   COMMAND
@@ -53,7 +63,7 @@ add_target(
     ${BUN_ZIG_IDENTIFIER_SOURCES}
   OUTPUTS
     ${BUN_ZIG_IDENTIFIER_OUTPUTS}
-  DEPENDS
+  TARGETS
     clone-zig
 )
 
@@ -67,31 +77,31 @@ file(GLOB BUN_ERROR_SOURCES ${CONFIGURE_DEPENDS}
   ${BUN_ERROR_SOURCE}/img/*
 )
 
+set(BUN_ERROR_OUTPUT ${BUN_ERROR_SOURCE}/dist)
 set(BUN_ERROR_OUTPUTS
-  ${BUN_ERROR_SOURCE}/dist/index.js
-  ${BUN_ERROR_SOURCE}/dist/bun-error.css
+  ${BUN_ERROR_OUTPUT}/index.js
+  ${BUN_ERROR_OUTPUT}/bun-error.css
 )
 
-add_bun_install(
-  WORKING_DIRECTORY
+register_bun_install(
+  CWD
     ${BUN_ERROR_SOURCE}
+  NODE_MODULES_VARIABLE
+    BUN_ERROR_NODE_MODULES
 )
 
-add_target(
-  NAME
-    bun-codegen-bun-error
-  ALIASES
-    bun-codegen
+register_command(
+  TARGET
+    bun-error
   COMMENT
     "Building bun-error"
-  WORKING_DIRECTORY
+  CWD
     ${BUN_ERROR_SOURCE}
   COMMAND
-    ${BUN_EXECUTABLE} x
-    esbuild
+    ${ESBUILD_EXECUTABLE} ${ESBUILD_ARGS}
       index.tsx
       bun-error.css
-      --outdir=dist
+      --outdir=${BUN_ERROR_OUTPUT}
       --define:process.env.NODE_ENV=\"'production'\"
       --minify
       --bundle
@@ -99,25 +109,21 @@ add_target(
       --format=esm
   SOURCES
     ${BUN_ERROR_SOURCES}
+    ${BUN_ERROR_NODE_MODULES}
   OUTPUTS
     ${BUN_ERROR_OUTPUTS}
-  NODE_MODULES
-    ON
 )
 
 set(BUN_FALLBACK_DECODER_SOURCE ${CWD}/src/fallback.ts)
 set(BUN_FALLBACK_DECODER_OUTPUT ${CWD}/src/fallback.out.js)
 
-add_target(
-  NAME
-    bun-codegen-fallback-decoder
-  ALIASES
-    bun-codegen
+register_command(
+  TARGET
+    bun-fallback-decoder
   COMMENT
     "Building src/fallback.out.js"
   COMMAND
-    ${BUN_EXECUTABLE} x
-    esbuild
+    ${ESBUILD_EXECUTABLE} ${ESBUILD_ARGS}
       ${BUN_FALLBACK_DECODER_SOURCE}
       --outfile=${BUN_FALLBACK_DECODER_OUTPUT}
       --target=esnext
@@ -129,23 +135,18 @@ add_target(
     ${BUN_FALLBACK_DECODER_SOURCE}
   OUTPUTS
     ${BUN_FALLBACK_DECODER_OUTPUT}
-  NODE_MODULES
-    ON
 )
 
 set(BUN_RUNTIME_JS_SOURCE ${CWD}/src/runtime.bun.js)
 set(BUN_RUNTIME_JS_OUTPUT ${CWD}/src/runtime.out.js)
 
-add_target(
-  NAME
-    bun-codegen-runtime-js
-  ALIASES
-    bun-codegen
+register_command(
+  TARGET
+    bun-runtime-js
   COMMENT
     "Building src/runtime.out.js"
   COMMAND
-    ${BUN_EXECUTABLE} x
-    esbuild
+    ${ESBUILD_EXECUTABLE} ${ESBUILD_ARGS}
       ${BUN_RUNTIME_JS_SOURCE}
       --outfile=${BUN_RUNTIME_JS_OUTPUT}
       --define:process.env.NODE_ENV=\"'production'\"
@@ -159,14 +160,11 @@ add_target(
     ${BUN_RUNTIME_JS_SOURCE}
   OUTPUTS
     ${BUN_RUNTIME_JS_OUTPUT}
-  NODE_MODULES
-    ON
 )
 
 set(BUN_NODE_FALLBACKS_SOURCE ${CWD}/src/node-fallbacks)
 
-file(GLOB BUN_NODE_FALLBACKS_SOURCES
-  ${CONFIGURE_DEPENDS}
+file(GLOB BUN_NODE_FALLBACKS_SOURCES ${CONFIGURE_DEPENDS}
   ${BUN_NODE_FALLBACKS_SOURCE}/*.js
 )
 
@@ -177,23 +175,25 @@ foreach(source ${BUN_NODE_FALLBACKS_SOURCES})
   list(APPEND BUN_NODE_FALLBACKS_OUTPUTS ${BUN_NODE_FALLBACKS_OUTPUT}/${filename})
 endforeach()
 
-add_bun_install(
-  WORKING_DIRECTORY
+register_bun_install(
+  CWD
     ${BUN_NODE_FALLBACKS_SOURCE}
+  NODE_MODULES_VARIABLE
+    BUN_NODE_FALLBACKS_NODE_MODULES
 )
 
-add_target(
-  NAME
-    bun-codegen-node-fallbacks
-  ALIASES
-    bun-codegen
+# This command relies on an older version of `esbuild`, which is why
+# it uses ${BUN_EXECUTABLE} x instead of ${ESBUILD_EXECUTABLE}.
+register_command(
+  TARGET
+    bun-node-fallbacks
   COMMENT
-    "Building src/node-fallbacks"
-  WORKING_DIRECTORY
+    "Building src/node-fallbacks/*.js"
+  CWD
     ${BUN_NODE_FALLBACKS_SOURCE}
   COMMAND
     ${BUN_EXECUTABLE} x
-    esbuild
+      esbuild ${ESBUILD_ARGS}
       ${BUN_NODE_FALLBACKS_SOURCES}
       --outdir=${BUN_NODE_FALLBACKS_OUTPUT}
       --format=esm
@@ -202,16 +202,10 @@ add_target(
       --platform=browser
   SOURCES
     ${BUN_NODE_FALLBACKS_SOURCES}
+    ${BUN_NODE_FALLBACKS_NODE_MODULES}
   OUTPUTS
     ${BUN_NODE_FALLBACKS_OUTPUTS}
-  NODE_MODULES
-    ON
 )
-
-# TODO: change custom commands defined above this, to use the codegen path instead of in-source 
-optionx(CODEGEN_PATH FILEPATH "Path to the codegen directory" DEFAULT ${BUILD_PATH}/codegen)
-
-# --- ErrorCode.{zig,h} --
 
 set(BUN_ERROR_CODE_SCRIPT ${CWD}/src/codegen/generate-node-errors.ts)
 
@@ -228,11 +222,9 @@ set(BUN_ERROR_CODE_OUTPUTS
   ${CODEGEN_PATH}/ErrorCode.zig
 )
 
-add_target(
-  NAME
-    bun-codegen-error-code
-  ALIASES
-    bun-codegen
+register_command(
+  TARGET
+    bun-error-code
   COMMENT
     "Generating ErrorCode.{zig,h}"
   COMMAND
@@ -245,19 +237,6 @@ add_target(
   OUTPUTS
     ${BUN_ERROR_CODE_OUTPUTS}
 )
-
-# This needs something to force it to be regenerated
-WEBKIT_ADD_SOURCE_DEPENDENCIES(
-  ${CWD}/src/bun.js/bindings/ErrorCode.cpp
-  ${CODEGEN_PATH}/ErrorCode+List.h
-)
-
-WEBKIT_ADD_SOURCE_DEPENDENCIES(
-  ${CWD}/src/bun.js/bindings/ErrorCode.h
-  ${CODEGEN_PATH}/ErrorCode+Data.h
-)
-
-# --- ZigGeneratedClasses.{zig,cpp,h} --
 
 set(BUN_ZIG_GENERATED_CLASSES_SCRIPT ${CWD}/src/codegen/generate-classes.ts)
 
@@ -279,11 +258,9 @@ set(BUN_ZIG_GENERATED_CLASSES_OUTPUTS
   ${CODEGEN_PATH}/ZigGeneratedClasses.zig
 )
 
-add_target(
-  NAME
-    bun-codegen-zig-generated-classes
-  ALIASES
-    bun-codegen
+register_command(
+  TARGET
+    bun-zig-generated-classes
   COMMENT
     "Generating ZigGeneratedClasses.{zig,cpp,h}"
   COMMAND
@@ -301,14 +278,12 @@ add_target(
 
 set(BUN_JAVASCRIPT_CODEGEN_SCRIPT ${CWD}/src/codegen/bundle-modules.ts)
 
-file(GLOB_RECURSE BUN_JAVASCRIPT_SOURCES
-  ${CONFIGURE_DEPENDS}
+file(GLOB_RECURSE BUN_JAVASCRIPT_SOURCES ${CONFIGURE_DEPENDS}
   ${CWD}/src/js/*.js
   ${CWD}/src/js/*.ts
 )
 
-file(GLOB BUN_JAVASCRIPT_CODEGEN_SOURCES
-  ${CONFIGURE_DEPENDS}
+file(GLOB BUN_JAVASCRIPT_CODEGEN_SOURCES ${CONFIGURE_DEPENDS}
   ${CWD}/src/codegen/*.ts
 )
 
@@ -331,11 +306,9 @@ set(BUN_JAVASCRIPT_OUTPUTS
   ${CWD}/src/bun.js/bindings/GeneratedJS2Native.zig
 )
 
-add_target(
-  NAME
-    bun-codegen-js-modules
-  ALIASES
-    bun-codegen
+register_command(
+  TARGET
+    bun-js-modules
   COMMENT
     "Generating JavaScript modules"
   COMMAND
@@ -352,11 +325,6 @@ add_target(
     ${BUN_JAVASCRIPT_OUTPUTS}
 )
 
-WEBKIT_ADD_SOURCE_DEPENDENCIES(
-  ${CWD}/src/bun.js/bindings/InternalModuleRegistry.cpp
-  ${CODEGEN_PATH}/InternalModuleRegistryConstants.h
-)
-
 set(BUN_JS_SINK_SCRIPT ${CWD}/src/codegen/generate-jssink.ts)
 
 set(BUN_JS_SINK_SOURCES
@@ -370,11 +338,9 @@ set(BUN_JS_SINK_OUTPUTS
   ${CODEGEN_PATH}/JSSink.lut.h
 )
 
-add_target(
-  NAME
-    bun-codegen-js-sink
-  ALIASES
-    bun-codegen
+register_command(
+  TARGET
+    bun-js-sink
   COMMENT
     "Generating JSSink.{cpp,h}"
   COMMAND
@@ -408,6 +374,22 @@ set(BUN_OBJECT_LUT_OUTPUTS
   ${CODEGEN_PATH}/ProcessBindingNatives.lut.h
 )
 
+macro(WEBKIT_ADD_SOURCE_DEPENDENCIES _source _deps)
+  set(_tmp)
+  get_source_file_property(_tmp ${_source} OBJECT_DEPENDS)
+
+  if(NOT _tmp)
+    set(_tmp "")
+  endif()
+
+  foreach(f ${_deps})
+    list(APPEND _tmp "${f}")
+  endforeach()
+
+  set_source_files_properties(${_source} PROPERTIES OBJECT_DEPENDS "${_tmp}")
+  unset(_tmp)
+endmacro()
+
 list(LENGTH BUN_OBJECT_LUT_SOURCES BUN_OBJECT_LUT_SOURCES_COUNT)
 math(EXPR BUN_OBJECT_LUT_SOURCES_MAX_INDEX "${BUN_OBJECT_LUT_SOURCES_COUNT} - 1")
 
@@ -416,12 +398,9 @@ foreach(i RANGE 0 ${BUN_OBJECT_LUT_SOURCES_MAX_INDEX})
   list(GET BUN_OBJECT_LUT_OUTPUTS ${i} BUN_OBJECT_LUT_OUTPUT)
 
   get_filename_component(filename ${BUN_OBJECT_LUT_SOURCE} NAME_WE)
-  add_target(
-    NAME
+  register_command(
+    TARGET
       bun-codegen-lut-${filename}
-    ALIASES
-      bun-codegen-lut
-      bun-codegen
     COMMENT
       "Generating ${filename}.lut.h"
     COMMAND
@@ -441,6 +420,186 @@ foreach(i RANGE 0 ${BUN_OBJECT_LUT_SOURCES_MAX_INDEX})
 endforeach()
 
 WEBKIT_ADD_SOURCE_DEPENDENCIES(
+  ${CWD}/src/bun.js/bindings/ErrorCode.cpp
+  ${CODEGEN_PATH}/ErrorCode+List.h
+)
+
+WEBKIT_ADD_SOURCE_DEPENDENCIES(
+  ${CWD}/src/bun.js/bindings/ErrorCode.h
+  ${CODEGEN_PATH}/ErrorCode+Data.h
+)
+
+WEBKIT_ADD_SOURCE_DEPENDENCIES(
   ${CWD}/src/bun.js/bindings/ZigGlobalObject.cpp
   ${CODEGEN_PATH}/ZigGlobalObject.lut.h
 )
+
+WEBKIT_ADD_SOURCE_DEPENDENCIES(
+  ${CWD}/src/bun.js/bindings/InternalModuleRegistry.cpp
+  ${CODEGEN_PATH}/InternalModuleRegistryConstants.h
+)
+
+# --- Zig ---
+
+file(GLOB_RECURSE BUN_ZIG_SOURCES ${CONFIGURE_DEPENDS}
+  ${CWD}/*.zig
+  ${CWD}/src/*.zig
+)
+
+list(APPEND BUN_ZIG_SOURCES
+  ${BUN_ZIG_IDENTIFIER_OUTPUTS}
+  ${BUN_ERROR_OUTPUTS}
+  ${BUN_FALLBACK_DECODER_OUTPUT}
+  ${BUN_RUNTIME_JS_OUTPUT}
+  ${BUN_NODE_FALLBACKS_OUTPUTS}
+  ${BUN_ERROR_CODE_OUTPUTS}
+  ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}
+  ${BUN_JAVASCRIPT_OUTPUTS}
+)
+
+set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.o)
+
+# TODO: change build.zig to support ON/OFF as a boolean argument
+if(ENABLE_LOGS)
+  set(ZIG_ENABLE_LOGS "true")
+else()
+  set(ZIG_ENABLE_LOGS "false")
+endif()
+
+register_command(
+  TARGET
+    bun-zig
+  GROUP
+    console
+  COMMENT
+    "Building Zig object"
+  COMMAND
+    ${CMAKE_ZIG_COMPILER}
+      build obj
+      ${CMAKE_ZIG_FLAGS}
+      --prefix ${BUILD_PATH}
+      -Dobj_format=${ZIG_OBJECT_FORMAT}
+      -Dtarget=${ZIG_TARGET}
+      -Doptimize=${ZIG_OPTIMIZE}
+      -Dcpu=${CPU}
+      -Denable_logs=$<IF:$<BOOL:${ENABLE_LOGS}>,true,false>
+      -Dversion=${VERSION}
+      -Dsha=${REVISION}
+      -Dreported_nodejs_version=${NODEJS_VERSION}
+      -Dcanary=${CANARY_REVISION}
+      -Dgenerated-code=${CODEGEN_PATH}
+  OUTPUTS
+    ${BUN_ZIG_OUTPUT}
+  SOURCES
+    ${BUN_ZIG_SOURCES}
+  TARGETS
+    clone-zig
+)
+
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
+
+# --- C/C++ ---
+
+set(BUN_DEPS_SOURCE ${CWD}/src/deps)
+set(BUN_USOCKETS_SOURCE ${CWD}/packages/bun-usockets)
+
+file(GLOB BUN_CXX_SOURCES ${CONFIGURE_DEPENDS}
+  ${CWD}/src/io/*.cpp
+  ${CWD}/src/bun.js/modules/*.cpp
+  ${CWD}/src/bun.js/bindings/*.cpp
+  ${CWD}/src/bun.js/bindings/webcore/*.cpp
+  ${CWD}/src/bun.js/bindings/sqlite/*.cpp
+  ${CWD}/src/bun.js/bindings/webcrypto/*.cpp
+  ${CWD}/src/bun.js/bindings/webcrypto/*/*.cpp
+  ${CWD}/src/bun.js/bindings/v8/*.cpp
+  ${BUN_USOCKETS_SOURCE}/src/crypto/*.cpp
+  ${BUN_DEPS_SOURCE}/*.cpp
+)
+
+file(GLOB BUN_C_SOURCES ${CONFIGURE_DEPENDS}
+  ${BUN_USOCKETS_SOURCE}/src/*.c
+  ${BUN_USOCKETS_SOURCE}/src/eventing/*.c
+  ${BUN_USOCKETS_SOURCE}/src/internal/*.c
+  ${BUN_USOCKETS_SOURCE}/src/crypto/*.c
+  ${BUN_DEPS_SOURCE}/picohttpparser/picohttpparser.c
+)
+
+if(WIN32)
+  list(APPEND BUN_C_SOURCES ${CWD}/src/bun.js/bindings/windows/musl-memmem.c)
+endif()
+
+list(APPEND BUN_CPP_SOURCES
+  ${BUN_C_SOURCES}
+  ${BUN_CXX_SOURCES}
+  ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}
+  ${BUN_JS_SINK_OUTPUTS}
+  ${BUN_JAVASCRIPT_OUTPUTS}
+  ${BUN_OBJECT_LUT_OUTPUTS}
+)
+
+if(WIN32)
+  if(ENABLE_CANARY)
+    set(Bun_VERSION_WITH_TAG "${VERSION}-canary.${CANARY_REVISION}")
+  else()
+    set(Bun_VERSION_WITH_TAG "${VERSION}")
+  endif()
+  set(BUN_ICO_PATH ${CWD}/src/bun.ico)
+  configure_file(
+    ${CWD}/src/windows-app-info.rc
+    ${CODEGEN_PATH}/windows-app-info.rc
+  )
+  list(APPEND BUN_CPP_SOURCES ${CODEGEN_PATH}/windows-app-info.rc)
+endif()
+
+# --- Executable ---
+
+if(BUN_CPP_ONLY)
+  add_library(${bun} STATIC ${BUN_CPP_SOURCES})
+else()
+  add_executable(${bun} ${BUN_CPP_SOURCES} ${BUN_ZIG_OUTPUT})
+endif()
+
+# --- Dependencies ---
+
+include(BuildBrotli)
+include(BuildBoringSSL)
+include(BuildCares)
+include(BuildLibArchive)
+include(BuildLibDeflate)
+include(BuildLolHtml)
+include(BuildLshpack)
+include(BuildMimalloc)
+include(BuildTinyCC)
+include(BuildZlib)
+include(BuildZstd)
+
+if(WIN32)
+  include(BuildLibuv)
+endif()
+
+if(USE_STATIC_SQLITE)
+  include(BuildSQLite)
+  target_compile_definitions(${bun} PRIVATE "LAZY_LOAD_SQLITE=0")
+else()
+  target_compile_definitions(${bun} PRIVATE "LAZY_LOAD_SQLITE=1")
+endif()
+
+if(LINUX)
+  if(USE_STATIC_LIBATOMIC)
+    target_link_libraries(${bun} PRIVATE "libatomic.a")
+  else()
+    target_link_libraries(${bun} PUBLIC "libatomic.so")
+  endif()
+endif()
+
+# Since linking locks the file, we need to kill all instances of bun before linking.
+if(WIN32)
+  add_custom_command(
+    TARGET
+      ${bun} PRE_LINK
+    VERBATIM COMMAND
+      powershell
+      /C
+      "Stop-Process -Name '${bun}' -Force -ErrorAction SilentlyContinue; exit 0"
+  )
+endif()

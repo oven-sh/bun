@@ -22,6 +22,10 @@ else()
   setx(DEBUG OFF)
 endif()
 
+if(CMAKE_BUILD_TYPE MATCHES "MinSizeRel")
+  setx(ENABLE_SMOL ON)
+endif()
+
 if(APPLE)
   setx(OS "darwin")
 elseif(WIN32)
@@ -127,7 +131,14 @@ if(CMAKE_HOST_LINUX AND NOT WIN32 AND NOT APPLE)
 endif()
 
 optionx(USE_STATIC_LIBATOMIC BOOL "If libatomic should be statically linked" DEFAULT ${DEFAULT_STATIC_LIBATOMIC})
-optionx(USE_SYSTEM_ICU BOOL "Use the system-provided libicu. May fix startup crashes when building WebKit yourself." DEFAULT OFF)
+
+if(APPLE)
+  set(DEFAULT_WEBKIT_ICU OFF)
+else()
+  set(DEFAULT_WEBKIT_ICU ON)
+endif()
+
+optionx(USE_WEBKIT_ICU BOOL "Use the ICU libraries from WebKit" DEFAULT ${DEFAULT_WEBKIT_ICU})
 
 # Set the CMAKE_C_FLAGS and CMAKE_CXX_FLAGS for building dependencies.
 # This is a mess, since it doesn't use the CMake add_compile_options or target_compile_options commands.

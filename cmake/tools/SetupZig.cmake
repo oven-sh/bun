@@ -38,6 +38,12 @@ if(WIN32 AND DEFAULT_ZIG_OPTIMIZE STREQUAL "ReleaseFast")
 endif()
 
 optionx(ZIG_OPTIMIZE "ReleaseFast|ReleaseSafe|MinSizeRel|Debug" "The Zig optimize level to use" DEFAULT ${DEFAULT_ZIG_OPTIMIZE})
+
+# To use LLVM bitcode from Zig, more work needs to be done. Currently, an install of
+# LLVM 18.1.7 does not compatible with what bitcode Zig 0.13 outputs (has LLVM 18.1.7)
+# Change to "bc" to experiment, "Invalid record" means it is not valid output.
+optionx(ZIG_OBJECT_FORMAT "obj|bc" "Output file format for Zig object files" DEFAULT obj)
+
 optionx(ZIG_VERSION STRING "The version of zig to use" DEFAULT "0.13.0")
 optionx(ZIG_LOCAL_CACHE_DIR FILEPATH "The path to local the zig cache directory" DEFAULT ${CACHE_PATH}/zig/local)
 optionx(ZIG_GLOBAL_CACHE_DIR FILEPATH "The path to the global zig cache directory" DEFAULT ${CACHE_PATH}/zig/global)

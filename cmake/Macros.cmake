@@ -110,6 +110,239 @@ macro(find_llvm_program variable program_name)
   message(STATUS "Set ${variable}: ${${variable}}")
 endmacro()
 
+# register_command
+#   COMMAND     string[] - The command to run
+#   COMMENT     string   - The comment to display in the log
+#   CWD         string   - The working directory to run the command in
+#   ENVIRONMENT string[] - The environment variables to set (e.g. "DEBUG=1")
+#   TARGETS     string[] - The targets that this command depends on
+#   SOURCES     string[] - The files that this command depends on
+#   OUTPUTS     string[] - The files that this command produces
+#   ARTIFACTS   string[] - The files that this command produces, and uploads as an artifact in CI
+#   BYPRODUCTS  string[] - The files that this command produces, but are not used as inputs (e.g. "node_modules")
+#   ALWAYS_RUN  bool     - If true, the command will always run
+#   TARGET      string   - The target to register the command with
+#   GROUP       string   - The group to register the command with (e.g. similar to JOB_POOL)
+function(register_command)
+  set(options ALWAYS_RUN)
+  set(args COMMENT CWD TARGET GROUP)
+  set(multiArgs COMMAND ENVIRONMENT TARGETS SOURCES OUTPUTS BYPRODUCTS ARTIFACTS)
+  cmake_parse_arguments(CMD "${options}" "${args}" "${multiArgs}" ${ARGN})
+
+  if(NOT CMD_COMMAND)
+    message(FATAL_ERROR "register_command: COMMAND is required")
+  endif()
+
+  if(NOT CMD_CWD)
+    set(CMD_CWD ${CWD})
+  endif()
+
+  if(CMD_ENVIRONMENT)
+    set(CMD_COMMAND ${CMAKE_COMMAND} -E env ${CMD_ENVIRONMENT} ${CMD_COMMAND})
+  endif()
+  
+  if(NOT CMD_COMMENT)
+    string(JOIN " " CMD_COMMENT ${CMD_COMMAND})
+  endif()
+
+  set(CMD_COMMANDS COMMAND ${CMD_COMMAND})
+  set(CMD_EFFECTIVE_DEPENDS)
+
+  list(GET CMD_COMMAND 0 CMD_EXECUTABLE)
+  if(CMD_EXECUTABLE MATCHES "/|\\\\")
+    list(APPEND CMD_EFFECTIVE_DEPENDS ${CMD_EXECUTABLE})
+  endif()
+
+  foreach(target ${CMD_TARGETS})
+    if(target MATCHES "/|\\\\")
+      message(FATAL_ERROR "register_command: TARGETS contains \"${target}\", if it's a path add it to SOURCES instead")
+    endif()
+    if(NOT TARGET ${target})
+      message(FATAL_ERROR "register_command: TARGETS contains \"${target}\", but it's not a target")
+    endif()
+    list(APPEND CMD_EFFECTIVE_DEPENDS ${target})
+  endforeach()
+
+  foreach(source ${CMD_SOURCES})
+    if(NOT source MATCHES "^(${CWD}|${BUILD_PATH})")
+      message(FATAL_ERROR "register_command: SOURCES contains \"${source}\", if it's a path, make it absolute, otherwise add it to TARGETS instead")
+    endif()
+    list(APPEND CMD_EFFECTIVE_DEPENDS ${source})
+  endforeach()
+
+  if(NOT CMD_EFFECTIVE_DEPENDS)
+    message(FATAL_ERROR "register_command: TARGETS or SOURCES is required")
+  endif()
+
+  set(CMD_EFFECTIVE_OUTPUTS)
+
+  foreach(output ${CMD_OUTPUTS})
+    if(NOT output MATCHES "^(${CWD}|${BUILD_PATH})")
+      message(FATAL_ERROR "register_command: OUTPUTS contains \"${output}\", if it's a path, make it absolute")
+    endif()
+    list(APPEND CMD_EFFECTIVE_OUTPUTS ${output})
+  endforeach()
+
+  foreach(artifact ${CMD_ARTIFACTS})
+    if(NOT artifact MATCHES "^(${CWD}|${BUILD_PATH})")
+      message(FATAL_ERROR "register_command: ARTIFACTS contains \"${artifact}\", if it's a path, make it absolute")
+    endif()
+    list(APPEND CMD_EFFECTIVE_OUTPUTS ${artifact})
+    if(BUILDKITE)
+      file(RELATIVE_PATH filename ${CMD_CWD} ${artifact})
+      list(APPEND CMD_COMMANDS COMMAND buildkite-agent artifact upload ${filename})
+    endif()
+  endforeach()
+
+  foreach(output ${CMD_EFFECTIVE_OUTPUTS})
+    # list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E sha256sum ${output})
+  endforeach()
+
+  if(CMD_ALWAYS_RUN)
+    list(APPEND CMD_EFFECTIVE_OUTPUTS ${CMD_CWD}/.1)
+  endif()
+
+  if(NOT CMD_EFFECTIVE_OUTPUTS)
+    message(FATAL_ERROR "register_command: OUTPUTS or ARTIFACTS is required, or set ALWAYS_RUN")
+  endif()
+
+  if(CMD_TARGET)
+    if(TARGET ${CMD_TARGET})
+      message(FATAL_ERROR "register_command: TARGET is already registered: ${CMD_TARGET}")
+    endif()
+    add_custom_target(${CMD_TARGET}
+      COMMENT ${CMD_COMMENT}
+      SOURCES ${CMD_EFFECTIVE_SOURCES}
+      DEPENDS ${CMD_EFFECTIVE_OUTPUTS}
+      BYPRODUCTS ${CMD_EFFECTIVE_BYPRODUCTS}
+      JOB_POOL ${CMD_GROUP}
+    )
+  endif()
+
+  message(STATUS "register_command: ${CMD_COMMANDS}")
+  add_custom_command(
+    VERBATIM ${CMD_COMMANDS}
+    WORKING_DIRECTORY ${CMD_CWD}
+    COMMENT ${CMD_COMMENT}
+    DEPENDS ${CMD_EFFECTIVE_DEPENDS}
+    OUTPUT ${CMD_EFFECTIVE_OUTPUTS}
+    BYPRODUCTS ${CMD_BYPRODUCTS}
+    JOB_POOL ${CMD_GROUP}
+  )
+endfunction()
+
+# parse_package_json
+#   CWD                   string - The directory to look for the package.json file
+#   VERSION_VARIABLE      string - The variable to set to the package version
+#   NODE_MODULES_VARIABLE string - The variable to set to list of node_modules sources
+function(parse_package_json)
+  set(args CWD VERSION_VARIABLE NODE_MODULES_VARIABLE)
+  cmake_parse_arguments(NPM "" "${args}" "" ${ARGN})
+
+  if(NOT NPM_CWD)
+    set(NPM_CWD ${CWD})
+  endif()
+
+  set(NPM_PACKAGE_JSON_PATH ${NPM_CWD}/package.json)
+
+  if(NOT EXISTS ${NPM_PACKAGE_JSON_PATH})
+    message(FATAL_ERROR "parse_package_json: package.json not found: ${NPM_PACKAGE_JSON_PATH}")
+  endif()
+
+  file(READ ${NPM_PACKAGE_JSON_PATH} NPM_PACKAGE_JSON)
+  if(NOT NPM_PACKAGE_JSON)
+    message(FATAL_ERROR "parse_package_json: failed to read package.json: ${NPM_PACKAGE_JSON_PATH}")
+  endif()
+
+  if(NPM_VERSION_VARIABLE)
+    string(JSON NPM_VERSION ERROR_VARIABLE error GET "${NPM_PACKAGE_JSON}" version)
+    if(error)
+      message(FATAL_ERROR "parse_package_json: failed to read 'version': ${error}")
+    endif()
+    set(${NPM_VERSION_VARIABLE} ${NPM_VERSION} PARENT_SCOPE)
+  endif()
+
+  if(NPM_NODE_MODULES_VARIABLE)
+    set(NPM_NODE_MODULES)
+    set(NPM_NODE_MODULES_PATH ${NPM_CWD}/node_modules)
+    set(NPM_NODE_MODULES_PROPERTIES "devDependencies" "dependencies")
+    
+    foreach(property ${NPM_NODE_MODULES_PROPERTIES})
+      string(JSON NPM_${property} ERROR_VARIABLE error GET "${NPM_PACKAGE_JSON}" "${property}")
+      if(error MATCHES "not found")
+        continue()
+      endif()
+      if(error)
+        message(FATAL_ERROR "parse_package_json: failed to read '${property}': ${error}")
+      endif()
+
+      string(JSON NPM_${property}_LENGTH ERROR_VARIABLE error LENGTH "${NPM_${property}}")
+      if(error)
+        message(FATAL_ERROR "parse_package_json: failed to read '${property}' length: ${error}")
+      endif()
+
+      math(EXPR NPM_${property}_MAX_INDEX "${NPM_${property}_LENGTH} - 1")
+      foreach(i RANGE 0 ${NPM_${property}_MAX_INDEX})
+        string(JSON NPM_${property}_${i} ERROR_VARIABLE error MEMBER "${NPM_${property}}" ${i})
+        if(error)
+          message(FATAL_ERROR "parse_package_json: failed to index '${property}' at ${i}: ${error}")
+        endif()
+        list(APPEND NPM_NODE_MODULES ${NPM_NODE_MODULES_PATH}/${NPM_${property}_${i}}/package.json)
+      endforeach()
+    endforeach()
+
+    set(${NPM_NODE_MODULES_VARIABLE} ${NPM_NODE_MODULES} PARENT_SCOPE)
+  endif()
+endfunction()
+
+# register_bun_install
+#   CWD                   string - The directory to run `bun install`
+#   NODE_MODULES_VARIABLE string - The variable to set to list of node_modules sources
+function(register_bun_install)
+  set(args CWD NODE_MODULES_VARIABLE)
+  cmake_parse_arguments(NPM "" "${args}" "" ${ARGN})
+
+  if(NOT NPM_CWD)
+    set(NPM_CWD ${CWD})
+  endif()
+
+  if(NPM_CWD STREQUAL ${CWD})
+    set(NPM_COMMENT "bun install")
+  else()
+    set(NPM_COMMENT "bun install --cwd ${NPM_CWD}")
+  endif()
+
+  parse_package_json(
+    CWD
+      ${NPM_CWD}
+    NODE_MODULES_VARIABLE
+      NPM_NODE_MODULES
+  )
+
+  if(NOT NPM_NODE_MODULES)
+    message(FATAL_ERROR "register_bun_install: package.json does not have dependencies?")
+  endif()
+
+  register_command(
+    COMMENT
+      ${NPM_COMMENT}
+    CWD
+      ${NPM_CWD}
+    COMMAND
+      ${BUN_EXECUTABLE}
+        install
+        --frozen-lockfile
+    SOURCES
+      ${NPM_CWD}/package.json
+    OUTPUTS
+      ${NPM_NODE_MODULES}
+    BYPRODUCTS
+      ${NPM_CWD}/bun.lockb
+  )
+
+  set(${NPM_NODE_MODULES_VARIABLE} ${NPM_NODE_MODULES} PARENT_SCOPE)
+endfunction()
+
 function(add_target)
   set(options NODE_MODULES USES_TERMINAL)
   set(args NAME COMMENT WORKING_DIRECTORY)
@@ -184,40 +417,6 @@ function(add_target)
       add_dependencies(${alias} ${ARG_NAME})
     endif()
   endforeach()
-endfunction()
-
-function(add_bun_install)
-  set(args WORKING_DIRECTORY)
-  cmake_parse_arguments(ARG "" "${args}" "" ${ARGN})
-
-  if(NOT ARG_WORKING_DIRECTORY)
-    message(FATAL_ERROR "add_bun_install: WORKING_DIRECTORY is required")
-  endif()
-
-  if(ARG_WORKING_DIRECTORY STREQUAL ${CWD})
-    set(ARG_COMMENT "bun install")
-  else()
-    set(ARG_COMMENT "bun install --cwd ${ARG_WORKING_DIRECTORY}")
-  endif()
-
-  get_filename_component(ARG_NAME ${ARG_WORKING_DIRECTORY} NAME_WE)
-  add_target(
-    NAME
-      bun-install-${ARG_NAME}
-    ALIASES
-      bun-install
-    COMMAND
-      ${BUN_EXECUTABLE}
-        install
-        --frozen-lockfile
-    WORKING_DIRECTORY
-      ${ARG_WORKING_DIRECTORY}
-    SOURCES
-      ${ARG_WORKING_DIRECTORY}/package.json
-    OUTPUTS
-      ${ARG_WORKING_DIRECTORY}/bun.lockb
-      ${ARG_WORKING_DIRECTORY}/node_modules
-  )
 endfunction()
 
 function(upload_artifact)
@@ -444,12 +643,12 @@ function(add_custom_library)
   endif()
   
   include_directories(${${LIB_ID}_INCLUDE_PATHS})
-  target_include_directories(bun-lib PRIVATE ${${LIB_ID}_INCLUDE_PATHS})
+  target_include_directories(${bun} PRIVATE ${${LIB_ID}_INCLUDE_PATHS})
 
   if(TARGET clone-${LIB_NAME})
-    add_dependencies(bun-lib clone-${LIB_NAME})
+    add_dependencies(${bun} clone-${LIB_NAME})
   endif()
-  add_dependencies(bun-lib ${LIB_NAME})
+  add_dependencies(${bun} ${LIB_NAME})
 
-  target_link_libraries(bun-lib PRIVATE ${${LIB_ID}_LIBRARY_PATHS})
+  target_link_libraries(${bun} PRIVATE ${${LIB_ID}_LIBRARY_PATHS})
 endfunction()

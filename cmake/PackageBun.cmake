@@ -19,7 +19,7 @@ if(bunStrip)
     OUTPUTS
       ${BUILD_PATH}/${bunStripExe}.1 # FIXME
     DEPENDS
-      bun-lib
+      ${bun}
   )
 endif()
 
@@ -40,7 +40,7 @@ add_target(
   OUTPUTS
     ${BUILD_PATH}/${bunExe}.1 # FIXME
   DEPENDS
-    bun-lib
+    ${bun}
 )
 
 set(BUN_FEATURES_SCRIPT ${CWD}/scripts/features.mjs)

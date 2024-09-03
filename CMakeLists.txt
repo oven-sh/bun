@@ -48,7 +48,7 @@ endif()
 
 project(Bun VERSION 0.0.0)
 
-include(Options)
+include(BuildOptions)
 include(SetupBuildkite)
 
 if(WIN32)
@@ -70,45 +70,13 @@ if(CI)
   include(SetupCI)
 endif()
 
-if(DEBUG)
-  setx(bun bun-debug)
-elseif(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
-  setx(bun bun-smol-profile)
-  setx(bunStrip bun-smol)
-elseif(ENABLE_VALGRIND)
-  setx(bun bun-valgrind)
-elseif(ENABLE_ASSERTIONS)
-  setx(bun bun-assertions)
-else()
-  setx(bun bun-profile)
-  setx(bunStrip bun)
-endif()
-
-setx(bunExe ${bun}${CMAKE_EXECUTABLE_SUFFIX})
-
-if(bunStrip)
-  setx(buns ${bun} ${bunStrip})
-else()
-  setx(buns ${bun})
-endif()
-
-if(ENABLE_BASELINE)
-  setx(bunTriplet bun-${OS}-${ARCH}-baseline)
-else()
-  setx(bunTriplet bun-${OS}-${ARCH})
-endif()
-
-if(NOT BUN_LINK_ONLY)
-  include(BuildBunCodegen)
-endif()
-
 if(WIN32 AND ENABLE_LTO)
   set(CMAKE_LINKER_TYPE LLD)
   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
 endif()
 
 if(ENABLE_VALGRIND)
-  if(ARCH STREQUAL "x86_64")
+  if(ARCH STREQUAL "x64")
     # This is for picohttpparser
     # Valgrind cannot handle SSE4.2 instructions
     add_compile_definitions("__SSE4_2__=0")
@@ -200,18 +168,13 @@ else()
     endif()
 endif()
 
-# --- Zig Object ---
-if(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY)
-  include(BuildBunZig)
-endif()
-
 include(BuildBun)
 
 if(WIN32)
   include_directories("${CWD}/src/bun.js/bindings/windows")
 endif()
 
-set_target_properties(bun-lib PROPERTIES
+set_target_properties(${bun} PROPERTIES
   CXX_STANDARD 20
   CXX_STANDARD_REQUIRED YES
   CXX_EXTENSIONS YES
@@ -286,13 +249,13 @@ include_directories(
 
 # -- BUN_CPP_ONLY Target
 if(BUN_CPP_ARCHIVE)
-    set_target_properties(bun-lib PROPERTIES LINKER_LANGUAGE CXX)
+    set_target_properties(${bun} PROPERTIES LINKER_LANGUAGE CXX)
 endif()
 
 # --- clang and linker flags ---
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     if(NOT WIN32)
-        target_compile_options(bun-lib PUBLIC -O0 -g -g3 -ggdb -gdwarf-4
+        target_compile_options(${bun} PUBLIC -O0 -g -g3 -ggdb -gdwarf-4
             -Werror=return-type
             -Werror=return-stack-address
             -Werror=implicit-function-declaration
@@ -317,9 +280,9 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
             -fsanitize=returns-nonnull-attribute
             -fsanitize=unreachable
         )
-        target_link_libraries(bun-lib PRIVATE -fsanitize=null)
+        target_link_libraries(${bun} PRIVATE -fsanitize=null)
     else()
-        target_compile_options(bun-lib PUBLIC /Od /Z7)
+        target_compile_options(${bun} PUBLIC /Od /Z7)
     endif()
 
     add_compile_definitions("BUN_DEBUG=1")
@@ -332,7 +295,7 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
         endif()
 
         # Leave -Werror=unused off in release builds so we avoid errors from being used in ASSERT
-        target_compile_options(bun-lib PUBLIC -O3 ${LTO_FLAG} -g1
+        target_compile_options(${bun} PUBLIC -O3 ${LTO_FLAG} -g1
             -Werror=return-type
             -Werror=return-stack-address
             -Werror=implicit-function-declaration
@@ -350,7 +313,7 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
         set(LTO_LINK_FLAG "")
 
         if(ENABLE_LTO)
-            target_compile_options(bun-lib PUBLIC -Xclang -emit-llvm-bc)
+            target_compile_options(${bun} PUBLIC -Xclang -emit-llvm-bc)
 
             list(APPEND LTO_FLAG "-flto=full")
             list(APPEND LTO_LINK_FLAG "-flto=full")
@@ -359,7 +322,7 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
             list(APPEND LTO_LINK_FLAG "/OPT:NOICF")
         endif()
 
-        target_compile_options(bun-lib PUBLIC
+        target_compile_options(${bun} PUBLIC
             /O2
             ${LTO_FLAG}
             /Gy
@@ -367,7 +330,7 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
             /GF
             /GA
         )
-        target_link_options(bun-lib PUBLIC
+        target_link_options(${bun} PUBLIC
             ${LTO_LINK_FLAG}
             /DEBUG:FULL
 
@@ -386,27 +349,27 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
 endif()
 
 if(NOT CI AND NOT WIN32)
-    target_compile_options(bun-lib PRIVATE -fdiagnostics-color=always)
+    target_compile_options(${bun} PRIVATE -fdiagnostics-color=always)
 endif()
 
 if(NOT CPU STREQUAL "native")
   # passing -march=native to clang will break older systems
   # by default on x64, CPU is set to "haswell" or "nehalem" depending on baseline
   # on arm, this argument will not be passed.
-  target_compile_options(bun-lib PUBLIC "-march=${CPU}")
+  target_compile_options(${bun} PUBLIC "-march=${CPU}")
 else()
   if(APPLE AND ARCH STREQUAL "aarch64")
     # On arm macOS, we can set it to a minimum of the M1 cpu set. this might be the default already.
-    target_compile_options(bun-lib PUBLIC "-mcpu=apple-m1")
+    target_compile_options(${bun} PUBLIC "-mcpu=apple-m1")
   endif()
 
   if(NOT WIN32 AND NOT APPLE AND ARCH STREQUAL "aarch64")
     # on arm64 linux, we set a minimum of armv8
-    target_compile_options(bun-lib PUBLIC -march=armv8-a+crc -mtune=ampere1)
+    target_compile_options(${bun} PUBLIC -march=armv8-a+crc -mtune=ampere1)
   endif()
 endif()
 
-target_compile_options(bun-lib PUBLIC -ferror-limit=${ERROR_LIMIT})
+target_compile_options(${bun} PUBLIC -ferror-limit=${ERROR_LIMIT})
 
 if(WIN32)
     add_compile_definitions(
@@ -420,11 +383,11 @@ if(WIN32)
     # set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
 
-    target_compile_options(bun-lib PUBLIC "/EHsc" "/GR-" "-Xclang" "-fno-c++-static-destructors")
+    target_compile_options(${bun} PUBLIC "/EHsc" "/GR-" "-Xclang" "-fno-c++-static-destructors")
 
-    target_link_options(bun-lib PUBLIC "/STACK:0x1200000,0x100000" "/DEF:${CWD}/src/symbols.def" "/errorlimit:0")
+    target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000" "/DEF:${CWD}/src/symbols.def" "/errorlimit:0")
 else()
-    target_compile_options(bun-lib PUBLIC
+    target_compile_options(${bun} PUBLIC
         -mtune=${CPU}
         -fconstexpr-steps=2542484
         -fconstexpr-depth=54
@@ -447,17 +410,17 @@ else()
 endif()
 
 if(APPLE)
-    target_link_options(bun-lib PUBLIC "-dead_strip")
-    target_link_options(bun-lib PUBLIC "-dead_strip_dylibs")
-    target_link_options(bun-lib PUBLIC "-Wl,-stack_size,0x1200000")
-    target_link_options(bun-lib PUBLIC "-exported_symbols_list" "${CWD}/src/symbols.txt")
-    set_target_properties(bun-lib PROPERTIES LINK_DEPENDS "${CWD}/src/symbols.txt")
-    target_link_options(bun-lib PUBLIC "-fno-keep-static-consts")
-    target_link_libraries(bun-lib PRIVATE "resolv")
+    target_link_options(${bun} PUBLIC "-dead_strip")
+    target_link_options(${bun} PUBLIC "-dead_strip_dylibs")
+    target_link_options(${bun} PUBLIC "-Wl,-stack_size,0x1200000")
+    target_link_options(${bun} PUBLIC "-exported_symbols_list" "${CWD}/src/symbols.txt")
+    set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${CWD}/src/symbols.txt")
+    target_link_options(${bun} PUBLIC "-fno-keep-static-consts")
+    target_link_libraries(${bun} PRIVATE "resolv")
 endif()
 
 if(UNIX AND NOT APPLE)
-    target_link_options(bun-lib PUBLIC
+    target_link_options(${bun} PUBLIC
         -fuse-ld=lld-${LLVM_VERSION_MAJOR}
         -fno-pic
         -static-libstdc++
@@ -467,26 +430,26 @@ if(UNIX AND NOT APPLE)
         "-Wl,--as-needed"
         "-Wl,--gc-sections"
         "-Wl,-z,stack-size=12800000"
-        # "-Wl,--wrap=fcntl"
-        # "-Wl,--wrap=fcntl64"
-        # "-Wl,--wrap=stat64"
-        # "-Wl,--wrap=pow"
-        # "-Wl,--wrap=exp"
-        # "-Wl,--wrap=expf"
-        # "-Wl,--wrap=log"
-        # "-Wl,--wrap=log2"
-        # "-Wl,--wrap=lstat"
-        # "-Wl,--wrap=stat64"
-        # "-Wl,--wrap=stat"
-        # "-Wl,--wrap=fstat"
-        # "-Wl,--wrap=fstatat"
-        # "-Wl,--wrap=lstat64"
-        # "-Wl,--wrap=fstat64"
-        # "-Wl,--wrap=fstatat64"
-        # "-Wl,--wrap=mknod"
-        # "-Wl,--wrap=mknodat"
-        # "-Wl,--wrap=statx"
-        # "-Wl,--wrap=fmod"
+        "-Wl,--wrap=fcntl"
+        "-Wl,--wrap=fcntl64"
+        "-Wl,--wrap=stat64"
+        "-Wl,--wrap=pow"
+        "-Wl,--wrap=exp"
+        "-Wl,--wrap=expf"
+        "-Wl,--wrap=log"
+        "-Wl,--wrap=log2"
+        "-Wl,--wrap=lstat"
+        "-Wl,--wrap=stat64"
+        "-Wl,--wrap=stat"
+        "-Wl,--wrap=fstat"
+        "-Wl,--wrap=fstatat"
+        "-Wl,--wrap=lstat64"
+        "-Wl,--wrap=fstat64"
+        "-Wl,--wrap=fstatat64"
+        "-Wl,--wrap=mknod"
+        "-Wl,--wrap=mknodat"
+        "-Wl,--wrap=statx"
+        "-Wl,--wrap=fmod"
         "-Wl,--compress-debug-sections=zlib"
         "-Bsymbolics-functions"
         "-rdynamic"
@@ -496,69 +459,44 @@ if(UNIX AND NOT APPLE)
         -Wl,-z,norelro
     )
 
-    target_link_libraries(bun-lib PRIVATE "c")
-    target_link_libraries(bun-lib PRIVATE "pthread")
-    target_link_libraries(bun-lib PRIVATE "dl")
+    target_link_libraries(${bun} PRIVATE "c")
+    target_link_libraries(${bun} PRIVATE "pthread")
+    target_link_libraries(${bun} PRIVATE "dl")
 
     if(NOT USE_STATIC_LIBATOMIC)
-        target_link_libraries(bun-lib PUBLIC "libatomic.so")
+        target_link_libraries(${bun} PUBLIC "libatomic.so")
     else()
-        target_link_libraries(bun-lib PRIVATE "libatomic.a")
+        target_link_libraries(${bun} PRIVATE "libatomic.a")
     endif()
 
     if(USE_SYSTEM_ICU)
-        target_link_libraries(bun-lib PRIVATE "libicudata.a")
-        target_link_libraries(bun-lib PRIVATE "libicui18n.a")
-        target_link_libraries(bun-lib PRIVATE "libicuuc.a")
+        target_link_libraries(${bun} PRIVATE "libicudata.a")
+        target_link_libraries(${bun} PRIVATE "libicui18n.a")
+        target_link_libraries(${bun} PRIVATE "libicuuc.a")
     else()
-        target_link_libraries(bun-lib PRIVATE "${WEBKIT_LIB_DIR}/libicudata.a")
-        target_link_libraries(bun-lib PRIVATE "${WEBKIT_LIB_DIR}/libicui18n.a")
-        target_link_libraries(bun-lib PRIVATE "${WEBKIT_LIB_DIR}/libicuuc.a")
+        target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicudata.a")
+        target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicui18n.a")
+        target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicuuc.a")
     endif()
 
-    set_target_properties(bun-lib PROPERTIES LINK_DEPENDS "${CWD}/src/linker.lds")
-    set_target_properties(bun-lib PROPERTIES LINK_DEPENDS "${CWD}/src/symbols.dyn")
+    set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${CWD}/src/linker.lds")
+    set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${CWD}/src/symbols.dyn")
 endif()
 
 # --- ICU ---
 if(APPLE)
-  target_link_libraries(bun-lib PRIVATE "icucore")
-endif()
-
-include(PackageBun)
-
-include(BuildBrotli)
-include(BuildBoringSSL)
-include(BuildCares)
-include(BuildLibArchive)
-include(BuildLibDeflate)
-include(BuildLolHtml)
-include(BuildLshpack)
-include(BuildMimalloc)
-include(BuildTinyCC)
-include(BuildZlib)
-include(BuildZstd)
-
-if(WIN32)
-  include(BuildLibuv)
-endif()
-
-if(USE_STATIC_SQLITE)
-  include(BuildSQLite)
-  target_compile_definitions(bun-lib PRIVATE "LAZY_LOAD_SQLITE=0")
-else()
-  target_compile_definitions(bun-lib PRIVATE "LAZY_LOAD_SQLITE=1")
+  target_link_libraries(${bun} PRIVATE "icucore")
 endif()
 
 if(NOT WIN32)
-  target_link_libraries(bun-lib PRIVATE ${WEBKIT_LIB_DIR}/libWTF.a)
-  target_link_libraries(bun-lib PRIVATE ${WEBKIT_LIB_DIR}/libJavaScriptCore.a)
+  target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_DIR}/libWTF.a)
+  target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_DIR}/libJavaScriptCore.a)
 
   if(NOT APPLE OR EXISTS ${WEBKIT_LIB_DIR}/libbmalloc.a)
-    target_link_libraries(bun-lib PRIVATE ${WEBKIT_LIB_DIR}/libbmalloc.a)
+    target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_DIR}/libbmalloc.a)
   endif()
 else()
-  target_link_libraries(bun-lib PRIVATE
+  target_link_libraries(${bun} PRIVATE
     ${WEBKIT_LIB_DIR}/WTF.lib
     ${WEBKIT_LIB_DIR}/JavaScriptCore.lib
     ${WEBKIT_LIB_DIR}/sicudt.lib

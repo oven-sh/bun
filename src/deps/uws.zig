@@ -13,7 +13,9 @@ pub const Socket = opaque {};
 pub const ConnectingSocket = opaque {};
 const debug = bun.Output.scoped(.uws, false);
 const uws = @This();
-
+const SSLWrapper = @import("../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
+const TextEncoder = @import("../bun.js/webcore/encoding.zig").Encoder;
+const JSC = bun.JSC;
 pub const CloseCode = enum(i32) {
     normal = 0,
     failure = 1,
@@ -56,7 +58,7 @@ pub const InternalLoopData = extern struct {
         return this.recv_buf[0..LIBUS_RECV_BUFFER_LENGTH];
     }
 
-    pub fn setParentEventLoop(this: *InternalLoopData, parent: bun.JSC.EventLoopHandle) void {
+    pub fn setParentEventLoop(this: *InternalLoopData, parent: JSC.EventLoopHandle) void {
         switch (parent) {
             .js => |ptr| {
                 this.parent_tag = 1;
@@ -69,14 +71,353 @@ pub const InternalLoopData = extern struct {
         }
     }
 
-    pub fn getParent(this: *InternalLoopData) bun.JSC.EventLoopHandle {
+    pub fn getParent(this: *InternalLoopData) JSC.EventLoopHandle {
         const parent = this.parent_ptr orelse @panic("Parent loop not set - pointer is null");
         return switch (this.parent_tag) {
             0 => @panic("Parent loop not set - tag is zero"),
-            1 => .{ .js = bun.cast(*bun.JSC.EventLoop, parent) },
-            2 => .{ .mini = bun.cast(*bun.JSC.MiniEventLoop, parent) },
+            1 => .{ .js = bun.cast(*JSC.EventLoop, parent) },
+            2 => .{ .mini = bun.cast(*JSC.MiniEventLoop, parent) },
             else => @panic("Parent loop data corrupted - tag is invalid"),
         };
+    }
+};
+
+pub const UpgradedDuplex = struct {
+    pub const CertError = struct {
+        error_no: i32 = 0,
+        code: [:0]const u8 = "",
+        reason: [:0]const u8 = "",
+    };
+
+    const WrapperType = SSLWrapper(*UpgradedDuplex);
+
+    wrapper: ?WrapperType,
+    origin: JSC.Strong = .{}, // any duplex
+    ssl_error: CertError = .{},
+    vm: *JSC.VirtualMachine,
+    handlers: Handlers,
+
+    onDataCallback: JSC.Strong = .{},
+    onEndCallback: JSC.Strong = .{},
+    onWritbaleCallback: JSC.Strong = .{},
+
+    pub const Handlers = struct {
+        ctx: *anyopaque,
+        onOpen: *const fn (*anyopaque) void,
+        onHandshake: *const fn (*anyopaque, bool, uws.us_bun_verify_error_t) void,
+        onData: *const fn (*anyopaque, []const u8) void,
+        onClose: *const fn (*anyopaque) void,
+        onEnd: *const fn (*anyopaque) void,
+        onWritable: *const fn (*anyopaque) void,
+    };
+
+    fn onOpen(this: *UpgradedDuplex) void {
+        this.handlers.onOpen(this.handlers.ctx);
+    }
+
+    fn onData(this: *UpgradedDuplex, decoded_data: []const u8) void {
+        this.handlers.onData(this.handlers.ctx, decoded_data);
+    }
+
+    fn onHandshake(this: *UpgradedDuplex, handshake_success: bool, ssl_error: uws.us_bun_verify_error_t) void {
+        this.ssl_error = .{
+            .error_no = ssl_error.error_no,
+            .code = bun.default_allocator.dupeZ(u8, ssl_error.code[0..bun.len(ssl_error.code) :0]) catch bun.outOfMemory(),
+            .reason = bun.default_allocator.dupeZ(u8, ssl_error.reason[0..bun.len(ssl_error.reason) :0]) catch bun.outOfMemory(),
+        };
+        this.handlers.onHandshake(this.handlers.ctx, handshake_success, ssl_error);
+    }
+
+    fn onClose(this: *UpgradedDuplex) void {
+        defer this.deinit();
+
+        this.handlers.onClose(this.handlers.ctx);
+    }
+
+    fn callWriteOrEnd(this: *UpgradedDuplex, data: ?[]const u8, msg_more: bool) void {
+        if (this.vm.isShuttingDown()) {
+            return;
+        }
+        if (this.origin.get()) |duplex| {
+            const globalThis = this.origin.globalThis.?;
+            const push = if (msg_more) duplex.getFunction(globalThis, "write") catch return orelse return else duplex.getFunction(globalThis, "end") catch return orelse return;
+            if (data) |data_| {
+                const buffer = JSC.BinaryType.toJS(.Buffer, data_, globalThis);
+                buffer.ensureStillAlive();
+                this.vm.eventLoop().runCallback(push, globalThis, duplex, &[_]JSC.JSValue{buffer});
+            } else {
+                this.vm.eventLoop().runCallback(push, globalThis, duplex, &[_]JSC.JSValue{JSC.JSValue.jsNull()});
+            }
+        }
+    }
+
+    fn internalWrite(this: *UpgradedDuplex, encoded_data: []const u8) void {
+        this.callWriteOrEnd(encoded_data, true);
+    }
+
+    pub fn flush(this: *UpgradedDuplex) void {
+        if (this.wrapper) |*wrapper| {
+            _ = wrapper.flush();
+        }
+    }
+
+    fn onInternalReceiveData(this: *UpgradedDuplex, data: []const u8) void {
+        if (this.wrapper) |*wrapper| {
+            wrapper.receiveData(data);
+        }
+    }
+
+    fn onReceivedData(
+        globalObject: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) JSC.JSValue {
+        const function = callframe.callee();
+        const args = callframe.arguments(1);
+
+        if (JSC.getFunctionData(function)) |self| {
+            const this = @as(*UpgradedDuplex, @ptrCast(@alignCast(self)));
+            if (args.len >= 1) {
+                const data_arg = args.ptr[0];
+                if (this.origin.get()) |duplex| {
+                    if (data_arg.isEmptyOrUndefinedOrNull()) {
+                        return JSC.JSValue.jsUndefined();
+                    }
+                    if (data_arg.asArrayBuffer(globalObject)) |array_buffer| {
+                        // yay fast path
+                        const payload = array_buffer.slice();
+                        this.onInternalReceiveData(payload);
+                    } else if (bun.String.tryFromJS(data_arg, globalObject)) |data_str| {
+                        defer data_str.deref();
+
+                        // slow path we are encoded as a string
+                        var encoding: JSC.Node.Encoding = .utf8;
+                        // we need to check every time because the encoding can change at any time
+                        if (duplex.getTruthy(globalObject, "readableEncoding")) |encoding_| {
+                            encoding = JSC.Node.Encoding.fromJS(encoding_, globalObject) orelse .utf8;
+                        }
+                        // TODO: optimize this using a shared buffer instead of allocating memory every time
+                        const payload = TextEncoder.decodeStringAtRuntime(data_str, encoding);
+                        defer bun.default_allocator.free(payload);
+                        this.onInternalReceiveData(payload);
+                    }
+                }
+            }
+        }
+        return JSC.JSValue.jsUndefined();
+    }
+
+    fn onEnd(
+        globalObject: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) void {
+        _ = globalObject;
+        const function = callframe.callee();
+
+        if (JSC.getFunctionData(function)) |self| {
+            const this = @as(*UpgradedDuplex, @ptrCast(@alignCast(self)));
+
+            if (this.wrapper != null) {
+                this.handlers.onEnd(this.handlers.ctx);
+            }
+        }
+    }
+
+    fn onWritable(
+        globalObject: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) JSC.JSValue {
+        _ = globalObject;
+        const function = callframe.callee();
+
+        if (JSC.getFunctionData(function)) |self| {
+            const this = @as(*UpgradedDuplex, @ptrCast(@alignCast(self)));
+
+            this.handlers.onWritable(this.handlers.ctx);
+
+            if (this.wrapper) |*wrapper| {
+                _ = wrapper.flush();
+            }
+        }
+
+        return JSC.JSValue.jsUndefined();
+    }
+
+    pub fn from(
+        globalThis: *JSC.JSGlobalObject,
+        origin: JSC.JSValue,
+        handlers: UpgradedDuplex.Handlers,
+    ) UpgradedDuplex {
+        return UpgradedDuplex{
+            .vm = globalThis.bunVM(),
+            .origin = JSC.Strong.create(origin, globalThis),
+            .wrapper = null,
+            .handlers = handlers,
+        };
+    }
+
+    pub fn startTLS(this: *UpgradedDuplex, ssl_options: JSC.API.ServerConfig.SSLConfig, is_client: bool) !void {
+        this.wrapper = try WrapperType.init(ssl_options, is_client, .{
+            .ctx = this,
+            .onOpen = UpgradedDuplex.onOpen,
+            .onHandshake = UpgradedDuplex.onHandshake,
+            .onData = UpgradedDuplex.onData,
+            .onClose = UpgradedDuplex.onClose,
+            .write = UpgradedDuplex.internalWrite,
+        });
+        if (this.origin.get()) |duplex| {
+            const globalThis = this.origin.globalThis.?;
+
+            const addEventListener = try duplex.getFunction(globalThis, "addEventListener") orelse return;
+            const dataCallback = JSC.NewFunctionWithData(
+                globalThis,
+                null,
+                0,
+                onReceivedData,
+                false,
+                this,
+            );
+            dataCallback.ensureStillAlive();
+            JSC.setFunctionData(dataCallback, this);
+
+            this.onDataCallback = JSC.Strong.create(dataCallback, globalThis);
+
+            const endCallback = JSC.NewFunctionWithData(
+                globalThis,
+                null,
+                0,
+                onReceivedData,
+                false,
+                this,
+            );
+            endCallback.ensureStillAlive();
+            JSC.setFunctionData(dataCallback, this);
+
+            this.onEndCallback = JSC.Strong.create(endCallback, globalThis);
+
+            const writableCallback = JSC.NewFunctionWithData(
+                globalThis,
+                null,
+                0,
+                onWritable,
+                false,
+                this,
+            );
+            writableCallback.ensureStillAlive();
+            JSC.setFunctionData(writableCallback, this);
+
+            this.onEndCallback = JSC.Strong.create(endCallback, globalThis);
+
+            this.vm.eventLoop().runCallback(addEventListener, globalThis, duplex, &[_]JSC.JSValue{ bun.String.static("data").toJS(globalThis), dataCallback });
+            this.vm.eventLoop().runCallback(addEventListener, globalThis, duplex, &[_]JSC.JSValue{ bun.String.static("end").toJS(globalThis), endCallback });
+            this.vm.eventLoop().runCallback(addEventListener, globalThis, duplex, &[_]JSC.JSValue{ bun.String.static("drain").toJS(globalThis), writableCallback });
+        }
+        this.wrapper.?.start();
+    }
+
+    pub fn encodeAndWrite(this: *UpgradedDuplex, data: []const u8, msg_more: bool) i32 {
+        if (this.wrapper) |*wrapper| {
+            const result: i32 = @as(i32, @intCast(wrapper.writeData(data) catch 0));
+            if (result == data.len and !msg_more) {
+                this.shutdown();
+            }
+            return result;
+        }
+        return 0;
+    }
+
+    pub fn rawWrite(this: *UpgradedDuplex, encoded_data: []const u8, msg_more: bool) i32 {
+        this.callWriteOrEnd(encoded_data, msg_more);
+        return @intCast(encoded_data.len);
+    }
+
+    pub fn close(this: *UpgradedDuplex) void {
+        if (this.wrapper) |*wrapper| {
+            _ = wrapper.shutdown(true);
+        }
+    }
+
+    pub fn shutdown(this: *UpgradedDuplex) void {
+        if (this.wrapper) |*wrapper| {
+            _ = wrapper.shutdown(false);
+        }
+    }
+
+    pub fn shutdownRead(this: *UpgradedDuplex) void {
+        if (this.wrapper) |*wrapper| {
+            _ = wrapper.shutdownRead();
+        }
+    }
+
+    pub fn isShutdown(this: *UpgradedDuplex) bool {
+        if (this.wrapper) |wrapper| {
+            return wrapper.isShutdown();
+        }
+        return true;
+    }
+
+    pub fn isClosed(this: *UpgradedDuplex) bool {
+        if (this.wrapper) |wrapper| {
+            return wrapper.isClosed();
+        }
+        return true;
+    }
+
+    pub fn isEstablished(this: *UpgradedDuplex) bool {
+        return !this.isClosed();
+    }
+
+    pub fn ssl(this: *UpgradedDuplex) ?*BoringSSL.SSL {
+        if (this.wrapper) |wrapper| {
+            return wrapper.ssl;
+        }
+        return null;
+    }
+
+    pub fn sslError(this: *UpgradedDuplex) us_bun_verify_error_t {
+        return .{
+            .error_no = this.ssl_error.error_no,
+            .code = @ptrCast(this.ssl_error.code.ptr),
+            .reason = @ptrCast(this.ssl_error.reason.ptr),
+        };
+    }
+
+    pub fn setTimeout(this: *UpgradedDuplex, seconds: c_uint) void {
+        // TODO: handle timeout
+        _ = this;
+        _ = seconds;
+    }
+
+    pub fn deinit(this: *UpgradedDuplex) void {
+        if (this.wrapper) |*wrapper| {
+            wrapper.deinit();
+            this.wrapper = null;
+        }
+        if (this.origin.get()) |origin| {
+            const globalThis = this.origin.globalThis.?;
+            const removeEventListener = origin.getFunction(globalThis, "removeEventListener") catch null;
+            if (removeEventListener) |removeEventListener_| {
+                if (this.onDataCallback.get()) |dataCallback| {
+                    this.vm.eventLoop().runCallback(removeEventListener_, globalThis, origin, &[_]JSC.JSValue{ bun.String.static("data").toJS(globalThis), dataCallback });
+                }
+                if (this.onEndCallback.get()) |endCallback| {
+                    this.vm.eventLoop().runCallback(removeEventListener_, globalThis, origin, &[_]JSC.JSValue{ bun.String.static("end").toJS(globalThis), endCallback });
+                }
+                if (this.onWritbaleCallback.get()) |endCallback| {
+                    this.vm.eventLoop().runCallback(removeEventListener_, globalThis, origin, &[_]JSC.JSValue{ bun.String.static("drain").toJS(globalThis), endCallback });
+                }
+            }
+        }
+        this.origin.deinit();
+        this.onDataCallback.deinit();
+        this.onEndCallback.deinit();
+        const ssl_error = this.ssl_error;
+        this.ssl_error = .{};
+        if (ssl_error.reason.len > 0) {
+            bun.default_allocator.free(ssl_error.reason);
+        }
+        if (ssl_error.code.len > 0) {
+            bun.default_allocator.free(ssl_error.code);
+        }
     }
 };
 
@@ -84,6 +425,7 @@ pub const InternalSocket = union(enum) {
     done: *Socket,
     connecting: *ConnectingSocket,
     detached: void,
+    upgradedDuplex: *UpgradedDuplex,
     pub fn isDetached(this: InternalSocket) bool {
         return this == .detached;
     }
@@ -109,6 +451,9 @@ pub const InternalSocket = union(enum) {
                     socket,
                 );
             },
+            .upgradedDuplex => |socket| {
+                socket.close();
+            },
         }
     }
 
@@ -117,6 +462,7 @@ pub const InternalSocket = union(enum) {
             .done => |socket| us_socket_is_closed(@intFromBool(is_ssl), socket) > 0,
             .connecting => |socket| us_connecting_socket_is_closed(@intFromBool(is_ssl), socket) > 0,
             .detached => true,
+            .upgradedDuplex => |socket| socket.isClosed(),
         };
     }
 
@@ -125,6 +471,7 @@ pub const InternalSocket = union(enum) {
             .done => this.done,
             .connecting => null,
             .detached => null,
+            .upgradedDuplex => null,
         };
     }
 
@@ -132,15 +479,19 @@ pub const InternalSocket = union(enum) {
         return switch (this) {
             .done => switch (other) {
                 .done => this.done == other.done,
-                .connecting, .detached => false,
+                .upgradedDuplex, .connecting, .detached => false,
             },
             .connecting => switch (other) {
-                .done, .detached => false,
+                .upgradedDuplex, .done, .detached => false,
                 .connecting => this.connecting == other.connecting,
             },
             .detached => switch (other) {
                 .detached => true,
-                .done, .connecting => false,
+                .upgradedDuplex, .done, .connecting => false,
+            },
+            .upgradedDuplex => switch (other) {
+                .upgradedDuplex => this.upgradedDuplex == other.upgradedDuplex,
+                .done, .connecting, .detached => false,
             },
         };
     }
@@ -159,18 +510,24 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             return this.socket.isDetached();
         }
         pub fn verifyError(this: ThisSocket) us_bun_verify_error_t {
-            const socket = this.socket.get() orelse return std.mem.zeroes(us_bun_verify_error_t);
-            const ssl_error: us_bun_verify_error_t = uws.us_socket_verify_error(comptime ssl_int, socket);
-            return ssl_error;
+            switch (this.socket) {
+                .done => |socket| return uws.us_socket_verify_error(comptime ssl_int, socket),
+                .upgradedDuplex => |socket| return socket.sslError(),
+                .connecting, .detached => return std.mem.zeroes(us_bun_verify_error_t),
+            }
         }
 
         pub fn isEstablished(this: ThisSocket) bool {
-            const socket = this.socket.get() orelse return false;
-            return us_socket_is_established(comptime ssl_int, socket) > 0;
+            switch (this.socket) {
+                .done => |socket| return us_socket_is_established(comptime ssl_int, socket) > 0,
+                .upgradedDuplex => |socket| return socket.isEstablished(),
+                .connecting, .detached => return false,
+            }
         }
 
         pub fn timeout(this: ThisSocket, seconds: c_uint) void {
             switch (this.socket) {
+                .upgradedDuplex => |socket| socket.setTimeout(seconds),
                 .done => |socket| us_socket_timeout(comptime ssl_int, socket, seconds),
                 .connecting => |socket| us_connecting_socket_timeout(comptime ssl_int, socket, seconds),
                 .detached => {},
@@ -198,6 +555,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     }
                 },
                 .detached => {},
+                .upgradedDuplex => |socket| socket.setTimeout(seconds),
             }
         }
 
@@ -212,6 +570,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     us_connecting_socket_long_timeout(comptime ssl_int, socket, minutes);
                 },
                 .detached => {},
+                .upgradedDuplex => |socket| socket.setTimeout(minutes * 60),
             }
         }
 
@@ -364,6 +723,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 .done => |socket| us_socket_get_native_handle(comptime ssl_int, socket),
                 .connecting => |socket| us_connecting_socket_get_native_handle(comptime ssl_int, socket),
                 .detached => null,
+                .upgradedDuplex => |socket| if (is_ssl) @as(*anyopaque, @ptrCast(socket.ssl())) else null,
             } orelse return null);
         }
 
@@ -397,6 +757,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 .done => |sock| us_socket_ext(comptime ssl_int, sock),
                 .connecting => |sock| us_connecting_socket_ext(comptime ssl_int, sock),
                 .detached => return null,
+                .upgradedDuplex => return null,
             };
 
             return @as(*align(alignment) ContextType, @ptrCast(@alignCast(ptr)));
@@ -408,44 +769,67 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 .done => |socket| return us_socket_context(comptime ssl_int, socket),
                 .connecting => |socket| return us_connecting_socket_context(comptime ssl_int, socket),
                 .detached => return null,
+                .upgradedDuplex => return null,
             }
         }
 
         pub fn flush(this: ThisSocket) void {
-            const socket = this.socket.get() orelse return;
-            return us_socket_flush(
-                comptime ssl_int,
-                socket,
-            );
-        }
-        pub fn write(this: ThisSocket, data: []const u8, msg_more: bool) i32 {
-            const socket = this.socket.get() orelse return 0;
-            const result = us_socket_write(
-                comptime ssl_int,
-                socket,
-                data.ptr,
-                // truncate to 31 bits since sign bit exists
-                @as(i32, @intCast(@as(u31, @truncate(data.len)))),
-                @as(i32, @intFromBool(msg_more)),
-            );
-
-            if (comptime Environment.allow_assert) {
-                debug("us_socket_write({*}, {d}) = {d}", .{ this.getNativeHandle(), data.len, result });
+            switch (this.socket) {
+                .upgradedDuplex => |socket| {
+                    return socket.flush();
+                },
+                .done => |socket| {
+                    return us_socket_flush(
+                        comptime ssl_int,
+                        socket,
+                    );
+                },
+                .connecting, .detached => return,
             }
+        }
 
-            return result;
+        pub fn write(this: ThisSocket, data: []const u8, msg_more: bool) i32 {
+            switch (this.socket) {
+                .upgradedDuplex => |socket| {
+                    return socket.encodeAndWrite(data, msg_more);
+                },
+                .done => |socket| {
+                    const result = us_socket_write(
+                        comptime ssl_int,
+                        socket,
+                        data.ptr,
+                        // truncate to 31 bits since sign bit exists
+                        @as(i32, @intCast(@as(u31, @truncate(data.len)))),
+                        @as(i32, @intFromBool(msg_more)),
+                    );
+
+                    if (comptime Environment.allow_assert) {
+                        debug("us_socket_write({*}, {d}) = {d}", .{ this.getNativeHandle(), data.len, result });
+                    }
+
+                    return result;
+                },
+                .connecting, .detached => return 0,
+            }
         }
 
         pub fn rawWrite(this: ThisSocket, data: []const u8, msg_more: bool) i32 {
-            const socket = this.socket.get() orelse return 0;
-            return us_socket_raw_write(
-                comptime ssl_int,
-                socket,
-                data.ptr,
-                // truncate to 31 bits since sign bit exists
-                @as(i32, @intCast(@as(u31, @truncate(data.len)))),
-                @as(i32, @intFromBool(msg_more)),
-            );
+            switch (this.socket) {
+                .done => |socket| {
+                    return us_socket_raw_write(
+                        comptime ssl_int,
+                        socket,
+                        data.ptr,
+                        // truncate to 31 bits since sign bit exists
+                        @as(i32, @intCast(@as(u31, @truncate(data.len)))),
+                        @as(i32, @intFromBool(msg_more)),
+                    );
+                },
+                .connecting, .detached => return 0,
+                .upgradedDuplex => |socket| {
+                    return socket.rawWrite(data, msg_more);
+                },
+            }
         }
         pub fn shutdown(this: ThisSocket) void {
             // debug("us_socket_shutdown({d})", .{@intFromPtr(this.socket)});
@@ -463,6 +847,9 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     );
                 },
                 .detached => {},
+                .upgradedDuplex => |socket| {
+                    socket.shutdown();
+                },
             }
         }
 
@@ -483,6 +870,9 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     );
                 },
                 .detached => {},
+                .upgradedDuplex => |socket| {
+                    socket.shutdownRead();
+                },
             }
         }
 
@@ -501,6 +891,9 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     ) > 0;
                 },
                 .detached => return true,
+                .upgradedDuplex => |socket| {
+                    return socket.isShutdown();
+                },
             }
         }
 
@@ -527,6 +920,9 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     );
                 },
                 .detached => return 0,
+                .upgradedDuplex => |socket| {
+                    return socket.sslError().error_no;
+                },
             }
         }
 
@@ -538,23 +934,30 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             return this.socket.close(comptime is_ssl, code);
         }
         pub fn localPort(this: ThisSocket) i32 {
-            const socket = this.socket.get() orelse return 0;
-            return us_socket_local_port(
-                comptime ssl_int,
-                socket,
-            );
+            switch (this.socket) {
+                .done => |socket| {
+                    return us_socket_local_port(
+                        comptime ssl_int,
+                        socket,
+                    );
+                },
+                .upgradedDuplex, .connecting, .detached => return 0,
+            }
         }
         pub fn remoteAddress(this: ThisSocket, buf: [*]u8, length: *i32) void {
-            const socket = this.socket.get() orelse {
-                length.* = 0;
-                return;
-            };
-            return us_socket_remote_address(
-                comptime ssl_int,
-                socket,
-                buf,
-                length,
-            );
+            switch (this.socket) {
+                .done => |socket| {
+                    return us_socket_remote_address(
+                        comptime ssl_int,
+                        socket,
+                        buf,
+                        length,
+                    );
+                },
+                .upgradedDuplex, .connecting, .detached => return {
+                    length.* = 0;
+                },
+            }
         }
 
         /// Get the local address of a socket in binary format.
@@ -565,19 +968,23 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         /// # Returns
         /// This function returns a slice of the buffer on success, or null on failure.
         pub fn localAddressBinary(this: ThisSocket, buf: []u8) ?[]const u8 {
-            const socket = this.socket.get() orelse return null;
-            var length: i32 = @intCast(buf.len);
-            us_socket_local_address(
-                comptime ssl_int,
-                socket,
-                buf.ptr,
-                &length,
-            );
+            switch (this.socket) {
+                .done => |socket| {
+                    var length: i32 = @intCast(buf.len);
+                    us_socket_local_address(
+                        comptime ssl_int,
+                        socket,
+                        buf.ptr,
+                        &length,
+                    );
 
-            if (length <= 0) {
-                return null;
+                    if (length <= 0) {
+                        return null;
+                    }
+                    return buf[0..@intCast(length)];
+                },
+                .upgradedDuplex, .connecting, .detached => return null,
             }
-            return buf[0..@intCast(length)];
         }
 
         /// Get the local address of a socket in text format.
@@ -663,6 +1070,12 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             const this_socket = try connectAnon(host, port, socket_ctx, ctx);
             @field(ctx, socket_field_name) = this_socket;
             return ctx;
+        }
+
+        pub fn fromDuplex(
+            duplex: *UpgradedDuplex,
+        ) ThisSocket {
+            return ThisSocket{ .socket = .{ .upgradedDuplex = duplex } };
         }
 
         pub fn fromFd(

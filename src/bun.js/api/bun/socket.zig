@@ -3173,6 +3173,71 @@ pub fn NewWrappedHandler(comptime tls: bool) type {
         }
     };
 }
+
+pub const DuplexUpgradeContext = struct {
+    upgrade: uws.UpgradedDuplex,
+    tls: ?*TLSSocket,
+
+    usingnamespace bun.New(DuplexUpgradeContext);
+
+    fn onOpen(this: *DuplexUpgradeContext) void {
+        const socket = TLSSocket.Socket.fromDuplex(&this.upgrade);
+
+        if (this.tls) |tls| {
+            tls.onOpen(socket);
+        }
+    }
+
+    fn onData(this: *DuplexUpgradeContext, decoded_data: []const u8) void {
+        const socket = TLSSocket.Socket.fromDuplex(&this.upgrade);
+
+        if (this.tls) |tls| {
+            tls.onData(socket, decoded_data);
+        }
+    }
+
+    fn onHandshake(this: *DuplexUpgradeContext, success: bool, ssl_error: uws.us_bun_verify_error_t) void {
+        const socket = TLSSocket.Socket.fromDuplex(&this.upgrade);
+
+        if (this.tls) |tls| {
+            tls.onHandshake(socket, @intFromBool(success), ssl_error);
+        }
+    }
+
+    fn onEnd(this: *DuplexUpgradeContext) void {
+        const socket = TLSSocket.Socket.fromDuplex(&this.upgrade);
+        if (this.tls) |tls| {
+            tls.onEnd(socket);
+        }
+    }
+
+    fn onWritable(this: *DuplexUpgradeContext) void {
+        const socket = TLSSocket.Socket.fromDuplex(&this.upgrade);
+
+        if (this.tls) |tls| {
+            tls.onWritable(socket);
+        }
+    }
+
+    fn onClose(this: *DuplexUpgradeContext) void {
+        const socket = TLSSocket.Socket.fromDuplex(&this.upgrade);
+
+        if (this.tls) |tls| {
+            tls.onClose(socket, 0, null);
+        }
+
+        this.deinit();
+    }
+
+    fn deinit(this: *DuplexUpgradeContext) void {
+        if (this.tls) |tls| {
+            this.tls = null;
+            tls.deref();
+        }
+        this.upgrade.deinit();
+        this.destroy();
+    }
+};
 pub fn jsAddServerName(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
     JSC.markBinding(@src());
 
@@ -3189,8 +3254,128 @@ pub fn jsAddServerName(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) J
     return .zero;
 }
 
+pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    JSC.markBinding(@src());
+
+    const args = callframe.arguments(2);
+    if (args.len < 2) {
+        globalObject.throw("Expected 2 arguments", .{});
+        return .zero;
+    }
+    const duplex = args.ptr[0];
+    // TODO: do better type checking
+    if (duplex.isEmptyOrUndefinedOrNull()) {
+        globalObject.throw("Expected a Duplex instance", .{});
+        return .zero;
+    }
+
+    var exception: JSC.C.JSValueRef = null;
+
+    const opts = args.ptr[1];
+    if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
+        globalObject.throw("Expected options object", .{});
+        return .zero;
+    }
+
+    const socket_obj = opts.get(globalObject, "socket") orelse {
+        globalObject.throw("Expected \"socket\" option", .{});
+        return .zero;
+    };
+
+    var handlers = Handlers.fromJS(globalObject, socket_obj, &exception) orelse {
+        globalObject.throwValue(exception.?.value());
+        return .zero;
+    };
+
+    var ssl_opts: ?JSC.API.ServerConfig.SSLConfig = null;
+    if (opts.getTruthy(globalObject, "tls")) |tls| {
+        if (tls.isBoolean()) {
+            if (tls.toBoolean()) {
+                ssl_opts = JSC.API.ServerConfig.SSLConfig.zero;
+            }
+        } else {
+            if (JSC.API.ServerConfig.SSLConfig.inJS(JSC.VirtualMachine.get(), globalObject, tls, &exception)) |ssl_config| {
+                ssl_opts = ssl_config;
+            } else if (exception != null) {
+                return .zero;
+            }
+        }
+    }
+    if (ssl_opts == null) {
+        globalObject.throw("Expected \"tls\" option", .{});
+        return .zero;
+    }
+
+    var default_data = JSValue.zero;
+    if (opts.fastGet(globalObject, .data)) |default_data_value| {
+        default_data = default_data_value;
+        default_data.ensureStillAlive();
+    }
+
+    var socket_config = ssl_opts.?;
+    defer socket_config.deinit();
+
+    const protos = socket_config.protos;
+    const protos_len = socket_config.protos_len;
+
+    const is_server = false; // A duplex socket is always handled as a client
+
+    var handlers_ptr = handlers.vm.allocator.create(Handlers) catch bun.outOfMemory();
+    handlers_ptr.* = handlers;
+    handlers_ptr.is_server = is_server;
+    handlers_ptr.protect();
+    var tls = TLSSocket.new(.{
+        .handlers = handlers_ptr,
+        .this_value = .zero,
+        .socket = TLSSocket.Socket.detached,
+        .connection = null,
+        .wrapped = .tls,
+        .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p[0..protos_len]) catch bun.outOfMemory()) else null,
+        .server_name = if (socket_config.server_name) |server_name| (bun.default_allocator.dupe(u8, server_name[0..bun.len(server_name)]) catch bun.outOfMemory()) else null,
+        .socket_context = null, // only set after the wrapTLS
+    });
+    const tls_js_value = tls.getThisValue(globalObject);
+    TLSSocket.dataSetCached(tls_js_value, globalObject, default_data);
+
+    var duplexContext = DuplexUpgradeContext.new(.{
+        .upgrade = undefined,
+        .tls = tls,
+    });
+    tls.ref();
+    duplexContext.upgrade = uws.UpgradedDuplex.from(globalObject, duplex, .{
+        .onOpen = @ptrCast(&DuplexUpgradeContext.onOpen),
+        .onData = @ptrCast(&DuplexUpgradeContext.onData),
+        .onHandshake = @ptrCast(&DuplexUpgradeContext.onHandshake),
+        .onClose = @ptrCast(&DuplexUpgradeContext.onClose),
+        .onEnd = @ptrCast(&DuplexUpgradeContext.onEnd),
+        .onWritable = @ptrCast(&DuplexUpgradeContext.onWritable),
+        .ctx = @ptrCast(duplexContext),
+    });
+
+    tls.socket = TLSSocket.Socket.fromDuplex(&duplexContext.upgrade);
+    tls.markActive();
+    tls.poll_ref.ref(globalObject.bunVM());
+    duplexContext.upgrade.startTLS(socket_config, !is_server) catch |err| {
+        switch (err) {
+            error.OutOfMemory => {
+                bun.outOfMemory();
+            },
+            error.InvalidOptions => {
+                globalObject.throw("Invalid SSL Options", .{});
+            },
+            error.JSError => {},
+        }
+
+        duplexContext.deinit();
+
+        return JSValue.jsUndefined();
+    };
+
+    return tls_js_value;
+}
 pub fn createNodeTLSBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
     return JSC.JSArray.create(global, &.{
         JSC.JSFunction.create(global, "addServerName", JSC.toJSHostFunction(jsAddServerName), 3, .{}),
+        JSC.JSFunction.create(global, "upgradeDuplexToTLS", JSC.toJSHostFunction(jsUpgradeDuplexToTLS), 2, .{}),
     });
 }

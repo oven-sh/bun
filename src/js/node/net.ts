@@ -21,7 +21,7 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 const { Duplex } = require("node:stream");
 const EventEmitter = require("node:events");
-const { addServerName } = require("../internal/net");
+const { addServerName, upgradeDuplexToTLS } = require("../internal/net");
 const { ExceptionWithHostPort } = require("internal/shared");
 const { ERR_SERVER_NOT_RUNNING } = require("internal/errors");
 
@@ -457,6 +457,8 @@ const Socket = (function (InternalSocket) {
       const [options, connectListener] = normalizeArgs(args);
       let connection = this.#socket;
 
+      let upgradeDuplex = false;
+
       let {
         fd,
         port,
@@ -540,7 +542,11 @@ const Socket = (function (InternalSocket) {
             !(connection instanceof Socket) ||
             typeof connection[bunTlsSymbol] === "function"
           ) {
-            throw new TypeError("socket must be an instance of net.Socket");
+            if (connection instanceof Duplex) {
+              upgradeDuplex = true;
+            } else {
+              throw new TypeError("socket must be an instance of net.Socket or Duplex");
+            }
           }
         }
         this.authorized = false;
@@ -554,42 +560,31 @@ const Socket = (function (InternalSocket) {
       // start using existing connection
       try {
         if (connection) {
-          const socket = connection[bunSocketInternal];
-
-          if (socket) {
+          if (upgradeDuplex) {
             this.connecting = true;
-            this.#upgraded = connection;
-            const result = socket.upgradeTLS({
+            this.#upgraded = true;
+            const result = upgradeDuplexToTLS(connection, {
               data: this,
               tls,
               socket: this.#handlers,
             });
             if (result) {
-              const [raw, tls] = result;
-              // replace socket
-              connection[bunSocketInternal] = raw;
-              raw.timeout(raw.timeout);
-              this.once("end", this.#closeRawConnection);
-              raw.connecting = false;
-              this[bunSocketInternal] = tls;
+              this[bunSocketInternal] = result;
             } else {
               this[bunSocketInternal] = null;
-              throw new Error("Invalid socket");
+              throw new Error("Invalid duplex");
             }
           } else {
-            // wait to be connected
-            connection.once("connect", () => {
-              const socket = connection[bunSocketInternal];
-              if (!socket) return;
+            const socket = connection[bunSocketInternal];
 
+            if (socket) {
               this.connecting = true;
-              this.#upgraded = connection;
+              this.#upgraded = !!connection;
               const result = socket.upgradeTLS({
                 data: this,
                 tls,
                 socket: this.#handlers,
               });
-
               if (result) {
                 const [raw, tls] = result;
                 // replace socket
@@ -602,7 +597,34 @@ const Socket = (function (InternalSocket) {
                 this[bunSocketInternal] = null;
                 throw new Error("Invalid socket");
               }
-            });
+            } else {
+              // wait to be connected
+              connection.once("connect", () => {
+                const socket = connection[bunSocketInternal];
+                if (!socket) return;
+
+                this.connecting = true;
+                this.#upgraded = !!connection;
+                const result = socket.upgradeTLS({
+                  data: this,
+                  tls,
+                  socket: this.#handlers,
+                });
+
+                if (result) {
+                  const [raw, tls] = result;
+                  // replace socket
+                  connection[bunSocketInternal] = raw;
+                  raw.timeout(raw.timeout);
+                  this.once("end", this.#closeRawConnection);
+                  raw.connecting = false;
+                  this[bunSocketInternal] = tls;
+                } else {
+                  this[bunSocketInternal] = null;
+                  throw new Error("Invalid socket");
+                }
+              });
+            }
           }
         } else if (path) {
           // start using unix socket

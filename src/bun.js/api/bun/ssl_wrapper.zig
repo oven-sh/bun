@@ -116,7 +116,7 @@ pub fn SSLWrapper(comptime T: type) type {
             // We cannot shutdown read in SSL, the read direction is closed by the peer.
             // So we just ignore the onData data, we still wanna to wait until we received the shutdown
             const DummyReadHandler = struct {
-                fn onData(_: T, _: *This, _: []const u8) void {}
+                fn onData(_: T, _: []const u8) void {}
             };
             this.handlers.onData = DummyReadHandler.onData;
         }
@@ -176,19 +176,19 @@ pub fn SSLWrapper(comptime T: type) type {
         }
 
         // Return if we have pending data to be read or write
-        pub fn hasPendingData(this: *This) bool {
+        pub fn hasPendingData(this: *const This) bool {
             const ssl = this.ssl orelse return false;
 
             return BoringSSL.BIO_ctrl_pending(BoringSSL.SSL_get_wbio(ssl)) > 0 or BoringSSL.BIO_ctrl_pending(BoringSSL.SSL_get_rbio(ssl)) > 0;
         }
 
         // We sent or received a shutdown (closing or closed)
-        pub fn isShutdown(this: *This) bool {
+        pub fn isShutdown(this: *const This) bool {
             return this.flags.closed_notified or this.flags.received_ssl_shutdown or this.flags.sent_ssl_shutdown;
         }
 
         // We sent and received the shutdown (fully closed)
-        pub fn isClosed(this: *This) bool {
+        pub fn isClosed(this: *const This) bool {
             return this.flags.received_ssl_shutdown and this.flags.sent_ssl_shutdown;
         }
 

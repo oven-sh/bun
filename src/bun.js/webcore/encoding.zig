@@ -1448,6 +1448,42 @@ pub const Encoder = struct {
         };
     }
 
+    pub fn decodeStringAtRuntime(str: bun.String, encoding: JSC.Node.Encoding) []u8 {
+        return if (str.is8Bit()) constructFromAtRuntime(u8, str.byteSlice(), encoding) else constructFromAtRuntime(u16, str.utf16(), encoding);
+    }
+
+    pub fn constructFromAtRuntime(comptime T: type, input: []const T, encoding: JSC.Node.Encoding) []u8 {
+        switch (comptime T) {
+            u16 => {
+                return switch (encoding) {
+                    .ucs2 => constructFromU16(input.ptr, input.len, .utf16le),
+                    .utf16le => constructFromU16(input.ptr, input.len, .utf16le),
+                    .utf8 => constructFromU16(input.ptr, input.len, .utf8),
+                    .ascii => constructFromU16(input.ptr, input.len, .ascii),
+                    .hex => constructFromU16(input.ptr, input.len, .hex),
+                    .base64 => constructFromU16(input.ptr, input.len, .base64),
+                    .base64url => constructFromU16(input.ptr, input.len, .base64url),
+                    .latin1 => constructFromU16(input.ptr, input.len, .latin1),
+                    else => constructFromU16(input.ptr, input.len, .utf8),
+                };
+            },
+            u8 => {
+                return switch (encoding) {
+                    .ucs2 => constructFromU8(input.ptr, input.len, .utf16le),
+                    .utf16le => constructFromU8(input.ptr, input.len, .utf16le),
+                    .utf8 => constructFromU8(input.ptr, input.len, .utf8),
+                    .ascii => constructFromU8(input.ptr, input.len, .ascii),
+                    .hex => constructFromU8(input.ptr, input.len, .hex),
+                    .base64 => constructFromU8(input.ptr, input.len, .base64),
+                    .base64url => constructFromU8(input.ptr, input.len, .base64url),
+                    .latin1 => constructFromU8(input.ptr, input.len, .latin1),
+                    else => constructFromU8(input.ptr, input.len, .utf8),
+                };
+            },
+            else => @compileError("Unsupported type for constructFrom: " ++ @typeName(T)),
+        }
+    }
+
     pub fn constructFromU8(input: [*]const u8, len: usize, comptime encoding: JSC.Node.Encoding) []u8 {
         if (len == 0) return &[_]u8{};
 

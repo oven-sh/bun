@@ -1,13 +1,15 @@
 include(Macros)
 
-find_program(
-  BUN_EXECUTABLE
-  NAMES bun
-  PATHS ENV PATH $ENV{HOME}/.bun/bin 
-  REQUIRED
+find_command(
+  VARIABLE
+    BUN_EXECUTABLE
+  COMMAND
+    bun
+  PATHS
+    $ENV{HOME}/.bun/bin
+  VERSION
+    >=1.1.24
 )
-
-setx(BUN_EXECUTABLE ${BUN_EXECUTABLE})
 
 if(CMAKE_HOST_WIN32)
   setx(ESBUILD_EXECUTABLE ${CWD}/node_modules/.bin/esbuild.exe)

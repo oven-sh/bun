@@ -2,9 +2,16 @@
 
 include(Macros)
 
-find_program(CPPCHECK_PROGRAM "cppcheck")
+find_command(
+  VARIABLE
+    CPPCHECK_EXECUTABLE
+  COMMAND
+    cppcheck
+  REQUIRED
+    OFF
+)
 
-set(CPPCHECK_COMMAND ${CPPCHECK_PROGRAM}
+set(CPPCHECK_COMMAND ${CPPCHECK_EXECUTABLE}
   --cppcheck-build-dir=${BUILD_PATH}/cppcheck
   --project=${BUILD_PATH}/compile_commands.json
   --clang=${CMAKE_CXX_COMPILER}
@@ -13,17 +20,16 @@ set(CPPCHECK_COMMAND ${CPPCHECK_PROGRAM}
   --showtime=summary
 )
 
-add_custom_target(
-  cppcheck
+register_command(
+  TARGET
+    cppcheck
   COMMENT
     "Running cppcheck"
-  VERBATIM COMMAND
-    ${CMAKE_COMMAND}
-      -E make_directory cppcheck
-  VERBATIM COMMAND
-    ${CPPCHECK_COMMAND} 
-  WORKING_DIRECTORY
+  COMMAND
+    ${CMAKE_COMMAND} -E make_directory cppcheck
+    && ${CPPCHECK_COMMAND} 
+  CWD
     ${BUILD_PATH}
-  DEPENDS
+  TARGETS
     ${bun}
 )

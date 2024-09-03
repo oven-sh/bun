@@ -28,44 +28,38 @@ endif()
 optionx(LLVM_PREFIX FILEPATH "The path to the LLVM installation" DEFAULT ${DEFAULT_LLVM_PREFIX})
 set(LLVM_PATH ${LLVM_PREFIX}/bin)
 
-function(check_llvm_version found executable)
-  set(${found} FALSE PARENT_SCOPE)
-
-  execute_process(
-    COMMAND ${executable} --version
-    RESULT_VARIABLE result
-    OUTPUT_VARIABLE output
-    OUTPUT_STRIP_TRAILING_WHITESPACE
+macro(find_llvm_command VARIABLE COMMAND)
+  find_command(
+    VARIABLE ${VARIABLE}
+    COMMAND ${COMMAND}
+    PATHS ${LLVM_PATH}
+    VERSION ${LLVM_VERSION}
   )
+endmacro()
 
-  if(NOT result EQUAL 0)
-    message(DEBUG "Checking ${executable} (expected \"${LLVM_VERSION}\", exited with \"${result}\")")
-    return()
-  endif()
-
-  parse_semver("${output}" executable)
-  if(NOT executable_VERSION STREQUAL LLVM_VERSION)
-    message(DEBUG "Checking ${executable} (expected \"${LLVM_VERSION}\", received \"${executable_VERSION}\")")
-    return()
-  endif()
-
-  set(${found} TRUE PARENT_SCOPE)
-endfunction()
+macro(find_llvm_command_no_version VARIABLE COMMAND)
+  find_command(
+    VARIABLE ${VARIABLE}
+    COMMAND ${COMMAND}
+    PATHS ${LLVM_PATH}
+    REQUIRED ON
+  )
+endmacro()
 
 if(WIN32)
-  find_llvm_program(CMAKE_C_COMPILER "clang-cl")
-  find_llvm_program(CMAKE_CXX_COMPILER "clang-cl")
-  find_program(CMAKE_LINKER "lld-link")
-  find_program(CMAKE_AR "llvm-lib")
-  find_program(CMAKE_STRIP "llvm-strip")
+  find_llvm_command(CMAKE_C_COMPILER clang-cl)
+  find_llvm_command(CMAKE_CXX_COMPILER clang-cl)
+  find_llvm_command_no_version(CMAKE_LINKER lld-link)
+  find_llvm_command_no_version(CMAKE_AR llvm-lib)
+  find_llvm_command_no_version(CMAKE_STRIP llvm-strip)
 else()
-  find_llvm_program(CMAKE_C_COMPILER "clang")
-  find_llvm_program(CMAKE_CXX_COMPILER "clang++")
-  find_llvm_program(CMAKE_LINKER "llvm-link")
-  find_llvm_program(CMAKE_AR "llvm-ar")
-  find_llvm_program(CMAKE_STRIP "llvm-strip")
-  find_llvm_program(CMAKE_RANLIB "llvm-ranlib")
+  find_llvm_command(CMAKE_C_COMPILER clang)
+  find_llvm_command(CMAKE_CXX_COMPILER clang++)
+  find_llvm_command(CMAKE_LINKER llvm-link)
+  find_llvm_command(CMAKE_AR llvm-ar)
+  find_llvm_command(CMAKE_STRIP llvm-strip)
+  find_llvm_command(CMAKE_RANLIB llvm-ranlib)
   if(APPLE)
-    find_llvm_program(CMAKE_DSYMUTIL "dsymutil")
+    find_llvm_command(CMAKE_DSYMUTIL dsymutil)
   endif()
 endif()

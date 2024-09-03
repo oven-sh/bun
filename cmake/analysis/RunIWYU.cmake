@@ -19,41 +19,52 @@ add_custom_repository(
     ${IWYU_SOURCE_PATH}
 )
 
-add_custom_target(
-  build-iwyu
+register_command(
+  TARGET
+    build-iwyu
   COMMENT
     "Building iwyu"
-  VERBATIM COMMAND
+  COMMAND
     ${CMAKE_COMMAND}
       -B${IWYU_BUILD_PATH}
       -G${CMAKE_GENERATOR}
       -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
       -DCMAKE_CXX_COMPILER_LAUNCHER=${CMAKE_CXX_COMPILER_LAUNCHER}
       -DIWYU_LLVM_ROOT_PATH=${LLVM_PREFIX}
-  VERBATIM COMMAND
-    ${CMAKE_COMMAND}
+    && ${CMAKE_COMMAND}
       --build ${IWYU_BUILD_PATH}
-  WORKING_DIRECTORY
+  CWD
     ${IWYU_SOURCE_PATH}
-  DEPENDS
+  TARGETS
     clone-iwyu
 )
 
-find_package(Python3 COMPONENTS Interpreter)
+find_command(
+  VARIABLE
+    PYTHON_EXECUTABLE
+  COMMAND
+    python3
+    python
+  VERSION
+    >=3.0.0
+  REQUIRED
+    OFF
+)
 
-add_custom_target(
-  iwyu
+register_command(
+  TARGET
+    iwyu
   COMMENT
     "Running iwyu"
-  VERBATIM COMMAND
+  COMMAND
     ${CMAKE_COMMAND}
       -E env IWYU_BINARY=${IWYU_PROGRAM}
       ${PYTHON_EXECUTABLE}
       ${IWYU_SOURCE_PATH}/iwyu_tool.py
       -p ${BUILD_PATH}
-  WORKING_DIRECTORY
+  CWD
     ${BUILD_PATH}
-  DEPENDS
+  TARGETS
     build-iwyu
     ${bun}
 )

@@ -4,7 +4,7 @@ include(Macros)
 
 find_llvm_program(CLANG_TIDY_PROGRAM "clang-tidy" OPTIONAL)
 
-set(CLANG_TIDY_COMMAND ${BUN_CPP_SOURCES}
+set(CLANG_TIDY_COMMAND ${CLANG_TIDY_PROGRAM} ${BUN_CPP_SOURCES}
   -p ${BUILD_PATH}  
   --config-file=${CWD}/.clang-tidy
   --fix
@@ -22,26 +22,28 @@ set(CLANG_TIDY_EXTRA_COMMAND ${CLANG_TIDY_PROGRAM}
   --checks=performance-*
 )
 
-add_custom_target(
-  clang-tidy
+register_command(
+  TARGET
+    clang-tidy
   COMMENT
     "Running clang-tidy"
-  VERBATIM COMMAND
+  COMMAND
     ${CLANG_TIDY_COMMAND} 
-  WORKING_DIRECTORY
+  CWD
     ${BUILD_PATH}
-  DEPENDS
+  TARGETS
     ${bun}
 )
 
-add_custom_target(
-  clang-tidy-extra
+register_command(
+  TARGET
+    clang-tidy-extra
   COMMENT
     "Running clang-tidy with extra checks"
-  VERBATIM COMMAND
+  COMMAND
     ${CLANG_TIDY_EXTRA_COMMAND} 
-  WORKING_DIRECTORY
+  CWD
     ${BUILD_PATH}
-  DEPENDS
+  TARGETS
     ${bun}
 )

@@ -1,16 +1,24 @@
 include(Macros)
 
-find_program(CPPLINT_PROGRAM "cpplint")
+find_command(
+  VARIABLE
+    CPPLINT_PROGRAM
+  COMMAND
+    cpplint
+  REQUIRED
+    OFF
+)
 
-add_custom_target(
-  cpplint
+register_command(
+  TARGET
+    cpplint
   COMMENT
     "Running cpplint"
-  VERBATIM COMMAND
+  COMMAND
     ${CPPLINT_PROGRAM}
     ${BUN_CPP_SOURCES}
-  WORKING_DIRECTORY
+  CWD
     ${BUILD_PATH}
-  DEPENDS
+  TARGETS
     ${bun}
 )

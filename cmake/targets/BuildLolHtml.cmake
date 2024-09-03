@@ -41,7 +41,7 @@ add_custom_library(
   WORKING_DIRECTORY
     c-api
   COMMAND
-    ${CMAKE_CARGO}
+    ${CARGO_EXECUTABLE}
       build
       ${LOLHTML_BUILD_ARGS}
 )

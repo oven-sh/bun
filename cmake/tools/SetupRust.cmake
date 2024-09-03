@@ -1,12 +1,15 @@
 include(Macros)
 
-find_program(
-  CMAKE_CARGO
-  cargo
-  PATHS ENV PATH $ENV{HOME}/.cargo/bin
+find_command(
+  VARIABLE
+    CARGO_EXECUTABLE
+  COMMAND
+    cargo
+  PATHS
+    $ENV{HOME}/.cargo/bin
 )
 
-if(CMAKE_CARGO)
+if(CARGO_EXECUTABLE)
   return()
 endif()
 

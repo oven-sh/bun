@@ -67,26 +67,16 @@ set(CMAKE_ZIG_FLAGS
   --zig-lib-dir ${ZIG_REPOSITORY_PATH}/lib
 )
 
-function(check_zig_version found executable)
-  set(${found} FALSE PARENT_SCOPE)
-
-  execute_process(
-    COMMAND ${executable} version
-    OUTPUT_VARIABLE output
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET
-  )
-
-  if(output STREQUAL ${ZIG_VERSION})
-    set(${found} TRUE PARENT_SCOPE)
-  endif()
-endfunction()
-
-find_program(
-  CMAKE_ZIG_COMPILER
-  NAMES zig zig.exe
-  PATHS ENV PATH ${ZIG_BIN_CACHE_DIR}
-  VALIDATOR check_zig_version
+find_command(
+  VARIABLE
+    CMAKE_ZIG_COMPILER
+  COMMAND
+    zig
+    zig.exe
+  PATHS
+    ${ZIG_BIN_CACHE_DIR}
+  VERSION
+    ${ZIG_VERSION}
 )
 
 if(CMAKE_ZIG_COMPILER)

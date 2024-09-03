@@ -1,8 +1,12 @@
 include(Macros)
 
-find_program(
-  CCACHE_PROGRAM
-  NAMES ccache
+find_command(
+  VARIABLE
+    CCACHE_PROGRAM
+  COMMAND
+    ccache
+  REQUIRED
+    ${CI}
 )
 
 if(NOT CCACHE_PROGRAM)

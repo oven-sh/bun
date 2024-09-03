@@ -110,6 +110,95 @@ macro(find_llvm_program variable program_name)
   message(STATUS "Set ${variable}: ${${variable}}")
 endmacro()
 
+# check_command
+#   FOUND bool   - The variable to set to true if the version is found
+#   CMD   string - The executable to check the version of
+function(check_command FOUND CMD)
+  set(${FOUND} OFF PARENT_SCOPE)
+
+  if(${CMD} MATCHES "zig")
+    set(CHECK_COMMAND ${CMD} version)
+  else()
+    set(CHECK_COMMAND ${CMD} --version)
+  endif()
+
+  execute_process(
+    COMMAND ${CHECK_COMMAND}
+    RESULT_VARIABLE RESULT
+    OUTPUT_VARIABLE OUTPUT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+
+  if(NOT RESULT EQUAL 0)
+    message(DEBUG "${CHECK_COMMAND}, exited with code ${RESULT}")
+    return()
+  endif()
+
+  parse_semver(${OUTPUT} CMD)
+  parse_semver(${CHECK_COMMAND_VERSION} CHECK)
+
+  if(CHECK_COMMAND_VERSION MATCHES ">=")
+    if(NOT CMD_VERSION VERSION_GREATER_EQUAL ${CHECK_VERSION})
+      message(DEBUG "${CHECK_COMMAND}, actual: ${CMD_VERSION}, expected: ${CHECK_COMMAND_VERSION}")
+      return()
+    endif()
+  elseif(CHECK_COMMAND_VERSION MATCHES ">")
+    if(NOT CMD_VERSION VERSION_GREATER ${CHECK_VERSION})
+      message(DEBUG "${CHECK_COMMAND}, actual: ${CMD_VERSION}, expected: ${CHECK_COMMAND_VERSION}")
+      return()
+    endif()
+  else()
+    if(NOT CMD_VERSION VERSION_EQUAL ${CHECK_VERSION})
+      message(DEBUG "${CHECK_COMMAND}, actual: ${CMD_VERSION}, expected: =${CHECK_COMMAND_VERSION}")
+      return()
+    endif()
+  endif()
+
+  set(${FOUND} TRUE PARENT_SCOPE)
+endfunction()
+
+# find_command
+#   VARIABLE  string   - The variable to set
+#   COMMAND   string[] - The names of the command to find
+#   PATHS     string[] - The paths to search for the command
+#   REQUIRED  bool     - If false, the command is optional
+#   VERSION   string   - The version of the command to find (e.g. "1.2.3" or ">1.2.3")
+function(find_command)
+  set(options)
+  set(args VARIABLE VERSION MIN_VERSION REQUIRED)
+  set(multiArgs COMMAND PATHS)
+  cmake_parse_arguments(CMD "${options}" "${args}" "${multiArgs}" ${ARGN})
+
+  if(NOT CMD_VARIABLE)
+    message(FATAL_ERROR "find_command: VARIABLE is required")
+  endif()
+
+  if(NOT CMD_COMMAND)
+    message(FATAL_ERROR "find_command: COMMAND is required")
+  endif()
+
+  if(CMD_VERSION)
+    set(CHECK_COMMAND_VERSION ${CMD_VERSION}) # special global variable
+    set(CMD_VALIDATOR VALIDATOR check_command)
+  endif()
+
+  find_program(
+    ${CMD_VARIABLE}
+    NAMES ${CMD_COMMAND}
+    PATHS ${CMD_PATHS}
+    ${CMD_VALIDATOR}
+  )
+
+  if(NOT CMD_REQUIRED AND ${CMD_VARIABLE} MATCHES "NOTFOUND")
+    if(CMD_VERSION)
+      message(FATAL_ERROR "Command not found: \"${CMD_COMMAND}\" that matches version \"${CHECK_COMMAND_VERSION}\"")
+    endif()
+    message(FATAL_ERROR "Command not found: \"${CMD_COMMAND}\"")
+  endif()
+
+  setx(${CMD_VARIABLE} ${${CMD_VARIABLE}})
+endfunction()
+
 # register_command
 #   COMMAND      string[] - The command to run
 #   COMMENT      string   - The comment to display in the log

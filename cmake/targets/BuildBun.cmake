@@ -582,9 +582,12 @@ endif()
 
 # Since linking locks the file, we need to kill all instances of bun before linking.
 if(WIN32)
-  find_program(POWERSHELL_EXECUTABLE
-    NAMES pwsh powershell
-    REQUIRED
+  find_command(
+    VARIABLE
+      POWERSHELL_EXECUTABLE
+    COMMAND
+      pwsh
+      powershell
   )
   register_command(
     TARGET

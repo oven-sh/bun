@@ -1315,7 +1315,10 @@ pub const Fetch = struct {
         fn clearAbortSignal(this: *FetchTasklet) void {
             const signal = this.signal orelse return;
             this.signal = null;
-            defer signal.unref();
+            defer {
+                signal.pendingActivityUnref();
+                signal.unref();
+            }
 
             signal.cleanNativeBindings(this);
         }
@@ -1707,6 +1710,7 @@ pub const Fetch = struct {
             }
 
             if (fetch_tasklet.signal) |signal| {
+                signal.pendingActivityRef();
                 fetch_tasklet.signal = signal.listen(FetchTasklet, fetch_tasklet, FetchTasklet.abortListener);
             }
             return fetch_tasklet;
@@ -2943,6 +2947,16 @@ pub const Fetch = struct {
 
         const promise_val = promise.value();
 
+        const initial_body_reference_count: if (Environment.isDebug) usize else u0 = brk: {
+            if (Environment.isDebug) {
+                if (body.store()) |store| {
+                    break :brk store.ref_count.load(.monotonic);
+                }
+            }
+
+            break :brk 0;
+        };
+
         _ = FetchTasklet.queue(
             allocator,
             globalThis,
@@ -2975,10 +2989,26 @@ pub const Fetch = struct {
             promise,
         ) catch bun.outOfMemory();
 
+        if (Environment.isDebug) {
+            if (body.store()) |store| {
+                if (store.ref_count.load(.monotonic) == initial_body_reference_count) {
+                    Output.panic("Expected body ref count to have incremented in FetchTasklet", .{});
+                }
+            }
+        }
+
         // These are now owned by FetchTasklet.
         url = .{};
         headers = null;
-        body = AnyBlob{ .Blob = .{} };
+        // Reference count for the blob is incremented above.
+        if (body.store() != null) {
+            body.detach();
+        } else {
+            // These are single-use, and have effectively been moved to the FetchTasklet.
+            body = .{
+                .Blob = .{},
+            };
+        }
         proxy = null;
         url_proxy_buffer = "";
         signal = null;

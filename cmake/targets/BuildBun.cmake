@@ -17,15 +17,10 @@ endif()
 setx(bunExe ${bun}${CMAKE_EXECUTABLE_SUFFIX})
 
 if(bunStrip)
+  setx(bunStripExe ${bunStrip}${CMAKE_EXECUTABLE_SUFFIX})
   setx(buns ${bun} ${bunStrip})
 else()
   setx(buns ${bun})
-endif()
-
-if(ENABLE_BASELINE)
-  setx(bunTriplet bun-${OS}-${ARCH}-baseline)
-else()
-  setx(bunTriplet bun-${OS}-${ARCH})
 endif()
 
 # Some commands use this path, and some do not.
@@ -602,4 +597,124 @@ if(WIN32)
       /C
       "Stop-Process -Name '${bun}' -Force -ErrorAction SilentlyContinue; exit 0"
   )
+endif()
+
+# --- Packaging ---
+
+if(bunStrip)
+  add_custom_command(
+    TARGET
+      ${bun} POST_BUILD
+    COMMENT
+      "Stripping ${bun}"
+    VERBATIM COMMAND
+      ${CMAKE_STRIP}
+        ${bunExe}
+        --strip-all
+        --strip-debug
+        --discard-all
+        -o ${bunStripExe}
+    WORKING_DIRECTORY
+      ${BUILD_PATH}
+  )
+  set_property(TARGET ${bun} PROPERTY OUTPUT ${bunStripExe} APPEND)
+endif()
+
+add_custom_command(
+  TARGET
+    ${bun} POST_BUILD
+  COMMENT
+    "Testing ${bun}"
+  VERBATIM COMMAND
+    ${CMAKE_COMMAND}
+    -E env BUN_DEBUG_QUIET_LOGS=1
+    ${BUILD_PATH}/${bunExe}
+      --revision
+  WORKING_DIRECTORY
+    ${BUILD_PATH}
+)
+
+if(CI)
+  set(BUN_FEATURES_SCRIPT ${CWD}/scripts/features.mjs)
+  add_custom_command(
+    TARGET
+      ${bun} POST_BUILD
+    COMMENT
+      "Generating features.json"
+    VERBATIM COMMAND
+      ${CMAKE_COMMAND}
+        -E env
+          BUN_GARBAGE_COLLECTOR_LEVEL=1
+          BUN_DEBUG_QUIET_LOGS=1
+          BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1
+        ${BUILD_PATH}/${bunExe}
+        ${BUN_FEATURES_SCRIPT}
+    WORKING_DIRECTORY
+      ${BUILD_PATH}
+  )
+  set_property(TARGET ${bun} PROPERTY OUTPUT ${BUILD_PATH}/features.json APPEND)
+endif()
+
+if(APPLE AND bunStrip)
+  add_custom_command(
+    TARGET
+      ${bun} POST_BUILD
+    COMMENT
+      "Generating ${bun}.dSYM"
+    COMMAND
+      ${CMAKE_DSYMUTIL}
+        ${bun}
+        --flat
+        --keep-function-for-static
+        --object-prefix-map .=${CWD}
+        -o ${bun}.dSYM
+        -j ${CMAKE_BUILD_PARALLEL_LEVEL}
+    WORKING_DIRECTORY
+      ${BUILD_PATH}
+  )
+  set_property(TARGET ${bun} PROPERTY OUTPUT ${bun}.dSYM APPEND)
+endif()
+
+if(CI)
+  if(ENABLE_BASELINE)
+    setx(bunTriplet bun-${OS}-${ARCH}-baseline)
+  else()
+    setx(bunTriplet bun-${OS}-${ARCH})
+  endif()
+
+  string(REPLACE bun ${bunTriplet} bunPath ${bun})
+  add_custom_command(
+    TARGET
+      ${bun} POST_BUILD
+    COMMENT
+      "Generating ${bunPath}.zip"
+    VERBATIM COMMAND
+      ${CMAKE_COMMAND} -E rm -rf ${bunPath} ${bunPath}.zip
+        && ${CMAKE_COMMAND} -E make_directory ${bunPath}
+        && ${CMAKE_COMMAND} -E copy ${bunExe} ${bunPath}
+        && ${CMAKE_COMMAND} -E tar cfv ${bunPath}.zip --format=zip ${bunPath}
+        && ${CMAKE_COMMAND} -E rm -rf ${bunPath}
+    WORKING_DIRECTORY
+      ${BUILD_PATH}
+  )
+  set_property(TARGET ${bun} PROPERTY OUTPUT ${BUILD_PATH}/${bunPath}.zip APPEND)
+
+  if(bunStrip)
+    string(REPLACE bun ${bunTriplet} bunPath ${bunStrip})
+    add_custom_command(
+      TARGET
+        ${bun} POST_BUILD
+      COMMENT
+        "Generating ${bunPath}.zip"
+      VERBATIM COMMAND
+        ${CMAKE_COMMAND} -E rm -rf ${bunPath} ${bunPath}.zip
+          && ${CMAKE_COMMAND} -E make_directory ${bunPath}
+          && ${CMAKE_COMMAND} -E copy ${bunStripExe} ${bunPath}
+          && ${CMAKE_COMMAND} -E tar cfv ${bunPath}.zip --format=zip ${bunPath}
+          && ${CMAKE_COMMAND} -E rm -rf ${bunPath}
+      WORKING_DIRECTORY
+        ${BUILD_PATH}
+    )
+    set_property(TARGET ${bun} PROPERTY OUTPUT ${BUILD_PATH}/${bunPath}.zip APPEND)
+  endif()
 endif()

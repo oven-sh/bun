@@ -103,7 +103,7 @@ function spawn(command, args, options) {
   }
 
   if (error) {
-    console.error(error);
+    // console.error(error);
   } else if (signal) {
     console.error(`Command killed: ${signal}`);
   } else {

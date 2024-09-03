@@ -134,7 +134,7 @@ pub const VendorPrefix = packed struct(u8) {
 
     pub usingnamespace Bitflags(@This());
 
-    pub fn toCss(this: *const VendorPrefix, comptime W: type, dest: *Printer(W)) PrintResult(void) {
+    pub fn toCss(this: *const VendorPrefix, comptime W: type, dest: *Printer(W)) PrintErr!void {
         return switch (this.asBits()) {
             VendorPrefix.asBits(.{ .webkit = true }) => dest.writeStr("-webkit"),
             VendorPrefix.asBits(.{ .moz = true }) => dest.writeStr("-moz-"),
@@ -397,7 +397,7 @@ pub fn DeriveParse(comptime T: type) type {
             @compileError(todo_stuff.depth);
         }
 
-        // pub fn parse(this: *const T, comptime W: type, dest: *Printer(W)) PrintResult(void) {
+        // pub fn parse(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
         //     // to implement this, we need to cargo expand the derive macro
         //     _ = this; // autofix
         //     _ = dest; // autofix
@@ -409,7 +409,7 @@ pub fn DeriveParse(comptime T: type) type {
 pub fn DeriveToCss(comptime T: type) type {
     // TODO: this has to work for enums and union(enums)
     return struct {
-        pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintResult(void) {
+        pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
             // to implement this, we need to cargo expand the derive macro
             _ = this; // autofix
             _ = dest; // autofix
@@ -445,7 +445,7 @@ pub fn DefineEnumProperty(comptime T: type) type {
             return location.newUnexpectedTokenError(.{ .ident = ident });
         }
 
-        pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintResult(void) {
+        pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
             return dest.writeStr(asStr(this));
         }
     };
@@ -1954,7 +1954,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
 
         const This = @This();
 
-        pub fn toCss(this: *const @This(), allocator: Allocator, options: css_printer.PrinterOptions) Maybe(ToCssResult, Error(PrinterErrorKind)) {
+        pub fn toCss(this: *const @This(), allocator: Allocator, options: css_printer.PrinterOptions) PrintErr!ToCssResult {
             // TODO: this is not necessary
             // Make sure we always have capacity > 0: https://github.com/napi-rs/napi-rs/issues/1124.
             var dest = ArrayList(u8).initCapacity(allocator, 1) catch unreachable;
@@ -1982,8 +1982,8 @@ pub fn StyleSheet(comptime AtRule: type) type {
                 var references = std.StringArrayHashMap(CssModuleReferences).init(allocator);
                 printer.css_module = CssModule.new(config, &this.sources, project_root, &references);
 
-                if (this.rules.toCss(&printer).asErr()) |e| return .{ .err = e };
-                if (printer.newline().asErr()) |e| return .{ .err = e };
+                try this.rules.toCss(&printer);
+                try printer.newline();
 
                 return ToCssResult{
                     .dependencies = printer.dependencies,
@@ -1996,7 +1996,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
                     .references = references,
                 };
             } else {
-                if (this.rules.toCss(&printer).asErr()) |e| return .{ .err = e };
+                try this.rules.toCss(&printer);
                 return ToCssResult{
                     .dependencies = printer.dependencies,
                     .code = dest,
@@ -4462,52 +4462,52 @@ pub const Token = union(TokenKind) {
     // ~toCssImpl
     const This = @This();
 
-    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintResult(void) {
+    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
         // zack is here: verify this is correct
         return switch (this.*) {
-            .ident => |value| if (serializer.serializeIdentifier(value, dest).asErr()) |e| return .{ .err = e },
+            .ident => |value| serializer.serializeIdentifier(value, dest),
             .at_keyword => |value| {
-                if (dest.writeStr("@").asErr()) |e| return .{ .err = e };
+                try dest.writeStr("@");
                 return serializer.serializeIdentifier(value, dest);
             },
             .hash => |value| {
-                if (dest.writeStr("#").asErr()) |e| return .{ .err = e };
+                try dest.writeStr("#");
                 return serializer.serializeName(value, dest);
             },
             .id_hash => |value| {
-                if (dest.writeStr("#").asErr()) |e| return .{ .err = e };
+                try dest.writeStr("#");
                 return serializer.serializeIdentifier(value, dest);
             },
             .quoted_string => |value| serializer.serializeString(value, dest),
             .unquoted_url => |value| {
-                if (dest.writeStr("url(").asErr()) |e| return .{ .err = e };
-                if (serializer.serializeUnquotedUrl(value, dest).asErr()) |e| return .{ .err = e };
+                try dest.writeStr("url(");
+                try serializer.serializeUnquotedUrl(value, dest);
                 return dest.writeStr(")");
             },
             .delim => |value| dest.writeChar(value),
             .number => |num| serializer.writeNumeric(num.value, num.int_value, num.has_sign, dest),
             .percentage => |num| {
-                if (serializer.writeNumeric(num.value * 100, num.int_value, num.has_sign, dest).asErr()) |e| return .{ .err = e };
+                try serializer.writeNumeric(num.value * 100, num.int_value, num.has_sign, dest);
                 return dest.writeStr("%");
             },
             .dimension => |dim| {
-                if (serializer.writeNumeric(dim.num.value, dim.num.int_value, dim.num.has_sign, dest).asErr()) |e| return .{ .err = e };
+                try serializer.writeNumeric(dim.num.value, dim.num.int_value, dim.num.has_sign, dest);
                 // Disambiguate with scientific notation.
                 const unit = dim.unit;
                 if (std.mem.eql(u8, unit, "e") or std.mem.eql(u8, unit, "E") or
                     std.mem.startsWith(u8, unit, "e-") or std.mem.startsWith(u8, unit, "E-"))
                 {
-                    if (dest.writeStr("\\65 ").asErr()) |e| return .{ .err = e };
-                    if (serializer.serializeName(unit[1..], dest).asErr()) |e| return .{ .err = e };
+                    try dest.writeStr("\\65 ");
+                    try serializer.serializeName(unit[1..], dest);
                 } else {
-                    if (serializer.serializeIdentifier(unit, dest).asErr()) |e| return .{ .err = e };
+                    try serializer.serializeIdentifier(unit, dest);
                 }
-                return PrintResult(void).success;
+                return;
             },
             .white_space => |content| dest.writeStr(content),
             .comment => |content| {
-                if (dest.writeStr("/*").asErr()) |e| return .{ .err = e };
-                if (dest.writeStr(content).asErr()) |e| return .{ .err = e };
+                try dest.writeStr("/*");
+                try dest.writeStr(content);
                 return dest.writeStr("*/");
             },
             .colon => dest.writeStr(":"),
@@ -4521,19 +4521,19 @@ pub const Token = union(TokenKind) {
             .cdo => dest.writeStr("<!--"),
             .cdc => dest.writeStr("-->"),
             .function => |name| {
-                if (serializer.serializeIdentifier(name, dest).asErr()) |e| return .{ .err = e };
+                try serializer.serializeIdentifier(name, dest);
                 return dest.writeStr("(");
             },
             .open_paren => dest.writeStr("("),
             .open_square => dest.writeStr("["),
             .open_curly => dest.writeStr("{"),
             .bad_url => |contents| {
-                if (dest.writeStr("url(").asErr()) |e| return .{ .err = e };
-                if (dest.writeStr(contents).asErr()) |e| return .{ .err = e };
+                try dest.writeStr("url(");
+                try dest.writeStr(contents);
                 return dest.writeChar(')');
             },
             .bad_string => |value| {
-                if (dest.writeChar('"').asErr()) |e| return .{ .err = e };
+                try dest.writeChar('"');
                 var writer = serializer.CssStringWriter(Printer(W)).new(dest);
                 return writer.writeStr(value);
             },
@@ -4933,7 +4933,7 @@ pub const serializer = struct {
     ///
     /// You should only use this when you know what you're doing, when in doubt,
     /// consider using `serialize_identifier`.
-    pub fn serializeName(value: []const u8, comptime W: type, dest: *W) PrintResult(void) {
+    pub fn serializeName(value: []const u8, comptime W: type, dest: *W) PrintErr!void {
         var chunk_start: usize = 0;
         for (value, 0..) |b, i| {
             const escaped: ?[]const u8 = switch (b) {
@@ -4943,13 +4943,13 @@ pub const serializer = struct {
                 else => if (!std.ascii.isASCII(b)) continue else null,
             };
 
-            if (dest.writeStr(value[chunk_start..i]).asErr()) |e| return .{ .err = e };
+            try dest.writeStr(value[chunk_start..i]);
             if (escaped) |esc| {
-                if (dest.writeStr(esc).asErr()) |e| return .{ .err = e };
+                try dest.writeStr(esc);
             } else if ((b >= 0x01 and b <= 0x1F) or b == 0x7F) {
-                if (hexEscape(b, W, dest).asErr()) |e| return .{ .err = e };
+                try hexEscape(b, W, dest);
             } else {
-                if (charEscape(b, W, dest).asErr()) |e| return .{ .err = e };
+                try charEscape(b, W, dest);
             }
             chunk_start = i + 1;
         }
@@ -4957,13 +4957,13 @@ pub const serializer = struct {
     }
 
     /// Write a double-quoted CSS string token, escaping content as necessary.
-    pub fn serializeString(value: []const u8, comptime W: type, dest: *W) PrintResult(void) {
-        if (dest.writeStr("\"").asErr()) |e| return .{ .err = e };
-        if (CssStringWriter(W).new(dest).writeStr(value).asErr()) |e| return .{ .err = e };
+    pub fn serializeString(value: []const u8, comptime W: type, dest: *W) PrintErr!void {
+        try dest.writeStr("\"");
+        try CssStringWriter(W).new(dest).writeStr(value);
         return dest.writeStr("\"");
     }
 
-    pub fn serializeDimension(value: f32, unit: []const u8, comptime W: type, dest: *W) PrintResult(void) {
+    pub fn serializeDimension(value: f32, unit: []const u8, comptime W: type, dest: *W) PrintErr!void {
         // const int_value: ?i32 = if (@rem(value, 1) == 0.0) @as(i32, @intFromFloat(value)) else null;
         const int_value: ?i32 = if (1.0 - @trunc(value) == 0.0) @intCast(value) else null;
         const token = Token{ .dimension = .{
@@ -4978,10 +4978,10 @@ pub const serializer = struct {
             // TODO: calculate the actual number of chars here
             var buf: [64]u8 = undefined;
             var fbs = std.io.fixedBufferStream(&buf);
-            if (token.toCss(W, fbs.writer()).asErr()) |e| return .{ .err = e };
+            try token.toCss(W, fbs.writer());
             const s = fbs.getWritten();
             if (value < 0.0) {
-                if (dest.writeStr("-").asErr()) |e| return .{ .err = e };
+                try dest.writeStr("-");
                 return dest.writeStr(bun.strings.trimLeadingPattern2(s, '-', '0'));
             } else {
                 return dest.writeStr(bun.strings.trimLeadingChar(s, '0'));
@@ -4992,31 +4992,31 @@ pub const serializer = struct {
     }
 
     /// Write a CSS identifier, escaping characters as necessary.
-    pub fn serializeIdentifier(value: []const u8, comptime W: type, dest: *W) PrintResult(void) {
+    pub fn serializeIdentifier(value: []const u8, comptime W: type, dest: *W) PrintErr!void {
         if (value.len == 0) {
             return;
         }
 
         if (bun.strings.startsWith(value, "--")) {
-            if (dest.writeStr("--").asErr()) |e| return .{ .err = e };
+            try dest.writeStr("--");
             return serializeName(value[2..], W, dest);
         } else if (bun.strings.eql(value, "-")) {
             return dest.writeStr("\\-");
         } else {
             var slice = value;
             if (slice[0] == '-') {
-                if (dest.writeStr("-").asErr()) |e| return .{ .err = e };
+                try dest.writeStr("-");
                 slice = slice[1..];
             }
             if (slice.len > 0 and slice[0] >= '0' and slice[0] <= '9') {
-                if (hexEscape(slice[0], W, dest).asErr()) |e| return .{ .err = e };
+                try hexEscape(slice[0], W, dest);
                 slice = slice[1..];
             }
             return serializeName(slice, W, dest);
         }
     }
 
-    pub fn serializeUnquotedUrl(value: []const u8, comptime W: type, dest: *W) PrintResult(void) {
+    pub fn serializeUnquotedUrl(value: []const u8, comptime W: type, dest: *W) PrintErr!void {
         var chunk_start: usize = 0;
         for (value, 0..) |b, i| {
             const hex = switch (b) {
@@ -5024,26 +5024,26 @@ pub const serializer = struct {
                 '(', ')', '"', '\'', '\\' => false,
                 else => continue,
             };
-            if (dest.writeStr(value[chunk_start..i]).asErr()) |e| return .{ .err = e };
+            try dest.writeStr(value[chunk_start..i]);
             if (hex) {
-                if (hexEscape(b, W, dest).asErr()) |e| return .{ .err = e };
+                try hexEscape(b, W, dest);
             } else {
-                if (charEscape(b, W, dest).asErr()) |e| return .{ .err = e };
+                try charEscape(b, W, dest);
             }
             chunk_start = i + 1;
         }
         return dest.writeStr(value[chunk_start..]);
     }
 
-    pub fn writeNumeric(value: f32, int_value: ?i32, has_sign: bool, comptime W: type, dest: *W) PrintResult(void) {
+    pub fn writeNumeric(value: f32, int_value: ?i32, has_sign: bool, comptime W: type, dest: *W) PrintErr!void {
         // `value >= 0` is true for negative 0.
         if (has_sign and !std.math.signbit(value)) {
-            if (dest.writeStr("+").asErr()) |e| return .{ .err = e };
+            try dest.writeStr("+");
         }
 
         const notation = if (value == 0.0 and std.math.signbit(value)) notation: {
             // Negative zero. Work around #20596.
-            if (dest.writeStr("-0").asErr()) |e| return .{ .err = e };
+            try dest.writeStr("-0");
             break :notation .{
                 .decimal_point = false,
                 .scientific = false,
@@ -5056,7 +5056,7 @@ pub const serializer = struct {
                 .mode = .scientific,
                 .precision = 6,
             }) catch unreachable;
-            if (dest.writeStr(floats).asErr()) |e| return .{ .err = e };
+            try dest.writeStr(floats);
             // TODO: this is not correct, might need to copy impl from dtoa_short here
             break :notation .{
                 .decimal_point = true,
@@ -5066,11 +5066,11 @@ pub const serializer = struct {
 
         if (int_value == null and @mod(value, 1) == 0) {
             if (!notation.decimal_point and !notation.scientific) {
-                if (dest.writeStr(".0").asErr()) |e| return .{ .err = e };
+                try dest.writeStr(".0");
             }
         }
 
-        return PrintResult(void).success;
+        return;
     }
 
     pub fn hexEscape(ascii_byte: u8, comptime W: type, dest: *W) !void {
@@ -5118,11 +5118,11 @@ pub const serializer = struct {
                         0x01...0x1F, 0x7F => null,
                         else => continue,
                     };
-                    if (this.inner.writeStr(str[chunk_start..i]).asErr()) |e| return .{ .err = e };
+                    try this.inner.writeStr(str[chunk_start..i]);
                     if (escaped) |e| {
-                        if (this.inner.writeStr(e).asErr()) |ee| return .{ .err = ee };
+                        try this.inner.writeStr(e);
                     } else {
-                        if (serializer.hexEscape(b, W, this.inner).asErr()) |e| return .{ .err = e };
+                        try serializer.hexEscape(b, W, this.inner);
                     }
                     chunk_start = i + 1;
                 }
@@ -5164,7 +5164,7 @@ pub const generic = struct {
         }.parsefn;
     }
 
-    pub inline fn toCss(comptime T: type, this: *const T, comptime W: type, dest: *Printer(W)) PrintResult(void) {
+    pub inline fn toCss(comptime T: type, this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
         return switch (T) {
             f32 => CSSNumberFns.toCss(this, W, dest),
             CSSInteger => CSSIntegerFns.toCss(this, W, dest),
@@ -5213,38 +5213,38 @@ pub const to_css = struct {
     /// Serialize `self` in CSS syntax and return a string.
     ///
     /// (This is a convenience wrapper for `to_css` and probably should not be overridden.)
-    pub fn string(allocator: Allocator, comptime T: type, this: *T, options: PrinterOptions) PrintResult([]const u8) {
+    pub fn string(allocator: Allocator, comptime T: type, this: *T, options: PrinterOptions) PrintErr![]const u8 {
         var s = ArrayList(u8){};
         const writer = s.writer(allocator);
         const W = @TypeOf(writer);
         var printer = Printer(W).new(allocator, writer, options);
         defer printer.deinit();
         switch (T) {
-            CSSString => if (CSSStringFns.toCss(W, printer).asErr()) |e| return .{ .err = e },
-            else => if (this.toCss(W, printer).asErr()) |e| return .{ .err = e },
+            CSSString => try CSSStringFns.toCss(W, printer),
+            else => try this.toCss(W, printer),
         }
         return s;
     }
 
-    pub fn fromList(comptime T: type, this: *const ArrayList(T), comptime W: type, dest: *Printer(W)) PrintResult(void) {
+    pub fn fromList(comptime T: type, this: *const ArrayList(T), comptime W: type, dest: *Printer(W)) PrintErr!void {
         const len = this.items.len;
         for (this.items, 0..) |*val, idx| {
-            if (val.toCss(W, dest).asErr()) |e| return .{ .err = e };
+            try val.toCss(W, dest);
             if (idx < len - 1) {
-                if (dest.delim(',', false).asErr()) |e| return .{ .err = e };
+                try dest.delim(',', false);
             }
         }
-        return PrintResult(void).success;
+        return;
     }
 
-    pub fn integer(comptime T: type, this: T, comptime W: type, dest: *Printer(W)) PrintResult(void) {
+    pub fn integer(comptime T: type, this: T, comptime W: type, dest: *Printer(W)) PrintErr!void {
         const MAX_LEN = comptime maxDigits(T);
         var buf: [MAX_LEN]u8 = undefined;
         const str = std.fmt.bufPrint(buf[0..], "{d}", .{this}) catch unreachable;
         return dest.writeStr(str);
     }
 
-    pub fn float32(this: f32, comptime W: type, dest: *Printer(W)) PrintResult(void) {
+    pub fn float32(this: f32, comptime W: type, dest: *Printer(W)) PrintErr!void {
         var scratch: [26]u8 = undefined;
         // PERF/TODO: Compare this to Rust dtoa-short crate
         const floats = std.fmt.formatFloat(scratch[0..], this, .{

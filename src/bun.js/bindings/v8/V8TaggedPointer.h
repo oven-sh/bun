@@ -19,15 +19,10 @@ struct TaggedPointer {
     TaggedPointer& operator=(const TaggedPointer&) = default;
     bool operator==(const TaggedPointer& other) const { return m_value == other.m_value; }
 
-    TaggedPointer(void* ptr, bool weak)
+    TaggedPointer(void* ptr, bool weak = false)
         : m_value(reinterpret_cast<uintptr_t>(ptr) | (weak ? 3 : 1))
     {
         RELEASE_ASSERT((reinterpret_cast<uintptr_t>(ptr) & 3) == 0);
-    }
-
-    TaggedPointer(void* ptr)
-        : TaggedPointer(ptr, false)
-    {
     }
 
     TaggedPointer(int32_t smi)

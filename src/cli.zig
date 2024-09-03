@@ -252,6 +252,7 @@ pub const Arguments = struct {
         clap.parseParam("--entry-naming <STR>             Customize entry point filenames. Defaults to \"[dir]/[name].[ext]\"") catch unreachable,
         clap.parseParam("--chunk-naming <STR>             Customize chunk filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
         clap.parseParam("--asset-naming <STR>             Customize asset filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
+        clap.parseParam("--react-fast-refresh             Enable React Fast Refresh transform (does not emit hot-module code, use this for testing)") catch unreachable,
         clap.parseParam("--server-components              Enable React Server Components (experimental)") catch unreachable,
         clap.parseParam("--no-bundle                      Transpile file only, do not bundle") catch unreachable,
         clap.parseParam("--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed.") catch unreachable,
@@ -854,6 +855,10 @@ pub const Arguments = struct {
                 ctx.bundler_options.react_server_components = true;
             }
 
+            if (args.flag("--react-fast-refresh")) {
+                ctx.bundler_options.react_fast_refresh = true;
+            }
+
             if (args.option("--sourcemap")) |setting| {
                 if (setting.len == 0) {
                     // In the future, Bun is going to make this default to .linked
@@ -1311,6 +1316,7 @@ pub const Command = struct {
             chunk_naming: []const u8 = "./[name]-[hash].[ext]",
             asset_naming: []const u8 = "./[name]-[hash].[ext]",
             react_server_components: bool = false,
+            react_fast_refresh: bool = false,
             code_splitting: bool = false,
             transform_only: bool = false,
             inline_entrypoint_import_meta_main: bool = false,

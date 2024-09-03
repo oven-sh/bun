@@ -1453,6 +1453,7 @@ pub const BundleOptions = struct {
     react_server_components: bool = false,
     react_server_components_boundary: string = "",
     hot_module_reloading: bool = false,
+    react_fast_refresh: bool = false,
     inject: ?[]string = null,
     origin: URL = URL{},
     output_dir_handle: ?Dir = null,

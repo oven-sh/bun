@@ -227,4 +227,8 @@ pub const Ref = packed struct(u64) {
     pub fn jsonStringify(self: *const Ref, writer: anytype) !void {
         return try writer.write([2]u32{ self.sourceIndex(), self.innerIndex() });
     }
+
+    pub fn toExpr(ref: Ref, loc: bun.logger.Loc) js_ast.Expr {
+        return .{ .e_identifier = .{ .ref = ref }, .loc = loc };
+    }
 };

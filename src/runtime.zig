@@ -52,8 +52,6 @@ pub const ErrorCSS = struct {
     }
 };
 
-pub const ReactRefresh = @embedFile("./react-refresh.js");
-
 pub const ErrorJS = struct {
     pub inline fn sourceContent() string {
         if (comptime Environment.isDebug) {
@@ -212,8 +210,8 @@ pub const Runtime = struct {
         // *** How React Fast Refresh works ***
         //
         //  Implementations:
-        //   [0]: https://github.com/facebook/react/blob/master/packages/react-refresh/src/ReactFreshBabelPlugin.js
-        //   [1]: https://github.com/swc-project/swc/blob/master/ecmascript/transforms/react/src/refresh/mod.rs
+        //   [0]: https://github.com/facebook/react/blob/main/packages/react-refresh/src/ReactFreshBabelPlugin.js
+        //   [1]: https://github.com/swc-project/swc/blob/main/crates/swc_ecma_transforms_react/src/refresh/mod.rs
         //
         //  Additional reading:
         //   - https://github.com/facebook/react/issues/16604#issuecomment-528663101
@@ -378,29 +376,25 @@ pub const Runtime = struct {
         pub const ActivateFunction = "activate";
     };
 
+    /// See js_parser.StaticSymbolName
     pub const GeneratedSymbol = struct {
         primary: Ref,
         backup: Ref,
         ref: Ref,
+
+        pub const empty: GeneratedSymbol = .{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None };
     };
 
-    // If you change this, remember to update "runtime.footer.js" and rebuild the runtime.js
+    // If you change this, remember to update "runtime.js"
     pub const Imports = struct {
         __name: ?GeneratedSymbol = null,
-        __toModule: ?GeneratedSymbol = null,
-        __cJS2eSM: ?GeneratedSymbol = null,
         __require: ?GeneratedSymbol = null,
         __export: ?GeneratedSymbol = null,
         __reExport: ?GeneratedSymbol = null,
-        __load: ?GeneratedSymbol = null,
-        @"$$m": ?GeneratedSymbol = null,
-        @"$$lzy": ?GeneratedSymbol = null,
-        __HMRModule: ?GeneratedSymbol = null,
-        __HMRClient: ?GeneratedSymbol = null,
-        __FastRefreshModule: ?GeneratedSymbol = null,
         __exportValue: ?GeneratedSymbol = null,
         __exportDefault: ?GeneratedSymbol = null,
-        __FastRefreshRuntime: ?GeneratedSymbol = null,
+        // __refreshRuntime: ?GeneratedSymbol = null,
+        // __refreshSig: ?GeneratedSymbol = null, // $RefreshSig$
         __merge: ?GeneratedSymbol = null,
         __legacyDecorateClassTS: ?GeneratedSymbol = null,
         __legacyDecorateParamTS: ?GeneratedSymbol = null,
@@ -410,23 +404,12 @@ pub const Runtime = struct {
         __callDispose: ?GeneratedSymbol = null,
 
         pub const all = [_][]const u8{
-            // __HMRClient goes first
-            // This is so we can call Bun.activate(true) as soon as possible
-            "__HMRClient",
             "__name",
-            "__toModule",
             "__require",
-            "__cJS2eSM",
             "__export",
             "__reExport",
-            "__load",
-            "$$m",
-            "$$lzy",
-            "__HMRModule",
-            "__FastRefreshModule",
             "__exportValue",
             "__exportDefault",
-            "__FastRefreshRuntime",
             "__merge",
             "__legacyDecorateClassTS",
             "__legacyDecorateParamTS",
@@ -481,7 +464,7 @@ pub const Runtime = struct {
                     defer this.i += 1;
 
                     switch (this.i) {
-                        inline 0...21 => |t| {
+                        inline 0...all.len - 1 => |t| {
                             if (@field(this.runtime_imports, all[t])) |val| {
                                 return Entry{ .key = t, .value = val.ref };
                             }
@@ -497,7 +480,7 @@ pub const Runtime = struct {
         };
 
         pub fn iter(imports: *Imports) Iterator {
-            return Iterator{ .runtime_imports = imports };
+            return .{ .runtime_imports = imports };
         }
 
         pub fn contains(imports: *const Imports, comptime key: string) bool {
@@ -530,7 +513,7 @@ pub const Runtime = struct {
             key: anytype,
         ) ?Ref {
             return switch (key) {
-                inline 0...21 => |t| (@field(imports, all[t]) orelse return null).ref,
+                inline 0...all.len - 1 => |t| (@field(imports, all[t]) orelse return null).ref,
                 else => null,
             };
         }

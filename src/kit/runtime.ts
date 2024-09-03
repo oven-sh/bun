@@ -27,7 +27,7 @@ type ExportsCallbackFunction = (new_exports: any) => void;
  * reloading. It is unacceptable to depend 
  */
 class HotModule {
-  exports = {};
+  exports: any = {};
 
   _ext_exports = {};
   __esModule = false;
@@ -75,6 +75,12 @@ name(loadModule, '<HMR runtime> loadModule')
 //   style.innerHTML = css('overlay.css', IS_BUN_DEVELOPMENT);
 //   document.head.appendChild(style);
 // }
+
+const have_react_refresh = true;
+if (mode === 'client' && have_react_refresh) {
+  const runtime = loadModule('react-refresh/runtime').exports;
+  runtime.injectIntoGlobalHook(window);
+}
 
 // Load the entry point module
 loadModule(entry_point_key);

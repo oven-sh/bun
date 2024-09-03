@@ -2993,6 +2993,7 @@ pub const ParseTask = struct {
         opts.features.emit_decorator_metadata = bundler.options.emit_decorator_metadata;
         opts.features.unwrap_commonjs_packages = bundler.options.unwrap_commonjs_packages;
         opts.features.hot_module_reloading = bundler.options.output_format == .internal_kit_dev and !source.index.isRuntime();
+        opts.features.react_fast_refresh = (bundler.options.hot_module_reloading or bundler.options.react_fast_refresh) and loader.isJSX();
 
         opts.ignore_dce_annotations = bundler.options.ignore_dce_annotations and !source.index.isRuntime();
 

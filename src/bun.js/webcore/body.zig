@@ -1055,7 +1055,7 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
-                if (value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
+                if (value.Locked.action != .none or value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
                     return handleBodyAlreadyUsed(globalObject);
                 }
 
@@ -1087,6 +1087,10 @@ pub fn BodyMixin(comptime Type: type) type {
                 switch (this.getBodyValue().*) {
                     .Used => true,
                     .Locked => |*pending| brk: {
+                        if (pending.action != .none) {
+                            break :brk true;
+                        }
+
                         if (pending.readable.get()) |*stream| {
                             break :brk stream.isDisturbed(globalObject);
                         }
@@ -1117,9 +1121,10 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
-                if (value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
+                if (value.Locked.action != .none or value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
                     return handleBodyAlreadyUsed(globalObject);
                 }
+
                 return value.Locked.setPromise(globalObject, .{ .getJSON = {} });
             }
 
@@ -1144,7 +1149,7 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
-                if (value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
+                if (value.Locked.action != .none or value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
                     return handleBodyAlreadyUsed(globalObject);
                 }
                 return value.Locked.setPromise(globalObject, .{ .getArrayBuffer = {} });
@@ -1168,7 +1173,7 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
-                if (value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
+                if (value.Locked.action != .none or value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
                     return handleBodyAlreadyUsed(globalObject);
                 }
                 return value.Locked.setPromise(globalObject, .{ .getBytes = {} });
@@ -1191,7 +1196,7 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
-                if (value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
+                if (value.Locked.action != .none or value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
                     return handleBodyAlreadyUsed(globalObject);
                 }
             }
@@ -1247,6 +1252,9 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
+                if (value.Locked.action != .none) {
+                    return handleBodyAlreadyUsed(globalObject);
+                }
                 if (value.Locked.promise == null or value.Locked.promise.?.isEmptyOrUndefinedOrNull()) {
                     return value.Locked.setPromise(globalObject, .{ .getBlob = {} });
                 }

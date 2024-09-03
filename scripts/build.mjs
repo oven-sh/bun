@@ -30,7 +30,7 @@ function build(args) {
   if (process.platform === "win32" && !process.env["VSINSTALLDIR"]) {
     const shellPath = join(import.meta.dirname, "vs-shell.ps1");
     const scriptPath = import.meta.filename;
-    spawn("pwsh", ["-NoProfile", "-NoLogo", "-File", shellPath, scriptPath, ...args], {
+    spawn("pwsh", ["-NoProfile", "-NoLogo", "-File", shellPath, process.argv0, scriptPath, ...args], {
       stdio: "inherit",
     });
     return;

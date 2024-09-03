@@ -718,3 +718,24 @@ if(CI)
     set_property(TARGET ${bun} PROPERTY OUTPUT ${BUILD_PATH}/${bunPath}.zip APPEND)
   endif()
 endif()
+
+if(BUILDKITE)
+  add_custom_command(
+    TARGET
+      ${bun} POST_BUILD
+    COMMENT
+      "Uploading ${bun}"
+    VERBATIM COMMAND
+      buildkite-agent artifact upload ${bun}.zip
+  )
+  if(bunStrip)
+    add_custom_command(
+      TARGET
+        ${bun} POST_BUILD
+      COMMENT
+        "Uploading ${bunStrip}"
+      VERBATIM COMMAND
+        buildkite-agent artifact upload ${bunStrip}.zip
+    )
+  endif()
+endif()

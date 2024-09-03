@@ -60,9 +60,6 @@ if(WIN32)
   endif()
 endif()
 
-find_program(BUN_EXECUTABLE bun ${REQUIRED_IF_NOT_ONLY_CPP_OR_LINK} DOC "Path to an already built release of Bun")
-message(STATUS "Found Bun: ${BUN_EXECUTABLE}")
-
 if(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY)
   include(SetupZig)
 endif()

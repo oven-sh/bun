@@ -1,7 +1,6 @@
 const std = @import("std");
 pub const css = @import("../css_parser.zig");
 const bun = @import("root").bun;
-const Error = css.Error;
 const ArrayList = std.ArrayListUnmanaged;
 const MediaList = css.MediaList;
 const CustomMedia = css.CustomMedia;
@@ -17,6 +16,7 @@ const fontprops = css.css_properties.font;
 const LayerName = css.css_rules.layer.LayerName;
 const SupportsCondition = css.css_rules.supports.SupportsCondition;
 const Location = css.css_rules.Location;
+const Result = css.Result;
 
 pub const KeyframesListParser = struct {
     const This = @This();
@@ -24,7 +24,7 @@ pub const KeyframesListParser = struct {
     pub const DeclarationParser = struct {
         pub const Declaration = Keyframe;
 
-        fn parseValue(_: *This, name: []const u8, input: *css.Parser) Error!Declaration {
+        fn parseValue(_: *This, name: []const u8, input: *css.Parser) Result(!Declaration) {
             return input.newError(css.BasicParseErrorKind{ .unexpected_token = .{ .ident = name } });
         }
     };
@@ -43,15 +43,15 @@ pub const KeyframesListParser = struct {
         pub const Prelude = void;
         pub const AtRule = void;
 
-        pub fn parsePrelude(_: *This, name: []const u8, input: *css.Parser) Error!Prelude {
+        pub fn parsePrelude(_: *This, name: []const u8, input: *css.Parser) Result(!Prelude) {
             return input.newError(css.BasicParseErrorKind{ .at_rule_invalid = name });
         }
 
-        pub fn parseBlock(_: *This, _: AtRuleParser.Prelude, _: *const css.ParserState, input: *css.Parser) Error!AtRuleParser.AtRule {
+        pub fn parseBlock(_: *This, _: AtRuleParser.Prelude, _: *const css.ParserState, input: *css.Parser) Result(!AtRuleParser.AtRule) {
             return input.newError(css.BasicParseErrorKind.at_rule_body_invalid);
         }
 
-        pub fn ruleWithoutBlock(_: *This, _: AtRuleParser.Prelude, _: *const css.ParserState) Error!AtRuleParser.AtRule {
+        pub fn ruleWithoutBlock(_: *This, _: AtRuleParser.Prelude, _: *const css.ParserState) Result(!AtRuleParser.AtRule) {
             @compileError(css.todo_stuff.errors);
         }
     };
@@ -60,16 +60,21 @@ pub const KeyframesListParser = struct {
         pub const Prelude = ArrayList(KeyframeSelector);
         pub const QualifiedRule = Keyframe;
 
-        pub fn parsePrelude(_: *This, input: *css.Parser) Error!Prelude {
-            return try input.parseCommaSeparated(Prelude, KeyframeSelector.parse);
+        pub fn parsePrelude(_: *This, input: *css.Parser) Result(!Prelude) {
+            return input.parseCommaSeparated(Prelude, KeyframeSelector.parse);
         }
 
-        pub fn parseBlock(_: *This, prelude: Prelude, _: *const css.ParserState, input: *css.Parser) Error!QualifiedRule {
+        pub fn parseBlock(_: *This, prelude: Prelude, _: *const css.ParserState, input: *css.Parser) Result(!QualifiedRule) {
             // For now there are no options that apply within @keyframes
             const options = css.ParserOptions{};
-            return Keyframe{
-                .selectors = prelude,
-                .declarations = try css.DeclarationBlock.parse(input, &options),
+            return .{
+                .result = Keyframe{
+                    .selectors = prelude,
+                    .declarations = switch (css.DeclarationBlock.parse(input, &options)) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    },
+                },
             };
         }
     };
@@ -84,8 +89,11 @@ pub const KeyframesName = union(enum) {
 
     const This = @This();
 
-    pub fn parse(input: *css.Parser) Error!KeyframesName {
-        switch ((try input.next()).*) {
+    pub fn parse(input: *css.Parser) Result(!KeyframesName) {
+        switch (switch (input.next()) {
+            .result => |v| v,
+            .err => |e| return .{ .err = e },
+        }) {
             .ident => |s| {
                 // todo_stuff.match_ignore_ascii_case
                 // CSS-wide keywords without quotes throws an error.
@@ -99,12 +107,10 @@ pub const KeyframesName = union(enum) {
                 {
                     return input.newUnexpectedTokenError(.{ .ident = s });
                 } else {
-                    return .{
-                        .ident = s,
-                    };
+                    return .{ .result = .{ .ident = s } };
                 }
             },
-            .string => |s| return .{ .custom = s },
+            .string => |s| return .{ .result = .{ .custom = s } },
             else => |t| {
                 return input.newUnexpectedTokenError(t);
             },
@@ -149,7 +155,7 @@ pub const KeyframeSelector = union(enum) {
     // TODO: implement this
     // pub usingnamespace css.DeriveParse(@This());
 
-    pub fn parse(input: *css.Parser) Error!KeyframeSelector {
+    pub fn parse(input: *css.Parser) Result(!KeyframeSelector) {
         _ = input; // autofix
         @panic(css.todo_stuff.depth);
     }

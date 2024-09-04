@@ -1,7 +1,6 @@
 const std = @import("std");
 pub const css = @import("../css_parser.zig");
 const bun = @import("root").bun;
-const Error = css.Error;
 const ArrayList = std.ArrayListUnmanaged;
 const MediaList = css.MediaList;
 const CustomMedia = css.CustomMedia;
@@ -24,6 +23,7 @@ const FontWeight = css.css_properties.font.FontWeight;
 const FontStretch = css.css_properties.font.FontStretch;
 const CustomProperty = css.css_properties.custom.CustomProperty;
 const CustomPropertyName = css.css_properties.custom.CustomPropertyName;
+const Result = css.Result;
 
 /// A property within an `@font-face` rule.
 ///
@@ -149,7 +149,7 @@ pub const UnicodeRange = struct {
     }
 
     /// https://drafts.csswg.org/css-syntax/#urange-syntax
-    pub fn parse(input: *css.Parser) Error!UnicodeRange {
+    pub fn parse(input: *css.Parser) Result(UnicodeRange) {
         // <urange> =
         //   u '+' <ident-token> '?'* |
         //   u <dimension-token> '?'* |
@@ -158,16 +158,16 @@ pub const UnicodeRange = struct {
         //   u <number-token> <number-token> |
         //   u '+' '?'+
 
-        try input.expectIdentMatching("u");
+        if (input.expectIdentMatching("u").asErr()) |e| return .{ .err = e };
         const after_u = input.position();
-        try parseTokens(input);
+        if (parseTokens(input).asErr()) |e| return .{ .err = e };
 
         // This deviates from the spec in case there are CSS comments
         // between tokens in the middle of one <unicode-range>,
         // but oh well…
         const concatenated_tokens = input.sliceFrom(after_u);
 
-        const range = if (parseConcatenated(concatenated_tokens)) |range|
+        const range = if (parseConcatenated(concatenated_tokens).asValue()) |range|
             range
         else
             return input.newBasicUnexpectedTokenError(.{ .ident = concatenated_tokens });
@@ -176,31 +176,49 @@ pub const UnicodeRange = struct {
             return input.newBasicUnexpectedTokenError(.{ .ident = concatenated_tokens });
         }
 
-        return range;
+        return .{ .result = range };
     }
 
-    fn parseTokens(input: *css.Parser) Error!void {
-        const tok = try input.nextIncludingWhitespace();
+    fn parseTokens(input: *css.Parser) Result(void) {
+        const tok = switch (input.nextIncludingWhitespace()) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
         switch (tok.*) {
-            .dimension => try parseQuestionMarks(input),
+            .dimension => return parseQuestionMarks(input),
             .number => {
                 const after_number = input.state();
-                const token = input.nextIncludingWhitespace() catch {
-                    input.reset(&after_number);
-                    return;
+                const token = switch (input.nextIncludingWhitespace()) {
+                    .result => |vv| vv,
+                    .err => {
+                        input.reset(&after_number);
+                        return;
+                    },
                 };
+
                 if (token.* == .delim and token.delim == '?') return parseQuestionMarks(input);
                 if (token.* == .delim or token.* == .number) return;
                 return;
             },
-            .delim => {},
+            .delim => |c| {
+                if (c == '+') {
+                    const next = switch (input.nextIncludingWhitespace()) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    };
+                    if (!(next.* == .ident or (next.* == .delim and next.delim == '?'))) {
+                        return input.newBasicUnexpectedTokenError(next.*);
+                    }
+                    return parseQuestionMarks(input);
+                }
+            },
             else => {},
         }
         return input.newBasicUnexpectedTokenError(tok.*);
     }
 
     /// Consume as many '?' as possible
-    fn parseQuestionMarks(input: *css.Parser) Error!void {
+    fn parseQuestionMarks(input: *css.Parser) Result(void) {
         while (true) {
             const start = input.state();
             if (input.nextIncludingWhitespace()) |tok| if (tok.* == .delim and tok.delim == '?') continue;
@@ -209,7 +227,7 @@ pub const UnicodeRange = struct {
         }
     }
 
-    fn parseConcatenated(_text: []const u8) Error!UnicodeRange {
+    fn parseConcatenated(_text: []const u8) Result(UnicodeRange) {
         var text = if (_text.len > 0 and _text[0] == '+') _text[1..] else {
             @compileError(css.todo_stuff.errors);
         };
@@ -290,15 +308,21 @@ pub const FontStyle = union(enum) {
     /// Oblique font style, with a custom angle.
     oblique: Size2D(css.css_values.angle.Angle),
 
-    pub fn parse(input: *css.Parser) Error!FontStyle {
-        return switch (try FontStyleProperty.parse(input)) {
-            .normal => .normal,
-            .italic => .italic,
-            .oblique => |angle| {
-                const second_angle = if (input.tryParse(css.css_values.angle.Angle.parse, .{})) |a| a else angle;
-                return .{
-                    .oblique = .{ angle, second_angle },
-                };
+    pub fn parse(input: *css.Parser) Result(FontStyle) {
+        const property = switch (FontStyleProperty.parse(input)) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
+        return .{
+            .result = switch (property) {
+                .normal => .normal,
+                .italic => .italic,
+                .oblique => |angle| {
+                    const second_angle = if (input.tryParse(css.css_values.angle.Angle.parse, .{}).asValue()) |a| a else angle;
+                    return .{
+                        .oblique = .{ angle, second_angle },
+                    };
+                },
             },
         };
     }
@@ -353,25 +377,28 @@ pub const FontFormat = union(enum) {
     /// An unknown format.
     string: []const u8,
 
-    pub fn parse(input: *css.Parser) Error!FontFormat {
-        const s = try input.expectIdentOrString();
+    pub fn parse(input: *css.Parser) Result(FontFormat) {
+        const s = switch (input.expectIdentOrString()) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
 
         if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("woff", s)) {
-            return .woff;
+            return .{ .result = .woff };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("woff2", s)) {
-            return .woff2;
+            return .{ .result = .woff2 };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("truetype", s)) {
-            return .truetype;
+            return .{ .result = .truetype };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("opentype", s)) {
-            return .opentype;
+            return .{ .result = .opentype };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("embedded-opentype", s)) {
-            return .embedded_opentype;
+            return .{ .result = .embedded_opentype };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("collection", s)) {
-            return .collection;
+            return .{ .result = .collection };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("svg", s)) {
-            return .svg;
+            return .{ .result = .svg };
         } else {
-            return .{ .string = s };
+            return .{ .result = .{ .string = s } };
         }
     }
 
@@ -400,22 +427,28 @@ pub const Source = union(enum) {
     /// The `local()` function.
     local: fontprops.FontFamily,
 
-    pub fn parse(input: *css.Parser) Error!Source {
-        if (input.tryParse(UrlSource.parse, .{})) |url|
-            return .{ .url = url }
-        else |e| {
-            _ = e; // autofix
-            @compileError(css.todo_stuff.errors);
+    pub fn parse(input: *css.Parser) Result(Source) {
+        switch (input.tryParse(UrlSource.parse, .{})) {
+            .result => |url| .{ .result = return .{ .url = url } },
+            .err => |e| {
+                _ = e; // autofix
+
+                @compileError(css.todo_stuff.errors);
+            },
         }
 
-        try input.expectFunctionMatching("local");
+        if (input.expectFunctionMatching("local").asErr()) |e| return .{ .err = e };
+
         const Fn = struct {
-            pub fn parseNestedBlock(_: void, i: *css.Parser) Error!fontprops.FontFamily {
-                return fontprops.FontFamily.parse(i);
+            pub fn parseNestedBlock(_: void, i: *css.Parser) Result(fontprops.FontFamily) {
+                return .{ .result = fontprops.FontFamily.parse(i) };
             }
         };
-        const local = try input.parseNestedBlock(fontprops.FontFamily, {}, Fn.parseNestedBlock);
-        return .{ .local = local };
+        const local = switch (input.parseNestedBlock(fontprops.FontFamily, {}, Fn.parseNestedBlock)) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
+        return .{ .result = .{ .local = local } };
     }
 
     pub fn toCss(this: *const Source, comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -494,27 +527,33 @@ pub const UrlSource = struct {
     /// Optional `tech()` function.
     tech: ArrayList(FontTechnology),
 
-    pub fn parse(input: *css.Parser) Error!UrlSource {
-        const url = try Url.parse(input);
+    pub fn parse(input: *css.Parser) Result(UrlSource) {
+        const url = switch (Url.parse(input)) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
 
-        const format = if (input.tryParse(css.Parser.expectFunctionMatching, .{"format"}))
-            try input.parseNestedBlock(FontFormat, {}, css.voidWrap(FontFormat, FontFormat.parse))
-        else
-            null;
-
-        const tech = if (input.tryParse(css.Parser.expectFunctionMatching, .{"tech"})) tech: {
-            const Fn = struct {
-                pub fn parseNestedBlockFn(_: void, i: *css.Parser) Error!ArrayList(FontTechnology) {
-                    return try i.parseList(FontTechnology, FontTechnology.parse);
-                }
-            };
-            break :tech try input.parseNestedBlock(ArrayList(FontTechnology), {}, Fn.parseNestedBlockFn);
+        const format = if (input.tryParse(css.Parser.expectFunctionMatching, .{"format"}).isOk()) format: {
+            switch (input.parseNestedBlock(FontFormat, {}, css.voidWrap(FontFormat, FontFormat.parse))) {
+                .result => |vv| break :format vv,
+                .err => |e| return .{ .err = e },
+            }
         } else null;
 
-        return UrlSource{
-            .url = url,
-            .format = format,
-            .tech = tech,
+        const tech = if (input.tryParse(css.Parser.expectFunctionMatching, .{"tech"}).isOk()) tech: {
+            const Fn = struct {
+                pub fn parseNestedBlockFn(_: void, i: *css.Parser) Result(ArrayList(FontTechnology)) {
+                    return .{ .result = i.parseList(FontTechnology, FontTechnology.parse) };
+                }
+            };
+            break :tech switch (input.parseNestedBlock(ArrayList(FontTechnology), {}, Fn.parseNestedBlockFn)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
+        } else null;
+
+        return .{
+            .result = UrlSource{ .url = url, .format = format, .tech = tech },
         };
     }
 
@@ -573,42 +612,42 @@ pub const FontFaceDeclarationParser = struct {
     pub const DeclarationParser = struct {
         pub const Declaration = FontFaceProperty;
 
-        fn parseValue(this: *This, name: []const u8, input: *css.Parser) Error!Declaration {
+        fn parseValue(this: *This, name: []const u8, input: *css.Parser) Result(Declaration) {
             _ = this; // autofix
             const state = input.state();
             // todo_stuff.match_ignore_ascii_case
             if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "src")) {
-                if (input.parseCommaSeparated(Source, Source.parse)) |sources| {
-                    return .{ .sources = sources };
+                if (input.parseCommaSeparated(Source, Source.parse).asValue()) |sources| {
+                    return .{ .result = .{ .sources = sources } };
                 }
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "font-family")) {
-                if (FontFamily.parse(input)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .font_family = c };
+                if (FontFamily.parse(input).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .font_family = c } };
                     }
                 }
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "font-weight")) {
-                if (Size2D(FontWeight).parse(input)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .font_weight = c };
+                if (Size2D(FontWeight).parse(input).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .font_weight = c } };
                     }
                 }
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "font-style")) {
-                if (FontStyle.parse(input)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .font_style = c };
+                if (FontStyle.parse(input).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) |_| {
+                        return .{ .result = .{ .font_style = c } };
                     }
                 }
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "font-stretch")) {
-                if (Size2D(FontStretch).parse(input)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .font_stretch = c };
+                if (Size2D(FontStretch).parse(input).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .font_stretch = c } };
                     }
                 }
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "unicode-renage")) {
-                if (input.parseList(UnicodeRange, UnicodeRange.parse)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .unicode_range = c };
+                if (input.parseList(UnicodeRange, UnicodeRange.parse).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .unicode_range = c } };
                     }
                 }
             } else {
@@ -618,11 +657,9 @@ pub const FontFaceDeclarationParser = struct {
             input.reset(&state);
             const opts = css.ParserOptions{};
             return .{
-                .custom = try CustomProperty.parse(
-                    CustomPropertyName.fromStr(name),
-                    input,
-                    &opts,
-                ),
+                .result = .{
+                    .custom = try CustomProperty.parse(CustomPropertyName.fromStr(name), input, &opts),
+                },
             };
         }
     };

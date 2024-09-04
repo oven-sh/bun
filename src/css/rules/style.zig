@@ -1,6 +1,5 @@
 const std = @import("std");
 pub const css = @import("../css_parser.zig");
-const Error = css.Error;
 const ArrayList = std.ArrayListUnmanaged;
 const MediaList = css.MediaList;
 const CustomMedia = css.CustomMedia;

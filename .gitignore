@@ -158,6 +158,7 @@ scripts/env.local
 /src/deps/libuv
 /src/deps/ls*hpack
 /src/deps/mimalloc
+/src/deps/picohttpparser
 /src/deps/tinycc
 /src/deps/zstd
 /src/deps/zlib

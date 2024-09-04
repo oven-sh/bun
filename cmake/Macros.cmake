@@ -452,9 +452,11 @@ endfunction()
 #   TAG        string - The tag to clone
 #   COMMIT     string - The commit to clone
 #   PATH       string - The path to clone the repository to
+#   OUTPUTS    string - The outputs of the repository
 function(register_repository)
   set(args NAME REPOSITORY BRANCH TAG COMMIT PATH)
-  cmake_parse_arguments(GIT "" "${args}" "" ${ARGN})
+  set(multiArgs OUTPUTS)
+  cmake_parse_arguments(GIT "" "${args}" "${multiArgs}" ${ARGN})
 
   if(NOT GIT_REPOSITORY)
     message(FATAL_ERROR "git_clone: REPOSITORY is required")
@@ -476,6 +478,11 @@ function(register_repository)
     set(GIT_REF refs/heads/${GIT_BRANCH})
   endif()
 
+  set(GIT_EFFECTIVE_OUTPUTS)
+  foreach(output ${GIT_OUTPUTS})
+    list(APPEND GIT_EFFECTIVE_OUTPUTS ${GIT_PATH}/${output})
+  endforeach()
+
   register_command(
     TARGET
       clone-${GIT_NAME}
@@ -490,6 +497,7 @@ function(register_repository)
         -DGIT_NAME=${GIT_NAME}
     OUTPUTS
       ${GIT_PATH}
+      ${GIT_EFFECTIVE_OUTPUTS}
   )
 endfunction()
 

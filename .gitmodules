@@ -1,7 +1,0 @@
-[submodule "src/deps/picohttpparser"]
-path = src/deps/picohttpparser
-url = https://github.com/h2o/picohttpparser.git
-ignore = dirty
-depth = 1
-shallow = true
-fetchRecurseSubmodules = false

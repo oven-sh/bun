@@ -511,6 +511,17 @@ file(GLOB BUN_C_SOURCES ${CONFIGURE_DEPENDS}
   ${BUN_USOCKETS_SOURCE}/src/crypto/*.c
 )
 
+register_repository(
+  NAME
+    picohttpparser
+  REPOSITORY
+    h2o/picohttpparser
+  COMMIT
+    066d2b1e9ab820703db0837a7255d92d30f0c9f5
+  OUTPUTS
+    picohttpparser.c
+)
+
 list(APPEND BUN_C_SOURCES ${BUN_DEPS_SOURCE}/picohttpparser/picohttpparser.c)
 
 if(WIN32)
@@ -580,6 +591,8 @@ if(LINUX)
     target_link_libraries(${bun} PUBLIC "libatomic.so")
   endif()
 endif()
+
+# --- Linking ---
 
 # Since linking locks the file, we need to kill all instances of bun before linking.
 if(WIN32)

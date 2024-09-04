@@ -213,27 +213,19 @@ pub const UpgradedDuplex = struct {
             const this = @as(*UpgradedDuplex, @ptrCast(@alignCast(self)));
             if (args.len >= 1) {
                 const data_arg = args.ptr[0];
-                if (this.origin.get()) |duplex| {
+                if (this.origin.has()) {
                     if (data_arg.isEmptyOrUndefinedOrNull()) {
                         return JSC.JSValue.jsUndefined();
                     }
                     if (data_arg.asArrayBuffer(globalObject)) |array_buffer| {
-                        // yay fast path
+                        // yay we can read the data
                         const payload = array_buffer.slice();
                         this.onInternalReceiveData(payload);
-                    } else if (bun.String.tryFromJS(data_arg, globalObject)) |data_str| {
-                        defer data_str.deref();
-
-                        // slow path we are encoded as a string
-                        var encoding: JSC.Node.Encoding = .utf8;
-                        // we need to check every time because the encoding can change at any time
-                        if (duplex.getTruthy(globalObject, "readableEncoding")) |encoding_| {
-                            encoding = JSC.Node.Encoding.fromJS(encoding_, globalObject) orelse .utf8;
-                        }
-                        // TODO: optimize this using a shared buffer instead of allocating memory every time
-                        const payload = TextEncoder.decodeStringAtRuntime(data_str, encoding);
-                        defer bun.default_allocator.free(payload);
-                        this.onInternalReceiveData(payload);
+                    } else {
+                        // node.js errors in this case with the same error, lets keep it consistent
+                        const error_value = globalObject.ERR_STREAM_WRAP("Stream has StringDecoder set or is in objectMode", .{}).toJS();
+                        error_value.ensureStillAlive();
+                        this.handlers.onError(this.handlers.ctx, error_value);
                     }
                 }
             }

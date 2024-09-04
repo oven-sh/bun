@@ -239,12 +239,11 @@ pub const BindingNodeList = []Binding;
 
 pub const ImportItemStatus = enum(u2) {
     none,
-
-    // The linker doesn't report import/export mismatch errors
+    /// The linker doesn't report import/export mismatch errors
     generated,
-    // The printer will replace this import with "undefined"
-
+    /// The printer will replace this import with "undefined"
     missing,
+
     pub fn jsonStringify(self: @This(), writer: anytype) !void {
         return try writer.write(@tagName(self));
     }

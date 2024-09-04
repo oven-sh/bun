@@ -4390,8 +4390,9 @@ pub const ByteStream = struct {
         json: JSC.JSPromise.Strong,
 
         pub fn fulfill(this: *BufferAction, blob: *AnyBlob) void {
-            blob.wrap(.{ .Normal = this.swap() }, this.globalThis().?, this.*);
+            blob.wrap(.{ .normal = this.swap() }, this.globalThis().?, this.*);
         }
+
         pub fn reject(this: *BufferAction, err: StreamResult.StreamError) void {
             this.swap().reject(this.globalThis().?, err.toJSWeak(this.globalThis().?)[0]);
         }

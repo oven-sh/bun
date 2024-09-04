@@ -4879,7 +4879,9 @@ fn NewPrinter(
 
                         p.print("{");
                         if (!s.is_single_line) {
-                            p.unindent();
+                            p.indent();
+                        } else {
+                            p.printSpace();
                         }
 
                         for (s.items, 0..) |item, i| {
@@ -4902,6 +4904,8 @@ fn NewPrinter(
                             p.unindent();
                             p.printNewline();
                             p.printIndent();
+                        } else {
+                            p.printSpace();
                         }
                         p.print("}");
                         item_count += 1;

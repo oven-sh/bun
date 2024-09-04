@@ -3298,6 +3298,12 @@ pub const Parser = struct {
             before.deinit();
         }
 
+        if (p.options.bundle) {
+            // The bundler requires a part for generated module wrappers. This
+            // part must be at the start as it is referred to by index.
+            before.append(js_ast.Part{}) catch bun.outOfMemory();
+        }
+
         // --inspect-brk
         if (p.options.features.set_breakpoint_on_first_line) {
             var debugger_stmts = try p.allocator.alloc(Stmt, 1);
@@ -3309,14 +3315,7 @@ pub const Parser = struct {
                 js_ast.Part{
                     .stmts = debugger_stmts,
                 },
-            ) catch unreachable;
-        }
-
-        if (p.options.bundle) {
-            // allocate an empty part for the bundle
-            before.append(
-                js_ast.Part{},
-            ) catch unreachable;
+            ) catch bun.outOfMemory();
         }
 
         // When "using" declarations appear at the top level, we change all TDZ
@@ -4134,29 +4133,6 @@ pub const Parser = struct {
             }
         }
 
-        // TODO(@paperdave): decide if to delete this?
-        // if (p.legacy_cjs_import_stmts.items.len > 0 and p.options.legacy_transform_require_to_import) {
-        //     var import_records = try bun.BabyList(u32).initCapacity(p.allocator, p.legacy_cjs_import_stmts.items.len);
-        //     var declared_symbols = DeclaredSymbol.List{};
-        //     try declared_symbols.ensureTotalCapacity(p.allocator, p.legacy_cjs_import_stmts.items.len);
-
-        //     for (p.legacy_cjs_import_stmts.items) |entry| {
-        //         const import_statement: *S.Import = entry.data.s_import;
-        //         import_records.appendAssumeCapacity(import_statement.import_record_index);
-        //         declared_symbols.appendAssumeCapacity(.{
-        //             .ref = import_statement.namespace_ref,
-        //             .is_top_level = true,
-        //         });
-        //     }
-
-        //     before.append(js_ast.Part{
-        //         .stmts = p.legacy_cjs_import_stmts.items,
-        //         .declared_symbols = declared_symbols,
-        //         .import_record_indices = import_records,
-        //         .tag = .cjs_imports,
-        //     }) catch unreachable;
-        // }
-
         if (p.has_called_runtime) {
             var runtime_imports: [RuntimeImports.all.len]u8 = undefined;
             var iter = p.runtime_imports.iter();
@@ -4222,6 +4198,10 @@ pub const Parser = struct {
                     false,
                 ) catch unreachable;
             }
+        }
+
+        if (p.react_refresh.register_used or p.react_refresh.signature_used) {
+            try p.generateReactRefreshImport(&after);
         }
 
         var parts_slice: []js_ast.Part = &([_]js_ast.Part{});
@@ -5008,9 +4988,6 @@ fn NewParser_(
         require_transposer: RequireTransposer,
         require_resolve_transposer: RequireResolveTransposer,
 
-        // This is a general place to put lots of Expr objects
-        expr_list: List(Expr) = .{},
-
         const_values: js_ast.Ast.ConstValuesMap = .{},
 
         // These are backed by stack fallback allocators in _parse, and are uninitialized until then.
@@ -5038,6 +5015,9 @@ fn NewParser_(
         // If this is true, then all top-level statements are wrapped in a try/catch
         will_wrap_module_in_try_catch_for_using: bool = false,
 
+        /// Used for react refresh, it must be able to insert `const _s = $RefreshSig$`
+        nearest_stmt_list: ?*ListManaged(Stmt) = null,
+
         const RecentlyVisitedTSNamespace = struct {
             expr: Expr.Data = Expr.empty.data,
             map: ?*js_ast.TSNamespaceMemberMap = null,
@@ -5048,51 +5028,92 @@ fn NewParser_(
             };
         };
 
-        /// "Fast refresh" is React's solution for hot-module-reloading in the context of the UI framework
+        /// "Fast Refresh" is React's solution for hot-module-reloading in the context of the UI framework
         /// user guide: https://reactnative.dev/docs/fast-refresh (applies to react-dom and native)
         ///
         /// This depends on performing a couple extra transformations at bundle time, as well as
         /// including the `react-refresh` NPM package, which is able to do the heavy lifting,
         /// integrating with `react` and `react-dom`.
+        ///
+        /// Prior implementations:
+        ///  [1]: https://github.com/facebook/react/blob/main/packages/react-refresh/src/ReactFreshBabelPlugin.js
+        ///  [2]: https://github.com/swc-project/swc/blob/main/crates/swc_ecma_transforms_react/src/refresh/mod.rs
+        ///
+        /// Additional reading:
+        ///  [3] https://github.com/facebook/react/issues/16604#issuecomment-528663101
+        ///  [4] https://github.com/facebook/react/blob/master/packages/react-refresh/src/__tests__/ReactFreshIntegration-test.js
+        ///
+        /// Instead of a plugin which visits the tree separately, Bun's implementation of fast refresh
+        /// happens in tandem with the visit pass. The responsibilities of the transform are as follows:
+        ///
+        /// 1. For all Components (which is defined as any top-level function/function variable, that is
+        ///    named with a capital letter; see `isComponentishName`), register them to the runtime using
+        ///    `$RefreshReg$(ComponentFunction, "Component");`. Implemented in `p.handleReactRefreshRegister`
+        ///    HOC components are also registered, but only through a special case for `export default`
+        ///
+        /// 2. For all functions which call a Hook (a hook is an identifier matching /^use[A-Z]/):
+        ///     a. Outside of the function, create a signature function `const _s = $RefreshSig$();`
+        ///     b. At the start of the function, call `_s()`
+        ///     c. Record all of the hooks called, the variables they are assigned to, and
+        ///        arguments depending on which hook has been used. `useState` and `useReducer`,
+        ///        for example, are special-cased.
+        ///     d. Directly after the function, call `_s(hook, "<hash>", forceReset)`
+        ///         - If a user-defined hook is called, the alterate form is used:
+        ///           `_s(hook, "<hash>", forceReset, () => [useCustom1, useCustom2])`
+        ///
+        /// The upstream transforms do not declare `$RefreshReg$` or `$RefreshSig$`. A typical
+        /// implementation might look like this, prepending this data to the module start:
+        ///
+        ///     import * as Refresh from 'react-refresh/runtime';
+        ///     const $RefreshReg$ = (type, id) => Refresh.register(type, "<file id here>" + id);
+        ///     const $RefreshSig$ = Refresh.createSignatureFunctionForTransform;
+        ///
+        /// Since Bun is a transpiler *and* bundler, we take a slightly different approach. Aside
+        /// from including the link to the refresh runtime, our notation of $RefreshReg$ is just
+        /// pointing at `Refresh.register`, which means when we call it, the second argument has
+        /// to be a string containing the filepath, not just the component name.
         const ReactRefresh = struct {
-            /// Import to `react-refresh`
-            module: Ref = Ref.None,
-
-            /// Set if this JSX/TSX file uses the refresh runtime. If so,
-            /// we must insert an import statement to it.
-            is_used: bool = false,
+            // Set if this JSX/TSX file uses the refresh runtime. If so,
+            // we must insert an import statement to it.
+            register_used: bool = false,
+            signature_used: bool = false,
 
             /// $RefreshReg$ is called on all top-level variables that are
             /// components, as well as HOCs found in the `export default` clause.
-            ///
-            /// The original transform assumes the register function looks like:
-            ///     `var $RefreshReg$ = (type, id) => register(type, module.id + ' ' + id)`
-            /// However, for us, this is going to point right at `RefreshRuntime.register`,
-            /// which means when we call this ref, we must make the string unique.
-            refresh_register: Ref = Ref.None,
+            register_ref: Ref = Ref.None,
 
-            /// $RefreshSig$ is called to signal hook usage and state to the
-            /// refresh runtime
-            refresh_signal: Ref = Ref.None,
+            /// $RefreshSig$ is called to create a signature function, which is
+            /// used by the refresh runtime to perform smart hook tracking.
+            create_signature_ref: Ref = Ref.None,
 
-            /// If a comment with '@refresh reset' is seen, we will forward a force refresh
-            /// to the refresh runtime. This lets you reset the state of hooks on an update
-            /// on a per-component basis.
-            // TODO: This is set to true by the lexer???
+            /// If a comment with '@refresh reset' is seen, we will forward a
+            /// force refresh to the refresh runtime. This lets you reset the
+            /// state of hooks on an update on a per-component basis.
+            // TODO: this is never set
             force_reset: bool = false,
 
-            /// The location of the current Hook context, which is stored on the stack
-            hook_context_storage: ?*?HookContext = null,
+            /// The last hook that was scanned. This is used when visiting
+            /// `.s_local`, as we must hash the variable destructure if the
+            /// hook's result is assigned directly to a local.
+            last_hook_seen: ?*E.Call = null,
+
+            /// Every function sets up stack memory to hold data related to it's
+            /// hook tracking. This is a pointer to that ?HookContext, where an
+            /// inner null means there are no hook calls.
+            ///
+            /// The inner value is initialized when the first hook .e_call is
+            /// visited, where the '_s' symbol is reserved. Additional hook calls
+            /// append to the `hasher` and `user_hooks` as needed.
+            ///
+            /// When a function is done visiting, the stack location is checked,
+            /// and then it will insert `var _s = ...`, add the `_s()` call at
+            /// the start of the function, and then add the call to `_s(func, ...)`.
+            hook_ctx_storage: ?*?HookContext = null,
 
             pub const HookContext = struct {
-                /// All hook names and arguments are passed here.
                 hasher: std.hash.Wyhash,
-                signal_cb: Ref,
-                user_hooks: List(UserHook),
-
-                const UserHook = struct {
-                    ref: Ref,
-                };
+                signature_cb: Ref,
+                user_hooks: std.AutoArrayHashMapUnmanaged(Ref, Expr),
             };
 
             // https://github.com/facebook/react/blob/d1afcb43fd506297109c32ff462f6f659f9110ae/packages/react-refresh/src/ReactFreshBabelPlugin.js#L42
@@ -5114,7 +5135,6 @@ fn NewParser_(
                 };
             }
 
-            // TODO: this is probably going to turn into just tracking if the ref came from react
             pub const built_in_hooks = bun.ComptimeEnumMap(enum {
                 useState,
                 useReducer,
@@ -5136,9 +5156,6 @@ fn NewParser_(
                 useActionState,
                 useOptimistic,
             });
-            pub fn isBuiltinHook(id: []const u8) bool {
-                return built_in_hooks.has(id);
-            }
         };
 
         /// use this instead of checking p.source.index
@@ -6105,6 +6122,7 @@ fn NewParser_(
                     .namespace_ref = namespace_ref,
                     .items = clause_items,
                     .import_record_index = import_record_i,
+                    .is_single_line = true,
                 },
                 logger.Loc{},
             );
@@ -6123,6 +6141,74 @@ fn NewParser_(
                 .import_record_indices = bun.BabyList(u32).init(import_records),
                 .tag = .runtime,
             }) catch unreachable;
+        }
+
+        pub fn generateReactRefreshImport(p: *P, parts: *ListManaged(js_ast.Part)) !void {
+            const allocator = p.allocator;
+            const import_record_i = p.addImportRecordByRange(.stmt, logger.Range.None, "react-refresh/runtime");
+
+            var clause_items = try List(js_ast.ClauseItem).initCapacity(
+                allocator,
+                @as(usize, @intFromBool(p.react_refresh.register_used)) +
+                    @as(usize, @intFromBool(p.react_refresh.signature_used)),
+            );
+            const stmts = try allocator.alloc(Stmt, 1);
+            var declared_symbols = DeclaredSymbol.List{};
+            try declared_symbols.ensureTotalCapacity(allocator, 3);
+
+            const namespace_ref = try p.newSymbol(.other, "RefreshRuntime");
+            declared_symbols.appendAssumeCapacity(.{
+                .ref = namespace_ref,
+                .is_top_level = true,
+            });
+            try p.module_scope.generated.push(allocator, namespace_ref);
+
+            const Entry = struct { name: []const u8, enabled: bool, ref: Ref };
+            for ([2]Entry{
+                .{
+                    .name = "register",
+                    .enabled = p.react_refresh.register_used,
+                    .ref = p.react_refresh.register_ref,
+                },
+                .{
+                    .name = "createSignatureFunctionForTransform",
+                    .enabled = p.react_refresh.signature_used,
+                    .ref = p.react_refresh.create_signature_ref,
+                },
+            }) |entry| {
+                if (!entry.enabled) continue;
+                clause_items.appendAssumeCapacity(.{
+                    .alias = entry.name,
+                    .original_name = entry.name,
+                    .alias_loc = logger.Loc{},
+                    .name = LocRef{ .ref = entry.ref, .loc = logger.Loc{} },
+                });
+                declared_symbols.appendAssumeCapacity(.{ .ref = entry.ref, .is_top_level = true });
+                try p.module_scope.generated.push(allocator, entry.ref);
+                try p.is_import_item.put(allocator, entry.ref, {});
+                try p.named_imports.put(entry.ref, .{
+                    .alias = entry.name,
+                    .alias_loc = logger.Loc.Empty,
+                    .namespace_ref = namespace_ref,
+                    .import_record_index = import_record_i,
+                });
+            }
+
+            stmts[0] = p.s(S.Import{
+                .namespace_ref = namespace_ref,
+                .items = clause_items.items,
+                .import_record_index = import_record_i,
+                .is_single_line = false,
+            }, logger.Loc.Empty);
+
+            // Append a single import to the end of the file (ES6 imports are hoisted
+            // so we don't need to worry about where the import statement goes)
+            try parts.append(.{
+                .stmts = stmts,
+                .declared_symbols = declared_symbols,
+                .import_record_indices = try bun.BabyList(u32).fromSlice(allocator, &.{import_record_i}),
+                .tag = .runtime,
+            });
         }
 
         fn substituteSingleUseSymbolInStmt(p: *P, stmt: Stmt, ref: Ref, replacement: Expr) bool {
@@ -6710,12 +6796,9 @@ fn NewParser_(
             }
 
             if (p.options.features.react_fast_refresh) {
-                p.react_refresh = .{
-                    // TODO: what is the correct way to use this
-                    .module = (try p.declareGeneratedSymbol(.other, "$RefreshRuntime$")).primary,
-                    .refresh_signal = (try p.declareGeneratedSymbol(.other, "$RefreshSig$")).primary,
-                    .refresh_register = (try p.declareGeneratedSymbol(.other, "$RefreshReg$")).primary,
-                };
+                // this is .. obviously.. not correct
+                p.react_refresh.create_signature_ref = (try p.declareGeneratedSymbol(.other, "$RefreshSig$")).primary;
+                p.react_refresh.register_ref = (try p.declareGeneratedSymbol(.other, "$RefreshReg$")).primary;
             }
 
             //  "React.createElement" and "createElement" become:
@@ -16077,6 +16160,16 @@ fn NewParser_(
             var stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, body.stmts);
             var temp_opts = PrependTempRefsOpts{ .kind = StmtsKind.fn_body, .fn_body_loc = body.loc };
             p.visitStmtsAndPrependTempRefs(&stmts, &temp_opts) catch unreachable;
+
+            if (p.options.features.react_fast_refresh) {
+                const hook_storage = p.react_refresh.hook_ctx_storage orelse
+                    unreachable; // caller did not init hook storage. any function can have react hooks!
+
+                if (hook_storage.*) |*hook| {
+                    p.handleReactRefreshPostVisitFunctionBody(&stmts, hook);
+                }
+            }
+
             func.body = G.FnBody{ .stmts = stmts.items, .loc = body.loc };
 
             p.popScope();
@@ -16152,7 +16245,6 @@ fn NewParser_(
                     //     p.log.addRangeError(p.source, target.range, "Cannot use \"new.target\" here") catch unreachable;
                     // }
                 },
-
                 .e_string => {
 
                     // If you're using this, you're probably not using 0-prefixed legacy octal notation
@@ -16294,7 +16386,6 @@ fn NewParser_(
                         .was_originally_identifier = true,
                     });
                 },
-
                 .e_jsx_element => |e_| {
                     switch (comptime jsx_transform_type) {
                         .react => {
@@ -16626,7 +16717,6 @@ fn NewParser_(
                         else => unreachable,
                     }
                 },
-
                 .e_template => |e_| {
                     if (e_.tag) |tag| {
                         e_.tag = p.visitExpr(tag);
@@ -16685,7 +16775,6 @@ fn NewParser_(
                         return e_.fold(p.allocator, expr.loc);
                     }
                 },
-
                 .e_binary => |e_| {
 
                     // The handling of binary expressions is convoluted because we're using
@@ -17578,6 +17667,26 @@ fn NewParser_(
                         }
                     }
 
+                    // In fast refresh, any function call that looks like a hook (/^use[A-Z]/) is a
+                    // hook, even if it is not the value of `SExpr` or `SLocal`. It can be anywhere
+                    // in the function call. This makes sense for some weird situations with `useCallback`,
+                    // where it is not assigned to a variable.
+                    //
+                    // When we see a hook call, we need to hash it, and then mark a flag so that if
+                    // it is assigned to a variable, that variable also get's hashed.
+                    if (p.options.features.react_fast_refresh) try_record_hook: {
+                        const original_name = switch (e_.target.data) {
+                            inline .e_identifier,
+                            .e_import_identifier,
+                            .e_commonjs_export_identifier,
+                            => |id| p.symbols.items[id.ref.innerIndex()].original_name,
+                            .e_dot => |dot| dot.name,
+                            else => break :try_record_hook,
+                        };
+                        if (!ReactRefresh.isHookName(original_name)) break :try_record_hook;
+                        p.handleReactRefreshHookCall(e_, original_name);
+                    }
+
                     return expr;
                 },
                 .e_new => |e_| {
@@ -17620,8 +17729,13 @@ fn NewParser_(
                     });
                     p.pushScopeForVisitPass(.function_body, e_.body.loc) catch unreachable;
 
+                    var react_hook_data: ?ReactRefresh.HookContext = null;
+                    const prev = p.react_refresh.hook_ctx_storage;
+                    defer p.react_refresh.hook_ctx_storage = prev;
+                    p.react_refresh.hook_ctx_storage = &react_hook_data;
+
                     var stmts_list = ListManaged(Stmt).fromOwnedSlice(p.allocator, dupe);
-                    var temp_opts = PrependTempRefsOpts{ .kind = StmtsKind.fn_body };
+                    var temp_opts = PrependTempRefsOpts{ .kind = .fn_body };
                     p.visitStmtsAndPrependTempRefs(&stmts_list, &temp_opts) catch unreachable;
                     p.allocator.free(e_.body.stmts);
                     e_.body.stmts = stmts_list.items;
@@ -17630,16 +17744,42 @@ fn NewParser_(
 
                     p.fn_only_data_visit.is_inside_async_arrow_fn = old_inside_async_arrow_fn;
                     p.fn_or_arrow_data_visit = std.mem.bytesToValue(@TypeOf(p.fn_or_arrow_data_visit), &old_fn_or_arrow_data);
+
+                    if (react_hook_data) |*hook| try_mark_hook: {
+                        const stmts = p.nearest_stmt_list orelse break :try_mark_hook;
+                        stmts.append(p.getReactRefreshHookSignalDecl(hook.signature_cb)) catch bun.outOfMemory();
+
+                        p.handleReactRefreshPostVisitFunctionBody(&stmts_list, hook);
+                        e_.body.stmts = stmts_list.items;
+
+                        return p.getReactRefreshHookSignalInit(hook, expr);
+                    }
                 },
                 .e_function => |e_| {
                     if (p.is_revisit_for_substitution) {
                         return expr;
                     }
 
+                    var react_hook_data: ?ReactRefresh.HookContext = null;
+                    const prev = p.react_refresh.hook_ctx_storage;
+                    defer p.react_refresh.hook_ctx_storage = prev;
+                    p.react_refresh.hook_ctx_storage = &react_hook_data;
+
                     e_.func = p.visitFunc(e_.func, expr.loc);
-                    if (e_.func.name) |name| {
-                        return p.keepExprSymbolName(expr, p.symbols.items[name.ref.?.innerIndex()].original_name);
+
+                    var final_expr = expr;
+
+                    if (react_hook_data) |*hook| try_mark_hook: {
+                        const stmts = p.nearest_stmt_list orelse break :try_mark_hook;
+                        stmts.append(p.getReactRefreshHookSignalDecl(hook.signature_cb)) catch bun.outOfMemory();
+                        final_expr = p.getReactRefreshHookSignalInit(hook, expr);
                     }
+
+                    if (e_.func.name) |name| {
+                        final_expr = p.keepExprSymbolName(final_expr, p.symbols.items[name.ref.?.innerIndex()].original_name);
+                    }
+
+                    return final_expr;
                 },
                 .e_class => |e_| {
                     if (p.is_revisit_for_substitution) {
@@ -19967,6 +20107,11 @@ fn NewParser_(
                         }
                     }
 
+                    var react_hook_data: ?ReactRefresh.HookContext = null;
+                    const prev = p.react_refresh.hook_ctx_storage;
+                    defer p.react_refresh.hook_ctx_storage = prev;
+                    p.react_refresh.hook_ctx_storage = &react_hook_data;
+
                     data.func = p.visitFunc(data.func, data.func.open_parens_loc);
 
                     const name_ref = data.func.name.?.ref.?;
@@ -20001,8 +20146,17 @@ fn NewParser_(
                         }
                     }
 
-                    if (p.options.features.react_fast_refresh and p.current_scope == p.module_scope) {
-                        try p.handleReactRefreshRegister(stmts, original_name, name_ref);
+                    if (p.options.features.react_fast_refresh) {
+                        if (react_hook_data) |*hook| {
+                            try stmts.append(p.getReactRefreshHookSignalDecl(hook.signature_cb));
+                            try stmts.append(p.s(S.SExpr{
+                                .value = p.getReactRefreshHookSignalInit(hook, Expr.initIdentifier(name_ref, logger.Loc.Empty)),
+                            }, logger.Loc.Empty));
+                        }
+
+                        if (p.current_scope == p.module_scope) {
+                            try p.handleReactRefreshRegister(stmts, original_name, name_ref);
+                        }
                     }
 
                     return;
@@ -20339,12 +20493,27 @@ fn NewParser_(
                         }
                     }
 
+                    if (p.options.features.react_fast_refresh) {
+                        p.react_refresh.last_hook_seen = null;
+                    }
+
                     if (only_scan_imports_and_do_not_visit) {
                         @compileError("only_scan_imports_and_do_not_visit must not run this.");
                     }
                     decl.value = p.visitExprInOut(val, .{
                         .is_immediately_assigned_to_decl = true,
                     });
+
+                    if (p.options.features.react_fast_refresh) {
+                        // When hooks are immediately assigned to something, we need to hash the binding.
+                        if (p.react_refresh.last_hook_seen) |last_hook| {
+                            if (decl.value.?.data.as(.e_call)) |call| {
+                                if (last_hook == call) {
+                                    @panic("TODO: Hash binding");
+                                }
+                            }
+                        }
+                    }
 
                     if (p.shouldUnwrapCommonJSToESM()) {
                         if (prev_require_to_convert_count < p.imports_to_convert_from_require.items.len) {
@@ -21843,19 +22012,24 @@ fn NewParser_(
         }
 
         fn keepStmtSymbolName(p: *P, loc: logger.Loc, ref: Ref, name: string) Stmt {
-            p.expr_list.ensureUnusedCapacity(2) catch unreachable;
-            const start = p.expr_list.items.len;
-            p.expr_list.appendAssumeCapacity(p.newExpr(E.Identifier{
-                .ref = ref,
-            }, loc));
-            p.expr_list.appendAssumeCapacity(p.newExpr(E.String{ .data = name }, loc));
-            return p.s(S.SExpr{
-                // I believe that this is a spot we can do $RefreshReg$(name)
-                .value = p.callRuntime(loc, "__name", p.expr_list.items[start..p.expr_list.items.len]),
+            _ = p;
+            _ = loc;
+            _ = ref;
+            _ = name;
 
-                // Make sure tree shaking removes this if the function is never used
-                .does_not_affect_tree_shaking = true,
-            }, loc);
+            // p.expr_list.ensureUnusedCapacity(2) catch unreachable;
+            // const start = p.expr_list.items.len;
+            // p.expr_list.appendAssumeCapacity(p.newExpr(E.Identifier{
+            //     .ref = ref,
+            // }, loc));
+            // p.expr_list.appendAssumeCapacity(p.newExpr(E.String{ .data = name }, loc));
+            // return p.s(S.SExpr{
+            //     // I believe that this is a spot we can do $RefreshReg$(name)
+            //     .value = p.callRuntime(loc, "__name", p.expr_list.items[start..p.expr_list.items.len]),
+
+            //     // Make sure tree shaking removes this if the function is never used
+            //     .does_not_affect_tree_shaking = true,
+            // }, loc);
         }
 
         fn runtimeIdentifierRef(p: *P, loc: logger.Loc, comptime name: string) Ref {
@@ -21960,6 +22134,10 @@ fn NewParser_(
                 // visit all statements first
                 var visited = try ListManaged(Stmt).initCapacity(p.allocator, stmts.items.len);
                 defer visited.deinit();
+
+                const prev_nearest_stmt_list = p.nearest_stmt_list;
+                defer p.nearest_stmt_list = prev_nearest_stmt_list;
+                p.nearest_stmt_list = &before;
 
                 var preprocessed_enum_i: usize = 0;
 
@@ -22706,8 +22884,10 @@ fn NewParser_(
         /// When not transpiling we dont use the renamer, so our solution is to generate really
         /// hard to collide with variables, instead of actually making things collision free
         pub fn generateTempRef(p: *P, default_name: ?string) Ref {
-            var scope = p.current_scope;
+            return p.generateTempRefWithScope(default_name, p.current_scope);
+        }
 
+        pub fn generateTempRefWithScope(p: *P, default_name: ?string, scope: *Scope) Ref {
             const name = (if (p.willUseRenamer()) default_name else null) orelse brk: {
                 p.temp_ref_count += 1;
                 break :brk std.fmt.allocPrint(p.allocator, "__bun_temp_ref_{x}$", .{p.temp_ref_count}) catch bun.outOfMemory();
@@ -23049,7 +23229,7 @@ fn NewParser_(
                 // $RefreshReg$(component, "file.ts:Original Name")
                 const loc = logger.Loc.Empty;
                 try stmts.append(p.s(S.SExpr{ .value = p.newExpr(E.Call{
-                    .target = Expr.initIdentifier(p.react_refresh.refresh_register, loc),
+                    .target = Expr.initIdentifier(p.react_refresh.register_ref, loc),
                     .args = try ExprNodeList.fromSlice(p.allocator, &.{
                         Expr.initIdentifier(ref, loc),
                         p.newExpr(E.String{
@@ -23062,8 +23242,140 @@ fn NewParser_(
                     }),
                 }, loc) }, loc));
 
-                p.react_refresh.is_used = true;
+                p.react_refresh.register_used = true;
             }
+        }
+
+        pub fn handleReactRefreshHookCall(p: *P, hook_call: *E.Call, original_name: []const u8) void {
+            bun.assert(p.options.features.react_fast_refresh);
+            bun.assert(ReactRefresh.isHookName(original_name));
+            const ctx_storage = p.react_refresh.hook_ctx_storage orelse
+                return; // not in a function, ignore this hook call.
+
+            // if this function has no hooks recorded, initialize a hook context
+            // every function visit provides stack storage, which it will inspect at visit finish.
+            const ctx: *ReactRefresh.HookContext = if (ctx_storage.*) |*ctx| ctx else init: {
+                p.react_refresh.signature_used = true;
+
+                var scope = p.current_scope;
+                while (scope.kind != .function_body and scope.kind != .block and scope.kind != .entry) {
+                    scope = scope.parent orelse break;
+                }
+
+                ctx_storage.* = .{
+                    .hasher = std.hash.Wyhash.init(0),
+                    .signature_cb = p.generateTempRefWithScope("_s", scope),
+                    .user_hooks = .{},
+                };
+
+                break :init &(ctx_storage.*.?);
+            };
+
+            ctx.hasher.update(original_name);
+
+            if (ReactRefresh.built_in_hooks.get(original_name)) |built_in_hook| hash_arg: {
+                const arg_index: usize = switch (built_in_hook) {
+                    // useState first argument is initial state.
+                    .useState => 0,
+                    // useReducer second argument is initial state.
+                    .useReducer => 1,
+                    else => break :hash_arg,
+                };
+                if (hook_call.args.len <= arg_index) break :hash_arg;
+                const arg = hook_call.args.slice()[arg_index];
+                _ = arg; // autofix
+                // TODO:
+            } else switch (hook_call.target.data) {
+                inline .e_identifier,
+                .e_import_identifier,
+                .e_commonjs_export_identifier,
+                => |id| {
+                    const gop = ctx.user_hooks.getOrPut(p.allocator, id.ref) catch bun.outOfMemory();
+                    if (!gop.found_existing) {
+                        gop.value_ptr.* = Expr.initIdentifier(id.ref, logger.Loc.Empty);
+                    }
+                },
+                else => {},
+            }
+
+            ctx.hasher.update("\x00");
+        }
+
+        pub fn handleReactRefreshPostVisitFunctionBody(p: *P, stmts: *ListManaged(Stmt), hook: *ReactRefresh.HookContext) void {
+            bun.assert(p.options.features.react_fast_refresh);
+
+            // we need to prepend `_s();` as a statement.
+            if (stmts.items.len == stmts.capacity) {
+                // would have to re-alloc the array in general
+                const new_stmts = p.allocator.alloc(Stmt, stmts.items.len + 1) catch bun.outOfMemory();
+                @memcpy(new_stmts[1..], stmts.items);
+                stmts.deinit();
+                stmts.* = ListManaged(Stmt).fromOwnedSlice(p.allocator, new_stmts);
+            } else {
+                _ = stmts.addOneAssumeCapacity();
+                bun.copy(Stmt, stmts.items[0 .. stmts.items.len - 2], stmts.items[1..]);
+            }
+
+            const loc = logger.Loc.Empty;
+            const prepended_stmt = p.s(S.SExpr{ .value = p.newExpr(E.Call{
+                .target = Expr.initIdentifier(hook.signature_cb, loc),
+            }, loc) }, loc);
+            stmts.items[0] = prepended_stmt;
+        }
+
+        pub fn getReactRefreshHookSignalDecl(p: *P, signal_cb_ref: Ref) Stmt {
+            const loc = logger.Loc.Empty;
+            // var s_ = $RefreshSig$();
+            return p.s(S.Local{ .decls = G.Decl.List.fromSlice(p.allocator, &.{.{
+                .binding = p.b(B.Identifier{ .ref = signal_cb_ref }, loc),
+                .value = p.newExpr(E.Call{
+                    .target = Expr.initIdentifier(p.react_refresh.create_signature_ref, loc),
+                }, loc),
+            }}) catch bun.outOfMemory() }, loc);
+        }
+
+        pub fn getReactRefreshHookSignalInit(p: *P, ctx: *ReactRefresh.HookContext, function_with_hook_calls: Expr) Expr {
+            const loc = logger.Loc.Empty;
+
+            const final = ctx.hasher.final();
+            const hash_data = p.allocator.alloc(u8, comptime bun.base64.encodeLenFromSize(@sizeOf(@TypeOf(final)))) catch bun.outOfMemory();
+            bun.assert(bun.base64.encode(hash_data, std.mem.asBytes(&final)) == hash_data.len);
+
+            const have_custom_hooks = ctx.user_hooks.count() > 0;
+            const have_force_arg = have_custom_hooks or p.react_refresh.force_reset;
+
+            const args = p.allocator.alloc(
+                Expr,
+                2 +
+                    @as(usize, @intFromBool(have_force_arg)) +
+                    @as(usize, @intFromBool(have_custom_hooks)),
+            ) catch bun.outOfMemory();
+
+            args[0] = function_with_hook_calls;
+            args[1] = p.newExpr(E.String{ .data = hash_data }, loc);
+
+            if (have_force_arg) args[2] = p.newExpr(E.Boolean{ .value = p.react_refresh.force_reset }, loc);
+
+            if (have_custom_hooks) {
+                // () => [useCustom1, useCustom2]
+                args[3] = p.newExpr(E.Arrow{
+                    .body = .{
+                        .stmts = p.allocator.dupe(Stmt, &.{
+                            p.s(S.Return{ .value = p.newExpr(E.Array{
+                                .items = ExprNodeList.init(ctx.user_hooks.values()),
+                            }, loc) }, loc),
+                        }) catch bun.outOfMemory(),
+                        .loc = loc,
+                    },
+                    .prefer_expr = true,
+                }, loc);
+            }
+
+            // _s(func, "<hash>", force, () => [useCustom])
+            return p.newExpr(E.Call{
+                .target = Expr.initIdentifier(ctx.signature_cb, loc),
+                .args = ExprNodeList.init(args),
+            }, loc);
         }
 
         pub fn toAST(
@@ -23774,7 +24086,6 @@ fn NewParser_(
                 .call_target = nullExprData,
                 .delete_target = nullExprData,
                 .stmt_expr_value = nullExprData,
-                .expr_list = .{},
                 .loop_body = nullStmtData,
                 .define = define,
                 .import_records = undefined,

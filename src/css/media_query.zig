@@ -49,14 +49,12 @@ pub const MediaList = struct {
     pub fn parse(input: *css.Parser) Result(MediaList) {
         var media_queries = ArrayList(MediaList){};
         while (true) {
-            const mq = input.parseUntilBefore(
-                css.Delimiters{ .comma = true },
-                MediaQuery,
-                {},
-                css.voidWrap(MediaQuery, MediaQuery.parse),
-            ) catch |e| {
-                _ = e; // autofix
-                @compileError(css.todo_stuff.errors);
+            const mq = switch (input.parseUntilBefore(css.Delimiters{ .comma = true }, MediaQuery, {}, css.voidWrap(MediaQuery, MediaQuery.parse))) {
+                .result => |v| v,
+                .err => |e| {
+                    _ = e; // autofix
+                    @compileError(css.todo_stuff.errors);
+                },
             };
             media_queries.append(@compileError(css.todo_stuff.think_about_allocator), mq) catch bun.outOfMemory();
 
@@ -127,8 +125,14 @@ pub const MediaQuery = struct {
     pub fn parse(input: *css.Parser) Result(MediaQuery) {
         const Fn = struct {
             pub fn tryParseFn(i: *css.Parser) Result(struct { ?Qualifier, ?MediaType }) {
-                const qualifier = i.tryParse(Qualifier.parse, .{}) catch null;
-                const media_type = if (MediaType.parse(i).asErr()) |e| return .{ .err = e };
+                const qualifier = switch (i.tryParse(Qualifier.parse, .{})) {
+                    .result => |vv| vv,
+                    .err => null,
+                };
+                const media_type = switch (MediaType.parse(i)) {
+                    .result => |vv| vv,
+                    .err => |e| return .{ .err = e },
+                };
                 return .{ qualifier, media_type };
             }
         };
@@ -441,9 +445,9 @@ pub fn parseQueryCondition(
     };
 
     while (true) {
-        input.tryParse(css.Parser.expectIdentMatching, .{delim}) catch {
+        if (input.tryParse(css.Parser.expectIdentMatching, .{delim}).isErr()) {
             return QueryCondition.createOperation(operator, conditions);
-        };
+        }
 
         conditions.append(
             @compileError(css.todo_stuff.think_about_allocator),
@@ -762,13 +766,16 @@ pub fn QueryFeature(comptime FeatureId: type) type {
         }
 
         pub fn parse(input: *css.Parser) Result(This) {
-            if (input.tryParse(parseNameFirst, .{})) |res| {
-                return res;
-            } else |e| {
-                if (e == css.ParserError.invalid_media_query) {
-                    @compileError(css.todo_stuff.errors);
-                }
-                return parseValueFirst(input);
+            switch (input.tryParse(parseNameFirst, .{})) {
+                .result => |res| {
+                    return res;
+                },
+                .err => |e| {
+                    if (e == css.ParserError.invalid_media_query) {
+                        @compileError(css.todo_stuff.errors);
+                    }
+                    return parseValueFirst(input);
+                },
             }
             return Result(This).success;
         }
@@ -779,7 +786,7 @@ pub fn QueryFeature(comptime FeatureId: type) type {
                 .result => |v| v,
             };
 
-            const operator = if (input.tryParse(consumeOperationOrColon, .{true})) |operator| operator else return .{
+            const operator = if (input.tryParse(consumeOperationOrColon, .{true}).asValue()) |operator| operator else return .{
                 .boolean = .{ .name = name },
             };
 
@@ -862,7 +869,7 @@ pub fn QueryFeature(comptime FeatureId: type) type {
                 return input.newCustomError(css.ParserError.invalid_media_query);
             }
 
-            if (input.tryParse(consumeOperationOrColon, .{ input, false })) |end_operator_| {
+            if (input.tryParse(consumeOperationOrColon, .{ input, false }).asValue()) |end_operator_| {
                 const start_operator = operator.?;
                 const end_operator = end_operator_.?;
                 // Start and end operators must be matching.
@@ -933,13 +940,13 @@ fn consumeOperationOrColon(input: *css.Parser, allow_colon: bool) Result(?MediaF
     switch (first_delim) {
         '=' => return .equal,
         '>' => {
-            if (input.tryParse(css.Parser.expectDelim, .{'='})) {
+            if (input.tryParse(css.Parser.expectDelim, .{'='}).isOk()) {
                 return .@"greater-than-equal";
             }
             return .@"greater-than";
         },
         '<' => {
-            if (input.tryParse(css.Parser.expectDelim, .{'='})) {
+            if (input.tryParse(css.Parser.expectDelim, .{'='}).isOk()) {
                 return .@"less-than-equal";
             }
             return .@"less-than";
@@ -1026,7 +1033,7 @@ pub const MediaFeatureValue = union(enum) {
     /// Parses a single media query feature value, with an expected type.
     /// If the type is unknown, pass MediaFeatureType::Unknown instead.
     pub fn parse(input: *css.Parser, expected_type: MediaFeatureType) Result(MediaFeatureValue) {
-        if (input.tryParse(parseKnown, .{expected_type})) |value| {
+        if (input.tryParse(parseKnown, .{expected_type}).asValue()) |value| {
             return value;
         }
 
@@ -1053,16 +1060,16 @@ pub const MediaFeatureValue = union(enum) {
         // Ratios are ambiguous with numbers because the second param is optional (e.g. 2/1 == 2).
         // We require the / delimiter when parsing ratios so that 2/1 ends up as a ratio and 2 is
         // parsed as a number.
-        if (input.tryParse(Ratio.parseRequired, .{})) |ratio| return .{ .ratio = ratio };
+        if (input.tryParse(Ratio.parseRequired, .{}).asValue()) |ratio| return .{ .ratio = ratio };
 
         // Parse number next so that unitless values are not parsed as lengths.
-        if (input.tryParse(CSSNumberFns.parse, .{})) |num| return .{ .number = num };
+        if (input.tryParse(CSSNumberFns.parse, .{}).asValue()) |num| return .{ .number = num };
 
-        if (input.tryParse(Length.parse, .{})) |res| return .{ .length = res };
+        if (input.tryParse(Length.parse, .{}).asValue()) |res| return .{ .length = res };
 
-        if (input.tryParse(Resolution.parse, .{})) |res| return .{ .resolution = res };
+        if (input.tryParse(Resolution.parse, .{}).asValue()) |res| return .{ .resolution = res };
 
-        if (input.tryParse(EnvironmentVariable.parse, .{})) |env| return .{ .env = env };
+        if (input.tryParse(EnvironmentVariable.parse, .{}).asValue()) |env| return .{ .env = env };
 
         const ident = switch (IdentFns.parse(input)) {
             .err => |e| return .{ .err = e },

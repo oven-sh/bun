@@ -42,13 +42,13 @@ pub const DeclarationBlock = struct {
         var parser = css.RuleBodyParser(PropertyDeclarationParser).new(input, &decl_parser);
 
         while (parser.next()) |res| {
-            _ = res catch |e| {
+            if (res.asErr()) |e| {
                 if (options.error_recovery) {
                     options.warn(e);
                     continue;
                 }
                 return .{ .err = e };
-            };
+            }
         }
 
         return DeclarationBlock{
@@ -195,7 +195,7 @@ pub fn parse_declaration(
             return input2.expectIdentMatching("important");
         }
     };
-    const important = if (input.tryParse(Fn.parsefn, .{})) true else false;
+    const important = if (input.tryParse(Fn.parsefn, .{}).isOk()) true else false;
     if (input.expectExhausted().asErr()) |e| return .{ .err = e };
     if (important) {
         important_declarations.append(comptime {

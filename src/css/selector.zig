@@ -6,7 +6,6 @@ const Log = logger.Log;
 
 pub const css = @import("./css_parser.zig");
 const CSSString = css.CSSString;
-pub const Error = css.Error;
 
 pub const Printer = css.Printer;
 pub const PrintErr = css.PrintErr;
@@ -521,7 +520,10 @@ pub const api = struct {
             var any_whitespace = false;
             while (true) {
                 const before_this_token = input.state();
-                const tok: *css.Token = input.nextIncludingWhitespace() catch break :outer_loop;
+                const tok: *css.Token = switch (input.nextIncludingWhitespace()) {
+                    .result => |vv| vv,
+                    .err => break :outer_loop,
+                };
                 switch (tok.*) {
                     .whitespace => {
                         any_whitespace = true;
@@ -606,7 +608,7 @@ pub const api = struct {
         input.skipWhitespace();
 
         var empty: bool = true;
-        if (parser.isNestingAllowed() and if (input.tryParse(css.Parser.expectDelim, .{'&'})) |_| true else false) {
+        if (parser.isNestingAllowed() and if (input.tryParse(css.Parser.expectDelim, .{'&'}).isOk()) true else false) {
             state.insert(SelectorParsingState{ .after_nesting = true });
             builder.pushSimpleSelector(.nesting);
             empty = false;
@@ -1489,15 +1491,18 @@ pub const api = struct {
                     const selector = input.parseUntilBefore(css.Delimiters{ .comma = true }, SelectorT, &closure, Closure.parsefn);
 
                     const was_ok = if (selector) true else false;
-                    if (selector) |sel| {
-                        values.append(comptime {
-                            @compileError("TODO: Think about where Allocator comes from");
-                        }, sel) catch bun.outOfMemory();
-                    } else |e| {
-                        switch (recovery) {
-                            .discard_list => return e,
-                            .ignore_invalid_selector => {},
-                        }
+                    switch (selector) {
+                        .result => |sel| {
+                            values.append(comptime {
+                                @compileError("TODO: Think about where Allocator comes from");
+                            }, sel) catch bun.outOfMemory();
+                        },
+                        .err => |e| {
+                            switch (recovery) {
+                                .discard_list => return e,
+                                .ignore_invalid_selector => {},
+                            }
+                        },
                     }
 
                     while (true) {
@@ -2158,22 +2163,25 @@ pub const api = struct {
         state: SelectorParsingState,
         sink: *SelectorBuilder(Impl),
     ) Result(bool) {
-        const result = parse_qualified_name(
+        const result = switch (parse_qualified_name(
             Impl,
             parser,
             input,
             false,
-        ) catch |e| {
-            _ = e; // autofix
+        )) {
+            .result => |v| v,
+            .err => |e| {
+                _ = e; // autofix
 
-            // TODO: error does not exist
-            // but it should exist
-            // todo_stuff.errors
-            // if (e == Error.EndOfInput)
-            // this is not complete
-            // needs to check if error is EndOfInput and return false
-            // otherwise return error
-            return false;
+                // TODO: error does not exist
+                // but it should exist
+                // todo_stuff.errors
+                // if (e == Error.EndOfInput)
+                // this is not complete
+                // needs to check if error is EndOfInput and return false
+                // otherwise return error
+                return false;
+            },
         };
 
         if (result == .none) return false;
@@ -2265,10 +2273,13 @@ pub const api = struct {
         const S = SimpleSelectorParseResult(Impl);
 
         const start = input.state();
-        const token = (input.nextIncludingWhitespace() catch {
-            input.reset(start);
-            return null;
-        }).*;
+        const token = switch (input.nextIncludingWhitespace()) {
+            .result => |v| v.*,
+            .err => {
+                input.reset(start);
+                return null;
+            },
+        };
 
         switch (token) {
             .idhash => |id| {
@@ -2508,35 +2519,38 @@ pub const api = struct {
 
         const location = input.currentSourceLocation();
         const operator = operator: {
-            const tok = input.next() catch |e| {
-                _ = e; // autofix
-                const local_name_lower = local_name_lower: {
-                    const lower = alloc.alloc(u8, local_name.len) catch unreachable;
-                    _ = bun.strings.copyLowercase(local_name, lower);
-                    break :local_name_lower lower;
-                };
-                if (namespace) |ns| {
-                    return brk: {
-                        const x = attrs.AttrSelectorWithOptionalNamespace(Impl){
-                            .namespace = ns,
-                            .local_name = local_name,
-                            .local_name_lower = local_name_lower,
-                            .never_matches = false,
-                            .operation = .exists,
+            const tok = switch (input.next()) {
+                .result => |v| v,
+                .err => {
+                    const local_name_lower = local_name_lower: {
+                        const lower = alloc.alloc(u8, local_name.len) catch unreachable;
+                        _ = bun.strings.copyLowercase(local_name, lower);
+                        break :local_name_lower lower;
+                    };
+                    if (namespace) |ns| {
+                        return brk: {
+                            const x = attrs.AttrSelectorWithOptionalNamespace(Impl){
+                                .namespace = ns,
+                                .local_name = local_name,
+                                .local_name_lower = local_name_lower,
+                                .never_matches = false,
+                                .operation = .exists,
+                            };
+                            const v = alloc.create(@TypeOf(x)) catch unreachable;
+                            v.* = x;
+                            break :brk v;
                         };
-                        const v = alloc.create(@TypeOf(x)) catch unreachable;
-                        v.* = x;
-                        break :brk v;
-                    };
-                } else {
-                    return .{
-                        .attribute_in_no_namespace_exists = .{
-                            .local_name = local_name,
-                            .local_name_lower = local_name_lower,
-                        },
-                    };
-                }
+                    } else {
+                        return .{
+                            .attribute_in_no_namespace_exists = .{
+                                .local_name = local_name,
+                                .local_name_lower = local_name_lower,
+                            },
+                        };
+                    }
+                },
             };
+
             switch (tok.*) {
                 // [foo=bar]
                 .delim => |d| {
@@ -2557,10 +2571,13 @@ pub const api = struct {
             return location.newCustomError(SelectorParseErrorKind{ .unexpected_token_in_attribute_selector = tok.* });
         };
 
-        const value_str: []const u8 = (input.expectIdentOrString() catch |e| {
-            _ = e; // autofix
-            @compileError(css.todo_stuff.errors);
-        }).*;
+        const value_str: []const u8 = switch (input.expectIdentOrString()) {
+            .result => |v| v,
+            .err => |e| {
+                _ = e; // autofix
+                @compileError(css.todo_stuff.errors);
+            },
+        };
         const never_matches = switch (operator) {
             .equal, .dash_match => false,
             .includes => value_str.len == 0 or std.mem.indexOfAny(u8, value_str, SELECTOR_WHITESPACE),
@@ -2804,9 +2821,9 @@ pub const api = struct {
         }
 
         // Try to parse "of <selector-list>".
-        input.tryParse(css.Parser.expectIdentMatching, .{"of"}) catch {
+        if (input.tryParse(css.Parser.expectIdentMatching, .{"of"}).isErr()) {
             return .{ .nth = nth_data };
-        };
+        }
 
         // Whitespace between "of" and the selector list is optional
         // https://github.com/w3c/csswg-drafts/issues/8285
@@ -2964,9 +2981,12 @@ pub const api = struct {
     ) Result(OptionalQName(Impl)) {
         const start = input.state();
 
-        const tok = input.nextIncludingWhitespace() catch |e| {
-            input.reset(&start);
-            return e;
+        const tok = switch (input.nextIncludingWhitespace()) {
+            .result => |v| v,
+            .err => |e| {
+                input.reset(&start);
+                return e;
+            },
         };
         switch (tok.*) {
             .ident => |value| {
@@ -3047,7 +3067,10 @@ pub const api = struct {
         in_attr_selector: bool,
     ) Result(OptionalQName(Impl)) {
         const location = input.currentSourceLocation();
-        const t = input.nextIncludingWhitespace() catch |e| return e;
+        const t = switch (input.nextIncludingWhitespace()) {
+            .result => |v| v,
+            .err => |e| return e,
+        };
         switch (t) {
             .ident => |local_name| return .{ .some = .{ namespace, local_name } },
             .delim => |c| {
@@ -3107,10 +3130,13 @@ pub const api = struct {
 
     pub fn parse_attribute_flags(input: *css.Parser) Result(AttributeFlags) {
         const location = input.currentSourceLocation();
-        const token = input.next() catch {
-            // Selectors spec says language-defined; HTML says it depends on the
-            // exact attribute name.
-            return AttributeFlags.case_sensitivity_depends_on_name;
+        const token = switch (input.next()) {
+            .result => |v| v,
+            .err => {
+                // Selectors spec says language-defined; HTML says it depends on the
+                // exact attribute name.
+                return AttributeFlags.case_sensitivity_depends_on_name;
+            },
         };
 
         const ident = if (token.* == .ident) token.ident else return location.newBasicUnexpectedTokenError(token.*);

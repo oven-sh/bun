@@ -2,7 +2,7 @@
 
 import { spawn as nodeSpawn } from "node:child_process";
 import { rmSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 // https://cmake.org/cmake/help/latest/manual/cmake.1.html#generate-a-project-buildsystem
 const generateFlags = [
@@ -27,14 +27,16 @@ const buildFlags = [
   ["-v", "boolean", "same as --verbose"],
 ];
 
-const extraFlags = [["--clean", "boolean", "clean the build directory before building"]];
+const extraFlags = [
+  ["--clean", "boolean", "clean the build directory before building"],
+  ["--toolchain", "string", "the toolchain to use"],
+];
 
-function build(args) {
+async function build(args) {
   if (process.platform === "win32" && !process.env["VSINSTALLDIR"]) {
     const shellPath = join(import.meta.dirname, "vs-shell.ps1");
     const scriptPath = import.meta.filename;
-    spawn("pwsh", ["-NoProfile", "-NoLogo", "-File", shellPath, process.argv0, scriptPath, ...args]);
-    return;
+    return spawn("pwsh", ["-NoProfile", "-NoLogo", "-File", shellPath, process.argv0, scriptPath, ...args]);
   }
 
   const env = {
@@ -53,11 +55,16 @@ function build(args) {
   if ("--clean" in extraOptions) {
     rmSync(buildPath, { recursive: true, force: true });
   }
-  spawn("cmake", generateArgs, { env });
+  if ("--toolchain" in extraOptions) {
+    const toolchain = extraOptions["--toolchain"];
+    const toolchainPath = resolve(import.meta.dirname, "..", "cmake", "toolchains", `${toolchain}.cmake`);
+    generateArgs.push("--toolchain", toolchainPath);
+  }
+  await spawn("cmake", generateArgs, { env });
 
   const buildOptions = parseOptions(args, buildFlags);
   const buildArgs = Object.entries(buildOptions).flatMap(([flag, value]) => [flag, value]);
-  spawn("cmake", ["--build", buildPath, ...buildArgs], { env });
+  await spawn("cmake", ["--build", buildPath, ...buildArgs], { env });
 }
 
 function parseOptions(args, flags = []) {

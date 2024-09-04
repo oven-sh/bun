@@ -16,17 +16,32 @@ include(Macros)
 # These must be set before include(), since they are widely used.
 setx(CWD ${CMAKE_SOURCE_DIR})
 setx(BUILD_PATH ${CMAKE_BINARY_DIR})
-
 optionx(CACHE_PATH STRING "The path to the cache directory" DEFAULT ${BUILD_PATH}/cache)
 optionx(TMP_PATH STRING "The path to the temporary directory" DEFAULT ${BUILD_PATH}/tmp)
 
 # Modules that set CMake variables, such as CMAKE_C_COMPILER must be run before project().
 # Otherwise, CMake can select the wrong compiler or flags.
-if(APPLE)
+if(CMAKE_HOST_APPLE)
   include(SetupMacSDK)
 endif()
 include(SetupLLVM)
 include(SetupCcache)
+
+parse_package_json(VERSION_VARIABLE VERSION)
+project(Bun VERSION ${VERSION})
+
+include(Options)
+include(SetupBuildkite)
+include(SetupJavaScript)
+include(SetupZig)
+
+if(WIN32)
+  if(DEBUG)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDebug")
+  else()
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
+  endif()
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_C_STANDARD 17)
@@ -45,29 +60,6 @@ endif()
 # https://github.com/ninja-build/ninja/issues/2280
 if(WIN32 AND NOT CMAKE_CL_SHOWINCLUDES_PREFIX)
   set(CMAKE_CL_SHOWINCLUDES_PREFIX "Note: including file:")
-endif()
-
-parse_package_json(VERSION_VARIABLE VERSION)
-project(Bun VERSION ${VERSION})
-
-include(Options)
-include(SetupBuildkite)
-include(SetupJavaScript)
-
-if(WIN32)
-  if(DEBUG)
-    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDebug")
-  else()
-    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
-  endif()
-endif()
-
-if(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY)
-  include(SetupZig)
-endif()
-
-if(CI)
-  include(SetupCI)
 endif()
 
 if(WIN32 AND ENABLE_LTO)

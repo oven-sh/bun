@@ -186,6 +186,39 @@ napi_value test_napi_handle_scope(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+napi_value test_napi_delete_property(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  napi_value object = info[0];
+  napi_valuetype type;
+  assert(napi_typeof(env, object, &type) == napi_ok);
+  assert(type == napi_object);
+
+  napi_value key;
+  assert(napi_create_string_utf8(env, "foo", 3, &key) == napi_ok);
+
+  napi_value non_configurable_key;
+  assert(napi_create_string_utf8(env, "bar", 3, &non_configurable_key) ==
+         napi_ok);
+
+  napi_value val;
+  assert(napi_create_int32(env, 42, &val) == napi_ok);
+
+  bool delete_result;
+  assert(napi_delete_property(env, object, non_configurable_key,
+                              &delete_result) == napi_ok);
+  assert(delete_result == false);
+
+  assert(napi_delete_property(env, object, key, &delete_result) == napi_ok);
+  assert(delete_result == true);
+
+  bool has_property;
+  assert(napi_has_property(env, object, key, &has_property) == napi_ok);
+  assert(has_property == false);
+
+  return ok(env);
+}
+
 Napi::Value RunCallback(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   Napi::Function cb = info[0].As<Napi::Function>();
@@ -216,6 +249,8 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
           env, test_napi_threadsafe_function_does_not_hang_after_finalize));
   exports.Set("test_napi_handle_scope",
               Napi::Function::New(env, test_napi_handle_scope));
+  exports.Set("test_napi_delete_property",
+              Napi::Function::New(env, test_napi_delete_property));
 
   return exports;
 }

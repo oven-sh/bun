@@ -75,9 +75,32 @@ describe("napi", () => {
       checkSameOutput("test_napi_handle_scope", []);
     });
   });
+
+  describe("napi_delete_property", () => {
+    it("returns a valid boolean", () => {
+      checkSameOutput(
+        "test_napi_delete_property",
+        // generate a string representing an array around an IIFE which main.js will eval
+        // we do this as the napi_delete_property test needs an object with an own non-configurable
+        // property
+        "[(" +
+          function () {
+            const object = { foo: 42 };
+            Object.defineProperty(object, "bar", {
+              get() {
+                return 1;
+              },
+              configurable: false,
+            });
+            return object;
+          }.toString() +
+          ")()]",
+      );
+    });
+  });
 });
 
-function checkSameOutput(test: string, args: any[]) {
+function checkSameOutput(test: string, args: any[] | string) {
   const nodeResult = runOn("node", test, args).trim();
   let bunResult = runOn(bunExe(), test, args);
   // remove all debug logs
@@ -86,9 +109,9 @@ function checkSameOutput(test: string, args: any[]) {
   return nodeResult;
 }
 
-function runOn(executable: string, test: string, args: any[]) {
+function runOn(executable: string, test: string, args: any[] | string) {
   const exec = spawnSync({
-    cmd: [executable, join(__dirname, "napi-app/main.js"), test, JSON.stringify(args)],
+    cmd: [executable, join(__dirname, "napi-app/main.js"), test, typeof args == "string" ? args : JSON.stringify(args)],
     env: bunEnv,
   });
   const errs = exec.stderr.toString();

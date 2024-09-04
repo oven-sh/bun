@@ -1,7 +1,7 @@
 import { describe, test } from "bun:test";
 import assert from "node:assert";
-import { inspect } from "node:util";
 import url from "node:url";
+import { inspect } from "node:util";
 
 describe("url.parse then url.format", () => {
   // URLs to parse, and expected data

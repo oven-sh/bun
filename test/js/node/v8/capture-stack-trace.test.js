@@ -1,5 +1,5 @@
 import { nativeFrameForTesting } from "bun:internal-for-testing";
-import { test, expect, afterEach } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {

@@ -1,7 +1,7 @@
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { join } from "path";
-import { it, expect } from "bun:test";
 
 it("imports tsconfig.json with abritary keys", async () => {
   const testDir = tmpdirSync();

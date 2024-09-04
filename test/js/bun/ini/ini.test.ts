@@ -1,8 +1,7 @@
 const { iniInternals } = require("bun:internal-for-testing");
 const { parse } = iniInternals;
-import { join } from "path";
-import { expect, test, describe, it } from "bun:test";
-import { bunEnv, bunExe, isWindows, runWithErrorPromise, tempDirWithFiles, tmpdirSync } from "harness";
+import { describe, expect, it, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 describe("parse ini", () => {
   test("weird section", () => {

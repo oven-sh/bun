@@ -1,8 +1,8 @@
+import { DebugSession } from "@vscode/debugadapter";
+import { tmpdir } from "node:os";
 import * as vscode from "vscode";
 import type { DAP } from "../../../bun-debug-adapter-protocol";
 import { DebugAdapter, UnixSignal } from "../../../bun-debug-adapter-protocol";
-import { DebugSession } from "@vscode/debugadapter";
-import { tmpdir } from "node:os";
 
 export const DEBUG_CONFIGURATION: vscode.DebugConfiguration = {
   type: "bun",

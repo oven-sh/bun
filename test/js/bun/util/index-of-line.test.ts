@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
 import { indexOfLine } from "bun";
+import { expect, test } from "bun:test";
 
 test("indexOfLine", () => {
   const source = `

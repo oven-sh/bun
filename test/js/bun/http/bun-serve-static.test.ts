@@ -1,5 +1,4 @@
-import { test, expect, mock, beforeAll, describe, afterAll, it } from "bun:test";
-import { server } from "bun";
+import { afterAll, beforeAll, describe, expect, it, mock } from "bun:test";
 import { fillRepeating, isWindows } from "harness";
 
 const routes = {

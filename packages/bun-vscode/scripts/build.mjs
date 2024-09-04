@@ -1,6 +1,6 @@
 import { buildSync } from "esbuild";
-import { rmSync, mkdirSync, cpSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { cpSync, mkdirSync, rmSync } from "node:fs";
 
 const { pathname } = new URL("..", import.meta.url);
 process.chdir(pathname);

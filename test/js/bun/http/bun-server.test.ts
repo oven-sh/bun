@@ -1,6 +1,6 @@
-import type { ServerWebSocket, Server, Socket } from "bun";
+import type { Server, ServerWebSocket, Socket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunExe, bunEnv, rejectUnauthorizedScope } from "harness";
+import { bunEnv, bunExe, rejectUnauthorizedScope } from "harness";
 import path from "path";
 
 describe("Server", () => {

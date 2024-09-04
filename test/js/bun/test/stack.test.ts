@@ -1,8 +1,8 @@
-import { test, expect, beforeEach, afterEach } from "bun:test";
-import { join } from "node:path";
-import "harness";
 import { $ } from "bun";
+import { expect, test } from "bun:test";
+import "harness";
 import { bunEnv, bunExe } from "harness";
+import { join } from "node:path";
 
 test("name property is used for function calls in Error.stack", () => {
   function WRONG() {

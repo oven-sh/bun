@@ -1,6 +1,5 @@
-import { ArrayBufferSink, readableStreamToText, spawn, spawnSync, write } from "bun";
+import { ArrayBufferSink, readableStreamToText, spawn, spawnSync } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { closeSync, fstatSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import {
   gcTick as _gcTick,
   bunEnv,
@@ -13,6 +12,7 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
+import { closeSync, fstatSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "path";
 
 let tmp: string;

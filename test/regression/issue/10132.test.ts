@@ -1,8 +1,8 @@
-import { test, expect, beforeAll } from "bun:test";
-import { join } from "path";
 import { $ } from "bun";
-import { bunExe, isPosix, tempDirWithFiles } from "harness";
+import { beforeAll, expect, test } from "bun:test";
 import { chmodSync } from "fs";
+import { bunExe, isPosix, tempDirWithFiles } from "harness";
+import { join } from "path";
 
 let dir = "";
 beforeAll(() => {

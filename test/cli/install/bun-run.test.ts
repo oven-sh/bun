@@ -1,7 +1,7 @@
 import { file, spawn, spawnSync } from "bun";
-import { afterEach, beforeEach, expect, it, describe } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
+import { exists, mkdir, rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, bunEnv as env, isWindows, tempDirWithFiles, tmpdirSync } from "harness";
-import { rm, writeFile, exists, mkdir } from "fs/promises";
 import { join } from "path";
 import { readdirSorted } from "./dummy.registry";
 

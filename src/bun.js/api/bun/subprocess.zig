@@ -1422,7 +1422,6 @@ pub const Subprocess = struct {
         defer this.deref();
         defer this.disconnectIPC(true);
 
-
         var stdin: ?*JSC.WebCore.FileSink = this.weak_file_sink_stdin_ptr;
         var existing_stdin_value = JSC.JSValue.zero;
         if (this_jsvalue != .zero) {
@@ -2072,12 +2071,12 @@ pub const Subprocess = struct {
             .pid_rusage = null,
             .stdin = undefined,
             .stdout = undefined,
-            .stderr  = undefined,
+            .stderr = undefined,
             .stdio_pipes = .{},
             .on_exit_callback = .{},
             .on_disconnect_callback = .{},
             .ipc_data = null,
-            .ipc_callback =.{},
+            .ipc_callback = .{},
             .flags = .{
                 .is_sync = is_sync,
             },

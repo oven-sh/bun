@@ -1,8 +1,8 @@
 import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
+import { readFileSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
-import { readFileSync } from "fs";
 
 describe("text-loader", () => {
   const fixtures = [

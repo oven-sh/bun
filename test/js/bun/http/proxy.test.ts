@@ -1,9 +1,9 @@
-import { describe, expect, test, beforeAll, afterAll } from "bun:test";
-import { once } from "node:events";
-import tls from "node:tls";
-import net from "node:net";
-import { tls as tlsCert } from "harness";
 import type { Server } from "bun";
+import { afterAll, beforeAll, expect, test } from "bun:test";
+import { tls as tlsCert } from "harness";
+import { once } from "node:events";
+import net from "node:net";
+import tls from "node:tls";
 async function createProxyServer(is_tls: boolean) {
   const serverArgs = [];
   if (is_tls) {

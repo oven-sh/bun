@@ -1,10 +1,10 @@
-import { describe, it, expect } from "bun:test";
-import { io as ioc } from "socket.io-client";
-import { join } from "path";
+import { describe, expect, it } from "bun:test";
+import { ChildProcess, exec } from "child_process";
 import { createServer } from "http";
-import { createClient, getPort, success, fail, eioHandshake, eioPoll, eioPush } from "./support/util.ts";
+import { join } from "path";
 import { Server } from "socket.io";
-import { exec, ChildProcess } from "child_process";
+import { io as ioc } from "socket.io-client";
+import { createClient, eioHandshake, eioPoll, eioPush, fail, getPort, success } from "./support/util.ts";
 
 // Hanging tests are disabled because they cause the test suite to hang
 describe("close", () => {

@@ -5,7 +5,14 @@ namespace v8 {
 
 bool Boolean::Value() const
 {
-    return localToJSValue(Isolate::GetCurrent()->globalInternals()).asBoolean();
+    JSC::JSValue jsv = localToOddball();
+    if (jsv.isTrue()) {
+        return true;
+    } else if (jsv.isFalse()) {
+        return false;
+    } else {
+        RELEASE_ASSERT_NOT_REACHED("non-Boolean passed to Boolean::Value");
+    }
 }
 
 Local<Boolean> Boolean::New(Isolate* isolate, bool value)

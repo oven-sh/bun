@@ -5,37 +5,37 @@ namespace v8 {
 
 bool Value::IsBoolean() const
 {
-    return localToJSValue(Isolate::GetCurrent()->globalInternals()).isBoolean();
+    return localToJSValue().isBoolean();
 }
 
 bool Value::IsObject() const
 {
-    return localToJSValue(Isolate::GetCurrent()->globalInternals()).isObject();
+    return localToJSValue().isObject();
 }
 
 bool Value::IsNumber() const
 {
-    return localToJSValue(Isolate::GetCurrent()->globalInternals()).isNumber();
+    return localToJSValue().isNumber();
 }
 
 bool Value::IsUint32() const
 {
-    return localToJSValue(Isolate::GetCurrent()->globalInternals()).isUInt32();
+    return localToJSValue().isUInt32();
 }
 
 bool Value::IsUndefined() const
 {
-    return localToJSValue(Isolate::GetCurrent()->globalInternals()).isUndefined();
+    return localToJSValue().isUndefined();
 }
 
 bool Value::IsNull() const
 {
-    return localToJSValue(Isolate::GetCurrent()->globalInternals()).isNull();
+    return localToJSValue().isNull();
 }
 
 bool Value::IsNullOrUndefined() const
 {
-    return localToJSValue(Isolate::GetCurrent()->globalInternals()).isUndefinedOrNull();
+    return localToJSValue().isUndefinedOrNull();
 }
 
 bool Value::IsTrue() const
@@ -50,12 +50,12 @@ bool Value::IsFalse() const
 
 bool Value::IsString() const
 {
-    return localToJSValue(Isolate::GetCurrent()->globalInternals()).isString();
+    return localToJSValue().isString();
 }
 
 Maybe<uint32_t> Value::Uint32Value(Local<Context> context) const
 {
-    auto js_value = localToJSValue(context->globalObject()->V8GlobalInternals());
+    auto js_value = localToJSValue();
     uint32_t value;
     if (js_value.getUInt32(value)) {
         return Just(value);
@@ -65,12 +65,12 @@ Maybe<uint32_t> Value::Uint32Value(Local<Context> context) const
 
 bool Value::FullIsTrue() const
 {
-    return localToJSValue(Isolate::GetCurrent()->globalInternals()).isTrue();
+    return localToJSValue().isTrue();
 }
 
 bool Value::FullIsFalse() const
 {
-    return localToJSValue(Isolate::GetCurrent()->globalInternals()).isFalse();
+    return localToJSValue().isFalse();
 }
 
 } // namespace v8

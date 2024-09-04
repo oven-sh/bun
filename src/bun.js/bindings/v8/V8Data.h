@@ -17,9 +17,9 @@ public:
     // Recover a JSCell pointer out of a v8::Local
     JSC::JSCell* localToCell()
     {
-        TaggedPointer tagged = localToTagged();
-        RELEASE_ASSERT(tagged.type() != TaggedPointer::Type::Smi);
-        return tagged.getPtr<JSCell>();
+        TaggedPointer root = localToTagged();
+        RELEASE_ASSERT(root.type() != TaggedPointer::Type::Smi);
+        return root.getPtr<shim::ObjectLayout>()->asCell();
     }
 
     // Recover a pointer to a JSCell subclass out of a v8::Local
@@ -30,31 +30,33 @@ public:
         return JSC::jsDynamicCast<T*>(localToCell());
     }
 
-    // Get this as a JSValue when this is a v8::Local
-    JSC::JSValue localToJSValue(shim::GlobalInternals* globalInternals) const
+    // Get this as a JSValue when this is a v8::Local containing a boolean, null, or undefined
+    JSC::JSValue localToOddball() const
     {
-        TaggedPointer root = *reinterpret_cast<const TaggedPointer*>(this);
+        TaggedPointer root = localToTagged();
+        shim::Oddball* oddball = root.getPtr<shim::Oddball>();
+        RELEASE_ASSERT(
+            oddball->m_map.getPtr<const shim::Map>()->m_instanceType == shim::InstanceType::Oddball);
+        return oddball->toJSValue();
+    }
+
+    // Get this as a JSValue when this is a v8::Local
+    JSC::JSValue localToJSValue() const
+    {
+        TaggedPointer root = localToTagged();
         if (root.type() == TaggedPointer::Type::Smi) {
             return JSC::jsNumber(root.getSmiUnchecked());
         } else {
-            void* raw_ptr = root.getPtr<void>();
-            // check if this pointer is identical to the fixed locations where these primitive
-            // values are stored
-            if (raw_ptr == globalInternals->undefinedSlot()->getPtr<void>()) {
-                return JSC::jsUndefined();
-            } else if (raw_ptr == globalInternals->nullSlot()->getPtr<void>()) {
-                return JSC::jsNull();
-            } else if (raw_ptr == globalInternals->trueSlot()->getPtr<void>()) {
-                return JSC::jsBoolean(true);
-            } else if (raw_ptr == globalInternals->falseSlot()->getPtr<void>()) {
-                return JSC::jsBoolean(false);
-            }
+            using shim::InstanceType;
+            auto* v8_object = root.getPtr<shim::ObjectLayout>();
 
-            shim::ObjectLayout* v8_object = reinterpret_cast<shim::ObjectLayout*>(raw_ptr);
-            if (v8_object->map()->m_instanceType == shim::InstanceType::HeapNumber) {
+            switch (v8_object->map()->m_instanceType) {
+            case InstanceType::Oddball:
+                return reinterpret_cast<shim::Oddball*>(v8_object)->toJSValue();
+            case InstanceType::HeapNumber:
                 return JSC::jsDoubleNumber(v8_object->asDouble());
-            } else {
-                return JSC::JSValue(v8_object->asCell());
+            default:
+                return v8_object->asCell();
             }
         }
     }
@@ -62,9 +64,9 @@ public:
     // Recover a JSCell pointer out of a v8::Local
     const JSC::JSCell* localToCell() const
     {
-        TaggedPointer tagged = localToTagged();
-        RELEASE_ASSERT(tagged.type() != TaggedPointer::Type::Smi);
-        return tagged.getPtr<JSCell>();
+        TaggedPointer root = localToTagged();
+        RELEASE_ASSERT(root.type() != TaggedPointer::Type::Smi);
+        return root.getPtr<shim::ObjectLayout>()->asCell();
     }
 
     // Recover a pointer to a JSCell subclass out of a v8::Local
@@ -76,19 +78,10 @@ public:
     }
 
 private:
-    // Convert the local handle into either a smi or a pointer to some non-V8 type.
+    // Convert the local handle into either a smi or an ObjectLayout pointer.
     TaggedPointer localToTagged() const
     {
-        TaggedPointer root = *reinterpret_cast<const TaggedPointer*>(this);
-        if (root.type() == TaggedPointer::Type::Smi) {
-            return root;
-        } else {
-            // root points to the V8 object. The first field of the V8 object is the map, and the
-            // second is a pointer to some object we have stored. So we ignore the map and recover
-            // the object pointer.
-            shim::ObjectLayout* v8_object = root.getPtr<shim::ObjectLayout>();
-            return TaggedPointer(v8_object->asCell());
-        }
+        return *reinterpret_cast<const TaggedPointer*>(this);
     }
 };
 

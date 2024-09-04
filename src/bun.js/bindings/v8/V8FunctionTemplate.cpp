@@ -44,7 +44,7 @@ Local<FunctionTemplate> FunctionTemplate::New(
     auto globalObject = isolate->globalObject();
     auto& vm = globalObject->vm();
     auto* globalInternals = globalObject->V8GlobalInternals();
-    JSValue jsc_data = data.IsEmpty() ? JSC::jsUndefined() : data->localToJSValue(globalInternals);
+    JSValue jsc_data = data.IsEmpty() ? JSC::jsUndefined() : data->localToJSValue();
 
     Structure* structure = globalInternals->functionTemplateStructure(globalObject);
     auto* functionTemplate = shim::FunctionTemplate::create(vm, structure, callback, jsc_data);

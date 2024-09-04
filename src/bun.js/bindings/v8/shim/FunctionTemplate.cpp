@@ -93,7 +93,7 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
         return JSValue::encode(JSC::jsUndefined());
     } else {
         Local<Data> local_ret(&implicit_args.return_value);
-        return JSValue::encode(local_ret->localToJSValue(isolate->globalInternals()));
+        return JSValue::encode(local_ret->localToJSValue());
     }
 }
 

@@ -2,6 +2,7 @@
 
 #include "TaggedPointer.h"
 #include "Map.h"
+#include "JavaScriptCore/JSCJSValue.h"
 
 namespace v8 {
 namespace shim {
@@ -23,6 +24,27 @@ struct Oddball {
         : m_map(const_cast<Map*>(&Map::oddball_map))
         , m_kind(TaggedPointer(static_cast<int>(kind)))
     {
+    }
+
+    Kind kind() const
+    {
+        return (Kind)m_kind.getSmiUnchecked();
+    }
+
+    JSC::JSValue toJSValue() const
+    {
+        switch (kind()) {
+        case Kind::kUndefined:
+            return JSC::jsUndefined();
+        case Kind::kNull:
+            return JSC::jsNull();
+        case Kind::kTrue:
+            return JSC::jsBoolean(true);
+        case Kind::kFalse:
+            return JSC::jsBoolean(false);
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
     }
 };
 

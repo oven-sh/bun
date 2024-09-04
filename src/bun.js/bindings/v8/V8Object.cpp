@@ -39,8 +39,8 @@ Maybe<bool> Object::Set(Local<Context> context, Local<Value> key, Local<Value> v
 {
     Zig::GlobalObject* globalObject = context->globalObject();
     JSObject* object = localToObjectPointer<JSObject>();
-    JSValue k = key->localToJSValue(globalObject->V8GlobalInternals());
-    JSValue v = value->localToJSValue(globalObject->V8GlobalInternals());
+    JSValue k = key->localToJSValue();
+    JSValue v = value->localToJSValue();
     auto& vm = globalObject->vm();
 
     auto scope = DECLARE_CATCH_SCOPE(vm);
@@ -67,7 +67,7 @@ void Object::SetInternalField(int index, Local<Data> data)
     RELEASE_ASSERT(index >= 0 && index < fields->size(), "internal field index is out of bounds");
     JSObject* js_object = localToObjectPointer<JSObject>();
     auto* globalObject = JSC::jsDynamicCast<Zig::GlobalObject*>(js_object->globalObject());
-    fields->at(index).set(globalObject->vm(), localToCell(), data->localToJSValue(globalObject->V8GlobalInternals()));
+    fields->at(index).set(globalObject->vm(), localToCell(), data->localToJSValue());
 }
 
 Local<Data> Object::GetInternalField(int index)

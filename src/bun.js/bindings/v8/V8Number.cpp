@@ -10,7 +10,7 @@ Local<Number> Number::New(Isolate* isolate, double value)
 
 double Number::Value() const
 {
-    return localToJSValue(Isolate::GetCurrent()->globalInternals()).asNumber();
+    return localToJSValue().asNumber();
 }
 
 } // namespace v8

@@ -331,6 +331,91 @@ pub const UpgradedDuplex = struct {
         };
     }
 
+    pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        const array = JSC.JSValue.createEmptyArray(globalThis, 4);
+        array.ensureStillAlive();
+
+        {
+            const callback = this.onDataCallback.get() orelse brk: {
+                const dataCallback = JSC.NewFunctionWithData(
+                    globalThis,
+                    null,
+                    0,
+                    onReceivedData,
+                    false,
+                    this,
+                );
+                dataCallback.ensureStillAlive();
+
+                JSC.setFunctionData(dataCallback, this);
+
+                this.onDataCallback = JSC.Strong.create(dataCallback, globalThis);
+                break :brk dataCallback;
+            };
+            array.putIndex(globalThis, 0, callback);
+        }
+
+        {
+            const callback = this.onEndCallback.get() orelse brk: {
+                const endCallback = JSC.NewFunctionWithData(
+                    globalThis,
+                    null,
+                    0,
+                    onReceivedData,
+                    false,
+                    this,
+                );
+                endCallback.ensureStillAlive();
+
+                JSC.setFunctionData(endCallback, this);
+
+                this.onEndCallback = JSC.Strong.create(endCallback, globalThis);
+                break :brk endCallback;
+            };
+            array.putIndex(globalThis, 1, callback);
+        }
+
+        {
+            const callback = this.onWritableCallback.get() orelse brk: {
+                const writableCallback = JSC.NewFunctionWithData(
+                    globalThis,
+                    null,
+                    0,
+                    onWritable,
+                    false,
+                    this,
+                );
+                writableCallback.ensureStillAlive();
+
+                JSC.setFunctionData(writableCallback, this);
+                this.onWritableCallback = JSC.Strong.create(writableCallback, globalThis);
+                break :brk writableCallback;
+            };
+            array.putIndex(globalThis, 2, callback);
+        }
+
+        {
+            const callback = this.onCloseCallback.get() orelse brk: {
+                const closeCallback = JSC.NewFunctionWithData(
+                    globalThis,
+                    null,
+                    0,
+                    onCloseJS,
+                    false,
+                    this,
+                );
+                closeCallback.ensureStillAlive();
+
+                JSC.setFunctionData(closeCallback, this);
+                this.onCloseCallback = JSC.Strong.create(closeCallback, globalThis);
+                break :brk closeCallback;
+            };
+            array.putIndex(globalThis, 3, callback);
+        }
+
+        return array;
+    }
+
     pub fn startTLS(this: *UpgradedDuplex, ssl_options: JSC.API.ServerConfig.SSLConfig, is_client: bool) !void {
         this.wrapper = try WrapperType.init(ssl_options, is_client, .{
             .ctx = this,
@@ -340,92 +425,7 @@ pub const UpgradedDuplex = struct {
             .onClose = UpgradedDuplex.onClose,
             .write = UpgradedDuplex.internalWrite,
         });
-        if (this.origin.get()) |duplex| {
-            const globalThis = this.origin.globalThis.?;
 
-            const addEventListener = try duplex.getFunction(globalThis, "on") orelse {
-                const error_value = globalThis.ERR_STREAM_WRAP("Invalid Duplex", .{}).toJS();
-                error_value.ensureStillAlive();
-                this.handlers.onError(this.handlers.ctx, error_value);
-                return;
-            };
-            const dataCallback = JSC.NewFunctionWithData(
-                globalThis,
-                null,
-                0,
-                onReceivedData,
-                false,
-                this,
-            );
-            dataCallback.ensureStillAlive();
-            JSC.setFunctionData(dataCallback, this);
-
-            this.onDataCallback = JSC.Strong.create(dataCallback, globalThis);
-
-            const endCallback = JSC.NewFunctionWithData(
-                globalThis,
-                null,
-                0,
-                onReceivedData,
-                false,
-                this,
-            );
-            endCallback.ensureStillAlive();
-            JSC.setFunctionData(dataCallback, this);
-
-            this.onEndCallback = JSC.Strong.create(endCallback, globalThis);
-
-            const writableCallback = JSC.NewFunctionWithData(
-                globalThis,
-                null,
-                0,
-                onWritable,
-                false,
-                this,
-            );
-            writableCallback.ensureStillAlive();
-            JSC.setFunctionData(writableCallback, this);
-            this.onWritableCallback = JSC.Strong.create(writableCallback, globalThis);
-            const closeCallback = JSC.NewFunctionWithData(
-                globalThis,
-                null,
-                0,
-                onCloseJS,
-                false,
-                this,
-            );
-            closeCallback.ensureStillAlive();
-            JSC.setFunctionData(closeCallback, this);
-            this.onCloseCallback = JSC.Strong.create(closeCallback, globalThis);
-
-            {
-                const result = addEventListener.call(globalThis, duplex, &[_]JSC.JSValue{ bun.String.static("data").toJS(globalThis), dataCallback });
-                if (result.toError()) |err| {
-                    this.handlers.onError(this.handlers.ctx, err);
-                }
-            }
-
-            {
-                const result = addEventListener.call(globalThis, duplex, &[_]JSC.JSValue{ bun.String.static("end").toJS(globalThis), endCallback });
-                if (result.toError()) |err| {
-                    this.handlers.onError(this.handlers.ctx, err);
-                }
-            }
-
-            {
-                const result = addEventListener.call(globalThis, duplex, &[_]JSC.JSValue{ bun.String.static("close").toJS(globalThis), closeCallback });
-                if (result.toError()) |err| {
-                    this.handlers.onError(this.handlers.ctx, err);
-                }
-            }
-
-            {
-                const result = addEventListener.call(globalThis, duplex, &[_]JSC.JSValue{ bun.String.static("drain").toJS(globalThis), writableCallback });
-                if (result.toError()) |err| {
-                    this.handlers.onError(this.handlers.ctx, err);
-                }
-            }
-        }
         this.wrapper.?.start();
     }
 

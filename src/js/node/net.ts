@@ -564,17 +564,19 @@ const Socket = (function (InternalSocket) {
           if (upgradeDuplex) {
             this.connecting = true;
             this.#upgraded = connection;
-            const result = upgradeDuplexToTLS(connection, {
+
+            const [result, events] = upgradeDuplexToTLS(connection, {
               data: this,
               tls,
               socket: this.#handlers,
             });
-            if (result) {
-              this[bunSocketInternal] = result;
-            } else {
-              this[bunSocketInternal] = null;
-              throw new Error("Invalid duplex");
-            }
+
+            connection.on("data", events[0]);
+            connection.on("end", events[1]);
+            connection.on("drain", events[2]);
+            connection.on("close", events[3]);
+
+            this[bunSocketInternal] = result;
           } else {
             const socket = connection[bunSocketInternal];
 

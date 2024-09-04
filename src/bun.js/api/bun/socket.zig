@@ -3443,7 +3443,12 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.C
 
     duplexContext.startTLS();
 
-    return tls_js_value;
+    const array = JSC.JSValue.createEmptyArray(globalObject, 2);
+    array.putIndex(globalObject, 0, tls_js_value);
+    // data, end, drain and close events must be reported
+    array.putIndex(globalObject, 1, duplexContext.upgrade.getJSHandlers(globalObject));
+
+    return array;
 }
 pub fn createNodeTLSBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
     return JSC.JSArray.create(global, &.{

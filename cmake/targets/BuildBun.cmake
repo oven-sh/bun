@@ -554,10 +554,13 @@ endif()
 # --- Executable ---
 
 if(BUN_CPP_ONLY)
-  add_library(${bun} STATIC ${BUN_CPP_SOURCES})
+  add_library(${bun} STATIC ${BUN_CPP_SOURCES} ALIAS bun)
 else()
   add_executable(${bun} ${BUN_CPP_SOURCES} ${BUN_ZIG_OUTPUT})
-endif()
+  if(bun NOT STREQUAL "bun")
+    add_custom_target(bun DEPENDS ${bun})
+  endif()
+endif()  
 
 # --- Dependencies ---
 

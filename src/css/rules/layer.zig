@@ -1,7 +1,6 @@
 const std = @import("std");
 const bun = @import("root").bun;
 pub const css = @import("../css_parser.zig");
-const Error = css.Error;
 const ArrayList = std.ArrayListUnmanaged;
 const MediaList = css.MediaList;
 const CustomMedia = css.CustomMedia;
@@ -11,12 +10,13 @@ const PrinterError = css.PrinterError;
 const PrintErr = css.PrintErr;
 const SupportsCondition = css.css_rules.supports.SupportsCondition;
 const Location = css.css_rules.Location;
+const Result = css.Result;
 
 // TODO: make this equivalent of SmallVec<[CowArcStr<'i>; 1]
 pub const LayerName = struct {
     v: css.SmallList([]const u8, 1) = .{},
 
-    pub fn parse(input: *css.Parser) Error!LayerName {
+    pub fn parse(input: *css.Parser) Result(LayerName) {
         var parts: css.SmallList([]const u8, 1) = .{};
         const ident = try input.expectIdent();
         parts.append(
@@ -28,11 +28,14 @@ pub const LayerName = struct {
             const Fn = struct {
                 pub fn tryParseFn(
                     i: *css.Parser,
-                ) Error![]const u8 {
+                ) Result([]const u8) {
                     const name = name: {
                         out: {
                             const start_location = i.currentSourceLocation();
-                            const tok = try i.nextIncludingWhitespace();
+                            const tok = switch (i.nextIncludingWhitespace()) {
+                                .err => |e| return .{ .err = e },
+                                .result => |vvv| vvv,
+                            };
                             if (tok.* == .delim or tok.* == '.') {
                                 break :out;
                             }
@@ -40,7 +43,10 @@ pub const LayerName = struct {
                         }
 
                         const start_location = i.currentSourceLocation();
-                        const tok = try i.nextIncludingWhitespace();
+                        const tok = switch (i.nextIncludingWhitespace()) {
+                            .err => |e| return .{ .err = e },
+                            .result => |vvv| vvv,
+                        };
                         if (tok.* == .ident) {
                             break :name tok.ident;
                         }
@@ -51,7 +57,10 @@ pub const LayerName = struct {
             };
 
             while (true) {
-                const name = input.tryParse(Fn.tryParseFn, .{}) catch break;
+                const name = switch (input.tryParse(Fn.tryParseFn, .{})) {
+                    .err => break,
+                    .result => |vvv| vvv,
+                };
                 parts.append(
                     @compileError(css.todo_stuff.think_about_allocator),
                     name,

@@ -9,8 +9,6 @@ namespace v8 {
 
 MaybeLocal<String> String::NewFromUtf8(Isolate* isolate, char const* data, NewStringType type, int signed_length)
 {
-    // TODO(@190n) maybe use JSC::AtomString instead of ignoring type
-    (void)type;
     size_t length = 0;
     if (signed_length < 0) {
         length = strlen(data);
@@ -25,15 +23,26 @@ MaybeLocal<String> String::NewFromUtf8(Isolate* isolate, char const* data, NewSt
 
     auto& vm = isolate->vm();
     std::span<const unsigned char> span(reinterpret_cast<const unsigned char*>(data), length);
+    JSString* jsString = nullptr;
     // ReplacingInvalidSequences matches how v8 behaves here
     auto string = WTF::String::fromUTF8ReplacingInvalidSequences(span);
-    JSString* jsString = JSC::jsString(vm, string);
+    switch (type) {
+    case NewStringType::kNormal:
+        jsString = JSC::jsString(vm, string);
+        break;
+
+    case NewStringType::kInternalized:
+        // don't create AtomString directly from the characters, as that gives an empty string
+        // instead of replacing invalid UTF-8 sequences
+        WTF::AtomString atom_string(string);
+        jsString = JSC::jsString(vm, atom_string);
+        break;
+    }
     return MaybeLocal<String>(isolate->currentHandleScope()->createLocal<String>(vm, jsString));
 }
 
 MaybeLocal<String> String::NewFromOneByte(Isolate* isolate, const uint8_t* data, NewStringType type, int signed_length)
 {
-    (void)type;
     size_t length = 0;
     if (signed_length < 0) {
         length = strlen(reinterpret_cast<const char*>(data));
@@ -48,8 +57,19 @@ MaybeLocal<String> String::NewFromOneByte(Isolate* isolate, const uint8_t* data,
 
     auto& vm = isolate->vm();
     std::span<const unsigned char> span(data, length);
-    WTF::String string(span);
-    JSString* jsString = JSC::jsString(vm, string);
+    JSString* jsString = nullptr;
+    switch (type) {
+    case NewStringType::kNormal: {
+        WTF::String string(span);
+        jsString = JSC::jsString(vm, string);
+        break;
+    }
+    case NewStringType::kInternalized: {
+        WTF::AtomString atom_string(span);
+        jsString = JSC::jsString(vm, atom_string);
+        break;
+    }
+    }
     return MaybeLocal<String>(isolate->currentHandleScope()->createLocal<String>(vm, jsString));
 }
 

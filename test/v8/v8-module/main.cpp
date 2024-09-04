@@ -155,40 +155,55 @@ static void perform_string_test(const FunctionCallbackInfo<Value> &info,
   return ok(info);
 }
 
+template <typename T>
+void perform_string_test_normal_and_internalized(
+    const FunctionCallbackInfo<Value> &info, const T *string_literal,
+    bool latin1 = false) {
+  Isolate *isolate = info.GetIsolate();
+
+  if (latin1) {
+    const uint8_t *string = reinterpret_cast<const uint8_t *>(string_literal);
+    perform_string_test(
+        info, String::NewFromOneByte(isolate, string, NewStringType::kNormal)
+                  .ToLocalChecked());
+    perform_string_test(info, String::NewFromOneByte(
+                                  isolate, string, NewStringType::kInternalized)
+                                  .ToLocalChecked());
+
+  } else {
+    const char *string = reinterpret_cast<const char *>(string_literal);
+    perform_string_test(
+        info, String::NewFromUtf8(isolate, string, NewStringType::kNormal)
+                  .ToLocalChecked());
+    perform_string_test(
+        info, String::NewFromUtf8(isolate, string, NewStringType::kInternalized)
+                  .ToLocalChecked());
+  }
+}
+
 void test_v8_string_ascii(const FunctionCallbackInfo<Value> &info) {
-  auto string =
-      String::NewFromUtf8(info.GetIsolate(), "hello world").ToLocalChecked();
-  perform_string_test(info, string);
+  perform_string_test_normal_and_internalized(info, "hello world");
 }
 
 void test_v8_string_utf8(const FunctionCallbackInfo<Value> &info) {
   const unsigned char trans_flag_unsigned[] = {240, 159, 143, 179, 239, 184,
                                                143, 226, 128, 141, 226, 154,
                                                167, 239, 184, 143, 0};
-  const char *trans_flag = reinterpret_cast<const char *>(trans_flag_unsigned);
-  auto string =
-      String::NewFromUtf8(info.GetIsolate(), trans_flag).ToLocalChecked();
-  perform_string_test(info, string);
+  perform_string_test_normal_and_internalized(info, trans_flag_unsigned);
 }
 
 void test_v8_string_invalid_utf8(const FunctionCallbackInfo<Value> &info) {
   const unsigned char mixed_sequence_unsigned[] = {'o', 'h',  ' ', 0xc0, 'n',
                                                    'o', 0xc2, '!', 0xf5, 0};
-  const char *mixed_sequence =
-      reinterpret_cast<const char *>(mixed_sequence_unsigned);
-  auto string =
-      String::NewFromUtf8(info.GetIsolate(), mixed_sequence).ToLocalChecked();
-  perform_string_test(info, string);
+  perform_string_test_normal_and_internalized(info, mixed_sequence_unsigned);
 }
 
 void test_v8_string_latin1(const FunctionCallbackInfo<Value> &info) {
   const unsigned char latin1[] = {0xa1, 'b', 'u', 'n', '!', 0};
-  auto string =
-      String::NewFromOneByte(info.GetIsolate(), latin1).ToLocalChecked();
-  perform_string_test(info, string);
-  string = String::NewFromOneByte(info.GetIsolate(), latin1,
-                                  NewStringType::kNormal, 1)
-               .ToLocalChecked();
+  perform_string_test_normal_and_internalized(info, latin1, true);
+  auto string = String::NewFromOneByte(info.GetIsolate(), latin1,
+                                       NewStringType::kNormal, 1)
+                    .ToLocalChecked();
   perform_string_test(info, string);
 }
 

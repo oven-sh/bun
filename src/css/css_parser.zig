@@ -439,7 +439,7 @@ pub fn DefineEnumProperty(comptime T: type) type {
 
             // todo_stuff.match_ignore_ascii_case
             inline for (fields) |field| {
-                if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, field.name)) return @enumFromInt(field.value);
+                if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, field.name)) return .{ .result = @enumFromInt(field.value) };
             }
 
             return location.newUnexpectedTokenError(.{ .ident = ident });
@@ -558,7 +558,7 @@ fn parse_at_rule(
 fn parse_custom_at_rule_prelude(name: []const u8, input: *Parser, options: *ParserOptions, comptime T: type, at_rule_parser: *T) Result(AtRulePrelude(T.AtRuleParser.AtRule)) {
     ValidCustomAtRuleParser(T);
     if (at_rule_parser.CustomAtRuleParser.parsePrelude(at_rule_parser, name, input, options)) |prelude| {
-        return .{ .custom = prelude };
+        return .{ .result = .{ .custom = prelude } };
     } else {
         // } else |e| unknown: {
         // TODO: error does not exist but should exist
@@ -572,10 +572,10 @@ fn parse_custom_at_rule_prelude(name: []const u8, input: *Parser, options: *Pars
         .err => |e| return .{ .err = e },
         .result => |v| v,
     };
-    return .{ .unknown = .{
+    return .{ .result = .{ .unknown = .{
         .name = name,
         .tokens = tokens,
-    } };
+    } } };
 }
 
 fn parse_custom_at_rule_body(
@@ -601,7 +601,7 @@ fn parse_custom_at_rule_body(
             todo("This part here", .{});
         },
     };
-    return result;
+    return .{ .result = result };
 }
 
 fn parse_qualified_rule(
@@ -627,7 +627,7 @@ fn parse_qualified_rule(
         parser: *P,
 
         pub fn parsefn(this: *@This(), input2: *Parser) Result(P.QualifiedRuleParser.QualifiedRule) {
-            P.QualifiedRuleParser.parseBlock(this.parser, this.prelude, this.start, input2);
+            return P.QualifiedRuleParser.parseBlock(this.parser, this.prelude, this.start, input2);
         }
     };
     var closure = Closure{
@@ -635,7 +635,7 @@ fn parse_qualified_rule(
         .prelude = prelude,
         .parser = parser,
     };
-    return parse_nested_block(input, P.QualifiedRuleParser.QualifiedRule, &closure, Closure.parsefn);
+    return .{ .result = parse_nested_block(input, P.QualifiedRuleParser.QualifiedRule, &closure, Closure.parsefn) };
 }
 
 fn parse_until_before(
@@ -658,7 +658,7 @@ fn parse_until_before(
         const result = delimited_parser.parseEntirely(T, closure, parse_fn);
         const is_result = if (result) |_| false else true;
         if (error_behavior == .stop and is_result) {
-            return result;
+            return .{ .result = result };
         }
         if (delimited_parser.at_start_of) |block_type| {
             consume_until_end_of_block(block_type, &delimited_parser.input.tokenizer);
@@ -679,7 +679,7 @@ fn parse_until_before(
         }
     }
 
-    return result;
+    return .{ .result = result };
 }
 
 // fn parse_until_before_impl(parser: *Parser, delimiters: Delimiters, error_behavior: Parse
@@ -695,7 +695,7 @@ pub fn parse_until_after(
     const result = parse_until_before(parser, delimiters, error_behavior, T, closure, parsefn);
     const is_err = if (result) |_| false else true;
     if (error_behavior == .stop and is_err) {
-        return result;
+        return .{ .result = result };
     }
     const next_byte = parser.input.tokenizer.nextByte();
     if (next_byte != null and !parser.stop_before.contains(Delimiters.fromByte(next_byte))) {
@@ -706,7 +706,7 @@ pub fn parse_until_after(
             consume_until_end_of_block(BlockType.curly_bracket, &parser.input.tokenizer);
         }
     }
-    return result;
+    return .{ .result = result };
 }
 
 fn parse_nested_block(parser: *Parser, comptime T: type, closure: anytype, comptime parsefn: *const fn (@TypeOf(closure), *Parser) Result(T)) Error!T {
@@ -734,7 +734,7 @@ fn parse_nested_block(parser: *Parser, comptime T: type, closure: anytype, compt
         consume_until_end_of_block(block_type2, &nested_parser.input.tokenizer);
     }
     consume_until_end_of_block(block_type, &parser.input.tokenizer);
-    return result;
+    return .{ .result = result };
 }
 
 pub fn ValidQualifiedRuleParser(comptime T: type) void {
@@ -852,7 +852,7 @@ pub fn ValidAtRuleParser(comptime T: type) void {
     // This is only called when `parse_prelude` returned `WithoutBlock`, and
     // either the `;` semicolon indeed follows the prelude, or parser is at
     // the end of the input.
-    // fn ruleWithoutBlock(this: *T, allocator: Allocator, prelude: T.AtRuleParser.Prelude, state: *const ParserState) Error!T.AtRuleParser.AtRule
+    // fn ruleWithoutBlock(this: *T, allocator: Allocator, prelude: T.AtRuleParser.Prelude, state: *const ParserState) Maybe(T.AtRuleParser.AtRule, void)
     _ = T.AtRuleParser.ruleWithoutBlock;
 
     // Parse the content of a `{ /* ... */ }` block for the body of the at-rule.
@@ -1024,11 +1024,13 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                     };
 
                     return .{
-                        .import = .{
-                            url_str,
-                            media,
-                            supports,
-                            layer,
+                        .result = .{
+                            .import = .{
+                                url_str,
+                                media,
+                                supports,
+                                layer,
+                            },
                         },
                     };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "namespace")) {
@@ -1046,13 +1048,13 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                         .err => |e| return .{ .err = e },
                         .result => |v| v,
                     };
-                    return .{ .namespace = .{ prefix, namespace } };
+                    return .{ .result = .{ .namespace = .{ prefix, namespace } } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "charset")) {
                     // @charset is removed by rust-cssparser if it’s the first rule in the stylesheet.
                     // Anything left is technically invalid, however, users often concatenate CSS files
                     // together, so we are more lenient and simply ignore @charset rules in the middle of a file.
                     if (input.expectString().asErr()) |e| return .{ .err = e };
-                    return .charset;
+                    return .{ .result = .charset };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "custom-media")) {
                     const custom_media_name = switch (DashedIdentFns.parse(input)) {
                         .err => |e| return .{ .err = e },
@@ -1063,9 +1065,11 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                         .result => |v| v,
                     };
                     return .{
-                        .custom_media = .{
-                            .name = custom_media_name,
-                            .media = media,
+                        .result = .{
+                            .custom_media = .{
+                                .name = custom_media_name,
+                                .media = media,
+                            },
                         },
                     };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "property")) {
@@ -1073,11 +1077,11 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                         .err => |e| return .{ .err = e },
                         .result => |v| v,
                     };
-                    return .{ .property = property_name };
+                    return .{ .result = .{ .property = property_name } };
                 } else {
                     const Nested = NestedRuleParser(AtRuleParserT);
                     const nested_rule_parser: Nested = this.nested();
-                    return Nested.AtRuleParser.parsePrelude(&nested_rule_parser, name, input);
+                    return .{ .result = Nested }.AtRuleParser.parsePrelude(&nested_rule_parser, name, input);
                 }
             }
 
@@ -1087,7 +1091,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                 return NestedRuleParser(AtRuleParserT).AtRuleParser.parseBlock(nested_parser, prelude, start, input);
             }
 
-            pub fn ruleWithoutBlock(this: *This, prelude: AtRuleParser.Prelude, start: *const ParserState) Result(AtRuleParser.AtRule) {
+            pub fn ruleWithoutBlock(this: *This, prelude: AtRuleParser.Prelude, start: *const ParserState) Maybe(AtRuleParser.AtRule, void) {
                 const loc_ = start.sourceLocation();
                 const loc = css_rules.Location{
                     .source_index = this.options.source_index,
@@ -1106,7 +1110,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                                 .layer = prelude.import[3],
                             },
                         });
-                        return;
+                        return Result(AtRuleParser.AtRule).success;
                     },
                     .namespace => {
                         this.state = State.namespaces;
@@ -1122,7 +1126,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                             },
                         });
 
-                        return;
+                        return Result(AtRuleParser.AtRule).success;
                     },
                     .custom_media => {
                         this.state = State.body;
@@ -1146,7 +1150,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                         const nested_parser = this.nested();
                         return NestedRuleParser(AtRuleParserT).AtRuleParser.parseBlock(nested_parser, prelude, start);
                     },
-                    .charset => {},
+                    .charset => return Result(AtRuleParser.AtRule).success,
                     .unknown => {
                         const name = prelude.unknown[0];
                         const prelude2 = prelude.unknown[1];
@@ -1162,7 +1166,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                         const nested_parser = this.nested();
                         return NestedRuleParser(AtRuleParserT).AtRuleParser.parseBlock(nested_parser, prelude, start);
                     },
-                    else => error.ParsingError,
+                    else => return .{ .err = {} },
                 }
             }
         };
@@ -1325,10 +1329,10 @@ pub fn NestedRuleParser(comptime T: type) type {
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "layer")) {
                         const names = switch (input.parseList(LayerName)) {
                             .result => |vv| vv,
-                            .err => |e| {
-                                // TODO: error does not exist
-                                // but it should exist
-                                // if (e == Error.EndOfInput) {}
+                            .err => |e| names: {
+                                if (e.kind == .basic and e.kind.basic == .end_of_input) {
+                                    break :names ArrayList(LayerName){};
+                                }
                                 return .{ .err = e };
                             },
                         };
@@ -1399,11 +1403,10 @@ pub fn NestedRuleParser(comptime T: type) type {
                 };
 
                 if (this.is_in_style_rule and !result.allowedInStyleRule()) {
-                    input.newError(.{ .at_rule_invalid = name });
-                    return error.ParsingError;
+                    return input.newError(BasicParseErrorKind{ .at_rule_invalid = name });
                 }
 
-                return result;
+                return .{ .result = result };
             }
 
             pub fn parseBlock(this: *This, prelude: AtRuleParser.Prelude, start: *const ParserState, input: *Parser) Result(AtRuleParser.AtRule) {
@@ -1689,7 +1692,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                 }
             }
 
-            pub fn ruleWithoutBlock(this: *This, prelude: AtRuleParser.Prelude, start: *const ParserState) Result(AtRuleParser.AtRule) {
+            pub fn ruleWithoutBlock(this: *This, prelude: AtRuleParser.Prelude, start: *const ParserState) Maybe(AtRuleParser.AtRule, void) {
                 // TODO: finish
                 const loc = this.getLoc(start);
                 switch (prelude) {
@@ -1710,6 +1713,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 },
                             },
                         ) catch bun.outOfMemory();
+                        return Maybe(AtRuleParser.AtRule, void).success;
                     },
                     .unknown => {
                         this.rules.v.append(
@@ -1723,6 +1727,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 },
                             },
                         ) catch bun.outOfMemory();
+                        return Maybe(AtRuleParser.AtRule, void).success;
                     },
                     .custom => {
                         this.rules.v.append(
@@ -1734,13 +1739,9 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 },
                             },
                         ) catch bun.outOfMemory();
+                        return Maybe(AtRuleParser.AtRule, void).success;
                     },
-                    else => {
-                        // TODO: the source actually has the return like: Result<Self::AtRule, ()> for AtRuleParser
-                        // maybe we should make an empty error type? (EmptyError) or make it return nullable type
-                        // return Err(());
-                        todo("this", .{});
-                    },
+                    else => return .{ .err = {} },
                 }
             }
         };
@@ -1780,6 +1781,8 @@ pub fn NestedRuleParser(comptime T: type) type {
                         .loc = loc,
                     },
                 }) catch bun.outOfMemory();
+
+                return Result(QualifiedRule).success;
             }
         };
 
@@ -1827,7 +1830,7 @@ pub fn NestedRuleParser(comptime T: type) type {
             var iter = RuleBodyParser(This).new(input, &nested_parser);
 
             while (iter.next()) |result| {
-                if (result) {} else |e| {
+                if (result.asErr()) |e| {
                     if (parse_declarations) {
                         iter.parser.declarations.clearRetainingCapacity();
                         iter.parser.important_declarations.clearRetainingCapacity();
@@ -1840,7 +1843,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                             iter.parser.options.warn(e);
                             continue;
                         }
-                        return e;
+                        return .{ .err = e };
                     }
                 }
             }
@@ -1852,17 +1855,19 @@ pub fn NestedRuleParser(comptime T: type) type {
                             this.options.warn(e);
                         }
                     } else {
-                        return errors.orderedRemove(0);
+                        return .{ .err = errors.orderedRemove(0) };
                     }
                 }
             }
 
             return .{
-                DeclarationBlock{
-                    .declarations = nested_parser.declarations,
-                    .important_declarations = nested_parser.important_declarations,
+                .result = .{
+                    DeclarationBlock{
+                        .declarations = nested_parser.declarations,
+                        .important_declarations = nested_parser.important_declarations,
+                    },
+                    rules,
                 },
-                rules,
             };
         }
 
@@ -1900,7 +1905,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                 ) catch unreachable;
             }
 
-            return rules;
+            return .{ .result = rules };
         }
     };
 }
@@ -2102,11 +2107,13 @@ pub fn StyleSheet(comptime AtRule: type) type {
             // sources.append(allocator, options.filename) catch bun.outOfMemory();
             const source_map_urls = ArrayList([]const u8){};
 
-            return This{
-                .sources = sources,
-                .source_map_urls = source_map_urls,
-                .license_comments = license_comments,
-                .options = options,
+            return .{
+                .result = This{
+                    .sources = sources,
+                    .source_map_urls = source_map_urls,
+                    .license_comments = license_comments,
+                    .options = options,
+                },
             };
         }
     };
@@ -2236,8 +2243,8 @@ pub fn RuleBodyParser(comptime P: type) type {
                                     P,
                                     this.parser,
                                     Delimiters{ .semicolon = true, .curly_bracket_block = true },
-                                )) |qual| {
-                                    return qual;
+                                ).asValue()) |qual| {
+                                    return .{ .result = qual };
                                 }
                             }
 
@@ -2256,18 +2263,14 @@ pub fn RuleBodyParser(comptime P: type) type {
                     break :result parse_qualified_rule(&start, this.input, P, this.parser, delimiters);
                 } else result: {
                     const token = tok.*;
-                    _ = token; // autofix
-                    const Fn = struct {
-                        token: Token,
-                        fn parsefn(input: *Parser) Result(I) {
-                            _ = input; // autofix
-                            // TODO: implement this
-                            // Err(start.source_location().new_unexpected_token_error(token))
-                            // return input.newCustomError(.unexpected_token);
-                            @panic("TODO");
+
+                    const Closure = struct { token: Token, start: ParserState };
+                    break :result this.input.parseUntilAfter(Delimiters{ .semicolon = true }, I, &Closure{ .token = token, .start = start }, struct {
+                        pub fn parseFn(closure: *Closure, i: *Parser) Result(I) {
+                            _ = i; // autofix
+                            return closure.start.sourceLocation().newUnexpectedTokenError(closure.token);
                         }
-                    };
-                    break :result this.input.parseUntilAfter(Delimiters{ .semicolon = true }, I, Fn.parsefn);
+                    }.parseFn);
                 };
 
                 return result;
@@ -2714,20 +2717,16 @@ pub const Parser = struct {
         this: *Parser,
         delimiters: Delimiters,
         comptime T: type,
-        comptime parse_fn: *const fn (*Parser) Result(T),
+        closure: anytype,
+        comptime parse_fn: *const fn (@TypeOf(closure), *Parser) Result(T),
     ) Result(T) {
-        const Fn = struct {
-            pub fn parsefn(_: void, p: *Parser) Result(T) {
-                return parse_fn(p);
-            }
-        };
         return parse_until_after(
             this,
             delimiters,
             ParserState.none,
             T,
-            {},
-            Fn.parsefn,
+            closure,
+            parse_fn,
         );
     }
 

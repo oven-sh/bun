@@ -24,7 +24,7 @@ pub const KeyframesListParser = struct {
     pub const DeclarationParser = struct {
         pub const Declaration = Keyframe;
 
-        fn parseValue(_: *This, name: []const u8, input: *css.Parser) Result(!Declaration) {
+        fn parseValue(_: *This, name: []const u8, input: *css.Parser) Result(Declaration) {
             return input.newError(css.BasicParseErrorKind{ .unexpected_token = .{ .ident = name } });
         }
     };
@@ -43,15 +43,15 @@ pub const KeyframesListParser = struct {
         pub const Prelude = void;
         pub const AtRule = void;
 
-        pub fn parsePrelude(_: *This, name: []const u8, input: *css.Parser) Result(!Prelude) {
+        pub fn parsePrelude(_: *This, name: []const u8, input: *css.Parser) Result(Prelude) {
             return input.newError(css.BasicParseErrorKind{ .at_rule_invalid = name });
         }
 
-        pub fn parseBlock(_: *This, _: AtRuleParser.Prelude, _: *const css.ParserState, input: *css.Parser) Result(!AtRuleParser.AtRule) {
+        pub fn parseBlock(_: *This, _: AtRuleParser.Prelude, _: *const css.ParserState, input: *css.Parser) Result(AtRuleParser.AtRule) {
             return input.newError(css.BasicParseErrorKind.at_rule_body_invalid);
         }
 
-        pub fn ruleWithoutBlock(_: *This, _: AtRuleParser.Prelude, _: *const css.ParserState) Result(!AtRuleParser.AtRule) {
+        pub fn ruleWithoutBlock(_: *This, _: AtRuleParser.Prelude, _: *const css.ParserState) Result(AtRuleParser.AtRule) {
             @compileError(css.todo_stuff.errors);
         }
     };
@@ -60,11 +60,11 @@ pub const KeyframesListParser = struct {
         pub const Prelude = ArrayList(KeyframeSelector);
         pub const QualifiedRule = Keyframe;
 
-        pub fn parsePrelude(_: *This, input: *css.Parser) Result(!Prelude) {
+        pub fn parsePrelude(_: *This, input: *css.Parser) Result(Prelude) {
             return input.parseCommaSeparated(Prelude, KeyframeSelector.parse);
         }
 
-        pub fn parseBlock(_: *This, prelude: Prelude, _: *const css.ParserState, input: *css.Parser) Result(!QualifiedRule) {
+        pub fn parseBlock(_: *This, prelude: Prelude, _: *const css.ParserState, input: *css.Parser) Result(QualifiedRule) {
             // For now there are no options that apply within @keyframes
             const options = css.ParserOptions{};
             return .{
@@ -89,7 +89,7 @@ pub const KeyframesName = union(enum) {
 
     const This = @This();
 
-    pub fn parse(input: *css.Parser) Result(!KeyframesName) {
+    pub fn parse(input: *css.Parser) Result(KeyframesName) {
         switch (switch (input.next()) {
             .result => |v| v,
             .err => |e| return .{ .err = e },
@@ -155,7 +155,7 @@ pub const KeyframeSelector = union(enum) {
     // TODO: implement this
     // pub usingnamespace css.DeriveParse(@This());
 
-    pub fn parse(input: *css.Parser) Result(!KeyframeSelector) {
+    pub fn parse(input: *css.Parser) Result(KeyframeSelector) {
         _ = input; // autofix
         @panic(css.todo_stuff.depth);
     }

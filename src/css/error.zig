@@ -27,11 +27,34 @@ pub fn fmtPrinterError() PrinterError {
 pub fn Err(comptime T: type) type {
     return struct {
         /// The type of error that occurred.
-        kind: T,
+        kind: ParserErrorKind(T),
         /// The location where the error occurred.
         loc: ?ErrorLocation,
     };
 }
+
+pub fn ParserErrorKind(comptime T: type) type {
+    return union(enum) {
+        /// A fundamental parse error from a built-in parsing routine.
+        basic: BasicParseErrorKind,
+        /// A parse error reported by downstream consumer code.
+        custom: T,
+    };
+}
+
+/// Details about a `BasicParseError`
+pub const BasicParseErrorKind = union(enum) {
+    /// An unexpected token was encountered.
+    unexpected_token: css.Token,
+    /// The end of the input was encountered unexpectedly.
+    end_of_input,
+    /// An `@` rule was encountered that was invalid.
+    at_rule_invalid: []const u8,
+    /// The body of an '@' rule was invalid.
+    at_rule_body_invalid,
+    /// A qualified rule was encountered that was invalid.
+    qualified_rule_invalid,
+};
 
 /// A line and column location within a source file.
 pub const ErrorLocation = struct {

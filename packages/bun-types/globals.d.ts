@@ -137,8 +137,8 @@ type _Body = typeof globalThis extends { onerror: any }
       readonly text: () => Promise<string>;
     };
 
+import type { TextDecoder as NodeTextDecoder, TextEncoder as NodeTextEncoder } from "util";
 import type { MessagePort } from "worker_threads";
-import type { TextEncoder as NodeTextEncoder, TextDecoder as NodeTextDecoder } from "util";
 import type { WebSocket as _WebSocket } from "ws";
 
 declare module "*.txt" {
@@ -955,7 +955,7 @@ declare global {
     ref(): Timer;
     unref(): Timer;
     hasRef(): boolean;
-    refresh(): Timer
+    refresh(): Timer;
 
     [Symbol.toPrimitive](): number;
   }

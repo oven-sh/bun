@@ -1,6 +1,6 @@
-import { run, bench, group } from "mitata";
 import fg from "fast-glob";
 import { fdir } from "fdir";
+import { bench, group, run } from "mitata";
 
 const normalPattern = "*.ts";
 const recursivePattern = "**/*.ts";

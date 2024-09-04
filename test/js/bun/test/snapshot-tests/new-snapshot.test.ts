@@ -1,6 +1,6 @@
+import { expect, test } from "bun:test";
 import fs from "fs";
 import { bunExe, tmpdirSync } from "harness";
-import { it, test, expect, describe } from "bun:test";
 
 test("it will create a snapshot file and directory if they don't exist", () => {
   const tempDir = tmpdirSync();

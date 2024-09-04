@@ -1,5 +1,5 @@
+import { describe, expect, test } from "bun:test";
 import { getSecret } from "harness";
-import { expect, test, describe } from "bun:test";
 import { Stripe } from "stripe";
 
 const stripeCredentials = getSecret("TEST_INFO_STRIPE");

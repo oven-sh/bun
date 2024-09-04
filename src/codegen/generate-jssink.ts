@@ -1,4 +1,4 @@
-import { resolve, join } from "path";
+import { join, resolve } from "path";
 
 const classes = ["ArrayBufferSink", "FileSink", "HTTPResponseSink", "HTTPSResponseSink"];
 

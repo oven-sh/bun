@@ -1,7 +1,7 @@
-import { it, expect } from "bun:test";
-import tls from "node:tls";
-import { join } from "node:path";
+import { expect, it } from "bun:test";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { join } from "node:path";
+import tls from "node:tls";
 
 type TLSOptions = {
   cert: string;

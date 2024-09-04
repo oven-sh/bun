@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { createContext, runInContext, runInNewContext, runInThisContext, Script } from "node:vm";
 
 function capture(_: any, _1?: any) {}

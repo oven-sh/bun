@@ -1,6 +1,6 @@
-import { it, expect, beforeAll } from "bun:test";
+import { beforeAll, expect, it } from "bun:test";
 import { writeFileSync } from "fs";
-import { bunExe, bunEnv, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 let dir: string;
 

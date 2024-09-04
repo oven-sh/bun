@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 test("Bun.file in CryptoHasher is not supported yet", () => {
   expect(() => Bun.SHA1.hash(Bun.file(import.meta.path))).toThrow();

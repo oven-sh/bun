@@ -1,11 +1,11 @@
 import { AnyFunction, serve, ServeOptions, Server, sleep, TCPSocketListener } from "bun";
-import { afterAll, afterEach, beforeAll, describe, expect, it, beforeEach } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, gc, isWindows, tls, tmpdirSync, withoutAggressiveGC } from "harness";
 import { mkfifo } from "mkfifo";
-import { gzipSync } from "zlib";
-import { join } from "path";
-import { gc, withoutAggressiveGC, isWindows, bunExe, bunEnv, tmpdirSync, tls } from "harness";
 import net from "net";
+import { join } from "path";
+import { gzipSync } from "zlib";
 
 const tmp_dir = tmpdirSync();
 

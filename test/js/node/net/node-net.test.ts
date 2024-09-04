@@ -1,8 +1,8 @@
-import { ServerWebSocket, TCPSocket, Socket as _BunSocket, TCPSocketListener } from "bun";
+import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { describe, expect, it } from "bun:test";
-import { Stream, connect, isIP, isIPv4, isIPv6, Socket, createConnection, Server } from "net";
-import { join } from "path";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { connect, createConnection, isIP, isIPv4, isIPv6, Server, Socket, Stream } from "net";
+import { join } from "path";
 
 const socket_domain = tmpdirSync();
 

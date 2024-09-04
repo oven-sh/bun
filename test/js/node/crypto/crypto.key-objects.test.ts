@@ -1,31 +1,31 @@
 "use strict";
 
+import { describe, expect, it, test } from "bun:test";
 import {
   createCipheriv,
   createDecipheriv,
+  createPrivateKey,
+  createPublicKey,
+  createSecretKey,
   createSign,
   createVerify,
-  createSecretKey,
-  createPublicKey,
-  createPrivateKey,
-  KeyObject,
-  randomBytes,
-  publicDecrypt,
-  publicEncrypt,
-  privateDecrypt,
-  privateEncrypt,
+  generateKey,
+  generateKeyPair,
   generateKeyPairSync,
   generateKeySync,
-  generateKeyPair,
+  KeyObject,
+  privateDecrypt,
+  privateEncrypt,
+  publicDecrypt,
+  publicEncrypt,
+  randomBytes,
   sign,
   verify,
-  generateKey,
 } from "crypto";
-import { test, it, expect, describe } from "bun:test";
-import { createContext, Script, runInThisContext, runInContext } from "node:vm";
 import fs from "fs";
-import path from "path";
 import { isWindows } from "harness";
+import { createContext, runInContext, runInThisContext, Script } from "node:vm";
+import path from "path";
 
 function readFile(...args) {
   const result = fs.readFileSync(...args);

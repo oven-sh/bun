@@ -1,4 +1,4 @@
-import { listen, connect } from "bun";
+import { connect, listen } from "bun";
 
 var counter = 0;
 const msg = "Hello World!";

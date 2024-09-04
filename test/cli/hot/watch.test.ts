@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { writeFile } from "node:fs/promises";
 import { bunEnv, bunExe, forEachLine, tempDirWithFiles } from "harness";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 describe("--watch works", async () => {

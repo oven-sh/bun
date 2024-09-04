@@ -1,7 +1,7 @@
-import { test, expect } from "bun:test";
-import { createServer } from "node:http";
+import { expect, test } from "bun:test";
 import { once } from "node:events";
-import { createBrotliCompress, createGzip, createDeflate } from "node:zlib";
+import { createServer } from "node:http";
+import { createBrotliCompress, createDeflate, createGzip } from "node:zlib";
 
 test.todo("content-encoding header is case-iNsENsITIve", async () => {
   const contentCodings = "GZiP, bR";

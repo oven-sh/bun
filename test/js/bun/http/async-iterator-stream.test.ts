@@ -1,6 +1,6 @@
-import { describe, expect, test, afterAll, mock } from "bun:test";
 import { spawn } from "bun";
-import { bunExe, bunEnv } from "harness";
+import { afterAll, describe, expect, mock, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 describe("Streaming body via", () => {
   test("async generator function", async () => {

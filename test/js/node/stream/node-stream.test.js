@@ -1,10 +1,9 @@
-import { expect, describe, it, jest } from "bun:test";
-import { Stream, Readable, Writable, Duplex, Transform, PassThrough } from "node:stream";
-import { createReadStream } from "node:fs";
-import { join } from "path";
-import { bunExe, bunEnv, tmpdirSync, isGlibcVersionAtLeast, isMacOS } from "harness";
+import { describe, expect, it, jest } from "bun:test";
+import { bunEnv, bunExe, isGlibcVersionAtLeast, isMacOS, tmpdirSync } from "harness";
+import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { Duplex, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
+import { join } from "path";
 
 describe("Readable", () => {
   it("should be able to be created without _construct method defined", done => {

@@ -1,9 +1,9 @@
-import { it, expect, test, beforeAll, describe, afterAll } from "bun:test";
-import { bunExe, bunEnv, tmpdirSync } from "harness";
 import { spawn, spawnSync } from "bun";
-import { join } from "path";
-import fs from "node:fs/promises";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import assert from "node:assert";
+import fs from "node:fs/promises";
+import { join } from "path";
 
 // clang-cl does not work on Windows with node-gyp 10.2.0, so we should not let that affect the
 // test environment

@@ -1,5 +1,5 @@
-import jwt from "jsonwebtoken";
 import { describe, it } from "bun:test";
+import jwt from "jsonwebtoken";
 
 describe("issue 70 - public key start with BEING PUBLIC KEY", function () {
   it("should work", function (done) {

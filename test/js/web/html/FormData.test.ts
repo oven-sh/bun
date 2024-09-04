@@ -1,7 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import fs, { chmodSync, unlinkSync } from "fs";
-import { gc, withoutAggressiveGC } from "harness";
-import { mkfifo } from "mkfifo";
+import { describe, expect, it, test } from "bun:test";
 import { join } from "path";
 
 describe("FormData", () => {

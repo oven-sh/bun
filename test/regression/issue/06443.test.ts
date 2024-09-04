@@ -1,5 +1,5 @@
-import { describe, test, expect } from "bun:test";
-import { serve, file } from "bun";
+import { file, serve } from "bun";
+import { describe, expect, test } from "bun:test";
 
 describe("Bun.serve()", () => {
   const tls = {

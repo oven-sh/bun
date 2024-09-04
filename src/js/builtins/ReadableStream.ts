@@ -55,10 +55,11 @@ export function initializeReadableStream(
   // direct streams are always lazy
   const isUnderlyingSourceLazy = !!underlyingSource.$lazy;
   const isLazy = isDirect || isUnderlyingSourceLazy;
+  let pullFn;
 
   // FIXME: We should introduce https://streams.spec.whatwg.org/#create-readable-stream.
   // For now, we emulate this with underlyingSource with private properties.
-  if ($getByIdDirectPrivate(underlyingSource, "pull") !== undefined && !isLazy) {
+  if (!isLazy && (pullFn = $getByIdDirectPrivate(underlyingSource, "pull")) !== undefined) {
     const size = $getByIdDirectPrivate(strategy, "size");
     const highWaterMark = $getByIdDirectPrivate(strategy, "highWaterMark");
     $putByIdDirectPrivate(this, "highWaterMark", highWaterMark);
@@ -69,7 +70,7 @@ export function initializeReadableStream(
       size,
       highWaterMark !== undefined ? highWaterMark : 1,
       $getByIdDirectPrivate(underlyingSource, "start"),
-      $getByIdDirectPrivate(underlyingSource, "pull"),
+      pullFn,
       $getByIdDirectPrivate(underlyingSource, "cancel"),
     );
 
@@ -113,7 +114,6 @@ export function readableStreamToArray(stream: ReadableStream): Promise<unknown[]
     return $readableStreamToArrayDirect(stream, underlyingSource);
   }
   if ($isReadableStreamLocked(stream)) return Promise.$reject($makeTypeError("ReadableStream is locked"));
-
   return $readableStreamIntoArray(stream);
 }
 
@@ -125,6 +125,13 @@ export function readableStreamToText(stream: ReadableStream): Promise<string> {
     return $readableStreamToTextDirect(stream, underlyingSource);
   }
   if ($isReadableStreamLocked(stream)) return Promise.$reject($makeTypeError("ReadableStream is locked"));
+
+  const result = $tryUseReadableStreamBufferedFastPath(stream, "text");
+
+  if (result) {
+    return result;
+  }
+
   return $readableStreamIntoText(stream);
 }
 
@@ -132,19 +139,27 @@ $linkTimeConstant;
 export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>): Promise<ArrayBuffer> | ArrayBuffer {
   // this is a direct stream
   var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
-
   if (underlyingSource !== undefined) {
     return $readableStreamToArrayBufferDirect(stream, underlyingSource, false);
   }
   if ($isReadableStreamLocked(stream)) return Promise.$reject($makeTypeError("ReadableStream is locked"));
 
-  var result = Bun.readableStreamToArray(stream);
+  let result = $tryUseReadableStreamBufferedFastPath(stream, "arrayBuffer");
+
+  if (result) {
+    return result;
+  }
+
+  result = Bun.readableStreamToArray(stream);
   if ($isPromise(result)) {
     // `result` is an InternalPromise, which doesn't have a `.then` method
     // but `.then` isn't user-overridable, so we can use it safely.
-    return result.then(x => Bun.concatArrayBuffers(x));
+    return result.then(x => (x.length === 1 && x[0] instanceof ArrayBuffer ? x[0] : Bun.concatArrayBuffers(x)));
   }
 
+  if (result.length === 1) {
+    return result[0];
+  }
   return Bun.concatArrayBuffers(result);
 }
 
@@ -158,13 +173,28 @@ export function readableStreamToBytes(stream: ReadableStream<ArrayBuffer>): Prom
   }
   if ($isReadableStreamLocked(stream)) return Promise.$reject($makeTypeError("ReadableStream is locked"));
 
-  var result = Bun.readableStreamToArray(stream);
+  let result = $tryUseReadableStreamBufferedFastPath(stream, "bytes");
+
+  if (result) {
+    return result;
+  }
+
+  result = Bun.readableStreamToArray(stream);
   if ($isPromise(result)) {
     // `result` is an InternalPromise, which doesn't have a `.then` method
     // but `.then` isn't user-overridable, so we can use it safely.
-    return result.then(x => Bun.concatArrayBuffers(x, Infinity, true));
+    return result.then(x => {
+      // Micro-optimization: if the result is a single Uint8Array chunk, let's just return it without cloning.
+      if (x.length === 1 && x[0] instanceof ArrayBuffer) {
+        return new Uint8Array(x[0]);
+      }
+      return Bun.concatArrayBuffers(x, Infinity, true);
+    });
   }
 
+  if (result.length === 1 && result[0] instanceof ArrayBuffer) {
+    return new Uint8Array(result[0]);
+  }
   return Bun.concatArrayBuffers(result, Infinity, true);
 }
 
@@ -182,13 +212,21 @@ export function readableStreamToFormData(
 $linkTimeConstant;
 export function readableStreamToJSON(stream: ReadableStream): unknown {
   if ($isReadableStreamLocked(stream)) return Promise.$reject($makeTypeError("ReadableStream is locked"));
-  return Promise.resolve(Bun.readableStreamToText(stream)).then(globalThis.JSON.parse);
+
+  return (
+    $tryUseReadableStreamBufferedFastPath(stream, "json") ||
+    Promise.resolve(Bun.readableStreamToText(stream)).then(globalThis.JSON.parse)
+  );
 }
 
 $linkTimeConstant;
 export function readableStreamToBlob(stream: ReadableStream): Promise<Blob> {
   if ($isReadableStreamLocked(stream)) return Promise.$reject($makeTypeError("ReadableStream is locked"));
-  return Promise.resolve(Bun.readableStreamToArray(stream)).then(array => new Blob(array));
+
+  return (
+    $tryUseReadableStreamBufferedFastPath(stream, "blob") ||
+    Promise.resolve(Bun.readableStreamToArray(stream)).then(array => new Blob(array))
+  );
 }
 
 $linkTimeConstant;

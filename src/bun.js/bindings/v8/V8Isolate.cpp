@@ -1,13 +1,14 @@
 #include "V8Isolate.h"
 #include "V8HandleScope.h"
 #include "shim/GlobalInternals.h"
+#include "ZigGlobalObject.h"
 
 namespace v8 {
 
 // Returns the isolate inside which the current thread is running or nullptr.
 Isolate* Isolate::TryGetCurrent()
 {
-    auto* global = Bun__getDefaultGlobalObject();
+    auto* global = defaultGlobalObject();
 
     return global ? &global->V8GlobalInternals()->m_isolate : nullptr;
 }
@@ -15,7 +16,7 @@ Isolate* Isolate::TryGetCurrent()
 // Returns the isolate inside which the current thread is running.
 Isolate* Isolate::GetCurrent()
 {
-    auto* global = Bun__getDefaultGlobalObject();
+    auto* global = defaultGlobalObject();
 
     return global ? &global->V8GlobalInternals()->m_isolate : nullptr;
 }

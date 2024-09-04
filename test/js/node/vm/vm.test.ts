@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { createContext, runInContext, runInNewContext, runInThisContext, Script } from "node:vm";
 
 function capture(_: any, _1?: any) {}
@@ -6,7 +6,7 @@ describe("runInContext()", () => {
   testRunInContext({ fn: runInContext, isIsolated: true });
   test("options can be a string", () => {
     const context = createContext();
-    const result = runInContext("new Error().stack;", context, "test-filename.js" );
+    const result = runInContext("new Error().stack;", context, "test-filename.js");
     expect(result).toContain("test-filename.js");
   });
 });
@@ -15,7 +15,7 @@ describe("runInNewContext()", () => {
   testRunInContext({ fn: runInNewContext, isIsolated: true, isNew: true });
   test("options can be a string", () => {
     test("options can be a string", () => {
-      const result = runInNewContext("new Error().stack;", {}, "test-filename.js" );
+      const result = runInNewContext("new Error().stack;", {}, "test-filename.js");
       expect(result).toContain("test-filename.js");
     });
   });
@@ -24,7 +24,7 @@ describe("runInNewContext()", () => {
 describe("runInThisContext()", () => {
   testRunInContext({ fn: runInThisContext });
   test("options can be a string", () => {
-    const result = runInThisContext("new Error().stack;", "test-filename.js" );
+    const result = runInThisContext("new Error().stack;", "test-filename.js");
     expect(result).toContain("test-filename.js");
   });
 });
@@ -298,3 +298,135 @@ function randomProps(propsNumber = 0) {
   }
   return props;
 }
+
+// https://github.com/oven-sh/bun/issues/13629
+test("can extend generated globals & WebCore globals", async () => {
+  const vm = require("vm");
+
+  for (let j = 0; j < 100; j++) {
+    const context = vm.createContext({
+      URL,
+      urlProto: URL.prototype,
+      console,
+      Response,
+    });
+
+    const code = /*js*/ `
+class ExtendedDOMGlobal extends URL {
+  constructor(url) {
+    super(url);
+  }
+
+  get searchParams() {
+    return super.searchParams;
+  }
+}
+
+class ExtendedExtendedDOMGlobal extends ExtendedDOMGlobal {
+  constructor(url) {
+    super(url);
+  }
+
+  get wowSuchGetter() {
+    return "wow such getter";
+  }
+}
+
+const response = new Response();
+class ExtendedZigGeneratedClass extends Response {
+  constructor(body) {
+    super(body);
+  }
+
+  get ok() {
+    return super.ok;
+  }
+
+  get custom() {
+    return true;
+  }
+}
+
+class ExtendedExtendedZigGeneratedClass extends ExtendedZigGeneratedClass {
+  constructor(body) {
+    super(body);
+  }
+
+  get custom() {
+    return 42;
+  }
+}
+
+const resp = new ExtendedZigGeneratedClass("empty");
+const resp2 = new ExtendedExtendedZigGeneratedClass("empty");
+
+const url = new ExtendedDOMGlobal("https://example.com/path?foo=bar&baz=qux");
+const url2 = new ExtendedExtendedDOMGlobal("https://example.com/path?foo=bar&baz=qux");
+if (url.ok !== true) {
+  throw new Error("bad");
+}
+  
+if (url2.wowSuchGetter !== "wow such getter") {
+  throw new Error("bad");
+}
+
+if (!response.ok) {
+  throw new Error("bad");
+}
+
+URL.prototype.ok = false;
+
+if (url.ok !== false) {
+  throw new Error("bad");
+}
+
+url.searchParams.get("foo");
+
+if (!resp.custom) {
+  throw new Error("expected getter");
+}
+
+if (resp2.custom !== 42) {
+  throw new Error("expected getter");
+}
+
+if (!resp2.ok) {
+  throw new Error("expected ok");
+}
+
+if (!(resp instanceof ExtendedZigGeneratedClass)) {
+  throw new Error("expected ExtendedZigGeneratedClass");
+}
+
+if (!(resp instanceof Response)) {
+  throw new Error("expected Response");
+}
+
+if (!(resp2 instanceof ExtendedExtendedZigGeneratedClass)) {
+  throw new Error("expected ExtendedExtendedZigGeneratedClass");
+}
+
+if (!(resp2 instanceof ExtendedZigGeneratedClass)) {
+  throw new Error("expected ExtendedZigGeneratedClass");
+}
+
+if (!(resp2 instanceof Response)) {
+  throw new Error("expected Response");
+}
+
+if (!resp.ok) {
+  throw new Error("expected ok");
+}
+
+resp.text().then((a) => {
+  if (a !== "empty") {
+    throw new Error("expected empty");
+  }
+});
+
+  `;
+    URL.prototype.ok = true;
+    await vm.runInContext(code, context);
+    delete URL.prototype.ok;
+  }
+});

@@ -1,6 +1,6 @@
+import { isAscii } from "buffer";
 import fs from "fs";
 import path from "path";
-import { isAscii } from "buffer";
 
 // MSVC has a max of 16k characters per string literal
 // Combining string literals didn't support constexpr apparently

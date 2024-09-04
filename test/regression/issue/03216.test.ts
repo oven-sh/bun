@@ -1,8 +1,8 @@
 // https://github.com/oven-sh/bun/issues/3216
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { writeFileSync } from "fs";
-import { join } from "path";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { join } from "path";
 
 test("runtime directory caching gets invalidated", () => {
   const tmp = tmpdirSync();

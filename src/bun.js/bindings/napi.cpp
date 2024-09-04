@@ -45,7 +45,6 @@
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include "JSFFIFunction.h"
 #include <JavaScriptCore/JavaScript.h>
-#include <JavaScriptCore/JSWeakValue.h>
 #include "napi.h"
 #include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/JSSourceCode.h>
@@ -64,6 +63,7 @@
 #include <JavaScriptCore/FunctionPrototype.h>
 #include "CommonJSModuleRecord.h"
 #include "wtf/text/ASCIIFastPath.h"
+#include "JavaScriptCore/WeakInlines.h"
 
 // #include <iostream>
 using namespace JSC;
@@ -115,6 +115,15 @@ JSC::SourceCode generateSourceCode(WTF::String keyString, JSC::VM& vm, JSC::JSOb
 // #include <csignal>
 #define NAPI_OBJECT_EXPECTED napi_object_expected
 
+static inline Zig::GlobalObject* defaultGlobalObject(napi_env env)
+{
+    if (env) {
+        return defaultGlobalObject(toJS(env));
+    }
+
+    return defaultGlobalObject();
+}
+
 class NapiRefWeakHandleOwner final : public JSC::WeakHandleOwner {
 public:
     void finalize(JSC::Handle<JSC::Unknown>, void* context) final
@@ -148,13 +157,8 @@ void NapiRef::ref()
     ++refCount;
     if (refCount == 1 && !weakValueRef.isClear()) {
         auto& vm = globalObject.get()->vm();
-        if (weakValueRef.isString()) {
-            strongRef.set(vm, JSC::JSValue(weakValueRef.string()));
-        } else if (weakValueRef.isObject()) {
-            strongRef.set(vm, JSC::JSValue(weakValueRef.object()));
-        } else {
-            strongRef.set(vm, weakValueRef.primitive());
-        }
+        strongRef.set(vm, weakValueRef.get());
+
         // isSet() will return always true after being set once
         // We cannot rely on isSet() to check if the value is set we need to use isClear()
         // .setString/.setObject/.setPrimitive will assert fail if called more than once (even after clear())
@@ -186,8 +190,6 @@ void NapiRef::clear()
 // class Reference
 // }
 
-extern "C" Zig::GlobalObject* Bun__getDefaultGlobalObject();
-
 WTF_MAKE_ISO_ALLOCATED_IMPL(NapiRef);
 
 static uint32_t getPropertyAttributes(napi_property_attributes attributes_)
@@ -218,6 +220,101 @@ static uint32_t getPropertyAttributes(napi_property_descriptor prop)
     // }
 
     return result;
+}
+
+NapiWeakValue::~NapiWeakValue()
+{
+    clear();
+}
+
+void NapiWeakValue::clear()
+{
+    switch (m_tag) {
+    case WeakTypeTag::Cell: {
+        m_value.cell.clear();
+        break;
+    }
+    case WeakTypeTag::String: {
+        m_value.string.clear();
+        break;
+    }
+    default: {
+        break;
+    }
+    }
+
+    m_tag = WeakTypeTag::NotSet;
+}
+
+bool NapiWeakValue::isClear() const
+{
+    return m_tag == WeakTypeTag::NotSet;
+}
+
+void NapiWeakValue::setPrimitive(JSValue value)
+{
+    switch (m_tag) {
+    case WeakTypeTag::Cell: {
+        m_value.cell.clear();
+        break;
+    }
+    case WeakTypeTag::String: {
+        m_value.string.clear();
+        break;
+    }
+    default: {
+        break;
+    }
+    }
+    m_tag = WeakTypeTag::Primitive;
+    m_value.primitive = value;
+}
+
+void NapiWeakValue::set(JSValue value, WeakHandleOwner& owner, void* context)
+{
+    if (value.isCell()) {
+        auto* cell = value.asCell();
+        if (cell->isString()) {
+            setString(jsCast<JSString*>(cell), owner, context);
+        } else {
+            setCell(cell, owner, context);
+        }
+    } else {
+        setPrimitive(value);
+    }
+}
+
+void NapiWeakValue::setCell(JSCell* cell, WeakHandleOwner& owner, void* context)
+{
+    switch (m_tag) {
+    case WeakTypeTag::Cell: {
+        m_value.cell = JSC::Weak<JSCell>(cell, &owner, context);
+        break;
+    }
+    case WeakTypeTag::String: {
+        m_value.string.clear();
+        break;
+    }
+    default: {
+        break;
+    }
+    }
+}
+
+void NapiWeakValue::setString(JSString* string, WeakHandleOwner& owner, void* context)
+{
+    switch (m_tag) {
+    case WeakTypeTag::Cell: {
+        m_value.cell.clear();
+        break;
+    }
+    default: {
+        break;
+    }
+    }
+
+    m_value.string = JSC::Weak<JSString>(string, &owner, context);
+    m_tag = WeakTypeTag::String;
 }
 
 class NAPICallFrame {
@@ -672,7 +769,7 @@ extern "C" napi_status napi_set_named_property(napi_env env, napi_value object,
         return napi_object_expected;
     }
 
-    if (UNLIKELY(utf8name == nullptr || !*utf8name)) {
+    if (UNLIKELY(utf8name == nullptr || !*utf8name || !value)) {
         return napi_invalid_arg;
     }
 
@@ -816,14 +913,10 @@ node_api_create_external_string_latin1(napi_env env,
 #if NAPI_VERBOSE
             printf("[napi] string finalize_callback\n");
 #endif
-            finalize_callback(reinterpret_cast<napi_env>(Bun__getDefaultGlobalObject()), nullptr, hint);
+            finalize_callback(reinterpret_cast<napi_env>(defaultGlobalObject()), nullptr, hint);
         }
     });
-    JSGlobalObject* globalObject = toJS(env);
-    // globalObject is allowed to be null here
-    if (UNLIKELY(!globalObject)) {
-        globalObject = Bun__getDefaultGlobalObject();
-    }
+    JSGlobalObject* globalObject = defaultGlobalObject(env);
 
     JSString* out = JSC::jsString(globalObject->vm(), WTF::String(impl));
     ensureStillAliveHere(out);
@@ -858,14 +951,10 @@ node_api_create_external_string_utf16(napi_env env,
 #endif
 
         if (finalize_callback) {
-            finalize_callback(reinterpret_cast<napi_env>(Bun__getDefaultGlobalObject()), nullptr, hint);
+            finalize_callback(reinterpret_cast<napi_env>(defaultGlobalObject()), nullptr, hint);
         }
     });
-    JSGlobalObject* globalObject = toJS(env);
-    // globalObject is allowed to be null here
-    if (UNLIKELY(!globalObject)) {
-        globalObject = Bun__getDefaultGlobalObject();
-    }
+    JSGlobalObject* globalObject = defaultGlobalObject(env);
 
     JSString* out = JSC::jsString(globalObject->vm(), WTF::String(impl));
     ensureStillAliveHere(out);
@@ -877,7 +966,7 @@ node_api_create_external_string_utf16(napi_env env,
 
 extern "C" void napi_module_register(napi_module* mod)
 {
-    auto* globalObject = Bun__getDefaultGlobalObject();
+    auto* globalObject = defaultGlobalObject();
     JSC::VM& vm = globalObject->vm();
     auto keyStr = WTF::String::fromUTF8(mod->nm_modname);
     globalObject->napiModuleRegisterCallCount++;
@@ -971,7 +1060,8 @@ extern "C" napi_status napi_wrap(napi_env env,
     }
 
     auto* ref = new NapiRef(globalObject, 0);
-    ref->weakValueRef.setObject(value.getObject(), weakValueHandleOwner(), ref);
+
+    ref->weakValueRef.set(value, weakValueHandleOwner(), ref);
 
     if (finalize_cb) {
         ref->finalizer.finalize_cb = finalize_cb;
@@ -1273,13 +1363,13 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
 {
     NAPI_PREMABLE
 
-    if (UNLIKELY(!result)) {
+    if (UNLIKELY(!result || !env)) {
         return napi_invalid_arg;
     }
 
     JSC::JSValue val = toJS(value);
 
-    if (!val || !val.isObject()) {
+    if (!val || !val.isCell()) {
         return napi_object_expected;
     }
 
@@ -1289,14 +1379,7 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
     if (initial_refcount > 0) {
         ref->strongRef.set(globalObject->vm(), val);
     }
-    // we dont have a finalizer but we can use the weak value to re-ref again or get the value until the GC is called
-    if (val.isString()) {
-        ref->weakValueRef.setString(val.toString(globalObject), weakValueHandleOwner(), ref);
-    } else if (val.isObject()) {
-        ref->weakValueRef.setObject(val.getObject(), weakValueHandleOwner(), ref);
-    } else {
-        ref->weakValueRef.setPrimitive(val);
-    }
+    ref->weakValueRef.set(val, weakValueHandleOwner(), ref);
 
     *result = toNapi(ref);
 
@@ -2527,8 +2610,7 @@ extern "C" napi_status napi_set_instance_data(napi_env env,
     NAPI_PREMABLE
 
     Zig::GlobalObject* globalObject = toJS(env);
-    if (data)
-        globalObject->napiInstanceData = data;
+    globalObject->napiInstanceData = data;
 
     globalObject->napiInstanceDataFinalizer = reinterpret_cast<void*>(finalize_cb);
     globalObject->napiInstanceDataFinalizerHint = finalize_hint;

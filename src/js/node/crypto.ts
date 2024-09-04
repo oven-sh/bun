@@ -11935,14 +11935,17 @@ function _generateKeyPairSync(algorithm, options) {
 }
 crypto_exports.generateKeyPairSync = _generateKeyPairSync;
 
-crypto_exports.generateKeyPair = function (algorithm, options, callback) {
+function _generateKeyPair(algorithm, options, callback) {
   try {
     const result = _generateKeyPairSync(algorithm, options);
     typeof callback === "function" && callback(null, result.publicKey, result.privateKey);
   } catch (err) {
     typeof callback === "function" && callback(err);
   }
-};
+}
+const { defineCustomPromisifyArgs } = require("internal/promisify");
+defineCustomPromisifyArgs(_generateKeyPair, ["publicKey", "privateKey"]);
+crypto_exports.generateKeyPair = _generateKeyPair;
 
 crypto_exports.createSecretKey = function (key, encoding) {
   if (key instanceof KeyObject || key instanceof CryptoKey) {

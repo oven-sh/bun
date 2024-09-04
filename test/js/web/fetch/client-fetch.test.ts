@@ -1,10 +1,10 @@
 /* globals AbortController */
 
-import { test, expect, describe } from "bun:test";
+import { expect, test } from "bun:test";
+import { createHash, randomFillSync } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { promisify } from "node:util";
-import { randomFillSync, createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
 
 test("function signature", () => {

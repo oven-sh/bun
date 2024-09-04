@@ -35,7 +35,7 @@ void RemoveEnvironmentCleanupHook(v8::Isolate* isolate,
 void node_module_register(void* opaque_mod)
 {
     // TODO unify this with napi_module_register
-    auto* globalObject = Bun__getDefaultGlobalObject();
+    auto* globalObject = defaultGlobalObject();
     auto& vm = globalObject->vm();
     auto* mod = reinterpret_cast<struct node_module*>(opaque_mod);
 

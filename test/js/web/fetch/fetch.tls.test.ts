@@ -1,7 +1,7 @@
-import { it, expect } from "bun:test";
-import tls from "node:tls";
-import { join } from "node:path";
+import { expect, it } from "bun:test";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { join } from "node:path";
+import tls from "node:tls";
 
 type TLSOptions = {
   cert: string;
@@ -269,7 +269,9 @@ for (const timeout of [0, 1, 10, 20, 100, 300]) {
         return new Response("Hello World");
       },
     });
-    const time = Date.now();
+    const THRESHOLD = 50;
+
+    const time = performance.now();
     try {
       await fetch(server.url, {
         //@ts-ignore
@@ -280,9 +282,9 @@ for (const timeout of [0, 1, 10, 20, 100, 300]) {
     } catch (err) {
       expect((err as Error).name).toBe("TimeoutError");
     } finally {
-      const diff = Date.now() - time;
-      expect(diff).toBeLessThanOrEqual(timeout + 30);
-      expect(diff).toBeGreaterThanOrEqual(timeout - 30);
+      const diff = performance.now() - time;
+      expect(diff).toBeLessThanOrEqual(timeout + THRESHOLD);
+      expect(diff).toBeGreaterThanOrEqual(timeout - THRESHOLD);
     }
   });
 }

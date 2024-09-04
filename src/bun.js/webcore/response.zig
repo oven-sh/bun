@@ -1033,9 +1033,18 @@ pub const Fetch = struct {
                         var prev = this.readable_stream_ref;
                         this.readable_stream_ref = .{};
                         defer prev.deinit();
+                        buffer_reset = false;
+                        this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
+                        this.scheduled_response_buffer = .{
+                            .allocator = bun.default_allocator,
+                            .list = .{
+                                .items = &.{},
+                                .capacity = 0,
+                            },
+                        };
                         readable.ptr.Bytes.onData(
                             .{
-                                .temporary_and_done = bun.ByteList.initConst(chunk),
+                                .owned_and_done = bun.ByteList.initConst(chunk),
                             },
                             bun.default_allocator,
                         );
@@ -1315,7 +1324,10 @@ pub const Fetch = struct {
         fn clearAbortSignal(this: *FetchTasklet) void {
             const signal = this.signal orelse return;
             this.signal = null;
-            defer signal.unref();
+            defer {
+                signal.pendingActivityUnref();
+                signal.unref();
+            }
 
             signal.cleanNativeBindings(this);
         }
@@ -1427,9 +1439,9 @@ pub const Fetch = struct {
             return .{ .SystemError = fetch_error };
         }
 
-        pub fn onReadableStreamAvailable(ctx: *anyopaque, readable: JSC.WebCore.ReadableStream) void {
+        pub fn onReadableStreamAvailable(ctx: *anyopaque, globalThis: *JSC.JSGlobalObject, readable: JSC.WebCore.ReadableStream) void {
             const this = bun.cast(*FetchTasklet, ctx);
-            this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable, this.global_this);
+            this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable, globalThis);
         }
 
         pub fn onStartStreamingRequestBodyCallback(ctx: *anyopaque) JSC.WebCore.DrainResult {
@@ -1707,6 +1719,7 @@ pub const Fetch = struct {
             }
 
             if (fetch_tasklet.signal) |signal| {
+                signal.pendingActivityRef();
                 fetch_tasklet.signal = signal.listen(FetchTasklet, fetch_tasklet, FetchTasklet.abortListener);
             }
             return fetch_tasklet;
@@ -2568,7 +2581,7 @@ pub const Fetch = struct {
             }
 
             if (request) |req| {
-                if (req.body.value == .Used or (req.body.value == .Locked and req.body.value.Locked.isDisturbed(Request, globalThis, first_arg))) {
+                if (req.body.value == .Used or (req.body.value == .Locked and (req.body.value.Locked.action != .none or req.body.value.Locked.isDisturbed(Request, globalThis, first_arg)))) {
                     globalThis.ERR_BODY_ALREADY_USED("Request body already used", .{}).throw();
                     is_error = true;
                     return .zero;
@@ -2943,6 +2956,16 @@ pub const Fetch = struct {
 
         const promise_val = promise.value();
 
+        const initial_body_reference_count: if (Environment.isDebug) usize else u0 = brk: {
+            if (Environment.isDebug) {
+                if (body.store()) |store| {
+                    break :brk store.ref_count.load(.monotonic);
+                }
+            }
+
+            break :brk 0;
+        };
+
         _ = FetchTasklet.queue(
             allocator,
             globalThis,
@@ -2975,10 +2998,26 @@ pub const Fetch = struct {
             promise,
         ) catch bun.outOfMemory();
 
+        if (Environment.isDebug) {
+            if (body.store()) |store| {
+                if (store.ref_count.load(.monotonic) == initial_body_reference_count) {
+                    Output.panic("Expected body ref count to have incremented in FetchTasklet", .{});
+                }
+            }
+        }
+
         // These are now owned by FetchTasklet.
         url = .{};
         headers = null;
-        body = AnyBlob{ .Blob = .{} };
+        // Reference count for the blob is incremented above.
+        if (body.store() != null) {
+            body.detach();
+        } else {
+            // These are single-use, and have effectively been moved to the FetchTasklet.
+            body = .{
+                .Blob = .{},
+            };
+        }
         proxy = null;
         url_proxy_buffer = "";
         signal = null;

@@ -1,5 +1,5 @@
-import { describe, expect, test, beforeAll, afterAll } from "bun:test";
-import { bunRun, bunRunAsScript, bunTest, tempDirWithFiles, bunExe, bunEnv, isWindows } from "harness";
+import { beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, bunRun, bunRunAsScript, bunTest, isWindows, tempDirWithFiles } from "harness";
 import path from "path";
 
 function bunRunWithoutTrim(file: string, env?: Record<string, string>) {

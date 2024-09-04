@@ -1,7 +1,7 @@
+import type { Socket } from "bun";
+import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
 import { expect, it } from "bun:test";
 import { bunEnv, bunExe, expectMaxObjectTypeCount, isWindows, tls } from "harness";
-import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
-import type { Socket } from "bun";
 it("should coerce '0' to 0", async () => {
   const listener = Bun.listen({
     // @ts-expect-error

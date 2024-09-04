@@ -1,17 +1,14 @@
 #include "root.h"
 
+#include "JavaScriptCore/JSArrayBuffer.h"
 #include "JavaScriptCore/TypedArrayType.h"
-#include "JavaScriptCore/JSArrayBufferViewInlines.h"
-#include "JavaScriptCore/JSArrayBufferView.h"
-#include "JavaScriptCore/JSTypedArrayViewPrototype.h"
 #include "mimalloc.h"
 
 namespace Bun {
 
 extern "C" JSC::EncodedJSValue JSUint8Array__fromDefaultAllocator(JSC::JSGlobalObject* lexicalGlobalObject, uint8_t* ptr, size_t length)
 {
-
-    JSC::JSUint8Array* uint8Array = nullptr;
+    JSC::JSUint8Array* uint8Array;
 
     if (LIKELY(length > 0)) {
         auto buffer = ArrayBuffer::createFromBytes({ ptr, length }, createSharedTask<void(void*)>([](void* p) {
@@ -25,4 +22,23 @@ extern "C" JSC::EncodedJSValue JSUint8Array__fromDefaultAllocator(JSC::JSGlobalO
 
     return JSC::JSValue::encode(uint8Array);
 }
+
+extern "C" JSC::EncodedJSValue JSArrayBuffer__fromDefaultAllocator(JSC::JSGlobalObject* lexicalGlobalObject, uint8_t* ptr, size_t length)
+{
+
+    JSC::JSArrayBuffer* arrayBuffer;
+
+    if (LIKELY(length > 0)) {
+        RefPtr<ArrayBuffer> buffer = ArrayBuffer::createFromBytes({ ptr, length }, createSharedTask<void(void*)>([](void* p) {
+            mi_free(p);
+        }));
+
+        arrayBuffer = JSC::JSArrayBuffer::create(lexicalGlobalObject->vm(), lexicalGlobalObject->arrayBufferStructure(), WTFMove(buffer));
+    } else {
+        arrayBuffer = JSC::JSArrayBuffer::create(lexicalGlobalObject->vm(), lexicalGlobalObject->arrayBufferStructure(), nullptr);
+    }
+
+    return JSC::JSValue::encode(arrayBuffer);
+}
+
 }

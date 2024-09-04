@@ -1,5 +1,5 @@
-import { describe, test, expect } from "bun:test";
-import { file, spawn, version, readableStreamToText } from "bun";
+import { file, readableStreamToText, spawn, version } from "bun";
+import { describe, expect, test } from "bun:test";
 
 const bodyTypes = [
   {

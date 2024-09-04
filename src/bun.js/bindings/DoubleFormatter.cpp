@@ -6,10 +6,10 @@
 
 /// Must be called with a buffer of exactly 124
 /// Find the length by scanning for the 0
-extern "C" void WTF__dtoa(char* buf_124_bytes, double number)
+extern "C" size_t WTF__dtoa(char* buf_124_bytes, double number)
 {
     NumberToStringBuffer& buf = *reinterpret_cast<NumberToStringBuffer*>(buf_124_bytes);
-    WTF::numberToString(number, buf);
+    return WTF::numberToStringAndSize(number, buf);
 }
 
 /// This is the equivalent of the unary '+' operator on a JS string

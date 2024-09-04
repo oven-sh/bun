@@ -1,4 +1,4 @@
-import { it, test, expect, describe } from "bun:test";
+import { expect, test } from "bun:test";
 
 test.todo("snapshots in different directory", () => {
   expect("1\b2\n3\r4").toMatchSnapshot();

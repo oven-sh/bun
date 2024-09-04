@@ -59,8 +59,7 @@ pub const Request = struct {
     method: Method = Method.GET,
     request_context: JSC.API.AnyRequestContext = JSC.API.AnyRequestContext.Null,
     https: bool = false,
-    upgrader: ?*anyopaque = null,
-
+    weak_ptr_data: bun.WeakPtrData = .{},
     // We must report a consistent value for this
     reported_estimated_size: usize = 0,
 
@@ -77,6 +76,7 @@ pub const Request = struct {
     pub const getBlob = RequestMixin.getBlob;
     pub const getFormData = RequestMixin.getFormData;
     pub const getBlobWithoutCallFrame = RequestMixin.getBlobWithoutCallFrame;
+    pub const WeakRef = bun.WeakPtr(Request, .weak_ptr_data);
 
     pub export fn Request__getUWSRequest(
         this: *Request,
@@ -295,7 +295,9 @@ pub const Request = struct {
     pub fn finalize(this: *Request) void {
         this.finalizeWithoutDeinit();
         _ = this.body.unref();
-        this.destroy();
+        if (this.weak_ptr_data.onFinalize()) {
+            this.destroy();
+        }
     }
 
     pub fn getRedirect(

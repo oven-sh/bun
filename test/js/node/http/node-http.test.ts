@@ -15,8 +15,8 @@ import http, {
   request,
   Server,
   ServerResponse,
-  validateHeaderName,
   validateHeaderValue,
+  validateHeaderName,
 } from "node:http";
 import https, { createServer as createHttpsServer } from "node:https";
 import { tmpdir } from "node:os";

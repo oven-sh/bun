@@ -440,7 +440,7 @@ for (const { name, connect } of tests) {
         socket.end();
         done(err);
       });
-    });
+    }, 10_000); // 10 seconds because uWS sometimes is not that precise with timeouts
 
     it("should be able to transfer data", done => {
       const socket = connect({

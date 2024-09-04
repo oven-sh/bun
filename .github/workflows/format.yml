@@ -23,5 +23,7 @@ jobs:
     name: Run format
     uses: ./.github/workflows/run-format.yml
     secrets: inherit
+    permissions:
+      contents: write
     with:
       zig-version: 0.13.0

@@ -431,12 +431,20 @@ for (const { name, connect } of tests) {
         port: 443,
         host: "bun.sh",
       });
+
+      const timer = setTimeout(() => {
+        socket.end();
+        done(new Error("timeout did not trigger"));
+      }, 8000);
       socket.setTimeout(1000, () => {
+        clearTimeout(timer);
         done();
         socket.end();
       });
 
       socket.on("error", err => {
+        clearTimeout(timer);
+
         socket.end();
         done(err);
       });

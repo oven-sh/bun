@@ -86,7 +86,8 @@ pub const PackCommand = struct {
         };
         defer ctx.allocator.free(original_cwd);
 
-        const load_from_disk_result = manager.lockfile.loadFromDisk(
+        var lockfile: Lockfile = undefined;
+        const load_from_disk_result = lockfile.loadFromDisk(
             manager,
             manager.allocator,
             manager.log,

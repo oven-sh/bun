@@ -36,11 +36,8 @@ const StrongImpl = opaque {
     extern fn Bun__StrongRef__clear(this: *StrongImpl) void;
 };
 
-// TODO: replace Compact with Strong.
-// We generally don't use the globalThis object from it.
-// so we can remove that pointer.
 pub const Strong = struct {
-    ref: Compact = .{},
+    ref: ?*StrongImpl = null,
     globalThis: ?*JSC.JSGlobalObject = null,
 
     pub fn init() Strong {
@@ -60,113 +57,66 @@ pub const Strong = struct {
         globalThis: *JSC.JSGlobalObject,
     ) Strong {
         if (value != .zero) {
-            return .{ .ref = Compact.create(value, globalThis), .globalThis = globalThis };
+            return .{ .ref = StrongImpl.init(globalThis, value), .globalThis = globalThis };
         }
 
         return .{ .globalThis = globalThis };
     }
 
     pub fn get(this: *const Strong) ?JSC.JSValue {
-        return this.ref.get();
+        var ref = this.ref orelse return null;
+        const result = ref.get();
+        if (result == .zero) {
+            return null;
+        }
+
+        return result;
     }
 
     pub fn swap(this: *Strong) JSC.JSValue {
-        return this.ref.swap();
+        var ref = this.ref orelse return .zero;
+        const result = ref.get();
+        if (result == .zero) {
+            return .zero;
+        }
+
+        ref.clear();
+        return result;
     }
 
     pub fn has(this: *Strong) bool {
-        return this.ref.has();
+        var ref = this.ref orelse return false;
+        return ref.get() != .zero;
     }
 
     pub fn trySwap(this: *Strong) ?JSC.JSValue {
-        return this.ref.trySwap();
+        const result = this.swap();
+        if (result == .zero) {
+            return null;
+        }
+
+        return result;
     }
 
     pub fn set(this: *Strong, globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) void {
-        this.ref.set(globalThis, value);
+        var ref: *StrongImpl = this.ref orelse {
+            if (value == .zero) return;
+            this.ref = StrongImpl.init(globalThis, value);
+            this.globalThis = globalThis;
+            return;
+        };
         this.globalThis = globalThis;
+        ref.set(globalThis, value);
     }
 
     pub fn clear(this: *Strong) void {
-        this.ref.clear();
+        var ref: *StrongImpl = this.ref orelse return;
+        ref.clear();
     }
 
     pub fn deinit(this: *Strong) void {
-        this.ref.deinit();
+        var ref: *StrongImpl = this.ref orelse return;
+        this.ref = null;
+        ref.deinit();
     }
-
-    pub const Compact = struct {
-        ref: ?*StrongImpl = null,
-
-        pub fn init() Compact {
-            return .{};
-        }
-
-        pub fn create(
-            value: JSC.JSValue,
-            globalThis: *JSC.JSGlobalObject,
-        ) Compact {
-            if (value != .zero) {
-                return .{ .ref = StrongImpl.init(globalThis, value) };
-            }
-
-            return .{};
-        }
-
-        pub fn get(this: *const Compact) ?JSC.JSValue {
-            var ref = this.ref orelse return null;
-            const result = ref.get();
-            if (result == .zero) {
-                return null;
-            }
-
-            return result;
-        }
-
-        pub fn swap(this: *Compact) JSC.JSValue {
-            var ref = this.ref orelse return .zero;
-            const result = ref.get();
-            if (result == .zero) {
-                return .zero;
-            }
-
-            ref.clear();
-            return result;
-        }
-
-        pub fn has(this: *Compact) bool {
-            var ref = this.ref orelse return false;
-            return ref.get() != .zero;
-        }
-
-        pub fn trySwap(this: *Compact) ?JSC.JSValue {
-            const result = this.swap();
-            if (result == .zero) {
-                return null;
-            }
-
-            return result;
-        }
-
-        pub fn set(this: *Compact, globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) void {
-            var ref: *StrongImpl = this.ref orelse {
-                if (value == .zero) return;
-                this.ref = StrongImpl.init(globalThis, value);
-                return;
-            };
-
-            ref.set(globalThis, value);
-        }
-
-        pub fn clear(this: *Compact) void {
-            var ref: *StrongImpl = this.ref orelse return;
-            ref.clear();
-        }
-
-        pub fn deinit(this: *Compact) void {
-            var ref: *StrongImpl = this.ref orelse return;
-            this.ref = null;
-            ref.deinit();
-        }
-    };
 };

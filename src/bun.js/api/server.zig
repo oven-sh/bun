@@ -1890,8 +1890,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         /// Defer finalization until after the request handler task is completed?
         defer_deinit_until_callback_completes: ?*bool = null,
 
-        on_fullfill_readable_stream_promise: JSC.Strong.Compact = .{},
-
         // TODO: support builtin compression
         const can_sendfile = !ssl_enabled and !Environment.isWindows;
 
@@ -2453,8 +2451,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             this.readable_stream_ref.deinit();
 
-            this.on_fullfill_readable_stream_promise.deinit();
-
             if (!this.pathname.isEmpty()) {
                 this.pathname.deref();
                 this.pathname = bun.String.empty;
@@ -2824,7 +2820,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             var this = pair.this;
             var stream = pair.stream;
             assert(this.server != null);
-            const globalThis: *JSC.JSGlobalObject = this.server.?.globalThis;
+            const globalThis = this.server.?.globalThis;
 
             if (this.isAbortedOrEnded()) {
                 stream.cancel(globalThis);
@@ -2855,18 +2851,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // we use this memory address to disable signals being sent
             signal.clear();
             assert(signal.isDead());
-
-            const jsc_vm = globalThis.bunVM();
-
-            const event_loop = jsc_vm.eventLoop();
-
-            event_loop.enter();
-            var did_exit_event_loop = false;
-            defer {
-                if (!did_exit_event_loop) {
-                    event_loop.exit();
-                }
-            }
 
             // We are already corked!
             const assignment_result: JSValue = ResponseStream.JSSink.assignToStream(
@@ -2913,70 +2897,55 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 // it returns a Promise when it goes through ReadableStreamDefaultReader
                 if (assignment_result.asAnyPromise()) |promise| {
                     streamLog("returned a promise", .{});
-                    var keep_promise_alive_while_microtask_queue_drains: JSC.Strong = .{};
-                    defer keep_promise_alive_while_microtask_queue_drains.deinit();
-                    var can_retry = event_loop.willDrainMicrotaskQueueOnExit();
-                    while (true) {
-                        switch (promise.status(globalThis.vm())) {
-                            .Pending => {
-                                if (can_retry) {
-                                    did_exit_event_loop = true;
-                                    can_retry = false;
-                                    keep_promise_alive_while_microtask_queue_drains.set(globalThis, assignment_result);
-                                    event_loop.drainMicrotasks();
-                                    continue;
-                                }
-                                streamLog("promise still Pending", .{});
-                                if (!this.flags.has_written_status) {
-                                    response_stream.sink.onFirstWrite = null;
-                                    response_stream.sink.ctx = null;
-                                    this.renderMetadata();
-                                }
+                    this.drainMicrotasks();
 
-                                // TODO: should this timeout?
-                                this.response_ptr.?.body.value = .{
-                                    .Locked = .{
-                                        .readable = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis),
-                                        .global = globalThis,
-                                    },
-                                };
-                                this.ref();
-                                this.on_fullfill_readable_stream_promise.set(globalThis, assignment_result);
-                                assignment_result.then(
-                                    globalThis,
-                                    this,
-                                    onResolveStream,
-                                    onRejectStream,
-                                );
-                                // the response_stream should be GC'd
+                    switch (promise.status(globalThis.vm())) {
+                        .Pending => {
+                            streamLog("promise still Pending", .{});
+                            if (!this.flags.has_written_status) {
+                                response_stream.sink.onFirstWrite = null;
+                                response_stream.sink.ctx = null;
+                                this.renderMetadata();
+                            }
 
-                            },
-                            .Fulfilled => {
-                                streamLog("promise Fulfilled", .{});
-                                var readable_stream_ref = this.readable_stream_ref;
-                                this.readable_stream_ref = .{};
-                                defer {
-                                    stream.done(globalThis);
-                                    readable_stream_ref.deinit();
-                                }
+                            // TODO: should this timeout?
+                            this.response_ptr.?.body.value = .{
+                                .Locked = .{
+                                    .readable = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis),
+                                    .global = globalThis,
+                                },
+                            };
+                            this.ref();
+                            assignment_result.then(
+                                globalThis,
+                                this,
+                                onResolveStream,
+                                onRejectStream,
+                            );
+                            // the response_stream should be GC'd
 
-                                this.handleResolveStream();
-                            },
-                            .Rejected => {
-                                streamLog("promise Rejected", .{});
-                                var readable_stream_ref = this.readable_stream_ref;
-                                this.readable_stream_ref = .{};
-                                defer {
-                                    stream.cancel(globalThis);
-                                    readable_stream_ref.deinit();
-                                }
-                                // Don't allow this to bubble up to the Promise rejection queue.
-                                promise.setHandled(globalThis.vm());
-                                this.handleRejectStream(globalThis, promise.result(globalThis.vm()));
-                            },
-                        }
+                        },
+                        .Fulfilled => {
+                            streamLog("promise Fulfilled", .{});
+                            var readable_stream_ref = this.readable_stream_ref;
+                            this.readable_stream_ref = .{};
+                            defer {
+                                stream.done(globalThis);
+                                readable_stream_ref.deinit();
+                            }
 
-                        break;
+                            this.handleResolveStream();
+                        },
+                        .Rejected => {
+                            streamLog("promise Rejected", .{});
+                            var readable_stream_ref = this.readable_stream_ref;
+                            this.readable_stream_ref = .{};
+                            defer {
+                                stream.cancel(globalThis);
+                                readable_stream_ref.deinit();
+                            }
+                            this.handleRejectStream(globalThis, promise.result(globalThis.vm()));
+                        },
                     }
                     return;
                 } else {
@@ -3282,11 +3251,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             var args = callframe.arguments(2);
             var req: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
             defer req.deref();
-            var on_fullfill_readable_stream_promise = req.on_fullfill_readable_stream_promise;
-            req.on_fullfill_readable_stream_promise = .{};
-            defer on_fullfill_readable_stream_promise.deinit();
             req.handleResolveStream();
-
             return JSValue.jsUndefined();
         }
         pub fn onRejectStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
@@ -3294,9 +3259,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             const args = callframe.arguments(2);
             var req = args.ptr[args.len - 1].asPromisePtr(@This());
             const err = args.ptr[0];
-            var on_fullfill_readable_stream_promise = req.on_fullfill_readable_stream_promise;
-            req.on_fullfill_readable_stream_promise = .{};
-            defer on_fullfill_readable_stream_promise.deinit();
             defer req.deref();
 
             req.handleRejectStream(globalThis, err);
@@ -4036,7 +3998,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn onRequestBodyReadableStreamAvailable(ptr: *anyopaque, globalThis: *JSC.JSGlobalObject, readable: JSC.WebCore.ReadableStream) void {
             var this = bun.cast(*RequestContext, ptr);
-            bun.debugAssert(!this.request_body_readable_stream_ref.held.has());
+            bun.debugAssert(this.request_body_readable_stream_ref.held.ref == null);
             this.request_body_readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable, globalThis);
         }
 

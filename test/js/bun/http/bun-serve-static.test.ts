@@ -1,5 +1,34 @@
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { fillRepeating, isWindows } from "harness";
+import { fillRepeating, isWindows, nodeExe } from "harness";
+import { join } from "path";
+
+const fetchNodeFixture = join(import.meta.dir, "fixtures", "fetch.node.fixture.js");
+function nodeFetch(url: string, method: string, label: string): Promise<Uint8Array | string | Blob> {
+  const process = Bun.spawn({
+    cmd: [nodeExe(), fetchNodeFixture],
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "inherit",
+    env: {
+      "URL": url,
+      "METHOD": method,
+      "LABEL": label,
+    },
+  });
+
+  return (Bun.readableStreamToBytes(process.stdout) as Promise<Uint8Array>).then(ouput => {
+    switch (method) {
+      case "arrayBuffer":
+        return ouput.buffer;
+      case "blob":
+        return new Blob([ouput], { type: "text/plain;charset=utf-8" });
+      case "text":
+        return new TextDecoder().decode(ouput);
+      default:
+        return ouput;
+    }
+  });
+}
 
 const routes = {
   "/foo": new Response("foo", {
@@ -102,69 +131,76 @@ describe("static", () => {
       expect(res.headers.get("Content-Length")).toBe(static_responses[path].size.toString());
       expect(handler.mock.calls.length, "Handler should not be called").toBe(previousCallCount);
     });
+    describe.each(["fetch", "node fetch"])("using %s", fetchType => {
+      describe.each(["access .body", "don't access .body"])("stress (%s)", label => {
+        test.each(["arrayBuffer", "blob", "bytes", "text"])(
+          "%s",
+          async method => {
+            const byteSize = static_responses[path][method]?.size;
 
-    describe.each(["access .body", "don't access .body"])("stress (%s)", label => {
-      test.each(["arrayBuffer", "blob", "bytes", "text"])(
-        "%s",
-        async method => {
-          const byteSize = static_responses[path][method]?.size;
+            const bytes = method === "blob" ? static_responses[path] : await static_responses[path][method]();
 
-          const bytes = method === "blob" ? static_responses[path] : await static_responses[path][method]();
+            // macOS limits backlog to 128.
+            // When we do the big request, reduce number of connections but increase number of iterations
+            const batchSize = Math.ceil((byteSize > 1024 * 1024 ? 48 : 64) / (isWindows ? 8 : 1));
+            const iterations = Math.ceil((byteSize > 1024 * 1024 ? 10 : 12) / (isWindows ? 8 : 1));
 
-          // macOS limits backlog to 128.
-          // When we do the big request, reduce number of connections but increase number of iterations
-          const batchSize = Math.ceil((byteSize > 1024 * 1024 ? 48 : 64) / (isWindows ? 8 : 1));
-          const iterations = Math.ceil((byteSize > 1024 * 1024 ? 10 : 12) / (isWindows ? 8 : 1));
+            async function iterate() {
+              const array = new Array(batchSize);
+              const route = `${server.url}${path.substring(1)}`;
+              for (let i = 0; i < batchSize; i++) {
+                if (fetchType === "fetch") {
+                  array[i] = fetch(route)
+                    .then(res => {
+                      expect(res.status).toBe(200);
+                      expect(res.url).toBe(route);
+                      if (label === "access .body") {
+                        res.body;
+                      }
+                      return res[method]();
+                    })
+                    .then(output => {
+                      expect(output).toStrictEqual(bytes);
+                    });
+                } else {
+                  array[i] = nodeFetch(route, method, label).then(output => {
+                    expect(output).toStrictEqual(bytes);
+                  });
+                }
+              }
 
-          async function iterate() {
-            let array = new Array(batchSize);
-            const route = `${server.url}${path.substring(1)}`;
-            for (let i = 0; i < batchSize; i++) {
-              array[i] = fetch(route)
-                .then(res => {
-                  expect(res.status).toBe(200);
-                  expect(res.url).toBe(route);
-                  if (label === "access .body") {
-                    res.body;
-                  }
-                  return res[method]();
-                })
-                .then(output => {
-                  expect(output).toStrictEqual(bytes);
-                });
+              await Promise.all(array);
+
+              Bun.gc();
             }
 
-            await Promise.all(array);
+            for (let i = 0; i < iterations; i++) {
+              await iterate();
+            }
 
-            Bun.gc();
-          }
+            Bun.gc(true);
+            const baseline = (process.memoryUsage.rss() / 1024 / 1024) | 0;
+            let lastRSS = baseline;
+            console.log("Start RSS", baseline);
+            for (let i = 0; i < iterations; i++) {
+              await iterate();
+              const rss = (process.memoryUsage.rss() / 1024 / 1024) | 0;
+              if (lastRSS + 50 < rss) {
+                console.log("RSS Growth", rss - lastRSS);
+              }
+              lastRSS = rss;
+            }
+            Bun.gc(true);
 
-          for (let i = 0; i < iterations; i++) {
-            await iterate();
-          }
-
-          Bun.gc(true);
-          const baseline = (process.memoryUsage.rss() / 1024 / 1024) | 0;
-          let lastRSS = baseline;
-          console.log("Start RSS", baseline);
-          for (let i = 0; i < iterations; i++) {
-            await iterate();
             const rss = (process.memoryUsage.rss() / 1024 / 1024) | 0;
-            if (lastRSS + 50 < rss) {
-              console.log("RSS Growth", rss - lastRSS);
-            }
-            lastRSS = rss;
-          }
-          Bun.gc(true);
-
-          const rss = (process.memoryUsage.rss() / 1024 / 1024) | 0;
-          expect(rss).toBeLessThan(4092);
-          const delta = rss - baseline;
-          console.log("Final RSS", rss);
-          console.log("Delta RSS", delta);
-        },
-        40 * 1000,
-      );
+            expect(rss).toBeLessThan(4092);
+            const delta = rss - baseline;
+            console.log("Final RSS", rss);
+            console.log("Delta RSS", delta);
+          },
+          40 * 1000,
+        );
+      });
     });
   });
 

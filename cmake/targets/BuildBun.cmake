@@ -561,24 +561,9 @@ endif()
 
 # --- Dependencies ---
 
-include(BuildBrotli)
-include(BuildBoringSSL)
-include(BuildCares)
-include(BuildLibArchive)
-include(BuildLibDeflate)
-include(BuildLolHtml)
-include(BuildLshpack)
-include(BuildMimalloc)
-include(BuildTinyCC)
-include(BuildZlib)
-include(BuildZstd)
-
-if(WIN32)
-  include(BuildLibuv)
-endif()
+include(BuildDependencies)
 
 if(USE_STATIC_SQLITE)
-  include(BuildSQLite)
   target_compile_definitions(${bun} PRIVATE "LAZY_LOAD_SQLITE=0")
 else()
   target_compile_definitions(${bun} PRIVATE "LAZY_LOAD_SQLITE=1")
@@ -595,24 +580,24 @@ endif()
 # --- Linking ---
 
 # Since linking locks the file, we need to kill all instances of bun before linking.
-if(WIN32)
-  find_command(
-    VARIABLE
-      POWERSHELL_EXECUTABLE
-    COMMAND
-      pwsh
-      powershell
-  )
-  register_command(
-    TARGET
-      ${bun}
-    TARGET_PHASE
-      PRE_LINK
-    COMMAND
-      ${POWERSHELL_EXECUTABLE} /C
-      "Stop-Process -Name '${bun}' -Force -ErrorAction SilentlyContinue"
-  )
-endif()
+# if(WIN32)
+#   find_command(
+#     VARIABLE
+#       POWERSHELL_EXECUTABLE
+#     COMMAND
+#       pwsh
+#       powershell
+#   )
+#   register_command(
+#     TARGET
+#       ${bun}
+#     TARGET_PHASE
+#       PRE_LINK
+#     COMMAND
+#       ${POWERSHELL_EXECUTABLE} /C
+#       "Stop-Process -Name '${bun}' -Force -ErrorAction SilentlyContinue"
+#   )
+# endif()
 
 # --- Packaging ---
 

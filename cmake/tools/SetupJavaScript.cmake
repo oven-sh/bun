@@ -30,6 +30,4 @@ register_command(
     ${CWD}/package.json
   OUTPUTS
     ${ESBUILD_EXECUTABLE}
-  BYPRODUCTS
-    ${CWD}/bun.lockb
 )

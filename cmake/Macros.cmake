@@ -261,8 +261,8 @@ function(register_command)
     endif()
     list(APPEND CMD_EFFECTIVE_OUTPUTS ${artifact})
     if(BUILDKITE)
-      file(RELATIVE_PATH filename ${CMD_CWD} ${artifact})
-      list(APPEND CMD_COMMANDS COMMAND buildkite-agent artifact upload ${filename})
+      file(RELATIVE_PATH filename ${BUILD_PATH} ${artifact})
+      list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} buildkite-agent artifact upload ${filename})
     endif()
   endforeach()
 
@@ -275,7 +275,6 @@ function(register_command)
   endif()
 
   if(CMD_TARGET_PHASE)
-    message(STATUS "register_command: target: ${CMD_TARGET} phase: ${CMD_TARGET_PHASE} commands: ${CMD_COMMANDS} outputs: ${CMD_EFFECTIVE_OUTPUTS} artifacts: ${CMD_EFFECTIVE_ARTIFACTS}")
     if(NOT CMD_TARGET)
       message(FATAL_ERROR "register_command: TARGET is required when TARGET_PHASE is set")
     endif()
@@ -435,8 +434,6 @@ function(register_bun_install)
       ${NPM_CWD}/package.json
     OUTPUTS
       ${NPM_NODE_MODULES}
-    BYPRODUCTS
-      ${NPM_CWD}/bun.lockb
   )
 
   set(${NPM_NODE_MODULES_VARIABLE} ${NPM_NODE_MODULES} PARENT_SCOPE)
@@ -591,10 +588,11 @@ function(register_cmake_command)
   endforeach()
 
   register_command(
+    COMMENT "Configuring ${MAKE_TARGET}"
     TARGET configure-${MAKE_TARGET}
     COMMAND ${CMAKE_COMMAND} ${MAKE_EFFECTIVE_ARGS}
     CWD ${MAKE_CWD}
-    ALWAYS_RUN
+    OUTPUTS ${MAKE_BUILD_PATH}/CMakeCache.txt
   )
 
   if(TARGET clone-${MAKE_TARGET})
@@ -640,6 +638,7 @@ function(register_cmake_command)
   endforeach()
 
   register_command(
+    COMMENT "Building ${MAKE_TARGET}"
     TARGET ${MAKE_TARGET}
     TARGETS configure-${MAKE_TARGET}
     COMMAND ${CMAKE_COMMAND} ${MAKE_BUILD_ARGS}

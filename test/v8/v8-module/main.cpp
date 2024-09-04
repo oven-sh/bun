@@ -382,14 +382,19 @@ static Local<Object> setup_object_with_string_field(Isolate *isolate,
   return ehs.Escape(o);
 }
 
-static void examine_object_fields(Isolate *isolate, Local<Object> o) {
+static void examine_object_fields(Isolate *isolate, Local<Object> o,
+                                  int expected_field0, int expected_field1) {
   char buf[16];
   HandleScope hs(isolate);
   o->GetInternalField(0).As<String>()->WriteUtf8(isolate, buf);
+  assert(atoi(buf) == expected_field0);
 
-  Local<Data> field1 = o->GetInternalField(1);
-  if (field1.As<Value>()->IsString()) {
+  Local<Value> field1 = o->GetInternalField(1).As<Value>();
+  if (field1->IsString()) {
     field1.As<String>()->WriteUtf8(isolate, buf);
+    assert(atoi(buf) == expected_field1);
+  } else {
+    assert(field1->IsUndefined());
   }
 }
 
@@ -425,7 +430,7 @@ void test_handle_scope_gc(const FunctionCallbackInfo<Value> &info) {
   // this should cause GC to start looking for objects to free
   // after each big string allocation, we try reading all of the strings we
   // created above to ensure they are still alive
-  constexpr size_t num_strings = 100;
+  constexpr size_t num_strings = 50;
   constexpr size_t string_size = 20 * 1000 * 1000;
 
   auto string_data = new char[string_size];
@@ -442,10 +447,12 @@ void test_handle_scope_gc(const FunctionCallbackInfo<Value> &info) {
     for (size_t j = 0; j < num_small_allocs; j++) {
       char buf[16];
       mini_strings[j]->WriteUtf8(isolate, buf);
+      assert(atoi(buf) == (int)j);
     }
 
     for (size_t j = 0; j < num_small_allocs; j++) {
-      examine_object_fields(isolate, objects[j]);
+      examine_object_fields(isolate, objects[j], j + num_small_allocs,
+                            j + 2 * num_small_allocs);
     }
 
     if (i == 1) {
@@ -461,6 +468,14 @@ void test_handle_scope_gc(const FunctionCallbackInfo<Value> &info) {
             String::NewFromUtf8(isolate, cpp_str.c_str()).ToLocalChecked();
         o->SetInternalField(1, field);
       }
+    }
+  }
+
+  memset(string_data, 0, string_size);
+  for (size_t i = 0; i < num_strings; i++) {
+    huge_strings[i]->WriteUtf8(isolate, string_data);
+    for (size_t j = 0; j < string_size - 1; j++) {
+      assert(string_data[j] == (char)(i + 1));
     }
   }
 

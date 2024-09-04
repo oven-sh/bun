@@ -21,10 +21,10 @@
 
 // Tests adapted from https://github.com/nodejs/node/blob/main/test/parallel/test-util.js
 
-import { expect, describe, it } from "bun:test";
-import util from "util";
 import assert from "assert";
+import { describe, expect, it } from "bun:test";
 import "harness";
+import util from "util";
 // const context = require('vm').runInNewContext; // TODO: Use a vm polyfill
 
 const strictEqual = (...args) => {

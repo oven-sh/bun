@@ -1,4 +1,4 @@
-import { describe, expect, test, it, beforeAll, setDefaultTimeout } from "bun:test";
+import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
 import * as fs from "node:fs";

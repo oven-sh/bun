@@ -76,4 +76,4 @@ var __ImportKind;
   __ImportKind = ImportKind;
 }
 
-export { __ResolveLog as ResolveMessage, __BuildLog as BuildMessage, __ImportKind as ImportKind };
+export { __BuildLog as BuildMessage, __ImportKind as ImportKind, __ResolveLog as ResolveMessage };

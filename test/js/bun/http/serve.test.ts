@@ -1,25 +1,14 @@
 import { file, gc, Serve, serve, Server } from "bun";
-import { afterEach, describe, it, expect, afterAll, mock } from "bun:test";
+import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, dumpStats, isIPv4, isIPv6, isPosix, tls, tmpdirSync } from "harness";
 import { join, resolve } from "path";
-import {
-  bunExe,
-  bunEnv,
-  dumpStats,
-  isPosix,
-  isIPv6,
-  tmpdirSync,
-  isIPv4,
-  rejectUnauthorizedScope,
-  tls,
-  isWindows,
-} from "harness";
 // import { renderToReadableStream } from "react-dom/server";
 // import app_jsx from "./app.jsx";
-import { spawn } from "child_process";
-import { tmpdir } from "os";
 import { heapStats } from "bun:jsc";
+import { spawn } from "child_process";
 import net from "node:net";
+import { tmpdir } from "os";
 
 let renderToReadableStream: any = null;
 let app_jsx: any = null;

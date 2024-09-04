@@ -1,5 +1,5 @@
+import { bunEnv, bunExe } from "harness";
 import path from "path";
-import { bunExe, bunEnv } from "harness";
 
 test("works with prompts", async () => {
   var child = Bun.spawn({

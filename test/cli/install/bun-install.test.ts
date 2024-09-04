@@ -1,8 +1,7 @@
-import { $ } from "bun";
 import { file, listen, Socket, spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it, describe, test, setDefaultTimeout } from "bun:test";
-import { bunExe, bunEnv as env, toBeValidBin, toHaveBins, toBeWorkspaceLink, tempDirWithFiles, bunEnv } from "harness";
-import { access, mkdir, readlink as readlink, realpath, rm, writeFile } from "fs/promises";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { access, mkdir, readlink, rm, writeFile } from "fs/promises";
+import { bunEnv, bunExe, bunEnv as env, tempDirWithFiles, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
 import { join, sep } from "path";
 import {
   dummyAfterAll,

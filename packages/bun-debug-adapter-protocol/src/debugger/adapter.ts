@@ -1,13 +1,13 @@
-import type { DAP } from "../protocol";
-import type { JSC } from "../../../bun-inspector-protocol/src/protocol";
 import type { InspectorEventMap } from "../../../bun-inspector-protocol/src/inspector";
+import type { JSC } from "../../../bun-inspector-protocol/src/protocol";
+import type { DAP } from "../protocol";
 // @ts-ignore
-import { WebSocketInspector, remoteObjectToString } from "../../../bun-inspector-protocol/index";
 import type { ChildProcess } from "node:child_process";
 import { spawn } from "node:child_process";
-import { Location, SourceMap } from "./sourcemap";
 import { EventEmitter } from "node:events";
+import { WebSocketInspector, remoteObjectToString } from "../../../bun-inspector-protocol/index";
 import { UnixSignal, randomUnixPath } from "./signal";
+import { Location, SourceMap } from "./sourcemap";
 
 const capabilities: DAP.Capabilities = {
   supportsConfigurationDoneRequest: true,

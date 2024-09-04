@@ -1,8 +1,8 @@
 "use strict";
 
-import { createServer } from "node:http";
+import { expect, test } from "bun:test";
 import { once } from "node:events";
-import { test, expect } from "bun:test";
+import { createServer } from "node:http";
 
 test.todo("Headers retain keys case-sensitive", async () => {
   await using server = createServer((req, res) => {

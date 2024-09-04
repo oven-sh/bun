@@ -1,19 +1,19 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
-import { platform } from "os";
 import { isGlibcVersionAtLeast } from "harness";
+import { platform } from "os";
 
 import {
+  dlopen as _dlopen,
   CFunction,
   CString,
-  dlopen as _dlopen,
   JSCallback,
   ptr,
   read,
+  suffix,
   toArrayBuffer,
   toBuffer,
   viewSource,
-  suffix,
 } from "bun:ffi";
 
 const dlopen = (...args) => {

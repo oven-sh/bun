@@ -1,5 +1,5 @@
-import { describe, test, expect, beforeAll } from "bun:test";
 import { spawnSync } from "bun";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 let cwd: string;

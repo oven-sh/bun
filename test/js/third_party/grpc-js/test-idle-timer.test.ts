@@ -15,10 +15,10 @@
  *
  */
 
-import * as assert from "assert";
 import * as grpc from "@grpc/grpc-js";
+import * as assert from "assert";
+import { afterAll, afterEach, beforeAll, describe, it } from "bun:test";
 import { TestClient, TestServer } from "./common";
-import { describe, it, afterAll, afterEach, beforeAll } from "bun:test";
 
 ["h2", "h2c"].forEach(protocol => {
   describe("Channel idle timer", () => {

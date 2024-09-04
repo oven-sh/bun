@@ -1,6 +1,6 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
-import { Password, password } from "bun";
+import { password } from "bun";
 
 const placeholder = "hey";
 

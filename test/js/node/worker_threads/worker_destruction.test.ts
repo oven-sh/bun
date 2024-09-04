@@ -1,7 +1,6 @@
-import { test, describe, expect } from "bun:test";
-import { $ } from "bun";
-import { join } from "path";
+import { describe, expect, test } from "bun:test";
 import "harness";
+import { join } from "path";
 
 describe("Worker destruction", () => {
   const method = ["Bun.connect", "Bun.listen"];

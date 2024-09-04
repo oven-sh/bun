@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { heapStats } from "bun:jsc";
-import { it, expect } from "bun:test";
+import { expect, it } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import path from "node:path";
 

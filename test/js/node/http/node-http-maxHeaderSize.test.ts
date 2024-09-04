@@ -1,7 +1,7 @@
+import { expect, test } from "bun:test";
+import { bunEnv } from "harness";
 import http from "node:http";
 import path from "path";
-import { test, expect } from "bun:test";
-import { bunEnv } from "harness";
 
 test("maxHeaderSize", async () => {
   const originalMaxHeaderSize = http.maxHeaderSize;

@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("error.cause", () => {
   const err = new Error("error 1");

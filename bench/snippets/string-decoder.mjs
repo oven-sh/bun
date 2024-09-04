@@ -1,5 +1,5 @@
-import { bench, run } from "./runner.mjs";
 import { StringDecoder } from "string_decoder";
+import { bench, run } from "./runner.mjs";
 
 var short = Buffer.from("Hello World!");
 var shortUTF16 = Buffer.from("Hello World 💕💕💕");

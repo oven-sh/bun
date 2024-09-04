@@ -1,6 +1,6 @@
 // @runtime node, bun
-import { bench, run } from "./runner.mjs";
 import * as vm from "node:vm";
+import { bench, run } from "./runner.mjs";
 
 const context = {
   animal: "cat",

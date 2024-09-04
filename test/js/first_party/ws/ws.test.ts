@@ -1,7 +1,7 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, nodeExe } from "harness";
+import { bunEnv, bunExe } from "harness";
 import path from "node:path";
 import { Server, WebSocket, WebSocketServer } from "ws";
 

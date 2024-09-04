@@ -13,4 +13,4 @@ if (buildTypeFlag) {
 }
 let buildType = buildTypeFlag ? BuildType[buildTypeFlag.split("=")[1].toLowerCase()] : BuildType.release;
 
-export { buildType, BuildType };
+export { BuildType, buildType };

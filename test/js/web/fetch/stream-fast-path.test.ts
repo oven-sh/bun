@@ -1,11 +1,11 @@
-import { test, expect, describe } from "bun:test";
 import {
-  readableStreamToBlob,
   readableStreamToArrayBuffer,
+  readableStreamToBlob,
   readableStreamToBytes,
-  readableStreamToText,
   readableStreamToJSON,
+  readableStreamToText,
 } from "bun";
+import { describe, expect, test } from "bun:test";
 
 describe("ByteBlobLoader", () => {
   const blobs = [

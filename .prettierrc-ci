@@ -4,9 +4,14 @@
   "trailingComma": "all",
   "useTabs": false,
   "quoteProps": "preserve",
+  "plugins": [
+    "prettier-plugin-organize-imports"
+  ],
   "overrides": [
     {
-      "files": [".vscode/*.json"],
+      "files": [
+        ".vscode/*.json"
+      ],
       "options": {
         "parser": "jsonc",
         "quoteProps": "preserve",
@@ -15,7 +20,9 @@
       }
     },
     {
-      "files": ["*.md"],
+      "files": [
+        "*.md"
+      ],
       "options": {
         "printWidth": 80
       }

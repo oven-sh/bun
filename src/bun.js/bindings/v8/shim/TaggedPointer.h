@@ -11,8 +11,10 @@ namespace v8 {
 namespace shim {
 
 struct TaggedPointer {
+private:
     uintptr_t m_value;
 
+public:
     enum class Type : uint8_t {
         Smi,
         StrongPointer,
@@ -36,11 +38,18 @@ struct TaggedPointer {
     {
     }
 
+    // Convert the raw integer representation of a tagged pointer into a TaggedPointer struct
     static TaggedPointer fromRaw(uintptr_t raw)
     {
         TaggedPointer tagged;
         tagged.m_value = raw;
         return tagged;
+    }
+
+    // Get a pointer to where this TaggedPointer is located
+    uintptr_t* asRawPtr()
+    {
+        return &m_value;
     }
 
     Type type() const

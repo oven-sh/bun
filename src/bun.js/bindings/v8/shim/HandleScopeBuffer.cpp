@@ -34,7 +34,7 @@ void HandleScopeBuffer::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     for (auto& handle : thisObject->m_storage) {
         if (handle.isCell()) {
-            visitor.append(handle.m_object.m_contents.cell);
+            visitor.append(handle.asCell());
         }
     }
 }
@@ -52,21 +52,21 @@ TaggedPointer* HandleScopeBuffer::createHandle(JSCell* ptr, const Map* map, JSC:
 {
     auto& handle = createEmptyHandle();
     handle = Handle(map, ptr, vm, this);
-    return &handle.m_toV8Object;
+    return handle.slot();
 }
 
 TaggedPointer* HandleScopeBuffer::createSmiHandle(int32_t smi)
 {
     auto& handle = createEmptyHandle();
     handle = Handle(smi);
-    return &handle.m_toV8Object;
+    return handle.slot();
 }
 
 TaggedPointer* HandleScopeBuffer::createDoubleHandle(double value)
 {
     auto& handle = createEmptyHandle();
     handle = Handle(value);
-    return &handle.m_toV8Object;
+    return handle.slot();
 }
 
 TaggedPointer* HandleScopeBuffer::createHandleFromExistingObject(TaggedPointer address, Isolate* isolate, Handle* reuseHandle)
@@ -75,7 +75,7 @@ TaggedPointer* HandleScopeBuffer::createHandleFromExistingObject(TaggedPointer a
     if (address.getSmi(smi)) {
         if (reuseHandle) {
             *reuseHandle = Handle(smi);
-            return &reuseHandle->m_toV8Object;
+            return reuseHandle->slot();
         } else {
             return createSmiHandle(smi);
         }
@@ -92,7 +92,7 @@ TaggedPointer* HandleScopeBuffer::createHandleFromExistingObject(TaggedPointer a
         }
         if (reuseHandle) {
             *reuseHandle = Handle(v8_object->map(), v8_object->asCell(), vm(), this);
-            return &reuseHandle->m_toV8Object;
+            return reuseHandle->slot();
         } else {
             return createHandle(v8_object->asCell(), v8_object->map(), vm());
         }

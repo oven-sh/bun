@@ -6,7 +6,7 @@
 namespace v8 {
 namespace shim {
 
-class ObjectLayout {
+struct ObjectLayout {
 private:
     // these two fields are laid out so that V8 can find the map
     TaggedPointer m_taggedMap;
@@ -128,6 +128,17 @@ struct Handle {
         }
     }
 
+    TaggedPointer* slot()
+    {
+        return &m_toV8Object;
+    }
+
+    JSC::WriteBarrier<JSC::JSCell> asCell() const
+    {
+        return m_object.m_contents.cell;
+    }
+
+private:
     // if not SMI, holds &this->map so that V8 can see what kind of object this is
     TaggedPointer m_toV8Object;
     ObjectLayout m_object;

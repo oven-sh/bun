@@ -27,7 +27,7 @@ uintptr_t* HandleScope::CreateHandle(internal::Isolate* i_isolate, uintptr_t val
     auto* handleScope = isolate->globalInternals()->currentHandleScope();
     TaggedPointer* newSlot = handleScope->m_buffer->createHandleFromExistingObject(TaggedPointer::fromRaw(value), isolate);
     // basically a reinterpret
-    return &newSlot->m_value;
+    return newSlot->asRawPtr();
 }
 
 } // namespace v8

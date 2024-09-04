@@ -1088,8 +1088,10 @@ pub const PackCommand = struct {
 
         libarchive.archive_entry_set_pathname_utf8(entry, package_prefix ++ "package.json");
         libarchive.archive_entry_set_size(entry, @intCast(edited_package_json.len));
-        libarchive.archive_entry_set_filetype(entry, std.posix.S.IFREG);
-        libarchive.archive_entry_set_perm(entry, stat.mode);
+        // https://github.com/libarchive/libarchive/blob/898dc8319355b7e985f68a9819f182aaed61b53a/libarchive/archive_entry.h#L185
+        libarchive.archive_entry_set_filetype(entry, 0o100000);
+        // TODO: is this correct on windows?
+        libarchive.archive_entry_set_perm(entry, @intCast(stat.mode));
         // '1985-10-26T08:15:00.000Z'
         // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L28
         libarchive.archive_entry_set_mtime(entry, 499162500, 0);
@@ -1123,13 +1125,16 @@ pub const PackCommand = struct {
             Output.err(err, "failed to stat file: {}", .{file.handle});
             Global.crash();
         };
-        libarchive.archive_entry_set_size(entry, stat.size);
-        libarchive.archive_entry_set_filetype(entry, std.posix.S.IFREG);
+        libarchive.archive_entry_set_size(entry, @intCast(stat.size));
 
-        var perm: bun.Mode = stat.mode;
+        // https://github.com/libarchive/libarchive/blob/898dc8319355b7e985f68a9819f182aaed61b53a/libarchive/archive_entry.h#L185
+        libarchive.archive_entry_set_filetype(entry, 0o100000);
+
+        var perm: bun.Mode = @intCast(stat.mode);
         // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L20
         if (isPackageBin(bins, filename)) perm |= 0o111;
-        libarchive.archive_entry_set_perm(entry, perm);
+        // TODO: is this correct on windows?
+        libarchive.archive_entry_set_perm(entry, @intCast(perm));
 
         // '1985-10-26T08:15:00.000Z'
         // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L28

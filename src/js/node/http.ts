@@ -1295,7 +1295,8 @@ function drainHeadersIfObservable() {
 }
 
 ServerResponse.prototype._final = function (callback) {
-  const shouldEmitClose = !this[finishedSymbol];
+  const req = this.req;
+  const shouldEmitClose = req && req.emit && !this[finishedSymbol];
 
   if (!this.headersSent) {
     var data = this[firstWriteSymbol] || "";
@@ -1310,7 +1311,6 @@ ServerResponse.prototype._final = function (callback) {
       }),
     );
     if (shouldEmitClose) {
-      const req = this.req;
       req.complete = true;
       req.emit("close");
     }
@@ -1322,7 +1322,6 @@ ServerResponse.prototype._final = function (callback) {
   ensureReadableStreamController.$call(this, controller => {
     controller.end();
     if (shouldEmitClose) {
-      const req = this.req;
       req.complete = true;
       req.emit("close");
     }

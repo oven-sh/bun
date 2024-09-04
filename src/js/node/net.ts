@@ -133,7 +133,8 @@ const Socket = (function (InternalSocket) {
         const self = socket.data;
         if (!self) return;
 
-        socket.timeout(self.timeout);
+        socket.timeout(Math.ceil(self.timeout / 1000));
+
         if (self.#unrefOnConnected) socket.unref();
         self[bunSocketInternal] = socket;
         self.connecting = false;
@@ -434,7 +435,7 @@ const Socket = (function (InternalSocket) {
     #attach(port, socket) {
       this.remotePort = port;
       socket.data = this;
-      socket.timeout(this.timeout);
+      socket.timeout(Math.ceil(this.timeout / 1000));
       if (this.#unrefOnConnected) socket.unref();
       this[bunSocketInternal] = socket;
       this.connecting = false;
@@ -589,7 +590,6 @@ const Socket = (function (InternalSocket) {
                 const [raw, tls] = result;
                 // replace socket
                 connection[bunSocketInternal] = raw;
-                raw.timeout(raw.timeout);
                 this.once("end", this.#closeRawConnection);
                 raw.connecting = false;
                 this[bunSocketInternal] = tls;
@@ -615,7 +615,6 @@ const Socket = (function (InternalSocket) {
                   const [raw, tls] = result;
                   // replace socket
                   connection[bunSocketInternal] = raw;
-                  raw.timeout(raw.timeout);
                   this.once("end", this.#closeRawConnection);
                   raw.connecting = false;
                   this[bunSocketInternal] = tls;

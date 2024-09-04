@@ -427,9 +427,7 @@ for (const { name, connect } of tests) {
     });
 
     it("should timeout", done => {
-      let socket = connect(443, "bun.sh", {
-        rejectUnauthorized: false,
-      });
+      const socket = connect(443, "bun.sh");
       socket.setTimeout(1000, () => {
         done();
         socket.end();

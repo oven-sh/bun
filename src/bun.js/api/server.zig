@@ -3873,12 +3873,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     );
                 } else {
                     var strong = this.request_body_readable_stream_ref;
+                    this.request_body_readable_stream_ref = .{};
                     defer strong.deinit();
                     if (this.request_body) |request_body| {
                         _ = request_body.unref();
                         this.request_body = null;
                     }
-                    this.request_body_readable_stream_ref = .{};
+
                     readable.value.ensureStillAlive();
                     readable.ptr.Bytes.onData(
                         .{

@@ -18,12 +18,17 @@ const server = Bun.serve({
       await req.text();
     } else if (url.endsWith("/streaming")) {
       const reader = req.body?.getReader();
+      const reader = req.body?.getReader({ mode: "byob" });
+      let iter = 0;
+      const buffer = new Uint8Array(64 * 1024);
       while (reader) {
-        const { done, value } = await reader?.read();
         if (done) {
           break;
         }
+        console.log("Chunk", value.byteLength);
+        iter++;
       }
+      console.log("Chunks", iter);
     } else if (url.endsWith("/incomplete-streaming")) {
       const reader = req.body?.getReader();
       if (!reader) {
@@ -39,4 +44,5 @@ const server = Bun.serve({
     return new Response("Ok");
   },
 });
-process.send(server.url.href);
+console.log(server.url.href);
+process.send?.(server.url.href);

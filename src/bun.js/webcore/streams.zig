@@ -4443,14 +4443,18 @@ pub const ByteStream = struct {
         }
 
         if (this.has_received_last_chunk) {
-            return .{ .chunk_size = @min(1024 * 1024 * 2, this.buffer.items.len) };
+            return .{ .owned_and_done = bun.ByteList.fromList(this.buffer.moveToUnmanaged()) };
         }
 
         if (this.highWaterMark == 0) {
             return .{ .ready = {} };
         }
 
-        return .{ .chunk_size = @max(this.highWaterMark, std.mem.page_size) };
+        // For HTTP, the maximum streaming response body size will be 512 KB.
+        // #define LIBUS_RECV_BUFFER_LENGTH 524288
+        // For HTTPS, the size is probably quite a bit lower like 64 KB due to TLS transmission.
+        // We add 1 extra page size so that if there's a little bit of excess buffered data, we avoid extra allocations.
+        return .{ .chunk_size = @min(512 * 1024 + std.mem.page_size, @max(this.highWaterMark, std.mem.page_size)) };
     }
 
     pub fn value(this: *@This()) JSValue {

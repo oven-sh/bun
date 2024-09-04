@@ -70,7 +70,7 @@ pub const MediaList = struct {
         return MediaList{ .media_queries = media_queries };
     }
 
-    pub fn toCss(this: *const MediaList, comptime W: type, dest: *css.Printer(W)) css.PrintResult(void) {
+    pub fn toCss(this: *const MediaList, comptime W: type, dest: *css.Printer(W)) PrintErr!void {
         if (this.media_queries.items.len == 0) {
             return dest.writeStr("not all");
         }
@@ -78,12 +78,12 @@ pub const MediaList = struct {
         var first = true;
         for (this.media_queries.items) |*query| {
             if (!first) {
-                if (dest.delim(',', false).asErr()) |e| return .{ .err = e };
+                try dest.delim(',', false);
             }
             first = false;
-            if (query.toCss(W, dest).asErr()) |e| return .{ .err = e };
+            try query.toCss(W, dest);
         }
-        return PrintResult(void).success;
+        return;
     }
 
     /// Returns whether the media query list always matches.
@@ -158,10 +158,10 @@ pub const MediaQuery = struct {
         };
     }
 
-    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintResult(void) {
+    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
         if (this.qualifier) |qual| {
-            if (qual.toCss(W, dest).asErr()) |e| return .{ .err = e };
-            if (dest.writeChar(' ').asErr()) |e| return .{ .err = e };
+            try qual.toCss(W, dest);
+            try dest.writeChar(' ');
         }
 
         switch (this.media_type) {
@@ -172,17 +172,17 @@ pub const MediaQuery = struct {
                 // Otherwise, we'd serialize media queries like "(min-width:
                 // 40px)" in "all (min-width: 40px)", which is unexpected.
                 if (this.qualifier != null or this.condition != null) {
-                    if (dest.writeStr("all").asErr()) |e| return .{ .err = e };
+                    try dest.writeStr("all");
                 }
             },
             .print => {
-                if (dest.writeStr("print").asErr()) |e| return .{ .err = e };
+                try dest.writeStr("print");
             },
             .screen => {
-                if (dest.writeStr("screen").asErr()) |e| return .{ .err = e };
+                try dest.writeStr("screen");
             },
             .custom => |desc| {
-                if (dest.writeStr(desc).asErr()) |e| return .{ .err = e };
+                try dest.writeStr(desc);
             },
         }
 
@@ -211,15 +211,15 @@ pub fn toCssWithParensIfNeeded(
     comptime W: type,
     dest: *Printer(W),
     needs_parens: bool,
-) PrintResult(void) {
+) PrintErr!void {
     if (needs_parens) {
-        if (dest.writeChar('(').asErr()) |e| return .{ .err = e };
+        try dest.writeChar('(');
     }
-    if (v.toCss(W, dest).asErr()) |e| return .{ .err = e };
+    try v.toCss(W, dest);
     if (needs_parens) {
-        if (dest.writeChar(')').asErr()) |e| return .{ .err = e };
+        try dest.writeChar(')');
     }
-    return PrintResult(void).success;
+    return;
 }
 
 /// A [media query qualifier](https://drafts.csswg.org/mediaqueries/#mq-prefix).
@@ -261,18 +261,18 @@ pub const MediaType = union(enum) {
     }
 };
 
-pub fn operationToCss(comptime QueryCondition: type, operator: Operator, conditions: *const ArrayList(QueryCondition), comptime W: type, dest: *Printer(W)) PrintResult(void) {
+pub fn operationToCss(comptime QueryCondition: type, operator: Operator, conditions: *const ArrayList(QueryCondition), comptime W: type, dest: *Printer(W)) PrintErr!void {
     ValidQueryCondition(QueryCondition);
     const first = &conditions.items[0];
-    if (toCssWithParensIfNeeded(first, W, dest, first.needsParens(operator, &dest.targets)).asErr()) |e| return .{ .err = e };
+    try toCssWithParensIfNeeded(first, W, dest, first.needsParens(operator, &dest.targets));
     if (conditions.items.len == 1) return;
     for (conditions.items[1..]) |*item| {
-        if (dest.writeChar(' ').asErr()) |e| return .{ .err = e };
-        if (operator.toCss(W, dest).asErr()) |e| return .{ .err = e };
-        if (dest.writeChar(' ').asErr()) |e| return .{ .err = e };
-        if (toCssWithParensIfNeeded(item, W, dest, item.needsParens(operator, &dest.targets)).asErr()) |e| return .{ .err = e };
+        try dest.writeChar(' ');
+        try operator.toCss(W, dest);
+        try dest.writeChar(' ');
+        try toCssWithParensIfNeeded(item, W, dest, item.needsParens(operator, &dest.targets));
     }
-    return PrintResult(void).success;
+    return;
 }
 
 /// Represents a media condition.
@@ -288,21 +288,21 @@ pub const MediaCondition = struct {
 
     const This = @This();
 
-    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintResult(void) {
+    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
         switch (this.*) {
             .feature => |*f| {
-                if (f.toCss(W, dest).asErr()) |e| return .{ .err = e };
+                try f.toCss(W, dest);
             },
             .not => |*c| {
-                if (dest.writeStr("not ").asErr()) |e| return .{ .err = e };
-                if (toCssWithParensIfNeeded(c, W, dest, c.needsParens(null, &dest.targets)).asErr()) |e| return .{ .err = e };
+                try dest.writeStr("not ");
+                try toCssWithParensIfNeeded(c, W, dest, c.needsParens(null, &dest.targets));
             },
             .operation => |operation| {
                 operationToCss(operation.operator, &operation.conditions, W, dest);
             },
         }
 
-        return PrintResult(void).success;
+        return;
     }
 
     /// QueryCondition.parseFeature
@@ -640,13 +640,13 @@ const MediaFeatureId = union(enum) {
         prefix: []const u8,
         comptime W: type,
         dest: *Printer(W),
-    ) PrintResult(void) {
+    ) PrintErr!void {
         switch (this.*) {
             .@"-webkit-device-pixel-ratio" => {
                 return dest.writeFmt("-webkit-{s}device-pixel-ratio", .{prefix});
             },
             else => {
-                if (dest.writeStr(prefix).asErr()) |e| return .{ .err = e };
+                try dest.writeStr(prefix);
                 return this.toCss(W, dest);
             },
         }
@@ -701,17 +701,17 @@ pub fn QueryFeature(comptime FeatureId: type) type {
                 targets.shouldCompile(css.Features{ .media_interval_syntax = true });
         }
 
-        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintResult(void) {
-            if (dest.writeChar('(').asErr()) |e| return .{ .err = e };
+        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+            try dest.writeChar('(');
 
             switch (this.*) {
                 .boolean => {
-                    if (this.boolean.name.toCss(W, dest).asErr()) |e| return .{ .err = e };
+                    try this.boolean.name.toCss(W, dest);
                 },
                 .plain => {
-                    if (this.plain.name.toCss(W, dest).asErr()) |e| return .{ .err = e };
-                    if (dest.delim(':', false).asErr()) |e| return .{ .err = e };
-                    if (this.plain.value.toCss(W, dest).asErr()) |e| return .{ .err = e };
+                    try this.plain.name.toCss(W, dest);
+                    try dest.delim(':', false);
+                    try this.plain.value.toCss(W, dest);
                 },
                 .range => {
                     // If range syntax is unsupported, use min/max prefix if possible.
@@ -725,21 +725,21 @@ pub fn QueryFeature(comptime FeatureId: type) type {
                             dest,
                         );
                     }
-                    if (this.range.name.toCss(W, dest).asErr()) |e| return .{ .err = e };
-                    if (this.range.operator.toCss(W, dest).asErr()) |e| return .{ .err = e };
-                    if (this.range.value.toCss(W, dest).asErr()) |e| return .{ .err = e };
+                    try this.range.name.toCss(W, dest);
+                    try this.range.operator.toCss(W, dest);
+                    try this.range.value.toCss(W, dest);
                 },
                 .interval => |interval| {
                     if (dest.targets.shouldCompile(.media_interval_syntax, .media_interval_syntax)) {
-                        if (writeMinMax(
+                        try writeMinMax(
                             &interval.start_operator.opposite(),
                             FeatureId,
                             &interval.name,
                             &interval.start,
                             W,
                             dest,
-                        ).asErr()) |e| return .{ .err = e };
-                        if (dest.writeStr(" and (").asErr()) |e| return .{ .err = e };
+                        );
+                        try dest.writeStr(" and (");
                         return writeMinMax(
                             &interval.end_operator,
                             FeatureId,
@@ -750,11 +750,11 @@ pub fn QueryFeature(comptime FeatureId: type) type {
                         );
                     }
 
-                    if (interval.start.toCss(W, dest).asErr()) |e| return .{ .err = e };
-                    if (interval.start_operator.toCss(W, dest).asErr()) |e| return .{ .err = e };
-                    if (interval.name.toCss(W, dest).asErr()) |e| return .{ .err = e };
-                    if (interval.end_operator.toCss(W, dest).asErr()) |e| return .{ .err = e };
-                    if (interval.end.toCss(W, dest).asErr()) |e| return .{ .err = e };
+                    try interval.start.toCss(W, dest);
+                    try interval.start_operator.toCss(W, dest);
+                    try interval.name.toCss(W, dest);
+                    try interval.end_operator.toCss(W, dest);
+                    try interval.end.toCss(W, dest);
                 },
             }
 
@@ -998,7 +998,7 @@ pub const MediaFeatureValue = union(enum) {
         this: *const MediaFeatureValue,
         comptime W: type,
         dest: *Printer(W),
-    ) PrintResult(void) {
+    ) PrintErr!void {
         switch (this.*) {
             .length => |len| return len.toCss(W, dest),
             .number => |num| return CSSNumberFns.toCss(&num, W, dest),
@@ -1119,7 +1119,7 @@ pub fn MediaFeatureName(comptime FeatureId: type) type {
             };
         }
 
-        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintResult(void) {
+        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
             return switch (this.*) {
                 .standard => |v| v.toCss(W, dest),
                 .custom => |d| DashedIdentFns.toCss(&d, W, dest),
@@ -1127,7 +1127,7 @@ pub fn MediaFeatureName(comptime FeatureId: type) type {
             };
         }
 
-        pub fn toCssWithPrefix(this: *const This, prefix: []const u8, comptime W: type, dest: *Printer(W)) PrintResult(void) {
+        pub fn toCssWithPrefix(this: *const This, prefix: []const u8, comptime W: type, dest: *Printer(W)) PrintErr!void {
             return switch (this.*) {
                 .standard => |v| v.toCssWithPrefix(prefix, W, dest),
                 .custom => |d| {
@@ -1208,7 +1208,7 @@ fn writeMinMax(
     value: *const MediaFeatureValue,
     comptime W: type,
     dest: *Printer(W),
-) PrintResult(void) {
+) PrintErr!void {
     const prefix = switch (operator.*) {
         .@"greater-than", .@"greater-than-equal" => "min-",
         .@"less-than", .@"less-than-equal" => "max-",
@@ -1216,12 +1216,12 @@ fn writeMinMax(
     };
 
     if (prefix) |p| {
-        if (name.toCssWithPrefix(p, W, dest).asErr()) |e| return .{ .err = e };
+        try name.toCssWithPrefix(p, W, dest);
     } else {
-        if (name.toCss(W, dest).asErr()) |e| return .{ .err = e };
+        try name.toCss(W, dest);
     }
 
-    if (dest.delim(':', false).asErr()) |e| return .{ .err = e };
+    try dest.delim(':', false);
 
     const adjusted = switch (operator.*) {
         .@"greater-than" => value.add(0.001),
@@ -1230,9 +1230,9 @@ fn writeMinMax(
     };
 
     if (adjusted) |val| {
-        if (val.toCss(W, dest).asErr()) |e| return .{ .err = e };
+        try val.toCss(W, dest);
     } else {
-        if (value.toCss(W, dest).asErr()) |e| return .{ .err = e };
+        try value.toCss(W, dest);
     }
 
     return dest.writeChar(')');

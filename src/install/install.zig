@@ -9120,6 +9120,9 @@ pub const PackageManager = struct {
 
     pub const pm_params: []const ParamType = &(install_params_ ++ [_]ParamType{
         clap.parseParam("-a, --all") catch unreachable,
+        // clap.parseParam("--filter <STR>...                      Pack each matching workspace") catch unreachable,
+        clap.parseParam("--destination <STR>                    The directory the tarball will be saved in") catch unreachable,
+        clap.parseParam("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9.") catch unreachable,
         clap.parseParam("<POS> ...                         ") catch unreachable,
     });
 
@@ -9539,7 +9542,7 @@ pub const PackageManager = struct {
                 // cli.json_output = args.flag("--json");
             }
 
-            if (comptime subcommand == .pack) {
+            if (comptime subcommand == .pack or subcommand == .pm) {
                 if (args.option("--destination")) |dest| {
                     cli.pack_destination = dest;
                 }

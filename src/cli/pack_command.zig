@@ -68,24 +68,7 @@ pub const PackCommand = struct {
         }
     };
 
-    pub fn exec(ctx: Command.Context) !void {
-        Output.prettyErrorln("<r><b>bun pack <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
-        Output.flush();
-
-        const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .pack);
-
-        const manager, const original_cwd = PackageManager.init(ctx, cli, .pack) catch |err| {
-            if (!cli.silent) {
-                switch (err) {
-                    error.MissingPackageJSON => Output.errGeneric("missing package.json, no package to pack", .{}),
-                    else => Output.errGeneric("failed to initialize bun install: {s}", .{@errorName(err)}),
-                }
-            }
-
-            Global.crash();
-        };
-        defer ctx.allocator.free(original_cwd);
-
+    pub fn execWithManager(ctx: Command.Context, manager: *PackageManager) !void {
         var lockfile: Lockfile = undefined;
         const load_from_disk_result = lockfile.loadFromDisk(
             manager,
@@ -149,12 +132,16 @@ pub const PackCommand = struct {
                 pack(&pack_ctx, manager.original_package_json_path, enable_ansi_colors) catch |err| {
                     switch (err) {
                         error.OutOfMemory => bun.outOfMemory(),
-                        error.MissingName, error.MissingVersion => {
-                            Output.errGeneric("invalid package, must have name and version", .{});
+                        error.MissingPackageName, error.MissingPackageVersion => {
+                            Output.errGeneric("package.json must have `name` and `version` fields", .{});
+                            Global.crash();
+                        },
+                        error.InvalidPackageName, error.InvalidPackageVersion => {
+                            Output.errGeneric("`name` and `version` must have string values in package.json", .{});
                             Global.crash();
                         },
                         error.MissingPackageJSON => {
-                            Output.errGeneric("invalid package, missing package.json", .{});
+                            Output.errGeneric("failed to find a package.json in: \"{s}\"", .{manager.original_package_json_path});
                             Global.crash();
                         },
                     }
@@ -165,9 +152,39 @@ pub const PackCommand = struct {
         pack_ctx.printStats();
     }
 
+    pub fn exec(ctx: Command.Context) !void {
+        Output.prettyErrorln("<r><b>bun pack <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+        Output.flush();
+
+        const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .pack);
+
+        const manager, const original_cwd = PackageManager.init(ctx, cli, .pack) catch |err| {
+            if (!cli.silent) {
+                switch (err) {
+                    error.MissingPackageJSON => {
+                        var cwd_buf: bun.PathBuffer = undefined;
+                        const cwd = bun.getcwd(&cwd_buf) catch {
+                            Output.errGeneric("failed to find project package.json", .{});
+                            Global.crash();
+                        };
+                        Output.errGeneric("failed to find project package.json from: \"{s}\"", .{cwd});
+                    },
+                    else => Output.errGeneric("failed to initialize bun install: {s}", .{@errorName(err)}),
+                }
+            }
+
+            Global.crash();
+        };
+        defer ctx.allocator.free(original_cwd);
+
+        return execWithManager(ctx, manager);
+    }
+
     const PackError = OOM || error{
-        MissingName,
-        MissingVersion,
+        MissingPackageName,
+        InvalidPackageName,
+        MissingPackageVersion,
+        InvalidPackageVersion,
         MissingPackageJSON,
     };
 
@@ -756,6 +773,14 @@ pub const PackCommand = struct {
             .entry => |entry| entry,
         };
 
+        const package_name_expr: Expr = json.root.get("name") orelse return error.MissingPackageName;
+        const package_name = package_name_expr.asStringCloned(ctx.allocator) orelse return error.InvalidPackageName;
+        defer ctx.allocator.free(package_name);
+
+        const package_version_expr: Expr = json.root.get("version") orelse return error.MissingPackageVersion;
+        const package_version = package_version_expr.asStringCloned(ctx.allocator) orelse return error.InvalidPackageVersion;
+        defer ctx.allocator.free(package_version);
+
         var this_bundler: bun.bundler.Bundler = undefined;
 
         _ = RunCommand.configureEnvForRun(
@@ -1017,46 +1042,7 @@ pub const PackCommand = struct {
         }
         print_buf.clearRetainingCapacity();
 
-        const package_name_expr: Expr = json.root.get("name") orelse return error.MissingName;
-        const package_name = package_name_expr.asStringCloned(ctx.allocator) orelse return error.MissingName;
-        defer ctx.allocator.free(package_name);
-
-        const package_version_expr: Expr = json.root.get("version") orelse return error.MissingVersion;
-        const package_version = package_version_expr.asStringCloned(ctx.allocator) orelse return error.MissingVersion;
-        defer ctx.allocator.free(package_version);
-
-        {
-            var dest_buf: PathBuffer = undefined;
-            const tarball_destination_dir = bun.path.joinAbsStringBufZ(
-                FileSystem.instance.top_level_dir,
-                &dest_buf,
-                &.{manager.options.pack_destination},
-                .posix,
-            );
-
-            // create the directory if it doesn't exist
-            std.fs.makeDirAbsoluteZ(tarball_destination_dir) catch {};
-
-            const tarball_name = std.fmt.bufPrint(dest_buf[strings.withoutTrailingSlash(tarball_destination_dir).len..], "/{s}-{s}.tgz\x00", .{
-                package_name,
-                package_version,
-            }) catch {
-                Output.errGeneric("archive destination name too long: \"{s}/{s}-{s}.tgz\"", .{
-                    strings.withoutTrailingSlash(tarball_destination_dir),
-                    package_name,
-                    package_version,
-                });
-                Global.crash();
-            };
-            const tarball_destination: stringZ = dest_buf[0 .. strings.withoutTrailingSlash(tarball_destination_dir).len + tarball_name.len - 1 :0];
-            switch (archive.writeOpenFilename(tarball_destination)) {
-                .failed, .fatal, .warn => {
-                    Output.errGeneric("failed to open destination file: {s}", .{archive.errorString()});
-                    Global.crash();
-                },
-                else => {},
-            }
-        }
+        setupTarballDestination(ctx, archive, package_name, package_version);
 
         var entry = Archive.Entry.new();
         defer entry.free();
@@ -1116,6 +1102,47 @@ pub const PackCommand = struct {
                 }
             };
         }
+    }
+
+    fn setupTarballDestination(
+        ctx: *Context,
+        archive: *Archive,
+        package_name: string,
+        package_version: string,
+    ) void {
+        var dest_buf: PathBuffer = undefined;
+        const tarball_destination_dir = bun.path.joinAbsStringBufZ(
+            FileSystem.instance.top_level_dir,
+            &dest_buf,
+            &.{ctx.manager.options.pack_destination},
+            .posix,
+        );
+
+        // create the directory if it doesn't exist
+        std.fs.makeDirAbsoluteZ(tarball_destination_dir) catch {};
+
+        const tarball_name = std.fmt.bufPrint(dest_buf[strings.withoutTrailingSlash(tarball_destination_dir).len..], "/{s}-{s}.tgz\x00", .{
+            package_name,
+            package_version,
+        }) catch {
+            Output.errGeneric("archive destination name too long: \"{s}/{s}-{s}.tgz\"", .{
+                strings.withoutTrailingSlash(tarball_destination_dir),
+                package_name,
+                package_version,
+            });
+            Global.crash();
+        };
+        const tarball_destination = dest_buf[0 .. strings.withoutTrailingSlash(tarball_destination_dir).len + tarball_name.len - 1 :0];
+
+        switch (archive.writeOpenFilename(tarball_destination)) {
+            .failed, .fatal, .warn => {
+                Output.errGeneric("failed to open tarball file descriptor: {s}", .{archive.errorString()});
+                Global.crash();
+            },
+            else => {},
+        }
+
+        // TODO: experiment with `archive.writeOpenMemory()`
     }
 
     fn editAndArchivePackageJSON(

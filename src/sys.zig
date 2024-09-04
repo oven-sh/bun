@@ -3003,6 +3003,10 @@ pub const File = struct {
         };
     }
 
+    pub fn open(path: anytype, flags: bun.Mode, mode: bun.Mode) Maybe(File) {
+        return File.openat(bun.FD.cwd(), path, flags, mode);
+    }
+
     pub fn openatOSPath(other: anytype, path: bun.OSPathSliceZ, flags: bun.Mode, mode: bun.Mode) Maybe(File) {
         return switch (This.openatOSPath(bun.toFD(other), path, flags, mode)) {
             .result => |fd| .{ .result = .{ .handle = fd } },

@@ -219,6 +219,16 @@ pub const Archive = opaque {
         return archive_write_open_filename(archive, filename);
     }
 
+    pub extern fn archive_write_open_fd(*Archive, _fd: c_int) Result;
+    pub fn writeOpenFd(archive: *Archive, fd: bun.FileDescriptor) Result {
+        return archive_write_open_fd(archive, fd.cast());
+    }
+
+    pub extern fn archive_write_open_memory(*Archive, _buffer: ?*anyopaque, _buffSize: usize, _used: [*c]usize) Result;
+    pub fn writeOpenMemory(archive: *Archive, buf: ?*anyopaque, buf_size: usize, used: *usize) Result {
+        return archive_write_open_memory(archive, buf, buf_size, used);
+    }
+
     extern fn archive_write_header(*Archive, *Entry) Result;
     pub fn writeHeader(archive: *Archive, entry: *Entry) Result {
         return archive_write_header(archive, entry);
@@ -443,11 +453,9 @@ pub extern fn archive_write_zip_set_compression_deflate(*struct_archive) c_int;
 pub extern fn archive_write_zip_set_compression_store(*struct_archive) c_int;
 pub extern fn archive_write_open(*struct_archive, ?*anyopaque, ?archive_open_callback, ?archive_write_callback, ?archive_close_callback) c_int;
 pub extern fn archive_write_open2(*struct_archive, ?*anyopaque, ?archive_open_callback, ?archive_write_callback, ?archive_close_callback, ?archive_free_callback) c_int;
-pub extern fn archive_write_open_fd(*struct_archive, _fd: c_int) c_int;
 pub extern fn archive_write_open_filename_w(*struct_archive, _file: [*c]const wchar_t) c_int;
 pub extern fn archive_write_open_file(*struct_archive, _file: [*c]const u8) c_int;
 pub extern fn archive_write_open_FILE(*struct_archive, [*c]FILE) c_int;
-pub extern fn archive_write_open_memory(*struct_archive, _buffer: ?*anyopaque, _buffSize: usize, _used: [*c]usize) c_int;
 pub extern fn archive_write_data_block(*struct_archive, ?*const anyopaque, usize, la_int64_t) la_ssize_t;
 pub extern fn archive_write_finish_entry(*struct_archive) c_int;
 pub extern fn archive_write_fail(*struct_archive) c_int;

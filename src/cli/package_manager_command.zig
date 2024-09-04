@@ -24,6 +24,7 @@ const UntrustedCommand = @import("./pm_trusted_command.zig").UntrustedCommand;
 const TrustCommand = @import("./pm_trusted_command.zig").TrustCommand;
 const DefaultTrustedCommand = @import("./pm_trusted_command.zig").DefaultTrustedCommand;
 const Environment = bun.Environment;
+const PackCommand = bun.CLI.PackCommand;
 
 const ByName = struct {
     dependencies: []const Dependency,
@@ -99,6 +100,10 @@ pub const PackageManagerCommand = struct {
         Output.prettyln(
             \\<b><blue>bun pm<r>: Package manager utilities
             \\
+            \\  bun pm <b>pack<r>               create a tarball of the current workspace
+            \\  <d>├<r>  <cyan>--dry-run<r>              do everything except for writing the tarball to disk
+            \\  <d>├<r>  <cyan>--destination<r>          the directory the tarball will be saved in
+            \\  <d>└<r>  <cyan>--gzip-level<r>           specify a custom compression level for gzip (default is 9)
             \\  bun pm <b>bin<r>                print the path to bin folder
             \\  <d>└<r>  <cyan>-g<r>                     print the <b>global<r> path to bin folder
             \\  bun pm <b>ls<r>                 list the dependency tree according to the current lockfile
@@ -143,7 +148,10 @@ pub const PackageManagerCommand = struct {
             try pm.setupGlobalDir(ctx);
         }
 
-        if (strings.eqlComptime(subcommand, "bin")) {
+        if (strings.eqlComptime(subcommand, "pack")) {
+            try PackCommand.execWithManager(ctx, pm);
+            Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "bin")) {
             const output_path = Path.joinAbs(Fs.FileSystem.instance.top_level_dir, .auto, bun.asByteSlice(pm.options.bin_path));
             Output.prettyln("{s}", .{output_path});
             if (Output.stdout_descriptor_type == .terminal) {

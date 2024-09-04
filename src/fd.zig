@@ -170,14 +170,22 @@ pub const FDImpl = packed struct {
         return switch (env.os) {
             else => numberToHandle(this.value.as_system),
             .windows => switch (this.kind) {
-                .system => std.debug.panic(
-                    \\Cast {} -> FDImpl.UV makes closing impossible!
-                    \\
-                    \\The supplier of this FileDescriptor should call 'bun.toLibUVOwnedFD'
-                    \\or 'FDImpl.makeLibUVOwned', probably where open() was called.
-                ,
-                    .{this},
-                ),
+                .system => {
+                    const peb = std.os.windows.peb();
+                    const handle = this.system();
+                    if (handle == peb.ProcessParameters.hStdInput) return 0;
+                    if (handle == peb.ProcessParameters.hStdOutput) return 1;
+                    if (handle == peb.ProcessParameters.hStdError) return 2;
+
+                    std.debug.panic(
+                        \\Cast {} -> FDImpl.UV makes closing impossible!
+                        \\
+                        \\The supplier of this FileDescriptor should call 'bun.toLibUVOwnedFD'
+                        \\or 'FDImpl.makeLibUVOwned', probably where open() was called.
+                    ,
+                        .{this},
+                    );
+                },
                 .uv => this.value.as_uv,
             },
         };

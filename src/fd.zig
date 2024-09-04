@@ -171,11 +171,18 @@ pub const FDImpl = packed struct {
             else => numberToHandle(this.value.as_system),
             .windows => switch (this.kind) {
                 .system => {
-                    const peb = std.os.windows.peb();
-                    const handle = this.system();
-                    if (handle == peb.ProcessParameters.hStdInput) return 0;
-                    if (handle == peb.ProcessParameters.hStdOutput) return 1;
-                    if (handle == peb.ProcessParameters.hStdError) return 2;
+                    const w = std.os.windows;
+
+                    const S = struct {
+                        fn is_stdio_handle(id: w.DWORD, handle: w.HANDLE) bool {
+                            const h = w.GetStdHandle(id) catch return false;
+                            return handle == h;
+                        }
+                    };
+                    const handle = this.encode().cast();
+                    if (S.is_stdio_handle(w.STD_INPUT_HANDLE, handle)) return 0;
+                    if (S.is_stdio_handle(w.STD_OUTPUT_HANDLE, handle)) return 1;
+                    if (S.is_stdio_handle(w.STD_ERROR_HANDLE, handle)) return 2;
 
                     std.debug.panic(
                         \\Cast {} -> FDImpl.UV makes closing impossible!

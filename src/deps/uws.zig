@@ -483,6 +483,7 @@ pub const UpgradedDuplex = struct {
         this.vm.timer.insert(&this.event_loop_timer);
     }
     pub fn setTimeout(this: *UpgradedDuplex, seconds: c_uint) void {
+        log("setTimeout({d})", .{seconds});
         this.setTimeoutInMilliseconds(seconds * 1000);
     }
 

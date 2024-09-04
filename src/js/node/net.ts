@@ -753,7 +753,9 @@ const Socket = (function (InternalSocket) {
     }
 
     setTimeout(timeout, callback) {
-      this[bunSocketInternal]?.timeout(timeout / 1000);
+      // internally or timeouts are in seconds
+      // we use Math.ceil because 0 would disable the timeout and less than 1 second but greater than 1ms would be 1 second (the minimum)
+      this[bunSocketInternal]?.timeout(Math.ceil(timeout / 1000));
       this.timeout = timeout;
       if (callback) this.once("timeout", callback);
       return this;

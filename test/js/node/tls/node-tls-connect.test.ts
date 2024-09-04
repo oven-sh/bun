@@ -425,5 +425,20 @@ for (const { name, connect } of tests) {
         done(err);
       });
     });
+
+    it("should timeout", done => {
+      let socket = connect(443, "bun.sh", {
+        rejectUnauthorized: false,
+      });
+      socket.setTimeout(1000, () => {
+        done();
+        socket.end();
+      });
+
+      socket.on("error", err => {
+        socket.end();
+        done(err);
+      });
+    });
   });
 }

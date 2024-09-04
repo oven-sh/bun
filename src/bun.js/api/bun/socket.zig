@@ -790,7 +790,7 @@ pub const Listener = struct {
         if (socket.ext(**anyopaque)) |ctx| {
             ctx.* = bun.cast(**anyopaque, this_socket);
         }
-        socket.setTimeout(120000);
+        socket.setTimeout(120);
     }
 
     pub fn addServerName(this: *Listener, global: *JSC.JSGlobalObject, hostname: JSValue, tls: JSValue) JSValue {

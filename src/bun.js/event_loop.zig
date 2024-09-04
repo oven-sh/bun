@@ -780,6 +780,10 @@ pub const EventLoop = struct {
     entered_event_loop_count: isize = 0,
     concurrent_ref: std.atomic.Value(i32) = std.atomic.Value(i32).init(0),
 
+    pub fn willDrainMicrotaskQueueOnExit(this: *const EventLoop) bool {
+        return this.entered_event_loop_count == 1;
+    }
+
     pub const Debug = if (Environment.isDebug) struct {
         is_inside_tick_queue: bool = false,
         js_call_count_outside_tick_queue: usize = 0,

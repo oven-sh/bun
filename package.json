@@ -5,6 +5,10 @@
     "./packages/bun-types"
   ],
   "devDependencies": {
+    "@types/bun": "^1.1.3",
+    "@types/react": "^18.3.3",
+    "@typescript-eslint/eslint-plugin": "^7.11.0",
+    "@typescript-eslint/parser": "^7.11.0",
     "@vscode/debugadapter": "^1.65.0",
     "esbuild": "^0.21.4",
     "eslint": "^9.4.0",
@@ -12,14 +16,11 @@
     "mitata": "^0.1.11",
     "peechy": "0.4.34",
     "prettier": "^3.2.5",
+    "prettier-plugin-organize-imports": "^4.0.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "source-map-js": "^1.2.0",
-    "typescript": "^5.4.5",
-    "@types/bun": "^1.1.3",
-    "@types/react": "^18.3.3",
-    "@typescript-eslint/eslint-plugin": "^7.11.0",
-    "@typescript-eslint/parser": "^7.11.0"
+    "typescript": "^5.4.5"
   },
   "resolutions": {
     "bun-types": "workspace:packages/bun-types"

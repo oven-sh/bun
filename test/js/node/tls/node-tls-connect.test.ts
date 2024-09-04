@@ -427,20 +427,24 @@ for (const { name, connect } of tests) {
     });
 
     it("should timeout", done => {
-      const socket = connect({
-        port: 443,
-        host: "bun.sh",
-      });
+      const socket = connect(
+        {
+          port: 443,
+          host: "bun.sh",
+        },
+        () => {
+          socket.setTimeout(1000, () => {
+            clearTimeout(timer);
+            done();
+            socket.end();
+          });
+        },
+      );
 
       const timer = setTimeout(() => {
         socket.end();
         done(new Error("timeout did not trigger"));
       }, 8000);
-      socket.setTimeout(1000, () => {
-        clearTimeout(timer);
-        done();
-        socket.end();
-      });
 
       socket.on("error", err => {
         clearTimeout(timer);
@@ -451,31 +455,35 @@ for (const { name, connect } of tests) {
     }, 10_000); // 10 seconds because uWS sometimes is not that precise with timeouts
 
     it("should be able to transfer data", done => {
-      const socket = connect({
-        port: 443,
-        host: "bun.sh",
-        servername: "bun.sh",
-      });
+      const socket = connect(
+        {
+          port: 443,
+          host: "bun.sh",
+          servername: "bun.sh",
+        },
+        () => {
+          let data = "";
+          socket.on("data", chunk => {
+            data += chunk.toString();
+          });
+          socket.on("end", () => {
+            if (data.indexOf("HTTP/1.1 200 OK") !== -1) {
+              done();
+            } else {
+              done(new Error("missing data"));
+            }
+          });
+          socket.write("GET / HTTP/1.1\r\n");
+          socket.write("Host: bun.sh\r\n");
+          socket.write("Connection: close\r\n");
+          socket.write("Content-Length: 0\r\n");
+          socket.write("\r\n");
+        },
+      );
       socket.on("error", err => {
         socket.end();
         done(err);
       });
-      let data = "";
-      socket.on("data", chunk => {
-        data += chunk.toString();
-      });
-      socket.on("end", () => {
-        if (data.indexOf("HTTP/1.1 200 OK") !== -1) {
-          done();
-        } else {
-          done(new Error("missing data"));
-        }
-      });
-      socket.write("GET / HTTP/1.1\r\n");
-      socket.write("Host: bun.sh\r\n");
-      socket.write("Connection: close\r\n");
-      socket.write("Content-Length: 0\r\n");
-      socket.write("\r\n");
     });
   });
 }

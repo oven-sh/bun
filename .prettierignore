@@ -7,3 +7,4 @@ src/react-refresh.js
 *.min.js
 test/js/node/test/fixtures
 test/js/node/test/common
+test/snippets

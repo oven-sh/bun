@@ -1,25 +1,14 @@
 import { file, gc, Serve, serve, Server } from "bun";
-import { afterEach, describe, it, expect, afterAll, mock } from "bun:test";
+import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, dumpStats, isIPv4, isIPv6, isPosix, tls, tmpdirSync } from "harness";
 import { join, resolve } from "path";
-import {
-  bunExe,
-  bunEnv,
-  dumpStats,
-  isPosix,
-  isIPv6,
-  tmpdirSync,
-  isIPv4,
-  rejectUnauthorizedScope,
-  tls,
-  isWindows,
-} from "harness";
 // import { renderToReadableStream } from "react-dom/server";
 // import app_jsx from "./app.jsx";
-import { spawn } from "child_process";
-import { tmpdir } from "os";
 import { heapStats } from "bun:jsc";
+import { spawn } from "child_process";
 import net from "node:net";
+import { tmpdir } from "os";
 
 let renderToReadableStream: any = null;
 let app_jsx: any = null;
@@ -480,44 +469,32 @@ it("request.url should be based on the Host header", async () => {
 describe("streaming", () => {
   describe("error handler", () => {
     it("throw on pull renders headers, does not call error handler", async () => {
-      let subprocess;
-
-      afterAll(() => {
-        subprocess?.kill();
-      });
-
       const onMessage = mock(async url => {
         const response = await fetch(url);
         expect(response.status).toBe(402);
         expect(response.headers.get("X-Hey")).toBe("123");
         expect(response.text()).resolves.toBe("");
-        subprocess.kill();
+        subprocess?.kill();
       });
 
-      subprocess = Bun.spawn({
+      await using subprocess = Bun.spawn({
         cwd: import.meta.dirname,
         cmd: [bunExe(), "readable-stream-throws.fixture.js"],
         env: bunEnv,
-        stdout: "ignore",
+        stdout: "inherit",
         stderr: "pipe",
         ipc: onMessage,
       });
 
       let [exitCode, stderr] = await Promise.all([subprocess.exited, new Response(subprocess.stderr).text()]);
       expect(exitCode).toBeInteger();
-      expect(stderr).toContain("error: Oops");
+      expect(stderr).toContain("error: Oop");
       expect(onMessage).toHaveBeenCalled();
     });
 
     it("throw on pull after writing should not call the error handler", async () => {
-      let subprocess;
-
-      afterAll(() => {
-        subprocess?.kill();
-      });
-
       const onMessage = mock(async href => {
-        const url = new URL("write", href);
+        const url = new URL("/write", href);
         const response = await fetch(url);
         expect(response.status).toBe(402);
         expect(response.headers.get("X-Hey")).toBe("123");
@@ -525,18 +502,18 @@ describe("streaming", () => {
         subprocess.kill();
       });
 
-      subprocess = Bun.spawn({
+      await using subprocess = Bun.spawn({
         cwd: import.meta.dirname,
         cmd: [bunExe(), "readable-stream-throws.fixture.js"],
         env: bunEnv,
-        stdout: "ignore",
+        stdout: "inherit",
         stderr: "pipe",
         ipc: onMessage,
       });
 
       let [exitCode, stderr] = await Promise.all([subprocess.exited, new Response(subprocess.stderr).text()]);
       expect(exitCode).toBeInteger();
-      expect(stderr).toContain("error: Oops");
+      expect(stderr).toContain("error: Oop");
       expect(onMessage).toHaveBeenCalled();
     });
   });
@@ -1565,7 +1542,7 @@ it("should response with HTTP 413 when request body is larger than maxRequestBod
 it("should support promise returned from error", async () => {
   const { promise, resolve } = Promise.withResolvers<string>();
 
-  const subprocess = Bun.spawn({
+  await using subprocess = Bun.spawn({
     cwd: import.meta.dirname,
     cmd: [bunExe(), "bun-serve.fixture.js"],
     env: bunEnv,
@@ -1574,10 +1551,6 @@ it("should support promise returned from error", async () => {
     ipc(message) {
       resolve(message);
     },
-  });
-
-  afterAll(() => {
-    subprocess.kill();
   });
 
   const url = new URL(await promise);

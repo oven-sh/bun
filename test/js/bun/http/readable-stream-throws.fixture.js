@@ -15,9 +15,14 @@ const server = Bun.serve({
             controller.enqueue("world!");
             controller.close();
           }
-          throw new Error("Oops");
+          // Use a base64-encoded error string to ensure the test printing
+          // source code stack traces is not confused with an error message.
+          throw new Error(atob("T29w"));
         },
-        cancel(reason) {},
+        cancel(reason) {
+          console.log("Cancel call");
+          console.error(reason);
+        },
       }),
       {
         status: 402,

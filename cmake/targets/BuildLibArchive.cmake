@@ -1,7 +1,6 @@
 include(Macros)
-include(GitClone)
 
-add_custom_repository(
+register_repository(
   NAME
     libarchive
   REPOSITORY
@@ -9,7 +8,6 @@ add_custom_repository(
   COMMIT
     898dc8319355b7e985f68a9819f182aaed61b53a
 )
-
 
 add_custom_library(
   TARGET

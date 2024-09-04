@@ -2,13 +2,12 @@
 # https://include-what-you-use.org/
 
 include(Macros)
-include(GitClone)
 
 setx(IWYU_SOURCE_PATH ${CACHE_PATH}/iwyu-${LLVM_VERSION_MAJOR})
 setx(IWYU_BUILD_PATH ${IWYU_SOURCE_PATH}/build)
 setx(IWYU_PROGRAM ${IWYU_BUILD_PATH}/bin/include-what-you-use)
 
-add_custom_repository(
+register_repository(
   NAME
     iwyu
   REPOSITORY

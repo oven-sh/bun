@@ -31,7 +31,7 @@ set(LLVM_PATH ${LLVM_PREFIX}/bin)
 macro(find_llvm_command VARIABLE COMMAND)
   find_command(
     VARIABLE ${VARIABLE}
-    COMMAND ${COMMAND}
+    COMMAND ${COMMAND} ${COMMAND}-${LLVM_VERSION_MAJOR}
     PATHS ${LLVM_PATH}
     VERSION ${LLVM_VERSION}
   )
@@ -41,7 +41,7 @@ endmacro()
 macro(find_llvm_command_no_version VARIABLE COMMAND)
   find_command(
     VARIABLE ${VARIABLE}
-    COMMAND ${COMMAND}
+    COMMAND ${COMMAND} ${COMMAND}-${LLVM_VERSION_MAJOR}
     PATHS ${LLVM_PATH}
     REQUIRED ON
   )

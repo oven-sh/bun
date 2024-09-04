@@ -1,5 +1,4 @@
 include(Macros)
-include(GitClone)
 
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
   set(DEFAULT_ZIG_ARCH "aarch64")
@@ -50,7 +49,7 @@ optionx(ZIG_GLOBAL_CACHE_DIR FILEPATH "The path to the global zig cache director
 optionx(ZIG_BIN_CACHE_DIR FILEPATH "The path to the zig binary cache directory" DEFAULT ${CACHE_PATH}/zig/bin)
 optionx(ZIG_REPOSITORY_PATH FILEPATH "The path to the Zig repository" DEFAULT ${CWD}/src/deps/zig)
 
-add_custom_repository(
+register_repository(
   NAME
     zig
   REPOSITORY

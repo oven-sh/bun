@@ -13,18 +13,22 @@ function(parse_semver value variable)
   set(${variable}_VERSION_PATCH "${CMAKE_MATCH_3}" PARENT_SCOPE)
 endfunction()
 
-function(get_major_version version variable)
-  string(REGEX MATCH "^([0-9]+)" major_version ${version})
-  set(${variable} ${major_version} PARENT_SCOPE)
-endfunction()
-
-# Set a variable, and print it to the console.
+# setx
+#   variable string - The variable to set
+#   value    string - The value to set the variable to
 macro(setx)
   set(${ARGV})
   message(STATUS "Set ${ARGV0}: ${${ARGV0}}")
 endmacro()
 
-# optionx(variable type description [DEFAULT default] [PREVIEW value] [REGEX value] [REQUIRED])
+# optionx
+#   variable    string - The variable to set
+#   type        string - The type of the variable
+#   description string - The description of the variable
+#   DEFAULT     string - The default value of the variable
+#   PREVIEW     string - The preview value of the variable
+#   REGEX       string - The regex to match the value
+#   REQUIRED    bool   - Whether the variable is required
 macro(optionx variable type description)
   set(options REQUIRED)
   set(oneValueArgs DEFAULT PREVIEW REGEX)
@@ -52,7 +56,7 @@ macro(optionx variable type description)
     set(${variable}_PREVIEW ${variable})
   endif()
 
-  if("${${variable}}" STREQUAL "" AND ${${variable}_REQUIRED})
+  if(NOT ${variable} AND ${${variable}_REQUIRED})
     message(FATAL_ERROR "Required ${${variable}_SOURCE} is missing: please set, ${${variable}_PREVIEW}=<${${variable}_REGEX}>")
   endif()
 
@@ -70,43 +74,6 @@ macro(optionx variable type description)
     message(FATAL_ERROR "Invalid ${${variable}_SOURCE}: ${${variable}_PREVIEW}=\"${${variable}}\", please use ${${variable}_PREVIEW}=<${${variable}_REGEX}>")
   endif()
 
-  message(STATUS "Set ${variable}: ${${variable}}")
-endmacro()
-
-macro(find_llvm_program variable program_name)
-  set(args OPTIONAL)
-  cmake_parse_arguments(ARG "${args}" "" "" ${ARGN})
-
-  set(${variable}_NAMES
-    ${program_name}
-    ${program_name}-${LLVM_VERSION_MAJOR}
-    ${program_name}-${LLVM_VERSION}
-  )
-
-  find_program(
-    ${variable}
-    NAMES ${${variable}_NAMES}
-    PATHS ENV PATH ${LLVM_PATH}
-    VALIDATOR check_llvm_version
-  )
-
-  if(NOT ${variable})
-    if(ARG_OPTIONAL)
-      return()
-    endif()
-    if(CMAKE_HOST_APPLE)
-      set(LLVM_INSTALL_COMMAND "brew install llvm@${LLVM_VERSION_MAJOR} --force")
-    elseif(CMAKE_HOST_WIN32)
-      set(LLVM_INSTALL_COMMAND "choco install llvm@${LLVM_VERSION}")
-    else()
-      set(LLVM_INSTALL_COMMAND "curl -fsSL https://apt.llvm.org/llvm.sh | bash -s ${LLVM_VERSION}")
-    endif()
-    message(FATAL_ERROR "Command not found: ${program_name}\n"
-      "Do you have LLVM ${LLVM_VERSION} installed? To fix this, try running:\n"
-      "   ${LLVM_INSTALL_COMMAND}\n")
-  endif()
-
-  list(APPEND CMAKE_ARGS "-D${variable}=${${variable}}")
   message(STATUS "Set ${variable}: ${${variable}}")
 endmacro()
 
@@ -760,3 +727,74 @@ function(add_custom_library)
 
   target_link_libraries(${bun} PRIVATE ${${LIB_ID}_LIBRARY_PATHS})
 endfunction()
+
+function(register_repository)
+  set(args NAME REPOSITORY BRANCH TAG COMMIT PATH)
+  cmake_parse_arguments(GIT "" "${args}" "" ${ARGN})
+
+  if(NOT GIT_REPOSITORY)
+    message(FATAL_ERROR "git_clone: REPOSITORY is required")
+  endif()
+
+  if(NOT GIT_BRANCH AND NOT GIT_TAG AND NOT GIT_COMMIT)
+    message(FATAL_ERROR "git_clone: COMMIT, TAG, or BRANCH is required")
+  endif()
+
+  if(NOT GIT_PATH)
+    set(GIT_PATH ${CWD}/src/deps/${GIT_NAME})
+  endif()
+
+  if(GIT_COMMIT)
+    set(GIT_REF ${GIT_COMMIT})
+  elseif(GIT_TAG)
+    set(GIT_REF refs/tags/${GIT_TAG})
+  else()
+    set(GIT_REF refs/heads/${GIT_BRANCH})
+  endif()
+
+  register_command(
+    TARGET
+      clone-${GIT_NAME}
+    COMMENT
+      "Cloning ${GIT_NAME}"
+    COMMAND
+      ${CMAKE_COMMAND}
+        -P ${CWD}/cmake/scripts/GitClone.cmake
+        -DGIT_PATH=${GIT_PATH}
+        -DGIT_REPOSITORY=${GIT_REPOSITORY}
+        -DGIT_REF=${GIT_REF}
+        -DGIT_NAME=${GIT_NAME}
+    OUTPUTS
+      ${GIT_PATH}
+  )
+endfunction()
+
+# function(register_directory)
+#   set(args TARGET PATHS)
+#   cmake_parse_arguments(REGISTER "" "${args}" "" ${ARGN})
+
+#   if(NOT REGISTER_TARGET)
+#     message(FATAL_ERROR "register_directory: TARGET is required")
+#   endif()
+
+#   if(NOT TARGET ${REGISTER_TARGET})
+#     message(FATAL_ERROR "register_directory: TARGET is not a target: ${TARGET}")
+#   endif()
+
+#   if(NOT REGISTER_PATHS)
+#     message(FATAL_ERROR "register_directory: PATHS is required")
+#   endif()
+
+#   get_property(ALL_TARGETS DIRECTORY ${CWD} PROPERTY BUILDSYSTEM_TARGETS)
+#   foreach(target ${ALL_TARGETS})
+#     get_target_property(TARGET_INCLUDES ${target} INCLUDE_DIRECTORIES)
+#     get_target_property(TARGET_SOURCES ${target} SOURCES)
+#     set(TARGET_FILES ${TARGET_SOURCES} ${TARGET_INCLUDES})
+
+#     foreach(file ${TARGET_FILES})
+#       if(file MATCHES ${REGISTER_PATH})
+        
+#       endif()
+#     endforeach()
+#   endforeach()
+# endfunction()

@@ -1,8 +1,7 @@
 include(Macros)
-include(GitClone)
 include(SetupRust)
 
-add_custom_repository(
+register_repository(
   NAME
     lolhtml
   REPOSITORY

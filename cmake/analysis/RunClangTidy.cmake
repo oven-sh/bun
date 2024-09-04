@@ -2,7 +2,16 @@
 
 include(Macros)
 
-find_llvm_program(CLANG_TIDY_PROGRAM "clang-tidy" OPTIONAL)
+find_command(
+  VARIABLE
+    CLANG_TIDY_PROGRAM
+  COMMAND
+    clang-tidy
+  VERSION
+    ${LLVM_VERSION}
+  REQUIRED
+    OFF
+)
 
 set(CLANG_TIDY_COMMAND ${CLANG_TIDY_PROGRAM} ${BUN_CPP_SOURCES}
   -p ${BUILD_PATH}  

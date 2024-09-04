@@ -1,7 +1,6 @@
 include(Macros)
-include(GitClone)
 
-add_custom_repository(
+register_repository(
   NAME
     lshpack
   REPOSITORY

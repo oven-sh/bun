@@ -509,8 +509,9 @@ file(GLOB BUN_C_SOURCES ${CONFIGURE_DEPENDS}
   ${BUN_USOCKETS_SOURCE}/src/eventing/*.c
   ${BUN_USOCKETS_SOURCE}/src/internal/*.c
   ${BUN_USOCKETS_SOURCE}/src/crypto/*.c
-  ${BUN_DEPS_SOURCE}/picohttpparser/picohttpparser.c
 )
+
+list(APPEND BUN_C_SOURCES ${BUN_DEPS_SOURCE}/picohttpparser/picohttpparser.c)
 
 if(WIN32)
   list(APPEND BUN_C_SOURCES ${CWD}/src/bun.js/bindings/windows/musl-memmem.c)
@@ -527,9 +528,9 @@ list(APPEND BUN_CPP_SOURCES
 
 if(WIN32)
   if(ENABLE_CANARY)
-    set(Bun_VERSION_WITH_TAG "${VERSION}-canary.${CANARY_REVISION}")
+    set(Bun_VERSION_WITH_TAG ${VERSION}-canary.${CANARY_REVISION})
   else()
-    set(Bun_VERSION_WITH_TAG "${VERSION}")
+    set(Bun_VERSION_WITH_TAG ${VERSION})
   endif()
   set(BUN_ICO_PATH ${CWD}/src/bun.ico)
   configure_file(

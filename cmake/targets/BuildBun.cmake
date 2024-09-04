@@ -584,24 +584,24 @@ endif()
 # --- Linking ---
 
 # Since linking locks the file, we need to kill all instances of bun before linking.
-# if(WIN32)
-#   find_command(
-#     VARIABLE
-#       POWERSHELL_EXECUTABLE
-#     COMMAND
-#       pwsh
-#       powershell
-#   )
-#   register_command(
-#     TARGET
-#       ${bun}
-#     TARGET_PHASE
-#       PRE_LINK
-#     COMMAND
-#       ${POWERSHELL_EXECUTABLE} /C
-#       "Stop-Process -Name '${bun}' -Force -ErrorAction SilentlyContinue"
-#   )
-# endif()
+if(WIN32)
+  find_command(
+    VARIABLE
+      POWERSHELL_EXECUTABLE
+    COMMAND
+      pwsh
+      powershell
+  )
+  register_command(
+    TARGET
+      ${bun}
+    TARGET_PHASE
+      PRE_LINK
+    COMMAND
+      ${POWERSHELL_EXECUTABLE} /C
+      "Stop-Process -Name '${bun}' -Force -ErrorAction SilentlyContinue"
+  )
+endif()
 
 # --- Packaging ---
 

@@ -647,7 +647,13 @@ function(register_cmake_command)
     # BYPRODUCTS ${MAKE_EFFECTIVE_INCLUDES}
   )
 
-  target_include_directories(${bun} PRIVATE ${MAKE_EFFECTIVE_INCLUDES})
+  if(MAKE_EFFECTIVE_INCLUDES)
+    target_include_directories(${bun} PRIVATE ${MAKE_EFFECTIVE_INCLUDES})
+    if(TARGET clone-${MAKE_TARGET})
+      add_dependencies(${bun} clone-${MAKE_TARGET})
+    endif()
+  endif()
+
   target_link_libraries(${bun} PRIVATE ${MAKE_ARTIFACTS})
 endfunction()
 

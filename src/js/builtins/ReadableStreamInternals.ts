@@ -704,7 +704,8 @@ export async function readStreamIntoSink(stream, sink, isNative) {
   const highWaterMark = $getByIdDirectPrivate(stream, "highWaterMark") || 0;
   function onSinkClose(stream, reason) {
     if (!didThrow && !didClose && stream && stream.$state !== $streamClosed) {
-      $readableStreamCancel(stream, reason);
+      const cancelResult = $readableStreamCancel(stream, reason);
+      $isPromise(cancelResult) && $markPromiseAsHandled(cancelResult);
     }
   }
 
@@ -754,21 +755,18 @@ export async function readStreamIntoSink(stream, sink, isNative) {
     }
   } catch (e) {
     onSinkClose(stream, e);
-
     didThrow = true;
-    var rethrow = true;
 
     if (sink && !didClose) {
       didClose = true;
       try {
         sink.close(e);
-        rethrow = false;
       } catch (j) {
         throw new globalThis.AggregateError([e, j]);
       }
     }
 
-    if (rethrow) throw e;
+    throw e;
   } finally {
     if (reader) {
       try {
@@ -1420,8 +1418,7 @@ export function readableStreamCloseIfPossible(stream) {
   switch ($getByIdDirectPrivate(stream, "state")) {
     case $streamReadable:
     case $streamClosing: {
-      $readableStreamClose(stream);
-      break;
+      return $readableStreamClose(stream);
     }
   }
 }

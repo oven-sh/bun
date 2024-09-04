@@ -460,7 +460,7 @@ register_command(
   GROUP
     console
   COMMENT
-    "Building src/*.zig"
+    "Building src/*.zig for ${ZIG_TARGET}"
   COMMAND
     ${CMAKE_ZIG_COMPILER}
       build obj
@@ -476,7 +476,7 @@ register_command(
       -Dreported_nodejs_version=${NODEJS_VERSION}
       -Dcanary=${CANARY_REVISION}
       -Dgenerated-code=${CODEGEN_PATH}
-  OUTPUTS
+  ARTIFACTS
     ${BUN_ZIG_OUTPUT}
   SOURCES
     ${BUN_ZIG_SOURCES}

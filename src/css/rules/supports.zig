@@ -1,7 +1,7 @@
 const std = @import("std");
 pub const css = @import("../css_parser.zig");
 const bun = @import("root").bun;
-const Error = css.Error;
+const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
 const MediaList = css.MediaList;
 const CustomMedia = css.CustomMedia;
@@ -70,19 +70,27 @@ pub const SupportsCondition = union(enum) {
         []const u8,
     };
 
-    pub fn parse(input: *css.Parser) Error!SupportsCondition {
-        if (input.tryParse(css.Parser.expectIdentMatching, .{"not"})) |_| {
-            const in_parens = try SupportsCondition.parseInParens(input);
+    pub fn parse(input: *css.Parser) Result(SupportsCondition) {
+        if (input.tryParse(css.Parser.expectIdentMatching, .{"not"}).isOk()) {
+            const in_parens = switch (SupportsCondition.parseInParens(input)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
             return .{
-                .not = bun.create(
-                    @compileError(css.todo_stuff.think_about_allocator),
-                    SupportsCondition,
-                    in_parens,
-                ),
+                .result = .{
+                    .not = bun.create(
+                        @compileError(css.todo_stuff.think_about_allocator),
+                        SupportsCondition,
+                        in_parens,
+                    ),
+                },
             };
         }
 
-        const in_parens: SupportsCondition = try SupportsCondition.parseInParens(input);
+        const in_parens: SupportsCondition = switch (SupportsCondition.parseInParens(input)) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
         var expected_type: ?i32 = null;
         var conditions = ArrayList(SupportsCondition){};
         const mapalloc: std.mem.Allocator = {
@@ -109,10 +117,13 @@ pub const SupportsCondition = union(enum) {
         while (true) {
             const Closure = struct {
                 expected_type: *?i32 = null,
-                pub fn tryParseFn(i: *css.Parser, this: *@This()) Error!SupportsCondition {
+                pub fn tryParseFn(i: *css.Parser, this: *@This()) Result(SupportsCondition) {
                     _ = i; // autofix
                     const location = input.currentSourceLocation();
-                    const s = try input.expectIdent();
+                    const s = switch (input.expectIdent()) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    };
                     const found_type: i32 = found_type: {
                         // todo_stuff.match_ignore_ascii_case
                         if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("and", s)) break :found_type 1;
@@ -136,46 +147,49 @@ pub const SupportsCondition = union(enum) {
             };
             const _condition = input.tryParse(Closure.tryParseFn, .{&closure});
 
-            if (_condition) |condition| {
-                if (conditions.items.len == 0) {
-                    conditions.append(@compileError(css.todo_stuff.think_about_allocator), in_parens.clone());
-                    if (in_parens == .declaration) {
-                        const property_id = in_parens.declaration.property_id;
-                        const value = in_parens.declaration.value;
-                        seen_declarations.put(
-                            property_id.withPrefix(css.VendorPrefix{ .none = true }),
-                            value,
-                            0,
-                        ) catch bun.outOfMemory();
+            switch (_condition) {
+                .result => |condition| {
+                    if (conditions.items.len == 0) {
+                        conditions.append(@compileError(css.todo_stuff.think_about_allocator), in_parens.clone());
+                        if (in_parens == .declaration) {
+                            const property_id = in_parens.declaration.property_id;
+                            const value = in_parens.declaration.value;
+                            seen_declarations.put(
+                                property_id.withPrefix(css.VendorPrefix{ .none = true }),
+                                value,
+                                0,
+                            ) catch bun.outOfMemory();
+                        }
                     }
-                }
 
-                if (condition == .declaration) {
-                    // Merge multiple declarations with the same property id (minus prefix) and value together.
-                    const property_id_ = condition.declaration.property_id;
-                    const value = condition.declaration.value;
+                    if (condition == .declaration) {
+                        // Merge multiple declarations with the same property id (minus prefix) and value together.
+                        const property_id_ = condition.declaration.property_id;
+                        const value = condition.declaration.value;
 
-                    const property_id = property_id_.withPrefix(css.VendorPrefix{ .none = true });
-                    const key = SeenDeclKey{ property_id, value };
-                    if (seen_declarations.get(key)) |index| {
-                        const cond = &conditions.items[index];
-                        if (cond == .declaration) {
-                            cond.declaration.property_id.addPrefix(property_id.prefix());
+                        const property_id = property_id_.withPrefix(css.VendorPrefix{ .none = true });
+                        const key = SeenDeclKey{ property_id, value };
+                        if (seen_declarations.get(key)) |index| {
+                            const cond = &conditions.items[index];
+                            if (cond == .declaration) {
+                                cond.declaration.property_id.addPrefix(property_id.prefix());
+                            }
+                        } else {
+                            seen_declarations.put(key, conditions.items.len) catch bun.outOfMemory();
+                            conditions.append(@compileError(css.todo_stuff.think_about_allocator), SupportsCondition{
+                                .property_id = property_id,
+                                .value = value,
+                            }) catch bun.outOfMemory();
                         }
                     } else {
-                        seen_declarations.put(key, conditions.items.len) catch bun.outOfMemory();
-                        conditions.append(@compileError(css.todo_stuff.think_about_allocator), SupportsCondition{
-                            .property_id = property_id,
-                            .value = value,
-                        }) catch bun.outOfMemory();
+                        conditions.append(
+                            @compileError(css.todo_stuff.think_about_allocator),
+                            condition,
+                        ) catch bun.outOfMemory();
                     }
-                } else {
-                    conditions.append(
-                        @compileError(css.todo_stuff.think_about_allocator),
-                        condition,
-                    ) catch bun.outOfMemory();
-                }
-            } else break;
+                },
+                else => break,
+            }
         }
 
         if (conditions.items.len() == 1) {
@@ -184,54 +198,57 @@ pub const SupportsCondition = union(enum) {
 
         if (expected_type == 1) return .{ .@"and" = conditions };
         if (expected_type == 2) return .{ .@"or" = conditions };
-        return in_parens;
+        return .{ .result = in_parens };
     }
 
-    pub fn parseDeclaration(input: *css.Parser) Error!SupportsCondition {
+    pub fn parseDeclaration(input: *css.Parser) Result(SupportsCondition) {
         const property_id = try css.PropertyId.parse(input);
-        try input.expectColon();
-        try input.skipWhitespace();
+        if (input.expectColon().asErr()) |e| return .{ .err = e };
+        if (input.skipWhitespace().asErr()) |e| return .{ .err = e };
         const pos = input.position();
-        try input.expectNoErrorToken();
-        return SupportsCondition{
+        if (input.expectNoErrorToken().asErr()) |e| return .{ .err = e };
+        return .{ .result = SupportsCondition{
             .declaration = .{
                 .property_id = property_id,
                 .value = input.sliceFrom(pos),
             },
-        };
+        } };
     }
 
-    fn parseInParens(input: *css.Parser) Error!SupportsCondition {
+    fn parseInParens(input: *css.Parser) Result(SupportsCondition) {
         input.skipWhitespace();
         const location = input.currentSourceLocation();
         const pos = input.position();
-        const tok = try input.next();
+        const tok = switch (input.next()) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
         switch (tok.*) {
             .function => |f| {
                 if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("selector", f)) {
                     const Fn = struct {
-                        pub fn tryParseFn(i: *css.Parser) Error!SupportsCondition {
-                            return try i.parseNestedBlock(SupportsCondition, void, @This().parseNestedBlockFn);
+                        pub fn tryParseFn(i: *css.Parser) Result(SupportsCondition) {
+                            return i.parseNestedBlock(SupportsCondition, void, @This().parseNestedBlockFn);
                         }
-                        pub fn parseNestedBlockFn(_: void, i: *css.Parser) Error!SupportsCondition {
+                        pub fn parseNestedBlockFn(_: void, i: *css.Parser) Result(SupportsCondition) {
                             const p = i.position();
-                            try i.expectNoErrorToken();
-                            return SupportsCondition{ .selector = i.sliceFrom(p) };
+                            if (i.expectNoErrorToken().asErr()) |e| return .{ .err = e };
+                            return .{ .result = SupportsCondition{ .selector = i.sliceFrom(p) } };
                         }
                     };
                     const res = input.tryParse(Fn.tryParseFn, .{});
-                    if (res) |_| return res;
+                    if (res.isOk()) return res;
                 }
             },
             .open_curly => {},
             else => return location.newUnexpectedTokenError(tok.*),
         }
 
-        input.parseNestedBlock(void, {}, css.voidWrap(void, css.Parser.expectNoErrorToken)) catch |err| {
+        if (input.parseNestedBlock(void, {}, css.voidWrap(void, css.Parser.expectNoErrorToken)).asErr()) |err| {
             return err;
-        };
+        }
 
-        return SupportsCondition{ .unknown = input.sliceFrom(pos) };
+        return .{ .result = SupportsCondition{ .unknown = input.sliceFrom(pos) } };
     }
 
     pub fn toCss(this: *const SupportsCondition, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {

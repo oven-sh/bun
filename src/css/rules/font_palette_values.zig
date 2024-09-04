@@ -1,7 +1,7 @@
 const std = @import("std");
 pub const css = @import("../css_parser.zig");
 const bun = @import("root").bun;
-const Error = css.Error;
+const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
 const MediaList = css.MediaList;
 const CustomMedia = css.CustomMedia;
@@ -34,7 +34,7 @@ pub const FontPaletteValuesRule = struct {
 
     const This = @This();
 
-    pub fn parse(name: DashedIdent, input: *css.Parser, loc: Location) Error!FontPaletteValuesRule {
+    pub fn parse(name: DashedIdent, input: *css.Parser, loc: Location) Result(FontPaletteValuesRule) {
         var decl_parser = FontPaletteValuesDeclarationParser{};
         var parser = css.RuleBodyParser(FontPaletteValuesProperty).new(input, &decl_parser);
         var properties = ArrayList(FontPaletteValuesProperty){};
@@ -130,16 +130,24 @@ pub const OverrideColors = struct {
     /// The replacement color.
     color: css.css_values.color.CssColor,
 
-    pub fn parse(input: *css.Parser) Error!OverrideColors {
-        const index = try css.CSSIntegerFns.parse(input);
+    pub fn parse(input: *css.Parser) Result(OverrideColors) {
+        const index = switch (css.CSSIntegerFns.parse(input)) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
         if (index < 0) return input.newCustomError(css.ParserError.invalid_value);
 
-        const color = try css.CssColor.parse(input);
+        const color = switch (css.CssColor.parse(input)) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
         if (color == .current_color) return input.newCustomError(css.ParserError.invalid_value);
 
-        return OverrideColors{
-            .index = @intCast(index),
-            .color = color,
+        return .{
+            .result = OverrideColors{
+                .index = @intCast(index),
+                .color = color,
+            },
         };
     }
 
@@ -162,18 +170,21 @@ pub const BasePalette = union(enum) {
     /// A palette index within the font.
     integer: u16,
 
-    pub fn parse(input: *css.Parser) Error!BasePalette {
-        if (input.tryParse(css.CSSIntegerFns.parse())) |i| {
+    pub fn parse(input: *css.Parser) Result(BasePalette) {
+        if (input.tryParse(css.CSSIntegerFns.parse()).asValue()) |i| {
             if (i < 0) return input.newCustomError(css.ParserError.invalid_value);
-            return .{ .integer = @intCast(i) };
+            return .{ .result = .{ .integer = @intCast(i) } };
         }
 
         const location = input.currentSourceLocation();
-        const ident = try input.expectIdent();
+        const ident = switch (input.expectIdent()) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
         if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("light", ident)) {
-            return .light;
+            return .{ .result = .light };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("dark", ident)) {
-            return .dark;
+            return .{ .result = .dark };
         } else return location.newUnexpectedTokenError(.{ .ident = ident });
     }
 
@@ -192,27 +203,27 @@ pub const FontPaletteValuesDeclarationParser = struct {
     pub const DeclarationParser = struct {
         pub const Declaration = FontPaletteValuesProperty;
 
-        fn parseValue(this: *This, name: []const u8, input: *css.Parser) Error!Declaration {
+        fn parseValue(this: *This, name: []const u8, input: *css.Parser) Result(Declaration) {
             _ = this; // autofix
             const state = input.state();
             // todo_stuff.match_ignore_ascii_case
             if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("font-family", name)) {
                 // https://drafts.csswg.org/css-fonts-4/#font-family-2-desc
-                if (FontFamily.parse(input)) |font_family| {
+                if (FontFamily.parse(input).asValue()) |font_family| {
                     if (font_family == .generic) {
                         return input.newCustomError(css.ParserError.invalid_declaration);
                     }
-                    return .{ .font_family = font_family };
+                    return .{ .result = .{ .font_family = font_family } };
                 }
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("base-palette", name)) {
                 // https://drafts.csswg.org/css-fonts-4/#base-palette-desc
-                if (BasePalette.parse(input)) |base_palette| {
-                    return .{ .base_palette = base_palette };
+                if (BasePalette.parse(input).asValue()) |base_palette| {
+                    return .{ .result = .{ .base_palette = base_palette } };
                 }
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("override-colors", name)) {
                 // https://drafts.csswg.org/css-fonts-4/#override-color
-                if (input.parseCommaSeparated(OverrideColors, OverrideColors.parse)) |override_colors| {
-                    return .{ .override_colors = override_colors };
+                if (input.parseCommaSeparated(OverrideColors, OverrideColors.parse).asValue()) |override_colors| {
+                    return .{ .result = .{ .override_colors = override_colors } };
                 }
             } else {
                 return try input.newCustomError(css.ParserError.invalid_declaration);
@@ -220,13 +231,13 @@ pub const FontPaletteValuesDeclarationParser = struct {
 
             input.reset(&state);
             const opts = css.ParserOptions{};
-            return .{
+            return .{ .result = .{
                 .custom = CustomProperty.parse(
                     CustomPropertyName.fromStr(name),
                     input,
                     &opts,
                 ),
-            };
+            } };
         }
     };
 
@@ -244,15 +255,15 @@ pub const FontPaletteValuesDeclarationParser = struct {
         pub const Prelude = void;
         pub const AtRule = FontPaletteValuesProperty;
 
-        pub fn parsePrelude(_: *This, name: []const u8, input: *css.Parser) Error!Prelude {
+        pub fn parsePrelude(_: *This, name: []const u8, input: *css.Parser) Result(Prelude) {
             return input.newError(css.BasicParseErrorKind{ .at_rule_invalid = name });
         }
 
-        pub fn parseBlock(_: *This, _: AtRuleParser.Prelude, _: *const css.ParserState, input: *css.Parser) Error!AtRuleParser.AtRule {
+        pub fn parseBlock(_: *This, _: AtRuleParser.Prelude, _: *const css.ParserState, input: *css.Parser) Result(AtRuleParser.AtRule) {
             return input.newError(css.BasicParseErrorKind.at_rule_body_invalid);
         }
 
-        pub fn ruleWithoutBlock(_: *This, _: AtRuleParser.Prelude, _: *const css.ParserState) Error!AtRuleParser.AtRule {
+        pub fn ruleWithoutBlock(_: *This, _: AtRuleParser.Prelude, _: *const css.ParserState) Result(AtRuleParser.AtRule) {
             @compileError(css.todo_stuff.errors);
         }
     };
@@ -261,12 +272,12 @@ pub const FontPaletteValuesDeclarationParser = struct {
         pub const Prelude = void;
         pub const QualifiedRule = FontPaletteValuesProperty;
 
-        pub fn parsePrelude(_: *This, input: *css.Parser) Error!Prelude {
-            return try input.newError(css.BasicParseErrorKind.qualified_rule_invalid);
+        pub fn parsePrelude(_: *This, input: *css.Parser) Result(Prelude) {
+            return input.newError(css.BasicParseErrorKind.qualified_rule_invalid);
         }
 
-        pub fn parseBlock(_: *This, _: Prelude, _: *const css.ParserState, input: *css.Parser) Error!QualifiedRule {
-            return try input.newError(css.BasicParseErrorKind.qualified_rule_invalid);
+        pub fn parseBlock(_: *This, _: Prelude, _: *const css.ParserState, input: *css.Parser) Result(QualifiedRule) {
+            return input.newError(css.BasicParseErrorKind.qualified_rule_invalid);
         }
     };
 };

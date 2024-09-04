@@ -71,7 +71,10 @@ export function createBunShellTemplateFunction(createShellInterpreter, createPar
     }
 
     text(encoding) {
-      return this.stdout.toString(encoding);
+      // const ret = this.stdout.toString(encoding);
+      // this.stdout = undefined;
+      // return ret;
+      return undefined;
     }
 
     json() {

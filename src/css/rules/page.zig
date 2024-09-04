@@ -1,7 +1,7 @@
 const std = @import("std");
 pub const css = @import("../css_parser.zig");
 const bun = @import("root").bun;
-const Error = css.Error;
+const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
 const MediaList = css.MediaList;
 const CustomMedia = css.CustomMedia;
@@ -36,17 +36,23 @@ pub const PageSelector = struct {
     /// A list of page pseudo classes.
     psuedo_classes: ArrayList(PagePseudoClass),
 
-    pub fn parse(input: *css.Parser) Error!PageSelector {
-        const name = if (input.tryParse(css.Parser.expectIdent, .{})) |name| name else null;
+    pub fn parse(input: *css.Parser) Result(PageSelector) {
+        const name = if (input.tryParse(css.Parser.expectIdent, .{}).asValue()) |name| name else null;
         var pseudo_classes = ArrayList(PagePseudoClass){};
 
         while (true) {
             // Whitespace is not allowed between pseudo classes
             const state = input.state();
-            if ((try input.nextIncludingWhitespace()).* == .colon) {
+            if (switch (input.nextIncludingWhitespace()) {
+                .result => |tok| tok.* == .colon,
+                .err => |e| return .{ .err = e },
+            }) {
                 pseudo_classes.append(
                     @compileError(css.todo_stuff.think_about_allocator),
-                    try PagePseudoClass.parse(input),
+                    switch (PagePseudoClass.parse(input)) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    },
                 ) catch bun.outOfMemory();
             } else {
                 input.reset(&state);
@@ -58,9 +64,11 @@ pub const PageSelector = struct {
             return input.newCustomError(css.ParserError.invalid_page_selector);
         }
 
-        return PageSelector{
-            .name = name,
-            .pseudo_classes = pseudo_classes,
+        return .{
+            .result = PageSelector{
+                .name = name,
+                .pseudo_classes = pseudo_classes,
+            },
         };
     }
 
@@ -109,7 +117,7 @@ pub const PageRule = struct {
     /// The location of the rule in the source file.
     loc: Location,
 
-    pub fn parse(selectors: ArrayList(PageSelector), input: *css.Parser, loc: Location, options: *css.ParserOptions) Error!PageRule {
+    pub fn parse(selectors: ArrayList(PageSelector), input: *css.Parser, loc: Location, options: *css.ParserOptions) Result(PageRule) {
         var declarations = css.DeclarationBlock{};
         var rules = ArrayList(PageMarginRule){};
         var rule_parser = PageRuleParser{
@@ -274,7 +282,7 @@ pub const PageRuleParser = struct {
     pub const DeclarationParser = struct {
         pub const Declaration = void;
 
-        fn parseValue(this: *This, name: []const u8, input: *css.Parser) Error!Declaration {
+        fn parseValue(this: *This, name: []const u8, input: *css.Parser) Result(Declaration) {
             return css.declaration.parse_declaration(
                 name,
                 input,
@@ -299,21 +307,27 @@ pub const PageRuleParser = struct {
         pub const Prelude = PageMarginBox;
         pub const AtRule = void;
 
-        pub fn parsePrelude(_: *This, name: []const u8, input: *css.Parser) Error!Prelude {
+        pub fn parsePrelude(_: *This, name: []const u8, input: *css.Parser) Result(Prelude) {
             const loc = input.currentSourceLocation();
-            css.parse_utility.parseString(
+            return switch (css.parse_utility.parseString(
                 @compileError(css.todo_stuff.think_about_allocator),
                 PageMarginBox,
                 name,
                 PageMarginBox.parse,
-            ) catch {
-                return loc.newCustomError(css.ParserError{ .at_rule_invalid = name });
+            )) {
+                .result => |v| return .{ .result = v },
+                .err => {
+                    return loc.newCustomError(css.ParserError{ .at_rule_invalid = name });
+                },
             };
         }
 
-        pub fn parseBlock(this: *This, prelude: AtRuleParser.Prelude, start: *const css.ParserState, input: *css.Parser) Error!AtRuleParser.AtRule {
+        pub fn parseBlock(this: *This, prelude: AtRuleParser.Prelude, start: *const css.ParserState, input: *css.Parser) Result(AtRuleParser.AtRule) {
             const loc = start.sourceLocation();
-            const declarations = try css.DeclarationBlock.parse(input, this.options);
+            const declarations = switch (css.DeclarationBlock.parse(input, this.options)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
             this.rules.append(@compileError(css.todo_stuff.think_about_allocator), PageMarginRule{
                 .margin_box = prelude,
                 .declarations = declarations,
@@ -323,10 +337,11 @@ pub const PageRuleParser = struct {
                     .column = loc.column,
                 },
             }) catch bun.outOfMemory();
+            return Result(AtRuleParser.AtRule).success;
         }
 
-        pub fn ruleWithoutBlock(_: *This, _: AtRuleParser.Prelude, _: *const css.ParserState) Error!AtRuleParser.AtRule {
-            @compileError(css.todo_stuff.errors);
+        pub fn ruleWithoutBlock(_: *This, _: AtRuleParser.Prelude, _: *const css.ParserState) css.Maybe(AtRuleParser.AtRule, void) {
+            return .{ .err = {} };
         }
     };
 
@@ -334,12 +349,12 @@ pub const PageRuleParser = struct {
         pub const Prelude = void;
         pub const QualifiedRule = void;
 
-        pub fn parsePrelude(_: *This, input: *css.Parser) Error!Prelude {
-            return try input.newError(css.BasicParseErrorKind.qualified_rule_invalid);
+        pub fn parsePrelude(_: *This, input: *css.Parser) Result(Prelude) {
+            return input.newError(css.BasicParseErrorKind.qualified_rule_invalid);
         }
 
-        pub fn parseBlock(_: *This, _: Prelude, _: *const css.ParserState, input: *css.Parser) Error!QualifiedRule {
-            return try input.newError(css.BasicParseErrorKind.qualified_rule_invalid);
+        pub fn parseBlock(_: *This, _: Prelude, _: *const css.ParserState, input: *css.Parser) Result(QualifiedRule) {
+            return input.newError(css.BasicParseErrorKind.qualified_rule_invalid);
         }
     };
 };

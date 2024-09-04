@@ -1,7 +1,7 @@
 const std = @import("std");
 pub const css = @import("../css_parser.zig");
 const bun = @import("root").bun;
-const Error = css.Error;
+const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
 const MediaList = css.MediaList;
 const CustomMedia = css.CustomMedia;
@@ -18,8 +18,11 @@ const Operator = css.media_query.Operator;
 
 pub const ContainerName = struct {
     v: css.css_values.ident.CustomIdent,
-    pub fn parse(input: *css.Parser) Error!ContainerName {
-        const ident = try CustomIdentFns.parse(input);
+    pub fn parse(input: *css.Parser) Result(ContainerName) {
+        const ident = switch (CustomIdentFns.parse(input)) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
 
         // todo_stuff.match_ignore_ascii_case;
         if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("none", ident) or
@@ -28,7 +31,7 @@ pub const ContainerName = struct {
             bun.strings.eqlCaseInsensitiveASCIIICheckLength("or", ident))
             return input.newUnexpectedtokenError(.{ .ident = ident });
 
-        return ContainerName{ .v = ident };
+        return .{ .result = ContainerName{ .v = ident } };
     }
 
     const This = @This();
@@ -106,17 +109,23 @@ pub const StyleQuery = union(enum) {
         }
     }
 
-    pub fn parseFeature(input: *css.Parser) Error!StyleQuery {
-        const property_id = try css.PropertyId.parse(input);
-        try input.expectColon();
-        try input.skipWhitespace();
+    pub fn parseFeature(input: *css.Parser) Result(StyleQuery) {
+        const property_id = switch (css.PropertyId.parse(input)) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
+        if (input.expectColon().asErr()) |e| return .{ .err = e };
+        if (input.skipWhitespace().asErr()) |e| return .{ .err = e };
         const opts = css.ParserOptions{};
         const feature = .{
-            .feature = try css.Property.parse(
+            .feature = switch (css.Property.parse(
                 property_id,
                 input,
                 &opts,
-            ),
+            )) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            },
         };
         _ = input.tryParse(css.parseImportant, .{});
         return feature;
@@ -165,8 +174,8 @@ pub const ContainerCondition = union(enum) {
 
     const This = @This();
 
-    pub fn parse(input: *css.Parser) Error!ContainerCondition {
-        return try css.media_query.parseQueryCondition(
+    pub fn parse(input: *css.Parser) Result(ContainerCondition) {
+        return css.media_query.parseQueryCondition(
             ContainerCondition,
             input,
             QueryConditionFlags{
@@ -197,8 +206,11 @@ pub const ContainerCondition = union(enum) {
         }
     }
 
-    pub fn parseFeature(input: *css.Parser) Error!ContainerCondition {
-        const feature = try QueryFeature(ContainerSizeFeatureId).parse(input);
+    pub fn parseFeature(input: *css.Parser) Result(ContainerCondition) {
+        const feature = switch (QueryFeature(ContainerSizeFeatureId)) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        }.parse(input);
         return .{ .feature = feature };
     }
 
@@ -215,28 +227,31 @@ pub const ContainerCondition = union(enum) {
         };
     }
 
-    pub fn parseStyleQuery(input: *css.Parser) Error!ContainerCondition {
+    pub fn parseStyleQuery(input: *css.Parser) Result(ContainerCondition) {
         const Fns = struct {
-            pub inline fn adaptedParseQueryCondition(i: *css.Parser, flags: QueryConditionFlags) Error!ContainerCondition {
+            pub inline fn adaptedParseQueryCondition(i: *css.Parser, flags: QueryConditionFlags) Result(ContainerCondition) {
                 return css.media_query.parseParensOrFunction(ContainerCondition, i, flags);
             }
 
-            pub fn parseNestedBlockFn(_: void, i: *css.Parser) Error!ContainerCondition {
+            pub fn parseNestedBlockFn(_: void, i: *css.Parser) Result(ContainerCondition) {
                 if (i.tryParse(
                     @This().adaptedParseQueryCondition,
                     .{
                         QueryConditionFlags{ .allow_or = true },
                     },
-                )) |res| {
-                    return .{ .style = res };
+                ).asValue()) |res| {
+                    return .{ .result = .{ .style = res } };
                 }
 
-                return .{
-                    .style = try StyleQuery.parseFeature(input),
-                };
+                return .{ .result = .{
+                    .style = switch (StyleQuery.parseFeature(input)) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    },
+                } };
             }
         };
-        return try input.parseNestedBlock(ContainerCondition, {}, Fns.parseNestedBlockFn);
+        return input.parseNestedBlock(ContainerCondition, {}, Fns.parseNestedBlockFn);
     }
 
     pub fn needsParens(

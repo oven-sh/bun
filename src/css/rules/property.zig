@@ -1,7 +1,7 @@
 const std = @import("std");
 pub const css = @import("../css_parser.zig");
 const bun = @import("root").bun;
-const Error = css.Error;
+const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
 const MediaList = css.MediaList;
 const CustomMedia = css.CustomMedia;
@@ -21,7 +21,7 @@ pub const PropertyRule = struct {
     initial_vlaue: ?css.css_values.syntax.ParsedComponent,
     loc: Location,
 
-    pub fn parse(name: css.css_values.ident.DashedIdent, input: *css.Parser, loc: Location) Error!PropertyRule {
+    pub fn parse(name: css.css_values.ident.DashedIdent, input: *css.Parser, loc: Location) Result(PropertyRule) {
         var p = PropertyRuleDeclarationParser{
             .syntax = null,
             .inherits = null,
@@ -38,8 +38,14 @@ pub const PropertyRule = struct {
         // `syntax` and `inherits` are always required.
         const parser = decl_parser.parser;
         // TODO(zack): source clones these two, but I omitted here becaues it seems 100% unnecessary
-        const syntax: SyntaxString = parser.syntax orelse try decl_parser.input.newCustomError(css.ParserError.at_rule_body_invalid);
-        const inherits: bool = parser.inherits orelse try decl_parser.input.newCustomError(css.ParserError.at_rule_body_invalid);
+        const syntax: SyntaxString = parser.syntax orelse switch (decl_parser.input.newCustomError(css.ParserError.at_rule_body_invalid)) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
+        const inherits: bool = parser.inherits orelse switch (decl_parser.input.newCustomError(css.ParserError.at_rule_body_invalid)) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
 
         // `initial-value` is required unless the syntax is a universal definition.
         const initial_value = switch (syntax) {
@@ -54,22 +60,30 @@ pub const PropertyRule = struct {
                         },
                     };
                 }
-                break :brk try syntax.parseValue(&p2);
+                break :brk switch (syntax.parseValue(&p2)) {
+                    .result => |vv| vv,
+                    .err => |e| return .{ .err = e },
+                };
             } else null,
             else => brk: {
                 const val = parser.initial_value orelse return input.newCustomError(css.ParserError.at_rule_body_invalid);
                 var i = css.ParserInput.new(@compileError(css.todo_stuff.think_about_allocator), val);
                 var p2 = css.Parser.new(&i);
-                break :brk try syntax.parseValue(&p2);
+                break :brk switch (syntax.parseValue(&p2)) {
+                    .result => |vv| vv,
+                    .err => |e| return .{ .err = e },
+                };
             },
         };
 
-        return PropertyRule{
-            .name = name,
-            .syntax = syntax,
-            .inherits = inherits,
-            .initial_value = initial_value,
-            .loc = loc,
+        return .{
+            .result = PropertyRule{
+                .name = name,
+                .syntax = syntax,
+                .inherits = inherits,
+                .initial_value = initial_value,
+                .loc = loc,
+            },
         };
     }
 
@@ -129,14 +143,20 @@ pub const PropertyRuleDeclarationParser = struct {
     pub const DeclarationParser = struct {
         pub const Declaration = void;
 
-        fn parseValue(this: *This, name: []const u8, input: *css.Parser) Error!Declaration {
+        fn parseValue(this: *This, name: []const u8, input: *css.Parser) Result(Declaration) {
             // todo_stuff.match_ignore_ascii_case
             if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("syntax", name)) {
-                const syntax = try SyntaxString.parse(input);
+                const syntax = switch (SyntaxString.parse(input)) {
+                    .result => |vv| vv,
+                    .err => |e| return .{ .err = e },
+                };
                 this.syntax = syntax;
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("inherits", name)) {
                 const location = input.currentSourceLocation();
-                const ident = try input.expectIdent();
+                const ident = switch (input.expectIdent()) {
+                    .result => |vv| vv,
+                    .err => |e| return .{ .err = e },
+                };
                 const inherits = if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("true", ident))
                     true
                 else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("false", ident))
@@ -170,15 +190,15 @@ pub const PropertyRuleDeclarationParser = struct {
         pub const Prelude = void;
         pub const AtRule = void;
 
-        pub fn parsePrelude(_: *This, name: []const u8, input: *css.Parser) Error!Prelude {
+        pub fn parsePrelude(_: *This, name: []const u8, input: *css.Parser) Result(Prelude) {
             return input.newError(css.BasicParseErrorKind{ .at_rule_invalid = name });
         }
 
-        pub fn parseBlock(_: *This, _: AtRuleParser.Prelude, _: *const css.ParserState, input: *css.Parser) Error!AtRuleParser.AtRule {
+        pub fn parseBlock(_: *This, _: AtRuleParser.Prelude, _: *const css.ParserState, input: *css.Parser) Result(AtRuleParser.AtRule) {
             return input.newError(css.BasicParseErrorKind.at_rule_body_invalid);
         }
 
-        pub fn ruleWithoutBlock(_: *This, _: AtRuleParser.Prelude, _: *const css.ParserState) Error!AtRuleParser.AtRule {
+        pub fn ruleWithoutBlock(_: *This, _: AtRuleParser.Prelude, _: *const css.ParserState) Result(AtRuleParser.AtRule) {
             @compileError(css.todo_stuff.errors);
         }
     };
@@ -187,12 +207,12 @@ pub const PropertyRuleDeclarationParser = struct {
         pub const Prelude = void;
         pub const QualifiedRule = void;
 
-        pub fn parsePrelude(_: *This, input: *css.Parser) Error!Prelude {
-            return try input.newError(css.BasicParseErrorKind.qualified_rule_invalid);
+        pub fn parsePrelude(_: *This, input: *css.Parser) Result(Prelude) {
+            return input.newError(css.BasicParseErrorKind.qualified_rule_invalid);
         }
 
-        pub fn parseBlock(_: *This, _: Prelude, _: *const css.ParserState, input: *css.Parser) Error!QualifiedRule {
-            return try input.newError(css.BasicParseErrorKind.qualified_rule_invalid);
+        pub fn parseBlock(_: *This, _: Prelude, _: *const css.ParserState, input: *css.Parser) Result(QualifiedRule) {
+            return input.newError(css.BasicParseErrorKind.qualified_rule_invalid);
         }
     };
 };

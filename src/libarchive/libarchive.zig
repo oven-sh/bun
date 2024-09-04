@@ -740,7 +740,7 @@ pub const Archive = struct {
                                         },
                                         else => {
                                             if (options.log) {
-                                                const archive_error = std.mem.span(lib.archive_error_string(archive));
+                                                const archive_error = bun.sliceTo(lib.Archive.errorString(@ptrCast(archive)), 0);
                                                 Output.err("libarchive error", "extracting {}: {s}", .{
                                                     bun.fmt.fmtOSPath(path_slice, .{}),
                                                     archive_error,

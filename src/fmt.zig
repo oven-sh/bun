@@ -1005,17 +1005,30 @@ pub fn fastDigitCount(x: u64) u64 {
 
 pub const SizeFormatter = struct {
     value: usize = 0,
+    opts: Options,
+
+    pub const Options = struct {
+        space_between_number_and_unit: bool = true,
+    };
 
     pub fn format(self: SizeFormatter, comptime _: []const u8, opts: fmt.FormatOptions, writer: anytype) !void {
         const math = std.math;
         const value = self.value;
         if (value == 0) {
-            return writer.writeAll("0 KB");
+            if (self.opts.space_between_number_and_unit) {
+                return writer.writeAll("0 KB");
+            } else {
+                return writer.writeAll("0KB");
+            }
         }
 
         if (value < 512) {
             try fmt.formatInt(self.value, 10, .lower, opts, writer);
-            return writer.writeAll(" bytes");
+            if (self.opts.space_between_number_and_unit) {
+                return writer.writeAll(" bytes");
+            } else {
+                return writer.writeByte('B');
+            }
         }
 
         const mags_si = " KMGTPEZY";
@@ -1025,21 +1038,31 @@ pub const SizeFormatter = struct {
         const suffix = mags_si[magnitude];
 
         if (suffix == ' ') {
-            try writer.print("{d:.2} KB", .{new_value / 1000.0});
+            if (self.opts.space_between_number_and_unit) {
+                try writer.print("{d:.2} KB", .{new_value / 1000.0});
+            } else {
+                try writer.print("{d:.2}KB", .{new_value / 1000.0});
+            }
             return;
         }
         const precision: usize = if (std.math.approxEqAbs(f64, new_value, @trunc(new_value), 0.100)) 1 else 2;
         try fmt.formatType(new_value, "d", .{ .precision = precision }, writer, 0);
-        try writer.writeAll(&.{ ' ', suffix, 'B' });
+        if (self.opts.space_between_number_and_unit) {
+            try writer.writeAll(&.{ ' ', suffix, 'B' });
+        } else {
+            try writer.writeAll(&.{ suffix, 'B' });
+        }
     }
 };
 
-pub fn size(value: anytype) SizeFormatter {
-    return switch (@TypeOf(value)) {
-        f64, f32, f128 => SizeFormatter{
-            .value = @as(u64, @intFromFloat(value)),
+pub fn size(value: anytype, opts: SizeFormatter.Options) SizeFormatter {
+    return .{
+        .value = switch (@TypeOf(value)) {
+            f64, f32, f128 => @intFromFloat(value),
+            i64, isize => @intCast(value),
+            else => value,
         },
-        else => SizeFormatter{ .value = value },
+        .opts = opts,
     };
 }
 

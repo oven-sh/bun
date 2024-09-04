@@ -12,7 +12,7 @@ const DependencyID = Install.DependencyID;
 const Behavior = Install.Dependency.Behavior;
 const string = bun.string;
 const stringZ = bun.stringZ;
-const libarchive = @import("../libarchive/libarchive.zig").lib;
+const Archive = @import("../libarchive/libarchive.zig").lib.Archive;
 const Expr = bun.js_parser.Expr;
 const Semver = @import("../install/semver.zig");
 const File = bun.sys.File;
@@ -59,7 +59,7 @@ pub const PackCommand = struct {
                     \\ignored_directories: {d}
                     \\
                 , .{
-                    bun.fmt.size(stats.total_unpacked_size),
+                    bun.fmt.size(stats.total_unpacked_size, .{ .space_between_number_and_unit = false }),
                     stats.total_files,
                     stats.ignored_files,
                     stats.ignored_directories,
@@ -919,7 +919,16 @@ pub const PackCommand = struct {
                 Output.prettyln("<r><b><green>bundled<r> {s}", .{dep});
             }
             for (pack_list.items) |filename| {
-                Output.prettyln("<r><b><cyan>packing<r> {s}", .{filename});
+                const file = File.openat(root_dir, filename, bun.O.RDONLY, 0).unwrap() catch |err| {
+                    Output.err(err, "failed to open file: \"{s}\"", .{filename});
+                    Global.crash();
+                };
+                defer file.close();
+                const stat = file.stat().unwrap() catch |err| {
+                    Output.err(err, "failed to stat file: \"{}\"", .{file.handle});
+                    Global.crash();
+                };
+                Output.prettyln("<r><b><cyan>packing<r> {} {s}", .{ bun.fmt.size(stat.size, .{ .space_between_number_and_unit = false }), filename });
             }
 
             if (postpack_script) |postpack_script_str| {
@@ -955,22 +964,52 @@ pub const PackCommand = struct {
         defer print_buf.deinit();
         const print_buf_writer = print_buf.writer();
 
-        const archive = libarchive.archive_write_new();
+        var archive = Archive.writeNew();
         defer {
-            _ = libarchive.archive_write_close(archive);
-            _ = libarchive.archive_free(archive);
+            switch (archive.writeClose()) {
+                .failed, .fatal, .warn => {
+                    Output.errGeneric("failed to close archive: {s}", .{archive.errorString()});
+                    Global.crash();
+                },
+                else => {},
+            }
+            switch (archive.free()) {
+                .failed, .fatal, .warn => {
+                    Output.errGeneric("failed to free archive: {s}", .{archive.errorString()});
+                    Global.crash();
+                },
+                else => {},
+            }
         }
-        _ = libarchive.archive_write_set_format_pax_restricted(archive);
-        _ = libarchive.archive_write_set_compression_gzip(archive);
-        _ = libarchive.archive_write_add_filter_gzip(archive);
+
+        switch (archive.writeSetFormatPaxRestricted()) {
+            .failed, .fatal, .warn => {
+                Output.errGeneric("failed to set archive format to pax restricted: {s}", .{archive.errorString()});
+                Global.crash();
+            },
+            else => {},
+        }
+        switch (archive.writeSetCompressionGzip()) {
+            .failed, .fatal, .warn => {
+                Output.errGeneric("failed to set compression to gzip: {s}", .{archive.errorString()});
+                Global.crash();
+            },
+            else => {},
+        }
+        switch (archive.writeAddFilterGzip()) {
+            .failed, .fatal, .warn => {
+                Output.errGeneric("failed to set filter to gzip: {s}", .{archive.errorString()});
+                Global.crash();
+            },
+            else => {},
+        }
 
         // default is 9
         // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L12
         const compression_level = manager.options.pack_gzip_level orelse "9";
         try print_buf_writer.print("{s}\x00", .{compression_level});
-        switch (libarchive.archive_write_set_filter_option(archive, null, "compression-level", print_buf.items.ptr)) {
-            libarchive.ARCHIVE_OK => {},
-            libarchive.ARCHIVE_FAILED, libarchive.ARCHIVE_FATAL, libarchive.ARCHIVE_WARN => {
+        switch (archive.writeSetFilterOption(null, "compression-level", print_buf.items[0..compression_level.len :0])) {
+            .failed, .fatal, .warn => {
                 Output.errGeneric("compression level must be between 0 and 9, received {s}", .{compression_level});
                 Global.crash();
             },
@@ -1010,11 +1049,17 @@ pub const PackCommand = struct {
                 Global.crash();
             };
             const tarball_destination: stringZ = dest_buf[0 .. strings.withoutTrailingSlash(tarball_destination_dir).len + tarball_name.len - 1 :0];
-            _ = libarchive.archive_write_open_filename(archive, tarball_destination);
+            switch (archive.writeOpenFilename(tarball_destination)) {
+                .failed, .fatal, .warn => {
+                    Output.errGeneric("failed to open destination file: {s}", .{archive.errorString()});
+                    Global.crash();
+                },
+                else => {},
+            }
         }
 
-        var entry = libarchive.archive_entry_new();
-        defer libarchive.archive_entry_free(entry);
+        var entry = Archive.Entry.new();
+        defer entry.free();
 
         for (ctx.stats.successfully_bundled_deps.items) |dep| {
             Output.prettyln("<r><b><green>bundled<r> {s}", .{dep});
@@ -1028,9 +1073,13 @@ pub const PackCommand = struct {
                 Global.crash();
             };
             defer file.close();
-            Output.prettyln("<r><b><cyan>packing<r> {s}", .{filename});
+            const stat = file.stat().unwrap() catch |err| {
+                Output.err(err, "failed to stat file: \"{}\"", .{file.handle});
+                Global.crash();
+            };
+            Output.prettyln("<r><b><cyan>packing<r> {} {s}", .{ bun.fmt.size(stat.size, .{ .space_between_number_and_unit = false }), filename });
             Output.flush();
-            entry = try addArchiveEntry(ctx, file, filename, &read_buf, archive, entry, &print_buf, bins);
+            entry = try addArchiveEntry(ctx, file, stat, filename, &read_buf, archive, entry, &print_buf, bins);
         }
 
         for (bundled_pack_list.items) |filename| {
@@ -1039,7 +1088,11 @@ pub const PackCommand = struct {
                 Global.crash();
             };
             defer file.close();
-            entry = try addArchiveEntry(ctx, file, filename, &read_buf, archive, entry, &print_buf, bins);
+            const stat = file.stat().unwrap() catch |err| {
+                Output.err(err, "failed to stat file: \"{}\"", .{file.handle});
+                Global.crash();
+            };
+            entry = try addArchiveEntry(ctx, file, stat, filename, &read_buf, archive, entry, &print_buf, bins);
         }
 
         if (postpack_script) |postpack_script_str| {
@@ -1067,11 +1120,11 @@ pub const PackCommand = struct {
 
     fn editAndArchivePackageJSON(
         ctx: *Context,
-        archive: *libarchive.archive,
-        entry: *libarchive.archive_entry,
+        archive: *Archive,
+        entry: *Archive.Entry,
         root_dir: std.fs.Dir,
         json: *PackageManager.WorkspacePackageJSONCache.MapEntry,
-    ) OOM!*libarchive.archive_entry {
+    ) OOM!*Archive.Entry {
         const edited_package_json = try editRootPackageJSON(ctx, json);
         const package_json_file = File.openat(root_dir, "package.json", bun.O.RDONLY, 0).unwrap() catch |err| {
             Output.err(err, "failed to open package.json", .{});
@@ -1079,7 +1132,7 @@ pub const PackCommand = struct {
         };
         defer package_json_file.close();
 
-        Output.prettyln("<r><b><cyan>packing<r> package.json", .{});
+        Output.prettyln("<r><b><cyan>packing<r> {} package.json", .{bun.fmt.size(edited_package_json.len, .{ .space_between_number_and_unit = false })});
         Output.flush();
 
         const stat = package_json_file.stat().unwrap() catch |err| {
@@ -1087,61 +1140,71 @@ pub const PackCommand = struct {
             Global.crash();
         };
 
-        libarchive.archive_entry_set_pathname_utf8(entry, package_prefix ++ "package.json");
-        libarchive.archive_entry_set_size(entry, @intCast(edited_package_json.len));
+        entry.setPathnameUtf8(package_prefix ++ "package.json");
+        entry.setSize(@intCast(edited_package_json.len));
         // https://github.com/libarchive/libarchive/blob/898dc8319355b7e985f68a9819f182aaed61b53a/libarchive/archive_entry.h#L185
-        libarchive.archive_entry_set_filetype(entry, 0o100000);
+        entry.setFiletype(0o100000);
         // TODO: is this correct on windows?
-        libarchive.archive_entry_set_perm(entry, @intCast(stat.mode));
+        entry.setPerm(@intCast(stat.mode));
         // '1985-10-26T08:15:00.000Z'
         // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L28
-        libarchive.archive_entry_set_mtime(entry, 499162500, 0);
+        entry.setMtime(499162500, 0);
 
-        _ = libarchive.archive_write_header(archive, entry);
-        _ = libarchive.archive_write_data(archive, edited_package_json.ptr, edited_package_json.len);
+        switch (archive.writeHeader(entry)) {
+            .failed, .fatal, .warn => {
+                Output.errGeneric("failed to write tarball header: {s}", .{archive.errorString()});
+                Global.crash();
+            },
+            else => {},
+        }
+
+        _ = archive.writeData(edited_package_json);
 
         ctx.stats.total_unpacked_size += edited_package_json.len;
         ctx.stats.total_files += 1;
 
-        return libarchive.archive_entry_clear(entry);
+        return entry.clear();
     }
 
     fn addArchiveEntry(
         ctx: *Context,
         file: File,
+        stat: bun.Stat,
         filename: stringZ,
         read_buf: []u8,
-        archive: *libarchive.archive,
-        entry: *libarchive.archive_entry,
+        archive: *Archive,
+        entry: *Archive.Entry,
         print_buf: *std.ArrayList(u8),
         bins: []const BinInfo,
-    ) OOM!*libarchive.archive_entry {
+    ) OOM!*Archive.Entry {
         const print_buf_writer = print_buf.writer();
 
         try print_buf_writer.print("{s}{s}\x00", .{ package_prefix, filename });
-        libarchive.archive_entry_set_pathname_utf8(entry, print_buf_writer.context.items.ptr);
+        entry.setPathnameUtf8(print_buf_writer.context.items[0 .. package_prefix.len + filename.len :0]);
         print_buf_writer.context.clearRetainingCapacity();
 
-        const stat = file.stat().unwrap() catch |err| {
-            Output.err(err, "failed to stat file: {}", .{file.handle});
-            Global.crash();
-        };
-        libarchive.archive_entry_set_size(entry, @intCast(stat.size));
+        entry.setSize(@intCast(stat.size));
 
         // https://github.com/libarchive/libarchive/blob/898dc8319355b7e985f68a9819f182aaed61b53a/libarchive/archive_entry.h#L185
-        libarchive.archive_entry_set_filetype(entry, 0o100000);
+        entry.setFiletype(0o100000);
 
         var perm: bun.Mode = @intCast(stat.mode);
         // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L20
         if (isPackageBin(bins, filename)) perm |= 0o111;
         // TODO: is this correct on windows?
-        libarchive.archive_entry_set_perm(entry, @intCast(perm));
+        entry.setPerm(@intCast(perm));
 
         // '1985-10-26T08:15:00.000Z'
         // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L28
-        libarchive.archive_entry_set_mtime(entry, 499162500, 0);
+        entry.setMtime(499162500, 0);
 
-        _ = libarchive.archive_write_header(archive, entry);
+        switch (archive.writeHeader(entry)) {
+            .failed, .fatal, .warn => {
+                Output.errGeneric("failed to write tarball header: {s}", .{archive.errorString()});
+                Global.crash();
+            },
+            else => {},
+        }
 
         var read = file.read(read_buf).unwrap() catch |err| {
             Output.err(err, "failed to read file: {s}", .{filename});
@@ -1149,7 +1212,7 @@ pub const PackCommand = struct {
         };
         while (read > 0) {
             ctx.stats.total_unpacked_size += read;
-            _ = libarchive.archive_write_data(archive, read_buf.ptr, read);
+            _ = archive.writeData(read_buf[0..read]);
             read = file.read(read_buf).unwrap() catch |err| {
                 Output.err(err, "failed to read file: {s}", .{filename});
                 Global.crash();
@@ -1158,7 +1221,7 @@ pub const PackCommand = struct {
 
         ctx.stats.total_files += 1;
 
-        return libarchive.archive_entry_clear(entry);
+        return entry.clear();
     }
 
     /// Strip workspace protocols from dependency versions then

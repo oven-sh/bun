@@ -167,8 +167,8 @@ describe("FileSink", () => {
 });
 
 import fs from "node:fs";
-import util from "node:util";
 import path from "node:path";
+import util from "node:util";
 
 it("end doesn't close when backed by a file descriptor", async () => {
   using _ = fileDescriptorLeakChecker();

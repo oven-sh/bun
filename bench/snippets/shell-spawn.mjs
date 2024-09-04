@@ -1,6 +1,6 @@
-import { $ as zx } from "zx";
 import { $ as execa$ } from "execa";
-import { bench, run, group } from "./runner.mjs";
+import { $ as zx } from "zx";
+import { bench, group, run } from "./runner.mjs";
 
 const execa = execa$({ stdio: "ignore", cwd: import.meta.dirname });
 

@@ -1,8 +1,8 @@
 import { FileSystemRouter } from "bun";
-import { it, expect } from "bun:test";
-import path, { dirname } from "path";
+import { expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
 import { tmpdirSync } from "harness";
+import path, { dirname } from "path";
 
 function createTree(basedir: string, paths: string[]) {
   for (const end of paths) {

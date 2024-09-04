@@ -1,6 +1,6 @@
-import { bunExe, bunEnv } from "harness";
 import { expect, it } from "bun:test";
-import { join, dirname } from "node:path";
+import { bunEnv, bunExe } from "harness";
+import { dirname, join } from "node:path";
 
 it("works", async () => {
   const fixture_path = join(import.meta.dirname, "st.fixture.ts");

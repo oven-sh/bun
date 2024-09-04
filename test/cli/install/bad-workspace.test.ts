@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
-import { beforeEach, expect, test, beforeAll, setDefaultTimeout } from "bun:test";
+import { beforeAll, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
 import { writeFileSync } from "fs";
-import { bunExe, bunEnv, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 
 let cwd: string;
 

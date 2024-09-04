@@ -1,28 +1,28 @@
 import { file, spawn, write } from "bun";
+import { install_test_helpers } from "bun:internal-for-testing";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { ChildProcess, fork } from "child_process";
+import { copyFileSync, mkdirSync } from "fs";
+import { cp, exists, mkdir, readlink, rm, writeFile } from "fs/promises";
 import {
+  assertManifestsPopulated,
   bunExe,
   bunEnv as env,
   isLinux,
   isWindows,
-  toBeValidBin,
-  toHaveBins,
-  writeShebangScript,
-  tmpdirSync,
-  toMatchNodeModulesAt,
+  mergeWindowEnvs,
+  randomPort,
   runBunInstall,
   runBunUpdate,
   tempDirWithFiles,
-  randomPort,
-  mergeWindowEnvs,
-  assertManifestsPopulated,
+  tmpdirSync,
+  toBeValidBin,
+  toHaveBins,
+  toMatchNodeModulesAt,
+  writeShebangScript,
 } from "harness";
-import { join, sep, resolve } from "path";
-import { mkdirSync, copyFileSync } from "fs";
-import { rm, writeFile, mkdir, exists, cp, readlink } from "fs/promises";
+import { join, resolve, sep } from "path";
 import { readdirSorted } from "../dummy.registry";
-import { fork, ChildProcess } from "child_process";
-import { beforeAll, afterAll, beforeEach, test, expect, describe, it, setDefaultTimeout } from "bun:test";
-import { install_test_helpers } from "bun:internal-for-testing";
 const { parseLockfile } = install_test_helpers;
 const { iniInternals } = require("bun:internal-for-testing");
 const { loadNpmrc } = iniInternals;

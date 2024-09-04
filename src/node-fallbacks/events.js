@@ -478,6 +478,5 @@ function eventTargetAgnosticAddListener(emitter, name, listener, flags) {
 }
 
 export default EventEmitter;
-export { once };
-export { EventEmitter };
+export { EventEmitter, once };
 export var prototype = EventEmitter.prototype;

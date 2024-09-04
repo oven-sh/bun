@@ -1,6 +1,6 @@
-import { test, expect, afterEach } from "bun:test";
-import { bunExe, bunEnv, randomPort } from "harness";
 import { Subprocess, spawn } from "bun";
+import { afterEach, expect, test } from "bun:test";
+import { bunEnv, bunExe, randomPort } from "harness";
 import { WebSocket } from "ws";
 
 let inspectee: Subprocess;

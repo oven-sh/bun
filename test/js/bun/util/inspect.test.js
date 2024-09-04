@@ -1,4 +1,4 @@
-import { it, expect, describe } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { tmpdirSync } from "harness";
 import { join } from "path";
 import util from "util";

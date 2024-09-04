@@ -1,7 +1,12 @@
+import fs from "node:fs";
+import { join, relative, resolve } from "node:path";
 import wt, {
+  BroadcastChannel,
   getEnvironmentData,
   isMainThread,
   markAsUntransferable,
+  MessageChannel,
+  MessagePort,
   moveMessagePortToContext,
   parentPort,
   receiveMessageOnPort,
@@ -9,14 +14,9 @@ import wt, {
   setEnvironmentData,
   SHARE_ENV,
   threadId,
-  workerData,
-  BroadcastChannel,
-  MessageChannel,
-  MessagePort,
   Worker,
+  workerData,
 } from "worker_threads";
-import { resolve, relative, join } from "node:path";
-import fs from "node:fs";
 
 test("support eval in worker", async () => {
   const worker = new Worker(`postMessage(1 + 1)`, {

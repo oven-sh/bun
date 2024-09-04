@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { spawnSync } from "node:child_process";
+import { spawn as nodeSpawn } from "node:child_process";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 
@@ -33,9 +33,7 @@ function build(args) {
   if (process.platform === "win32" && !process.env["VSINSTALLDIR"]) {
     const shellPath = join(import.meta.dirname, "vs-shell.ps1");
     const scriptPath = import.meta.filename;
-    spawn("pwsh", ["-NoProfile", "-NoLogo", "-File", shellPath, process.argv0, scriptPath, ...args], {
-      stdio: "inherit",
-    });
+    spawn("pwsh", ["-NoProfile", "-NoLogo", "-File", shellPath, process.argv0, scriptPath, ...args]);
     return;
   }
 
@@ -55,11 +53,11 @@ function build(args) {
   if ("--clean" in extraOptions) {
     rmSync(buildPath, { recursive: true, force: true });
   }
-  spawn("cmake", generateArgs, { stdio: "inherit", env });
+  spawn("cmake", generateArgs, { env });
 
   const buildOptions = parseOptions(args, buildFlags);
   const buildArgs = Object.entries(buildOptions).flatMap(([flag, value]) => [flag, value]);
-  spawn("cmake", ["--build", buildPath, ...buildArgs], { stdio: "inherit", env });
+  spawn("cmake", ["--build", buildPath, ...buildArgs], { env });
 }
 
 function parseOptions(args, flags = []) {
@@ -89,15 +87,39 @@ function parseOptions(args, flags = []) {
   return options;
 }
 
-function spawn(command, args, options) {
-  const description = [command, ...args]
-    .filter(Boolean)
-    .map(arg => (arg.includes(" ") ? JSON.stringify(arg) : arg))
-    .join(" ");
+async function spawn(command, args, options) {
+  const effectiveArgs = args.filter(Boolean);
+  const description = [command, ...effectiveArgs].map(arg => (arg.includes(" ") ? JSON.stringify(arg) : arg)).join(" ");
   console.log("$", description);
 
-  const timestamp = Date.now();
-  const { status, signal, error, stdout } = spawnSync(command, args.filter(Boolean), options);
+  const subprocess = nodeSpawn(command, effectiveArgs, {
+    stdio: "pipe",
+    ...options,
+  });
+
+  let timestamp;
+  subprocess.on("spawn", () => {
+    timestamp = Date.now();
+  });
+
+  const stdout = new Promise(resolve => {
+    subprocess.stdout.on("end", resolve);
+    subprocess.stdout.on("data", data => process.stdout.write(data));
+  });
+
+  const stderr = new Promise(resolve => {
+    subprocess.stderr.on("end", resolve);
+    subprocess.stderr.on("data", data => process.stderr.write(data));
+  });
+
+  const done = Promise.all([stdout, stderr]);
+
+  const { error, exitCode, signalCode } = await new Promise(resolve => {
+    subprocess.on("error", error => resolve({ error }));
+    subprocess.on("exit", (exitCode, signalCode) => resolve({ exitCode, signalCode }));
+  });
+
+  await done;
 
   const duration = Date.now() - timestamp;
   if (duration > 60000) {
@@ -106,19 +128,19 @@ function spawn(command, args, options) {
     console.log(`Took ${(duration / 1000).toFixed(2)} seconds`);
   }
 
-  if (status === 0) {
-    return stdout?.toString()?.trim();
+  if (exitCode === 0) {
+    return;
   }
 
   if (error) {
-    // console.error(error);
-  } else if (signal) {
-    console.error(`Command killed: ${signal}`);
+    console.error(error);
+  } else if (signalCode) {
+    console.error(`Command killed: ${signalCode}`);
   } else {
-    console.error(`Command exited: code ${status}`);
+    console.error(`Command exited: code ${exitCode}`);
   }
 
-  process.exit(status ?? 1);
+  process.exit(exitCode ?? 1);
 }
 
 build(process.argv.slice(2));

@@ -16,6 +16,7 @@ include(Macros)
 # These must be set before include(), since they are widely used.
 setx(CWD ${CMAKE_SOURCE_DIR})
 setx(BUILD_PATH ${CMAKE_BINARY_DIR})
+
 optionx(CACHE_PATH STRING "The path to the cache directory" DEFAULT ${BUILD_PATH}/cache)
 optionx(TMP_PATH STRING "The path to the temporary directory" DEFAULT ${BUILD_PATH}/tmp)
 
@@ -49,7 +50,7 @@ endif()
 parse_package_json(VERSION_VARIABLE VERSION)
 project(Bun VERSION ${VERSION})
 
-include(BuildOptions)
+include(Options)
 include(SetupBuildkite)
 include(SetupJavaScript)
 

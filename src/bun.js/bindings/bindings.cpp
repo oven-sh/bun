@@ -20,7 +20,7 @@
 
 #include "BunClientData.h"
 #include "GCDefferalContext.h"
-
+#include "JavaScriptCore/IncrementalSweeper.h"
 #include "JavaScriptCore/AggregateError.h"
 #include "JavaScriptCore/BytecodeIndex.h"
 #include "JavaScriptCore/CodeBlock.h"
@@ -66,6 +66,7 @@
 
 #include "wtf/Assertions.h"
 #include "wtf/Compiler.h"
+#include "wtf/MonotonicTime.h"
 #include "wtf/text/ExternalStringImpl.h"
 #include "wtf/text/OrdinalNumber.h"
 #include "wtf/text/StringCommon.h"
@@ -3033,6 +3034,13 @@ void JSC__AnyPromise__wrap(JSC__JSGlobalObject* globalObject, EncodedJSValue enc
     }
 
     ASSERT_NOT_REACHED_WITH_MESSAGE("Non-promise value passed to AnyPromise.wrap");
+}
+
+extern "C" void JSC__VM__incrementalSweep(JSC::VM* vmPtr, uint64_t milliseconds)
+{
+    auto& vm = *vmPtr;
+    double deadlineSeconds = milliseconds / 1000.0;
+    vm.heap.sweeper().doWorkUntil(vm, MonotonicTime::fromRawSeconds(deadlineSeconds));
 }
 
 JSC__JSValue JSC__JSPromise__wrap(JSC__JSGlobalObject* globalObject, void* ctx, JSC__JSValue (*func)(void*, JSC__JSGlobalObject*))

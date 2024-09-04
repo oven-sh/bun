@@ -541,6 +541,8 @@ pub const GarbageCollectionController = struct {
     gc_repeating_timer_fast: bool = true,
     disabled: bool = false,
 
+    const log = bun.Output.scoped(.GC, false);
+
     pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
         const actual = uws.Loop.get();
         this.gc_timer = uws.Timer.createFallthrough(actual, this);
@@ -568,7 +570,10 @@ pub const GarbageCollectionController = struct {
             this.gc_repeating_timer.set(this, onGCRepeatingTimer, gc_timer_interval, gc_timer_interval);
     }
 
+    extern fn JSC__VM__incrementalSweep(vm: *JSC.VM, deadlineSeconds: u64) void;
+
     pub fn scheduleGCTimer(this: *GarbageCollectionController) void {
+        log("schedule", .{});
         this.gc_timer_state = .scheduled;
         this.gc_timer.set(this, onGCTimer, 16, 0);
     }
@@ -580,7 +585,9 @@ pub const GarbageCollectionController = struct {
     pub fn onGCTimer(timer: *uws.Timer) callconv(.C) void {
         var this = timer.as(*GarbageCollectionController);
         if (this.disabled) return;
+        log("onGCTimer", .{});
         this.gc_timer_state = .run_on_next_tick;
+        this.runIncrementalSweep(this.bunVM().jsc, 1);
     }
 
     // We want to always run GC once in awhile
@@ -603,6 +610,8 @@ pub const GarbageCollectionController = struct {
             this.gc_repeating_timer_fast = false;
             this.gc_repeating_timer.set(this, onGCRepeatingTimer, 30_000, 30_000);
             this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
+        } else if (setting == .slow and !this.gc_repeating_timer_fast) {
+            this.runIncrementalSweep(this.bunVM().jsc, 1);
         }
     }
 
@@ -626,7 +635,13 @@ pub const GarbageCollectionController = struct {
     pub fn processGCTimer(this: *GarbageCollectionController) void {
         if (this.disabled) return;
         var vm = this.bunVM().jsc;
+        log("processGCTimer", .{});
         this.processGCTimerWithHeapSize(vm, vm.blockBytesAllocated());
+    }
+
+    pub fn runIncrementalSweep(_: *GarbageCollectionController, vm: *JSC.VM, deadlineMs: u64) void {
+        log("runIncrementalSweep({d})", .{deadlineMs});
+        JSC__VM__incrementalSweep(vm, deadlineMs);
     }
 
     fn processGCTimerWithHeapSize(this: *GarbageCollectionController, vm: *JSC.VM, this_heap_size: usize) void {
@@ -649,6 +664,7 @@ pub const GarbageCollectionController = struct {
                     this.updateGCRepeatTimer(.fast);
 
                     if (this_heap_size > prev * 2) {
+                        this.runIncrementalSweep(vm, 1);
                         this.performGC();
                     } else {
                         this.scheduleGCTimer();
@@ -657,6 +673,7 @@ pub const GarbageCollectionController = struct {
             },
             .scheduled => {
                 if (this_heap_size > prev * 2) {
+                    this.runIncrementalSweep(vm, 1);
                     this.updateGCRepeatTimer(.fast);
                     this.performGC();
                 }

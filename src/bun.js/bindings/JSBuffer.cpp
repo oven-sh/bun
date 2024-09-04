@@ -380,7 +380,9 @@ static JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalOb
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    const auto& view = str->tryGetValue(lexicalGlobalObject);
+    const auto& view = str->value(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
     JSC::EncodedJSValue result;
 
     if (view->is8Bit()) {
@@ -435,7 +437,9 @@ static JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalOb
 
     JSC::JSValue decoded = JSC::JSValue::decode(result);
     if (UNLIKELY(!result)) {
-        throwTypeError(lexicalGlobalObject, scope, "An error occurred while decoding the string"_s);
+        if (!scope.exception()) {
+            throwTypeError(lexicalGlobalObject, scope, "An error occurred while decoding the string"_s);
+        }
         return JSC::JSValue::encode(jsUndefined());
     }
 
@@ -1333,6 +1337,7 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*
         RETURN_IF_EXCEPTION(scope, -1);
 
         JSC::EncodedJSValue encodedBuffer = constructFromEncoding(lexicalGlobalObject, str, encoding);
+        RETURN_IF_EXCEPTION(scope, -1);
         auto* arrayValue = JSC::jsDynamicCast<JSC::JSUint8Array*>(JSC::JSValue::decode(encodedBuffer));
         int64_t lengthValue = static_cast<int64_t>(arrayValue->byteLength());
         const uint8_t* typedVectorValue = arrayValue->typedVector();

@@ -1,33 +1,31 @@
 // @ts-nocheck
+import { bunExe } from "bun:harness";
+import { bunEnv, randomPort } from "harness";
+import { createTest } from "node-harness";
+import { spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
+import nodefs, { unlinkSync } from "node:fs";
 import http, {
-  createServer,
-  request,
-  get,
   Agent,
+  createServer,
+  get,
   globalAgent,
-  Server,
-  validateHeaderName,
-  validateHeaderValue,
-  ServerResponse,
   IncomingMessage,
   OutgoingMessage,
+  request,
+  Server,
+  ServerResponse,
+  validateHeaderName,
+  validateHeaderValue,
 } from "node:http";
 import https, { createServer as createHttpsServer } from "node:https";
-import { EventEmitter } from "node:events";
-import { createServer as createHttpsServer } from "node:https";
-import { createTest } from "node-harness";
-import url from "node:url";
 import { tmpdir } from "node:os";
-import { spawnSync } from "node:child_process";
-import nodefs from "node:fs";
 import * as path from "node:path";
-import { unlinkSync } from "node:fs";
-import { PassThrough } from "node:stream";
-const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock } = createTest(import.meta.path);
-import { bunExe } from "bun:harness";
-import { bunEnv, disableAggressiveGCScope, tmpdirSync, randomPort } from "harness";
 import * as stream from "node:stream";
+import { PassThrough } from "node:stream";
+import url from "node:url";
 import * as zlib from "node:zlib";
+const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock } = createTest(import.meta.path);
 
 function listen(server: Server, protocol: string = "http"): Promise<URL> {
   return new Promise((resolve, reject) => {

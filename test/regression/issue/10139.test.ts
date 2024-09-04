@@ -1,9 +1,9 @@
-import { test, expect, beforeAll, describe, afterAll } from "bun:test";
+import { $ } from "bun";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { readdirSync, statSync } from "fs";
+import { rm } from "fs/promises";
 import { bunExe, tempDirWithFiles } from "harness";
 import path from "path";
-import { rm } from "fs/promises";
-import { $ } from "bun";
-import { readdirSync, statSync } from "fs";
 
 // https://github.com/oven-sh/bun/issues/10139
 describe("https://github.com/oven-sh/bun/issues/10139", async () => {

@@ -1,8 +1,8 @@
-import { expect, it, describe } from "bun:test";
-import { Database, constants, SQLiteError } from "bun:sqlite";
-import { existsSync, fstat, readdirSync, realpathSync, rmSync, writeFileSync } from "fs";
-import { $, spawnSync } from "bun";
-import { BREAKING_CHANGES_BUN_1_2, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDirWithFiles } from "harness";
+import { spawnSync } from "bun";
+import { constants, Database, SQLiteError } from "bun:sqlite";
+import { describe, expect, it } from "bun:test";
+import { existsSync, readdirSync, realpathSync, writeFileSync } from "fs";
+import { bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 

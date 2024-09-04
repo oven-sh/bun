@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { bench, run } from "./runner.mjs";
 
 var short = "Hello World!";

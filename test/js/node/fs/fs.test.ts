@@ -1,55 +1,55 @@
 import { describe, expect, it, spyOn } from "bun:test";
-import { dirname, resolve, relative } from "node:path";
-import { promisify } from "node:util";
 import { bunEnv, bunExe, gc, getMaxFD, isIntelMacOS, isWindows, tempDirWithFiles, tmpdirSync } from "harness";
 import { isAscii } from "node:buffer";
 import fs, {
   closeSync,
+  constants,
+  copyFileSync,
+  createReadStream,
+  createWriteStream,
+  Dir,
+  Dirent,
   existsSync,
+  fdatasync,
+  fdatasyncSync,
+  fstatSync,
+  lstatSync,
   mkdirSync,
+  mkdtemp,
+  mkdtempSync,
+  openAsBlob,
   openSync,
+  promises,
   readdirSync,
   readFile,
   readFileSync,
+  readlinkSync,
   readSync,
-  writeFileSync,
-  writeSync,
-  statSync,
-  lstatSync,
-  copyFileSync,
-  rmSync,
+  readvSync,
+  realpathSync,
+  renameSync,
   rmdir,
   rmdirSync,
-  renameSync,
-  createReadStream,
-  createWriteStream,
-  promises,
-  unlinkSync,
-  mkdtempSync,
-  mkdtemp,
-  constants,
-  Dir,
-  Dirent,
+  rmSync,
   Stats,
-  realpathSync,
-  readlinkSync,
+  statSync,
   symlinkSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
   writevSync,
-  readvSync,
-  fstatSync,
-  fdatasync,
-  fdatasyncSync,
-  openAsBlob,
 } from "node:fs";
+import { dirname, relative, resolve } from "node:path";
+import { promisify } from "node:util";
 
 import _promises, { type FileHandle } from "node:fs/promises";
 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { spawnSync } from "bun";
 import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "./export-from.js";
 import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_ } from "./export-star-from.js";
-import { spawnSync } from "bun";
 
 const Buffer = globalThis.Buffer || Uint8Array;
 

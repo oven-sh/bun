@@ -1,7 +1,7 @@
-import { describe, it, expect, afterEach } from "bun:test";
 import type { Server, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
-import { bunEnv, bunExe, forceGuardMalloc, nodeExe } from "harness";
+import { afterEach, describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, forceGuardMalloc } from "harness";
 import { isIP } from "node:net";
 import path from "node:path";
 

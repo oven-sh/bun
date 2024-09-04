@@ -1,6 +1,5 @@
-import { describe, expect, test, beforeAll, afterAll } from "bun:test";
 import { $ } from "bun";
-import path from "path";
+import { expect, test } from "bun:test";
 import { bunExe } from "harness";
 
 test.each(["./only-fixture-1.ts", "./only-fixture-2.ts", "./only-fixture-3.ts"])(

@@ -1,12 +1,12 @@
-import { describe, it, expect } from "bun:test";
-import { gzipSync, deflateSync, inflateSync, gunzipSync } from "bun";
-import * as zlib from "node:zlib";
-import * as fs from "node:fs";
-import * as buffer from "node:buffer";
-import * as util from "node:util";
-import { resolve } from "node:path";
+import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
+import { describe, expect, it } from "bun:test";
 import { tmpdirSync } from "harness";
+import * as buffer from "node:buffer";
+import * as fs from "node:fs";
+import { resolve } from "node:path";
 import * as stream from "node:stream";
+import * as util from "node:util";
+import * as zlib from "node:zlib";
 
 describe("zlib", () => {
   for (let library of ["zlib", "libdeflate"]) {

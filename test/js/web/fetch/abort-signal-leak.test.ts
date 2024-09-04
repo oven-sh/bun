@@ -1,9 +1,9 @@
 import { afterAll, test } from "bun:test";
 import {
   server,
-  testReqSignalGetter,
-  testReqSignalAbortEventNeverResolves,
   testReqSignalAbortEvent,
+  testReqSignalAbortEventNeverResolves,
+  testReqSignalGetter,
 } from "./abortsignal-leak-fixture";
 
 afterAll(async () => {

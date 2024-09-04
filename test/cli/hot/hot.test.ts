@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
-import { bunExe, bunEnv, tmpdirSync, isDebug, isWindows } from "harness";
-import { cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync, copyFileSync } from "fs";
+import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isDebug, tmpdirSync } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;

@@ -1,5 +1,5 @@
-import { bench, run } from "mitata";
 import { expect } from "bun:test";
+import { bench, run } from "mitata";
 
 const MAP_SIZE = 10_000;
 

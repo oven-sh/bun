@@ -1,6 +1,6 @@
-import { it, expect, test, beforeAll, describe } from "bun:test";
-import { bunExe, bunEnv } from "harness";
 import { spawnSync } from "bun";
+import { beforeAll, describe, expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 
 describe("napi", () => {

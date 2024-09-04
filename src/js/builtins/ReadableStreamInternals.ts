@@ -924,6 +924,44 @@ export function onReadableStreamDirectControllerClosed(reason) {
   $throwTypeError("ReadableStreamDirectController is now closed");
 }
 
+export function tryUseReadableStreamBufferedFastPath(stream, method) {
+  // -- Fast path for Blob.prototype.stream(), fetch body streams, and incoming Request body streams --
+  const ptr = stream.$bunNativePtr;
+  if (
+    // only available on native streams
+    ptr &&
+    // don't even attempt it if the stream was used in some way
+    !$isReadableStreamDisturbed(stream) &&
+    // feature-detect if supported
+    $isCallable(ptr[method])
+  ) {
+    const promise = ptr[method]();
+    // if it throws, let it throw without setting $disturbed
+    stream.$disturbed = true;
+
+    // Clear the lazy load function.
+    $putByIdDirectPrivate(stream, "start", undefined);
+    $putByIdDirectPrivate(stream, "reader", {});
+
+    if (Bun.peek.status(promise) === "fulfilled") {
+      stream.$reader = undefined;
+      $readableStreamCloseIfPossible(stream);
+      return promise;
+    }
+
+    return promise
+      .catch(e => {
+        stream.$reader = undefined;
+        $readableStreamCancel(stream, e);
+        return Promise.$reject(e);
+      })
+      .finally(() => {
+        stream.$reader = undefined;
+        $readableStreamCloseIfPossible(stream);
+      });
+  }
+}
+
 export function onCloseDirectStream(reason) {
   var stream = this.$controlledReadableStream;
   if (!stream || $getByIdDirectPrivate(stream, "state") !== $streamReadable) return;
@@ -1862,18 +1900,22 @@ export function readableStreamIntoArray(stream) {
   var manyResult = reader.readMany();
 
   async function processManyResult(result) {
-    if (result.done) {
-      return [];
-    }
+    let { done, value } = result;
+    var chunks = value || [];
 
-    var chunks = result.value || [];
-
-    while (true) {
-      var thisResult = await reader.read();
-      if (thisResult.done) {
-        break;
+    while (!done) {
+      var thisResult = reader.readMany();
+      if ($isPromise(thisResult)) {
+        thisResult = await thisResult;
       }
-      chunks = chunks.concat(thisResult.value);
+
+      ({ done, value = [] } = thisResult);
+      const length = value.length || 0;
+      if (length > 1) {
+        chunks = chunks.concat(value);
+      } else if (length === 1) {
+        chunks.push(value[0]);
+      }
     }
 
     return chunks;

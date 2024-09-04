@@ -12,89 +12,105 @@ steps:
   - key: "darwin-aarch64"
     group: ":darwin: aarch64"
     steps:
-      - key: "darwin-aarch64-build-zig"
-        label: ":darwin: aarch64 - build-zig"
+      # - key: "darwin-aarch64-build-zig"
+      #   label: ":darwin: aarch64 - build-zig"
+      #   agents:
+      #     queue: "build-darwin"
+      #     os: "darwin"
+      #     arch: "aarch64"
+      #   command:
+      #     - "bun run build:ci --target bun-zig --toolchain darwin-aarch64"
+      - key: "darwin-aarch64-build-deps"
+        label: ":darwin: aarch64 - build-deps"
         agents:
           queue: "build-darwin"
           os: "darwin"
           arch: "aarch64"
         command:
-          - "bun run build:ci --target bun-zig --toolchain darwin-aarch64"
+          - "bun run build:ci --target dependencies"
+      - key: "darwin-aarch64-build-cpp"
+        label: ":darwin: aarch64 - build-cpp"
+        agents:
+          queue: "build-darwin"
+          os: "darwin"
+          arch: "aarch64"
+        command:
+          - "bun run build:ci -DBUN_CPP_ONLY=ON --target bun"
 
-  # macOS x64
-  - key: "darwin-x64"
-    group: ":darwin: x64"
-    steps:
-      - key: "darwin-x64-build-zig"
-        label: ":darwin: x64 - build-zig"
-        agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "aarch64"
-        command:
-          - "bun run build:ci --target bun-zig --toolchain darwin-x64"
+  # # macOS x64
+  # - key: "darwin-x64"
+  #   group: ":darwin: x64"
+  #   steps:
+  #     - key: "darwin-x64-build-zig"
+  #       label: ":darwin: x64 - build-zig"
+  #       agents:
+  #         queue: "build-darwin"
+  #         os: "darwin"
+  #         arch: "aarch64"
+  #       command:
+  #         - "bun run build:ci --target bun-zig --toolchain darwin-x64"
 
-  # Linux aarch64
-  - key: "linux-aarch64"
-    group: ":linux: aarch64"
-    steps:
-      - key: "linux-aarch64-build-zig"
-        label: ":linux: aarch64 - build-zig"
-        agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "aarch64"
-        command:
-          - "bun run build:ci --target bun-zig --toolchain linux-aarch64"
+  # # Linux aarch64
+  # - key: "linux-aarch64"
+  #   group: ":linux: aarch64"
+  #   steps:
+  #     - key: "linux-aarch64-build-zig"
+  #       label: ":linux: aarch64 - build-zig"
+  #       agents:
+  #         queue: "build-darwin"
+  #         os: "darwin"
+  #         arch: "aarch64"
+  #       command:
+  #         - "bun run build:ci --target bun-zig --toolchain linux-aarch64"
 
-  # Linux x64
-  - key: "linux-x64"
-    group: ":linux: x64"
-    steps:
-      - key: "linux-x64-build-zig"
-        label: ":linux: x64 - build-zig"
-        agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "aarch64"
-        command:
-          - "bun run build:ci --target bun-zig --toolchain linux-x64"
+  # # Linux x64
+  # - key: "linux-x64"
+  #   group: ":linux: x64"
+  #   steps:
+  #     - key: "linux-x64-build-zig"
+  #       label: ":linux: x64 - build-zig"
+  #       agents:
+  #         queue: "build-darwin"
+  #         os: "darwin"
+  #         arch: "aarch64"
+  #       command:
+  #         - "bun run build:ci --target bun-zig --toolchain linux-x64"
 
-  # Linux x64-baseline
-  - key: "linux-x64-baseline"
-    group: ":linux: x64-baseline"
-    steps:
-      - key: "linux-x64-baseline-build-zig"
-        label: ":linux: x64-baseline - build-zig"
-        agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "aarch64"
-        command:
-          - "bun run build:ci --target bun-zig --toolchain linux-x64-baseline"
+  # # Linux x64-baseline
+  # - key: "linux-x64-baseline"
+  #   group: ":linux: x64-baseline"
+  #   steps:
+  #     - key: "linux-x64-baseline-build-zig"
+  #       label: ":linux: x64-baseline - build-zig"
+  #       agents:
+  #         queue: "build-darwin"
+  #         os: "darwin"
+  #         arch: "aarch64"
+  #       command:
+  #         - "bun run build:ci --target bun-zig --toolchain linux-x64-baseline"
 
-  # Windows x64
-  - key: "windows-x64"
-    group: ":windows: x64"
-    steps:
-      - key: "windows-x64-build-zig"
-        label: ":windows: x64 - build-zig"
-        agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "aarch64"
-        command:
-          - "bun run build:ci --target bun-zig --toolchain windows-x64"
+  # # Windows x64
+  # - key: "windows-x64"
+  #   group: ":windows: x64"
+  #   steps:
+  #     - key: "windows-x64-build-zig"
+  #       label: ":windows: x64 - build-zig"
+  #       agents:
+  #         queue: "build-darwin"
+  #         os: "darwin"
+  #         arch: "aarch64"
+  #       command:
+  #         - "bun run build:ci --target bun-zig --toolchain windows-x64"
 
-  # Windows x64-baseline
-  - key: "windows-x64-baseline"
-    group: ":windows: x64-baseline"
-    steps:
-      - key: "windows-x64-baseline-build-zig"
-        label: ":windows: x64-baseline - build-zig"
-        agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "aarch64"
-        command:
-          - "bun run build:ci --target bun-zig --toolchain windows-x64-baseline"
+  # # Windows x64-baseline
+  # - key: "windows-x64-baseline"
+  #   group: ":windows: x64-baseline"
+  #   steps:
+  #     - key: "windows-x64-baseline-build-zig"
+  #       label: ":windows: x64-baseline - build-zig"
+  #       agents:
+  #         queue: "build-darwin"
+  #         os: "darwin"
+  #         arch: "aarch64"
+  #       command:
+  #         - "bun run build:ci --target bun-zig --toolchain windows-x64-baseline"

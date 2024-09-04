@@ -1198,7 +1198,7 @@ pub const ZlibDecompressorStreaming = struct {
         }
         if (ret == .StreamEnd) return true;
         if (state.avail_out == 0) return false;
-        if (ret == .BufError and this.finishFlush == .Finish) return this.error_for_message("unexpected end of file");
+        if (ret == .BufError and flush == .Finish) return this.error_for_message("unexpected end of file");
         return true;
     }
 

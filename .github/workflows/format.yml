@@ -15,7 +15,7 @@ on:
         description: The workflow ID to download artifacts (skips the build step)
   pull_request:
     paths:
-      - "**/*.{ts,js,json,md,toml,yml,yaml,tsx,jsx}"
+      - "**/*.{ts,js,json,md,toml,yml,yaml,tsx,jsx,zig}"
 
 jobs:
   format:

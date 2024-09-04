@@ -1,11 +1,11 @@
-import tls, { rootCertificates, connect, createServer, Server, TLSSocket } from "tls";
-import type { PeerCertificate } from "tls";
-import { realpathSync, readFileSync } from "fs";
+import { readFileSync, realpathSync } from "fs";
+import { tls as cert1 } from "harness";
+import { AddressInfo } from "net";
+import { createTest } from "node-harness";
 import { tmpdir } from "os";
 import { join } from "path";
-import { createTest } from "node-harness";
-import { AddressInfo } from "net";
-import { tls as cert1, expiredTls as cert2 } from "harness";
+import type { PeerCertificate } from "tls";
+import tls, { connect, createServer, rootCertificates, Server, TLSSocket } from "tls";
 
 const { describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
 

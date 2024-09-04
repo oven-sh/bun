@@ -1,11 +1,11 @@
 "use strict";
 
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import jwt from "jsonwebtoken";
-import { expect, describe, it, beforeEach, afterEach } from "bun:test";
-import util from "util";
-import testUtils from "./test-utils";
 import jws from "jws";
 import sinon from "sinon";
+import util from "util";
+import testUtils from "./test-utils";
 
 function signWithNotBefore(notBefore, payload, callback) {
   const options = { algorithm: "HS256" };

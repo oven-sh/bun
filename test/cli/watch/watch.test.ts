@@ -1,9 +1,9 @@
-import { it, expect, afterEach } from "bun:test";
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
+import { afterEach, expect, it } from "bun:test";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { writeFileSync, rmSync } from "node:fs";
-import { bunExe, bunEnv, tmpdirSync } from "harness";
 
 let watchee: Subprocess;
 

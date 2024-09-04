@@ -1,6 +1,6 @@
-import { readdirSync, statSync } from "fs";
-import { bench, run } from "./runner.mjs";
+import { statSync } from "fs";
 import { argv } from "process";
+import { bench, run } from "./runner.mjs";
 
 const dir = argv.length > 2 ? argv[2] : "/tmp";
 

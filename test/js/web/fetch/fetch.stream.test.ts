@@ -1,13 +1,12 @@
-import { Socket, Server, TCPSocketListener } from "bun";
-import { readFileSync } from "fs";
-import { join } from "path";
+import { Socket } from "bun";
 import { describe, expect, it } from "bun:test";
+import { createReadStream, readFileSync } from "fs";
 import { gcTick } from "harness";
-import zlib from "zlib";
 import http from "http";
-import { createReadStream } from "fs";
-import { pipeline } from "stream";
 import type { AddressInfo } from "net";
+import { join } from "path";
+import { pipeline } from "stream";
+import zlib from "zlib";
 
 const files = [
   join(import.meta.dir, "fixture.html"),

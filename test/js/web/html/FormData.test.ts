@@ -1,7 +1,5 @@
-import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import fs, { chmodSync, unlinkSync } from "fs";
-import { gc, withoutAggressiveGC } from "harness";
-import { mkfifo } from "mkfifo";
+import { describe, expect, it, test } from "bun:test";
+import { join } from "path";
 
 describe("FormData", () => {
   it("should be able to append a string", () => {
@@ -599,6 +597,27 @@ describe("FormData", () => {
       const formData = await response.formData();
       expect(formData instanceof FormData).toBe(true);
       expect(formData.getAll("foo")).toEqual(["bar", "baz"]);
+    });
+
+    it("should handle slices", async () => {
+      using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const body = await req.formData();
+          return new Response(body.get("file"), {
+            headers: { "Content-Type": "text/plain" },
+          });
+        },
+      });
+      const fileSlice = Bun.file(join(import.meta.dir, "..", "fetch", "fixture.html")).slice(5, 10);
+      const form = new FormData();
+      form.append("file", fileSlice);
+      const result = await fetch(server.url, {
+        method: "POST",
+        body: form,
+      }).then(res => res.blob());
+      expect(result.size).toBe(5);
+      expect(fileSlice.size).toBe(result.size);
     });
   });
 });

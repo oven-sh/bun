@@ -24,7 +24,7 @@
 #include <arpa/inet.h>
 #endif
 
-#define CONCURRENT_CONNECTIONS 6
+#define CONCURRENT_CONNECTIONS 4
 
 // clang-format off
 int default_is_low_prio_handler(struct us_socket_t *s) {

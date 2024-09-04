@@ -1,5 +1,5 @@
-import { createTestBuilder, redirect } from "./util";
 import { shellInternals } from "bun:internal-for-testing";
+import { createTestBuilder, redirect } from "./util";
 const { parse } = shellInternals;
 const TestBuilder = createTestBuilder(import.meta.path);
 

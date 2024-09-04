@@ -89,10 +89,8 @@ const BunBuildOptions = struct {
 
 pub fn getOSVersionMin(os: OperatingSystem) ?Target.Query.OsVersion {
     return switch (os) {
-        // bun needs macOS 12 to work properly due to icucore, but we have been
-        // compiling everything with 11 as the minimum.
         .mac => .{
-            .semver = .{ .major = 11, .minor = 0, .patch = 0 },
+            .semver = .{ .major = 13, .minor = 0, .patch = 0 },
         },
 
         // Windows 10 1809 is the minimum supported version

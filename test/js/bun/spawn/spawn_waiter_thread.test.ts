@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
 import { spawn } from "bun";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import { join } from "path";
 

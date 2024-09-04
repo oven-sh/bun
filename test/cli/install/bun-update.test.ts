@@ -1,7 +1,7 @@
-import { file, listen, Socket, spawn } from "bun";
+import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
+import { access, readFile, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, toBeValidBin, toHaveBins } from "harness";
-import { readFile, access, mkdir, readlink, realpath, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import {
   dummyAfterAll,

@@ -1,7 +1,7 @@
+import { pathToFileURL } from "bun";
+import { bunRun, bunRunAsScript, tempDirWithFiles } from "harness";
 import fs, { FSWatcher } from "node:fs";
 import path from "path";
-import { tempDirWithFiles, bunRun, bunRunAsScript } from "harness";
-import { pathToFileURL } from "bun";
 
 import { describe, expect, mock, test } from "bun:test";
 // Because macOS (and possibly other operating systems) can return a watcher

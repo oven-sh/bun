@@ -97,3 +97,18 @@ export const setSyntheticAllocationLimitForTesting: (limit: number) => number = 
   "Bun__setSyntheticAllocationLimitForTesting",
   1,
 );
+
+export const npm_manifest_test_helpers = $zig("npm.zig", "PackageManifest.bindings.generate") as {
+  /**
+   * Returns the parsed manifest file. Currently only returns an array of available versions.
+   */
+  parseManifest: (manifestFileName: string, registryUrl: string) => any;
+};
+
+// Like npm-package-arg, sort of https://www.npmjs.com/package/npm-package-arg
+export const npa: (name: string) => Dependency = $newZigFunction("dependency.zig", "fromJS", 1);
+
+export const npmTag: (
+  name: string,
+) => undefined | "npm" | "dist_tag" | "tarball" | "folder" | "symlink" | "workspace" | "git" | "github" =
+  $newZigFunction("dependency.zig", "Version.Tag.inferFromJS", 1);

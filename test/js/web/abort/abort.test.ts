@@ -1,8 +1,8 @@
-import { describe, test, expect } from "bun:test";
-import { bunExe, bunEnv, tmpdirSync } from "harness";
+import { describe, expect, test } from "bun:test";
 import { writeFileSync } from "fs";
-import { join } from "path";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { tmpdir } from "os";
+import { join } from "path";
 
 describe("AbortSignal", () => {
   test("spawn test", async () => {

@@ -1,9 +1,9 @@
-import { SpawnOptions, Subprocess, SyncSubprocess } from "bun";
+import { SyncSubprocess } from "bun";
 import { describe, expect, test } from "bun:test";
-import { writeFileSync, rmSync } from "fs";
+import { rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { tmpdir } from "os";
-import { join, sep, posix } from "path";
+import { join, sep } from "path";
 
 for (const flag of ["-e", "--print"]) {
   describe(`bun ${flag}`, () => {

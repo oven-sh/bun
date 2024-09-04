@@ -1,8 +1,8 @@
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { EventEmitter } from "node:events";
 import type { Server } from "node:net";
 import { createServer } from "node:net";
-import { EventEmitter } from "node:events";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const isDebug = process.env.NODE_ENV === "development";
 

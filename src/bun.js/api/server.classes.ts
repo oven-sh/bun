@@ -16,6 +16,10 @@ function generate(name) {
         fn: "doPublish",
         length: 3,
       },
+      subscriberCount: {
+        fn: "doSubscriberCount",
+        length: 1,
+      },
       reload: {
         fn: "doReload",
         length: 2,

@@ -259,9 +259,9 @@ function Agent(options = kEmptyObject) {
   if (options.noDelay === undefined) options.noDelay = true;
 
   // Don't confuse net and make it think that we're connecting to a pipe
-  this.requests = kEmptyObject;
-  this.sockets = kEmptyObject;
-  this.freeSockets = kEmptyObject;
+  this.requests = Object.create(null);
+  this.sockets = Object.create(null);
+  this.freeSockets = Object.create(null);
 
   this.keepAliveMsecs = options.keepAliveMsecs || 1000;
   this.keepAlive = options.keepAlive || false;
@@ -2118,7 +2118,7 @@ function _writeHead(statusCode, reason, obj, response) {
   } else {
     // writeHead(statusCode[, headers])
     if (!response.statusMessage) response.statusMessage = STATUS_CODES[statusCode] || "unknown";
-    obj = reason;
+    obj ??= reason;
   }
   response.statusCode = statusCode;
 
@@ -2207,6 +2207,9 @@ function emitAbortNextTick(self) {
   self.emit("abort");
 }
 
+const setMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "setMaxHTTPHeaderSize", 1);
+const getMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "getMaxHTTPHeaderSize", 0);
+
 var globalAgent = new Agent();
 export default {
   Agent,
@@ -2218,7 +2221,12 @@ export default {
   IncomingMessage,
   request,
   get,
-  maxHeaderSize: 16384,
+  get maxHeaderSize() {
+    return getMaxHTTPHeaderSize();
+  },
+  set maxHeaderSize(value) {
+    setMaxHTTPHeaderSize(value);
+  },
   validateHeaderName,
   validateHeaderValue,
   setMaxIdleHTTPParsers(max) {

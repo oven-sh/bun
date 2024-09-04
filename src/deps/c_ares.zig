@@ -854,7 +854,7 @@ pub const struct_ares_srv_reply = extern struct {
         //   name: 'service.example.com'
         // }
 
-        obj.put(globalThis, JSC.ZigString.static("priority"), JSC.JSValue.jsNumber(this.weight));
+        obj.put(globalThis, JSC.ZigString.static("priority"), JSC.JSValue.jsNumber(this.priority));
         obj.put(globalThis, JSC.ZigString.static("weight"), JSC.JSValue.jsNumber(this.weight));
         obj.put(globalThis, JSC.ZigString.static("port"), JSC.JSValue.jsNumber(this.port));
 

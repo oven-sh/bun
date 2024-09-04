@@ -1,7 +1,7 @@
-import { join } from "path";
-import { it, expect, beforeAll, afterAll } from "bun:test";
-import { bunExe, bunEnv, isDebug } from "harness";
 import type { Subprocess } from "bun";
+import { afterAll, beforeAll, expect, it } from "bun:test";
+import { bunEnv, bunExe, isDebug } from "harness";
+import { join } from "path";
 
 const payload = Buffer.alloc(512 * 1024, "1").toString("utf-8"); // decent size payload to test memory leak
 const batchSize = 40;
@@ -133,7 +133,7 @@ for (const test_info of [
   ["should not leak memory when streaming the body and echoing it back", callStreamingEcho, false, 64],
 ] as const) {
   const [testName, fn, skip, maxMemoryGrowth] = test_info;
-  it.todoIf(skip)(
+  it(
     testName,
     async () => {
       const report = await calculateMemoryLeak(fn);
@@ -143,6 +143,6 @@ for (const test_info of [
       expect(report.leak).toBeLessThanOrEqual(maxMemoryGrowth);
       expect(report.end_memory).toBeLessThanOrEqual(512 * 1024 * 1024);
     },
-    isDebug ? 60_000 : 30_000,
+    isDebug ? 60_000 : 40_000,
   );
 }

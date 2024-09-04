@@ -1,7 +1,7 @@
 import assert from "assert";
-import { readdirSync } from "fs";
-import { itBundled, testForFile } from "../expectBundled";
 import { describe, expect } from "bun:test";
+import { readdirSync } from "fs";
+import { itBundled } from "../expectBundled";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_splitting_test.go

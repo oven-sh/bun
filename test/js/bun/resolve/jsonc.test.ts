@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
-import { join } from "path";
+import { expect, test } from "bun:test";
 import { tempDirWithFiles } from "harness";
+import { join } from "path";
 test("empty jsonc - package.json", async () => {
   const dir = tempDirWithFiles("jsonc", {
     "package.json": ``,

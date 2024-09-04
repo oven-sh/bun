@@ -248,7 +248,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 }
 
 extern "C" void* Bun__getVM();
-extern "C" Zig::GlobalObject* Bun__getDefaultGlobalObject();
+
 extern "C" void Bun__setDefaultGlobalObject(Zig::GlobalObject* globalObject);
 
 // Error.captureStackTrace may cause computeErrorInfo to be called twice
@@ -592,7 +592,7 @@ static String computeErrorInfoWithoutPrepareStackTrace(
     }
 
     if (UNLIKELY(!globalObject)) {
-        globalObject = Bun__getDefaultGlobalObject();
+        globalObject = defaultGlobalObject();
     }
 
     return Bun::formatStackTrace(vm, globalObject, lexicalGlobalObject, name, message, line, column, sourceURL, stackTrace, errorInstance);
@@ -672,7 +672,7 @@ static String computeErrorInfo(JSC::VM& vm, Vector<StackFrame>& stackTrace, Ordi
         // Error.prepareStackTrace - https://v8.dev/docs/stack-trace-api#customizing-stack-traces
         if (!globalObject) {
             // node:vm will use a different JSGlobalObject
-            globalObject = Bun__getDefaultGlobalObject();
+            globalObject = defaultGlobalObject();
 
             auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(lexicalGlobalObject);
             if (JSValue prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "prepareStackTrace"_s))) {
@@ -708,7 +708,7 @@ static String computeErrorInfoWrapper(JSC::VM& vm, Vector<StackFrame>& stackTrac
 
 static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
 {
-    auto* globalObject = Bun__getDefaultGlobalObject();
+    auto* globalObject = defaultGlobalObject();
     if (auto nextTickQueueValue = globalObject->m_nextTickQueue.get()) {
         auto* queue = jsCast<Bun::JSNextTickQueue*>(nextTickQueueValue);
         globalObject->resetOnEachMicrotaskTick();
@@ -718,7 +718,7 @@ static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
 
 static void cleanupAsyncHooksData(JSC::VM& vm)
 {
-    auto* globalObject = Bun__getDefaultGlobalObject();
+    auto* globalObject = defaultGlobalObject();
     globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
     globalObject->asyncHooksNeedsCleanup = false;
     if (!globalObject->m_nextTickQueue) {
@@ -797,7 +797,7 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 
     vm.setOnComputeErrorInfo(computeErrorInfoWrapper);
     vm.setOnEachMicrotaskTick([](JSC::VM& vm) -> void {
-        auto* globalObject = Bun__getDefaultGlobalObject();
+        auto* globalObject = defaultGlobalObject();
         if (auto nextTickQueue = globalObject->m_nextTickQueue.get()) {
             globalObject->resetOnEachMicrotaskTick();
             Bun::JSNextTickQueue* queue = jsCast<Bun::JSNextTickQueue*>(nextTickQueue);
@@ -958,7 +958,7 @@ extern "C" bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject* g
 
 String GlobalObject::defaultAgentClusterID()
 {
-    return makeString(ProcessIdent::identifier().toUInt64(), "-default"_s);
+    return makeString(WebCore::Process::identifier().toUInt64(), "-default"_s);
 }
 
 String GlobalObject::agentClusterID() const
@@ -2520,12 +2520,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDefaultErrorPrepareStackTrace, (JSGlobalObjec
 {
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Zig::GlobalObject* globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
-
-    if (!globalObject) {
-        // node:vm will use a different JSGlobalObject
-        globalObject = Bun__getDefaultGlobalObject();
-    }
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
     auto errorObject = jsDynamicCast<JSC::ErrorInstance*>(callFrame->argument(0));
     auto callSites = jsDynamicCast<JSC::JSArray*>(callFrame->argument(1));

@@ -1,10 +1,15 @@
-import { ServerWebSocket, TCPSocket, Socket as _BunSocket, TCPSocketListener } from "bun";
+import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { describe, expect, it } from "bun:test";
-import { connect, isIP, isIPv4, isIPv6, Socket, createConnection, Server } from "net";
-import { join } from "path";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { connect, createConnection, isIP, isIPv4, isIPv6, Server, Socket, Stream } from "net";
+import { join } from "path";
 
 const socket_domain = tmpdirSync();
+
+it("Stream should be aliased to Socket", () => {
+  // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/net.js#L2456
+  expect(Socket).toBe(Stream);
+});
 
 it("should support net.isIP()", () => {
   expect(isIP("::1")).toBe(6);

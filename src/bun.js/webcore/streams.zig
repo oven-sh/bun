@@ -2120,7 +2120,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             return this.buffer.ptr[this.offset..this.buffer.len];
         }
 
-        pub fn onWritable(this: *@This(), write_offset: u64, _: *UWSResponse) callconv(.C) bool {
+        pub fn onWritable(this: *@This(), write_offset: u64, _: *UWSResponse) bool {
             // write_offset is the amount of data that was written not how much we need to write
             log("onWritable ({d})", .{write_offset});
             // onWritable reset backpressure state to allow flushing
@@ -2522,6 +2522,8 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         }
 
         fn registerAutoFlusher(this: *@This()) void {
+            // if we enqueue data we should reset the timeout
+            this.res.resetTimeout();
             if (!this.auto_flusher.registered)
                 AutoFlusher.registerDeferredMicrotaskWithTypeUnchecked(@This(), this, this.globalThis.bunVM());
         }

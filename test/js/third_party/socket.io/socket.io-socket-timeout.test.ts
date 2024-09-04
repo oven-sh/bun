@@ -1,7 +1,7 @@
+import { describe, expect, it } from "bun:test";
 import { Server } from "socket.io";
-import { describe, it, expect } from "bun:test";
 
-import { success, fail, createClient } from "./support/util.ts";
+import { createClient, fail, success } from "./support/util.ts";
 
 // Hanging tests are disabled because they cause the test suite to hang
 describe.skip("timeout", () => {

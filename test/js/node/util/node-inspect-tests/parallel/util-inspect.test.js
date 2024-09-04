@@ -20,11 +20,10 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 import assert from "assert";
+import { isWindows } from "harness";
 import util, { inspect } from "util";
 import vm from "vm";
 import { MessageChannel } from "worker_threads";
-import url from "url";
-import { isWindows } from "harness";
 const noop = () => {};
 const mustCallChecks = [];
 

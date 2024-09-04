@@ -1,6 +1,7 @@
 
 #include "root.h"
 
+#include "ZigGlobalObject.h"
 #include "DOMException.h"
 #include "JavaScriptCore/Error.h"
 #include "JavaScriptCore/ErrorType.h"
@@ -27,8 +28,6 @@
 
 #include "ErrorCode.h"
 
-extern "C" Zig::GlobalObject* Bun__getDefaultGlobalObject();
-
 static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code, bool isDOMExceptionPrototype = false)
 {
     JSC::JSObject* prototype;
@@ -36,11 +35,7 @@ static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* glo
     // Inherit from DOMException
     // But preserve the error.stack property.
     if (isDOMExceptionPrototype) {
-        auto* domGlobalObject = JSC::jsDynamicCast<Zig::GlobalObject*>(globalObject);
-        if (UNLIKELY(!domGlobalObject)) {
-            domGlobalObject = Bun__getDefaultGlobalObject();
-        }
-        // TODO: node:vm?
+        auto* domGlobalObject = defaultGlobalObject(globalObject);
         prototype = JSC::constructEmptyObject(globalObject, WebCore::JSDOMException::prototype(vm, *domGlobalObject));
     } else {
         switch (type) {
@@ -418,6 +413,11 @@ extern "C" JSC::EncodedJSValue WebCore__CommonAbortReason__toJS(JSC::JSGlobalObj
     return JSC::JSValue::encode(WebCore::toJS(globalObject, abortReason));
 }
 
+JSC::JSObject* Bun::createInvalidThisError(JSC::JSGlobalObject* globalObject, const String& message)
+{
+    return Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_THIS, message);
+}
+
 JSC::JSObject* Bun::createInvalidThisError(JSC::JSGlobalObject* globalObject, JSC::JSValue thisValue, const ASCIILiteral typeName)
 {
     if (thisValue.isEmpty() || thisValue.isUndefined()) {
@@ -427,4 +427,9 @@ JSC::JSObject* Bun::createInvalidThisError(JSC::JSGlobalObject* globalObject, JS
     // Pathological case: the this value returns a string which is extremely long or causes an out of memory error.
     const auto& typeString = thisValue.isString() ? String("a string"_s) : JSC::errorDescriptionForValue(globalObject, thisValue);
     return Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_THIS, makeString("Expected this to be instanceof "_s, typeName, ", but received "_s, typeString));
+}
+
+JSC::EncodedJSValue Bun::throwError(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, Bun::ErrorCode code, const WTF::String& message)
+{
+    return JSC::JSValue::encode(scope.throwException(globalObject, createError(globalObject, code, message)));
 }

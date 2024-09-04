@@ -20,18 +20,20 @@ function createWriter(target: zlib.Zlib, buffer: Buffer): Promise<void> {
   });
 }
 
-const methods: [string, string, boolean][] = [
+const methods = [
   ["createGzip", "createGunzip", false],
   ["createGzip", "createUnzip", false],
   ["createDeflate", "createInflate", true],
   ["createDeflateRaw", "createInflateRaw", true],
   ["createBrotliCompress", "createBrotliDecompress", true],
-];
+] as const;
+type C = (typeof methods)[number][0];
+type D = (typeof methods)[number][1];
 
-methods.forEach(([compressMethod, decompressMethod, allowExtra]) => {
+for (const [compressMethod, decompressMethod, allowExtra] of methods) {
   test(`Test ${compressMethod} and ${decompressMethod}`, async () => {
     let compData = Buffer.alloc(0);
-    const comp = zlib[compressMethod as keyof typeof zlib]() as zlib.Zlib;
+    const comp = zlib[compressMethod]();
 
     comp.on("data", (d: Buffer) => {
       compData = Buffer.concat([compData, d]);
@@ -55,11 +57,11 @@ methods.forEach(([compressMethod, decompressMethod, allowExtra]) => {
       await testDecompressionWithExtra(decompressMethod, compData);
     }
   });
-});
+}
 
-async function testDecompression(decompressMethod: string, compData: Buffer) {
+async function testDecompression(decompressMethod: D, compData: Buffer) {
   let decompData = Buffer.alloc(0);
-  const decomp = zlib[decompressMethod as keyof typeof zlib]() as zlib.Zlib;
+  const decomp = zlib[decompressMethod]();
 
   decomp.on("data", (d: Buffer) => {
     decompData = Buffer.concat([decompData, d]);
@@ -77,10 +79,10 @@ async function testDecompression(decompressMethod: string, compData: Buffer) {
   await decompPromise;
 }
 
-async function testDecompressionWithExtra(decompressMethod: string, compData: Buffer) {
+async function testDecompressionWithExtra(decompressMethod: D, compData: Buffer) {
   const compDataExtra = Buffer.concat([compData, Buffer.from("extra")]);
   let decompData = Buffer.alloc(0);
-  const decomp = zlib[decompressMethod as keyof typeof zlib]() as zlib.Zlib;
+  const decomp = zlib[decompressMethod]();
 
   decomp.on("data", (d: Buffer) => {
     decompData = Buffer.concat([decompData, d]);

@@ -89,6 +89,15 @@ pub const UpgradedDuplex = struct {
         error_no: i32 = 0,
         code: [:0]const u8 = "",
         reason: [:0]const u8 = "",
+
+        pub fn deinit(this: *CertError) void {
+            if (this.code.len > 0) {
+                bun.default_allocator.free(this.code);
+            }
+            if (this.reason.len > 0) {
+                bun.default_allocator.free(this.reason);
+            }
+        }
     };
 
     const WrapperType = SSLWrapper(*UpgradedDuplex);
@@ -334,7 +343,12 @@ pub const UpgradedDuplex = struct {
         if (this.origin.get()) |duplex| {
             const globalThis = this.origin.globalThis.?;
 
-            const addEventListener = try duplex.getFunction(globalThis, "on") orelse return error.InvalidDuplex;
+            const addEventListener = try duplex.getFunction(globalThis, "on") orelse {
+                const error_value = globalThis.ERR_STREAM_WRAP("Invalid Duplex", .{}).toJS();
+                error_value.ensureStillAlive();
+                this.handlers.onError(this.handlers.ctx, error_value);
+                return;
+            };
             const dataCallback = JSC.NewFunctionWithData(
                 globalThis,
                 null,
@@ -384,10 +398,33 @@ pub const UpgradedDuplex = struct {
             JSC.setFunctionData(closeCallback, this);
             this.onCloseCallback = JSC.Strong.create(closeCallback, globalThis);
 
-            this.vm.eventLoop().runCallback(addEventListener, globalThis, duplex, &[_]JSC.JSValue{ bun.String.static("data").toJS(globalThis), dataCallback });
-            this.vm.eventLoop().runCallback(addEventListener, globalThis, duplex, &[_]JSC.JSValue{ bun.String.static("end").toJS(globalThis), endCallback });
-            this.vm.eventLoop().runCallback(addEventListener, globalThis, duplex, &[_]JSC.JSValue{ bun.String.static("close").toJS(globalThis), closeCallback });
-            this.vm.eventLoop().runCallback(addEventListener, globalThis, duplex, &[_]JSC.JSValue{ bun.String.static("drain").toJS(globalThis), writableCallback });
+            {
+                const result = addEventListener.call(globalThis, duplex, &[_]JSC.JSValue{ bun.String.static("data").toJS(globalThis), dataCallback });
+                if (result.toError()) |err| {
+                    this.handlers.onError(this.handlers.ctx, err);
+                }
+            }
+
+            {
+                const result = addEventListener.call(globalThis, duplex, &[_]JSC.JSValue{ bun.String.static("end").toJS(globalThis), endCallback });
+                if (result.toError()) |err| {
+                    this.handlers.onError(this.handlers.ctx, err);
+                }
+            }
+
+            {
+                const result = addEventListener.call(globalThis, duplex, &[_]JSC.JSValue{ bun.String.static("close").toJS(globalThis), closeCallback });
+                if (result.toError()) |err| {
+                    this.handlers.onError(this.handlers.ctx, err);
+                }
+            }
+
+            {
+                const result = addEventListener.call(globalThis, duplex, &[_]JSC.JSValue{ bun.String.static("drain").toJS(globalThis), writableCallback });
+                if (result.toError()) |err| {
+                    this.handlers.onError(this.handlers.ctx, err);
+                }
+            }
         }
         this.wrapper.?.start();
     }
@@ -506,14 +543,9 @@ pub const UpgradedDuplex = struct {
             JSC.setFunctionData(callback, null);
             this.onCloseCallback.deinit();
         }
-        const ssl_error = this.ssl_error;
+        var ssl_error = this.ssl_error;
+        ssl_error.deinit();
         this.ssl_error = .{};
-        if (ssl_error.reason.len > 0) {
-            bun.default_allocator.free(ssl_error.reason);
-        }
-        if (ssl_error.code.len > 0) {
-            bun.default_allocator.free(ssl_error.code);
-        }
     }
 };
 

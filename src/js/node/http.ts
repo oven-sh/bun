@@ -782,7 +782,6 @@ function IncomingMessage(req, defaultIncomingOpts) {
   this._dumped = false;
   this[noBodySymbol] = false;
   this[abortedSymbol] = false;
-  this[readCompleteSymbol] = false;
   this.complete = false;
   Readable.$call(this);
   var { type = "request", [kInternalRequest]: nodeReq } = defaultIncomingOpts || {};
@@ -1159,6 +1158,10 @@ function emitCloseNT(self) {
   }
 }
 
+function emitRequestCloseNT(self) {
+  self.emit("close");
+}
+
 function onServerResponseClose() {
   // EventEmitter.emit makes a copy of the 'close' listeners array before
   // calling the listeners. detachSocket() unregisters onServerResponseClose
@@ -1307,7 +1310,7 @@ ServerResponse.prototype._final = function (callback) {
     );
     if (shouldEmitClose) {
       req.complete = true;
-      req.emit("close");
+      process.nextTick(emitRequestCloseNT, req);
     }
     callback && callback();
     return;
@@ -1318,7 +1321,7 @@ ServerResponse.prototype._final = function (callback) {
     controller.end();
     if (shouldEmitClose) {
       req.complete = true;
-      req.emit("close");
+      process.nextTick(emitRequestCloseNT, req);
     }
     callback();
     const deferred = this[deferredSymbol];

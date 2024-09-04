@@ -24,7 +24,12 @@ const {
   randomInt: _randomInt,
   pbkdf2: pbkdf2_,
   pbkdf2Sync: pbkdf2Sync_,
-} = $zig("node_crypto_binding.zig", "createNodeCryptoBindingZig");
+  hkdfSync: _hkdfSync,
+} = $zig("node_crypto_binding.zig", "NodeCrypto.create");
+
+function hkdfSync(digest, ikm, salt, info, keylen) {
+  return _hkdfSync(digest, ikm, salt, info, keylen);
+}
 
 function randomInt(min, max, callback) {
   if (max == null) {
@@ -12171,6 +12176,7 @@ __export(crypto_exports, {
   getRandomValues: () => getRandomValues,
   randomUUID: () => randomUUID,
   randomInt: () => randomInt,
+  hkdfSync: () => hkdfSync,
   getCurves: () => getCurves,
   scrypt: () => scrypt,
   scryptSync: () => scryptSync,

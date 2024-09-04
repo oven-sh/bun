@@ -147,7 +147,7 @@ for (const test_info of [
     async () => {
       const report = await calculateMemoryLeak(fn);
       // peak memory is too high
-      expect(report.peak_memory > report.start_memory * 2).toBe(false);
+      expect(report.peak_memory).not.toBeGreaterThan(report.start_memory * 2);
       // acceptable memory leak
       expect(report.leak).toBeLessThanOrEqual(maxMemoryGrowth);
       expect(report.end_memory).toBeLessThanOrEqual(512 * 1024 * 1024);

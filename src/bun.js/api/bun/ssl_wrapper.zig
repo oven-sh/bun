@@ -133,7 +133,7 @@ pub fn SSLWrapper(comptime T: type) type {
             // The peer might continue sending data for some period of time before handling the local application's shutdown indication.
             // This will start a full shutdown process if fast_shutdown = false, we can assume that the other side will complete the 2-step shutdown ASAP.
             const ret = BoringSSL.SSL_shutdown(ssl);
-            if (fast_shutdown and ret == 0) {
+            if (fast_shutdown) {
                 // This allows for a more rapid shutdown process if the application does not wish to wait for the peer.
                 // This alternative "fast shutdown" approach should only be done if it is known that the peer will not send more data, otherwise there is a risk of an application exposing itself to a truncation attack.
                 // The full SSL_shutdown() process, in which both parties send close_notify alerts and SSL_shutdown() returns 1, provides a cryptographically authenticated indication of the end of a connection.

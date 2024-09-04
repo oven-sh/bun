@@ -1740,6 +1740,7 @@ fn NewSocket(comptime ssl: bool) type {
                 globalObject.throw("Timeout must be a positive integer", .{});
                 return .zero;
             }
+            log("timeout({d})", .{t});
 
             this.socket.setTimeout(@as(c_uint, @intCast(t)));
 
@@ -3249,6 +3250,14 @@ pub const DuplexUpgradeContext = struct {
         }
     }
 
+    fn onTimeout(this: *DuplexUpgradeContext) void {
+        const socket = TLSSocket.Socket.fromDuplex(&this.upgrade);
+
+        if (this.tls) |tls| {
+            tls.onTimeout(socket);
+        }
+    }
+
     fn onClose(this: *DuplexUpgradeContext) void {
         const socket = TLSSocket.Socket.fromDuplex(&this.upgrade);
 
@@ -3424,6 +3433,7 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.C
         .onEnd = @ptrCast(&DuplexUpgradeContext.onEnd),
         .onWritable = @ptrCast(&DuplexUpgradeContext.onWritable),
         .onError = @ptrCast(&DuplexUpgradeContext.onError),
+        .onTimeout = @ptrCast(&DuplexUpgradeContext.onTimeout),
         .ctx = @ptrCast(duplexContext),
     });
 

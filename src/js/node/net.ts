@@ -753,7 +753,7 @@ const Socket = (function (InternalSocket) {
     }
 
     setTimeout(timeout, callback) {
-      this[bunSocketInternal]?.timeout(timeout);
+      this[bunSocketInternal]?.timeout(timeout / 1000);
       this.timeout = timeout;
       if (callback) this.once("timeout", callback);
       return this;

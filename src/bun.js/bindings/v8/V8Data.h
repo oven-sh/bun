@@ -14,18 +14,12 @@ public:
     // in public V8 functions), as they make assumptions about how V8 lays out local handles. They
     // will segfault or worse otherwise.
 
-    // Recover an opaque pointer out of a v8::Local which is not a number
-    void* localToPointer()
-    {
-        TaggedPointer tagged = localToTagged();
-        RELEASE_ASSERT(tagged.type() != TaggedPointer::Type::Smi);
-        return tagged.getPtr<void>();
-    }
-
     // Recover a JSCell pointer out of a v8::Local
     JSC::JSCell* localToCell()
     {
-        return reinterpret_cast<JSC::JSCell*>(localToPointer());
+        TaggedPointer tagged = localToTagged();
+        RELEASE_ASSERT(tagged.type() != TaggedPointer::Type::Smi);
+        return tagged.getPtr<JSCell>();
     }
 
     // Recover a pointer to a JSCell subclass out of a v8::Local
@@ -65,18 +59,12 @@ public:
         }
     }
 
-    // Recover an opaque pointer out of a v8::Local which is not a number
-    const void* localToPointer() const
-    {
-        TaggedPointer tagged = localToTagged();
-        RELEASE_ASSERT(tagged.type() != TaggedPointer::Type::Smi);
-        return tagged.getPtr<const void>();
-    }
-
     // Recover a JSCell pointer out of a v8::Local
     const JSC::JSCell* localToCell() const
     {
-        return reinterpret_cast<const JSC::JSCell*>(localToPointer());
+        TaggedPointer tagged = localToTagged();
+        RELEASE_ASSERT(tagged.type() != TaggedPointer::Type::Smi);
+        return tagged.getPtr<JSCell>();
     }
 
     // Recover a pointer to a JSCell subclass out of a v8::Local

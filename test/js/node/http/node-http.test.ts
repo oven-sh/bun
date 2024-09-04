@@ -2264,7 +2264,7 @@ it("should not emit continue event #7480", done => {
   req.end();
 });
 
-it("should emit close, and complete should be true only after close", async () => {
+it("should emit close, and complete should be true only after close #13373", async () => {
   const server = http.createServer().listen(0);
   try {
     await once(server, "listening");

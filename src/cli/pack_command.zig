@@ -25,12 +25,21 @@ const Environment = bun.Environment;
 const RunCommand = bun.RunCommand;
 const FileSystem = bun.fs.FileSystem;
 const OOM = bun.OOM;
+const js_printer = bun.js_printer;
+const E = bun.js_parser.E;
 
 pub const PackCommand = struct {
     pub const Context = struct {
         manager: *PackageManager,
         allocator: std.mem.Allocator,
         command_ctx: Command.Context,
+
+        // `bun pack` does not require a lockfile, but
+        // it's possible we will need it for finding
+        // workspace versions. This is the only valid lockfile
+        // pointer in this file. `manager.lockfile` is incorrect
+        lockfile: ?*Lockfile,
+
         stats: struct {
             total_unpacked_size: usize = 0,
             total_files: usize = 0,
@@ -72,10 +81,52 @@ pub const PackCommand = struct {
         };
         defer ctx.allocator.free(original_cwd);
 
+        const load_from_disk_result = manager.lockfile.loadFromDisk(
+            manager,
+            manager.allocator,
+            manager.log,
+            manager.options.lockfile_path,
+            false,
+        );
+
         var pack_ctx: Context = .{
             .manager = manager,
             .allocator = ctx.allocator,
             .command_ctx = ctx,
+            .lockfile = switch (load_from_disk_result) {
+                .ok => |ok| ok.lockfile,
+                .err => |cause| err: {
+                    switch (cause.step) {
+                        .open_file => {
+                            if (cause.value == error.ENOENT) break :err null;
+                            Output.errGeneric("failed to open lockfile: {s}", .{
+                                @errorName(cause.value),
+                            });
+                        },
+                        .parse_file => Output.errGeneric("failed to parse lockfile: {s}", .{
+                            @errorName(cause.value),
+                        }),
+                        .read_file => Output.errGeneric("failed to read lockfile: {s}", .{
+                            @errorName(cause.value),
+                        }),
+                        .migrating => Output.errGeneric("failed to migrate lockfile: {s}", .{
+                            @errorName(cause.value),
+                        }),
+                    }
+
+                    if (ctx.log.hasErrors()) {
+                        switch (Output.enable_ansi_colors) {
+                            inline else => |enable_ansi_colors| try manager.log.printForLogLevelWithEnableAnsiColors(
+                                Output.errorWriter(),
+                                enable_ansi_colors,
+                            ),
+                        }
+                    }
+
+                    Global.crash();
+                },
+                else => null,
+            },
         };
 
         switch (Output.enable_ansi_colors) {
@@ -267,6 +318,12 @@ pub const PackCommand = struct {
                 if (entry.kind != .file and entry.kind != .directory) continue;
 
                 const entry_name = entry.name.slice();
+
+                // Special case root package.json. It is always included
+                // and is possibly edited, so it's easier to handle it
+                // separately
+                if (dir_depth == 1 and strings.eqlComptime(entry_name, "package.json")) continue;
+
                 const entry_subpath = try std.fmt.allocPrintZ(ctx.allocator, "{s}{s}{s}", .{
                     dir_subpath,
                     if (dir_subpath.len == 0) "" else "/",
@@ -532,7 +589,9 @@ pub const PackCommand = struct {
     ) PackError!void {
         _ = enable_ansi_colors;
         const manager = ctx.manager;
-        const json = switch (manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, package_json_path, .{})) {
+        const json = switch (manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, package_json_path, .{
+            .guess_indentation = true,
+        })) {
             .read_err => |err| {
                 Output.err(err, "failed to read package.json: {s}", .{package_json_path});
                 Global.crash();
@@ -708,6 +767,7 @@ pub const PackCommand = struct {
 
         var print_buf = std.ArrayList(u8).init(ctx.allocator);
         defer print_buf.deinit();
+        const print_buf_writer = print_buf.writer();
 
         const archive = libarchive.archive_write_new();
         defer {
@@ -718,8 +778,19 @@ pub const PackCommand = struct {
         _ = libarchive.archive_write_set_compression_gzip(archive);
         _ = libarchive.archive_write_add_filter_gzip(archive);
 
+        // default is 9
         // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L12
-        _ = libarchive.archive_write_set_filter_option(archive, null, "compression-level", "9");
+        const compression_level = manager.options.pack_gzip_level orelse "9";
+        try print_buf_writer.print("{s}\x00", .{compression_level});
+        switch (libarchive.archive_write_set_filter_option(archive, null, "compression-level", print_buf.items.ptr)) {
+            libarchive.ARCHIVE_OK => {},
+            libarchive.ARCHIVE_FAILED, libarchive.ARCHIVE_FATAL, libarchive.ARCHIVE_WARN => {
+                Output.errGeneric("compression level must be between 0 and 9, received {s}", .{compression_level});
+                Global.crash();
+            },
+            else => {},
+        }
+        print_buf.clearRetainingCapacity();
 
         const package_name_expr: Expr = json.root.get("name") orelse return error.MissingName;
         const package_name = package_name_expr.asStringCloned(ctx.allocator) orelse return error.MissingName;
@@ -759,9 +830,42 @@ pub const PackCommand = struct {
         var entry = libarchive.archive_entry_new();
         defer libarchive.archive_entry_free(entry);
 
+        {
+            const edited_package_json = try editRootPackageJSON(ctx, json);
+            const package_json_file = File.openat(root_dir, "package.json", bun.O.RDONLY, 0).unwrap() catch |err| {
+                Output.err(err, "failed to open package.json", .{});
+                Global.crash();
+            };
+            defer package_json_file.close();
+
+            Output.prettyln("<r><b><cyan>packing<r> package.json", .{});
+            Output.flush();
+
+            const stat = package_json_file.stat().unwrap() catch |err| {
+                Output.err(err, "failed to stat package.json", .{});
+                Global.crash();
+            };
+
+            libarchive.archive_entry_set_pathname_utf8(entry, package_prefix ++ "package.json");
+            libarchive.archive_entry_set_size(entry, @intCast(edited_package_json.len));
+            libarchive.archive_entry_set_filetype(entry, std.posix.S.IFREG);
+            libarchive.archive_entry_set_perm(entry, stat.mode);
+            // '1985-10-26T08:15:00.000Z'
+            // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L28
+            libarchive.archive_entry_set_mtime(entry, 499162500, 0);
+
+            _ = libarchive.archive_write_header(archive, entry);
+            _ = libarchive.archive_write_data(archive, edited_package_json.ptr, edited_package_json.len);
+
+            ctx.stats.total_unpacked_size += edited_package_json.len;
+            ctx.stats.total_files += 1;
+
+            entry = libarchive.archive_entry_clear(entry);
+        }
+
         for (pack_list.items) |filename| {
             const file = File.openat(root_dir, filename, bun.O.RDONLY, 0).unwrap() catch |err| {
-                Output.err(err, "failed to open file: \"{s}\"\n", .{filename});
+                Output.err(err, "failed to open file: \"{s}\"", .{filename});
                 Global.crash();
             };
             defer file.close();
@@ -806,7 +910,7 @@ pub const PackCommand = struct {
         const print_buf_writer = print_buf.writer();
 
         try print_buf_writer.print("{s}{s}\x00", .{ package_prefix, filename });
-        libarchive.archive_entry_set_pathname(entry, print_buf_writer.context.items.ptr);
+        libarchive.archive_entry_set_pathname_utf8(entry, print_buf_writer.context.items.ptr);
         print_buf_writer.context.clearRetainingCapacity();
 
         const stat = file.stat().unwrap() catch |err| {
@@ -817,6 +921,7 @@ pub const PackCommand = struct {
         libarchive.archive_entry_set_filetype(entry, std.posix.S.IFREG);
 
         var perm: bun.Mode = stat.mode;
+        // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L20
         if (isPackageBin(bins, filename)) perm |= 0o111;
         libarchive.archive_entry_set_perm(entry, perm);
 
@@ -842,6 +947,134 @@ pub const PackCommand = struct {
         ctx.stats.total_files += 1;
 
         return libarchive.archive_entry_clear(entry);
+    }
+
+    /// Strip workspace protocols from dependency versions then
+    /// returns the printed json
+    fn editRootPackageJSON(
+        ctx: *Context,
+        json: *PackageManager.WorkspacePackageJSONCache.MapEntry,
+    ) OOM!string {
+        for ([_]string{
+            "dependencies",
+            "devDependencies",
+            "peerDependencies",
+            "optionalDependencies",
+        }) |dependency_group| {
+            if (json.root.get(dependency_group)) |dependencies_expr| {
+                switch (dependencies_expr.data) {
+                    .e_object => |dependencies| {
+                        for (dependencies.properties.slice()) |*dependency| {
+                            if (dependency.key == null) continue;
+                            if (dependency.value == null) continue;
+
+                            const package_spec = dependency.value.?.asString(ctx.allocator) orelse continue;
+                            if (strings.withoutPrefixIfPossibleComptime(package_spec, "workspace:")) |without_workspace_protocol| {
+
+                                // TODO: make semver parsing more strict. `^`, `~` are not valid
+                                // const parsed = Semver.Version.parseUTF8(without_workspace_protocol);
+                                // if (parsed.valid) {
+                                //     dependency.value = Expr.allocate(
+                                //         ctx.manager.allocator,
+                                //         E.String,
+                                //         .{
+                                //             .data = without_workspace_protocol,
+                                //         },
+                                //         .{},
+                                //     );
+                                //     continue;
+                                // }
+
+                                if (without_workspace_protocol.len == 1) {
+                                    // TODO: this might be too strict
+                                    const c = without_workspace_protocol[0];
+                                    if (c == '^' or c == '~' or c == '*') {
+                                        const dependency_name = dependency.key.?.asString(ctx.allocator) orelse {
+                                            Output.errGeneric("expected string value for dependency name in \"{s}\"", .{
+                                                dependency_group,
+                                            });
+                                            Global.crash();
+                                        };
+
+                                        failed_to_resolve: {
+                                            // find the current workspace version and append to package spec without `workspace:`
+                                            const lockfile = ctx.lockfile orelse break :failed_to_resolve;
+
+                                            const workspace_version = lockfile.workspace_versions.get(Semver.String.Builder.stringHash(dependency_name)) orelse break :failed_to_resolve;
+
+                                            dependency.value = Expr.allocate(
+                                                ctx.manager.allocator,
+                                                E.String,
+                                                .{
+                                                    .data = try std.fmt.allocPrint(ctx.allocator, "{s}{}", .{
+                                                        switch (c) {
+                                                            '^' => "^",
+                                                            '~' => "~",
+                                                            '*' => "",
+                                                            else => unreachable,
+                                                        },
+                                                        workspace_version.fmt(lockfile.buffers.string_bytes.items),
+                                                    }),
+                                                },
+                                                .{},
+                                            );
+
+                                            continue;
+                                        }
+
+                                        // only produce this error only when we need to get the workspace version
+                                        Output.errGeneric("Failed to resolve version for dependency \"{s}\" in \"{s}\". Run <cyan>`bun install`<r> and try again.", .{
+                                            dependency_name,
+                                            dependency_group,
+                                        });
+                                        Global.crash();
+                                    }
+                                }
+
+                                dependency.value = Expr.allocate(
+                                    ctx.manager.allocator,
+                                    E.String,
+                                    .{
+                                        .data = try ctx.allocator.dupe(u8, without_workspace_protocol),
+                                    },
+                                    .{},
+                                );
+                            }
+                        }
+                    },
+                    else => {},
+                }
+            }
+        }
+
+        const has_trailing_newline = json.source.contents.len > 0 and json.source.contents[json.source.contents.len - 1] == '\n';
+        var buffer_writer = try js_printer.BufferWriter.init(ctx.allocator);
+        try buffer_writer.buffer.list.ensureTotalCapacity(ctx.allocator, json.source.contents.len + 1);
+        buffer_writer.append_newline = has_trailing_newline;
+        var package_json_writer = js_printer.BufferPrinter.init(buffer_writer);
+
+        const written = js_printer.printJSON(
+            @TypeOf(&package_json_writer),
+            &package_json_writer,
+            json.root,
+
+            // shouldn't be used
+            &json.source,
+            .{
+                .indent = json.indentation,
+            },
+        ) catch |err| {
+            return switch (err) {
+                error.OutOfMemory => |oom| oom,
+                else => {
+                    Output.errGeneric("failed to print edited package.json: {s}", .{@errorName(err)});
+                    Global.crash();
+                },
+            };
+        };
+        _ = written;
+
+        return package_json_writer.ctx.writtenWithoutTrailingZero();
     }
 
     /// A pattern used to ignore or include
@@ -940,7 +1173,7 @@ pub const PackCommand = struct {
         fn ignoreFileFail(dir: std.fs.Dir, ignore_kind: Kind, reason: enum { read, open }, err: anyerror) noreturn {
             var buf: PathBuffer = undefined;
             const dir_path = bun.getFdPath(dir, &buf) catch "";
-            Output.err(err, "failed to {s} {s} file at: \"{s}{s}{s}\"", .{
+            Output.err(err, "failed to {s} {s} at: \"{s}{s}{s}\"", .{
                 @tagName(reason),
                 @tagName(ignore_kind),
                 strings.withoutTrailingSlash(dir_path),

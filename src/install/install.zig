@@ -6897,6 +6897,7 @@ pub const PackageManager = struct {
 
         filter_patterns: []const string = &.{},
         pack_destination: string = "",
+        pack_gzip_level: ?string = null,
         // json_output: bool = false,
 
         max_retry_count: u16 = 5,
@@ -7230,6 +7231,7 @@ pub const PackageManager = struct {
 
                 this.filter_patterns = cli.filters;
                 this.pack_destination = cli.pack_destination;
+                this.pack_gzip_level = cli.pack_gzip_level;
                 // this.json_output = cli.json_output;
 
                 if (cli.no_cache) {
@@ -9159,7 +9161,8 @@ pub const PackageManager = struct {
 
     const pack_params: []const ParamType = &(install_params_ ++ [_]ParamType{
         clap.parseParam("--filter <STR>...                      Pack each matching workspace") catch unreachable,
-        clap.parseParam("--pack-destination <STR>               The directory the tarball will be saved in") catch unreachable,
+        clap.parseParam("--destination <STR>                    The directory the tarball will be saved in") catch unreachable,
+        clap.parseParam("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9.") catch unreachable,
         clap.parseParam("<POS> ...                              ") catch unreachable,
     });
 
@@ -9194,6 +9197,7 @@ pub const PackageManager = struct {
         filters: []const string = &.{},
 
         pack_destination: string = "",
+        pack_gzip_level: ?string = null,
 
         link_native_bins: []const string = &[_]string{},
 
@@ -9535,8 +9539,12 @@ pub const PackageManager = struct {
             }
 
             if (comptime subcommand == .pack) {
-                if (args.option("--pack-destination")) |dest| {
+                if (args.option("--destination")) |dest| {
                     cli.pack_destination = dest;
+                }
+
+                if (args.option("--gzip-level")) |level| {
+                    cli.pack_gzip_level = level;
                 }
             }
 

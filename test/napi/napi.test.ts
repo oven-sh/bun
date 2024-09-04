@@ -69,6 +69,12 @@ describe("napi", () => {
     const result = checkSameOutput("self", []);
     expect(result).toBe("hello world!");
   });
+
+  describe("handle_scope", () => {
+    it("keeps napi_values alive", () => {
+      checkSameOutput("test_napi_handle_scope", []);
+    });
+  });
 });
 
 function checkSameOutput(test: string, args: any[]) {

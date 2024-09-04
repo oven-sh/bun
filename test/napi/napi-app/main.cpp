@@ -46,6 +46,7 @@ napi_value test_issue_7685(const Napi::CallbackInfo &info) {
   napi_assert(info[5].IsNumber());
   napi_assert(info[6].IsNumber());
   napi_assert(info[7].IsNumber());
+#undef napi_assert
   return ok(env);
 }
 
@@ -146,6 +147,45 @@ test_napi_get_value_string_utf8_with_buffer(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+napi_value test_napi_handle_scope(const Napi::CallbackInfo &info) {
+  // this is mostly a copy of test_handle_scope_gc from
+  // test/v8/v8-module/main.cpp -- see comments there for explanation
+  Napi::Env env = info.Env();
+
+  constexpr size_t num_small_strings = 10000;
+  constexpr size_t num_large_strings = 100;
+  constexpr size_t large_string_size = 20'000'000;
+
+  auto *small_strings = new napi_value[num_small_strings];
+  auto *large_strings = new napi_value[num_large_strings];
+  auto *string_data = new char[large_string_size];
+  string_data[large_string_size - 1] = 0;
+
+  for (size_t i = 0; i < num_small_strings; i++) {
+    std::string cpp_str = std::to_string(i);
+    assert(napi_create_string_utf8(env, cpp_str.c_str(), cpp_str.size(),
+                                   &small_strings[i]) == napi_ok);
+  }
+
+  for (size_t i = 0; i < num_large_strings; i++) {
+    memset(string_data, i + 1, large_string_size);
+    assert(napi_create_string_utf8(env, string_data, large_string_size,
+                                   &large_strings[i]) == napi_ok);
+
+    for (size_t j = 0; j < num_small_strings; j++) {
+      char buf[16];
+      size_t result;
+      assert(napi_get_value_string_utf8(env, small_strings[j], buf, sizeof buf,
+                                        &result) == napi_ok);
+      printf("%s\n", buf);
+      assert(atoi(buf) == (int)j);
+    }
+  }
+
+  delete[] string_data;
+  return ok(env);
+}
+
 Napi::Value RunCallback(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   Napi::Function cb = info[0].As<Napi::Function>();
@@ -174,6 +214,8 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
       "test_napi_threadsafe_function_does_not_hang_after_finalize",
       Napi::Function::New(
           env, test_napi_threadsafe_function_does_not_hang_after_finalize));
+  exports.Set("test_napi_handle_scope",
+              Napi::Function::New(env, test_napi_handle_scope));
 
   return exports;
 }

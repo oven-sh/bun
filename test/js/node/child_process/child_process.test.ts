@@ -1,10 +1,10 @@
-import { describe, it, expect, afterAll, beforeEach } from "bun:test";
-import { ChildProcess, spawn, execFile, exec, spawnSync, execFileSync, execSync } from "node:child_process";
-import { promisify } from "node:util";
-import { bunExe, bunEnv, isWindows, tmpdirSync, nodeExe, shellExe } from "harness";
-import path from "path";
 import { semver } from "bun";
+import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import fs from "fs";
+import { bunEnv, bunExe, isWindows, nodeExe, shellExe, tmpdirSync } from "harness";
+import { ChildProcess, exec, execFile, execFileSync, execSync, spawn, spawnSync } from "node:child_process";
+import { promisify } from "node:util";
+import path from "path";
 const debug = process.env.DEBUG ? console.log : () => {};
 
 const originalProcessEnv = process.env;

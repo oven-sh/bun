@@ -1,4 +1,4 @@
-import { it, test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 describe("d0", () => {
   test.todo("snapshot serialize edgecases", () => {

@@ -1,9 +1,9 @@
-import { ChildProcess, spawn, exec, fork } from "node:child_process";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { createTest } from "node-harness";
+import { ChildProcess, exec, fork, spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import util from "node:util";
-import { bunEnv, bunExe, isWindows } from "harness";
 const { beforeAll, beforeEach, afterAll, describe, expect, it, throws, assert, createCallCheckCtx, createDoneDotAll } =
   createTest(import.meta.path);
 const origProcessEnv = process.env;

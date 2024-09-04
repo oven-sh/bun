@@ -1,7 +1,7 @@
-import { join } from "path";
-import { it, expect, beforeAll, afterAll } from "bun:test";
-import { bunExe, bunEnv, isDebug } from "harness";
 import type { Subprocess } from "bun";
+import { afterAll, beforeAll, expect, it } from "bun:test";
+import { bunEnv, bunExe, isDebug } from "harness";
+import { join } from "path";
 
 const payload = Buffer.alloc(512 * 1024, "1").toString("utf-8"); // decent size payload to test memory leak
 const batchSize = 40;

@@ -1,5 +1,5 @@
 import { TCPSocketListener } from "bun";
-import { beforeAll, describe, expect, it, test, afterAll, mock, spyOn } from "bun:test";
+import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
 
 let server;
 let requestCount = 0;

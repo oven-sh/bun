@@ -1669,4 +1669,4 @@ if (typeof window !== "undefined") {
   globalThis["__BUN_ERROR"] = BunError;
 }
 
-export { __HMRModule, __FastRefreshModule, __HMRClient, __injectFastRefresh };
+export { __FastRefreshModule, __HMRClient, __HMRModule, __injectFastRefresh };

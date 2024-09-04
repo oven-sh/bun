@@ -1,9 +1,9 @@
 import { $ } from "bun";
-import { describe, test, expect, it } from "bun:test";
 import { patchInternals } from "bun:internal-for-testing";
+import { describe, expect, test } from "bun:test";
+import fs from "fs/promises";
 import { tempDirWithFiles as __tempDirWithFiles } from "harness";
 import { join as __join } from "node:path";
-import fs from "fs/promises";
 const { parse, apply, makeDiff } = patchInternals;
 
 const makeDiffJs = async (aFolder: string, bFolder: string, cwd: string): Promise<string> => {

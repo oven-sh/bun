@@ -4,11 +4,11 @@
  *  PACKAGE_DIR_TO_USE=(realpath .) bun test/cli/install/dummy.registry.ts
  */
 import { file, Server } from "bun";
-
-let expect: (typeof import("bun:test"))["expect"];
 import { tmpdirSync } from "harness";
 
-import { readdir, rm, writeFile } from "fs/promises";
+let expect: (typeof import("bun:test"))["expect"];
+
+import { readdir, writeFile } from "fs/promises";
 import { basename, join } from "path";
 
 type Handler = (req: Request) => Response | Promise<Response>;

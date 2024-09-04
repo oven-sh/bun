@@ -1,4 +1,4 @@
-import { run, bench } from "../node_modules/mitata/src/cli.mjs";
+import { bench, run } from "../node_modules/mitata/src/cli.mjs";
 
 const data = new TextEncoder().encode("Hello World!".repeat(9999));
 

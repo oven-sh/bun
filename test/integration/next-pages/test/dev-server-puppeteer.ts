@@ -1,7 +1,7 @@
-import { ConsoleMessage, Page, launch } from "puppeteer";
 import assert from "assert";
 import { copyFileSync } from "fs";
 import { join } from "path";
+import { ConsoleMessage, Page, launch } from "puppeteer";
 
 const root = join(import.meta.dir, "../");
 

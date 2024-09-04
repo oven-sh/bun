@@ -1,5 +1,5 @@
-import { itBundled } from "../expectBundled";
 import { describe } from "bun:test";
+import { itBundled } from "../expectBundled";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_importstar_ts_test.go

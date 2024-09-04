@@ -1,6 +1,6 @@
+import { tempDirWithFiles } from "harness";
 import fs from "node:fs";
 import path from "path";
-import { tempDirWithFiles } from "harness";
 
 import { beforeEach, describe, expect, test } from "bun:test";
 // Because macOS (and possibly other operating systems) can return a watcher

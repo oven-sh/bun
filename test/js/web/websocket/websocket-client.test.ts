@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, nodeExe } from "harness";
 import * as path from "node:path";
 

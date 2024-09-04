@@ -1,10 +1,10 @@
-import { test, describe, expect, mock } from "bun:test";
 import { sleep } from "bun";
+import { describe, expect, mock, test } from "bun:test";
 import { createRequire } from "module";
 
 // this is also testing that imports with default and named imports in the same statement work
 // our transpiler transform changes this to a var with import.meta.require
-import EventEmitter, { getEventListeners, captureRejectionSymbol, setMaxListeners, getMaxListeners } from "node:events";
+import EventEmitter, { captureRejectionSymbol, getEventListeners, getMaxListeners, setMaxListeners } from "node:events";
 
 describe("node:events", () => {
   test("captureRejectionSymbol", () => {

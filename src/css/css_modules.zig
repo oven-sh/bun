@@ -10,7 +10,6 @@ const DashedIdent = css_values.ident.DashedIdent;
 const Ident = css_values.ident.Ident;
 pub const Error = css.Error;
 const PrintErr = css.PrintErr;
-const PrintResult = css.PrintResult;
 
 const ArrayList = std.ArrayListUnmanaged;
 
@@ -78,7 +77,7 @@ const CssModule = struct {
         selectors: *const css.selector.api.SelectorList,
         composes: *const css.css_properties.css_modules.Composes,
         source_index: u32,
-    ) css.PrintResult(void) {
+    ) PrintErr!void {
         for (selectors.v.items) |*sel| {
             if (sel.len() == 1) {
                 const component: *const css.selector.api.Component = &sel.components.items[0];
@@ -216,30 +215,29 @@ pub const Pattern = struct {
         path: []const u8,
         local: []const u8,
         closure: anytype,
-        comptime writefn: *const fn (@TypeOf(closure), []const u8, replace_dots: bool) PrintResult(void),
+        comptime writefn: *const fn (@TypeOf(closure), []const u8, replace_dots: bool) PrintErr!void,
     ) void {
         for (this.segments.items) |*segment| {
             switch (segment.*) {
                 .literal => |s| {
-                    if (writefn(closure, s).asErr()) |e| return .{ .err = e };
+                    try writefn(closure, s);
                 },
                 .name => {
                     const stem = std.fs.path.stem(path);
                     if (std.mem.indexOf(u8, stem, ".")) |_| {
-                        if (writefn(closure, stem, true).asErr()) |e| return .{ .err = e };
+                        try writefn(closure, stem, true);
                     } else {
-                        if (writefn(closure, stem, false).asErr()) |e| return .{ .err = e };
+                        try writefn(closure, stem, false);
                     }
                 },
                 .local => {
-                    if (writefn(closure, local, false).asErr()) |e| return .{ .err = e };
+                    try writefn(closure, local, false);
                 },
                 .hash => {
-                    if (writefn(closure, hash_, false).asErr()) |e| return .{ .err = e };
+                    try writefn(closure, hash_, false);
                 },
             }
         }
-        return PrintResult(void).success;
     }
 
     pub fn writeToStringWithPrefix(
@@ -258,7 +256,7 @@ pub const Pattern = struct {
             local,
             &Closure{ .res = .{}, .allocator = allocator },
             struct {
-                pub fn writefn(self: *Closure, slice: []const u8, replace_dots: bool) PrintResult(void) {
+                pub fn writefn(self: *Closure, slice: []const u8, replace_dots: bool) PrintErr!void {
                     self.res.appendSlice(self.allocator, prefix) catch bun.outOfMemory();
                     if (replace_dots) {
                         const start = self.res.items.len;
@@ -293,7 +291,7 @@ pub const Pattern = struct {
             local,
             &Closure{ .res = res, .allocator = allocator },
             struct {
-                pub fn writefn(self: *Closure, slice: []const u8, replace_dots: bool) PrintResult(void) {
+                pub fn writefn(self: *Closure, slice: []const u8, replace_dots: bool) PrintErr!void {
                     if (replace_dots) {
                         const start = self.res.items.len;
                         self.res.appendSlice(self.allocator, slice) catch bun.outOfMemory();
@@ -306,7 +304,7 @@ pub const Pattern = struct {
                         return;
                     }
                     self.res.appendSlice(self.allocator, slice) catch bun.outOfMemory();
-                    return PrintResult(void).success;
+                    return;
                 }
             }.writefn,
         );

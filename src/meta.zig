@@ -3,6 +3,30 @@ const bun = @import("root").bun;
 
 pub usingnamespace std.meta;
 
+pub fn ReturnOfMaybe(comptime function: anytype) type {
+    const Func = @TypeOf(function);
+    const typeinfo: std.builtin.Type.Fn = @typeInfo(Func).Fn;
+    const MaybeType = typeinfo.return_type orelse @compileError("Expected the function to have a return type");
+    return MaybeResult(MaybeType);
+}
+
+pub fn MaybeResult(comptime MaybeType: type) type {
+    const maybe_ty_info = @typeInfo(MaybeType);
+
+    const maybe = maybe_ty_info.Union;
+    if (maybe.fields.len != 2) @compileError("Expected the Maybe type to be a union(enum) with two variants");
+
+    if (std.mem.eql(u8, maybe.fields[0].name, "err")) {
+        @compileError("Expected the first field of the Maybe type to be \"err\"");
+    }
+
+    if (std.mem.eql(u8, maybe.fields[1].name, "result")) {
+        @compileError("Expected the first field of the Maybe type to be \"err\"");
+    }
+
+    return maybe.fields[1].type;
+}
+
 pub fn ReturnOf(comptime function: anytype) type {
     return ReturnOfType(@TypeOf(function));
 }

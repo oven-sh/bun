@@ -128,6 +128,20 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             return null;
         }
 
+        pub inline fn isOk(this: *const @This()) bool {
+            return switch (this.*) {
+                .result => true,
+                .err => false,
+            };
+        }
+
+        pub inline fn isErr(this: *const @This()) bool {
+            return switch (this.*) {
+                .result => false,
+                .err => true,
+            };
+        }
+
         pub inline fn initResult(result: ReturnType) Maybe(ReturnType, ErrorType) {
             return .{ .result = result };
         }

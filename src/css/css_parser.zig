@@ -510,17 +510,29 @@ fn parse_at_rule(
         }
     };
     var closure = Closure{ .name = name, .parser = parser };
-    const prelude: P.AtRuleParser.Prelude = input.parseUntilBefore(delimiters, P.AtRuleParser.Prelude, &closure, closure.parsefn) catch |e| {
-        const end_position = input.position();
-        _ = end_position; // autofix
-        out: {
-            const tok = input.next() catch break :out;
-            if (tok.* != .open_curly and tok != .semicolon) unreachable;
-        }
-        return e;
+    const prelude: P.AtRuleParser.Prelude = switch (input.parseUntilBefore(delimiters, P.AtRuleParser.Prelude, &closure, closure.parsefn)) {
+        .result => |vvv| vvv,
+        .err => |e| {
+            _ = e; // autofix
+            const end_position = input.position();
+            _ = end_position; // autofix
+            out: {
+                const tok = switch (input.next()) {
+                    .result => |v| v,
+                    .err => break :out,
+                };
+                if (tok.* != .open_curly and tok != .semicolon) unreachable;
+            }
+            @compileError(todo_stuff.errors);
+            // return ;
+        },
     };
-    const next = input.next() catch {
-        return P.AtRuleParser.ruleWithoutBlock(allocator, parser, prelude, start);
+    const next = switch (input.next()) {
+        .result => |v| v,
+        .err => |e| {
+            _ = e; // autofix
+            return P.AtRuleParser.ruleWithoutBlock(allocator, parser, prelude, start);
+        },
     };
     switch (next.*) {
         .semicolon => return P.AtRuleParser.ruleWithoutBlock(allocator, parser, prelude, start),
@@ -575,16 +587,19 @@ fn parse_custom_at_rule_body(
     at_rule_parser: *T,
     is_nested: bool,
 ) Result(T.CustomAtRuleParser.AtRule) {
-    const result = T.CustomAtRuleParser.parseBlock(at_rule_parser, prelude, start, input, options, is_nested) catch |e| {
-        _ = e; // autofix
-        // match &err.kind {
-        //   ParseErrorKind::Basic(kind) => ParseError {
-        //     kind: ParseErrorKind::Basic(kind.clone()),
-        //     location: err.location,
-        //   },
-        //   _ => input.new_error(BasicParseErrorKind::AtRuleBodyInvalid),
-        // }
-        todo("This part here", .{});
+    const result = switch (T.CustomAtRuleParser.parseBlock(at_rule_parser, prelude, start, input, options, is_nested)) {
+        .result => |vv| vv,
+        .err => |e| {
+            _ = e; // autofix
+            // match &err.kind {
+            //   ParseErrorKind::Basic(kind) => ParseError {
+            //     kind: ParseErrorKind::Basic(kind.clone()),
+            //     location: err.location,
+            //   },
+            //   _ => input.new_error(BasicParseErrorKind::AtRuleBodyInvalid),
+            // }
+            todo("This part here", .{});
+        },
     };
     return result;
 }
@@ -978,21 +993,29 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                     };
 
                     const layer: ?struct { value: ?LayerName } =
-                        if (input.tryParse(Parser.expectIdentMatching, .{"layer"}) != Error.ParsingError)
+                        if (input.tryParse(Parser.expectIdentMatching, .{"layer"}) == .result)
                         .{ .value = null }
-                    else if (input.tryParse(Parser.expectFunctionMatching, .{"layer"}) != Error.ParsingError) brk: {
-                        break :brk .{ .value = if (input.parseNestedBlock(LayerName, void, voidWrap(LayerName, LayerName.parse)).asErr()) |e| return .{ .err = e } };
+                    else if (input.tryParse(Parser.expectFunctionMatching, .{"layer"}) == .result) brk: {
+                        break :brk .{
+                            .value = switch (input.parseNestedBlock(LayerName, void, voidWrap(LayerName, LayerName.parse))) {
+                                .result => |v| v,
+                                .err => |e| return .{ .err = e },
+                            },
+                        };
                     } else null;
 
-                    const supports = if (input.tryParse(Parser.expectFunctionMatching, .{"supports"}) != Error.ParsingError) brk: {
+                    const supports = if (input.tryParse(Parser.expectFunctionMatching, .{"supports"}) == .result) brk: {
                         const Func = struct {
                             pub fn do(p: *Parser) Result(SupportsCondition) {
-                                return p.tryParse(SupportsCondition.parse, .{}) catch {
-                                    return SupportsCondition.parseDeclaration(p);
-                                };
+                                const result = p.tryParse(SupportsCondition.parse, .{});
+                                if (result == .err) return SupportsCondition.parseDeclaration(p);
+                                return result;
                             }
                         };
-                        break :brk input.parseNestedBlock(SupportsCondition, void, voidWrap(SupportsCondition, Func.do));
+                        break :brk switch (input.parseNestedBlock(SupportsCondition, void, voidWrap(SupportsCondition, Func.do))) {
+                            .result => |v| v,
+                            .err => |e| return .{ .err = e },
+                        };
                     } else null;
 
                     const media = switch (MediaList.parse(input)) {
@@ -1015,7 +1038,10 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                         return Error.ParsingError;
                     }
 
-                    const prefix = input.tryParse(Parser.expectIdent, .{}) catch null;
+                    const prefix = switch (input.tryParse(Parser.expectIdent, .{})) {
+                        .result => |v| v,
+                        .err => null,
+                    };
                     const namespace = switch (input.expectUrlOrString()) {
                         .err => |e| return .{ .err = e },
                         .result => |v| v,
@@ -1266,7 +1292,10 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 return input2.parseCommaSeparated(css_rules.page.PageSelector.parse);
                             }
                         };
-                        const selectors = input.tryParse(Fn.parsefn, .{});
+                        const selectors = switch (input.tryParse(Fn.parsefn, .{})) {
+                            .result => |v| v,
+                            .err => ArrayList{},
+                        };
                         break :brk .{ .page = selectors };
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-moz-document")) {
                         // Firefox only supports the url-prefix() function with no arguments as a legacy CSS hack.
@@ -1294,15 +1323,22 @@ pub fn NestedRuleParser(comptime T: type) type {
                         if (input.parseNestedBlock(void, void, Fn.parsefn).asErr()) |e| return .{ .err = e };
                         break :brk .moz_document;
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "layer")) {
-                        const names = input.parseList(LayerName) catch |e| {
-                            // TODO: error does not exist
-                            // but it should exist
-                            // if (e == Error.EndOfInput) {}
-                            return .{ .err = e };
+                        const names = switch (input.parseList(LayerName)) {
+                            .result => |vv| vv,
+                            .err => |e| {
+                                // TODO: error does not exist
+                                // but it should exist
+                                // if (e == Error.EndOfInput) {}
+                                return .{ .err = e };
+                            },
                         };
+
                         break :brk .{ .layer = names };
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "container")) {
-                        const container_name = input.tryParse(css_rules.container.ContainerName.parse, .{}) catch null;
+                        const container_name = switch (input.tryParse(css_rules.container.ContainerName.parse, .{})) {
+                            .result => |vv| vv,
+                            .err => null,
+                        };
                         const condition = switch (css_rules.container.ContainerCondition.parse(input)) {
                             .err => |e| return .{ .err = e },
                             .result => |v| v,
@@ -1325,13 +1361,19 @@ pub fn NestedRuleParser(comptime T: type) type {
                             .selector_parser = &selector_parser,
                         };
 
-                        const scope_start = if (input.tryParse(Parser.expectParenthesisBlock, .{})) scope_start: {
-                            break :scope_start if (input.parseNestedBlock(selector.api.SelectorList, &closure, Closure.parsefn).asErr()) |e| return .{ .err = e };
+                        const scope_start = if (input.tryParse(Parser.expectParenthesisBlock, .{}).isOk()) scope_start: {
+                            break :scope_start switch (input.parseNestedBlock(selector.api.SelectorList, &closure, Closure.parsefn)) {
+                                .result => |v| v,
+                                .err => |e| return .{ .err = e },
+                            };
                         } else null;
 
-                        const scope_end = if (input.tryParse(Parser.expectIdentMatching, .{"to"})) scope_end: {
+                        const scope_end = if (input.tryParse(Parser.expectIdentMatching, .{"to"}).isOk()) scope_end: {
                             if (input.expectParenthesisBlock().asErr()) |e| return .{ .err = e };
-                            break :scope_end if (input.parseNestedBlock(selector.api.SelectorList, &closure, Closure.parsefn).asErr()) |e| return .{ .err = e };
+                            break :scope_end switch (input.parseNestedBlock(selector.api.SelectorList, &closure, Closure.parsefn)) {
+                                .result => |v| v,
+                                .err => |e| return .{ .err = e },
+                            };
                         } else null;
 
                         break :brk .{
@@ -1893,10 +1935,14 @@ pub fn StyleSheetParser(comptime P: type) type {
                 const start = this.input.state();
                 const at_keyword: ?[]const u8 = switch (this.input.nextByte()) {
                     '@' => brk: {
-                        const at_keyword: *Token = this.input.nextIncludingWhitespaceAndComments() catch {
-                            this.input.reset(&start);
-                            break :brk null;
+                        const at_keyword: *Token = switch (this.input.nextIncludingWhitespaceAndComments()) {
+                            .result => |vv| vv,
+                            .err => {
+                                this.input.reset(&start);
+                                break :brk null;
+                            },
                         };
+
                         if (at_keyword.* == .at_keyword) break :brk at_keyword.*;
                         this.input.reset(&start);
                         break :brk null;
@@ -2037,7 +2083,8 @@ pub fn StyleSheet(comptime AtRule: type) type {
             var rule_list_parser = StyleSheetParser(TopLevelRuleParser(AtRule)).new(&parser, &rule_parser);
 
             while (rule_list_parser.next()) |result| {
-                _ = result catch |e| {
+                if (result.asErr()) |e| {
+                    _ = e; // autofix
                     const result_options = rule_list_parser.parser.options;
                     if (result_options.error_recovery) {
                         // TODO this
@@ -2045,8 +2092,9 @@ pub fn StyleSheet(comptime AtRule: type) type {
                         continue;
                     }
 
-                    return e;
-                };
+                    // return e;
+                    @compileError(todo_stuff.errors);
+                }
             }
 
             // TODO finish these
@@ -2143,7 +2191,10 @@ pub fn RuleBodyParser(comptime P: type) type {
                 this.input.skipWhitespace();
                 const start = this.input.state();
 
-                const tok: *Token = this.input.nextIncludingWhitespaceAndComments() catch return null;
+                const tok: *Token = switch (this.input.nextIncludingWhitespaceAndComments()) {
+                    .err => |_| return null,
+                    .result => |vvv| vvv,
+                };
 
                 switch (tok.*) {
                     .close_curly_bracket, .whitespace, .semicolon, .comment => continue,
@@ -2349,7 +2400,10 @@ pub const Parser = struct {
             } else |e| {
                 if (!ignore_errors) return e;
             }
-            const tok = this.next() catch return values;
+            const tok = switch (this.next()) {
+                .result => |v| v,
+                .err => return values,
+            };
             if (tok != .comma) bun.unreachablePanic("", .{});
         }
     }
@@ -2360,7 +2414,7 @@ pub const Parser = struct {
     /// is restored to what it was before the call.
     ///
     /// func needs to be a funtion like this: `fn func(*ParserInput, ...@TypeOf(args_)) T`
-    pub inline fn tryParse(this: *Parser, comptime func: anytype, args_: anytype) Result(bun.meta.ReturnOf(func)) {
+    pub inline fn tryParse(this: *Parser, comptime func: anytype, args_: anytype) Result(bun.meta.ReturnOfMaybe(func)) {
         const start = this.state();
         const result = result: {
             const args = brk: {
@@ -2376,9 +2430,9 @@ pub const Parser = struct {
 
             break :result @call(.auto, func, args);
         };
-        result catch {
+        if (result == .err) {
             this.reset(start);
-        };
+        }
         return result;
     }
 
@@ -2395,22 +2449,26 @@ pub const Parser = struct {
     /// See `Token::is_parse_error`. This also checks nested blocks and functions recursively.
     pub fn expectNoErrorToken(this: *Parser) Result(void) {
         while (true) {
-            const tok = this.nextIncludingWhitespaceAndComments() catch return;
+            const tok = switch (this.nextIncludingWhitespaceAndComments()) {
+                .err => return,
+                .result => |v| v,
+            };
             switch (tok.*) {
                 .function, .open_paren, .open_square, .open_curly => {
-                    this.parseNestedBlock(void, {}, struct {
+                    if (this.parseNestedBlock(void, {}, struct {
                         pub fn parse(i: *Parser) Result(void) {
-                            i.expectNoErrorToken() catch {
+                            if (i.expectNoErrorToken().asErr()) |e| {
+                                _ = e; // autofix
                                 @compileError(todo_stuff.errors);
-                            };
+                            }
                         }
-                    }.parse) catch |err| {
+                    }.parse).asErr()) |err| {
                         _ = err; // autofix
                         // FIXME: maybe these should be separate variants of
                         // BasicParseError instead?
                         @compileError(todo_stuff.errors);
                         // return this.newBasicUnexpectedTokenError(tok.*);
-                    };
+                    }
                 },
                 else => {
                     if (tok.isParseError()) {
@@ -2593,13 +2651,16 @@ pub const Parser = struct {
             .unquoted_url => |value| return value,
             .function => |name| {
                 if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("url", name)) {
-                    return this.parseNestedBlock([]const u8, {}, struct {
+                    const result = this.parseNestedBlock([]const u8, {}, struct {
                         fn parse(parser: *Parser) Result([]const u8) {
                             return parser.expectString();
                         }
-                    }.parse) catch {
+                    }.parse);
+                    if (result.asErr()) |e| {
+                        _ = e; // autofix
                         @compileError(todo_stuff.errors);
-                    };
+                    }
+                    return result;
                 }
             },
             else => {},
@@ -2619,13 +2680,17 @@ pub const Parser = struct {
             .quoted_string => |value| return value,
             .function => |name| {
                 if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("url", name)) {
-                    return this.parseNestedBlock([]const u8, {}, struct {
+                    const result = this.parseNestedBlock([]const u8, {}, struct {
                         fn parse(parser: *Parser) Result([]const u8) {
                             return parser.expectString();
                         }
-                    }.parse) catch {
+                    }.parse);
+                    if (result.asErr()) |e| {
+                        _ = e; // autofix
+
                         @compileError(todo_stuff.errors);
-                    };
+                    }
+                    return result;
                 }
             },
             else => {},
@@ -3009,9 +3074,12 @@ pub const nth = struct {
 
     fn parse_b(input: *Parser, a: i23) Result(struct { i32, i32 }) {
         const start = input.state();
-        const tok = input.next() catch {
-            input.reset(&start);
-            return .{ a, 0 };
+        const tok = switch (input.next()) {
+            .result => |v| v,
+            .err => {
+                input.reset(&start);
+                return .{ a, 0 };
+            },
         };
 
         if (tok.* == .delim and tok.delim == '+') return parse_signless_b(input, a, 1);
@@ -3053,9 +3121,12 @@ pub const nth = struct {
     fn parse_number_saturate(string: []const u8) Result(i32) {
         var input = ParserInput.new(@compileError(todo_stuff.think_about_allocator), string);
         var parser = Parser.new(&input);
-        const tok = parser.nextIncludingWhitespaceAndComments() catch {
-            //         return Err(());
-            @compileError(todo_stuff.errors);
+        const tok = switch (parser.nextIncludingWhitespaceAndComments()) {
+            .result => |v| v,
+            .err => {
+                //         return Err(());
+                @compileError(todo_stuff.errors);
+            },
         };
         const int = if (tok.* == .number and tok.number.int_value != null) tok.number.int_value.? else {
             //         return Err(());

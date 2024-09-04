@@ -10,6 +10,17 @@ register_repository(
     8d4c273ded322193d017042d1f48df2766b0f88b
 )
 
+set(LOLHTML_CWD ${CWD}/src/deps/lolhtml/c-api)
+set(LOLHTML_BUILD_PATH ${BUILD_PATH}/lolhtml)
+
+if(DEBUG)
+  set(LOLHTML_BUILD_TYPE debug)
+else()
+  set(LOLHTML_BUILD_TYPE release)
+endif()
+
+set(LOLHTML_LIBRARY ${LOLHTML_BUILD_PATH}/${LOLHTML_BUILD_TYPE}/${CMAKE_STATIC_LIBRARY_PREFIX}lolhtml${CMAKE_STATIC_LIBRARY_SUFFIX})
+
 set(LOLHTML_BUILD_ARGS
   --target-dir ${BUILD_PATH}/lolhtml
 )
@@ -18,29 +29,17 @@ if(RELEASE)
   list(APPEND LOLHTML_BUILD_ARGS --release)
 endif()
 
-if(CMAKE_VERBOSE_MAKEFILE)
-  list(APPEND LOLHTML_BUILD_ARGS --verbose)
-endif()
-
-if(DEBUG)
-  set(LOLHTML_PREFIX debug)
-else()
-  set(LOLHTML_PREFIX release)
-endif()
-
-add_custom_library(
+register_command(
   TARGET
     lolhtml
-  PREFIX
-    ${LOLHTML_PREFIX}
-  LIBRARIES
-    lolhtml
-  INCLUDES
-    c-api/include
-  WORKING_DIRECTORY
-    c-api
+  CWD
+    ${LOLHTML_CWD}
   COMMAND
     ${CARGO_EXECUTABLE}
       build
       ${LOLHTML_BUILD_ARGS}
+  ARTIFACTS
+    ${LOLHTML_LIBRARY}
 )
+
+target_link_libraries(${bun} PRIVATE ${LOLHTML_LIBRARY})

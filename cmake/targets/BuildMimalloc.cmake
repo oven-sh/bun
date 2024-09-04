@@ -30,11 +30,11 @@ if(ENABLE_VALGRIND)
 endif()
 
 if(WIN32)
-  set(MIMALLOC_LIBRARY "mimalloc-static")
-elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
-  set(MIMALLOC_LIBRARY "mimalloc-debug")
+  set(MIMALLOC_LIBRARY mimalloc-static)
+elseif(DEBUG)
+  set(MIMALLOC_LIBRARY mimalloc-debug)
 else()
-  set(MIMALLOC_LIBRARY "mimalloc")
+  set(MIMALLOC_LIBRARY mimalloc)
 endif()
 
 # Workaround for linker issue on macOS and Linux x64
@@ -43,16 +43,16 @@ if(APPLE OR (LINUX AND NOT DEBUG))
   set(MIMALLOC_LIBRARY CMakeFiles/mimalloc-obj.dir/src/static.c.o)
 endif()
 
-add_custom_library(
+register_cmake_command(
   TARGET
     mimalloc
+  TARGETS
+    mimalloc-static
+    mimalloc-obj
+  ARGS
+    ${MIMALLOC_CMAKE_ARGS}
   LIBRARIES
     ${MIMALLOC_LIBRARY}
   INCLUDES
     include
-  CMAKE_TARGETS
-    mimalloc-static
-    mimalloc-obj
-  CMAKE_ARGS
-    ${MIMALLOC_CMAKE_ARGS}
 )

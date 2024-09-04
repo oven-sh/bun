@@ -9,7 +9,7 @@ register_repository(
     ab631362d839333660a265d3084d8ff060b96753
 )
 
-add_custom_library(
+register_cmake_command(
   TARGET
     tinycc
   LIBRARIES

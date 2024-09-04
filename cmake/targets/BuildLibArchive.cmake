@@ -9,18 +9,13 @@ register_repository(
     898dc8319355b7e985f68a9819f182aaed61b53a
 )
 
-add_custom_library(
+register_cmake_command(
   TARGET
     libarchive
-  PREFIX
-    libarchive
-  LIBRARIES
-    archive
-  INCLUDES
-    include
-  CMAKE_TARGETS
+  TARGETS
     archive_static
-  CMAKE_ARGS
+  ARGS
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON
     -DBUILD_SHARED_LIBS=OFF
     -DENABLE_INSTALL=OFF
     -DENABLE_TEST=OFF
@@ -42,6 +37,10 @@ add_custom_library(
     -DENABLE_PCREPOSIX=OFF
     -DENABLE_ZLIB=OFF
     -DENABLE_ZSTD=OFF
-  CMAKE_POSITION_INDEPENDENT_CODE
-    ON
+  LIB_PATH
+    libarchive
+  LIBRARIES
+    archive
+  INCLUDES
+    include
 )

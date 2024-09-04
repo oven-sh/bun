@@ -9,18 +9,18 @@ register_repository(
     v1.1.0
 )
 
-add_custom_library(
+register_cmake_command(
   TARGET
     brotli
   LIBRARIES
     brotlicommon
     brotlidec
     brotlienc
-  INCLUDES
-    c/include
-  CMAKE_ARGS
+  ARGS
     -DBUILD_SHARED_LIBS=OFF
     -DBROTLI_BUILD_TOOLS=OFF
     -DBROTLI_EMSCRIPTEN=OFF
     -DBROTLI_DISABLE_TESTS=ON
+  INCLUDES
+    c/include
 )

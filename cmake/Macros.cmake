@@ -13,7 +13,10 @@ function(parse_semver value variable)
   set(${variable}_VERSION_PATCH "${CMAKE_MATCH_3}" PARENT_SCOPE)
 endfunction()
 
-# setx
+# setx()
+# Description:
+#   Sets a variable, similar to `set()`, but also prints the value.
+# Arguments:
 #   variable string - The variable to set
 #   value    string - The value to set the variable to
 macro(setx)
@@ -21,7 +24,10 @@ macro(setx)
   message(STATUS "Set ${ARGV0}: ${${ARGV0}}")
 endmacro()
 
-# optionx
+# optionx()
+# Description:
+#   Defines an option, similar to `option()`, but allows for bool, string, and regex types.
+# Arguments:
 #   variable    string - The variable to set
 #   type        string - The type of the variable
 #   description string - The description of the variable
@@ -77,7 +83,10 @@ macro(optionx variable type description)
   message(STATUS "Set ${variable}: ${${variable}}")
 endmacro()
 
-# check_command
+# check_command()
+# Description:
+#   Checks if a command is available, used by `find_command()` as a validator.
+# Arguments:
 #   FOUND bool   - The variable to set to true if the version is found
 #   CMD   string - The executable to check the version of
 function(check_command FOUND CMD)
@@ -124,7 +133,10 @@ function(check_command FOUND CMD)
   set(${FOUND} TRUE PARENT_SCOPE)
 endfunction()
 
-# find_command
+# find_command()
+# Description:
+#   Finds a command, similar to `find_program()`, but allows for version checking.
+# Arguments:
 #   VARIABLE  string   - The variable to set
 #   COMMAND   string[] - The names of the command to find
 #   PATHS     string[] - The paths to search for the command
@@ -166,7 +178,10 @@ function(find_command)
   setx(${CMD_VARIABLE} ${${CMD_VARIABLE}})
 endfunction()
 
-# register_command
+# register_command()
+# Description:
+#   Registers a command, similar to `add_custom_command()`, but has more validation and features.
+# Arguments:
 #   COMMAND      string[] - The command to run
 #   COMMENT      string   - The comment to display in the log
 #   CWD          string   - The working directory to run the command in
@@ -260,7 +275,7 @@ function(register_command)
   endif()
 
   if(CMD_TARGET_PHASE)
-    message(STATUS "register_command: target: ${CMD_TARGET} phase: ${CMD_TARGET_PHASE} commands: ${CMD_COMMANDS}")
+    message(STATUS "register_command: target: ${CMD_TARGET} phase: ${CMD_TARGET_PHASE} commands: ${CMD_COMMANDS} outputs: ${CMD_EFFECTIVE_OUTPUTS} artifacts: ${CMD_EFFECTIVE_ARTIFACTS}")
     if(NOT CMD_TARGET)
       message(FATAL_ERROR "register_command: TARGET is required when TARGET_PHASE is set")
     endif()
@@ -293,6 +308,9 @@ function(register_command)
       BYPRODUCTS ${CMD_EFFECTIVE_BYPRODUCTS}
       JOB_POOL ${CMD_GROUP}
     )
+    if(TARGET clone-${CMD_TARGET})
+      add_dependencies(${CMD_TARGET} clone-${CMD_TARGET})
+    endif()
   endif()
 
   add_custom_command(
@@ -306,7 +324,10 @@ function(register_command)
   )
 endfunction()
 
-# parse_package_json
+# parse_package_json()
+# Description:
+#   Parses a package.json file.
+# Arguments:
 #   CWD                   string - The directory to look for the package.json file
 #   VERSION_VARIABLE      string - The variable to set to the package version
 #   NODE_MODULES_VARIABLE string - The variable to set to list of node_modules sources
@@ -370,7 +391,10 @@ function(parse_package_json)
   endif()
 endfunction()
 
-# register_bun_install
+# register_bun_install()
+# Description:
+#   Registers a command to run `bun install` in a directory.
+# Arguments:
 #   CWD                   string - The directory to run `bun install`
 #   NODE_MODULES_VARIABLE string - The variable to set to list of node_modules sources
 function(register_bun_install)
@@ -418,316 +442,16 @@ function(register_bun_install)
   set(${NPM_NODE_MODULES_VARIABLE} ${NPM_NODE_MODULES} PARENT_SCOPE)
 endfunction()
 
-function(add_target)
-  set(options NODE_MODULES USES_TERMINAL)
-  set(args NAME COMMENT WORKING_DIRECTORY)
-  set(multiArgs ALIASES COMMAND DEPENDS SOURCES OUTPUTS ARTIFACTS)
-  cmake_parse_arguments(ARG "${options}" "${args}" "${multiArgs}" ${ARGN})
-
-  message(STATUS "add_target: ${ARG_NAME}")
-  if(NOT ARG_NAME)
-    message(FATAL_ERROR "add_target: NAME is required")
-  endif()
-
-  if(NOT ARG_COMMAND)
-    message(FATAL_ERROR "add_target: COMMAND is required")
-  endif()
-
-  if(NOT ARG_COMMENT)
-    set(ARG_COMMENT "Running ${ARG_NAME}")
-  endif()
-
-  if(NOT ARG_WORKING_DIRECTORY)
-    set(ARG_WORKING_DIRECTORY ${CWD})
-  endif()
-
-  if(ARG_NODE_MODULES)
-    get_filename_component(ARG_INSTALL_NAME ${ARG_WORKING_DIRECTORY} NAME_WE)
-    list(APPEND ARG_DEPENDS bun-install-${ARG_INSTALL_NAME})
-  endif()
-
-  if(ARG_USES_TERMINAL)
-    set(ARG_USES_TERMINAL "USES_TERMINAL")
-  else()
-    set(ARG_USES_TERMINAL "")
-  endif()
-
-  add_custom_command(
-    VERBATIM COMMAND
-      ${ARG_COMMAND}
-    WORKING_DIRECTORY
-      ${ARG_WORKING_DIRECTORY}
-    OUTPUT
-      ${ARG_OUTPUTS}
-      ${ARG_ARTIFACTS}
-    DEPENDS
-      ${ARG_SOURCES}
-      ${ARG_DEPENDS}
-    ${ARG_USES_TERMINAL}
-  )
-
-  add_custom_target(${ARG_NAME}
-    COMMENT
-      ${ARG_COMMENT}
-    DEPENDS
-      ${ARG_OUTPUTS}
-      ${ARG_ARTIFACTS}
-      ${ARG_DEPENDS}
-    SOURCES
-      ${ARG_SOURCES}
-  )
-
-  foreach(artifact ${ARG_ARTIFACTS})
-    upload_artifact(
-      NAME
-        ${artifact}
-    )
-  endforeach()
-
-  message(STATUS "add_target: ${ARG_NAME} with aliases: ${ARG_ALIASES}")
-  foreach(alias ${ARG_ALIASES})
-    if(NOT TARGET ${alias})
-      add_custom_target(${alias} DEPENDS ${ARG_NAME})
-    else()
-      add_dependencies(${alias} ${ARG_NAME})
-    endif()
-  endforeach()
-endfunction()
-
-function(upload_artifact)
-  set(args NAME WORKING_DIRECTORY)
-  cmake_parse_arguments(ARTIFACT "" "${args}" "" ${ARGN})
-
-  if(NOT ARTIFACT_NAME)
-    message(FATAL_ERROR "upload_artifact: NAME is required")
-  endif()
-
-  if(NOT ARTIFACT_WORKING_DIRECTORY)
-    set(ARTIFACT_WORKING_DIRECTORY ${BUILD_PATH})
-  endif()
-
-  if(ARTIFACT_NAME MATCHES "^${ARTIFACT_WORKING_DIRECTORY}")
-    file(RELATIVE_PATH ARTIFACT_NAME ${ARTIFACT_WORKING_DIRECTORY} ${ARTIFACT_NAME})
-  endif()
-
-  if(BUILDKITE)
-    set(ARTIFACT_UPLOAD_COMMAND
-      buildkite-agent
-        artifact
-        upload
-        ${ARTIFACT_NAME}
-    )
-  else()
-    set(ARTIFACT_UPLOAD_COMMAND
-      ${CMAKE_COMMAND}
-        -E copy
-        ${ARTIFACT_NAME}
-        ${BUILD_PATH}/artifacts/${ARTIFACT_NAME}
-    )
-  endif()
-
-  get_filename_component(ARTIFACT_FILENAME ${ARTIFACT_NAME} NAME)
-  string(REGEX REPLACE "\\." "-" ARTIFACT_FILENAME ${ARTIFACT_FILENAME})
-  add_target(
-    NAME
-      upload-${ARTIFACT_FILENAME}
-    COMMENT
-      "Uploading ${ARTIFACT_NAME}"
-    COMMAND
-      ${ARTIFACT_UPLOAD_COMMAND}
-    WORKING_DIRECTORY
-      ${ARTIFACT_WORKING_DIRECTORY}
-    OUTPUTS
-      ${ARTIFACT_WORKING_DIRECTORY}/.fixme/${ARTIFACT_FILENAME}
-  )
-endfunction()
-
-function(add_custom_library)
-  set(args TARGET PREFIX CMAKE_BUILD_TYPE CMAKE_POSITION_INDEPENDENT_CODE CMAKE_C_FLAGS CMAKE_CXX_FLAGS CMAKE_LINKER_FLAGS CMAKE_PATH WORKING_DIRECTORY SOURCE_PATH BUILD_PATH)
-  set(multi_args LIBRARIES INCLUDES CMAKE_TARGETS CMAKE_ARGS COMMAND)
-  cmake_parse_arguments(LIB "" "${args}" "${multi_args}" ${ARGN})
-
-  if(NOT LIB_TARGET)
-    message(FATAL_ERROR "add_custom_library: TARGET is required")
-  endif()
-
-  if(NOT LIB_LIBRARIES)
-    message(FATAL_ERROR "add_custom_library: LIBRARIES is required")
-  endif()
-
-  set(LIB_NAME ${LIB_TARGET})
-  string(TOUPPER ${LIB_NAME} LIB_ID)
-
-  if(LIB_SOURCE_PATH)
-    set(${LIB_ID}_SOURCE_PATH ${CWD}/${LIB_SOURCE_PATH})
-  else()
-    set(${LIB_ID}_SOURCE_PATH ${CWD}/src/deps/${LIB_NAME})
-  endif()
-
-  if(LIB_BUILD_PATH)
-    set(${LIB_ID}_BUILD_PATH ${BUILD_PATH}/${LIB_BUILD_PATH})
-  else()
-    set(${LIB_ID}_BUILD_PATH ${BUILD_PATH}/${LIB_NAME})
-  endif()
-
-  set(${LIB_ID}_WORKING_DIRECTORY ${${LIB_ID}_SOURCE_PATH})
-  if(LIB_WORKING_DIRECTORY)
-    set(${LIB_ID}_WORKING_DIRECTORY ${${LIB_ID}_WORKING_DIRECTORY}/${LIB_WORKING_DIRECTORY})
-  endif()
-
-  set(${LIB_ID}_LIB_PATH ${${LIB_ID}_BUILD_PATH})
-  if(LIB_PREFIX)
-    set(${LIB_ID}_LIB_PATH ${${LIB_ID}_LIB_PATH}/${LIB_PREFIX})
-  endif()
-
-  set(${LIB_ID}_LIBRARY_PATHS)  
-  foreach(lib ${LIB_LIBRARIES})
-    if(lib MATCHES "\\.")
-      set(lib_path ${${LIB_ID}_LIB_PATH}/${lib})
-    else()
-      set(lib_path ${${LIB_ID}_LIB_PATH}/${CMAKE_STATIC_LIBRARY_PREFIX}${lib}${CMAKE_STATIC_LIBRARY_SUFFIX})
-    endif()
-    list(APPEND ${LIB_ID}_LIBRARY_PATHS ${lib_path})  
-  endforeach()
-
-  if(LIB_COMMAND)
-    add_target(
-      NAME
-        build-${LIB_NAME}
-      COMMENT
-        "Building ${LIB_NAME}"
-      COMMAND
-        ${LIB_COMMAND}
-      WORKING_DIRECTORY
-        ${${LIB_ID}_WORKING_DIRECTORY}
-      ARTIFACTS
-        ${${LIB_ID}_LIBRARY_PATHS}
-    )
-
-    if(TARGET clone-${LIB_NAME})
-      add_dependencies(build-${LIB_NAME} clone-${LIB_NAME})
-    endif()
-  else()
-    if(NOT LIB_CMAKE_BUILD_TYPE)
-      set(LIB_CMAKE_BUILD_TYPE ${CMAKE_BUILD_TYPE})
-    endif()
-    
-    if(LIB_CMAKE_POSITION_INDEPENDENT_CODE AND NOT WIN32)
-      set(LIB_CMAKE_C_FLAGS "${LIB_CMAKE_C_FLAGS} -fPIC")
-      set(LIB_CMAKE_CXX_FLAGS "${LIB_CMAKE_CXX_FLAGS} -fPIC")
-    elseif(APPLE)
-      set(LIB_CMAKE_C_FLAGS "${LIB_CMAKE_C_FLAGS} -fno-pic -fno-pie")
-      set(LIB_CMAKE_CXX_FLAGS "${LIB_CMAKE_CXX_FLAGS} -fno-pic -fno-pie")
-    endif()
-
-    set(${LIB_ID}_CMAKE_ARGS
-      -G${CMAKE_GENERATOR}
-      -DCMAKE_BUILD_TYPE=${LIB_CMAKE_BUILD_TYPE}
-      "-DCMAKE_C_FLAGS=${CMAKE_C_FLAGS} ${LIB_CMAKE_C_FLAGS}"
-      "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS} ${LIB_CMAKE_CXX_FLAGS}"
-      "-DCMAKE_LINKER_FLAGS=${CMAKE_LINKER_FLAGS} ${LIB_CMAKE_LINKER_FLAGS}"
-      ${CMAKE_ARGS}
-      ${LIB_CMAKE_ARGS}
-    )
-
-    set(${LIB_ID}_CMAKE_PATH ${${LIB_ID}_SOURCE_PATH})
-    if(LIB_CMAKE_PATH)
-      set(${LIB_ID}_CMAKE_PATH ${${LIB_ID}_CMAKE_PATH}/${LIB_CMAKE_PATH})
-    endif()
-
-    add_target(
-      NAME
-        configure-${LIB_NAME}
-      COMMENT
-        "Configuring ${LIB_NAME}"
-      COMMAND
-        ${CMAKE_COMMAND}
-          -S${${LIB_ID}_CMAKE_PATH}
-          -B${${LIB_ID}_BUILD_PATH}
-          ${${LIB_ID}_CMAKE_ARGS}
-      WORKING_DIRECTORY
-        ${${LIB_ID}_WORKING_DIRECTORY}
-      OUTPUTS
-        ${${LIB_ID}_WORKING_DIRECTORY}/CMakeCache.txt
-    )
-
-    if(TARGET clone-${LIB_NAME})
-      add_dependencies(configure-${LIB_NAME} clone-${LIB_NAME})
-    endif()
-  endif()
-
-  if(NOT LIB_COMMAND)
-    if(NOT LIB_CMAKE_TARGETS)
-      set(LIB_CMAKE_TARGETS ${LIB_LIBRARIES})
-    endif()
-
-    set(${LIB_ID}_CMAKE_BUILD_ARGS
-      --build ${${LIB_ID}_BUILD_PATH}
-      --config ${CMAKE_BUILD_TYPE}
-    )
-    foreach(target ${LIB_CMAKE_TARGETS})
-      list(APPEND ${LIB_ID}_CMAKE_BUILD_ARGS --target ${target})
-    endforeach()
-
-    add_target(
-      NAME
-        build-${LIB_NAME}
-      COMMENT
-        "Compiling ${LIB_NAME}"
-      COMMAND
-        ${CMAKE_COMMAND}
-          ${${LIB_ID}_CMAKE_BUILD_ARGS}
-      WORKING_DIRECTORY
-        ${${LIB_ID}_WORKING_DIRECTORY}
-      ARTIFACTS
-        ${${LIB_ID}_LIBRARY_PATHS}
-      DEPENDS
-        configure-${LIB_NAME}
-    )
-  endif()
-  
-  set(${LIB_ID}_INCLUDE_PATHS)
-  foreach(include ${LIB_INCLUDES})
-    if(include STREQUAL ".")
-      list(APPEND ${LIB_ID}_INCLUDE_PATHS ${${LIB_ID}_SOURCE_PATH})
-    else()
-      list(APPEND ${LIB_ID}_INCLUDE_PATHS ${${LIB_ID}_SOURCE_PATH}/${include})
-    endif()
-  endforeach()
-
-  add_custom_target(
-    ${LIB_NAME}
-    COMMENT
-      "Building ${LIB_NAME}"
-    DEPENDS
-      build-${LIB_NAME}
-  )
-
-  if(BUILDKITE)
-    foreach(lib ${${LIB_ID}_LIBRARY_PATHS})
-      file(RELATIVE_PATH filename ${BUILD_PATH} ${lib})
-      add_custom_command(
-        TARGET
-          build-${LIB_NAME} POST_BUILD
-        VERBATIM COMMAND
-          buildkite-agent artifact upload "${filename}"
-        WORKING_DIRECTORY
-          ${BUILD_PATH}
-      )
-    endforeach()
-  endif()
-  
-  include_directories(${${LIB_ID}_INCLUDE_PATHS})
-  target_include_directories(${bun} PRIVATE ${${LIB_ID}_INCLUDE_PATHS})
-
-  if(TARGET clone-${LIB_NAME})
-    add_dependencies(${bun} clone-${LIB_NAME})
-  endif()
-  add_dependencies(${bun} ${LIB_NAME})
-
-  target_link_libraries(${bun} PRIVATE ${${LIB_ID}_LIBRARY_PATHS})
-endfunction()
-
+# register_repository()
+# Description:
+#   Registers a git repository.
+# Arguments:
+#   NAME       string - The name of the repository
+#   REPOSITORY string - The repository to clone
+#   BRANCH     string - The branch to clone
+#   TAG        string - The tag to clone
+#   COMMIT     string - The commit to clone
+#   PATH       string - The path to clone the repository to
 function(register_repository)
   set(args NAME REPOSITORY BRANCH TAG COMMIT PATH)
   cmake_parse_arguments(GIT "" "${args}" "" ${ARGN})
@@ -767,6 +491,157 @@ function(register_repository)
     OUTPUTS
       ${GIT_PATH}
   )
+endfunction()
+
+# register_cmake_command()
+# Description:
+#   Registers a command that builds an external CMake project.
+# Arguments:
+#   TARGET                    string   - The target to register the command with
+#   ARGS                      string[] - The arguments to pass to CMake (e.g. -DKEY=VALUE)
+#   CWD                       string   - The directory where the CMake files are located
+#   BUILD_PATH                string   - The path to build the project to
+#   LIB_PATH                  string   - The path to the libraries
+#   TARGETS                   string[] - The targets to build from CMake
+#   LIBRARIES                 string[] - The libraries that are built
+#   INCLUDES                  string[] - The include paths
+function(register_cmake_command)
+  set(args TARGET CWD BUILD_PATH LIB_PATH)
+  set(multiArgs ARGS TARGETS LIBRARIES INCLUDES)
+  # Use "MAKE" instead of "CMAKE" to prevent conflicts with CMake's own CMAKE_* variables
+  cmake_parse_arguments(MAKE "" "${args}" "${multiArgs}" ${ARGN})
+
+  if(NOT MAKE_TARGET)
+    message(FATAL_ERROR "register_cmake_command: TARGET is required")
+  endif()
+
+  if(TARGET ${MAKE_TARGET})
+    message(FATAL_ERROR "register_cmake_command: TARGET is already a target: ${MAKE_TARGET}")
+  endif()
+
+  if(NOT MAKE_CWD)
+    set(MAKE_CWD ${CWD}/src/deps/${MAKE_TARGET})
+  endif()
+
+  if(NOT MAKE_BUILD_PATH)
+    set(MAKE_BUILD_PATH ${BUILD_PATH}/${MAKE_TARGET})
+  endif()
+
+  if(MAKE_LIB_PATH)
+    set(MAKE_LIB_PATH ${MAKE_BUILD_PATH}/${MAKE_LIB_PATH})
+  else()
+    set(MAKE_LIB_PATH ${MAKE_BUILD_PATH})
+  endif()
+
+  set(MAKE_EFFECTIVE_ARGS -B${MAKE_BUILD_PATH} ${CMAKE_ARGS})
+
+  set(setFlags GENERATOR BUILD_TYPE)
+  set(appendFlags C_FLAGS CXX_FLAGS LINKER_FLAGS)
+  set(specialFlags POSITION_INDEPENDENT_CODE)
+  set(flags ${setFlags} ${appendFlags} ${specialFlags})
+
+  foreach(arg ${MAKE_ARGS})
+    foreach(flag ${flags})
+      if(arg MATCHES "-DCMAKE_${flag}=(.*)")
+        if(DEFINED MAKE_${flag})
+          message(FATAL_ERROR "register_cmake_command: CMAKE_${flag} was already set: \"${MAKE_${flag}}\"")
+        endif()
+        set(MAKE_${flag} ${CMAKE_MATCH_1})
+        set(${arg}_USED ON)
+      endif()
+    endforeach()
+    if(NOT ${arg}_USED)
+      list(APPEND MAKE_EFFECTIVE_ARGS ${arg})
+    endif()
+  endforeach()
+
+  foreach(flag ${setFlags})
+    if(NOT DEFINED MAKE_${flag} AND DEFINED CMAKE_${flag})
+      set(MAKE_${flag} ${CMAKE_${flag}})
+    endif()
+  endforeach()
+
+  foreach(flag ${appendFlags})
+    if(MAKE_${flag})
+      set(MAKE_${flag} "${CMAKE_${flag}} ${MAKE_${flag}}")
+    else()
+      set(MAKE_${flag} ${CMAKE_${flag}})
+    endif()
+  endforeach()
+
+  if(MAKE_POSITION_INDEPENDENT_CODE AND NOT WIN32)
+    set(MAKE_C_FLAGS "${MAKE_C_FLAGS} -fPIC")
+    set(MAKE_CXX_FLAGS "${MAKE_CXX_FLAGS} -fPIC")
+  elseif(APPLE)
+    set(MAKE_C_FLAGS "${MAKE_C_FLAGS} -fno-pic -fno-pie")
+    set(MAKE_CXX_FLAGS "${MAKE_CXX_FLAGS} -fno-pic -fno-pie")
+  endif()
+
+  set(effectiveFlags ${setFlags} ${appendFlags})
+  foreach(flag ${effectiveFlags})
+    list(APPEND MAKE_EFFECTIVE_ARGS -DCMAKE_${flag}=${MAKE_${flag}})
+  endforeach()
+
+  register_command(
+    TARGET configure-${MAKE_TARGET}
+    COMMAND ${CMAKE_COMMAND} ${MAKE_EFFECTIVE_ARGS}
+    CWD ${MAKE_CWD}
+    ALWAYS_RUN
+  )
+
+  if(TARGET clone-${MAKE_TARGET})
+    add_dependencies(configure-${MAKE_TARGET} clone-${MAKE_TARGET})
+  endif()
+
+  set(MAKE_BUILD_ARGS --build ${MAKE_BUILD_PATH} --config ${MAKE_BUILD_TYPE})
+
+  set(MAKE_EFFECTIVE_LIBRARIES)
+  set(MAKE_ARTIFACTS)
+  foreach(lib ${MAKE_LIBRARIES})
+    if(lib MATCHES "^(WIN32|UNIX|APPLE)$")
+      if(${lib})
+        continue()
+      else()
+        list(POP_BACK MAKE_ARTIFACTS)
+      endif()
+    else()
+      list(APPEND MAKE_EFFECTIVE_LIBRARIES ${lib})
+      if(lib MATCHES "\\.")
+        list(APPEND MAKE_ARTIFACTS ${MAKE_LIB_PATH}/${lib})
+      else()
+        list(APPEND MAKE_ARTIFACTS ${MAKE_LIB_PATH}/${CMAKE_STATIC_LIBRARY_PREFIX}${lib}${CMAKE_STATIC_LIBRARY_SUFFIX})
+      endif()
+    endif()
+  endforeach()
+
+  if(NOT MAKE_TARGETS)
+    set(MAKE_TARGETS ${MAKE_EFFECTIVE_LIBRARIES})
+  endif()
+
+  foreach(target ${MAKE_TARGETS})
+    list(APPEND MAKE_BUILD_ARGS --target ${target})
+  endforeach()
+
+  set(MAKE_EFFECTIVE_INCLUDES)
+  foreach(include ${MAKE_INCLUDES})
+    if(include STREQUAL ".")
+      list(APPEND MAKE_EFFECTIVE_INCLUDES ${MAKE_CWD})
+    else()
+      list(APPEND MAKE_EFFECTIVE_INCLUDES ${MAKE_CWD}/${include})
+    endif()
+  endforeach()
+
+  register_command(
+    TARGET ${MAKE_TARGET}
+    TARGETS configure-${MAKE_TARGET}
+    COMMAND ${CMAKE_COMMAND} ${MAKE_BUILD_ARGS}
+    CWD ${MAKE_CWD}
+    ARTIFACTS ${MAKE_ARTIFACTS}
+    # BYPRODUCTS ${MAKE_EFFECTIVE_INCLUDES}
+  )
+
+  target_include_directories(${bun} PRIVATE ${MAKE_EFFECTIVE_INCLUDES})
+  target_link_libraries(${bun} PRIVATE ${MAKE_ARTIFACTS})
 endfunction()
 
 # function(register_directory)

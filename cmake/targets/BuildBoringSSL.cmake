@@ -9,13 +9,15 @@ register_repository(
     29a2cd359458c9384694b75456026e4b57e3e567
 )
 
-add_custom_library(
+register_cmake_command(
   TARGET
     boringssl
   LIBRARIES
     crypto
     ssl
     decrepit
+  ARGS
+    -DBUILD_SHARED_LIBS=OFF
   INCLUDES
     include
 )

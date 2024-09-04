@@ -597,7 +597,7 @@ if(WIN32)
       PRE_LINK
     COMMAND
       ${POWERSHELL_EXECUTABLE} /C
-      "Stop-Process -Name '${bun}' -Force -ErrorAction SilentlyContinue; exit 0"
+      "Stop-Process -Name '${bun}' -Force -ErrorAction SilentlyContinue"
   )
 endif()
 

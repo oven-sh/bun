@@ -10,28 +10,22 @@ register_repository(
 )
 
 if(WIN32)
-  set(LIBUV_LIBRARY libuv)
-else()
-  set(LIBUV_LIBRARY uv)
-endif()
-
-if(WIN32)
   set(LIBUV_CMAKE_C_FLAGS "/DWIN32 /D_WINDOWS -Wno-int-conversion")
 endif()
 
-add_custom_library(
+register_cmake_command(
   TARGET
     libuv
-  LIBRARIES
-    ${LIBUV_LIBRARY}
-  INCLUDES
-    include
-  CMAKE_TARGETS
+  TARGETS
     uv_a
-  CMAKE_ARGS
+  ARGS
     -DLIBUV_BUILD_SHARED=OFF
     -DLIBUV_BUILD_TESTS=OFF
     -DLIBUV_BUILD_BENCH=OFF
-  CMAKE_C_FLAGS
-    ${LIBUV_CMAKE_C_FLAGS}
+    -DCMAKE_C_FLAGS=${LIBUV_CMAKE_C_FLAGS}
+  LIBRARIES
+    libuv WIN32
+    uv UNIX
+  INCLUDES
+    include
 )

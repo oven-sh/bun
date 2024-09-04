@@ -9,26 +9,20 @@ register_repository(
     794ea1b0afca0f020f4e57b6732332231fb23c70
 )
 
-if(WIN32)
-  set(ZSTD_LIBRARY zstd_static)
-else()
-  set(ZSTD_LIBRARY zstd)
-endif()
-
-add_custom_library(
+register_cmake_command(
   TARGET
     zstd
-  PREFIX
-    lib
-  LIBRARIES
-    ${ZSTD_LIBRARY}
-  CMAKE_PATH
-    build/cmake
-  CMAKE_TARGETS
+  TARGETS
     libzstd_static
-  CMAKE_ARGS
+  ARGS
+    -Sbuild/cmake
     -DZSTD_BUILD_STATIC=ON
     -DZSTD_BUILD_PROGRAMS=OFF
     -DZSTD_BUILD_TESTS=OFF
     -DZSTD_BUILD_CONTRIB=OFF
+  LIB_PATH
+    lib
+  LIBRARIES
+    zstd_static WIN32
+    zstd UNIX
 )

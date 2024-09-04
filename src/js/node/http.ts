@@ -421,6 +421,15 @@ function Server(options, callback) {
   return this;
 }
 
+function onRequestAborted() {
+  const [server, http_res, req] = this.socket[kInternalSocketData];
+  if (!http_res[finishedSymbol]) {
+    this.complete = true;
+    this.emit("close");
+    http_res[finishedSymbol] = true;
+  }
+}
+
 Server.prototype = {
   ref() {
     this._unref = false;
@@ -584,6 +593,7 @@ Server.prototype = {
         this.serverName = tls.serverName || host || "localhost";
       }
       this[serverSymbol] = Bun.serve<any>({
+        idleTimeout: 0, // nodejs dont have a idleTimeout by default
         tls,
         port,
         hostname: host,
@@ -636,6 +646,7 @@ Server.prototype = {
           const prevIsNextIncomingMessageHTTPS = isNextIncomingMessageHTTPS;
           isNextIncomingMessageHTTPS = isHTTPS;
           const http_req = new RequestClass(req);
+          req.signal.addEventListener("abort", onRequestAborted.bind(http_req));
           isNextIncomingMessageHTTPS = prevIsNextIncomingMessageHTTPS;
 
           const upgrade = http_req.headers.upgrade;
@@ -764,12 +775,15 @@ var reqSymbol = Symbol("req");
 var bodyStreamSymbol = Symbol("bodyStream");
 var noBodySymbol = Symbol("noBody");
 var abortedSymbol = Symbol("aborted");
+var readCompleteSymbol = Symbol("readComplete");
 function IncomingMessage(req, defaultIncomingOpts) {
   this.method = null;
   this._consuming = false;
   this._dumped = false;
   this[noBodySymbol] = false;
   this[abortedSymbol] = false;
+  this[readCompleteSymbol] = false;
+  this.complete = false;
   Readable.$call(this);
   var { type = "request", [kInternalRequest]: nodeReq } = defaultIncomingOpts || {};
 
@@ -800,7 +814,7 @@ function IncomingMessage(req, defaultIncomingOpts) {
       ? requestHasNoBody(this.method, this)
       : false;
 
-  this.complete = !!this[noBodySymbol];
+  this[readCompleteSymbol] = !!this[noBodySymbol];
 }
 
 IncomingMessage.prototype = {
@@ -824,12 +838,12 @@ IncomingMessage.prototype = {
   },
   _read(size) {
     if (this[noBodySymbol]) {
-      this.complete = true;
+      this[readCompleteSymbol] = true;
       this.push(null);
     } else if (this[bodyStreamSymbol] == null) {
       const reader = this[reqSymbol].body?.getReader() as ReadableStreamDefaultReader;
       if (!reader) {
-        this.complete = true;
+        this[readCompleteSymbol] = true;
         this.push(null);
         return;
       }
@@ -838,7 +852,7 @@ IncomingMessage.prototype = {
     }
   },
   _destroy(err, cb) {
-    if (!this.readableEnded || !this.complete) {
+    if (!this.readableEnded || !this[readCompleteSymbol]) {
       this[abortedSymbol] = true;
       // IncomingMessage emits 'aborted'.
       // Client emits 'abort'.
@@ -964,8 +978,8 @@ async function consumeStream(self, reader: ReadableStreamDefaultReader) {
     reader?.cancel?.().catch?.(nop);
   }
 
-  if (!self.complete) {
-    self.complete = true;
+  if (!self[readCompleteSymbol]) {
+    self[readCompleteSymbol] = true;
     self.push(null);
   }
 }
@@ -1276,6 +1290,8 @@ function drainHeadersIfObservable() {
 }
 
 ServerResponse.prototype._final = function (callback) {
+  const shouldEmitClose = !this[finishedSymbol];
+
   if (!this.headersSent) {
     var data = this[firstWriteSymbol] || "";
     this[firstWriteSymbol] = undefined;
@@ -1288,6 +1304,11 @@ ServerResponse.prototype._final = function (callback) {
         statusText: this.statusMessage ?? STATUS_CODES[this.statusCode],
       }),
     );
+    if (shouldEmitClose) {
+      const req = this.req;
+      req.complete = true;
+      req.emit("close");
+    }
     callback && callback();
     return;
   }
@@ -1295,7 +1316,11 @@ ServerResponse.prototype._final = function (callback) {
   this[finishedSymbol] = true;
   ensureReadableStreamController.$call(this, controller => {
     controller.end();
-
+    if (shouldEmitClose) {
+      const req = this.req;
+      req.complete = true;
+      req.emit("close");
+    }
     callback();
     const deferred = this[deferredSymbol];
     if (deferred) {

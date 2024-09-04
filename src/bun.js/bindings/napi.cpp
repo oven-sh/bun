@@ -724,7 +724,7 @@ extern "C" napi_status napi_delete_property(napi_env env, napi_value object,
     RETURN_IF_EXCEPTION(scope, napi_generic_failure);
 
     if (LIKELY(result)) {
-        *result = toNapi(deleteResult);
+        *result = deleteResult;
     }
 
     scope.clearException();
@@ -749,7 +749,7 @@ extern "C" napi_status napi_has_own_property(napi_env env, napi_value object,
 
     auto keyProp = toJS(key);
     auto scope = DECLARE_CATCH_SCOPE(vm);
-    *result = toNapi(target->hasOwnProperty(globalObject, JSC::PropertyName(keyProp.toPropertyKey(globalObject))));
+    *result = target->hasOwnProperty(globalObject, JSC::PropertyName(keyProp.toPropertyKey(globalObject)));
     RETURN_IF_EXCEPTION(scope, napi_generic_failure);
 
     scope.clearException();
@@ -2016,7 +2016,7 @@ extern "C" napi_status napi_get_all_property_names(
 
     JSC::JSArray* exportKeys = ownPropertyKeys(globalObject, object, jsc_property_mode, jsc_key_mode);
     // TODO: filter
-    *result = toNapi(JSC::JSValue::encode(exportKeys));
+    *result = toNapi(JSC::JSValue(exportKeys));
     return napi_ok;
 }
 

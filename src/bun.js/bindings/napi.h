@@ -38,14 +38,9 @@ static inline Zig::GlobalObject* toJS(napi_env val)
     return reinterpret_cast<Zig::GlobalObject*>(val);
 }
 
-static inline napi_value toNapi(JSC::EncodedJSValue val)
-{
-    return reinterpret_cast<napi_value>(val);
-}
-
 static inline napi_value toNapi(JSC::JSValue val)
 {
-    return toNapi(JSC::JSValue::encode(val));
+    return reinterpret_cast<napi_value>(JSC::JSValue::encode(val));
 }
 
 static inline napi_env toNapi(JSC::JSGlobalObject* val)
@@ -60,7 +55,6 @@ public:
 
     void call(JSC::JSGlobalObject* globalObject, void* data);
 };
-
 
 // This is essentially JSC::JSWeakValue, except with a JSCell* instead of a
 // JSObject*. Sometimes, a napi embedder might want to store a JSC::Exception, a

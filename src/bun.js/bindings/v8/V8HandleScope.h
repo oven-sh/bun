@@ -28,13 +28,13 @@ public:
         } else if (value.isNumber()) {
             return Local<T>(m_buffer->createDoubleHandle(value.asNumber()));
         } else if (value.isUndefined()) {
-            return Local<T>(m_isolate->globalInternals()->undefinedSlot());
+            return Local<T>(m_isolate->undefinedSlot());
         } else if (value.isNull()) {
-            return Local<T>(m_isolate->globalInternals()->nullSlot());
+            return Local<T>(m_isolate->nullSlot());
         } else if (value.isTrue()) {
-            return Local<T>(m_isolate->globalInternals()->trueSlot());
+            return Local<T>(m_isolate->trueSlot());
         } else if (value.isFalse()) {
-            return Local<T>(m_isolate->globalInternals()->falseSlot());
+            return Local<T>(m_isolate->falseSlot());
         } else {
             V8_UNIMPLEMENTED();
             return Local<T>();

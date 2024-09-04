@@ -81,14 +81,22 @@ TaggedPointer* HandleScopeBuffer::createHandleFromExistingObject(TaggedPointer a
         }
     } else {
         auto* v8_object = address.getPtr<ObjectLayout>();
-        if (v8_object->m_taggedMap.getPtr<Map>()->m_instanceType == InstanceType::Oddball) {
+        if (v8_object->map()->m_instanceType == InstanceType::Oddball) {
+            using Kind = Oddball::Kind;
             // find which oddball this is
-            for (auto& root : isolate->m_roots) {
-                if (root == address) {
-                    return &root;
-                }
+            switch (reinterpret_cast<Oddball*>(v8_object)->kind()) {
+            case Kind::kNull:
+                return isolate->nullSlot();
+            case Kind::kUndefined:
+                return isolate->undefinedSlot();
+            case Kind::kTrue:
+                return isolate->trueSlot();
+            case Kind::kFalse:
+                return isolate->falseSlot();
+            default:
+                RELEASE_ASSERT_NOT_REACHED("HandleScopeBuffer::createHandleFromExistingObject passed an unknown Oddball kind: %d",
+                    reinterpret_cast<Oddball*>(v8_object)->kind());
             }
-            RELEASE_ASSERT_NOT_REACHED("HandleScopeBuffer::createHandleFromExistingObject passed an Oddball which does not exist in Roots");
         }
         if (reuseHandle) {
             *reuseHandle = Handle(v8_object->map(), v8_object->asCell(), vm(), this);

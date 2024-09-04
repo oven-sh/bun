@@ -63,14 +63,6 @@ public:
 
     void setCurrentHandleScope(HandleScope* handleScope) { m_currentHandleScope = handleScope; }
 
-    TaggedPointer* undefinedSlot() { return m_isolate.getRoot(Isolate::kUndefinedValueRootIndex); }
-
-    TaggedPointer* nullSlot() { return m_isolate.getRoot(Isolate::kNullValueRootIndex); }
-
-    TaggedPointer* trueSlot() { return m_isolate.getRoot(Isolate::kTrueValueRootIndex); }
-
-    TaggedPointer* falseSlot() { return m_isolate.getRoot(Isolate::kFalseValueRootIndex); }
-
     Isolate* isolate() { return &m_isolate; }
 
     DECLARE_INFO;

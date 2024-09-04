@@ -39,7 +39,13 @@ public:
     shim::GlobalInternals* globalInternals() { return m_globalInternals; }
     HandleScope* currentHandleScope();
 
-    TaggedPointer* getRoot(int index) { return &m_roots[index]; }
+    TaggedPointer* undefinedSlot() { return &m_roots[Isolate::kUndefinedValueRootIndex]; }
+
+    TaggedPointer* nullSlot() { return &m_roots[Isolate::kNullValueRootIndex]; }
+
+    TaggedPointer* trueSlot() { return &m_roots[Isolate::kTrueValueRootIndex]; }
+
+    TaggedPointer* falseSlot() { return &m_roots[Isolate::kFalseValueRootIndex]; }
 
     shim::GlobalInternals* m_globalInternals;
     Zig::GlobalObject* m_globalObject;

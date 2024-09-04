@@ -45,24 +45,29 @@ pub const PackCommand = struct {
             total_files: usize = 0,
             ignored_files: usize = 0,
             ignored_directories: usize = 0,
+
+            successfully_bundled_deps: std.ArrayListUnmanaged(string) = .{},
         } = .{},
 
         pub fn printStats(this: *const Context) void {
-            const stats = this.stats;
-            Output.pretty(
-                \\total_unpacked_size: {}
-                \\total_files: {d}
-                \\ignored_files: {d}
-                \\ignored_directories: {d}
-                \\
-            , .{
-                bun.fmt.size(stats.total_unpacked_size),
-                stats.total_files,
-                stats.ignored_files,
-                stats.ignored_directories,
-            });
+            if (this.manager.options.log_level != .silent) {
+                const stats = this.stats;
+                Output.pretty(
+                    \\total_unpacked_size: {}
+                    \\total_files: {d}
+                    \\ignored_files: {d}
+                    \\ignored_directories: {d}
+                    \\
+                , .{
+                    bun.fmt.size(stats.total_unpacked_size),
+                    stats.total_files,
+                    stats.ignored_files,
+                    stats.ignored_directories,
+                });
+            }
         }
     };
+
     pub fn exec(ctx: Command.Context) !void {
         Output.prettyErrorln("<r><b>bun pack <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
         Output.flush();
@@ -168,8 +173,6 @@ pub const PackCommand = struct {
     const package_prefix = "package/";
 
     const root_default_ignore_patterns = [_][]const u32{
-        // TODO: might need more special rules for node_modules due to bundledDependencies
-        &.{ 110, 111, 100, 101, 95, 109, 111, 100, 117, 108, 101, 115 }, // node_modules
         &.{ 112, 97, 99, 107, 97, 103, 101, 45, 108, 111, 99, 107, 46, 106, 115, 111, 110 }, // package-lock.json
         &.{ 121, 97, 114, 110, 46, 108, 111, 99, 107 }, // yarn.lock
         &.{ 112, 110, 112, 109, 45, 108, 111, 99, 107, 46, 121, 97, 109, 108 }, // pnpm-lock.yaml
@@ -204,30 +207,37 @@ pub const PackCommand = struct {
 
     fn iterateIncludedProjectTree(
         ctx: *Context,
-        // includes: []const Pattern,
-        includes: []const stringZ,
+        includes: []const Pattern,
         root_dir_info: DirInfo,
         comptime close_root_dir: bool,
-    ) OOM!std.ArrayListUnmanaged(stringZ) {
+    ) OOM!struct { std.ArrayListUnmanaged(stringZ), std.ArrayListUnmanaged(stringZ) } {
         const pack_list: std.ArrayListUnmanaged(stringZ) = .{};
+        const bundled_pack_list: std.ArrayListUnmanaged(stringZ) = .{};
+
+        var ignores: std.ArrayListUnmanaged(IgnorePatterns) = .{};
+        defer ignores.deinit(ctx.allocator);
 
         var dirs: std.ArrayListUnmanaged(DirInfo) = .{};
         defer dirs.deinit(ctx.allocator);
 
         try dirs.append(ctx.allocator, root_dir_info);
 
-        var included_files: std.ArrayListUnmanaged(stringZ) = .{};
-        defer included_files.deinit(ctx.allocator);
-        var included_dirs: std.ArrayListUnmanaged(stringZ) = .{};
+        // var included_files: std.ArrayListUnmanaged(stringZ) = .{};
+        // defer included_files.deinit(ctx.allocator);
+
+        var included_dirs: std.ArrayListUnmanaged(DirInfo) = .{};
         defer included_dirs.deinit(ctx.allocator);
 
-        const root_dir_depth = root_dir_info[2];
+        // for (includes) |include| {
+        //     if (include.len ==)
+        // }
+
         while (dirs.popOrNull()) |dir_info| {
             var dir, const dir_subpath, const dir_depth = dir_info;
             defer {
                 if (comptime close_root_dir) {
                     dir.close();
-                } else if (dir_depth != root_dir_depth) {
+                } else if (dir_depth != root_dir_info[2]) {
                     dir.close();
                 }
             }
@@ -252,21 +262,130 @@ pub const PackCommand = struct {
                             included = true;
                         },
                         .negate_no_match => included = false,
+
+                        else => {},
                     }
                 }
             }
         }
 
-        return pack_list;
+        return .{ pack_list, bundled_pack_list };
+    }
+
+    /// Adds all files in a directory tree to `pack_list` (default ignores still apply)
+    fn addEntireTree(
+        ctx: *Context,
+        root_dir_info: DirInfo,
+        pack_list: *std.ArrayListUnmanaged(stringZ),
+    ) OOM!void {
+        var dirs: std.ArrayListUnmanaged(DirInfo) = .{};
+        defer dirs.deinit(ctx.allocator);
+
+        try dirs.append(ctx.allocator, root_dir_info);
+
+        while (dirs.popOrNull()) |dir_info| {
+            var dir, const dir_subpath, const dir_depth = dir_info;
+            defer dir.close();
+
+            var iter = DirIterator.iterate(dir, .u8);
+            while (iter.next().unwrap() catch null) |entry| {
+                if (entry.kind != .file and entry.kind != .directory) continue;
+
+                const entry_name = entry.name.slice();
+
+                const entry_subpath = try std.fmt.allocPrintZ(ctx.allocator, "{s}{s}{s}", .{
+                    dir_subpath,
+                    if (dir_subpath.len == 0) "" else "/",
+                    entry_name,
+                });
+
+                if (dir_depth == root_dir_info[2]) {
+                    if (entry.kind == .directory and strings.eqlComptime(entry_name, "node_modules")) continue;
+                }
+
+                if (isExcluded(entry, entry_subpath, dir_depth, &.{})) |used_pattern_info| {
+                    if (ctx.manager.options.log_level.isVerbose()) {
+                        const pattern, const kind = used_pattern_info;
+                        Output.prettyln("<r><blue>ignore<r> <d>[{s}:{}]<r> {s}{s}", .{
+                            @tagName(kind),
+                            bun.fmt.debugUtf32PathFormatter(pattern),
+                            entry_subpath,
+                            if (entry.kind == .directory) "/" else "",
+                        });
+                        Output.flush();
+                    }
+                    continue;
+                }
+
+                switch (entry.kind) {
+                    .file => try pack_list.append(ctx.allocator, entry_subpath),
+                    .directory => {
+                        const subdir = openSubdir(dir, entry_name, entry_subpath);
+
+                        try dirs.append(ctx.allocator, .{
+                            subdir,
+                            entry_subpath,
+                            dir_depth + 1,
+                        });
+                    },
+                    else => unreachable,
+                }
+            }
+        }
+    }
+
+    fn iterateBundledDeps(
+        ctx: *Context,
+        bundled_deps: []const string,
+        node_modules_dir: std.fs.Dir,
+        bundled_pack_list: *std.ArrayListUnmanaged(stringZ),
+    ) OOM!void {
+        var iter = DirIterator.iterate(node_modules_dir, .u8);
+        while (iter.next().unwrap() catch null) |entry| {
+            if (entry.kind != .directory) continue;
+
+            const entry_name = entry.name.slice();
+
+            const entry_subpath = try std.fmt.allocPrintZ(ctx.allocator, "node_modules/{s}", .{
+                entry_name,
+            });
+
+            for (bundled_deps) |dep| {
+                if (!strings.eqlLong(dep, entry_name, true)) continue;
+
+                // closed in `addEntireTree`
+                const subdir = openSubdir(node_modules_dir, entry_name, entry_subpath);
+
+                try addEntireTree(ctx, .{ subdir, entry_subpath, 2 }, bundled_pack_list);
+                try ctx.stats.successfully_bundled_deps.append(ctx.allocator, dep);
+            }
+        }
+    }
+
+    fn openSubdir(
+        dir: std.fs.Dir,
+        entry_name: string,
+        entry_subpath: stringZ,
+    ) std.fs.Dir {
+        return dir.openDirZ(
+            // doing this because `entry_subpath` has a sentinel and I don't trust `entry.name.sliceAssumeZ()`
+            entry_subpath[entry_subpath.len - entry_name.len ..][0..entry_name.len :0],
+            .{ .iterate = true },
+        ) catch |err| {
+            Output.err(err, "failed to open directory \"{s}\" for packing", .{entry_subpath});
+            Global.crash();
+        };
     }
 
     /// Returns an array of filenames to include in the archive
     fn iterateProjectTree(
         ctx: *Context,
+        bundled_deps: []const string,
         root_dir_info: DirInfo,
         comptime close_root_dir: bool,
-    ) OOM!std.ArrayListUnmanaged(stringZ) {
+    ) OOM!struct { std.ArrayListUnmanaged(stringZ), std.ArrayListUnmanaged(stringZ) } {
         var pack_list: std.ArrayListUnmanaged(stringZ) = .{};
+        var bundled_pack_list: std.ArrayListUnmanaged(stringZ) = .{};
 
         var ignores: std.ArrayListUnmanaged(IgnorePatterns) = .{};
         defer ignores.deinit(ctx.allocator);
@@ -278,26 +397,22 @@ pub const PackCommand = struct {
 
         try dirs.append(ctx.allocator, root_dir_info);
 
-        const root_dir_depth = root_dir_info[2];
         while (dirs.popOrNull()) |dir_info| {
             var dir, const dir_subpath, const dir_depth = dir_info;
             defer {
                 if (comptime close_root_dir) {
                     dir.close();
-                } else if (dir_depth != root_dir_depth) {
+                } else if (dir_depth != 1) {
                     dir.close();
                 }
             }
 
-            while (ignores.items.len != 0) {
-                // pop patterns from files greater than or equal to the current depth.
-                if (ignores.getLast().depth >= dir_depth) {
-                    const last = ignores.pop();
-                    last.deinit(ctx.allocator);
-                    continue;
-                }
+            while (ignores.getLastOrNull()) |last| {
+                if (last.depth < dir_depth) break;
 
-                break;
+                // pop patterns from files greater than or equal to the current depth.
+                last.deinit(ctx.allocator);
+                ignores.items.len -= 1;
             }
 
             if (try IgnorePatterns.readFromDisk(ctx, dir, dir_depth)) |patterns| {
@@ -319,21 +434,41 @@ pub const PackCommand = struct {
 
                 const entry_name = entry.name.slice();
 
-                // Special case root package.json. It is always included
-                // and is possibly edited, so it's easier to handle it
-                // separately
-                if (dir_depth == 1 and strings.eqlComptime(entry_name, "package.json")) continue;
-
                 const entry_subpath = try std.fmt.allocPrintZ(ctx.allocator, "{s}{s}{s}", .{
                     dir_subpath,
                     if (dir_subpath.len == 0) "" else "/",
                     entry_name,
                 });
 
+                if (dir_depth == 1) {
+                    // Special case root package.json. It is always included
+                    // and is possibly edited, so it's easier to handle it
+                    // separately
+                    if (strings.eqlComptime(entry_name, "package.json")) continue;
+
+                    // bundled dependencies are included only if they exist on disk
+                    if (strings.eqlComptime(entry_name, "node_modules")) {
+                        if (bundled_deps.len == 0) continue;
+
+                        const node_modules_dir = dir.openDirZ("node_modules", .{ .iterate = true }) catch |err| {
+                            switch (err) {
+                                error.NotDir => continue,
+                                else => {
+                                    Output.err(err, "failed to open \"node_modules\" to pack bundled dependencies", .{});
+                                    Global.crash();
+                                },
+                            }
+                        };
+
+                        try iterateBundledDeps(ctx, bundled_deps, node_modules_dir, &bundled_pack_list);
+                        continue;
+                    }
+                }
+
                 if (isExcluded(entry, entry_subpath, dir_depth, ignores.items)) |used_pattern_info| {
                     if (ctx.manager.options.log_level.isVerbose()) {
                         const pattern, const kind = used_pattern_info;
-                        Output.prettyln("<r><blue>ignore<r><d>[{s}:{}]<r> {s}{s}", .{
+                        Output.prettyln("<r><blue>ignore<r> <d>[{s}:{}]<r> {s}{s}", .{
                             @tagName(kind),
                             bun.fmt.debugUtf32PathFormatter(pattern),
                             entry_subpath,
@@ -349,12 +484,7 @@ pub const PackCommand = struct {
                         try pack_list.append(ctx.allocator, entry_subpath);
                     },
                     .directory => {
-                        const entry_name_z = entry_subpath[entry_subpath.len - entry_name.len ..][0..entry_name.len :0];
-                        const subdir = dir.openDirZ(entry_name_z, .{ .iterate = true }) catch |err| {
-                            Output.warn("failed to open \"{s}\" for packing: {s}", .{ entry_name, @errorName(err) });
-                            ctx.allocator.free(entry_subpath);
-                            continue;
-                        };
+                        const subdir = openSubdir(dir, entry_name, entry_subpath);
 
                         try dirs.append(ctx.allocator, .{
                             subdir,
@@ -367,7 +497,29 @@ pub const PackCommand = struct {
             }
         }
 
-        return pack_list;
+        return .{ pack_list, bundled_pack_list };
+    }
+
+    fn getBundledDeps(
+        ctx: *Context,
+        json: Expr,
+        comptime field: string,
+    ) OOM!?[]const string {
+        var deps: std.ArrayListUnmanaged(string) = .{};
+        const bundled_deps = json.get(field) orelse return null;
+
+        invalid_field: {
+            var iter = bundled_deps.asArray() orelse break :invalid_field;
+            while (iter.next()) |bundled_dep_item| {
+                const bundled_dep = bundled_dep_item.asStringCloned(ctx.allocator) orelse break :invalid_field;
+                try deps.append(ctx.allocator, bundled_dep);
+            }
+
+            return deps.items;
+        }
+
+        Output.errGeneric("expected `{s}` to be an array of strings", .{field});
+        Global.crash();
     }
 
     const BinInfo = struct {
@@ -621,66 +773,65 @@ pub const PackCommand = struct {
             }
         };
 
-        const postpack_script: ?string = find_pack_scripts: {
-            if (json.root.asProperty("scripts")) |scripts| {
-                if (scripts.expr.data != .e_object) break :find_pack_scripts null;
+        const postpack_script: ?string = postpack_script: {
+            const scripts = json.root.asProperty("scripts") orelse break :postpack_script null;
+            if (scripts.expr.data != .e_object) break :postpack_script null;
 
-                if (scripts.expr.get("prepack")) |prepack_script| {
-                    if (prepack_script.asString(ctx.allocator)) |prepack_script_str| {
-                        _ = RunCommand.runPackageScriptForeground(
-                            ctx.command_ctx,
-                            ctx.allocator,
-                            prepack_script_str,
-                            "prepack",
-                            FileSystem.instance.top_level_dir,
-                            this_bundler.env,
-                            &.{},
-                            manager.options.log_level == .silent,
-                            ctx.command_ctx.debug.use_system_shell,
-                        ) catch |err| {
-                            switch (err) {
-                                error.MissingShell => {
-                                    Output.errGeneric("failed to find shell executable to run prepack script", .{});
-                                    Global.crash();
-                                },
-                                error.OutOfMemory => |oom| return oom,
-                            }
-                        };
-                    }
-                }
-
-                if (scripts.expr.get("prepare")) |prepare_script| {
-                    if (prepare_script.asString(ctx.allocator)) |prepare_script_str| {
-                        _ = RunCommand.runPackageScriptForeground(
-                            ctx.command_ctx,
-                            ctx.allocator,
-                            prepare_script_str,
-                            "prepare",
-                            FileSystem.instance.top_level_dir,
-                            this_bundler.env,
-                            &.{},
-                            manager.options.log_level == .silent,
-                            ctx.command_ctx.debug.use_system_shell,
-                        ) catch |err| {
-                            switch (err) {
-                                error.MissingShell => {
-                                    Output.errGeneric("failed to find shell executable to run prepare script", .{});
-                                    Global.crash();
-                                },
-                                error.OutOfMemory => |oom| return oom,
-                            }
-                        };
-                    }
-                }
-
-                if (scripts.expr.get("postpack")) |postpack| {
-                    if (postpack.asString(ctx.allocator)) |postpack_str| {
-                        break :find_pack_scripts postpack_str;
-                    }
+            if (scripts.expr.get("prepack")) |prepack_script| {
+                if (prepack_script.asString(ctx.allocator)) |prepack_script_str| {
+                    _ = RunCommand.runPackageScriptForeground(
+                        ctx.command_ctx,
+                        ctx.allocator,
+                        prepack_script_str,
+                        "prepack",
+                        FileSystem.instance.top_level_dir,
+                        this_bundler.env,
+                        &.{},
+                        manager.options.log_level == .silent,
+                        ctx.command_ctx.debug.use_system_shell,
+                    ) catch |err| {
+                        switch (err) {
+                            error.MissingShell => {
+                                Output.errGeneric("failed to find shell executable to run prepack script", .{});
+                                Global.crash();
+                            },
+                            error.OutOfMemory => |oom| return oom,
+                        }
+                    };
                 }
             }
 
-            break :find_pack_scripts null;
+            if (scripts.expr.get("prepare")) |prepare_script| {
+                if (prepare_script.asString(ctx.allocator)) |prepare_script_str| {
+                    _ = RunCommand.runPackageScriptForeground(
+                        ctx.command_ctx,
+                        ctx.allocator,
+                        prepare_script_str,
+                        "prepare",
+                        FileSystem.instance.top_level_dir,
+                        this_bundler.env,
+                        &.{},
+                        manager.options.log_level == .silent,
+                        ctx.command_ctx.debug.use_system_shell,
+                    ) catch |err| {
+                        switch (err) {
+                            error.MissingShell => {
+                                Output.errGeneric("failed to find shell executable to run prepare script", .{});
+                                Global.crash();
+                            },
+                            error.OutOfMemory => |oom| return oom,
+                        }
+                    };
+                }
+            }
+
+            if (scripts.expr.get("postpack")) |postpack| {
+                if (postpack.asString(ctx.allocator)) |postpack_str| {
+                    break :postpack_script postpack_str;
+                }
+            }
+
+            break :postpack_script null;
         };
 
         const package_json_dir = std.fs.path.dirname(package_json_path) orelse @panic("ooops");
@@ -697,11 +848,15 @@ pub const PackCommand = struct {
         };
         defer root_dir.close();
 
-        var pack_list: std.ArrayListUnmanaged(stringZ) = pack_list: {
+        const bundled_deps: []const string = try getBundledDeps(ctx, json.root, "bundledDependencies") orelse
+            try getBundledDeps(ctx, json.root, "bundleDependencies") orelse
+            &.{};
+
+        var pack_list, var bundled_pack_list = pack_lists: {
             if (json.root.get("files")) |files| {
                 files_error: {
                     if (files.asArray()) |_files_array| {
-                        var includes: std.ArrayListUnmanaged(stringZ) = .{};
+                        var includes: std.ArrayListUnmanaged(Pattern) = .{};
                         defer includes.deinit(ctx.allocator);
 
                         var files_array = _files_array;
@@ -713,25 +868,26 @@ pub const PackCommand = struct {
                                 }
 
                                 // TODO: support pattern matching in `files`
-                                // const parsed = try Pattern.fromUTF8(ctx, file_entry_str) orelse continue;
+                                const parsed = try Pattern.fromUTF8(ctx, file_entry_str) orelse continue;
 
-                                try includes.append(ctx.allocator, file_entry_str);
+                                // try includes.append(ctx.allocator, file_entry_str);
+                                try includes.append(ctx.allocator, parsed);
                                 continue;
                             }
 
                             break :files_error;
                         }
 
-                        // break :pack_list try iterateIncludedProjectTree(
-                        //     ctx,
-                        //     includes.items,
-                        //     .{
-                        //         root_dir,
-                        //         "",
-                        //         1,
-                        //     },
-                        //     false,
-                        // );
+                        break :pack_lists try iterateIncludedProjectTree(
+                            ctx,
+                            includes.items,
+                            .{
+                                root_dir,
+                                "",
+                                1,
+                            },
+                            false,
+                        );
                     }
                 }
 
@@ -740,8 +896,9 @@ pub const PackCommand = struct {
             }
 
             // pack from project root
-            break :pack_list try iterateProjectTree(
+            break :pack_lists try iterateProjectTree(
                 ctx,
+                bundled_deps,
                 .{
                     root_dir,
                     "",
@@ -750,12 +907,40 @@ pub const PackCommand = struct {
                 false,
             );
         };
-        defer pack_list.deinit(ctx.allocator);
+        defer {
+            pack_list.deinit(ctx.allocator);
+            bundled_pack_list.deinit(ctx.allocator);
+        }
 
         if (manager.options.dry_run) {
-            // don't create the tarball
+            // don't create the tarball, but run scripts if they exists
+            for (ctx.stats.successfully_bundled_deps.items) |dep| {
+                Output.prettyln("<r><b><green>bundled<r> {s}", .{dep});
+            }
             for (pack_list.items) |filename| {
                 Output.prettyln("<r><b><cyan>packing<r> {s}", .{filename});
+            }
+
+            if (postpack_script) |postpack_script_str| {
+                _ = RunCommand.runPackageScriptForeground(
+                    ctx.command_ctx,
+                    ctx.allocator,
+                    postpack_script_str,
+                    "postpack",
+                    FileSystem.instance.top_level_dir,
+                    manager.env,
+                    &.{},
+                    manager.options.log_level == .silent,
+                    ctx.command_ctx.debug.use_system_shell,
+                ) catch |err| {
+                    switch (err) {
+                        error.MissingShell => {
+                            Output.errGeneric("failed to find shell executable to run postpack script", .{});
+                            Global.crash();
+                        },
+                        error.OutOfMemory => |oom| return oom,
+                    }
+                };
             }
             return;
         }
@@ -830,38 +1015,11 @@ pub const PackCommand = struct {
         var entry = libarchive.archive_entry_new();
         defer libarchive.archive_entry_free(entry);
 
-        {
-            const edited_package_json = try editRootPackageJSON(ctx, json);
-            const package_json_file = File.openat(root_dir, "package.json", bun.O.RDONLY, 0).unwrap() catch |err| {
-                Output.err(err, "failed to open package.json", .{});
-                Global.crash();
-            };
-            defer package_json_file.close();
-
-            Output.prettyln("<r><b><cyan>packing<r> package.json", .{});
-            Output.flush();
-
-            const stat = package_json_file.stat().unwrap() catch |err| {
-                Output.err(err, "failed to stat package.json", .{});
-                Global.crash();
-            };
-
-            libarchive.archive_entry_set_pathname_utf8(entry, package_prefix ++ "package.json");
-            libarchive.archive_entry_set_size(entry, @intCast(edited_package_json.len));
-            libarchive.archive_entry_set_filetype(entry, std.posix.S.IFREG);
-            libarchive.archive_entry_set_perm(entry, stat.mode);
-            // '1985-10-26T08:15:00.000Z'
-            // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L28
-            libarchive.archive_entry_set_mtime(entry, 499162500, 0);
-
-            _ = libarchive.archive_write_header(archive, entry);
-            _ = libarchive.archive_write_data(archive, edited_package_json.ptr, edited_package_json.len);
-
-            ctx.stats.total_unpacked_size += edited_package_json.len;
-            ctx.stats.total_files += 1;
-
-            entry = libarchive.archive_entry_clear(entry);
+        for (ctx.stats.successfully_bundled_deps.items) |dep| {
+            Output.prettyln("<r><b><green>bundled<r> {s}", .{dep});
         }
+
+        entry = try editAndArchivePackageJSON(ctx, archive, entry, root_dir, json);
 
         for (pack_list.items) |filename| {
             const file = File.openat(root_dir, filename, bun.O.RDONLY, 0).unwrap() catch |err| {
@@ -871,6 +1029,15 @@ pub const PackCommand = struct {
             defer file.close();
             Output.prettyln("<r><b><cyan>packing<r> {s}", .{filename});
             Output.flush();
+            entry = try addArchiveEntry(ctx, file, filename, &read_buf, archive, entry, &print_buf, bins);
+        }
+
+        for (bundled_pack_list.items) |filename| {
+            const file = File.openat(root_dir, filename, bun.O.RDONLY, 0).unwrap() catch |err| {
+                Output.err(err, "failed to open file: \"{s}\"", .{filename});
+                Global.crash();
+            };
+            defer file.close();
             entry = try addArchiveEntry(ctx, file, filename, &read_buf, archive, entry, &print_buf, bins);
         }
 
@@ -895,6 +1062,45 @@ pub const PackCommand = struct {
                 }
             };
         }
+    }
+
+    fn editAndArchivePackageJSON(
+        ctx: *Context,
+        archive: *libarchive.archive,
+        entry: *libarchive.archive_entry,
+        root_dir: std.fs.Dir,
+        json: *PackageManager.WorkspacePackageJSONCache.MapEntry,
+    ) OOM!*libarchive.archive_entry {
+        const edited_package_json = try editRootPackageJSON(ctx, json);
+        const package_json_file = File.openat(root_dir, "package.json", bun.O.RDONLY, 0).unwrap() catch |err| {
+            Output.err(err, "failed to open package.json", .{});
+            Global.crash();
+        };
+        defer package_json_file.close();
+
+        Output.prettyln("<r><b><cyan>packing<r> package.json", .{});
+        Output.flush();
+
+        const stat = package_json_file.stat().unwrap() catch |err| {
+            Output.err(err, "failed to stat package.json", .{});
+            Global.crash();
+        };
+
+        libarchive.archive_entry_set_pathname_utf8(entry, package_prefix ++ "package.json");
+        libarchive.archive_entry_set_size(entry, @intCast(edited_package_json.len));
+        libarchive.archive_entry_set_filetype(entry, std.posix.S.IFREG);
+        libarchive.archive_entry_set_perm(entry, stat.mode);
+        // '1985-10-26T08:15:00.000Z'
+        // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L28
+        libarchive.archive_entry_set_mtime(entry, 499162500, 0);
+
+        _ = libarchive.archive_write_header(archive, entry);
+        _ = libarchive.archive_write_data(archive, edited_package_json.ptr, edited_package_json.len);
+
+        ctx.stats.total_unpacked_size += edited_package_json.len;
+        ctx.stats.total_files += 1;
+
+        return libarchive.archive_entry_clear(entry);
     }
 
     fn addArchiveEntry(

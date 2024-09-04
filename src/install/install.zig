@@ -8226,7 +8226,8 @@ pub const PackageManager = struct {
 
         pub fn supportsWorkspaceFiltering(this: Subcommand) bool {
             return switch (this) {
-                .outdated, .pack => true,
+                .outdated => true,
+                // .pack => true,
                 else => false,
             };
         }
@@ -9160,7 +9161,7 @@ pub const PackageManager = struct {
     });
 
     const pack_params: []const ParamType = &(install_params_ ++ [_]ParamType{
-        clap.parseParam("--filter <STR>...                      Pack each matching workspace") catch unreachable,
+        // clap.parseParam("--filter <STR>...                      Pack each matching workspace") catch unreachable,
         clap.parseParam("--destination <STR>                    The directory the tarball will be saved in") catch unreachable,
         clap.parseParam("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9.") catch unreachable,
         clap.parseParam("<POS> ...                              ") catch unreachable,

@@ -148,7 +148,7 @@ void NapiFinalizer::call(JSC::JSGlobalObject* globalObject, void* data)
 {
     if (this->finalize_cb) {
         NAPI_PREMABLE
-        this->finalize_cb(reinterpret_cast<napi_env>(globalObject), data, this->finalize_hint);
+        this->finalize_cb(toNapi(globalObject), data, this->finalize_hint);
     }
 }
 
@@ -913,7 +913,7 @@ node_api_create_external_string_latin1(napi_env env,
 #if NAPI_VERBOSE
             printf("[napi] string finalize_callback\n");
 #endif
-            finalize_callback(reinterpret_cast<napi_env>(defaultGlobalObject()), nullptr, hint);
+            finalize_callback(toNapi(defaultGlobalObject()), nullptr, hint);
         }
     });
     JSGlobalObject* globalObject = defaultGlobalObject(env);
@@ -951,7 +951,7 @@ node_api_create_external_string_utf16(napi_env env,
 #endif
 
         if (finalize_callback) {
-            finalize_callback(reinterpret_cast<napi_env>(defaultGlobalObject()), nullptr, hint);
+            finalize_callback(toNapi(defaultGlobalObject()), nullptr, hint);
         }
     });
     JSGlobalObject* globalObject = defaultGlobalObject(env);
@@ -1757,8 +1757,7 @@ extern "C" napi_status napi_object_freeze(napi_env env, napi_value object_value)
     JSC::VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    JSC::EncodedJSValue encodedValue = reinterpret_cast<JSC::EncodedJSValue>(object_value);
-    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    JSC::JSValue value = toJS(object_value);
     if (!value.isObject()) {
         return NAPI_OBJECT_EXPECTED;
     }
@@ -1777,8 +1776,7 @@ extern "C" napi_status napi_object_seal(napi_env env, napi_value object_value)
     JSC::VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    JSC::EncodedJSValue encodedValue = reinterpret_cast<JSC::EncodedJSValue>(object_value);
-    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    JSC::JSValue value = toJS(object_value);
 
     if (UNLIKELY(!value.isObject())) {
         return NAPI_OBJECT_EXPECTED;
@@ -1801,7 +1799,7 @@ extern "C" napi_status napi_get_global(napi_env env, napi_value* result)
     }
 
     Zig::GlobalObject* globalObject = toJS(env);
-    *result = reinterpret_cast<napi_value>(globalObject->globalThis());
+    *result = toNapi(globalObject->globalThis());
     return napi_ok;
 }
 
@@ -1850,7 +1848,7 @@ extern "C" napi_status napi_get_new_target(napi_env env,
     }
 
     JSC::JSValue newTarget = callFrame->newTarget();
-    *result = reinterpret_cast<napi_value>(JSC::JSValue::encode(newTarget));
+    *result = toNapi(newTarget);
     return napi_ok;
 }
 
@@ -1869,14 +1867,14 @@ extern "C" napi_status napi_create_dataview(napi_env env, size_t length,
     JSC::VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    JSC::EncodedJSValue encodedArraybuffer = reinterpret_cast<JSC::EncodedJSValue>(arraybuffer);
-    auto arraybufferValue = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(JSC::JSValue::decode(encodedArraybuffer));
-    if (!arraybufferValue) {
+    JSC::JSValue arraybufferValue = toJS(arraybuffer);
+    auto arraybufferPtr = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(arraybufferValue);
+    if (!arraybufferPtr) {
         return napi_arraybuffer_expected;
     }
-    auto dataView = JSC::DataView::create(arraybufferValue->impl(), byte_offset, length);
+    auto dataView = JSC::DataView::create(arraybufferPtr->impl(), byte_offset, length);
 
-    *result = reinterpret_cast<napi_value>(dataView->wrap(globalObject, globalObject));
+    *result = toNapi(dataView->wrap(globalObject, globalObject));
 
     return napi_ok;
 }
@@ -2113,7 +2111,7 @@ extern "C" napi_status napi_coerce_to_string(napi_env env, napi_value value,
     *result = toNapi(resultValue);
 
     if (UNLIKELY(scope.exception())) {
-        *result = reinterpret_cast<napi_value>(JSC::JSValue::encode(JSC::jsUndefined()));
+        *result = toNapi(JSC::jsUndefined());
         return napi_generic_failure;
     }
     scope.clearException();
@@ -2141,7 +2139,7 @@ extern "C" napi_status napi_get_property_names(napi_env env, napi_value object,
     JSC::EnsureStillAliveScope ensureStillAlive(jsValue);
     JSC::JSValue value = JSC::ownPropertyKeys(globalObject, jsValue.getObject(), PropertyNameMode::Strings, DontEnumPropertiesMode::Include);
     if (UNLIKELY(scope.exception())) {
-        *result = reinterpret_cast<napi_value>(JSC::JSValue::encode(JSC::jsUndefined()));
+        *result = toNapi(JSC::jsUndefined());
         return napi_generic_failure;
     }
     scope.clearException();

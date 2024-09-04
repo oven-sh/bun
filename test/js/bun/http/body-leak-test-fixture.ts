@@ -1,7 +1,8 @@
 const server = Bun.serve({
   port: 0,
   async fetch(req: Request) {
-    if (req.url.endsWith("/report")) {
+    const url = req.url;
+    if (url.endsWith("/report")) {
       Bun.gc(true);
       await Bun.sleep(10);
       return new Response(JSON.stringify(process.memoryUsage.rss()), {
@@ -10,12 +11,12 @@ const server = Bun.serve({
         },
       });
     }
-    if (req.url.endsWith("/buffering")) {
+    if (url.endsWith("/buffering")) {
       await req.text();
-    } else if (req.url.endsWith("/buffering+body-getter")) {
+    } else if (url.endsWith("/buffering+body-getter")) {
       req.body;
       await req.text();
-    } else if (req.url.endsWith("/streaming")) {
+    } else if (url.endsWith("/streaming")) {
       const reader = req.body?.getReader();
       while (reader) {
         const { done, value } = await reader?.read();
@@ -23,12 +24,12 @@ const server = Bun.serve({
           break;
         }
       }
-    } else if (req.url.endsWith("/incomplete-streaming")) {
+    } else if (url.endsWith("/incomplete-streaming")) {
       const reader = req.body?.getReader();
       if (!reader) {
         reader?.read();
       }
-    } else if (req.url.endsWith("/streaming-echo")) {
+    } else if (url.endsWith("/streaming-echo")) {
       return new Response(req.body, {
         headers: {
           "Content-Type": "application/octet-stream",
@@ -38,4 +39,4 @@ const server = Bun.serve({
     return new Response("Ok");
   },
 });
-console.log(server.url.href);
+process.send(server.url.href);

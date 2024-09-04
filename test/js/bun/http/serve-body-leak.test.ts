@@ -1,5 +1,5 @@
 import { join } from "path";
-import { it, expect, beforeAll, afterAll } from "bun:test";
+import { it, expect, beforeAll, afterAll, afterEach, beforeEach } from "bun:test";
 import { bunExe, bunEnv, isDebug } from "harness";
 import type { Subprocess } from "bun";
 
@@ -10,20 +10,26 @@ const zeroCopyPayload = new Blob([payload]);
 
 let url: URL;
 let process: Subprocess<"ignore", "pipe", "inherit"> | null = null;
-beforeAll(async () => {
+beforeEach(async () => {
+  if (process) {
+    process?.kill();
+  }
+
+  let defer = Promise.withResolvers();
   process = Bun.spawn([bunExe(), "--smol", join(import.meta.dirname, "body-leak-test-fixture.ts")], {
     env: bunEnv,
-    stdout: "pipe",
+    stdout: "inherit",
     stderr: "inherit",
     stdin: "ignore",
+    ipc(message) {
+      defer.resolve(message);
+    },
   });
-  const { value } = await process.stdout.getReader().read();
-  url = new URL(new TextDecoder().decode(value));
+  url = new URL(await defer.promise);
   process.unref();
-
   await warmup();
 });
-afterAll(() => {
+afterEach(() => {
   process?.kill();
 });
 

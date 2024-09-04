@@ -1221,6 +1221,20 @@ fn NewSocket(comptime ssl: bool) type {
             return null;
         }
 
+        pub fn handleError(this: *This, err_value: JSC.JSValue) void {
+            log("handleError", .{});
+            const handlers = this.handlers;
+            var vm = handlers.vm;
+            if (vm.isShuttingDown()) {
+                return;
+            }
+            vm.eventLoop().enter();
+            defer vm.eventLoop().exit();
+            const globalObject = handlers.globalObject;
+            const this_value = this.getThisValue(globalObject);
+            _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, err_value });
+        }
+
         pub fn onWritable(
             this: *This,
             _: Socket,
@@ -3176,7 +3190,17 @@ pub fn NewWrappedHandler(comptime tls: bool) type {
 
 pub const DuplexUpgradeContext = struct {
     upgrade: uws.UpgradedDuplex,
+    // We only us a tls and not a raw socket when upgrading a Duplex, Duplex dont support socketpairs
     tls: ?*TLSSocket,
+    // task used to deinit the context in the next tick, vm is used to enqueue the task
+    vm: *JSC.VirtualMachine,
+    task: JSC.AnyTask,
+    task_event: EventState = .StartTLS,
+    ssl_config: ?JSC.API.ServerConfig.SSLConfig,
+    pub const EventState = enum(u8) {
+        StartTLS,
+        Close,
+    };
 
     usingnamespace bun.New(DuplexUpgradeContext);
 
@@ -3219,6 +3243,12 @@ pub const DuplexUpgradeContext = struct {
         }
     }
 
+    fn onError(this: *DuplexUpgradeContext, err_value: JSC.JSValue) void {
+        if (this.tls) |tls| {
+            tls.handleError(err_value);
+        }
+    }
+
     fn onClose(this: *DuplexUpgradeContext) void {
         const socket = TLSSocket.Socket.fromDuplex(&this.upgrade);
 
@@ -3226,7 +3256,47 @@ pub const DuplexUpgradeContext = struct {
             tls.onClose(socket, 0, null);
         }
 
-        this.deinit();
+        this.deinitInNextTick();
+    }
+
+    fn runEvent(this: *DuplexUpgradeContext) void {
+        switch (this.task_event) {
+            .StartTLS => {
+                if (this.ssl_config) |config| {
+                    this.upgrade.startTLS(config, true) catch |err| {
+                        switch (err) {
+                            error.OutOfMemory => {
+                                bun.outOfMemory();
+                            },
+                            else => {
+                                const errno = @intFromEnum(bun.C.SystemErrno.ECONNREFUSED);
+                                if (this.tls) |tls| {
+                                    const socket = TLSSocket.Socket.fromDuplex(&this.upgrade);
+
+                                    tls.handleConnectError(errno);
+                                    tls.onClose(socket, errno, null);
+                                }
+                            },
+                        }
+                    };
+                    this.ssl_config.?.deinit();
+                    this.ssl_config = null;
+                }
+            },
+            .Close => {
+                this.upgrade.close();
+            },
+        }
+    }
+
+    fn deinitInNextTick(this: *DuplexUpgradeContext) void {
+        this.task_event = .Close;
+        this.vm.enqueueTask(JSC.Task.init(&this.task));
+    }
+
+    fn startTLS(this: *DuplexUpgradeContext) void {
+        this.task_event = .StartTLS;
+        this.vm.enqueueTask(JSC.Task.init(&this.task));
     }
 
     fn deinit(this: *DuplexUpgradeContext) void {
@@ -3312,8 +3382,7 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.C
         default_data.ensureStillAlive();
     }
 
-    var socket_config = ssl_opts.?;
-    defer socket_config.deinit();
+    const socket_config = ssl_opts.?;
 
     const protos = socket_config.protos;
     const protos_len = socket_config.protos_len;
@@ -3340,8 +3409,13 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.C
     var duplexContext = DuplexUpgradeContext.new(.{
         .upgrade = undefined,
         .tls = tls,
+        .vm = globalObject.bunVM(),
+        .task = undefined,
+        .ssl_config = socket_config,
     });
     tls.ref();
+
+    duplexContext.task = JSC.AnyTask.New(DuplexUpgradeContext, DuplexUpgradeContext.runEvent).init(duplexContext);
     duplexContext.upgrade = uws.UpgradedDuplex.from(globalObject, duplex, .{
         .onOpen = @ptrCast(&DuplexUpgradeContext.onOpen),
         .onData = @ptrCast(&DuplexUpgradeContext.onData),
@@ -3349,27 +3423,15 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.C
         .onClose = @ptrCast(&DuplexUpgradeContext.onClose),
         .onEnd = @ptrCast(&DuplexUpgradeContext.onEnd),
         .onWritable = @ptrCast(&DuplexUpgradeContext.onWritable),
+        .onError = @ptrCast(&DuplexUpgradeContext.onError),
         .ctx = @ptrCast(duplexContext),
     });
 
     tls.socket = TLSSocket.Socket.fromDuplex(&duplexContext.upgrade);
     tls.markActive();
     tls.poll_ref.ref(globalObject.bunVM());
-    duplexContext.upgrade.startTLS(socket_config, !is_server) catch |err| {
-        switch (err) {
-            error.OutOfMemory => {
-                bun.outOfMemory();
-            },
-            error.InvalidOptions => {
-                globalObject.throw("Invalid SSL Options", .{});
-            },
-            error.JSError => {},
-        }
 
-        duplexContext.deinit();
-
-        return JSValue.jsUndefined();
-    };
+    duplexContext.startTLS();
 
     return tls_js_value;
 }

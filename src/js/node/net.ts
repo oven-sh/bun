@@ -562,7 +562,7 @@ const Socket = (function (InternalSocket) {
         if (connection) {
           if (upgradeDuplex) {
             this.connecting = true;
-            this.#upgraded = true;
+            this.#upgraded = connection;
             const result = upgradeDuplexToTLS(connection, {
               data: this,
               tls,
@@ -579,7 +579,7 @@ const Socket = (function (InternalSocket) {
 
             if (socket) {
               this.connecting = true;
-              this.#upgraded = !!connection;
+              this.#upgraded = connection;
               const result = socket.upgradeTLS({
                 data: this,
                 tls,
@@ -604,7 +604,7 @@ const Socket = (function (InternalSocket) {
                 if (!socket) return;
 
                 this.connecting = true;
-                this.#upgraded = !!connection;
+                this.#upgraded = connection;
                 const result = socket.upgradeTLS({
                   data: this,
                   tls,

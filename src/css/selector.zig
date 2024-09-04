@@ -238,30 +238,30 @@ pub const api = struct {
                 operation: ParsedAttrSelectorOperation(Impl.SelectorImpl.AttrValue),
                 never_matches: bool,
 
-                pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintResult(void) {
-                    if (dest.writeChar('[').asErr()) |e| return .{ .err = e };
+                pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+                    try dest.writeChar('[');
                     if (this.namespace) |nsp| switch (nsp) {
                         .specific => |v| {
-                            if (css.IdentFns.toCss(&v.prefix, W, dest).asErr()) |e| return .{ .err = e };
-                            if (dest.writeChar('|').asErr()) |e| return .{ .err = e };
+                            try css.IdentFns.toCss(&v.prefix, W, dest);
+                            try dest.writeChar('|');
                         },
                         .any => {
-                            if (dest.writeStr("*|").asErr()) |e| return .{ .err = e };
+                            try dest.writeStr("*|");
                         },
                     };
-                    if (css.IdentFns.toCss(&this.local_name, W, dest).asErr()) |e| return .{ .err = e };
+                    try css.IdentFns.toCss(&this.local_name, W, dest);
                     switch (this.operation) {
                         .exists => {},
                         .with_value => |v| {
-                            if (v.operator.toCss(W, dest).asErr()) |e| return .{ .err = e };
-                            if (v.expected_value.toCss(dest).asErr()) |e| return .{ .err = e };
+                            try v.operator.toCss(W, dest);
+                            try v.expected_value.toCss(dest);
                             switch (v.case_sensitivity) {
                                 .case_sensitive, .ascii_case_insensitive_if_in_html_element_in_html_document => {},
                                 .ascii_case_insensitive => {
-                                    if (dest.writeChar(" i").asErr()) |e| return .{ .err = e };
+                                    try dest.writeChar(" i");
                                 },
                                 .explicit_case_sensitive => {
-                                    if (dest.writeStr(" s").asErr()) |e| return .{ .err = e };
+                                    try dest.writeStr(" s");
                                 },
                             }
                         },
@@ -299,7 +299,7 @@ pub const api = struct {
             suffix,
 
             const This = @This();
-            pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintResult(void) {
+            pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
                 // https://drafts.csswg.org/cssom/#serializing-selectors
                 // See "attribute selector".
                 return dest.writeStr(switch (this.*) {
@@ -946,12 +946,12 @@ pub const api = struct {
             arguments: css.TokenList,
         },
 
-        pub fn toCss(this: *const PseudoClass, comptime W: type, dest: *Printer(W)) PrintResult(void) {
+        pub fn toCss(this: *const PseudoClass, comptime W: type, dest: *Printer(W)) PrintErr!void {
             var s = std.ArrayList(u8){};
             const writer = s.writer();
             const W2 = @TypeOf(writer);
             var printer = Printer(W2).new(@compileError(css.todo_stuff.think_about_allocator), css.PrinterOptions{});
-            if (serialize.serializePseudoClass(this, W2, &printer, null).asErr()) |e| return .{ .err = e };
+            try serialize.serializePseudoClass(this, W2, &printer, null);
             return dest.writeStr(s.items);
         }
     };
@@ -1421,7 +1421,7 @@ pub const api = struct {
 
             const This = @This();
 
-            pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintResult(void) {
+            pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
                 _ = this; // autofix
                 _ = dest; // autofix
                 @compileError("Do not call this! Use `serializer.serializeSelectorList()` or `tocss_servo.toCss_SelectorList()` instead.");
@@ -1585,7 +1585,7 @@ pub const api = struct {
 
             const This = @This();
 
-            pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintResult(void) {
+            pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
                 _ = this; // autofix
                 _ = dest; // autofix
                 @compileError("Do not call this! Use `serializer.serializeSelector()` or `tocss_servo.toCss_Selector()` instead.");
@@ -1782,7 +1782,7 @@ pub const api = struct {
                 return this.* == .combinator;
             }
 
-            pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintResult(void) {
+            pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
                 _ = this; // autofix
                 _ = dest; // autofix
                 @compileError("Do not call this! Use `serializer.serializeComponent()` or `tocss_servo.toCss_Component()` instead.");
@@ -1992,7 +1992,7 @@ pub const api = struct {
         /// And still supported as an alias for >>> by Vue.
         deep,
 
-        pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintResult(void) {
+        pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
             _ = this; // autofix
             _ = dest; // autofix
             @compileError("Do not call this! Use `serializer.serializeCombinator()` or `tocss_servo.toCss_Combinator()` instead.");
@@ -2110,12 +2110,12 @@ pub const api = struct {
             return true;
         }
 
-        pub fn toCss(this: *const PseudoElement, comptime W: type, dest: *Printer(W)) PrintResult(void) {
+        pub fn toCss(this: *const PseudoElement, comptime W: type, dest: *Printer(W)) PrintErr!void {
             var s = std.ArrayList(u8){};
             const writer = s.writer();
             const W2 = @TypeOf(writer);
             var printer = Printer(W2).new(@compileError(css.todo_stuff.think_about_allocator), css.PrinterOptions{});
-            if (serialize.serializePseudoElement(this, W2, &printer, null).asErr()) |e| return .{ .err = e };
+            try serialize.serializePseudoElement(this, W2, &printer, null);
             return dest.writeStr(s.items);
         }
     };
@@ -3069,7 +3069,7 @@ pub const api = struct {
             name: Impl.SelectorImpl.LocalName,
             lower_name: Impl.SelectorImpl.LocalName,
 
-            pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintResult(void) {
+            pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
                 return css.IdentFns.toCss(&this.name, W, dest);
             }
         };
@@ -3132,14 +3132,14 @@ pub const serialize = struct {
         dest: *Printer(W),
         context: ?*const css.StyleContext,
         is_relative: bool,
-    ) PrintResult(void) {
+    ) PrintErr!void {
         var first = true;
         for (list) |*selector| {
             if (!first) {
-                if (dest.delim(',', false).asErr()) |e| return .{ .err = e };
+                try dest.delim(',', false);
             }
             first = false;
-            if (serializeSelector(selector, W, dest, context, is_relative).asErr()) |e| return .{ .err = e };
+            try serializeSelector(selector, W, dest, context, is_relative);
         }
     }
 
@@ -3149,7 +3149,7 @@ pub const serialize = struct {
         dest: *css.Printer(W),
         context: ?*const css.StyleContext,
         is_relative: bool,
-    ) PrintResult(void) {
+    ) PrintErr!void {
         const CombinatorIter = struct {
             sel: *const api.Selector,
             i: usize = 0,
@@ -3232,7 +3232,7 @@ pub const serialize = struct {
             // Skip implicit :scope in relative selectors (e.g. :has(:scope > foo) -> :has(> foo))
             if (is_relative and compound.len >= 1 and compound[0] == .scope) {
                 if (combinators.next()) |*combinator| {
-                    if (serializeCombinator(combinator, W, dest).asErr()) |e| return .{ .err = e };
+                    try serializeCombinator(combinator, W, dest);
                 }
                 compound = compound[1..];
                 is_relative = false;
@@ -3283,11 +3283,11 @@ pub const serialize = struct {
                     } else compound;
 
                     for (slice) |simple| {
-                        if (serializeComponent(simple, W, dest, context).asErr()) |e| return .{ .err = e };
+                        try serializeComponent(simple, W, dest, context);
                     }
 
                     if (swap_nesting) {
-                        if (serializeNesting(W, dest, context, false).asErr()) |e| return .{ .err = e };
+                        try serializeNesting(W, dest, context, false);
                     }
 
                     // Skip step 2, which is an "otherwise".
@@ -3319,20 +3319,20 @@ pub const serialize = struct {
                     i += 1;
                     const local = iter[i];
                     i += 1;
-                    if (serializeComponent(local, W, dest, context).asErr()) |e| return .{ .err = e };
+                    try serializeComponent(local, W, dest, context);
 
                     // Also check the next item in case of namespaces.
                     if (first_non_namespace > first_index) {
                         const local2 = iter[i];
                         i += 1;
-                        if (serializeComponent(local2, W, dest, context).asErr()) |e| return .{ .err = e };
+                        try serializeComponent(local2, W, dest, context);
                     }
 
-                    if (serializeComponent(nesting, W, dest, context).asErr()) |e| return .{ .err = e };
+                    try serializeComponent(nesting, W, dest, context);
                 } else if (has_leading_nesting and should_compile_nesting) {
                     // Nesting selector may serialize differently if it is leading, due to type selectors.
                     i += 1;
-                    if (serializeNesting(W, dest, context, true).asErr()) |e| return .{ .err = e };
+                    try serializeNesting(W, dest, context, true);
                 }
 
                 if (i < compound.len) {
@@ -3346,7 +3346,7 @@ pub const serialize = struct {
                                 continue;
                             }
                         }
-                        if (serializeComponent(simple, W, dest, context).asErr()) |e| return .{ .err = e };
+                        try serializeComponent(simple, W, dest, context);
                     }
                 }
             }
@@ -3357,7 +3357,7 @@ pub const serialize = struct {
             //    single SPACE (U+0020) if the combinator was not whitespace, to
             //    s.
             if (next_combinator) |c| {
-                if (serializeCombinator(&c, W, dest).asErr()) |e| return .{ .err = e };
+                try serializeCombinator(&c, W, dest);
             } else {
                 combinators_exhausted = true;
             }
@@ -3375,13 +3375,13 @@ pub const serialize = struct {
         comptime W: type,
         dest: *css.Printer(W),
         context: ?*const css.StyleContext,
-    ) PrintResult(void) {
+    ) PrintErr!void {
         switch (component.*) {
             .combinator => |c| return serializeCombinator(&c, W, dest),
             .attribute_in_no_namespace => |*v| {
-                if (dest.writeChar('[').asErr()) |e| return .{ .err = e };
-                if (css.css_values.ident.IdentFns.toCss(&v.local_name, W, dest).asErr()) |e| return .{ .err = e };
-                if (v.operator.toCss(W, dest).asErr()) |e| return .{ .err = e };
+                try dest.writeChar('[');
+                try css.css_values.ident.IdentFns.toCss(&v.local_name, W, dest);
+                try v.operator.toCss(W, dest);
 
                 if (dest.minify) {
                     // PERF: should we put a scratch buffer in the printer
@@ -3396,24 +3396,24 @@ pub const serialize = struct {
                     };
 
                     if (id.items.len > 0 and id.items.len < s.len) {
-                        if (dest.writeStr(id.items).asErr()) |e| return .{ .err = e };
+                        try dest.writeStr(id.items);
                     } else {
-                        if (dest.writeStr(s).asErr()) |e| return .{ .err = e };
+                        try dest.writeStr(s);
                     }
                 } else {
-                    if (css.CSSStringFns.toCss(&v.value, W, dest).asErr()) |e| return .{ .err = e };
+                    try css.CSSStringFns.toCss(&v.value, W, dest);
                 }
 
                 switch (v.case_sensitivity) {
                     .case_sensitive, .ascii_case_insensitive_if_in_html_element_in_html_document => {},
-                    .ascii_case_insensitive => if (dest.writeStr(" i").asErr()) |e| return .{ .err = e },
-                    .explicit_case_sensitive => if (dest.writeStr(" s").asErr()) |e| return .{ .err = e },
+                    .ascii_case_insensitive => try dest.writeStr(" i"),
+                    .explicit_case_sensitive => try dest.writeStr(" s"),
                 }
                 return dest.writeChar(']');
             },
             .is, .where, .negation, .any => {
                 switch (component.*) {
-                    .where => if (dest.writeStr(":where(").asErr()) |e| return .{ .err = e },
+                    .where => try dest.writeStr(":where("),
                     .is => |selectors| {
                         // If there's only one simple selector, serialize it directly.
                         if (shouldUnwrapIs(selectors)) {
@@ -3422,38 +3422,38 @@ pub const serialize = struct {
 
                         const vp = dest.vendor_prefix;
                         if (vp.intersects(css.VendorPrefix{ .webkit = true, .moz = true })) {
-                            if (dest.writeChar(':').asErr()) |e| return .{ .err = e };
-                            if (vp.toCss(W, dest).asErr()) |e| return .{ .err = e };
-                            if (dest.writeStr("any(").asErr()) |e| return .{ .err = e };
+                            try dest.writeChar(':');
+                            try vp.toCss(W, dest);
+                            try dest.writeStr("any(");
                         } else {
-                            if (dest.writeStr(":is(").asErr()) |e| return .{ .err = e };
+                            try dest.writeStr(":is(");
                         }
                     },
                     .negation => {
-                        if (dest.writeStr(":not(").asErr()) |e| return .{ .err = e };
+                        try dest.writeStr(":not(");
                     },
                     .any => |v| {
                         const vp = dest.vendor_prefix.bitwiseOr(v.vendor_prefix);
                         if (vp.intersects(css.VendorPrefix{ .webkit = true, .mox = true })) {
-                            if (dest.writeChar(':').asErr()) |e| return .{ .err = e };
-                            if (vp.toCss(W, dest).asErr()) |e| return .{ .err = e };
-                            if (dest.writeStr("any(").asErr()) |e| return .{ .err = e };
+                            try dest.writeChar(':');
+                            try vp.toCss(W, dest);
+                            try dest.writeStr("any(");
                         } else {
-                            if (dest.writeStr(":is(").asErr()) |e| return .{ .err = e };
+                            try dest.writeStr(":is(");
                         }
                     },
                     else => unreachable,
                 }
-                if (serializeSelectorList(switch (component.*) {
+                try serializeSelectorList(switch (component.*) {
                     .where, .is, .negation => |list| list,
                     .any => |v| v.selectors,
                     else => unreachable,
-                }, W, dest, context, false).asErr()) |e| return .{ .err = e };
+                }, W, dest, context, false);
                 return dest.writeStr(")");
             },
             .has => |list| {
-                if (dest.writeStr(":has(").asErr()) |e| return .{ .err = e };
-                if (serializeSelectorList(list, W, dest, context, true).asErr()) |e| return .{ .err = e };
+                try dest.writeStr(":has(");
+                try serializeSelectorList(list, W, dest, context, true);
                 return dest.writeStr(")");
             },
             .non_ts_pseudo_class => |pseudo| {
@@ -3466,21 +3466,21 @@ pub const serialize = struct {
                 return serializeNesting(W, dest, context, false);
             },
             .class => |class| {
-                if (dest.writeChar('.').asErr()) |e| return .{ .err = e };
+                try dest.writeChar('.');
                 return dest.writeIdent(class, true);
             },
             .id => |id| {
-                if (dest.writeChar('#').asErr()) |e| return .{ .err = e };
+                try dest.writeChar('#');
                 return dest.writeIdent(id, true);
             },
             .host => |selector| {
-                if (dest.writeStr(":host").asErr()) |e| return .{ .err = e };
+                try dest.writeStr(":host");
                 if (selector) |*sel| {
-                    if (dest.writeChar('(').asErr()) |e| return .{ .err = e };
-                    if (sel.toCss(W, dest).asErr()) |e| return .{ .err = e };
-                    if (dest.writeChar(')').asErr()) |e| return .{ .err = e };
+                    try dest.writeChar('(');
+                    try sel.toCss(W, dest);
+                    try dest.writeChar(')');
                 }
-                return PrintResult(void).success;
+                return;
             },
             .slotted => |selector| {
                 try dest.writeStr("::slotted(");
@@ -3505,7 +3505,7 @@ pub const serialize = struct {
         combinator: *api.Combinator,
         comptime W: type,
         dest: *Printer(W),
-    ) PrintResult(void) {
+    ) PrintErr!void {
         switch (combinator.*) {
             .child => try dest.delim('>', true),
             .descendant => try dest.writeStr(" "),
@@ -3526,7 +3526,7 @@ pub const serialize = struct {
         comptime W: type,
         dest: *Printer(W),
         context: ?*css.StyleContext,
-    ) PrintResult(void) {
+    ) PrintErr!void {
         switch (pseudo_class.*) {
             .lang => {
                 try dest.writeStr(":lang(");
@@ -3555,7 +3555,7 @@ pub const serialize = struct {
                 d: *Printer(W),
                 prefix: css.VendorPrefix,
                 comptime val: []const u8,
-            ) PrintResult(void) {
+            ) PrintErr!void {
                 try d.writeChar(':');
                 // If the printer has a vendor prefix override, use that.
                 const vp = if (!dest.vendor_prefix.isEmpty())
@@ -3570,7 +3570,7 @@ pub const serialize = struct {
                 d: *Printer(W),
                 comptime key: []const u8,
                 comptime s: []const u8,
-            ) PrintResult(void) {
+            ) PrintErr!void {
                 const _class = if (dest.pseudo_classes) |*pseudo_classes| @field(pseudo_classes, key) else null;
 
                 if (_class) |class| {
@@ -3706,9 +3706,9 @@ pub const serialize = struct {
         comptime W: type,
         dest: *Printer(W),
         context: ?*css.StyleContext,
-    ) PrintResult(void) {
+    ) PrintErr!void {
         const Helpers = struct {
-            pub fn writePrefix(d: *Printer(W), prefix: css.VendorPrefix) PrintResult(css.VendorPrefix) {
+            pub fn writePrefix(d: *Printer(W), prefix: css.VendorPrefix) PrintErr!css.VendorPrefix {
                 try d.writeStr("::");
                 // If the printer has a vendor prefix override, use that.
                 const vp = if (!d.vendor_prefix.isEmpty()) dest.vendor_prefix.bitwiseAnd(prefix).orNone() else prefix;
@@ -3716,7 +3716,7 @@ pub const serialize = struct {
                 return vp;
             }
 
-            pub fn writePrefixed(d: *Printer(W), prefix: css.VendorPrefix, comptime val: []const u8) PrintResult(void) {
+            pub fn writePrefixed(d: *Printer(W), prefix: css.VendorPrefix, comptime val: []const u8) PrintErr!void {
                 _ = writePrefix(d, prefix);
                 try d.writeStr(val);
             }
@@ -3830,7 +3830,7 @@ pub const serialize = struct {
         dest: *Printer(W),
         context: ?*css.StyleContext,
         first: bool,
-    ) PrintResult(void) {
+    ) PrintErr!void {
         if (context) |ctx| {
             // If there's only one simple selector, just serialize it directly.
             // Otherwise, use an :is() pseudo class.
@@ -3863,7 +3863,7 @@ const tocss_servo = struct {
         selectors: []const api.Selector,
         comptime W: type,
         dest: *css.Printer(W),
-    ) PrintResult(void) {
+    ) PrintErr!void {
         var first = true;
         for (selectors) |*selector| {
             if (!first) {
@@ -3878,7 +3878,7 @@ const tocss_servo = struct {
         selector: *const api.Selector,
         comptime W: type,
         dest: *css.Printer(W),
-    ) PrintResult(void) {
+    ) PrintErr!void {
         const CombinatorIter = struct {
             sel: *const api.Selector,
             i: usize = 0,
@@ -4046,7 +4046,7 @@ const tocss_servo = struct {
         component: *const api.Component,
         comptime W: type,
         dest: *Printer(W),
-    ) PrintResult(void) {
+    ) PrintErr!void {
         switch (component.*) {
             .combinator => |c| try toCss_Combinator(&c, W, dest),
             .slotted => |selector| {
@@ -4187,7 +4187,7 @@ const tocss_servo = struct {
         combinator: *api.Combinator,
         comptime W: type,
         dest: *Printer(W),
-    ) PrintResult(void) {
+    ) PrintErr!void {
         switch (combinator.*) {
             .child => try dest.writeStr(" > "),
             .descendant => try dest.writeStr(" "),
@@ -4205,7 +4205,7 @@ const tocss_servo = struct {
         pseudo_element: *const api.PseudoElement,
         comptime W: type,
         dest: *Printer(W),
-    ) PrintResult(void) {
+    ) PrintErr!void {
         switch (pseudo_element.*) {
             .before => try dest.writeStr("::before"),
             .after => try dest.writeStr("::after"),

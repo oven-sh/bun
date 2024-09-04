@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it, mock } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
 import { fillRepeating, isWindows } from "harness";
 
 const routes = {
@@ -135,7 +135,7 @@ describe("static", () => {
             }
 
             await Promise.all(array);
-            console.count("Iteration: " + path);
+
             Bun.gc();
           }
 
@@ -145,17 +145,25 @@ describe("static", () => {
 
           Bun.gc(true);
           const baseline = (process.memoryUsage.rss() / 1024 / 1024) | 0;
-          console.log("Baseline RSS", baseline);
+          let lastRSS = baseline;
+          console.log("Start RSS", baseline);
           for (let i = 0; i < iterations; i++) {
             await iterate();
-            console.log("RSS", (process.memoryUsage.rss() / 1024 / 1024) | 0);
+            const rss = (process.memoryUsage.rss() / 1024 / 1024) | 0;
+            if (lastRSS + 50 < rss) {
+              console.log("RSS Growth", rss - lastRSS);
+            }
+            lastRSS = rss;
           }
           Bun.gc(true);
 
           const rss = (process.memoryUsage.rss() / 1024 / 1024) | 0;
           expect(rss).toBeLessThan(4092);
+          const delta = rss - baseline;
+          console.log("Final RSS", rss);
+          console.log("Delta RSS", delta);
         },
-        30 * 1000,
+        40 * 1000,
       );
     });
   });

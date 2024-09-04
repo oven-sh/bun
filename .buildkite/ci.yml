@@ -19,7 +19,7 @@ steps:
           os: "darwin"
           arch: "aarch64"
         command:
-          - "bun run build:ci --target zig --toolchain darwin-aarch64"
+          - "bun run build:ci --target bun-zig --toolchain darwin-aarch64"
 
   # macOS x64
   - key: "darwin-x64"
@@ -32,7 +32,7 @@ steps:
           os: "darwin"
           arch: "aarch64"
         command:
-          - "bun run build:ci --target zig --toolchain darwin-x64"
+          - "bun run build:ci --target bun-zig --toolchain darwin-x64"
 
   # Linux aarch64
   - key: "linux-aarch64"
@@ -45,7 +45,7 @@ steps:
           os: "darwin"
           arch: "aarch64"
         command:
-          - "bun run build:ci --target zig --toolchain linux-aarch64"
+          - "bun run build:ci --target bun-zig --toolchain linux-aarch64"
 
   # Linux x64
   - key: "linux-x64"
@@ -58,7 +58,7 @@ steps:
           os: "darwin"
           arch: "aarch64"
         command:
-          - "bun run build:ci --target zig --toolchain linux-x64"
+          - "bun run build:ci --target bun-zig --toolchain linux-x64"
 
   # Linux x64-baseline
   - key: "linux-x64-baseline"
@@ -71,7 +71,7 @@ steps:
           os: "darwin"
           arch: "aarch64"
         command:
-          - "bun run build:ci --target zig --toolchain linux-x64-baseline"
+          - "bun run build:ci --target bun-zig --toolchain linux-x64-baseline"
 
   # Windows x64
   - key: "windows-x64"
@@ -84,7 +84,7 @@ steps:
           os: "darwin"
           arch: "aarch64"
         command:
-          - "bun run build:ci --target zig --toolchain windows-x64"
+          - "bun run build:ci --target bun-zig --toolchain windows-x64"
 
   # Windows x64-baseline
   - key: "windows-x64-baseline"
@@ -97,4 +97,4 @@ steps:
           os: "darwin"
           arch: "aarch64"
         command:
-          - "bun run build:ci --target zig --toolchain windows-x64-baseline"
+          - "bun run build:ci --target bun-zig --toolchain windows-x64-baseline"

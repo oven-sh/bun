@@ -62,9 +62,9 @@ pub const DeclarationBlock = struct {
     }
 
     /// Writes the declarations to a CSS block, including starting and ending braces.
-    pub fn toCssBlock(this: *const This, comptime W: type, dest: *Printer(W)) PrintResult(void) {
-        if (dest.whitespace().asErr()) |e| return .{ .err = e };
-        if (dest.writeChar('{').asErr()) |e| return .{ .err = e };
+    pub fn toCssBlock(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        try dest.whitespace();
+        try dest.writeChar('{');
         dest.indent();
 
         var i: usize = 0;
@@ -76,17 +76,17 @@ pub const DeclarationBlock = struct {
             const decls = &@field(this, decl_field_name);
             const is_important = comptime std.mem.eql(u8, decl_field_name, "important_declarations");
             for (decls.items) |*decl| {
-                if (dest.newline().asErr()) |e| return .{ .err = e };
-                if (decl.toCss(W, dest, is_important).asErr()) |e| return .{ .err = e };
+                try dest.newline();
+                try decl.toCss(W, dest, is_important);
                 if (i != length - 1 or !dest.minify) {
-                    if (dest.writeChar(';').asErr()) |e| return .{ .err = e };
+                    try dest.writeChar(';');
                 }
                 i += 1;
             }
         }
 
         dest.dedent();
-        if (dest.newline().asErr()) |e| return .{ .err = e };
+        try dest.newline();
         return dest.writeChar('}');
     }
 };

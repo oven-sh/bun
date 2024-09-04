@@ -1,7 +1,7 @@
 name: format
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && inputs.run-id  || github.ref }}

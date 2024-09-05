@@ -1,20 +1,37 @@
 include(Macros)
 
+optionx(ENABLE_CCACHE BOOL "If ccache should be enabled" DEFAULT ON)
+
+if(NOT ENABLE_CCACHE OR CACHE_STRATEGY STREQUAL "none")
+  setenv(CCACHE_DISABLE 1)
+  return()
+endif()
+
 find_command(
   VARIABLE
     CCACHE_PROGRAM
   COMMAND
     ccache
   REQUIRED
-    ${CI}
+    ON
 )
-
-if(NOT EXISTS CCACHE_PROGRAM)
-  return()
-endif()
 
 set(CCACHE_ARGS CMAKE_C_COMPILER_LAUNCHER CMAKE_CXX_COMPILER_LAUNCHER)
 foreach(arg ${CCACHE_ARGS})
   setx(${arg} ${CCACHE_PROGRAM})
   list(APPEND CMAKE_ARGS -D${arg}=${${arg}})
 endforeach()
+
+setenv(CCACHE_DIR ${CACHE_PATH}/ccache)
+setenv(CCACHE_BASEDIR ${CWD})
+setenv(CCACHE_NOHASHDIR 1)
+setenv(CCACHE_TEMPDIR ${TMP_PATH}/ccache)
+
+if(CCACHE_STRATEGY STREQUAL "read-only")
+  setenv(CCACHE_READONLY 1)
+elseif(CCACHE_STRATEGY STREQUAL "write-only")
+  setenv(CCACHE_RECACHE 1)
+endif()
+
+setenv(CCACHE_FILECLONE 1)
+setenv(CCACHE_SLOPPINESS "pch_defines,time_macros,locale,random_seed,clang_index_store")

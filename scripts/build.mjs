@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn as nodeSpawn } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 // https://cmake.org/cmake/help/latest/manual/cmake.1.html#generate-a-project-buildsystem
@@ -49,6 +48,20 @@ async function build(args) {
   generateOptions["-B"] = buildPath;
   buildOptions["--build"] = buildPath;
 
+  const cacheRead = isCacheReadEnabled();
+  const cacheWrite = isCacheWriteEnabled();
+  if (cacheRead || cacheWrite) {
+    const cachePath = getCachePath();
+    generateOptions["-DCACHE_PATH"] = cachePath;
+    if (cacheRead && cacheWrite) {
+      generateOptions["-DCACHE_STRATEGY"] = "read-write";
+    } else if (cacheRead) {
+      generateOptions["-DCACHE_STRATEGY"] = "read-only";
+    } else if (cacheWrite) {
+      generateOptions["-DCACHE_STRATEGY"] = "write-only";
+    }
+  }
+
   const toolchain = generateOptions["--toolchain"];
   if (toolchain) {
     const toolchainPath = resolve(import.meta.dirname, "..", "cmake", "toolchains", `${toolchain}.cmake`);
@@ -60,16 +73,19 @@ async function build(args) {
   );
   await spawn("cmake", generateArgs, { env });
 
+  const envPath = resolve(buildPath, ".env");
+  if (existsSync(envPath)) {
+    const envFile = readFileSync(envPath, "utf8");
+    for (const line of envFile.split("\n")) {
+      const [key, value] = line.split("=");
+      env[key] = value;
+    }
+  }
+
   const buildArgs = Object.entries(buildOptions)
     .sort(([a], [b]) => (a === "--build" ? -1 : a.localeCompare(b)))
     .flatMap(([flag, value]) => [flag, value]);
   await spawn("cmake", buildArgs, { env });
-}
-
-function copyPath(src, dst) {
-  rmSync(dst, { recursive: true, force: true });
-  mkdirSync(dst, { recursive: true });
-  cpSync(src, dst, { recursive: true, force: true });
 }
 
 function getCachePath(branch) {

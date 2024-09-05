@@ -24,6 +24,40 @@ macro(setx)
   message(STATUS "Set ${ARGV0}: ${${ARGV0}}")
 endmacro()
 
+# setenv()
+# Description:
+#   Sets an environment variable during the build step, and writes it to a .env file.
+# Arguments:
+#   variable string - The variable to set
+#   value    string - The value to set the variable to
+function(setenv variable value)
+  set(ENV_PATH ${BUILD_PATH}/.env)
+  set(ENV_LINE "${variable}=${value}")
+
+  if(EXISTS ${ENV_PATH})
+    file(STRINGS ${ENV_PATH} ENV_FILE ENCODING UTF-8)
+
+    foreach(line ${ENV_FILE})
+      if(line MATCHES "^${variable}=")
+        list(REMOVE_ITEM ENV_FILE ${line})
+        set(ENV_MODIFIED ON)
+      endif()
+    endforeach()
+
+    if(ENV_MODIFIED)
+      list(APPEND ENV_FILE "${variable}=${value}")
+      list(JOIN ENV_FILE "\n" ENV_FILE)
+      file(WRITE ${ENV_PATH} ${ENV_FILE})
+    else()
+      file(APPEND ${ENV_PATH} "\n${variable}=${value}")
+    endif()
+  else()
+    file(WRITE ${ENV_PATH} ${ENV_LINE})
+  endif()
+
+  message(STATUS "Set ENV ${variable}: ${value}")
+endfunction()
+
 # optionx()
 # Description:
 #   Defines an option, similar to `option()`, but allows for bool, string, and regex types.

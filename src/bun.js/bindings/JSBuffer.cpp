@@ -1931,6 +1931,11 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_concat, (JSGlobalObject * l
     return jsBufferConstructorFunction_concatBody(lexicalGlobalObject, callFrame);
 }
 
+JSC::JSValue jsBufferConstructorPoolSize(VM& vm, JSObject* object)
+{
+    return jsNumber(8192);
+}
+
 extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsBufferConstructorAllocWithoutTypeChecks, JSUint8Array*, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int size));
 extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsBufferConstructorAllocUnsafeWithoutTypeChecks, JSUint8Array*, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int size));
 extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsBufferConstructorAllocUnsafeSlowWithoutTypeChecks, JSUint8Array*, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int size));
@@ -2241,6 +2246,7 @@ const ClassInfo JSBufferPrototype::s_info = {
     from            JSBuiltin                                      Builtin|Function 1
     isBuffer        JSBuiltin                                      Builtin|Function 1
     isEncoding      jsBufferConstructorFunction_isEncoding         Function 1
+    poolSize        jsBufferConstructorPoolSize                    PropertyCallback
 @end
 */
 #include "JSBuffer.lut.h"

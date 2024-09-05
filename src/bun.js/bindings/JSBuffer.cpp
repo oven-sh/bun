@@ -675,14 +675,9 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_byteLengthBody(JSC
 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (UNLIKELY(callFrame->argumentCount() == 0)) {
-        throwTypeError(lexicalGlobalObject, scope, "Not enough arguments"_s);
-        return JSC::JSValue::encode(jsUndefined());
-    }
-
     EnsureStillAliveScope arg0 = callFrame->argument(0);
-
     EnsureStillAliveScope arg1 = callFrame->argument(1);
+
     if (callFrame->argumentCount() > 1) {
 
         if (arg1.value().isString()) {
@@ -706,7 +701,7 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_byteLengthBody(JSC
         return JSValue::encode(jsNumber(arrayBuffer->impl()->byteLength()));
     }
 
-    throwTypeError(lexicalGlobalObject, scope, "Invalid input, must be a string, Buffer, or ArrayBuffer"_s);
+    scope.throwException(lexicalGlobalObject, Bun::Bun__ERR_INVALID_ARG_TYPE_static2(lexicalGlobalObject, "string"_s, "string or an instance of Buffer or ArrayBuffer"_s, callFrame->argument(0)));
     return JSC::JSValue::encode(jsUndefined());
 }
 

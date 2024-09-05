@@ -5050,7 +5050,9 @@ pub const AnyBlob = union(enum) {
                     return JSC.ArrayBuffer.create(global, "", TypedArrayView);
                 }
 
+                bun.assertMimalloc(&this.InternalBlob.bytes.allocator, @src());
                 const bytes = this.InternalBlob.toOwnedSlice();
+
                 this.* = .{ .Blob = .{} };
 
                 return JSC.ArrayBuffer.fromDefaultAllocator(

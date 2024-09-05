@@ -3725,3 +3725,9 @@ pub fn WeakPtr(comptime T: type, comptime weakable_field: std.meta.FieldEnum(T))
         }
     };
 }
+
+pub inline fn assertMimalloc(allocator: *const std.mem.Allocator, loc: std.builtin.SourceLocation) void {
+    if (allocator.vtable != default_allocator.vtable and allocator.vtable != MimallocArena.v_table) {
+        Output.panic("Internal error: expected default allocator in use at {s}:{s}:{d}", .{ loc.file, loc.fn_name, loc.line });
+    }
+}

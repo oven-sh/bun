@@ -373,11 +373,27 @@ pub const Body = struct {
             if (this.* != .Locked)
                 return;
 
-            if (this.Locked.toAnyBlob()) |blob| {
-                this.* = switch (blob) {
-                    .Blob => .{ .Blob = blob.Blob },
-                    .InternalBlob => .{ .InternalBlob = blob.InternalBlob },
-                    .WTFStringImpl => .{ .WTFStringImpl = blob.WTFStringImpl },
+            if (this.Locked.toAnyBlob()) |any_blob_value| {
+                var any_blob = any_blob_value;
+                this.* = switch (any_blob) {
+                    .Blob => |*blob| brk: {
+                        // We want to free the Response body as soon as possible.
+                        // If there's only one reference to it, let's make it an InternalBlob instead.
+                        if (blob.store) |store| {
+                            if (store.toAnyBlob()) |as_any| {
+                                blob.detach();
+                                break :brk switch (as_any) {
+                                    .Blob => |blob_| .{ .Blob = blob_ },
+                                    .InternalBlob => |internal_blob| .{ .InternalBlob = internal_blob },
+                                    .WTFStringImpl => |wtf_string_impl| .{ .WTFStringImpl = wtf_string_impl },
+                                };
+                            }
+                        }
+
+                        break :brk .{ .Blob = blob.* };
+                    },
+                    .InternalBlob => |internal_blob| .{ .InternalBlob = internal_blob },
+                    .WTFStringImpl => |wtf_string_impl| .{ .WTFStringImpl = wtf_string_impl },
                     // .InlineBlob => .{ .InlineBlob = blob.InlineBlob },
                 };
             }
@@ -411,28 +427,6 @@ pub const Body = struct {
                 .Locked => this.Locked.sizeHint(),
                 // .InlineBlob => this.InlineBlob.sliceConst().len,
                 else => 0,
-            };
-        }
-
-        pub fn createBlobValue(data: []u8, allocator: std.mem.Allocator, was_string: bool) Value {
-            // if (data.len <= InlineBlob.available_bytes) {
-            //     var _blob = InlineBlob{
-            //         .bytes = undefined,
-            //         .was_string = was_string,
-            //         .len = @truncate(InlineBlob.IntSize, data.len),
-            //     };
-            //     @memcpy(&_blob.bytes, data.ptr, data.len);
-            //     allocator.free(data);
-            //     return Value{
-            //         .InlineBlob = _blob,
-            //     };
-            // }
-
-            return Value{
-                .InternalBlob = InternalBlob{
-                    .bytes = std.ArrayList(u8).fromOwnedSlice(allocator, data),
-                    .was_string = was_string,
-                },
             };
         }
 
@@ -844,7 +838,19 @@ pub const Body = struct {
             }
 
             const any_blob: AnyBlob = switch (this.*) {
-                .Blob => AnyBlob{ .Blob = this.Blob },
+                .Blob => |*blob| brk: {
+                    // We want to free the Response body as soon as possible.
+                    // If there's only one reference to it, let's make it an InternalBlob instead.
+                    if (blob.store) |store| {
+                        if (store.toAnyBlob()) |any_blob| {
+                            blob.detach();
+                            this.* = .{ .Used = {} };
+                            return any_blob;
+                        }
+                    }
+
+                    break :brk .{ .Blob = blob.* };
+                },
                 .InternalBlob => AnyBlob{ .InternalBlob = this.InternalBlob },
                 // .InlineBlob => AnyBlob{ .InlineBlob = this.InlineBlob },
                 .Locked => this.Locked.toAnyBlobAllowPromise() orelse return null,
@@ -857,7 +863,19 @@ pub const Body = struct {
 
         pub fn useAsAnyBlob(this: *Value) AnyBlob {
             const any_blob: AnyBlob = switch (this.*) {
-                .Blob => .{ .Blob = this.Blob },
+                .Blob => |*blob| brk: {
+                    // We want to free the Response body as soon as possible.
+                    // If there's only one reference to it, let's make it an InternalBlob instead.
+                    if (blob.store) |store| {
+                        if (store.toAnyBlob()) |any_blob| {
+                            blob.detach();
+                            this.* = .{ .Used = {} };
+                            return any_blob;
+                        }
+                    }
+
+                    break :brk .{ .Blob = blob.* };
+                },
                 .InternalBlob => .{ .InternalBlob = this.InternalBlob },
                 .WTFStringImpl => |str| brk: {
                     if (str.toUTF8IfNeeded(bun.default_allocator)) |utf8| {
@@ -888,7 +906,19 @@ pub const Body = struct {
 
         pub fn useAsAnyBlobAllowNonUTF8String(this: *Value) AnyBlob {
             const any_blob: AnyBlob = switch (this.*) {
-                .Blob => .{ .Blob = this.Blob },
+                .Blob => |*blob| brk: {
+                    // We want to free the Response body as soon as possible.
+                    // If there's only one reference to it, let's make it an InternalBlob instead.
+                    if (blob.store) |store| {
+                        if (store.toAnyBlob()) |any_blob| {
+                            blob.detach();
+                            this.* = .{ .Used = {} };
+                            return any_blob;
+                        }
+                    }
+
+                    break :brk .{ .Blob = blob.* };
+                },
                 .InternalBlob => .{ .InternalBlob = this.InternalBlob },
                 .WTFStringImpl => .{ .WTFStringImpl = this.WTFStringImpl },
                 // .InlineBlob => .{ .InlineBlob = this.InlineBlob },

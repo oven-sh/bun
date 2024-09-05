@@ -44,6 +44,10 @@ steps:
           queue: "build-darwin"
           os: "darwin"
           arch: "aarch64"
+        depends_on:
+          - "darwin-aarch64-build-deps"
+          - "darwin-aarch64-build-cpp"
+          - "darwin-aarch64-build-zig"
         env:
           BUN_LINK_ONLY: "ON"
         command:

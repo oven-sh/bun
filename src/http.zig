@@ -417,38 +417,37 @@ const ProxyTunnel = struct {
         }
     }
 
-    fn start(ctx: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, ssl_options: JSC.API.ServerConfig.SSLConfig) void {
-        ctx.proxy_tunnel = ProxyTunnel.new(.{});
-        if (ctx.proxy_tunnel) |this| {
-            if (is_ssl) {
-                this.socket = .{ .ssl = socket };
-            } else {
-                this.socket = .{ .tcp = socket };
-            }
-            var custom_options = ssl_options;
-            // we always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
-            custom_options.reject_unauthorized = 0;
-            custom_options.request_cert = 1;
-            this.wrapper = SSLWrapper(*HTTPClient).init(custom_options, true, .{
-                .onOpen = ProxyTunnel.onOpen,
-                .onData = ProxyTunnel.onData,
-                .onHandshake = ProxyTunnel.onHandshake,
-                .onClose = ProxyTunnel.onClose,
-                .write = ProxyTunnel.write,
-                .ctx = ctx,
-            }) catch |err| {
-                if (err == error.OutOfMemory) {
-                    bun.outOfMemory();
-                }
+    fn start(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, ssl_options: JSC.API.ServerConfig.SSLConfig) void {
+        const proxy_tunnel = ProxyTunnel.new(.{});
 
-                // invalid TLS Options
-                this.socket = .{ .none = {} };
-                this.wrapper = null;
-                ctx.closeAndFail(error.ConnectionRefused, is_ssl, socket);
-                return;
-            };
-            this.wrapper.?.start();
+        var custom_options = ssl_options;
+        // we always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
+        custom_options.reject_unauthorized = 0;
+        custom_options.request_cert = 1;
+        proxy_tunnel.wrapper = SSLWrapper(*HTTPClient).init(custom_options, true, .{
+            .onOpen = ProxyTunnel.onOpen,
+            .onData = ProxyTunnel.onData,
+            .onHandshake = ProxyTunnel.onHandshake,
+            .onClose = ProxyTunnel.onClose,
+            .write = ProxyTunnel.write,
+            .ctx = this,
+        }) catch |err| {
+            if (err == error.OutOfMemory) {
+                bun.outOfMemory();
+            }
+
+            // invalid TLS Options
+            proxy_tunnel.detachAndDeref();
+            this.closeAndFail(error.ConnectionRefused, is_ssl, socket);
+            return;
+        };
+        this.proxy_tunnel = proxy_tunnel;
+        if (is_ssl) {
+            proxy_tunnel.socket = .{ .ssl = socket };
+        } else {
+            proxy_tunnel.socket = .{ .tcp = socket };
         }
+        proxy_tunnel.wrapper.?.start();
     }
 
     pub fn close(this: *ProxyTunnel, err: anyerror) void {
@@ -1068,8 +1067,10 @@ pub const HTTPThread = struct {
                 for (custom_ssl_context_map.keys()) |other_config| {
                     if (requested_config.isSame(other_config)) {
                         // we free the callers config since we have a existing one
-                        requested_config.deinit();
-                        bun.default_allocator.destroy(requested_config);
+                        if (requested_config != client.tls_props) {
+                            requested_config.deinit();
+                            bun.default_allocator.destroy(requested_config);
+                        }
                         client.tls_props = other_config;
                         if (client.http_proxy) |url| {
                             return try custom_ssl_context_map.get(other_config).?.connect(client, url.hostname, url.getPortAuto());
@@ -1081,8 +1082,10 @@ pub const HTTPThread = struct {
                 // we need the config so dont free it
                 var custom_context = try bun.default_allocator.create(NewHTTPContext(is_ssl));
                 custom_context.initWithClientConfig(client) catch |err| {
-                    requested_config.deinit();
                     client.tls_props = null;
+
+                    requested_config.deinit();
+                    bun.default_allocator.destroy(requested_config);
                     bun.default_allocator.destroy(custom_context);
                     return err;
                 };

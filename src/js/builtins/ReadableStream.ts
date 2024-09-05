@@ -153,46 +153,54 @@ export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>)
   result = Bun.readableStreamToArray(stream);
 
   function toArrayBuffer(result: unknown[]) {
-    // Fast path: single element
-    if (result.length === 1) {
-      const view = result[0];
-      if (view instanceof ArrayBuffer || view instanceof SharedArrayBuffer) {
-        return view;
+    switch (result.length) {
+      case 0: {
+        return new ArrayBuffer(0);
       }
-
-      if (ArrayBuffer.isView(view)) {
-        if (view.byteOffset === 0 && view.byteLength === view.buffer.byteLength) {
-          return view.buffer;
+      case 1: {
+        const view = result[0];
+        if (view instanceof ArrayBuffer || view instanceof SharedArrayBuffer) {
+          return view;
         }
 
-        return view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength);
+        if (ArrayBuffer.isView(view)) {
+          const buffer = view.buffer;
+          const byteOffset = view.byteOffset;
+          const byteLength = view.byteLength;
+          if (byteOffset === 0 && byteLength === buffer.byteLength) {
+            return buffer;
+          }
+
+          return buffer.slice(byteOffset, byteOffset + byteLength);
+        }
+
+        if (typeof view === "string") {
+          return new TextEncoder().encode(view);
+        }
       }
+      default: {
+        let anyStrings = false;
+        for (const chunk of result) {
+          if (typeof chunk === "string") {
+            anyStrings = true;
+            break;
+          }
+        }
 
-      if (typeof view === "string") {
-        return new TextEncoder().encode(view).buffer;
+        if (!anyStrings) {
+          return Bun.concatArrayBuffers(result, false);
+        }
+
+        const sink = new Bun.ArrayBufferSink();
+        sink.start();
+
+        for (const chunk of result) {
+          sink.write(chunk);
+        }
+
+        return sink.end() as Uint8Array;
       }
     }
-
-    let anyStrings = false;
-    for (const chunk of result) {
-      if (typeof chunk === "string") {
-        anyStrings = true;
-        break;
-      }
-    }
-
-    if (!anyStrings) {
-      return Bun.concatArrayBuffers(result);
-    }
-
-    const arrayBufferSink = new Bun.ArrayBufferSink();
-    arrayBufferSink.start({ asUint8Array: false });
-
-    for (const chunk of result) {
-      arrayBufferSink.write(chunk);
-    }
-
-    return arrayBufferSink.end();
   }
 
   if ($isPromise(result)) {
@@ -221,45 +229,51 @@ export function readableStreamToBytes(stream: ReadableStream<ArrayBuffer>): Prom
   result = Bun.readableStreamToArray(stream);
 
   function toBytes(result: unknown[]) {
-    if (result.length === 1) {
-      const view = result[0];
-      if (view instanceof Uint8Array) {
-        return view;
+    switch (result.length) {
+      case 0: {
+        return new Uint8Array(0);
       }
+      case 1: {
+        const view = result[0];
+        if (view instanceof Uint8Array) {
+          return view;
+        }
 
-      if (ArrayBuffer.isView(view)) {
-        return new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+        if (ArrayBuffer.isView(view)) {
+          return new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+        }
+
+        if (view instanceof ArrayBuffer || view instanceof SharedArrayBuffer) {
+          return new Uint8Array(view);
+        }
+
+        if (typeof view === "string") {
+          return new TextEncoder().encode(view);
+        }
       }
+      default: {
+        let anyStrings = false;
+        for (const chunk of result) {
+          if (typeof chunk === "string") {
+            anyStrings = true;
+            break;
+          }
+        }
 
-      if (view instanceof ArrayBuffer || view instanceof SharedArrayBuffer) {
-        return new Uint8Array(view);
-      }
+        if (!anyStrings) {
+          return Bun.concatArrayBuffers(result, true);
+        }
 
-      if (typeof view === "string") {
-        return new TextEncoder().encode(view);
+        const sink = new Bun.ArrayBufferSink();
+        sink.start({ asUint8Array: true });
+
+        for (const chunk of result) {
+          sink.write(chunk);
+        }
+
+        return sink.end() as Uint8Array;
       }
     }
-
-    let anyStrings = false;
-    for (const chunk of result) {
-      if (typeof chunk === "string") {
-        anyStrings = true;
-        break;
-      }
-    }
-
-    if (!anyStrings) {
-      return Bun.concatArrayBuffers(result, true);
-    }
-
-    const sink = new Bun.ArrayBufferSink();
-    sink.start({ asUint8Array: true });
-
-    for (const chunk of result) {
-      sink.write(chunk);
-    }
-
-    return sink.end() as Uint8Array;
   }
 
   if ($isPromise(result)) {

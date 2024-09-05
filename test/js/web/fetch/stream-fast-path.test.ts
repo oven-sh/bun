@@ -28,7 +28,8 @@ describe("ByteBlobLoader", () => {
       test("works", async () => {
         const stream = blob.stream();
         const result = fn(stream);
-        console.log(Promise, result);
+        // Don't waste microticks on this.
+        expect(Bun.peek.status(result)).toBe("fulfilled");
         expect(result.then).toBeFunction();
         const awaited = await result;
         expect(awaited).toEqual(await new Response(blob)[name]());

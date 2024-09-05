@@ -111,12 +111,14 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
     } else if (match[1] === "interface") {
       contents = sliceSourceCode(contents, false).rest;
     } else if (match[1] === "const enum") {
-      const i = contents.indexOf("}\n");
+      const { result, rest } = sliceSourceCode(contents, false);
+      const i = result.indexOf("{\n");
       topLevelEnums.push({
-        name: contents.slice(match[0].length, contents.indexOf("{")).trim(),
-        code: "\n" + contents.slice(0, i + 1).trim() + ";\n",
+        name: result.slice("const enum ".length, i).trim(),
+        code: "\n" + result,
       });
-      contents = sliceSourceCode(contents, false).rest;
+
+      contents = rest;
     } else if (match[1] === "$") {
       const directive = contents.match(/^\$([a-zA-Z0-9]+)(?:\s*=\s*([^\r\n]+?))?\s*;?\r?\n/);
       if (!directive) {

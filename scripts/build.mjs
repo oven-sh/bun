@@ -60,6 +60,7 @@ async function build(args) {
       const cachePath = getCachePath();
       if (existsSync(cachePath)) {
         cpSync(cachePath, buildPath, { recursive: true, force: true });
+        rmSync(join(buildPath, "CMakeCache.txt"));
         generateOptions["--fresh"] = undefined;
         console.log(`Copied branch cache from ${cachePath} to ${buildPath}`);
       }
@@ -68,6 +69,7 @@ async function build(args) {
         const mainCachePath = getCachePath(getDefaultBranch());
         if (existsSync(mainCachePath)) {
           cpSync(mainCachePath, buildPath, { recursive: true, force: true });
+          rmSync(join(buildPath, "CMakeCache.txt"));
           generateOptions["--fresh"] = undefined;
           console.log(`Copied main cache from ${mainCachePath} to ${buildPath}`);
         }

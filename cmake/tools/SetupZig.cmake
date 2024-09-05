@@ -80,7 +80,7 @@ find_command(
     OFF
 )
 
-if(EXISTS ${CMAKE_ZIG_COMPILER})
+if(NOT CMAKE_ZIG_COMPILER MATCHES "NOTFOUND")
   return()
 endif()
 

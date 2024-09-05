@@ -360,6 +360,10 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocUnsafeBody(JS
 
     double lengthDouble = lengthValue.toIntegerWithTruncation(lexicalGlobalObject);
 
+    if (UNLIKELY(lengthDouble != lengthDouble)) {
+        throwNodeRangeError(lexicalGlobalObject, throwScope, "Buffer size must be 0...9007199254740991, got NaN"_s);
+        return {};
+    }
     if (UNLIKELY(lengthDouble < 0 || lengthDouble > UINT_MAX)) {
         throwNodeRangeError(lexicalGlobalObject, throwScope, "Buffer size must be 0...4294967295"_s);
         return {};
@@ -488,6 +492,10 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSG
 
     double lengthDouble = lengthValue.toIntegerWithTruncation(lexicalGlobalObject);
 
+    if (UNLIKELY(lengthDouble != lengthDouble)) {
+        throwNodeRangeError(lexicalGlobalObject, scope, "Buffer size must be 0...9007199254740991, got NaN"_s);
+        return {};
+    }
     if (UNLIKELY(lengthDouble < 0 || lengthDouble > UINT_MAX)) {
         throwNodeRangeError(lexicalGlobalObject, scope, "Buffer size must be 0...4294967295"_s);
         return {};
@@ -2295,6 +2303,25 @@ static inline JSC::EncodedJSValue createJSBufferFromJS(JSC::JSGlobalObject* lexi
     if (distinguishingArg.isAnyInt()) {
         throwScope.release();
         return JSBuffer__bufferFromLength(lexicalGlobalObject, distinguishingArg.asAnyInt());
+    } else if (distinguishingArg.isNumber()) {
+
+        double lengthDouble = distinguishingArg.toIntegerWithTruncation(lexicalGlobalObject);
+        if (UNLIKELY(lengthDouble != lengthDouble)) {
+            throwNodeRangeError(lexicalGlobalObject, throwScope, "Buffer size must be 0...9007199254740991, got NaN"_s);
+            return {};
+        }
+        size_t length = static_cast<size_t>(lengthDouble);
+
+        if (UNLIKELY(length < 0 || length > 9007199254740991)) {
+            throwNodeRangeError(lexicalGlobalObject, throwScope, "Buffer size must be 0...9007199254740991"_s);
+            return {};
+        }
+        return JSBuffer__bufferFromLength(lexicalGlobalObject, length);
+    } else if (distinguishingArg.isUndefinedOrNull() || distinguishingArg.isBoolean()) {
+        auto arg_string = distinguishingArg.toWTFString(globalObject);
+        auto message = makeString("The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object. Received "_s, arg_string);
+        throwTypeError(lexicalGlobalObject, throwScope, message);
+        return {};
     } else if (distinguishingArg.isCell()) {
         auto type = distinguishingArg.asCell()->type();
 

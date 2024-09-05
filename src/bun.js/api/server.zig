@@ -2356,6 +2356,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 if (request.internal_abort_callback.trigger(globalThis)) {
                     any_js_calls = true;
                 }
+                // we can already clean this strong refs
+                request.internal_abort_callback.deinit();
                 this.request_weakref.deinit();
             }
             // if signal is not aborted, abort the signal
@@ -2425,6 +2427,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             if (this.request_weakref.get()) |request| {
                 request.request_context = AnyRequestContext.Null;
+                // we can already clean this strong refs
+                request.internal_abort_callback.deinit();
                 this.request_weakref.deinit();
             }
 

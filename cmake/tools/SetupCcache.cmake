@@ -42,5 +42,5 @@ if(NOT WIN32)
     setenv(CCACHE_SLOPPINESS "pch_defines,time_macros,locale,random_seed,clang_index_store,gcno_cwd")
   endif()
 else()
-  
+  setenv(CCACHE_DIR ${CACHE_PATH}/ccache)
 endif()

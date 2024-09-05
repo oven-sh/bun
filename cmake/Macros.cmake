@@ -32,9 +32,9 @@ endmacro()
 #   value    string - The value to set the variable to
 function(setenv variable value)
   set(ENV_PATH ${BUILD_PATH}/.env)
-  if(value MATCHES "/|\\\\")
-    file(TO_NATIVE_PATH ${value} value)
-  endif()
+  # if(value MATCHES "/|\\\\")
+  #   file(TO_NATIVE_PATH ${value} value)
+  # endif()
   set(ENV_LINE "${variable}=${value}")
 
   if(EXISTS ${ENV_PATH})

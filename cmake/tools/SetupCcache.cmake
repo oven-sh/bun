@@ -38,7 +38,7 @@ if(NOT WIN32)
 
 else()
   file(TO_NATIVE_PATH "${CACHE_PATH}/cache" CCACHE_DIR)
-  setenv(CCACHE_DIR CCACHE_DIR)
+  setenv(CCACHE_DIR ${CCACHE_DIR})
 endif()
 
 if(CI)

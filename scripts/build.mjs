@@ -83,9 +83,8 @@ async function build(args) {
   const envPath = resolve(buildPath, ".env");
   if (existsSync(envPath)) {
     const envFile = readFileSync(envPath, "utf8");
-    for (const line of envFile.split("\n")) {
+    for (const line of envFile.split(/\r\n|\n|\r/)) {
       const [key, value] = line.split("=");
-      console.log("Set env", { key, value });
       env[key] = value;
     }
   }

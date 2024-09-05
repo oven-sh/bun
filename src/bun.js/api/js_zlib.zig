@@ -197,8 +197,6 @@ pub const ZlibEncoder = struct {
                 err_buffer_too_large.throw();
                 return .zero;
             }
-            if (this.output.items.len > 0) event_loop.runCallback(push_fn, globalThis, thisctx, &.{this.collectOutputValue()});
-
             while (!this.stream.broke_on_first_iter) {
                 const done = this.stream.doWork(&this.output, this.stream.flush) catch |err| return handleTransformSyncStreamError(err, globalThis, this.stream.err_msg, &this.closed);
                 if (this.output.items.len > this.maxOutputLength) {
@@ -628,8 +626,6 @@ pub const ZlibDecoder = struct {
                 err_buffer_too_large.throw();
                 return .zero;
             }
-            if (this.output.items.len > 0) event_loop.runCallback(push_fn, globalThis, thisctx, &.{this.collectOutputValue()});
-
             while (this.stream.do_dowork) {
                 const done = this.stream.doWork(&this.output, this.stream.flush) catch |err| return handleTransformSyncStreamError(err, globalThis, this.stream.err_msg, &this.closed);
                 if (this.output.items.len > this.maxOutputLength) {

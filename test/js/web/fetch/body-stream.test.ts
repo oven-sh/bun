@@ -2,7 +2,7 @@
 import { gc, ServeOptions } from "bun";
 import { afterAll, describe, expect, it, test } from "bun:test";
 
-var port = 0;
+const port = 0;
 
 for (let doClone of [true, false]) {
   const BodyMixin = [

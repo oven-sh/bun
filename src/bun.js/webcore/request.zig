@@ -62,6 +62,7 @@ pub const Request = struct {
     weak_ptr_data: bun.WeakPtrData = .{},
     // We must report a consistent value for this
     reported_estimated_size: usize = 0,
+    internal_abort_callback: InternalJSAbortCallback = .{},
 
     const RequestMixin = BodyMixin(@This());
     pub usingnamespace JSC.Codegen.JSRequest;
@@ -84,11 +85,49 @@ pub const Request = struct {
         return this.request_context.getRequest();
     }
 
+    pub export fn Request__setInternalAbortCallback(
+        this: *Request,
+        callback: JSC.JSValue,
+        ctx: JSC.JSValue,
+        globalThis: *JSC.JSGlobalObject,
+    ) void {
+        this.internal_abort_callback = InternalJSAbortCallback.init(callback, ctx, globalThis);
+    }
+
     comptime {
         if (!JSC.is_bindgen) {
             _ = Request__getUWSRequest;
+            _ = Request__setInternalAbortCallback;
         }
     }
+
+    pub const InternalJSAbortCallback = struct {
+        function: JSC.Strong = .{},
+        ctx: JSC.Strong = .{},
+
+        pub fn init(function: JSC.JSValue, ctx: JSC.JSValue, globalThis: *JSC.JSGlobalObject) InternalJSAbortCallback {
+            return InternalJSAbortCallback{
+                .function = JSC.Strong.create(function, globalThis),
+                .ctx = JSC.Strong.create(ctx, globalThis),
+            };
+        }
+
+        pub fn trigger(this: *InternalJSAbortCallback, globalThis: *JSC.JSGlobalObject) bool {
+            if (this.function.get()) |callback| {
+                const result = callback.call(globalThis, this.ctx.get() orelse JSC.JSValue.jsUndefined(), &.{});
+                if (result.toError()) |js_error| {
+                    globalThis.throwValue(js_error);
+                }
+                return true;
+            }
+            return false;
+        }
+
+        pub fn deinit(this: *InternalJSAbortCallback) void {
+            this.function.deinit();
+            this.ctx.deinit();
+        }
+    };
 
     pub fn init(
         url: bun.String,
@@ -295,6 +334,7 @@ pub const Request = struct {
     pub fn finalize(this: *Request) void {
         this.finalizeWithoutDeinit();
         _ = this.body.unref();
+        this.internal_abort_callback.deinit();
         if (this.weak_ptr_data.onFinalize()) {
             this.destroy();
         }

@@ -11,6 +11,7 @@ const {
   getHeader,
   setHeader,
   assignHeaders: assignHeadersFast,
+  assignAbortCallback,
   Response,
   Request,
   Headers,
@@ -20,6 +21,7 @@ const {
   getHeader: (headers: Headers, name: string) => string | undefined;
   setHeader: (headers: Headers, name: string, value: string) => void;
   assignHeaders: (object: any, req: Request, headersTuple: any) => boolean;
+  assignAbortCallback: (req: Request, callback: () => void, ctx: any) => void;
   Response: (typeof globalThis)["Response"];
   Request: (typeof globalThis)["Request"];
   Headers: (typeof globalThis)["Headers"];
@@ -646,7 +648,7 @@ Server.prototype = {
           const prevIsNextIncomingMessageHTTPS = isNextIncomingMessageHTTPS;
           isNextIncomingMessageHTTPS = isHTTPS;
           const http_req = new RequestClass(req);
-          req.signal.addEventListener("abort", onRequestAborted.bind(http_req));
+          assignAbortCallback(req, onRequestAborted, http_req);
           isNextIncomingMessageHTTPS = prevIsNextIncomingMessageHTTPS;
 
           const upgrade = http_req.headers.upgrade;

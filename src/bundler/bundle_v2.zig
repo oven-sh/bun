@@ -4302,7 +4302,6 @@ pub const LinkerContext = struct {
             source_id: u32,
 
             pub fn next(c: *@This(), chunk_id: usize) void {
-                std.debug.print("yolo {d} - {d}\n", .{ chunk_id, c.source_id });
                 _ = c.chunks[chunk_id].files_with_parts_in_chunk.getOrPut(c.allocator, @as(u32, @truncate(c.source_id))) catch unreachable;
             }
         };

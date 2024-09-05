@@ -293,16 +293,13 @@ const ProxyTunnel = struct {
                         return;
                     }
                 },
-                .proxy_decoded_headers, .proxy_headers => {
-                    this.flags.proxy_tunneling = false;
-                    this.state.response_stage = .proxy_decoded_headers;
-
+                .proxy_headers => {
                     switch (proxy.socket) {
                         .ssl => |socket| {
-                            this.onData(true, decoded_data, &http_thread.https_context, socket);
+                            this.handleOnDataHeaders(true, decoded_data, &http_thread.https_context, socket);
                         },
                         .tcp => |socket| {
-                            this.onData(false, decoded_data, &http_thread.http_context, socket);
+                            this.handleOnDataHeaders(false, decoded_data, &http_thread.http_context, socket);
                         },
                         .none => {},
                     }
@@ -1586,7 +1583,6 @@ pub const HTTPStage = enum {
     done,
     proxy_handshake,
     proxy_headers,
-    proxy_decoded_headers,
     proxy_body,
 };
 
@@ -3124,6 +3120,145 @@ inline fn handleShortRead(
 
     this.setTimeout(socket, 5);
 }
+
+pub fn handleOnDataHeaders(
+    this: *HTTPClient,
+    comptime is_ssl: bool,
+    incoming_data: []const u8,
+    ctx: *NewHTTPContext(is_ssl),
+    socket: NewHTTPContext(is_ssl).HTTPSocket,
+) void {
+    var to_read = incoming_data;
+    var amount_read: usize = 0;
+    var needs_move = true;
+    if (this.state.response_message_buffer.list.items.len > 0) {
+        // this one probably won't be another chunk, so we use appendSliceExact() to avoid over-allocating
+        this.state.response_message_buffer.appendSliceExact(incoming_data) catch bun.outOfMemory();
+        to_read = this.state.response_message_buffer.list.items;
+        needs_move = false;
+    }
+
+    // we reset the pending_response each time wich means that on parse error this will be always be empty
+    this.state.pending_response = picohttp.Response{};
+
+    // minimal http/1.1 request size is 16 bytes without headers and 26 with Host header
+    // if is less than 16 will always be a ShortRead
+    if (to_read.len < 16) {
+        this.handleShortRead(is_ssl, incoming_data, socket, needs_move);
+        return;
+    }
+
+    var response = picohttp.Response.parseParts(
+        to_read,
+        &shared_response_headers_buf,
+        &amount_read,
+    ) catch |err| {
+        switch (err) {
+            error.ShortRead => {
+                this.handleShortRead(is_ssl, incoming_data, socket, needs_move);
+            },
+            else => {
+                this.closeAndFail(err, is_ssl, socket);
+            },
+        }
+        return;
+    };
+
+    // we save the successful parsed response
+    this.state.pending_response = response;
+
+    const body_buf = to_read[@min(@as(usize, @intCast(response.bytes_read)), to_read.len)..];
+    // handle the case where we have a 100 Continue
+    if (response.status_code == 100) {
+        // we still can have the 200 OK in the same buffer sometimes
+        if (body_buf.len > 0) {
+            this.onData(is_ssl, body_buf, ctx, socket);
+        }
+        return;
+    }
+    const should_continue = this.handleResponseMetadata(
+        &response,
+    ) catch |err| {
+        this.closeAndFail(err, is_ssl, socket);
+        return;
+    };
+
+    if (this.state.content_encoding_i < response.headers.len and !this.state.flags.did_set_content_encoding) {
+        // if it compressed with this header, it is no longer because we will decompress it
+        const mutable_headers = std.ArrayListUnmanaged(picohttp.Header){ .items = response.headers, .capacity = response.headers.len };
+        this.state.flags.did_set_content_encoding = true;
+        response.headers = mutable_headers.items;
+        this.state.content_encoding_i = std.math.maxInt(@TypeOf(this.state.content_encoding_i));
+        // we need to reset the pending response because we removed a header
+        this.state.pending_response = response;
+    }
+
+    if (should_continue == .finished) {
+        if (this.state.flags.is_redirect_pending) {
+            this.doRedirect(is_ssl, ctx, socket);
+            return;
+        }
+        // this means that the request ended
+        // clone metadata and return the progress at this point
+        this.cloneMetadata();
+        // if is chuncked but no body is expected we mark the last chunk
+        this.state.flags.received_last_chunk = true;
+        // if is not we ignore the content_length
+        this.state.content_length = 0;
+        this.progressUpdate(is_ssl, ctx, socket);
+        return;
+    }
+
+    if (this.flags.proxy_tunneling and this.proxy_tunnel == null) {
+        // we are proxing we dont need to cloneMetadata yet
+        this.startProxyHandshake(is_ssl, socket);
+        return;
+    }
+
+    // we have body data incoming so we clone metadata and keep going
+    this.cloneMetadata();
+
+    if (body_buf.len == 0) {
+        // no body data yet, but we can report the headers
+        if (this.signals.get(.header_progress)) {
+            this.progressUpdate(is_ssl, ctx, socket);
+        }
+        return;
+    }
+
+    if (this.state.response_stage == .body) {
+        {
+            const report_progress = this.handleResponseBody(body_buf, true) catch |err| {
+                this.closeAndFail(err, is_ssl, socket);
+                return;
+            };
+
+            if (report_progress) {
+                this.progressUpdate(is_ssl, ctx, socket);
+                return;
+            }
+        }
+    } else if (this.state.response_stage == .body_chunk) {
+        this.setTimeout(socket, 5);
+        {
+            const report_progress = this.handleResponseBodyChunkedEncoding(body_buf) catch |err| {
+                this.closeAndFail(err, is_ssl, socket);
+                return;
+            };
+
+            if (report_progress) {
+                this.progressUpdate(is_ssl, ctx, socket);
+                return;
+            }
+        }
+    }
+
+    // if not reported we report partially now
+    if (this.signals.get(.header_progress)) {
+        this.progressUpdate(is_ssl, ctx, socket);
+        return;
+    }
+}
 pub fn onData(
     this: *HTTPClient,
     comptime is_ssl: bool,
@@ -3138,139 +3273,9 @@ pub fn onData(
     }
 
     switch (this.state.response_stage) {
-        .pending, .headers, .proxy_decoded_headers => {
-            var to_read = incoming_data;
-            var amount_read: usize = 0;
-            var needs_move = true;
-            if (this.state.response_message_buffer.list.items.len > 0) {
-                // this one probably won't be another chunk, so we use appendSliceExact() to avoid over-allocating
-                this.state.response_message_buffer.appendSliceExact(incoming_data) catch bun.outOfMemory();
-                to_read = this.state.response_message_buffer.list.items;
-                needs_move = false;
-            }
-
-            // we reset the pending_response each time wich means that on parse error this will be always be empty
-            this.state.pending_response = picohttp.Response{};
-
-            // minimal http/1.1 request size is 16 bytes without headers and 26 with Host header
-            // if is less than 16 will always be a ShortRead
-            if (to_read.len < 16) {
-                this.handleShortRead(is_ssl, incoming_data, socket, needs_move);
-                return;
-            }
-
-            var response = picohttp.Response.parseParts(
-                to_read,
-                &shared_response_headers_buf,
-                &amount_read,
-            ) catch |err| {
-                switch (err) {
-                    error.ShortRead => {
-                        this.handleShortRead(is_ssl, incoming_data, socket, needs_move);
-                    },
-                    else => {
-                        this.closeAndFail(err, is_ssl, socket);
-                    },
-                }
-                return;
-            };
-
-            // we save the successful parsed response
-            this.state.pending_response = response;
-
-            const body_buf = to_read[@min(@as(usize, @intCast(response.bytes_read)), to_read.len)..];
-            // handle the case where we have a 100 Continue
-            if (response.status_code == 100) {
-                // we still can have the 200 OK in the same buffer sometimes
-                if (body_buf.len > 0) {
-                    this.onData(is_ssl, body_buf, ctx, socket);
-                }
-                return;
-            }
-            const should_continue = this.handleResponseMetadata(
-                &response,
-            ) catch |err| {
-                this.closeAndFail(err, is_ssl, socket);
-                return;
-            };
-
-            if (this.state.content_encoding_i < response.headers.len and !this.state.flags.did_set_content_encoding) {
-                // if it compressed with this header, it is no longer because we will decompress it
-                const mutable_headers = std.ArrayListUnmanaged(picohttp.Header){ .items = response.headers, .capacity = response.headers.len };
-                this.state.flags.did_set_content_encoding = true;
-                response.headers = mutable_headers.items;
-                this.state.content_encoding_i = std.math.maxInt(@TypeOf(this.state.content_encoding_i));
-                // we need to reset the pending response because we removed a header
-                this.state.pending_response = response;
-            }
-
-            if (should_continue == .finished) {
-                if (this.state.flags.is_redirect_pending) {
-                    this.doRedirect(is_ssl, ctx, socket);
-                    return;
-                }
-                // this means that the request ended
-                // clone metadata and return the progress at this point
-                this.cloneMetadata();
-                // if is chuncked but no body is expected we mark the last chunk
-                this.state.flags.received_last_chunk = true;
-                // if is not we ignore the content_length
-                this.state.content_length = 0;
-                this.progressUpdate(is_ssl, ctx, socket);
-                return;
-            }
-
-            if (this.flags.proxy_tunneling and this.proxy_tunnel == null) {
-                // we are proxing we dont need to cloneMetadata yet
-                this.startProxyHandshake(is_ssl, socket);
-                return;
-            }
-
-            // we have body data incoming so we clone metadata and keep going
-            this.cloneMetadata();
-
-            if (body_buf.len == 0) {
-                // no body data yet, but we can report the headers
-                if (this.signals.get(.header_progress)) {
-                    this.progressUpdate(is_ssl, ctx, socket);
-                }
-                return;
-            }
-
-            if (this.state.response_stage == .body) {
-                {
-                    const report_progress = this.handleResponseBody(body_buf, true) catch |err| {
-                        this.closeAndFail(err, is_ssl, socket);
-                        return;
-                    };
-
-                    if (report_progress) {
-                        this.progressUpdate(is_ssl, ctx, socket);
-                        return;
-                    }
-                }
-            } else if (this.state.response_stage == .body_chunk) {
-                this.setTimeout(socket, 5);
-                {
-                    const report_progress = this.handleResponseBodyChunkedEncoding(body_buf) catch |err| {
-                        this.closeAndFail(err, is_ssl, socket);
-                        return;
-                    };
-
-                    if (report_progress) {
-                        this.progressUpdate(is_ssl, ctx, socket);
-                        return;
-                    }
-                }
-            }
-
-            // if not reported we report partially now
-            if (this.signals.get(.header_progress)) {
-                this.progressUpdate(is_ssl, ctx, socket);
-                return;
-            }
+        .pending, .headers => {
+            this.handleOnDataHeaders(is_ssl, incoming_data, ctx, socket);
         },
-
         .body => {
             this.setTimeout(socket, 5);
 

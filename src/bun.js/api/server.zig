@@ -2337,6 +2337,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             assert(this.server != null);
             // mark request as aborted
             this.flags.aborted = true;
+
             this.detachResponse();
             var any_js_calls = false;
             var vm = this.server.?.vm;
@@ -2350,6 +2351,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.deref();
             }
 
+            if (this.request_weakref.get()) |request| {
+                request.request_context = AnyRequestContext.Null;
+                if (request.internal_abort_callback.trigger(globalThis)) {
+                    any_js_calls = true;
+                }
+                this.request_weakref.deinit();
+            }
             // if signal is not aborted, abort the signal
             if (this.signal) |signal| {
                 this.signal = null;

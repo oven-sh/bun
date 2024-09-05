@@ -1,3 +1,4 @@
+#include "bun-uws/src/HttpParser.h"
 #include "root.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "ZigGlobalObject.h"
@@ -22,6 +23,7 @@ using namespace JSC;
 using namespace WebCore;
 
 extern "C" uWS::HttpRequest* Request__getUWSRequest(void*);
+extern "C" void Request__setInternalAbortCallback(void*, EncodedJSValue, EncodedJSValue, JSC::JSGlobalObject*);
 
 static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject* prototype, JSObject* objectValue, JSC::InternalFieldTuple* tuple, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
 {
@@ -322,6 +324,25 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPAssignHeaders, (JSGlobalObject * globalObject, Ca
     return JSValue::encode(jsNull());
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsHTTPAssignAbortCallback, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // This is an internal binding.
+    JSValue requestValue = callFrame->uncheckedArgument(0);
+    JSValue callback = callFrame->uncheckedArgument(1);
+    JSValue ctx = callFrame->uncheckedArgument(2);
+
+    ASSERT(callFrame->argumentCount() == 3);
+
+    if (auto* jsRequest = jsDynamicCast<WebCore::JSRequest*>(requestValue)) {
+        Request__setInternalAbortCallback(jsRequest->wrapped(), JSValue::encode(callback), JSValue::encode(ctx), globalObject);
+    }
+
+    return JSValue::encode(jsNull());
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsHTTPGetHeader, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
@@ -418,6 +439,9 @@ JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "assignHeaders"_s)),
         JSC::JSFunction::create(vm, globalObject, 2, "assignHeaders"_s, jsHTTPAssignHeaders, ImplementationVisibility::Public), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "assignAbortCallback"_s)),
+        JSC::JSFunction::create(vm, globalObject, 2, "assignAbortCallback"_s, jsHTTPAssignAbortCallback, ImplementationVisibility::Public), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "Response"_s)),
         globalObject->JSResponseConstructor(), 0);

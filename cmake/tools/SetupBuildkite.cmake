@@ -81,16 +81,16 @@ foreach(i RANGE ${BUILDKITE_JOBS_MAX_INDEX})
     else()
       set(BUILDKITE_DOWNLOAD_COMMAND curl -L -o ${BUILDKITE_ARTIFACT_PATH} ${BUILDKITE_ARTIFACTS_URL}/${BUILDKITE_ARTIFACT_ID})
     endif()
-    register_command(
+    message(STATUS "Downloading ${BUILDKITE_ARTIFACT_PATH}")
+    add_custom_command(
       COMMENT
         "Downloading ${BUILDKITE_ARTIFACT_PATH}"
-      COMMAND
+      VERBATIM COMMAND
         ${BUILDKITE_DOWNLOAD_COMMAND}
-      CWD
+      WORKING_DIRECTORY
         ${BUILD_PATH}
-      OUTPUTS
+      OUTPUT
         ${BUILD_PATH}/${BUILDKITE_ARTIFACT_PATH}
-      ALWAYS_RUN
     )
   endforeach()
 endforeach()

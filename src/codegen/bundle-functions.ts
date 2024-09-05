@@ -158,10 +158,9 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
         globalThis.requireTransformer(x, SRC_DIR + "/" + basename),
       );
 
-      let source = result.trim().slice(2, -1);
-      let enums = [];
+      const source = result.trim().slice(2, -1);
+      const enums: string[] = [];
       if (topLevelEnums.length) {
-        source = result.trim().slice(2, -1);
         for (const { name, code } of topLevelEnums) {
           if (source.includes(name)) {
             enums.push(code);

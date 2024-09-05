@@ -45,7 +45,7 @@ async function build(args) {
   const generateOptions = parseOptions(args, generateFlags);
   const buildOptions = parseOptions(args, buildFlags);
 
-  const buildPath = generateOptions["-B"] || buildOptions["--build"] || "build";
+  const buildPath = resolve(generateOptions["-B"] || buildOptions["--build"] || "build");
   generateOptions["-B"] = buildPath;
   buildOptions["--build"] = buildPath;
 
@@ -105,7 +105,7 @@ function getCachePath(branch) {
   const repositoryKey = (fork || repository).replace(/[^a-z0-9]/i, "-");
   const branchKey = (branch || process.env.BUILDKITE_BRANCH).replace(/[^a-z0-9]/i, "-");
   const stepKey = process.env.BUILDKITE_STEP_KEY.replace(/[^a-z0-9]/i, "-");
-  return join(homedir(), "builds", "cache", repositoryKey, branchKey, stepKey);
+  return join(homedir(), "cache", repositoryKey, branchKey, stepKey);
 }
 
 function isCacheReadEnabled() {

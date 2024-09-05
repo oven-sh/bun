@@ -341,7 +341,7 @@ for (let doClone of [true, false]) {
                         try {
                           if (withDelay) await 1;
 
-                          for (let req of doClone ? [request.clone(), request] : [request]) {
+                          const run = async function (req) {
                             expect(req.headers.get("x-custom")).toBe("hello");
                             expect(req.headers.get("content-type")).toBe("text/plain");
                             expect(req.headers.get("user-agent")).toBe(navigator.userAgent);
@@ -351,15 +351,15 @@ for (let doClone of [true, false]) {
                             expect(req.headers.get("content-type")).toBe("text/plain");
                             expect(req.headers.get("user-agent")).toBe(navigator.userAgent);
 
-                            var reader = req.body.getReader();
+                            let reader = req.body.getReader();
                             called = true;
-                            var buffers = [];
+                            let buffers = [];
                             while (true) {
-                              var { done, value } = await reader.read();
+                              let { done, value } = await reader.read();
                               if (done) break;
                               buffers.push(value);
                             }
-                            var out = new Blob(buffers);
+                            let out = new Blob(buffers);
                             gc();
                             expect(out.size).toBe(expectedSize);
                             expect(Bun.SHA1.hash(await out.arrayBuffer(), "base64")).toBe(expectedHash);
@@ -367,6 +367,12 @@ for (let doClone of [true, false]) {
                             expect(req.headers.get("content-type")).toBe("text/plain");
                             expect(req.headers.get("user-agent")).toBe(navigator.userAgent);
                             gc();
+                            return out;
+                          };
+
+                          let out;
+                          for (let req of doClone ? [request.clone(), request] : [request]) {
+                            out = await run(req);
                           }
 
                           return new Response(out, {

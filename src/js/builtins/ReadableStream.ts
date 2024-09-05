@@ -151,16 +151,55 @@ export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>)
   }
 
   result = Bun.readableStreamToArray(stream);
-  if ($isPromise(result)) {
-    // `result` is an InternalPromise, which doesn't have a `.then` method
-    // but `.then` isn't user-overridable, so we can use it safely.
-    return result.then(x => (x.length === 1 && x[0] instanceof ArrayBuffer ? x[0] : Bun.concatArrayBuffers(x)));
+
+  function toArrayBuffer(result: unknown[]) {
+    // Fast path: single element
+    if (result.length === 1) {
+      const view = result[0];
+      if (view instanceof ArrayBuffer || view instanceof SharedArrayBuffer) {
+        return view;
+      }
+
+      if (ArrayBuffer.isView(view)) {
+        if (view.byteOffset === 0 && view.byteLength === view.buffer.byteLength) {
+          return view.buffer;
+        }
+
+        return view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength);
+      }
+
+      if (typeof view === "string") {
+        return new TextEncoder().encode(view).buffer;
+      }
+    }
+
+    let anyStrings = false;
+    for (const chunk of result) {
+      if (typeof chunk === "string") {
+        anyStrings = true;
+        break;
+      }
+    }
+
+    if (!anyStrings) {
+      return Bun.concatArrayBuffers(result);
+    }
+
+    const arrayBufferSink = new Bun.ArrayBufferSink();
+    arrayBufferSink.start({ asUint8Array: false });
+
+    for (const chunk of result) {
+      arrayBufferSink.write(chunk);
+    }
+
+    return arrayBufferSink.end();
   }
 
-  if (result.length === 1) {
-    return result[0];
+  if ($isPromise(result)) {
+    return result.then(toArrayBuffer);
   }
-  return Bun.concatArrayBuffers(result);
+
+  return toArrayBuffer(result);
 }
 
 $linkTimeConstant;
@@ -180,22 +219,54 @@ export function readableStreamToBytes(stream: ReadableStream<ArrayBuffer>): Prom
   }
 
   result = Bun.readableStreamToArray(stream);
-  if ($isPromise(result)) {
-    // `result` is an InternalPromise, which doesn't have a `.then` method
-    // but `.then` isn't user-overridable, so we can use it safely.
-    return result.then(x => {
-      // Micro-optimization: if the result is a single Uint8Array chunk, let's just return it without cloning.
-      if (x.length === 1 && x[0] instanceof ArrayBuffer) {
-        return new Uint8Array(x[0]);
+
+  function toBytes(result: unknown[]) {
+    if (result.length === 1) {
+      const view = result[0];
+      if (view instanceof Uint8Array) {
+        return view;
       }
-      return Bun.concatArrayBuffers(x, Infinity, true);
-    });
+
+      if (ArrayBuffer.isView(view)) {
+        return new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+      }
+
+      if (view instanceof ArrayBuffer || view instanceof SharedArrayBuffer) {
+        return new Uint8Array(view);
+      }
+
+      if (typeof view === "string") {
+        return new TextEncoder().encode(view);
+      }
+    }
+
+    let anyStrings = false;
+    for (const chunk of result) {
+      if (typeof chunk === "string") {
+        anyStrings = true;
+        break;
+      }
+    }
+
+    if (!anyStrings) {
+      return Bun.concatArrayBuffers(result, true);
+    }
+
+    const sink = new Bun.ArrayBufferSink();
+    sink.start({ asUint8Array: true });
+
+    for (const chunk of result) {
+      sink.write(chunk);
+    }
+
+    return sink.end() as Uint8Array;
   }
 
-  if (result.length === 1 && result[0] instanceof ArrayBuffer) {
-    return new Uint8Array(result[0]);
+  if ($isPromise(result)) {
+    return result.then(toBytes);
   }
-  return Bun.concatArrayBuffers(result, Infinity, true);
+
+  return toBytes(result);
 }
 
 $linkTimeConstant;

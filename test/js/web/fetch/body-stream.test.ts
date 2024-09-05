@@ -370,7 +370,7 @@ for (let doClone of [true, false]) {
                           }
 
                           return new Response(out, {
-                            headers: req.headers,
+                            headers: request.headers,
                           });
                         } catch (e) {
                           console.error(e);

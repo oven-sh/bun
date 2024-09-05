@@ -574,24 +574,18 @@ if(BUN_CPP_ONLY)
       ${BUN_CPP_OUTPUT}
   )
 elseif(BUN_LINK_ONLY)
-  add_executable(${bun} ${BUN_CPP_OUTPUT} ${BUN_ZIG_OUTPUT})
   if (BUILDKITE)
     set(stepName build-deps build-zig build-cpp)
     foreach(step ${steps})
       set(step ENV${BUILDKITE_GROUP_KEY}-${stepName})
-      register_command(
-        TARGET
-          ${bun}
-        TARGET_PHASE
-          PRE_BUILD
-        COMMENT
-          "Downloading artifacts from ${step}"
-        CWD
-          ${BUILD_PATH}
+      execute_process(
         COMMAND
           buildkite-agent artifact download "**" . --step ${step}
+        WORKING_DIRECTORY
+          ${BUILD_PATH}
       )
     endforeach()
+    add_executable(${bun} ${BUN_CPP_OUTPUT} ${BUN_ZIG_OUTPUT})
   endif()
 else()
   add_executable(${bun} ${BUN_CPP_SOURCES} ${BUN_ZIG_OUTPUT})

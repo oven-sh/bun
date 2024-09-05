@@ -130,7 +130,18 @@ for (const proxy_tls of [false, true]) {
     }
   }
 }
-
+test("#12007", async () => {
+  const response = await fetch("https://nopecha.com/demo/cloudflare", {
+    proxy: httpsProxyServer.url,
+    tls: {
+      ca: tlsCert.cert,
+      rejectUnauthorized: false,
+    },
+  });
+  expect(response.ok).toBe(false);
+  expect(response.status).toBe(403);
+  expect(response.statusText).toBe("Forbidden");
+});
 test("unsupported protocol", async () => {
   expect(
     fetch("https://httpbin.org/get", {

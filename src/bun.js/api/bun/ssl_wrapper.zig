@@ -154,15 +154,16 @@ pub fn SSLWrapper(comptime T: type) type {
 
             // we sent the shutdown
             this.flags.sent_ssl_shutdown = ret >= 0;
-            defer if (ret < 0) {
+            if (ret < 0) {
                 const err = BoringSSL.SSL_get_error(ssl, ret);
                 BoringSSL.ERR_clear_error();
 
                 if (err == BoringSSL.SSL_ERROR_SSL or err == BoringSSL.SSL_ERROR_SYSCALL) {
                     this.flags.fatal_error = true;
                     this.triggerCloseCallback();
+                    return false;
                 }
-            };
+            }
             return ret == 1; // truly closed
         }
 
@@ -424,7 +425,6 @@ pub fn SSLWrapper(comptime T: type) type {
                         if (read > 0) {
                             this.triggerDataCallback(buffer[0..read]);
                         }
-
                         this.triggerCloseCallback();
                         return false;
                     } else {

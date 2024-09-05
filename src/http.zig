@@ -210,13 +210,18 @@ const ProxyTunnel = struct {
         none: void,
     } = .{ .none = {} },
     write_buffer: bun.io.StreamBuffer = .{},
+    ref_count: u32 = 1,
 
     const ProxyTunnelWrapper = SSLWrapper(*HTTPClient);
+
+    usingnamespace bun.NewRefCounted(ProxyTunnel, ProxyTunnel.deinit);
 
     fn onOpen(this: *HTTPClient) void {
         this.state.response_stage = .proxy_handshake;
         this.state.request_stage = .proxy_handshake;
-        if (this.proxy_tunnel) |*proxy| {
+        if (this.proxy_tunnel) |proxy| {
+            proxy.ref();
+            defer proxy.deref();
             if (proxy.wrapper) |*wrapper| {
                 var ssl_ptr = wrapper.ssl orelse return;
                 const _hostname = this.hostname orelse this.url.hostname;
@@ -244,7 +249,9 @@ const ProxyTunnel = struct {
         if (decoded_data.len == 0) return;
         log("onData decoded {}", .{decoded_data.len});
 
-        if (this.proxy_tunnel) |*proxy| {
+        if (this.proxy_tunnel) |proxy| {
+            proxy.ref();
+            defer proxy.deref();
             switch (this.state.response_stage) {
                 .body => {
                     if (decoded_data.len == 0) return;
@@ -309,7 +316,9 @@ const ProxyTunnel = struct {
     }
 
     fn onHandshake(this: *HTTPClient, handshake_success: bool, ssl_error: uws.us_bun_verify_error_t) void {
-        if (this.proxy_tunnel) |*proxy| {
+        if (this.proxy_tunnel) |proxy| {
+            proxy.ref();
+            defer proxy.deref();
             this.state.response_stage = .proxy_headers;
             this.state.request_stage = .proxy_headers;
             this.state.request_sent_len = 0;
@@ -375,7 +384,7 @@ const ProxyTunnel = struct {
     }
 
     pub fn write(this: *HTTPClient, encoded_data: []const u8) void {
-        if (this.proxy_tunnel) |*proxy| {
+        if (this.proxy_tunnel) |proxy| {
             const written = switch (proxy.socket) {
                 .ssl => |socket| socket.write(encoded_data, true),
                 .tcp => |socket| socket.write(encoded_data, true),
@@ -390,7 +399,10 @@ const ProxyTunnel = struct {
     }
 
     fn onClose(this: *HTTPClient) void {
-        if (this.proxy_tunnel) |*proxy| {
+        if (this.proxy_tunnel) |proxy| {
+            proxy.ref();
+            // defer the proxy deref the proxy tunnel may still be in use after triggering the close callback
+            defer http_thread.scheduleProxyDeref(proxy);
             const err = proxy.shutdown_err;
             switch (proxy.socket) {
                 .ssl => |socket| {
@@ -401,12 +413,13 @@ const ProxyTunnel = struct {
                 },
                 .none => {},
             }
+            proxy.detachSocket();
         }
     }
 
     fn start(ctx: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, ssl_options: JSC.API.ServerConfig.SSLConfig) void {
-        ctx.proxy_tunnel = .{};
-        if (ctx.proxy_tunnel) |*this| {
+        ctx.proxy_tunnel = ProxyTunnel.new(.{});
+        if (ctx.proxy_tunnel) |this| {
             if (is_ssl) {
                 this.socket = .{ .ssl = socket };
             } else {
@@ -447,6 +460,8 @@ const ProxyTunnel = struct {
     }
 
     pub fn onWritable(this: *ProxyTunnel, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+        this.ref();
+        defer this.deref();
         const encoded_data = this.write_buffer.slice();
         if (encoded_data.len == 0) {
             return;
@@ -465,6 +480,8 @@ const ProxyTunnel = struct {
     }
 
     pub fn receiveData(this: *ProxyTunnel, buf: []const u8) void {
+        this.ref();
+        defer this.deref();
         if (this.wrapper) |*wrapper| {
             wrapper.receiveData(buf);
         }
@@ -477,6 +494,15 @@ const ProxyTunnel = struct {
         return 0;
     }
 
+    pub fn detachSocket(this: *ProxyTunnel) void {
+        this.socket = .{ .none = {} };
+    }
+
+    pub fn detachAndDeref(this: *ProxyTunnel) void {
+        this.detachSocket();
+        this.deref();
+    }
+
     pub fn deinit(this: *ProxyTunnel) void {
         this.socket = .{ .none = {} };
         if (this.wrapper) |*wrapper| {
@@ -484,6 +510,7 @@ const ProxyTunnel = struct {
             this.wrapper = null;
         }
         this.write_buffer.deinit();
+        this.destroy();
     }
 };
 
@@ -951,6 +978,8 @@ pub const HTTPThread = struct {
     queued_shutdowns: std.ArrayListUnmanaged(ShutdownMessage) = std.ArrayListUnmanaged(ShutdownMessage){},
     queued_shutdowns_lock: bun.Lock = .{},
 
+    queued_proxy_deref: std.ArrayListUnmanaged(*ProxyTunnel) = std.ArrayListUnmanaged(*ProxyTunnel){},
+
     has_awoken: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     timer: std.time.Timer,
 
@@ -1104,6 +1133,10 @@ pub const HTTPThread = struct {
             this.queued_shutdowns.clearRetainingCapacity();
         }
 
+        while (this.queued_proxy_deref.popOrNull()) |http| {
+            http.deref();
+        }
+
         var count: usize = 0;
         var active = AsyncHTTP.active_requests_count.load(.monotonic);
         const max = AsyncHTTP.max_simultaneous_requests.load(.monotonic);
@@ -1169,6 +1202,15 @@ pub const HTTPThread = struct {
                 .async_http_id = http.async_http_id,
                 .is_tls = http.client.isHTTPS(),
             }) catch bun.outOfMemory();
+        }
+        if (this.has_awoken.load(.monotonic))
+            this.loop.loop.wakeup();
+    }
+
+    pub fn scheduleProxyDeref(this: *@This(), proxy: *ProxyTunnel) void {
+        // this is always called on the http thread
+        {
+            this.queued_proxy_deref.append(bun.default_allocator, proxy) catch bun.outOfMemory();
         }
         if (this.has_awoken.load(.monotonic))
             this.loop.loop.wakeup();
@@ -1360,11 +1402,16 @@ pub fn onClose(
     log("Closed  {s}\n", .{client.url.href});
     // the socket is closed, we need to unregister the abort tracker
     client.unregisterAbortTracker();
+
     if (client.signals.get(.aborted)) {
         client.fail(error.Aborted);
         return;
     }
-
+    if (client.proxy_tunnel) |tunnel| {
+        client.proxy_tunnel = null;
+        // always detach the socket from the tunnel onClose (timeout, connectError will call fail that will do the same)
+        tunnel.detachAndDeref();
+    }
     const in_progress = client.state.stage != .done and client.state.stage != .fail and client.state.flags.is_redirect_pending == false;
 
     if (in_progress) {
@@ -1407,6 +1454,7 @@ pub fn onTimeout(
 ) void {
     if (client.flags.disable_timeout) return;
     log("Timeout  {s}\n", .{client.url.href});
+
     defer NewHTTPContext(is_ssl).terminateSocket(socket);
     client.fail(error.Timeout);
 }
@@ -1908,7 +1956,7 @@ request_content_len_buf: ["-4294967295".len]u8 = undefined,
 
 http_proxy: ?URL = null,
 proxy_authorization: ?[]u8 = null,
-proxy_tunnel: ?ProxyTunnel = null,
+proxy_tunnel: ?*ProxyTunnel = null,
 signals: Signals = .{},
 async_http_id: u32 = 0,
 hostname: ?[]u8 = null,
@@ -1923,10 +1971,9 @@ pub fn deinit(this: *HTTPClient) void {
         this.allocator.free(auth);
         this.proxy_authorization = null;
     }
-    if (this.proxy_tunnel != null) {
-        var tunnel = this.proxy_tunnel.?;
+    if (this.proxy_tunnel) |tunnel| {
         this.proxy_tunnel = null;
-        tunnel.deinit();
+        tunnel.detachAndDeref();
     }
     this.unix_socket_path.deinit();
     this.unix_socket_path = JSC.ZigString.Slice.empty;
@@ -2078,6 +2125,8 @@ pub const AsyncHTTP = struct {
     verbose: HTTPVerboseLevel = .none,
 
     client: HTTPClient = undefined,
+    waitingDeffered: bool = false,
+    finalized: bool = false,
     err: ?anyerror = null,
     async_http_id: u32 = 0,
 
@@ -2654,10 +2703,9 @@ pub fn doRedirect(
     this.state.reset(this.allocator);
     // also reset proxy to redirect
     this.flags.proxy_tunneling = false;
-    if (this.proxy_tunnel != null) {
-        var tunnel = this.proxy_tunnel.?;
+    if (this.proxy_tunnel) |tunnel| {
         this.proxy_tunnel = null;
-        tunnel.deinit();
+        tunnel.detachAndDeref();
     }
 
     return this.start(.{ .bytes = request_body }, body_out_str);
@@ -2782,7 +2830,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
         }
     }
 
-    if (this.proxy_tunnel) |*proxy| {
+    if (this.proxy_tunnel) |proxy| {
         proxy.onWritable(is_ssl, socket);
     }
 
@@ -2952,7 +3000,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
             if (this.state.original_request_body != .bytes) {
                 @panic("sendfile is only supported without SSL. This code should never have been reached!");
             }
-            if (this.proxy_tunnel) |*proxy| {
+            if (this.proxy_tunnel) |proxy| {
                 this.setTimeout(socket, 5);
 
                 const to_send = this.state.request_body;
@@ -2968,7 +3016,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
             }
         },
         .proxy_headers => {
-            if (this.proxy_tunnel) |*proxy| {
+            if (this.proxy_tunnel) |proxy| {
                 this.setTimeout(socket, 5);
                 var stack_fallback = std.heap.stackFallback(16384, default_allocator);
                 const allocator = stack_fallback.get();
@@ -3223,7 +3271,7 @@ pub fn onData(
         .body => {
             this.setTimeout(socket, 5);
 
-            if (this.proxy_tunnel) |*proxy| {
+            if (this.proxy_tunnel) |proxy| {
                 proxy.receiveData(incoming_data);
             } else {
                 const report_progress = this.handleResponseBody(incoming_data, false) catch |err| {
@@ -3241,7 +3289,7 @@ pub fn onData(
         .body_chunk => {
             this.setTimeout(socket, 5);
 
-            if (this.proxy_tunnel) |*proxy| {
+            if (this.proxy_tunnel) |proxy| {
                 proxy.receiveData(incoming_data);
             } else {
                 const report_progress = this.handleResponseBodyChunkedEncoding(incoming_data) catch |err| {
@@ -3259,7 +3307,7 @@ pub fn onData(
         .fail => {},
         .proxy_headers, .proxy_handshake => {
             this.setTimeout(socket, 5);
-            if (this.proxy_tunnel) |*proxy| {
+            if (this.proxy_tunnel) |proxy| {
                 proxy.receiveData(incoming_data);
             }
             return;
@@ -3278,10 +3326,11 @@ pub fn closeAndAbort(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCo
 
 fn fail(this: *HTTPClient, err: anyerror) void {
     this.unregisterAbortTracker();
-    if (this.proxy_tunnel != null) {
-        var tunnel = this.proxy_tunnel.?;
+
+    if (this.proxy_tunnel) |tunnel| {
         this.proxy_tunnel = null;
-        tunnel.deinit();
+        // always detach the socket from the tunnel in case of fail
+        tunnel.detachAndDeref();
     }
     if (this.state.stage != .done and this.state.stage != .fail) {
         this.state.request_stage = .fail;

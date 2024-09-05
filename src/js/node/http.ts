@@ -780,7 +780,6 @@ var reqSymbol = Symbol("req");
 var bodyStreamSymbol = Symbol("bodyStream");
 var noBodySymbol = Symbol("noBody");
 var abortedSymbol = Symbol("aborted");
-var readCompleteSymbol = Symbol("readComplete");
 function IncomingMessage(req, defaultIncomingOpts) {
   this.method = null;
   this._consuming = false;
@@ -817,8 +816,6 @@ function IncomingMessage(req, defaultIncomingOpts) {
     type === "request" // TODO: Add logic for checking for body on response
       ? requestHasNoBody(this.method, this)
       : false;
-
-  this[readCompleteSymbol] = !!this[noBodySymbol];
 }
 
 IncomingMessage.prototype = {
@@ -842,12 +839,12 @@ IncomingMessage.prototype = {
   },
   _read(size) {
     if (this[noBodySymbol]) {
-      this[readCompleteSymbol] = true;
+      this.complete = true;
       this.push(null);
     } else if (this[bodyStreamSymbol] == null) {
       const reader = this[reqSymbol].body?.getReader() as ReadableStreamDefaultReader;
       if (!reader) {
-        this[readCompleteSymbol] = true;
+        this.complete = true;
         this.push(null);
         return;
       }
@@ -856,7 +853,7 @@ IncomingMessage.prototype = {
     }
   },
   _destroy(err, cb) {
-    if (!this.readableEnded || !this[readCompleteSymbol]) {
+    if (!this.readableEnded || !this.complete) {
       this[abortedSymbol] = true;
       // IncomingMessage emits 'aborted'.
       // Client emits 'abort'.
@@ -982,8 +979,8 @@ async function consumeStream(self, reader: ReadableStreamDefaultReader) {
     reader?.cancel?.().catch?.(nop);
   }
 
-  if (!self[readCompleteSymbol]) {
-    self[readCompleteSymbol] = true;
+  if (!self.complete) {
+    self.complete = true;
     self.push(null);
   }
 }

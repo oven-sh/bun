@@ -1178,7 +1178,8 @@ pub const ZlibDecompressorStreaming = struct {
     pub fn doWork(this: *ZlibDecompressorStreaming, output: *std.ArrayListUnmanaged(u8), flush: FlushValue) !bool {
         const state = &this.state;
         var out: [CHUNK]u8 = undefined;
-        state.avail_out = CHUNK;
+        const len = @min(CHUNK, this.chunkSize);
+        state.avail_out = len;
         state.next_out = &out;
 
         this.err = inflate(state, flush);
@@ -1187,7 +1188,7 @@ pub const ZlibDecompressorStreaming = struct {
         if (ret == .NeedDict) return this.error_for_message((if (this.dictionary.len == 0) "Missing dictionary" else "Bad dictionary").ptr);
         if (ret == .DataError) return this.error_for_message("Zlib error");
         if (ret == .MemError) return error.ZlibError4;
-        const have = CHUNK - state.avail_out;
+        const have = len - state.avail_out;
         try output.appendSlice(bun.default_allocator, out[0..have]);
         if (ret == .StreamEnd and this.mode == .GUNZIP and state.avail_in > 0 and state.next_in.?[0] != 0) {
             _ = inflateReset(state);

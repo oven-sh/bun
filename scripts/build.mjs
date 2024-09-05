@@ -42,10 +42,6 @@ async function build(args) {
     CLICOLOR_FORCE: "1",
   };
 
-  if (process.env.CI === "true") {
-    console.log("Environment:", env);
-  }
-
   const generateOptions = parseOptions(args, generateFlags);
   const buildOptions = parseOptions(args, buildFlags);
 
@@ -109,31 +105,19 @@ async function build(args) {
 }
 
 function copyPath(src, dst) {
-  try {
-    rmSync(dst, { recursive: true, force: true });
-    mkdirSync(dst, { recursive: true });
-    cpSync(src, dst, { recursive: true, force: true });
-  } catch (error) {
-    for (const path of readdirSync(src, { recursive: true })) {
-      const srcPath = join(src, path);
-      const dstPath = join(dst, path);
-      try {
-        copyFileSync(srcPath, dstPath);
-      } catch (error) {
-        const content = readFileSync(srcPath);
-        writeFileSync(dstPath, content);
-      }
-    }
-  }
+  rmSync(dst, { recursive: true, force: true });
+  mkdirSync(dst, { recursive: true });
+  cpSync(src, dst, { recursive: true, force: true });
 }
 
 function getCachePath(branch) {
+  const buildPath = process.env.BUILDKITE_BUILD_PATH;
   const repository = process.env.BUILDKITE_REPO;
   const fork = process.env.BUILDKITE_PULL_REQUEST_REPO;
   const repositoryKey = (fork || repository).replace(/[^a-z0-9]/gi, "-");
   const branchKey = (branch || process.env.BUILDKITE_BRANCH).replace(/[^a-z0-9]/gi, "-");
   const stepKey = process.env.BUILDKITE_STEP_KEY.replace(/[^a-z0-9]/gi, "-");
-  return join(homedir(), "cache", repositoryKey, branchKey, stepKey);
+  return resolve(buildPath, "..", "cache", repositoryKey, branchKey, stepKey);
 }
 
 function isCacheReadEnabled() {

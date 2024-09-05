@@ -152,18 +152,11 @@ pub const Ref = packed struct(u64) {
     pub fn dump(ref: Ref, symbol_table: anytype) std.fmt.Formatter(dumpImpl) {
         return .{ .data = .{
             .ref = ref,
-            .symbol_table = switch (@TypeOf(symbol_table)) {
-                *const std.ArrayList(js_ast.Symbol) => symbol_table.items,
-                *std.ArrayList(js_ast.Symbol) => symbol_table.items,
-                []const js_ast.Symbol => symbol_table,
-                []js_ast.Symbol => symbol_table,
-                else => |T| @compileError("Unsupported type to Ref.dump: " ++ @typeName(T)),
-            },
+            .symbol = ref.getSymbol(symbol_table),
         } };
     }
 
-    fn dumpImpl(data: struct { ref: Ref, symbol_table: []const js_ast.Symbol }, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        const symbol = data.symbol_table[data.ref.inner_index];
+    fn dumpImpl(data: struct { ref: Ref, symbol: *js_ast.Symbol }, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         try std.fmt.format(
             writer,
             "Ref[inner={d}, src={d}, .{s}; original_name={s}, uses={d}]",
@@ -171,8 +164,8 @@ pub const Ref = packed struct(u64) {
                 data.ref.inner_index,
                 data.ref.source_index,
                 @tagName(data.ref.tag),
-                symbol.original_name,
-                symbol.use_count_estimate,
+                data.symbol.original_name,
+                data.symbol.use_count_estimate,
             },
         );
     }
@@ -228,7 +221,16 @@ pub const Ref = packed struct(u64) {
         return try writer.write([2]u32{ self.sourceIndex(), self.innerIndex() });
     }
 
-    pub fn toExpr(ref: Ref, loc: bun.logger.Loc) js_ast.Expr {
-        return .{ .e_identifier = .{ .ref = ref }, .loc = loc };
+    pub fn getSymbol(ref: Ref, symbol_table: anytype) *js_ast.Symbol {
+        // Different parts of the bundler use different formats of the symbol table
+        // In the parser you only have one array, and .sourceIndex() is ignored.
+        // In the bundler, you have a 2D array where both parts of the ref are used.
+        const resolved_symbol_table = switch (@TypeOf(symbol_table)) {
+            *const std.ArrayList(js_ast.Symbol) => symbol_table.items,
+            *std.ArrayList(js_ast.Symbol) => symbol_table.items,
+            []js_ast.Symbol => symbol_table,
+            else => |T| @compileError("Unsupported type to Ref.getSymbol: " ++ @typeName(T)),
+        };
+        return &resolved_symbol_table[ref.innerIndex()];
     }
 };

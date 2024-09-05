@@ -516,6 +516,39 @@ pub const B = union(Binding.Tag) {
     };
 
     pub const Missing = struct {};
+
+    /// This hash function is currently only used for React Fast Refresh transform.
+    /// This doesn't include the `is_single_line` properties, as they only affect whitespace.
+    pub fn writeToHasher(b: B, hasher: anytype, symbol_table: anytype) void {
+        switch (b) {
+            .b_identifier => |id| {
+                const original_name = id.ref.getSymbol(symbol_table).original_name;
+                writeAnyToHasher(hasher, .{ std.meta.activeTag(b), original_name.len });
+            },
+            .b_array => |array| {
+                writeAnyToHasher(hasher, .{ std.meta.activeTag(b), array.has_spread, array.items.len });
+                for (array.items) |item| {
+                    writeAnyToHasher(hasher, .{item.default_value != null});
+                    if (item.default_value) |default| {
+                        default.data.writeToHasher(hasher, symbol_table);
+                    }
+                    item.binding.data.writeToHasher(hasher, symbol_table);
+                }
+            },
+            .b_object => |object| {
+                writeAnyToHasher(hasher, .{ std.meta.activeTag(b), object.properties.len });
+                for (object.properties) |property| {
+                    writeAnyToHasher(hasher, .{ property.default_value != null, property.flags });
+                    if (property.default_value) |default| {
+                        default.data.writeToHasher(hasher, symbol_table);
+                    }
+                    property.key.data.writeToHasher(hasher, symbol_table);
+                    property.value.data.writeToHasher(hasher, symbol_table);
+                }
+            },
+            .b_missing => {},
+        }
+    }
 };
 
 pub const ClauseItem = struct {
@@ -5552,6 +5585,138 @@ pub const Expr = struct {
             };
         }
 
+        /// `hasher` should be something with 'pub fn update([]const u8) void';
+        /// symbol table is passed to serialize `Ref` as an identifier names instead of a nondeterministic numbers
+        pub fn writeToHasher(this: Expr.Data, hasher: anytype, symbol_table: anytype) void {
+            writeAnyToHasher(hasher, std.meta.activeTag(this));
+            switch (this) {
+                .e_array => |e| {
+                    writeAnyToHasher(hasher, .{
+                        e.is_single_line,
+                        e.is_parenthesized,
+                        e.was_originally_macro,
+                        e.items.len,
+                    });
+                    for (e.items.slice()) |item| {
+                        item.data.writeToHasher(hasher, symbol_table);
+                    }
+                },
+                .e_unary => |e| {
+                    writeAnyToHasher(hasher, .{e.op});
+                    e.value.data.writeToHasher(hasher, symbol_table);
+                },
+                .e_binary => |e| {
+                    writeAnyToHasher(hasher, .{e.op});
+                    e.left.data.writeToHasher(hasher, symbol_table);
+                    e.right.data.writeToHasher(hasher, symbol_table);
+                },
+                .e_class => |e| {
+                    _ = e; // autofix
+                },
+                inline .e_new, .e_call => |e| {
+                    _ = e; // autofix
+                },
+                .e_function => |e| {
+                    _ = e; // autofix
+                },
+                .e_dot => |e| {
+                    writeAnyToHasher(hasher, .{ e.optional_chain, e.name.len });
+                    e.target.data.writeToHasher(hasher, symbol_table);
+                    hasher.update(e.name);
+                },
+                .e_index => |e| {
+                    writeAnyToHasher(hasher, .{e.optional_chain});
+                    e.target.data.writeToHasher(hasher, symbol_table);
+                    e.index.data.writeToHasher(hasher, symbol_table);
+                },
+                .e_arrow => |e| {
+                    _ = e; // autofix
+                },
+                .e_jsx_element => |e| {
+                    _ = e; // autofix
+                },
+                .e_object => |e| {
+                    _ = e; // autofix
+                },
+                inline .e_spread, .e_await => |e| {
+                    e.value.data.writeToHasher(hasher, symbol_table);
+                },
+                inline .e_yield => |e| {
+                    writeAnyToHasher(hasher, .{ e.is_star, e.value });
+                    if (e.value) |value|
+                        value.data.writeToHasher(hasher, symbol_table);
+                },
+                .e_template_part => {
+                    // TODO: delete e_template_part as hit has zero usages
+                },
+                .e_template => |e| {
+                    _ = e; // autofix
+                },
+                .e_if => |e| {
+                    _ = e; // autofix
+                },
+                .e_import => |e| {
+                    _ = e; // autofix
+
+                },
+                inline .e_identifier,
+                .e_import_identifier,
+                .e_private_identifier,
+                .e_commonjs_export_identifier,
+                => |e| {
+                    const symbol = e.ref.getSymbol(symbol_table);
+                    hasher.update(symbol.original_name);
+                },
+                inline .e_boolean, .e_number => |e| {
+                    writeAnyToHasher(hasher, e.value);
+                },
+                inline .e_big_int, .e_reg_exp => |e| {
+                    hasher.update(e.value);
+                },
+
+                .e_string => |e| {
+                    var next: ?*E.String = e;
+                    if (next) |current| {
+                        if (current.isUTF8()) {
+                            hasher.update(current.data);
+                        } else {
+                            hasher.update(bun.reinterpretSlice(u8, current.slice16()));
+                        }
+                        next = current.next;
+                        hasher.update("\x00");
+                    }
+                },
+                inline .e_require_string, .e_require_resolve_string => |e| {
+                    writeAnyToHasher(hasher, e.import_record_index); // preferably, i'd like to write the filepath
+                },
+
+                .e_import_meta_main => |e| {
+                    writeAnyToHasher(hasher, e.inverted);
+                },
+                .e_inlined_enum => |e| {
+                    // pretend there is no comment
+                    e.value.data.writeToHasher(hasher, symbol_table);
+                },
+                .e_utf8_string => |e| {
+                    hasher.update(e.data);
+                },
+
+                // no data
+                .e_require_call_target,
+                .e_require_resolve_call_target,
+                .e_missing,
+                .e_this,
+                .e_super,
+                .e_null,
+                .e_undefined,
+                .e_new_target,
+                .e_require_main,
+                .e_import_meta,
+                .e_module_dot_exports,
+                => {},
+            }
+        }
+
         /// "const values" here refers to expressions that can participate in constant
         /// inlining, as they have no side effects on instantiation, and there would be
         /// no observable difference if duplicated. This is a subset of canBeMoved()
@@ -8607,3 +8772,19 @@ const ToJSError = error{
     MacroError,
     OutOfMemory,
 };
+
+fn assertNoPointers(T: type) void {
+    switch (@typeInfo(T)) {
+        .Pointer => @compileError("no pointers!"),
+        .Struct => |s| for (s.fields) |field| {
+            assertNoPointers(field.type);
+        },
+        .Array => |a| assertNoPointers(a.child),
+        else => {},
+    }
+}
+
+inline fn writeAnyToHasher(hasher: anytype, thing: anytype) void {
+    comptime assertNoPointers(@TypeOf(thing)); // catch silly mistakes
+    hasher.update(std.mem.asBytes(&thing));
+}

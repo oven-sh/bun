@@ -7824,7 +7824,7 @@ fn NewParser_(
 
         fn parseFn(p: *P, name: ?js_ast.LocRef, opts: FnOrArrowDataParse) anyerror!G.Fn {
             // if data.allowAwait and data.allowYield {
-            // 	p.markSyntaxFeature(compat.AsyncGenerator, data.asyncRange)
+            //     p.markSyntaxFeature(compat.AsyncGenerator, data.asyncRange)
             // }
 
             var func = G.Fn{
@@ -19348,7 +19348,23 @@ fn NewParser_(
                                         name = js_ast.ClauseItem.default_alias;
                                     }
 
+                                    var react_hook_data: ?ReactRefresh.HookContext = null;
+                                    const prev = p.react_refresh.hook_ctx_storage;
+                                    defer p.react_refresh.hook_ctx_storage = prev;
+                                    p.react_refresh.hook_ctx_storage = &react_hook_data;
+
                                     func.func = p.visitFunc(func.func, func.func.open_parens_loc);
+
+                                    if (react_hook_data) |*hook| {
+                                        stmts.append(p.getReactRefreshHookSignalDecl(hook.signature_cb)) catch bun.outOfMemory();
+
+                                        data.value = .{
+                                            .expr = p.getReactRefreshHookSignalInit(hook, p.newExpr(
+                                                E.Function{ .func = func.func },
+                                                stmt.loc,
+                                            )),
+                                        };
+                                    }
 
                                     if (p.is_control_flow_dead) {
                                         return;
@@ -20459,7 +20475,7 @@ fn NewParser_(
                         if (p.react_refresh.last_hook_seen) |last_hook| {
                             if (decl.value.?.data.as(.e_call)) |call| {
                                 if (last_hook == call) {
-                                    @panic("TODO: Hash binding");
+                                    decl.binding.data.writeToHasher(&p.react_refresh.hook_ctx_storage.?.*.?.hasher, p.symbols.items);
                                 }
                             }
                         }
@@ -23233,8 +23249,7 @@ fn NewParser_(
                 };
                 if (hook_call.args.len <= arg_index) break :hash_arg;
                 const arg = hook_call.args.slice()[arg_index];
-                _ = arg; // autofix
-                // TODO:
+                arg.data.writeToHasher(&ctx.hasher, p.symbols.items);
             } else switch (hook_call.target.data) {
                 inline .e_identifier,
                 .e_import_identifier,
@@ -23263,7 +23278,7 @@ fn NewParser_(
                 stmts.* = ListManaged(Stmt).fromOwnedSlice(p.allocator, new_stmts);
             } else {
                 _ = stmts.addOneAssumeCapacity();
-                bun.copy(Stmt, stmts.items[0 .. stmts.items.len - 2], stmts.items[1..]);
+                bun.copy(Stmt, stmts.items[1..], stmts.items[0 .. stmts.items.len - 1]);
             }
 
             const loc = logger.Loc.Empty;

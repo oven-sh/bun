@@ -44,6 +44,7 @@ interface ParsedBuiltin {
   directives: Record<string, any>;
   source: string;
   async: boolean;
+  enums: string[];
 }
 
 interface BundledBuiltin {
@@ -74,13 +75,15 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
   // and then compile those separately
 
   const consumeWhitespace = /^\s*/;
-  const consumeTopLevelContent = /^(\/\*|\/\/|type|import|interface|\$|export (?:async )?function|(?:async )?function)/;
-  const consumeEndOfType = /;|.(?=export|type|interface|\$|\/\/|\/\*|function)/;
+  const consumeTopLevelContent =
+    /^(\/\*|\/\/|type|import|interface|\$|const enum|export (?:async )?function|(?:async )?function)/;
+  const consumeEndOfType = /;|.(?=export|type|interface|\$|\/\/|\/\*|function|const enum)/;
 
   const functions: ParsedBuiltin[] = [];
   let directives: Record<string, any> = {};
   const bundledFunctions: BundledBuiltin[] = [];
   let internal = false;
+  const topLevelEnums: { name: string; code: string }[] = [];
 
   while (contents.length) {
     contents = contents.replace(consumeWhitespace, "");
@@ -106,6 +109,13 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
       const i = contents.search(consumeEndOfType);
       contents = contents.slice(i + 1);
     } else if (match[1] === "interface") {
+      contents = sliceSourceCode(contents, false).rest;
+    } else if (match[1] === "const enum") {
+      const i = contents.indexOf("}\n");
+      topLevelEnums.push({
+        name: contents.slice(match[0].length, contents.indexOf("{")).trim(),
+        code: "\n" + contents.slice(0, i + 1).trim() + ";\n",
+      });
       contents = sliceSourceCode(contents, false).rest;
     } else if (match[1] === "$") {
       const directive = contents.match(/^\$([a-zA-Z0-9]+)(?:\s*=\s*([^\r\n]+?))?\s*;?\r?\n/);
@@ -148,12 +158,24 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
         globalThis.requireTransformer(x, SRC_DIR + "/" + basename),
       );
 
+      let source = result.trim().slice(2, -1);
+      let enums = [];
+      if (topLevelEnums.length) {
+        source = result.trim().slice(2, -1);
+        for (const { name, code } of topLevelEnums) {
+          if (source.includes(name)) {
+            enums.push(code);
+          }
+        }
+      }
+
       functions.push({
         name,
         params,
         directives,
-        source: result.trim().slice(2, -1),
+        source,
         async,
+        enums,
       });
       contents = rest;
       directives = {};
@@ -178,7 +200,7 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
       `// @ts-nocheck
 // GENERATED TEMP FILE - DO NOT EDIT
 // Sourced from ${path.relative(TMP_DIR, filename)}
-
+${fn.enums.join("\n")}
 // do not allow the bundler to rename a symbol to $
 ($);
 

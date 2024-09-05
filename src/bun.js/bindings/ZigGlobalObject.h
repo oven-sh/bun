@@ -29,7 +29,7 @@ class Performance;
 
 namespace Bun {
 class InternalModuleRegistry;
-class NapiHandleScope;
+class NapiHandleScopeImpl;
 } // namespace Bun
 
 namespace v8 {
@@ -284,6 +284,7 @@ public:
     Structure* NapiExternalStructure() const { return m_NapiExternalStructure.getInitializedOnMainThread(this); }
     Structure* NapiPrototypeStructure() const { return m_NapiPrototypeStructure.getInitializedOnMainThread(this); }
     Structure* NAPIFunctionStructure() const { return m_NAPIFunctionStructure.getInitializedOnMainThread(this); }
+    Structure* NapiHandleScopeImplStructure() const { return m_NapiHandleScopeImplStructure.getInitializedOnMainThread(this); }
 
     Structure* JSSQLStatementStructure() const { return m_JSSQLStatementStructure.getInitializedOnMainThread(this); }
 
@@ -409,7 +410,7 @@ public:
     // The handle scope where all new NAPI values will be created. You must not pass any napi_values
     // back to a NAPI function without putting them in the handle scope, as the NAPI function may
     // move them off the stack which will cause them to get collected if not in the handle scope.
-    JSC::WriteBarrier<Bun::NapiHandleScope> m_currentNapiHandleScope;
+    JSC::WriteBarrier<Bun::NapiHandleScopeImpl> m_currentNapiHandleScopeImpl;
 
     // The original, unmodified Error.prepareStackTrace.
     //
@@ -570,7 +571,7 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_NapiExternalStructure;
     LazyProperty<JSGlobalObject, Structure> m_NapiPrototypeStructure;
     LazyProperty<JSGlobalObject, Structure> m_NAPIFunctionStructure;
-    LazyProperty<JSGlobalObject, Structure> m_NapiHandleScopeStructure;
+    LazyProperty<JSGlobalObject, Structure> m_NapiHandleScopeImplStructure;
 
     LazyProperty<JSGlobalObject, Structure> m_JSSQLStatementStructure;
     LazyProperty<JSGlobalObject, v8::GlobalInternals> m_V8GlobalInternals;

@@ -147,7 +147,7 @@ test_napi_get_value_string_utf8_with_buffer(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
-napi_value test_napi_handle_scope(const Napi::CallbackInfo &info) {
+napi_value test_napi_handle_scope_string(const Napi::CallbackInfo &info) {
   // this is mostly a copy of test_handle_scope_gc from
   // test/v8/v8-module/main.cpp -- see comments there for explanation
   Napi::Env env = info.Env();
@@ -182,7 +182,54 @@ napi_value test_napi_handle_scope(const Napi::CallbackInfo &info) {
     }
   }
 
+  delete[] small_strings;
+  delete[] large_strings;
   delete[] string_data;
+  return ok(env);
+}
+
+napi_value test_napi_handle_scope_bigint(const Napi::CallbackInfo &info) {
+  // this is mostly a copy of test_handle_scope_gc from
+  // test/v8/v8-module/main.cpp -- see comments there for explanation
+  Napi::Env env = info.Env();
+
+  constexpr size_t num_small_ints = 100;
+  constexpr size_t num_large_ints = 10000;
+  constexpr size_t small_int_size = 16;
+  // JSC bigint size limit = 1<<20 bits
+  constexpr size_t large_int_size = (1 << 20) / 64;
+
+  auto *small_ints = new napi_value[num_small_ints];
+  auto *large_ints = new napi_value[num_large_ints];
+  std::vector<uint64_t> int_words(large_int_size);
+
+  for (size_t i = 0; i < num_small_ints; i++) {
+    std::array<uint64_t, small_int_size> words;
+    words.fill(i + 1);
+    assert(napi_create_bigint_words(env, 0, small_int_size, words.data(),
+                                    &small_ints[i]) == napi_ok);
+  }
+
+  for (size_t i = 0; i < num_large_ints; i++) {
+    std::fill(int_words.begin(), int_words.end(), i + 1);
+    assert(napi_create_bigint_words(env, 0, large_int_size, int_words.data(),
+                                    &large_ints[i]) == napi_ok);
+
+    for (size_t j = 0; j < num_small_ints; j++) {
+      std::array<uint64_t, small_int_size> words;
+      int sign;
+      size_t word_count = words.size();
+      assert(napi_get_value_bigint_words(env, small_ints[j], &sign, &word_count,
+                                         words.data()) == napi_ok);
+      printf("%d, %zu\n", sign, word_count);
+      assert(sign == 0 && word_count == words.size());
+      assert(std::all_of(words.begin(), words.end(),
+                         [j](const uint64_t &w) { return w == j + 1; }));
+    }
+  }
+
+  delete[] small_ints;
+  delete[] large_ints;
   return ok(env);
 }
 
@@ -247,8 +294,10 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
       "test_napi_threadsafe_function_does_not_hang_after_finalize",
       Napi::Function::New(
           env, test_napi_threadsafe_function_does_not_hang_after_finalize));
-  exports.Set("test_napi_handle_scope",
-              Napi::Function::New(env, test_napi_handle_scope));
+  exports.Set("test_napi_handle_scope_string",
+              Napi::Function::New(env, test_napi_handle_scope_string));
+  exports.Set("test_napi_handle_scope_bigint",
+              Napi::Function::New(env, test_napi_handle_scope_bigint));
   exports.Set("test_napi_delete_property",
               Napi::Function::New(env, test_napi_delete_property));
 

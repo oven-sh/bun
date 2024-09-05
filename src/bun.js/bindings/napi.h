@@ -1,9 +1,5 @@
 #pragma once
 
-namespace Zig {
-class GlobalObject;
-}
-
 #include "root.h"
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/VM.h>
@@ -14,6 +10,8 @@ class GlobalObject;
 #include "js_native_api_types.h"
 #include <JavaScriptCore/JSWeakValue.h>
 #include "JSFFIFunction.h"
+#include "ZigGlobalObject.h"
+#include "napi_handle_scope.h"
 
 namespace JSC {
 class JSGlobalObject;
@@ -38,8 +36,11 @@ static inline Zig::GlobalObject* toJS(napi_env val)
     return reinterpret_cast<Zig::GlobalObject*>(val);
 }
 
-static inline napi_value toNapi(JSC::JSValue val)
+static inline napi_value toNapi(JSC::JSValue val, Zig::GlobalObject* globalObject)
 {
+    if (val.isCell()) {
+        globalObject->m_currentNapiHandleScopeImpl.get()->append(val);
+    }
     return reinterpret_cast<napi_value>(JSC::JSValue::encode(val));
 }
 

@@ -8,11 +8,11 @@ namespace Bun {
 // An array of write barriers (so that newly-added objects are not lost by GC) to JSValues. Unlike
 // the V8 version, pointer stability is not required (because napi_values don't point into this
 // structure) so we can use a regular WTF::Vector
-class NapiHandleScope : public JSC::JSCell {
+class NapiHandleScopeImpl : public JSC::JSCell {
 public:
     using Base = JSC::JSCell;
 
-    static NapiHandleScope* create(JSC::VM& vm, JSC::Structure* structure, NapiHandleScope* parent);
+    static NapiHandleScopeImpl* create(JSC::VM& vm, JSC::Structure* structure, NapiHandleScopeImpl* parent);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
     {
@@ -24,29 +24,40 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<NapiHandleScope, WebCore::UseCustomHeapCellType::No>(
+        return WebCore::subspaceForImpl<NapiHandleScopeImpl, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForHandleScopeBuffer.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForHandleScopeBuffer = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForHandleScopeBuffer.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForHandleScopeBuffer = std::forward<decltype(space)>(space); });
+            [](auto& spaces) { return spaces.m_clientSubspaceForNapiHandleScopeImpl.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNapiHandleScopeImpl = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForNapiHandleScopeImpl.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForNapiHandleScopeImpl = std::forward<decltype(space)>(space); });
     }
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
     void append(JSC::JSValue val);
-    NapiHandleScope* parent() const { return m_parent; }
+    NapiHandleScopeImpl* parent() const { return m_parent; }
 
 private:
-    NapiHandleScope* m_parent;
+    NapiHandleScopeImpl* m_parent;
     WTF::Vector<JSC::WriteBarrier<JSC::Unknown>, 16> m_storage;
 
-    NapiHandleScope(JSC::VM& vm, JSC::Structure* structure, NapiHandleScope* parent)
+    NapiHandleScopeImpl(JSC::VM& vm, JSC::Structure* structure, NapiHandleScopeImpl* parent)
         : Base(vm, structure)
         , m_parent(parent)
     {
     }
+};
+
+// Wrapper class used to push a new handle scope and pop it when this instance goes out of scope
+class NapiHandleScope {
+public:
+    NapiHandleScope(Zig::GlobalObject* globalObject);
+    ~NapiHandleScope();
+
+private:
+    NapiHandleScopeImpl* m_impl;
+    Zig::GlobalObject* m_globalObject;
 };
 
 } // namespace Bun

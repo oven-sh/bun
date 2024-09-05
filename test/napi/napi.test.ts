@@ -71,9 +71,12 @@ describe("napi", () => {
   });
 
   describe("handle_scope", () => {
-    it("keeps napi_values alive", () => {
-      checkSameOutput("test_napi_handle_scope", []);
+    it("keeps strings alive", () => {
+      checkSameOutput("test_napi_handle_scope_string", []);
     });
+    it("keeps bigints alive", () => {
+      checkSameOutput("test_napi_handle_scope_bigint", []);
+    }, 10000);
   });
 
   describe("napi_delete_property", () => {

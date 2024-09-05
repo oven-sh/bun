@@ -2857,8 +2857,8 @@ void GlobalObject::finishCreation(VM& vm)
                 Bun::NapiPrototype::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
         });
 
-    m_NapiHandleScopeStructure.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
-        init.set(Bun::NapiHandleScope::createStructure(init.vm, init.owner));
+    m_NapiHandleScopeImplStructure.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
+        init.set(Bun::NapiHandleScopeImpl::createStructure(init.vm, init.owner));
     });
 
     m_cachedNodeVMGlobalObjectStructure.initLater(
@@ -3542,7 +3542,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_pendingNapiModuleAndExports[0]);
     visitor.append(thisObject->m_pendingNapiModuleAndExports[1]);
 
-    visitor.append(thisObject->m_currentNapiHandleScope);
+    visitor.append(thisObject->m_currentNapiHandleScopeImpl);
 
     thisObject->m_asyncBoundFunctionStructure.visit(visitor);
     thisObject->m_bunObject.visit(visitor);
@@ -3582,7 +3582,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_NapiExternalStructure.visit(visitor);
     thisObject->m_NAPIFunctionStructure.visit(visitor);
     thisObject->m_NapiPrototypeStructure.visit(visitor);
-    thisObject->m_NapiHandleScopeStructure.visit(visitor);
+    thisObject->m_NapiHandleScopeImplStructure.visit(visitor);
     thisObject->m_nativeMicrotaskTrampoline.visit(visitor);
     thisObject->m_navigatorObject.visit(visitor);
     thisObject->m_NodeVMScriptClassStructure.visit(visitor);

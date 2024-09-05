@@ -1,29 +1,31 @@
 #include "napi_handle_scope.h"
 
+#include "ZigGlobalObject.h"
+
 namespace Bun {
 
 // for CREATE_METHOD_TABLE
 namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
-const JSC::ClassInfo NapiHandleScope::s_info = {
-    "NapiHandleScope"_s,
+const JSC::ClassInfo NapiHandleScopeImpl::s_info = {
+    "NapiHandleScopeImpl"_s,
     nullptr,
     nullptr,
     nullptr,
-    CREATE_METHOD_TABLE(NapiHandleScope)
+    CREATE_METHOD_TABLE(NapiHandleScopeImpl)
 };
 
-NapiHandleScope* NapiHandleScope::create(JSC::VM& vm, JSC::Structure* structure, NapiHandleScope* parent)
+NapiHandleScopeImpl* NapiHandleScopeImpl::create(JSC::VM& vm, JSC::Structure* structure, NapiHandleScopeImpl* parent)
 {
-    NapiHandleScope* buffer = new (NotNull, JSC::allocateCell<NapiHandleScope>(vm)) NapiHandleScope(vm, structure, parent);
+    NapiHandleScopeImpl* buffer = new (NotNull, JSC::allocateCell<NapiHandleScopeImpl>(vm)) NapiHandleScopeImpl(vm, structure, parent);
     buffer->finishCreation(vm);
     return buffer;
 }
 
 template<typename Visitor>
-void NapiHandleScope::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+void NapiHandleScopeImpl::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    NapiHandleScope* thisObject = jsCast<NapiHandleScope*>(cell);
+    NapiHandleScopeImpl* thisObject = jsCast<NapiHandleScopeImpl*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
@@ -34,11 +36,32 @@ void NapiHandleScope::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     }
 }
 
-DEFINE_VISIT_CHILDREN(NapiHandleScope);
+DEFINE_VISIT_CHILDREN(NapiHandleScopeImpl);
 
-void NapiHandleScope::append(JSC::JSValue val)
+void NapiHandleScopeImpl::append(JSC::JSValue val)
 {
     m_storage.append(JSC::WriteBarrier<JSC::Unknown>(vm(), this, val));
+}
+
+NapiHandleScope::NapiHandleScope(Zig::GlobalObject* globalObject)
+    : m_globalObject(globalObject)
+    , m_impl(NapiHandleScopeImpl::create(globalObject->vm(),
+          globalObject->NapiHandleScopeImplStructure(),
+          globalObject->m_currentNapiHandleScopeImpl.get()))
+{
+    globalObject->m_currentNapiHandleScopeImpl.set(globalObject->vm(), globalObject, m_impl);
+}
+
+NapiHandleScope::~NapiHandleScope()
+{
+    auto* current = m_globalObject->m_currentNapiHandleScopeImpl.get();
+    RELEASE_ASSERT_WITH_MESSAGE(current == m_impl, "Unbalanced napi_handle_scope opens and closes");
+    if (auto* parent = m_impl->parent()) {
+        m_globalObject->m_currentNapiHandleScopeImpl.set(m_globalObject->vm(), m_globalObject, m_impl->parent());
+    } else {
+        m_globalObject->m_currentNapiHandleScopeImpl.clear();
+    }
+    m_impl = nullptr;
 }
 
 } // namespace Bun

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn as nodeSpawn } from "node:child_process";
-import { cpSync, existsSync } from "node:fs";
+import { cpSync, existsSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -60,6 +60,7 @@ async function build(args) {
       const cachePath = getCachePath();
       if (existsSync(cachePath)) {
         cpSync(cachePath, buildPath, { recursive: true, force: true });
+        generateOptions["--fresh"] = undefined;
         console.log(`Copied branch cache from ${cachePath} to ${buildPath}`);
       }
     } catch (error) {
@@ -67,6 +68,7 @@ async function build(args) {
         const mainCachePath = getCachePath(getDefaultBranch());
         if (existsSync(mainCachePath)) {
           cpSync(mainCachePath, buildPath, { recursive: true, force: true });
+          generateOptions["--fresh"] = undefined;
           console.log(`Copied main cache from ${mainCachePath} to ${buildPath}`);
         }
       } catch (error) {

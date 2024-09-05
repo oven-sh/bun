@@ -4,6 +4,9 @@ if(NOT CMAKE_SYSTEM_NAME OR NOT CMAKE_SYSTEM_PROCESSOR)
   message(FATAL_ERROR "CMake included this file before project() was called")
 endif()
 
+optionx(BUN_LINK_ONLY BOOL "If only the linking step should be built" DEFAULT OFF)
+optionx(BUN_CPP_ONLY BOOL "If only the C++ part of Bun should be built" DEFAULT OFF)
+
 optionx(CI BOOL "If CI is enabled" DEFAULT OFF)
 optionx(BUILDKITE BOOL "If Buildkite is enabled" DEFAULT OFF)
 optionx(GITHUB_ACTIONS BOOL "If GitHub Actions is enabled" DEFAULT OFF)
@@ -187,3 +190,4 @@ else()
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D_LIBCXX_ENABLE_ASSERTIONS=0 -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_NONE")
   endif()
 endif()
+

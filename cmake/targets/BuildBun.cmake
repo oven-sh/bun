@@ -555,9 +555,6 @@ endif()
 
 set(BUN_CPP_OUTPUT ${BUILD_PATH}/${CMAKE_STATIC_LIBRARY_PREFIX}bun${CMAKE_STATIC_LIBRARY_SUFFIX})
 
-optionx(BUN_LINK_ONLY BOOL "If only the linking step should be built" DEFAULT OFF)
-optionx(BUN_CPP_ONLY BOOL "If only the C++ part of Bun should be built" DEFAULT OFF)
-
 if(BUN_LINK_ONLY)
   add_executable(${bun} ${BUN_CPP_OUTPUT} ${BUN_ZIG_OUTPUT})
   set_target_properties(${bun} PROPERTIES LINKER_LANGUAGE CXX)

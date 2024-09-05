@@ -1,7 +1,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
 pub const css = @import("../css_parser.zig");
-const Error = css.Error;
+const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -32,7 +32,7 @@ pub fn Size2D(comptime T: type) type {
         a: T,
         b: T,
 
-        fn parseVal(input: *css.Parser) Error!T {
+        fn parseVal(input: *css.Parser) Result(T) {
             switch (T) {
                 f32 => return CSSNumberFns.parse(input),
                 LengthPercentage => return LengthPercentage.parse(input),
@@ -40,13 +40,16 @@ pub fn Size2D(comptime T: type) type {
             }
         }
 
-        pub fn parse(input: *css.Parser) Error!Size2D(T) {
-            const first = try parseVal(input);
-            const second = input.tryParse(parseVal, .{}) catch first;
-            return Size2D(T){
+        pub fn parse(input: *css.Parser) Result(Size2D(T)) {
+            const first = switch (parseVal(input)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
+            const second = input.tryParse(parseVal, .{}).unwrapOrNoOptmizations(first);
+            return .{ .result = Size2D(T){
                 .a = first,
                 .b = second,
-            };
+            } };
         }
 
         pub fn toCss(this: *const Size2D(T), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {

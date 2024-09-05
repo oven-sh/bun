@@ -1,7 +1,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
 pub const css = @import("../css_parser.zig");
-const Error = css.Error;
+const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -31,23 +31,26 @@ pub const Resolution = union(enum) {
     /// A resolution in dots per px.
     dppx: CSSNumber,
 
-    pub fn parse(input: *css.Parser) Error!Resolution {
+    pub fn parse(input: *css.Parser) Result(Resolution) {
         // TODO: calc?
         const location = input.currentSourceLocation();
-        const tok = try input.next();
+        const tok = switch (input.next()) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
         if (tok.* == .dimension) {
             const value = tok.dimension.num.value;
             const unit = tok.dimension.unit;
             // css.todo_stuff.match_ignore_ascii_case
-            if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "dpi")) return .{ .dpi = value };
-            if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "dpcm")) return .{ .dpcm = value };
-            if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "dppx") or bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "x")) return .{ .dppx = value };
+            if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "dpi")) return .{ .result = .{ .dpi = value } };
+            if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "dpcm")) return .{ .result = .{ .dpcm = value } };
+            if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "dppx") or bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "x")) return .{ .result = .{ .dppx = value } };
             return location.newUnexpectedTokenError(.{ .ident = unit });
         }
         return location.newUnexpectedTokenError(tok.*);
     }
 
-    pub fn tryFromToken(token: *const css.Token) Error!Resolution {
+    pub fn tryFromToken(token: *const css.Token) css.Maybe(Resolution, void) {
         switch (token.*) {
             .dimension => |dim| {
                 const value = dim.num.value;
@@ -62,10 +65,10 @@ pub const Resolution = union(enum) {
                 {
                     return .{ .dppx = value };
                 } else {
-                    @compileError(css.todo_stuff.errors);
+                    return .{ .err = {} };
                 }
             },
-            else => @compileError(css.todo_stuff.errors),
+            else => return .{ .err = {} },
         }
     }
 

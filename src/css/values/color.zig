@@ -5,7 +5,7 @@ const logger = bun.logger;
 const Log = logger.Log;
 
 pub const css = @import("../css_parser.zig");
-pub const Error = css.Error;
+pub const Result = css.Result;
 
 const Percentage = css.css_values.percentage.Percentage;
 const CSSNumberFns = css.css_values.number.CSSNumberFns;
@@ -227,9 +227,12 @@ pub const CssColor = union(enum) {
         }
     }
 
-    pub fn parse(input: *css.Parser) Error!CssColor {
+    pub fn parse(input: *css.Parser) Result(CssColor) {
         const location = input.currentSourceLocation();
-        const token = try input.next();
+        const token = switch (input.next()) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
 
         switch (token.*) {
             .hash, .idhash => |v| {
@@ -374,8 +377,8 @@ pub const CssColor = union(enum) {
         const converted_second = check_converted.run(other);
 
         // https://drafts.csswg.org/css-color-5/#color-mix-result
-        var first_color = T.tryFromCssColor(this) catch return null;
-        var second_color = T.tryFromCssColor(other) catch return null;
+        var first_color = T.tryFromCssColor(this) orelse return null;
+        var second_color = T.tryFromCssColor(other) orelse return null;
 
         if (converted_first and !first_color.inGamut()) {
             first_color = mapGamut(first_color);
@@ -498,27 +501,43 @@ pub fn parseLab(
     input: *css.Parser,
     parser: *ComponentParser,
     comptime func: *const fn (f32, f32, f32, f32) LABColor,
-) Error!CssColor {
+) Result(CssColor) {
     const Closure = struct {
         parser: *ComponentParser,
 
-        pub fn parsefn(this: *@This(), i: *css.Parser) Error!CssColor {
+        pub fn parsefn(this: *@This(), i: *css.Parser) Result(CssColor) {
             return this.parser.parseRelative(i, T, CssColor, @This().innerfn, .{});
         }
 
-        pub fn innerfn(i: *css.Parser, p: *ComponentParser) Error!CssColor {
+        pub fn innerfn(i: *css.Parser, p: *ComponentParser) Result(CssColor) {
             // f32::max() does not propagate NaN, so use clamp for now until f32::maximum() is stable.
-            const l = std.math.clamp(try p.parsePercentage(input), 0.0, std.math.floatMax(f32));
-            const a = try p.parseNumber(i);
-            const b = try p.parseNumber(i);
-            const alpha = try parseAlpha(i, p);
+            const l = std.math.clamp(
+                switch (p.parsePercentage(input)) {
+                    .result => |v| v,
+                    .err => |e| return .{ .err = e },
+                },
+                0.0,
+                std.math.floatMax(f32),
+            );
+            const a = switch (p.parseNumber(i)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
+            const b = switch (p.parseNumber(i)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
+            const alpha = switch (parseAlpha(i, p)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
             const lab = func(l, a, b, alpha);
             const allocator: Allocator = {
                 @compileError(css.todo_stuff.think_about_allocator);
             };
             const heap_lab = bun.create(allocator, LABColor, lab) catch unreachable;
             heap_lab.* = lab;
-            return CssColor{ .lab = heap_lab };
+            return .{ .result = CssColor{ .lab = heap_lab } };
         }
     };
     var closure = Closure{
@@ -541,15 +560,15 @@ pub fn parseLch(
         f32,
         f32,
     ) LABColor,
-) Error!CssColor {
+) Result(CssColor) {
     const Closure = struct {
         parser: *ComponentParser,
 
-        pub fn parseNestedBlockFn(this: *@This(), i: *css.Parser) Error!CssColor {
+        pub fn parseNestedBlockFn(this: *@This(), i: *css.Parser) Result(CssColor) {
             return this.parser.parseRelative(i, T, CssColor, @This().parseRelativeFn, .{this});
         }
 
-        pub fn parseRelativeFn(i: *css.Parser, p: *ComponentParser, this: *@This()) Error!CssColor {
+        pub fn parseRelativeFn(i: *css.Parser, p: *ComponentParser, this: *@This()) Result(CssColor) {
             _ = this; // autofix
             if (p.from) |from| {
                 // Relative angles should be normalized.
@@ -560,13 +579,35 @@ pub fn parseLch(
                 }
             }
 
-            const l = std.math.clamp(try parser.parsePercentage(i), 0.0, std.math.floatMax(f32));
-            const c = std.math.clamp(try parser.parseNumber(i), 0.0, std.math.floatMax(f32));
-            const h = try parseAngleOrNumber(i, p);
-            const alpha = try parseAlpha(i, p);
+            const l = std.math.clamp(
+                switch (parser.parsePercentage(i)) {
+                    .result => |vv| vv,
+                    .err => |e| return .{ .err = e },
+                },
+                0.0,
+                std.math.floatMax(f32),
+            );
+            const c = std.math.clamp(
+                switch (parser.parseNumber(i)) {
+                    .result => |vv| vv,
+                    .err => |e| return .{ .err = e },
+                },
+                0.0,
+                std.math.floatMax(f32),
+            );
+            const h = switch (parseAngleOrNumber(i, p)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
+            const alpha = switch (parseAlpha(i, p)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
             const lab = func(l, c, h, alpha);
             return .{
-                .lab = bun.create(@compileError(css.todo_stuff.think_about_allocator), LABColor, lab),
+                .result = .{
+                    .lab = bun.create(@compileError(css.todo_stuff.think_about_allocator), LABColor, lab),
+                },
             };
         }
     };
@@ -592,20 +633,26 @@ pub fn parseHslHwb(
         f32,
         f32,
     ) CssColor,
-) Error!CssColor {
+) Result(CssColor) {
     const Closure = struct {
         parser: *ComponentParser,
         allows_legacy: bool,
 
-        pub fn parseNestedBlockFn(this: *@This(), i: *css.Parser) Error!CssColor {
+        pub fn parseNestedBlockFn(this: *@This(), i: *css.Parser) Result(CssColor) {
             return this.parser.parseRelative(i, T, CssColor, @This().parseRelativeFn, .{this});
         }
 
-        pub fn parseRelativeFn(i: *css.Parser, p: *ComponentParser, this: *@This()) Error!CssColor {
-            const h, const a, const b, const is_legacy = try parseHslHwbComponents(T, i, p, this.allows_legacy);
-            const alpha = if (is_legacy) try parseLegacyAlpha(i, p) else try parseAlpha(i, p);
+        pub fn parseRelativeFn(i: *css.Parser, p: *ComponentParser, this: *@This()) Result(CssColor) {
+            const h, const a, const b, const is_legacy = switch (parseHslHwbComponents(T, i, p, this.allows_legacy)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
+            const alpha = switch (if (is_legacy) parseLegacyAlpha(i, p) else parseAlpha(i, p)) {
+                .result => |v| v,
+                .err => |e| return .{ .err = e },
+            };
 
-            return func(h, a, b, alpha);
+            return .{ .result = func(h, a, b, alpha) };
         }
     };
 
@@ -622,52 +669,80 @@ pub fn parseHslHwbComponents(
     input: *css.Parser,
     parser: *ComponentParser,
     allows_legacy: bool,
-) Error!struct { f32, f32, f32, bool } {
+) Result(struct { f32, f32, f32, bool }) {
     _ = T; // autofix
-    const h = try parseAngleOrNumber(input, parser);
+    const h = switch (parseAngleOrNumber(input, parser)) {
+        .result => |vv| vv,
+        .err => |e| return .{ .err = e },
+    };
     const is_legacy_syntax = allows_legacy and
         parser.from == null and
         !std.math.isNan(h) and
-        (if (input.tryParse(css.Parser.expectComma, .{})) |_| true else false);
+        input.tryParse(css.Parser.expectComma, .{}).isOk();
 
-    const a = std.math.clamp(try parser.parsePercentage(input), 0.0, 1.0);
+    const a = std.math.clamp(
+        switch (parser.parsePercentage(input)) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        },
+        0.0,
+        1.0,
+    );
 
     if (is_legacy_syntax) {
-        try input.expectComma();
+        if (input.expectComma().asErr()) |e| return .{ .err = e };
     }
 
-    const b = std.math.clamp(try parser.parsePercentage(input), 0.0, 1.0);
+    const b = std.math.clamp(
+        switch (parser.parsePercentage(input)) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        },
+        0.0,
+        1.0,
+    );
 
     if (is_legacy_syntax and (std.math.isNan(a) or std.math.isNan(b))) {
-        return try input.newCustomError(css.ParserError.invalid_value);
+        return input.newCustomError(css.ParserError.invalid_value);
     }
 
-    return .{ h, a, b, is_legacy_syntax };
+    return .{ .result = .{ h, a, b, is_legacy_syntax } };
 }
 
-pub fn parseAngleOrNumber(input: *css.Parser, parser: *const ComponentParser) Error!f32 {
-    // zack is here
-    return switch (try parser.parseAngleOrNumber(input)) {
-        .number => |v| v.value,
-        .angle => |v| v.degrees,
+pub fn parseAngleOrNumber(input: *css.Parser, parser: *const ComponentParser) Result(f32) {
+    const result = switch (parser.parseAngleOrNumber(input)) {
+        .result => |vv| vv,
+        .err => |e| return .{ .err = e },
+    };
+    return .{
+        .result = switch (result) {
+            .number => |v| v.value,
+            .angle => |v| v.degrees,
+        },
     };
 }
 
-fn parseRgb(input: *css.Parser, parser: *ComponentParser) Error!CssColor {
+fn parseRgb(input: *css.Parser, parser: *ComponentParser) Result(CssColor) {
     // https://drafts.csswg.org/css-color-4/#rgb-functions
 
     const Closure = struct {
         p: *ComponentParser,
 
-        pub fn parseNestedBlockFn(this: *@This(), i: *css.Parser) Error!CssColor {
+        pub fn parseNestedBlockFn(this: *@This(), i: *css.Parser) Result(CssColor) {
             this.p.parseRelative(i, SRGB, CssColor, @This().parseRelativeFn, .{this});
         }
 
-        pub fn parseRelativeFn(i: *css.Parser, p: *css.Parser, this: *@This()) Error!CssColor {
+        pub fn parseRelativeFn(i: *css.Parser, p: *css.Parser, this: *@This()) Result(CssColor) {
             _ = i; // autofix
             _ = this; // autofix
-            const r, const g, const b, const is_legacy = try parseRgbComponents(input, p);
-            const alpha = if (is_legacy) try parseLegacyAlpha(input, p) else try parseAlpha(input, p);
+            const r, const g, const b, const is_legacy = switch (parseRgbComponents(input, p)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
+            const alpha = switch (if (is_legacy) parseLegacyAlpha(input, p) else parseAlpha(input, p)) {
+                .result => |v| v,
+                .err => |e| return .{ .err = e },
+            };
 
             if (!std.math.isNan(r) and
                 !std.math.isNan(g) and
@@ -675,36 +750,42 @@ fn parseRgb(input: *css.Parser, parser: *ComponentParser) Error!CssColor {
                 !std.math.isNan(alpha))
             {
                 if (is_legacy) return .{
-                    .rgba = RGBA.new(
-                        @intCast(r),
-                        @intCast(g),
-                        @intCast(b),
-                        @intCast(alpha),
-                    ),
+                    .result = .{
+                        .rgba = RGBA.new(
+                            @intCast(r),
+                            @intCast(g),
+                            @intCast(b),
+                            @intCast(alpha),
+                        ),
+                    },
                 };
 
                 return .{
-                    .rgba = RGBA.fromFloats(
-                        r,
-                        g,
-                        b,
-                        alpha,
-                    ),
+                    .result = .{
+                        .rgba = RGBA.fromFloats(
+                            r,
+                            g,
+                            b,
+                            alpha,
+                        ),
+                    },
                 };
             } else {
                 return .{
-                    .float = bun.create(
-                        @compileError(css.todo_stuff.think_about_allocator),
-                        FloatColor,
-                        .{
-                            .srgb = .{
-                                .r = r,
-                                .g = g,
-                                .b = b,
-                                .alpha = alpha,
+                    .result = .{
+                        .float = bun.create(
+                            @compileError(css.todo_stuff.think_about_allocator),
+                            FloatColor,
+                            .{
+                                .srgb = .{
+                                    .r = r,
+                                    .g = g,
+                                    .b = b,
+                                    .alpha = alpha,
+                                },
                             },
-                        },
-                    ),
+                        ),
+                    },
                 };
             }
         }
@@ -715,29 +796,68 @@ fn parseRgb(input: *css.Parser, parser: *ComponentParser) Error!CssColor {
     return input.parseNestedBlock(CssColor, &closure, Closure.parseNestedBlockFn);
 }
 
-pub fn parseRgbComponents(input: *css.Parser, parser: *ComponentParser) Error!struct {
+pub fn parseRgbComponents(input: *css.Parser, parser: *ComponentParser) Result(struct {
     f32,
     f32,
     f32,
     bool,
-} {
-    const red = try parser.parseNumberOrPercentage(input);
-    const is_legacy_syntax = parser.from == null and !std.math.isNan(red.value) and (if (input.tryParse(css.Parser.expectComma)) |_| true else false);
+}) {
+    const red = switch (parser.parseNumberOrPercentage(input)) {
+        .result => |vv| vv,
+        .err => |e| return .{ .err = e },
+    };
+    const is_legacy_syntax = parser.from == null and !std.math.isNan(red.value) and input.tryParse(css.Parser.expectComma).isOk();
 
     const r, const g, const b = if (is_legacy_syntax) switch (red) {
         .number => |num| brk: {
             const r = std.math.clamp(@round(num.value), 0.0, 255.0);
-            const g = std.math.clamp(@round(try parser.parseNumber(input)), 0.0, 255.0);
-            try input.expectComma();
-            const b = std.math.clamp(@round(try parser.parseNumber(input)), 0.0, 255.0);
+            const g = std.math.clamp(
+                @round(
+                    switch (parser.parseNumber(input)) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    },
+                ),
+                0.0,
+                255.0,
+            );
+            if (input.expectComma().asErr()) |e| return .{ .err = e };
+            const b = std.math.clamp(
+                @round(
+                    switch (parser.parseNumber(input)) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    },
+                ),
+                0.0,
+                255.0,
+            );
             break :brk .{ r, g, b };
         },
         .percentage => |per| brk: {
             const unit_value = per.unit_value;
             const r = std.math.clamp(@round(unit_value * 255.0), 0.0, 255.0);
-            const g = std.math.clamp(@round(try parser.parsePercentage(input) * 255.0), 0.0, 255.0);
-            try input.expectComma();
-            const b = std.math.clamp(@round(try parser.parsePercentage(input) * 255.0), 0.0, 255.0);
+            const g = std.math.clamp(
+                @round(
+                    switch (parser.parsePercentage(input)) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    } * 255.0,
+                ),
+                0.0,
+                255.0,
+            );
+            if (input.expectComma().asErr()) |e| return .{ .err = e };
+            const b = std.math.clamp(
+                @round(
+                    switch (parser.parsePercentage(input)) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    } * 255.0,
+                ),
+                0.0,
+                255.0,
+            );
             break :brk .{ r, g, b };
         },
     } else brk: {
@@ -754,8 +874,18 @@ pub fn parseRgbComponents(input: *css.Parser, parser: *ComponentParser) Error!st
             }
         };
         const r = get.component(red);
-        const g = get.component(try parser.parseNumberOrPercentage(input));
-        const b = get.component(try parser.parseNumberOrPercentage(input));
+        const g = get.component(
+            switch (parser.parseNumberOrPercentage(input)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            },
+        );
+        const b = get.component(
+            switch (parser.parseNumberOrPercentage(input)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            },
+        );
         break :brk .{ r, g, b };
     };
 
@@ -763,48 +893,62 @@ pub fn parseRgbComponents(input: *css.Parser, parser: *ComponentParser) Error!st
         return input.newCustomError(css.ParserError.invalid_value);
     }
 
-    return .{ r, g, b, is_legacy_syntax };
+    return .{ .result = .{ r, g, b, is_legacy_syntax } };
 }
 
-fn parseLegacyAlpha(input: *css.Parser, parser: *const ComponentParser) Error!f32 {
+fn parseLegacyAlpha(input: *css.Parser, parser: *const ComponentParser) Result(f32) {
     if (!input.isExhausted()) {
-        try input.expectComma();
-        return std.math.clamp(try parseNumberOrPercentage(input, parser), 0.0, 1.0);
+        if (input.expectComma().asErr()) |e| return .{ .err = e };
+        return .{ .result = std.math.clamp(
+            switch (parseNumberOrPercentage(input, parser)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            },
+            0.0,
+            1.0,
+        ) };
     }
-    return 1.0;
+    return .{ .result = 1.0 };
 }
 
-fn parseAlpha(input: *css.Parser, parser: *const ComponentParser) Error!f32 {
-    const res = if (input.tryParse(css.Parser.expectDelim, .{'/'}))
+fn parseAlpha(input: *css.Parser, parser: *const ComponentParser) Result(f32) {
+    const res = if (input.tryParse(css.Parser.expectDelim, .{'/'}).isOk())
         std.math.clamp(try parseNumberOrPercentage(input, parser), 0.0, 1.0)
     else
         1.0;
 
-    return res;
+    return .{ .result = res };
 }
 
-pub fn parseNumberOrPercentage(input: *css.Parser, parser: *const ComponentParser) Error!f32 {
-    return switch (try parser.parseNumberOrPercentage(input)) {
+pub fn parseNumberOrPercentage(input: *css.Parser, parser: *const ComponentParser) Result(f32) {
+    const result = switch (parser.parseNumberOrPercentage(input)) {
+        .result => |vv| vv,
+        .err => |e| return .{ .err = e },
+    };
+    return switch (result) {
         .number => |value| value.value,
         .percentage => |value| value.unit_value,
     };
 }
 
-pub fn parseeColorFunction(location: css.SourceLocation, function: []const u8, input: *css.Parser) Error!CssColor {
+pub fn parseeColorFunction(location: css.SourceLocation, function: []const u8, input: *css.Parser) Result(CssColor) {
     var parser = ComponentParser.new(true);
 
     // css.todo_stuff.match_ignore_ascii_case;
     if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "lab")) {
-        return parseLab(LAB, input, &parser, LABColor.newLAB, .{});
+        return .{ .result = parseLab(LAB, input, &parser, LABColor.newLAB, .{}) };
     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "oklab")) {
-        return parseLab(OKLAB, input, &parser, LABColor.newOKLAB, .{});
+        return .{ .result = parseLab(OKLAB, input, &parser, LABColor.newOKLAB, .{}) };
     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "lch")) {
-        return parseLch(LCH, input, &parser, LABColor.newLCH, .{});
+        return .{ .result = parseLch(LCH, input, &parser, LABColor.newLCH, .{}) };
     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "oklch")) {
-        return parseLch(OKLCH, input, &parser, LABColor.newOKLCH, .{});
+        return .{ .result = parseLch(OKLCH, input, &parser, LABColor.newOKLCH, .{}) };
     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "color")) {
-        const predefined = try parsePredefined(input, &parser);
-        return predefined;
+        const predefined = switch (parsePredefined(input, &parser)) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
+        return .{ .result = predefined };
     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "hsl") or
         bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "hsla"))
     {
@@ -839,8 +983,12 @@ pub fn parseeColorFunction(location: css.SourceLocation, function: []const u8, i
         return input.parseNestedBlock(CssColor, void, css.voidWrap(CssColor, parseColorMix));
     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "light-dark")) {
         const Fn = struct {
-            pub fn parsefn(_: void, i: *css.Parser) Error!CssColor {
-                const light = switch (try CssColor.parse(i)) {
+            pub fn parsefn(_: void, i: *css.Parser) Result(CssColor) {
+                const first_color = switch (CssColor.parse(i)) {
+                    .result => |vv| vv,
+                    .err => |e| return .{ .err = e },
+                };
+                const light = switch (first_color) {
                     .light_dark => |c| c.light,
                     else => |light| bun.create(
                         @compileError(css.todo_stuff.think_about_allocator),
@@ -848,8 +996,14 @@ pub fn parseeColorFunction(location: css.SourceLocation, function: []const u8, i
                         light,
                     ),
                 };
-                try i.expectComma();
-                const dark = switch (try CssColor.parse(i)) {
+
+                if (i.expectComma().asErr()) |e| return .{ .err = e };
+
+                const second_color = switch (CssColor.parse(i)) {
+                    .result => |vv| vv,
+                    .err => |e| return .{ .err = e },
+                };
+                const dark = switch (second_color) {
                     .light_dark => |c| c.dark,
                     else => |dark| bun.create(
                         @compileError(css.todo_stuff.think_about_allocator),
@@ -858,9 +1012,11 @@ pub fn parseeColorFunction(location: css.SourceLocation, function: []const u8, i
                     ),
                 };
                 return .{
-                    .light_dark = .{
-                        .light = light,
-                        .dark = dark,
+                    .result = .{
+                        .light_dark = .{
+                            .light = light,
+                            .dark = dark,
+                        },
                     },
                 };
             }
@@ -1538,9 +1694,12 @@ pub const ComponentParser = struct {
         comptime C: type,
         comptime func: anytype,
         args_: anytype,
-    ) Error!C {
-        if (input.tryParse(css.Parser.expectIdentMatching, .{"from"})) {
-            const from = try CssColor.parse(input);
+    ) Result(C) {
+        if (input.tryParse(css.Parser.expectIdentMatching, .{"from"}).isOk()) {
+            const from = switch (CssColor.parse(input)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
             return this.parseFrom(from, input, T, C, func, args_);
         }
 
@@ -1556,18 +1715,25 @@ pub const ComponentParser = struct {
         comptime C: type,
         comptime func: anytype,
         args_: anytype,
-    ) Error!C {
+    ) Result(C) {
         if (from == .light_dark) {
             const state = input.state();
-            const light = try this.parseFrom(from.light_dark.light.*, input, T, C, func, args_);
+            const light = switch (this.parseFrom(from.light_dark.light.*, input, T, C, func, args_)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
             input.reset(&state);
-            const dark = try this.parseFrom(from.light_dark.dark.*, input, T, C, func, args_);
-            return C.LightDarkColor.lightDark(light, dark);
+            const dark = switch (this.parseFrom(from.light_dark.dark.*, input, T, C, func, args_)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
+            return .{ .result = C.LightDarkColor.lightDark(light, dark) };
         }
 
-        const new_from = (T.tryFromCssColor(from) catch {
-            @compileError(css.todo_stuff.errors);
-        }).resolve();
+        const new_from = switch (T.tryFromCssColor(from)) {
+            .result => |v| v.resolve(),
+            .err => return .{ .err = input.newCustomError(css.ParserError.invalid_value) },
+        };
 
         this.from = RelativeComponentParser.new(&new_from);
 
@@ -1575,57 +1741,84 @@ pub const ComponentParser = struct {
         return @call(.auto, func, args);
     }
 
-    pub fn parseNumberOrPercentage(this: *const ComponentParser, input: *css.Parser) Error!NumberOrPercentage {
+    pub fn parseNumberOrPercentage(this: *const ComponentParser, input: *css.Parser) Result(NumberOrPercentage) {
         if (this.from) |*from| {
-            if (input.tryParse(RelativeComponentParser.parseNumberOrPercentage, .{from})) |res| {
-                return res;
+            if (input.tryParse(RelativeComponentParser.parseNumberOrPercentage, .{from}).asValue()) |res| {
+                return .{ .result = res };
             }
         }
 
-        if (input.tryParse(CSSNumberFns.parse, .{})) |value| {
-            return NumberOrPercentage{ .number = value };
-        } else if (input.tryParse(Percentage.parse, .{})) |value| {
-            return NumberOrPercentage{
-                .percentage = .{ .unit_value = value.v },
+        if (input.tryParse(CSSNumberFns.parse, .{}).asValue()) |value| {
+            return .{ .result = NumberOrPercentage{ .number = value } };
+        } else if (input.tryParse(Percentage.parse, .{}).asValue()) |value| {
+            return .{
+                .result = NumberOrPercentage{
+                    .percentage = .{ .unit_value = value.v },
+                },
             };
         } else if (this.allow_none) {
-            try input.expectIdentMatching("none");
-            return NumberOrPercentage{
+            if (input.expectIdentMatching("none").asErr()) |e| return .{ .err = e };
+            return .{ .result = NumberOrPercentage{
                 .number = .{
                     .value = std.math.nan(f32),
                 },
-            };
+            } };
         } else {
-            return try input.newCustomError(css.ParserError.invalid_value);
+            return input.newCustomError(css.ParserError.invalid_value);
         }
     }
 
-    pub fn parseAngleOrNumber(this: *ComponentParser, input: *css.Parser) Error!css.color.AngleOrNumber {
+    pub fn parseAngleOrNumber(this: *const ComponentParser, input: *css.Parser) Result(css.color.AngleOrNumber) {
         if (this.from) |from| {
-            if (input.tryParse(RelativeComponentParser.parseAngleOrNumber, .{from})) |res| {
+            if (input.tryParse(RelativeComponentParser.parseAngleOrNumber, .{from}).asValue()) |res| {
+                return .{ .result = res };
+            }
+        }
+
+        if (input.tryParse(Angle.parse, .{}).asValue()) |angle| {
+            return .{
+                .result = .{
+                    .angle = .{
+                        .degrees = angle.toDegrees(),
+                    },
+                },
+            };
+        } else if (input.tryParse(CSSNumberFns.parse, .{}).asValue()) |value| {
+            return .{
+                .result = .{
+                    .number = .{
+                        .value = value,
+                    },
+                },
+            };
+        } else if (this.allow_none) {
+            if (input.expectIdentMatching("none").asErr()) |e| return .{ .err = e };
+            return .{
+                .result = .{
+                    .number = .{
+                        .value = std.math.nan(f32),
+                    },
+                },
+            };
+        } else {
+            return input.newCustomError(css.ParserError.invalid_value);
+        }
+    }
+
+    pub fn parsePercentage(this: *const ComponentParser, input: *css.Parser) Result(f32) {
+        if (this.from) |*from| {
+            if (input.tryParse(RelativeComponentParser.parsePercentage, .{from}).asValue()) |res| {
                 return res;
             }
         }
 
-        if (input.tryParse(Angle.parse, .{})) |angle| {
-            return .{
-                .angle = .{
-                    .degrees = angle.toDegrees(),
-                },
-            };
-        } else if (input.tryParse(CSSNumberFns.parse, .{})) |value| {
-            return .{
-                .number = .{
-                    .value = value,
-                },
-            };
+        if (input.tryParse(Percentage.parse, .{}).asValue()) |val| {
+            return .{ .result = val };
         } else if (this.allow_none) {
-            try input.expectIdentMatching("none");
-            return .{ .number = .{
-                .value = std.math.nan(f32),
-            } };
+            if (input.expectIdentMatching("none").asErr()) |e| return .{ .err = e };
+            return .{ .result = std.math.nan(f32) };
         } else {
-            return try input.newCustomError(css.ParserError.invalid_value);
+            return input.newCustomError(css.ParserError.invalid_value);
         }
     }
 };
@@ -1658,19 +1851,19 @@ const RelativeComponentParser = struct {
         };
     }
 
-    pub fn parseAngleOrNumber(input: *css.Parser, this: *const RelativeComponentParser) Error!css.color.AngleOrNumber {
+    pub fn parseAngleOrNumber(input: *css.Parser, this: *const RelativeComponentParser) Result(css.color.AngleOrNumber) {
         if (input.tryParse(
             RelativeComponentParser.parseIdent,
             .{
                 this,
                 ChannelType{ .angle = true, .number = true },
             },
-        )) |value| {
-            return .{
+        ).asValue()) |value| {
+            return .{ .result = .{
                 .number = .{
                     .value = value,
                 },
-            };
+            } };
         }
 
         if (input.tryParse(
@@ -1679,21 +1872,21 @@ const RelativeComponentParser = struct {
                 this,
                 ChannelType{ .angle = true, .number = true },
             },
-        )) |value| {
-            return .{
+        ).asValue()) |value| {
+            return .{ .result = .{
                 .number = .{
                     .value = value,
                 },
-            };
+            } };
         }
 
         const Closure = struct {
             angle: Angle,
             parser: *const RelativeComponentParser,
-            pub fn tryParseFn(i: *css.Parser, t: *@This()) Error!Angle {
-                if (Calc(Angle).parseWith(i, t, @This().calcParseIdentFn)) |val| {
+            pub fn tryParseFn(i: *css.Parser, t: *@This()) Result(Angle) {
+                if (Calc(Angle).parseWith(i, t, @This().calcParseIdentFn).asValue()) |val| {
                     if (val == .value) {
-                        return val.value.*;
+                        return .{ .result = val.value.* };
                     }
                 }
                 return i.newCustomError(css.ParserError.invalid_value);
@@ -1702,37 +1895,37 @@ const RelativeComponentParser = struct {
             pub fn calcParseIdentFn(t: *@This(), ident: []const u8) ?Calc(Angle) {
                 const value = t.parser.getIdent(ident, ChannelType{ .angle = true, .number = true }) orelse return null;
                 t.angle = value;
-                return Calc(Angle){
+                return .{ .result = Calc(Angle){
                     .value = &t.angle,
-                };
+                } };
             }
         };
         var closure = Closure{
             .angle = undefined,
             .parser = this,
         };
-        if (input.tryParse(Closure.tryParseFn, .{&closure})) |value| {
-            return .{
+        if (input.tryParse(Closure.tryParseFn, .{&closure}).asValue()) |value| {
+            return .{ .result = .{
                 .angle = .{
                     .degrees = value.toDegrees(),
                 },
-            };
+            } };
         }
 
-        return try input.newErrorForNextToken();
+        return input.newErrorForNextToken();
     }
 
-    pub fn parseNumberOrPercentage(input: *css.Parser, this: *const RelativeComponentParser) Error!NumberOrPercentage {
-        if (input.tryParse(RelativeComponentParser.parseIdent, .{ this, ChannelType{ .percentage = true, .number = true } })) |value| {
-            return NumberOrPercentage{ .percentage = .{ .unit_value = value } };
+    pub fn parseNumberOrPercentage(input: *css.Parser, this: *const RelativeComponentParser) Result(NumberOrPercentage) {
+        if (input.tryParse(RelativeComponentParser.parseIdent, .{ this, ChannelType{ .percentage = true, .number = true } }).asValue()) |value| {
+            return .{ .result = NumberOrPercentage{ .percentage = .{ .unit_value = value } } };
         }
 
-        if (input.tryParse(RelativeComponentParser.parseCalc, .{ this, ChannelType{ .percentage = true, .number = true } })) |value| {
-            return NumberOrPercentage{
+        if (input.tryParse(RelativeComponentParser.parseCalc, .{ this, ChannelType{ .percentage = true, .number = true } }).asValue()) |value| {
+            return .{ .result = NumberOrPercentage{
                 .percentage = .{
                     .unit_value = value,
                 },
-            };
+            } };
         }
 
         {
@@ -1740,9 +1933,9 @@ const RelativeComponentParser = struct {
                 parser: *const RelativeComponentParser,
                 percentage: Percentage = 0,
 
-                pub fn parsefn(i: *css.Parser, self: *@This()) Error!Percentage {
-                    if (Calc(Percentage).parseWith(i, self, @This().calcparseident)) |calc_value| {
-                        if (calc_value == .value) return calc_value.value.*;
+                pub fn parsefn(i: *css.Parser, self: *@This()) Result(Percentage) {
+                    if (Calc(Percentage).parseWith(i, self, @This().calcparseident).asValue()) |calc_value| {
+                        if (calc_value == .value) return .{ .result = calc_value.value.* };
                     }
                     return i.newCustomError(css.ParserError.invalid_value);
                 }
@@ -1753,9 +1946,9 @@ const RelativeComponentParser = struct {
                     // value variant is a *Percentage
                     // but we immediately dereference it and discard the pointer
                     // so using a field on this closure struct instead of making a gratuitous allocation
-                    return .{
+                    return .{ .result = .{
                         .value = &self.percentage,
-                    };
+                    } };
                 }
             };
             var closure = Closure{
@@ -1763,50 +1956,82 @@ const RelativeComponentParser = struct {
             };
             if (input.tryParse(Closure.parsefn, .{
                 &closure,
-            })) |value| {
-                return NumberOrPercentage{
+            }).asValue()) |value| {
+                return .{ .result = NumberOrPercentage{
                     .percentage = .{
                         .unit_value = value,
                     },
-                };
+                } };
             }
         }
 
         return input.newErrorForNextToken();
     }
 
-    pub fn parseNumber(this: *const RelativeComponentParser, input: *css.Parser) Error!f32 {
+    pub fn parsePercentage(
+        input: *css.Parser,
+        this: *const RelativeComponentParser,
+    ) Result(f32) {
+        if (input.tryParse(RelativeComponentParser.parseIdent, .{ this, ChannelType{ .percentage = true } }).asValue()) |value| {
+            return .{ .result = value };
+        }
+
+        const Closure = struct { self: *const RelativeComponentParser, temp: Percentage = .{ .v = 0 } };
+        var _closure = Closure{ .self = this };
+        if (input.tryParse(struct {
+            pub fn parseFn(i: *css.Parser, closure: *Closure) Result(Percentage) {
+                const calc_value = switch (Calc(Percentage).parseWith(i, closure, parseIdentFn)) {
+                    .result => |v| v,
+                    .err => return i.newCustomError(css.ParserError.invalid_value),
+                };
+                if (calc_value == .value) return calc_value.value.*;
+                return i.newCustomError(css.ParserError.invalid_value);
+            }
+
+            pub fn parseIdentFn(closure: *Closure, ident: []const u8) ?Calc(Percentage) {
+                const v = closure.self.getIdent(ident, ChannelType{ .percentage = true }) orelse return null;
+                closure.temp = v;
+                return Calc(Percentage){ .value = &closure.temp };
+            }
+        }.parseFn, .{&_closure}).asValue()) |value| {
+            return .{ .result = value.v };
+        }
+
+        return .{ .err = input.newErrorForNextToken() };
+    }
+
+    pub fn parseNumber(this: *const RelativeComponentParser, input: *css.Parser) Result(f32) {
         if (input.tryParse(
             RelativeComponentParser.parseIdent,
             .{ this, ChannelType{ .number = true } },
-        )) |value| {
-            return value;
+        ).asValue()) |value| {
+            return .{ .result = value };
         }
 
         if (input.tryParse(
             RelativeComponentParser.parseCalc,
             .{ this, ChannelType{ .number = true } },
-        )) |value| {
-            return value;
+        ).asValue()) |value| {
+            return .{ .result = value };
         }
 
-        return try input.newErrorForNextToken();
+        return input.newErrorForNextToken();
     }
 
     pub fn parseIdent(
         input: *css.Parser,
         this: *const RelativeComponentParser,
         allowed_types: ChannelType,
-    ) Error!f32 {
+    ) Result(f32) {
         const v = this.getIdent(input.getIdent(), allowed_types) orelse return input.newErrorForNextToken();
-        return v;
+        return .{ .result = v };
     }
 
     pub fn parseCalc(
         input: *css.Parser,
         this: *const RelativeComponentParser,
         allowed_types: ChannelType,
-    ) Error!f32 {
+    ) Result(f32) {
         const Closure = struct {
             p: *const RelativeComponentParser,
             allowed_types: ChannelType,
@@ -1866,25 +2091,34 @@ pub const ChannelType = packed struct(u8) {
     pub usingnamespace css.Bitflags(@This());
 };
 
-pub fn parsePredefined(input: *css.Parser, parser: *ComponentParser) Error!CssColor {
+pub fn parsePredefined(input: *css.Parser, parser: *ComponentParser) Result(CssColor) {
     // https://www.w3.org/TR/css-color-4/#color-function
     const Closure = struct {
         p: *ComponentParser,
-        pub fn parseNestedBlockFn(this: *@This(), i: *css.Parser) Error!CssColor {
-            const from: ?CssColor = if (i.tryParse(css.Parser.expectIdentMatching, .{"from"})) |_|
-                try CssColor.parse(i)
+        pub fn parseNestedBlockFn(this: *@This(), i: *css.Parser) Result(CssColor) {
+            const from: ?CssColor = if (i.tryParse(css.Parser.expectIdentMatching, .{"from"}).isOk())
+                switch (CssColor.parse(i)) {
+                    .result => |vv| vv,
+                    .err => |e| return .{ .err = e },
+                }
             else
                 null;
 
-            const colorspace = try input.expectIdent();
+            const colorspace = if (input.expectIdent().asErr()) |e| return .{ .err = e };
 
             if (from) |f| {
                 if (f == .light_dark) {
                     const state = input.state();
-                    const light = try parsePredefinedRelative(i, this.p, &colorspace, f.light_dark.light);
+                    const light = switch (parsePredefinedRelative(i, this.p, &colorspace, f.light_dark.light)) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    };
                     input.reset(&state);
-                    const dark = parsePredefinedRelative(input, this.p, colorspace, f.light_dark.dark);
-                    return CssColor{
+                    const dark = switch (parsePredefinedRelative(input, this.p, colorspace, f.light_dark.dark)) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    };
+                    return .{ .result = CssColor{
                         .light_dark = .{
                             .light = bun.create(
                                 @compileError(css.todo_stuff.think_about_allocator),
@@ -1897,7 +2131,7 @@ pub fn parsePredefined(input: *css.Parser, parser: *ComponentParser) Error!CssCo
                                 dark,
                             ),
                         },
-                    };
+                    } };
                 }
             }
 
@@ -1909,7 +2143,10 @@ pub fn parsePredefined(input: *css.Parser, parser: *ComponentParser) Error!CssCo
         .p = parser,
     };
 
-    const res = try input.parseNestedBlock(CssColor, &closure, Closure.parseNestedBlockFn);
+    const res = switch (input.parseNestedBlock(CssColor, &closure, Closure.parseNestedBlockFn)) {
+        .result => |vv| vv,
+        .err => |e| return .{ .err = e },
+    };
 
     return res;
 }
@@ -1919,45 +2156,65 @@ pub fn parsePredefinedRelative(
     parser: *ComponentParser,
     colorspace: []const u8,
     _from: ?*const CssColor,
-) Error!CssColor {
+) Result(CssColor) {
     const location = input.currentSourceLocation();
     if (_from) |from| {
         parser.from = set_from: {
             // todo_stuff.match_ignore_ascii_case
             if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("srgb", colorspace)) {
                 break :set_from RelativeComponentParser.new(
-                    (SRGB.tryFromCssColor(from) catch return input.newCustomError(css.ParserError.invalid_value)).resolveMissing(),
+                    switch (SRGB.tryFromCssColor(from)) {
+                        .result => |v| v.resolveMissing(),
+                        .err => return input.newCustomError(css.ParserError.invalid_value),
+                    },
                 );
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("srgb-linear", colorspace)) {
                 break :set_from RelativeComponentParser.new(
-                    (SRGBLinear.tryFromCssColor(from) catch return input.newCustomError(css.ParserError.invalid_value)).resolveMissing(),
+                    switch (SRGBLinear.tryFromCssColor(from)) {
+                        .result => |v| v.resolveMissing(),
+                        .err => return input.newCustomError(css.ParserError.invalid_value),
+                    },
                 );
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("display-p3", colorspace)) {
                 break :set_from RelativeComponentParser.new(
-                    (P3.tryFromCssColor(from) catch return input.newCustomError(css.ParserError.invalid_value)).resolveMissing(),
+                    switch (P3.tryFromCssColor(from)) {
+                        .result => |v| v.resolveMissing(),
+                        .err => return input.newCustomError(css.ParserError.invalid_value),
+                    },
                 );
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("a98-rgb", colorspace)) {
                 break :set_from RelativeComponentParser.new(
-                    (A98.tryFromCssColor(from) catch return input.newCustomError(css.ParserError.invalid_value)).resolveMissing(),
+                    switch (A98.tryFromCssColor(from)) {
+                        .result => |v| v.resolveMissing(),
+                        .err => return input.newCustomError(css.ParserError.invalid_value),
+                    },
                 );
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("prophoto-rgb", colorspace)) {
-                break :set_from RelativeComponentParser.new(
-                    (ProPhoto.tryFromCssColor(from) catch return input.newCustomError(css.ParserError.invalid_value)).resolveMissing(),
-                );
+                break :set_from RelativeComponentParser.new(switch (ProPhoto.tryFromCssColor(from)) {
+                    .result => |v| v.resolveMissing(),
+                    .err => return input.newCustomError(css.ParserError.invalid_value),
+                });
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("rec2020", colorspace)) {
                 break :set_from RelativeComponentParser.new(
-                    (Rec2020.tryFromCssColor(from) catch return input.newCustomError(css.ParserError.invalid_value)).resolveMissing(),
+                    switch (Rec2020.tryFromCssColor(from)) {
+                        .result => |v| v.resolveMissing(),
+                        .err => return input.newCustomError(css.ParserError.invalid_value),
+                    },
                 );
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("xyz-d50", colorspace)) {
                 break :set_from RelativeComponentParser.new(
-                    (XYZd50.tryFromCssColor(from) catch return input.newCustomError(css.ParserError.invalid_value)).resolveMissing(),
+                    switch (XYZd50.tryFromCssColor(from)) {
+                        .result => |v| v.resolveMissing(),
+                        .err => return input.newCustomError(css.ParserError.invalid_value),
+                    },
                 );
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("xyz", colorspace) or
                 bun.strings.eqlCaseInsensitiveASCIIICheckLength("xyz-d65", colorspace))
             {
-                break :set_from RelativeComponentParser.new(
-                    (XYZd65.tryFromCssColor(from) catch return input.newCustomError(css.ParserError.invalid_value)).resolveMissing(),
-                );
+                break :set_from RelativeComponentParser.new(switch (XYZd65.tryFromCssColor(from)) {
+                    .result => |v| v.resolveMissing(),
+                    .err => return input.newCustomError(css.ParserError.invalid_value),
+                });
             } else {
                 return location.newUnexpectedTokenError(.{ .ident = colorspace });
             }
@@ -1966,10 +2223,22 @@ pub fn parsePredefinedRelative(
 
     // Out of gamut values should not be clamped, i.e. values < 0 or > 1 should be preserved.
     // The browser will gamut-map the color for the target device that it is rendered on.
-    const a = try input.tryParse(parseNumberOrPercentage, .{parser});
-    const b = try input.tryParse(parseNumberOrPercentage, .{parser});
-    const c = try input.tryParse(parseNumberOrPercentage, .{parser});
-    const alpha = try parseAlpha(input, parser);
+    const a = switch (input.tryParse(parseNumberOrPercentage, .{parser})) {
+        .result => |vv| vv,
+        .err => |e| return .{ .err = e },
+    };
+    const b = switch (input.tryParse(parseNumberOrPercentage, .{parser})) {
+        .result => |vv| vv,
+        .err => |e| return .{ .err = e },
+    };
+    const c = switch (input.tryParse(parseNumberOrPercentage, .{parser})) {
+        .result => |vv| vv,
+        .err => |e| return .{ .err = e },
+    };
+    const alpha = switch (parseAlpha(input, parser)) {
+        .result => |vv| vv,
+        .err => |e| return .{ .err = e },
+    };
 
     const predefined = predefined: {
         // todo_stuff.match_ignore_ascii_case
@@ -2036,13 +2305,13 @@ pub fn parsePredefinedRelative(
         }
     };
 
-    return .{
+    return .{ .result = .{
         .predefined = bun.create(
             @compileError(css.todo_stuff.allocator),
             PredefinedColor,
             predefined,
         ),
-    };
+    } };
 }
 
 /// A [color space](https://www.w3.org/TR/css-color-4/#interpolation-space) keyword
@@ -2063,17 +2332,20 @@ pub const ColorSpaceName = union(enum) {
     pub usingnamespace css.DefineEnumProperty(@This());
 };
 
-pub fn parseColorMix(input: *css.Parser) Error!CssColor {
-    try input.expectIdentMatching("in");
-    const method = try ColorSpaceName.parse(input);
+pub fn parseColorMix(input: *css.Parser) Result(CssColor) {
+    if (input.expectIdentMatching("in").asErr()) |e| return .{ .err = e };
+    const method = switch (ColorSpaceName.parse(input)) {
+        .result => |vv| vv,
+        .err => |e| return .{ .err = e },
+    };
 
     const hue_method_ = if (switch (method) {
         .hsl, .hwb, .lch, .oklch => true,
         else => false,
     }) brk: {
         const hue_method = input.tryParse(HueInterpolationMethod.parse, .{});
-        if (hue_method) |_| {
-            try input.expectIdentMatching("hue");
+        if (hue_method.isOk()) {
+            if (input.expectIdentMatching("hue").asErr()) |e| return .{ .err = e };
         }
         break :brk hue_method;
     } else HueInterpolationMethod.shorter;
@@ -2081,16 +2353,30 @@ pub fn parseColorMix(input: *css.Parser) Error!CssColor {
     const hue_method = hue_method_ orelse HueInterpolationMethod.shorter;
 
     const first_percent_ = input.tryParse(css.Parser.expectPercentage, .{});
-    const first_color = try CssColor.parse(input);
-    const first_percent = first_percent_ catch first_percent: {
-        break :first_percent input.tryParse(css.Parser.expectPercentage, .{}) catch null;
+    const first_color = switch (CssColor.parse(input)) {
+        .result => |vv| vv,
+        .err => |e| return .{ .err = e },
     };
-    try input.expectComma();
+    const first_percent = switch (first_percent_) {
+        .result => |v| v,
+        .err => switch (input.tryParse(css.Parser.expectPercentage, .{})) {
+            .result => |vv| vv,
+            .err => null,
+        },
+    };
+    if (input.expectComma().asErr()) |e| return .{ .err = e };
 
     const second_percent_ = input.tryParse(css.Parser.expectPercentage, .{});
-    const second_color = try CssColor.parse(input);
-    const second_percent = second_percent_ catch first_percent: {
-        break :first_percent input.tryParse(css.Parser.expectPercentage, .{}) catch null;
+    const second_color = switch (CssColor.parse(input)) {
+        .result => |vv| vv,
+        .err => |e| return .{ .err = e },
+    };
+    const second_percent = switch (second_percent_) {
+        .result => |vv| vv,
+        .err => switch (input.tryParse(css.Parser.expectPercentage, .{})) {
+            .result => |vv| vv,
+            .err => null,
+        },
     };
 
     // https://drafts.csswg.org/css-color-5/#color-mix-percent-norm
@@ -2102,7 +2388,7 @@ pub fn parseColorMix(input: *css.Parser) Error!CssColor {
 
     if ((p1 + p2) == 0.0) return input.newCustomError(css.ParserError.invalid_value);
 
-    return (switch (method) {
+    const result = switch (method) {
         .srgb => first_color.interpolate(SRGB, p1, &second_color, p2, hue_method),
         .@"srgb-linear" => first_color.interpolate(SRGBLinear, p1, &second_color, p2, hue_method),
         .hsl => first_color.interpolate(HSL, p1, &second_color, p2, hue_method),
@@ -2113,9 +2399,9 @@ pub fn parseColorMix(input: *css.Parser) Error!CssColor {
         .oklch => first_color.interpolate(OKLCH, p1, &second_color, p2, hue_method),
         .xyz, .@"xyz-d65" => first_color.interpolate(XYZd65, p1, &second_color, p2, hue_method),
         .@"xyz-d50" => first_color.interpolate(XYZd65, p1, &second_color, p2, hue_method),
-    }) orelse {
-        return try input.newCustomError(css.ParserError.invalid_value);
-    };
+    } orelse return input.newCustomError(css.ParserError.invalid_value);
+
+    return .{ .result = result };
 }
 
 /// A hue [interpolation method](https://www.w3.org/TR/css-color-4/#typedef-hue-interpolation-method)

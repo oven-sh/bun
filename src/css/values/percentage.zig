@@ -1,7 +1,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
 pub const css = @import("../css_parser.zig");
-const Error = css.Error;
+const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -12,15 +12,19 @@ const Calc = css.css_values.calc.Calc;
 pub const Percentage = struct {
     v: CSSNumber,
 
-    pub fn parse(input: *css.Parser) Error!Percentage {
-        if (input.tryParse(Calc(Percentage), .{})) |calc_value| {
+    pub fn parse(input: *css.Parser) Result(Percentage) {
+        if (input.tryParse(Calc(Percentage), .{}).asValue()) |calc_value| {
             if (calc_value == .value) |v| return v.*;
             // Percentages are always compatible, so they will always compute to a value.
             bun.unreachablePanic("Percentages are always compatible, so they will always compute to a value.", .{});
         }
 
-        const percent = try input.expectPercentage();
-        return Percentage{ .v = percent };
+        const percent = switch (input.expectPercentage()) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
+
+        return .{ .result = Percentage{ .v = percent } };
     }
 
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -70,19 +74,19 @@ pub fn DimensionPercentage(comptime D: type) type {
 
         const This = @This();
 
-        pub fn parse(input: *css.Parser) Error!@This() {
-            if (input.tryParse(Calc(This, .{}))) |calc_value| {
+        pub fn parse(input: *css.Parser) Result(@This()) {
+            if (input.tryParse(Calc(This, .{})).asValue()) |calc_value| {
                 if (calc_value == .value) return calc_value.value.*;
                 return .{
                     .calc = bun.create(@compileError(css.todo_stuff.think_about_allocator), This, calc_value),
                 };
             }
 
-            if (input.tryParse(D.parse(), .{})) |length| {
+            if (input.tryParse(D.parse(), .{}).asValue()) |length| {
                 return .{ .dimension = length };
             }
 
-            if (input.tryParse(Percentage.parse, .{})) |percentage| {
+            if (input.tryParse(Percentage.parse, .{}).asValue()) |percentage| {
                 return .{ .percentage = percentage };
             }
 
@@ -132,7 +136,7 @@ pub const NumberOrPercentage = union(enum) {
     // pub usingnamespace css.DeriveParse(@This());
     // pub usingnamespace css.DeriveToCss(@This());
 
-    pub fn parse(input: *css.Parser) Error!NumberOrPercentage {
+    pub fn parse(input: *css.Parser) Result(NumberOrPercentage) {
         _ = input; // autofix
         @panic(css.todo_stuff.depth);
     }

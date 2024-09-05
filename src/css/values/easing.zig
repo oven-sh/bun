@@ -1,7 +1,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
 pub const css = @import("../css_parser.zig");
-const Error = css.Error;
+const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -55,13 +55,13 @@ pub const EasingFunction = union(enum) {
         position: StepPosition = StepPosition.default,
     },
 
-    pub fn parse(input: *css.Parser) Error!EasingFunction {
+    pub fn parse(input: *css.Parser) Result(EasingFunction) {
         const location = input.currentSourceLocation();
         if (input.tryParse(struct {
-            fn parse(i: *css.Parser) Error![]const u8 {
+            fn parse(i: *css.Parser) Result([]const u8) {
                 return i.expectIdent();
             }
-        }.parse, .{})) |ident| {
+        }.parse, .{}).asValue()) |ident| {
             // todo_stuff.match_ignore_ascii_case
             const keyword = if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "linear"))
                 EasingFunction.linear
@@ -79,10 +79,13 @@ pub const EasingFunction = union(enum) {
                 EasingFunction{ .steps = .{ .count = 1, .position = .end } }
             else
                 return location.newUnexpectedTokenError(.{ .ident = ident });
-            return keyword;
+            return .{ .result = keyword };
         }
 
-        const function = try input.expectFunction();
+        const function = switch (input.expectFunction()) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
         return input.parseNestedBlock(
             EasingFunction,
             .{ .loc = location, .function = function },
@@ -90,25 +93,40 @@ pub const EasingFunction = union(enum) {
                 fn parse(
                     closure: *const struct { loc: css.SourceLocation, function: []const u8 },
                     i: *css.Parser,
-                ) Error!EasingFunction {
+                ) Result(EasingFunction) {
                     if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "cubic-bezier")) {
-                        const x1 = try CSSNumberFns.parse(i);
-                        try i.expectComma();
-                        const y1 = try CSSNumberFns.parse(i);
-                        try i.expectComma();
-                        const x2 = try CSSNumberFns.parse(i);
-                        try i.expectComma();
-                        const y2 = try CSSNumberFns.parse(i);
-                        return EasingFunction{ .cubic_bezier = .{ .x1 = x1, .y1 = y1, .x2 = x2, .y2 = y2 } };
+                        const x1 = switch (CSSNumberFns.parse(i)) {
+                            .result => |vv| vv,
+                            .err => |e| return .{ .err = e },
+                        };
+                        if (i.expectComma().asErr()) |e| return .{ .err = e };
+                        const y1 = switch (CSSNumberFns.parse(i)) {
+                            .result => |vv| vv,
+                            .err => |e| return .{ .err = e },
+                        };
+                        if (i.expectComma().asErr()) |e| return .{ .err = e };
+                        const x2 = switch (CSSNumberFns.parse(i)) {
+                            .result => |vv| vv,
+                            .err => |e| return .{ .err = e },
+                        };
+                        if (i.expectComma().asErr()) |e| return .{ .err = e };
+                        const y2 = switch (CSSNumberFns.parse(i)) {
+                            .result => |vv| vv,
+                            .err => |e| return .{ .err = e },
+                        };
+                        return .{ .result = EasingFunction{ .cubic_bezier = .{ .x1 = x1, .y1 = y1, .x2 = x2, .y2 = y2 } } };
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "steps")) {
-                        const count = try CSSIntegerFns.parse(i);
+                        const count = switch (CSSIntegerFns.parse(i)) {
+                            .result => |vv| vv,
+                            .err => |e| return .{ .err = e },
+                        };
                         const position = i.tryParse(struct {
-                            fn parse(p: *css.Parser) Error!StepPosition {
-                                try p.expectComma();
+                            fn parse(p: *css.Parser) Result(StepPosition) {
+                                if (p.expectComma().asErr()) |e| return .{ .err = e };
                                 return StepPosition.parse(p);
                             }
-                        }.parse, .{}) catch StepPosition.default;
-                        return EasingFunction{ .steps = .{ .count = count, .position = position } };
+                        }.parse, .{}).unwrapOr(StepPosition.default);
+                        return .{ .result = EasingFunction{ .steps = .{ .count = count, .position = position } } };
                     } else {
                         return closure.loc.newUnexpectedTokenError(.{ .ident = closure.function });
                     }
@@ -213,9 +231,12 @@ pub const StepPosition = enum {
         @panic(css.todo_stuff.depth);
     }
 
-    pub fn parse(input: *css.Parser) Error!StepPosition {
+    pub fn parse(input: *css.Parser) Result(StepPosition) {
         const location = input.currentSourceLocation();
-        const ident = try input.expectIdent();
+        const ident = switch (input.expectIdent()) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
         // todo_stuff.match_ignore_ascii_case
         const keyword = if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "start"))
             StepPosition.start
@@ -231,6 +252,6 @@ pub const StepPosition = enum {
             StepPosition.jump_both
         else
             return location.newUnexpectedTokenError(.{ .ident = ident });
-        return keyword;
+        return .{ .result = keyword };
     }
 };

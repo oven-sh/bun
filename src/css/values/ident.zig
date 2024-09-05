@@ -5,7 +5,7 @@ const logger = bun.logger;
 const Log = logger.Log;
 
 pub const css = @import("../css_parser.zig");
-pub const Error = css.Error;
+pub const Result = css.Result;
 pub const Printer = css.Printer;
 pub const PrintErr = css.PrintErr;
 
@@ -25,15 +25,21 @@ pub const DashedIdentReference = struct {
     /// Only enabled when the CSS modules `dashed_idents` option is turned on.
     from: ?Specifier,
 
-    pub fn parseWithOptions(input: *css.Parser, options: *const css.ParserOptions) Error!DashedIdentReference {
-        const ident = try DashedIdentFns.parse(input);
+    pub fn parseWithOptions(input: *css.Parser, options: *const css.ParserOptions) Result(DashedIdentReference) {
+        const ident = switch (DashedIdentFns.parse(input)) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
 
-        const from = if (options.css_modules.config != null and options.css_modules.config.dashed_idents)
-            if (input.tryParse(css.Parser.expectIdentMatching, .{"from"})) try Specifier.parse(input) else null
-        else
-            null;
+        const from = if (options.css_modules.config != null and options.css_modules.config.dashed_idents) from: {
+            if (input.tryParse(css.Parser.expectIdentMatching, .{"from"}).isOk()) break :from switch (Specifier.parse(input)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
+            break :from null;
+        } else null;
 
-        return DashedIdentReference{ .ident = ident, .from = from };
+        return .{ .result = DashedIdentReference{ .ident = ident, .from = from } };
     }
 };
 
@@ -43,9 +49,12 @@ pub const DashedIdentReference = struct {
 /// Author defined idents must start with two dash characters ("--") or parsing will fail.
 pub const DashedIdent = []const u8;
 pub const DashedIdentFns = struct {
-    pub fn parse(input: *css.Parser) Error!DashedIdent {
+    pub fn parse(input: *css.Parser) Result(DashedIdent) {
         const location = input.currentSourceLocation();
-        const ident = try input.expectIdent();
+        const ident = switch (input.expectIdent()) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
         if (bun.strings.startsWith(ident, "--")) return location.newUnexpectedTokenError(.{ .ident = ident });
 
         return ident;
@@ -62,8 +71,11 @@ pub const DashedIdentFns = struct {
 pub const Ident = []const u8;
 
 pub const IdentFns = struct {
-    pub fn parse(input: *css.Parser) Error![]const u8 {
-        const ident = try input.expectIdent();
+    pub fn parse(input: *css.Parser) Result([]const u8) {
+        const ident = switch (input.expectIdent()) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
         return ident;
     }
 
@@ -74,9 +86,12 @@ pub const IdentFns = struct {
 
 pub const CustomIdent = []const u8;
 pub const CustomIdentFns = struct {
-    pub fn parse(input: *css.Parser) Error!CustomIdent {
+    pub fn parse(input: *css.Parser) Result(CustomIdent) {
         const location = input.currentSourceLocation();
-        const ident = try input.expectIdent();
+        const ident = switch (input.expectIdent()) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
         // css.todo_stuff.match_ignore_ascii_case
         const valid = !(bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "initial") or
             bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "inherit") or
@@ -86,7 +101,7 @@ pub const CustomIdentFns = struct {
             bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "revert-layer"));
 
         if (!valid) return location.newUnexpectedTokenError(.{ .ident = ident });
-        return ident;
+        return .{ .result = ident };
     }
 
     const This = @This();

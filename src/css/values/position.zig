@@ -1,7 +1,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
 pub const css = @import("../css_parser.zig");
-const Error = css.Error;
+const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -28,42 +28,42 @@ pub const Position = struct {
         return .{ .x = .center, .y = .center };
     }
 
-    pub fn parse(input: *css.Parser) Error!Position {
+    pub fn parse(input: *css.Parser) Result(Position) {
         // Try parsing a horizontal position first
-        if (input.tryParse(HorizontalPosition.parse, .{})) |horizontal_pos| {
+        if (input.tryParse(HorizontalPosition.parse, .{}).asValue()) |horizontal_pos| {
             switch (horizontal_pos) {
                 .center => {
                     // Try parsing a vertical position next
-                    if (input.tryParse(VerticalPosition.parse, .{})) |y| {
-                        return Position{
+                    if (input.tryParse(VerticalPosition.parse, .{}).asValue()) |y| {
+                        return .{ .result = Position{
                             .x = .center,
                             .y = y,
-                        };
+                        } };
                     }
 
                     // If it didn't work, assume the first actually represents a y position,
                     // and the next is an x position. e.g. `center left` rather than `left center`.
-                    const x = input.tryParse(HorizontalPosition.parse, .{}) catch HorizontalPosition.center;
+                    const x = input.tryParse(HorizontalPosition.parse, .{}).unwrapOr(HorizontalPosition.center);
                     const y = VerticalPosition.center;
-                    return Position{ .x = x, .y = y };
+                    return .{ .result = Position{ .x = x, .y = y } };
                 },
                 .length => |*x| {
                     // If we got a length as the first component, then the second must
                     // be a keyword or length (not a side offset).
-                    if (input.tryParse(VerticalPositionKeyword.parse, .{})) |y_keyword| {
+                    if (input.tryParse(VerticalPositionKeyword.parse, .{}).asValue()) |y_keyword| {
                         const y = VerticalPosition{ .side = .{
                             .side = y_keyword,
                             .offset = null,
                         } };
-                        return Position{ .x = .{ .length = x.* }, .y = y };
+                        return .{ .result = Position{ .x = .{ .length = x.* }, .y = y } };
                     }
-                    if (input.tryParse(LengthPercentage.parse, .{})) |y_lp| {
+                    if (input.tryParse(LengthPercentage.parse, .{}).asValue()) |y_lp| {
                         const y = VerticalPosition{ .length = y_lp };
-                        return Position{ .x = .{ .length = x.* }, .y = y };
+                        return .{ .result = Position{ .x = .{ .length = x.* }, .y = y } };
                     }
                     const y = VerticalPosition.center;
                     _ = input.tryParse(css.Parser.expectIdentMatching, .{"center"});
-                    return Position{ .x = .{ .length = x.* }, .y = y };
+                    return .{ .result = Position{ .x = .{ .length = x.* }, .y = y } };
                 },
                 .side => |*side| {
                     const x_keyword = side.side;
@@ -71,18 +71,21 @@ pub const Position = struct {
 
                     // If we got a horizontal side keyword (and optional offset), expect another for the vertical side.
                     // e.g. `left center` or `left 20px center`
-                    if (input.tryParse(css.Parser.expectIdentMatching, .{"center"})) |_| {
+                    if (input.tryParse(css.Parser.expectIdentMatching, .{"center"}).isOk()) {
                         const x = HorizontalPosition{ .side = .{
                             .side = x_keyword,
                             .offset = lp,
                         } };
                         const y = VerticalPosition.center;
-                        return Position{ .x = x, .y = y };
+                        return .{ .result = Position{ .x = x, .y = y } };
                     }
 
                     // e.g. `left top`, `left top 20px`, `left 20px top`, or `left 20px top 20px`
-                    if (input.tryParse(VerticalPositionKeyword.parse, .{})) |y_keyword| {
-                        const y_lp = input.tryParse(LengthPercentage.parse, .{}) catch null;
+                    if (input.tryParse(VerticalPositionKeyword.parse, .{}).asValue()) |y_keyword| {
+                        const y_lp = switch (input.tryParse(LengthPercentage.parse, .{})) {
+                            .result => |vv| vv,
+                            .err => null,
+                        };
                         const x = HorizontalPosition{ .side = .{
                             .side = x_keyword,
                             .offset = lp,
@@ -91,7 +94,7 @@ pub const Position = struct {
                             .side = y_keyword,
                             .offset = y_lp,
                         } };
-                        return Position{ .x = x, .y = y };
+                        return .{ .result = Position{ .x = x, .y = y } };
                     }
 
                     // If we didn't get a vertical side keyword (e.g. `left 20px`), then apply the offset to the vertical side.
@@ -103,38 +106,41 @@ pub const Position = struct {
                         VerticalPosition{ .length = lp_val }
                     else
                         VerticalPosition.center;
-                    return Position{ .x = x, .y = y };
+                    return .{ .result = Position{ .x = x, .y = y } };
                 },
             }
         }
 
         // If the horizontal position didn't parse, then it must be out of order. Try vertical position keyword.
-        const y_keyword = try VerticalPositionKeyword.parse(input);
+        const y_keyword = switch (VerticalPositionKeyword.parse(input)) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
         const lp_and_x_pos = input.tryParse(struct {
-            fn parse(i: *css.Parser) Error!struct { ?LengthPercentage, HorizontalPosition } {
-                const y_lp = i.tryParse(LengthPercentage.parse, .{});
-                if (i.tryParse(HorizontalPositionKeyword.parse, .{})) |x_keyword| {
-                    const x_lp = i.tryParse(LengthPercentage.parse, .{});
+            fn parse(i: *css.Parser) Result(struct { ?LengthPercentage, HorizontalPosition }) {
+                const y_lp = i.tryParse(LengthPercentage.parse, .{}).asValue();
+                if (i.tryParse(HorizontalPositionKeyword.parse, .{}).asValue()) |x_keyword| {
+                    const x_lp = i.tryParse(LengthPercentage.parse, .{}).asValue();
                     const x_pos = HorizontalPosition{ .side = .{
                         .side = x_keyword,
                         .offset = x_lp,
                     } };
-                    return .{ y_lp, x_pos };
+                    return .{ .result = .{ y_lp, x_pos } };
                 }
-                try i.expectIdentMatching("center");
+                if (i.expectIdentMatching("center").asErr()) |e| return .{ .err = e };
                 const x_pos = HorizontalPosition.center;
-                return .{ y_lp, x_pos };
+                return .{ .result = .{ y_lp, x_pos } };
             }
         }.parse, .{});
 
-        if (lp_and_x_pos) |tuple| {
+        if (lp_and_x_pos.asValue()) |tuple| {
             const y_lp = tuple[0];
             const x = tuple[1];
             const y = VerticalPosition{ .side = .{
                 .side = y_keyword,
                 .offset = y_lp,
             } };
-            return Position{ .x = x, .y = y };
+            return .{ .result = Position{ .x = x, .y = y } };
         }
 
         const x = HorizontalPosition.center;
@@ -142,7 +148,7 @@ pub const Position = struct {
             .side = y_keyword,
             .offset = null,
         } };
-        return Position{ .x = x, .y = y };
+        return .{ .result = Position{ .x = x, .y = y } };
     }
 
     pub fn toCss(this: *const Position, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
@@ -260,25 +266,28 @@ pub fn PositionComponent(comptime S: type) type {
 
         const This = @This();
 
-        pub fn parse(input: *css.Parser) Error!This {
+        pub fn parse(input: *css.Parser) Result(This) {
             if (input.tryParse(
                 struct {
-                    fn parse(i: *css.Parser) Error!void {
-                        try i.expectIdentMatching("center");
+                    fn parse(i: *css.Parser) Result(void) {
+                        if (i.expectIdentMatching("center").asErr()) |e| return .{ .err = e };
                     }
                 }.parse,
                 .{},
-            )) |_| {
-                return .center;
+            ).isOk()) {
+                return .{ .result = .center };
             }
 
-            if (input.tryParse(LengthPercentage.parse, .{})) |lp| {
-                return .{ .length = lp };
+            if (input.tryParse(LengthPercentage.parse, .{}).asValue()) |lp| {
+                return .{ .result = .{ .length = lp } };
             }
 
-            const side = try S.parse(input);
-            const offset = input.tryParse(LengthPercentage.parse, .{});
-            return .{ .side = .{ .side = side, .offset = offset } };
+            const side = switch (S.parse(input)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
+            const offset = input.tryParse(LengthPercentage.parse, .{}).asValue();
+            return .{ .result = .{ .side = .{ .side = side, .offset = offset } } };
         }
 
         pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {

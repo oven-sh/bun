@@ -3,7 +3,7 @@ const Allocator = std.mem.Allocator;
 const bun = @import("root").bun;
 const ArrayList = std.ArrayListUnmanaged;
 pub const css = @import("../css_parser.zig");
-const Error = css.Error;
+const Result = css.Result;
 const VendorPrefix = css.VendorPrefix;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -37,54 +37,114 @@ pub const Gradient = union(enum) {
     /// A legacy `-webkit-gradient()`.
     @"webkit-gradient": WebKitGradient,
 
-    pub fn parse(input: *css.Parser) Error!Gradient {
+    pub fn parse(input: *css.Parser) Result(Gradient) {
         const location = input.currentSourceLocation();
-        const func = try input.expectFunction();
+        const func = switch (input.expectFunction()) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
         const Closure = struct { location: css.SourceLocation, func: []const u8 };
-        return try input.parseNestedBlock(Gradient, Closure{ .location = location, .func = func }, struct {
+        return input.parseNestedBlock(Gradient, Closure{ .location = location, .func = func }, struct {
             fn parse(
                 closure: struct { location: css.SourceLocation, func: []const u8 },
                 input_: *css.Parser,
-            ) Error!Gradient {
+            ) Result(Gradient) {
                 // css.todo_stuff.match_ignore_ascii_case
                 if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "linear-gradient")) {
-                    return .{ .linear = try LinearGradient.parse(input_, css.VendorPrefix{ .none = true }) };
+                    return .{ .result = .{ .linear = switch (LinearGradient.parse(input_, css.VendorPrefix{ .none = true })) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    } } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "repeating-linear-gradient")) {
-                    return .{ .repeating_linear = try LinearGradient.parse(input_, css.VendorPrefix{ .none = true }) };
+                    return .{ .result = .{ .repeating_linear = switch (LinearGradient.parse(input_, css.VendorPrefix{ .none = true })) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    } } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "radial-gradient")) {
-                    return .{ .radial = try RadialGradient.parse(input_, css.VendorPrefix{ .none = true }) };
+                    return .{ .result = .{ .radial = switch (RadialGradient.parse(input_, css.VendorPrefix{ .none = true })) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    } } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "repeating-radial-gradient")) {
-                    return .{ .repeating_radial = try RadialGradient.parse(input_, css.VendorPrefix{ .none = true }) };
+                    return .{ .result = .{ .repeating_radial = switch (RadialGradient.parse(input_, css.VendorPrefix{ .none = true })) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    } } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "conic-gradient")) {
-                    return .{ .conic = try ConicGradient.parse(input_) };
+                    return .{ .result = .{ .conic = switch (ConicGradient.parse(input_)) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    } } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "repeating-conic-gradient")) {
-                    return .{ .repeating_conic = try ConicGradient.parse(input_) };
+                    return .{ .result = .{ .repeating_conic = switch (ConicGradient.parse(input_)) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    } } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-webkit-linear-gradient")) {
-                    return .{ .linear = try LinearGradient.parse(input_, css.VendorPrefix{ .webkit = true }) };
+                    return .{ .result = .{ .linear = switch (LinearGradient.parse(input_, css.VendorPrefix{ .webkit = true })) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    } } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-webkit-repeating-linear-gradient")) {
-                    return .{ .repeating_linear = try LinearGradient.parse(input_, css.VendorPrefix{ .webkit = true }) };
+                    return .{ .result = .{ .repeating_linear = switch (LinearGradient.parse(input_, css.VendorPrefix{ .webkit = true })) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    } } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-webkit-radial-gradient")) {
-                    return .{ .radial = try RadialGradient.parse(input_, css.VendorPrefix{ .webkit = true }) };
+                    return .{ .result = .{ .radial = switch (RadialGradient.parse(input_, css.VendorPrefix{ .webkit = true })) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    } } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-webkit-repeating-radial-gradient")) {
-                    return .{ .repeating_radial = try RadialGradient.parse(input_, css.VendorPrefix{ .webkit = true }) };
+                    return .{ .result = .{ .repeating_radial = switch (RadialGradient.parse(input_, css.VendorPrefix{ .webkit = true })) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    } } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-moz-linear-gradient")) {
-                    return .{ .linear = try LinearGradient.parse(input_, css.VendorPrefix{ .mox = true }) };
+                    return .{ .result = .{ .linear = switch (LinearGradient.parse(input_, css.VendorPrefix{ .mox = true })) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    } } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-moz-repeating-linear-gradient")) {
-                    return .{ .repeating_linear = try LinearGradient.parse(input_, css.VendorPrefix{ .mox = true }) };
+                    return .{ .result = .{ .repeating_linear = switch (LinearGradient.parse(input_, css.VendorPrefix{ .mox = true })) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    } } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-moz-radial-gradient")) {
-                    return .{ .radial = try RadialGradient.parse(input_, css.VendorPrefix{ .mox = true }) };
+                    return .{ .result = .{ .radial = switch (RadialGradient.parse(input_, css.VendorPrefix{ .mox = true })) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    } } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-moz-repeating-radial-gradient")) {
-                    return .{ .repeating_radial = try RadialGradient.parse(input_, css.VendorPrefix{ .mox = true }) };
+                    return .{ .result = .{ .repeating_radial = switch (RadialGradient.parse(input_, css.VendorPrefix{ .mox = true })) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    } } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-o-linear-gradient")) {
-                    return .{ .linear = try LinearGradient.parse(input_, css.VendorPrefix{ .o = true }) };
+                    return .{ .result = .{ .linear = switch (LinearGradient.parse(input_, css.VendorPrefix{ .o = true })) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    } } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-o-repeating-linear-gradient")) {
-                    return .{ .repeating_linear = try LinearGradient.parse(input_, css.VendorPrefix{ .o = true }) };
+                    return .{ .result = .{ .repeating_linear = switch (LinearGradient.parse(input_, css.VendorPrefix{ .o = true })) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    } } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-o-radial-gradient")) {
-                    return .{ .radial = try RadialGradient.parse(input_, css.VendorPrefix{ .o = true }) };
+                    return .{ .result = .{ .radial = switch (RadialGradient.parse(input_, css.VendorPrefix{ .o = true })) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    } } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-o-repeating-radial-gradient")) {
-                    return .{ .repeating_radial = try RadialGradient.parse(input_, css.VendorPrefix{ .o = true }) };
+                    return .{ .result = .{ .repeating_radial = switch (RadialGradient.parse(input_, css.VendorPrefix{ .o = true })) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    } } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-webkit-gradient")) {
-                    return .{ .@"webkit-gradient" = try WebKitGradient.parse(input_) };
+                    return .{ .result = .{ .@"webkit-gradient" = switch (WebKitGradient.parse(input_)) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    } } };
                 } else {
                     return closure.location.newUnexpectedTokenError(.{ .ident = closure.func });
                 }
@@ -137,13 +197,16 @@ pub const LinearGradient = struct {
     /// The color stops and transition hints for the gradient.
     items: ArrayList(GradientItem(LengthPercentage)),
 
-    pub fn parse(input: *css.Parser, vendor_prefix: VendorPrefix) Error!LinearGradient {
-        const direction = if (input.tryParse(LineDirection.parse, .{vendor_prefix != VendorPrefix{ .none = true }})) |dir| direction: {
-            try input.expectComma();
+    pub fn parse(input: *css.Parser, vendor_prefix: VendorPrefix) Result(LinearGradient) {
+        const direction = if (input.tryParse(LineDirection.parse, .{vendor_prefix != VendorPrefix{ .none = true }}).asValue()) |dir| direction: {
+            if (input.expectComma().asErr()) |e| return .{ .err = e };
             break :direction dir;
         } else .{ .vertical = .bottom };
-        const items = try parseItems(LengthPercentage, input);
-        return LinearGradient{ .direction = direction, .items = items, .vendor_prefix = vendor_prefix };
+        const items = switch (parseItems(LengthPercentage, input)) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
+        return .{ .result = LinearGradient{ .direction = direction, .items = items, .vendor_prefix = vendor_prefix } };
     }
 
     pub fn toCss(this: *const LinearGradient, comptime W: type, dest: *Printer(W), is_prefixed: bool) PrintErr!void {
@@ -222,28 +285,39 @@ pub const RadialGradient = struct {
     /// The color stops and transition hints for the gradient.
     items: ArrayList(GradientItem(LengthPercentage)),
 
-    pub fn parse(input: *css.Parser, vendor_prefix: VendorPrefix) Error!RadialGradient {
+    pub fn parse(input: *css.Parser, vendor_prefix: VendorPrefix) Result(RadialGradient) {
         // todo_stuff.depth
-        const shape = input.tryParse(EndingShape.parse, .{}) catch null;
-        const position = input.tryParse(struct {
-            fn parse(input_: *css.Parser) Error!Position {
-                try input_.expectIdentMatching("at");
+        const shape = switch (input.tryParse(EndingShape.parse, .{})) {
+            .result => |vv| vv,
+            .err => null,
+        };
+        const position = switch (input.tryParse(struct {
+            fn parse(input_: *css.Parser) Result(Position) {
+                if (input_.expectIdentMatching("at").asErr()) |e| return .{ .err = e };
                 return Position.parse(input_);
             }
-        }.parse, .{}) catch null;
+        }.parse, .{})) {
+            .result => |v| v,
+            .err => null,
+        };
 
         if (shape != null or position != null) {
-            try input.expectComma();
+            if (input.expectComma().asErr()) |e| return .{ .err = e };
         }
 
-        const items = try parseItems(LengthPercentage, input);
-        return RadialGradient{
-            // todo_stuff.depth
-            .shape = shape orelse EndingShape.default(),
-            // todo_stuff.depth
-            .position = position orelse Position.center(),
-            .items = items,
-            .vendor_prefix = vendor_prefix,
+        const items = switch (parseItems(LengthPercentage, input)) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
+        return .{
+            .result = RadialGradient{
+                // todo_stuff.depth
+                .shape = shape orelse EndingShape.default(),
+                // todo_stuff.depth
+                .position = position orelse Position.center(),
+                .items = items,
+                .vendor_prefix = vendor_prefix,
+            },
         };
     }
 
@@ -276,33 +350,36 @@ pub const ConicGradient = struct {
     /// The color stops and transition hints for the gradient.
     items: ArrayList(GradientItem(AnglePercentage)),
 
-    pub fn parse(input: *css.Parser) Error!ConicGradient {
+    pub fn parse(input: *css.Parser) Result(ConicGradient) {
         const angle = input.tryParse(struct {
-            inline fn parse(i: *css.Parser) Error!Angle {
-                try i.expectIdentMatching("from");
+            inline fn parse(i: *css.Parser) Result(Angle) {
+                if (i.expectIdentMatching("from").asErr()) |e| return .{ .err = e };
                 // Spec allows unitless zero angles for gradients.
                 // https://w3c.github.io/csswg-drafts/css-images-4/#valdef-conic-gradient-angle
                 return Angle.parseWithUnitlessZero(i);
             }
-        }.parse, .{}) catch Angle{ .deg = 0.0 };
+        }.parse, .{}).unwrapOr(Angle{ .deg = 0.0 });
 
         const position = input.tryParse(struct {
-            inline fn parse(i: *css.Parser) Error!Position {
-                try i.expectIdentMatching("at");
+            inline fn parse(i: *css.Parser) Result(Position) {
+                if (i.expectIdentMatching("at").asErr()) |e| return .{ .err = e };
                 return Position.parse(i);
             }
-        }.parse, .{}) catch Position.center();
+        }.parse, .{}).unwrapOr(Position.center());
 
         if (angle != .{ .deg = 0.0 } or !std.meta.eql(position, Position.center())) {
-            try input.expectComma();
+            if (input.expectComma().asErr()) |e| return .{ .err = e };
         }
 
-        const items = try parseItems(AnglePercentage, input);
-        return ConicGradient{
+        const items = switch (parseItems(AnglePercentage, input)) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
+        return .{ .result = ConicGradient{
             .angle = angle,
             .position = position,
             .items = items,
-        };
+        } };
     }
 
     pub fn toCss(this: *const ConicGradient, comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -352,36 +429,63 @@ pub const WebKitGradient = union(enum) {
         stops: ArrayList(WebKitColorStop),
     },
 
-    pub fn parse(input: *css.Parser) Error!WebKitGradient {
+    pub fn parse(input: *css.Parser) Result(WebKitGradient) {
         const location = input.currentSourceLocation();
-        const ident = try input.expectIdent();
-        try input.expectComma();
+        const ident = switch (input.expectIdent()) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
+        if (input.expectComma().asErr()) |e| return .{ .err = e };
 
         // todo_stuff.match_ignore_ascii_case
         if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "linear")) {
             // todo_stuff.depth
-            const from = try WebKitGradientPoint.parse(input);
-            try input.expectComma();
-            const to = try WebKitGradientPoint.parse(input);
-            try input.expectComma();
-            const stops = try input.parseCommaSeparated(WebKitColorStop.parse);
-            return WebKitGradient{ .linear = .{
+            const from = switch (WebKitGradientPoint.parse(input)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
+            if (input.expectComma().asErr()) |e| return .{ .err = e };
+            const to = switch (WebKitGradientPoint.parse(input)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
+            if (input.expectComma().asErr()) |e| return .{ .err = e };
+            const stops = switch (input.parseCommaSeparated(WebKitColorStop.parse)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
+            return .{ .result = WebKitGradient{ .linear = .{
                 .from = from,
                 .to = to,
                 .stops = stops,
-            } };
+            } } };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "radial")) {
-            const from = try WebKitGradientPoint.parse(input);
-            try input.expectComma();
-            const r0 = try CSSNumberFns.parse(input);
-            try input.expectComma();
-            const to = try WebKitGradientPoint.parse(input);
-            try input.expectComma();
-            const r1 = try CSSNumberFns.parse(input);
-            try input.expectComma();
+            const from = switch (WebKitGradientPoint.parse(input)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
+            if (input.expectComma().asErr()) |e| return .{ .err = e };
+            const r0 = switch (CSSNumberFns.parse(input)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
+            if (input.expectComma().asErr()) |e| return .{ .err = e };
+            const to = switch (WebKitGradientPoint.parse(input)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
+            if (input.expectComma().asErr()) |e| return .{ .err = e };
+            const r1 = switch (CSSNumberFns.parse(input)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
+            if (input.expectComma().asErr()) |e| return .{ .err = e };
             // todo_stuff.depth
-            const stops = try input.parseCommaSeparated(WebKitColorStop.parse);
-            return WebKitGradient{
+            const stops = switch (input.parseCommaSeparated(WebKitColorStop.parse)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
+            return .{ .result = WebKitGradient{
                 .radial = .{
                     .from = from,
                     .r0 = r0,
@@ -389,7 +493,7 @@ pub const WebKitGradient = union(enum) {
                     .r1 = r1,
                     .stops = stops,
                 },
-            };
+            } };
         } else {
             return location.newUnexpectedTokenError(.{ .ident = ident });
         }
@@ -445,35 +549,38 @@ pub const LineDirection = union(enum) {
         vertical: VerticalPositionKeyword,
     },
 
-    pub fn parse(input: *css.Parser, is_prefixed: bool) Error!Position {
+    pub fn parse(input: *css.Parser, is_prefixed: bool) Result(Position) {
         // Spec allows unitless zero angles for gradients.
         // https://w3c.github.io/csswg-drafts/css-images-3/#linear-gradient-syntax
-        if (input.tryParse(Angle.parseWithUnitlessZero, .{})) |angle| {
-            return LineDirection{ .angle = angle };
+        if (input.tryParse(Angle.parseWithUnitlessZero, .{}).asValue()) |angle| {
+            return .{ .result = LineDirection{ .angle = angle } };
         }
 
         if (!is_prefixed) {
-            try input.expectIdentMatching("to");
+            if (input.expectIdentMatching("to").asErr()) |e| return .{ .err = e };
         }
 
-        if (input.tryParse(HorizontalPositionKeyword.parse, .{})) |x| {
-            if (input.tryParse(VerticalPositionKeyword.parse, .{})) |y| {
-                return LineDirection{ .corner = .{
+        if (input.tryParse(HorizontalPositionKeyword.parse, .{}).asValue()) |x| {
+            if (input.tryParse(VerticalPositionKeyword.parse, .{}).asValue()) |y| {
+                return .{ .result = LineDirection{ .corner = .{
                     .horizontal = x,
                     .vertical = y,
-                } };
+                } } };
             }
-            return LineDirection{ .horizontal = x };
+            return .{ .result = LineDirection{ .horizontal = x } };
         }
 
-        const y = try VerticalPositionKeyword.parse(input);
-        if (input.tryParse(HorizontalPositionKeyword.parse, .{})) |x| {
-            return LineDirection{ .corner = .{
+        const y = switch (VerticalPositionKeyword.parse(input)) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
+        if (input.tryParse(HorizontalPositionKeyword.parse, .{}).asValue()) |x| {
+            return .{ .result = LineDirection{ .corner = .{
                 .horizontal = x,
                 .vertical = y,
-            } };
+            } } };
         }
-        return LineDirection{ .vertical = y };
+        return .{ .result = LineDirection{ .vertical = y } };
     }
 
     pub fn toCss(this: *const LineDirection, comptime W: type, dest: *Printer(W), is_prefixed: bool) PrintErr!void {
@@ -558,10 +665,16 @@ pub const WebKitGradientPoint = struct {
     /// The y-position.
     y: WebKitGradientPointComponent(VerticalPositionKeyword),
 
-    pub fn parse(input: *css.Parser) Error!WebKitGradientPoint {
-        const x = try WebKitGradientPointComponent(HorizontalPositionKeyword).parse(input);
-        const y = try WebKitGradientPointComponent(VerticalPositionKeyword).parse(input);
-        return .{ .x = x, .y = y };
+    pub fn parse(input: *css.Parser) Result(WebKitGradientPoint) {
+        const x = switch (WebKitGradientPointComponent(HorizontalPositionKeyword).parse(input)) {
+            .result => |v| v,
+            .err => |e| return .{ .err = e },
+        };
+        const y = switch (WebKitGradientPointComponent(VerticalPositionKeyword).parse(input)) {
+            .result => |v| v,
+            .err => |e| return .{ .err = e },
+        };
+        return .{ .result = .{ .x = x, .y = y } };
     }
 
     pub fn toCss(this: *const WebKitGradientPoint, comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -583,17 +696,20 @@ pub fn WebKitGradientPointComponent(comptime S: type) type {
 
         const This = @This();
 
-        pub fn parse(input: *css.Parser) Error!This {
-            if (input.tryParse(css.Parser.expectIdentMatching, .{"center"})) |_| {
-                return .center;
+        pub fn parse(input: *css.Parser) Result(This) {
+            if (input.tryParse(css.Parser.expectIdentMatching, .{"center"}).isOk()) {
+                return .{ .result = .center };
             }
 
-            if (input.tryParse(NumberOrPercentage.parse, .{})) |number| {
-                return .{ .number = number };
+            if (input.tryParse(NumberOrPercentage.parse, .{}).asValue()) |number| {
+                return .{ .result = .{ .number = number } };
             }
 
-            const keyword = try css.generic.parse(S, input);
-            return .{ .side = keyword };
+            const keyword = switch (css.generic.parse(S, input)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
+            return .{ .result = .{ .side = keyword } };
         }
 
         pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -632,9 +748,12 @@ pub const WebKitColorStop = struct {
     /// The position of the color stop.
     position: CSSNumber,
 
-    pub fn parse(input: *css.Parser) Error!WebKitColorStop {
+    pub fn parse(input: *css.Parser) Result(WebKitColorStop) {
         const location = input.currentSourceLocation();
-        const function = try input.expectFunction();
+        const function = switch (input.expectFunction()) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
         const Closure = struct { loc: css.SourceLocation, function: []const u8 };
         return input.parseNestedBlock(
             WebKitColorStop,
@@ -643,11 +762,14 @@ pub const WebKitColorStop = struct {
                 fn parse(
                     closure: Closure,
                     i: *css.Parser,
-                ) Error!WebKitColorStop {
+                ) Result(WebKitColorStop) {
                     // todo_stuff.match_ignore_ascii_case
                     const position: f32 = if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "color-stop")) position: {
-                        const p: NumberOrPercentage = try @call(.auto, @field(NumberOrPercentage, "parse"), .{i});
-                        try i.expectComma();
+                        const p: NumberOrPercentage = switch (@call(.auto, @field(NumberOrPercentage, "parse"), .{i})) {
+                            .result => |vv| vv,
+                            .err => |e| return .{ .err = e },
+                        };
+                        if (i.expectComma().asErr()) |e| return .{ .err = e };
                         break :position p.intoF32();
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "from")) position: {
                         break :position 0.0;
@@ -656,8 +778,11 @@ pub const WebKitColorStop = struct {
                     } else {
                         return closure.loc.newUnexpectedTokenError(.{ .ident = closure.function });
                     };
-                    const color = try CssColor.parse(i);
-                    return WebKitColorStop{ .color = color, .position = position };
+                    const color = switch (CssColor.parse(i)) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    };
+                    return .{ .result = WebKitColorStop{ .color = color, .position = position } };
                 }
             }.parse,
         );
@@ -693,10 +818,16 @@ pub fn ColorStop(comptime D: type) type {
 
         const This = @This();
 
-        pub fn parse(input: *css.Parser) Error!ColorStop(D) {
-            const color = try CssColor.parse(input);
-            const position = input.tryParse(css.generic.parseFor(D), .{}) catch null;
-            return .{ .color = color, .position = position };
+        pub fn parse(input: *css.Parser) Result(ColorStop(D)) {
+            const color = switch (CssColor.parse(input)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
+            const position = switch (input.tryParse(css.generic.parseFor(D), .{})) {
+                .result => |v| v,
+                .err => null,
+            };
+            return .{ .result = .{ .color = color, .position = position } };
         }
 
         pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -724,36 +855,42 @@ pub const Ellipse = union(enum) {
     /// A shape extent keyword.
     extent: ShapeExtent,
 
-    pub fn parse(input: *css.Parser) Error!Ellipse {
-        if (input.tryParse(ShapeExtent.parse, .{})) |extent| {
+    pub fn parse(input: *css.Parser) Result(Ellipse) {
+        if (input.tryParse(ShapeExtent.parse, .{}).asValue()) |extent| {
             // The `ellipse` keyword is optional, but only if the `circle` keyword is not present.
             // If it is, then we'll re-parse as a circle.
-            if (input.tryParse(css.Parser.expectIdentMatching, .{"circle"})) |_| {
+            if (input.tryParse(css.Parser.expectIdentMatching, .{"circle"}).isOk()) {
                 return input.newErrorForNextToken();
             }
             _ = input.tryParse(css.Parser.expectIdentMatching, .{"ellipse"});
-            return Ellipse{ .extent = extent };
+            return .{ .result = Ellipse{ .extent = extent } };
         }
 
-        if (input.tryParse(LengthPercentage.parse, .{})) |x| {
-            const y = try LengthPercentage.parse(input);
+        if (input.tryParse(LengthPercentage.parse, .{}).asValue()) |x| {
+            const y = switch (LengthPercentage.parse(input)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
             // The `ellipse` keyword is optional if there are two lengths.
             _ = input.tryParse(css.Parser.expectIdentMatching, .{"ellipse"});
-            return Ellipse{ .size = .{ .x = x, .y = y } };
+            return .{ .result = Ellipse{ .size = .{ .x = x, .y = y } } };
         }
 
-        if (input.tryParse(css.Parser.expectIdentMatching, .{"ellipse"})) |_| {
-            if (input.tryParse(ShapeExtent.parse, .{})) |extent| {
-                return Ellipse{ .extent = extent };
+        if (input.tryParse(css.Parser.expectIdentMatching, .{"ellipse"}).isOk()) {
+            if (input.tryParse(ShapeExtent.parse, .{}).asValue()) |extent| {
+                return .{ .result = Ellipse{ .extent = extent } };
             }
 
-            if (input.tryParse(LengthPercentage.parse, .{})) |x| {
-                const y = try LengthPercentage.parse(input);
-                return Ellipse{ .size = .{ .x = x, .y = y } };
+            if (input.tryParse(LengthPercentage.parse, .{}).asValue()) |x| {
+                const y = switch (LengthPercentage.parse(input)) {
+                    .result => |vv| vv,
+                    .err => |e| return .{ .err = e },
+                };
+                return .{ .result = Ellipse{ .size = .{ .x = x, .y = y } } };
             }
 
             // Assume `farthest-corner` if only the `ellipse` keyword is present.
-            return Ellipse{ .extent = .@"farthest-corner" };
+            return .{ .result = Ellipse{ .extent = .@"farthest-corner" } };
         }
 
         return input.newErrorForNextToken();
@@ -793,31 +930,31 @@ pub const Circle = union(enum) {
     /// A shape extent keyword.
     extent: ShapeExtent,
 
-    pub fn parse(input: *css.Parser) Error!Circle {
-        if (input.tryParse(ShapeExtent.parse, .{})) |extent| {
+    pub fn parse(input: *css.Parser) Result(Circle) {
+        if (input.tryParse(ShapeExtent.parse, .{}).asValue()) |extent| {
             // The `circle` keyword is required. If it's not there, then it's an ellipse.
-            try input.expectIdentMatching("circle");
-            return Circle{ .extent = extent };
+            if (input.expectIdentMatching("circle").asErr()) |e| return .{ .err = e };
+            return .{ .result = Circle{ .extent = extent } };
         }
 
-        if (input.tryParse(Length.parse, .{})) |length| {
+        if (input.tryParse(Length.parse, .{}).asValue()) |length| {
             // The `circle` keyword is optional if there is only a single length.
             // We are assuming here that Ellipse.parse ran first.
             _ = input.tryParse(css.Parser.expectIdentMatching, .{"circle"});
-            return Circle{ .radius = length };
+            return .{ .result = Circle{ .radius = length } };
         }
 
-        if (input.tryParse(css.Parser.expectIdentMatching, .{"circle"})) |_| {
-            if (input.tryParse(ShapeExtent.parse, .{})) |extent| {
-                return Circle{ .extent = extent };
+        if (input.tryParse(css.Parser.expectIdentMatching, .{"circle"}).isOk()) {
+            if (input.tryParse(ShapeExtent.parse, .{}).asValue()) |extent| {
+                return .{ .result = Circle{ .extent = extent } };
             }
 
-            if (input.tryParse(Length.parse, .{})) |length| {
-                return Circle{ .radius = length };
+            if (input.tryParse(Length.parse, .{}).asValue()) |length| {
+                return .{ .result = Circle{ .radius = length } };
             }
 
             // If only the `circle` keyword was given, default to `farthest-corner`.
-            return Circle{ .extent = .@"farthest-corner" };
+            return .{ .result = Circle{ .extent = .@"farthest-corner" } };
         }
 
         return input.newErrorForNextToken();
@@ -837,26 +974,29 @@ pub const Circle = union(enum) {
     }
 };
 
-pub fn parseItems(comptime D: type, input: *css.Parser) Error!ArrayList(GradientItem(D)) {
+pub fn parseItems(comptime D: type, input: *css.Parser) Result(ArrayList(GradientItem(D))) {
     var items = ArrayList(GradientItem(D)){};
     var seen_stop = false;
 
     while (true) {
         const Closure = struct { items: *ArrayList(GradientItem(D)), seen_stop: *bool };
-        try input.parseUntilBefore(
+        if (input.parseUntilBefore(
             css.Delimiters{ .comma = true },
             Closure{ .items = &items, .seen_stop = &seen_stop },
             struct {
-                fn parse(closure: Closure, i: *css.Parser) Error!void {
+                fn parse(closure: Closure, i: *css.Parser) Result(void) {
                     if (closure.seen_stop.*) {
-                        if (i.tryParse(comptime css.generic.parseFor(D), .{})) |hint| {
+                        if (i.tryParse(comptime css.generic.parseFor(D), .{}).asValue()) |hint| {
                             closure.seen_stop.* = false;
                             closure.items.append(.{ .hint = hint }) catch bun.outOfMemory();
-                            return;
+                            return Result(void).success;
                         }
                     }
 
-                    const stop = try ColorStop(D).parse(i);
+                    const stop = switch (ColorStop(D).parse(i)) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    };
 
                     if (i.tryParse(comptime css.generic.parseFor(D), .{})) |position| {
                         const color = stop.color.clone(@compileError(css.todo_stuff.think_about_allocator));
@@ -870,19 +1010,20 @@ pub fn parseItems(comptime D: type, input: *css.Parser) Error!ArrayList(Gradient
                     }
 
                     closure.seen_stop.* = true;
+                    return Result(void).success;
                 }
             }.parse,
-        );
+        ).asErr()) |e| return .{ .err = e };
 
-        if (input.next()) |tok| {
+        if (input.next().asValue()) |tok| {
             if (tok == .comma) continue;
             bun.unreachablePanic("expected a comma after parsing a gradient", .{});
         } else {
-            @compileError(css.todo_stuff.errors);
+            break;
         }
     }
 
-    return items;
+    return .{ .result = items };
 }
 
 pub fn serializeItems(

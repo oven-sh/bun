@@ -2,7 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const bun = @import("root").bun;
 pub const css = @import("../css_parser.zig");
-const Error = css.Error;
+const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -28,7 +28,7 @@ pub const Image = union(enum) {
     // pub usingnamespace css.DeriveParse(@This());
     // pub usingnamespace css.DeriveToCss(@This());
 
-    pub fn parse(input: *css.Parser) Error!Image {
+    pub fn parse(input: *css.Parser) Result(Image) {
         _ = input; // autofix
         @panic(css.todo_stuff.depth);
     }
@@ -51,7 +51,7 @@ pub const ImageSet = struct {
     /// The vendor prefix for the `image-set()` function.
     vendor_prefix: VendorPrefix,
 
-    pub fn parse(input: *css.Parser) Error!ImageSet {
+    pub fn parse(input: *css.Parser) Result(ImageSet) {
         const location = input.currentSourceLocation();
         const f = input.expectFunction();
         const vendor_prefix = vendor_prefix: {
@@ -64,17 +64,20 @@ pub const ImageSet = struct {
         };
 
         const Fn = struct {
-            pub fn parseNestedBlockFn(_: void, i: *css.Parser) Error!ArrayList(ImageSetOption) {
+            pub fn parseNestedBlockFn(_: void, i: *css.Parser) Result(ArrayList(ImageSetOption)) {
                 return i.parseCommaSeparated(ImageSetOption, ImageSetOption.parse);
             }
         };
 
-        const options = try input.parseNestedBlock(ArrayList(ImageSetOption), {}, Fn.parseNestedBlockFn);
+        const options = switch (input.parseNestedBlock(ArrayList(ImageSetOption), {}, Fn.parseNestedBlockFn)) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
 
-        return ImageSet{
+        return .{ .result = ImageSet{
             .options = options,
             .vendor_prefix = vendor_prefix,
-        };
+        } };
     }
 
     pub fn toCss(this: *const ImageSet, comptime W: type, dest: *css.Printer(W)) PrintErr!void {
@@ -102,31 +105,32 @@ pub const ImageSetOption = struct {
     /// The mime type of the image.
     file_type: ?[]const u8,
 
-    pub fn parse(input: *css.Parser) Error!ImageSetOption {
+    pub fn parse(input: *css.Parser) Result(ImageSetOption) {
         const loc = input.currentSourceLocation();
-        const image = if (input.tryParse(css.Parser.expectUrlOrString, .{})) |url|
+        const image = if (input.tryParse(css.Parser.expectUrlOrString, .{}).asValue()) |url|
             Image{ .url = Url{
                 .url = url,
                 .loc = loc,
             } }
-        else
-            // For some reason, `Image.parse` makes zls crash, using this syntax until that's fixed
-            try @call(.auto, @field(Image, "parse"), .{input});
+        else switch (@call(.auto, @field(Image, "parse"), .{input})) { // For some reason, `Image.parse` makes zls crash, using this syntax until that's fixed
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
 
-        const resolution: Resolution, const file_type: ?[]const u8 = if (input.tryParse(Resolution.parse, .{})) |res| brk: {
-            const file_type = input.tryParse(parseFileType, .{}) catch null;
+        const resolution: Resolution, const file_type: ?[]const u8 = if (input.tryParse(Resolution.parse, .{}).asValue()) |res| brk: {
+            const file_type = input.tryParse(parseFileType, .{}).asValue();
             break :brk .{ res, file_type };
         } else brk: {
-            const file_type = input.tryParse(parseFileType, .{}) catch null;
-            const resolution = input.tryParse(Resolution.parse, .{}) catch Resolution{ .dppx = 1.0 };
+            const file_type = input.tryParse(parseFileType, .{}).asValue();
+            const resolution = input.tryParse(Resolution.parse, .{}).unwrapOr(Resolution{ .dppx = 1.0 });
             break :brk .{ resolution, file_type };
         };
 
-        return ImageSetOption{
+        return .{ .result = ImageSetOption{
             .image = image,
             .resolution = resolution,
             .file_type = if (file_type) |x| x else null,
-        };
+        } };
     }
 
     pub fn toCss(
@@ -180,10 +184,10 @@ pub const ImageSetOption = struct {
     }
 };
 
-fn parseFileType(input: *css.Parser) Error![]const u8 {
-    try input.expectFunctionMatching("type");
+fn parseFileType(input: *css.Parser) Result([]const u8) {
+    if (input.expectFunctionMatching("type").asErr()) |e| return .{ .err = e };
     const Fn = struct {
-        pub fn parseNestedBlockFn(_: void, i: *css.Parser) Error![]const u8 {
+        pub fn parseNestedBlockFn(_: void, i: *css.Parser) Result([]const u8) {
             return i.expectString();
         }
     };

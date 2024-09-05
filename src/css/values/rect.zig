@@ -1,7 +1,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
 pub const css = @import("../css_parser.zig");
-const Error = css.Error;
+const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -42,26 +42,32 @@ pub fn Rect(comptime T: type) type {
 
         const This = @This();
 
-        pub fn parse(input: *css.Parser) Error!This {
+        pub fn parse(input: *css.Parser) Result(This) {
             return This.parseWith(input, valParse);
         }
 
-        pub fn parseWith(input: *css.Parser, comptime parse_fn: *const fn (*css.Parser) Error!T) Error!This {
-            const first = try parse_fn(input);
-            const second = input.tryParse(parse_fn, .{}) catch {
+        pub fn parseWith(input: *css.Parser, comptime parse_fn: *const fn (*css.Parser) Result(T)) Result(This) {
+            const first = switch (parse_fn(input)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
+            const second = switch (input.tryParse(parse_fn, .{})) {
+                .result => |v| v,
                 // <first>
-                return This{ .top = first, .right = first, .bottom = first, .left = first };
+                .err => return .{ .result = This{ .top = first, .right = first, .bottom = first, .left = first } },
             };
-            const third = input.tryParse(parse_fn, .{}) catch {
+            const third = switch (input.tryParse(parse_fn, .{})) {
+                .result => |v| v,
                 // <first> <second>
-                return This{ .top = first, .right = second, .bottom = first, .left = second };
+                .err => return This{ .top = first, .right = second, .bottom = first, .left = second },
             };
-            const fourth = input.tryParse(parse_fn, .{}) catch {
+            const fourth = switch (input.tryParse(parse_fn, .{})) {
+                .result => |v| v,
                 // <first> <second> <third>
-                return This{ .top = first, .right = second, .bottom = third, .left = second };
+                .err => return This{ .top = first, .right = second, .bottom = third, .left = second },
             };
             // <first> <second> <third> <fourth>
-            return This{ .top = first, .right = second, .bottom = third, .left = fourth };
+            return .{ .result = This{ .top = first, .right = second, .bottom = third, .left = fourth } };
         }
 
         pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -85,7 +91,7 @@ pub fn Rect(comptime T: type) type {
             try css.generic.toCss(T, &this.left, W, dest);
         }
 
-        pub fn valParse(i: *css.Parser) Error!T {
+        pub fn valParse(i: *css.Parser) Result(T) {
             return css.generic.parse(T, i);
         }
     };

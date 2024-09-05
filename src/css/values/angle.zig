@@ -1,7 +1,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
 pub const css = @import("../css_parser.zig");
-const Error = css.Error;
+const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -33,45 +33,48 @@ pub const Angle = union(Tag) {
     // ~toCssImpl
     const This = @This();
 
-    pub fn parse(input: *css.Parser) Error!Angle {
+    pub fn parse(input: *css.Parser) Result(Angle) {
         return Angle.parseInternal(input, false);
     }
 
-    fn parseInternal(input: *css.Parser, allow_unitless_zero: bool) Error!Angle {
-        if (input.tryParse(Calc(Angle).parse, .{})) |calc_value| {
-            if (calc_value == .value) return calc_value.value.*;
+    fn parseInternal(input: *css.Parser, allow_unitless_zero: bool) Result(Angle) {
+        if (input.tryParse(Calc(Angle).parse, .{}).asValue()) |calc_value| {
+            if (calc_value == .value) return .{ .result = calc_value.value.* };
             // Angles are always compatible, so they will always compute to a value.
             return input.newCustomError(css.ParserError.invalid_value);
         }
 
         const location = input.currentSourceLocation();
-        const token = try input.next();
+        const token = switch (input.next()) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
         switch (token.*) {
             .dimension => |*dim| {
                 const value = dim.num.value;
                 const unit = dim.unit;
                 // todo_stuff.match_ignore_ascii_case
                 if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("deg", unit)) {
-                    return Angle{ .deg = value };
+                    return .{ .result = Angle{ .deg = value } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("grad", unit)) {
-                    return Angle{ .grad = value };
+                    return .{ .result = Angle{ .grad = value } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("turn", unit)) {
-                    return Angle{ .turn = value };
+                    return .{ .result = Angle{ .turn = value } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("rad", unit)) {
-                    return Angle{ .rad = value };
+                    return .{ .result = Angle{ .rad = value } };
                 } else {
                     return location.newUnexpectedTokenError(token.*);
                 }
             },
             .number => |num| {
-                if (num.value == 0.0 and allow_unitless_zero) return Angle.zero();
+                if (num.value == 0.0 and allow_unitless_zero) return .{ .result = Angle.zero() };
             },
             else => {},
         }
         return location.newUnexpectedTokenError(token.*);
     }
 
-    pub fn parseWithUnitlessZero(input: *css.Parser) Error!Angle {
+    pub fn parseWithUnitlessZero(input: *css.Parser) Result(Angle) {
         return Angle.parseInternal(input, true);
     }
 
@@ -104,21 +107,21 @@ pub const Angle = union(Tag) {
         }
     }
 
-    pub fn tryFromToken(token: *const css.Token) Error!Angle {
+    pub fn tryFromToken(token: *const css.Token) css.Maybe(Angle, void) {
         if (token.* == .dimension) {
             const value = token.dimension.num;
             const unit = token.dimension.unit;
             if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "deg")) {
-                return .{ .deg = value };
+                return .{ .result = .{ .deg = value } };
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "grad")) {
-                return .{ .grad = value };
+                return .{ .result = .{ .grad = value } };
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "turn")) {
-                return .{ .turn = value };
+                return .{ .result = .{ .turn = value } };
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "rad")) {
-                return .{ .rad = value };
+                return .{ .result = .{ .rad = value } };
             }
         }
-        @compileError(css.todo_stuff.errors);
+        return .{ .err = {} };
     }
 
     /// Returns the angle in radians.

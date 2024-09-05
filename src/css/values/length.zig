@@ -1,7 +1,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
 pub const css = @import("../css_parser.zig");
-const Error = css.Error;
+const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -147,9 +147,12 @@ pub const LengthValue = union(enum) {
     /// A length in the `cqmax` unit. An `cqmin` is equal to the larger of `cqi` and `cqb`.
     cqmax: CSSNumber,
 
-    pub fn parse(input: *css.Parser) Error!@This() {
+    pub fn parse(input: *css.Parser) Result(@This()) {
         const location = input.currentSourceLocation();
-        const token = try input.next();
+        const token = switch (input.next()) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
         switch (token.*) {
             .dimension => |*dim| {
                 inline for (std.meta.fields(@This())) |field| {
@@ -158,7 +161,7 @@ pub const LengthValue = union(enum) {
                     }
                 }
             },
-            .number => |*num| return .{ .px = num.value },
+            .number => |*num| return .{ .result = .{ .px = num.value } },
         }
         return location.newUnexpectedTokenError(token.*);
     }
@@ -175,7 +178,7 @@ pub const LengthValue = union(enum) {
         return css.serializer.serializeDimension(value, unit, W, dest);
     }
 
-    pub fn tryFromToken(token: *const css.Token) Error!@This() {
+    pub fn tryFromToken(token: *const css.Token) Result(@This()) {
         switch (token.*) {
             .dimension => |*dim| {
                 inline for (std.meta.fields(@This())) |field| {
@@ -229,8 +232,8 @@ pub const Length = union(enum) {
         };
     }
 
-    pub fn parse(input: *css.Parser) Error!Length {
-        if (input.tryParse(Calc(Length).parse, .{})) |calc_value| {
+    pub fn parse(input: *css.Parser) Result(Length) {
+        if (input.tryParse(Calc(Length).parse, .{}).asValue()) |calc_value| {
             // PERF: I don't like this redundant allocation
             if (calc_value == .value) return .{ .calc = calc_value.value.* };
             return .{
@@ -242,8 +245,11 @@ pub const Length = union(enum) {
             };
         }
 
-        const len = try LengthValue.parse(input);
-        return .{ .value = len };
+        const len = switch (LengthValue.parse(input)) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
+        return .{ .result = .{ .value = len } };
     }
 
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {

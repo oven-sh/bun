@@ -1,7 +1,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
 pub const css = @import("../css_parser.zig");
-const Error = css.Error;
+const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -143,7 +143,7 @@ pub fn Calc(comptime V: type) type {
 
         // TODO: users of this and `parseWith` don't need the pointer and often throwaway heap allocated values immediately
         // use temp allocator or something?
-        pub fn parse(input: *css.Parser) Error!This {
+        pub fn parse(input: *css.Parser) Result(This) {
             const Fn = struct {
                 pub fn parseWithFn(_: void, _: []const u8) ?This {
                     return null;
@@ -156,39 +156,45 @@ pub fn Calc(comptime V: type) type {
             input: *css.Parser,
             ctx: anytype,
             comptime parseIdent: *const fn (@TypeOf(ctx), []const u8) ?This,
-        ) Error!This {
+        ) Result(This) {
             const location = input.currentSourceLocation();
-            const f = try input.expectFunction();
+            const f = if (input.expectFunction().asErr()) |e| return .{ .err = e };
             // todo_stuff.match_ignore_ascii_case
             if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("calc", f)) {
                 const Closure = struct {
                     ctx: @TypeOf(ctx),
-                    pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Error!This {
+                    pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
                         return This.parseSum(i, self.ctx, parseIdent);
                     }
                 };
                 var closure = Closure{ .ctx = ctx };
-                const calc = try input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
-                if (calc == .value or calc == .number) return calc;
-                return Calc(V){
+                const calc = switch (input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn)) {
+                    .result => |vv| vv,
+                    .err => |e| return .{ .err = e },
+                };
+                if (calc == .value or calc == .number) return .{ .result = calc };
+                return .{ .result = Calc(V){
                     .function = bun.create(
                         @compileError(css.todo_stuff.think_about_allocator),
                         MathFunction(V),
                         MathFunction(V){ .calc = calc },
                     ),
-                };
+                } };
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("min", f)) {
                 const Closure = struct {
                     ctx: @TypeOf(ctx),
-                    pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Error!ArrayList(This) {
+                    pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(ArrayList(This)) {
                         return i.parseCommaSeparatedWithCtx(This, This, self, @This().parseOne);
                     }
-                    pub fn parseOne(self: *@This(), i: *css.Parser) Error!This {
+                    pub fn parseOne(self: *@This(), i: *css.Parser) Result(This) {
                         return This.parseSum(i, self.ctx, parseIdent);
                     }
                 };
                 var closure = Closure{ .ctx = ctx };
-                var args = try input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
+                var args = switch (input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn)) {
+                    .result => |vv| vv,
+                    .err => |e| return .{ .err = e },
+                };
                 // PERF: i don't like this additional allocation
                 var reduced: ArrayList(This) = This.reducedArgs(&args, std.math.Order.lt);
                 if (reduced.items.len == 1) {
@@ -204,49 +210,64 @@ pub fn Calc(comptime V: type) type {
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("max", f)) {
                 const Closure = struct {
                     ctx: @TypeOf(ctx),
-                    pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Error!ArrayList(This) {
+                    pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(ArrayList(This)) {
                         return i.parseCommaSeparatedWithCtx(This, This, self, @This().parseOne);
                     }
-                    pub fn parseOne(self: *@This(), i: *css.Parser) Error!This {
+                    pub fn parseOne(self: *@This(), i: *css.Parser) Result(This) {
                         return This.parseSum(i, self.ctx, parseIdent);
                     }
                 };
                 var closure = Closure{ .ctx = ctx };
-                var args = try input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
+                var args = switch (input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn)) {
+                    .result => |vv| vv,
+                    .err => |e| return .{ .err = e },
+                };
                 // PERF: i don't like this additional allocation
                 var reduced: ArrayList(This) = This.reducedArgs(&args, std.math.Order.gt);
                 if (reduced.items.len == 1) {
-                    return reduced.orderedRemove(0);
+                    return .{ .result = reduced.orderedRemove(0) };
                 }
-                return This{
+                return .{ .result = This{
                     .function = bun.create(
                         @compileError(css.todo_stuff.think_about_allocator),
                         MathFunction(V),
                         MathFunction(V){ .max = reduced },
                     ),
-                };
+                } };
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("clamp", f)) {
-                const Result = struct { ?This, This, ?This };
+                const ClosureResult = struct { ?This, This, ?This };
                 const Closure = struct {
                     ctx: @TypeOf(ctx),
 
-                    pub fn parseNestedBlock(self: *@This(), i: *css.Parser) Error!Result {
-                        const min = try This.parseSum(i, self, parseIdent);
-                        try i.expectComma();
-                        const center = This.parseSum(i, self, parseIdent);
-                        try input.expectComma();
-                        const max = This.parseSum(i, self, parseIdent);
-                        return .{ min, center, max };
+                    pub fn parseNestedBlock(self: *@This(), i: *css.Parser) Result(ClosureResult) {
+                        const min = switch (This.parseSum(i, self, parseIdent)) {
+                            .result => |vv| vv,
+                            .err => |e| return .{ .err = e },
+                        };
+                        if (i.expectComma().asErr()) |e| return .{ .err = e };
+                        const center = switch (This.parseSum(i, self, parseIdent)) {
+                            .result => |vv| vv,
+                            .err => |e| return .{ .err = e },
+                        };
+                        if (input.expectComma().asErr()) |e| return .{ .err = e };
+                        const max = switch (This.parseSum(i, self, parseIdent)) {
+                            .result => |vv| vv,
+                            .err => |e| return .{ .err = e },
+                        };
+                        return .{ .result = .{ min, center, max } };
                     }
                 };
                 var closure = Closure{
                     .ctx = ctx,
                 };
-                var min, var center, var max = try input.parseNestedBlock(
+                var min, var center, var max = switch (input.parseNestedBlock(
                     Result,
                     &closure,
                     Closure.parseNestedBlock,
-                );
+                )) {
+                    .result => |vv| vv,
+                    .err => |e| return .{ .err = e },
+                };
 
                 // According to the spec, the minimum should "win" over the maximum if they are in the wrong order.
                 const cmp = if (max != null and max == .value and center == .value)
@@ -314,9 +335,9 @@ pub fn Calc(comptime V: type) type {
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("round", f)) {
                 const Fn = struct {
                     ctx: @TypeOf(ctx),
-                    pub inline fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Error!This {
-                        const strategy = if (input.tryParse(RoundingStrategy.parse, .{})) |s| brk: {
-                            try input.expectComma();
+                    pub inline fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
+                        const strategy = if (input.tryParse(RoundingStrategy.parse, .{}).asValue()) |s| brk: {
+                            if (input.expectComma().asErr()) |e| return .{ .err = e };
                             break :brk s;
                         } else RoundingStrategy.default();
 
@@ -355,7 +376,7 @@ pub fn Calc(comptime V: type) type {
                 const Closure = struct {
                     ctx: @TypeOf(ctx),
 
-                    pub inline fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Error!This {
+                    pub inline fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
                         This.parseMathFn(
                             i,
                             void,
@@ -386,7 +407,7 @@ pub fn Calc(comptime V: type) type {
                 const Closure = struct {
                     ctx: @TypeOf(ctx),
 
-                    pub inline fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Error!This {
+                    pub inline fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
                         This.parseMathFn(
                             i,
                             void,
@@ -428,7 +449,7 @@ pub fn Calc(comptime V: type) type {
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("atan2", f)) {
                 const Closure = struct {
                     ctx: @TypeOf(ctx),
-                    pub inline fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Error!This {
+                    pub inline fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
                         _ = i; // autofix
                         const res = This.parseAtan2(input, self.ctx, parseIdent);
                         if (V.tryFromAngle(res)) |v| {
@@ -449,13 +470,22 @@ pub fn Calc(comptime V: type) type {
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("pow", f)) {
                 const Closure = struct {
                     ctx: @TypeOf(ctx),
-                    pub inline fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Error!This {
-                        const a = try This.parseNumeric(i, self.ctx, parseIdent);
-                        try input.expectComma();
-                        const b = try This.parseNumeric(i, self.ctx, parseIdent);
-                        return This{
-                            .number = std.math.pow(f32, a, b),
+                    pub inline fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
+                        const a = switch (This.parseNumeric(i, self.ctx, parseIdent)) {
+                            .result => |vv| vv,
+                            .err => |e| return .{ .err = e },
                         };
+
+                        if (input.expectComma().asErr()) |e| return .{ .err = e };
+
+                        const b = switch (This.parseNumeric(i, self.ctx, parseIdent)) {
+                            .result => |vv| vv,
+                            .err => |e| return .{ .err = e },
+                        };
+
+                        return .{ .result = This{
+                            .number = std.math.pow(f32, a, b),
+                        } };
                     }
                 };
                 var closure = Closure{ .ctx = ctx };
@@ -463,13 +493,19 @@ pub fn Calc(comptime V: type) type {
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("log", f)) {
                 const Closure = struct {
                     ctx: @TypeOf(ctx),
-                    pub inline fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Error!This {
-                        const value = try This.parseNumeric(i, self.ctx, parseIdent);
-                        if (input.tryParse(css.Parser.expectComma, .{})) {
-                            const base = This.parseNumeric(i, self.ctx, parseIdent);
-                            return This{ .number = std.math.log(f32, base, value) };
+                    pub inline fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
+                        const value = switch (This.parseNumeric(i, self.ctx, parseIdent)) {
+                            .result => |vv| vv,
+                            .err => |e| return .{ .err = e },
+                        };
+                        if (input.tryParse(css.Parser.expectComma, .{}).isOk()) {
+                            const base = switch (This.parseNumeric(i, self.ctx, parseIdent)) {
+                                .result => |vv| vv,
+                                .err => |e| return .{ .err = e },
+                            };
+                            return .{ .result = This{ .number = std.math.log(f32, base, value) } };
                         }
-                        return This{ .number = std.math.log(f32, std.math.e, value) };
+                        return .{ .result = This{ .number = std.math.log(f32, std.math.e, value) } };
                     }
                 };
                 var closure = Closure{ .ctx = ctx };
@@ -481,18 +517,22 @@ pub fn Calc(comptime V: type) type {
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("hypot", f)) {
                 const Closure = struct {
                     ctx: @TypeOf(ctx),
-                    pub inline fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Error!This {
+                    pub inline fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
                         const args = i.parseCommaSeparatedWithCtx(This, self, parseOne);
-                        const v = This.parseHypot(&args) catch return This{
-                            .function = bun.create(
-                                @compileError(css.todo_stuff.think_about_allocator),
-                                MathFunction,
-                                MathFunction(V){ .hypot = args },
-                            ),
+                        const v = switch (This.parseHypot(&args)) {
+                            .result => |vv| vv,
+                            .err => return This{
+                                .function = bun.create(
+                                    @compileError(css.todo_stuff.think_about_allocator),
+                                    MathFunction,
+                                    MathFunction(V){ .hypot = args },
+                                ),
+                            },
                         };
+
                         return v;
                     }
-                    pub inline fn parseOne(self: *@This(), i: *css.Parser) Error!This {
+                    pub inline fn parseOne(self: *@This(), i: *css.Parser) Result(This) {
                         return This.parseSum(i, self.ctx, parseIdent);
                     }
                 };
@@ -501,14 +541,22 @@ pub fn Calc(comptime V: type) type {
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("abs", f)) {
                 const Closure = struct {
                     ctx: @TypeOf(ctx),
-                    pub inline fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Error!This {
-                        const v = try This.parseSum(i, self.ctx, parseIdent);
-                        return This.applyMap(&v, .abs) catch return This{
-                            .function = bun.create(
-                                @compileError(css.todo_stuff.think_about_allocator),
-                                MathFunction(V),
-                                MathFunction(V){ .abs = v },
-                            ),
+                    pub inline fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
+                        const v = switch (This.parseSum(i, self.ctx, parseIdent)) {
+                            .result => |vv| vv,
+                            .err => |e| return .{ .err = e },
+                        };
+                        return .{
+                            .result = switch (This.applyMap(&v, .abs)) {
+                                .result => |vv| vv,
+                                .err => This{
+                                    .function = bun.create(
+                                        @compileError(css.todo_stuff.think_about_allocator),
+                                        MathFunction(V),
+                                        MathFunction(V){ .abs = v },
+                                    ),
+                                },
+                            },
                         };
                     }
                 };
@@ -517,10 +565,13 @@ pub fn Calc(comptime V: type) type {
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("sign", f)) {
                 const Closure = struct {
                     ctx: @TypeOf(ctx),
-                    pub inline fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Error!This {
-                        const v = try This.parseSum(i, self.ctx, parseIdent);
+                    pub inline fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
+                        const v = switch (This.parseSum(i, self.ctx, parseIdent)) {
+                            .result => |vv| vv,
+                            .err => |e| return .{ .err = e },
+                        };
                         switch (v) {
-                            .number => |*n| return This{ .number = std.math.sign(n) },
+                            .number => |*n| return .{ .result = This{ .number = std.math.sign(n) } },
                             .value => |*v2| {
                                 const MapFn = struct {
                                     pub inline fn sign(s: f32) f32 {
@@ -531,19 +582,19 @@ pub fn Calc(comptime V: type) type {
                                 // computed value in order to determine the sign.
                                 if (v2.tryMap(MapFn.sign)) |new_v| {
                                     // sign() alwasy resolves to a number.
-                                    return This{ .number = new_v.trySign().unwrap() };
+                                    return .{ .result = This{ .number = new_v.trySign().unwrap() } };
                                 }
                             },
                             else => {},
                         }
 
-                        return This{
+                        return .{ .result = This{
                             .function = bun.create(
                                 @compileError(css.todo_stuff.think_about_allocator),
                                 MathFunction(V),
                                 MathFunction(V){ .sign = v },
                             ),
-                        };
+                        } };
                     }
                 };
                 var closure = Closure{ .ctx = ctx };
@@ -560,42 +611,63 @@ pub fn Calc(comptime V: type) type {
             comptime fallback: *const fn (@TypeOf(ctx_for_op_and_fallback), This, This) MathFunction(V),
             ctx_for_parse_ident: anytype,
             comptime parse_ident: *const fn (@TypeOf(ctx_for_parse_ident), []const u8) ?This,
-        ) Error!This {
-            const a = try This.parseSum(input, ctx_for_parse_ident, parse_ident);
-            try input.expectComma();
-            const b = try This.parseSum(input, ctx_for_parse_ident, parse_ident);
+        ) Result(This) {
+            const a = switch (This.parseSum(input, ctx_for_parse_ident, parse_ident)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
+            if (input.expectComma().asErr()) |e| return .{ .err = e };
+            const b = switch (This.parseSum(input, ctx_for_parse_ident, parse_ident)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
 
-            return This.applyOp(&a, &b, ctx_for_op_and_fallback, op) orelse This{
+            const val = This.applyOp(&a, &b, ctx_for_op_and_fallback, op) orelse This{
                 .function = bun.create(
                     @compileError(css.todo_stuff.think_about_allocator),
                     MathFunction(V),
                     fallback(ctx_for_op_and_fallback, a, b),
                 ),
             };
+
+            return .{ .result = val };
         }
 
         pub fn parseSum(
             input: *css.Parser,
             ctx: anytype,
             comptime parse_ident: *const fn (@TypeOf(ctx), []const u8) ?This,
-        ) Error!This {
-            var cur = try This.parseProduct(input, ctx, parse_ident);
+        ) Result(This) {
+            var cur = switch (This.parseProduct(input, ctx, parse_ident)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
             while (true) {
                 const start = input.state();
-                const tok = input.nextIncludingWhitespace() catch {
-                    input.reset(&start);
-                    break;
+                const tok = switch (input.nextIncludingWhitespace()) {
+                    .result => |vv| vv,
+                    .err => {
+                        input.reset(&start);
+                        break;
+                    },
                 };
+
                 if (tok == .whitespace) {
                     if (input.isExhausted()) {
                         break; // allow trailing whitespace
                     }
-                    const next_tok = try input.next();
+                    const next_tok = switch (input.next()) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    };
                     if (next_tok.* == .delim and next_tok.delim == '+') {
                         const next = Calc(V).parseProduct(input, ctx, parse_ident);
                         cur = cur.add(@compileError(css.todo_stuff.think_about_allocator), next);
                     } else if (next_tok.* == .delim and next_tok.delim == '-') {
-                        var rhs = try This.parseProduct(input, ctx, parse_ident);
+                        var rhs = switch (This.parseProduct(input, ctx, parse_ident)) {
+                            .result => |vv| vv,
+                            .err => |e| return .{ .err = e },
+                        };
                         rhs = rhs.mul_f32(-1.0);
                         cur = cur.add(@compileError(css.todo_stuff.think_about_allocator), rhs);
                     } else {
@@ -606,23 +678,35 @@ pub fn Calc(comptime V: type) type {
                 input.reset(&start);
                 break;
             }
+
+            return .{ .result = cur };
         }
 
         pub fn parseProduct(
             input: *css.Parser,
             ctx: anytype,
             parse_ident: *const fn (@TypeOf(ctx), []const u8) ?This,
-        ) Error!This {
-            var node = try This.parseValue(input, ctx, parse_ident);
+        ) Result(This) {
+            var node = switch (This.parseValue(input, ctx, parse_ident)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
             while (true) {
                 const start = input.state();
-                const tok = input.next() catch {
-                    input.reset(&start);
-                    break;
+                const tok = switch (input.next()) {
+                    .result => |vv| vv,
+                    .err => {
+                        input.reset(&start);
+                        break;
+                    },
                 };
+
                 if (tok.* == .delim and tok.delim == '*') {
                     // At least one of the operands must be a number.
-                    const rhs = try This.parseValue(input, ctx, parse_ident);
+                    const rhs = switch (This.parseValue(input, ctx, parse_ident)) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    };
                     if (rhs == .number) {
                         node = node.mul_f32(rhs.number);
                     } else if (node == .number) {
@@ -633,7 +717,10 @@ pub fn Calc(comptime V: type) type {
                         return input.newUnexpectedTokenError(.{ .delim = '*' });
                     }
                 } else if (tok.* == .delim and tok.delim == '/') {
-                    const rhs = try This.parseValue(input, ctx, parse_ident);
+                    const rhs = switch (This.parseValue(input, ctx, parse_ident)) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    };
                     if (rhs == .number) {
                         const val = rhs.number;
                         node = node.mul_f32(1.0 / val);
@@ -645,30 +732,30 @@ pub fn Calc(comptime V: type) type {
                     break;
                 }
             }
-            return node;
+            return .{ .result = node };
         }
 
-        pub fn pareValue(
+        pub fn parseValue(
             input: *css.Parser,
             ctx: anytype,
             parse_ident: *const fn (@TypeOf(ctx), []const u8) ?This,
-        ) Error!This {
+        ) Result(This) {
             // Parse nested calc() and other math functions.
-            if (input.tryParse(This.parse, .{})) |_calc| {
+            if (input.tryParse(This.parse, .{}).asValue()) |_calc| {
                 const calc: This = _calc;
                 switch (calc) {
                     .function => |f| return switch (f.*) {
                         .calc => |c| c,
                         else => .{ .function = f },
                     },
-                    else => return calc,
+                    else => return .{ .result = calc },
                 }
             }
 
-            if (input.tryParse(css.Parser.expectParenthesisBlock, .{})) |_| {
+            if (input.tryParse(css.Parser.expectParenthesisBlock, .{}).isOk()) {
                 const Closure = struct {
                     ctx: @TypeOf(ctx),
-                    pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Error!This {
+                    pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
                         return This.parseSum(i, self.ctx, parse_ident);
                     }
                 };
@@ -678,31 +765,34 @@ pub fn Calc(comptime V: type) type {
                 return input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
             }
 
-            if (input.tryParse(css.Parser.expectNumber, .{})) |num| {
-                return .{ .number = num };
+            if (input.tryParse(css.Parser.expectNumber, .{}).asValue()) |num| {
+                return .{ .result = .{ .number = num } };
             }
 
-            if (input.tryParse(Constant.parse, .{})) |constant| {
-                return .{ .number = constant.intoF32() };
+            if (input.tryParse(Constant.parse, .{}).asValue()) |constant| {
+                return .{ .result = .{ .number = constant.intoF32() } };
             }
 
             const location = input.currentSourceLocation();
-            if (input.tryParse(css.Parser.expectIdent, .{})) |ident| {
+            if (input.tryParse(css.Parser.expectIdent, .{}).asValue()) |ident| {
                 if (parse_ident(ctx, ident)) |c| {
-                    return c;
+                    return .{ .result = c };
                 }
 
                 return location.newUnexpectedTokenError(.{ .ident = ident });
             }
 
-            const value = try input.tryParse(V.parse, .{});
-            return .{
+            const value = switch (input.tryParse(V.parse, .{})) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
+            return .{ .result = .{
                 .value = bun.create(
                     @compileError(css.todo_stuff.think_about_allocator),
                     V,
                     value,
                 ),
-            };
+            } };
         }
 
         pub fn parseTrig(
@@ -718,7 +808,7 @@ pub fn Calc(comptime V: type) type {
             to_angle: bool,
             ctx: anytype,
             parse_ident: *const fn (@TypeOf(ctx), []const u8) ?This,
-        ) Error!This {
+        ) Result(This) {
             const trig_fn = struct {
                 pub fn run(x: f32) f32 {
                     return comptime switch (trig_fn_kind) {
@@ -735,8 +825,11 @@ pub fn Calc(comptime V: type) type {
                 ctx: @TypeOf(ctx),
                 to_angle: bool,
 
-                pub fn parseNestedBockFn(this: *@This(), i: *css.Parser) Error!This {
-                    const v = try Calc(Angle).parseSum(
+                pub fn parseNestedBockFn(this: *@This(), i: *css.Parser) Result(This) {
+                    const v = switch (Calc(Angle)) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    }.parseSum(
                         i,
                         this,
                         @This().parseIdentFn,
@@ -785,7 +878,7 @@ pub fn Calc(comptime V: type) type {
             input: *css.Parser,
             ctx: anytype,
             parse_ident: *const fn (@TypeOf(ctx), []const u8) ?This,
-        ) Error!Angle {
+        ) Result(Angle) {
             const Fn = struct {
                 pub inline fn parseIdentNone(_: @TypeOf(ctx), _: []const u8) ?This {
                     return null;
@@ -798,28 +891,28 @@ pub fn Calc(comptime V: type) type {
             if (input.tryParse(Calc(Length).parseAtan2Args, .{
                 {},
                 Fn.parseIdentNone,
-            })) |v| {
+            }).asValue()) |v| {
                 return v;
             }
 
             if (input.tryParse(Calc(Percentage).parseAtan2Args, .{
                 {},
                 Fn.parseIdentNone,
-            })) |v| {
+            }).asValue()) |v| {
                 return v;
             }
 
             if (input.tryParse(Calc(Angle).parseAtan2Args, .{
                 {},
                 Fn.parseIdentNone,
-            })) |v| {
+            }).asValue()) |v| {
                 return v;
             }
 
             if (input.tryParse(Calc(Time).parseAtan2Args, .{
                 {},
                 Fn.parseIdentNone,
-            })) |v| {
+            }).asValue()) |v| {
                 return v;
             }
 
@@ -842,10 +935,16 @@ pub fn Calc(comptime V: type) type {
             input: *css.Parser,
             ctx: anytype,
             parse_ident: *const fn (@TypeOf(ctx), []const u8) ?This,
-        ) Error!Angle {
-            const a = try This.parseSum(input, ctx, parse_ident);
-            try input.expectComma();
-            const b = try This.parseSum(input, ctx, parse_ident);
+        ) Result(Angle) {
+            const a = switch (This.parseSum(input, ctx, parse_ident)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
+            if (input.expectComma().asErr()) |e| return .{ .err = e };
+            const b = switch (This.parseSum(input, ctx, parse_ident)) {
+                .result => |vv| vv,
+                .err => |e| return .{ .err = e },
+            };
 
             if (a == .value and b == .value) {
                 const Fn = struct {
@@ -871,7 +970,7 @@ pub fn Calc(comptime V: type) type {
             input: *css.Parser,
             ctx: anytype,
             parse_ident: *const fn (@TypeOf(ctx), []const u8) ?This,
-        ) Error!f32 {
+        ) Result(f32) {
             const Closure = struct {
                 ctx: @TypeOf(ctx),
 
@@ -884,15 +983,19 @@ pub fn Calc(comptime V: type) type {
             var closure = Closure{
                 .ctx = ctx,
             };
-            const v: Calc(CSSNumber) = try Calc(CSSNumber).parseSum(input, &closure, Closure.parseIdentFn);
-            return switch (v) {
+            const v: Calc(CSSNumber) = switch (Calc(CSSNumber).parseSum(input, &closure, Closure.parseIdentFn)) {
+                .result => |v| v,
+                .err => |e| return .{ .err = e },
+            };
+            const val = switch (v) {
                 .number => v.number,
                 .value => v.value.*,
                 else => input.newCustomError(css.ParserError.invalid_value),
             };
+            return .{ .result = val };
         }
 
-        pub fn parseHypot(args: *ArrayList(This)) Error!?This {
+        pub fn parseHypot(args: *ArrayList(This)) Result(?This) {
             if (args.items.len == 1) {
                 const v = args.items[0];
                 args.items[0] = This{ .number = 0 };

@@ -1,7 +1,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
 pub const css = @import("../css_parser.zig");
-const Error = css.Error;
+const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -33,10 +33,13 @@ pub const Url = struct {
 
     const This = @This();
 
-    pub fn parse(input: *css.Parser) Error!Url {
+    pub fn parse(input: *css.Parser) Result(Url) {
         const loc = input.currentSourceLocation();
-        const url = try input.expectUrl();
-        return Url{ .url = url, .loc = loc };
+        const url = switch (input.expectUrl()) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
+        return .{ .result = Url{ .url = url, .loc = loc } };
     }
 
     /// Returns whether the URL is absolute, and not relative.

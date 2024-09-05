@@ -1,7 +1,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
 pub const css = @import("../css_parser.zig");
-const Error = css.Error;
+const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -34,22 +34,25 @@ pub const Time = union(enum) {
     /// A time in milliseconds.
     milliseconds: CSSNumber,
 
-    pub fn parse(input: *css.Parser) Error!Time {
+    pub fn parse(input: *css.Parser) Result(Time) {
         const calc_result = input.tryParse(Calc(Time), .{});
         switch (calc_result) {
-            .value => |v| return .{ .seconds = v.* },
+            .value => |v| return .{ .result = .{ .seconds = v.* } },
             // Time is always compatible, so they will always compute to a value.
             else => return input.newErrorForNextToken(),
         }
 
         const location = input.currentSourceLocation();
-        const token = try input.next();
+        const token = switch (input.next()) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
         switch (token.*) {
             .dimension => |*dim| {
                 if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("s", dim.unit)) {
-                    return .{ .seconds = dim.value };
+                    return .{ .result = .{ .seconds = dim.value } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("ms", dim.unit)) {
-                    return .{ .milliseconds = dim.value };
+                    return .{ .result = .{ .milliseconds = dim.value } };
                 } else {
                     return location.newUnexpectedTokenError(css.Token{ .ident = dim.unit });
                 }
@@ -83,19 +86,19 @@ pub const Time = union(enum) {
         }
     }
 
-    pub fn tryFromToken(token: *const css.Token) Error!Time {
+    pub fn tryFromToken(token: *const css.Token) css.Maybe(Time, void) {
         switch (token.*) {
             .dimension => |*dim| {
                 // todo_stuff.match_ignore_ascii_case
                 if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("s", dim.unit)) {
-                    return .{ .seconds = dim.num.value };
+                    return .{ .result = .{ .seconds = dim.num.value } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("ms", dim.unit)) {
-                    return .{ .milliseconds = dim.num.value };
+                    return .{ .result = .{ .milliseconds = dim.num.value } };
                 }
             },
             else => {},
         }
 
-        @compileError(css.todo_stuff.errors);
+        return .{ .err = {} };
     }
 };

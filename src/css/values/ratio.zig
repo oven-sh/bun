@@ -1,7 +1,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
 pub const css = @import("../css_parser.zig");
-const Error = css.Error;
+const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -30,18 +30,31 @@ pub const Ratio = struct {
     numerator: CSSNumber,
     denominator: CSSNumber,
 
-    pub fn parse(input: *css.Parser) Error!Ratio {
-        const first = try CSSNumberFns.parse(input);
-        const second = if (input.tryParse(css.Parser.expectDelim, .{'/'})) |_| try CSSNumberFns.parse(input) else 1.0;
-        return Ratio{ .numerator = first, .denominator = second };
+    pub fn parse(input: *css.Parser) Result(Ratio) {
+        const first = switch (CSSNumberFns.parse(input)) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
+        const second = if (input.tryParse(css.Parser.expectDelim, .{'/'}).isOk()) switch (CSSNumberFns.parse(input)) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        } else 1.0;
+
+        return .{ .result = Ratio{ .numerator = first, .denominator = second } };
     }
 
     /// Parses a ratio where both operands are required.
-    pub fn parseRequired(input: *css.Parser) Error!Ratio {
-        const first = try CSSNumberFns.parse(input);
-        try input.expectDelim('/');
-        const second = try CSSNumberFns.parse(input);
-        return Ratio{ .numerator = first, .denominator = second };
+    pub fn parseRequired(input: *css.Parser) Result(Ratio) {
+        const first = switch (CSSNumberFns.parse(input)) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
+        if (input.expectDelim('/').asErr()) |e| return .{ .err = e };
+        const second = switch (CSSNumberFns.parse(input)) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
+        return .{ .result = Ratio{ .numerator = first, .denominator = second } };
     }
 
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {

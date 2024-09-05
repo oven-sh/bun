@@ -1,7 +1,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
 pub const css = @import("../css_parser.zig");
-const Error = css.Error;
+const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -32,13 +32,14 @@ const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
 pub const AlphaValue = struct {
     v: f32,
 
-    pub fn parse(input: *css.Parser) Error!AlphaValue {
+    pub fn parse(input: *css.Parser) Result(AlphaValue) {
         // For some reason NumberOrPercentage.parse makes zls crash, using this instead.
         const val: NumberOrPercentage = @call(.auto, @field(NumberOrPercentage, "parse"), .{input});
-        return switch (val) {
+        const final = switch (val) {
             .percentage => |percent| AlphaValue{ .v = percent.v },
             .number => |num| AlphaValue{ .v = num },
         };
+        return .{ .result = final };
     }
 
     pub fn toCss(this: *const AlphaValue, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {

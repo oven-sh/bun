@@ -1,7 +1,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
 pub const css = @import("../css_parser.zig");
-const Error = css.Error;
+const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -58,21 +58,23 @@ pub const SyntaxString = union(enum) {
         return dest.writeChar('"');
     }
 
-    pub fn parse(input: *css.Parser) Error!SyntaxString {
+    pub fn parse(input: *css.Parser) Result(SyntaxString) {
         const string = input.expectString();
-        return SyntaxString.parseString(string) catch return input.newCustomError(css.ParserError.invalid_value);
+        const result = SyntaxString.parseString(string);
+        if (result.isErr()) return input.newCustomError(css.ParserError.invalid_value);
+        return result;
     }
 
     /// Parses a syntax string.
-    pub fn parseString(input: []const u8) !SyntaxString {
+    pub fn parseString(input: []const u8) css.Maybe(SyntaxString, void) {
         // https://drafts.css-houdini.org/css-properties-values-api/#parsing-syntax
         var trimmed_input = std.mem.trimLeft(u8, input, SPACE_CHARACTERS);
         if (trimmed_input.len == 0) {
-            @compileError(css.todo_stuff.errors);
+            return .{ .err = {} };
         }
 
         if (bun.strings.eqlComptime(u8, trimmed_input, "*")) {
-            return SyntaxString.universal;
+            return .{ .result = SyntaxString.universal };
         }
 
         var components = ArrayList(SyntaxComponent){};
@@ -94,14 +96,14 @@ pub const SyntaxString = union(enum) {
                 continue;
             }
 
-            @compileError(css.todo_stuff.errors);
+            return .{ .err = {} };
         }
 
-        return SyntaxString{ .components = components };
+        return .{ .result = SyntaxString{ .components = components } };
     }
 
     /// Parses a value according to the syntax grammar.
-    pub fn parseValue(this: *SyntaxString, input: *css.Parser) Error!ParsedComponent {
+    pub fn parseValue(this: *SyntaxString, input: *css.Parser) Result(ParsedComponent) {
         switch (this.*) {
             .universal => return ParsedComponent{
                 .token_list = try css.css_properties.custom.TokenList.parse(
@@ -118,31 +120,74 @@ pub const SyntaxString = union(enum) {
 
                     while (true) {
                         const value_result = input.tryParse(struct {
-                            fn parse(i: *css.Parser) Error!ParsedComponent {
-                                return switch (component.kind) {
-                                    .length => ParsedComponent{ .length = try Length.parse(i) },
-                                    .number => ParsedComponent{ .number = try CSSNumberFns.parse(i) },
-                                    .percentage => ParsedComponent{ .percentage = try Percentage.parse(i) },
-                                    .length_percentage => ParsedComponent{ .length_percentage = try LengthPercentage.parse(i) },
-                                    .color => ParsedComponent{ .color = try CssColor.parse(i) },
-                                    .image => ParsedComponent{ .image = try Image.parse(i) },
-                                    .url => ParsedComponent{ .url = try Url.parse(i) },
-                                    .integer => ParsedComponent{ .integer = try CSSIntegerFns.parse(i) },
-                                    .angle => ParsedComponent{ .angle = try Angle.parse(i) },
-                                    .time => ParsedComponent{ .time = try Time.parse(i) },
-                                    .resolution => ParsedComponent{ .resolution = try Resolution.parse(i) },
-                                    .transform_function => ParsedComponent{ .transform_function = try css.css_properties.transform.Transform.parse(i) },
-                                    .transform_list => ParsedComponent{ .transform_list = try css.css_properties.transform.TransformList.parse(i) },
-                                    .custom_ident => ParsedComponent{ .custom_ident = try CustomIdentFns.parse(i) },
+                            fn parse(i: *css.Parser) Result(ParsedComponent) {
+                                const value = switch (component.kind) {
+                                    .length => ParsedComponent{ .length = switch (Length.parse(i)) {
+                                        .result => |vv| vv,
+                                        .err => |e| return .{ .err = e },
+                                    } },
+                                    .number => ParsedComponent{ .number = switch (CSSNumberFns.parse(i)) {
+                                        .result => |vv| vv,
+                                        .err => |e| return .{ .err = e },
+                                    } },
+                                    .percentage => ParsedComponent{ .percentage = switch (Percentage.parse(i)) {
+                                        .result => |vv| vv,
+                                        .err => |e| return .{ .err = e },
+                                    } },
+                                    .length_percentage => ParsedComponent{ .length_percentage = switch (LengthPercentage.parse(i)) {
+                                        .result => |vv| vv,
+                                        .err => |e| return .{ .err = e },
+                                    } },
+                                    .color => ParsedComponent{ .color = switch (CssColor.parse(i)) {
+                                        .result => |vv| vv,
+                                        .err => |e| return .{ .err = e },
+                                    } },
+                                    .image => ParsedComponent{ .image = switch (Image.parse(i)) {
+                                        .result => |vv| vv,
+                                        .err => |e| return .{ .err = e },
+                                    } },
+                                    .url => ParsedComponent{ .url = switch (Url.parse(i)) {
+                                        .result => |vv| vv,
+                                        .err => |e| return .{ .err = e },
+                                    } },
+                                    .integer => ParsedComponent{ .integer = switch (CSSIntegerFns.parse(i)) {
+                                        .result => |vv| vv,
+                                        .err => |e| return .{ .err = e },
+                                    } },
+                                    .angle => ParsedComponent{ .angle = switch (Angle.parse(i)) {
+                                        .result => |vv| vv,
+                                        .err => |e| return .{ .err = e },
+                                    } },
+                                    .time => ParsedComponent{ .time = switch (Time.parse(i)) {
+                                        .result => |vv| vv,
+                                        .err => |e| return .{ .err = e },
+                                    } },
+                                    .resolution => ParsedComponent{ .resolution = switch (Resolution.parse(i)) {
+                                        .result => |vv| vv,
+                                        .err => |e| return .{ .err = e },
+                                    } },
+                                    .transform_function => ParsedComponent{ .transform_function = switch (css.css_properties.transform.Transform.parse(i)) {
+                                        .result => |vv| vv,
+                                        .err => |e| return .{ .err = e },
+                                    } },
+                                    .transform_list => ParsedComponent{ .transform_list = switch (css.css_properties.transform.TransformList.parse(i)) {
+                                        .result => |vv| vv,
+                                        .err => |e| return .{ .err = e },
+                                    } },
+                                    .custom_ident => ParsedComponent{ .custom_ident = switch (CustomIdentFns.parse(i)) {
+                                        .result => |vv| vv,
+                                        .err => |e| return .{ .err = e },
+                                    } },
                                     .literal => |value| blk: {
                                         const location = i.currentSourceLocation();
-                                        const ident = try i.expectIdent();
+                                        const ident = if (i.expectIdent().asErr()) |e| return .{ .err = e };
                                         if (!bun.strings.eql(ident, value)) {
                                             return location.newUnexpectedTokenError(.{ .ident = ident });
                                         }
                                         break :blk ParsedComponent{ .literal = ident };
                                     },
                                 };
+                                return .{ .result = value };
                             }
                         }.parse, .{});
 
@@ -150,24 +195,24 @@ pub const SyntaxString = union(enum) {
                             switch (component.multiplier) {
                                 .none => return value,
                                 .space => {
-                                    try parsed.append(value);
+                                    if (parsed.append(value).asErr()) |e| return .{ .err = e };
                                     if (input.isExhausted()) {
-                                        return ParsedComponent{ .repeated = .{
+                                        return .{ .result = ParsedComponent{ .repeated = .{
                                             .components = parsed,
                                             .multiplier = component.multiplier,
-                                        } };
+                                        } } };
                                     }
                                 },
                                 .comma => {
-                                    try parsed.append(value);
-                                    if (input.next()) |token| {
+                                    if (parsed.append(value).asErr()) |e| return .{ .err = e };
+                                    if (input.next().asValue()) |token| {
                                         if (token == .comma) continue;
                                         break;
                                     } else {
-                                        return ParsedComponent{ .repeated = .{
+                                        return .{ .result = ParsedComponent{ .repeated = .{
                                             .components = parsed,
                                             .multiplier = component.multiplier,
-                                        } };
+                                        } } };
                                     }
                                 },
                             }
@@ -195,7 +240,10 @@ pub const SyntaxComponent = struct {
     multiplier: Multiplier,
 
     pub fn parseString(input: []const u8) !SyntaxComponent {
-        const kind = try SyntaxComponentKind.parseString(input);
+        const kind = switch (SyntaxComponentKind.parseString(input)) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
 
         // Pre-multiplied types cannot have multipliers.
         if (kind == .transform_list) {
@@ -260,7 +308,7 @@ pub const SyntaxComponentKind = union(enum) {
     /// A literal component.
     literal: []const u8,
 
-    pub fn parseString(input_: []const u8) Error!SyntaxComponentKind {
+    pub fn parseString(input_: []const u8) Result(SyntaxComponentKind) {
         // https://drafts.css-houdini.org/css-properties-values-api/#consume-syntax-component
         var input = std.mem.trimLeft(u8, input_, SPACE_CHARACTERS);
         if (bun.strings.startsWithChar(input, '<')) {

@@ -130,8 +130,20 @@ for (const proxy_tls of [false, true]) {
     }
   }
 }
-test("#12007", async () => {
-  const response = await fetch("https://nopecha.com/demo/cloudflare", {
+test("proxy can handle redirects #12007", async () => {
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      if (req.url.endsWith("/bunbun")) {
+        return Response.redirect("/bun", 302);
+      }
+      if (req.url.endsWith("/bun")) {
+        return Response.redirect("/", 302);
+      }
+      return new Response("", { status: 403 });
+    },
+  });
+  const response = await fetch(`${server.url.origin}/bunbun`, {
     proxy: httpsProxyServer.url,
     tls: {
       ca: tlsCert.cert,

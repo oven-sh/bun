@@ -648,7 +648,7 @@ function(register_cmake_command)
 
   if(MAKE_EFFECTIVE_INCLUDES)
     target_include_directories(${bun} PRIVATE ${MAKE_EFFECTIVE_INCLUDES})
-    if(TARGET clone-${MAKE_TARGET})
+    if(TARGET clone-${MAKE_TARGET} AND NOT BUN_LINK_ONLY)
       add_dependencies(${bun} clone-${MAKE_TARGET})
     endif()
   endif()

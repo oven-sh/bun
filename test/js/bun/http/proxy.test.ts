@@ -132,7 +132,7 @@ for (const proxy_tls of [false, true]) {
 }
 
 for (const server_tls of [false, true]) {
-  describe(`proxy can handle redirects with server ${server_tls ? "TLS" : "non-TLS"}`, () => {
+  describe(`proxy can handle redirects with ${server_tls ? "TLS" : "non-TLS"} server`, () => {
     test("with empty body #12007", async () => {
       using server = Bun.serve({
         tls: server_tls ? tlsCert : undefined,

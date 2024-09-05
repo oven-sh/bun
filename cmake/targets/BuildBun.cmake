@@ -557,6 +557,19 @@ optionx(BUN_CPP_ONLY BOOL "If only the C++ part of Bun should be built" DEFAULT 
 
 if(BUN_CPP_ONLY)
   add_library(${bun} STATIC ${BUN_CPP_SOURCES})
+  set_target_properties(${bun} PROPERTIES OUTPUT_NAME bun)
+  register_command(
+    TARGET
+      ${bun}
+    TARGET_PHASE
+      POST_BUILD
+    COMMENT
+      "Uploading ${bun}"
+    COMMAND
+      ${CMAKE_COMMAND} -E true
+    ARTIFACTS
+      ${BUILD_PATH}/${CMAKE_STATIC_LIBRARY_PREFIX}${bun}${CMAKE_STATIC_LIBRARY_SUFFIX}
+  )
 else()
   add_executable(${bun} ${BUN_CPP_SOURCES} ${BUN_ZIG_OUTPUT})
 endif()

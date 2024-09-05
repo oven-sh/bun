@@ -83,12 +83,6 @@ else()
   set(CONFIGURE_DEPENDS "CONFIGURE_DEPENDS")
 endif()
 
-set(REQUIRED_IF_NOT_ONLY_CPP_OR_LINK "")
-
-if(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY)
-    set(REQUIRED_IF_NOT_ONLY_CPP_OR_LINK "REQUIRED")
-endif()
-
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
 
 # --- WebKit ---
@@ -241,7 +235,7 @@ include_directories(
 
 # -- BUN_CPP_ONLY Target
 if(BUN_CPP_ARCHIVE)
-    set_target_properties(${bun} PROPERTIES LINKER_LANGUAGE CXX)
+  set_target_properties(${bun} PROPERTIES LINKER_LANGUAGE CXX)
 endif()
 
 # --- clang and linker flags ---

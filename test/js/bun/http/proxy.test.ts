@@ -132,6 +132,7 @@ for (const proxy_tls of [false, true]) {
 }
 test("proxy can handle redirects #12007", async () => {
   using server = Bun.serve({
+    tls: tlsCert,
     port: 0,
     async fetch(req) {
       if (req.url.endsWith("/bunbun")) {
@@ -146,7 +147,7 @@ test("proxy can handle redirects #12007", async () => {
   const response = await fetch(`${server.url.origin}/bunbun`, {
     proxy: httpsProxyServer.url,
     tls: {
-      ca: tlsCert.cert,
+      cert: tlsCert.cert,
       rejectUnauthorized: false,
     },
   });
@@ -157,6 +158,7 @@ test("proxy can handle redirects #12007", async () => {
 
 test("proxy can handle redirects with body #12007", async () => {
   using server = Bun.serve({
+    tls: tlsCert,
     port: 0,
     async fetch(req) {
       if (req.url.endsWith("/bunbun")) {
@@ -171,7 +173,7 @@ test("proxy can handle redirects with body #12007", async () => {
   const response = await fetch(`${server.url.origin}/bunbun`, {
     proxy: httpsProxyServer.url,
     tls: {
-      ca: tlsCert.cert,
+      cert: tlsCert.cert,
       rejectUnauthorized: false,
     },
   });
@@ -185,6 +187,7 @@ test("proxy can handle redirects with body #12007", async () => {
 
 test("proxy can handle redirects with chunked body #12007", async () => {
   using server = Bun.serve({
+    tls: tlsCert,
     port: 0,
     async fetch(req) {
       async function* body() {
@@ -209,7 +212,7 @@ test("proxy can handle redirects with chunked body #12007", async () => {
   const response = await fetch(`${server.url.origin}/bunbun`, {
     proxy: httpsProxyServer.url,
     tls: {
-      ca: tlsCert.cert,
+      cert: tlsCert.cert,
       rejectUnauthorized: false,
     },
   });

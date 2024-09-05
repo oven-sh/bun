@@ -169,7 +169,7 @@ DEFINE_NATIVE_MODULE(NodeBuffer) {
       JSC::jsNumber(MAX_ARRAY_BUFFER_SIZE));
 
   put(JSC::Identifier::fromString(vm, "kStringMaxLength"_s),
-      JSC::jsNumber(std::numeric_limits<unsigned>().max()));
+      JSC::jsNumber(std::numeric_limits<int>().max()));
 
   JSC::JSObject *constants = JSC::constructEmptyObject(
       lexicalGlobalObject, globalObject->objectPrototype(), 2);

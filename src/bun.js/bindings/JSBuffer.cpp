@@ -716,27 +716,23 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_compareBody(JSC::J
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    if (callFrame->argumentCount() < 2) {
-        throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
-        return JSValue::encode(jsUndefined());
-    }
 
-    auto castedThisValue = callFrame->uncheckedArgument(0);
+    auto castedThisValue = callFrame->argument(0);
     JSC::JSArrayBufferView* castedThis = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(castedThisValue);
     if (UNLIKELY(!castedThis)) {
-        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Buffer (first argument)"_s);
-        return JSValue::encode(jsUndefined());
+        throwScope.throwException(lexicalGlobalObject, Bun::Bun__ERR_INVALID_ARG_TYPE_static3(lexicalGlobalObject, "buf1"_s, "Buffer or Uint8Array"_s, castedThisValue));
+        return {};
     }
     if (UNLIKELY(castedThis->isDetached())) {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Uint8Array (first argument) is detached"_s);
         return JSValue::encode(jsUndefined());
     }
 
-    auto buffer = callFrame->uncheckedArgument(1);
+    auto buffer = callFrame->argument(1);
     JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(buffer);
     if (UNLIKELY(!view)) {
-        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Buffer (2nd argument)"_s);
-        return JSValue::encode(jsUndefined());
+        throwScope.throwException(lexicalGlobalObject, Bun::Bun__ERR_INVALID_ARG_TYPE_static3(lexicalGlobalObject, "buf2"_s, "Buffer or Uint8Array"_s, buffer));
+        return {};
     }
     if (UNLIKELY(view->isDetached())) {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Uint8Array (second argument) is detached"_s);

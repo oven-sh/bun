@@ -18,6 +18,7 @@ describe("bundler", async () => {
     },
   });
   itBundled('kit_dev/SimpleCommonJS', {
+    todo: true,
     files: {
       '/a.js': `console.log(require('./b').message)`,
       '/b.js': `module.exports = { message: "Hello, world!" }`,

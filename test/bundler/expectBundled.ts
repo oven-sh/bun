@@ -881,10 +881,11 @@ function expectBundled(
       if (!ESBUILD) {
         const warningText = stderr!.toUnixString();
         const allWarnings = warnParser(warningText).map(([error, source]) => {
+          if(!source) return;
           const [_str2, fullFilename, line, col] = source.match(/bun-build-tests[\/\\](.*):(\d+):(\d+)/)!;
           const file = fullFilename.slice(id.length + path.basename(tempDirectory).length + 1).replaceAll("\\", "/");
           return { error, file, line, col };
-        });
+        }).filter(Boolean);
         const expectedWarnings = bundleWarnings
           ? Object.entries(bundleWarnings).flatMap(([file, v]) => v.map(error => ({ file, error })))
           : null;

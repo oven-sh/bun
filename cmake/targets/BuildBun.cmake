@@ -605,137 +605,139 @@ endif()
 
 # --- Packaging ---
 
-if(bunStrip)
-  register_command(
-    TARGET
-      ${bun}
-    TARGET_PHASE
-      POST_BUILD
-    COMMENT
-      "Stripping ${bun}"
-    COMMAND
-      ${CMAKE_STRIP}
-        ${bunExe}
-        --strip-all
-        --strip-debug
-        --discard-all
-        -o ${bunStripExe}
-    CWD
-      ${BUILD_PATH}
-    OUTPUTS
-      ${BUILD_PATH}/${bunStripExe}
-  )
-endif()
-
-register_command(
-  TARGET
-    ${bun}
-  TARGET_PHASE
-    POST_BUILD
-  COMMENT
-    "Testing ${bun}"
-  COMMAND
-    ${CMAKE_COMMAND}
-    -E env BUN_DEBUG_QUIET_LOGS=1
-    ${BUILD_PATH}/${bunExe}
-      --revision
-  CWD
-    ${BUILD_PATH}
-)
-
-if(CI)
-  set(BUN_FEATURES_SCRIPT ${CWD}/scripts/features.mjs)
-  register_command(
-    TARGET
-      ${bun}
-    TARGET_PHASE
-      POST_BUILD
-    COMMENT
-      "Generating features.json"
-    COMMAND
-      ${CMAKE_COMMAND}
-        -E env
-          BUN_GARBAGE_COLLECTOR_LEVEL=1
-          BUN_DEBUG_QUIET_LOGS=1
-          BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1
-        ${BUILD_PATH}/${bunExe}
-        ${BUN_FEATURES_SCRIPT}
-    CWD
-      ${BUILD_PATH}
-    OUTPUTS
-      ${BUILD_PATH}/features.json
-  )
-endif()
-
-if(APPLE AND bunStrip)
-  register_command(
-    TARGET
-      ${bun}
-    TARGET_PHASE
-      POST_BUILD
-    COMMENT
-      "Generating ${bun}.dSYM"
-    COMMAND
-      ${CMAKE_DSYMUTIL}
-        ${bun}
-        --flat
-        --keep-function-for-static
-        --object-prefix-map .=${CWD}
-        -o ${bun}.dSYM
-        -j ${CMAKE_BUILD_PARALLEL_LEVEL}
-    CWD
-      ${BUILD_PATH}
-    OUTPUTS
-      ${BUILD_PATH}/${bun}.dSYM
-  )
-endif()
-
-if(CI)
-  if(ENABLE_BASELINE)
-    setx(bunTriplet bun-${OS}-${ARCH}-baseline)
-  else()
-    setx(bunTriplet bun-${OS}-${ARCH})
-  endif()
-
-  string(REPLACE bun ${bunTriplet} bunPath ${bun})
-  register_command(
-    TARGET
-      ${bun}
-    TARGET_PHASE
-      POST_BUILD
-    COMMENT
-      "Generating ${bunPath}.zip"
-    COMMAND
-      ${CMAKE_COMMAND} -E rm -rf ${bunPath} ${bunPath}.zip
-      && ${CMAKE_COMMAND} -E make_directory ${bunPath}
-      && ${CMAKE_COMMAND} -E copy ${bunExe} ${bunPath}
-      && ${CMAKE_COMMAND} -E tar cfv ${bunPath}.zip --format=zip ${bunPath}
-      && ${CMAKE_COMMAND} -E rm -rf ${bunPath}
-    CWD
-      ${BUILD_PATH}
-    ARTIFACTS
-      ${BUILD_PATH}/${bunPath}.zip
-  )
-
+if(NOT BUN_CPP_ONLY)
   if(bunStrip)
-    string(REPLACE bun ${bunTriplet} bunStripPath ${bunStrip})
     register_command(
       TARGET
         ${bun}
       TARGET_PHASE
         POST_BUILD
       COMMENT
-        "Generating ${bunStripPath}.zip"
+        "Stripping ${bun}"
       COMMAND
-        ${CMAKE_COMMAND} -E rm -rf ${bunStripPath} ${bunStripPath}.zip
-        && ${CMAKE_COMMAND} -E make_directory ${bunStripPath}
-        && ${CMAKE_COMMAND} -E copy ${bunStripExe} ${bunStripPath}
-        && ${CMAKE_COMMAND} -E tar cfv ${bunStripPath}.zip --format=zip ${bunStripPath}
-        && ${CMAKE_COMMAND} -E rm -rf ${bunStripPath}
+        ${CMAKE_STRIP}
+          ${bunExe}
+          --strip-all
+          --strip-debug
+          --discard-all
+          -o ${bunStripExe}
+      CWD
+        ${BUILD_PATH}
+      OUTPUTS
+        ${BUILD_PATH}/${bunStripExe}
+    )
+  endif()
+
+  register_command(
+    TARGET
+      ${bun}
+    TARGET_PHASE
+      POST_BUILD
+    COMMENT
+      "Testing ${bun}"
+    COMMAND
+      ${CMAKE_COMMAND}
+      -E env BUN_DEBUG_QUIET_LOGS=1
+      ${BUILD_PATH}/${bunExe}
+        --revision
+    CWD
+      ${BUILD_PATH}
+  )
+
+  if(CI)
+    set(BUN_FEATURES_SCRIPT ${CWD}/scripts/features.mjs)
+    register_command(
+      TARGET
+        ${bun}
+      TARGET_PHASE
+        POST_BUILD
+      COMMENT
+        "Generating features.json"
+      COMMAND
+        ${CMAKE_COMMAND}
+          -E env
+            BUN_GARBAGE_COLLECTOR_LEVEL=1
+            BUN_DEBUG_QUIET_LOGS=1
+            BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1
+          ${BUILD_PATH}/${bunExe}
+          ${BUN_FEATURES_SCRIPT}
+      CWD
+        ${BUILD_PATH}
+      OUTPUTS
+        ${BUILD_PATH}/features.json
+    )
+  endif()
+
+  if(APPLE AND bunStrip)
+    register_command(
+      TARGET
+        ${bun}
+      TARGET_PHASE
+        POST_BUILD
+      COMMENT
+        "Generating ${bun}.dSYM"
+      COMMAND
+        ${CMAKE_DSYMUTIL}
+          ${bun}
+          --flat
+          --keep-function-for-static
+          --object-prefix-map .=${CWD}
+          -o ${bun}.dSYM
+          -j ${CMAKE_BUILD_PARALLEL_LEVEL}
+      CWD
+        ${BUILD_PATH}
+      OUTPUTS
+        ${BUILD_PATH}/${bun}.dSYM
+    )
+  endif()
+
+  if(CI)
+    if(ENABLE_BASELINE)
+      setx(bunTriplet bun-${OS}-${ARCH}-baseline)
+    else()
+      setx(bunTriplet bun-${OS}-${ARCH})
+    endif()
+
+    string(REPLACE bun ${bunTriplet} bunPath ${bun})
+    register_command(
+      TARGET
+        ${bun}
+      TARGET_PHASE
+        POST_BUILD
+      COMMENT
+        "Generating ${bunPath}.zip"
+      COMMAND
+        ${CMAKE_COMMAND} -E rm -rf ${bunPath} ${bunPath}.zip
+        && ${CMAKE_COMMAND} -E make_directory ${bunPath}
+        && ${CMAKE_COMMAND} -E copy ${bunExe} ${bunPath}
+        && ${CMAKE_COMMAND} -E tar cfv ${bunPath}.zip --format=zip ${bunPath}
+        && ${CMAKE_COMMAND} -E rm -rf ${bunPath}
       CWD
         ${BUILD_PATH}
       ARTIFACTS
-        ${BUILD_PATH}/${bunStripPath}.zip
+        ${BUILD_PATH}/${bunPath}.zip
     )
+
+    if(bunStrip)
+      string(REPLACE bun ${bunTriplet} bunStripPath ${bunStrip})
+      register_command(
+        TARGET
+          ${bun}
+        TARGET_PHASE
+          POST_BUILD
+        COMMENT
+          "Generating ${bunStripPath}.zip"
+        COMMAND
+          ${CMAKE_COMMAND} -E rm -rf ${bunStripPath} ${bunStripPath}.zip
+          && ${CMAKE_COMMAND} -E make_directory ${bunStripPath}
+          && ${CMAKE_COMMAND} -E copy ${bunStripExe} ${bunStripPath}
+          && ${CMAKE_COMMAND} -E tar cfv ${bunStripPath}.zip --format=zip ${bunStripPath}
+          && ${CMAKE_COMMAND} -E rm -rf ${bunStripPath}
+        CWD
+          ${BUILD_PATH}
+        ARTIFACTS
+          ${BUILD_PATH}/${bunStripPath}.zip
+      )
+    endif()
   endif()
 endif()

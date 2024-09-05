@@ -20,14 +20,14 @@ steps:
       #     arch: "aarch64"
       #   command:
       #     - "bun run build:ci --target bun-zig --toolchain darwin-aarch64"
-      - key: "darwin-aarch64-build-deps"
-        label: ":darwin: aarch64 - build-deps"
-        agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "aarch64"
-        command:
-          - "bun run build:ci --target dependencies"
+      # - key: "darwin-aarch64-build-deps"
+      #   label: ":darwin: aarch64 - build-deps"
+      #   agents:
+      #     queue: "build-darwin"
+      #     os: "darwin"
+      #     arch: "aarch64"
+      #   command:
+      #     - "bun run build:ci --target dependencies"
       - key: "darwin-aarch64-build-cpp"
         label: ":darwin: aarch64 - build-cpp"
         agents:

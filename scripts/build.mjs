@@ -55,28 +55,6 @@ async function build(args) {
     generateOptions["--toolchain"] = toolchainPath;
   }
 
-  if (isCacheReadEnabled()) {
-    const readCache = path => {
-      try {
-        if (existsSync(path)) {
-          copyPath(path, buildPath);
-          generateOptions["--fresh"] = undefined;
-          console.log(`Copied cache from ${path} to ${buildPath}`);
-          return true;
-        }
-      } catch (error) {
-        console.log(`Failed to read cache from ${path}`, error);
-      }
-      return false;
-    };
-
-    const cachePath = getCachePath();
-    if (!readCache(cachePath)) {
-      const mainCachePath = getCachePath(getDefaultBranch());
-      readCache(mainCachePath);
-    }
-  }
-
   const generateArgs = Object.entries(generateOptions).flatMap(([flag, value]) =>
     flag.startsWith("-D") ? [`${flag}=${value}`] : [flag, value],
   );
@@ -86,22 +64,6 @@ async function build(args) {
     .sort(([a], [b]) => (a === "--build" ? -1 : a.localeCompare(b)))
     .flatMap(([flag, value]) => [flag, value]);
   await spawn("cmake", buildArgs, { env });
-
-  if (isCacheWriteEnabled()) {
-    const writeCache = path => {
-      try {
-        copyPath(buildPath, path);
-        console.log(`Saved cache to ${path}`);
-        return true;
-      } catch (error) {
-        console.log(`Failed to write cache to ${path}`, error);
-      }
-      return false;
-    };
-
-    const cachePath = getCachePath();
-    writeCache(cachePath);
-  }
 }
 
 function copyPath(src, dst) {

@@ -190,7 +190,6 @@ endfunction()
 #   SOURCES      string[] - The files that this command depends on
 #   OUTPUTS      string[] - The files that this command produces
 #   ARTIFACTS    string[] - The files that this command produces, and uploads as an artifact in CI
-#   BYPRODUCTS   string[] - The files that this command produces, but are not used as inputs (e.g. "node_modules")
 #   ALWAYS_RUN   bool     - If true, the command will always run
 #   TARGET       string   - The target to register the command with
 #   TARGET_PHASE string   - The target phase to register the command with (e.g. PRE_BUILD, PRE_LINK, POST_BUILD)
@@ -198,7 +197,7 @@ endfunction()
 function(register_command)
   set(options ALWAYS_RUN)
   set(args COMMENT CWD TARGET TARGET_PHASE GROUP)
-  set(multiArgs COMMAND ENVIRONMENT TARGETS SOURCES OUTPUTS BYPRODUCTS ARTIFACTS)
+  set(multiArgs COMMAND ENVIRONMENT TARGETS SOURCES OUTPUTS ARTIFACTS)
   cmake_parse_arguments(CMD "${options}" "${args}" "${multiArgs}" ${ARGN})
 
   if(NOT CMD_COMMAND)
@@ -242,7 +241,7 @@ function(register_command)
     list(APPEND CMD_EFFECTIVE_DEPENDS ${source})
   endforeach()
 
-  if(NOT CMD_EFFECTIVE_DEPENDS)
+  if(NOT CMD_EFFECTIVE_DEPENDS AND NOT CMD_ALWAYS_RUN)
     message(FATAL_ERROR "register_command: TARGETS or SOURCES is required")
   endif()
 
@@ -267,11 +266,24 @@ function(register_command)
   endforeach()
 
   foreach(output ${CMD_EFFECTIVE_OUTPUTS})
-    # list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E sha256sum ${output})
+    get_source_file_property(generated ${output} GENERATED)
+    if(generated)
+      list(REMOVE_ITEM CMD_EFFECTIVE_OUTPUTS ${output})
+      set(CMD_ALWAYS_RUN ON)
+    endif()
   endforeach()
 
   if(CMD_ALWAYS_RUN)
-    list(APPEND CMD_EFFECTIVE_OUTPUTS ${CMD_CWD}/.1)
+    set(index 1)
+    while(TRUE)
+      get_source_file_property(generated ${CMD_CWD}/.always_run.${index} GENERATED)
+      if(generated)
+        math(EXPR index "${index} + 1")
+      else()
+        break()
+      endif()
+    endwhile()
+    list(APPEND CMD_EFFECTIVE_OUTPUTS ${CMD_CWD}/.always_run.${index})
   endif()
 
   if(CMD_TARGET_PHASE)
@@ -285,7 +297,6 @@ function(register_command)
       TARGET ${CMD_TARGET} ${CMD_TARGET_PHASE}
       COMMENT ${CMD_COMMENT}
       WORKING_DIRECTORY ${CMD_CWD}
-      BYPRODUCTS ${CMD_BYPRODUCTS}
       VERBATIM ${CMD_COMMANDS}
     )
     set_property(TARGET ${CMD_TARGET} PROPERTY OUTPUT ${CMD_EFFECTIVE_OUTPUTS} APPEND)
@@ -304,7 +315,6 @@ function(register_command)
     add_custom_target(${CMD_TARGET}
       COMMENT ${CMD_COMMENT}
       DEPENDS ${CMD_EFFECTIVE_OUTPUTS}
-      BYPRODUCTS ${CMD_EFFECTIVE_BYPRODUCTS}
       JOB_POOL ${CMD_GROUP}
     )
     if(TARGET clone-${CMD_TARGET})
@@ -318,7 +328,6 @@ function(register_command)
     COMMENT ${CMD_COMMENT}
     DEPENDS ${CMD_EFFECTIVE_DEPENDS}
     OUTPUT ${CMD_EFFECTIVE_OUTPUTS}
-    BYPRODUCTS ${CMD_BYPRODUCTS}
     JOB_POOL ${CMD_GROUP}
   )
 endfunction()
@@ -644,7 +653,6 @@ function(register_cmake_command)
     COMMAND ${CMAKE_COMMAND} ${MAKE_BUILD_ARGS}
     CWD ${MAKE_CWD}
     ARTIFACTS ${MAKE_ARTIFACTS}
-    # BYPRODUCTS ${MAKE_EFFECTIVE_INCLUDES}
   )
 
   if(MAKE_EFFECTIVE_INCLUDES)

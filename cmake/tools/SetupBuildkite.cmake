@@ -1,41 +1,96 @@
 include(Macros)
 
+optionx(BUILDKITE_CLEAN_CHECKOUT BOOL "If the build should be clean and not use caches" DEFAULT OFF)
 optionx(BUILDKITE_CACHE BOOL "If the build can use Buildkite caches, even if not running in Buildkite" DEFAULT ${BUILDKITE})
 
-if(NOT BUILDKITE_CACHE)
+if(NOT BUILDKITE_CACHE OR BUILDKITE_CLEAN_CHECKOUT)
   return()
 endif()
 
 optionx(BUILDKITE_ORGANIZATION_SLUG STRING "The organization slug to use on Buildkite" DEFAULT "bun")
 optionx(BUILDKITE_PIPELINE_SLUG STRING "The pipeline slug to use on Buildkite" DEFAULT "bun")
-optionx(BUILDKITE_BRANCH STRING "The branch to build on Buildkite" DEFAULT "main")
-
-if(BUILDKITE)
-  optionx(BUILDKITE_STEP_ID STRING "The step ID to use on Buildkite" REQUIRED)
-  optionx(BUILDKITE_CLEAN_CHECKOUT BOOL "If the build should be clean and not use caches" DEFAULT OFF)
-endif()
+optionx(BUILDKITE_BUILD_ID STRING "The build ID to use on Buildkite")
+optionx(BUILDKITE_GROUP_ID STRING "The group ID to use on Buildkite")
 
 set(BUILDKITE_PATH ${BUILD_PATH}/buildkite)
-set(BUILDKITE_BUILDS_PATH ${BUILDKITE_PATH}/builds.json)
+set(BUILDKITE_BUILDS_PATH ${BUILDKITE_PATH}/builds)
 
-setx(BUILDKITE_BUILDS_URL "https://buildkite.com/${BUILDKITE_ORGANIZATION_SLUG}/${BUILDKITE_PIPELINE_SLUG}/builds")
+if(NOT BUILDKITE_BUILD_ID)
+  # TODO: find the latest build on the main branch that passed
+  return()
+endif()
+
+setx(BUILDKITE_BUILD_URL https://buildkite.com/${BUILDKITE_ORGANIZATION_SLUG}/${BUILDKITE_PIPELINE_SLUG}/builds/${BUILDKITE_BUILD_ID})
+setx(BUILDKITE_BUILD_PATH ${BUILDKITE_BUILDS_PATH}/builds/${BUILDKITE_BUILD_ID})
+
 file(
-  DOWNLOAD ${BUILDKITE_BUILDS_URL}
+  DOWNLOAD ${BUILDKITE_BUILD_URL}
   HTTPHEADER "Accept: application/json"
   TIMEOUT 15
-  STATUS BUILDKITE_BUILDS_STATUS
-  ${BUILDKITE_BUILDS_PATH}
+  STATUS BUILDKITE_BUILD_STATUS
+  ${BUILDKITE_BUILD_PATH}/build.json
 )
 
-if(NOT BUILDKITE_BUILDS_STATUS EQUAL 0)
-  message(WARNING "Failed to download list of builds from Buildkite: ${BUILDKITE_BUILDS_STATUS}")
+if(NOT BUILDKITE_BUILD_STATUS EQUAL 0)
+  message(FATAL_ERROR "Failed to download build from Buildkite: ${BUILDKITE_BUILD_STATUS}")
   return()
 endif()
 
-file(READ ${BUILDKITE_BUILDS_PATH} BUILDKITE_BUILDS)
-
-string(JSON BUILDKITE_BUILDS_LENGTH ERROR_VARIABLE BUILDKITE_BUILDS_ERROR LENGTH ${BUILDKITE_BUILDS})
-if(BUILDKITE_BUILDS_ERROR)
-  message(WARNING "Failed to parse list of builds from Buildkite: ${BUILDKITE_BUILDS_ERROR}")
-  return()
-endif()
+file(READ ${BUILDKITE_BUILD_PATH}/build.json BUILDKITE_BUILD)
+string(JSON BUILDKITE_JOBS GET ${BUILDKITE_BUILD} jobs)
+string(JSON BUILDKITE_JOBS_COUNT LENGTH ${BUILDKITE_JOBS})
+math(EXPR BUILDKITE_JOBS_MAX_INDEX "${BUILDKITE_JOBS_COUNT} - 1")
+foreach(i RANGE ${BUILDKITE_JOBS_MAX_INDEX})
+  string(JSON BUILDKITE_JOB GET ${BUILDKITE_JOBS} ${i})
+  string(JSON BUILDKITE_JOB_GROUP_ID GET ${BUILDKITE_JOB} group_identifier)
+  if(BUILDKITE_GROUP_ID AND NOT BUILDKITE_JOB_GROUP_ID STREQUAL BUILDKITE_GROUP_ID)
+    continue()
+  endif()
+  string(JSON BUILDKITE_JOB_ID GET ${BUILDKITE_JOB} id)
+  string(JSON BUILDKITE_JOB_NAME GET ${BUILDKITE_JOB} step_key)
+  if(NOT BUILDKITE_JOB_NAME)
+    string(JSON BUILDKITE_JOB_NAME GET ${BUILDKITE_JOB} name)
+  endif()
+  set(BUILDKITE_ARTIFACTS_URL https://buildkite.com/organizations/${BUILDKITE_ORGANIZATION_SLUG}/pipelines/${BUILDKITE_PIPELINE_SLUG}/builds/${BUILDKITE_BUILD_ID}/jobs/${BUILDKITE_JOB_ID}/artifacts)
+  set(BUILDKITE_ARTIFACTS_PATH ${BUILDKITE_BUILD_PATH}/artifacts/${BUILDKITE_JOB_ID}.json)
+  file(
+    DOWNLOAD ${BUILDKITE_ARTIFACTS_URL}
+    HTTPHEADER "Accept: application/json"
+    TIMEOUT 15
+    STATUS BUILDKITE_ARTIFACTS_STATUS
+    ${BUILDKITE_ARTIFACTS_PATH}
+  )
+  if(NOT BUILDKITE_ARTIFACTS_STATUS EQUAL 0)
+    message(FATAL_ERROR "Failed to download artifacts from Buildkite: ${BUILDKITE_ARTIFACTS_STATUS}")
+    return()
+  endif()
+  file(READ ${BUILDKITE_ARTIFACTS_PATH} BUILDKITE_ARTIFACTS)
+  string(JSON BUILDKITE_ARTIFACTS_LENGTH LENGTH ${BUILDKITE_ARTIFACTS})
+  if(NOT BUILDKITE_ARTIFACTS_LENGTH GREATER 0)
+    message(WARNING "No artifacts found: ${BUILDKITE_JOB_NAME} ${BUILDKITE_ARTIFACTS_URL}")
+    continue()
+  endif()
+  math(EXPR BUILDKITE_ARTIFACTS_MAX_INDEX "${BUILDKITE_ARTIFACTS_LENGTH} - 1")
+  foreach(i RANGE 0 ${BUILDKITE_ARTIFACTS_MAX_INDEX})
+    string(JSON BUILDKITE_ARTIFACT GET ${BUILDKITE_ARTIFACTS} ${i})
+    string(JSON BUILDKITE_ARTIFACT_ID GET ${BUILDKITE_ARTIFACT} id)
+    string(JSON BUILDKITE_ARTIFACT_PATH GET ${BUILDKITE_ARTIFACT} path)
+    message(STATUS "Found artifact: ${BUILDKITE_JOB_NAME} ${BUILDKITE_ARTIFACT_PATH}")
+    if(BUILDKITE)
+      set(BUILDKITE_DOWNLOAD_COMMAND buildkite-agent artifact download "${BUILDKITE_ARTIFACT_PATH}" --step ${BUILDKITE_JOB_NAME})
+    else()
+      set(BUILDKITE_DOWNLOAD_COMMAND curl -L -o ${BUILDKITE_ARTIFACT_PATH} ${BUILDKITE_ARTIFACTS_URL}/${BUILDKITE_ARTIFACT_ID})
+    endif()
+    register_command(
+      COMMENT
+        "Downloading ${BUILDKITE_ARTIFACT_PATH}"
+      COMMAND
+        ${BUILDKITE_DOWNLOAD_COMMAND}
+      CWD
+        ${BUILD_PATH}
+      OUTPUTS
+        ${BUILD_PATH}/${BUILDKITE_ARTIFACT_PATH}
+      ALWAYS_RUN
+    )
+  endforeach()
+endforeach()

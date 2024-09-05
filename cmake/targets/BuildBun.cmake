@@ -574,19 +574,8 @@ if(BUN_CPP_ONLY)
       ${BUN_CPP_OUTPUT}
   )
 elseif(BUN_LINK_ONLY)
-  if (BUILDKITE)
-    set(stepName build-deps build-zig build-cpp)
-    foreach(step ${steps})
-      set(step ENV${BUILDKITE_GROUP_KEY}-${stepName})
-      execute_process(
-        COMMAND
-          buildkite-agent artifact download "**" . --step ${step}
-        WORKING_DIRECTORY
-          ${BUILD_PATH}
-      )
-    endforeach()
-    add_executable(${bun} ${BUN_CPP_OUTPUT} ${BUN_ZIG_OUTPUT})
-  endif()
+  add_executable(${bun} ${BUN_CPP_OUTPUT} ${BUN_ZIG_OUTPUT})
+  set_target_properties(${bun} PROPERTIES LINKER_LANGUAGE CXX)
 else()
   add_executable(${bun} ${BUN_CPP_SOURCES} ${BUN_ZIG_OUTPUT})
 endif()
@@ -721,11 +710,10 @@ if(NOT BUN_CPP_ONLY)
 
   if(CI)
     if(ENABLE_BASELINE)
-      setx(bunTriplet bun-${OS}-${ARCH}-baseline)
+      set(bunTriplet bun-${OS}-${ARCH}-baseline)
     else()
-      setx(bunTriplet bun-${OS}-${ARCH})
+      set(bunTriplet bun-${OS}-${ARCH})
     endif()
-
     string(REPLACE bun ${bunTriplet} bunPath ${bun})
     register_command(
       TARGET

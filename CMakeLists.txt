@@ -233,11 +233,6 @@ include_directories(
   ${BUILD_PATH}/codegen
 )
 
-# -- BUN_CPP_ONLY Target
-if(BUN_CPP_ARCHIVE)
-  set_target_properties(${bun} PROPERTIES LINKER_LANGUAGE CXX)
-endif()
-
 # --- clang and linker flags ---
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     if(NOT WIN32)

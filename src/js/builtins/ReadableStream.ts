@@ -204,10 +204,14 @@ export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>)
   }
 
   if ($isPromise(result)) {
-    return result.then(toArrayBuffer);
+    const completedResult = Bun.peek(result);
+    if (completedResult !== result) {
+      result = completedResult;
+    } else {
+      return result.then(toArrayBuffer);
+    }
   }
-
-  return toArrayBuffer(result);
+  return $createFulfilledPromise(toArrayBuffer(result));
 }
 
 $linkTimeConstant;
@@ -277,10 +281,15 @@ export function readableStreamToBytes(stream: ReadableStream<ArrayBuffer>): Prom
   }
 
   if ($isPromise(result)) {
-    return result.then(toBytes);
+    const completedResult = Bun.peek(result);
+    if (completedResult !== result) {
+      result = completedResult;
+    } else {
+      return result.then(toBytes);
+    }
   }
 
-  return toBytes(result);
+  return $createFulfilledPromise(toBytes(result));
 }
 
 $linkTimeConstant;
@@ -297,11 +306,22 @@ export function readableStreamToFormData(
 $linkTimeConstant;
 export function readableStreamToJSON(stream: ReadableStream): unknown {
   if ($isReadableStreamLocked(stream)) return Promise.$reject($makeTypeError("ReadableStream is locked"));
+  let result = $tryUseReadableStreamBufferedFastPath(stream, "json");
+  if (result) {
+    return result;
+  }
 
-  return (
-    $tryUseReadableStreamBufferedFastPath(stream, "json") ||
-    Promise.resolve(Bun.readableStreamToText(stream)).then(globalThis.JSON.parse)
-  );
+  let text = Bun.readableStreamToText(stream);
+  const peeked = Bun.peek(text);
+  if (peeked !== text) {
+    try {
+      return $createFulfilledPromise(globalThis.JSON.parse(peeked));
+    } catch (e) {
+      return Promise.reject(e);
+    }
+  }
+
+  return text.then(globalThis.JSON.parse);
 }
 
 $linkTimeConstant;

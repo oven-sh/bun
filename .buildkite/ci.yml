@@ -51,4 +51,4 @@ steps:
         env:
           BUN_LINK_ONLY: "ON"
         command:
-          - "bun run build:ci --target bun-bun"
+          - "bun run build:ci --target bun"

@@ -5374,7 +5374,7 @@ pub const LinkerContext = struct {
                     this.graph.meta.items(.entry_point_part_index)[id] = Index.part(entry_point_part_index);
 
                     // Pull in the "__toCommonJS" symbol if we need it due to being an entry point
-                    if (force_include_exports) {
+                    if (force_include_exports and this.options.output_format != .internal_kit_dev) {
                         this.graph.generateRuntimeSymbolImportAndUse(
                             source_index,
                             Index.part(entry_point_part_index),
@@ -5387,9 +5387,6 @@ pub const LinkerContext = struct {
                 // Encode import-specific constraints in the dependency graph
                 const import_records: []ImportRecord = import_records_list[id].slice();
                 debug("Binding {d} imports for file {s} (#{d})", .{ import_records.len, source.path.text, id });
-
-                // None of the runtime symbols are used in .internal_kit_dev
-                // if (this.options.output_format == .internal_kit_dev) continue;
 
                 for (parts, 0..) |*part, part_index| {
                     var to_esm_uses: u32 = 0;
@@ -5404,6 +5401,8 @@ pub const LinkerContext = struct {
 
                         // Don't follow external imports (this includes import() expressions)
                         if (!record.source_index.isValid() or this.isExternalDynamicImport(record, source_index)) {
+                            if (this.options.output_format == .internal_kit_dev) continue;
+
                             // This is an external import. Check if it will be a "require()" call.
                             if (kind == .require or !output_format.keepES6ImportExportSyntax() or kind == .dynamic) {
                                 if (record.source_index.isValid() and kind == .dynamic and ast_flags[other_id].force_cjs_to_esm) {
@@ -5475,7 +5474,7 @@ pub const LinkerContext = struct {
 
                             // This is an ES6 import of a CommonJS module, so it needs the
                             // "__toESM" wrapper as long as it's not a bare "require()"
-                            if (kind != .require and other_export_kind == .cjs) {
+                            if (kind != .require and other_export_kind == .cjs and this.options.output_format != .internal_kit_dev) {
                                 record.wrap_with_to_esm = true;
                                 to_esm_uses += 1;
                             }
@@ -5524,33 +5523,6 @@ pub const LinkerContext = struct {
                         }
                     }
 
-                    // If there's an ES6 import of a CommonJS module, then we're going to need the
-                    // "__toESM" symbol from the runtime to wrap the result of "require()"
-                    this.graph.generateRuntimeSymbolImportAndUse(
-                        source_index,
-                        Index.part(part_index),
-                        "__toESM",
-                        to_esm_uses,
-                    ) catch unreachable;
-
-                    // If there's a CommonJS require of an ES6 module, then we're going to need the
-                    // "__toCommonJS" symbol from the runtime to wrap the exports object
-                    this.graph.generateRuntimeSymbolImportAndUse(
-                        source_index,
-                        Index.part(part_index),
-                        "__toCommonJS",
-                        to_common_js_uses,
-                    ) catch unreachable;
-
-                    // If there are unbundled calls to "require()" and we're not generating
-                    // code for node, then substitute a "__require" wrapper for "require".
-                    this.graph.generateRuntimeSymbolImportAndUse(
-                        source_index,
-                        Index.part(part_index),
-                        "__require",
-                        runtime_require_uses,
-                    ) catch unreachable;
-
                     // If there's an ES6 export star statement of a non-ES6 module, then we're
                     // going to need the "__reExport" symbol from the runtime
                     var re_export_uses: u32 = 0;
@@ -5598,13 +5570,41 @@ pub const LinkerContext = struct {
                         }
                     }
 
-                    this.graph.generateRuntimeSymbolImportAndUse(
-                        source_index,
-                        Index.part(part_index),
+                    if (this.options.output_format != .internal_kit_dev) {
+                        // If there's an ES6 import of a CommonJS module, then we're going to need the
+                        // "__toESM" symbol from the runtime to wrap the result of "require()"
+                        this.graph.generateRuntimeSymbolImportAndUse(
+                            source_index,
+                            Index.part(part_index),
+                            "__toESM",
+                            to_esm_uses,
+                        ) catch unreachable;
 
-                        "__reExport",
-                        re_export_uses,
-                    ) catch unreachable;
+                        // If there's a CommonJS require of an ES6 module, then we're going to need the
+                        // "__toCommonJS" symbol from the runtime to wrap the exports object
+                        this.graph.generateRuntimeSymbolImportAndUse(
+                            source_index,
+                            Index.part(part_index),
+                            "__toCommonJS",
+                            to_common_js_uses,
+                        ) catch unreachable;
+
+                        // If there are unbundled calls to "require()" and we're not generating
+                        // code for node, then substitute a "__require" wrapper for "require".
+                        this.graph.generateRuntimeSymbolImportAndUse(
+                            source_index,
+                            Index.part(part_index),
+                            "__require",
+                            runtime_require_uses,
+                        ) catch unreachable;
+
+                        this.graph.generateRuntimeSymbolImportAndUse(
+                            source_index,
+                            Index.part(part_index),
+                            "__reExport",
+                            re_export_uses,
+                        ) catch unreachable;
+                    }
                 }
             }
         }
@@ -10945,7 +10945,7 @@ pub const LinkerContext = struct {
                 }
 
                 // Generate a dummy part that depends on the "__commonJS" symbol.
-                const dependencies: []js_ast.Dependency = if (true) brk: {
+                const dependencies: []js_ast.Dependency = if (c.options.output_format != .internal_kit_dev) brk: {
                     const dependencies = c.allocator.alloc(js_ast.Dependency, common_js_parts.len) catch bun.outOfMemory();
                     for (common_js_parts, dependencies) |part, *cjs| {
                         cjs.* = .{
@@ -10981,15 +10981,15 @@ pub const LinkerContext = struct {
                 wrapper_part_index.* = Index.part(part_index);
 
                 // Kit uses a wrapping approach that does not use __commonJS
-                // if (c.options.output_format != .internal_kit_dev) {
-                c.graph.generateSymbolImportAndUse(
-                    source_index,
-                    part_index,
-                    c.cjs_runtime_ref,
-                    1,
-                    Index.runtime,
-                ) catch unreachable;
-                // }
+                if (c.options.output_format != .internal_kit_dev) {
+                    c.graph.generateSymbolImportAndUse(
+                        source_index,
+                        part_index,
+                        c.cjs_runtime_ref,
+                        1,
+                        Index.runtime,
+                    ) catch unreachable;
+                }
             },
 
             .esm => {

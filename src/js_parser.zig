@@ -4388,11 +4388,11 @@ pub const Prefill = struct {
         pub const Zero = Expr.Data{ .e_number = Value.Zero };
     };
     pub const Runtime = struct {
-        pub var JSXFilename = "__jsxFilename";
-        pub var MarkAsModule = "__markAsModule";
-        pub var CommonJS = "__commonJS";
-        pub var ToModule = "__toModule";
-        const JSXShortname = "jsx";
+        // pub var JSXFilename = "__jsxFilename";
+        // pub var MarkAsModule = "__markAsModule";
+        // pub var CommonJS = "__commonJS";
+        // pub var ToModule = "__toModule";
+        // const JSXShortname = "jsx";
     };
 };
 
@@ -23597,7 +23597,7 @@ fn NewParser_(
             }
 
             const wrapper_ref: Ref = brk: {
-                if (p.options.bundle and !p.options.features.hot_module_reloading and p.needsWrapperRef(parts)) {
+                if (p.options.bundle and p.needsWrapperRef(parts)) {
                     break :brk p.newSymbol(
                         .other,
                         std.fmt.allocPrint(
@@ -23994,8 +23994,8 @@ fn NewParser_(
                     try ctx.last_part.declared_symbols.append(p.allocator, .{ .ref = p.module_ref, .is_top_level = true });
                 }
 
+                // TODO: this is a tiny mess. it is honestly trying to hard to merge all parts into one
                 for (all_parts[0 .. all_parts.len - 1]) |*part| {
-                    // todo: prealloc
                     try ctx.last_part.declared_symbols.appendList(p.allocator, part.declared_symbols);
                     try ctx.last_part.import_record_indices.append(p.allocator, part.import_record_indices.slice());
                     for (part.symbol_uses.keys(), part.symbol_uses.values()) |k, v| {
@@ -24009,6 +24009,11 @@ fn NewParser_(
                     part.stmts = &.{};
                     part.declared_symbols.entries.len = 0;
                     part.tag = .dead_due_to_inlining;
+                    part.dependencies.clearRetainingCapacity();
+                    try part.dependencies.push(p.allocator, .{
+                        .part_index = @intCast(all_parts.len - 1),
+                        .source_index = p.source.index,
+                    });
                 }
 
                 try ctx.last_part.import_record_indices.append(p.allocator, p.import_records_for_current_part.items);

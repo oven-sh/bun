@@ -5180,9 +5180,6 @@ pub const Expr = struct {
             else
                 .mixed;
         }
-
-        //  This can be used when the returned type is either one or the other
-
     };
 
     pub const Data = union(Tag) {

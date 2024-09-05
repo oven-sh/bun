@@ -401,8 +401,7 @@ pub const BundleTask = struct {
     next: ?*BundleTask = null,
     result: BundleV2.Result = .{ .pending = {} },
 
-    // initialzied in the task itself
-
+    // initialized in the task itself:
     concurrent_task: JSC.EventLoopTask = undefined,
     bundler: *BundleV2 = undefined,
     log: Log = undefined,

@@ -13,13 +13,17 @@
       "request": "launch",
       "name": "bun build demo",
       "program": "${workspaceFolder}/build/bun-debug",
-      "args": ["build", "./first.tsx", "--format", "internal_kit_dev"],
+      "args": [
+        "build", "./first.tsx", 
+      // "--format", "internal_kit_dev"
+    ],
       "cwd": "/Users/dave/kt",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_DEBUG_jest": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
+        "BUN_DEBUG_TreeShake": "1",
+        "BUN_DEBUG_LinkerCtx": "1",
+        "GOMAXPROCS": "0",
       },
       "console": "internalConsole",
     },

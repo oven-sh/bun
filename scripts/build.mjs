@@ -52,6 +52,13 @@ async function build(args) {
   const cacheWrite = isCacheWriteEnabled();
   if (cacheRead || cacheWrite) {
     const cachePath = getCachePath();
+    if (cacheRead && !existsSync(cachePath)) {
+      const mainCachePath = getCachePath(getDefaultBranch());
+      if (existsSync(mainCachePath)) {
+        mkdirSync(cachePath, { recursive: true });
+        cpSync(mainCachePath, cachePath, { recursive: true, force: true });
+      }
+    }
     generateOptions["-DCACHE_PATH"] = cmakePath(cachePath);
     if (cacheRead && cacheWrite) {
       generateOptions["-DCACHE_STRATEGY"] = "read-write";

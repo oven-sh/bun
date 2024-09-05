@@ -55,9 +55,16 @@ public:
     NapiHandleScope(Zig::GlobalObject* globalObject);
     ~NapiHandleScope();
 
+    static NapiHandleScopeImpl* push(Zig::GlobalObject* globalObject);
+    static void pop(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* current);
+
 private:
     NapiHandleScopeImpl* m_impl;
     Zig::GlobalObject* m_globalObject;
 };
+
+extern "C" NapiHandleScopeImpl* NapiHandleScope__push(Zig::GlobalObject* globalObject);
+extern "C" void NapiHandleScope__pop(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* current);
+extern "C" void NapiHandleScope__append(Zig::GlobalObject* globalObject, JSC::EncodedJSValue value);
 
 } // namespace Bun

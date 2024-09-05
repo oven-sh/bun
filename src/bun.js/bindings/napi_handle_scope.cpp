@@ -43,25 +43,50 @@ void NapiHandleScopeImpl::append(JSC::JSValue val)
     m_storage.append(JSC::WriteBarrier<JSC::Unknown>(vm(), this, val));
 }
 
+NapiHandleScopeImpl* NapiHandleScope::push(Zig::GlobalObject* globalObject)
+{
+    auto* impl = NapiHandleScopeImpl::create(globalObject->vm(),
+        globalObject->NapiHandleScopeImplStructure(),
+        globalObject->m_currentNapiHandleScopeImpl.get());
+    globalObject->m_currentNapiHandleScopeImpl.set(globalObject->vm(), globalObject, impl);
+    return impl;
+}
+
+void NapiHandleScope::pop(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* current)
+{
+    RELEASE_ASSERT_WITH_MESSAGE(current == globalObject->m_currentNapiHandleScopeImpl.get(),
+        "Unbalanced napi_handle_scope opens and closes");
+    if (auto* parent = current->parent()) {
+        globalObject->m_currentNapiHandleScopeImpl.set(globalObject->vm(), globalObject, parent);
+    } else {
+        globalObject->m_currentNapiHandleScopeImpl.clear();
+    }
+}
+
 NapiHandleScope::NapiHandleScope(Zig::GlobalObject* globalObject)
     : m_globalObject(globalObject)
-    , m_impl(NapiHandleScopeImpl::create(globalObject->vm(),
-          globalObject->NapiHandleScopeImplStructure(),
-          globalObject->m_currentNapiHandleScopeImpl.get()))
+    , m_impl(NapiHandleScope::push(globalObject))
 {
-    globalObject->m_currentNapiHandleScopeImpl.set(globalObject->vm(), globalObject, m_impl);
 }
 
 NapiHandleScope::~NapiHandleScope()
 {
-    auto* current = m_globalObject->m_currentNapiHandleScopeImpl.get();
-    RELEASE_ASSERT_WITH_MESSAGE(current == m_impl, "Unbalanced napi_handle_scope opens and closes");
-    if (auto* parent = m_impl->parent()) {
-        m_globalObject->m_currentNapiHandleScopeImpl.set(m_globalObject->vm(), m_globalObject, m_impl->parent());
-    } else {
-        m_globalObject->m_currentNapiHandleScopeImpl.clear();
-    }
-    m_impl = nullptr;
+    NapiHandleScope::pop(m_globalObject, m_impl);
+}
+
+extern "C" NapiHandleScopeImpl* NapiHandleScope__push(Zig::GlobalObject* globalObject)
+{
+    return NapiHandleScope::push(globalObject);
+}
+
+extern "C" void NapiHandleScope__pop(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* current)
+{
+    return NapiHandleScope::pop(globalObject, current);
+}
+
+extern "C" void NapiHandleScope__append(Zig::GlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    globalObject->m_currentNapiHandleScopeImpl.get()->append(JSC::JSValue::decode(value));
 }
 
 } // namespace Bun

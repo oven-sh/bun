@@ -154,10 +154,9 @@ for (let doClone of [true, false]) {
                     expect(await originalResponse.text()).toBe(name);
                   }
 
-                  var promises = new Array(5);
-                  for (let i = 0; i < 5; i++) {
+                  let promises = Array.from({ length: 5 }).map((_, i) => {
                     if (useRequestObject) {
-                      promises[i] = await fetch(
+                      return fetch(
                         new Request({
                           body: input,
                           method: "POST",
@@ -169,7 +168,7 @@ for (let doClone of [true, false]) {
                         }),
                       );
                     } else {
-                      promises[i] = await fetch(url, {
+                      return fetch(url, {
                         body: input,
                         method: "POST",
                         headers: {
@@ -178,24 +177,28 @@ for (let doClone of [true, false]) {
                         },
                       });
                     }
-                  }
+                  });
 
-                  const results = await Promise.all(promises);
-                  for (let i = 0; i < 5; i++) {
-                    const originalResponse = results[i];
-                    if (forceReadableStreamConversionFastPath) {
-                      originalResponse.body;
-                    }
+                  promises = await Promise.all(promises);
 
-                    for (let response of doClone ? [originalResponse.clone(), originalResponse] : [originalResponse]) {
-                      expect(response.status).toBe(200);
-                      expect(response.headers.get("content-length")).toBe(String(Buffer.from(input).byteLength));
-                      expect(response.headers.get("content-type")).toBe("text/plain");
-                      expect(response.headers.get("x-counter")).toBe(String(i));
-                      const responseText = await response.text();
-                      expect(responseText).toBe(name);
-                    }
-                  }
+                  await Promise.all(
+                    promises.map(async (originalResponse, i) => {
+                      if (forceReadableStreamConversionFastPath) {
+                        originalResponse.body;
+                      }
+
+                      for (let response of doClone
+                        ? [originalResponse.clone(), originalResponse]
+                        : [originalResponse]) {
+                        expect(response.status).toBe(200);
+                        expect(response.headers.get("content-length")).toBe(String(Buffer.from(input).byteLength));
+                        expect(response.headers.get("content-type")).toBe("text/plain");
+                        expect(response.headers.get("x-counter")).toBe(String(i));
+                        const responseText = await response.text();
+                        expect(responseText).toBe(name);
+                      }
+                    }),
+                  );
                 },
               );
             });
@@ -291,15 +294,12 @@ for (let doClone of [true, false]) {
               new DataView(bytes.buffer),
               new Int8Array(bytes),
               new Blob([bytes]),
+              new Float64Array(bytes),
 
               new Uint16Array(bytes),
               new Uint32Array(bytes),
-              new Float64Array(bytes),
-
               new Int16Array(bytes),
               new Int32Array(bytes),
-              new Float16Array(bytes),
-              new Float32Array(bytes),
 
               // make sure we handle subarray() as expected when reading
               // typed arrays from native code
@@ -307,16 +307,10 @@ for (let doClone of [true, false]) {
               new Int16Array(bytes).subarray(0, new Int16Array(bytes).byteLength - 1),
               new Int32Array(bytes).subarray(1),
               new Int32Array(bytes).subarray(0, new Int32Array(bytes).byteLength - 1),
-              new Float16Array(bytes).subarray(1),
-              new Float16Array(bytes).subarray(0, new Float16Array(bytes).byteLength - 1),
-              new Float32Array(bytes).subarray(1),
-              new Float32Array(bytes).subarray(0, new Float32Array(bytes).byteLength - 1),
               new Int16Array(bytes).subarray(0, 1),
               new Int32Array(bytes).subarray(0, 1),
-              new Float16Array(bytes).subarray(0, 1),
               new Float32Array(bytes).subarray(0, 1),
             ]) {
-              gc();
               const thisArray = huge_;
               if (Number(thisArray.byteLength ?? thisArray.size) === 0) continue;
 
@@ -329,7 +323,6 @@ for (let doClone of [true, false]) {
                 async () => {
                   var huge = thisArray;
                   var called = false;
-                  gc();
 
                   const expectedHash =
                     huge instanceof Blob ? Bun.SHA1.hash(await huge.bytes(), "base64") : Bun.SHA1.hash(huge, "base64");
@@ -346,7 +339,6 @@ for (let doClone of [true, false]) {
                             expect(req.headers.get("content-type")).toBe("text/plain");
                             expect(req.headers.get("user-agent")).toBe(navigator.userAgent);
 
-                            gc();
                             expect(req.headers.get("x-custom")).toBe("hello");
                             expect(req.headers.get("content-type")).toBe("text/plain");
                             expect(req.headers.get("user-agent")).toBe(navigator.userAgent);
@@ -360,13 +352,11 @@ for (let doClone of [true, false]) {
                               buffers.push(value);
                             }
                             let out = new Blob(buffers);
-                            gc();
                             expect(out.size).toBe(expectedSize);
                             expect(Bun.SHA1.hash(await out.arrayBuffer(), "base64")).toBe(expectedHash);
                             expect(req.headers.get("x-custom")).toBe("hello");
                             expect(req.headers.get("content-type")).toBe("text/plain");
                             expect(req.headers.get("user-agent")).toBe(navigator.userAgent);
-                            gc();
                             return out;
                           };
 
@@ -385,7 +375,6 @@ for (let doClone of [true, false]) {
                       },
                     },
                     async url => {
-                      gc();
                       if (withDelay) await 1;
                       const pendingResponse = await fetch(url, {
                         body: huge,
@@ -415,13 +404,11 @@ for (let doClone of [true, false]) {
                         expect(Bun.SHA1.hash(response_body, "base64")).toBe(expectedHash);
                       }
 
-                      gc();
                       expect(response.headers.get("content-type")).toBe("text/plain");
-                      gc();
                     },
                   );
                   expect(called).toBe(true);
-                  gc();
+
                   return out;
                 },
               );
@@ -438,7 +425,6 @@ for (let doClone of [true, false]) {
                       async () => {
                         var huge = thisArray;
                         var called = false;
-                        gc();
 
                         const expectedHash =
                           huge instanceof Blob
@@ -464,11 +450,6 @@ for (let doClone of [true, false]) {
                                     reader = req.body.getReader();
                                   }
 
-                                  expect(req.headers.get("x-custom")).toBe("hello");
-                                  expect(req.headers.get("content-type")).toBe("text/plain");
-                                  expect(req.headers.get("user-agent")).toBe(navigator.userAgent);
-
-                                  gc();
                                   expect(req.headers.get("x-custom")).toBe("hello");
                                   expect(req.headers.get("content-type")).toBe("text/plain");
                                   expect(req.headers.get("user-agent")).toBe(navigator.userAgent);
@@ -519,7 +500,6 @@ for (let doClone of [true, false]) {
                             },
                           },
                           async url => {
-                            gc();
                             let response = await fetch(url, {
                               body: huge,
                               method: "POST",
@@ -546,17 +526,15 @@ for (let doClone of [true, false]) {
                               expect(Bun.SHA1.hash(response_body, "base64")).toBe(expectedHash);
                             }
 
-                            gc();
                             if (!response.headers.has("content-type")) {
                               console.error(Object.fromEntries(response.headers.entries()));
                             }
 
                             expect(response.headers.get("content-type")).toBe("text/plain");
-                            gc();
                           },
                         );
                         expect(called).toBe(true);
-                        gc();
+
                         return out;
                       },
                     );

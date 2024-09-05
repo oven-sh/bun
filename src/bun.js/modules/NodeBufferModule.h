@@ -177,7 +177,7 @@ DEFINE_NATIVE_MODULE(NodeBuffer) {
                        JSC::jsNumber(MAX_ARRAY_BUFFER_SIZE));
   constants->putDirect(vm,
                        JSC::Identifier::fromString(vm, "MAX_STRING_LENGTH"_s),
-                       JSC::jsNumber(std::numeric_limits<unsigned>().max()));
+                       JSC::jsNumber(std::numeric_limits<int>().max()));
 
   put(JSC::Identifier::fromString(vm, "constants"_s), constants);
 

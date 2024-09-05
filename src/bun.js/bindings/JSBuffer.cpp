@@ -69,6 +69,7 @@
 #include "DOMJITIDLTypeFilter.h"
 #include "DOMJITHelpers.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
+#include "ErrorCode.h"
 
 // #include <JavaScriptCore/JSTypedArrayViewPrototype.h>
 #include <JavaScriptCore/JSArrayBufferViewInlines.h>
@@ -1494,6 +1495,10 @@ static inline JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObj
 
     if (UNLIKELY(length == 0)) {
         RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsEmptyString(vm)));
+    }
+    if (length > std::numeric_limits<int>().max()) {
+        scope.throwException(lexicalGlobalObject, JSValue::decode(Bun::Bun__ERR_STRING_TOO_LONG(lexicalGlobalObject)));
+        return JSC::JSValue::encode(jsUndefined());
     }
 
     JSC::EncodedJSValue ret = 0;

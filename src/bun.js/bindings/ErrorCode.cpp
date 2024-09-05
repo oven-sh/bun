@@ -27,6 +27,7 @@
 #include "JSDOMException.h"
 
 #include "ErrorCode.h"
+#include <limits>
 
 static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code, bool isDOMExceptionPrototype = false)
 {
@@ -66,6 +67,7 @@ extern "C" JSC::EncodedJSValue Bun__ERR_INVALID_ARG_TYPE_static(JSC::JSGlobalObj
 extern "C" JSC::EncodedJSValue Bun__ERR_MISSING_ARGS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2, JSC::EncodedJSValue arg3);
 extern "C" JSC::EncodedJSValue Bun__ERR_MISSING_ARGS_static(JSC::JSGlobalObject* globalObject, const ZigString* arg1, const ZigString* arg2, const ZigString* arg3);
 extern "C" JSC::EncodedJSValue Bun__ERR_IPC_CHANNEL_CLOSED(JSC::JSGlobalObject* globalObject);
+extern "C" JSC::EncodedJSValue Bun__ERR_STRING_TOO_LONG(JSC::JSGlobalObject* globalObject);
 
 // clang-format on
 
@@ -363,6 +365,15 @@ extern "C" JSC::EncodedJSValue Bun__ERR_IPC_CHANNEL_CLOSED(JSC::JSGlobalObject* 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_SOCKET_BAD_TYPE, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
 {
     return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_BAD_TYPE, "Bad socket type specified. Valid types are: udp4, udp6"_s));
+}
+
+extern "C" JSC::EncodedJSValue Bun__ERR_STRING_TOO_LONG(JSC::JSGlobalObject* globalObject)
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto message = makeString("Cannot create a string longer than "_s, std::numeric_limits<int>().max(), " characters"_s);
+    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STRING_TOO_LONG, message));
 }
 
 } // namespace Bun

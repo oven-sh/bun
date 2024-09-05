@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn as nodeSpawn } from "node:child_process";
-import { cpSync, existsSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -59,6 +59,7 @@ async function build(args) {
     const readCache = path => {
       try {
         if (existsSync(path)) {
+          mkdirSync(buildPath, { recursive: true });
           cpSync(path, buildPath, { recursive: true, force: true });
           generateOptions["--fresh"] = undefined;
           console.log(`Copied cache from ${path} to ${buildPath}`);
@@ -91,6 +92,7 @@ async function build(args) {
     const writeCache = path => {
       try {
         rmSync(path, { recursive: true, force: true });
+        mkdirSync(path, { recursive: true });
         cpSync(buildPath, path, { recursive: true, force: true });
         console.log(`Saved cache to ${path}`);
         return true;
@@ -105,12 +107,29 @@ async function build(args) {
   }
 }
 
+function copyPath(src, dst) {
+  try {
+    cpSync(src, dst, { recursive: true, force: true });
+  } catch (error) {
+    for (const path of readdirSync(src, { recursive: true })) {
+      const srcPath = join(src, path);
+      const dstPath = join(dst, path);
+      try {
+        copyFileSync(srcPath, dstPath);
+      } catch (error) {
+        const content = readFileSync(srcPath);
+        writeFileSync(dstPath, content);
+      }
+    }
+  }
+}
+
 function getCachePath(branch) {
   const repository = process.env.BUILDKITE_REPO;
   const fork = process.env.BUILDKITE_PULL_REQUEST_REPO;
-  const repositoryKey = (fork || repository).replace(/[^a-z0-9]/i, "-");
-  const branchKey = (branch || process.env.BUILDKITE_BRANCH).replace(/[^a-z0-9]/i, "-");
-  const stepKey = process.env.BUILDKITE_STEP_KEY.replace(/[^a-z0-9]/i, "-");
+  const repositoryKey = (fork || repository).replace(/[^a-z0-9]/gi, "-");
+  const branchKey = (branch || process.env.BUILDKITE_BRANCH).replace(/[^a-z0-9]/gi, "-");
+  const stepKey = process.env.BUILDKITE_STEP_KEY.replace(/[^a-z0-9]/gi, "-");
   return join(homedir(), "cache", repositoryKey, branchKey, stepKey);
 }
 

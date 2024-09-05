@@ -147,3 +147,7 @@ if(BUILDKITE_JOBS_MATCH)
   list(JOIN BUILDKITE_JOBS_MATCH " " BUILDKITE_JOBS_MATCH)
   message(STATUS "The following jobs were found and matched the group ID: ${BUILDKITE_JOBS_MATCH}")
 endif()
+
+if(NOT BUILDKITE_JOBS_NOT_FOUND AND NOT BUILDKITE_JOBS_NO_MATCH AND NOT BUILDKITE_JOBS_NO_ARTIFACTS AND NOT BUILDKITE_JOBS_MATCH)
+  message(FATAL_ERROR "Something went wrong with Buildkite?")
+endif()

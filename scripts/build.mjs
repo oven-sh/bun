@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn as nodeSpawn } from "node:child_process";
-import { cpSync, existsSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -30,6 +30,21 @@ const buildFlags = [
 ];
 
 async function build(args) {
+  console.log("Attempting to write to...");
+  try {
+    mkdirSync("/var/cache/buildkite", { recursive: true });
+  } catch (e) {
+    console.log("Failed to mkdir to /var/cache/buildkite");
+    console.log(e);
+  }
+  try {
+    writeFileSync("/var/cache/buildkite/test.txt", "hello world");
+  } catch (e) {
+    console.log("Failed to write to /var/cache/buildkite/test.txt");
+    console.log(e);
+  }
+  process.exit(0);
+
   if (process.platform === "win32" && !process.env["VSINSTALLDIR"]) {
     const shellPath = join(import.meta.dirname, "vs-shell.ps1");
     const scriptPath = import.meta.filename;

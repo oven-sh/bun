@@ -81,7 +81,7 @@ async function build(args) {
   await spawn("cmake", generateArgs, { env });
 
   const buildArgs = Object.entries(buildOptions).flatMap(([flag, value]) => [flag, value]);
-  await spawn("cmake", ["--build", buildPath, ...buildArgs], { env });
+  await spawn("cmake", buildArgs, { env });
 
   if (isCacheWriteEnabled()) {
     try {

@@ -606,7 +606,7 @@ endif()
 # --- Packaging ---
 
 if(NOT BUN_CPP_ONLY)
-  if(WIN32)
+  if(CMAKE_HOST_WIN32)
     find_command(
       VARIABLE
         POWERSHELL_EXECUTABLE

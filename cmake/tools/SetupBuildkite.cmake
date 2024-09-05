@@ -3,7 +3,7 @@ include(Macros)
 optionx(BUILDKITE_CLEAN_CHECKOUT BOOL "If the build should be clean and not use caches" DEFAULT OFF)
 optionx(BUILDKITE_CACHE BOOL "If the build can use Buildkite caches, even if not running in Buildkite" DEFAULT ${BUILDKITE})
 
-if(NOT BUILDKITE_CACHE OR BUILDKITE_CLEAN_CHECKOUT)
+if(NOT BUILDKITE_CACHE OR BUILDKITE_CLEAN_CHECKOUT OR NOT BUN_LINK_ONLY)
   return()
 endif()
 

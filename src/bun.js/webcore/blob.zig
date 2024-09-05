@@ -1706,6 +1706,21 @@ pub const Blob = struct {
             assert(old > 0);
         }
 
+        pub fn hasOneRef(this: *const Store) bool {
+            return this.ref_count.load(.monotonic) == 1;
+        }
+
+        /// Caller is responsible for derefing the Store.
+        pub fn toAnyBlob(this: *Store) ?AnyBlob {
+            if (this.hasOneRef()) {
+                if (this.data == .bytes) {
+                    return .{ .InternalBlob = this.data.bytes.toInternalBlob() };
+                }
+            }
+
+            return null;
+        }
+
         pub fn external(ptr: ?*anyopaque, _: ?*anyopaque, _: usize) callconv(.C) void {
             if (ptr == null) return;
             var this = bun.cast(*Store, ptr);
@@ -3202,6 +3217,20 @@ pub const Blob = struct {
             return ByteStore.init(list.items, allocator);
         }
 
+        pub fn toInternalBlob(this: *ByteStore) InternalBlob {
+            const result = InternalBlob{
+                .bytes = std.ArrayList(u8){
+                    .items = this.ptr[0..this.len],
+                    .capacity = this.cap,
+                    .allocator = this.allocator,
+                },
+            };
+
+            this.allocator = bun.default_allocator;
+            this.len = 0;
+            this.cap = 0;
+            return result;
+        }
         pub fn slice(this: ByteStore) []u8 {
             return this.ptr[0..this.len];
         }
@@ -3299,10 +3328,17 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) JSC.JSValue {
+        return this.getTextClone(globalThis);
+    }
+
+    pub fn getTextClone(
+        this: *Blob,
+        globalObject: *JSC.JSGlobalObject,
+    ) JSC.JSValue {
         const store = this.store;
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
-        return JSC.JSPromise.wrap(globalThis, lifetimeWrap(toString, .clone), .{ this, globalThis });
+        return JSC.JSPromise.wrap(globalObject, lifetimeWrap(toString, .clone), .{ this, globalObject });
     }
 
     pub fn getTextTransfer(
@@ -3320,13 +3356,18 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) JSC.JSValue {
+        return this.getJSONShare(globalThis);
+    }
+
+    pub fn getJSONShare(
+        this: *Blob,
+        globalObject: *JSC.JSGlobalObject,
+    ) JSC.JSValue {
         const store = this.store;
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
-
-        return JSC.JSPromise.wrap(globalThis, lifetimeWrap(toJSON, .share), .{ this, globalThis });
+        return JSC.JSPromise.wrap(globalObject, lifetimeWrap(toJSON, .share), .{ this, globalObject });
     }
-
     pub fn getArrayBufferTransfer(
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
@@ -3338,15 +3379,32 @@ pub const Blob = struct {
         return JSC.JSPromise.wrap(globalThis, lifetimeWrap(toArrayBuffer, .transfer), .{ this, globalThis });
     }
 
+    pub fn getArrayBufferClone(
+        this: *Blob,
+        globalThis: *JSC.JSGlobalObject,
+    ) JSC.JSValue {
+        const store = this.store;
+        if (store) |st| st.ref();
+        defer if (store) |st| st.deref();
+        return JSC.JSPromise.wrap(globalThis, lifetimeWrap(toArrayBuffer, .clone), .{ this, globalThis });
+    }
+
     pub fn getArrayBuffer(
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) JSValue {
+        return this.getArrayBufferClone(globalThis);
+    }
+
+    pub fn getBytesClone(
+        this: *Blob,
+        globalThis: *JSC.JSGlobalObject,
+    ) JSValue {
         const store = this.store;
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
-        return JSC.JSPromise.wrap(globalThis, lifetimeWrap(toArrayBuffer, .clone), .{ this, globalThis });
+        return JSC.JSPromise.wrap(globalThis, lifetimeWrap(toUint8Array, .clone), .{ this, globalThis });
     }
 
     pub fn getBytes(
@@ -3354,10 +3412,17 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) JSValue {
+        return this.getBytesClone(globalThis);
+    }
+
+    pub fn getBytesTransfer(
+        this: *Blob,
+        globalThis: *JSC.JSGlobalObject,
+    ) JSValue {
         const store = this.store;
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
-        return JSC.JSPromise.wrap(globalThis, lifetimeWrap(toUint8Array, .clone), .{ this, globalThis });
+        return JSC.JSPromise.wrap(globalThis, lifetimeWrap(toUint8Array, .transfer), .{ this, globalThis });
     }
 
     pub fn getFormData(
@@ -4759,6 +4824,14 @@ pub const AnyBlob = union(enum) {
     InternalBlob: InternalBlob,
     WTFStringImpl: bun.WTF.StringImpl,
 
+    pub fn hasOneRef(this: *const AnyBlob) bool {
+        if (this.store()) |s| {
+            return s.hasOneRef();
+        }
+
+        return false;
+    }
+
     pub fn getFileName(this: *const AnyBlob) ?[]const u8 {
         return switch (this.*) {
             .Blob => this.Blob.getFileName(),
@@ -4781,6 +4854,65 @@ pub const AnyBlob = union(enum) {
             .WTFStringImpl => false,
             .InternalBlob => false,
         };
+    }
+
+    fn toInternalBlobIfPossible(this: *AnyBlob) void {
+        if (this.* == .Blob) {
+            if (this.Blob.store) |s| {
+                if (s.data == .bytes and s.hasOneRef()) {
+                    this.* = .{ .InternalBlob = s.data.bytes.toInternalBlob() };
+                    s.deref();
+                    return;
+                }
+            }
+        }
+    }
+
+    pub fn toActionValue(this: *AnyBlob, globalThis: *JSGlobalObject, action: JSC.WebCore.BufferedReadableStreamAction) JSC.JSValue {
+        if (action != .blob) {
+            this.toInternalBlobIfPossible();
+        }
+
+        switch (action) {
+            .text => {
+                if (this.* == .Blob) {
+                    return this.toString(globalThis, .clone);
+                }
+
+                return this.toStringTransfer(globalThis);
+            },
+            .bytes => {
+                if (this.* == .Blob) {
+                    return this.toArrayBufferView(globalThis, .clone, .Uint8Array);
+                }
+
+                return this.toUint8ArrayTransfer(globalThis);
+            },
+            .blob => {
+                const result = Blob.new(this.toBlob(globalThis));
+                result.allocator = bun.default_allocator;
+                result.globalThis = globalThis;
+                return result.toJS(globalThis);
+            },
+            .arrayBuffer => {
+                if (this.* == .Blob) {
+                    return this.toArrayBufferView(globalThis, .clone, .ArrayBuffer);
+                }
+
+                return this.toArrayBufferTransfer(globalThis);
+            },
+            .json => {
+                return this.toJSON(globalThis, .share);
+            },
+        }
+    }
+
+    pub fn toPromise(this: *AnyBlob, globalThis: *JSGlobalObject, action: JSC.WebCore.BufferedReadableStreamAction) JSC.JSValue {
+        return JSC.JSPromise.wrap(globalThis, toActionValue, .{ this, globalThis, action });
+    }
+
+    pub fn wrap(this: *AnyBlob, promise: JSC.AnyPromise, globalThis: *JSGlobalObject, action: JSC.WebCore.BufferedReadableStreamAction) void {
+        promise.wrap(globalThis, toActionValue, .{ this, globalThis, action });
     }
 
     pub fn toJSON(this: *AnyBlob, global: *JSGlobalObject, comptime lifetime: JSC.WebCore.Lifetime) JSValue {
@@ -4837,6 +4969,26 @@ pub const AnyBlob = union(enum) {
 
     pub fn toArrayBufferTransfer(this: *AnyBlob, global: *JSGlobalObject) JSValue {
         return this.toArrayBuffer(global, .transfer);
+    }
+
+    pub fn toBlob(this: *AnyBlob, global: *JSGlobalObject) Blob {
+        if (this.size() == 0) {
+            return Blob.initEmpty(global);
+        }
+
+        if (this.* == .Blob) {
+            return this.Blob.dupe();
+        }
+
+        if (this.* == .WTFStringImpl) {
+            const blob = Blob.create(this.slice(), bun.default_allocator, global, true);
+            this.* = .{ .Blob = .{} };
+            return blob;
+        }
+
+        const blob = Blob.init(this.InternalBlob.slice(), this.InternalBlob.bytes.allocator, global);
+        this.* = .{ .Blob = .{} };
+        return blob;
     }
 
     pub fn toString(this: *AnyBlob, global: *JSGlobalObject, comptime lifetime: JSC.WebCore.Lifetime) JSValue {
@@ -4900,11 +5052,12 @@ pub const AnyBlob = union(enum) {
 
                 const bytes = this.InternalBlob.toOwnedSlice();
                 this.* = .{ .Blob = .{} };
-                const value = JSC.ArrayBuffer.fromBytes(
+
+                return JSC.ArrayBuffer.fromDefaultAllocator(
+                    global,
                     bytes,
                     TypedArrayView,
                 );
-                return value.toJS(global, null);
             },
             .WTFStringImpl => {
                 const str = bun.String.init(this.WTFStringImpl);
@@ -4913,11 +5066,11 @@ pub const AnyBlob = union(enum) {
 
                 const out_bytes = str.toUTF8WithoutRef(bun.default_allocator);
                 if (out_bytes.isAllocated()) {
-                    const value = JSC.ArrayBuffer.fromBytes(
+                    return JSC.ArrayBuffer.fromDefaultAllocator(
+                        global,
                         @constCast(out_bytes.slice()),
                         TypedArrayView,
                     );
-                    return value.toJS(global, null);
                 }
 
                 return JSC.ArrayBuffer.create(global, out_bytes.slice(), TypedArrayView);

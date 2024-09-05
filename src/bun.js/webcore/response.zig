@@ -1033,9 +1033,18 @@ pub const Fetch = struct {
                         var prev = this.readable_stream_ref;
                         this.readable_stream_ref = .{};
                         defer prev.deinit();
+                        buffer_reset = false;
+                        this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
+                        this.scheduled_response_buffer = .{
+                            .allocator = bun.default_allocator,
+                            .list = .{
+                                .items = &.{},
+                                .capacity = 0,
+                            },
+                        };
                         readable.ptr.Bytes.onData(
                             .{
-                                .temporary_and_done = bun.ByteList.initConst(chunk),
+                                .owned_and_done = bun.ByteList.initConst(chunk),
                             },
                             bun.default_allocator,
                         );
@@ -1430,9 +1439,9 @@ pub const Fetch = struct {
             return .{ .SystemError = fetch_error };
         }
 
-        pub fn onReadableStreamAvailable(ctx: *anyopaque, readable: JSC.WebCore.ReadableStream) void {
+        pub fn onReadableStreamAvailable(ctx: *anyopaque, globalThis: *JSC.JSGlobalObject, readable: JSC.WebCore.ReadableStream) void {
             const this = bun.cast(*FetchTasklet, ctx);
-            this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable, this.global_this);
+            this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable, globalThis);
         }
 
         pub fn onStartStreamingRequestBodyCallback(ctx: *anyopaque) JSC.WebCore.DrainResult {
@@ -2572,7 +2581,7 @@ pub const Fetch = struct {
             }
 
             if (request) |req| {
-                if (req.body.value == .Used or (req.body.value == .Locked and req.body.value.Locked.isDisturbed(Request, globalThis, first_arg))) {
+                if (req.body.value == .Used or (req.body.value == .Locked and (req.body.value.Locked.action != .none or req.body.value.Locked.isDisturbed(Request, globalThis, first_arg)))) {
                     globalThis.ERR_BODY_ALREADY_USED("Request body already used", .{}).throw();
                     is_error = true;
                     return .zero;

@@ -2181,6 +2181,10 @@ function _writeHead(statusCode, reason, obj, response) {
     // consisting only of the Status-Line and optional headers, and is
     // terminated by an empty line.
     response._hasBody = false;
+    const req = response.req;
+    if (req) {
+      req.complete = true;
+    }
   }
 }
 

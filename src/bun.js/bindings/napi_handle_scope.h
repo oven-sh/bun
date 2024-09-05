@@ -8,11 +8,18 @@ namespace Bun {
 // An array of write barriers (so that newly-added objects are not lost by GC) to JSValues. Unlike
 // the V8 version, pointer stability is not required (because napi_values don't point into this
 // structure) so we can use a regular WTF::Vector
+//
+// Don't use this directly, use NapiHandleScope. Most NAPI functions won't even need to use that as
+// a handle scope is created before calling a native function.
 class NapiHandleScopeImpl : public JSC::JSCell {
 public:
     using Base = JSC::JSCell;
 
-    static NapiHandleScopeImpl* create(JSC::VM& vm, JSC::Structure* structure, NapiHandleScopeImpl* parent);
+    static NapiHandleScopeImpl* create(
+        JSC::VM& vm,
+        JSC::Structure* structure,
+        NapiHandleScopeImpl* parent,
+        bool escapable = false);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
     {
@@ -35,18 +42,23 @@ public:
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
+    // Store val in the handle scope
     void append(JSC::JSValue val);
     NapiHandleScopeImpl* parent() const { return m_parent; }
+    // Returns false if this handle scope is not escapable or if it is but escape() has already
+    // been called
+    bool escape(JSC::JSValue val);
 
 private:
-    NapiHandleScopeImpl* m_parent;
-    WTF::Vector<JSC::WriteBarrier<JSC::Unknown>, 16> m_storage;
+    using Slot = JSC::WriteBarrier<JSC::Unknown>;
 
-    NapiHandleScopeImpl(JSC::VM& vm, JSC::Structure* structure, NapiHandleScopeImpl* parent)
-        : Base(vm, structure)
-        , m_parent(parent)
-    {
-    }
+    NapiHandleScopeImpl* m_parent;
+    WTF::Vector<Slot, 16> m_storage;
+    Slot* m_escapeSlot;
+
+    Slot* reserveSlot();
+
+    NapiHandleScopeImpl(JSC::VM& vm, JSC::Structure* structure, NapiHandleScopeImpl* parent, bool escapable);
 };
 
 // Wrapper class used to push a new handle scope and pop it when this instance goes out of scope
@@ -55,7 +67,11 @@ public:
     NapiHandleScope(Zig::GlobalObject* globalObject);
     ~NapiHandleScope();
 
-    static NapiHandleScopeImpl* push(Zig::GlobalObject* globalObject);
+    // Create a new handle scope in the given environment
+    static NapiHandleScopeImpl* push(Zig::GlobalObject* globalObject, bool escapable);
+
+    // Pop the most recently created handle scope in the given environment and restore the old one.
+    // Asserts that `current` is the active handle scope.
     static void pop(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* current);
 
 private:
@@ -63,8 +79,19 @@ private:
     Zig::GlobalObject* m_globalObject;
 };
 
-extern "C" NapiHandleScopeImpl* NapiHandleScope__push(Zig::GlobalObject* globalObject);
+// Create a new handle scope in the given environment
+extern "C" NapiHandleScopeImpl* NapiHandleScope__push(Zig::GlobalObject* globalObject, bool escapable);
+
+// Pop the most recently created handle scope in the given environment and restore the old one.
+// Asserts that `current` is the active handle scope.
 extern "C" void NapiHandleScope__pop(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* current);
+
+// Store a value in the active handle scope in the given environment
 extern "C" void NapiHandleScope__append(Zig::GlobalObject* globalObject, JSC::EncodedJSValue value);
+
+// Put a value from the current handle scope into its escape slot reserved in the outer handle
+// scope. Returns false if the current handle scope is not escapable or if escape has already been
+// called on it.
+extern "C" bool NapiHandleScope__escape(NapiHandleScopeImpl* handle_scope, JSC::EncodedJSValue value);
 
 } // namespace Bun

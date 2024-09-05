@@ -266,6 +266,58 @@ napi_value test_napi_delete_property(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+void store_escaped_handle(napi_env env, napi_value *out, const char *str) {
+  napi_escapable_handle_scope ehs;
+  assert(napi_open_escapable_handle_scope(env, &ehs) == napi_ok);
+  napi_value s;
+  assert(napi_create_string_utf8(env, str, NAPI_AUTO_LENGTH, &s) == napi_ok);
+  napi_value escaped;
+  assert(napi_escape_handle(env, ehs, s, &escaped) == napi_ok);
+  // can't call a second time
+  assert(napi_escape_handle(env, ehs, s, &escaped) == napi_escape_called_twice);
+  assert(napi_close_escapable_handle_scope(env, ehs) == napi_ok);
+  *out = escaped;
+
+  // try to defeat stack scanning
+  *(volatile napi_value *)(&s) = nullptr;
+  *(volatile napi_value *)(&escaped) = nullptr;
+}
+
+napi_value test_napi_escapable_handle_scope(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  // allocate space for a napi_value on the heap
+  // use store_escaped_handle to put the value into it
+  // allocate some big objects to trigger GC
+  // the napi_value should still be valid even though it can't be found on the
+  // stack, because it escaped into the current handle scope
+
+  constexpr const char *str = "this is a long string meow meow meow";
+
+  napi_value *hidden = new napi_value;
+  store_escaped_handle(env, hidden, str);
+
+  constexpr size_t big_string_length = 20'000'000;
+  auto *string_data = new char[big_string_length];
+  for (int i = 0; i < 100; i++) {
+    napi_value s;
+    memset(string_data, i + 1, big_string_length);
+    assert(napi_create_string_utf8(env, string_data, big_string_length, &s) ==
+           napi_ok);
+  }
+  delete[] string_data;
+
+  char buf[64];
+  size_t len;
+  assert(napi_get_value_string_utf8(env, *hidden, buf, sizeof(buf), &len) ==
+         napi_ok);
+  assert(len == strlen(str));
+  assert(strcmp(buf, str) == 0);
+
+  delete hidden;
+  return ok(env);
+}
+
 Napi::Value RunCallback(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   Napi::Function cb = info[0].As<Napi::Function>();
@@ -300,6 +352,8 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
               Napi::Function::New(env, test_napi_handle_scope_bigint));
   exports.Set("test_napi_delete_property",
               Napi::Function::New(env, test_napi_delete_property));
+  exports.Set("test_napi_escapable_handle_scope",
+              Napi::Function::New(env, test_napi_escapable_handle_scope));
 
   return exports;
 }

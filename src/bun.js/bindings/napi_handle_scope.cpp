@@ -15,9 +15,23 @@ const JSC::ClassInfo NapiHandleScopeImpl::s_info = {
     CREATE_METHOD_TABLE(NapiHandleScopeImpl)
 };
 
-NapiHandleScopeImpl* NapiHandleScopeImpl::create(JSC::VM& vm, JSC::Structure* structure, NapiHandleScopeImpl* parent)
+NapiHandleScopeImpl::NapiHandleScopeImpl(JSC::VM& vm, JSC::Structure* structure, NapiHandleScopeImpl* parent, bool escapable)
+    : Base(vm, structure)
+    , m_parent(parent)
+    , m_escapeSlot(nullptr)
 {
-    NapiHandleScopeImpl* buffer = new (NotNull, JSC::allocateCell<NapiHandleScopeImpl>(vm)) NapiHandleScopeImpl(vm, structure, parent);
+    if (escapable) {
+        m_escapeSlot = parent->reserveSlot();
+    }
+}
+
+NapiHandleScopeImpl* NapiHandleScopeImpl::create(JSC::VM& vm,
+    JSC::Structure* structure,
+    NapiHandleScopeImpl* parent,
+    bool escapable)
+{
+    NapiHandleScopeImpl* buffer = new (NotNull, JSC::allocateCell<NapiHandleScopeImpl>(vm))
+        NapiHandleScopeImpl(vm, structure, parent, escapable);
     buffer->finishCreation(vm);
     return buffer;
 }
@@ -40,14 +54,32 @@ DEFINE_VISIT_CHILDREN(NapiHandleScopeImpl);
 
 void NapiHandleScopeImpl::append(JSC::JSValue val)
 {
-    m_storage.append(JSC::WriteBarrier<JSC::Unknown>(vm(), this, val));
+    m_storage.append(Slot(vm(), this, val));
 }
 
-NapiHandleScopeImpl* NapiHandleScope::push(Zig::GlobalObject* globalObject)
+bool NapiHandleScopeImpl::escape(JSC::JSValue val)
+{
+    if (!m_escapeSlot) {
+        return false;
+    }
+
+    m_escapeSlot->set(vm(), m_parent, val);
+    m_escapeSlot = nullptr;
+    return true;
+}
+
+NapiHandleScopeImpl::Slot* NapiHandleScopeImpl::reserveSlot()
+{
+    m_storage.append(Slot());
+    return &m_storage.last();
+}
+
+NapiHandleScopeImpl* NapiHandleScope::push(Zig::GlobalObject* globalObject, bool escapable)
 {
     auto* impl = NapiHandleScopeImpl::create(globalObject->vm(),
         globalObject->NapiHandleScopeImplStructure(),
-        globalObject->m_currentNapiHandleScopeImpl.get());
+        globalObject->m_currentNapiHandleScopeImpl.get(),
+        escapable);
     globalObject->m_currentNapiHandleScopeImpl.set(globalObject->vm(), globalObject, impl);
     return impl;
 }
@@ -65,7 +97,7 @@ void NapiHandleScope::pop(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* 
 
 NapiHandleScope::NapiHandleScope(Zig::GlobalObject* globalObject)
     : m_globalObject(globalObject)
-    , m_impl(NapiHandleScope::push(globalObject))
+    , m_impl(NapiHandleScope::push(globalObject, false))
 {
 }
 
@@ -74,9 +106,9 @@ NapiHandleScope::~NapiHandleScope()
     NapiHandleScope::pop(m_globalObject, m_impl);
 }
 
-extern "C" NapiHandleScopeImpl* NapiHandleScope__push(Zig::GlobalObject* globalObject)
+extern "C" NapiHandleScopeImpl* NapiHandleScope__push(Zig::GlobalObject* globalObject, bool escapable)
 {
-    return NapiHandleScope::push(globalObject);
+    return NapiHandleScope::push(globalObject, escapable);
 }
 
 extern "C" void NapiHandleScope__pop(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* current)
@@ -87,6 +119,11 @@ extern "C" void NapiHandleScope__pop(Zig::GlobalObject* globalObject, NapiHandle
 extern "C" void NapiHandleScope__append(Zig::GlobalObject* globalObject, JSC::EncodedJSValue value)
 {
     globalObject->m_currentNapiHandleScopeImpl.get()->append(JSC::JSValue::decode(value));
+}
+
+extern "C" bool NapiHandleScope__escape(NapiHandleScopeImpl* handleScope, JSC::EncodedJSValue value)
+{
+    return handleScope->escape(JSC::JSValue::decode(value));
 }
 
 } // namespace Bun

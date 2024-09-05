@@ -79,6 +79,12 @@ describe("napi", () => {
     }, 10000);
   });
 
+  describe("escapable_handle_scope", () => {
+    it("keeps the escaped value alive in the outer scope", () => {
+      checkSameOutput("test_napi_escapable_handle_scope", []);
+    });
+  });
+
   describe("napi_delete_property", () => {
     it("returns a valid boolean", () => {
       checkSameOutput(

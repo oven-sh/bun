@@ -65,12 +65,13 @@ pub const Ref = opaque {
     extern fn napi_set_ref(ref: *Ref, value: JSC.JSValue) void;
 };
 pub const NapiHandleScope = opaque {
-    extern fn NapiHandleScope__push(globalObject: *JSC.JSGlobalObject) *NapiHandleScope;
+    extern fn NapiHandleScope__push(globalObject: *JSC.JSGlobalObject, escapable: bool) *NapiHandleScope;
     extern fn NapiHandleScope__pop(globalObject: *JSC.JSGlobalObject, current: *NapiHandleScope) void;
     extern fn NapiHandleScope__append(globalObject: *JSC.JSGlobalObject, value: JSC.JSValueReprInt) void;
+    extern fn NapiHandleScope__escape(handleScope: *NapiHandleScope, value: JSC.JSValueReprInt) bool;
 
-    pub fn push(env: napi_env) *NapiHandleScope {
-        return NapiHandleScope__push(env);
+    pub fn push(env: napi_env, escapable: bool) *NapiHandleScope {
+        return NapiHandleScope__push(env, escapable);
     }
 
     pub fn pop(self: *NapiHandleScope, env: napi_env) void {
@@ -80,11 +81,16 @@ pub const NapiHandleScope = opaque {
     pub fn append(env: napi_env, value: JSC.JSValue) void {
         NapiHandleScope__append(env, @intFromEnum(value));
     }
+
+    pub fn escape(self: *NapiHandleScope, value: JSC.JSValue) error{EscapeCalledTwice}!void {
+        if (!NapiHandleScope__escape(self, @intFromEnum(value))) {
+            return error.EscapeCalledTwice;
+        }
+    }
 };
 
 pub const napi_handle_scope = *NapiHandleScope;
-
-pub const napi_escapable_handle_scope = *struct_napi_escapable_handle_scope__;
+pub const napi_escapable_handle_scope = *NapiHandleScope;
 pub const napi_callback_info = *JSC.CallFrame;
 pub const napi_deferred = *JSC.JSPromise.Strong;
 
@@ -739,18 +745,17 @@ pub extern fn napi_get_reference_value(env: napi_env, ref: *Ref, result: *napi_v
 pub extern fn napi_get_reference_value_internal(ref: *Ref) JSC.JSValue;
 
 pub export fn napi_open_handle_scope(env: napi_env, result_: ?*napi_handle_scope) napi_status {
-    _ = env; // autofix
-    _ = result_; // autofix
     log("napi_open_handle_scope", .{});
-    // const result = result_ orelse {
-    //     return invalidArg();
-    // };
-    // result.* = env;
+    const result = result_ orelse {
+        return invalidArg();
+    };
+    result.* = NapiHandleScope.push(env, false);
     return .ok;
 }
 
-pub export fn napi_close_handle_scope(_: napi_env, _: napi_handle_scope) napi_status {
+pub export fn napi_close_handle_scope(env: napi_env, handle_scope: napi_handle_scope) napi_status {
     log("napi_close_handle_scope", .{});
+    handle_scope.pop(env);
     return .ok;
 }
 
@@ -816,27 +821,26 @@ fn notImplementedYet(comptime name: []const u8) void {
     );
 }
 
-pub export fn napi_open_escapable_handle_scope(env: napi_env, handle_: ?*napi_escapable_handle_scope) napi_status {
-    _ = env; // autofix
+pub export fn napi_open_escapable_handle_scope(env: napi_env, result_: ?*napi_escapable_handle_scope) napi_status {
     log("napi_open_escapable_handle_scope", .{});
-    const handle = handle_ orelse {
+    const result = result_ orelse {
         return invalidArg();
     };
-    _ = handle; // autofix
-    // handle.* = env;
+    result.* = NapiHandleScope.push(env, true);
     return .ok;
 }
-pub export fn napi_close_escapable_handle_scope(_: napi_env, _: napi_escapable_handle_scope) napi_status {
+pub export fn napi_close_escapable_handle_scope(env: napi_env, scope: napi_escapable_handle_scope) napi_status {
     log("napi_close_escapable_handle_scope", .{});
+    scope.pop(env);
     return .ok;
 }
-pub export fn napi_escape_handle(_: napi_env, _: napi_escapable_handle_scope, value: napi_value, result_: ?*napi_value) napi_status {
+pub export fn napi_escape_handle(_: napi_env, scope: napi_escapable_handle_scope, escapee: napi_value, result_: ?*napi_value) napi_status {
     log("napi_escape_handle", .{});
     const result = result_ orelse {
         return invalidArg();
     };
-    // value.ensureStillAlive();
-    result.* = value;
+    scope.escape(escapee.get()) catch return .escape_called_twice;
+    result.* = escapee;
     return .ok;
 }
 pub export fn napi_type_tag_object(_: napi_env, _: napi_value, _: [*c]const napi_type_tag) napi_status {
@@ -1570,7 +1574,7 @@ pub const ThreadSafeFunction = struct {
                     log("call() {}", .{str});
                 }
 
-                const handle_scope = NapiHandleScope.push(globalObject);
+                const handle_scope = NapiHandleScope.push(globalObject, false);
                 defer handle_scope.pop(globalObject);
                 cb.napi_threadsafe_function_call_js(globalObject, napi_value.create(globalObject, cb.js), this.ctx, task);
             },

@@ -55,30 +55,6 @@ async function build(args) {
     generateOptions["--toolchain"] = toolchainPath;
   }
 
-  if (isCacheReadEnabled()) {
-    try {
-      const cachePath = getCachePath();
-      if (existsSync(cachePath)) {
-        cpSync(cachePath, buildPath, { recursive: true, force: true });
-        rmSync(join(buildPath, "CMakeCache.txt"));
-        generateOptions["--fresh"] = undefined;
-        console.log(`Copied branch cache from ${cachePath} to ${buildPath}`);
-      }
-    } catch (error) {
-      try {
-        const mainCachePath = getCachePath(getDefaultBranch());
-        if (existsSync(mainCachePath)) {
-          cpSync(mainCachePath, buildPath, { recursive: true, force: true });
-          rmSync(join(buildPath, "CMakeCache.txt"));
-          generateOptions["--fresh"] = undefined;
-          console.log(`Copied main cache from ${mainCachePath} to ${buildPath}`);
-        }
-      } catch (error) {
-        console.warn("Failed to read cache", error);
-      }
-    }
-  }
-
   const generateArgs = Object.entries(generateOptions).flatMap(([flag, value]) =>
     flag.startsWith("-D") ? [`${flag}=${value}`] : [flag, value],
   );
@@ -88,42 +64,6 @@ async function build(args) {
     .sort(([a], [b]) => (a === "--build" ? -1 : a.localeCompare(b)))
     .flatMap(([flag, value]) => [flag, value]);
   await spawn("cmake", buildArgs, { env });
-
-  if (isCacheWriteEnabled()) {
-    try {
-      const cachePath = getCachePath();
-      rmSync(cachePath, { recursive: true, force: true });
-      cpSync(buildPath, cachePath, { recursive: true, force: true });
-      console.log(`Saved cache to ${cachePath}`);
-    } catch (error) {
-      console.warn("Failed to save cache", error);
-    }
-  }
-}
-
-function getCachePath(branch) {
-  const repository = process.env.BUILDKITE_REPO;
-  const fork = process.env.BUILDKITE_PULL_REQUEST_REPO;
-  const repositoryKey = (fork || repository).replace(/[^a-z0-9]/i, "-");
-  const branchKey = (branch || process.env.BUILDKITE_BRANCH).replace(/[^a-z0-9]/i, "-");
-  const stepKey = process.env.BUILDKITE_STEP_KEY.replace(/[^a-z0-9]/i, "-");
-  return join(homedir(), "builds", "cache", repositoryKey, branchKey, stepKey);
-}
-
-function isCacheReadEnabled() {
-  return (
-    process.env.BUILDKITE === "true" &&
-    process.env.BUILDKITE_CLEAN_CHECKOUT !== "true" &&
-    process.env.BUILDKITE_BRANCH !== getDefaultBranch()
-  );
-}
-
-function isCacheWriteEnabled() {
-  return process.env.BUILDKITE === "true";
-}
-
-function getDefaultBranch() {
-  return process.env.BUILDKITE_PIPELINE_DEFAULT_BRANCH || "main";
 }
 
 function parseOptions(args, flags = []) {

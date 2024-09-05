@@ -12,42 +12,42 @@ steps:
   - key: "darwin-aarch64"
     group: ":darwin: aarch64"
     steps:
-      - key: "darwin-aarch64-build-deps"
-        label: ":darwin: aarch64 - build-deps"
-        agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "aarch64"
-        command:
-          - "bun run build:ci --target dependencies"
-      - key: "darwin-aarch64-build-cpp"
-        label: ":darwin: aarch64 - build-cpp"
-        agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "aarch64"
-        env:
-          BUN_CPP_ONLY: "ON"
-        command:
-          - "bun run build:ci --target bun"
-      - key: "darwin-aarch64-build-zig"
-        label: ":darwin: aarch64 - build-zig"
-        agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "aarch64"
-        command:
-          - "bun run build:ci --target bun-zig --toolchain darwin-aarch64"
+      # - key: "darwin-aarch64-build-deps"
+      #   label: ":darwin: aarch64 - build-deps"
+      #   agents:
+      #     queue: "build-darwin"
+      #     os: "darwin"
+      #     arch: "aarch64"
+      #   command:
+      #     - "bun run build:ci --target dependencies"
+      # - key: "darwin-aarch64-build-cpp"
+      #   label: ":darwin: aarch64 - build-cpp"
+      #   agents:
+      #     queue: "build-darwin"
+      #     os: "darwin"
+      #     arch: "aarch64"
+      #   env:
+      #     BUN_CPP_ONLY: "ON"
+      #   command:
+      #     - "bun run build:ci --target bun"
+      # - key: "darwin-aarch64-build-zig"
+      #   label: ":darwin: aarch64 - build-zig"
+      #   agents:
+      #     queue: "build-darwin"
+      #     os: "darwin"
+      #     arch: "aarch64"
+      #   command:
+      #     - "bun run build:ci --target bun-zig --toolchain darwin-aarch64"
       - key: "darwin-aarch64-build-bun"
         label: ":darwin: aarch64 - build-bun"
         agents:
           queue: "build-darwin"
           os: "darwin"
           arch: "aarch64"
-        depends_on:
-          - "darwin-aarch64-build-deps"
-          - "darwin-aarch64-build-cpp"
-          - "darwin-aarch64-build-zig"
+        # depends_on:
+        #   - "darwin-aarch64-build-deps"
+        #   - "darwin-aarch64-build-cpp"
+        #   - "darwin-aarch64-build-zig"
         env:
           BUN_LINK_ONLY: "ON"
         command:

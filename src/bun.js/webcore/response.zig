@@ -261,10 +261,27 @@ pub const Response = struct {
     pub fn doClone(
         this: *Response,
         globalThis: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
+        callframe: *JSC.CallFrame,
     ) JSValue {
+        const this_value = callframe.this();
         const cloned = this.clone(globalThis);
-        return Response.makeMaybePooled(globalThis, cloned);
+        if (globalThis.hasException()) {
+            cloned.finalize();
+            return .zero;
+        }
+
+        const js_wrapper = Response.makeMaybePooled(globalThis, cloned);
+
+        if (js_wrapper != .zero) {
+            if (cloned.body.value == .Locked) {
+                if (cloned.body.value.Locked.readable.get()) |readable| {
+                    Response.bodySetCached(js_wrapper, globalThis, readable.value);
+                    Response.bodySetCached(this_value, globalThis, this.body.value.Locked.readable.get().?.value);
+                }
+            }
+        }
+
+        return js_wrapper;
     }
 
     pub fn makeMaybePooled(globalObject: *JSC.JSGlobalObject, ptr: *Response) JSValue {

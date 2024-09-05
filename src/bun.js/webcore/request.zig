@@ -744,8 +744,9 @@ pub const Request = struct {
     pub fn doClone(
         this: *Request,
         globalThis: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
+        callframe: *JSC.CallFrame,
     ) JSC.JSValue {
+        const this_value = callframe.this();
         var cloned = this.clone(getAllocator(globalThis), globalThis);
 
         if (globalThis.hasException()) {
@@ -753,7 +754,17 @@ pub const Request = struct {
             return .zero;
         }
 
-        return cloned.toJS(globalThis);
+        const js_wrapper = cloned.toJS(globalThis);
+        if (js_wrapper != .zero) {
+            if (cloned.body.value == .Locked) {
+                if (cloned.body.value.Locked.readable.get()) |readable| {
+                    Request.bodySetCached(js_wrapper, globalThis, readable.value);
+                    Request.bodySetCached(this_value, globalThis, this.body.value.Locked.readable.get().?.value);
+                }
+            }
+        }
+
+        return js_wrapper;
     }
 
     // Returns if the request has headers already cached/set.

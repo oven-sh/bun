@@ -8,7 +8,7 @@ find_command(
   PATHS
     $ENV{HOME}/.bun/bin
   VERSION
-    >=1.1.0
+    >=1.1.26
 )
 
 setenv(BUN_INSTALL_CACHE_DIR ${CACHE_PATH}/bun)

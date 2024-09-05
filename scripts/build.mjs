@@ -32,15 +32,15 @@ const buildFlags = [
 async function build(args) {
   console.log("Attempting to write to...");
   try {
-    mkdirSync("/var/cache/buildkite", { recursive: true });
+    mkdirSync("/opt/homebrew/var/buildkite-agent/cache", { recursive: true });
   } catch (e) {
-    console.log("Failed to mkdir to /var/cache/buildkite");
+    console.log("Failed to mkdir to /opt/homebrew/var/buildkite-agent");
     console.log(e);
   }
   try {
-    writeFileSync("/var/cache/buildkite/test.txt", "hello world");
+    writeFileSync("/opt/homebrew/var/buildkite-agent/cache/test.txt", "hello world");
   } catch (e) {
-    console.log("Failed to write to /var/cache/buildkite/test.txt");
+    console.log("Failed to write to /opt/homebrew/var/buildkite-agent/test.txt");
     console.log(e);
   }
   process.exit(0);

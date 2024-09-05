@@ -80,7 +80,9 @@ async function build(args) {
   );
   await spawn("cmake", generateArgs, { env });
 
-  const buildArgs = Object.entries(buildOptions).flatMap(([flag, value]) => [flag, value]);
+  const buildArgs = Object.entries(buildOptions)
+    .sort(([a], [b]) => (a === "--build" ? -1 : a.localeCompare(b)))
+    .flatMap(([flag, value]) => [flag, value]);
   await spawn("cmake", buildArgs, { env });
 
   if (isCacheWriteEnabled()) {

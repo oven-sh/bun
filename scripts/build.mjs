@@ -59,8 +59,7 @@ async function build(args) {
     const readCache = path => {
       try {
         if (existsSync(path)) {
-          mkdirSync(buildPath, { recursive: true });
-          cpSync(path, buildPath, { recursive: true, force: true });
+          copyPath(path, buildPath);
           generateOptions["--fresh"] = undefined;
           console.log(`Copied cache from ${path} to ${buildPath}`);
           return true;
@@ -91,9 +90,7 @@ async function build(args) {
   if (isCacheWriteEnabled()) {
     const writeCache = path => {
       try {
-        rmSync(path, { recursive: true, force: true });
-        mkdirSync(path, { recursive: true });
-        cpSync(buildPath, path, { recursive: true, force: true });
+        copyPath(buildPath, path);
         console.log(`Saved cache to ${path}`);
         return true;
       } catch (error) {
@@ -109,6 +106,8 @@ async function build(args) {
 
 function copyPath(src, dst) {
   try {
+    rmSync(dst, { recursive: true, force: true });
+    mkdirSync(dst, { recursive: true });
     cpSync(src, dst, { recursive: true, force: true });
   } catch (error) {
     for (const path of readdirSync(src, { recursive: true })) {

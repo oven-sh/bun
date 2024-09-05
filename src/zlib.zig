@@ -962,7 +962,6 @@ pub const ZlibCompressorStreaming = struct {
     dictionary: []const u8,
     err: ReturnCode = .Ok,
     err_msg: ?[*:0]const u8 = null,
-    broke_on_first_iter: bool = false,
 
     pub fn init(this: *ZlibCompressorStreaming, level: c_int, windowBits: c_int, memLevel: c_int, strategy: c_int) !void {
         const ret_code = deflateInit2_(&this.state, level, 8, windowBits, memLevel, strategy, zlibVersion(), @sizeOf(z_stream));
@@ -1005,13 +1004,11 @@ pub const ZlibCompressorStreaming = struct {
         state.avail_in = @intCast(bytes.len);
         if (state.avail_in == 0) state.next_in = null;
 
-        this.broke_on_first_iter = false;
+        if (!process_all_input) return;
         while (true) {
             if (try this.doWork(output, this.flush)) {
-                this.broke_on_first_iter = true;
                 break;
             }
-            if (!process_all_input) break;
         }
         // bun.assert(state.avail_in == 0);
     }
@@ -1057,7 +1054,7 @@ pub const ZlibDecompressorStreaming = struct {
     dictionary: []const u8,
     err: ReturnCode = .Ok,
     err_msg: ?[*:0]const u8 = null,
-    do_dowork: bool = true,
+    do_inflate_loop: bool = true,
 
     pub fn init(this: *ZlibDecompressorStreaming, windowBits: c_int) !void {
         const ret_code = inflateInit2_(&this.state, windowBits, zlibVersion(), @sizeOf(z_stream));
@@ -1111,7 +1108,7 @@ pub const ZlibDecompressorStreaming = struct {
 
         if (this.mode == .UNZIP) {
             var redd: usize = 0;
-            this.do_dowork = false;
+            this.do_inflate_loop = false;
 
             if (bytes.len > 0) {
                 this.next_expected_header_byte = state.next_in;
@@ -1166,7 +1163,7 @@ pub const ZlibDecompressorStreaming = struct {
             bun.assert(false); // invalid number of gzip magic number bytes read
         }
 
-        this.do_dowork = true;
+        this.do_inflate_loop = true;
         if (!process_all_input) return bytes.len;
         while (true) {
             if (try this.doWork(output, this.flush)) {

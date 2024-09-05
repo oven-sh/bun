@@ -252,6 +252,23 @@ JSC::JSValue Bun__ERR_INVALID_ARG_TYPE_static2(JSC::JSGlobalObject* globalObject
     auto message = makeString("The \""_s, arg_name, "\" argument must be of type "_s, expected_type, ". Received "_s, actual_value);
     return createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, message);
 }
+JSC::JSValue Bun__ERR_INVALID_ARG_TYPE_static3(JSC::JSGlobalObject* globalObject, ASCIILiteral val_arg_name, ASCIILiteral val_expected_type, JSC::JSValue val_actual_value)
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto arg_name = val_arg_name.span8();
+    ASSERT(WTF::charactersAreAllASCII(arg_name));
+
+    auto expected_type = val_expected_type.span8();
+    ASSERT(WTF::charactersAreAllASCII(expected_type));
+
+    auto actual_value = JSValueToStringSafe(globalObject, val_actual_value);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto message = makeString("The \""_s, arg_name, "\" argument must be an instance of "_s, expected_type, ". Received "_s, actual_value);
+    return createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, message);
+}
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_OUT_OF_RANGE, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -275,6 +292,19 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_OUT_OF_RANGE, (JSC::JSGlobalObject * glo
 
     auto message = makeString("The value of \""_s, arg_name, "\" is out of range. It must be "_s, range, ". Received "_s, input);
     return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, message));
+}
+JSC::JSValue Bun__ERR_OUT_OF_RANGE_static2(JSC::JSGlobalObject* globalObject, ASCIILiteral arg_name, size_t lower, size_t upper, JSC::JSValue actual)
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto lowerStr = jsNumber(lower).toWTFString(globalObject);
+    auto upperStr = jsNumber(upper).toWTFString(globalObject);
+    auto actual_value = JSValueToStringSafe(globalObject, actual);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto message = makeString("The value of \""_s, arg_name, "\" is out of range. It must be >= "_s, lowerStr, " && <= "_s, upperStr, ". Received "_s, actual_value);
+    return createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, message);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_IPC_DISCONNECTED, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))

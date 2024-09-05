@@ -42,6 +42,10 @@ async function build(args) {
     CLICOLOR_FORCE: "1",
   };
 
+  if (process.env.CI === "true") {
+    console.log("Environment:", env);
+  }
+
   const generateOptions = parseOptions(args, generateFlags);
   const buildOptions = parseOptions(args, buildFlags);
 

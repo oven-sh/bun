@@ -3652,8 +3652,8 @@ const LinkerGraph = struct {
 
         // Track that this specific symbol was imported
         if (source_index_to_import_from.get() != source_index) {
-            var to_bind = &g.meta.items(.imports_to_bind)[source_index];
-            try to_bind.put(g.allocator, ref, .{
+            const imports_to_bind = &g.meta.items(.imports_to_bind)[source_index];
+            try imports_to_bind.put(g.allocator, ref, .{
                 .data = .{
                     .source_index = source_index_to_import_from,
                     .import_ref = ref,
@@ -4300,7 +4300,9 @@ pub const LinkerContext = struct {
             chunks: []Chunk,
             allocator: std.mem.Allocator,
             source_id: u32,
+
             pub fn next(c: *@This(), chunk_id: usize) void {
+                std.debug.print("yolo {d} - {d}\n", .{ chunk_id, c.source_id });
                 _ = c.chunks[chunk_id].files_with_parts_in_chunk.getOrPut(c.allocator, @as(u32, @truncate(c.source_id))) catch unreachable;
             }
         };
@@ -4913,7 +4915,6 @@ pub const LinkerContext = struct {
                 // for entry point files in CommonJS format (or when in pass-through mode).
                 if (kind == .cjs and (!entry_point_kinds[id].isEntryPoint() or output_format == .iife or output_format == .esm)) {
                     flags[id].wrap = .cjs;
-                    bun.assert(kind == .cjs);
                 }
             }
 
@@ -5385,8 +5386,11 @@ pub const LinkerContext = struct {
                 }
 
                 // Encode import-specific constraints in the dependency graph
-                var import_records: []ImportRecord = import_records_list[id].slice();
+                const import_records: []ImportRecord = import_records_list[id].slice();
                 debug("Binding {d} imports for file {s} (#{d})", .{ import_records.len, source.path.text, id });
+
+                // None of the runtime symbols are used in .internal_kit_dev
+                // if (this.options.output_format == .internal_kit_dev) continue;
 
                 for (parts, 0..) |*part, part_index| {
                     var to_esm_uses: u32 = 0;
@@ -10925,9 +10929,9 @@ pub const LinkerContext = struct {
             // However, that generation is special-cased for various reasons and is
             // done later on. Still, we're going to need to ensure that this file
             // both depends on the "__commonJS" symbol and declares the "require_foo"
-            // symbol. Instead of special-casing this during the reachablity analysis
+            // symbol. Instead of special-casing this during the reachability analysis
             // below, we just append a dummy part to the end of the file with these
-            // dependencies and let the general-purpose reachablity analysis take care
+            // dependencies and let the general-purpose reachability analysis take care
             // of it.
             .cjs => {
                 const common_js_parts = c.topLevelSymbolsToPartsForRuntime(c.cjs_runtime_ref);
@@ -10942,7 +10946,7 @@ pub const LinkerContext = struct {
                 }
 
                 // Generate a dummy part that depends on the "__commonJS" symbol.
-                const dependencies: []js_ast.Dependency = if (c.options.output_format != .internal_kit_dev) brk: {
+                const dependencies: []js_ast.Dependency = if (true) brk: {
                     const dependencies = c.allocator.alloc(js_ast.Dependency, common_js_parts.len) catch bun.outOfMemory();
                     for (common_js_parts, dependencies) |part, *cjs| {
                         cjs.* = .{
@@ -10978,15 +10982,15 @@ pub const LinkerContext = struct {
                 wrapper_part_index.* = Index.part(part_index);
 
                 // Kit uses a wrapping approach that does not use __commonJS
-                if (c.options.output_format != .internal_kit_dev) {
-                    c.graph.generateSymbolImportAndUse(
-                        source_index,
-                        part_index,
-                        c.cjs_runtime_ref,
-                        1,
-                        Index.runtime,
-                    ) catch unreachable;
-                }
+                // if (c.options.output_format != .internal_kit_dev) {
+                c.graph.generateSymbolImportAndUse(
+                    source_index,
+                    part_index,
+                    c.cjs_runtime_ref,
+                    1,
+                    Index.runtime,
+                ) catch unreachable;
+                // }
             },
 
             .esm => {

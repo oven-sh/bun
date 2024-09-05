@@ -5575,6 +5575,8 @@ pub const Expr = struct {
         /// outside of a module wrapper (__esm/__commonJS).
         pub fn canBeMoved(data: Expr.Data) bool {
             return switch (data) {
+                .e_identifier => |id| id.can_be_removed_if_unused,
+
                 .e_class => |class| class.canBeMoved(),
 
                 .e_arrow,

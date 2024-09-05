@@ -810,21 +810,19 @@ pub const Arguments = struct {
 
             if (args.option("--format")) |format_str| {
                 const format = options.Format.fromString(format_str) orelse {
-                    Output.prettyErrorln("<r><red>error<r>: Invalid format - must be esm, cjs, or iife", .{});
+                    Output.errGeneric("Invalid format - must be esm, cjs, or iife", .{});
                     Global.crash();
                 };
 
                 switch (format) {
                     .internal_kit_dev => {
-                        if (!Environment.isDebug) {
-                            bun.Output.warn("--format={s} is for debugging only, and may experience breaking changes at any moment", .{format_str});
-                            bun.Output.flush();
-                        }
+                        bun.Output.warn("--format={s} is for debugging only, and may experience breaking changes at any moment", .{format_str});
+                        bun.Output.flush();
                     },
                     .cjs => {
                         // Make this a soft error in debug to allow experimenting with these flags.
-                        const function = if (Environment.isDebug) Output.debugWarn else Output.prettyErrorln;
-                        function("<r><red>error<r>: Format '{s}' are not implemented", .{@tagName(format)});
+                        const function = if (Environment.isDebug) Output.debugWarn else Output.errGeneric;
+                        function("Format '{s}' are not implemented", .{@tagName(format)});
                         if (!Environment.isDebug) {
                             Global.crash();
                         }

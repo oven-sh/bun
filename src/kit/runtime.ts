@@ -78,7 +78,7 @@ name(loadModule, '<HMR runtime> loadModule')
 
 const have_react_refresh = true;
 if (mode === 'client' && have_react_refresh) {
-  const runtime = loadModule('react-refresh/runtime').exports;
+  const runtime = loadModule('node_modules/react-refresh/cjs/react-refresh-runtime.development.js').exports;
   runtime.injectIntoGlobalHook(window);
 }
 

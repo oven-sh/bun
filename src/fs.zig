@@ -1652,6 +1652,10 @@ pub const Path = struct {
         return hasher.final();
     }
 
+    pub fn hashForKit(path: Path) u32 {
+        return @truncate(path.hashKey());
+    }
+
     pub fn packageName(this: *const Path) ?string {
         var name_to_use = this.pretty;
         if (strings.lastIndexOf(this.text, std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str)) |node_modules| {

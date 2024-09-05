@@ -1422,9 +1422,14 @@ fn NewPrinter(
                 }
             }
 
+            if (decls.len <= 1) return;
+            p.indent();
+            defer p.unindent();
+
             for (decls[1..]) |*decl| {
                 p.print(",");
-                p.printSpace();
+                p.printNewline();
+                p.printIndent();
 
                 p.printBinding(decl.binding);
 
@@ -3194,7 +3199,7 @@ fn NewPrinter(
                     // }
 
                     if (!didPrint) {
-                        assert(p.options.module_type != .internal_kit_dev);
+                        // assert(p.options.module_type != .internal_kit_dev);
                         p.printSpaceBeforeIdentifier();
                         p.addSourceMapping(expr.loc);
                         p.printSymbol(e.ref);

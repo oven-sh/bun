@@ -3992,10 +3992,6 @@ pub const Parser = struct {
             }
         }
 
-        if (p.options.features.hot_module_reloading and exports_kind == .esm) {
-            wrap_mode = .kit_dev_hmr;
-        }
-
         // Handle dirname and filename at runtime.
         //
         // If we reach this point, it means:
@@ -5277,7 +5273,7 @@ fn NewParser_(
 
                     // For unwrapping CommonJS into ESM to fully work
                     // we must also unwrap requires into imports.
-                    const should_unwrap_require = p.options.features.hot_module_reloading and
+                    const should_unwrap_require = !p.options.features.hot_module_reloading and
                         (p.unwrap_all_requires or
                         if (path.packageName()) |pkg| p.options.features.shouldUnwrapRequire(pkg) else false) and
                         // We cannot unwrap a require wrapped in a try/catch because
@@ -5324,58 +5320,6 @@ fn NewParser_(
                     p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
 
                     return p.newExpr(E.RequireString{ .import_record_index = import_record_index }, arg.loc);
-                    // }
-
-                    // p.import_records.items[import_record_index].was_originally_require = true;
-                    // p.import_records.items[import_record_index].contains_import_star = true;
-
-                    // const symbol_name = p.import_records.items[import_record_index].path.name.nonUniqueNameString(p.allocator) catch unreachable;
-                    // const hash_value = @as(
-                    //     u16,
-                    //     @truncate(bun.hash(p.import_records.items[import_record_index].path.text)),
-                    // );
-
-                    // const cjs_import_name = std.fmt.allocPrint(
-                    //     p.allocator,
-                    //     "{s}_{any}_{d}",
-                    //     .{
-                    //         symbol_name,
-                    //         bun.fmt.hexIntLower(hash_value),
-                    //         p.legacy_cjs_import_stmts.items.len,
-                    //     },
-                    // ) catch unreachable;
-
-                    // const namespace_ref = p.declareSymbol(.hoisted, arg.loc, cjs_import_name) catch unreachable;
-
-                    // p.legacy_cjs_import_stmts.append(
-                    //     p.s(
-                    //         S.Import{
-                    //             .namespace_ref = namespace_ref,
-                    //             .star_name_loc = arg.loc,
-                    //             .is_single_line = true,
-                    //             .import_record_index = import_record_index,
-                    //         },
-                    //         arg.loc,
-                    //     ),
-                    // ) catch unreachable;
-
-                    // const args = p.allocator.alloc(Expr, 1) catch unreachable;
-                    // args[0] = p.newExpr(
-                    //     E.ImportIdentifier{
-                    //         .ref = namespace_ref,
-                    //     },
-                    //     arg.loc,
-                    // );
-
-                    // // require(import_object_assign)
-                    // p.recordUsageOfRuntimeRequire();
-                    // return p.newExpr(
-                    //     E.Call{
-                    //         .target = p.valueForRequire(arg.loc),
-                    //         .args = ExprNodeList.init(args),
-                    //     },
-                    //     arg.loc,
-                    // );
                 },
                 else => {
                     p.recordUsageOfRuntimeRequire();
@@ -9070,11 +9014,14 @@ fn NewParser_(
 
                     // ensure every e_import_identifier holds the namespace
                     if (p.options.features.hot_module_reloading) {
-                        p.symbols.items[ref.inner_index].namespace_alias = .{
-                            .namespace_ref = stmt.namespace_ref,
-                            .alias = "default",
-                            .import_record_index = stmt.import_record_index,
-                        };
+                        const symbol = &p.symbols.items[ref.inner_index];
+                        if (symbol.namespace_alias == null) {
+                            symbol.namespace_alias = .{
+                                .namespace_ref = stmt.namespace_ref,
+                                .alias = "default",
+                                .import_record_index = stmt.import_record_index,
+                            };
+                        }
                     }
 
                     if (macro_remap) |*remap| {
@@ -9130,11 +9077,14 @@ fn NewParser_(
 
                 // ensure every e_import_identifier holds the namespace
                 if (p.options.features.hot_module_reloading) {
-                    p.symbols.items[ref.inner_index].namespace_alias = .{
-                        .namespace_ref = stmt.namespace_ref,
-                        .alias = name,
-                        .import_record_index = stmt.import_record_index,
-                    };
+                    const symbol = &p.symbols.items[ref.inner_index];
+                    if (symbol.namespace_alias == null) {
+                        symbol.namespace_alias = .{
+                            .namespace_ref = stmt.namespace_ref,
+                            .alias = name,
+                            .import_record_index = stmt.import_record_index,
+                        };
+                    }
                 }
 
                 if (macro_remap) |*remap| {
@@ -23400,7 +23350,7 @@ fn NewParser_(
             // which requires a single part. Otherwise, you'll end up with
             // multiple instances of a module, each with different parts of
             // the file. That is also why tree-shaking is disabled.
-            if (wrap_mode == .kit_dev_hmr) {
+            if (p.options.features.hot_module_reloading) {
                 bun.assert(!p.options.tree_shaking);
                 bun.assert(p.options.features.hot_module_reloading);
 
@@ -24250,7 +24200,6 @@ pub fn newLazyExportAST(
 const WrapMode = union(enum) {
     none,
     bun_commonjs,
-    kit_dev_hmr,
 };
 
 /// Equivalent of esbuild's js_ast_helpers.ToInt32

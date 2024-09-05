@@ -327,7 +327,7 @@ pub const BuildCommand = struct {
                         std.fs.cwd()
                     else
                         std.fs.cwd().makeOpenPath(root_path, .{}) catch |err| {
-                            Output.prettyErrorln("<r><red>{s}<r> while attemping to open output directory {}", .{ @errorName(err), bun.fmt.quote(root_path) });
+                            Output.prettyErrorln("<r><red>{s}<r> while attempting to open output directory {}", .{ @errorName(err), bun.fmt.quote(root_path) });
                             exitOrWatch(1, ctx.debug.hot_reload == .watch);
                             unreachable;
                         };

@@ -171,6 +171,8 @@ class BunWebSocket extends EventEmitter {
   }
 
   #onOrOnce(event, listener, once) {
+    const ws = this.#ws;
+    if (!ws) return;
     if (event === "unexpected-response" || event === "upgrade" || event === "redirect") {
       emitWarning(event, "ws.WebSocket '" + event + "' event is not implemented in bun");
     }
@@ -178,7 +180,7 @@ class BunWebSocket extends EventEmitter {
     if (mask && (this.#eventId & mask) !== mask) {
       this.#eventId |= mask;
       if (event === "open") {
-        this.#ws.addEventListener(
+        ws.addEventListener(
           "open",
           () => {
             this.emit("open");
@@ -186,7 +188,7 @@ class BunWebSocket extends EventEmitter {
           once,
         );
       } else if (event === "close") {
-        this.#ws.addEventListener(
+        ws.addEventListener(
           "close",
           ({ code, reason, wasClean }) => {
             this.emit("close", code, reason, wasClean);
@@ -194,7 +196,7 @@ class BunWebSocket extends EventEmitter {
           once,
         );
       } else if (event === "message") {
-        this.#ws.addEventListener(
+        ws.addEventListener(
           "message",
           ({ data }) => {
             const isBinary = typeof data !== "string";
@@ -211,7 +213,7 @@ class BunWebSocket extends EventEmitter {
           once,
         );
       } else if (event === "error") {
-        this.#ws.addEventListener(
+        ws.addEventListener(
           "error",
           err => {
             this.emit("error", err);
@@ -219,7 +221,7 @@ class BunWebSocket extends EventEmitter {
           once,
         );
       } else if (event === "ping") {
-        this.#ws.addEventListener(
+        ws.addEventListener(
           "ping",
           ({ data }) => {
             this.emit("ping", data);
@@ -227,7 +229,7 @@ class BunWebSocket extends EventEmitter {
           once,
         );
       } else if (event === "pong") {
-        this.#ws.addEventListener(
+        ws.addEventListener(
           "pong",
           ({ data }) => {
             this.emit("pong", data);
@@ -254,7 +256,12 @@ class BunWebSocket extends EventEmitter {
     }
 
     try {
-      this.#ws.send(normalizeData(data, opts), opts?.compress);
+      const ws = this.#ws;
+      if (ws) {
+        ws.send(normalizeData(data, opts), opts?.compress);
+      } else {
+        throw new Error("WebSocket is already closed");
+      }
     } catch (error) {
       // Node.js APIs expect callback arguments to be called after the current stack pops
       typeof cb === "function" && process.nextTick(cb, error);
@@ -266,19 +273,21 @@ class BunWebSocket extends EventEmitter {
   }
 
   close(code, reason) {
-    this.#ws.close(code, reason);
+    this.#ws?.close?.(code, reason);
   }
 
   terminate() {
-    this.#ws.terminate();
+    this.#ws?.terminate?.();
   }
 
   get url() {
-    return this.#ws.url;
+    return this.#ws?.url;
   }
 
   get readyState() {
-    return this.#ws.readyState;
+    const ws = this.#ws;
+    if (ws === null) return WebSocket.CLOSED;
+    return ws.readyState;
   }
 
   get binaryType() {
@@ -286,11 +295,13 @@ class BunWebSocket extends EventEmitter {
   }
 
   set binaryType(value) {
+    const ws = this.#ws;
+    if (!ws) return;
     if (value === "nodebuffer" || value === "arraybuffer") {
-      this.#ws.binaryType = this.#binaryType = value;
+      ws.binaryType = this.#binaryType = value;
       this.#fragments = false;
     } else if (value === "fragments") {
-      this.#ws.binaryType = "nodebuffer";
+      ws.binaryType = "nodebuffer";
       this.#binaryType = "fragments";
       this.#fragments = true;
     } else {
@@ -299,57 +310,65 @@ class BunWebSocket extends EventEmitter {
   }
 
   get protocol() {
-    return this.#ws.protocol;
+    return this.#ws?.protocol;
   }
 
   get extensions() {
-    return this.#ws.extensions;
+    return this.#ws?.extensions;
   }
 
   // deviation: this does not support `message` with `binaryType = "fragments"`
   addEventListener(type, listener, options) {
-    this.#ws.addEventListener(type, listener, options);
+    this.#ws?.addEventListener?.(type, listener, options);
   }
 
   removeEventListener(type, listener) {
-    this.#ws.removeEventListener(type, listener);
+    this.#ws?.removeEventListener?.(type, listener);
   }
 
   get onopen() {
-    return this.#ws.onopen;
+    return this.#ws?.onopen;
   }
 
   set onopen(value) {
-    this.#ws.onopen = value;
+    const ws = this.#ws;
+    if (!ws) return;
+    ws.onopen = value;
   }
 
   get onerror() {
-    return this.#ws.onerror;
+    return this.#ws?.onerror;
   }
 
   set onerror(value) {
-    this.#ws.onerror = value;
+    const ws = this.#ws;
+    if (!ws) return;
+    ws.onerror = value;
   }
 
   get onclose() {
-    return this.#ws.onclose;
+    return this.#ws?.onclose;
   }
 
   set onclose(value) {
-    this.#ws.onclose = value;
+    const ws = this.#ws;
+    if (!ws) return;
+    ws.onclose = value;
   }
 
   get onmessage() {
-    return this.#ws.onmessage;
+    return this.#ws?.onmessage;
   }
 
   // deviation: this does not support `binaryType = "fragments"`
   set onmessage(value) {
-    this.#ws.onmessage = value;
+    const ws = this.#ws;
+    if (!ws) return;
+    ws.onmessage = value;
   }
 
   get bufferedAmount() {
-    return this.#ws.bufferedAmount;
+    return this.#ws?.bufferedAmount || 0;
   }
 
   get isPaused() {
@@ -357,7 +376,11 @@ class BunWebSocket extends EventEmitter {
   }
 
   ping(data, mask, cb) {
-    if (this.#ws.readyState === 0) {
+    const ws = this.#ws;
+    if (!ws) {
+      throw new Error("WebSocket is not open: readyState 3 (CLOSED)");
+    }
+    if (ws.readyState === 0) {
       throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
     }
 
@@ -372,7 +395,7 @@ class BunWebSocket extends EventEmitter {
     if (typeof data === "number") data = data.toString();
 
     try {
-      this.#ws.ping(data);
+      ws.ping(data);
     } catch (error) {
       if (typeof cb === "function") {
         cb(error);
@@ -386,7 +409,11 @@ class BunWebSocket extends EventEmitter {
   }
 
   pong(data, mask, cb) {
-    if (this.#ws.readyState === 0) {
+    const ws = this.#ws;
+    if (!ws) {
+      throw new Error("WebSocket is not open: readyState 3 (CLOSED)");
+    }
+    if (ws.readyState === 0) {
       throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
     }
 
@@ -401,7 +428,7 @@ class BunWebSocket extends EventEmitter {
     if (typeof data === "number") data = data.toString();
 
     try {
-      this.#ws.pong(data);
+      ws.pong(data);
     } catch (error) {
       if (typeof cb === "function") {
         cb(error);

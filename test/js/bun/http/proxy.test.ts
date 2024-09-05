@@ -154,6 +154,73 @@ test("proxy can handle redirects #12007", async () => {
   expect(response.status).toBe(403);
   expect(response.statusText).toBe("Forbidden");
 });
+
+test("proxy can handle redirects with body #12007", async () => {
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      if (req.url.endsWith("/bunbun")) {
+        return new Response("Hello, bunbun", { status: 302, headers: { Location: "/bun" } });
+      }
+      if (req.url.endsWith("/bun")) {
+        return new Response("Hello, bun", { status: 302, headers: { Location: "/" } });
+      }
+      return new Response("BUN!", { status: 200 });
+    },
+  });
+  const response = await fetch(`${server.url.origin}/bunbun`, {
+    proxy: httpsProxyServer.url,
+    tls: {
+      ca: tlsCert.cert,
+      rejectUnauthorized: false,
+    },
+  });
+  expect(response.ok).toBe(true);
+  expect(response.status).toBe(200);
+  expect(response.statusText).toBe("OK");
+
+  const result = await response.text();
+  expect(result).toBe("BUN!");
+});
+
+test("proxy can handle redirects with chunked body #12007", async () => {
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      async function* body() {
+        await Bun.sleep(100);
+        yield "bun";
+        await Bun.sleep(100);
+        yield "bun";
+        await Bun.sleep(100);
+        yield "bun";
+        await Bun.sleep(100);
+        yield "bun";
+      }
+      if (req.url.endsWith("/bunbun")) {
+        return new Response(body, { status: 302, headers: { Location: "/bun" } });
+      }
+      if (req.url.endsWith("/bun")) {
+        return new Response(body, { status: 302, headers: { Location: "/" } });
+      }
+      return new Response(body, { status: 200 });
+    },
+  });
+  const response = await fetch(`${server.url.origin}/bunbun`, {
+    proxy: httpsProxyServer.url,
+    tls: {
+      ca: tlsCert.cert,
+      rejectUnauthorized: false,
+    },
+  });
+  expect(response.ok).toBe(true);
+  expect(response.status).toBe(200);
+  expect(response.statusText).toBe("OK");
+
+  const result = await response.text();
+  expect(result).toBe("bunbunbunbun");
+});
+
 test("unsupported protocol", async () => {
   expect(
     fetch("https://httpbin.org/get", {

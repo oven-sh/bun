@@ -34,4 +34,10 @@ elseif(CCACHE_STRATEGY STREQUAL "write-only")
 endif()
 
 setenv(CCACHE_FILECLONE 1)
-setenv(CCACHE_SLOPPINESS "pch_defines,time_macros,locale,random_seed,clang_index_store")
+setenv(CCACHE_STATSLOG ${BUILD_PATH}/ccache.log)
+
+if(CI)
+  setenv(CCACHE_SLOPPINESS "pch_defines,time_macros,locale,clang_index_store,gcno_cwd,include_file_ctime,include_file_mtime")
+else()
+  setenv(CCACHE_SLOPPINESS "pch_defines,time_macros,locale,random_seed,clang_index_store,gcno_cwd")
+endif()

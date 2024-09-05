@@ -52,7 +52,7 @@ async function build(args) {
   const cacheWrite = isCacheWriteEnabled();
   if (cacheRead || cacheWrite) {
     const cachePath = getCachePath();
-    generateOptions["-DCACHE_PATH"] = cachePath;
+    generateOptions["-DCACHE_PATH"] = cmakePath(cachePath);
     if (cacheRead && cacheWrite) {
       generateOptions["-DCACHE_STRATEGY"] = "read-write";
     } else if (cacheRead) {
@@ -86,6 +86,10 @@ async function build(args) {
     .sort(([a], [b]) => (a === "--build" ? -1 : a.localeCompare(b)))
     .flatMap(([flag, value]) => [flag, value]);
   await spawn("cmake", buildArgs, { env });
+}
+
+function cmakePath(path) {
+  return path.replace(/\\/g, "/");
 }
 
 function getCachePath(branch) {

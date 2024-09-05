@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn as nodeSpawn } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -30,21 +30,6 @@ const buildFlags = [
 ];
 
 async function build(args) {
-  console.log("Attempting to write to...");
-  try {
-    mkdirSync("/opt/homebrew/var/buildkite-agent/cache", { recursive: true });
-  } catch (e) {
-    console.log("Failed to mkdir to /opt/homebrew/var/buildkite-agent");
-    console.log(e);
-  }
-  try {
-    writeFileSync("/opt/homebrew/var/buildkite-agent/cache/test.txt", "hello world");
-  } catch (e) {
-    console.log("Failed to write to /opt/homebrew/var/buildkite-agent/test.txt");
-    console.log(e);
-  }
-  process.exit(0);
-
   if (process.platform === "win32" && !process.env["VSINSTALLDIR"]) {
     const shellPath = join(import.meta.dirname, "vs-shell.ps1");
     const scriptPath = import.meta.filename;
@@ -70,6 +55,28 @@ async function build(args) {
     generateOptions["--toolchain"] = toolchainPath;
   }
 
+  if (isCacheReadEnabled()) {
+    const readCache = path => {
+      try {
+        if (existsSync(path)) {
+          cpSync(path, buildPath, { recursive: true, force: true });
+          generateOptions["--fresh"] = undefined;
+          console.log(`Copied cache from ${path} to ${buildPath}`);
+          return true;
+        }
+      } catch (error) {
+        console.log(`Failed to read cache from ${path}`, error);
+      }
+      return false;
+    };
+
+    const cachePath = getCachePath();
+    if (!readCache(cachePath)) {
+      const mainCachePath = getCachePath(getDefaultBranch());
+      readCache(mainCachePath);
+    }
+  }
+
   const generateArgs = Object.entries(generateOptions).flatMap(([flag, value]) =>
     flag.startsWith("-D") ? [`${flag}=${value}`] : [flag, value],
   );
@@ -79,6 +86,48 @@ async function build(args) {
     .sort(([a], [b]) => (a === "--build" ? -1 : a.localeCompare(b)))
     .flatMap(([flag, value]) => [flag, value]);
   await spawn("cmake", buildArgs, { env });
+
+  if (isCacheWriteEnabled()) {
+    const writeCache = path => {
+      try {
+        rmSync(path, { recursive: true, force: true });
+        cpSync(buildPath, path, { recursive: true, force: true });
+        console.log(`Saved cache to ${path}`);
+        return true;
+      } catch (error) {
+        console.log(`Failed to write cache to ${path}`, error);
+      }
+      return false;
+    };
+
+    const cachePath = getCachePath();
+    writeCache(cachePath);
+  }
+}
+
+function getCachePath(branch) {
+  const repository = process.env.BUILDKITE_REPO;
+  const fork = process.env.BUILDKITE_PULL_REQUEST_REPO;
+  const repositoryKey = (fork || repository).replace(/[^a-z0-9]/i, "-");
+  const branchKey = (branch || process.env.BUILDKITE_BRANCH).replace(/[^a-z0-9]/i, "-");
+  const stepKey = process.env.BUILDKITE_STEP_KEY.replace(/[^a-z0-9]/i, "-");
+  return join(homedir(), "cache", repositoryKey, branchKey, stepKey);
+}
+
+function isCacheReadEnabled() {
+  return (
+    process.env.BUILDKITE === "true" &&
+    process.env.BUILDKITE_CLEAN_CHECKOUT !== "true" &&
+    process.env.BUILDKITE_BRANCH !== getDefaultBranch()
+  );
+}
+
+function isCacheWriteEnabled() {
+  return process.env.BUILDKITE === "true";
+}
+
+function getDefaultBranch() {
+  return process.env.BUILDKITE_PIPELINE_DEFAULT_BRANCH || "main";
 }
 
 function parseOptions(args, flags = []) {

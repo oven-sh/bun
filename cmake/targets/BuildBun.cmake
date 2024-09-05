@@ -555,10 +555,14 @@ endif()
 
 set(BUN_CPP_OUTPUT ${BUILD_PATH}/${CMAKE_STATIC_LIBRARY_PREFIX}bun${CMAKE_STATIC_LIBRARY_SUFFIX})
 
-optionx(BUN_CPP_ONLY BOOL "If only the C++ part of Bun should be built" DEFAULT OFF)
 optionx(BUN_LINK_ONLY BOOL "If only the linking step should be built" DEFAULT OFF)
+optionx(BUN_CPP_ONLY BOOL "If only the C++ part of Bun should be built" DEFAULT OFF)
 
-if(BUN_CPP_ONLY)
+if(BUN_LINK_ONLY)
+  add_executable(${bun} ${BUN_CPP_OUTPUT} ${BUN_ZIG_OUTPUT})
+  set_target_properties(${bun} PROPERTIES LINKER_LANGUAGE CXX)
+  target_link_libraries(${bun} PRIVATE ${BUN_CPP_OUTPUT})
+elseif(BUN_CPP_ONLY)
   add_library(${bun} STATIC ${BUN_CPP_SOURCES})
   set_target_properties(${bun} PROPERTIES OUTPUT_NAME bun)
   register_command(
@@ -573,11 +577,6 @@ if(BUN_CPP_ONLY)
     ARTIFACTS
       ${BUN_CPP_OUTPUT}
   )
-elseif(BUN_LINK_ONLY)
-  add_executable(${bun} ${BUN_ZIG_OUTPUT})
-  add_link_options(${BUN_CPP_OUTPUT})
-  # target_sources(${bun} PUBLIC ${BUN_CPP_OUTPUT})
-  set_target_properties(${bun} PROPERTIES LINKER_LANGUAGE CXX)
 else()
   add_executable(${bun} ${BUN_CPP_SOURCES} ${BUN_ZIG_OUTPUT})
 endif()

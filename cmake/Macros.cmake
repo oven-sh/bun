@@ -653,7 +653,14 @@ function(register_cmake_command)
     endif()
   endif()
 
-  target_link_libraries(${bun} PRIVATE ${MAKE_ARTIFACTS})
+  # HACK: Workaround for duplicate symbols when linking mimalloc.o
+  # >| duplicate symbol '_mi_page_queue_append(mi_heap_s*, mi_page_queue_s*, mi_page_queue_s*)' in:
+  # >| mimalloc/CMakeFiles/mimalloc-obj.dir/src/static.c.o
+  # >| ld: 287 duplicate symbols for architecture arm64
+  if(NOT BUN_LINK_ONLY OR NOT MAKE_ARTIFACTS MATCHES "static.c.o")
+    target_link_libraries(${bun} PRIVATE ${MAKE_ARTIFACTS})
+  endif()
+
   if(BUN_LINK_ONLY)
     target_sources(${bun} PRIVATE ${MAKE_ARTIFACTS})
   endif()

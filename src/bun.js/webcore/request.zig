@@ -329,12 +329,12 @@ pub const Request = struct {
             signal.unref();
             this.signal = null;
         }
+        this.internal_abort_callback.deinit();
     }
 
     pub fn finalize(this: *Request) void {
         this.finalizeWithoutDeinit();
         _ = this.body.unref();
-        this.internal_abort_callback.deinit();
         if (this.weak_ptr_data.onFinalize()) {
             this.destroy();
         }

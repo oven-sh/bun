@@ -38,3 +38,13 @@ steps:
           arch: "aarch64"
         command:
           - "bun run build:ci --target bun-zig --toolchain darwin-aarch64"
+      - key: "darwin-aarch64-build-bun"
+        label: ":darwin: aarch64 - build-bun"
+        agents:
+          queue: "build-darwin"
+          os: "darwin"
+          arch: "aarch64"
+        env:
+          BUN_LINK_ONLY: "ON"
+        command:
+          - "bun run build:ci --target bun-bun"

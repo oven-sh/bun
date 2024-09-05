@@ -553,24 +553,46 @@ endif()
 
 # --- Executable ---
 
+set(BUN_CPP_OUTPUT ${BUILD_PATH}/${CMAKE_STATIC_LIBRARY_PREFIX}bun${CMAKE_STATIC_LIBRARY_SUFFIX})
+
 optionx(BUN_CPP_ONLY BOOL "If only the C++ part of Bun should be built" DEFAULT OFF)
+optionx(BUN_LINK_ONLY BOOL "If only the linking step should be built" DEFAULT OFF)
 
 if(BUN_CPP_ONLY)
   add_library(${bun} STATIC ${BUN_CPP_SOURCES})
   set_target_properties(${bun} PROPERTIES OUTPUT_NAME bun)
-  set(libbun ${CMAKE_STATIC_LIBRARY_PREFIX}bun${CMAKE_STATIC_LIBRARY_SUFFIX})
   register_command(
     TARGET
       ${bun}
     TARGET_PHASE
       POST_BUILD
     COMMENT
-      "Uploading ${libbun}"
+      "Uploading libbun"
     COMMAND
       ${CMAKE_COMMAND} -E true
     ARTIFACTS
-      ${BUILD_PATH}/${libbun}
+      ${BUN_CPP_OUTPUT}
   )
+elseif(BUN_LINK_ONLY)
+  add_executable(${bun} ${BUN_CPP_OUTPUT} ${BUN_ZIG_OUTPUT})
+  if (BUILDKITE)
+    set(stepName build-deps build-zig build-cpp)
+    foreach(step ${steps})
+      set(step ENV${BUILDKITE_GROUP_KEY}-${stepName})
+      register_command(
+        TARGET
+          ${bun}
+        TARGET_PHASE
+          PRE_BUILD
+        COMMENT
+          "Downloading artifacts from ${step}"
+        CWD
+          ${BUILD_PATH}
+        COMMAND
+          buildkite-agent artifact download "**" . --step ${step}
+      )
+    endforeach()
+  endif()
 else()
   add_executable(${bun} ${BUN_CPP_SOURCES} ${BUN_ZIG_OUTPUT})
 endif()

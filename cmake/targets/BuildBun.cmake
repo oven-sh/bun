@@ -553,6 +553,8 @@ endif()
 
 # --- Executable ---
 
+optionx(BUN_CPP_ONLY BOOL "If only the C++ part of Bun should be built" DEFAULT OFF)
+
 if(BUN_CPP_ONLY)
   add_library(${bun} STATIC ${BUN_CPP_SOURCES})
 else()

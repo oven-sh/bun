@@ -106,6 +106,31 @@ The `--minify` argument optimizes the size of the transpiled output code. If you
 
 The `--sourcemap` argument embeds a sourcemap compressed with zstd, so that errors & stacktraces point to their original locations instead of the transpiled location. Bun will automatically decompress & resolve the sourcemap when an error occurs.
 
+## Worker
+
+To use workers in a standalone executable, add the worker's entrypoint to the CLI arguments:
+
+```sh
+$ bun build --compile ./index.ts ./my-worker.ts --outfile myapp
+```
+
+Then, reference the worker in your code:
+
+```ts
+console.log("Hello from Bun!");
+
+// Any of these will work:
+new Worker("./my-worker.ts");
+new Worker(new URL("./my-worker.ts", import.meta.url));
+new Worker(new URL("./my-worker.ts", import.meta.url).href);
+```
+
+As of Bun v1.1.25, when you add multiple entrypoints to a standalone executable, they will be bundled separately into the executable.
+
+In the future, we may automatically detect usages of statically-known paths in `new Worker(path)` and then bundle those into the executable, but for now, you'll need to add it to the shell command manually like the above example.
+
+If you use a relative path to a file not included in the standalone executable, it will attempt to load that path from disk relative to the current working directory of the process (and then error if it doesn't exist).
+
 ## SQLite
 
 You can use `bun:sqlite` imports with `bun build --compile`.
@@ -178,6 +203,59 @@ console.log(addon.hello());
 ```
 
 Unfortunately, if you're using `@mapbox/node-pre-gyp` or other similar tools, you'll need to make sure the `.node` file is directly required or it won't bundle correctly.
+
+### Embed directories
+
+To embed a directory with `bun build --compile`, use a shell glob in your `bun build` command:
+
+```sh
+$ bun build --compile ./index.ts ./public/**/*.png
+```
+
+Then, you can reference the files in your code:
+
+```ts
+import icon from "./public/assets/icon.png" with { type: "file" };
+import { file } from "bun";
+
+export default {
+  fetch(req) {
+    // Embedded files can be streamed from Response objects
+    return new Response(file(icon));
+  },
+};
+```
+
+This is honestly a workaround, and we expect to improve this in the future with a more direct API.
+
+### Listing embedded files
+
+To get a list of all embedded files, use `Bun.embeddedFiles`:
+
+```js
+import "./icon.png" with { type: "file" };
+import { embeddedFiles } from "bun";
+
+console.log(embeddedFiles[0].name); // `icon-${hash}.png`
+```
+
+`Bun.embeddedFiles` returns an array of `Blob` objects which you can use to get the size, contents, and other properties of the files.
+
+```ts
+embeddedFiles: Blob[]
+```
+
+The list of embedded files excludes bundled source code like `.ts` and `.js` files.
+
+#### Content hash
+
+By default, embedded files have a content hash appended to their name. This is useful for situations where you want to serve the file from a URL or CDN and have fewer cache invalidation issues. But sometimes, this is unexpected and you might want the original name instead:
+
+To disable the content hash, pass `--asset-naming` to `bun build --compile` like this:
+
+```sh
+$ bun build --compile --asset-naming="[name].[ext]" ./index.ts
+```
 
 ## Minification
 

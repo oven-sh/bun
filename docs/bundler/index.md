@@ -1276,7 +1276,7 @@ interface BuildOptions {
   loader?: { [k in string]: Loader }; // See https://bun.sh/docs/bundler/loaders
   manifest?: boolean; // false
   external?: string[]; // []
-  sourcemap?: "none" | "inline" | "linked" | "external" | boolean; // "none"
+  sourcemap?: "none" | "inline" | "linked" | "external" | "linked" | boolean; // "none"
   root?: string; // computed from entrypoints
   naming?:
     | string

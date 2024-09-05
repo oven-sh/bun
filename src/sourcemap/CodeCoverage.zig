@@ -242,11 +242,11 @@ pub const CodeCoverageReport = struct {
             // FNH: functions hit
             try writer.print("FNH:{d}\n", .{report.functions_which_have_executed.count()});
 
-            var executable_lines_that_have_been_executed = report.lines_which_have_executed.clone(bun.default_allocator) catch bun.outOfMemory();
-            defer executable_lines_that_have_been_executed.deinit(bun.default_allocator);
-            // This sets statements in executed scopes
-            executable_lines_that_have_been_executed.setIntersection(report.executable_lines);
-            var iter = executable_lines_that_have_been_executed.iterator(.{});
+            // ** Track all executable lines **
+            // Executable lines that were not hit should be marked as 0
+            var executable_lines = report.executable_lines.clone(bun.default_allocator) catch bun.outOfMemory();
+            defer executable_lines.deinit(bun.default_allocator);
+            var iter = executable_lines.iterator(.{});
 
             // ** Branch coverage not supported yet, since JSC does not support those yet. ** //
             // BRDA: line, block, (expressions,count)+
@@ -262,7 +262,7 @@ pub const CodeCoverageReport = struct {
             try writer.print("LF:{d}\n", .{report.total_lines});
 
             // LH: lines hit
-            try writer.print("LH:{d}\n", .{executable_lines_that_have_been_executed.count()});
+            try writer.print("LH:{d}\n", .{report.lines_which_have_executed.count()});
 
             try writer.writeAll("end_of_record\n");
         }

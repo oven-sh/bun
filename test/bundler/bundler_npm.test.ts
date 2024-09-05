@@ -1,6 +1,6 @@
-import { itBundled } from "./expectBundled";
 import { describe } from "bun:test";
 import { isWindows } from "harness";
+import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   itBundled("npm/ReactSSR", {

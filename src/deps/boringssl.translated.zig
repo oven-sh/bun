@@ -18737,7 +18737,7 @@ pub extern fn RAND_bytes(buf: [*]u8, len: usize) c_int;
 /// Hence, this function should never be called by libraries.
 pub extern fn RAND_enable_fork_unsafe_buffering(c_int) void;
 
-pub extern fn SSL_new(ctx: ?*SSL_CTX) *SSL;
+pub extern fn SSL_new(ctx: ?*SSL_CTX) ?*SSL;
 
 pub extern fn EVP_md4() *const EVP_MD;
 pub extern fn EVP_md5() *const EVP_MD;

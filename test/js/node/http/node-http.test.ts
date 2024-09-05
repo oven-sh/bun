@@ -1,33 +1,31 @@
 // @ts-nocheck
+import { bunExe } from "bun:harness";
+import { bunEnv, randomPort } from "harness";
+import { createTest } from "node-harness";
+import { spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
+import nodefs, { unlinkSync } from "node:fs";
 import http, {
-  createServer,
-  request,
-  get,
   Agent,
+  createServer,
+  get,
   globalAgent,
-  Server,
-  validateHeaderName,
-  validateHeaderValue,
-  ServerResponse,
   IncomingMessage,
   OutgoingMessage,
+  request,
+  Server,
+  ServerResponse,
+  validateHeaderName,
+  validateHeaderValue,
 } from "node:http";
 import https, { createServer as createHttpsServer } from "node:https";
-import { EventEmitter } from "node:events";
-import { createServer as createHttpsServer } from "node:https";
-import { createTest } from "node-harness";
-import url from "node:url";
 import { tmpdir } from "node:os";
-import { spawnSync } from "node:child_process";
-import nodefs from "node:fs";
 import * as path from "node:path";
-import { unlinkSync } from "node:fs";
-import { PassThrough } from "node:stream";
-const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock } = createTest(import.meta.path);
-import { bunExe } from "bun:harness";
-import { bunEnv, disableAggressiveGCScope, tmpdirSync, randomPort } from "harness";
 import * as stream from "node:stream";
+import { PassThrough } from "node:stream";
+import url from "node:url";
 import * as zlib from "node:zlib";
+const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock } = createTest(import.meta.path);
 
 function listen(server: Server, protocol: string = "http"): Promise<URL> {
   return new Promise((resolve, reject) => {
@@ -159,12 +157,23 @@ describe("node:http", () => {
     });
 
     it("should use the provided port", async () => {
-      const server = http.createServer(() => {});
-      const random_port = randomPort();
-      server.listen(random_port);
-      const { port } = server.address();
-      expect(port).toEqual(random_port);
-      server.close();
+      while (true) {
+        try {
+          const server = http.createServer(() => {});
+          const random_port = randomPort();
+          server.listen(random_port);
+          const { port } = server.address();
+          expect(port).toEqual(random_port);
+          server.close();
+          break;
+        } catch (err) {
+          // Address in use try another port
+          if (err.code === "EADDRINUSE") {
+            continue;
+          }
+          throw err;
+        }
+      }
     });
 
     it("should assign a random port when undefined", async () => {
@@ -2206,4 +2215,96 @@ it("should propagate exception in async data handler", async () => {
 
   expect(stdout.toString()).toContain("Test passed");
   expect(exitCode).toBe(0);
+});
+// This test is disabled because it can OOM the CI
+it.skip("should be able to stream huge amounts of data", async () => {
+  const buf = Buffer.alloc(1024 * 1024 * 256);
+  const CONTENT_LENGTH = 3 * 1024 * 1024 * 1024;
+  let received = 0;
+  let written = 0;
+  const { promise: listen, resolve: resolveListen } = Promise.withResolvers();
+  const server = http
+    .createServer((req, res) => {
+      res.writeHead(200, {
+        "Content-Type": "text/plain",
+        "Content-Length": CONTENT_LENGTH,
+      });
+      function commit() {
+        if (written < CONTENT_LENGTH) {
+          written += buf.byteLength;
+          res.write(buf, commit);
+        } else {
+          res.end();
+        }
+      }
+
+      commit();
+    })
+    .listen(0, "localhost", resolveListen);
+  await listen;
+
+  try {
+    const response = await fetch(`http://localhost:${server.address().port}`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/plain");
+    const reader = response.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      received += value ? value.byteLength : 0;
+      if (done) {
+        break;
+      }
+    }
+    expect(written).toBe(CONTENT_LENGTH);
+    expect(received).toBe(CONTENT_LENGTH);
+  } finally {
+    server.close();
+  }
+}, 30_000);
+
+// TODO: today we use a workaround to continue event, we need to fix it in the future.
+it("should emit continue event #7480", done => {
+  let receivedContinue = false;
+  const req = request(
+    "https://example.com",
+    { headers: { "accept-encoding": "identity", "expect": "100-continue" } },
+    res => {
+      let data = "";
+      res.setEncoding("utf8");
+      res.on("data", chunk => {
+        data += chunk;
+      });
+      res.on("end", () => {
+        expect(receivedContinue).toBe(true);
+        expect(data).toContain("This domain is for use in illustrative examples in documents");
+        done();
+      });
+      res.on("error", err => done(err));
+    },
+  );
+  req.on("continue", () => {
+    receivedContinue = true;
+  });
+  req.end();
+});
+
+it("should not emit continue event #7480", done => {
+  let receivedContinue = false;
+  const req = request("https://example.com", { headers: { "accept-encoding": "identity" } }, res => {
+    let data = "";
+    res.setEncoding("utf8");
+    res.on("data", chunk => {
+      data += chunk;
+    });
+    res.on("end", () => {
+      expect(receivedContinue).toBe(false);
+      expect(data).toContain("This domain is for use in illustrative examples in documents");
+      done();
+    });
+    res.on("error", err => done(err));
+  });
+  req.on("continue", () => {
+    receivedContinue = true;
+  });
+  req.end();
 });

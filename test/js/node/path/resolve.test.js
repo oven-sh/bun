@@ -1,4 +1,4 @@
-import { test, describe } from "bun:test";
+import { describe, test } from "bun:test";
 import assert from "node:assert";
 // import child from "node:child_process";
 import path from "node:path";

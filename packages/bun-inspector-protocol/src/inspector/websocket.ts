@@ -1,7 +1,7 @@
-import type { Inspector, InspectorEventMap } from ".";
-import type { JSC } from "../protocol";
 import { EventEmitter } from "node:events";
 import { WebSocket } from "ws";
+import type { Inspector, InspectorEventMap } from ".";
+import type { JSC } from "../protocol";
 
 /**
  * An inspector that communicates with a debugger over a WebSocket.

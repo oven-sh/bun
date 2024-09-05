@@ -119,17 +119,17 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     /// On Windows, it is always a mistake, as the integer is bitcast of a tagged packed struct.
     ///
     /// TODO(@paperdave): remove this API.
-    pub inline fn int(self: FileDescriptor) std.posix.fd_t {
+    pub fn int(self: FileDescriptor) std.posix.fd_t {
         if (Environment.isWindows)
             @compileError("FileDescriptor.int() is not allowed on Windows.");
         return @intFromEnum(self);
     }
 
-    pub inline fn writeTo(fd: FileDescriptor, writer: anytype, endian: std.builtin.Endian) !void {
+    pub fn writeTo(fd: FileDescriptor, writer: anytype, endian: std.builtin.Endian) !void {
         try writer.writeInt(FileDescriptorInt, @intFromEnum(fd), endian);
     }
 
-    pub inline fn readFrom(reader: anytype, endian: std.builtin.Endian) !FileDescriptor {
+    pub fn readFrom(reader: anytype, endian: std.builtin.Endian) !FileDescriptor {
         return @enumFromInt(try reader.readInt(FileDescriptorInt, endian));
     }
 
@@ -139,35 +139,35 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     /// to Windows' *HANDLE, and casts the types for proper usage.
     ///
     /// This may be needed in places where a FileDescriptor is given to `std` or `kernel32` apis
-    pub inline fn cast(fd: FileDescriptor) std.posix.fd_t {
+    pub fn cast(fd: FileDescriptor) std.posix.fd_t {
         if (!Environment.isWindows) return fd.int();
         // if not having this check, the cast may crash zig compiler?
         if (@inComptime() and fd == invalid_fd) return FDImpl.invalid.system();
-        return FDImpl.decode(fd).system();
+        return fd.impl().system();
     }
 
-    pub inline fn asDir(fd: FileDescriptor) std.fs.Dir {
+    pub fn asDir(fd: FileDescriptor) std.fs.Dir {
         return std.fs.Dir{ .fd = fd.cast() };
     }
 
-    pub inline fn asFile(fd: FileDescriptor) std.fs.File {
+    pub fn asFile(fd: FileDescriptor) std.fs.File {
         return std.fs.File{ .handle = fd.cast() };
     }
 
     pub fn format(fd: FileDescriptor, comptime fmt_: string, options_: std.fmt.FormatOptions, writer: anytype) !void {
-        try FDImpl.format(FDImpl.decode(fd), fmt_, options_, writer);
+        try FDImpl.format(fd.impl(), fmt_, options_, writer);
     }
 
     pub fn assertValid(fd: FileDescriptor) void {
-        FDImpl.decode(fd).assertValid();
+        fd.impl().assertValid();
     }
 
     pub fn isValid(fd: FileDescriptor) bool {
-        return FDImpl.decode(fd).isValid();
+        return fd.impl().isValid();
     }
 
     pub fn assertKind(fd: FileDescriptor, kind: FDImpl.Kind) void {
-        assert(FDImpl.decode(fd).kind == kind);
+        assert(fd.impl().kind == kind);
     }
 
     pub fn cwd() FileDescriptor {
@@ -193,7 +193,7 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
 
     pub fn isStdio(fd: FileDescriptor) bool {
         // fd.assertValid();
-        const decoded = FDImpl.decode(fd);
+        const decoded = fd.impl();
         return switch (Environment.os) {
             else => decoded.value.as_system < 3,
             .windows => switch (decoded.kind) {
@@ -207,6 +207,10 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
 
     pub fn toJS(value: FileDescriptor, global: *JSC.JSGlobalObject) JSC.JSValue {
         return FDImpl.decode(value).toJS(global);
+    }
+
+    pub fn impl(fd: FileDescriptor) FDImpl {
+        return FDImpl.decode(fd);
     }
 };
 
@@ -809,14 +813,23 @@ pub fn openDirForIteration(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
 }
 
 pub fn openDirAbsolute(path_: []const u8) !std.fs.Dir {
-    if (comptime Environment.isWindows) {
-        const res = try sys.openDirAtWindowsA(invalid_fd, path_, .{ .iterable = true, .can_rename_or_delete = true, .read_only = true }).unwrap();
-        return res.asDir();
-    } else {
-        const fd = try sys.openA(path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0).unwrap();
-        return fd.asDir();
-    }
+    const fd = if (comptime Environment.isWindows)
+        try sys.openDirAtWindowsA(invalid_fd, path_, .{ .iterable = true, .can_rename_or_delete = true, .read_only = true }).unwrap()
+    else
+        try sys.openA(path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0).unwrap();
+
+    return fd.asDir();
 }
+
+pub fn openDirAbsoluteNotForDeletingOrRenaming(path_: []const u8) !std.fs.Dir {
+    const fd = if (comptime Environment.isWindows)
+        try sys.openDirAtWindowsA(invalid_fd, path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true }).unwrap()
+    else
+        try sys.openA(path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0).unwrap();
+
+    return fd.asDir();
+}
+
 pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;
 pub fn getRuntimeFeatureFlag(comptime flag: [:0]const u8) bool {
     return struct {
@@ -3330,7 +3343,7 @@ noinline fn assertionFailureWithLocation(src: std.builtin.SourceLocation) noretu
     });
 }
 
-pub inline fn debugAssert(cheap_value_only_plz: bool) void {
+pub fn debugAssert(cheap_value_only_plz: bool) callconv(callconv_inline) void {
     if (comptime !Environment.isDebug) {
         return;
     }
@@ -3363,7 +3376,7 @@ pub fn assertWithLocation(value: bool, src: std.builtin.SourceLocation) callconv
 }
 
 /// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
-pub inline fn assert_eql(a: anytype, b: anytype) void {
+pub fn assert_eql(a: anytype, b: anytype) callconv(callconv_inline) void {
     if (@inComptime()) {
         if (a != b) {
             @compileLog(a);
@@ -3375,7 +3388,7 @@ pub inline fn assert_eql(a: anytype, b: anytype) void {
 }
 
 /// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
-pub inline fn assert_neql(a: anytype, b: anytype) void {
+pub fn assert_neql(a: anytype, b: anytype) callconv(callconv_inline) void {
     return assert(a != b);
 }
 
@@ -3649,4 +3662,66 @@ pub fn tagName(comptime Enum: type, value: Enum) ?[:0]const u8 {
     return inline for (@typeInfo(Enum).Enum.fields) |f| {
         if (@intFromEnum(value) == f.value) break f.name;
     } else null;
+}
+extern "C" fn Bun__ramSize() usize;
+pub fn getTotalMemorySize() usize {
+    return Bun__ramSize();
+}
+
+pub const WeakPtrData = packed struct(u32) {
+    reference_count: u31 = 0,
+    finalized: bool = false,
+
+    pub fn onFinalize(this: *WeakPtrData) bool {
+        bun.debugAssert(!this.finalized);
+        this.finalized = true;
+        return this.reference_count == 0;
+    }
+};
+
+pub fn WeakPtr(comptime T: type, comptime weakable_field: std.meta.FieldEnum(T)) type {
+    return struct {
+        const WeakRef = @This();
+
+        value: ?*T = null,
+        pub fn create(req: *T) WeakRef {
+            bun.debugAssert(!@field(req, @tagName(weakable_field)).finalized);
+            @field(req, @tagName(weakable_field)).reference_count += 1;
+            return .{ .value = req };
+        }
+
+        comptime {
+            if (@TypeOf(@field(@as(T, undefined), @tagName(weakable_field))) != WeakPtrData) {
+                @compileError("Expected " ++ @typeName(T) ++ " to have a " ++ @typeName(WeakPtrData) ++ " field named " ++ @tagName(weakable_field));
+            }
+        }
+
+        fn deinitInternal(this: *WeakRef, value: *T) void {
+            const weak_data: *WeakPtrData = &@field(value, @tagName(weakable_field));
+
+            this.value = null;
+            const count = weak_data.reference_count - 1;
+            weak_data.reference_count = count;
+            if (weak_data.finalized and count == 0) {
+                value.destroy();
+            }
+        }
+
+        pub fn deinit(this: *WeakRef) void {
+            if (this.value) |value| {
+                this.deinitInternal(value);
+            }
+        }
+
+        pub fn get(this: *WeakRef) ?*T {
+            if (this.value) |value| {
+                if (!@field(value, @tagName(weakable_field)).finalized) {
+                    return value;
+                }
+
+                this.deinitInternal(value);
+            }
+            return null;
+        }
+    };
 }

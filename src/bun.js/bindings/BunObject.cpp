@@ -86,6 +86,14 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
 
     size_t arrayLength = array->length();
     if (arrayLength < 1) {
+        if (asUint8Array) {
+            return JSValue::encode(
+                JSC::JSUint8Array::create(
+                    lexicalGlobalObject,
+                    lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject),
+                    0));
+        }
+
         RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSArrayBuffer::create(vm, lexicalGlobalObject->arrayBufferStructure(), JSC::ArrayBuffer::create(static_cast<size_t>(0), 1))));
     }
 
@@ -392,23 +400,24 @@ JSC_DEFINE_HOST_FUNCTION(functionBunEscapeHTML, (JSC::JSGlobalObject * lexicalGl
     JSC::JSValue argument = callFrame->argument(0);
     if (argument.isEmpty())
         return JSValue::encode(jsEmptyString(vm));
-    if (argument.isNumber() || argument.isBoolean())
+    if (argument.isNumber() || argument.isBoolean() || argument.isUndefined() || argument.isNull())
         return JSValue::encode(argument.toString(lexicalGlobalObject));
 
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto string = argument.toString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    size_t length = string->length();
-    if (!length)
+    if (string->length() == 0)
         RELEASE_AND_RETURN(scope, JSValue::encode(string));
 
-    String resolvedString = string->value(lexicalGlobalObject);
+    auto resolvedString = string->value(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
     JSC::EncodedJSValue encodedInput = JSValue::encode(string);
-    if (!resolvedString.is8Bit()) {
-        const auto span = resolvedString.span16();
+    if (!resolvedString->is8Bit()) {
+        const auto span = resolvedString->span16();
         RELEASE_AND_RETURN(scope, Bun__escapeHTML16(lexicalGlobalObject, encodedInput, span.data(), span.size()));
     } else {
-        const auto span = resolvedString.span8();
+        const auto span = resolvedString->span8();
         RELEASE_AND_RETURN(scope, Bun__escapeHTML8(lexicalGlobalObject, encodedInput, span.data(), span.size()));
     }
 }
@@ -474,14 +483,13 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepMatch, (JSGlobalObject * globalObject, J
 
 JSC_DEFINE_HOST_FUNCTION(functionBunNanoseconds, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto* global = reinterpret_cast<GlobalObject*>(globalObject);
-    uint64_t time = Bun__readOriginTimer(global->bunVM());
+    uint64_t time = Bun__readOriginTimer(bunVM(globalObject));
     return JSValue::encode(jsNumber(time));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    auto& globalObject = *reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto& globalObject = *defaultGlobalObject(lexicalGlobalObject);
     auto& vm = globalObject.vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto pathValue = callFrame->argument(0);
@@ -553,6 +561,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     SHA512_256                                     BunObject_getter_wrap_SHA512_256                                    DontDelete|PropertyCallback
     TOML                                           BunObject_getter_wrap_TOML                                          DontDelete|PropertyCallback
     Transpiler                                     BunObject_getter_wrap_Transpiler                                    DontDelete|PropertyCallback
+    embeddedFiles                                  BunObject_getter_wrap_embeddedFiles                                 DontDelete|PropertyCallback
     allocUnsafe                                    BunObject_callback_allocUnsafe                                      DontDelete|Function 1
     argv                                           BunObject_getter_wrap_argv                                          DontDelete|PropertyCallback
     build                                          BunObject_callback_build                                            DontDelete|Function 1

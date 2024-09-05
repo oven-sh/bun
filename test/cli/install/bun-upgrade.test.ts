@@ -1,9 +1,9 @@
 import { spawn, spawnSync } from "bun";
-import { beforeEach, expect, it, setDefaultTimeout, beforeAll } from "bun:test";
-import { bunExe, bunEnv as env, tls, tmpdirSync } from "harness";
-import { join, basename } from "path";
-import { copyFileSync } from "node:fs";
 import { upgrade_test_helpers } from "bun:internal-for-testing";
+import { beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
+import { bunExe, bunEnv as env, tls, tmpdirSync } from "harness";
+import { copyFileSync } from "node:fs";
+import { basename, join } from "path";
 const { openTempDirWithoutSharingDelete, closeTempDirHandle } = upgrade_test_helpers;
 
 let cwd: string;

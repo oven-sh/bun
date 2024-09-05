@@ -1,6 +1,6 @@
-import { it, expect, test, beforeAll, describe } from "bun:test";
-import { bunExe, bunEnv } from "harness";
 import { spawnSync } from "bun";
+import { beforeAll, describe, expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 
 describe("napi", () => {
@@ -24,6 +24,7 @@ describe("napi", () => {
       checkSameOutput("test_issue_7685", args);
     });
   });
+
   describe("issue_11949", () => {
     it("napi_call_threadsafe_function should accept null", () => {
       const result = checkSameOutput("test_issue_11949", []);

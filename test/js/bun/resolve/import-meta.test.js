@@ -1,11 +1,11 @@
 import { spawnSync } from "bun";
-import { describe, expect, it } from "bun:test";
+import { expect, it } from "bun:test";
 import { bunEnv, bunExe, ospath } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import * as Module from "node:module";
+import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import sync from "./require-json.json";
-import { tmpdir } from "node:os";
 
 const { path, dir, dirname, filename } = import.meta;
 

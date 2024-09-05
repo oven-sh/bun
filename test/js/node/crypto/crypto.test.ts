@@ -1,9 +1,9 @@
-import { sha, MD5, MD4, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256, gc, CryptoHasher } from "bun";
-import { it, expect, describe } from "bun:test";
+import { CryptoHasher, MD4, MD5, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256, gc } from "bun";
+import { describe, expect, it } from "bun:test";
 import crypto from "crypto";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import path from "path";
 import { hashesFixture } from "./fixtures/sign.fixture.ts";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
 const HashClasses = [MD5, MD4, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256];
 
 describe("CryptoHasher", () => {

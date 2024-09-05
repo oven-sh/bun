@@ -1,7 +1,7 @@
-import tls, { TLSSocket, connect, checkServerIdentity, createServer, Server } from "tls";
-import { join } from "path";
-import { it, expect } from "bun:test";
+import { expect, it } from "bun:test";
 import { tls as COMMON_CERT_ } from "harness";
+import { join } from "path";
+import tls, { checkServerIdentity, connect, TLSSocket } from "tls";
 
 const symbolConnectOptions = Symbol.for("::buntlsconnectoptions::");
 

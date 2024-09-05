@@ -1,4 +1,4 @@
-import { serialize, deserialize } from "node:v8";
+import { deserialize, serialize } from "node:v8";
 import { bench, run } from "./runner.mjs";
 const obj = {
   "id": 1296269,

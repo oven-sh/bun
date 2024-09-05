@@ -1,10 +1,15 @@
-import { ServerWebSocket, TCPSocket, Socket as _BunSocket, TCPSocketListener } from "bun";
+import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { describe, expect, it } from "bun:test";
-import { connect, isIP, isIPv4, isIPv6, Socket, createConnection, Server } from "net";
-import { join } from "path";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { connect, createConnection, isIP, isIPv4, isIPv6, Server, Socket, Stream } from "net";
+import { join } from "path";
 
 const socket_domain = tmpdirSync();
+
+it("Stream should be aliased to Socket", () => {
+  // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/net.js#L2456
+  expect(Socket).toBe(Stream);
+});
 
 it("should support net.isIP()", () => {
   expect(isIP("::1")).toBe(6);
@@ -489,4 +494,69 @@ it("socket should keep process alive if unref is not called", async () => {
     env: bunEnv,
   });
   expect(await process.exited).toBe(1);
+});
+
+it("should not hang after FIN", async () => {
+  const net = require("node:net");
+  const { promise: listening, resolve: resolveListening, reject } = Promise.withResolvers();
+  const server = net.createServer(c => {
+    c.write("Hello client");
+    c.end();
+  });
+  try {
+    server.on("error", reject);
+    server.listen(0, () => {
+      resolveListening(server.address().port);
+    });
+    const process = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "node-fin-fixture.js")],
+      stderr: "inherit",
+      stdin: "ignore",
+      stdout: "inherit",
+      env: {
+        ...bunEnv,
+        PORT: ((await listening) as number).toString(),
+      },
+    });
+    const timeout = setTimeout(() => {
+      process.kill();
+      reject(new Error("Timeout"));
+    }, 1000);
+    expect(await process.exited).toBe(0);
+    clearTimeout(timeout);
+  } finally {
+    server.close();
+  }
+});
+
+it("should not hang after destroy", async () => {
+  const net = require("node:net");
+  const { promise: listening, resolve: resolveListening, reject } = Promise.withResolvers();
+  const server = net.createServer(c => {
+    c.write("Hello client");
+  });
+  try {
+    server.on("error", reject);
+    server.listen(0, () => {
+      resolveListening(server.address().port);
+    });
+    const process = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "node-destroy-fixture.js")],
+      stderr: "inherit",
+      stdin: "ignore",
+      stdout: "inherit",
+      env: {
+        ...bunEnv,
+        PORT: ((await listening) as number).toString(),
+      },
+    });
+    const timeout = setTimeout(() => {
+      process.kill();
+      reject(new Error("Timeout"));
+    }, 1000);
+    expect(await process.exited).toBe(0);
+    clearTimeout(timeout);
+  } finally {
+    server.close();
+  }
 });

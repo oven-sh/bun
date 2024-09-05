@@ -56,7 +56,7 @@ static std::optional<Vector<uint8_t>> cryptEncrypt(const Vector<uint8_t>& key, c
         return std::nullopt;
 
     EvpCipherCtxPtr ctx;
-    int len;
+    int len = 0;
 
     Vector<uint8_t> cipherText(plainText.size() + tagLength);
     size_t tagOffset = plainText.size();
@@ -88,11 +88,14 @@ static std::optional<Vector<uint8_t>> cryptEncrypt(const Vector<uint8_t>& key, c
     }
 
     // Provide the message to be encrypted, and obtain the encrypted output
-    if (1 != EVP_EncryptUpdate(ctx.get(), cipherText.data(), &len, plainText.data(), plainText.size()))
-        return std::nullopt;
+    if (plainText.size() > 0) {
+        if (1 != EVP_EncryptUpdate(ctx.get(), cipherText.data(), &len, plainText.data(), plainText.size()))
+            return std::nullopt;
+    }
 
     // Finalize the encryption. Normally ciphertext bytes may be written at
-    // this stage, but this does not occur in GCM mode
+    // this stage, but this does not occur in GCM mode since it is not padded.
+    // We're still required to call it however to signal that the tag should be written next.
     if (1 != EVP_EncryptFinal_ex(ctx.get(), cipherText.data() + len, &len))
         return std::nullopt;
 

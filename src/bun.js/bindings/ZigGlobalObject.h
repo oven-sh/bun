@@ -21,7 +21,7 @@ class ScriptExecutionContext;
 class DOMGuardedObject;
 class EventLoopTask;
 class DOMWrapperWorld;
-class GlobalScope;
+class WorkerGlobalScope;
 class SubtleCrypto;
 class EventTarget;
 class Performance;
@@ -30,6 +30,10 @@ class Performance;
 namespace Bun {
 class InternalModuleRegistry;
 } // namespace Bun
+
+namespace v8 {
+class GlobalInternals;
+} // namespace v8
 
 #include "root.h"
 #include "headers-handwritten.h"
@@ -44,9 +48,10 @@ class InternalModuleRegistry;
 #include "WebCoreJSBuiltins.h"
 #include "headers-handwritten.h"
 #include "BunCommonStrings.h"
+#include "BunGlobalScope.h"
 
 namespace WebCore {
-class GlobalScope;
+class WorkerGlobalScope;
 class SubtleCrypto;
 class EventTarget;
 }
@@ -68,8 +73,8 @@ using DOMGuardedObjectSet = HashSet<WebCore::DOMGuardedObject*>;
 
 #define ZIG_GLOBAL_OBJECT_DEFINED
 
-class GlobalObject : public JSC::JSGlobalObject {
-    using Base = JSC::JSGlobalObject;
+class GlobalObject : public Bun::GlobalScope {
+    using Base = Bun::GlobalScope;
     // Move this to the front for better cache locality.
     void* m_bunVM;
 
@@ -242,7 +247,6 @@ public:
     JSC::JSMap* readableStreamNativeMap() const { return m_lazyReadableStreamPrototypeMap.getInitializedOnMainThread(this); }
     JSC::JSMap* requireMap() const { return m_requireMap.getInitializedOnMainThread(this); }
     JSC::JSMap* esmRegistryMap() const { return m_esmRegistryMap.getInitializedOnMainThread(this); }
-    JSC::Structure* encodeIntoObjectStructure() const { return m_encodeIntoObjectStructure.getInitializedOnMainThread(this); }
 
     JSC::Structure* callSiteStructure() const { return m_callSiteStructure.getInitializedOnMainThread(this); }
 
@@ -264,7 +268,7 @@ public:
 
     JSObject* lazyRequireCacheObject() const { return m_lazyRequireCacheObject.getInitializedOnMainThread(this); }
 
-    Structure* globalObjectStructure() const { return m_cachedGlobalObjectStructure.getInitializedOnMainThread(this); }
+    Structure* NodeVMGlobalObjectStructure() const { return m_cachedNodeVMGlobalObjectStructure.getInitializedOnMainThread(this); }
     Structure* globalProxyStructure() const { return m_cachedGlobalProxyStructure.getInitializedOnMainThread(this); }
     JSObject* lazyTestModuleObject() const { return m_lazyTestModuleObject.getInitializedOnMainThread(this); }
     JSObject* lazyPreloadTestModuleObject() const { return m_lazyPreloadTestModuleObject.getInitializedOnMainThread(this); }
@@ -281,6 +285,8 @@ public:
     Structure* NAPIFunctionStructure() const { return m_NAPIFunctionStructure.getInitializedOnMainThread(this); }
 
     Structure* JSSQLStatementStructure() const { return m_JSSQLStatementStructure.getInitializedOnMainThread(this); }
+
+    v8::GlobalInternals* V8GlobalInternals() const { return m_V8GlobalInternals.getInitializedOnMainThread(this); }
 
     bool hasProcessObject() const { return m_processObject.isInitialized(); }
 
@@ -314,7 +320,7 @@ public:
     WebCore::EventTarget& eventTarget();
 
     WebCore::ScriptExecutionContext* m_scriptExecutionContext;
-    Bun::GlobalScope& globalEventScope;
+    Bun::WorkerGlobalScope& globalEventScope;
 
     void resetOnEachMicrotaskTick();
 
@@ -396,6 +402,9 @@ public:
     // Error.prepareStackTrace
     mutable WriteBarrier<JSC::Unknown> m_errorConstructorPrepareStackTraceValue;
 
+    // When a napi module initializes on dlopen, we need to know what the value is
+    mutable JSC::WriteBarrier<Unknown> m_pendingNapiModuleAndExports[2];
+
     // The original, unmodified Error.prepareStackTrace.
     //
     // We set a default value for this to mimick Node.js behavior It is a
@@ -447,9 +456,6 @@ public:
 
     JSC::Structure* pendingVirtualModuleResultStructure() { return m_pendingVirtualModuleResultStructure.get(this); }
 
-    // When a napi module initializes on dlopen, we need to know what the value is
-    // This value is not observed by GC. It should be extremely ephemeral.
-    JSValue pendingNapiModule = JSValue {};
     // We need to know if the napi module registered itself or we registered it.
     // To do that, we count the number of times we register a module.
     int napiModuleRegisterCallCount = 0;
@@ -531,7 +537,6 @@ public:
     LazyProperty<JSGlobalObject, JSMap> m_lazyReadableStreamPrototypeMap;
     LazyProperty<JSGlobalObject, JSMap> m_requireMap;
     LazyProperty<JSGlobalObject, JSMap> m_esmRegistryMap;
-    LazyProperty<JSGlobalObject, Structure> m_encodeIntoObjectStructure;
     LazyProperty<JSGlobalObject, JSObject> m_JSArrayBufferControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_JSHTTPSResponseControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_JSFileSinkControllerPrototype;
@@ -543,7 +548,7 @@ public:
     LazyProperty<JSGlobalObject, JSObject> m_lazyTestModuleObject;
     LazyProperty<JSGlobalObject, JSObject> m_lazyPreloadTestModuleObject;
     LazyProperty<JSGlobalObject, JSObject> m_testMatcherUtilsObject;
-    LazyProperty<JSGlobalObject, Structure> m_cachedGlobalObjectStructure;
+    LazyProperty<JSGlobalObject, Structure> m_cachedNodeVMGlobalObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_cachedGlobalProxyStructure;
     LazyProperty<JSGlobalObject, Structure> m_commonJSModuleObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_JSSocketAddressStructure;
@@ -560,6 +565,7 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_NapiPrototypeStructure;
     LazyProperty<JSGlobalObject, Structure> m_NAPIFunctionStructure;
     LazyProperty<JSGlobalObject, Structure> m_JSSQLStatementStructure;
+    LazyProperty<JSGlobalObject, v8::GlobalInternals> m_V8GlobalInternals;
 
     LazyProperty<JSGlobalObject, JSObject> m_bunObject;
     LazyProperty<JSGlobalObject, JSObject> m_cryptoObject;
@@ -593,6 +599,21 @@ namespace Bun {
 
 String formatStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, const WTF::String& name, const WTF::String& message, OrdinalNumber& line, OrdinalNumber& column, WTF::String& sourceURL, Vector<JSC::StackFrame>& stackTrace, JSC::JSObject* errorInstance);
 
+ALWAYS_INLINE void* vm(Zig::GlobalObject* globalObject)
+{
+    return globalObject->bunVM();
+}
+
+ALWAYS_INLINE void* vm(JSC::VM& vm)
+{
+    return WebCore::clientData(vm)->bunVM;
+}
+
+ALWAYS_INLINE void* vm(JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    return WebCore::clientData(lexicalGlobalObject->vm())->bunVM;
+}
+
 }
 
 #ifndef RENAMED_JSDOM_GLOBAL_OBJECT
@@ -601,5 +622,41 @@ namespace WebCore {
 using JSDOMGlobalObject = Zig::GlobalObject;
 }
 #endif
+
+// Do not use this directly.
+namespace ___private___ {
+extern "C" Zig::GlobalObject* Bun__getDefaultGlobalObject();
+inline Zig::GlobalObject* getDefaultGlobalObject()
+{
+    return Bun__getDefaultGlobalObject();
+}
+}
+
+inline Zig::GlobalObject* defaultGlobalObject(JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    auto* globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    if (!globalObject) {
+        return ___private___::getDefaultGlobalObject();
+    }
+    return globalObject;
+}
+inline Zig::GlobalObject* defaultGlobalObject()
+{
+    return ___private___::getDefaultGlobalObject();
+}
+
+inline void* bunVM(JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    if (auto* globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject)) {
+        return globalObject->bunVM();
+    }
+
+    return WebCore::clientData(lexicalGlobalObject->vm())->bunVM;
+}
+
+inline void* bunVM(Zig::GlobalObject* globalObject)
+{
+    return globalObject->bunVM();
+}
 
 #endif

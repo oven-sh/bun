@@ -16,6 +16,10 @@ function generate(name) {
         fn: "doPublish",
         length: 3,
       },
+      subscriberCount: {
+        fn: "doSubscriberCount",
+        length: 1,
+      },
       reload: {
         fn: "doReload",
         length: 2,
@@ -143,14 +147,17 @@ export default [
       close: {
         fn: "close",
         length: 3,
+        passThis: true,
       },
       terminate: {
         fn: "terminate",
         length: 0,
+        passThis: true,
       },
       cork: {
         fn: "cork",
         length: 1,
+        passThis: true,
       },
       getBufferedAmount: {
         fn: "getBufferedAmount",

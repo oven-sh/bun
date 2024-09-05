@@ -190,7 +190,7 @@ CPP_DECL void WebCore__FetchHeaders__count(WebCore__FetchHeaders* arg0, uint32_t
 CPP_DECL WebCore__FetchHeaders* WebCore__FetchHeaders__createEmpty();
 CPP_DECL WebCore__FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 CPP_DECL WebCore__FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void* arg0);
-CPP_DECL WebCore__FetchHeaders* WebCore__FetchHeaders__createFromUWS(JSC__JSGlobalObject* arg0, void* arg1);
+CPP_DECL WebCore__FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1);
 CPP_DECL JSC__JSValue WebCore__FetchHeaders__createValue(JSC__JSGlobalObject* arg0, StringPointer* arg1, StringPointer* arg2, const ZigString* arg3, uint32_t arg4);
 CPP_DECL void WebCore__FetchHeaders__deref(WebCore__FetchHeaders* arg0);
 CPP_DECL void WebCore__FetchHeaders__fastGet_(WebCore__FetchHeaders* arg0, unsigned char arg1, ZigString* arg2);
@@ -199,7 +199,6 @@ CPP_DECL void WebCore__FetchHeaders__fastRemove_(WebCore__FetchHeaders* arg0, un
 CPP_DECL void WebCore__FetchHeaders__get_(WebCore__FetchHeaders* arg0, const ZigString* arg1, ZigString* arg2, JSC__JSGlobalObject* arg3);
 CPP_DECL bool WebCore__FetchHeaders__has(WebCore__FetchHeaders* arg0, const ZigString* arg1, JSC__JSGlobalObject* arg2);
 CPP_DECL bool WebCore__FetchHeaders__isEmpty(WebCore__FetchHeaders* arg0);
-CPP_DECL void WebCore__FetchHeaders__put_(WebCore__FetchHeaders* arg0, const ZigString* arg1, const ZigString* arg2, JSC__JSGlobalObject* arg3);
 CPP_DECL void WebCore__FetchHeaders__remove(WebCore__FetchHeaders* arg0, const ZigString* arg1, JSC__JSGlobalObject* arg2);
 CPP_DECL JSC__JSValue WebCore__FetchHeaders__toJS(WebCore__FetchHeaders* arg0, JSC__JSGlobalObject* arg1);
 CPP_DECL void WebCore__FetchHeaders__toUWSResponse(WebCore__FetchHeaders* arg0, bool arg1, void* arg2);

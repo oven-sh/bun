@@ -4293,30 +4293,37 @@ var require_lib = __commonJS({
       if (!(this instanceof Deflate)) return new Deflate(opts);
       Zlib.$call(this, opts, binding.DEFLATE);
     }
+    Deflate.prototype = {};
     function Inflate(opts) {
       if (!(this instanceof Inflate)) return new Inflate(opts);
       Zlib.$call(this, opts, binding.INFLATE);
     }
+    Inflate.prototype = {};
     function Gzip(opts) {
       if (!(this instanceof Gzip)) return new Gzip(opts);
       Zlib.$call(this, opts, binding.GZIP);
     }
+    Gzip.prototype = {};
     function Gunzip(opts) {
       if (!(this instanceof Gunzip)) return new Gunzip(opts);
       Zlib.$call(this, opts, binding.GUNZIP);
     }
+    Gunzip.prototype = {};
     function DeflateRaw(opts) {
       if (!(this instanceof DeflateRaw)) return new DeflateRaw(opts);
       Zlib.$call(this, opts, binding.DEFLATERAW);
     }
+    DeflateRaw.prototype = {};
     function InflateRaw(opts) {
       if (!(this instanceof InflateRaw)) return new InflateRaw(opts);
       Zlib.$call(this, opts, binding.INFLATERAW);
     }
+    InflateRaw.prototype = {};
     function Unzip(opts) {
       if (!(this instanceof Unzip)) return new Unzip(opts);
       Zlib.$call(this, opts, binding.UNZIP);
     }
+    Unzip.prototype = {};
     function isValidFlushFlag(flag) {
       return (
         flag === binding.Z_NO_FLUSH ||
@@ -4411,6 +4418,7 @@ var require_lib = __commonJS({
         enumerable: true,
       });
     }
+    Zlib.prototype = {};
     util.inherits(Zlib, Transform);
     Zlib.prototype.params = function (level, strategy, callback) {
       if (level < exports.Z_MIN_LEVEL || level > exports.Z_MAX_LEVEL) {

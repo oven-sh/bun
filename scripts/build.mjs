@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 import { spawn as nodeSpawn } from "node:child_process";
-import { rmSync } from "node:fs";
+import { cpSync, existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 // https://cmake.org/cmake/help/latest/manual/cmake.1.html#generate-a-project-buildsystem
@@ -14,6 +15,7 @@ const generateFlags = [
   ["--fresh", "boolean", "force a fresh build"],
   ["--log-level", "string", "set the log level"],
   ["--debug-output", "boolean", "print debug output"],
+  ["--toolchain", "string", "the toolchain to use"],
 ];
 
 // https://cmake.org/cmake/help/latest/manual/cmake.1.html#generate-a-project-buildsystem
@@ -25,11 +27,6 @@ const buildFlags = [
   ["-j", "number", "same as --parallel"],
   ["--verbose", "boolean", "enable verbose output"],
   ["-v", "boolean", "same as --verbose"],
-];
-
-const extraFlags = [
-  ["--clean", "boolean", "clean the build directory before building"],
-  ["--toolchain", "string", "the toolchain to use"],
 ];
 
 async function build(args) {
@@ -46,25 +43,81 @@ async function build(args) {
   };
 
   const generateOptions = parseOptions(args, generateFlags);
+  const buildOptions = parseOptions(args, buildFlags);
+
+  const buildPath = generateOptions["-B"] || buildOptions["--build"] || "build";
+  generateOptions["-B"] = buildPath;
+  buildOptions["--build"] = buildPath;
+
+  const toolchain = generateOptions["--toolchain"];
+  if (toolchain) {
+    const toolchainPath = resolve(import.meta.dirname, "..", "cmake", "toolchains", `${toolchain}.cmake`);
+    generateOptions["--toolchain"] = toolchainPath;
+  }
+
+  if (isCacheReadEnabled()) {
+    try {
+      const cachePath = getCachePath();
+      if (existsSync(cachePath)) {
+        cpSync(cachePath, buildPath, { recursive: true, force: true });
+        console.log(`Copied branch cache from ${cachePath} to ${buildPath}`);
+      }
+    } catch (error) {
+      try {
+        const mainCachePath = getCachePath(getDefaultBranch());
+        if (existsSync(mainCachePath)) {
+          cpSync(mainCachePath, buildPath, { recursive: true, force: true });
+          console.log(`Copied main cache from ${mainCachePath} to ${buildPath}`);
+        }
+      } catch (error) {
+        console.warn("Failed to read cache", error);
+      }
+    }
+  }
+
   const generateArgs = Object.entries(generateOptions).flatMap(([flag, value]) =>
     flag.startsWith("-D") ? [`${flag}=${value}`] : [flag, value],
   );
-
-  const buildPath = generateOptions["-B"] || "build";
-  const extraOptions = parseOptions(args, extraFlags);
-  if ("--clean" in extraOptions) {
-    rmSync(buildPath, { recursive: true, force: true });
-  }
-  if ("--toolchain" in extraOptions) {
-    const toolchain = extraOptions["--toolchain"];
-    const toolchainPath = resolve(import.meta.dirname, "..", "cmake", "toolchains", `${toolchain}.cmake`);
-    generateArgs.push("--toolchain", toolchainPath);
-  }
   await spawn("cmake", generateArgs, { env });
 
-  const buildOptions = parseOptions(args, buildFlags);
   const buildArgs = Object.entries(buildOptions).flatMap(([flag, value]) => [flag, value]);
   await spawn("cmake", ["--build", buildPath, ...buildArgs], { env });
+
+  if (isCacheWriteEnabled()) {
+    try {
+      const cachePath = getCachePath();
+      rmSync(cachePath, { recursive: true, force: true });
+      cpSync(buildPath, cachePath, { recursive: true, force: true });
+      console.log(`Saved cache to ${cachePath}`);
+    } catch (error) {
+      console.warn("Failed to save cache", error);
+    }
+  }
+}
+
+function getCachePath(branch) {
+  const repository = process.env.BUILDKITE_REPO;
+  const fork = process.env.BUILDKITE_PULL_REQUEST_REPO;
+  const repositoryKey = (fork || repository).replace(/[^a-z0-9]/i, "-");
+  const branchKey = (branch || process.env.BUILDKITE_BRANCH).replace(/[^a-z0-9]/i, "-");
+  const stepKey = process.env.BUILDKITE_STEP_KEY.replace(/[^a-z0-9]/i, "-");
+  return join(homedir(), "cache", repositoryKey, branchKey, stepKey);
+}
+
+function isCacheReadEnabled() {
+  return (
+    process.env.BUILDKITE === "true" &&
+    process.env.BUILDKITE_CLEAN_CHECKOUT !== "true" &&
+    process.env.BUILDKITE_BRANCH !== getDefaultBranch()
+  );
+}
+
+function isCacheWriteEnabled() {
+  return process.env.BUILDKITE === "true";
+}
+
+function getDefaultBranch() {
+  return process.env.BUILDKITE_PIPELINE_DEFAULT_BRANCH || "main";
 }
 
 function parseOptions(args, flags = []) {

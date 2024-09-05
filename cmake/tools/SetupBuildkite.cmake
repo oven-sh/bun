@@ -12,6 +12,13 @@ optionx(BUILDKITE_PIPELINE_SLUG STRING "The pipeline slug to use on Buildkite" D
 optionx(BUILDKITE_BUILD_ID STRING "The build ID to use on Buildkite")
 optionx(BUILDKITE_GROUP_ID STRING "The group ID to use on Buildkite")
 
+if(BUILDKITE)
+  optionx(BUILDKITE_BUILD_ID_OVERRIDE STRING "The build ID to use on Buildkite")
+  if(BUILDKITE_BUILD_ID_OVERRIDE)
+    setx(BUILDKITE_BUILD_ID ${BUILDKITE_BUILD_ID_OVERRIDE})
+  endif()
+endif()
+
 set(BUILDKITE_PATH ${BUILD_PATH}/buildkite)
 set(BUILDKITE_BUILDS_PATH ${BUILDKITE_PATH}/builds)
 

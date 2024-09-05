@@ -31,6 +31,10 @@ const doesnt_exist = C.doesnt_exist;
 const struct_tm = C.struct_tm;
 const enum_ssl_verify_result_t = C.enum_ssl_verify_result_t;
 
+pub extern fn HKDF(out_key: [*c]u8, out_len: usize, digest: ?*const EVP_MD, secret: [*c]const u8, secret_len: usize, salt: [*c]const u8, salt_len: usize, info: [*c]const u8, info_len: usize) c_int;
+pub extern fn HKDF_extract(out_key: [*c]u8, out_len: [*c]usize, digest: ?*const EVP_MD, secret: [*c]const u8, secret_len: usize, salt: [*c]const u8, salt_len: usize) c_int;
+pub extern fn HKDF_expand(out_key: [*c]u8, out_len: usize, digest: ?*const EVP_MD, prk: [*c]const u8, prk_len: usize, info: [*c]const u8, info_len: usize) c_int;
+
 pub const CRYPTO_THREADID = c_int;
 pub const struct_asn1_null_st = opaque {};
 pub const ASN1_NULL = struct_asn1_null_st;

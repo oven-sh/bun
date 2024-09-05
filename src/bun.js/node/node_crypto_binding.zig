@@ -108,20 +108,14 @@ pub const NodeCrypto = struct {
         const arguments = callframe.arguments(5).slice();
         if (arguments.len < 5) {
             globalThis.throwNotEnoughArguments("hkdfSync", 5, arguments.len);
-            return JSC.JSValue.null;
-        }
-
-        if (!arguments[0].isString()) {
-            // todo: FIX field
-            globalThis.throwInvalidArgumentType("hkdfSync", "digest", "<string>");
-            return JSC.JSValue.null;
+            return .null;
         }
 
         // From BunObject PBKDF2 `fromJS`
         const algorithm = brk: {
             if (!arguments[0].isString()) {
                 _ = globalThis.throwInvalidArgumentTypeValue("algorithm", "string", arguments[0]);
-                return JSC.JSValue.null;
+                return .null;
             }
 
             const algorithm = EVP.Algorithm.map.fromJSCaseInsensitive(globalThis, arguments[0]) orelse {
@@ -131,7 +125,7 @@ pub const NodeCrypto = struct {
                     const name = slice.slice();
                     globalThis.ERR_CRYPTO_INVALID_DIGEST("Unsupported algorithm \"{s}\"", .{name}).throw();
                 }
-                return JSC.JSValue.null;
+                return .null;
             };
 
             break :brk EVP.Algorithm.md(algorithm) orelse {
@@ -141,33 +135,29 @@ pub const NodeCrypto = struct {
                     const name = slice.slice();
                     globalThis.ERR_CRYPTO_INVALID_DIGEST("Unsupported algorithm \"{s}\"", .{name}).throw();
                 }
-                return JSC.JSValue.null;
+                return .null;
             };
         };
-        _ = algorithm;
 
         // This can also be a KeyObject
         // Be sure to test with all listed here: <string> | <ArrayBuffer> | <Buffer> | <TypedArray> | <DataView> | <KeyObject>
         // Be sure this works with a keylen of 0
         const ikm = JSC.Node.StringOrBuffer.fromJS(globalThis, globalThis.bunVM().allocator, arguments[1]) orelse {
             globalThis.throwInvalidArgumentType("hkdfSync", "ikm", "<string> | <ArrayBuffer> | <Buffer>");
-            return JSC.JSValue.null;
+            return .null;
         };
         const salt = JSC.Node.StringOrBuffer.fromJS(globalThis, globalThis.bunVM().allocator, arguments[2]) orelse {
             globalThis.throwInvalidArgumentType("hkdfSync", "salt", "<string> | <ArrayBuffer> | <Buffer>");
-            return JSC.JSValue.null;
+            return .null;
         };
         const info = JSC.Node.StringOrBuffer.fromJS(globalThis, globalThis.bunVM().allocator, arguments[3]) orelse {
             globalThis.throwInvalidArgumentType("hkdfSync", "info", "<string> | <ArrayBuffer> | <Buffer>");
-            return JSC.JSValue.null;
+            return .null;
         };
-        _ = ikm;
-        _ = salt;
-        _ = info;
 
-        if (!arguments[4].isAnyInt()) { // seems to filter negative values automatically
+        if (!arguments[4].isAnyInt()) {
             _ = globalThis.throwInvalidArgumentTypeValue("keylen", "integer", arguments[4]);
-            return JSC.JSValue.null;
+            return .null;
         }
 
         // ensure this coersion is safe
@@ -175,38 +165,48 @@ pub const NodeCrypto = struct {
 
         if (keylen <= 0) {
             _ = globalThis.throwInvalidArgumentRangeValue("keylen", "integer", keylen);
-            return JSC.JSValue.null;
+            return .null;
         }
 
-        // check constriant about hash size
+        const max_keylen = 255 * BoringSSL.EVP_MD_size(algorithm);
+        if (keylen > max_keylen) {
+            const digest_bun_str = arguments[0].toBunString(globalThis);
+            defer digest_bun_str.deref();
+            globalThis.throw(
+                \\"keylen" cannot be larger than 255 times the byte size of the digest output in bytes.
+                \\Digest "{s}" is {} bytes, so the keylen limit is {}. Recieved {}.
+            ,
+                .{
+                    digest_bun_str.byteSlice(),
+                    BoringSSL.EVP_MD_size(algorithm),
+                    max_keylen,
+                    keylen,
+                },
+            );
+            return .null;
+        }
 
-        const out_key = JSC.JSValue.createBufferFromLength(globalThis, @intCast(keylen + 1));
+        const out_key = JSC.JSValue.createBufferFromLength(globalThis, @intCast(keylen));
         const out_key_ptr = @as([*c]u8, @ptrCast(out_key.asArrayBuffer(globalThis).?.ptr)); // what happens if Null is returned from `asArrayBuffer`?
-        _ = out_key_ptr;
 
         BoringSSL.load();
-        // https://github.com/nodejs/node/blob/main/src/crypto/crypto_hkdf.cc
-        // Node Code to Copy
-        //   if (HMAC(
-        //           params.digest,
-        //           salt.data(),
-        //           salt.size(),
-        //           reinterpret_cast<const unsigned char*>(params.key->GetSymmetricKey()),
-        //           params.key->GetSymmetricKeySize(),
-        //           pseudorandom_key,
-        //           &prk_len) == nullptr) {
-        //     return false;
-        //   }
-        //   if (!EVP_PKEY_CTX_hkdf_mode(ctx.get(), EVP_PKEY_HKDEF_MODE_EXPAND_ONLY) ||
-        //       !EVP_PKEY_CTX_set1_hkdf_key(ctx.get(), pseudorandom_key, prk_len)) {
-        //     return false;
-        //   }
-        //
-        //   size_t length = params.length;
-        //   ByteSource::Builder buf(length);
-        //   if (EVP_PKEY_derive(ctx.get(), buf.data<unsigned char>(), &length) <= 0)
-        //     return false;
-        //
+
+        const success = BoringSSL.HKDF(
+            out_key_ptr,
+            @intCast(keylen),
+            algorithm,
+            ikm.slice().ptr,
+            ikm.slice().len,
+            salt.slice().ptr,
+            salt.slice().len,
+            info.slice().ptr,
+            info.slice().len,
+        );
+
+        if (success == 0) {
+            globalThis.throwValue(Crypto.createCryptoError(globalThis, BoringSSL.ERR_get_error()));
+            return .null;
+        }
 
         return out_key;
     }

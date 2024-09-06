@@ -14,6 +14,8 @@ if(NOT WEBKIT_PREBUILT)
 endif()
 
 optionx(WEBKIT_PATH FILEPATH "The path to the WebKit directory" DEFAULT ${DEFAULT_WEBKIT_PATH})
+
+setx(WEBKIT_INCLUDE_PATH ${WEBKIT_PATH}/include)
 setx(WEBKIT_LIB_PATH ${WEBKIT_PATH}/lib)
 
 if(EXISTS ${WEBKIT_PATH}/package.json)

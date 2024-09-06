@@ -599,7 +599,7 @@ if(WIN32)
   target_include_directories(${bun} PRIVATE ${CWD}/src/bun.js/bindings/windows)
 endif()
 
-include_directories(
+target_include_directories(${bun} PRIVATE
   ${CWD}/packages
   ${CWD}/packages/bun-usockets
   ${CWD}/packages/bun-usockets/src
@@ -612,7 +612,6 @@ include_directories(
   ${CWD}/src/napi
   ${CWD}/src/deps
   ${CWD}/src/deps/picohttpparser
-  ${WEBKIT_INCLUDE_DIR}
   ${CODEGEN_PATH}
 )
 
@@ -669,8 +668,9 @@ else()
   endif()
 endif()
 
+target_include_directories(${bun} PRIVATE ${WEBKIT_INCLUDE_PATH})
 if(WEBKIT_PREBUILT AND NOT APPLE)
-  target_include_directories(${bun} PRIVATE ${WEBKIT_PATH}/include/wtf/unicode)
+  target_include_directories(${bun} PRIVATE ${WEBKIT_INCLUDE_PATH}/wtf/unicode)
 endif()
 
 # --- Dependencies ---

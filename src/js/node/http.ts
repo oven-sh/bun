@@ -1249,6 +1249,9 @@ ServerResponse.prototype._implicitHeader = function () {
 };
 
 function flushFirstWrite(self) {
+  // already finished
+  if (self[finishedSymbol]) return;
+  // already flushed
   const thisController = self[controllerSymbol];
   if (thisController) return;
   self.headersSent = true;

@@ -368,11 +368,10 @@ const methods = [
   [Unzip, false, createZlibDecoder],
   [BrotliDecompress, false, createBrotliDecoder],
   [BrotliCompress, true, createBrotliEncoder],
-];
+] as const;
 
 function createConvenienceMethod(method: number, is_sync: boolean) {
-  const [pub_constructor, is_encoder, private_constructor] = methods[method];
-  const name = pub_constructor.name;
+  const [, , private_constructor] = methods[method];
 
   switch (is_sync) {
     case false:
@@ -398,23 +397,14 @@ function createConvenienceMethod(method: number, is_sync: boolean) {
 }
 
 function createCreator(method: number) {
+  const Constructor = methods[method][0];
   return function (opts) {
-    return new methods[method][0](opts);
+    return new Constructor(opts);
   };
 }
 
-const zlib = {
+const functions = {
   crc32: $newZigFunction("node_zlib_binding.zig", "crc32", 1),
-
-  Deflate,
-  Inflate,
-  Gzip,
-  Gunzip,
-  DeflateRaw,
-  InflateRaw,
-  Unzip,
-  BrotliCompress,
-  BrotliDecompress,
 
   deflate: createConvenienceMethod(DEFLATE, false),
   deflateSync: createConvenienceMethod(DEFLATE, true),
@@ -444,6 +434,25 @@ const zlib = {
   createUnzip: createCreator(UNZIP),
   createBrotliCompress: createCreator(BROTLI_ENCODE),
   createBrotliDecompress: createCreator(BROTLI_DECODE),
+};
+for (const f in functions) {
+  Object.defineProperty(functions[f], "name", {
+    value: f,
+  });
+}
+
+const zlib = {
+  Deflate,
+  Inflate,
+  Gzip,
+  Gunzip,
+  DeflateRaw,
+  InflateRaw,
+  Unzip,
+  BrotliCompress,
+  BrotliDecompress,
+
+  ...functions,
 };
 Object.defineProperty(zlib, "constants", {
   writable: false,

@@ -35,9 +35,7 @@ steps:
       - key: "darwin-aarch64-build-zig"
         label: ":darwin: aarch64 - build-zig"
         agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "aarch64"
+          queue: "build-zig"
         command:
           - "bun run build:ci --target bun-zig --toolchain darwin-aarch64"
 
@@ -139,9 +137,7 @@ steps:
       - key: "darwin-x64-build-zig"
         label: ":darwin: x64 - build-zig"
         agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "aarch64"
+          queue: "build-zig"
         command:
           - "bun run build:ci --target bun-zig --toolchain darwin-x64"
 
@@ -243,9 +239,7 @@ steps:
       - key: "linux-x64-build-zig"
         label: ":linux: x64 - build-zig"
         agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "aarch64"
+          queue: "build-zig"
         command:
           - "bun run build:ci --target bun-zig --toolchain linux-x64"
 
@@ -381,9 +375,7 @@ steps:
       - key: "linux-x64-baseline-build-zig"
         label: ":linux: x64-baseline - build-zig"
         agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "aarch64"
+          queue: "build-zig"
         env:
           ENABLE_BASELINE: "ON"
         command:
@@ -519,9 +511,7 @@ steps:
       - key: "linux-aarch64-build-zig"
         label: ":linux: aarch64 - build-zig"
         agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "aarch64"
+          queue: "build-zig"
         command:
           - "bun run build:ci --target bun-zig --toolchain linux-aarch64"
 
@@ -662,9 +652,7 @@ steps:
       - key: "windows-x64-build-zig"
         label: ":windows: x64 - build-zig"
         agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "aarch64"
+          queue: "build-zig"
         command:
           - "bun run build:ci --target bun-zig --toolchain windows-x64"
 
@@ -750,9 +738,7 @@ steps:
       - key: "windows-x64-baseline-build-zig"
         label: ":windows: x64-baseline - build-zig"
         agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "aarch64"
+          queue: "build-zig"
         env:
           ENABLE_BASELINE: "ON"
         command:

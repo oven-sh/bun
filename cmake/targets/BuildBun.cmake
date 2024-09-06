@@ -775,7 +775,7 @@ if(NOT BUN_CPP_ONLY)
           ${BUN_FEATURES_SCRIPT}
       CWD
         ${BUILD_PATH}
-      OUTPUTS
+      ARTIFACTS
         ${BUILD_PATH}/features.json
     )
   endif()
@@ -810,6 +810,12 @@ if(NOT BUN_CPP_ONLY)
       set(bunTriplet bun-${OS}-${ARCH})
     endif()
     string(REPLACE bun ${bunTriplet} bunPath ${bun})
+    set(bunFiles ${bunExe} features.json)
+    if(WIN32)
+      list(APPEND bunFiles ${bun}.pdb)
+    elseif(APPLE)
+      list(APPEND bunFiles ${bun}.dSYM)
+    endif()
     register_command(
       TARGET
         ${bun}
@@ -820,7 +826,7 @@ if(NOT BUN_CPP_ONLY)
       COMMAND
         ${CMAKE_COMMAND} -E rm -rf ${bunPath} ${bunPath}.zip
         && ${CMAKE_COMMAND} -E make_directory ${bunPath}
-        && ${CMAKE_COMMAND} -E copy ${bunExe} ${bunPath}
+        && ${CMAKE_COMMAND} -E copy ${bunFiles} ${bunPath}
         && ${CMAKE_COMMAND} -E tar cfv ${bunPath}.zip --format=zip ${bunPath}
         && ${CMAKE_COMMAND} -E rm -rf ${bunPath}
       CWD

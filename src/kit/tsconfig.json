@@ -14,5 +14,5 @@
     "skipLibCheck": true,
     "jsx": "react-jsx",
   },
-  "include": ["*.ts"]
+  "include": ["./hmr-runtime-types.d.ts", "*.ts"]
 }

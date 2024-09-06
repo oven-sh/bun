@@ -1,5 +1,5 @@
-import { join } from 'node:path';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { join, basename } from 'node:path';
+import { writeFileSync } from 'node:fs';
 import assert from 'node:assert';
 
 // arg parsing
@@ -18,37 +18,49 @@ let { codegen_root, debug } = options as any;
 if (!codegen_root) {console.error('Missing --codegen_root=...'); process.exit(1);}
 if (debug === 'false' || debug === '0') debug = false;
 
-// The goal is to make the bundler emit an IIFE
-// with the following structure:
-//
-//   ((input_graph, entry_point_key) => {
-//     ... runtime code ...
-//   })([
-//     "module1.ts"(require, module) { ... },
-//     "module2.ts"(require, module) { ... },
-//   ], "module1.ts");
-//
-// Where the runtime code in ./runtime.ts controls loading modules, hot module
-// reloading, and displaying errors in browser. To make that code easier to
-// write, the `graph` is abstracted as a "global" variable instead of a
-// parameter.
 const kit_dir = join(import.meta.dirname, '../kit');
-
 process.chdir(kit_dir); // to make bun build predictable in development
 
-const runtime_source = readFileSync(join(kit_dir, 'runtime.ts'));
-const combined_source = `__marker__; let input_graph, entry_point_key; __marker__(input_graph, entry_point_key); ${runtime_source};`;
-const generated_entrypoint = join(kit_dir, ".runtime-entry.generated.ts");
-
-writeFileSync(generated_entrypoint, combined_source);
-
 const results = await Promise.allSettled(['client', 'server'].map(async mode => {
-  const result = await Bun.build({
-    entrypoints: [generated_entrypoint],
+  let result = await Bun.build({
+    entrypoints: [join(kit_dir, 'hmr-runtime.ts')],
     define: {
       mode: JSON.stringify(mode),
       IS_BUN_DEVELOPMENT: String(!!debug),
     },
+    minify: {
+      syntax: true,
+    }
+  });
+  if(!result.success) throw new AggregateError(result.logs);
+  assert(result.outputs.length === 1, 'must bundle to a single file');
+  // @ts-ignore
+  let code = await result.outputs[0].text();
+
+  // A second pass is used to convert global variables into parameters, while
+  // allowing for renaming to properly function when minification is enabled.
+  const in_names = [
+    'input_graph',
+    'config',
+    mode === 'server' && 'server_fetch_function'
+  ].filter(Boolean);
+  const combined_source = `
+    __marker__;
+    let ${in_names.join(',')};
+    __marker__(${in_names.join(',')});
+    ${code};
+  `;
+  const generated_entrypoint = join(kit_dir, `.runtime-${mode}.generated.ts`);
+  
+  writeFileSync(generated_entrypoint, combined_source);
+  using _ = {[Symbol.dispose] : () => {
+    try {
+      rmSync(generated_entrypoint);
+    } catch {}
+  }};
+
+  result = await Bun.build({
+    entrypoints: [generated_entrypoint],
     minify: {
       syntax: true,
       whitespace: !debug,
@@ -58,7 +70,7 @@ const results = await Promise.allSettled(['client', 'server'].map(async mode => 
   if(!result.success) throw new AggregateError(result.logs);
   assert(result.outputs.length === 1, 'must bundle to a single file');
   // @ts-ignore
-  let code = await result.outputs[0].text();
+  code = await result.outputs[0].text();
   
   let names: string = '';
   code = code
@@ -66,7 +78,7 @@ const results = await Promise.allSettled(['client', 'server'].map(async mode => 
       names = captured;
       return n;
     })
-    .replace('// .runtime-entry.generated.ts', '')
+    .replace(`// ${basename(generated_entrypoint)}`, '')
     .trim();
   assert(names, 'missing name');
 
@@ -76,9 +88,20 @@ const results = await Promise.allSettled(['client', 'server'].map(async mode => 
 
   if (code[code.length - 1] === ';') code = code.slice(0, -1);
 
+  if (mode === 'server') {
+    const server_fetch_function = names.split(',')[2].trim();
+    code = debug
+      ? `${code}  return ${server_fetch_function};\n`
+      : `${code};return ${server_fetch_function};`
+  }
+
   code = debug
     ? `((${names}) => {${code}})({\n`
     : `((${names})=>{${code}})({`;
+
+  if (mode === 'server') {
+    code = `export default await ${code}`;
+  }
 
   writeFileSync(join(codegen_root, `kit.${mode}.js`), code);
 }));
@@ -119,7 +142,8 @@ if(failed.length > 0) {
     }
     console.error(err);
   }
+  process.exit(1);
 } else {
   console.log('-> kit.client.js, kit.server.js');
-  writeFileSync(join(codegen_root, 'kit_empty_file'), 'this is used to fufill a cmake dependency');
+  writeFileSync(join(codegen_root, 'kit_empty_file'), 'this is used to fulfill a cmake dependency');
 }

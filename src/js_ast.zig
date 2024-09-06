@@ -505,8 +505,10 @@ pub const B = union(Binding.Tag) {
     };
 
     pub const Object = struct {
-        properties: []Property,
+        properties: []B.Property,
         is_single_line: bool = false,
+
+        pub const Property = B.Property;
     };
 
     pub const Array = struct {

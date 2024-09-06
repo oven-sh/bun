@@ -10,6 +10,7 @@ pub const Options = struct {
     routes: []Route,
     listen_config: uws.AppListenConfig = .{ .port = 3000 },
     dump_sources: ?[]const u8 = if (Environment.isDebug) ".kit-debug" else null,
+    // TODO: make it possible to inherit a js VM
 };
 
 /// Accepting a custom allocator for all of DevServer would be misleading
@@ -567,6 +568,7 @@ pub const BundleTask = struct {
             .output_dir = "", // this disables filesystem output
             .output_format = .internal_kit_dev,
             .out_extensions = bun.StringHashMap([]const u8).init(bundler.allocator),
+            .react_fast_refresh = task.kind == .client,
 
             .public_path = switch (task.kind) {
                 .client => task.route.clientPublicPath(),
@@ -583,6 +585,8 @@ pub const BundleTask = struct {
                 // For uniformity
                 .server => "server.[ext]",
             },
+            .tree_shaking = false,
+            .minify_syntax = true,
 
             // unused by all code
             .resolve_mode = .dev,
@@ -632,14 +636,6 @@ fn BundlePromise(T: type) type {
         pending: *BundleTask,
         failed: Failure,
         value: T,
-
-        pub fn deinit(r: T) void {
-            switch (r) {
-                .unqueued, .failed => {},
-                .pending => @panic("TODO"),
-                .value => |v| v.deinit(),
-            }
-        }
     };
 }
 
@@ -779,7 +775,7 @@ fn dumpBundle(dump_dir: std.fs.Dir, route: *Route, kind: BundleKind, files: []Ou
 
 /// Kit uses a special global object extending Zig::GlobalObject
 pub const DevGlobalObject = opaque {
-    /// Safe down-cast to use other Bun APIs
+    /// Safe downcast to use other Bun APIs
     pub fn js(ptr: *DevGlobalObject) *JSC.JSGlobalObject {
         return @ptrCast(ptr);
     }

@@ -4197,7 +4197,7 @@ pub const Parser = struct {
         }
 
         if (p.react_refresh.register_used or p.react_refresh.signature_used) {
-            try p.generateReactRefreshImport(&after);
+            try p.generateReactRefreshImport(&before);
         }
 
         var parts_slice: []js_ast.Part = &([_]js_ast.Part{});
@@ -6077,8 +6077,9 @@ fn NewParser_(
             var import_records = try allocator.alloc(@TypeOf(import_record_i), 1);
             import_records[0] = import_record_i;
 
-            // Append a single import to the end of the file (ES6 imports are hoisted
-            // so we don't need to worry about where the import statement goes)
+            // This import is placed in a part before the main code, however
+            // the bundler ends up re-ordering this to be after... The order
+            // does not matter as ESM imports are always hoisted.
             parts.append(js_ast.Part{
                 .stmts = stmts,
                 .declared_symbols = declared_symbols,
@@ -6088,14 +6089,26 @@ fn NewParser_(
         }
 
         pub fn generateReactRefreshImport(p: *P, parts: *ListManaged(js_ast.Part)) !void {
-            const allocator = p.allocator;
-            const import_record_i = p.addImportRecordByRange(.stmt, logger.Range.None, "react-refresh/runtime");
+            switch (p.options.features.hot_module_reloading) {
+                inline else => |hmr| try p.generateReactRefreshImportHmr(parts, hmr),
+            }
+        }
 
-            var clause_items = try List(js_ast.ClauseItem).initCapacity(
+        fn generateReactRefreshImportHmr(p: *P, parts: *ListManaged(js_ast.Part), comptime hot_module_reloading: bool) !void {
+            // If `hot_module_reloading`, we are going to generate `const { $RefreshSig$, $RefreshReg$ } = require("")`
+            // otherwise we are going to settle on an import statement. Using require is fine because `react-refresh` itself
+            // is already a CommonJS module.
+            const allocator = p.allocator;
+            const import_record_index = p.addImportRecordByRange(.stmt, logger.Range.None, "react-refresh/runtime");
+
+            const Item = if (hot_module_reloading) B.Object.Property else js_ast.ClauseItem;
+
+            var items = try List(Item).initCapacity(
                 allocator,
                 @as(usize, @intFromBool(p.react_refresh.register_used)) +
                     @as(usize, @intFromBool(p.react_refresh.signature_used)),
             );
+
             const stmts = try allocator.alloc(Stmt, 1);
             var declared_symbols = DeclaredSymbol.List{};
             try declared_symbols.ensureTotalCapacity(allocator, 3);
@@ -6107,8 +6120,7 @@ fn NewParser_(
             });
             try p.module_scope.generated.push(allocator, namespace_ref);
 
-            const Entry = struct { name: []const u8, enabled: bool, ref: Ref };
-            for ([2]Entry{
+            inline for (.{
                 .{
                     .name = "register",
                     .enabled = p.react_refresh.register_used,
@@ -6120,37 +6132,52 @@ fn NewParser_(
                     .ref = p.react_refresh.create_signature_ref,
                 },
             }) |entry| {
-                if (!entry.enabled) continue;
-                clause_items.appendAssumeCapacity(.{
-                    .alias = entry.name,
-                    .original_name = entry.name,
-                    .alias_loc = logger.Loc{},
-                    .name = LocRef{ .ref = entry.ref, .loc = logger.Loc{} },
-                });
-                declared_symbols.appendAssumeCapacity(.{ .ref = entry.ref, .is_top_level = true });
-                try p.module_scope.generated.push(allocator, entry.ref);
-                try p.is_import_item.put(allocator, entry.ref, {});
-                try p.named_imports.put(entry.ref, .{
-                    .alias = entry.name,
-                    .alias_loc = logger.Loc.Empty,
-                    .namespace_ref = namespace_ref,
-                    .import_record_index = import_record_i,
-                });
+                if (entry.enabled) {
+                    items.appendAssumeCapacity(if (hot_module_reloading) .{
+                        .key = p.newExpr(E.String{ .data = entry.name }, logger.Loc.Empty),
+                        .value = p.b(B.Identifier{ .ref = entry.ref }, logger.Loc.Empty),
+                    } else .{
+                        .alias = entry.name,
+                        .original_name = entry.name,
+                        .alias_loc = logger.Loc{},
+                        .name = LocRef{ .ref = entry.ref, .loc = logger.Loc{} },
+                    });
+                    declared_symbols.appendAssumeCapacity(.{ .ref = entry.ref, .is_top_level = true });
+                    try p.module_scope.generated.push(allocator, entry.ref);
+                    try p.is_import_item.put(allocator, entry.ref, {});
+                    try p.named_imports.put(entry.ref, .{
+                        .alias = entry.name,
+                        .alias_loc = logger.Loc.Empty,
+                        .namespace_ref = namespace_ref,
+                        .import_record_index = import_record_index,
+                    });
+                }
             }
 
-            stmts[0] = p.s(S.Import{
-                .namespace_ref = namespace_ref,
-                .items = clause_items.items,
-                .import_record_index = import_record_i,
-                .is_single_line = false,
-            }, logger.Loc.Empty);
+            stmts[0] = p.s(if (hot_module_reloading)
+                S.Local{
+                    .kind = .k_const,
+                    .decls = try Decl.List.fromSlice(p.allocator, &.{.{
+                        .binding = p.b(B.Object{
+                            .properties = items.items,
+                        }, logger.Loc.Empty),
+                        .value = p.newExpr(E.RequireString{
+                            .import_record_index = import_record_index,
+                        }, logger.Loc.Empty),
+                    }}),
+                }
+            else
+                S.Import{
+                    .namespace_ref = namespace_ref,
+                    .items = items.items,
+                    .import_record_index = import_record_index,
+                    .is_single_line = false,
+                }, logger.Loc.Empty);
 
-            // Append a single import to the end of the file (ES6 imports are hoisted
-            // so we don't need to worry about where the import statement goes)
             try parts.append(.{
                 .stmts = stmts,
                 .declared_symbols = declared_symbols,
-                .import_record_indices = try bun.BabyList(u32).fromSlice(allocator, &.{import_record_i}),
+                .import_record_indices = try bun.BabyList(u32).fromSlice(allocator, &.{import_record_index}),
                 .tag = .runtime,
             });
         }
@@ -17641,7 +17668,6 @@ fn NewParser_(
                 },
                 .e_new => |e_| {
                     e_.target = p.visitExpr(e_.target);
-                    // p.warnA
 
                     for (e_.args.slice()) |*arg| {
                         arg.* = p.visitExpr(arg.*);

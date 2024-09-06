@@ -1017,10 +1017,6 @@ fn NewPrinter(
             }
         }
 
-        pub inline fn unsafePrint(p: *Printer, str: string) void {
-            p.print(str);
-        }
-
         pub inline fn unindent(p: *Printer) void {
             p.options.indent.count -|= 1;
         }
@@ -2046,13 +2042,8 @@ fn NewPrinter(
                     p.printSymbol(p.options.commonjs_module_ref);
                     p.print(".require(");
                     {
-                        var e = E.String{
-                            .data = p.options.input_files_for_kit.?[record.source_index.get()].path.pretty,
-                        };
-                        const c = bestQuoteCharForEString(&e, true);
-                        p.print(c);
-                        p.printStringContent(&e, c);
-                        p.print(c);
+                        const path = p.options.input_files_for_kit.?[record.source_index.get()].path;
+                        p.printInlinedEnum(.{ .number = @floatFromInt(path.hashForKit()) }, path.pretty, level);
                     }
                     p.print(")");
                 } else if (!meta.was_unwrapped_require) {
@@ -6441,13 +6432,8 @@ pub fn printWithWriterAndPlatform(
     if (opts.module_type == .internal_kit_dev) {
         printer.indent();
         printer.printIndent();
-        var str = E.String{ .data = source.path.pretty };
-        printer.printExpr(.{
-            .data = .{
-                .e_string = &str,
-            },
-            .loc = logger.Loc.Empty,
-        }, .comma, .{});
+        printer.fmt("{d}", .{source.path.hashForKit()}) catch bun.outOfMemory();
+        printer.print(": function");
         printer.printFunc(parts[0].stmts[0].data.s_expr.value.data.e_function.func);
         printer.print(",\n");
     } else {

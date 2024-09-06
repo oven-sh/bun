@@ -2993,7 +2993,8 @@ pub const ParseTask = struct {
         opts.features.emit_decorator_metadata = bundler.options.emit_decorator_metadata;
         opts.features.unwrap_commonjs_packages = bundler.options.unwrap_commonjs_packages;
         opts.features.hot_module_reloading = bundler.options.output_format == .internal_kit_dev and !source.index.isRuntime();
-        opts.features.react_fast_refresh = (bundler.options.hot_module_reloading or bundler.options.react_fast_refresh) and loader.isJSX();
+        opts.features.react_fast_refresh = (bundler.options.hot_module_reloading or bundler.options.react_fast_refresh) and
+            loader.isJSX() and !source.path.isNodeModule();
 
         opts.ignore_dce_annotations = bundler.options.ignore_dce_annotations and !source.index.isRuntime();
 
@@ -7090,8 +7091,7 @@ pub const LinkerContext = struct {
         compile_results_for_source_map.setCapacity(worker.allocator, compile_results.len) catch bun.outOfMemory();
 
         const show_comments = c.options.mode == .bundle and
-            !c.options.minify_whitespace and
-            c.options.output_format != .internal_kit_dev; // includes every filename already
+            !c.options.minify_whitespace;
 
         const sources: []const Logger.Source = c.parse_graph.input_files.items(.source);
         for (compile_results) |compile_result| {
@@ -7213,20 +7213,26 @@ pub const LinkerContext = struct {
             },
             .internal_kit_dev => {
                 {
-                    const str = "}, ";
+                    const str = "}, {\n  main: ";
                     j.pushStatic(str);
                     line_offset.advance(str);
                 }
                 {
-                    const input = c.parse_graph.input_files.items(.source)[chunk.entry_point.source_index].path.pretty;
-                    var buf = MutableString.initEmpty(c.allocator);
-                    js_printer.quoteForJSONBuffer(input, &buf, true) catch bun.outOfMemory();
-                    const str = buf.toOwnedSliceLeaky(); // c.allocator is an arena
+                    const input = c.parse_graph.input_files.items(.source)[chunk.entry_point.source_index].path;
+                    // var buf = MutableString.initEmpty(c.allocator);
+                    // js_printer.quoteForJSONBuffer(input.pretty, &buf, true) catch bun.outOfMemory();
+                    // const str = buf.toOwnedSliceLeaky(); // c.allocator is an arena
+                    const str = try std.fmt.allocPrint(c.allocator, "{d}", .{input.hashForKit()});
                     j.pushStatic(str);
                     line_offset.advance(str);
                 }
+                // {
+                //     const str = "\n  react_refresh: ";
+                //     j.pushStatic(str);
+                //     line_offset.advance(str);
+                // }
                 {
-                    const str = ");";
+                    const str = "\n});";
                     j.pushStatic(str);
                     line_offset.advance(str);
                 }
@@ -8693,7 +8699,6 @@ pub const LinkerContext = struct {
         allocator: std.mem.Allocator,
         ast: *const JSAst,
     ) !void {
-        _ = c; // autofix
         _ = source_index; // autofix
 
         const receiver_args = try allocator.dupe(G.Arg, &.{
@@ -8725,13 +8730,17 @@ pub const LinkerContext = struct {
                     // pretty path is not yet known. the other statement types
                     // are not handled here because some of those generate
                     // new local variables (it is too late to do that here).
-                    //
-                    // TODO: attempt to batch some of these allocs together
                     const record = ast.import_records.at(st.import_record_index);
+                    const path = c.parse_graph.input_files.items(.source)[record.source_index.get()].path;
 
                     const is_bare_import = st.star_name_loc == null and st.items.len == 0 and st.default_name == null;
 
-                    const path_string = Expr.init(E.String, .{ .data = record.path.pretty }, stmt.loc);
+                    const key_expr = Expr.init(E.InlinedEnum, .{
+                        .comment = path.pretty,
+                        .value = Expr.init(E.Number, .{
+                            .value = @floatFromInt(path.hashForKit()),
+                        }, stmt.loc),
+                    }, stmt.loc);
 
                     // module.importSync('path', (module) => ns = module)
                     const call = Expr.init(E.Call, .{
@@ -8742,10 +8751,10 @@ pub const LinkerContext = struct {
                         }, stmt.loc),
                         .args = js_ast.ExprNodeList.init(
                             try allocator.dupe(Expr, if (is_bare_import)
-                                &.{path_string}
+                                &.{key_expr}
                             else
                                 &.{
-                                    path_string,
+                                    key_expr,
                                     Expr.init(E.Arrow, .{
                                         .args = receiver_args,
                                         .body = .{
@@ -8766,21 +8775,20 @@ pub const LinkerContext = struct {
                     if (is_bare_import) {
                         // the import value is never read
                         try stmts.inside_wrapper_prefix.append(Stmt.alloc(S.SExpr, .{ .value = call }, stmt.loc));
-                        continue;
+                    } else {
+                        // 'let namespace = module.importSync(...)'
+                        try stmts.inside_wrapper_prefix.append(Stmt.alloc(S.Local, .{
+                            .kind = .k_let,
+                            .decls = try G.Decl.List.fromSlice(allocator, &.{.{
+                                .binding = Binding.alloc(
+                                    allocator,
+                                    B.Identifier{ .ref = st.namespace_ref },
+                                    st.star_name_loc orelse stmt.loc,
+                                ),
+                                .value = call,
+                            }}),
+                        }, stmt.loc));
                     }
-
-                    // 'let namespace = module.importSync(...)'
-                    try stmts.inside_wrapper_prefix.append(Stmt.alloc(S.Local, .{
-                        .kind = .k_let,
-                        .decls = try G.Decl.List.fromSlice(allocator, &.{.{
-                            .binding = Binding.alloc(
-                                allocator,
-                                B.Identifier{ .ref = st.namespace_ref },
-                                st.star_name_loc orelse stmt.loc,
-                            ),
-                            .value = call,
-                        }}),
-                    }, stmt.loc));
 
                     continue;
                 },

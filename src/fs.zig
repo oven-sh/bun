@@ -1652,7 +1652,7 @@ pub const Path = struct {
         return hasher.final();
     }
 
-    pub fn hashForKit(path: Path) u32 {
+    pub fn hashForKit(path: Path) u52 {
         return @truncate(path.hashKey());
     }
 

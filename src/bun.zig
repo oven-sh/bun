@@ -3246,10 +3246,6 @@ pub fn runtimeEmbedFile(
     comptime assert(Environment.isDebug);
     comptime assert(!Environment.embed_code);
 
-    const static = struct {
-        var storage: ?[]const u8 = null;
-    };
-
     const abs_path = comptime path: {
         var buf: bun.PathBuffer = undefined;
         var fba = std.heap.FixedBufferAllocator.init(&buf);
@@ -3264,19 +3260,26 @@ pub fn runtimeEmbedFile(
         break :path &resolved;
     };
 
-    return static.storage orelse {
-        const contents = std.fs.cwd().readFileAlloc(default_allocator, abs_path, std.math.maxInt(usize)) catch |e| {
-            Output.panic(
-                \\Failed to load '{s}': {}
-                \\
-                \\To improve iteration speed, some files are not embedded but
-                \\loaded at runtime, at the cost of making the binary non-portable.
-                \\To fix this, pass -DFORCE_EMBED_CODE=1 to CMake
-            , .{ abs_path, e });
-        };
-        static.storage = contents;
-        return contents;
+    const static = struct {
+        var storage: []const u8 = undefined;
+        var once = std.once(load);
+
+        fn load() void {
+            storage = std.fs.cwd().readFileAlloc(default_allocator, abs_path, std.math.maxInt(usize)) catch |e| {
+                Output.panic(
+                    \\Failed to load '{s}': {}
+                    \\
+                    \\To improve iteration speed, some files are not embedded but
+                    \\loaded at runtime, at the cost of making the binary non-portable.
+                    \\To fix this, pass -DFORCE_EMBED_CODE=1 to CMake
+                , .{ abs_path, e });
+            };
+        }
     };
+
+    static.once.call();
+
+    return static.storage;
 }
 
 pub inline fn markWindowsOnly() if (Environment.isWindows) void else noreturn {

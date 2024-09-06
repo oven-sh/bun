@@ -28,6 +28,10 @@ const {
 } = $zig("node_crypto_binding.zig", "NodeCrypto.create");
 
 function hkdfSync(digest, ikm, salt, info, keylen) {
+  if (ikm instanceof KeyObject) {
+    ikm = ikm.export();
+  }
+
   return _hkdfSync(digest, ikm, salt, info, keylen).buffer;
 }
 

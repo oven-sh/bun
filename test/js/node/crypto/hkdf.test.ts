@@ -79,7 +79,9 @@ test("rejects excessive key size", () => {
 });
 
 test("trivial", async () => {
-  let outSync = crypto.hkdfSync("sha512", "key", "salt", "info", 64);
+  const key = crypto.createSecretKey("key");
+
+  let outSync = crypto.hkdfSync("sha512", key, "salt", "info", 64);
 
   const { promise, resolve } = Promise.withResolvers();
 

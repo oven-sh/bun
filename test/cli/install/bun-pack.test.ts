@@ -516,9 +516,9 @@ tarball: \${fs.existsSync("pack-lifecycle-order-1.1.1.tgz")}\`)`;
   ]);
 });
 
-for (const bundledDependencies of ["bundledDependencies", "bundleDependencies"]) {
-  describe(bundledDependencies, () => {
-    test("basic", async () => {
+describe("bundledDependnecies", () => {
+  for (const bundledDependencies of ["bundledDependencies", "bundleDependencies"]) {
+    test(`basic (${bundledDependencies})`, async () => {
       await Promise.all([
         write(
           join(packageDir, "package.json"),
@@ -531,11 +531,159 @@ for (const bundledDependencies of ["bundledDependencies", "bundleDependencies"])
             [bundledDependencies]: ["dep1"],
           }),
         ),
-        write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
+        write(
+          join(packageDir, "node_modules", "dep1", "package.json"),
+          JSON.stringify({
+            name: "dep1",
+            version: "1.1.1",
+          }),
+        ),
+      ]);
+
+      await pack(packageDir, bunEnv);
+
+      const tarball = readTarball(join(packageDir, "pack-bundled-4.4.4.tgz"));
+      expect(tarball.entries).toMatchObject([
+        { "pathname": "package/package.json" },
+        { "pathname": "package/node_modules/dep1/package.json" },
       ]);
     });
+  }
+
+  test("resolve dep of bundled dep", async () => {
+    // Test that a bundled dep can have it's dependencies resolved without
+    // needing to add them to `bundledDependencies`. Also test that only
+    // the bundled deps are included, the other files in node_modules are excluded.
+
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-resolved-bundled-dep",
+          version: "5.5.5",
+          dependencies: {
+            dep1: "1.1.1",
+          },
+          bundledDependencies: ["dep1"],
+        }),
+      ),
+      write(
+        join(packageDir, "node_modules", "dep1", "package.json"),
+        JSON.stringify({
+          name: "dep1",
+          version: "1.1.1",
+          dependencies: {
+            dep2: "2.2.2",
+            dep3: "3.3.3",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "node_modules", "dep2", "package.json"),
+        JSON.stringify({
+          name: "dep2",
+          version: "2.2.2",
+        }),
+      ),
+      write(join(packageDir, "node_modules", "dep1", "node_modules", "excluded.txt"), "do not add to tarball!"),
+      write(
+        join(packageDir, "node_modules", "dep1", "node_modules", "dep3", "package.json"),
+        JSON.stringify({
+          name: "dep3",
+          version: "3.3.3",
+        }),
+      ),
+    ]);
+
+    const { out } = await pack(packageDir, bunEnv);
+    expect(out).toContain("Total files: 4");
+    expect(out).toContain("Bundled deps: 3");
+
+    const tarball = readTarball(join(packageDir, "pack-resolved-bundled-dep-5.5.5.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { "pathname": "package/package.json" },
+      { "pathname": "package/node_modules/dep1/node_modules/dep3/package.json" },
+      { "pathname": "package/node_modules/dep1/package.json" },
+      { "pathname": "package/node_modules/dep2/package.json" },
+    ]);
   });
-}
+
+  test.todo("scoped names", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-resolve-scoped",
+          version: "6.6.6",
+          dependencies: {
+            "@scoped/dep1": "1.1.1",
+          },
+          bundledDependencies: ["@scoped/dep1"],
+        }),
+      ),
+      write(
+        join(packageDir, "node_modules", "@scoped", "dep1", "package.json"),
+        JSON.stringify({
+          name: "@scoped/dep1",
+          version: "1.1.1",
+          dependencies: {
+            "@scoped/dep2": "2.2.2",
+            "@scoped/dep3": "3.3.3",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "node_modules", "@scoped", "dep2", "package.json"),
+        JSON.stringify({
+          name: "@scoped/dep2",
+          version: "2.2.2",
+        }),
+      ),
+      write(
+        join(packageDir, "node_modules", "@scoped", "dep1", "node_modules", "@scoped", "dep3", "package.json"),
+        JSON.stringify({
+          name: "@scoped/dep3",
+          version: "3.3.3",
+        }),
+      ),
+    ]);
+
+    const { out } = await pack(packageDir, bunEnv);
+    expect(out).toContain("Total files: 4");
+    expect(out).toContain("Bundled deps: 3");
+
+    const tarball = readTarball(join(packageDir, "pack-resolve-scoped-6.6.6.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { "pathname": "package/package.json" },
+      { "pathname": "package/node_modules/@scoped/dep1/node_modules/@scoped/dep3/package.json" },
+      { "pathname": "package/node_modules/@scoped/dep1/package.json" },
+      { "pathname": "package/node_modules/@scoped/dep2/package.json" },
+    ]);
+  });
+
+  test("ignore deps that aren't directories", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-bundled-dep-not-dir",
+          version: "4.5.6",
+          dependencies: {
+            dep1: "1.1.1",
+          },
+        }),
+      ),
+      write(join(packageDir, "node_modules", "dep1"), "hi. this is a file, not a directory"),
+    ]);
+
+    const { out } = await pack(packageDir, bunEnv);
+    expect(out).toContain("Total files: 1");
+    expect(out).not.toContain("Bundled deps");
+
+    const tarball = readTarball(join(packageDir, "pack-bundled-dep-not-dir-4.5.6.tgz"));
+    expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }]);
+  });
+});
 
 test("unicode", async () => {
   await Promise.all([

@@ -30,7 +30,7 @@ cmake $CMAKE_FLAGS \
   -DENABLE_PCREPOSIX=0 \
   -DENABLE_TEST=0 \
   -DENABLE_WERROR=0 \
-  -DENABLE_ZLIB=0 \
+  -DENABLE_ZLIB=1 \
   -DENABLE_ZSTD=0 \
   -GNinja \
   -B . -S ..

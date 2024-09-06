@@ -649,10 +649,16 @@ target_compile_definitions(${bun} PRIVATE
   NOMINMAX
   IS_BUILD
   BUILDING_JSCONLY__
-  BUN_DYNAMIC_JS_LOAD_PATH=\"${BUILD_PATH}/js\"
   REPORTED_NODEJS_VERSION=\"${NODEJS_VERSION}\"
   REPORTED_NODEJS_ABI_VERSION=${NODEJS_ABI_VERSION}
 )
+
+if(DEBUG AND NOT CI)
+  target_compile_definitions(${bun} PRIVATE
+    BUN_DYNAMIC_JS_LOAD_PATH=\"${BUILD_PATH}/js\"
+  )
+endif()
+
 
 # --- Compile flags ---
 
@@ -679,24 +685,78 @@ else()
   )
 endif()
 
-# --- Link flags ---
+# --- Link options ---
 
 if(WIN32)
   target_link_options(${bun} PUBLIC
     /STACK:0x1200000,0x100000
     /errorlimit:0
   )
+elseif(APPLE)
+  target_link_options(${bun} PUBLIC 
+    -dead_strip
+    -dead_strip_dylibs
+    -Wl,-stack_size,0x1200000
+    -fno-keep-static-consts
+  )
+else()
+  target_link_options(${bun} PUBLIC
+    -fuse-ld=lld-${LLVM_VERSION_MAJOR}
+    -fno-pic
+    -static-libstdc++
+    -static-libgcc
+    -Wl,-no-pie
+    -Wl,-icf=safe
+    -Wl,--as-needed
+    -Wl,--gc-sections
+    -Wl,-z,stack-size=12800000
+    -Wl,--wrap=fcntl
+    -Wl,--wrap=fcntl64
+    -Wl,--wrap=stat64
+    -Wl,--wrap=pow
+    -Wl,--wrap=exp
+    -Wl,--wrap=expf
+    -Wl,--wrap=log
+    -Wl,--wrap=log2
+    -Wl,--wrap=lstat
+    -Wl,--wrap=stat64
+    -Wl,--wrap=stat
+    -Wl,--wrap=fstat
+    -Wl,--wrap=fstatat
+    -Wl,--wrap=lstat64
+    -Wl,--wrap=fstat64
+    -Wl,--wrap=fstatat64
+    -Wl,--wrap=mknod
+    -Wl,--wrap=mknodat
+    -Wl,--wrap=statx
+    -Wl,--wrap=fmod
+    -Wl,--compress-debug-sections=zlib
+    -Wl,-z,lazy
+    -Wl,-z,norelro
+  )
 endif()
 
 # --- Symbols list ---
 
 if(WIN32)
-  target_link_options(${bun} PUBLIC /DEF:${CWD}/src/symbols.def)
+  set(BUN_SYMBOLS_PATH ${CWD}/src/symbols.def)
+  target_link_options(${bun} PUBLIC /DEF:${BUN_SYMBOLS_PATH})
 elseif(APPLE)
-
+  set(BUN_SYMBOLS_PATH ${CWD}/src/symbols.txt)
+  target_link_options(${bun} PUBLIC -exported_symbols_list ${BUN_SYMBOLS_PATH})
 else()
-
+  set(BUN_SYMBOLS_PATH ${CWD}/src/symbols.dyn)
+  set(BUN_LINKER_LDS_PATH ${CWD}/src/linker.lds)
+  target_link_options(${bun} PUBLIC
+    -Bsymbolics-functions
+    -rdynamic
+    -Wl,--dynamic-list=${BUN_SYMBOLS_PATH}
+    -Wl,--version-script=${BUN_LINKER_LDS_PATH}
+  )
+  set_target_properties(${bun} PROPERTIES LINK_DEPENDS ${BUN_LINKER_LDS_PATH})
 endif()
+
+set_target_properties(${bun} PROPERTIES LINK_DEPENDS ${BUN_SYMBOLS_PATH})
 
 # --- WebKit ---
 
@@ -731,7 +791,7 @@ endif()
 include(BuildDependencies)
 
 if(APPLE)
-  target_link_libraries(${bun} PRIVATE icucore)
+  target_link_libraries(${bun} PRIVATE icucore resolv)
 endif()
 
 if(USE_STATIC_SQLITE)
@@ -741,6 +801,8 @@ else()
 endif()
 
 if(LINUX)
+  target_link_libraries(${bun} PRIVATE c pthread dl)
+
   if(USE_STATIC_LIBATOMIC)
     target_link_libraries(${bun} PRIVATE libatomic.a)
   else()
@@ -756,6 +818,18 @@ if(LINUX)
     target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libicui18n.a)
     target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libicuuc.a)
   endif()
+endif()
+
+if(WIN32)
+  target_link_libraries(${bun} PRIVATE
+    winmm
+    bcrypt
+    ntdll
+    userenv
+    dbghelp
+    wsock32 # ws2_32 required by TransmitFile aka sendfile on windows
+    delayimp.lib
+  )
 endif()
 
 # --- Packaging ---
@@ -900,4 +974,97 @@ if(NOT BUN_CPP_ONLY)
       )
     endif()
   endif()
+endif()
+
+# --- clang and linker flags ---
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    if(NOT WIN32)
+        target_compile_options(${bun} PUBLIC
+            -Werror=return-type
+            -Werror=return-stack-address
+            -Werror=implicit-function-declaration
+            -Werror=uninitialized
+            -Werror=conditional-uninitialized
+            -Werror=suspicious-memaccess
+            -Werror=int-conversion
+            -Werror=nonnull
+            -Werror=move
+            -Werror=sometimes-uninitialized
+            -Werror=unused
+            -Wno-unused-function
+            -Wno-nullability-completeness
+            -Werror
+            -fsanitize=null
+            -fsanitize-recover=all
+            -fsanitize=bounds
+            -fsanitize=return
+            -fsanitize=nullability-arg
+            -fsanitize=nullability-assign
+            -fsanitize=nullability-return
+            -fsanitize=returns-nonnull-attribute
+            -fsanitize=unreachable
+        )
+        target_link_libraries(${bun} PRIVATE -fsanitize=null)
+    else()
+        target_compile_options(${bun} PUBLIC /Z7)
+    endif()
+elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
+    set(LTO_FLAG "")
+
+    if(NOT WIN32)
+        if(ENABLE_LTO)
+            list(APPEND LTO_FLAG "-flto=full" "-emit-llvm" "-fwhole-program-vtables" "-fforce-emit-vtables")
+        endif()
+
+        # Leave -Werror=unused off in release builds so we avoid errors from being used in ASSERT
+        target_compile_options(${bun} PUBLIC ${LTO_FLAG}
+            -Werror=return-type
+            -Werror=return-stack-address
+            -Werror=implicit-function-declaration
+            -Werror=uninitialized
+            -Werror=conditional-uninitialized
+            -Werror=suspicious-memaccess
+            -Werror=int-conversion
+            -Werror=nonnull
+            -Werror=move
+            -Werror=sometimes-uninitialized
+            -Wno-nullability-completeness
+            -Werror
+        )
+    else()
+        set(LTO_LINK_FLAG "")
+
+        if(ENABLE_LTO)
+            target_compile_options(${bun} PUBLIC -Xclang -emit-llvm-bc)
+
+            list(APPEND LTO_FLAG "-flto=full")
+            list(APPEND LTO_LINK_FLAG "-flto=full")
+            list(APPEND LTO_LINK_FLAG "/LTCG")
+            list(APPEND LTO_LINK_FLAG "/OPT:REF")
+            list(APPEND LTO_LINK_FLAG "/OPT:NOICF")
+        endif()
+
+        target_compile_options(${bun} PUBLIC
+            ${LTO_FLAG}
+            /Gy
+            /Gw
+            /GF
+            /GA
+        )
+        target_link_options(${bun} PUBLIC
+            ${LTO_LINK_FLAG}
+            /DEBUG:FULL
+
+            /delayload:ole32.dll
+            /delayload:WINMM.dll
+            /delayload:dbghelp.dll
+            /delayload:VCRUNTIME140_1.dll
+
+            # libuv loads these two immediately, but for some reason it seems to still be slightly faster to delayload them
+            /delayload:WS2_32.dll
+            /delayload:WSOCK32.dll
+            /delayload:ADVAPI32.dll
+            /delayload:IPHLPAPI.dll
+        )
+    endif()
 endif()

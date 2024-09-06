@@ -64,6 +64,49 @@ else()
   add_compile_options(-fno-rtti)
 endif()
 
+# --- CPU target (-march, -mtune, -mcpu) ---
+
+# Using -march=native can break older systems, instead use a specific CPU
+if(CPU STREQUAL "native")
+  if(ARCH STREQUAL "aarch64")
+    if(APPLE)
+      add_compile_options(-mcpu=apple-m1)
+    else()
+      add_compile_options(-march=armv8-a+crc -mtune=ampere1)
+    endif()
+  endif()
+elseif(CPU)
+  add_compile_options(-march=${CPU} -mtune=${CPU})
+else()
+  message(FATAL_ERROR "No CPU specified, please set -DCPU=<string>")
+endif()
+
+# --- Diagnostics ---
+
+if(NOT WIN32)
+  add_compile_options(-fdiagnostics-color=always)
+endif()
+
+add_compile_options(-ferror-limit=${ERROR_LIMIT})
+
+# --- Remapping ---
+
+if(NOT WIN32)
+  add_compile_options(
+    -ffile-prefix-map=${CWD}=.
+    -ffile-prefix-map=${BUILD_PATH}=build
+    -ffile-prefix-map=${CACHE_PATH}=cache
+  )
+endif()
+
+# --- Features ---
+
+# Valgrind cannot handle SSE4.2 instructions
+# This is needed for picohttpparser
+if(ENABLE_VALGRIND AND ARCH STREQUAL "x64")
+  add_compile_definitions("__SSE4_2__=0")
+endif()
+
 # --- Other ---
 
 # Workaround for CMake and clang-cl bug.
@@ -90,31 +133,10 @@ else()
   add_compile_definitions("NDEBUG=1")
 endif()
 
-if(NOT WIN32)
-  add_compile_options(-fdiagnostics-color=always)
+# WebKit uses -std=gnu++20 on non-macOS non-Windows.
+# If we do not set this, it will crash at startup on the first memory allocation.
+if(NOT WIN32 AND NOT APPLE)
+  set(CMAKE_CXX_EXTENSIONS ON)
+  set(CMAKE_POSITION_INDEPENDENT_CODE OFF)
 endif()
 
-# Using -march=native can break older systems, instead use a specific CPU
-if(CPU STREQUAL "native")
-  if(ARCH STREQUAL "aarch64")
-    if(APPLE)
-      add_compile_options(-mcpu=apple-m1)
-    else()
-      add_compile_options(-march=armv8-a+crc -mtune=ampere1)
-    endif()
-  endif()
-elseif(CPU)
-  add_compile_options(-march=${CPU} -mtune=${CPU})
-else()
-  message(FATAL_ERROR "No CPU specified, please set -DCPU=<string>")
-endif()
-
-add_compile_options(-ferror-limit=${ERROR_LIMIT})
-
-if(NOT WIN32)
-  add_compile_options(
-    -ffile-prefix-map=${CWD}=.
-    -ffile-prefix-map=${BUILD_PATH}=build
-    -ffile-prefix-map=${CACHE_PATH}=cache
-  )
-endif()

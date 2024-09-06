@@ -5817,6 +5817,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub const doReload = onReload;
         pub const doFetch = onFetch;
         pub const doRequestIP = JSC.wrapInstanceMethod(ThisServer, "requestIP", false);
+        pub const doTimeout = JSC.wrapInstanceMethod(ThisServer, "timeout", false);
 
         pub fn doSubscriberCount(this: *ThisServer, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
             const arguments = callframe.arguments(1);
@@ -5866,6 +5867,16 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 )
             else
                 JSValue.jsNull();
+        }
+
+        pub fn timeout(this: *ThisServer, request: *JSC.WebCore.Request, seconds: JSValue) JSC.JSValue {
+            if (!seconds.isNumber()) {
+                this.globalThis.throw("timeout() requires a number", .{});
+                return .zero;
+            }
+            const value = seconds.to(c_uint);
+            _ = request.request_context.setTimeout(value);
+            return JSValue.jsUndefined();
         }
 
         pub fn publish(this: *ThisServer, globalThis: *JSC.JSGlobalObject, topic: ZigString, message_value: JSValue, compress_value: ?JSValue, exception: JSC.C.ExceptionRef) JSValue {

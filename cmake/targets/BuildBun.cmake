@@ -660,13 +660,21 @@ if(DEBUG AND NOT CI)
 endif()
 
 
-# --- Compile flags ---
+# --- Compiler options ---
 
 if(WIN32)
   target_compile_options(${bun} PUBLIC
     /EHsc
     -Xclang -fno-c++-static-destructors
   )
+  if(RELEASE)
+    target_compile_options(${bun} PUBLIC
+      /Gy
+      /Gw
+      /GF
+      /GA
+    )
+  endif()
 else()
   target_compile_options(${bun} PUBLIC
     -fconstexpr-steps=2542484
@@ -683,15 +691,77 @@ else()
     -fno-pie
     -faddrsig
   )
+  if(DEBUG)
+    target_compile_options(${bun} PUBLIC
+      -Werror=return-type
+      -Werror=return-stack-address
+      -Werror=implicit-function-declaration
+      -Werror=uninitialized
+      -Werror=conditional-uninitialized
+      -Werror=suspicious-memaccess
+      -Werror=int-conversion
+      -Werror=nonnull
+      -Werror=move
+      -Werror=sometimes-uninitialized
+      -Werror=unused
+      -Wno-unused-function
+      -Wno-nullability-completeness
+      -Werror
+      -fsanitize=null
+      -fsanitize-recover=all
+      -fsanitize=bounds
+      -fsanitize=return
+      -fsanitize=nullability-arg
+      -fsanitize=nullability-assign
+      -fsanitize=nullability-return
+      -fsanitize=returns-nonnull-attribute
+      -fsanitize=unreachable
+    )
+    target_link_libraries(${bun} PRIVATE -fsanitize=null)
+  else()
+    # Leave -Werror=unused off in release builds so we avoid errors from being used in ASSERT
+    target_compile_options(${bun} PUBLIC ${LTO_FLAG}
+      -Werror=return-type
+      -Werror=return-stack-address
+      -Werror=implicit-function-declaration
+      -Werror=uninitialized
+      -Werror=conditional-uninitialized
+      -Werror=suspicious-memaccess
+      -Werror=int-conversion
+      -Werror=nonnull
+      -Werror=move
+      -Werror=sometimes-uninitialized
+      -Wno-nullability-completeness
+      -Werror
+    )
+  endif()
 endif()
 
-# --- Link options ---
+# --- Linker options ---
 
 if(WIN32)
   target_link_options(${bun} PUBLIC
     /STACK:0x1200000,0x100000
     /errorlimit:0
   )
+  if(RELEASE)
+    target_link_options(${bun} PUBLIC
+      -flto=full
+      /LTCG
+      /OPT:REF
+      /OPT:NOICF
+      /DEBUG:FULL
+      /delayload:ole32.dll
+      /delayload:WINMM.dll
+      /delayload:dbghelp.dll
+      /delayload:VCRUNTIME140_1.dll
+      # libuv loads these two immediately, but for some reason it seems to still be slightly faster to delayload them
+      /delayload:WS2_32.dll
+      /delayload:WSOCK32.dll
+      /delayload:ADVAPI32.dll
+      /delayload:IPHLPAPI.dll
+    )
+  endif()
 elseif(APPLE)
   target_link_options(${bun} PUBLIC 
     -dead_strip
@@ -734,6 +804,22 @@ else()
     -Wl,-z,lazy
     -Wl,-z,norelro
   )
+endif()
+
+# --- LTO options ---
+
+if(ENABLE_LTO)
+  if(WIN32)
+    target_link_options(${bun} PUBLIC -flto)
+    target_compile_options(${bun} PUBLIC -flto -Xclang -emit-llvm-bc)
+  else()
+    target_compile_options(${bun} PUBLIC
+      -flto=full
+      -emit-llvm
+      -fwhole-program-vtables
+      -fforce-emit-vtables
+    )
+  endif()
 endif()
 
 # --- Symbols list ---
@@ -974,97 +1060,4 @@ if(NOT BUN_CPP_ONLY)
       )
     endif()
   endif()
-endif()
-
-# --- clang and linker flags ---
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    if(NOT WIN32)
-        target_compile_options(${bun} PUBLIC
-            -Werror=return-type
-            -Werror=return-stack-address
-            -Werror=implicit-function-declaration
-            -Werror=uninitialized
-            -Werror=conditional-uninitialized
-            -Werror=suspicious-memaccess
-            -Werror=int-conversion
-            -Werror=nonnull
-            -Werror=move
-            -Werror=sometimes-uninitialized
-            -Werror=unused
-            -Wno-unused-function
-            -Wno-nullability-completeness
-            -Werror
-            -fsanitize=null
-            -fsanitize-recover=all
-            -fsanitize=bounds
-            -fsanitize=return
-            -fsanitize=nullability-arg
-            -fsanitize=nullability-assign
-            -fsanitize=nullability-return
-            -fsanitize=returns-nonnull-attribute
-            -fsanitize=unreachable
-        )
-        target_link_libraries(${bun} PRIVATE -fsanitize=null)
-    else()
-        target_compile_options(${bun} PUBLIC /Z7)
-    endif()
-elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
-    set(LTO_FLAG "")
-
-    if(NOT WIN32)
-        if(ENABLE_LTO)
-            list(APPEND LTO_FLAG "-flto=full" "-emit-llvm" "-fwhole-program-vtables" "-fforce-emit-vtables")
-        endif()
-
-        # Leave -Werror=unused off in release builds so we avoid errors from being used in ASSERT
-        target_compile_options(${bun} PUBLIC ${LTO_FLAG}
-            -Werror=return-type
-            -Werror=return-stack-address
-            -Werror=implicit-function-declaration
-            -Werror=uninitialized
-            -Werror=conditional-uninitialized
-            -Werror=suspicious-memaccess
-            -Werror=int-conversion
-            -Werror=nonnull
-            -Werror=move
-            -Werror=sometimes-uninitialized
-            -Wno-nullability-completeness
-            -Werror
-        )
-    else()
-        set(LTO_LINK_FLAG "")
-
-        if(ENABLE_LTO)
-            target_compile_options(${bun} PUBLIC -Xclang -emit-llvm-bc)
-
-            list(APPEND LTO_FLAG "-flto=full")
-            list(APPEND LTO_LINK_FLAG "-flto=full")
-            list(APPEND LTO_LINK_FLAG "/LTCG")
-            list(APPEND LTO_LINK_FLAG "/OPT:REF")
-            list(APPEND LTO_LINK_FLAG "/OPT:NOICF")
-        endif()
-
-        target_compile_options(${bun} PUBLIC
-            ${LTO_FLAG}
-            /Gy
-            /Gw
-            /GF
-            /GA
-        )
-        target_link_options(${bun} PUBLIC
-            ${LTO_LINK_FLAG}
-            /DEBUG:FULL
-
-            /delayload:ole32.dll
-            /delayload:WINMM.dll
-            /delayload:dbghelp.dll
-            /delayload:VCRUNTIME140_1.dll
-
-            # libuv loads these two immediately, but for some reason it seems to still be slightly faster to delayload them
-            /delayload:WS2_32.dll
-            /delayload:WSOCK32.dll
-            /delayload:ADVAPI32.dll
-            /delayload:IPHLPAPI.dll
-        )
-    endif()
 endif()

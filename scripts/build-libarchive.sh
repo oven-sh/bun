@@ -5,6 +5,8 @@ source $(dirname -- "${BASH_SOURCE[0]}")/env.sh
 
 mkdir -p $BUN_DEPS_OUT_DIR
 
+export CXXFLAGS="$CXXFLAGS -isystem $BUN_DEPS_DIR/zlib"
+
 cd $BUN_DEPS_DIR/libarchive
 # Libarchive has a "build" folder which we must not use
 rm -rf libarchive-build
@@ -30,11 +32,8 @@ cmake $CMAKE_FLAGS \
   -DENABLE_PCREPOSIX=0 \
   -DENABLE_TEST=0 \
   -DENABLE_WERROR=0 \
-  -DENABLE_ZLIB=1 \
+  -DENABLE_ZLIB=0 \
   -DENABLE_ZSTD=0 \
-  -DZLIB_INCLUDE_DIR=$BUN_DEPS_DIR/zlib \
-  -DZLIB_LIBRARIES=$BUN_DEPS_OUT_DIR/libz.a \
-  -DHAVE_LIBZ=1 \
   -DHAVE_ZLIB_H=1 \
   -GNinja \
   -B . -S ..

@@ -658,8 +658,7 @@ static struct sigaction previous_actions[NSIG];
 #define FOR_EACH_LINUX_ONLY_SIGNAL(M) \
     M(SIGPOLL);                       \
     M(SIGPWR);                        \
-    M(SIGSTKFLT);                     \
-    M(SIGUNUSED);
+    M(SIGSTKFLT);
 
 #endif
 

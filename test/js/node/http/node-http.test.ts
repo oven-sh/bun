@@ -2477,7 +2477,10 @@ it("response body streaming is immediate (#13696)", async () => {
       // chunks before real-time streaming started working.
       expect(new Date().getTime() - Number.parseInt(decoder.decode(value).trimEnd(), 10)).toBeLessThan(acceptableDelay);
     }
+    // Verify that the correct number of chunks were sent (in case server
+    // decides to send no chunks at all).
     expect(receivedChunks).toEqual(totalChunks);
+    // Also verify the total size in case some data was lost.
     expect(receivedSize).toEqual(totalSize);
   } finally {
     server.close();

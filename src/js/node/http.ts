@@ -1260,17 +1260,17 @@ function flushFirstWrite(self) {
     new Response(
       new ReadableStream({
         type: "direct",
-        pull: controller => {
+        pull: async controller => {
           self[controllerSymbol] = controller;
           if (firstWrite) {
             controller.write(firstWrite);
-            controller.flush(); // flush the first write
+            await controller.flush(); // flush the first write
           }
           firstWrite = undefined;
           if (!self[finishedSymbol]) {
             const { promise, resolve } = $newPromiseCapability(GlobalPromise);
             self[deferredSymbol] = resolve;
-            return promise;
+            return await promise;
           }
         },
       }),

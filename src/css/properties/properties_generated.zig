@@ -235,7 +235,7 @@ const display = css.css_properties.display;
 
 const Position = position.Position;
 
-const Error = css.Error;
+const Result = css.Result;
 
 const ArrayList = std.ArrayListUnmanaged;
 const SmallList = css.SmallList;
@@ -575,2322 +575,2322 @@ pub const Property = union(PropertyIdTag) {
     custom: CustomProperty,
 
     /// Parses a CSS property by name.
-    pub fn parse(property_id: PropertyId, input: *css.Parser, options: *css.ParserOptions) Error!Property {
+    pub fn parse(property_id: PropertyId, input: *css.Parser, options: *css.ParserOptions) Result(Property) {
         const state = input.state();
 
         switch (property_id) {
             .@"background-color" => {
-                if (css.generic.parseWithOptions(CssColor, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"background-color" = c };
+                if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"background-color" = c } };
                     }
                 }
             },
             .@"background-image" => {
-                if (css.generic.parseWithOptions(SmallList(Image, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"background-image" = c };
+                if (css.generic.parseWithOptions(SmallList(Image, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"background-image" = c } };
                     }
                 }
             },
             .@"background-position-x" => {
-                if (css.generic.parseWithOptions(SmallList(css_values.position.HorizontalPosition, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"background-position-x" = c };
+                if (css.generic.parseWithOptions(SmallList(css_values.position.HorizontalPosition, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"background-position-x" = c } };
                     }
                 }
             },
             .@"background-position-y" => {
-                if (css.generic.parseWithOptions(SmallList(css_values.position.HorizontalPosition, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"background-position-y" = c };
+                if (css.generic.parseWithOptions(SmallList(css_values.position.HorizontalPosition, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"background-position-y" = c } };
                     }
                 }
             },
             .@"background-position" => {
-                if (css.generic.parseWithOptions(SmallList(background.BackgroundPosition, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"background-position" = c };
+                if (css.generic.parseWithOptions(SmallList(background.BackgroundPosition, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"background-position" = c } };
                     }
                 }
             },
             .@"background-size" => {
-                if (css.generic.parseWithOptions(SmallList(background.BackgroundSize, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"background-size" = c };
+                if (css.generic.parseWithOptions(SmallList(background.BackgroundSize, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"background-size" = c } };
                     }
                 }
             },
             .@"background-repeat" => {
-                if (css.generic.parseWithOptions(SmallList(background.BackgroundSize, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"background-repeat" = c };
+                if (css.generic.parseWithOptions(SmallList(background.BackgroundSize, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"background-repeat" = c } };
                     }
                 }
             },
             .@"background-attachment" => {
-                if (css.generic.parseWithOptions(SmallList(background.BackgroundAttachment, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"background-attachment" = c };
+                if (css.generic.parseWithOptions(SmallList(background.BackgroundAttachment, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"background-attachment" = c } };
                     }
                 }
             },
             .@"background-clip" => |pre| {
-                if (css.generic.parseWithOptions(SmallList(background.BackgroundAttachment, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"background-clip" = .{ c, pre } };
+                if (css.generic.parseWithOptions(SmallList(background.BackgroundAttachment, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"background-clip" = .{ c, pre } } };
                     }
                 }
             },
             .@"background-origin" => {
-                if (css.generic.parseWithOptions(SmallList(background.BackgroundOrigin, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"background-origin" = c };
+                if (css.generic.parseWithOptions(SmallList(background.BackgroundOrigin, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"background-origin" = c } };
                     }
                 }
             },
             .background => {
-                if (css.generic.parseWithOptions(SmallList(background.Background, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .background = c };
+                if (css.generic.parseWithOptions(SmallList(background.Background, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .background = c } };
                     }
                 }
             },
             .@"box-shadow" => |pre| {
-                if (css.generic.parseWithOptions(SmallList(box_shadow.BoxShadow, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"box-shadow" = .{ c, pre } };
+                if (css.generic.parseWithOptions(SmallList(box_shadow.BoxShadow, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"box-shadow" = .{ c, pre } } };
                     }
                 }
             },
             .opacity => {
-                if (css.generic.parseWithOptions(css.css_values.alpha.AlphaValue, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .opacity = c };
+                if (css.generic.parseWithOptions(css.css_values.alpha.AlphaValue, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .opacity = c } };
                     }
                 }
             },
             .color => {
-                if (css.generic.parseWithOptions(CssColor, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .color = c };
+                if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .color = c } };
                     }
                 }
             },
             .display => {
-                if (css.generic.parseWithOptions(display.Display, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .display = c };
+                if (css.generic.parseWithOptions(display.Display, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .display = c } };
                     }
                 }
             },
             .visibility => {
-                if (css.generic.parseWithOptions(display.Visibility, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .visibility = c };
+                if (css.generic.parseWithOptions(display.Visibility, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .visibility = c } };
                     }
                 }
             },
             .width => {
-                if (css.generic.parseWithOptions(size.Size, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .width = c };
+                if (css.generic.parseWithOptions(size.Size, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .width = c } };
                     }
                 }
             },
             .height => {
-                if (css.generic.parseWithOptions(size.Size, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .height = c };
+                if (css.generic.parseWithOptions(size.Size, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .height = c } };
                     }
                 }
             },
             .@"min-width" => {
-                if (css.generic.parseWithOptions(size.Size, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"min-width" = c };
+                if (css.generic.parseWithOptions(size.Size, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"min-width" = c } };
                     }
                 }
             },
             .@"min-height" => {
-                if (css.generic.parseWithOptions(size.Size, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"min-height" = c };
+                if (css.generic.parseWithOptions(size.Size, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"min-height" = c } };
                     }
                 }
             },
             .@"max-width" => {
-                if (css.generic.parseWithOptions(size.MaxSize, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"max-width" = c };
+                if (css.generic.parseWithOptions(size.MaxSize, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"max-width" = c } };
                     }
                 }
             },
             .@"max-height" => {
-                if (css.generic.parseWithOptions(size.MaxSize, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"max-height" = c };
+                if (css.generic.parseWithOptions(size.MaxSize, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"max-height" = c } };
                     }
                 }
             },
             .@"block-size" => {
-                if (css.generic.parseWithOptions(size.Size, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"block-size" = c };
+                if (css.generic.parseWithOptions(size.Size, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"block-size" = c } };
                     }
                 }
             },
             .@"inline-size" => {
-                if (css.generic.parseWithOptions(size.Size, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"inline-size" = c };
+                if (css.generic.parseWithOptions(size.Size, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"inline-size" = c } };
                     }
                 }
             },
             .@"min-block-size" => {
-                if (css.generic.parseWithOptions(size.Size, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"min-block-size" = c };
+                if (css.generic.parseWithOptions(size.Size, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"min-block-size" = c } };
                     }
                 }
             },
             .@"min-inline-size" => {
-                if (css.generic.parseWithOptions(size.Size, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"min-inline-size" = c };
+                if (css.generic.parseWithOptions(size.Size, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"min-inline-size" = c } };
                     }
                 }
             },
             .@"max-block-size" => {
-                if (css.generic.parseWithOptions(size.MaxSize, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"max-block-size" = c };
+                if (css.generic.parseWithOptions(size.MaxSize, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"max-block-size" = c } };
                     }
                 }
             },
             .@"max-inline-size" => {
-                if (css.generic.parseWithOptions(size.MaxSize, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"max-inline-size" = c };
+                if (css.generic.parseWithOptions(size.MaxSize, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"max-inline-size" = c } };
                     }
                 }
             },
             .@"box-sizing" => |pre| {
-                if (css.generic.parseWithOptions(size.BoxSizing, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"box-sizing" = .{ c, pre } };
+                if (css.generic.parseWithOptions(size.BoxSizing, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"box-sizing" = .{ c, pre } } };
                     }
                 }
             },
             .@"aspect-ratio" => {
-                if (css.generic.parseWithOptions(size.AspectRatio, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"aspect-ratio" = c };
+                if (css.generic.parseWithOptions(size.AspectRatio, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"aspect-ratio" = c } };
                     }
                 }
             },
             .overflow => {
-                if (css.generic.parseWithOptions(overflow.Overflow, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .overflow = c };
+                if (css.generic.parseWithOptions(overflow.Overflow, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .overflow = c } };
                     }
                 }
             },
             .@"overflow-x" => {
-                if (css.generic.parseWithOptions(overflow.OverflowKeyword, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"overflow-x" = c };
+                if (css.generic.parseWithOptions(overflow.OverflowKeyword, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"overflow-x" = c } };
                     }
                 }
             },
             .@"overflow-y" => {
-                if (css.generic.parseWithOptions(overflow.OverflowKeyword, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"overflow-y" = c };
+                if (css.generic.parseWithOptions(overflow.OverflowKeyword, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"overflow-y" = c } };
                     }
                 }
             },
             .@"text-overflow" => |pre| {
-                if (css.generic.parseWithOptions(overflow.TextOverflow, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"text-overflow" = .{ c, pre } };
+                if (css.generic.parseWithOptions(overflow.TextOverflow, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"text-overflow" = .{ c, pre } } };
                     }
                 }
             },
             .position => {
-                if (css.generic.parseWithOptions(position.Position, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .position = c };
+                if (css.generic.parseWithOptions(position.Position, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .position = c } };
                     }
                 }
             },
             .top => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .top = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .top = c } };
                     }
                 }
             },
             .bottom => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .bottom = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .bottom = c } };
                     }
                 }
             },
             .left => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .left = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .left = c } };
                     }
                 }
             },
             .right => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .right = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .right = c } };
                     }
                 }
             },
             .@"inset-block-start" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"inset-block-start" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"inset-block-start" = c } };
                     }
                 }
             },
             .@"inset-block-end" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"inset-block-end" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"inset-block-end" = c } };
                     }
                 }
             },
             .@"inset-inline-start" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"inset-inline-start" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"inset-inline-start" = c } };
                     }
                 }
             },
             .@"inset-inline-end" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"inset-inline-end" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"inset-inline-end" = c } };
                     }
                 }
             },
             .@"inset-block" => {
-                if (css.generic.parseWithOptions(margin_padding.InsetBlock, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"inset-block" = c };
+                if (css.generic.parseWithOptions(margin_padding.InsetBlock, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"inset-block" = c } };
                     }
                 }
             },
             .@"inset-inline" => {
-                if (css.generic.parseWithOptions(margin_padding.InsetInline, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"inset-inline" = c };
+                if (css.generic.parseWithOptions(margin_padding.InsetInline, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"inset-inline" = c } };
                     }
                 }
             },
             .inset => {
-                if (css.generic.parseWithOptions(margin_padding.Inset, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .inset = c };
+                if (css.generic.parseWithOptions(margin_padding.Inset, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .inset = c } };
                     }
                 }
             },
             .@"border-spacing" => {
-                if (css.generic.parseWithOptions(css.css_values.size.Size2D(Length), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-spacing" = c };
+                if (css.generic.parseWithOptions(css.css_values.size.Size2D(Length), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-spacing" = c } };
                     }
                 }
             },
             .@"border-top-color" => {
-                if (css.generic.parseWithOptions(CssColor, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-top-color" = c };
+                if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-top-color" = c } };
                     }
                 }
             },
             .@"border-bottom-color" => {
-                if (css.generic.parseWithOptions(CssColor, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-bottom-color" = c };
+                if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-bottom-color" = c } };
                     }
                 }
             },
             .@"border-left-color" => {
-                if (css.generic.parseWithOptions(CssColor, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-left-color" = c };
+                if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-left-color" = c } };
                     }
                 }
             },
             .@"border-right-color" => {
-                if (css.generic.parseWithOptions(CssColor, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-right-color" = c };
+                if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-right-color" = c } };
                     }
                 }
             },
             .@"border-block-start-color" => {
-                if (css.generic.parseWithOptions(CssColor, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-block-start-color" = c };
+                if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-block-start-color" = c } };
                     }
                 }
             },
             .@"border-block-end-color" => {
-                if (css.generic.parseWithOptions(CssColor, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-block-end-color" = c };
+                if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-block-end-color" = c } };
                     }
                 }
             },
             .@"border-inline-start-color" => {
-                if (css.generic.parseWithOptions(CssColor, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-inline-start-color" = c };
+                if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-inline-start-color" = c } };
                     }
                 }
             },
             .@"border-inline-end-color" => {
-                if (css.generic.parseWithOptions(CssColor, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-inline-end-color" = c };
+                if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-inline-end-color" = c } };
                     }
                 }
             },
             .@"border-top-style" => {
-                if (css.generic.parseWithOptions(border.LineStyle, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-top-style" = c };
+                if (css.generic.parseWithOptions(border.LineStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-top-style" = c } };
                     }
                 }
             },
             .@"border-bottom-style" => {
-                if (css.generic.parseWithOptions(border.LineStyle, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-bottom-style" = c };
+                if (css.generic.parseWithOptions(border.LineStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-bottom-style" = c } };
                     }
                 }
             },
             .@"border-left-style" => {
-                if (css.generic.parseWithOptions(border.LineStyle, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-left-style" = c };
+                if (css.generic.parseWithOptions(border.LineStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-left-style" = c } };
                     }
                 }
             },
             .@"border-right-style" => {
-                if (css.generic.parseWithOptions(border.LineStyle, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-right-style" = c };
+                if (css.generic.parseWithOptions(border.LineStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-right-style" = c } };
                     }
                 }
             },
             .@"border-block-start-style" => {
-                if (css.generic.parseWithOptions(border.LineStyle, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-block-start-style" = c };
+                if (css.generic.parseWithOptions(border.LineStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-block-start-style" = c } };
                     }
                 }
             },
             .@"border-block-end-style" => {
-                if (css.generic.parseWithOptions(border.LineStyle, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-block-end-style" = c };
+                if (css.generic.parseWithOptions(border.LineStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-block-end-style" = c } };
                     }
                 }
             },
             .@"border-inline-start-style" => {
-                if (css.generic.parseWithOptions(border.LineStyle, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-inline-start-style" = c };
+                if (css.generic.parseWithOptions(border.LineStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-inline-start-style" = c } };
                     }
                 }
             },
             .@"border-inline-end-style" => {
-                if (css.generic.parseWithOptions(border.LineStyle, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-inline-end-style" = c };
+                if (css.generic.parseWithOptions(border.LineStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-inline-end-style" = c } };
                     }
                 }
             },
             .@"border-top-width" => {
-                if (css.generic.parseWithOptions(BorderSideWidth, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-top-width" = c };
+                if (css.generic.parseWithOptions(BorderSideWidth, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-top-width" = c } };
                     }
                 }
             },
             .@"border-bottom-width" => {
-                if (css.generic.parseWithOptions(BorderSideWidth, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-bottom-width" = c };
+                if (css.generic.parseWithOptions(BorderSideWidth, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-bottom-width" = c } };
                     }
                 }
             },
             .@"border-left-width" => {
-                if (css.generic.parseWithOptions(BorderSideWidth, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-left-width" = c };
+                if (css.generic.parseWithOptions(BorderSideWidth, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-left-width" = c } };
                     }
                 }
             },
             .@"border-right-width" => {
-                if (css.generic.parseWithOptions(BorderSideWidth, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-right-width" = c };
+                if (css.generic.parseWithOptions(BorderSideWidth, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-right-width" = c } };
                     }
                 }
             },
             .@"border-block-start-width" => {
-                if (css.generic.parseWithOptions(BorderSideWidth, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-block-start-width" = c };
+                if (css.generic.parseWithOptions(BorderSideWidth, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-block-start-width" = c } };
                     }
                 }
             },
             .@"border-block-end-width" => {
-                if (css.generic.parseWithOptions(BorderSideWidth, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-block-end-width" = c };
+                if (css.generic.parseWithOptions(BorderSideWidth, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-block-end-width" = c } };
                     }
                 }
             },
             .@"border-inline-start-width" => {
-                if (css.generic.parseWithOptions(BorderSideWidth, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-inline-start-width" = c };
+                if (css.generic.parseWithOptions(BorderSideWidth, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-inline-start-width" = c } };
                     }
                 }
             },
             .@"border-inline-end-width" => {
-                if (css.generic.parseWithOptions(BorderSideWidth, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-inline-end-width" = c };
+                if (css.generic.parseWithOptions(BorderSideWidth, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-inline-end-width" = c } };
                     }
                 }
             },
             .@"border-top-left-radius" => |pre| {
-                if (css.generic.parseWithOptions(Size2D(LengthPercentage), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-top-left-radius" = .{ c, pre } };
+                if (css.generic.parseWithOptions(Size2D(LengthPercentage), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-top-left-radius" = .{ c, pre } } };
                     }
                 }
             },
             .@"border-top-right-radius" => |pre| {
-                if (css.generic.parseWithOptions(Size2D(LengthPercentage), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-top-right-radius" = .{ c, pre } };
+                if (css.generic.parseWithOptions(Size2D(LengthPercentage), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-top-right-radius" = .{ c, pre } } };
                     }
                 }
             },
             .@"border-bottom-left-radius" => |pre| {
-                if (css.generic.parseWithOptions(Size2D(LengthPercentage), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-bottom-left-radius" = .{ c, pre } };
+                if (css.generic.parseWithOptions(Size2D(LengthPercentage), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-bottom-left-radius" = .{ c, pre } } };
                     }
                 }
             },
             .@"border-bottom-right-radius" => |pre| {
-                if (css.generic.parseWithOptions(Size2D(LengthPercentage), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-bottom-right-radius" = .{ c, pre } };
+                if (css.generic.parseWithOptions(Size2D(LengthPercentage), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-bottom-right-radius" = .{ c, pre } } };
                     }
                 }
             },
             .@"border-start-start-radius" => {
-                if (css.generic.parseWithOptions(Size2D(LengthPercentage), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-start-start-radius" = c };
+                if (css.generic.parseWithOptions(Size2D(LengthPercentage), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-start-start-radius" = c } };
                     }
                 }
             },
             .@"border-start-end-radius" => {
-                if (css.generic.parseWithOptions(Size2D(LengthPercentage), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-start-end-radius" = c };
+                if (css.generic.parseWithOptions(Size2D(LengthPercentage), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-start-end-radius" = c } };
                     }
                 }
             },
             .@"border-end-start-radius" => {
-                if (css.generic.parseWithOptions(Size2D(LengthPercentage), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-end-start-radius" = c };
+                if (css.generic.parseWithOptions(Size2D(LengthPercentage), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-end-start-radius" = c } };
                     }
                 }
             },
             .@"border-end-end-radius" => {
-                if (css.generic.parseWithOptions(Size2D(LengthPercentage), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-end-end-radius" = c };
+                if (css.generic.parseWithOptions(Size2D(LengthPercentage), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-end-end-radius" = c } };
                     }
                 }
             },
             .@"border-radius" => |pre| {
-                if (css.generic.parseWithOptions(BorderRadius, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-radius" = .{ c, pre } };
+                if (css.generic.parseWithOptions(BorderRadius, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-radius" = .{ c, pre } } };
                     }
                 }
             },
             .@"border-image-source" => {
-                if (css.generic.parseWithOptions(Image, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-image-source" = c };
+                if (css.generic.parseWithOptions(Image, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-image-source" = c } };
                     }
                 }
             },
             .@"border-image-outset" => {
-                if (css.generic.parseWithOptions(Rect(LengthOrNumber), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-image-outset" = c };
+                if (css.generic.parseWithOptions(Rect(LengthOrNumber), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-image-outset" = c } };
                     }
                 }
             },
             .@"border-image-repeat" => {
-                if (css.generic.parseWithOptions(BorderImageRepeat, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-image-repeat" = c };
+                if (css.generic.parseWithOptions(BorderImageRepeat, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-image-repeat" = c } };
                     }
                 }
             },
             .@"border-image-width" => {
-                if (css.generic.parseWithOptions(Rect(BorderImageSideWidth), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-image-width" = c };
+                if (css.generic.parseWithOptions(Rect(BorderImageSideWidth), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-image-width" = c } };
                     }
                 }
             },
             .@"border-image-slice" => {
-                if (css.generic.parseWithOptions(BorderImageSlice, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-image-slice" = c };
+                if (css.generic.parseWithOptions(BorderImageSlice, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-image-slice" = c } };
                     }
                 }
             },
             .@"border-image" => |pre| {
-                if (css.generic.parseWithOptions(BorderImage, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-image" = .{ c, pre } };
+                if (css.generic.parseWithOptions(BorderImage, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-image" = .{ c, pre } } };
                     }
                 }
             },
             .@"border-color" => {
-                if (css.generic.parseWithOptions(BorderColor, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-color" = c };
+                if (css.generic.parseWithOptions(BorderColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-color" = c } };
                     }
                 }
             },
             .@"border-style" => {
-                if (css.generic.parseWithOptions(BorderStyle, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-style" = c };
+                if (css.generic.parseWithOptions(BorderStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-style" = c } };
                     }
                 }
             },
             .@"border-width" => {
-                if (css.generic.parseWithOptions(BorderWidth, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-width" = c };
+                if (css.generic.parseWithOptions(BorderWidth, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-width" = c } };
                     }
                 }
             },
             .@"border-block-color" => {
-                if (css.generic.parseWithOptions(BorderBlockColor, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-block-color" = c };
+                if (css.generic.parseWithOptions(BorderBlockColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-block-color" = c } };
                     }
                 }
             },
             .@"border-block-style" => {
-                if (css.generic.parseWithOptions(BorderBlockStyle, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-block-style" = c };
+                if (css.generic.parseWithOptions(BorderBlockStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-block-style" = c } };
                     }
                 }
             },
             .@"border-block-width" => {
-                if (css.generic.parseWithOptions(BorderBlockWidth, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-block-width" = c };
+                if (css.generic.parseWithOptions(BorderBlockWidth, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-block-width" = c } };
                     }
                 }
             },
             .@"border-inline-color" => {
-                if (css.generic.parseWithOptions(BorderInlineColor, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-inline-color" = c };
+                if (css.generic.parseWithOptions(BorderInlineColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-inline-color" = c } };
                     }
                 }
             },
             .@"border-inline-style" => {
-                if (css.generic.parseWithOptions(BorderInlineStyle, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-inline-style" = c };
+                if (css.generic.parseWithOptions(BorderInlineStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-inline-style" = c } };
                     }
                 }
             },
             .@"border-inline-width" => {
-                if (css.generic.parseWithOptions(BorderInlineWidth, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-inline-width" = c };
+                if (css.generic.parseWithOptions(BorderInlineWidth, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-inline-width" = c } };
                     }
                 }
             },
             .border => {
-                if (css.generic.parseWithOptions(Border, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .border = c };
+                if (css.generic.parseWithOptions(Border, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .border = c } };
                     }
                 }
             },
             .@"border-top" => {
-                if (css.generic.parseWithOptions(BorderTop, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-top" = c };
+                if (css.generic.parseWithOptions(BorderTop, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-top" = c } };
                     }
                 }
             },
             .@"border-bottom" => {
-                if (css.generic.parseWithOptions(BorderBottom, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-bottom" = c };
+                if (css.generic.parseWithOptions(BorderBottom, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-bottom" = c } };
                     }
                 }
             },
             .@"border-left" => {
-                if (css.generic.parseWithOptions(BorderLeft, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-left" = c };
+                if (css.generic.parseWithOptions(BorderLeft, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-left" = c } };
                     }
                 }
             },
             .@"border-right" => {
-                if (css.generic.parseWithOptions(BorderRight, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-right" = c };
+                if (css.generic.parseWithOptions(BorderRight, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-right" = c } };
                     }
                 }
             },
             .@"border-block" => {
-                if (css.generic.parseWithOptions(BorderBlock, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-block" = c };
+                if (css.generic.parseWithOptions(BorderBlock, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-block" = c } };
                     }
                 }
             },
             .@"border-block-start" => {
-                if (css.generic.parseWithOptions(BorderBlockStart, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-block-start" = c };
+                if (css.generic.parseWithOptions(BorderBlockStart, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-block-start" = c } };
                     }
                 }
             },
             .@"border-block-end" => {
-                if (css.generic.parseWithOptions(BorderBlockEnd, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-block-end" = c };
+                if (css.generic.parseWithOptions(BorderBlockEnd, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-block-end" = c } };
                     }
                 }
             },
             .@"border-inline" => {
-                if (css.generic.parseWithOptions(BorderInline, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-inline" = c };
+                if (css.generic.parseWithOptions(BorderInline, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-inline" = c } };
                     }
                 }
             },
             .@"border-inline-start" => {
-                if (css.generic.parseWithOptions(BorderInlineStart, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-inline-start" = c };
+                if (css.generic.parseWithOptions(BorderInlineStart, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-inline-start" = c } };
                     }
                 }
             },
             .@"border-inline-end" => {
-                if (css.generic.parseWithOptions(BorderInlineEnd, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"border-inline-end" = c };
+                if (css.generic.parseWithOptions(BorderInlineEnd, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-inline-end" = c } };
                     }
                 }
             },
             .outline => {
-                if (css.generic.parseWithOptions(Outline, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .outline = c };
+                if (css.generic.parseWithOptions(Outline, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .outline = c } };
                     }
                 }
             },
             .@"outline-color" => {
-                if (css.generic.parseWithOptions(CssColor, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"outline-color" = c };
+                if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"outline-color" = c } };
                     }
                 }
             },
             .@"outline-style" => {
-                if (css.generic.parseWithOptions(OutlineStyle, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"outline-style" = c };
+                if (css.generic.parseWithOptions(OutlineStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"outline-style" = c } };
                     }
                 }
             },
             .@"outline-width" => {
-                if (css.generic.parseWithOptions(BorderSideWidth, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"outline-width" = c };
+                if (css.generic.parseWithOptions(BorderSideWidth, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"outline-width" = c } };
                     }
                 }
             },
             .@"flex-direction" => |pre| {
-                if (css.generic.parseWithOptions(FlexDirection, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"flex-direction" = .{ c, pre } };
+                if (css.generic.parseWithOptions(FlexDirection, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"flex-direction" = .{ c, pre } } };
                     }
                 }
             },
             .@"flex-wrap" => |pre| {
-                if (css.generic.parseWithOptions(FlexWrap, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"flex-wrap" = .{ c, pre } };
+                if (css.generic.parseWithOptions(FlexWrap, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"flex-wrap" = .{ c, pre } } };
                     }
                 }
             },
             .@"flex-flow" => |pre| {
-                if (css.generic.parseWithOptions(FlexFlow, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"flex-flow" = .{ c, pre } };
+                if (css.generic.parseWithOptions(FlexFlow, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"flex-flow" = .{ c, pre } } };
                     }
                 }
             },
             .@"flex-grow" => |pre| {
-                if (css.generic.parseWithOptions(CSSNumber, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"flex-grow" = .{ c, pre } };
+                if (css.generic.parseWithOptions(CSSNumber, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"flex-grow" = .{ c, pre } } };
                     }
                 }
             },
             .@"flex-shrink" => |pre| {
-                if (css.generic.parseWithOptions(CSSNumber, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"flex-shrink" = .{ c, pre } };
+                if (css.generic.parseWithOptions(CSSNumber, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"flex-shrink" = .{ c, pre } } };
                     }
                 }
             },
             .@"flex-basis" => |pre| {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"flex-basis" = .{ c, pre } };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"flex-basis" = .{ c, pre } } };
                     }
                 }
             },
             .flex => |pre| {
-                if (css.generic.parseWithOptions(Flex, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .flex = .{ c, pre } };
+                if (css.generic.parseWithOptions(Flex, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .flex = .{ c, pre } } };
                     }
                 }
             },
             .order => |pre| {
-                if (css.generic.parseWithOptions(CSSInteger, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .order = .{ c, pre } };
+                if (css.generic.parseWithOptions(CSSInteger, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .order = .{ c, pre } } };
                     }
                 }
             },
             .@"align-content" => |pre| {
-                if (css.generic.parseWithOptions(AlignContent, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"align-content" = .{ c, pre } };
+                if (css.generic.parseWithOptions(AlignContent, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"align-content" = .{ c, pre } } };
                     }
                 }
             },
             .@"justify-content" => |pre| {
-                if (css.generic.parseWithOptions(JustifyContent, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"justify-content" = .{ c, pre } };
+                if (css.generic.parseWithOptions(JustifyContent, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"justify-content" = .{ c, pre } } };
                     }
                 }
             },
             .@"place-content" => {
-                if (css.generic.parseWithOptions(PlaceContent, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"place-content" = c };
+                if (css.generic.parseWithOptions(PlaceContent, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"place-content" = c } };
                     }
                 }
             },
             .@"align-self" => |pre| {
-                if (css.generic.parseWithOptions(AlignSelf, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"align-self" = .{ c, pre } };
+                if (css.generic.parseWithOptions(AlignSelf, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"align-self" = .{ c, pre } } };
                     }
                 }
             },
             .@"justify-self" => {
-                if (css.generic.parseWithOptions(JustifySelf, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"justify-self" = c };
+                if (css.generic.parseWithOptions(JustifySelf, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"justify-self" = c } };
                     }
                 }
             },
             .@"place-self" => {
-                if (css.generic.parseWithOptions(PlaceSelf, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"place-self" = c };
+                if (css.generic.parseWithOptions(PlaceSelf, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"place-self" = c } };
                     }
                 }
             },
             .@"align-items" => |pre| {
-                if (css.generic.parseWithOptions(AlignItems, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"align-items" = .{ c, pre } };
+                if (css.generic.parseWithOptions(AlignItems, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"align-items" = .{ c, pre } } };
                     }
                 }
             },
             .@"justify-items" => {
-                if (css.generic.parseWithOptions(JustifyItems, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"justify-items" = c };
+                if (css.generic.parseWithOptions(JustifyItems, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"justify-items" = c } };
                     }
                 }
             },
             .@"place-items" => {
-                if (css.generic.parseWithOptions(PlaceItems, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"place-items" = c };
+                if (css.generic.parseWithOptions(PlaceItems, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"place-items" = c } };
                     }
                 }
             },
             .@"row-gap" => {
-                if (css.generic.parseWithOptions(GapValue, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"row-gap" = c };
+                if (css.generic.parseWithOptions(GapValue, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"row-gap" = c } };
                     }
                 }
             },
             .@"column-gap" => {
-                if (css.generic.parseWithOptions(GapValue, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"column-gap" = c };
+                if (css.generic.parseWithOptions(GapValue, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"column-gap" = c } };
                     }
                 }
             },
             .gap => {
-                if (css.generic.parseWithOptions(Gap, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .gap = c };
+                if (css.generic.parseWithOptions(Gap, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .gap = c } };
                     }
                 }
             },
             .@"box-orient" => |pre| {
-                if (css.generic.parseWithOptions(BoxOrient, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"box-orient" = .{ c, pre } };
+                if (css.generic.parseWithOptions(BoxOrient, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"box-orient" = .{ c, pre } } };
                     }
                 }
             },
             .@"box-direction" => |pre| {
-                if (css.generic.parseWithOptions(BoxDirection, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"box-direction" = .{ c, pre } };
+                if (css.generic.parseWithOptions(BoxDirection, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"box-direction" = .{ c, pre } } };
                     }
                 }
             },
             .@"box-ordinal-group" => |pre| {
-                if (css.generic.parseWithOptions(CSSInteger, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"box-ordinal-group" = .{ c, pre } };
+                if (css.generic.parseWithOptions(CSSInteger, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"box-ordinal-group" = .{ c, pre } } };
                     }
                 }
             },
             .@"box-align" => |pre| {
-                if (css.generic.parseWithOptions(BoxAlign, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"box-align" = .{ c, pre } };
+                if (css.generic.parseWithOptions(BoxAlign, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"box-align" = .{ c, pre } } };
                     }
                 }
             },
             .@"box-flex" => |pre| {
-                if (css.generic.parseWithOptions(CSSNumber, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"box-flex" = .{ c, pre } };
+                if (css.generic.parseWithOptions(CSSNumber, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"box-flex" = .{ c, pre } } };
                     }
                 }
             },
             .@"box-flex-group" => |pre| {
-                if (css.generic.parseWithOptions(CSSInteger, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"box-flex-group" = .{ c, pre } };
+                if (css.generic.parseWithOptions(CSSInteger, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"box-flex-group" = .{ c, pre } } };
                     }
                 }
             },
             .@"box-pack" => |pre| {
-                if (css.generic.parseWithOptions(BoxPack, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"box-pack" = .{ c, pre } };
+                if (css.generic.parseWithOptions(BoxPack, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"box-pack" = .{ c, pre } } };
                     }
                 }
             },
             .@"box-lines" => |pre| {
-                if (css.generic.parseWithOptions(BoxLines, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"box-lines" = .{ c, pre } };
+                if (css.generic.parseWithOptions(BoxLines, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"box-lines" = .{ c, pre } } };
                     }
                 }
             },
             .@"flex-pack" => |pre| {
-                if (css.generic.parseWithOptions(FlexPack, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"flex-pack" = .{ c, pre } };
+                if (css.generic.parseWithOptions(FlexPack, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"flex-pack" = .{ c, pre } } };
                     }
                 }
             },
             .@"flex-order" => |pre| {
-                if (css.generic.parseWithOptions(CSSInteger, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"flex-order" = .{ c, pre } };
+                if (css.generic.parseWithOptions(CSSInteger, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"flex-order" = .{ c, pre } } };
                     }
                 }
             },
             .@"flex-align" => |pre| {
-                if (css.generic.parseWithOptions(BoxAlign, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"flex-align" = .{ c, pre } };
+                if (css.generic.parseWithOptions(BoxAlign, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"flex-align" = .{ c, pre } } };
                     }
                 }
             },
             .@"flex-item-align" => |pre| {
-                if (css.generic.parseWithOptions(FlexItemAlign, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"flex-item-align" = .{ c, pre } };
+                if (css.generic.parseWithOptions(FlexItemAlign, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"flex-item-align" = .{ c, pre } } };
                     }
                 }
             },
             .@"flex-line-pack" => |pre| {
-                if (css.generic.parseWithOptions(FlexLinePack, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"flex-line-pack" = .{ c, pre } };
+                if (css.generic.parseWithOptions(FlexLinePack, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"flex-line-pack" = .{ c, pre } } };
                     }
                 }
             },
             .@"flex-positive" => |pre| {
-                if (css.generic.parseWithOptions(CSSNumber, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"flex-positive" = .{ c, pre } };
+                if (css.generic.parseWithOptions(CSSNumber, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"flex-positive" = .{ c, pre } } };
                     }
                 }
             },
             .@"flex-negative" => |pre| {
-                if (css.generic.parseWithOptions(CSSNumber, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"flex-negative" = .{ c, pre } };
+                if (css.generic.parseWithOptions(CSSNumber, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"flex-negative" = .{ c, pre } } };
                     }
                 }
             },
             .@"flex-preferred-size" => |pre| {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"flex-preferred-size" = .{ c, pre } };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"flex-preferred-size" = .{ c, pre } } };
                     }
                 }
             },
             .@"margin-top" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"margin-top" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"margin-top" = c } };
                     }
                 }
             },
             .@"margin-bottom" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"margin-bottom" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"margin-bottom" = c } };
                     }
                 }
             },
             .@"margin-left" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"margin-left" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"margin-left" = c } };
                     }
                 }
             },
             .@"margin-right" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"margin-right" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"margin-right" = c } };
                     }
                 }
             },
             .@"margin-block-start" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"margin-block-start" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"margin-block-start" = c } };
                     }
                 }
             },
             .@"margin-block-end" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"margin-block-end" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"margin-block-end" = c } };
                     }
                 }
             },
             .@"margin-inline-start" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"margin-inline-start" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"margin-inline-start" = c } };
                     }
                 }
             },
             .@"margin-inline-end" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"margin-inline-end" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"margin-inline-end" = c } };
                     }
                 }
             },
             .@"margin-block" => {
-                if (css.generic.parseWithOptions(MarginBlock, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"margin-block" = c };
+                if (css.generic.parseWithOptions(MarginBlock, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"margin-block" = c } };
                     }
                 }
             },
             .@"margin-inline" => {
-                if (css.generic.parseWithOptions(MarginInline, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"margin-inline" = c };
+                if (css.generic.parseWithOptions(MarginInline, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"margin-inline" = c } };
                     }
                 }
             },
             .margin => {
-                if (css.generic.parseWithOptions(Margin, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .margin = c };
+                if (css.generic.parseWithOptions(Margin, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .margin = c } };
                     }
                 }
             },
             .@"padding-top" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"padding-top" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"padding-top" = c } };
                     }
                 }
             },
             .@"padding-bottom" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"padding-bottom" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"padding-bottom" = c } };
                     }
                 }
             },
             .@"padding-left" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"padding-left" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"padding-left" = c } };
                     }
                 }
             },
             .@"padding-right" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"padding-right" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"padding-right" = c } };
                     }
                 }
             },
             .@"padding-block-start" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"padding-block-start" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"padding-block-start" = c } };
                     }
                 }
             },
             .@"padding-block-end" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"padding-block-end" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"padding-block-end" = c } };
                     }
                 }
             },
             .@"padding-inline-start" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"padding-inline-start" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"padding-inline-start" = c } };
                     }
                 }
             },
             .@"padding-inline-end" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"padding-inline-end" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"padding-inline-end" = c } };
                     }
                 }
             },
             .@"padding-block" => {
-                if (css.generic.parseWithOptions(PaddingBlock, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"padding-block" = c };
+                if (css.generic.parseWithOptions(PaddingBlock, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"padding-block" = c } };
                     }
                 }
             },
             .@"padding-inline" => {
-                if (css.generic.parseWithOptions(PaddingInline, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"padding-inline" = c };
+                if (css.generic.parseWithOptions(PaddingInline, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"padding-inline" = c } };
                     }
                 }
             },
             .padding => {
-                if (css.generic.parseWithOptions(Padding, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .padding = c };
+                if (css.generic.parseWithOptions(Padding, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .padding = c } };
                     }
                 }
             },
             .@"scroll-margin-top" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"scroll-margin-top" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-margin-top" = c } };
                     }
                 }
             },
             .@"scroll-margin-bottom" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"scroll-margin-bottom" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-margin-bottom" = c } };
                     }
                 }
             },
             .@"scroll-margin-left" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"scroll-margin-left" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-margin-left" = c } };
                     }
                 }
             },
             .@"scroll-margin-right" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"scroll-margin-right" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-margin-right" = c } };
                     }
                 }
             },
             .@"scroll-margin-block-start" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"scroll-margin-block-start" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-margin-block-start" = c } };
                     }
                 }
             },
             .@"scroll-margin-block-end" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"scroll-margin-block-end" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-margin-block-end" = c } };
                     }
                 }
             },
             .@"scroll-margin-inline-start" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"scroll-margin-inline-start" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-margin-inline-start" = c } };
                     }
                 }
             },
             .@"scroll-margin-inline-end" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"scroll-margin-inline-end" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-margin-inline-end" = c } };
                     }
                 }
             },
             .@"scroll-margin-block" => {
-                if (css.generic.parseWithOptions(ScrollMarginBlock, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"scroll-margin-block" = c };
+                if (css.generic.parseWithOptions(ScrollMarginBlock, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-margin-block" = c } };
                     }
                 }
             },
             .@"scroll-margin-inline" => {
-                if (css.generic.parseWithOptions(ScrollMarginInline, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"scroll-margin-inline" = c };
+                if (css.generic.parseWithOptions(ScrollMarginInline, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-margin-inline" = c } };
                     }
                 }
             },
             .@"scroll-margin" => {
-                if (css.generic.parseWithOptions(ScrollMargin, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"scroll-margin" = c };
+                if (css.generic.parseWithOptions(ScrollMargin, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-margin" = c } };
                     }
                 }
             },
             .@"scroll-padding-top" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"scroll-padding-top" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-padding-top" = c } };
                     }
                 }
             },
             .@"scroll-padding-bottom" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"scroll-padding-bottom" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-padding-bottom" = c } };
                     }
                 }
             },
             .@"scroll-padding-left" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"scroll-padding-left" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-padding-left" = c } };
                     }
                 }
             },
             .@"scroll-padding-right" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"scroll-padding-right" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-padding-right" = c } };
                     }
                 }
             },
             .@"scroll-padding-block-start" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"scroll-padding-block-start" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-padding-block-start" = c } };
                     }
                 }
             },
             .@"scroll-padding-block-end" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"scroll-padding-block-end" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-padding-block-end" = c } };
                     }
                 }
             },
             .@"scroll-padding-inline-start" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"scroll-padding-inline-start" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-padding-inline-start" = c } };
                     }
                 }
             },
             .@"scroll-padding-inline-end" => {
-                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"scroll-padding-inline-end" = c };
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-padding-inline-end" = c } };
                     }
                 }
             },
             .@"scroll-padding-block" => {
-                if (css.generic.parseWithOptions(ScrollPaddingBlock, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"scroll-padding-block" = c };
+                if (css.generic.parseWithOptions(ScrollPaddingBlock, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-padding-block" = c } };
                     }
                 }
             },
             .@"scroll-padding-inline" => {
-                if (css.generic.parseWithOptions(ScrollPaddingInline, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"scroll-padding-inline" = c };
+                if (css.generic.parseWithOptions(ScrollPaddingInline, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-padding-inline" = c } };
                     }
                 }
             },
             .@"scroll-padding" => {
-                if (css.generic.parseWithOptions(ScrollPadding, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"scroll-padding" = c };
+                if (css.generic.parseWithOptions(ScrollPadding, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-padding" = c } };
                     }
                 }
             },
             .@"font-weight" => {
-                if (css.generic.parseWithOptions(FontWeight, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"font-weight" = c };
+                if (css.generic.parseWithOptions(FontWeight, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"font-weight" = c } };
                     }
                 }
             },
             .@"font-size" => {
-                if (css.generic.parseWithOptions(FontSize, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"font-size" = c };
+                if (css.generic.parseWithOptions(FontSize, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"font-size" = c } };
                     }
                 }
             },
             .@"font-stretch" => {
-                if (css.generic.parseWithOptions(FontStretch, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"font-stretch" = c };
+                if (css.generic.parseWithOptions(FontStretch, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"font-stretch" = c } };
                     }
                 }
             },
             .@"font-family" => {
-                if (css.generic.parseWithOptions(ArrayList(FontFamily), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"font-family" = c };
+                if (css.generic.parseWithOptions(ArrayList(FontFamily), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"font-family" = c } };
                     }
                 }
             },
             .@"font-style" => {
-                if (css.generic.parseWithOptions(FontStyle, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"font-style" = c };
+                if (css.generic.parseWithOptions(FontStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"font-style" = c } };
                     }
                 }
             },
             .@"font-variant-caps" => {
-                if (css.generic.parseWithOptions(FontVariantCaps, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"font-variant-caps" = c };
+                if (css.generic.parseWithOptions(FontVariantCaps, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"font-variant-caps" = c } };
                     }
                 }
             },
             .@"line-height" => {
-                if (css.generic.parseWithOptions(LineHeight, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"line-height" = c };
+                if (css.generic.parseWithOptions(LineHeight, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"line-height" = c } };
                     }
                 }
             },
             .font => {
-                if (css.generic.parseWithOptions(Font, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .font = c };
+                if (css.generic.parseWithOptions(Font, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .font = c } };
                     }
                 }
             },
             .@"vertical-align" => {
-                if (css.generic.parseWithOptions(VerticalAlign, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"vertical-align" = c };
+                if (css.generic.parseWithOptions(VerticalAlign, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"vertical-align" = c } };
                     }
                 }
             },
             .@"font-palette" => {
-                if (css.generic.parseWithOptions(DashedIdentReference, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"font-palette" = c };
+                if (css.generic.parseWithOptions(DashedIdentReference, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"font-palette" = c } };
                     }
                 }
             },
             .@"transition-property" => |pre| {
-                if (css.generic.parseWithOptions(SmallList(PropertyId, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"transition-property" = .{ c, pre } };
+                if (css.generic.parseWithOptions(SmallList(PropertyId, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"transition-property" = .{ c, pre } } };
                     }
                 }
             },
             .@"transition-duration" => |pre| {
-                if (css.generic.parseWithOptions(SmallList(Time, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"transition-duration" = .{ c, pre } };
+                if (css.generic.parseWithOptions(SmallList(Time, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"transition-duration" = .{ c, pre } } };
                     }
                 }
             },
             .@"transition-delay" => |pre| {
-                if (css.generic.parseWithOptions(SmallList(Time, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"transition-delay" = .{ c, pre } };
+                if (css.generic.parseWithOptions(SmallList(Time, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"transition-delay" = .{ c, pre } } };
                     }
                 }
             },
             .@"transition-timing-function" => |pre| {
-                if (css.generic.parseWithOptions(SmallList(EasingFunction, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"transition-timing-function" = .{ c, pre } };
+                if (css.generic.parseWithOptions(SmallList(EasingFunction, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"transition-timing-function" = .{ c, pre } } };
                     }
                 }
             },
             .transition => |pre| {
-                if (css.generic.parseWithOptions(SmallList(Transition, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .transition = .{ c, pre } };
+                if (css.generic.parseWithOptions(SmallList(Transition, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .transition = .{ c, pre } } };
                     }
                 }
             },
             .@"animation-name" => |pre| {
-                if (css.generic.parseWithOptions(AnimationNameList, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"animation-name" = .{ c, pre } };
+                if (css.generic.parseWithOptions(AnimationNameList, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"animation-name" = .{ c, pre } } };
                     }
                 }
             },
             .@"animation-duration" => |pre| {
-                if (css.generic.parseWithOptions(SmallList(Time, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"animation-duration" = .{ c, pre } };
+                if (css.generic.parseWithOptions(SmallList(Time, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"animation-duration" = .{ c, pre } } };
                     }
                 }
             },
             .@"animation-timing-function" => |pre| {
-                if (css.generic.parseWithOptions(SmallList(EasingFunction, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"animation-timing-function" = .{ c, pre } };
+                if (css.generic.parseWithOptions(SmallList(EasingFunction, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"animation-timing-function" = .{ c, pre } } };
                     }
                 }
             },
             .@"animation-iteration-count" => |pre| {
-                if (css.generic.parseWithOptions(SmallList(AnimationIterationCount, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"animation-iteration-count" = .{ c, pre } };
+                if (css.generic.parseWithOptions(SmallList(AnimationIterationCount, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"animation-iteration-count" = .{ c, pre } } };
                     }
                 }
             },
             .@"animation-direction" => |pre| {
-                if (css.generic.parseWithOptions(SmallList(AnimationDirection, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"animation-direction" = .{ c, pre } };
+                if (css.generic.parseWithOptions(SmallList(AnimationDirection, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"animation-direction" = .{ c, pre } } };
                     }
                 }
             },
             .@"animation-play-state" => |pre| {
-                if (css.generic.parseWithOptions(SmallList(AnimationPlayState, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"animation-play-state" = .{ c, pre } };
+                if (css.generic.parseWithOptions(SmallList(AnimationPlayState, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"animation-play-state" = .{ c, pre } } };
                     }
                 }
             },
             .@"animation-delay" => |pre| {
-                if (css.generic.parseWithOptions(SmallList(Time, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"animation-delay" = .{ c, pre } };
+                if (css.generic.parseWithOptions(SmallList(Time, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"animation-delay" = .{ c, pre } } };
                     }
                 }
             },
             .@"animation-fill-mode" => |pre| {
-                if (css.generic.parseWithOptions(SmallList(AnimationFillMode, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"animation-fill-mode" = .{ c, pre } };
+                if (css.generic.parseWithOptions(SmallList(AnimationFillMode, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"animation-fill-mode" = .{ c, pre } } };
                     }
                 }
             },
             .@"animation-composition" => {
-                if (css.generic.parseWithOptions(SmallList(AnimationComposition, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"animation-composition" = c };
+                if (css.generic.parseWithOptions(SmallList(AnimationComposition, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"animation-composition" = c } };
                     }
                 }
             },
             .@"animation-timeline" => {
-                if (css.generic.parseWithOptions(SmallList(AnimationTimeline, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"animation-timeline" = c };
+                if (css.generic.parseWithOptions(SmallList(AnimationTimeline, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"animation-timeline" = c } };
                     }
                 }
             },
             .@"animation-range-start" => {
-                if (css.generic.parseWithOptions(SmallList(AnimationRangeStart, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"animation-range-start" = c };
+                if (css.generic.parseWithOptions(SmallList(AnimationRangeStart, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"animation-range-start" = c } };
                     }
                 }
             },
             .@"animation-range-end" => {
-                if (css.generic.parseWithOptions(SmallList(AnimationRangeEnd, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"animation-range-end" = c };
+                if (css.generic.parseWithOptions(SmallList(AnimationRangeEnd, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"animation-range-end" = c } };
                     }
                 }
             },
             .@"animation-range" => {
-                if (css.generic.parseWithOptions(SmallList(AnimationRange, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"animation-range" = c };
+                if (css.generic.parseWithOptions(SmallList(AnimationRange, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"animation-range" = c } };
                     }
                 }
             },
             .animation => |pre| {
-                if (css.generic.parseWithOptions(AnimationList, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .animation = .{ c, pre } };
+                if (css.generic.parseWithOptions(AnimationList, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .animation = .{ c, pre } } };
                     }
                 }
             },
             .transform => |pre| {
-                if (css.generic.parseWithOptions(TransformList, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .transform = .{ c, pre } };
+                if (css.generic.parseWithOptions(TransformList, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .transform = .{ c, pre } } };
                     }
                 }
             },
             .@"transform-origin" => |pre| {
-                if (css.generic.parseWithOptions(Position, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"transform-origin" = .{ c, pre } };
+                if (css.generic.parseWithOptions(Position, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"transform-origin" = .{ c, pre } } };
                     }
                 }
             },
             .@"transform-style" => |pre| {
-                if (css.generic.parseWithOptions(TransformStyle, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"transform-style" = .{ c, pre } };
+                if (css.generic.parseWithOptions(TransformStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"transform-style" = .{ c, pre } } };
                     }
                 }
             },
             .@"transform-box" => {
-                if (css.generic.parseWithOptions(TransformBox, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"transform-box" = c };
+                if (css.generic.parseWithOptions(TransformBox, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"transform-box" = c } };
                     }
                 }
             },
             .@"backface-visibility" => |pre| {
-                if (css.generic.parseWithOptions(BackfaceVisibility, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"backface-visibility" = .{ c, pre } };
+                if (css.generic.parseWithOptions(BackfaceVisibility, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"backface-visibility" = .{ c, pre } } };
                     }
                 }
             },
             .perspective => |pre| {
-                if (css.generic.parseWithOptions(Perspective, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .perspective = .{ c, pre } };
+                if (css.generic.parseWithOptions(Perspective, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .perspective = .{ c, pre } } };
                     }
                 }
             },
             .@"perspective-origin" => |pre| {
-                if (css.generic.parseWithOptions(Position, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"perspective-origin" = .{ c, pre } };
+                if (css.generic.parseWithOptions(Position, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"perspective-origin" = .{ c, pre } } };
                     }
                 }
             },
             .translate => {
-                if (css.generic.parseWithOptions(Translate, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .translate = c };
+                if (css.generic.parseWithOptions(Translate, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .translate = c } };
                     }
                 }
             },
             .rotate => {
-                if (css.generic.parseWithOptions(Rotate, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .rotate = c };
+                if (css.generic.parseWithOptions(Rotate, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .rotate = c } };
                     }
                 }
             },
             .scale => {
-                if (css.generic.parseWithOptions(Scale, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .scale = c };
+                if (css.generic.parseWithOptions(Scale, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .scale = c } };
                     }
                 }
             },
             .@"text-transform" => {
-                if (css.generic.parseWithOptions(TextTransform, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"text-transform" = c };
+                if (css.generic.parseWithOptions(TextTransform, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"text-transform" = c } };
                     }
                 }
             },
             .@"white-space" => {
-                if (css.generic.parseWithOptions(WhiteSpace, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"white-space" = c };
+                if (css.generic.parseWithOptions(WhiteSpace, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"white-space" = c } };
                     }
                 }
             },
             .@"tab-size" => |pre| {
-                if (css.generic.parseWithOptions(LengthOrNumber, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"tab-size" = .{ c, pre } };
+                if (css.generic.parseWithOptions(LengthOrNumber, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"tab-size" = .{ c, pre } } };
                     }
                 }
             },
             .@"word-break" => {
-                if (css.generic.parseWithOptions(WordBreak, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"word-break" = c };
+                if (css.generic.parseWithOptions(WordBreak, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"word-break" = c } };
                     }
                 }
             },
             .@"line-break" => {
-                if (css.generic.parseWithOptions(LineBreak, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"line-break" = c };
+                if (css.generic.parseWithOptions(LineBreak, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"line-break" = c } };
                     }
                 }
             },
             .hyphens => |pre| {
-                if (css.generic.parseWithOptions(Hyphens, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .hyphens = .{ c, pre } };
+                if (css.generic.parseWithOptions(Hyphens, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .hyphens = .{ c, pre } } };
                     }
                 }
             },
             .@"overflow-wrap" => {
-                if (css.generic.parseWithOptions(OverflowWrap, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"overflow-wrap" = c };
+                if (css.generic.parseWithOptions(OverflowWrap, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"overflow-wrap" = c } };
                     }
                 }
             },
             .@"word-wrap" => {
-                if (css.generic.parseWithOptions(OverflowWrap, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"word-wrap" = c };
+                if (css.generic.parseWithOptions(OverflowWrap, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"word-wrap" = c } };
                     }
                 }
             },
             .@"text-align" => {
-                if (css.generic.parseWithOptions(TextAlign, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"text-align" = c };
+                if (css.generic.parseWithOptions(TextAlign, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"text-align" = c } };
                     }
                 }
             },
             .@"text-align-last" => |pre| {
-                if (css.generic.parseWithOptions(TextAlignLast, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"text-align-last" = .{ c, pre } };
+                if (css.generic.parseWithOptions(TextAlignLast, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"text-align-last" = .{ c, pre } } };
                     }
                 }
             },
             .@"text-justify" => {
-                if (css.generic.parseWithOptions(TextJustify, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"text-justify" = c };
+                if (css.generic.parseWithOptions(TextJustify, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"text-justify" = c } };
                     }
                 }
             },
             .@"word-spacing" => {
-                if (css.generic.parseWithOptions(Spacing, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"word-spacing" = c };
+                if (css.generic.parseWithOptions(Spacing, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"word-spacing" = c } };
                     }
                 }
             },
             .@"letter-spacing" => {
-                if (css.generic.parseWithOptions(Spacing, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"letter-spacing" = c };
+                if (css.generic.parseWithOptions(Spacing, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"letter-spacing" = c } };
                     }
                 }
             },
             .@"text-indent" => {
-                if (css.generic.parseWithOptions(TextIndent, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"text-indent" = c };
+                if (css.generic.parseWithOptions(TextIndent, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"text-indent" = c } };
                     }
                 }
             },
             .@"text-decoration-line" => |pre| {
-                if (css.generic.parseWithOptions(TextDecorationLine, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"text-decoration-line" = .{ c, pre } };
+                if (css.generic.parseWithOptions(TextDecorationLine, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"text-decoration-line" = .{ c, pre } } };
                     }
                 }
             },
             .@"text-decoration-style" => |pre| {
-                if (css.generic.parseWithOptions(TextDecorationStyle, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"text-decoration-style" = .{ c, pre } };
+                if (css.generic.parseWithOptions(TextDecorationStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"text-decoration-style" = .{ c, pre } } };
                     }
                 }
             },
             .@"text-decoration-color" => |pre| {
-                if (css.generic.parseWithOptions(CssColor, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"text-decoration-color" = .{ c, pre } };
+                if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"text-decoration-color" = .{ c, pre } } };
                     }
                 }
             },
             .@"text-decoration-thickness" => {
-                if (css.generic.parseWithOptions(TextDecorationThickness, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"text-decoration-thickness" = c };
+                if (css.generic.parseWithOptions(TextDecorationThickness, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"text-decoration-thickness" = c } };
                     }
                 }
             },
             .@"text-decoration" => |pre| {
-                if (css.generic.parseWithOptions(TextDecoration, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"text-decoration" = .{ c, pre } };
+                if (css.generic.parseWithOptions(TextDecoration, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"text-decoration" = .{ c, pre } } };
                     }
                 }
             },
             .@"text-decoration-skip-ink" => |pre| {
-                if (css.generic.parseWithOptions(TextDecorationSkipInk, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"text-decoration-skip-ink" = .{ c, pre } };
+                if (css.generic.parseWithOptions(TextDecorationSkipInk, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"text-decoration-skip-ink" = .{ c, pre } } };
                     }
                 }
             },
             .@"text-emphasis-style" => |pre| {
-                if (css.generic.parseWithOptions(TextEmphasisStyle, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"text-emphasis-style" = .{ c, pre } };
+                if (css.generic.parseWithOptions(TextEmphasisStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"text-emphasis-style" = .{ c, pre } } };
                     }
                 }
             },
             .@"text-emphasis-color" => |pre| {
-                if (css.generic.parseWithOptions(CssColor, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"text-emphasis-color" = .{ c, pre } };
+                if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"text-emphasis-color" = .{ c, pre } } };
                     }
                 }
             },
             .@"text-emphasis" => |pre| {
-                if (css.generic.parseWithOptions(TextEmphasis, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"text-emphasis" = .{ c, pre } };
+                if (css.generic.parseWithOptions(TextEmphasis, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"text-emphasis" = .{ c, pre } } };
                     }
                 }
             },
             .@"text-emphasis-position" => |pre| {
-                if (css.generic.parseWithOptions(TextEmphasisPosition, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"text-emphasis-position" = .{ c, pre } };
+                if (css.generic.parseWithOptions(TextEmphasisPosition, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"text-emphasis-position" = .{ c, pre } } };
                     }
                 }
             },
             .@"text-shadow" => {
-                if (css.generic.parseWithOptions(SmallList(TextShadow, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"text-shadow" = c };
+                if (css.generic.parseWithOptions(SmallList(TextShadow, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"text-shadow" = c } };
                     }
                 }
             },
             .@"text-size-adjust" => |pre| {
-                if (css.generic.parseWithOptions(TextSizeAdjust, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"text-size-adjust" = .{ c, pre } };
+                if (css.generic.parseWithOptions(TextSizeAdjust, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"text-size-adjust" = .{ c, pre } } };
                     }
                 }
             },
             .direction => {
-                if (css.generic.parseWithOptions(Direction, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .direction = c };
+                if (css.generic.parseWithOptions(Direction, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .direction = c } };
                     }
                 }
             },
             .@"unicode-bidi" => {
-                if (css.generic.parseWithOptions(UnicodeBidi, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"unicode-bidi" = c };
+                if (css.generic.parseWithOptions(UnicodeBidi, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"unicode-bidi" = c } };
                     }
                 }
             },
             .@"box-decoration-break" => |pre| {
-                if (css.generic.parseWithOptions(BoxDecorationBreak, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"box-decoration-break" = .{ c, pre } };
+                if (css.generic.parseWithOptions(BoxDecorationBreak, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"box-decoration-break" = .{ c, pre } } };
                     }
                 }
             },
             .resize => {
-                if (css.generic.parseWithOptions(Resize, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .resize = c };
+                if (css.generic.parseWithOptions(Resize, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .resize = c } };
                     }
                 }
             },
             .cursor => {
-                if (css.generic.parseWithOptions(Cursor, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .cursor = c };
+                if (css.generic.parseWithOptions(Cursor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .cursor = c } };
                     }
                 }
             },
             .@"caret-color" => {
-                if (css.generic.parseWithOptions(ColorOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"caret-color" = c };
+                if (css.generic.parseWithOptions(ColorOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"caret-color" = c } };
                     }
                 }
             },
             .@"caret-shape" => {
-                if (css.generic.parseWithOptions(CaretShape, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"caret-shape" = c };
+                if (css.generic.parseWithOptions(CaretShape, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"caret-shape" = c } };
                     }
                 }
             },
             .caret => {
-                if (css.generic.parseWithOptions(Caret, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .caret = c };
+                if (css.generic.parseWithOptions(Caret, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .caret = c } };
                     }
                 }
             },
             .@"user-select" => |pre| {
-                if (css.generic.parseWithOptions(UserSelect, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"user-select" = .{ c, pre } };
+                if (css.generic.parseWithOptions(UserSelect, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"user-select" = .{ c, pre } } };
                     }
                 }
             },
             .@"accent-color" => {
-                if (css.generic.parseWithOptions(ColorOrAuto, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"accent-color" = c };
+                if (css.generic.parseWithOptions(ColorOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"accent-color" = c } };
                     }
                 }
             },
             .appearance => |pre| {
-                if (css.generic.parseWithOptions(Appearance, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .appearance = .{ c, pre } };
+                if (css.generic.parseWithOptions(Appearance, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .appearance = .{ c, pre } } };
                     }
                 }
             },
             .@"list-style-type" => {
-                if (css.generic.parseWithOptions(ListStyleType, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"list-style-type" = c };
+                if (css.generic.parseWithOptions(ListStyleType, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"list-style-type" = c } };
                     }
                 }
             },
             .@"list-style-image" => {
-                if (css.generic.parseWithOptions(Image, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"list-style-image" = c };
+                if (css.generic.parseWithOptions(Image, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"list-style-image" = c } };
                     }
                 }
             },
             .@"list-style-position" => {
-                if (css.generic.parseWithOptions(ListStylePosition, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"list-style-position" = c };
+                if (css.generic.parseWithOptions(ListStylePosition, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"list-style-position" = c } };
                     }
                 }
             },
             .@"list-style" => {
-                if (css.generic.parseWithOptions(ListStyle, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"list-style" = c };
+                if (css.generic.parseWithOptions(ListStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"list-style" = c } };
                     }
                 }
             },
             .@"marker-side" => {
-                if (css.generic.parseWithOptions(MarkerSide, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"marker-side" = c };
+                if (css.generic.parseWithOptions(MarkerSide, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"marker-side" = c } };
                     }
                 }
             },
             .composes => {
-                if (css.generic.parseWithOptions(Composes, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .composes = c };
+                if (css.generic.parseWithOptions(Composes, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .composes = c } };
                     }
                 }
             },
             .fill => {
-                if (css.generic.parseWithOptions(SVGPaint, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .fill = c };
+                if (css.generic.parseWithOptions(SVGPaint, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .fill = c } };
                     }
                 }
             },
             .@"fill-rule" => {
-                if (css.generic.parseWithOptions(FillRule, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"fill-rule" = c };
+                if (css.generic.parseWithOptions(FillRule, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"fill-rule" = c } };
                     }
                 }
             },
             .@"fill-opacity" => {
-                if (css.generic.parseWithOptions(AlphaValue, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"fill-opacity" = c };
+                if (css.generic.parseWithOptions(AlphaValue, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"fill-opacity" = c } };
                     }
                 }
             },
             .stroke => {
-                if (css.generic.parseWithOptions(SVGPaint, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .stroke = c };
+                if (css.generic.parseWithOptions(SVGPaint, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .stroke = c } };
                     }
                 }
             },
             .@"stroke-opacity" => {
-                if (css.generic.parseWithOptions(AlphaValue, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"stroke-opacity" = c };
+                if (css.generic.parseWithOptions(AlphaValue, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"stroke-opacity" = c } };
                     }
                 }
             },
             .@"stroke-width" => {
-                if (css.generic.parseWithOptions(LengthPercentage, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"stroke-width" = c };
+                if (css.generic.parseWithOptions(LengthPercentage, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"stroke-width" = c } };
                     }
                 }
             },
             .@"stroke-linecap" => {
-                if (css.generic.parseWithOptions(StrokeLinecap, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"stroke-linecap" = c };
+                if (css.generic.parseWithOptions(StrokeLinecap, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"stroke-linecap" = c } };
                     }
                 }
             },
             .@"stroke-linejoin" => {
-                if (css.generic.parseWithOptions(StrokeLinejoin, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"stroke-linejoin" = c };
+                if (css.generic.parseWithOptions(StrokeLinejoin, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"stroke-linejoin" = c } };
                     }
                 }
             },
             .@"stroke-miterlimit" => {
-                if (css.generic.parseWithOptions(CSSNumber, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"stroke-miterlimit" = c };
+                if (css.generic.parseWithOptions(CSSNumber, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"stroke-miterlimit" = c } };
                     }
                 }
             },
             .@"stroke-dasharray" => {
-                if (css.generic.parseWithOptions(StrokeDasharray, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"stroke-dasharray" = c };
+                if (css.generic.parseWithOptions(StrokeDasharray, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"stroke-dasharray" = c } };
                     }
                 }
             },
             .@"stroke-dashoffset" => {
-                if (css.generic.parseWithOptions(LengthPercentage, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"stroke-dashoffset" = c };
+                if (css.generic.parseWithOptions(LengthPercentage, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"stroke-dashoffset" = c } };
                     }
                 }
             },
             .@"marker-start" => {
-                if (css.generic.parseWithOptions(Marker, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"marker-start" = c };
+                if (css.generic.parseWithOptions(Marker, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"marker-start" = c } };
                     }
                 }
             },
             .@"marker-mid" => {
-                if (css.generic.parseWithOptions(Marker, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"marker-mid" = c };
+                if (css.generic.parseWithOptions(Marker, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"marker-mid" = c } };
                     }
                 }
             },
             .@"marker-end" => {
-                if (css.generic.parseWithOptions(Marker, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"marker-end" = c };
+                if (css.generic.parseWithOptions(Marker, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"marker-end" = c } };
                     }
                 }
             },
             .marker => {
-                if (css.generic.parseWithOptions(Marker, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .marker = c };
+                if (css.generic.parseWithOptions(Marker, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .marker = c } };
                     }
                 }
             },
             .@"color-interpolation" => {
-                if (css.generic.parseWithOptions(ColorInterpolation, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"color-interpolation" = c };
+                if (css.generic.parseWithOptions(ColorInterpolation, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"color-interpolation" = c } };
                     }
                 }
             },
             .@"color-interpolation-filters" => {
-                if (css.generic.parseWithOptions(ColorInterpolation, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"color-interpolation-filters" = c };
+                if (css.generic.parseWithOptions(ColorInterpolation, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"color-interpolation-filters" = c } };
                     }
                 }
             },
             .@"color-rendering" => {
-                if (css.generic.parseWithOptions(ColorRendering, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"color-rendering" = c };
+                if (css.generic.parseWithOptions(ColorRendering, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"color-rendering" = c } };
                     }
                 }
             },
             .@"shape-rendering" => {
-                if (css.generic.parseWithOptions(ShapeRendering, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"shape-rendering" = c };
+                if (css.generic.parseWithOptions(ShapeRendering, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"shape-rendering" = c } };
                     }
                 }
             },
             .@"text-rendering" => {
-                if (css.generic.parseWithOptions(TextRendering, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"text-rendering" = c };
+                if (css.generic.parseWithOptions(TextRendering, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"text-rendering" = c } };
                     }
                 }
             },
             .@"image-rendering" => {
-                if (css.generic.parseWithOptions(ImageRendering, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"image-rendering" = c };
+                if (css.generic.parseWithOptions(ImageRendering, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"image-rendering" = c } };
                     }
                 }
             },
             .@"clip-path" => |pre| {
-                if (css.generic.parseWithOptions(ClipPath, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"clip-path" = .{ c, pre } };
+                if (css.generic.parseWithOptions(ClipPath, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"clip-path" = .{ c, pre } } };
                     }
                 }
             },
             .@"clip-rule" => {
-                if (css.generic.parseWithOptions(FillRule, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"clip-rule" = c };
+                if (css.generic.parseWithOptions(FillRule, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"clip-rule" = c } };
                     }
                 }
             },
             .@"mask-image" => |pre| {
-                if (css.generic.parseWithOptions(SmallList(Image, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"mask-image" = .{ c, pre } };
+                if (css.generic.parseWithOptions(SmallList(Image, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-image" = .{ c, pre } } };
                     }
                 }
             },
             .@"mask-mode" => {
-                if (css.generic.parseWithOptions(SmallList(MaskMode, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"mask-mode" = c };
+                if (css.generic.parseWithOptions(SmallList(MaskMode, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-mode" = c } };
                     }
                 }
             },
             .@"mask-repeat" => |pre| {
-                if (css.generic.parseWithOptions(SmallList(BackgroundRepeat, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"mask-repeat" = .{ c, pre } };
+                if (css.generic.parseWithOptions(SmallList(BackgroundRepeat, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-repeat" = .{ c, pre } } };
                     }
                 }
             },
             .@"mask-position-x" => {
-                if (css.generic.parseWithOptions(SmallList(HorizontalPosition, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"mask-position-x" = c };
+                if (css.generic.parseWithOptions(SmallList(HorizontalPosition, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-position-x" = c } };
                     }
                 }
             },
             .@"mask-position-y" => {
-                if (css.generic.parseWithOptions(SmallList(VerticalPosition, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"mask-position-y" = c };
+                if (css.generic.parseWithOptions(SmallList(VerticalPosition, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-position-y" = c } };
                     }
                 }
             },
             .@"mask-position" => |pre| {
-                if (css.generic.parseWithOptions(SmallList(Position, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"mask-position" = .{ c, pre } };
+                if (css.generic.parseWithOptions(SmallList(Position, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-position" = .{ c, pre } } };
                     }
                 }
             },
             .@"mask-clip" => |pre| {
-                if (css.generic.parseWithOptions(SmallList(MaskClip, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"mask-clip" = .{ c, pre } };
+                if (css.generic.parseWithOptions(SmallList(MaskClip, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-clip" = .{ c, pre } } };
                     }
                 }
             },
             .@"mask-origin" => |pre| {
-                if (css.generic.parseWithOptions(SmallList(GeometryBox, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"mask-origin" = .{ c, pre } };
+                if (css.generic.parseWithOptions(SmallList(GeometryBox, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-origin" = .{ c, pre } } };
                     }
                 }
             },
             .@"mask-size" => |pre| {
-                if (css.generic.parseWithOptions(SmallList(BackgroundSize, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"mask-size" = .{ c, pre } };
+                if (css.generic.parseWithOptions(SmallList(BackgroundSize, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-size" = .{ c, pre } } };
                     }
                 }
             },
             .@"mask-composite" => {
-                if (css.generic.parseWithOptions(SmallList(MaskComposite, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"mask-composite" = c };
+                if (css.generic.parseWithOptions(SmallList(MaskComposite, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-composite" = c } };
                     }
                 }
             },
             .@"mask-type" => {
-                if (css.generic.parseWithOptions(MaskType, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"mask-type" = c };
+                if (css.generic.parseWithOptions(MaskType, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-type" = c } };
                     }
                 }
             },
             .mask => |pre| {
-                if (css.generic.parseWithOptions(SmallList(Mask, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .mask = .{ c, pre } };
+                if (css.generic.parseWithOptions(SmallList(Mask, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .mask = .{ c, pre } } };
                     }
                 }
             },
             .@"mask-border-source" => {
-                if (css.generic.parseWithOptions(Image, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"mask-border-source" = c };
+                if (css.generic.parseWithOptions(Image, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-border-source" = c } };
                     }
                 }
             },
             .@"mask-border-mode" => {
-                if (css.generic.parseWithOptions(MaskBorderMode, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"mask-border-mode" = c };
+                if (css.generic.parseWithOptions(MaskBorderMode, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-border-mode" = c } };
                     }
                 }
             },
             .@"mask-border-slice" => {
-                if (css.generic.parseWithOptions(BorderImageSlice, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"mask-border-slice" = c };
+                if (css.generic.parseWithOptions(BorderImageSlice, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-border-slice" = c } };
                     }
                 }
             },
             .@"mask-border-width" => {
-                if (css.generic.parseWithOptions(Rect(BorderImageSideWidth), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"mask-border-width" = c };
+                if (css.generic.parseWithOptions(Rect(BorderImageSideWidth), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-border-width" = c } };
                     }
                 }
             },
             .@"mask-border-outset" => {
-                if (css.generic.parseWithOptions(Rect(LengthOrNumber), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"mask-border-outset" = c };
+                if (css.generic.parseWithOptions(Rect(LengthOrNumber), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-border-outset" = c } };
                     }
                 }
             },
             .@"mask-border-repeat" => {
-                if (css.generic.parseWithOptions(BorderImageRepeat, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"mask-border-repeat" = c };
+                if (css.generic.parseWithOptions(BorderImageRepeat, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-border-repeat" = c } };
                     }
                 }
             },
             .@"mask-border" => {
-                if (css.generic.parseWithOptions(MaskBorder, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"mask-border" = c };
+                if (css.generic.parseWithOptions(MaskBorder, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-border" = c } };
                     }
                 }
             },
             .@"-webkit-mask-composite" => {
-                if (css.generic.parseWithOptions(SmallList(WebKitMaskComposite, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"-webkit-mask-composite" = c };
+                if (css.generic.parseWithOptions(SmallList(WebKitMaskComposite, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"-webkit-mask-composite" = c } };
                     }
                 }
             },
             .@"mask-source-type" => |pre| {
-                if (css.generic.parseWithOptions(SmallList(WebKitMaskSourceType, 1), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"mask-source-type" = .{ c, pre } };
+                if (css.generic.parseWithOptions(SmallList(WebKitMaskSourceType, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-source-type" = .{ c, pre } } };
                     }
                 }
             },
             .@"mask-box-image" => |pre| {
-                if (css.generic.parseWithOptions(BorderImage, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"mask-box-image" = .{ c, pre } };
+                if (css.generic.parseWithOptions(BorderImage, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-box-image" = .{ c, pre } } };
                     }
                 }
             },
             .@"mask-box-image-source" => |pre| {
-                if (css.generic.parseWithOptions(Image, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"mask-box-image-source" = .{ c, pre } };
+                if (css.generic.parseWithOptions(Image, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-box-image-source" = .{ c, pre } } };
                     }
                 }
             },
             .@"mask-box-image-slice" => |pre| {
-                if (css.generic.parseWithOptions(BorderImageSlice, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"mask-box-image-slice" = .{ c, pre } };
+                if (css.generic.parseWithOptions(BorderImageSlice, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-box-image-slice" = .{ c, pre } } };
                     }
                 }
             },
             .@"mask-box-image-width" => |pre| {
-                if (css.generic.parseWithOptions(Rect(BorderImageSideWidth), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"mask-box-image-width" = .{ c, pre } };
+                if (css.generic.parseWithOptions(Rect(BorderImageSideWidth), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-box-image-width" = .{ c, pre } } };
                     }
                 }
             },
             .@"mask-box-image-outset" => |pre| {
-                if (css.generic.parseWithOptions(Rect(LengthOrNumber), input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"mask-box-image-outset" = .{ c, pre } };
+                if (css.generic.parseWithOptions(Rect(LengthOrNumber), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-box-image-outset" = .{ c, pre } } };
                     }
                 }
             },
             .@"mask-box-image-repeat" => |pre| {
-                if (css.generic.parseWithOptions(BorderImageRepeat, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"mask-box-image-repeat" = .{ c, pre } };
+                if (css.generic.parseWithOptions(BorderImageRepeat, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-box-image-repeat" = .{ c, pre } } };
                     }
                 }
             },
             .filter => |pre| {
-                if (css.generic.parseWithOptions(FilterList, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .filter = .{ c, pre } };
+                if (css.generic.parseWithOptions(FilterList, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .filter = .{ c, pre } } };
                     }
                 }
             },
             .@"backdrop-filter" => |pre| {
-                if (css.generic.parseWithOptions(FilterList, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"backdrop-filter" = .{ c, pre } };
+                if (css.generic.parseWithOptions(FilterList, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"backdrop-filter" = .{ c, pre } } };
                     }
                 }
             },
             .@"z-index" => {
-                if (css.generic.parseWithOptions(position.ZIndex, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"z-index" = c };
+                if (css.generic.parseWithOptions(position.ZIndex, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"z-index" = c } };
                     }
                 }
             },
             .@"container-type" => {
-                if (css.generic.parseWithOptions(ContainerType, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"container-type" = c };
+                if (css.generic.parseWithOptions(ContainerType, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"container-type" = c } };
                     }
                 }
             },
             .@"container-name" => {
-                if (css.generic.parseWithOptions(ContainerNameList, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"container-name" = c };
+                if (css.generic.parseWithOptions(ContainerNameList, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"container-name" = c } };
                     }
                 }
             },
             .container => {
-                if (css.generic.parseWithOptions(Container, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .container = c };
+                if (css.generic.parseWithOptions(Container, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .container = c } };
                     }
                 }
             },
             .@"view-transition-name" => {
-                if (css.generic.parseWithOptions(CustomIdent, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"view-transition-name" = c };
+                if (css.generic.parseWithOptions(CustomIdent, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"view-transition-name" = c } };
                     }
                 }
             },
             .@"color-scheme" => {
-                if (css.generic.parseWithOptions(ColorScheme, input, options)) |c| {
-                    if (input.expectExhausted()) |_| {
-                        return .{ .@"color-scheme" = c };
+                if (css.generic.parseWithOptions(ColorScheme, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"color-scheme" = c } };
                     }
                 }
             },
-            .all => return .{ .all = try CSSWideKeyword.parse(input, options) },
-            .custom => |name| return .{ .custom = try CustomProperty.parse(name, input, options) },
+            .all => return .{ .result = .{ .all = try CSSWideKeyword.parse(input, options) } },
+            .custom => |name| return .{ .result = .{ .custom = try CustomProperty.parse(name, input, options) } },
             else => {},
         }
 
@@ -2899,7 +2899,7 @@ pub const Property = union(PropertyIdTag) {
         // and stored as an enum rather than a string. This lets property handlers more easily deal with it.
         // Ideally we'd only do this if var() or env() references were seen, but err on the safe side for now.
         input.reset(&state);
-        return .{ .unparsed = try UnparsedProperty.parse(property_id, input, options) };
+        return .{ .result = .{ .unparsed = try UnparsedProperty.parse(property_id, input, options) } };
     }
 
     pub inline fn __toCssHelper(this: *const Property) struct { []const u8, VendorPrefix } {

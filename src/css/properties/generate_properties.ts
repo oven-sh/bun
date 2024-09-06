@@ -65,13 +65,13 @@ ${Object.entries(property_defs)
 function generatePropertyImpl(property_defs: Record<string, PropertyDef>): string {
   return `
   /// Parses a CSS property by name.
-  pub fn parse(property_id: PropertyId, input: *css.Parser, options: *css.ParserOptions) Error!Property {
+  pub fn parse(property_id: PropertyId, input: *css.Parser, options: *css.ParserOptions) Result(Property) {
     const state = input.state();
 
     switch (property_id) {
       ${generatePropertyImplParseCases(property_defs)}
-      .all => return .{ .all = try CSSWideKeyword.parse(input, options) },
-      .custom => |name| return .{ .custom = try CustomProperty.parse(name, input, options) },
+      .all => return .{ .result = .{ .all = try CSSWideKeyword.parse(input, options) } },
+      .custom => |name| return .{ .result = .{ .custom = try CustomProperty.parse(name, input, options) } },
       else => {},
     }
 
@@ -80,7 +80,7 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
     // and stored as an enum rather than a string. This lets property handlers more easily deal with it.
     // Ideally we'd only do this if var() or env() references were seen, but err on the safe side for now.
     input.reset(&state);
-    return .{ .unparsed = try UnparsedProperty.parse(property_id, input, options) };
+    return .{ .result = .{ .unparsed = try UnparsedProperty.parse(property_id, input, options) } };
   }
 
   pub inline fn __toCssHelper(this: *const Property) struct{[]const u8, VendorPrefix} {
@@ -155,9 +155,9 @@ function generatePropertyImplParseCases(property_defs: Record<string, PropertyDe
           ? `.{ .${escapeIdent(name)} = c }`
           : `.{ .${escapeIdent(name)} = .{ c, pre } }`;
       return `.${escapeIdent(name)} => ${capture} {
-  if (css.generic.parseWithOptions(${meta.ty}, input, options)) |c| {
-    if (input.expectExhausted()) |_| {
-      return ${ret};
+  if (css.generic.parseWithOptions(${meta.ty}, input, options).asValue()) |c| {
+    if (input.expectExhausted().isOk()) {
+      return .{ .result = ${ret} };
     }
   }
 },`;
@@ -1752,7 +1752,7 @@ const display = css.css_properties.display;
 
 const Position = position.Position;
 
-const Error = css.Error;
+const Result = css.Result;
 
 const ArrayList = std.ArrayListUnmanaged;
 const SmallList = css.SmallList;

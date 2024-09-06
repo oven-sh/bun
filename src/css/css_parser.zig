@@ -709,7 +709,7 @@ pub fn parse_until_after(
     return .{ .result = result };
 }
 
-fn parse_nested_block(parser: *Parser, comptime T: type, closure: anytype, comptime parsefn: *const fn (@TypeOf(closure), *Parser) Result(T)) Error!T {
+fn parse_nested_block(parser: *Parser, comptime T: type, closure: anytype, comptime parsefn: *const fn (@TypeOf(closure), *Parser) Result(T)) Result(T) {
     const block_type: BlockType = if (parser.at_start_of) |block_type| brk: {
         parser.at_start_of = null;
         break :brk block_type;

@@ -76,20 +76,8 @@ else()
   set(libWTF "libWTF")
 endif()
 
-include(SetupWebKit)
-
 if(WEBKIT_PREBUILT)
-    set(WEBKIT_INCLUDE_DIR ${WEBKIT_PATH}/include)
-
-    if(APPLE)
-        set(ICU_INCLUDE_DIR "")
-    else()
-        set(ICU_INCLUDE_DIR ${WEBKIT_PATH}/include/wtf/unicode)
-    endif()
-
-    set(WEBKIT_LIB_DIR ${WEBKIT_PATH}/lib)
 elseif(WEBKIT_PATH STREQUAL "omit")
-    # message(STATUS "Not using WebKit. This is only valid if you are only trying to build Zig code")
 else()
     # Expected to be WebKit/WebKitBuild/${CMAKE_BUILD_TYPE}
     if(EXISTS "${WEBKIT_PATH}/cmakeconfig.h")
@@ -118,7 +106,6 @@ else()
             message(FATAL_ERROR "WebKit directory ${WEBKIT_PATH} does not contain all the required files for Bun. Expected a path to the oven-sh/WebKit repository, or a path to a folder containing `include` and `lib`.")
         endif()
 
-        set(WEBKIT_INCLUDE_DIR "${WEBKIT_PATH}/include")
         set(WEBKIT_LIB_DIR "${WEBKIT_PATH}/lib")
 
         message(STATUS "Using specified WebKit directory: ${WEBKIT_PATH}")
@@ -128,10 +115,6 @@ endif()
 
 include(BuildBun)
 include(CompilerFlags)
-
-if(ICU_INCLUDE_DIR)
-  include_directories(${ICU_INCLUDE_DIR})
-endif()
 
 # --- clang and linker flags ---
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -319,45 +302,12 @@ if(UNIX AND NOT APPLE)
     target_link_libraries(${bun} PRIVATE "pthread")
     target_link_libraries(${bun} PRIVATE "dl")
 
-    if(NOT USE_STATIC_LIBATOMIC)
-        target_link_libraries(${bun} PUBLIC "libatomic.so")
-    else()
-        target_link_libraries(${bun} PRIVATE "libatomic.a")
-    endif()
-
-    if(USE_SYSTEM_ICU)
-        target_link_libraries(${bun} PRIVATE "libicudata.a")
-        target_link_libraries(${bun} PRIVATE "libicui18n.a")
-        target_link_libraries(${bun} PRIVATE "libicuuc.a")
-    else()
-        target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicudata.a")
-        target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicui18n.a")
-        target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicuuc.a")
-    endif()
-
     set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${CWD}/src/linker.lds")
     set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${CWD}/src/symbols.dyn")
 endif()
 
-# --- ICU ---
-if(APPLE)
-  target_link_libraries(${bun} PRIVATE "icucore")
-endif()
-
-if(NOT WIN32)
-  target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_DIR}/libWTF.a)
-  target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_DIR}/libJavaScriptCore.a)
-
-  if(NOT APPLE OR EXISTS ${WEBKIT_LIB_DIR}/libbmalloc.a)
-    target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_DIR}/libbmalloc.a)
-  endif()
-else()
+if(WIN32)
   target_link_libraries(${bun} PRIVATE
-    ${WEBKIT_LIB_DIR}/WTF.lib
-    ${WEBKIT_LIB_DIR}/JavaScriptCore.lib
-    ${WEBKIT_LIB_DIR}/sicudt.lib
-    ${WEBKIT_LIB_DIR}/sicuin.lib
-    ${WEBKIT_LIB_DIR}/sicuuc.lib
     winmm
     bcrypt
     ntdll

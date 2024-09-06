@@ -3504,7 +3504,7 @@ extern fn us_socket_mark_needs_more_not_ssl(socket: ?*uws_res) void;
 
 extern fn uws_res_state(ssl: c_int, res: *const uws_res) State;
 
-pub const State = enum(i32) {
+pub const State = enum(u8) {
     HTTP_STATUS_CALLED = 1,
     HTTP_WRITE_CALLED = 2,
     HTTP_END_CALLED = 4,

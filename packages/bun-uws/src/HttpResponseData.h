@@ -37,8 +37,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     using OnAbortedCallback = void (*)(uWS::HttpResponse<SSL>*, void*);
     using OnTimeoutCallback = void (*)(uWS::HttpResponse<SSL>*, void*);
     using OnDataCallback = void (*)(uWS::HttpResponse<SSL>* response, const char* chunk, size_t chunk_length, bool, void*);
-    uint8_t idleTimeout = 10; // default HTTP_TIMEOUT 10 seconds
-
+    
     /* When we are done with a response we mark it like so */
     void markDone() {
         onAborted = nullptr;
@@ -46,6 +45,9 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         onWritable = nullptr;
         /* Ignore data after this point */
         inStream = nullptr;
+
+        // Ensure we don't call a timeout callback
+        onTimeout = nullptr;
 
         /* We are done with this request */
         this->state &= ~HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
@@ -71,7 +73,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         return ret;
     }
     /* Bits of status */
-    enum  : int32_t{
+    enum  : uint8_t {
         HTTP_STATUS_CALLED = 1, // used
         HTTP_WRITE_CALLED = 2, // used
         HTTP_END_CALLED = 4, // used
@@ -94,7 +96,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     unsigned int received_bytes_per_timeout = 0;
 
     /* Current state (content-length sent, status sent, write called, etc */
-    int state = 0;
+    uint8_t state = 0;
+    uint8_t idleTimeout = 10; // default HTTP_TIMEOUT 10 seconds
 
 #ifdef UWS_WITH_PROXY
     ProxyParser proxyParser;

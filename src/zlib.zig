@@ -955,21 +955,17 @@ pub const ZlibCompressorStreaming = struct {
     flush: FlushValue = .NoFlush,
     finishFlush: FlushValue = .Finish,
     fullFlush: FlushValue = .FullFlush,
-    level: c_int = -1,
-    windowBits: c_int = -1,
-    memLevel: c_int = -1,
-    strategy: c_int = -1,
+    level: c_int,
+    windowBits: c_int,
+    memLevel: c_int,
+    strategy: c_int,
     dictionary: []const u8,
     err: ReturnCode = .Ok,
     err_msg: ?[*:0]const u8 = null,
 
-    pub fn init(this: *ZlibCompressorStreaming, level: c_int, windowBits: c_int, memLevel: c_int, strategy: c_int) !void {
-        const ret_code = deflateInit2_(&this.state, level, 8, windowBits, memLevel, strategy, zlibVersion(), @sizeOf(z_stream));
+    pub fn init(this: *ZlibCompressorStreaming) !void {
+        const ret_code = deflateInit2_(&this.state, this.level, 8, this.windowBits, this.memLevel, this.strategy, zlibVersion(), @sizeOf(z_stream));
         if (ret_code != .Ok) return error.ZlibError9;
-        this.level = level;
-        this.windowBits = windowBits;
-        this.memLevel = memLevel;
-        this.strategy = strategy;
 
         this.setDictionary() catch {};
         this.err_msg = null;
@@ -1050,19 +1046,15 @@ pub const ZlibDecompressorStreaming = struct {
     flush: FlushValue = .NoFlush,
     finishFlush: FlushValue = .Finish,
     fullFlush: FlushValue = .FullFlush,
-    windowBits: c_int = -1,
+    windowBits: c_int,
     dictionary: []const u8,
     err: ReturnCode = .Ok,
     err_msg: ?[*:0]const u8 = null,
     do_inflate_loop: bool = true,
 
-    pub fn init(this: *ZlibDecompressorStreaming, windowBits: c_int) !void {
-        const ret_code = inflateInit2_(&this.state, windowBits, zlibVersion(), @sizeOf(z_stream));
+    pub fn init(this: *ZlibDecompressorStreaming) !void {
+        const ret_code = inflateInit2_(&this.state, this.windowBits, zlibVersion(), @sizeOf(z_stream));
         if (ret_code != .Ok) return error.ZlibError1;
-        // this.level = level;
-        this.windowBits = windowBits;
-        // this.memLevel = memLevel;
-        // this.strategy = strategy;
 
         this.setDictionary() catch {};
         this.err_msg = null;

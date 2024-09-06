@@ -71,10 +71,14 @@ pub const ZlibEncoder = struct {
                 .flush = @enumFromInt(options.flush),
                 .finishFlush = @enumFromInt(options.finishFlush),
                 .fullFlush = @enumFromInt(options.fullFlush),
+                .level = options.level,
+                .windowBits = options.windowBits,
+                .memLevel = options.memLevel,
+                .strategy = options.strategy,
                 .dictionary = options.dictionary.slice(),
             },
         });
-        this.stream.init(options.level, options.windowBits, options.memLevel, options.strategy) catch {
+        this.stream.init() catch {
             globalThis.throw("Failed to create ZlibEncoder", .{});
             return .zero;
         };
@@ -499,10 +503,11 @@ pub const ZlibDecoder = struct {
                 .flush = @enumFromInt(options.flush),
                 .finishFlush = @enumFromInt(options.finishFlush),
                 .fullFlush = @enumFromInt(options.fullFlush),
+                .windowBits = options.windowBits,
                 .dictionary = options.dictionary.slice(),
             },
         });
-        this.stream.init(options.windowBits) catch {
+        this.stream.init() catch {
             globalThis.throw("Failed to create ZlibDecoder", .{});
             return .zero;
         };

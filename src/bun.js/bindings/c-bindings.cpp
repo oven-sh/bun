@@ -712,9 +712,8 @@ extern "C" void Bun__registerSignalsForForwarding()
         Bun__forwardSignalFromParentToChildAndRestorePreviousAction(Bun__currentSyncPID, sig);
     };
 
-#define REGISTER_SIGNAL(SIG)                                                    \
-    if (sigaction(SIG, &sa, &previous_actions[SIG]) == -1) {                    \
-        ASSERT_NOT_REACHED_WITH_MESSAGE("Unexpected error registering signal"); \
+#define REGISTER_SIGNAL(SIG)                                 \
+    if (sigaction(SIG, &sa, &previous_actions[SIG]) == -1) { \
     }
 
     FOR_EACH_SIGNAL(REGISTER_SIGNAL)
@@ -726,9 +725,8 @@ extern "C" void Bun__unregisterSignalsForForwarding()
 {
     Bun__currentSyncPID = 0;
 
-#define UNREGISTER_SIGNAL(SIG)                                                    \
-    if (sigaction(SIG, &previous_actions[SIG], NULL) == -1) {                     \
-        ASSERT_NOT_REACHED_WITH_MESSAGE("Unexpected error unregistering signal"); \
+#define UNREGISTER_SIGNAL(SIG)                                \
+    if (sigaction(SIG, &previous_actions[SIG], NULL) == -1) { \
     }
 
     FOR_EACH_SIGNAL(UNREGISTER_SIGNAL)

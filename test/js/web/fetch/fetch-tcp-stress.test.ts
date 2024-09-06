@@ -1,7 +1,7 @@
 // If port exhaustion occurs, these tests fail.
 // These tests fail by timing out.
 
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { getMaxFD, isMacOS } from "harness";
 
 // Since we bumped MAX_CONNECTIONS to 4, we should halve the threshold on macOS.

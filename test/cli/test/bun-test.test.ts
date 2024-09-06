@@ -1,9 +1,8 @@
-import { join, resolve, dirname } from "node:path";
-import { tmpdir } from "node:os";
-import { writeFileSync, rmSync, mkdirSync, realpathSync } from "node:fs";
 import { spawnSync } from "bun";
-import { describe, test, expect } from "bun:test";
-import { bunExe, bunEnv, tmpdirSync } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 
 describe("bun test", () => {
   test("can provide no arguments", () => {

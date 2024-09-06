@@ -1,6 +1,6 @@
-import { test, beforeAll, expect, setDefaultTimeout } from "bun:test";
+import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import fs from "fs/promises";
-import { bunExe, bunEnv, tmpdirSync } from "../../harness";
+import { bunEnv, bunExe, tmpdirSync } from "../../harness";
 
 const tmpdir = tmpdirSync();
 

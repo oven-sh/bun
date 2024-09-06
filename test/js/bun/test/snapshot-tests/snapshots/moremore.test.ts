@@ -1,4 +1,4 @@
-import { it, test, expect, describe } from "bun:test";
+import { expect, test } from "bun:test";
 
 class Number2 extends Number {
   constructor(value: number) {

@@ -1,10 +1,10 @@
 import { gc as bunGC, spawnSync, unsafe, which } from "bun";
-import { describe, test, expect, afterAll, beforeAll } from "bun:test";
-import { readlink, readFile, writeFile } from "fs/promises";
-import { isAbsolute, join, dirname } from "path";
-import fs, { openSync, closeSync } from "node:fs";
-import os from "node:os";
 import { heapStats } from "bun:jsc";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { readFile, readlink, writeFile } from "fs/promises";
+import fs, { closeSync, openSync } from "node:fs";
+import os from "node:os";
+import { dirname, isAbsolute, join } from "path";
 
 type Awaitable<T> = T | Promise<T>;
 

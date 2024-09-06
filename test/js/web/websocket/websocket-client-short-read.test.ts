@@ -1,5 +1,5 @@
 import { TCPSocketListener } from "bun";
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { WebSocket } from "ws";
 
 const hostname = process.env.HOST || "127.0.0.1";

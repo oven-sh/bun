@@ -1,5 +1,5 @@
-import { join } from "path";
 import { openSync } from "fs";
+import { join } from "path";
 
 describe("structured clone", () => {
   let primitives_tests = [

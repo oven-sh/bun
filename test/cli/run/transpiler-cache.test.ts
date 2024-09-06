@@ -1,8 +1,7 @@
 import { Subprocess } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
-import { realpathSync, chmodSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, bunRun, tmpdirSync } from "harness";
-import { tmpdir } from "os";
 import { join } from "path";
 
 function dummyFile(size: number, cache_bust: string, value: string | { code: string }) {

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import * as CJS from "./cjs-defineProperty-fixture.cjs";
 import * as CJSArrayLike from "./cjs-defineProperty-arraylike.cjs";
+import * as CJS from "./cjs-defineProperty-fixture.cjs";
 // https://github.com/oven-sh/bun/issues/4432
 test("defineProperty", () => {
   expect(CJS.a).toBe(1);

@@ -1254,6 +1254,8 @@ function flushFirstWrite(self) {
   self.headersSent = true;
   let firstWrite = self[firstWriteSymbol];
   self[controllerSymbol] = undefined;
+  // at this point, the user did not call end and we have not flushed the first write
+  // we need to flush it now and behave like chunked encoding
   self._reply(
     new Response(
       new ReadableStream({
@@ -1282,10 +1284,9 @@ ServerResponse.prototype._write = function (chunk, encoding, callback) {
     this[firstWriteSymbol] = chunk;
     callback();
 
-    if (this.header)
-      // we still wanna to flush if the user await some time before writing again
-      // keeping the first write is a good performance optimization
-      process.nextTick(flushFirstWrite, this);
+    // we still wanna to flush if the user await some time before writing again
+    // keeping the first write is a good performance optimization
+    process.nextTick(flushFirstWrite, this);
     return;
   }
 

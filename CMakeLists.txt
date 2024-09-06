@@ -1,6 +1,14 @@
 cmake_minimum_required(VERSION 3.24)
 message(STATUS "Configuring Bun")
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+if(NOT CONFIGURE_DEPENDS)
+  set(CONFIGURE_DEPENDS "")
+else()
+  set(CONFIGURE_DEPENDS "CONFIGURE_DEPENDS")
+endif()
+
 list(APPEND CMAKE_MODULE_PATH
   ${CMAKE_SOURCE_DIR}/cmake
   ${CMAKE_SOURCE_DIR}/cmake/targets
@@ -29,22 +37,14 @@ endif()
 include(SetupLLVM)
 include(SetupCcache)
 
-parse_package_json(VERSION_VARIABLE VERSION)
+parse_package_json(VERSION_VARIABLE DEFAULT_VERSION)
+optionx(VERSION STRING "The version of Bun" DEFAULT ${DEFAULT_VERSION})
 project(Bun VERSION ${VERSION})
 
 include(Options)
+include(CompilerFlags)
 include(SetupBuildkite)
 include(SetupBun)
 include(SetupEsbuild)
 include(SetupZig)
-
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
-if(NOT CONFIGURE_DEPENDS)
-  set(CONFIGURE_DEPENDS "")
-else()
-  set(CONFIGURE_DEPENDS "CONFIGURE_DEPENDS")
-endif()
-
 include(BuildBun)
-include(CompilerFlags)

@@ -63,7 +63,24 @@ optionx(CPU STRING "The CPU to use for the compiler" DEFAULT ${DEFAULT_CPU})
 
 optionx(ENABLE_LOGS BOOL "If debug logs should be enabled" DEFAULT ${DEBUG})
 optionx(ENABLE_ASSERTIONS BOOL "If debug assertions should be enabled" DEFAULT ${DEBUG})
-optionx(ENABLE_CANARY BOOL "If canary features should be enabled" DEFAULT ${DEBUG})
+
+set(DEFAULT_CANARY ON)
+set(DEFAULT_CANARY_REVISION "1")
+
+if(BUILDKITE)
+  optionx(BUILDKITE_MESSAGE STRING "The commit message")
+  if(BUILDKITE_MESSAGE MATCHES "\\[release\\]")
+    set(DEFAULT_CANARY OFF)
+  else()
+    optionx(BUILDKITE_PULL_REQUEST STRING "The pull request number")
+    if(BUILDKITE_PULL_REQUEST)
+      set(DEFAULT_CANARY_REVISION ${BUILDKITE_PULL_REQUEST})
+    endif()
+  endif()
+endif()
+
+optionx(ENABLE_CANARY BOOL "If canary features should be enabled" DEFAULT ${DEFAULT_CANARY})
+optionx(CANARY_REVISION STRING "The canary revision of the build" DEFAULT ${DEFAULT_CANARY_REVISION})
 
 if(RELEASE AND LINUX)
   set(DEFAULT_LTO ON)
@@ -77,19 +94,19 @@ if(LINUX)
   optionx(ENABLE_VALGRIND BOOL "If Valgrind support should be enabled" DEFAULT OFF)
 endif()
 
-if(APPLE AND ENABLE_LTO)
-  message(WARNING "Link-Time Optimization is not supported on macOS because it requires -fuse-ld=lld and lld causes many segfaults on macOS (likely related to stack size)")
-  setx(ENABLE_LTO OFF)
-endif()
-
 if(USE_VALGRIND AND NOT USE_BASELINE)
   message(WARNING "If valgrind is enabled, baseline must also be enabled")
   setx(USE_BASELINE ON)
 endif()
 
-file(READ ${CWD}/LATEST DEFAULT_VERSION)
+if(BUILDKITE)
+  optionx(BUILDKITE_COMMIT STRING "The commit hash")
+  if(BUILDKITE_COMMIT)
+    set(DEFAULT_REVISION ${BUILDKITE_COMMIT})
+  endif()
+endif()
 
-optionx(VERSION STRING "The version of the build" DEFAULT ${DEFAULT_VERSION})
+
 
 execute_process(
   COMMAND git rev-parse HEAD
@@ -104,14 +121,6 @@ if(NOT DEFAULT_REVISION)
 endif()
 
 optionx(REVISION STRING "The git revision of the build" DEFAULT ${DEFAULT_REVISION})
-
-if(ENABLE_CANARY)
-  set(DEFAULT_CANARY_REVISION "1")
-else()
-  set(DEFAULT_CANARY_REVISION "0")
-endif()
-
-optionx(CANARY_REVISION STRING "The canary revision of the build" DEFAULT ${DEFAULT_CANARY_REVISION})
 
 # Used in process.version, process.versions.node, napi, and elsewhere
 optionx(NODEJS_VERSION STRING "The version of Node.js to report" DEFAULT "22.6.0")

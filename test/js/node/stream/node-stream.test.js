@@ -386,6 +386,25 @@ it("Readable.fromWeb", async () => {
   expect(Buffer.concat(chunks).toString()).toBe("Hello World!\n");
 });
 
+it("Writable.toWeb", async () => {
+  const chunks = [];
+  const writable = new Writable({
+    write(chunk, encoding, callback) {
+      chunks.push(chunk);
+      callback();
+    },
+  });
+
+  const webWritable = Writable.toWeb(writable);
+  expect(webWritable).toBeInstanceOf(WritableStream);
+
+  await webWritable.write("Hello ");
+  await webWritable.write("World!\n");
+  await webWritable.close();
+
+  expect(Buffer.concat(chunks).toString()).toBe("Hello World!\n");
+})
+
 it("#9242.5 Stream has constructor", () => {
   const s = new Stream({});
   expect(s.constructor).toBe(Stream);

@@ -1249,7 +1249,7 @@ ServerResponse.prototype._implicitHeader = function () {
 };
 
 function flushFirstWrite(self) {
-  // headersSent alreadySent aka already flushed
+  // headersSent = already flushed the first write
   if (self.headersSent) return;
   self.headersSent = true;
   let firstWrite = self[firstWriteSymbol];

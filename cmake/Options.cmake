@@ -8,8 +8,17 @@ optionx(BUN_LINK_ONLY BOOL "If only the linking step should be built" DEFAULT OF
 optionx(BUN_CPP_ONLY BOOL "If only the C++ part of Bun should be built" DEFAULT OFF)
 
 optionx(CI BOOL "If CI is enabled" DEFAULT OFF)
-optionx(BUILDKITE BOOL "If Buildkite is enabled" DEFAULT OFF)
-optionx(GITHUB_ACTIONS BOOL "If GitHub Actions is enabled" DEFAULT OFF)
+
+if(CI)
+  optionx(BUILDKITE BOOL "If Buildkite is enabled" DEFAULT OFF)
+  optionx(GITHUB_ACTIONS BOOL "If GitHub Actions is enabled" DEFAULT OFF)
+endif()
+
+if(BUILDKITE)
+  optionx(BUILDKITE_COMMIT STRING "The commit hash")
+  optionx(BUILDKITE_MESSAGE STRING "The commit message")
+  optionx(BUILDKITE_PULL_REQUEST STRING "The pull request number")
+endif()
 
 optionx(CMAKE_BUILD_TYPE "Debug|Release|RelWithDebInfo|MinSizeRel" "The build type to use" REQUIRED)
 
@@ -64,23 +73,26 @@ optionx(CPU STRING "The CPU to use for the compiler" DEFAULT ${DEFAULT_CPU})
 optionx(ENABLE_LOGS BOOL "If debug logs should be enabled" DEFAULT ${DEBUG})
 optionx(ENABLE_ASSERTIONS BOOL "If debug assertions should be enabled" DEFAULT ${DEBUG})
 
-set(DEFAULT_CANARY ON)
-set(DEFAULT_CANARY_REVISION "1")
-
-if(BUILDKITE)
-  optionx(BUILDKITE_MESSAGE STRING "The commit message")
-  if(BUILDKITE_MESSAGE MATCHES "\\[release\\]")
-    set(DEFAULT_CANARY OFF)
-  else()
-    optionx(BUILDKITE_PULL_REQUEST STRING "The pull request number")
-    if(BUILDKITE_PULL_REQUEST)
-      set(DEFAULT_CANARY_REVISION ${BUILDKITE_PULL_REQUEST})
-    endif()
-  endif()
+if(BUILDKITE_MESSAGE AND BUILDKITE_MESSAGE MATCHES "\\[release build\\]")
+  message(STATUS "Switched to release build, since commit message contains: \"[release build]\"")
+  set(DEFAULT_CANARY OFF)
+else()
+  set(DEFAULT_CANARY ON)
 endif()
 
 optionx(ENABLE_CANARY BOOL "If canary features should be enabled" DEFAULT ${DEFAULT_CANARY})
-optionx(CANARY_REVISION STRING "The canary revision of the build" DEFAULT ${DEFAULT_CANARY_REVISION})
+
+if(BUILDKITE_PULL_REQUEST)
+  set(DEFAULT_CANARY_REVISION ${BUILDKITE_PULL_REQUEST})
+else()
+  set(DEFAULT_CANARY_REVISION "1")
+endif()
+
+if(ENABLE_CANARY)
+  optionx(CANARY_REVISION STRING "The canary revision of the build" DEFAULT ${DEFAULT_CANARY_REVISION})
+else()
+  setx(CANARY_REVISION "0")
+endif()
 
 if(RELEASE AND LINUX)
   set(DEFAULT_LTO ON)
@@ -99,25 +111,19 @@ if(USE_VALGRIND AND NOT USE_BASELINE)
   setx(USE_BASELINE ON)
 endif()
 
-if(BUILDKITE)
-  optionx(BUILDKITE_COMMIT STRING "The commit hash")
-  if(BUILDKITE_COMMIT)
-    set(DEFAULT_REVISION ${BUILDKITE_COMMIT})
+if(BUILDKITE_COMMIT)
+  set(DEFAULT_REVISION ${BUILDKITE_COMMIT})
+else()
+  execute_process(
+    COMMAND git rev-parse HEAD
+    WORKING_DIRECTORY ${CWD}
+    OUTPUT_VARIABLE DEFAULT_REVISION
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+  )
+  if(NOT DEFAULT_REVISION)
+    set(DEFAULT_REVISION "unknown")
   endif()
-endif()
-
-
-
-execute_process(
-  COMMAND git rev-parse HEAD
-  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-  OUTPUT_VARIABLE DEFAULT_REVISION
-  OUTPUT_STRIP_TRAILING_WHITESPACE
-  ERROR_QUIET
-)
-
-if(NOT DEFAULT_REVISION)
-  set(DEFAULT_REVISION "unknown")
 endif()
 
 optionx(REVISION STRING "The git revision of the build" DEFAULT ${DEFAULT_REVISION})
@@ -128,9 +134,10 @@ optionx(NODEJS_VERSION STRING "The version of Node.js to report" DEFAULT "22.6.0
 # Used in process.versions.modules and compared while loading V8 modules
 optionx(NODEJS_ABI_VERSION STRING "The ABI version of Node.js to report" DEFAULT "127")
 
-set(DEFAULT_STATIC_SQLITE ON)
 if(APPLE)
   set(DEFAULT_STATIC_SQLITE OFF)
+else()
+  set(DEFAULT_STATIC_SQLITE ON)
 endif()
 
 optionx(USE_STATIC_SQLITE BOOL "If SQLite should be statically linked" DEFAULT ${DEFAULT_STATIC_SQLITE})
@@ -142,9 +149,9 @@ if(CMAKE_HOST_LINUX AND NOT WIN32 AND NOT APPLE)
     COMMAND grep -w "NAME" /etc/os-release
     OUTPUT_VARIABLE LINUX_DISTRO
     OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
   )
-
-  if(${LINUX_DISTRO} MATCHES "NAME=\"(Arch|Manjaro|Artix) Linux\"|NAME=\"openSUSE Tumbleweed\"")
+  if(LINUX_DISTRO MATCHES "NAME=\"(Arch|Manjaro|Artix) Linux\"|NAME=\"openSUSE Tumbleweed\"")
     set(DEFAULT_STATIC_LIBATOMIC OFF)
   endif()
 endif()

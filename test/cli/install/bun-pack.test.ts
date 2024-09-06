@@ -1,4 +1,4 @@
-import { spawn, write } from "bun";
+import { spawn, write, file } from "bun";
 import { test, expect, describe, beforeEach } from "bun:test";
 import { bunExe, bunEnv, tmpdirSync, runBunInstall } from "harness";
 import { readTarball } from "bun:internal-for-testing";
@@ -73,6 +73,37 @@ test("basic", async () => {
 
   const tarball = readTarball(join(packageDir, "pack-basic-1.2.3.tgz"));
   expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }, { "pathname": "package/index.js" }]);
+});
+
+test("in subdirectory", async () => {
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "pack-from-subdir",
+        version: "7.7.7",
+      }),
+    ),
+    mkdir(join(packageDir, "subdir1", "subdir2"), { recursive: true }),
+    write(join(packageDir, "root.js"), "console.log(`hello ./root.js`);"),
+    write(join(packageDir, "subdir1", "subdir2", "index.js"), "console.log(`hello ./subdir1/subdir2/index.js`);"),
+  ]);
+
+  await pack(join(packageDir, "subdir1", "subdir2"), bunEnv);
+
+  const first = readTarball(join(packageDir, "pack-from-subdir-7.7.7.tgz"));
+  expect(first.entries).toMatchObject([
+    { "pathname": "package/package.json" },
+    { "pathname": "package/root.js" },
+    { "pathname": "package/subdir1/subdir2/index.js" },
+  ]);
+
+  await rm(join(packageDir, "pack-from-subdir-7.7.7.tgz"));
+
+  await pack(join(packageDir, "subdir1"), bunEnv);
+
+  const second = readTarball(join(packageDir, "pack-from-subdir-7.7.7.tgz"));
+  expect(first).toEqual(second);
 });
 
 describe("package.json names and versions", () => {
@@ -437,6 +468,74 @@ describe("workspaces", () => {
     });
   }
 });
+
+test("lifecycle scripts execution order", async () => {
+  const script = `const fs = require("fs");
+  fs.writeFileSync(\`\${process.argv[2]}.txt\`, \`
+prepack: \${fs.existsSync("prepack.txt")}
+prepare: \${fs.existsSync("prepare.txt")}
+postpack: \${fs.existsSync("postpack.txt")}
+tarball: \${fs.existsSync("pack-lifecycle-order-1.1.1.tgz")}\`)`;
+
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "pack-lifecycle-order",
+        version: "1.1.1",
+        scripts: {
+          prepack: `${bunExe()} script.js prepack`,
+          postpack: `${bunExe()} script.js postpack`,
+          prepare: `${bunExe()} script.js prepare`,
+        },
+      }),
+    ),
+    write(join(packageDir, "script.js"), script),
+  ]);
+
+  await pack(packageDir, bunEnv);
+
+  const tarball = readTarball(join(packageDir, "pack-lifecycle-order-1.1.1.tgz"));
+  expect(tarball.entries).toMatchObject([
+    { "pathname": "package/package.json" },
+    { "pathname": "package/prepack.txt" },
+    { "pathname": "package/prepare.txt" },
+    { "pathname": "package/script.js" },
+  ]);
+
+  const results = await Promise.all([
+    file(join(packageDir, "prepack.txt")).text(),
+    file(join(packageDir, "postpack.txt")).text(),
+    file(join(packageDir, "prepare.txt")).text(),
+  ]);
+
+  expect(results).toEqual([
+    "\nprepack: false\nprepare: false\npostpack: false\ntarball: false",
+    "\nprepack: true\nprepare: true\npostpack: false\ntarball: true",
+    "\nprepack: true\nprepare: false\npostpack: false\ntarball: false",
+  ]);
+});
+
+for (const bundledDependencies of ["bundledDependencies", "bundleDependencies"]) {
+  describe(bundledDependencies, () => {
+    test("basic", async () => {
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "pack-bundled",
+            version: "4.4.4",
+            dependencies: {
+              "dep1": "1.1.1",
+            },
+            [bundledDependencies]: ["dep1"],
+          }),
+        ),
+        write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
+      ]);
+    });
+  });
+}
 
 test("unicode", async () => {
   await Promise.all([

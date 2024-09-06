@@ -113,6 +113,7 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
     } else if (match[1] === "const enum") {
       const { result, rest } = sliceSourceCode(contents, false);
       const i = result.indexOf("{\n");
+      // Support const enums in module scope.
       topLevelEnums.push({
         name: result.slice("const enum ".length, i).trim(),
         code: "\n" + result,
@@ -161,11 +162,15 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
       );
 
       const source = result.trim().slice(2, -1);
-      const enums: string[] = [];
+      const constEnumsUsedInFunction: string[] = [];
       if (topLevelEnums.length) {
+        // If the function references a top-level const enum let's add the code
+        // to the top-level scope of the function so that the transpiler will
+        // inline all the values and strip out the enum object.
         for (const { name, code } of topLevelEnums) {
+          // Only include const enums which are referenced in the function source.
           if (source.includes(name)) {
-            enums.push(code);
+            constEnumsUsedInFunction.push(code);
           }
         }
       }
@@ -176,7 +181,7 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
         directives,
         source,
         async,
-        enums,
+        enums: constEnumsUsedInFunction,
       });
       contents = rest;
       directives = {};

@@ -1097,6 +1097,7 @@ pub const ZlibDecompressorStreaming = struct {
         // UNZIP mode allows the input to be either gzip or deflate data and we do a two-byte header detection in order to disambiguate.
         // the ordering of this logic is a bit abstract because we dont know ahead of time how large 'bytes' will be.
         // additionally, if the first byte is "correct" but the second is not, we don't want to lose it from it being consumed.
+        // Ref: https://github.com/nodejs/node/blob/v22.8.0/src/node_zlib.cc#L777
         if (this.mode == .UNZIP) {
             var redd: usize = 0;
             this.do_inflate_loop = false;

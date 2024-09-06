@@ -4089,13 +4089,18 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn setTimeout(this: *RequestContext, seconds: c_uint) bool {
             if (this.resp) |resp| {
                 resp.timeout(@min(seconds, 255));
+                if (seconds > 0) {
 
-                // we only set the timeout callback if we wanna the timeout event to be triggered
-                // the connection will be closed so the abort handler will be called after the timeout
-                if (this.request_weakref.get()) |req| {
-                    if (req.internal_event_callback.hasCallback()) {
-                        this.setTimeoutHandler();
+                    // we only set the timeout callback if we wanna the timeout event to be triggered
+                    // the connection will be closed so the abort handler will be called after the timeout
+                    if (this.request_weakref.get()) |req| {
+                        if (req.internal_event_callback.hasCallback()) {
+                            this.setTimeoutHandler();
+                        }
                     }
+                } else {
+                    // if the timeout is 0, we don't need to trigger the timeout event
+                    this.clearTimeoutHandler();
                 }
                 return true;
             }

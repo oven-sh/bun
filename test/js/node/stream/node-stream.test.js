@@ -387,23 +387,25 @@ it("Readable.fromWeb", async () => {
 });
 
 it("Writable.toWeb", async () => {
-  const chunks = [];
-  const writable = new Writable({
+  let dataBuffer = "";
+
+  // Create a Node.js Writable stream
+  const nodeWritable = new Writable({
     write(chunk, encoding, callback) {
-      chunks.push(chunk);
+      dataBuffer += chunk.toString();
       callback();
     },
   });
 
-  const webWritable = Writable.toWeb(writable);
-  expect(webWritable).toBeInstanceOf(WritableStream);
+  const webWritable = Writable.toWeb(nodeWritable);
+  const writer = webWritable.getWriter();
 
-  await webWritable.write("Hello ");
-  await webWritable.write("World!\n");
-  await webWritable.close();
-
-  expect(Buffer.concat(chunks).toString()).toBe("Hello World!\n");
-})
+  // Write some data
+  const encoder = new TextEncoder();
+  await writer.write(encoder.encode("Hello, World!"));
+  await writer.close();
+  expect(dataBuffer).toBe("Hello, World!");
+});
 
 it("#9242.5 Stream has constructor", () => {
   const s = new Stream({});

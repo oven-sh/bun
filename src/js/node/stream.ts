@@ -4391,8 +4391,8 @@ var require_writable = __commonJS({
         if (typeof streamWritable?._writableState !== "object") {
           throw new ERR_INVALID_ARG_TYPE("streamReadable", "stream.Readable", streamWritable);
         }
-        var { isDestroyed, isReadable } = require_utils();
-        if (isDestroyed(streamWritable) || !isReadable(streamWritable)) {
+        var { isDestroyed, isWritable } = require_utils();
+        if (isDestroyed(streamWritable) || !isWritable(streamWritable)) {
           const writable = new WritableStream();
           writable.close();
           return writable;
@@ -4418,16 +4418,15 @@ var require_writable = __commonJS({
             },
 
             write(chunk) {
-              controller.enqueue(chunk);
-              if (controller.desiredSize <= 0) streamWritable.pause();
+              streamWritable.write(chunk);
             },
 
             close() {
-              destroy(streamWritable);
+              streamWritable.destroy();
             },
 
             abort(reason) {
-              destroy(streamWritable, reason);
+              streamWritable.destroy(reason);
             },
           },
           strategy,

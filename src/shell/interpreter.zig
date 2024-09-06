@@ -51,6 +51,7 @@ const ast = shell.AST;
 const SmolList = shell.SmolList;
 
 const GlobWalker = Glob.GlobWalker_(null, Glob.SyscallAccessor, true);
+const isWindows = bun.Environment.isWindows;
 
 const stdin_no = 0;
 const stdout_no = 1;
@@ -845,6 +846,48 @@ pub const ParsedShellScript = struct {
     }
 };
 
+// TODO: remove this hack
+// We need to force libuv to enter it's event loop
+// So we use a timer that never fires to keep the event loop running
+const WindowsKeepAlive = struct {
+    handle: ?*uv.Timer = null,
+
+    pub fn ref(this: *WindowsKeepAlive, event_loop: *uv.Loop) void {
+        var handle = this.handle orelse brk: {
+            this.handle = init(event_loop);
+            break :brk this.handle.?;
+        };
+        handle.start(std.math.maxInt(i64) - 1, 0, callback);
+        handle.ref();
+    }
+
+    pub const activate = ref;
+
+    fn init(event_loop: *uv.Loop) *uv.Timer {
+        var handle = bun.new(uv.Timer, std.mem.zeroes(uv.Timer));
+        handle.init(event_loop);
+        handle.data = null;
+        return handle;
+    }
+
+    pub fn disable(this: *WindowsKeepAlive) void {
+        if (this.handle) |handle| {
+            this.handle = null;
+            handle.stop();
+            uv.uv_close(@alignCast(@ptrCast(handle)), onClose);
+        }
+    }
+
+    fn onClose(ptr: ?*anyopaque) callconv(.C) void {
+        const timer: *uv.Timer = @alignCast(@ptrCast(ptr.?));
+        bun.destroy(timer);
+    }
+
+    fn callback(_: *uv.Timer) callconv(.C) void {
+        bun.Output.panic("WindowsKeepAlive timer should never fire", .{});
+    }
+};
+
 /// This interpreter works by basically turning the AST into a state machine so
 /// that execution can be suspended and resumed to support async.
 pub const Interpreter = struct {
@@ -870,6 +913,7 @@ pub const Interpreter = struct {
     async_commands_executing: u32 = 0,
 
     globalThis: *JSC.JSGlobalObject,
+    ref: if (isWindows) WindowsKeepAlive else bun.Async.KeepAlive = .{},
 
     flags: packed struct(u8) {
         done: bool = false,
@@ -1262,7 +1306,7 @@ pub const Interpreter = struct {
         interpreter.this_jsvalue = JSC.Codegen.JSShellInterpreter.toJS(interpreter, globalThis);
         JSC.Codegen.JSShellInterpreter.resolveSetCached(interpreter.this_jsvalue, globalThis, resolve);
         JSC.Codegen.JSShellInterpreter.rejectSetCached(interpreter.this_jsvalue, globalThis, reject);
-
+        interpreter.ref.activate(JSC.VirtualMachine.get().uvLoop());
         bun.Analytics.Features.shell += 1;
         return interpreter.this_jsvalue;
     }
@@ -1687,6 +1731,8 @@ pub const Interpreter = struct {
         defer decrPendingActivityFlag(&this.has_pending_activity);
 
         if (this.event_loop == .js) {
+            this.ref.disable();
+
             defer this.deinitAfterJSRun();
             this.exit_code = exit_code;
             if (this.this_jsvalue != .zero) {
@@ -1707,6 +1753,8 @@ pub const Interpreter = struct {
         defer decrPendingActivityFlag(&this.has_pending_activity);
 
         if (this.event_loop == .js) {
+            this.ref.disable();
+
             if (this.this_jsvalue != .zero) {
                 if (JSC.Codegen.JSShellInterpreter.rejectGetCached(this.this_jsvalue)) |reject| {
                     reject.call(this.globalThis, &[_]JSValue{ JSValue.jsNumberFromChar(1), this.getBufferedStdout(), this.getBufferedStderr() });
@@ -1723,6 +1771,7 @@ pub const Interpreter = struct {
         for (this.jsobjs) |jsobj| {
             jsobj.unprotect();
         }
+        this.ref.disable();
         this.root_io.deref();
         this.root_shell.deinitImpl(false, false);
         this.this_jsvalue = .zero;
@@ -1736,6 +1785,7 @@ pub const Interpreter = struct {
             this.root_shell._buffered_stdout.owned.deinitWithAllocator(bun.default_allocator);
         }
         this.this_jsvalue = .zero;
+        this.ref.disable();
         this.allocator.destroy(this);
     }
 

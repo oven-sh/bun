@@ -43,7 +43,6 @@ async function build(args) {
 
   const generateOptions = parseOptions(args, generateFlags);
   const buildOptions = parseOptions(args, buildFlags);
-  console.log({ generateOptions, buildOptions });
 
   const buildPath = resolve(generateOptions["-B"] || buildOptions["--build"] || "build");
   generateOptions["-B"] = buildPath;
@@ -79,7 +78,6 @@ async function build(args) {
   const generateArgs = Object.entries(generateOptions).flatMap(([flag, value]) =>
     flag.startsWith("-D") ? [`${flag}=${value}`] : [flag, value],
   );
-  console.log({ generateArgs });
   await spawn("cmake", generateArgs, { env });
 
   const envPath = resolve(buildPath, ".env");
@@ -94,7 +92,6 @@ async function build(args) {
   const buildArgs = Object.entries(buildOptions)
     .sort(([a], [b]) => (a === "--build" ? -1 : a.localeCompare(b)))
     .flatMap(([flag, value]) => [flag, value]);
-  console.log({ buildArgs });
   await spawn("cmake", buildArgs, { env });
 
   const buildFiles = ["ccache.log", "compile_commands.json"];

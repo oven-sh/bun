@@ -205,7 +205,7 @@ steps:
           os: "windows"
           arch: "x64"
         command:
-          - "npm run build:ci --target dependencies"
+          - "bun run build:ci --target dependencies"
       - key: "windows-x64-build-cpp"
         label: ":windows: x64 - build-cpp"
         agents:
@@ -215,7 +215,7 @@ steps:
         env:
           BUN_CPP_ONLY: "ON"
         command:
-          - "npm run build:ci --target bun"
+          - "bun run build:ci --target bun"
       - key: "windows-x64-build-zig"
         label: ":windows: x64 - build-zig"
         agents:
@@ -223,7 +223,7 @@ steps:
           os: "darwin"
           arch: "aarch64"
         command:
-          - "npm run build:ci --target bun-zig --toolchain windows-x64"
+          - "bun run build:ci --target bun-zig --toolchain windows-x64"
       - key: "windows-x64-build-bun"
         label: ":windows: x64 - build-bun"
         agents:
@@ -237,7 +237,7 @@ steps:
         env:
           BUN_LINK_ONLY: "ON"
         command:
-          - "npm run build:ci --target bun"
+          - "bun run build:ci --target bun"
 
   # Windows x64-baseline
   - key: "windows-x64-baseline"
@@ -252,7 +252,7 @@ steps:
         env:
           ENABLE_BASELINE: "ON"
         command:
-          - "npm run build:ci --target dependencies"
+          - "bun run build:ci --target dependencies"
       - key: "windows-x64-baseline-build-cpp"
         label: ":windows: x64-baseline - build-cpp"
         agents:
@@ -263,7 +263,7 @@ steps:
           ENABLE_BASELINE: "ON"
           BUN_CPP_ONLY: "ON"
         command:
-          - "npm run build:ci --target bun"
+          - "bun run build:ci --target bun"
       - key: "windows-x64-baseline-build-zig"
         label: ":windows: x64-baseline - build-zig"
         agents:
@@ -273,7 +273,7 @@ steps:
         env:
           ENABLE_BASELINE: "ON"
         command:
-          - "npm run build:ci --target bun-zig --toolchain windows-x64-baseline"
+          - "bun run build:ci --target bun-zig --toolchain windows-x64-baseline"
       - key: "windows-x64-baseline-build-bun"
         label: ":windows: x64-baseline - build-bun"
         agents:
@@ -288,4 +288,4 @@ steps:
           ENABLE_BASELINE: "ON"
           BUN_LINK_ONLY: "ON"
         command:
-          - "npm run build:ci --target bun"
+          - "bun run build:ci --target bun"

@@ -47,8 +47,8 @@ else()
   add_compile_options(
     -g1                               # Emit as much debug information as possible (this is stripped in release)
     -ggdb                             # Produce a format that is compatable with GDB
-    -gdwarf-4                         # Produce DWARF v4 debug info
-    -fno-eliminate-unused-debug-types # Don't eliminate unused debug symbols
+    #-gdwarf-4                         # Produce DWARF v4 debug info
+    #-fno-eliminate-unused-debug-types # Don't eliminate unused debug symbols
   )
 endif()
 

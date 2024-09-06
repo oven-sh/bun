@@ -800,7 +800,7 @@ class BunWebSocketMocked extends EventEmitter {
     if (typeof data === "number") data = data.toString();
 
     try {
-      this.#ws?.ping?.(data);
+      this.#ws.ping(data);
     } catch (error) {
       typeof cb === "function" && cb(error);
       return;
@@ -825,7 +825,7 @@ class BunWebSocketMocked extends EventEmitter {
     if (typeof data === "number") data = data.toString();
 
     try {
-      this.#ws?.pong?.(data);
+      this.#ws.pong(data);
     } catch (error) {
       typeof cb === "function" && cb(error);
       return;

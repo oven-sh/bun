@@ -55,7 +55,7 @@ endif()
 # add_compile_options(
 #   -fdebug-macro      # Emit debug info for macros
 #   -fstandalone-debug # Emit debug info for non-system libraries
-)
+# )
 
 # --- RTTI ---
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn as nodeSpawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 // https://cmake.org/cmake/help/latest/manual/cmake.1.html#generate-a-project-buildsystem
@@ -93,6 +93,22 @@ async function build(args) {
     .sort(([a], [b]) => (a === "--build" ? -1 : a.localeCompare(b)))
     .flatMap(([flag, value]) => [flag, value]);
   await spawn("cmake", buildArgs, { env });
+
+  const buildFiles = ["ccache.log", "compile_commands.json"];
+  const buildPaths = [buildPath, readdirSync(buildPath).map(path => join(buildPath, path))];
+  const buildArtifacts = [];
+  for (const buildPath of buildPaths) {
+    for (const buildFile of buildFiles) {
+      const path = join(buildPath, buildFile);
+      if (existsSync(path)) {
+        buildArtifacts.push(path);
+      }
+    }
+  }
+
+  if (isBuildkite()) {
+    await Promise.all(buildArtifacts.map(path => spawn("buildkite-agent", ["artifact", "upload", path], { cwd: buildPath, env })));
+  }
 }
 
 function cmakePath(path) {
@@ -111,13 +127,17 @@ function getCachePath(branch) {
 
 function isCacheReadEnabled() {
   return (
-    process.env.BUILDKITE === "true" &&
+    isBuildkite() &&
     process.env.BUILDKITE_CLEAN_CHECKOUT !== "true" &&
     process.env.BUILDKITE_BRANCH !== getDefaultBranch()
   );
 }
 
 function isCacheWriteEnabled() {
+  return isBuildkite();
+}
+
+function isBuildkite() {
   return process.env.BUILDKITE === "true";
 }
 

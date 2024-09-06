@@ -121,15 +121,10 @@ pub extern fn deflateParams(strm: z_streamp, level: c_int, strategy: c_int) Retu
 pub extern fn inflate(stream: *zStream_struct, flush: FlushValue) ReturnCode;
 
 /// inflateEnd returns Z_OK if success, or Z_STREAM_ERROR if the stream state was inconsistent.
-const InflateEndResult = enum(c_int) {
-    Ok = 0,
-    StreamEnd = 1,
-};
-
 /// All dynamically allocated data structures for this stream are freed. This function discards any unprocessed input and does not flush any pending output.
-pub extern fn inflateEnd(stream: *zStream_struct) InflateEndResult;
+pub extern fn inflateEnd(stream: *zStream_struct) ReturnCode;
 
-pub extern fn inflateReset(stream: *zStream_struct) InflateEndResult;
+pub extern fn inflateReset(stream: *zStream_struct) ReturnCode;
 
 pub extern fn crc32(crc: uLong, buf: [*]const Bytef, len: uInt) uLong;
 
@@ -1032,7 +1027,8 @@ pub const ZlibCompressorStreaming = struct {
         bun.assert(done);
         // bun.assert(state.avail_in == 0);
 
-        _ = deflateEnd(&this.state);
+        const ret = deflateEnd(&this.state);
+        bun.assert(ret == .Ok or ret == .StreamEnd);
         if (this.err != .StreamEnd and this.finishFlush == .Finish) return error.ZlibError10;
     }
 };
@@ -1209,7 +1205,8 @@ pub const ZlibDecompressorStreaming = struct {
         bun.assert(done);
         // bun.assert(state.avail_in == 0);
 
-        _ = inflateEnd(&this.state);
+        const ret = inflateEnd(&this.state);
+        bun.assert(ret == .Ok or ret == .StreamEnd);
         if (this.err != .StreamEnd and this.finishFlush == .Finish) return error.ZlibError8;
     }
 };

@@ -62,7 +62,7 @@ pub const Request = struct {
     weak_ptr_data: bun.WeakPtrData = .{},
     // We must report a consistent value for this
     reported_estimated_size: usize = 0,
-    internal_abort_callback: InternalJSAbortCallback = .{},
+    internal_event_callback: InternalJSEventCallback = .{},
 
     const RequestMixin = BodyMixin(@This());
     pub usingnamespace JSC.Codegen.JSRequest;
@@ -85,33 +85,54 @@ pub const Request = struct {
         return this.request_context.getRequest();
     }
 
-    pub export fn Request__setInternalAbortCallback(
+    pub export fn Request__setInternalEventCallback(
         this: *Request,
         callback: JSC.JSValue,
         globalThis: *JSC.JSGlobalObject,
     ) void {
-        this.internal_abort_callback = InternalJSAbortCallback.init(callback, globalThis);
+        this.internal_event_callback = InternalJSEventCallback.init(callback, globalThis);
+    }
+    pub export fn Request__setTimeout(
+        this: *Request,
+        seconds: JSC.JSValue,
+        globalThis: *JSC.JSGlobalObject,
+    ) void {
+        if (!seconds.isNumber()) {
+            globalThis.throw("Failed to set timeout: The provided value is not of type 'number'.", .{});
+            return;
+        }
+
+        this.setTimeout(seconds.to(c_uint));
     }
 
     comptime {
         if (!JSC.is_bindgen) {
             _ = Request__getUWSRequest;
-            _ = Request__setInternalAbortCallback;
+            _ = Request__setInternalEventCallback;
+            _ = Request__setTimeout;
         }
     }
 
-    pub const InternalJSAbortCallback = struct {
+    pub const InternalJSEventCallback = struct {
         function: JSC.Strong = .{},
 
-        pub fn init(function: JSC.JSValue, globalThis: *JSC.JSGlobalObject) InternalJSAbortCallback {
-            return InternalJSAbortCallback{
+        pub const EventType = enum(u8) {
+            timeout = 0,
+            abort = 1,
+        };
+        pub fn init(function: JSC.JSValue, globalThis: *JSC.JSGlobalObject) InternalJSEventCallback {
+            return InternalJSEventCallback{
                 .function = JSC.Strong.create(function, globalThis),
             };
         }
 
-        pub fn trigger(this: *InternalJSAbortCallback, globalThis: *JSC.JSGlobalObject) bool {
+        pub fn hasCallback(this: *InternalJSEventCallback) bool {
+            return this.function.has();
+        }
+
+        pub fn trigger(this: *InternalJSEventCallback, eventType: EventType, globalThis: *JSC.JSGlobalObject) bool {
             if (this.function.get()) |callback| {
-                const result = callback.call(globalThis, JSC.JSValue.jsUndefined(), &.{});
+                const result = callback.call(globalThis, JSC.JSValue.jsUndefined(), &.{JSC.JSValue.jsNumber(@intFromEnum(eventType))});
                 if (result.toError()) |js_error| {
                     globalThis.throwValue(js_error);
                 }
@@ -120,7 +141,7 @@ pub const Request = struct {
             return false;
         }
 
-        pub fn deinit(this: *InternalJSAbortCallback) void {
+        pub fn deinit(this: *InternalJSEventCallback) void {
             this.function.deinit();
         }
     };
@@ -325,7 +346,7 @@ pub const Request = struct {
             signal.unref();
             this.signal = null;
         }
-        this.internal_abort_callback.deinit();
+        this.internal_event_callback.deinit();
     }
 
     pub fn finalize(this: *Request) void {
@@ -942,5 +963,12 @@ pub const Request = struct {
         const req = Request.new(undefined);
         this.cloneInto(req, allocator, globalThis, false);
         return req;
+    }
+
+    pub fn setTimeout(
+        this: *Request,
+        seconds: c_uint,
+    ) void {
+        _ = this.request_context.setTimeout(seconds);
     }
 };

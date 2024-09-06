@@ -322,6 +322,7 @@ const StaticRoute = struct {
     fn onResponseComplete(this: *Route, resp: HTTPResponse) void {
         resp.clearAborted();
         resp.clearOnWritable();
+        resp.clearTimeout();
 
         if (this.server) |server| {
             server.onStaticRequestComplete();
@@ -1700,6 +1701,7 @@ fn NewFlags(comptime debug_mode: bool) type {
         has_marked_complete: bool = false,
         has_marked_pending: bool = false,
         has_abort_handler: bool = false,
+        has_timeout_handler: bool = false,
         has_sendfile_ctx: bool = false,
         has_called_error_handler: bool = false,
         needs_content_length: bool = false,
@@ -1741,6 +1743,30 @@ pub const AnyRequestContext = struct {
     pub fn get(self: AnyRequestContext, comptime T: type) ?*T {
         return self.tagged_pointer.get(T);
     }
+
+    pub fn setTimeout(self: AnyRequestContext, seconds: c_uint) bool {
+        if (self.tagged_pointer.isNull()) {
+            return false;
+        }
+
+        switch (self.tagged_pointer.tag()) {
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
+                return self.tagged_pointer.as(HTTPServer.RequestContext).setTimeout(seconds);
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
+                return self.tagged_pointer.as(HTTPSServer.RequestContext).setTimeout(seconds);
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
+                return self.tagged_pointer.as(DebugHTTPServer.RequestContext).setTimeout(seconds);
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
+                return self.tagged_pointer.as(DebugHTTPSServer.RequestContext).setTimeout(seconds);
+            },
+            else => @panic("Unexpected AnyRequestContext tag"),
+        }
+        return false;
+    }
+
     pub fn getRemoteSocketInfo(self: AnyRequestContext) ?uws.SocketAddress {
         if (self.tagged_pointer.isNull()) {
             return null;
@@ -1907,6 +1933,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (this.resp) |resp| {
                 this.flags.has_abort_handler = true;
                 resp.onAborted(*RequestContext, RequestContext.onAbort, this);
+            }
+        }
+
+        pub fn setTimeoutHandler(this: *RequestContext) void {
+            if (this.flags.has_timeout_handler) return;
+            if (this.resp) |resp| {
+                this.flags.has_timeout_handler = true;
+                resp.onTimeout(*RequestContext, RequestContext.onTimeout, this);
             }
         }
 
@@ -2331,6 +2365,28 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             ctxLog("create<d> ({*})<r>", .{this});
         }
 
+        pub fn onTimeout(this: *RequestContext, resp: *App.Response) void {
+            assert(this.resp == resp);
+            assert(this.server != null);
+
+            var any_js_calls = false;
+            var vm = this.server.?.vm;
+            const globalThis = this.server.?.globalThis;
+            defer {
+                // This is a task in the event loop.
+                // If we called into JavaScript, we must drain the microtask queue
+                if (any_js_calls) {
+                    vm.drainMicrotasks();
+                }
+            }
+
+            if (this.request_weakref.get()) |request| {
+                if (request.internal_event_callback.trigger(Request.InternalJSEventCallback.EventType.timeout, globalThis)) {
+                    any_js_calls = true;
+                }
+            }
+        }
+
         pub fn onAbort(this: *RequestContext, resp: *App.Response) void {
             assert(this.resp == resp);
             assert(!this.flags.aborted);
@@ -2353,11 +2409,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             if (this.request_weakref.get()) |request| {
                 request.request_context = AnyRequestContext.Null;
-                if (request.internal_abort_callback.trigger(globalThis)) {
+                if (request.internal_event_callback.trigger(Request.InternalJSEventCallback.EventType.abort, globalThis)) {
                     any_js_calls = true;
                 }
                 // we can already clean this strong refs
-                request.internal_abort_callback.deinit();
+                request.internal_event_callback.deinit();
                 this.request_weakref.deinit();
             }
             // if signal is not aborted, abort the signal
@@ -2428,7 +2484,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (this.request_weakref.get()) |request| {
                 request.request_context = AnyRequestContext.Null;
                 // we can already clean this strong refs
-                request.internal_abort_callback.deinit();
+                request.internal_event_callback.deinit();
                 this.request_weakref.deinit();
             }
 
@@ -3076,6 +3132,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 if (this.flags.has_abort_handler) {
                     resp.clearAborted();
                     this.flags.has_abort_handler = false;
+                }
+                if (this.flags.has_timeout_handler) {
+                    resp.clearTimeout();
+                    this.flags.has_timeout_handler = false;
                 }
             }
         }
@@ -4024,6 +4084,22 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn getRemoteSocketInfo(this: *RequestContext) ?uws.SocketAddress {
             return (this.resp orelse return null).getRemoteSocketInfo();
+        }
+
+        pub fn setTimeout(this: *RequestContext, seconds: c_uint) bool {
+            if (this.resp) |resp| {
+                resp.timeout(@min(seconds, 255));
+
+                // we only set the timeout callback if we wanna the timeout event to be triggered
+                // the connection will be closed so the abort handler will be called after the timeout
+                if (this.request_weakref.get()) |req| {
+                    if (req.internal_event_callback.hasCallback()) {
+                        this.setTimeoutHandler();
+                    }
+                }
+                return true;
+            }
+            return false;
         }
 
         pub const Export = shim.exportFunctions(.{

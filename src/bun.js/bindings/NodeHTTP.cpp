@@ -23,7 +23,8 @@ using namespace JSC;
 using namespace WebCore;
 
 extern "C" uWS::HttpRequest* Request__getUWSRequest(void*);
-extern "C" void Request__setInternalAbortCallback(void*, EncodedJSValue, JSC::JSGlobalObject*);
+extern "C" void Request__setInternalEventCallback(void*, EncodedJSValue, JSC::JSGlobalObject*);
+extern "C" void Request__setTimeout(void*, EncodedJSValue, JSC::JSGlobalObject*);
 
 static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject* prototype, JSObject* objectValue, JSC::InternalFieldTuple* tuple, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
 {
@@ -324,7 +325,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPAssignHeaders, (JSGlobalObject * globalObject, Ca
     return JSValue::encode(jsNull());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsHTTPAssignAbortCallback, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsHTTPAssignEventCallback, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -336,7 +337,25 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPAssignAbortCallback, (JSGlobalObject * globalObje
     ASSERT(callFrame->argumentCount() == 2);
 
     if (auto* jsRequest = jsDynamicCast<WebCore::JSRequest*>(requestValue)) {
-        Request__setInternalAbortCallback(jsRequest->wrapped(), JSValue::encode(callback), globalObject);
+        Request__setInternalEventCallback(jsRequest->wrapped(), JSValue::encode(callback), globalObject);
+    }
+
+    return JSValue::encode(jsNull());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsHTTPSetTimeout, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // This is an internal binding.
+    JSValue requestValue = callFrame->uncheckedArgument(0);
+    JSValue seconds = callFrame->uncheckedArgument(1);
+
+    ASSERT(callFrame->argumentCount() == 2);
+
+    if (auto* jsRequest = jsDynamicCast<WebCore::JSRequest*>(requestValue)) {
+        Request__setTimeout(jsRequest->wrapped(), JSValue::encode(seconds), globalObject);
     }
 
     return JSValue::encode(jsNull());
@@ -439,8 +458,13 @@ JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "assignHeaders"_s)),
         JSC::JSFunction::create(vm, globalObject, 2, "assignHeaders"_s, jsHTTPAssignHeaders, ImplementationVisibility::Public), 0);
     obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "assignAbortCallback"_s)),
-        JSC::JSFunction::create(vm, globalObject, 2, "assignAbortCallback"_s, jsHTTPAssignAbortCallback, ImplementationVisibility::Public), 0);
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "assignEventCallback"_s)),
+        JSC::JSFunction::create(vm, globalObject, 2, "assignEventCallback"_s, jsHTTPAssignEventCallback, ImplementationVisibility::Public), 0);
+
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setRequestTimeout"_s)),
+        JSC::JSFunction::create(vm, globalObject, 2, "setRequestTimeout"_s, jsHTTPSetTimeout, ImplementationVisibility::Public), 0);
+
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "Response"_s)),
         globalObject->JSResponseConstructor(), 0);

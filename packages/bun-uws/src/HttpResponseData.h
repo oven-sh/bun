@@ -35,6 +35,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     public:
     using OnWritableCallback = bool (*)(uWS::HttpResponse<SSL>*, uint64_t, void*);
     using OnAbortedCallback = void (*)(uWS::HttpResponse<SSL>*, void*);
+    using OnTimeoutCallback = void (*)(uWS::HttpResponse<SSL>*, void*);
     using OnDataCallback = void (*)(uWS::HttpResponse<SSL>* response, const char* chunk, size_t chunk_length, bool, void*);
     uint8_t idleTimeout = 10; // default HTTP_TIMEOUT 10 seconds
 
@@ -69,7 +70,6 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
         return ret;
     }
-
     /* Bits of status */
     enum  : int32_t{
         HTTP_STATUS_CALLED = 1, // used
@@ -86,6 +86,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     OnWritableCallback onWritable = nullptr;
     OnAbortedCallback onAborted = nullptr;
     OnDataCallback inStream = nullptr;
+    OnTimeoutCallback onTimeout = nullptr;
     /* Outgoing offset */
     uint64_t offset = 0;
 

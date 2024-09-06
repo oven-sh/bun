@@ -11,7 +11,8 @@ const {
   getHeader,
   setHeader,
   assignHeaders: assignHeadersFast,
-  assignAbortCallback,
+  assignEventCallback,
+  setRequestTimeout,
   Response,
   Request,
   Headers,
@@ -21,7 +22,8 @@ const {
   getHeader: (headers: Headers, name: string) => string | undefined;
   setHeader: (headers: Headers, name: string, value: string) => void;
   assignHeaders: (object: any, req: Request, headersTuple: any) => boolean;
-  assignAbortCallback: (req: Request, callback: () => void) => void;
+  assignEventCallback: (req: Request, callback: (event: number) => void) => void;
+  setRequestTimeout: (req: Request, timeout: number) => void;
   Response: (typeof globalThis)["Response"];
   Request: (typeof globalThis)["Request"];
   Headers: (typeof globalThis)["Headers"];
@@ -423,12 +425,20 @@ function Server(options, callback) {
   return this;
 }
 
-function onRequestAborted() {
+function onRequestEvent(event) {
   const [server, http_res, req] = this.socket[kInternalSocketData];
   if (!http_res[finishedSymbol]) {
-    this.complete = true;
-    this.emit("close");
-    http_res[finishedSymbol] = true;
+    switch (event) {
+      case 0: // timeout
+        this.emit("timeout");
+        server.emit("timeout", req.socket);
+        break;
+      case 1: // abort
+        this.complete = true;
+        this.emit("close");
+        http_res[finishedSymbol] = true;
+        break;
+    }
   }
 }
 
@@ -648,7 +658,7 @@ Server.prototype = {
           const prevIsNextIncomingMessageHTTPS = isNextIncomingMessageHTTPS;
           isNextIncomingMessageHTTPS = isHTTPS;
           const http_req = new RequestClass(req);
-          assignAbortCallback(req, onRequestAborted.bind(http_req));
+          assignEventCallback(req, onRequestEvent.bind(http_req));
           isNextIncomingMessageHTTPS = prevIsNextIncomingMessageHTTPS;
 
           const upgrade = http_req.headers.upgrade;
@@ -932,7 +942,8 @@ IncomingMessage.prototype = {
     // noop
   },
   setTimeout(msecs, callback) {
-    // noop
+    setRequestTimeout(this[reqSymbol], Math.ceil(msecs / 1000));
+    this.once("timeout", callback);
     return this;
   },
   get socket() {

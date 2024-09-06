@@ -275,8 +275,14 @@ pub const Response = struct {
         if (js_wrapper != .zero) {
             if (cloned.body.value == .Locked) {
                 if (cloned.body.value.Locked.readable.get()) |readable| {
+                    // If we are teed, then we need to update the cached .body
+                    // value to point to the new readable stream
+                    // We must do this on both the original and cloned response
+                    // but especially the original response since it will have a stale .body value now.
                     Response.bodySetCached(js_wrapper, globalThis, readable.value);
-                    Response.bodySetCached(this_value, globalThis, this.body.value.Locked.readable.get().?.value);
+                    if (this.body.value.Locked.readable.get()) |other_readable| {
+                        Response.bodySetCached(this_value, globalThis, other_readable.value);
+                    }
                 }
             }
         }

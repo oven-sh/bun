@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
 import { spawnSync } from "bun";
-import { bunExe, bunEnv } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 
 test("issue 8964", async () => {

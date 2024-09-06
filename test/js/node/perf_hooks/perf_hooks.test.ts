@@ -1,5 +1,5 @@
+import { expect, test } from "bun:test";
 import perf from "perf_hooks";
-import { test, expect } from "bun:test";
 
 test("stubs", () => {
   expect(() => perf.monitorEventLoopDelay()).toThrow();

@@ -729,6 +729,7 @@ pub const EventLoopTimer = struct {
         TimerObject,
         TestRunner,
         StatWatcherScheduler,
+        UpgradedDuplex,
 
         pub fn Type(comptime T: Tag) type {
             return switch (T) {
@@ -736,6 +737,7 @@ pub const EventLoopTimer = struct {
                 .TimerObject => TimerObject,
                 .TestRunner => JSC.Jest.TestRunner,
                 .StatWatcherScheduler => StatWatcherScheduler,
+                .UpgradedDuplex => uws.UpgradedDuplex,
             };
         }
     };
@@ -795,6 +797,9 @@ pub const EventLoopTimer = struct {
                 }
                 if (comptime t.Type() == StatWatcherScheduler) {
                     return container.timerCallback();
+                }
+                if (comptime t.Type() == uws.UpgradedDuplex) {
+                    return container.onTimeout();
                 }
 
                 if (comptime t.Type() == JSC.Jest.TestRunner) {

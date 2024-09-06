@@ -1,6 +1,6 @@
-import { itBundled } from "./expectBundled";
 import { Database } from "bun:sqlite";
 import { describe, expect } from "bun:test";
+import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   itBundled("bun/embedded-sqlite-file", {

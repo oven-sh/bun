@@ -1,8 +1,7 @@
-import { itBundled } from "./expectBundled";
 import { Database } from "bun:sqlite";
-import { expect } from "bun:test";
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { rmSync } from "fs";
+import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   itBundled("compile/HelloWorld", {

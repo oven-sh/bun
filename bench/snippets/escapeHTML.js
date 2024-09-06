@@ -1,7 +1,4 @@
-import { group } from "./runner.mjs";
-import { bench, run } from "./runner.mjs";
-import { encode as htmlEntityEncode } from "html-entities";
-import { escape as heEscape } from "he";
+import { bench, group, run } from "./runner.mjs";
 
 var bunEscapeHTML = globalThis.escapeHTML || Bun.escapeHTML;
 

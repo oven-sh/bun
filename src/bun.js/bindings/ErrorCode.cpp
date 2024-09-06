@@ -1,6 +1,7 @@
 
 #include "root.h"
 
+#include "ZigGlobalObject.h"
 #include "DOMException.h"
 #include "JavaScriptCore/Error.h"
 #include "JavaScriptCore/ErrorType.h"
@@ -27,8 +28,6 @@
 
 #include "ErrorCode.h"
 
-extern "C" Zig::GlobalObject* Bun__getDefaultGlobalObject();
-
 static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code, bool isDOMExceptionPrototype = false)
 {
     JSC::JSObject* prototype;
@@ -36,11 +35,7 @@ static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* glo
     // Inherit from DOMException
     // But preserve the error.stack property.
     if (isDOMExceptionPrototype) {
-        auto* domGlobalObject = JSC::jsDynamicCast<Zig::GlobalObject*>(globalObject);
-        if (UNLIKELY(!domGlobalObject)) {
-            domGlobalObject = Bun__getDefaultGlobalObject();
-        }
-        // TODO: node:vm?
+        auto* domGlobalObject = defaultGlobalObject(globalObject);
         prototype = JSC::constructEmptyObject(globalObject, WebCore::JSDOMException::prototype(vm, *domGlobalObject));
     } else {
         switch (type) {
@@ -73,6 +68,15 @@ extern "C" JSC::EncodedJSValue Bun__ERR_MISSING_ARGS_static(JSC::JSGlobalObject*
 extern "C" JSC::EncodedJSValue Bun__ERR_IPC_CHANNEL_CLOSED(JSC::JSGlobalObject* globalObject);
 
 // clang-format on
+
+#define EXPECT_ARG_COUNT(count__)                                                          \
+    do {                                                                                   \
+        auto argCount = callFrame->argumentCount();                                        \
+        if (argCount < count__) {                                                          \
+            JSC::throwTypeError(globalObject, scope, "requires " #count__ " arguments"_s); \
+            return {};                                                                     \
+        }                                                                                  \
+    } while (false)
 
 namespace Bun {
 
@@ -201,11 +205,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_INVALID_ARG_TYPE, (JSC::JSGlobalObject *
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto argCount = callFrame->argumentCount();
-    if (argCount < 3) {
-        JSC::throwTypeError(globalObject, scope, "requires 3 arguments"_s);
-        return {};
-    }
+    EXPECT_ARG_COUNT(3);
+
     auto arg_name = callFrame->argument(0);
     auto expected_type = callFrame->argument(1);
     auto actual_value = callFrame->argument(2);
@@ -251,11 +252,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_OUT_OF_RANGE, (JSC::JSGlobalObject * glo
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto argCount = callFrame->argumentCount();
-    if (argCount < 3) {
-        JSC::throwTypeError(globalObject, scope, "requires 3 arguments"_s);
-        return {};
-    }
+    EXPECT_ARG_COUNT(3);
 
     auto arg_name = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -325,7 +322,7 @@ extern "C" JSC::EncodedJSValue Bun__ERR_MISSING_ARGS_static(JSC::JSGlobalObject*
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (arg1 == 0) {
+    if (arg1 == nullptr) {
         JSC::throwTypeError(globalObject, scope, "requires at least 1 argument"_s);
         return {};
     }
@@ -368,6 +365,23 @@ extern "C" JSC::EncodedJSValue Bun__ERR_IPC_CHANNEL_CLOSED(JSC::JSGlobalObject* 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_SOCKET_BAD_TYPE, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
 {
     return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_BAD_TYPE, "Bad socket type specified. Valid types are: udp4, udp6"_s));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_INVALID_PROTOCOL, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    EXPECT_ARG_COUNT(2);
+
+    auto actual = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto expected = callFrame->argument(1).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto message = makeString("Protocol \""_s, actual, "\" not supported. Expected \""_s, expected, "\""_s);
+    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_PROTOCOL, message));
 }
 
 } // namespace Bun

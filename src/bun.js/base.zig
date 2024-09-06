@@ -430,6 +430,19 @@ pub const ArrayBuffer = extern struct {
         return out;
     }
 
+    extern "C" fn JSArrayBuffer__fromDefaultAllocator(*JSC.JSGlobalObject, ptr: [*]u8, len: usize) JSC.JSValue;
+    pub fn toJSFromDefaultAllocator(globalThis: *JSC.JSGlobalObject, bytes: []u8) JSC.JSValue {
+        return JSArrayBuffer__fromDefaultAllocator(globalThis, bytes.ptr, bytes.len);
+    }
+
+    pub fn fromDefaultAllocator(globalThis: *JSC.JSGlobalObject, bytes: []u8, comptime typed_array_type: JSC.JSValue.JSType) JSC.JSValue {
+        return switch (typed_array_type) {
+            .ArrayBuffer => JSArrayBuffer__fromDefaultAllocator(globalThis, bytes.ptr, bytes.len),
+            .Uint8Array => JSC.JSUint8Array.fromBytes(globalThis, bytes),
+            else => @compileError("Not implemented yet"),
+        };
+    }
+
     pub fn fromBytes(bytes: []u8, typed_array_type: JSC.JSValue.JSType) ArrayBuffer {
         return ArrayBuffer{ .offset = 0, .len = @as(u32, @intCast(bytes.len)), .byte_len = @as(u32, @intCast(bytes.len)), .typed_array_type = typed_array_type, .ptr = bytes.ptr };
     }

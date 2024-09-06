@@ -1,5 +1,5 @@
 import braces from "braces";
-import { group, bench, run } from "mitata";
+import { bench, group, run } from "mitata";
 
 // const iterations = 1000;
 const iterations = 100;

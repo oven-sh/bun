@@ -1,15 +1,14 @@
 /**
  * See `./expectBundled.md` for how this works.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync, realpathSync } from "fs";
-import path from "path";
+import { BuildConfig, BunPlugin, fileURLToPath, PluginBuilder } from "bun";
+import { callerSourceOrigin } from "bun:jsc";
+import type { Matchers } from "bun:test";
+import * as esbuild from "esbuild";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isDebug } from "harness";
 import { tmpdir } from "os";
-import { callerSourceOrigin } from "bun:jsc";
-import { BuildConfig, BunPlugin, fileURLToPath } from "bun";
-import type { Matchers } from "bun:test";
-import { PluginBuilder } from "bun";
-import * as esbuild from "esbuild";
+import path from "path";
 import { SourceMapConsumer } from "source-map";
 
 /** Dedent module does a bit too much with their stuff. we will be much simpler */

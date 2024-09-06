@@ -18,6 +18,7 @@ export default [
   ["ERR_HTTP2_INVALID_SINGLE_VALUE_HEADER", TypeError, "TypeError"],
   ["ERR_INVALID_ARG_TYPE", TypeError, "TypeError"],
   ["ERR_INVALID_ARG_VALUE", TypeError, "TypeError"],
+  ["ERR_INVALID_PROTOCOL", TypeError, "TypeError"],
   ["ERR_INVALID_THIS", TypeError, "TypeError"],
   ["ERR_IPC_CHANNEL_CLOSED", Error, "Error"],
   ["ERR_IPC_DISCONNECTED", Error, "Error"],
@@ -45,4 +46,5 @@ export default [
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError, "TypeError"],
   ["ERR_BODY_ALREADY_USED", Error, "Error"],
+  ["ERR_STREAM_WRAP", Error, "Error"],
 ] as ErrorCodeMapping;

@@ -18,7 +18,5 @@
         Bun__panic(utf8.data(), utf8.length());                                                                     \
     } while (0)
 
-extern "C" Zig::GlobalObject* Bun__getDefaultGlobalObject();
-
 namespace v8 {
 }

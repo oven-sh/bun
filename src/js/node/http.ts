@@ -1262,7 +1262,10 @@ function flushFirstWrite(self) {
         type: "direct",
         pull: controller => {
           self[controllerSymbol] = controller;
-          if (firstWrite) controller.write(firstWrite);
+          if (firstWrite) {
+            controller.write(firstWrite);
+            controller.flush(); // flush the first write
+          }
           firstWrite = undefined;
           if (!self[finishedSymbol]) {
             const { promise, resolve } = $newPromiseCapability(GlobalPromise);

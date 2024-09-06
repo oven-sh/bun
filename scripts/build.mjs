@@ -95,7 +95,7 @@ async function build(args) {
   await spawn("cmake", buildArgs, { env });
 
   const buildFiles = ["ccache.log", "compile_commands.json"];
-  const buildPaths = [buildPath, readdirSync(buildPath).map(path => join(buildPath, path))];
+  const buildPaths = [buildPath, ...readdirSync(buildPath).map(path => join(buildPath, path))];
   const buildArtifacts = [];
   for (const buildPath of buildPaths) {
     for (const buildFile of buildFiles) {

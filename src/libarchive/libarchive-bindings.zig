@@ -285,6 +285,11 @@ pub const Archive = opaque {
             archive_entry_set_perm(entry, perm);
         }
 
+        pub extern fn archive_entry_set_mode(*Entry, bun.Mode) void;
+        pub fn setMode(entry: *Entry, mode: bun.Mode) void {
+            archive_entry_set_mode(entry, mode);
+        }
+
         extern fn archive_entry_set_mtime(*Entry, isize, c_long) void;
         pub fn setMtime(entry: *Entry, secs: isize, nsecs: c_long) void {
             archive_entry_set_mtime(entry, secs, nsecs);
@@ -636,7 +641,6 @@ pub extern fn archive_entry_set_link_utf8(*struct_archive_entry, [*c]const u8) v
 pub extern fn archive_entry_copy_link(*struct_archive_entry, [*c]const u8) void;
 pub extern fn archive_entry_copy_link_w(*struct_archive_entry, [*c]const wchar_t) void;
 pub extern fn archive_entry_update_link_utf8(*struct_archive_entry, [*c]const u8) c_int;
-pub extern fn archive_entry_set_mode(*struct_archive_entry, mode_t) void;
 pub extern fn archive_entry_unset_mtime(*struct_archive_entry) void;
 pub extern fn archive_entry_set_nlink(*struct_archive_entry, c_uint) void;
 pub extern fn archive_entry_copy_pathname(*struct_archive_entry, [*c]const u8) void;

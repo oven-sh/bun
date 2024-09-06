@@ -2093,7 +2093,7 @@ pub const bindings = struct {
         const EntryInfo = struct {
             pathname: String,
             kind: String,
-            mode: bun.Mode,
+            perm: bun.Mode,
             size: ?usize = null,
             contents: ?String = null,
         };
@@ -2136,7 +2136,7 @@ pub const bindings = struct {
                         std.mem.sliceTo(libarchive.archive_entry_pathname(archive_entry), 0);
 
                     const kind = bun.C.kindFromMode(libarchive.archive_entry_filetype(archive_entry));
-                    const mode = libarchive.archive_entry_mode(archive_entry);
+                    const perm = libarchive.archive_entry_perm(archive_entry);
 
                     var entry_info: EntryInfo = .{
                         .pathname = if (comptime Environment.isWindows)
@@ -2144,7 +2144,7 @@ pub const bindings = struct {
                         else
                             String.createUTF8(pathname),
                         .kind = String.static(@tagName(kind)),
-                        .mode = mode,
+                        .perm = perm,
                     };
 
                     if (kind == .file) {
@@ -2172,10 +2172,10 @@ pub const bindings = struct {
         const entries = JSArray.createEmpty(global, entries_info.items.len);
 
         for (entries_info.items, 0..) |entry, i| {
-            const obj = JSValue.createEmptyObject(global, 2);
+            const obj = JSValue.createEmptyObject(global, 4);
             obj.put(global, "pathname", entry.pathname.toJS(global));
             obj.put(global, "kind", entry.kind.toJS(global));
-            obj.put(global, "mode", JSValue.jsNumber(entry.mode));
+            obj.put(global, "perm", JSValue.jsNumber(entry.perm));
             if (entry.contents) |contents| {
                 obj.put(global, "contents", contents.toJS(global));
             }

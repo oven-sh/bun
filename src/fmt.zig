@@ -10,6 +10,102 @@ const Environment = bun.Environment;
 
 pub usingnamespace std.fmt;
 
+pub fn Table(
+    comptime column_color: []const u8,
+    comptime column_left_pad: usize,
+    comptime column_right_pad: usize,
+    comptime enable_ansi_colors: bool,
+) type {
+    return struct {
+        column_names: []const []const u8,
+        column_inside_lengths: []const usize,
+
+        pub fn topLeftSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "┌" else "|";
+        }
+        pub fn topRightSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "┐" else "|";
+        }
+        pub fn topColumnSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "┬" else "-";
+        }
+
+        pub fn bottomLeftSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "└" else "|";
+        }
+        pub fn bottomRightSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "┘" else "|";
+        }
+        pub fn bottomColumnSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "┴" else "-";
+        }
+
+        pub fn middleLeftSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "├" else "|";
+        }
+        pub fn middleRightSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "┤" else "|";
+        }
+        pub fn middleColumnSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "┼" else "|";
+        }
+
+        pub fn horizontalEdge(_: *const @This()) string {
+            return if (enable_ansi_colors) "─" else "-";
+        }
+        pub fn verticalEdge(_: *const @This()) string {
+            return if (enable_ansi_colors) "│" else "|";
+        }
+
+        pub fn init(column_names_: []const []const u8, column_inside_lengths_: []const usize) @This() {
+            return .{
+                .column_names = column_names_,
+                .column_inside_lengths = column_inside_lengths_,
+            };
+        }
+
+        pub fn printTopLineSeparator(this: *const @This()) void {
+            this.printLine(this.topLeftSep(), this.topRightSep(), this.topColumnSep());
+        }
+
+        pub fn printBottomLineSeparator(this: *const @This()) void {
+            this.printLine(this.bottomLeftSep(), this.bottomRightSep(), this.bottomColumnSep());
+        }
+
+        pub fn printLineSeparator(this: *const @This()) void {
+            this.printLine(this.middleLeftSep(), this.middleRightSep(), this.middleColumnSep());
+        }
+
+        pub fn printLine(this: *const @This(), left_edge_separator: string, right_edge_separator: string, column_separator: string) void {
+            for (this.column_inside_lengths, 0..) |column_inside_length, i| {
+                if (i == 0) {
+                    Output.pretty("{s}", .{left_edge_separator});
+                } else {
+                    Output.pretty("{s}", .{column_separator});
+                }
+
+                for (0..column_left_pad + column_inside_length + column_right_pad) |_| Output.pretty("{s}", .{this.horizontalEdge()});
+
+                if (i == this.column_inside_lengths.len - 1) {
+                    Output.pretty("{s}\n", .{right_edge_separator});
+                }
+            }
+        }
+
+        pub fn printColumnNames(this: *const @This()) void {
+            for (this.column_inside_lengths, 0..) |column_inside_length, i| {
+                Output.pretty("{s}", .{this.verticalEdge()});
+                for (0..column_left_pad) |_| Output.pretty(" ", .{});
+                Output.pretty("<b><" ++ column_color ++ ">{s}<r>", .{this.column_names[i]});
+                for (this.column_names[i].len..column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
+                if (i == this.column_inside_lengths.len - 1) {
+                    Output.pretty("{s}\n", .{this.verticalEdge()});
+                }
+            }
+        }
+    };
+}
+
 const SharedTempBuffer = [32 * 1024]u8;
 fn getSharedBuffer() []u8 {
     return std.mem.asBytes(shared_temp_buffer_ptr orelse brk: {

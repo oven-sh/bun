@@ -24,7 +24,7 @@ const UntrustedCommand = @import("./pm_trusted_command.zig").UntrustedCommand;
 const TrustCommand = @import("./pm_trusted_command.zig").TrustCommand;
 const DefaultTrustedCommand = @import("./pm_trusted_command.zig").DefaultTrustedCommand;
 const Environment = bun.Environment;
-const PackCommand = bun.CLI.PackCommand;
+const PackCommand = @import("./pack_command.zig").PackCommand;
 
 const ByName = struct {
     dependencies: []const Dependency,

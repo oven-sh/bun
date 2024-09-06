@@ -116,7 +116,6 @@ pub const ExecCommand = @import("./cli/exec_command.zig").ExecCommand;
 pub const PatchCommand = @import("./cli/patch_command.zig").PatchCommand;
 pub const PatchCommitCommand = @import("./cli/patch_commit_command.zig").PatchCommitCommand;
 pub const OutdatedCommand = @import("./cli/outdated_command.zig").OutdatedCommand;
-pub const PackCommand = @import("./cli/pack_command.zig").PackCommand;
 
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
@@ -1456,7 +1455,6 @@ pub const Command = struct {
             RootCommandMatcher.case("exec") => .ExecCommand,
 
             RootCommandMatcher.case("outdated") => .OutdatedCommand,
-            RootCommandMatcher.case("pack") => .PackCommand,
 
             // These are reserved for future use by Bun, so that someone
             // doing `bun deploy` to run a script doesn't accidentally break
@@ -1598,13 +1596,6 @@ pub const Command = struct {
                 const ctx = try Command.init(allocator, log, .OutdatedCommand);
 
                 try OutdatedCommand.exec(ctx);
-                return;
-            },
-            .PackCommand => {
-                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .PackCommand) unreachable;
-                const ctx = try Command.init(allocator, log, .PackCommand);
-
-                try PackCommand.exec(ctx);
                 return;
             },
             .BunxCommand => {
@@ -2175,7 +2166,6 @@ pub const Command = struct {
         PatchCommand,
         PatchCommitCommand,
         OutdatedCommand,
-        PackCommand,
 
         /// Used by crash reports.
         ///
@@ -2208,7 +2198,6 @@ pub const Command = struct {
                 .PatchCommand => 'x',
                 .PatchCommitCommand => 'z',
                 .OutdatedCommand => 'o',
-                .PackCommand => 'y',
             };
         }
 
@@ -2432,10 +2421,9 @@ pub const Command = struct {
                     , .{});
                     Output.flush();
                 },
-                .OutdatedCommand, .PackCommand => {
+                .OutdatedCommand => {
                     Install.PackageManager.CommandLineArguments.printHelp(switch (cmd) {
                         .OutdatedCommand => .outdated,
-                        .PackCommand => .pack,
                     });
                 },
                 else => {
@@ -2455,7 +2443,6 @@ pub const Command = struct {
                 .PatchCommand,
                 .PatchCommitCommand,
                 .OutdatedCommand,
-                .PackCommand,
                 => true,
                 else => false,
             };
@@ -2474,7 +2461,6 @@ pub const Command = struct {
                 .PatchCommand,
                 .PatchCommitCommand,
                 .OutdatedCommand,
-                .PackCommand,
                 => true,
                 else => false,
             };
@@ -2495,7 +2481,6 @@ pub const Command = struct {
             .RunCommand = true,
             .RunAsNodeCommand = true,
             .OutdatedCommand = true,
-            .PackCommand = true,
         });
 
         pub const always_loads_config: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{
@@ -2510,7 +2495,6 @@ pub const Command = struct {
             .PackageManagerCommand = true,
             .BunxCommand = true,
             .OutdatedCommand = true,
-            .PackCommand = true,
         });
 
         pub const uses_global_options: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(true, .{
@@ -2526,7 +2510,6 @@ pub const Command = struct {
             .UnlinkCommand = false,
             .BunxCommand = false,
             .OutdatedCommand = false,
-            .PackCommand = false,
         });
     };
 };

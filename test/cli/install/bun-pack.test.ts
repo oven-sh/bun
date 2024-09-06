@@ -9,7 +9,6 @@ var packageDir: string;
 
 beforeEach(() => {
   packageDir = tmpdirSync();
-  console.log(`packageDir: ${packageDir}`);
 });
 
 async function pack(cwd: string, env: NodeJS.ProcessEnv, ...args: string[]) {
@@ -682,6 +681,134 @@ describe("bundledDependnecies", () => {
 
     const tarball = readTarball(join(packageDir, "pack-bundled-dep-not-dir-4.5.6.tgz"));
     expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }]);
+  });
+});
+
+describe(".gitignore/.npmignore", () => {
+  for (const ignoreFile of [".gitignore", ".npmignore"]) {
+    test(`can ignore and un-ignore a file (${ignoreFile})`, async () => {
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "pack-ignore-1",
+            version: "0.0.0",
+          }),
+        ),
+        write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
+        write(join(packageDir, ignoreFile), "index.js"),
+      ]);
+
+      await pack(packageDir, bunEnv);
+      const tarball = readTarball(join(packageDir, "pack-ignore-1-0.0.0.tgz"));
+      expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }]);
+
+      await Promise.all([
+        rm(join(packageDir, "pack-ignore-1-0.0.0.tgz")),
+        write(join(packageDir, ignoreFile), "index.js\n!index.js"),
+      ]);
+
+      await pack(packageDir, bunEnv);
+      const tarball2 = readTarball(join(packageDir, "pack-ignore-1-0.0.0.tgz"));
+      expect(tarball2.entries).toMatchObject([
+        { "pathname": "package/package.json" },
+        { "pathname": "package/index.js" },
+      ]);
+
+      await Promise.all([
+        rm(join(packageDir, "pack-ignore-1-0.0.0.tgz")),
+        write(join(packageDir, ignoreFile), "!index.js\nindex.js"),
+      ]);
+
+      await pack(packageDir, bunEnv);
+      const tarball3 = readTarball(join(packageDir, "pack-ignore-1-0.0.0.tgz"));
+      expect(tarball3.entries).toMatchObject([{ "pathname": "package/package.json" }]);
+    });
+  }
+
+  test("excludes files recursively", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-ignore-2",
+          version: "1.2.1",
+        }),
+      ),
+      write(join(packageDir, ".npmignore"), "index.js"),
+      write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
+      write(join(packageDir, "subdir", "index.js"), "console.log('hello ./subdir/index.js')"),
+      write(join(packageDir, "subdir", "subsubdir", "index.js"), "console.log('hello ./subdir/subsubdir/index.js')"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+    const tarball = readTarball(join(packageDir, "pack-ignore-2-1.2.1.tgz"));
+    expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }]);
+  });
+});
+
+describe("bins", () => {
+  test("basic", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-bins",
+          version: "1.2.3",
+          bin: "bin.js",
+        }),
+      ),
+      write(join(packageDir, "bin.js"), `#!/usr/bin/env bun\n`),
+    ]);
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-bins-1.2.3.tgz"));
+    expect(tarball.entries).toMatchObject([
+      {
+        pathname: "package/package.json",
+        perm: 0o644,
+      },
+      {
+        pathname: "package/bin.js",
+        perm: 0o644 | 0o111,
+      },
+    ]);
+  });
+
+  test("directory", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-bins-dir",
+          version: "1.2.3",
+          directories: {
+            bin: "bins",
+          },
+        }),
+      ),
+      write(join(packageDir, "bins", "bin1.js"), `#!/usr/bin/env bun\n`),
+      write(join(packageDir, "bins", "bin2.js"), `#!/usr/bin/env bun\n`),
+    ]);
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-bins-dir-1.2.3.tgz"));
+    expect(tarball.entries).toMatchObject([
+      {
+        pathname: "package/package.json",
+        perm: 0o644,
+      },
+      {
+        pathname: "package/bins/bin1.js",
+        perm: 0o644 | 0o111,
+      },
+      {
+        pathname: "package/bins/bin2.js",
+        perm: 0o644 | 0o111,
+      },
+    ]);
   });
 });
 

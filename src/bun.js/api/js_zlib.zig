@@ -207,7 +207,7 @@ pub const ZlibEncoder = struct {
                     err_buffer_too_large.throw();
                     return .zero;
                 }
-                if (this.output.items.len > 0) event_loop.runCallback(push_fn, globalThis, thisctx, &.{this.collectOutputValue()});
+                if (this.output.items.len > 0) runCallback(event_loop, push_fn, globalThis, thisctx, &.{this.collectOutputValue()}) orelse return .zero;
                 if (done) break;
             }
         }
@@ -217,7 +217,7 @@ pub const ZlibEncoder = struct {
                 globalThis.ERR_BUFFER_TOO_LARGE("Cannot create a Buffer larger than {d} bytes", .{this.maxOutputLength}).throw();
                 return .zero;
             }
-            if (this.output.items.len > 0) event_loop.runCallback(push_fn, globalThis, thisctx, &.{this.collectOutputValue()});
+            if (this.output.items.len > 0) runCallback(event_loop, push_fn, globalThis, thisctx, &.{this.collectOutputValue()}) orelse return .zero;
         }
         return .undefined;
     }
@@ -637,7 +637,7 @@ pub const ZlibDecoder = struct {
                     err_buffer_too_large.throw();
                     return .zero;
                 }
-                if (this.output.items.len > 0) event_loop.runCallback(push_fn, globalThis, thisctx, &.{this.collectOutputValue()});
+                if (this.output.items.len > 0) runCallback(event_loop, push_fn, globalThis, thisctx, &.{this.collectOutputValue()}) orelse return .zero;
                 if (done) break;
             }
         }
@@ -647,7 +647,7 @@ pub const ZlibDecoder = struct {
                 globalThis.ERR_BUFFER_TOO_LARGE("Cannot create a Buffer larger than {d} bytes", .{this.maxOutputLength}).throw();
                 return .zero;
             }
-            if (this.output.items.len > 0) event_loop.runCallback(push_fn, globalThis, thisctx, &.{this.collectOutputValue()});
+            if (this.output.items.len > 0) runCallback(event_loop, push_fn, globalThis, thisctx, &.{this.collectOutputValue()}) orelse return .zero;
         }
         return .undefined;
     }
@@ -992,4 +992,13 @@ fn handleTransformSyncStreamError(err: anyerror, globalThis: *JSC.JSGlobalObject
     }
     closed.* = true;
     return .zero;
+}
+
+fn runCallback(event_loop: *JSC.EventLoop, callback: JSC.JSValue, globalObject: *JSC.JSGlobalObject, thisValue: JSC.JSValue, arguments: []const JSC.JSValue) ?void {
+    event_loop.enter();
+    defer event_loop.exit();
+
+    _ = callback.call(globalObject, thisValue, arguments);
+    if (globalObject.hasException()) return null;
+    return;
 }

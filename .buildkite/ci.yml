@@ -627,8 +627,8 @@ steps:
         command:
           - "bun run build:ci --target bun"
   
-      - key: "linux-x64-baseline-test-debian-12"
-        label: ":debian: 12 x64-baseline - test-bun"
+      - key: "linux-aarch64-test-debian-12"
+        label: ":debian: 12 aarch64 - test-bun"
         if: "build.branch != 'main'"
         parallelism: 5
         soft_fail:
@@ -646,18 +646,18 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "linux-x64-baseline-build-bun"
+          - "linux-aarch64-build-bun"
         agents:
           robobun: "true"
           os: "linux"
-          arch: "x64"
+          arch: "aarch64"
           distro: "debian"
           release: "12"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun"
+          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun"
 
-      - key: "linux-x64-baseline-test-ubuntu-2204"
-        label: ":ubuntu: 22.04 x64-baseline - test-bun"
+      - key: "linux-aarch64-test-ubuntu-2204"
+        label: ":ubuntu: 22.04 aarch64 - test-bun"
         if: "build.branch != 'main'"
         parallelism: 5
         soft_fail:
@@ -675,18 +675,18 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "linux-x64-baseline-build-bun"
+          - "linux-aarch64-build-bun"
         agents:
           robobun: "true"
           os: "linux"
-          arch: "x64"
+          arch: "aarch64"
           distro: "ubuntu"
           release: "22.04"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun"
+          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun"
 
-      - key: "linux-x64-baseline-test-ubuntu-2004"
-        label: ":ubuntu: 20.04 x64-baseline - test-bun"
+      - key: "linux-aarch64-test-ubuntu-2004"
+        label: ":ubuntu: 20.04 aarch64 - test-bun"
         if: "build.branch != 'main'"
         parallelism: 5
         soft_fail:
@@ -704,15 +704,15 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "linux-x64-baseline-build-bun"
+          - "linux-aarch64-build-bun"
         agents:
           robobun: "true"
           os: "linux"
-          arch: "x64"
+          arch: "aarch64"
           distro: "ubuntu"
           release: "20.04"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun"
+          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun"
 
   # Windows x64
   - key: "windows-x64"

@@ -1248,10 +1248,43 @@ ServerResponse.prototype._implicitHeader = function () {
   this.writeHead(this.statusCode);
 };
 
+function flushFirstWrite(self) {
+  const thisController = self[controllerSymbol];
+  if (thisController) return;
+  self.headersSent = true;
+  let firstWrite = self[firstWriteSymbol];
+  self[controllerSymbol] = undefined;
+  self._reply(
+    new Response(
+      new ReadableStream({
+        type: "direct",
+        pull: controller => {
+          self[controllerSymbol] = controller;
+          if (firstWrite) controller.write(firstWrite);
+          firstWrite = undefined;
+          if (!self[finishedSymbol]) {
+            const { promise, resolve } = $newPromiseCapability(GlobalPromise);
+            self[deferredSymbol] = resolve;
+            return promise;
+          }
+        },
+      }),
+      {
+        headers: self[headersSymbol],
+        status: self.statusCode,
+        statusText: self.statusMessage ?? STATUS_CODES[self.statusCode],
+      },
+    ),
+  );
+}
 ServerResponse.prototype._write = function (chunk, encoding, callback) {
   if (this[firstWriteSymbol] === undefined && !this.headersSent) {
     this[firstWriteSymbol] = chunk;
     callback();
+
+    // we still wanna to flush if the user await some time before writing again
+    // keeping the first write is a good performance optimization
+    process.nextTick(flushFirstWrite, this);
     return;
   }
 

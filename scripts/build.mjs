@@ -60,6 +60,7 @@ async function build(args) {
       }
     }
     generateOptions["-DCACHE_PATH"] = cmakePath(cachePath);
+    generateOptions["--fresh"] = undefined;
     if (cacheRead && cacheWrite) {
       generateOptions["-DCACHE_STRATEGY"] = "read-write";
     } else if (cacheRead) {

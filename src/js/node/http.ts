@@ -1249,11 +1249,8 @@ ServerResponse.prototype._implicitHeader = function () {
 };
 
 function flushFirstWrite(self) {
-  // already finished
-  if (self[finishedSymbol]) return;
-  // already flushed
-  const thisController = self[controllerSymbol];
-  if (thisController) return;
+  // headersSent alreadySent aka already flushed
+  if (self.headersSent) return;
   self.headersSent = true;
   let firstWrite = self[firstWriteSymbol];
   self[controllerSymbol] = undefined;
@@ -1285,9 +1282,10 @@ ServerResponse.prototype._write = function (chunk, encoding, callback) {
     this[firstWriteSymbol] = chunk;
     callback();
 
-    // we still wanna to flush if the user await some time before writing again
-    // keeping the first write is a good performance optimization
-    process.nextTick(flushFirstWrite, this);
+    if (this.header)
+      // we still wanna to flush if the user await some time before writing again
+      // keeping the first write is a good performance optimization
+      process.nextTick(flushFirstWrite, this);
     return;
   }
 
@@ -1360,6 +1358,7 @@ ServerResponse.prototype._final = function (callback) {
     var data = this[firstWriteSymbol] || "";
     this[firstWriteSymbol] = undefined;
     this[finishedSymbol] = true;
+    this.headersSent = true; // https://github.com/oven-sh/bun/issues/3458
     drainHeadersIfObservable.$call(this);
     this._reply(
       new Response(data, {
@@ -2219,7 +2218,9 @@ function _writeHead(statusCode, reason, obj, response) {
 
       for (let n = 0; n < obj.length; n += 2) {
         k = obj[n + 0];
-        if (k) response.setHeader(k, obj[n + 1]);
+        if (k) {
+          response.setHeader(k, obj[n + 1]);
+        }
       }
     } else if (obj) {
       const keys = Object.keys(obj);

@@ -12,7 +12,8 @@ if (typeof fn !== "function") {
   throw new Error("Unknown test:", process.argv[2]);
 }
 const result = fn.apply(null, eval(process.argv[3] ?? "[]"));
-
-if (result) {
+if (result instanceof Promise) {
+  result.then(x => console.log("resolved to", x));
+} else if (result) {
   throw new Error(result);
 }

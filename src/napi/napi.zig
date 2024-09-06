@@ -1194,6 +1194,8 @@ pub const napi_async_work = struct {
     }
 
     pub fn runFromJS(this: *napi_async_work) void {
+        const handle_scope = NapiHandleScope.push(this.global, false);
+        defer handle_scope.pop(this.global);
         this.complete.?(
             this.global,
             if (this.status.load(.seq_cst) == @intFromEnum(Status.cancelled))

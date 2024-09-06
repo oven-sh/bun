@@ -83,6 +83,9 @@ describe("napi", () => {
     it("exists when calling a napi constructor", () => {
       checkSameOutput("test_napi_class_constructor_handle_scope", []);
     });
+    it("exists while calling a napi_async_complete_callback", () => {
+      checkSameOutput("create_promise", []);
+    });
   });
 
   describe("escapable_handle_scope", () => {

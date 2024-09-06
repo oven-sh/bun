@@ -388,6 +388,49 @@ napi_value get_class_with_constructor(const Napi::CallbackInfo &info) {
   return napi_class;
 }
 
+struct AsyncWorkData {
+  int result;
+  napi_deferred deferred;
+  napi_async_work work;
+
+  static void execute(napi_env env, void *data) {
+    AsyncWorkData *async_work_data = reinterpret_cast<AsyncWorkData *>(data);
+    async_work_data->result = 42;
+  }
+
+  static void complete(napi_env env, napi_status status, void *data) {
+    AsyncWorkData *async_work_data = reinterpret_cast<AsyncWorkData *>(data);
+    assert(status == napi_ok);
+
+    napi_value result;
+    char buf[64] = {0};
+    snprintf(buf, sizeof(buf), "the number is %d", async_work_data->result);
+    assert(napi_create_string_utf8(env, buf, NAPI_AUTO_LENGTH, &result) ==
+           napi_ok);
+    assert(napi_resolve_deferred(env, async_work_data->deferred, result) ==
+           napi_ok);
+    assert(napi_delete_async_work(env, async_work_data->work) == napi_ok);
+    delete async_work_data;
+  }
+};
+
+napi_value create_promise(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  auto *data = new AsyncWorkData;
+  napi_value promise;
+
+  assert(napi_create_promise(env, &data->deferred, &promise) == napi_ok);
+
+  napi_value resource_name;
+  assert(napi_create_string_utf8(env, "napitests::create_promise",
+                                 NAPI_AUTO_LENGTH, &resource_name) == napi_ok);
+  assert(napi_create_async_work(env, nullptr, resource_name,
+                                AsyncWorkData::execute, AsyncWorkData::complete,
+                                data, &data->work) == napi_ok);
+  assert(napi_queue_async_work(env, data->work) == napi_ok);
+  return promise;
+}
+
 Napi::Value RunCallback(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   Napi::Function cb = info[0].As<Napi::Function>();
@@ -428,6 +471,7 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
               Napi::Function::New(env, test_napi_handle_scope_nesting));
   exports.Set("get_class_with_constructor",
               Napi::Function::New(env, get_class_with_constructor));
+  exports.Set("create_promise", Napi::Function::New(env, create_promise));
 
   return exports;
 }

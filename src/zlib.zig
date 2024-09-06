@@ -1098,6 +1098,9 @@ pub const ZlibDecompressorStreaming = struct {
         state.avail_in = @intCast(bytes.len);
         if (state.avail_in == 0) state.next_in = null;
 
+        // UNZIP mode allows the input to be either gzip or deflate data and we do a two-byte header detection in order to disambiguate.
+        // the ordering of this logic is a bit abstract because we dont know ahead of time how large 'bytes' will be.
+        // additionally, if the first byte is "correct" but the second is not, we don't want to lose it from it being consumed.
         if (this.mode == .UNZIP) {
             var redd: usize = 0;
             this.do_inflate_loop = false;
@@ -1120,6 +1123,7 @@ pub const ZlibDecompressorStreaming = struct {
                         return 1;
                     }
                 } else {
+                    // the stream did not match the gzip header, bail.
                     this.mode = .INFLATE;
                     return 0;
                 }
@@ -1134,19 +1138,22 @@ pub const ZlibDecompressorStreaming = struct {
                     redd += 1;
                     // next_expected_header_byte++;
 
+                    // the gzip header was found. send the header to inflate() and tell writeAll how much we read to do this detection
+                    // if we continued to doWork right now GZIP_HEADER_ID2 might get processed twice.
                     this.mode = .GUNZIP;
                     {
-                        const header = &[_]u8{ 0x1f, 0x8b };
+                        const header = &[_]u8{ GZIP_HEADER_ID1, GZIP_HEADER_ID2 };
                         state.next_in = header.ptr;
                         state.avail_in = @intCast(header.len);
                         var out: [0]u8 = undefined;
                         state.avail_out = 0;
-                        state.next_out = &out;
+                        state.next_out = &out; // passing a null pointer here causes it to return Z_STREAM_ERROR so we send zero-length instead.
                         const ret = inflate(state, this.flush);
                         bun.assert(ret == .Ok);
                     }
                 } else {
                     // There is no actual difference between INFLATE and INFLATERAW (after initialization).
+                    // the stream only partially matched the gzip header, bail.
                     this.mode = .INFLATE;
                 }
                 return redd;
@@ -1155,6 +1162,7 @@ pub const ZlibDecompressorStreaming = struct {
             bun.assert(false); // invalid number of gzip magic number bytes read
         }
 
+        // we're passed the header or there was no header. it is now safe to send everying to inflate().
         this.do_inflate_loop = true;
         if (!process_all_input) return bytes.len;
         while (true) {

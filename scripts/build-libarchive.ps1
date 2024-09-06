@@ -1,8 +1,6 @@
 $ErrorActionPreference = 'Stop'  # Setting strict mode, similar to 'set -euo pipefail' in bash
 . (Join-Path $PSScriptRoot "env.ps1")
 
-$CMAKE_FLAGS += "-isystem $BUN_DEPS_DIR/zlib"
-
 Push-Location (Join-Path $BUN_DEPS_DIR 'libarchive')
 try {
   Remove-Item -Recurse -Force libarchive-build -ErrorAction SilentlyContinue

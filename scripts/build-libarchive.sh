@@ -5,8 +5,6 @@ source $(dirname -- "${BASH_SOURCE[0]}")/env.sh
 
 mkdir -p $BUN_DEPS_OUT_DIR
 
-export CXXFLAGS="$CXXFLAGS -isystem $BUN_DEPS_DIR/zlib"
-
 cd $BUN_DEPS_DIR/libarchive
 # Libarchive has a "build" folder which we must not use
 rm -rf libarchive-build

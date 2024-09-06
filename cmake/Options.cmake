@@ -150,6 +150,8 @@ endif()
 
 optionx(USE_WEBKIT_ICU BOOL "Use the ICU libraries from WebKit" DEFAULT ${DEFAULT_WEBKIT_ICU})
 
+optionx(ERROR_LIMIT STRING "Maximum number of errors to show when compiling C++ code" DEFAULT "100")
+
 # Set the CMAKE_C_FLAGS and CMAKE_CXX_FLAGS for building dependencies.
 # This is a mess, since it doesn't use the CMake add_compile_options or target_compile_options commands.
 # In the future, make some macros so we can set this automatically.

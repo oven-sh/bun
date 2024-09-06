@@ -38,18 +38,6 @@ include(SetupBun)
 include(SetupEsbuild)
 include(SetupZig)
 
-if(WIN32)
-  if(DEBUG)
-    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDebug")
-  else()
-    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
-  endif()
-endif()
-
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_C_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # WebKit uses -std=gnu++20 on non-macOS non-Windows.
@@ -57,17 +45,6 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 if(NOT WIN32 AND NOT APPLE)
   set(CMAKE_CXX_EXTENSIONS ON)
   set(CMAKE_POSITION_INDEPENDENT_CODE FALSE)
-endif()
-
-# Workaround for CMake and clang-cl bug.
-# https://github.com/ninja-build/ninja/issues/2280
-if(WIN32 AND NOT CMAKE_CL_SHOWINCLUDES_PREFIX)
-  set(CMAKE_CL_SHOWINCLUDES_PREFIX "Note: including file:")
-endif()
-
-if(WIN32 AND ENABLE_LTO)
-  set(CMAKE_LINKER_TYPE LLD)
-  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
 endif()
 
 if(ENABLE_VALGRIND)
@@ -78,15 +55,11 @@ if(ENABLE_VALGRIND)
   endif()
 endif()
 
-set(ERROR_LIMIT 100 CACHE STRING "Maximum number of errors to show when compiling C++ code")
-
 if(NOT CONFIGURE_DEPENDS)
   set(CONFIGURE_DEPENDS "")
 else()
   set(CONFIGURE_DEPENDS "CONFIGURE_DEPENDS")
 endif()
-
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
 
 # --- WebKit ---
 # WebKit is either prebuilt and distributed via NPM, or you can pass WEBKIT_PATH to use a local build.
@@ -101,10 +74,6 @@ else()
   set(STATIC_LIB_EXT "a")
   set(libJavaScriptCore "libJavaScriptCore")
   set(libWTF "libWTF")
-endif()
-
-if(DEBUG)
-  add_compile_definitions("BUN_DEBUG=1")
 endif()
 
 include(SetupWebKit)
@@ -159,82 +128,9 @@ endif()
 
 include(BuildBun)
 
-if(WIN32)
-  include_directories("${CWD}/src/bun.js/bindings/windows")
-endif()
-
-set_target_properties(${bun} PROPERTIES
-  CXX_STANDARD 20
-  CXX_STANDARD_REQUIRED YES
-  CXX_EXTENSIONS YES
-  CXX_VISIBILITY_PRESET hidden
-  C_STANDARD 17
-  C_STANDARD_REQUIRED YES
-  VISIBILITY_INLINES_HIDDEN YES
-)
-
-if(APPLE)
-  add_compile_definitions("__DARWIN_NON_CANCELABLE=1")
-endif()
-
-add_compile_definitions(
-    # TODO: are all of these variables strictly necessary?
-    "_HAS_EXCEPTIONS=0"
-    "LIBUS_USE_OPENSSL=1"
-    "LIBUS_USE_BORINGSSL=1"
-    "WITH_BORINGSSL=1"
-    "STATICALLY_LINKED_WITH_JavaScriptCore=1"
-    "STATICALLY_LINKED_WITH_BMALLOC=1"
-    "BUILDING_WITH_CMAKE=1"
-    "JSC_OBJC_API_ENABLED=0"
-    "BUN_SINGLE_THREADED_PER_VM_ENTRY_SCOPE=1"
-    "NAPI_EXPERIMENTAL=ON"
-    "NOMINMAX"
-    "IS_BUILD"
-    "BUILDING_JSCONLY__"
-    "BUN_DYNAMIC_JS_LOAD_PATH=\"${BUILD_PATH}/js\""
-    "REPORTED_NODEJS_VERSION=\"${NODEJS_VERSION}\""
-    "REPORTED_NODEJS_ABI_VERSION=${NODEJS_ABI_VERSION}"
-)
-
-if(ENABLE_ASSERTIONS)
-    if(APPLE)
-        # add_compile_definitions("_LIBCXX_ENABLE_ASSERTIONS=1")
-        # add_compile_definitions("_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_DEBUG")
-    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        add_compile_definitions("_GLIBCXX_ASSERTIONS=1")
-    endif()
-
-    add_compile_definitions("ASSERT_ENABLED=1")
-else()
-    if(APPLE)
-        # add_compile_definitions("_LIBCXX_ENABLE_ASSERTIONS=0")
-        # add_compile_definitions("_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_NONE")
-    endif()
-
-    add_compile_definitions("NDEBUG=1")
-endif()
-
 if(ICU_INCLUDE_DIR)
   include_directories(${ICU_INCLUDE_DIR})
 endif()
-
-include_directories(
-  ${CMAKE_CURRENT_SOURCE_DIR}/packages/
-  ${CMAKE_CURRENT_SOURCE_DIR}/packages/bun-usockets
-  ${CMAKE_CURRENT_SOURCE_DIR}/packages/bun-usockets/src
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/bindings
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/bindings/webcore
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/bindings/webcrypto
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/bindings/sqlite
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/modules
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/js/builtins
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/napi
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/deps
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/deps/picohttpparser
-  ${WEBKIT_INCLUDE_DIR}
-  ${BUILD_PATH}/codegen
-)
 
 # --- clang and linker flags ---
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -331,29 +227,6 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
         )
     endif()
 endif()
-
-if(NOT CI AND NOT WIN32)
-    target_compile_options(${bun} PRIVATE -fdiagnostics-color=always)
-endif()
-
-if(NOT CPU STREQUAL "native")
-  # passing -march=native to clang will break older systems
-  # by default on x64, CPU is set to "haswell" or "nehalem" depending on baseline
-  # on arm, this argument will not be passed.
-  target_compile_options(${bun} PUBLIC "-march=${CPU}")
-else()
-  if(APPLE AND ARCH STREQUAL "aarch64")
-    # On arm macOS, we can set it to a minimum of the M1 cpu set. this might be the default already.
-    target_compile_options(${bun} PUBLIC "-mcpu=apple-m1")
-  endif()
-
-  if(NOT WIN32 AND NOT APPLE AND ARCH STREQUAL "aarch64")
-    # on arm64 linux, we set a minimum of armv8
-    target_compile_options(${bun} PUBLIC -march=armv8-a+crc -mtune=ampere1)
-  endif()
-endif()
-
-target_compile_options(${bun} PUBLIC -ferror-limit=${ERROR_LIMIT})
 
 if(WIN32)
     add_compile_definitions(

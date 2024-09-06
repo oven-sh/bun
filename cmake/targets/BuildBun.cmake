@@ -486,7 +486,7 @@ register_command(
 
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
 
-# --- C/C++ ---
+# --- C/C++ Sources ---
 
 set(BUN_DEPS_SOURCE ${CWD}/src/deps)
 set(BUN_USOCKETS_SOURCE ${CWD}/packages/bun-usockets)
@@ -580,6 +580,104 @@ endif()
 if(NOT bun STREQUAL "bun")
   add_custom_target(bun DEPENDS ${bun})
 endif()
+
+# --- C/C++ Properties ---
+
+set_target_properties(${bun} PROPERTIES
+  CXX_STANDARD 20
+  CXX_STANDARD_REQUIRED YES
+  CXX_EXTENSIONS YES
+  CXX_VISIBILITY_PRESET hidden
+  C_STANDARD 17
+  C_STANDARD_REQUIRED YES
+  VISIBILITY_INLINES_HIDDEN YES
+)
+
+# --- C/C++ Includes ---
+
+if(WIN32)
+  target_include_directories(${bun} PRIVATE ${CWD}/src/bun.js/bindings/windows)
+endif()
+
+# if(WIN32)
+#   include_directories("${CWD}/src/bun.js/bindings/windows")
+# endif()
+
+include_directories(
+  ${CMAKE_CURRENT_SOURCE_DIR}/packages/
+  ${CMAKE_CURRENT_SOURCE_DIR}/packages/bun-usockets
+  ${CMAKE_CURRENT_SOURCE_DIR}/packages/bun-usockets/src
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/bindings
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/bindings/webcore
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/bindings/webcrypto
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/bindings/sqlite
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/modules
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/js/builtins
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/napi
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/deps
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/deps/picohttpparser
+  ${WEBKIT_INCLUDE_DIR}
+  ${BUILD_PATH}/codegen
+)
+
+# --- C/C++ Definitions ---
+
+if(DEBUG)
+  target_compile_definitions(${bun} PRIVATE BUN_DEBUG=1)
+endif()
+
+# if(DEBUG)
+#   add_compile_definitions("BUN_DEBUG=1")
+# endif()
+
+if(APPLE)
+  target_compile_definitions(${bun} PRIVATE _DARWIN_NON_CANCELABLE=1)
+endif()
+
+# if(APPLE)
+#   add_compile_definitions("_DARWIN_NON_CANCELABLE=1")
+# endif()
+
+target_compile_definitions(${bun} PRIVATE
+  _HAS_EXCEPTIONS=0
+  LIBUS_USE_OPENSSL=1
+  LIBUS_USE_BORINGSSL=1
+  WITH_BORINGSSL=1
+  STATICALLY_LINKED_WITH_JavaScriptCore=1
+  STATICALLY_LINKED_WITH_BMALLOC=1
+  BUILDING_WITH_CMAKE=1
+  JSC_OBJC_API_ENABLED=0
+  BUN_SINGLE_THREADED_PER_VM_ENTRY_SCOPE=1
+  NAPI_EXPERIMENTAL=ON
+  NOMINMAX
+  IS_BUILD
+  BUILDING_JSCONLY__
+  BUN_DYNAMIC_JS_LOAD_PATH=\"${BUILD_PATH}/js\"
+  REPORTED_NODEJS_VERSION=\"${NODEJS_VERSION}\"
+  REPORTED_NODEJS_ABI_VERSION=${NODEJS_ABI_VERSION}
+)
+
+# add_compile_definitions(
+#     # TODO: are all of these variables strictly necessary?
+#     "_HAS_EXCEPTIONS=0"
+#     "LIBUS_USE_OPENSSL=1"
+#     "LIBUS_USE_BORINGSSL=1"
+#     "WITH_BORINGSSL=1"
+#     "STATICALLY_LINKED_WITH_JavaScriptCore=1"
+#     "STATICALLY_LINKED_WITH_BMALLOC=1"
+#     "BUILDING_WITH_CMAKE=1"
+#     "JSC_OBJC_API_ENABLED=0"
+#     "BUN_SINGLE_THREADED_PER_VM_ENTRY_SCOPE=1"
+#     "NAPI_EXPERIMENTAL=ON"
+#     "NOMINMAX"
+#     "IS_BUILD"
+#     "BUILDING_JSCONLY__"
+#     "BUN_DYNAMIC_JS_LOAD_PATH=\"${BUILD_PATH}/js\""
+#     "REPORTED_NODEJS_VERSION=\"${NODEJS_VERSION}\""
+#     "REPORTED_NODEJS_ABI_VERSION=${NODEJS_ABI_VERSION}"
+# )
+
+# --- C/C++ Options ---
 
 # --- Dependencies ---
 

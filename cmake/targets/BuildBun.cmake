@@ -558,7 +558,7 @@ set(BUN_CPP_OUTPUT ${BUILD_PATH}/${CMAKE_STATIC_LIBRARY_PREFIX}${bun}${CMAKE_STA
 if(BUN_LINK_ONLY)
   add_executable(${bun} ${BUN_CPP_OUTPUT} ${BUN_ZIG_OUTPUT})
   set_target_properties(${bun} PROPERTIES LINKER_LANGUAGE CXX)
-  target_link_libraries(${bun} PRIVATE ${BUN_CPP_OUTPUT})
+  target_link_libraries(${bun} PRIVATE ${BUN_CPP_OUTPUT} ${BUN_ZIG_OUTPUT})
 elseif(BUN_CPP_ONLY)
   add_library(${bun} STATIC ${BUN_CPP_SOURCES})
   # set_target_properties(${bun} PROPERTIES OUTPUT_NAME bun)

@@ -64,7 +64,14 @@ optionx(CPU STRING "The CPU to use for the compiler" DEFAULT ${DEFAULT_CPU})
 optionx(ENABLE_LOGS BOOL "If debug logs should be enabled" DEFAULT ${DEBUG})
 optionx(ENABLE_ASSERTIONS BOOL "If debug assertions should be enabled" DEFAULT ${DEBUG})
 optionx(ENABLE_CANARY BOOL "If canary features should be enabled" DEFAULT ${DEBUG})
-optionx(ENABLE_LTO BOOL "If LTO (link-time optimization) should be used" DEFAULT ${RELEASE})
+
+if(RELEASE AND LINUX)
+  set(DEFAULT_LTO ON)
+else()
+  set(DEFAULT_LTO OFF)
+endif()
+
+optionx(ENABLE_LTO BOOL "If LTO (link-time optimization) should be used" DEFAULT ${DEFAULT_LTO})
 
 if(LINUX)
   optionx(ENABLE_VALGRIND BOOL "If Valgrind support should be enabled" DEFAULT OFF)

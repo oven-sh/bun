@@ -57,6 +57,18 @@ pub const ReadableStream = struct {
             return this.held.globalThis;
         }
 
+        pub fn has(this: *Strong) bool {
+            return this.held.has();
+        }
+
+        pub fn isDisturbed(this: *const Strong, global: *JSC.JSGlobalObject) bool {
+            if (this.get()) |stream| {
+                return stream.isDisturbed(global);
+            }
+
+            return false;
+        }
+
         pub fn init(this: ReadableStream, global: *JSGlobalObject) Strong {
             return .{
                 .held = JSC.Strong.create(this.value, global),
@@ -76,7 +88,28 @@ pub const ReadableStream = struct {
             // }
             this.held.deinit();
         }
+
+        pub fn tee(this: *Strong, global: *JSGlobalObject) ?ReadableStream {
+            if (this.get()) |stream| {
+                const first, const second = stream.tee(global) orelse return null;
+                this.held.set(global, first.value);
+                return second;
+            }
+            return null;
+        }
     };
+
+    extern fn ReadableStream__tee(stream: JSValue, globalThis: *JSGlobalObject, out1: *JSC.JSValue, out2: *JSC.JSValue) bool;
+    pub fn tee(this: *const ReadableStream, globalThis: *JSGlobalObject) ?struct { ReadableStream, ReadableStream } {
+        var out1: JSC.JSValue = .zero;
+        var out2: JSC.JSValue = .zero;
+        if (!ReadableStream__tee(this.value, globalThis, &out1, &out2)) {
+            return null;
+        }
+        const out_stream2 = ReadableStream.fromJS(out2, globalThis) orelse return null;
+        const out_stream1 = ReadableStream.fromJS(out1, globalThis) orelse return null;
+        return .{ out_stream1, out_stream2 };
+    }
 
     pub fn toJS(this: *const ReadableStream) JSValue {
         return this.value;
@@ -102,13 +135,10 @@ pub const ReadableStream = struct {
 
         switch (stream.ptr) {
             .Blob => |blobby| {
-                var blob = JSC.WebCore.Blob.initWithStore(blobby.store orelse return null, globalThis);
-                blob.offset = blobby.offset;
-                blob.size = blobby.remain;
-                blob.store.?.ref();
-                stream.done(globalThis);
-
-                return AnyBlob{ .Blob = blob };
+                if (blobby.toAnyBlob(globalThis)) |blob| {
+                    stream.done(globalThis);
+                    return blob;
+                }
             },
             .File => |blobby| {
                 if (blobby.lazy == .blob) {
@@ -124,11 +154,7 @@ pub const ReadableStream = struct {
 
                 // If we've received the complete body by the time this function is called
                 // we can avoid streaming it and convert it to a Blob
-                if (bytes.has_received_last_chunk) {
-                    var blob: JSC.WebCore.AnyBlob = undefined;
-                    blob.from(bytes.buffer);
-                    bytes.buffer.items = &.{};
-                    bytes.buffer.capacity = 0;
+                if (bytes.toAnyBlob()) |blob| {
                     stream.done(globalThis);
                     return blob;
                 }
@@ -2613,6 +2639,14 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 pub const HTTPSResponseSink = HTTPServerWritable(true);
 pub const HTTPResponseSink = HTTPServerWritable(false);
 
+pub const BufferedReadableStreamAction = enum {
+    text,
+    arrayBuffer,
+    blob,
+    bytes,
+    json,
+};
+
 pub fn ReadableStreamSource(
     comptime Context: type,
     comptime name_: []const u8,
@@ -2622,6 +2656,7 @@ pub fn ReadableStreamSource(
     comptime deinit_fn: fn (this: *Context) void,
     comptime setRefUnrefFn: ?fn (this: *Context, enable: bool) void,
     comptime drainInternalBuffer: ?fn (this: *Context) bun.ByteList,
+    comptime toBufferedValue: ?fn (this: *Context, globalThis: *JSC.JSGlobalObject, action: BufferedReadableStreamAction) JSC.JSValue,
 ) type {
     return struct {
         context: Context,
@@ -2634,7 +2669,6 @@ pub fn ReadableStreamSource(
         globalThis: *JSGlobalObject = undefined,
         this_jsvalue: JSC.JSValue = .zero,
         is_closed: bool = false,
-
         const This = @This();
         const ReadableStreamSourceType = @This();
 
@@ -2781,6 +2815,11 @@ pub fn ReadableStreamSource(
         pub const finalize = JSReadableStreamSource.finalize;
         pub const construct = JSReadableStreamSource.construct;
         pub const getIsClosedFromJS = JSReadableStreamSource.isClosed;
+        pub const textFromJS = JSReadableStreamSource.text;
+        pub const jsonFromJS = JSReadableStreamSource.json;
+        pub const arrayBufferFromJS = JSReadableStreamSource.arrayBuffer;
+        pub const blobFromJS = JSReadableStreamSource.blob;
+        pub const bytesFromJS = JSReadableStreamSource.bytes;
         pub const JSReadableStreamSource = struct {
             pub fn construct(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) ?*ReadableStreamSourceType {
                 _ = callFrame; // autofix
@@ -2951,6 +2990,66 @@ pub fn ReadableStreamSource(
                     return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis, null);
                 }
                 return JSValue.jsUndefined();
+            }
+
+            pub fn text(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {
+                JSC.markBinding(@src());
+                this.this_jsvalue = callFrame.this();
+
+                if (toBufferedValue) |to_buffered_value| {
+                    return to_buffered_value(&this.context, globalThis, .text);
+                }
+
+                globalThis.throwTODO("This is not implemented yet");
+                return .zero;
+            }
+
+            pub fn arrayBuffer(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {
+                JSC.markBinding(@src());
+                this.this_jsvalue = callFrame.this();
+
+                if (toBufferedValue) |to_buffered_value| {
+                    return to_buffered_value(&this.context, globalThis, .arrayBuffer);
+                }
+
+                globalThis.throwTODO("This is not implemented yet");
+                return .zero;
+            }
+
+            pub fn blob(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {
+                JSC.markBinding(@src());
+                this.this_jsvalue = callFrame.this();
+
+                if (toBufferedValue) |to_buffered_value| {
+                    return to_buffered_value(&this.context, globalThis, .blob);
+                }
+
+                globalThis.throwTODO("This is not implemented yet");
+                return .zero;
+            }
+
+            pub fn bytes(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {
+                JSC.markBinding(@src());
+                this.this_jsvalue = callFrame.this();
+
+                if (toBufferedValue) |to_buffered_value| {
+                    return to_buffered_value(&this.context, globalThis, .bytes);
+                }
+
+                globalThis.throwTODO("This is not implemented yet");
+                return .zero;
+            }
+
+            pub fn json(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {
+                JSC.markBinding(@src());
+                this.this_jsvalue = callFrame.this();
+
+                if (toBufferedValue) |to_buffered_value| {
+                    return to_buffered_value(&this.context, globalThis, .json);
+                }
+
+                globalThis.throwTODO("This is not implemented yet");
+                return .zero;
             }
         };
     };
@@ -4104,6 +4203,7 @@ pub const FileReader = struct {
         deinit,
         setRefOrUnref,
         drain,
+        null,
     );
 };
 
@@ -4177,6 +4277,25 @@ pub const ByteBlobLoader = struct {
         return .{ .into_array = .{ .value = array, .len = copied } };
     }
 
+    pub fn toAnyBlob(this: *ByteBlobLoader, globalThis: *JSC.JSGlobalObject) ?AnyBlob {
+        if (this.store) |store| {
+            _ = this.detachStore();
+            if (this.offset == 0 and this.remain == store.size()) {
+                if (store.toAnyBlob()) |blob| {
+                    defer store.deref();
+                    return blob;
+                }
+            }
+
+            var blob = JSC.WebCore.Blob.initWithStore(store, globalThis);
+            blob.offset = this.offset;
+            blob.size = this.remain;
+            this.parent().is_closed = true;
+            return .{ .Blob = blob };
+        }
+        return null;
+    }
+
     pub fn detachStore(this: *ByteBlobLoader) ?*Blob.Store {
         if (this.store) |store| {
             this.store = null;
@@ -4216,6 +4335,15 @@ pub const ByteBlobLoader = struct {
         return bun.ByteList.fromList(cloned);
     }
 
+    pub fn toBufferedValue(this: *ByteBlobLoader, globalThis: *JSC.JSGlobalObject, action: BufferedReadableStreamAction) JSC.JSValue {
+        if (this.toAnyBlob(globalThis)) |blob_| {
+            var blob = blob_;
+            return blob.toPromise(globalThis, action);
+        }
+
+        return .zero;
+    }
+
     pub const Source = ReadableStreamSource(
         @This(),
         "Blob",
@@ -4225,6 +4353,7 @@ pub const ByteBlobLoader = struct {
         deinit,
         null,
         drain,
+        toBufferedValue,
     );
 };
 
@@ -4276,6 +4405,56 @@ pub const ByteStream = struct {
     highWaterMark: Blob.SizeType = 0,
     pipe: Pipe = .{},
     size_hint: Blob.SizeType = 0,
+    buffer_action: ?BufferAction = null,
+
+    const BufferAction = union(BufferedReadableStreamAction) {
+        text: JSC.JSPromise.Strong,
+        arrayBuffer: JSC.JSPromise.Strong,
+        blob: JSC.JSPromise.Strong,
+        bytes: JSC.JSPromise.Strong,
+        json: JSC.JSPromise.Strong,
+
+        pub fn fulfill(this: *BufferAction, blob: *AnyBlob) void {
+            blob.wrap(.{ .Normal = this.swap() }, this.globalThis().?, this.*);
+        }
+        pub fn reject(this: *BufferAction, err: StreamResult.StreamError) void {
+            this.swap().reject(this.globalThis().?, err.toJSWeak(this.globalThis().?)[0]);
+        }
+
+        pub fn resolve(this: *BufferAction, value_: JSC.JSValue) void {
+            this.swap().resolve(this.globalThis().?, value_);
+        }
+
+        pub fn globalThis(this: *BufferAction) ?*JSC.JSGlobalObject {
+            return switch (this.*) {
+                inline else => |promise| promise.strong.globalThis,
+            };
+        }
+
+        pub fn value(this: *BufferAction) JSC.JSValue {
+            return switch (this.*) {
+                inline else => |promise| promise.value(),
+            };
+        }
+
+        pub fn get(this: *BufferAction) *JSC.JSPromise {
+            return switch (this.*) {
+                inline else => |promise| promise.get(),
+            };
+        }
+
+        pub fn swap(this: *BufferAction) *JSC.JSPromise {
+            return switch (this.*) {
+                inline else => |*promise| promise.swap(),
+            };
+        }
+
+        pub fn deinit(this: *BufferAction) void {
+            switch (this.*) {
+                inline else => |*promise| promise.deinit(),
+            }
+        }
+    };
 
     pub const tag = ReadableStream.Tag.Bytes;
 
@@ -4289,14 +4468,18 @@ pub const ByteStream = struct {
         }
 
         if (this.has_received_last_chunk) {
-            return .{ .chunk_size = @min(1024 * 1024 * 2, this.buffer.items.len) };
+            return .{ .owned_and_done = bun.ByteList.fromList(this.buffer.moveToUnmanaged()) };
         }
 
         if (this.highWaterMark == 0) {
             return .{ .ready = {} };
         }
 
-        return .{ .chunk_size = @max(this.highWaterMark, std.mem.page_size) };
+        // For HTTP, the maximum streaming response body size will be 512 KB.
+        // #define LIBUS_RECV_BUFFER_LENGTH 524288
+        // For HTTPS, the size is probably quite a bit lower like 64 KB due to TLS transmission.
+        // We add 1 extra page size so that if there's a little bit of excess buffered data, we avoid extra allocations.
+        return .{ .chunk_size = @min(512 * 1024 + std.mem.page_size, @max(this.highWaterMark, std.mem.page_size)) };
     }
 
     pub fn value(this: *@This()) JSValue {
@@ -4341,6 +4524,51 @@ pub const ByteStream = struct {
 
         const chunk = stream.slice();
 
+        if (this.buffer_action) |*action| {
+            if (stream == .err) {
+                defer {
+                    this.buffer.clearAndFree();
+                    this.pending.result.deinit();
+                    this.pending.result = .{ .done = {} };
+                    this.buffer_action = null;
+                }
+
+                action.reject(stream.err);
+                return;
+            }
+
+            if (this.has_received_last_chunk) {
+                defer {
+                    this.buffer_action = null;
+                }
+
+                if (this.buffer.capacity == 0 and stream == .owned_and_done) {
+                    this.buffer = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, @constCast(chunk));
+                    var blob = this.toAnyBlob().?;
+                    action.fulfill(&blob);
+                    return;
+                }
+                defer {
+                    if (stream == .owned_and_done or stream == .owned) {
+                        allocator.free(stream.slice());
+                    }
+                }
+
+                this.buffer.appendSlice(chunk) catch bun.outOfMemory();
+                var blob = this.toAnyBlob().?;
+                action.fulfill(&blob);
+                return;
+            } else {
+                this.buffer.appendSlice(chunk) catch bun.outOfMemory();
+
+                if (stream == .owned_and_done or stream == .owned) {
+                    allocator.free(stream.slice());
+                }
+            }
+
+            return;
+        }
+
         if (this.pending.state == .pending) {
             bun.assert(this.buffer.items.len == 0);
             const to_copy = this.pending_buffer[0..@min(chunk.len, this.pending_buffer.len)];
@@ -4383,19 +4611,20 @@ pub const ByteStream = struct {
 
             const remaining = chunk[to_copy.len..];
             if (remaining.len > 0)
-                this.append(stream, to_copy.len, allocator) catch @panic("Out of memory while copying request body");
+                this.append(stream, to_copy.len, chunk, allocator) catch @panic("Out of memory while copying request body");
 
             this.pending.run();
             return;
         }
 
-        this.append(stream, 0, allocator) catch @panic("Out of memory while copying request body");
+        this.append(stream, 0, chunk, allocator) catch @panic("Out of memory while copying request body");
     }
 
     pub fn append(
         this: *@This(),
         stream: StreamResult,
         offset: usize,
+        base_address: []const u8,
         allocator: std.mem.Allocator,
     ) !void {
         const chunk = stream.slice()[offset..];
@@ -4426,12 +4655,22 @@ pub const ByteStream = struct {
             .temporary_and_done, .temporary => {
                 try this.buffer.appendSlice(chunk);
             },
+            .owned_and_done, .owned => {
+                try this.buffer.appendSlice(chunk);
+                allocator.free(@constCast(base_address));
+            },
             .err => {
+                if (this.buffer_action != null) {
+                    @panic("Expected buffer action to be null");
+                }
+
                 this.pending.result = .{ .err = stream.err };
             },
             // We don't support the rest of these yet
             else => unreachable,
         }
+
+        return;
     }
 
     pub fn setValue(this: *@This(), view: JSC.JSValue) void {
@@ -4446,6 +4685,7 @@ pub const ByteStream = struct {
     pub fn onPull(this: *@This(), buffer: []u8, view: JSC.JSValue) StreamResult {
         JSC.markBinding(@src());
         bun.assert(buffer.len > 0);
+        bun.debugAssert(this.buffer_action == null);
 
         if (this.buffer.items.len > 0) {
             bun.assert(this.value() == .zero);
@@ -4511,6 +4751,11 @@ pub const ByteStream = struct {
             this.pending.result = .{ .done = {} };
             this.pending.run();
         }
+
+        if (this.buffer_action) |*action| {
+            action.reject(.{ .AbortReason = .UserAbort });
+            this.buffer_action = null;
+        }
     }
 
     pub fn deinit(this: *@This()) void {
@@ -4526,8 +4771,78 @@ pub const ByteStream = struct {
             this.pending.result = .{ .done = {} };
             this.pending.run();
         }
-
+        if (this.buffer_action) |*action| {
+            action.deinit();
+        }
         this.parent().destroy();
+    }
+
+    pub fn drain(this: *@This()) bun.ByteList {
+        if (this.buffer.items.len > 0) {
+            const out = bun.ByteList.fromList(this.buffer);
+            this.buffer = .{
+                .allocator = bun.default_allocator,
+                .items = &.{},
+                .capacity = 0,
+            };
+
+            return out;
+        }
+
+        return .{};
+    }
+
+    pub fn toAnyBlob(this: *@This()) ?AnyBlob {
+        if (this.has_received_last_chunk) {
+            const buffer = this.buffer;
+            this.buffer = .{
+                .allocator = bun.default_allocator,
+                .items = &.{},
+                .capacity = 0,
+            };
+            this.done = true;
+            this.pending.result.deinit();
+            this.pending.result = .{ .done = {} };
+            this.parent().is_closed = true;
+            return AnyBlob{
+                .InternalBlob = JSC.WebCore.InternalBlob{
+                    .bytes = buffer,
+                    .was_string = false,
+                },
+            };
+        }
+
+        return null;
+    }
+
+    pub fn toBufferedValue(this: *@This(), globalThis: *JSC.JSGlobalObject, action: BufferedReadableStreamAction) JSC.JSValue {
+        if (this.buffer_action != null) {
+            globalThis.throw("Cannot buffer value twice", .{});
+            return .zero;
+        }
+
+        if (this.pending.result == .err) {
+            const err, _ = this.pending.result.err.toJSWeak(globalThis);
+            this.pending.result.deinit();
+            this.done = true;
+            this.buffer.clearAndFree();
+            return JSC.JSPromise.rejectedPromiseValue(globalThis, err);
+        }
+
+        if (this.toAnyBlob()) |blob_| {
+            var blob = blob_;
+            return blob.toPromise(globalThis, action);
+        }
+
+        this.buffer_action = switch (action) {
+            .blob => .{ .blob = JSC.JSPromise.Strong.init(globalThis) },
+            .bytes => .{ .bytes = JSC.JSPromise.Strong.init(globalThis) },
+            .arrayBuffer => .{ .arrayBuffer = JSC.JSPromise.Strong.init(globalThis) },
+            .json => .{ .json = JSC.JSPromise.Strong.init(globalThis) },
+            .text => .{ .text = JSC.JSPromise.Strong.init(globalThis) },
+        };
+
+        return this.buffer_action.?.value();
     }
 
     pub const Source = ReadableStreamSource(
@@ -4538,7 +4853,8 @@ pub const ByteStream = struct {
         onCancel,
         deinit,
         null,
-        null,
+        drain,
+        toBufferedValue,
     );
 };
 

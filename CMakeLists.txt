@@ -176,7 +176,7 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
         endif()
 
         # Leave -Werror=unused off in release builds so we avoid errors from being used in ASSERT
-        target_compile_options(${bun} PUBLIC ${LTO_FLAG} -g1
+        target_compile_options(${bun} PUBLIC ${LTO_FLAG}
             -Werror=return-type
             -Werror=return-stack-address
             -Werror=implicit-function-declaration

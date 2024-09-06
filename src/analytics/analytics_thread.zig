@@ -114,6 +114,8 @@ pub const Features = struct {
     pub var binlinks: usize = 0;
     pub var builtin_modules = std.enums.EnumSet(bun.JSC.HardcodedModule).initEmpty();
     pub var standalone_executable: usize = 0;
+    pub var workers_spawned: usize = 0;
+    pub var workers_terminated: usize = 0;
 
     pub fn formatter() Formatter {
         return Formatter{};

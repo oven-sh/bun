@@ -1,7 +1,7 @@
-import { test, expect } from "bun:test";
 import { spawn } from "bun";
-import { bunEnv, bunExe } from "../../../harness";
+import { expect, test } from "bun:test";
 import { join } from "path";
+import { bunEnv, bunExe } from "../../../harness";
 
 // The purpose of this test is to check that event loop tasks scheduled from
 // JavaScriptCore (rather than Bun) keep the process alive.

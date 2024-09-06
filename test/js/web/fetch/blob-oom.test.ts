@@ -1,7 +1,7 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
 import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
-import { tempDirWithFiles } from "harness";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { unlinkSync } from "fs";
+import { tempDirWithFiles } from "harness";
 import path from "path";
 describe("Memory", () => {
   beforeAll(() => {

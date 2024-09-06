@@ -1,5 +1,5 @@
+import { describe, expect, it } from "bun:test";
 import jwt from "jsonwebtoken";
-import { expect, describe, it } from "bun:test";
 
 var TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.t-IDcSemACt8x4iTMCda8Yhe3iZaWbvV5XKSTbuAn0M";
 

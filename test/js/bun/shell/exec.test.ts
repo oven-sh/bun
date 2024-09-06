@@ -1,9 +1,9 @@
 import { $ } from "bun";
-import { describe, test, expect } from "bun:test";
-import { createTestBuilder } from "./test_builder";
-const TestBuilder = createTestBuilder(import.meta.path);
+import { describe, expect, test } from "bun:test";
 import { bunEnv, tmpdirSync } from "harness";
 import { join } from "path";
+import { createTestBuilder } from "./test_builder";
+const TestBuilder = createTestBuilder(import.meta.path);
 
 const BUN = process.argv0;
 

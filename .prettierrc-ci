@@ -1,0 +1,31 @@
+{
+  "arrowParens": "avoid",
+  "printWidth": 120,
+  "trailingComma": "all",
+  "useTabs": false,
+  "quoteProps": "preserve",
+  "plugins": [
+    "prettier-plugin-organize-imports"
+  ],
+  "overrides": [
+    {
+      "files": [
+        ".vscode/*.json"
+      ],
+      "options": {
+        "parser": "jsonc",
+        "quoteProps": "preserve",
+        "singleQuote": false,
+        "trailingComma": "all"
+      }
+    },
+    {
+      "files": [
+        "*.md"
+      ],
+      "options": {
+        "printWidth": 80
+      }
+    }
+  ]
+}

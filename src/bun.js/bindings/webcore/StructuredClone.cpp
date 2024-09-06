@@ -77,6 +77,10 @@ JSC_DEFINE_HOST_FUNCTION(structuredCloneForStream, (JSGlobalObject * globalObjec
 
     JSValue value = callFrame->uncheckedArgument(0);
 
+    if (value.isPrimitive()) {
+        return JSValue::encode(value);
+    }
+
     if (value.inherits<JSArrayBuffer>())
         RELEASE_AND_RETURN(scope, cloneArrayBufferImpl(globalObject, callFrame, CloneMode::Full));
 

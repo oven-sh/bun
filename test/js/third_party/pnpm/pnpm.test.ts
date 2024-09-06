@@ -1,5 +1,5 @@
-import { tmpdirSync, bunEnv, bunExe } from "harness";
 import { expect, it } from "bun:test";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import * as path from "node:path";
 
 it("successfully traverses pnpm-generated install directory", async () => {

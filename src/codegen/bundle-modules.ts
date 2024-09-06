@@ -9,15 +9,15 @@
 //
 // For explanation on this, please nag @paperdave to write documentation on how everything works.
 import fs from "fs";
-import { writeFile, mkdir } from "fs/promises";
+import { mkdir, writeFile } from "fs/promises";
+import { builtinModules } from "node:module";
 import path from "path";
 import { sliceSourceCode } from "./builtin-parser";
-import { cap, declareASCIILiteral, writeIfNotChanged } from "./helpers";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
-import { builtinModules } from "node:module";
-import { define } from "./replacements";
-import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
 import { getJS2NativeCPP, getJS2NativeZig } from "./generate-js2native";
+import { cap, declareASCIILiteral, writeIfNotChanged } from "./helpers";
+import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
+import { define } from "./replacements";
 
 const BASE = path.join(import.meta.dir, "../js");
 const debug = process.argv[2] === "--debug=ON";

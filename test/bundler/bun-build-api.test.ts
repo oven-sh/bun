@@ -1,8 +1,7 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
-import { join } from "path";
-import path from "path";
+import path, { join } from "path";
 
 describe("Bun.build", () => {
   test("passing undefined doesnt segfault", () => {

@@ -1869,6 +1869,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         blob: JSC.WebCore.AnyBlob = JSC.WebCore.AnyBlob{ .Blob = .{} },
 
         sendfile: SendfileContext = undefined,
+
+        request_body_readable_stream_ref: JSC.WebCore.ReadableStream.Strong = .{},
         request_body: ?*JSC.BodyValueRef = null,
         request_body_buf: std.ArrayListUnmanaged(u8) = .{},
         request_body_content_len: usize = 0,
@@ -2351,7 +2353,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // if signal is not aborted, abort the signal
             if (this.signal) |signal| {
                 this.signal = null;
-                defer signal.unref();
+                defer {
+                    signal.pendingActivityUnref();
+                    signal.unref();
+                }
                 if (!signal.aborted()) {
                     signal.signal(globalThis, .ConnectionClosed);
                     any_js_calls = true;
@@ -2408,6 +2413,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.response_jsvalue = JSC.JSValue.zero;
             }
 
+            this.request_body_readable_stream_ref.deinit();
+
             if (this.request_weakref.get()) |request| {
                 request.request_context = AnyRequestContext.Null;
                 this.request_weakref.deinit();
@@ -2416,7 +2423,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // if signal is not aborted, abort the signal
             if (this.signal) |signal| {
                 this.signal = null;
-                defer signal.unref();
+                defer {
+                    signal.pendingActivityUnref();
+                    signal.unref();
+                }
                 if (this.flags.aborted and !signal.aborted()) {
                     signal.signal(globalThis, .ConnectionClosed);
                 }
@@ -3846,42 +3856,45 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             const vm = this.server.?.vm;
             const globalThis = this.server.?.globalThis;
 
+            // After the user does request.body,
+            // if they then do .text(), .arrayBuffer(), etc
+            // we can no longer hold the strong reference from the body value ref.
+            if (this.request_body_readable_stream_ref.get()) |readable| {
+                assert(this.request_body_buf.items.len == 0);
+                vm.eventLoop().enter();
+                defer vm.eventLoop().exit();
+
+                if (!last) {
+                    readable.ptr.Bytes.onData(
+                        .{
+                            .temporary = bun.ByteList.initConst(chunk),
+                        },
+                        bun.default_allocator,
+                    );
+                } else {
+                    var strong = this.request_body_readable_stream_ref;
+                    this.request_body_readable_stream_ref = .{};
+                    defer strong.deinit();
+                    if (this.request_body) |request_body| {
+                        _ = request_body.unref();
+                        this.request_body = null;
+                    }
+
+                    readable.value.ensureStillAlive();
+                    readable.ptr.Bytes.onData(
+                        .{
+                            .temporary_and_done = bun.ByteList.initConst(chunk),
+                        },
+                        bun.default_allocator,
+                    );
+                }
+
+                return;
+            }
+
             // This is the start of a task, so it's a good time to drain
             if (this.request_body != null) {
                 var body = this.request_body.?;
-
-                if (body.value == .Locked) {
-                    if (body.value.Locked.readable.get()) |readable| {
-                        if (readable.ptr == .Bytes) {
-                            assert(this.request_body_buf.items.len == 0);
-                            vm.eventLoop().enter();
-                            defer vm.eventLoop().exit();
-
-                            if (!last) {
-                                readable.ptr.Bytes.onData(
-                                    .{
-                                        .temporary = bun.ByteList.initConst(chunk),
-                                    },
-                                    bun.default_allocator,
-                                );
-                            } else {
-                                var prev = body.value.Locked.readable;
-                                body.value.Locked.readable = .{};
-                                readable.value.ensureStillAlive();
-                                defer prev.deinit();
-                                readable.value.ensureStillAlive();
-                                readable.ptr.Bytes.onData(
-                                    .{
-                                        .temporary_and_done = bun.ByteList.initConst(chunk),
-                                    },
-                                    bun.default_allocator,
-                                );
-                            }
-
-                            return;
-                        }
-                    }
-                }
 
                 if (last) {
                     var bytes = &this.request_body_buf;
@@ -3981,6 +3994,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     }
                 }
             }
+        }
+
+        pub fn onRequestBodyReadableStreamAvailable(ptr: *anyopaque, globalThis: *JSC.JSGlobalObject, readable: JSC.WebCore.ReadableStream) void {
+            var this = bun.cast(*RequestContext, ptr);
+            bun.debugAssert(this.request_body_readable_stream_ref.held.ref == null);
+            this.request_body_readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable, globalThis);
         }
 
         pub fn onStartBufferingCallback(this: *anyopaque) void {
@@ -6732,6 +6751,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             ctx.request_body = body;
             var signal = JSC.WebCore.AbortSignal.new(this.globalThis);
             ctx.signal = signal;
+            signal.pendingActivityRef();
 
             const request_object = Request.new(.{
                 .method = ctx.method,
@@ -6785,6 +6805,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                             .global = this.globalThis,
                             .onStartBuffering = RequestContext.onStartBufferingCallback,
                             .onStartStreaming = RequestContext.onStartStreamingRequestBodyCallback,
+                            .onReadableStreamAvailable = RequestContext.onRequestBodyReadableStreamAvailable,
                         },
                     };
                     ctx.flags.is_waiting_for_request_body = true;

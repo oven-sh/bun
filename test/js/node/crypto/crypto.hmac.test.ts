@@ -1,5 +1,5 @@
+import { describe, expect, test } from "bun:test";
 import { Hmac, createHmac, createSecretKey } from "crypto";
-import { test, expect, describe } from "bun:test";
 
 function testHmac(algo, key, data, expected) {
   if (!Array.isArray(data)) data = [data];

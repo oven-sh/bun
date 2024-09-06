@@ -1,10 +1,9 @@
-import { bunExe, bunEnv as env, tmpdirSync } from "harness";
-import { mkdir, writeFile } from "fs/promises";
-import { join, relative } from "path";
+import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
+import { mkdir, writeFile } from "fs/promises";
+import { bunExe, bunEnv as env, tmpdirSync } from "harness";
+import { join, relative } from "path";
 import { dummyAfterAll, dummyAfterEach, dummyBeforeAll, dummyBeforeEach, package_dir } from "./dummy.registry";
-import { spawn } from "bun";
-import { file } from "bun";
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);

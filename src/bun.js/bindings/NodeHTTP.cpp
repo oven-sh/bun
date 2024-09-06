@@ -23,7 +23,7 @@ using namespace JSC;
 using namespace WebCore;
 
 extern "C" uWS::HttpRequest* Request__getUWSRequest(void*);
-extern "C" void Request__setInternalAbortCallback(void*, EncodedJSValue, EncodedJSValue, JSC::JSGlobalObject*);
+extern "C" void Request__setInternalAbortCallback(void*, EncodedJSValue, JSC::JSGlobalObject*);
 
 static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject* prototype, JSObject* objectValue, JSC::InternalFieldTuple* tuple, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
 {
@@ -332,12 +332,11 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPAssignAbortCallback, (JSGlobalObject * globalObje
     // This is an internal binding.
     JSValue requestValue = callFrame->uncheckedArgument(0);
     JSValue callback = callFrame->uncheckedArgument(1);
-    JSValue ctx = callFrame->uncheckedArgument(2);
 
-    ASSERT(callFrame->argumentCount() == 3);
+    ASSERT(callFrame->argumentCount() == 2);
 
     if (auto* jsRequest = jsDynamicCast<WebCore::JSRequest*>(requestValue)) {
-        Request__setInternalAbortCallback(jsRequest->wrapped(), JSValue::encode(callback), JSValue::encode(ctx), globalObject);
+        Request__setInternalAbortCallback(jsRequest->wrapped(), JSValue::encode(callback), globalObject);
     }
 
     return JSValue::encode(jsNull());

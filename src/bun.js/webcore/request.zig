@@ -88,10 +88,9 @@ pub const Request = struct {
     pub export fn Request__setInternalAbortCallback(
         this: *Request,
         callback: JSC.JSValue,
-        ctx: JSC.JSValue,
         globalThis: *JSC.JSGlobalObject,
     ) void {
-        this.internal_abort_callback = InternalJSAbortCallback.init(callback, ctx, globalThis);
+        this.internal_abort_callback = InternalJSAbortCallback.init(callback, globalThis);
     }
 
     comptime {
@@ -103,18 +102,16 @@ pub const Request = struct {
 
     pub const InternalJSAbortCallback = struct {
         function: JSC.Strong = .{},
-        ctx: JSC.Strong = .{},
 
-        pub fn init(function: JSC.JSValue, ctx: JSC.JSValue, globalThis: *JSC.JSGlobalObject) InternalJSAbortCallback {
+        pub fn init(function: JSC.JSValue, globalThis: *JSC.JSGlobalObject) InternalJSAbortCallback {
             return InternalJSAbortCallback{
                 .function = JSC.Strong.create(function, globalThis),
-                .ctx = JSC.Strong.create(ctx, globalThis),
             };
         }
 
         pub fn trigger(this: *InternalJSAbortCallback, globalThis: *JSC.JSGlobalObject) bool {
             if (this.function.get()) |callback| {
-                const result = callback.call(globalThis, this.ctx.get() orelse JSC.JSValue.jsUndefined(), &.{});
+                const result = callback.call(globalThis, JSC.JSValue.jsUndefined(), &.{});
                 if (result.toError()) |js_error| {
                     globalThis.throwValue(js_error);
                 }
@@ -125,7 +122,6 @@ pub const Request = struct {
 
         pub fn deinit(this: *InternalJSAbortCallback) void {
             this.function.deinit();
-            this.ctx.deinit();
         }
     };
 

@@ -209,6 +209,7 @@ pub const PackCommand = struct {
         &.{ 121, 97, 114, 110, 46, 108, 111, 99, 107 }, // yarn.lock
         &.{ 112, 110, 112, 109, 45, 108, 111, 99, 107, 46, 121, 97, 109, 108 }, // pnpm-lock.yaml
         &.{ 'b', 'u', 'n', '.', 'l', 'o', 'c', 'k', 'b' }, // bun.lockb
+        &.{ 'b', 'u', 'n', '.', 'l', 'o', 'c', 'k' },
     };
 
     // pattern, can override
@@ -226,9 +227,11 @@ pub const PackCommand = struct {
         .{ &.{ 46, 119, 97, 102, 112, 105, 99, 107, 108, 101, 45, 42 }, true }, // ".wafpickle-*",
         .{ &.{ 67, 86, 83 }, true }, // "CVS",
         .{ &.{ 110, 112, 109, 45, 100, 101, 98, 117, 103, 46, 108, 111, 103 }, true }, // "npm-debug.log",
-
         // mentioned in the docs but does not appear to be ignored by default
         // .{ &.{ 99, 111, 110, 102, 105, 103, 46, 103, 121, 112, 105 }, false }, // "config.gypi",
+
+        .{ &.{ '.', 'e', 'n', 'v', '.', 'p', 'r', 'o', 'd', 'u', 'c', 't', 'i', 'o', 'n' }, true },
+        .{ &.{ 'b', 'u', 'n', 'f', 'i', 'g', '.', 't', 'o', 'm', 'l' }, true },
     };
 
     const PackListEntry = struct {
@@ -1621,7 +1624,10 @@ pub const PackCommand = struct {
 
         try print_buf_writer.print("{s}{s}\x00", .{ package_prefix, filename });
         const pathname = print_buf.items[0 .. package_prefix.len + filename.len :0];
-        entry.setPathname(pathname);
+        if (comptime Environment.isWindows)
+            entry.setPathnameUtf8(pathname)
+        else
+            entry.setPathname(pathname);
         print_buf_writer.context.clearRetainingCapacity();
 
         entry.setSize(@intCast(stat.size));

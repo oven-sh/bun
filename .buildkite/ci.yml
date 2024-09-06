@@ -216,10 +216,10 @@ steps:
         command:
           - "./scripts/runner.node.mjs --step darwin-x64-build-bun"
 
-      - key: "linux-aarch64-test-debian-12"
-        label: ":debian: 12 aarch64 - test-bun"
+      - key: "darwin-x64-test-macos-14"
+        label: ":darwin: 14 x64 - test-bun"
         if: "build.branch != 'main'"
-        parallelism: 5
+        parallelism: 2
         soft_fail:
           - exit_status: 2
         retry:
@@ -235,20 +235,19 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "linux-aarch64-build-bun"
+          - "darwin-x64-build-bun"
         agents:
-          robobun: "true"
-          os: "linux"
-          arch: "aarch64"
-          distro: "debian"
-          release: "12"
+          queue: "test-darwin"
+          os: "darwin"
+          arch: "x64"
+          release: "14"
         command:
-          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun"
+          - "./scripts/runner.node.mjs --step darwin-x64-build-bun"
 
-      - key: "linux-aarch64-test-ubuntu-2204"
-        label: ":ubuntu: 22.04 aarch64 - test-bun"
+      - key: "darwin-x64-test-macos-13"
+        label: ":darwin: 13 x64 - test-bun"
         if: "build.branch != 'main'"
-        parallelism: 5
+        parallelism: 2
         soft_fail:
           - exit_status: 2
         retry:
@@ -264,44 +263,14 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "linux-aarch64-build-bun"
+          - "darwin-x64-build-bun"
         agents:
-          robobun: "true"
-          os: "linux"
-          arch: "aarch64"
-          distro: "ubuntu"
-          release: "22.04"
+          queue: "test-darwin"
+          os: "darwin"
+          arch: "x64"
+          release: "13"
         command:
-          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun"
-
-      - key: "linux-aarch64-test-ubuntu-2004"
-        label: ":ubuntu: 20.04 aarch64 - test-bun"
-        if: "build.branch != 'main'"
-        parallelism: 5
-        soft_fail:
-          - exit_status: 2
-        retry:
-          automatic:
-            - exit_status: 1
-              limit: 1
-            - exit_status: -1
-              limit: 3
-            - exit_status: 255
-              limit: 3
-            - signal_reason: agent_stop
-              limit: 3
-            - signal: SIGTERM
-              limit: 3
-        depends_on:
-          - "linux-aarch64-build-bun"
-        agents:
-          robobun: "true"
-          os: "linux"
-          arch: "aarch64"
-          distro: "ubuntu"
-          release: "20.04"
-        command:
-          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun"
+          - "./scripts/runner.node.mjs --step darwin-x64-build-bun"
 
   # Linux x64
   - key: "linux-x64"

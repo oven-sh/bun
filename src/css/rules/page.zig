@@ -128,10 +128,15 @@ pub const PageRule = struct {
         var parser = css.RuleBodyParser(PageRuleParser).new(input, &rule_parser);
 
         while (parser.next()) |decl| {
-            _ = decl catch |e| {
-                _ = e; // autofix
-                @compileError(css.todo_stuff.errors);
-            };
+            if (decl.asErr()) |e| {
+                if (parser.parser.options.error_recovery) {
+                    // parser.parser.options.warn(err);
+                    // continue;
+                    @compileError(css.todo_stuff.warn);
+                }
+
+                return .{ .err = e };
+            }
         }
 
         return PageRule{

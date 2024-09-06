@@ -110,7 +110,7 @@ pub fn Printer(comptime Writer: type) type {
         }
 
         /// Add an error related to std lib fmt errors
-        pub fn addFmtError(this: *This) css.PrinterError {
+        pub fn addFmtError(this: *This) PrintErr!void {
             this.error_kind = css.PrinterError{
                 .kind = .fmt_error,
                 .loc = null,
@@ -122,11 +122,17 @@ pub fn Printer(comptime Writer: type) type {
             this: *const This,
             kind: css.PrinterErrorKind,
             loc: css.dependencies.Location,
-        ) css.Err(css.PrinterErrorKind) {
-            _ = this; // autofix
-            _ = kind; // autofix
-            _ = loc; // autofix
-            @compileError(css.todo_stuff.errors);
+        ) PrintErr!void {
+            bun.debugAssert(this.error_kind == null);
+            this.error_kind = css.PrinterError{
+                .kind = kind,
+                .loc = css.ErrorLocation{
+                    .filename = this.filename(),
+                    .line = loc.line - 1,
+                    .column = loc.column,
+                },
+            };
+            return PrintErr.lol;
         }
 
         pub fn deinit(this: *This) void {

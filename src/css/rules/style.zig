@@ -89,17 +89,17 @@ pub fn StyleRule(comptime R: type) type {
                         if (decl.* == .composes) {
                             const composes = &decl.composes;
                             if (dest.isNested() and dest.css_module != null) {
-                                return try dest.newError(css.PrinterErrorKind.invalid_composes_nesting, composes.loc);
+                                return dest.newError(css.PrinterErrorKind.invalid_composes_nesting, composes.loc);
                             }
 
                             if (dest.css_module) |*css_module| {
-                                css_module.handleComposes(
+                                if (css_module.handleComposes(
                                     &this.selectors,
                                     composes,
                                     this.loc.source_index,
-                                ) catch |e| {
-                                    return try dest.newError(e, composes.loc);
-                                };
+                                ).asErr()) |error_kind| {
+                                    return dest.newError(error_kind, composes.loc);
+                                }
                                 continue;
                             }
                         }

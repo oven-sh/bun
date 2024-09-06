@@ -263,8 +263,8 @@ pub const FontPaletteValuesDeclarationParser = struct {
             return input.newError(css.BasicParseErrorKind.at_rule_body_invalid);
         }
 
-        pub fn ruleWithoutBlock(_: *This, _: AtRuleParser.Prelude, _: *const css.ParserState) Result(AtRuleParser.AtRule) {
-            @compileError(css.todo_stuff.errors);
+        pub fn ruleWithoutBlock(_: *This, _: AtRuleParser.Prelude, _: *const css.ParserState) css.Maybe(AtRuleParser.AtRule, void) {
+            return .{ .err = {} };
         }
     };
 

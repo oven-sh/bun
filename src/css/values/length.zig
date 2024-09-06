@@ -178,7 +178,7 @@ pub const LengthValue = union(enum) {
         return css.serializer.serializeDimension(value, unit, W, dest);
     }
 
-    pub fn tryFromToken(token: *const css.Token) Result(@This()) {
+    pub fn tryFromToken(token: *const css.Token) css.Maybe(@This(), void) {
         switch (token.*) {
             .dimension => |*dim| {
                 inline for (std.meta.fields(@This())) |field| {
@@ -189,7 +189,7 @@ pub const LengthValue = union(enum) {
             },
             else => {},
         }
-        @compileError(css.todo_stuff.errors);
+        return .{ .err = {} };
     }
 
     pub fn toUnitValue(this: *const @This()) struct { CSSNumber, []const u8 } {

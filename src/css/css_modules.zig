@@ -77,7 +77,7 @@ const CssModule = struct {
         selectors: *const css.selector.api.SelectorList,
         composes: *const css.css_properties.css_modules.Composes,
         source_index: u32,
-    ) PrintErr!void {
+    ) css.Maybe(void, css.PrinterErrorKind) {
         for (selectors.v.items) |*sel| {
             if (sel.len() == 1) {
                 const component: *const css.selector.api.Component = &sel.components.items[0];
@@ -139,9 +139,10 @@ const CssModule = struct {
             }
 
             // The composes property can only be used within a simple class selector.
-            //   return Err(PrinterErrorKind::InvalidComposesSelector);
-            @compileError(css.todo_stuff.errors);
+            return css.PrinterErrorKind.invalid_composes_selector;
         }
+
+        return .{ .result = {} };
     }
 
     pub fn addDashed(this: *CssModule, allocator: Allocator, local: []const u8, source_index: u32) void {

@@ -52,8 +52,8 @@ pub const MediaList = struct {
             const mq = switch (input.parseUntilBefore(css.Delimiters{ .comma = true }, MediaQuery, {}, css.voidWrap(MediaQuery, MediaQuery.parse))) {
                 .result => |v| v,
                 .err => |e| {
-                    _ = e; // autofix
-                    @compileError(css.todo_stuff.errors);
+                    if (e.kind == .basic and e.kind.basic == .end_of_input) break;
+                    return .{ .err = e };
                 },
             };
             media_queries.append(@compileError(css.todo_stuff.think_about_allocator), mq) catch bun.outOfMemory();
@@ -771,8 +771,8 @@ pub fn QueryFeature(comptime FeatureId: type) type {
                     return res;
                 },
                 .err => |e| {
-                    if (e == css.ParserError.invalid_media_query) {
-                        @compileError(css.todo_stuff.errors);
+                    if (e.kind == .custom and e.kind.custom == .invalid_media_query) {
+                        return .{ .err = e };
                     }
                     return parseValueFirst(input);
                 },

@@ -483,9 +483,8 @@ pub const api = struct {
     ) Result(GenericSelector(Impl)) {
         if (nesting_requirement == .prefixed) {
             const parser_state = input.state();
-            if (!(if (input.expectDelim('&')) |_| true else false)) {
-                // todo_stuff.errors
-                return input.newCustomError(.missing_nesting_prefix);
+            if (!input.expectDelim('&').isOk()) {
+                return input.newCustomError(SelectorParseErrorKind.missing_nesting_prefix);
             }
             input.reset(&parser_state);
         }
@@ -507,7 +506,6 @@ pub const api = struct {
                 else
                     .empty_selector;
 
-                // todo_stuff.errors
                 return input.newCustomError(kind);
             }
 
@@ -572,7 +570,6 @@ pub const api = struct {
                     builder.addNestingPrefix();
                 },
                 .contained, .prefixed => {
-                    // todo_stuff.errors
                     return input.newCustomError(SelectorParseErrorKind.missing_nesting_selector);
                 },
                 else => {},
@@ -2171,16 +2168,11 @@ pub const api = struct {
         )) {
             .result => |v| v,
             .err => |e| {
-                _ = e; // autofix
+                if (e.kind == .basic and e.kind.basic == .end_of_input) {
+                    return false;
+                }
 
-                // TODO: error does not exist
-                // but it should exist
-                // todo_stuff.errors
-                // if (e == Error.EndOfInput)
-                // this is not complete
-                // needs to check if error is EndOfInput and return false
-                // otherwise return error
-                return false;
+                return .{ .err = e };
             },
         };
 
@@ -2574,8 +2566,15 @@ pub const api = struct {
         const value_str: []const u8 = switch (input.expectIdentOrString()) {
             .result => |v| v,
             .err => |e| {
-                _ = e; // autofix
-                @compileError(css.todo_stuff.errors);
+                if (e.kind == .unexpected_token) {
+                    return e.location.newCustomError(SelectorParseErrorKind{ .bad_value_in_attr = e.kind.unexpected_token });
+                }
+                return .{
+                    .err = .{
+                        .kind = .{ .basic = e.kind },
+                        .location = e.location,
+                    },
+                };
             },
         };
         const never_matches = switch (operator) {

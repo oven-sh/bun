@@ -308,12 +308,12 @@ pub const SyntaxComponentKind = union(enum) {
     /// A literal component.
     literal: []const u8,
 
-    pub fn parseString(input_: []const u8) Result(SyntaxComponentKind) {
+    pub fn parseString(input_: []const u8) css.Maybe(SyntaxComponentKind, void) {
         // https://drafts.css-houdini.org/css-properties-values-api/#consume-syntax-component
         var input = std.mem.trimLeft(u8, input_, SPACE_CHARACTERS);
         if (bun.strings.startsWithChar(input, '<')) {
             // https://drafts.css-houdini.org/css-properties-values-api/#consume-data-type-name
-            const end_idx = std.mem.indexOfScalar(u8, input, '>') orelse @compileError(css.todo_stuff.errors);
+            const end_idx = std.mem.indexOfScalar(u8, input, '>') orelse return .{ .err = {} };
             const name = input[1..end_idx];
             // todo_stuff.match_ignore_ascii_case
             const component = if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "length"))
@@ -345,7 +345,7 @@ pub const SyntaxComponentKind = union(enum) {
             else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "custom-ident"))
                 .custom_ident
             else
-                @compileError(css.todo_stuff.errors);
+                return .{ .err = {} };
 
             input = input[end_idx + 1 ..];
             return component;
@@ -360,7 +360,7 @@ pub const SyntaxComponentKind = union(enum) {
             input = input[end_idx..];
             return SyntaxComponentKind{ .literal = literal };
         } else {
-            @compileError(css.todo_stuff.errors);
+            return .{ .err = {} };
         }
     }
 

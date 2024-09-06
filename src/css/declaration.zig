@@ -102,17 +102,13 @@ pub const PropertyDeclarationParser = struct {
         pub const Prelude = void;
         pub const AtRule = void;
 
-        pub fn parsePrelude(this: *This, name: []const u8, input: *css.Parser) Result(Prelude) {
-            _ = input; // autofix
-            _ = this; // autofix
-            _ = name; // autofix
-            @compileError(css.todo_stuff.errors);
+        pub fn parsePrelude(_: *This, name: []const u8, input: *css.Parser) Result(Prelude) {
+            return .{
+                .err = input.newError(css.BasicParseErrorKind{ .at_rule_invalid = name }),
+            };
         }
 
-        pub fn parseBlock(this: *This, prelude: Prelude, start: *const css.ParserState, input: *css.Parser) Result(AtRule) {
-            _ = this; // autofix
-            _ = prelude; // autofix
-            _ = start; // autofix
+        pub fn parseBlock(_: *This, _: Prelude, _: *const css.ParserState, input: *css.Parser) Result(AtRule) {
             return input.newError(css.BasicParseErrorKind.at_rule_invalid);
         }
     };

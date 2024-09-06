@@ -79,12 +79,20 @@ const errors_ = @import("./error.zig");
 pub const Err = errors_.Err;
 pub const PrinterErrorKind = errors_.PrinterErrorKind;
 pub const PrinterError = errors_.PrinterError;
+pub const ErrorLocation = errors_.ErrorLocation;
+pub const ParseError = errors_.ParseError;
+pub const ParserError = errors_.ParserError;
+pub const BasicParseError = errors_.BasicParseError;
+pub const BasicParseErrorKind = errors_.BasicParseErrorKind;
+pub const SelectorError = errors_.SelectorError;
 
 const compat = @import("./compat.zig");
 
 pub const fmtPrinterError = errors_.fmtPrinterError;
 
-pub const PrintErr = error{};
+pub const PrintErr = error{
+    lol,
+};
 
 pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
     _ = N; // autofix
@@ -112,6 +120,8 @@ pub const todo_stuff = struct {
     pub const enum_property = "TODO: implement enum_property!";
 
     pub const match_byte = "TODO: implement match_byte!";
+
+    pub const warn = "TODO: implement warning";
 };
 
 pub const VendorPrefix = packed struct(u8) {
@@ -168,30 +178,16 @@ pub const Location = css_rules.Location;
 pub const Error = Err(ParserError);
 
 pub fn Result(comptime T: type) type {
-    return Maybe(T, Error);
+    return Maybe(T, ParseError(ParserError));
+}
+
+pub fn BasicResult(comptime T: type) type {
+    return Maybe(T, BasicParseError);
 }
 
 pub fn PrintResult(comptime T: type) type {
     return Maybe(T, PrinterError);
 }
-
-/// Details about a `BasicParseError`
-pub const BasicParseErrorKind = union(enum) {
-    /// An unexpected token was encountered.
-    unexpected_token: Token,
-
-    /// The end of the input was encountered unexpectedly.
-    end_of_input,
-
-    /// An `@` rule was encountered that was invalid.
-    at_rule_invalid: []const u8,
-
-    /// The body of an '@' rule was invalid.
-    at_rule_body_invalid,
-
-    /// A qualified rule was encountered that was invalid.
-    qualified_rule_invalid,
-};
 
 pub fn todo(comptime fmt: []const u8, args: anytype) noreturn {
     std.debug.panic("TODO: " ++ fmt, args);
@@ -513,18 +509,17 @@ fn parse_at_rule(
     const prelude: P.AtRuleParser.Prelude = switch (input.parseUntilBefore(delimiters, P.AtRuleParser.Prelude, &closure, closure.parsefn)) {
         .result => |vvv| vvv,
         .err => |e| {
-            _ = e; // autofix
-            const end_position = input.position();
-            _ = end_position; // autofix
+            // const end_position = input.position();
+            // _ = end_position; k
             out: {
                 const tok = switch (input.next()) {
                     .result => |v| v,
                     .err => break :out,
                 };
                 if (tok.* != .open_curly and tok != .semicolon) unreachable;
+                break :out;
             }
-            @compileError(todo_stuff.errors);
-            // return ;
+            return .{ .err = e };
         },
     };
     const next = switch (input.next()) {
@@ -1036,8 +1031,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "namespace")) {
                     if (@intFromEnum(this.state) > @intFromEnum(State.namespaces)) {
                         input.newCustomError(.unexpected_namespace_rule);
-                        // todo_stuff.errors
-                        return Error.ParsingError;
+                        return input.newCustomError(ParserError.unexpected_namespce_rule);
                     }
 
                     const prefix = switch (input.tryParse(Parser.expectIdent, .{})) {
@@ -2057,13 +2051,14 @@ pub fn StyleSheet(comptime AtRule: type) type {
             }
         }
 
+        /// Parse a style sheet from a string.
         pub fn parseWith(
             allocator: Allocator,
             code: []const u8,
             options: ParserOptions,
             comptime P: type,
             at_rule_parser: *P,
-        ) Result(This) {
+        ) Maybe(This, Error(ParserError)) {
             var input = ParserInput.new(allocator, code);
             var parser = Parser.new(allocator, &input);
 
@@ -2089,16 +2084,13 @@ pub fn StyleSheet(comptime AtRule: type) type {
 
             while (rule_list_parser.next()) |result| {
                 if (result.asErr()) |e| {
-                    _ = e; // autofix
                     const result_options = rule_list_parser.parser.options;
                     if (result_options.error_recovery) {
-                        // TODO this
-                        // options.logger.addWarningFmt(source: ?*const Source, l: Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype)
+                        // todo_stuff.warn
                         continue;
                     }
 
-                    // return e;
-                    @compileError(todo_stuff.errors);
+                    return .{ .err = Err(ParserError).fromParseError(e, options.filename) };
                 }
             }
 
@@ -2450,10 +2442,10 @@ pub const Parser = struct {
     /// Parse the input until exhaustion and check that it contains no “error” token.
     ///
     /// See `Token::is_parse_error`. This also checks nested blocks and functions recursively.
-    pub fn expectNoErrorToken(this: *Parser) Result(void) {
+    pub fn expectNoErrorToken(this: *Parser) BasicResult(void) {
         while (true) {
             const tok = switch (this.nextIncludingWhitespaceAndComments()) {
-                .err => return,
+                .err => return .{ .result = {} },
                 .result => |v| v,
             };
             switch (tok.*) {
@@ -2461,17 +2453,14 @@ pub const Parser = struct {
                     if (this.parseNestedBlock(void, {}, struct {
                         pub fn parse(i: *Parser) Result(void) {
                             if (i.expectNoErrorToken().asErr()) |e| {
-                                _ = e; // autofix
-                                @compileError(todo_stuff.errors);
+                                return .{ .err = e.intoParseErr(ParserError) };
                             }
+                            return .{ .result = {} };
                         }
                     }.parse).asErr()) |err| {
-                        _ = err; // autofix
-                        // FIXME: maybe these should be separate variants of
-                        // BasicParseError instead?
-                        @compileError(todo_stuff.errors);
-                        // return this.newBasicUnexpectedTokenError(tok.*);
+                        return .{ .err = ParseError(ParserError).basic(err) };
                     }
+                    return .{ .result = {} };
                 },
                 else => {
                     if (tok.isParseError()) {
@@ -2482,7 +2471,7 @@ pub const Parser = struct {
         }
     }
 
-    pub fn expectPercentage(this: *Parser) Result(f32) {
+    pub fn expectPercentage(this: *Parser) BasicResult(f32) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
@@ -2492,7 +2481,7 @@ pub const Parser = struct {
         return start_location.newBasicUnexpectedTokenError(tok.*);
     }
 
-    pub fn expectComma(this: *Parser) Result(void) {
+    pub fn expectComma(this: *Parser) BasicResult(void) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
@@ -2506,7 +2495,7 @@ pub const Parser = struct {
     }
 
     /// Parse a <number-token> that does not have a fractional part, and return the integer value.
-    pub fn expectInteger(this: *Parser) Result(i32) {
+    pub fn expectInteger(this: *Parser) BasicResult(i32) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
@@ -2517,7 +2506,7 @@ pub const Parser = struct {
     }
 
     /// Parse a <number-token> and return the integer value.
-    pub fn expectNumber(this: *Parser) Result(f32) {
+    pub fn expectNumber(this: *Parser) BasicResult(f32) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
@@ -2527,7 +2516,7 @@ pub const Parser = struct {
         return start_location.newBasicUnexpectedTokenError(tok.*);
     }
 
-    pub fn expectDelim(this: *Parser, delim: u8) Result(void) {
+    pub fn expectDelim(this: *Parser, delim: u8) BasicResult(void) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
@@ -2537,7 +2526,7 @@ pub const Parser = struct {
         return start_location.newBasicUnexpectedTokenError(tok.*);
     }
 
-    pub fn expectParenthesisBlock(this: *Parser) Result(void) {
+    pub fn expectParenthesisBlock(this: *Parser) BasicResult(void) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
@@ -2547,7 +2536,7 @@ pub const Parser = struct {
         return start_location.newBasicUnexpectedTokenError(tok.*);
     }
 
-    pub fn expectColon(this: *Parser) Result(void) {
+    pub fn expectColon(this: *Parser) BasicResult(void) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
@@ -2557,7 +2546,7 @@ pub const Parser = struct {
         return start_location.newBasicUnexpectedTokenError(tok.*);
     }
 
-    pub fn expectString(this: *Parser) Result([]const u8) {
+    pub fn expectString(this: *Parser) BasicResult([]const u8) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
@@ -2567,7 +2556,7 @@ pub const Parser = struct {
         return start_location.newBasicUnexpectedTokenError(tok.*);
     }
 
-    pub fn expectIdent(this: *Parser) Result([]const u8) {
+    pub fn expectIdent(this: *Parser) Maybe([]const u8, BasicParseError) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
@@ -2578,7 +2567,7 @@ pub const Parser = struct {
     }
 
     /// Parse either a <ident-token> or a <string-token>, and return the unescaped value.
-    pub fn expectIdentOrString(this: *Parser) Result([]const u8) {
+    pub fn expectIdentOrString(this: *Parser) BasicResult([]const u8) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
@@ -2592,7 +2581,7 @@ pub const Parser = struct {
         return start_location.newBasicUnexpectedTokenError(tok.*);
     }
 
-    pub fn expectIdentMatching(this: *Parser, name: []const u8) Result(void) {
+    pub fn expectIdentMatching(this: *Parser, name: []const u8) BasicResult(void) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
@@ -2605,7 +2594,7 @@ pub const Parser = struct {
         return start_location.newBasicUnexpectedTokenError(tok.*);
     }
 
-    pub fn expectFunction(this: *Parser) Result([]const u8) {
+    pub fn expectFunction(this: *Parser) BasicResult([]const u8) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
@@ -2618,7 +2607,7 @@ pub const Parser = struct {
         return start_location.newBasicUnexpectedTokenError(tok.*);
     }
 
-    pub fn expectFunctionMatching(this: *Parser, name: []const u8) Result(void) {
+    pub fn expectFunctionMatching(this: *Parser, name: []const u8) BasicResult(void) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
@@ -2631,7 +2620,7 @@ pub const Parser = struct {
         return start_location.newBasicUnexpectedTokenError(tok.*);
     }
 
-    pub fn expectCurlyBracketBlock(this: *Parser) Result(void) {
+    pub fn expectCurlyBracketBlock(this: *Parser) BasicResult(void) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
@@ -2644,26 +2633,28 @@ pub const Parser = struct {
     }
 
     /// Parse a <url-token> and return the unescaped value.
-    pub fn expectUrl(this: *Parser) Result([]const u8) {
+    pub fn expectUrl(this: *Parser) BasicResult([]const u8) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
             .result => |v| v,
         };
         switch (tok.*) {
-            .unquoted_url => |value| return value,
+            .unquoted_url => |value| return .{ .result = value },
             .function => |name| {
                 if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("url", name)) {
                     const result = this.parseNestedBlock([]const u8, {}, struct {
                         fn parse(parser: *Parser) Result([]const u8) {
-                            return parser.expectString();
+                            return switch (parser.expectString()) {
+                                .result => |v| .{ .result = v },
+                                .err => |e| .{ .err = e.intoParseError(ParseError(ParserError)) },
+                            };
                         }
                     }.parse);
-                    if (result.asErr()) |e| {
-                        _ = e; // autofix
-                        @compileError(todo_stuff.errors);
-                    }
-                    return result;
+                    return switch (result) {
+                        .result => |v| .{ .result = v },
+                        .err => |e| .{ .err = e.basic() },
+                    };
                 }
             },
             else => {},
@@ -2672,7 +2663,7 @@ pub const Parser = struct {
     }
 
     /// Parse either a <url-token> or a <string-token>, and return the unescaped value.
-    pub fn expectUrlOrString(this: *Parser) Result([]const u8) {
+    pub fn expectUrlOrString(this: *Parser) BasicResult([]const u8) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
@@ -2688,12 +2679,10 @@ pub const Parser = struct {
                             return parser.expectString();
                         }
                     }.parse);
-                    if (result.asErr()) |e| {
-                        _ = e; // autofix
-
-                        @compileError(todo_stuff.errors);
-                    }
-                    return result;
+                    return switch (result) {
+                        .result => |v| .{ .result = v },
+                        .err => .{ .err = e.basic() },
+                    };
                 }
             },
             else => {},
@@ -2779,13 +2768,13 @@ pub const Parser = struct {
         this.input.tokenizer.skipWhitespace();
     }
 
-    pub fn next(this: *@This()) Result(*Token) {
+    pub fn next(this: *@This()) BasicResult(*Token) {
         this.skipWhitespace();
         this.nextIncludingWhitespaceAndComments();
     }
 
     /// Same as `Parser::next`, but does not skip whitespace tokens.
-    pub fn nextIncludingWhitespace(this: *@This()) Result(*Token) {
+    pub fn nextIncludingWhitespace(this: *@This()) BasicResult(*Token) {
         while (true) {
             if (this.nextIncludingWhitespaceAndComments()) |tok| {
                 if (tok.* == .comment) {} else break;
@@ -2863,21 +2852,13 @@ pub const Parser = struct {
         return token;
     }
 
-    const ParseError = struct {
-        comptime {
-            @compileError(todo_stuff.errors);
-        }
-    };
-
     /// Create a new unexpected token or EOF ParseError at the current location
-    pub fn newErrorForNextToken(this: *Parser) ParseError {
-        _ = this; // autofix
-        @compileError(todo_stuff.errors);
-        // let token = match self.next() {
-        //     Ok(token) => token.clone(),
-        //     Err(e) => return e.into(),
-        // };
-        // self.new_error(BasicParseErrorKind::UnexpectedToken(token))
+    pub fn newErrorForNextToken(this: *Parser) ParseError(ParserError) {
+        const token = switch (this.next()) {
+            .result => |t| t.*,
+            .err => |e| return .{ .err = e.intoParseError(ParseError(ParserError)) },
+        };
+        return this.newError(BasicParseErrorKind{ .unexpected_token = token });
     }
 };
 
@@ -3100,7 +3081,7 @@ pub const nth = struct {
         return input.newBasicUnexpectedTokenError(tok.*);
     }
 
-    fn parse_n_dash_digits(str: []const u8) Result(i32) {
+    fn parse_n_dash_digits(str: []const u8) Maybe(i32, void) {
         const bytes = str;
         if (bytes.len >= 3 and
             bun.strings.eqlCaseInsensitiveASCIIICheckLength(bytes[0..2], "n-") and
@@ -3112,30 +3093,26 @@ pub const nth = struct {
         }) {
             return parse_number_saturate(str[1..]); // Include the minus sign
         } else {
-            //         return Err(());
-            @compileError(todo_stuff.errors);
+            return .{ .err = {} };
         }
     }
 
-    fn parse_number_saturate(string: []const u8) Result(i32) {
+    fn parse_number_saturate(string: []const u8) Maybe(i32, void) {
         var input = ParserInput.new(@compileError(todo_stuff.think_about_allocator), string);
         var parser = Parser.new(&input);
         const tok = switch (parser.nextIncludingWhitespaceAndComments()) {
             .result => |v| v,
             .err => {
-                //         return Err(());
-                @compileError(todo_stuff.errors);
+                return .{ .err = {} };
             },
         };
         const int = if (tok.* == .number and tok.number.int_value != null) tok.number.int_value.? else {
-            //         return Err(());
-            @compileError(todo_stuff.errors);
+            return .{ .err = {} };
         };
         if (!parser.isExhausted()) {
-            //         return Err(());
-            @compileError(todo_stuff.errors);
+            return .{ .err = {} };
         }
-        return int;
+        return .{ .result = int };
     }
 };
 
@@ -4916,84 +4893,6 @@ pub const color = struct {
         const blue = Helpers.hueToRgb(m1, m2, hue_times_3 - 1.0);
         return .{ red, green, blue };
     }
-};
-
-/// A parser error.
-pub const ParserError = union(enum) {
-    /// An at rule body was invalid.
-    at_rule_body_invalid,
-    /// An at rule prelude was invalid.
-    at_rule_prelude_invalid,
-    /// An unknown or unsupported at rule was encountered.
-    at_rule_invalid: []const u8,
-    /// Unexpectedly encountered the end of input data.
-    end_of_input,
-    /// A declaration was invalid.
-    invalid_declaration,
-    /// A media query was invalid.
-    invalid_media_query,
-    /// Invalid CSS nesting.
-    invalid_nesting,
-    /// The @nest rule is deprecated.
-    deprecated_nest_rule,
-    /// An invalid selector in an `@page` rule.
-    invalid_page_selector,
-    /// An invalid value was encountered.
-    invalid_value,
-    /// Invalid qualified rule.
-    qualified_rule_invalid,
-    /// A selector was invalid.
-    selector_error: SelectorError,
-    /// An `@import` rule was encountered after any rule besides `@charset` or `@layer`.
-    unexpected_import_rule,
-    /// A `@namespace` rule was encountered after any rules besides `@charset`, `@import`, or `@layer`.
-    unexpected_namespace_rule,
-    /// An unexpected token was encountered.
-    unexpected_token: Token,
-    /// Maximum nesting depth was reached.
-    maximum_nesting_depth,
-};
-
-/// A selector parsing error.
-pub const SelectorError = union(enum) {
-    /// An unexpected token was found in an attribute selector.
-    bad_value_in_attr: Token,
-    /// An unexpected token was found in a class selector.
-    class_needs_ident: Token,
-    /// A dangling combinator was found.
-    dangling_combinator,
-    /// An empty selector.
-    empty_selector,
-    /// A `|` was expected in an attribute selector.
-    expected_bar_in_attr: Token,
-    /// A namespace was expected.
-    expected_namespace: []const u8,
-    /// An unexpected token was encountered in a namespace.
-    explicit_namespace_unexpected_token: Token,
-    /// An invalid pseudo class was encountered after a pseudo element.
-    invalid_pseudo_class_after_pseudo_element,
-    /// An invalid pseudo class was encountered after a `-webkit-scrollbar` pseudo element.
-    invalid_pseudo_class_after_webkit_scrollbar,
-    /// A `-webkit-scrollbar` state was encountered before a `-webkit-scrollbar` pseudo element.
-    invalid_pseudo_class_before_webkit_scrollbar,
-    /// Invalid qualified name in attribute selector.
-    invalid_qual_name_in_attr: Token,
-    /// The current token is not allowed in this state.
-    invalid_state,
-    /// The selector is required to have the `&` nesting selector at the start.
-    missing_nesting_prefix,
-    /// The selector is missing a `&` nesting selector.
-    missing_nesting_selector,
-    /// No qualified name in attribute selector.
-    no_qualified_name_in_attribute_selector: Token,
-    /// An invalid token was encountered in a pseudo element.
-    pseudo_element_expected_ident: Token,
-    /// An unexpected identifier was encountered.
-    unexpected_ident: []const u8,
-    /// An unexpected token was encountered inside an attribute selector.
-    unexpected_token_in_attribute_selector: Token,
-    /// An unsupported pseudo class or pseudo element was encountered.
-    unsupported_pseudo_class_or_element: []const u8,
 };
 
 // pub const Bitflags

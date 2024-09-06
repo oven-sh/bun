@@ -227,16 +227,16 @@ pub const UnicodeRange = struct {
         }
     }
 
-    fn parseConcatenated(_text: []const u8) Result(UnicodeRange) {
+    fn parseConcatenated(_text: []const u8) css.Maybe(UnicodeRange, void) {
         var text = if (_text.len > 0 and _text[0] == '+') _text[1..] else {
-            @compileError(css.todo_stuff.errors);
+            return .{ .err = {} };
         };
         const first_hex_value, const hex_digit_count = consumeHex(&text);
         const question_marks = consumeQuestionMarks(&text);
         const consumed = hex_digit_count + question_marks;
 
         if (consumed == 0 or consumed > 6) {
-            @compileError(css.todo_stuff.errors);
+            return .{ .err = {} };
         }
 
         if (question_marks > 0) {
@@ -261,7 +261,7 @@ pub const UnicodeRange = struct {
                 }
             }
         }
-        @compileError(css.todo_stuff.errors);
+        return .{ .err = {} };
     }
 
     fn consumeQuestionMarks(text: *[]const u8) usize {
@@ -431,9 +431,9 @@ pub const Source = union(enum) {
         switch (input.tryParse(UrlSource.parse, .{})) {
             .result => |url| .{ .result = return .{ .url = url } },
             .err => |e| {
-                _ = e; // autofix
-
-                @compileError(css.todo_stuff.errors);
+                if (e.kind == .basic and e.kind.basic == .at_rule_body_invalid) {
+                    return .{ .err = e };
+                }
             },
         }
 

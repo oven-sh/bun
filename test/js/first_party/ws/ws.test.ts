@@ -282,7 +282,6 @@ describe("WebSocketServer", () => {
     const { resolve, reject, promise } = Promise.withResolvers();
 
     wss.on("connection", async ws => {
-      console.log("connection", ws.readyState);
       expect(ws.readyState).toBe(WebSocket.OPEN);
       const kBunInternals = Symbol.for("::bunternal::");
       // @ts-expect-error

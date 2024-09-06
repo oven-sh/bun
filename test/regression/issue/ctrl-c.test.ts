@@ -1,8 +1,8 @@
 import { test, expect, it } from "bun:test";
 import { join } from "path";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 
-test("verify that we forward SIGINT from parent to child in bun run", () => {
+test.skipIf(isWindows)("verify that we forward SIGINT from parent to child in bun run", () => {
   const dir = tempDirWithFiles("ctrlc", {
     "index.js": `
       let count = 0;

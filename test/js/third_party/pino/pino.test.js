@@ -1,7 +1,7 @@
 import { it, expect } from "bun:test";
 import { bunExe, bunEnv } from "harness";
 
-it("throwing inside preserves exit code", async () => {
+it("using pino does not crash, particularly on windows", async () => {
   const proc = Bun.spawnSync({
     cmd: [
       bunExe(),

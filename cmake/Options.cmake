@@ -14,7 +14,6 @@ optionx(GITHUB_ACTIONS BOOL "If GitHub Actions is enabled" DEFAULT OFF)
 if(BUILDKITE)
   optionx(BUILDKITE_COMMIT STRING "The commit hash")
   optionx(BUILDKITE_MESSAGE STRING "The commit message")
-  optionx(BUILDKITE_PULL_REQUEST STRING "The pull request number")
 endif()
 
 optionx(CMAKE_BUILD_TYPE "Debug|Release|RelWithDebInfo|MinSizeRel" "The build type to use" REQUIRED)
@@ -79,17 +78,19 @@ endif()
 
 optionx(ENABLE_CANARY BOOL "If canary features should be enabled" DEFAULT ${DEFAULT_CANARY})
 
-if(BUILDKITE_PULL_REQUEST)
-  set(DEFAULT_CANARY_REVISION ${BUILDKITE_PULL_REQUEST})
-else()
+if(ENABLE_CANARY AND BUILDKITE)
+  execute_process(
+    COMMAND buildkite-agent meta-data get "canary"
+    OUTPUT_VARIABLE DEFAULT_CANARY_REVISION
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+elseif(ENABLE_CANARY)
   set(DEFAULT_CANARY_REVISION "1")
+else()
+  set(DEFAULT_CANARY_REVISION "0")
 endif()
 
-if(ENABLE_CANARY)
-  optionx(CANARY_REVISION STRING "The canary revision of the build" DEFAULT ${DEFAULT_CANARY_REVISION})
-else()
-  setx(CANARY_REVISION "0")
-endif()
+optionx(CANARY_REVISION STRING "The canary revision of the build" DEFAULT ${DEFAULT_CANARY_REVISION})
 
 if(RELEASE AND LINUX)
   set(DEFAULT_LTO ON)

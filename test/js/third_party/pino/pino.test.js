@@ -21,6 +21,6 @@ it("using pino does not crash, particularly on windows", async () => {
     stdio: ["inherit", "pipe", "pipe"],
   });
 
-  expect(proc.exitCode).toBe(0);
   expect(proc.stderr.toString("utf8")).toBeEmpty();
+  expect(proc.exitCode).toBe(0);
 });

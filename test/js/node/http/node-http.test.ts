@@ -2361,7 +2361,7 @@ it("should emit close when connection is aborted", async () => {
   }
 });
 
-it("must set headersSent to true after headers are sent", async () => {
+it("must set headersSent to true after headers are sent #3458", async () => {
   const server = createServer().listen(0);
   try {
     await once(server, "listening");

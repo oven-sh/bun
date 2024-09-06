@@ -61,58 +61,6 @@ else()
   set(CONFIGURE_DEPENDS "CONFIGURE_DEPENDS")
 endif()
 
-# --- WebKit ---
-# WebKit is either prebuilt and distributed via NPM, or you can pass WEBKIT_PATH to use a local build.
-# We cannot include their CMake build files (TODO: explain why, for now ask @paperdave why)
-#
-# On Unix, this will pull from NPM the single package that is needed and use that
-if(WIN32)
-  set(STATIC_LIB_EXT "lib")
-  set(libJavaScriptCore "JavaScriptCore")
-  set(libWTF "WTF")
-else()
-  set(STATIC_LIB_EXT "a")
-  set(libJavaScriptCore "libJavaScriptCore")
-  set(libWTF "libWTF")
-endif()
-
-if(WEBKIT_PREBUILT)
-elseif(WEBKIT_PATH STREQUAL "omit")
-else()
-    # Expected to be WebKit/WebKitBuild/${CMAKE_BUILD_TYPE}
-    if(EXISTS "${WEBKIT_PATH}/cmakeconfig.h")
-        # You may need to run:
-        # make jsc-compile-debug jsc-copy-headers
-        include_directories(
-            "${WEBKIT_PATH}/"
-            "${WEBKIT_PATH}/JavaScriptCore/Headers/JavaScriptCore"
-            "${WEBKIT_PATH}/JavaScriptCore/PrivateHeaders"
-            "${WEBKIT_PATH}/bmalloc/Headers"
-            "${WEBKIT_PATH}/WTF/Headers"
-        )
-        set(WEBKIT_LIB_DIR "${WEBKIT_PATH}/lib")
-
-        if(ENABLE_ASSERTIONS)
-            add_compile_definitions("BUN_DEBUG=1")
-        endif()
-
-        message(STATUS "Using WebKit from ${WEBKIT_PATH}")
-    else()
-        if(NOT EXISTS "${WEBKIT_PATH}/lib/${libWTF}.${STATIC_LIB_EXT}" OR NOT EXISTS "${WEBKIT_PATH}/lib/${libJavaScriptCore}.${STATIC_LIB_EXT}")
-            if(WEBKIT_PATH MATCHES "src/bun.js/WebKit$")
-                message(FATAL_ERROR "WebKit directory ${WEBKIT_PATH} does not contain all the required files for Bun. Did you forget to init submodules?")
-            endif()
-
-            message(FATAL_ERROR "WebKit directory ${WEBKIT_PATH} does not contain all the required files for Bun. Expected a path to the oven-sh/WebKit repository, or a path to a folder containing `include` and `lib`.")
-        endif()
-
-        set(WEBKIT_LIB_DIR "${WEBKIT_PATH}/lib")
-
-        message(STATUS "Using specified WebKit directory: ${WEBKIT_PATH}")
-        message(STATUS "WebKit assertions: OFF")
-    endif()
-endif()
-
 include(BuildBun)
 include(CompilerFlags)
 

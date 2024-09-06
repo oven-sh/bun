@@ -194,6 +194,11 @@ pub const Archive = opaque {
         return archive_free(archive);
     }
 
+    pub extern fn archive_write_set_options(_a: *Archive, opts: [*c]const u8) Result;
+    pub fn writeSetOptions(archive: *Archive, opts: [:0]const u8) Result {
+        return archive_write_set_options(archive, opts);
+    }
+
     extern fn archive_write_set_format_pax_restricted(*Archive) Result;
     pub fn writeSetFormatPaxRestricted(archive: *Archive) Result {
         return archive_write_set_format_pax_restricted(archive);
@@ -243,6 +248,11 @@ pub const Archive = opaque {
         extern fn archive_entry_new() *Entry;
         pub fn new() *Entry {
             return archive_entry_new();
+        }
+
+        pub extern fn archive_entry_new2(*Archive) *Entry;
+        pub fn new2(archive: *Archive) *Entry {
+            return archive_entry_new2(archive);
         }
 
         extern fn archive_entry_free(*Entry) void;
@@ -463,7 +473,6 @@ pub extern fn archive_write_free(*struct_archive) c_int;
 pub extern fn archive_write_finish(*struct_archive) c_int;
 pub extern fn archive_write_set_format_option(_a: *struct_archive, m: [*c]const u8, o: [*c]const u8, v: [*c]const u8) c_int;
 pub extern fn archive_write_set_option(_a: *struct_archive, m: [*c]const u8, o: [*c]const u8, v: [*c]const u8) c_int;
-pub extern fn archive_write_set_options(_a: *struct_archive, opts: [*c]const u8) c_int;
 pub extern fn archive_write_set_passphrase(_a: *struct_archive, p: [*c]const u8) c_int;
 pub extern fn archive_write_set_passphrase_callback(*struct_archive, client_data: ?*anyopaque, ?archive_passphrase_callback) c_int;
 pub extern fn archive_write_disk_new() *struct_archive;
@@ -543,7 +552,6 @@ pub extern fn archive_match_include_gname_w(*struct_archive, [*c]const wchar_t) 
 pub extern fn archive_utility_string_sort([*c][*c]u8) c_int;
 
 pub extern fn archive_entry_clone(*struct_archive_entry) *struct_archive_entry;
-pub extern fn archive_entry_new2(*struct_archive) *struct_archive_entry;
 pub extern fn archive_entry_atime(*struct_archive_entry) time_t;
 pub extern fn archive_entry_atime_nsec(*struct_archive_entry) c_long;
 pub extern fn archive_entry_atime_is_set(*struct_archive_entry) c_int;

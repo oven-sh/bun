@@ -149,3 +149,12 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     echo "OSX Deployment Target: ${CMAKE_OSX_DEPLOYMENT_TARGET}"
   fi
 fi
+
+
+
+if [[ $(uname) ==  "OpenBSD" ]]; then
+    export MAKE="gmake"
+else
+    export MAKE="make"
+fi
+

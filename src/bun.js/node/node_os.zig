@@ -7,7 +7,8 @@ const strings = bun.strings;
 const JSC = bun.JSC;
 const Environment = bun.Environment;
 const Global = bun.Global;
-const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
+const is_bindgen: bool = false;
+const heap_allocator = bun.default_allocator;
 
 const libuv = bun.windows.libuv;
 pub const OS = struct {
@@ -58,6 +59,7 @@ pub const OS = struct {
             .linux => cpusImplLinux(globalThis),
             .mac => cpusImplDarwin(globalThis),
             .windows => cpusImplWindows(globalThis),
+            .openbsd => cpusImplOpenBSD(globalThis),
             else => @compileError("unsupported OS"),
         } catch {
             const err = JSC.SystemError{
@@ -190,6 +192,51 @@ pub const OS = struct {
             }
         }
 
+        return values;
+    }
+
+    fn cpusImplOpenBSD(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
+        // Fetch the CPU info structure
+        const c = std.c;
+
+        const HW_NCPUS: [2]c_int = [_]c_int{ c.CTL.HW, c.HW.NCPU };
+        var num_cpus: u32 = 0;
+        var len: usize = @sizeOf(@TypeOf(num_cpus));
+
+        if (!(c.sysctl(&HW_NCPUS, 2, &num_cpus, &len, null, 0) == 0)) {
+            return error.no_processor_info;
+        }
+
+        // Get CPU model name
+        const HW_MODELS: [2]c_int = [_]c_int{ c.CTL.HW, c.HW.MODEL };
+        var model_name_buf: [512]u8 = undefined;
+        len = model_name_buf.len;
+
+        if (!(c.sysctl(&HW_MODELS, 2, &model_name_buf, &len, null, 0) == 0)) {
+            return error.no_processor_info;
+        }
+
+        const model_name = JSC.ZigString.init(std.mem.sliceTo(&model_name_buf, 0)).withEncoding().toValueGC(globalThis);
+
+        // Get CPU speed
+        const HW_SPEED: [2]c_int = [_]c_int{ c.CTL.HW, c.HW.CPUSPEED };
+        var speed: u64 = 0;
+        len = @sizeOf(@TypeOf(speed));
+
+        if (!(c.sysctl(&HW_SPEED, 2, &speed, &len, null, 0) == 0)) {
+            return error.no_processor_info;
+        }
+
+        // Set up each CPU value in the return
+        const values = JSC.JSValue.createEmptyArray(globalThis, @as(u32, @intCast(num_cpus)));
+
+        for (0..num_cpus) |cpu_index| {
+            const cpu = JSC.JSValue.createEmptyObject(globalThis, 3);
+            cpu.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumber(speed / 1_000_000));
+            cpu.put(globalThis, JSC.ZigString.static("model"), model_name);
+            //cpu.put(globalThis, JSC.ZigString.static("times"), times.toValue(globalThis));
+            values.putIndex(globalThis, @as(u32, @intCast(cpu_index)), cpu);
+        }
         return values;
     }
 
@@ -539,7 +586,7 @@ pub const OS = struct {
                     //  cast to a link-layer socket address
                     if (comptime Environment.isLinux) {
                         break @as(?*std.posix.sockaddr.ll, @ptrCast(@alignCast(ll_iface.ifa_addr)));
-                    } else if (comptime Environment.isMac) {
+                    } else if (comptime (Environment.isMac or Environment.isOpenBSD)) {
                         break @as(?*C.sockaddr_dl, @ptrCast(@alignCast(ll_iface.ifa_addr)));
                     } else {
                         @compileError("unreachable");
@@ -550,7 +597,7 @@ pub const OS = struct {
                     // Encode its link-layer address.  We need 2*6 bytes for the
                     //  hex characters and 5 for the colon separators
                     var mac_buf: [17]u8 = undefined;
-                    const addr_data = if (comptime Environment.isLinux) ll_addr.addr else if (comptime Environment.isMac) ll_addr.sdl_data[ll_addr.sdl_nlen..] else @compileError("unreachable");
+                    const addr_data = if (comptime Environment.isLinux) ll_addr.addr else if (comptime Environment.isMac or comptime Environemnt.isOpenBSD) ll_addr.sdl_data[ll_addr.sdl_nlen..] else @compileError("unreachable");
                     if (addr_data.len < 6) {
                         const mac = "00:00:00:00:00:00";
                         interface.put(globalThis, JSC.ZigString.static("mac"), JSC.ZigString.init(mac).withEncoding().toJS(globalThis));

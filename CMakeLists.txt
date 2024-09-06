@@ -484,8 +484,12 @@ elseif(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY AND NOT BUN_TIDY_ONLY AND NOT BUN_
 endif()
 
 # Bun
+if (NOT NO_CODEGEN)
 find_program(BUN_EXECUTABLE bun ${REQUIRED_IF_NOT_ONLY_CPP_OR_LINK} DOC "Path to an already built release of Bun")
 message(STATUS "Found Bun: ${BUN_EXECUTABLE}")
+else()
+set (BUN_EXECUTABLE "echo")
+endif()
 
 if(WIN32 AND NO_CODEGEN)
     # TODO(@paperdave): remove this, see bun-windows.yml's comment.

@@ -1777,6 +1777,7 @@ pub const PosixLoop = extern struct {
 
     const EventType = switch (Environment.os) {
         .linux => std.os.linux.epoll_event,
+        .openbsd => std.posix.system.Kevent,
         .mac => std.posix.system.kevent64_s,
         // TODO:
         .windows => *anyopaque,

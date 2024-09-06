@@ -142,14 +142,21 @@ pub const NodeCrypto = struct {
             globalThis.throwInvalidArgumentType("hkdfSync", "ikm", "<string> | <ArrayBuffer> | <Buffer>");
             return .null;
         };
+        defer ikm.deinit();
         const salt = JSC.Node.StringOrBuffer.fromJS(globalThis, globalThis.bunVM().allocator, arguments[2]) orelse {
             globalThis.throwInvalidArgumentType("hkdfSync", "salt", "<string> | <ArrayBuffer> | <Buffer>");
             return .null;
         };
+        defer salt.deinit();
         const info = JSC.Node.StringOrBuffer.fromJS(globalThis, globalThis.bunVM().allocator, arguments[3]) orelse {
             globalThis.throwInvalidArgumentType("hkdfSync", "info", "<string> | <ArrayBuffer> | <Buffer>");
             return .null;
         };
+        defer info.deinit();
+        if (info.slice().len > 1024) {
+            globalThis.throw("Argument info canot be longer than 1024 bytes. Recieved {} bytes.", .{info.slice().len});
+            return .null;
+        }
 
         if (!arguments[4].isAnyInt()) {
             _ = globalThis.throwInvalidArgumentTypeValue("keylen", "integer", arguments[4]);

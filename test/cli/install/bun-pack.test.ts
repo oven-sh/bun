@@ -1,14 +1,15 @@
 import { spawn, write } from "bun";
 import { test, expect, describe, beforeEach } from "bun:test";
-import { bunExe, bunEnv, tmpdirSync } from "harness";
+import { bunExe, bunEnv, tmpdirSync, runBunInstall } from "harness";
 import { readTarball } from "bun:internal-for-testing";
-import { exists, rename, rm, stat } from "fs/promises";
+import { exists, rename, rm, stat, mkdir } from "fs/promises";
 import { join } from "path";
 
 var packageDir: string;
 
 beforeEach(() => {
   packageDir = tmpdirSync();
+  console.log(`packageDir: ${packageDir}`);
 });
 
 async function pack(cwd: string, env: NodeJS.ProcessEnv, ...args: string[]) {
@@ -28,9 +29,11 @@ async function pack(cwd: string, env: NodeJS.ProcessEnv, ...args: string[]) {
   expect(err).not.toContain("panic:");
 
   const out = await Bun.readableStreamToText(stdout);
-  const exitCode = await exited;
 
-  return { out, err, exitCode };
+  const exitCode = await exited;
+  expect(exitCode).toBe(0);
+
+  return { out, err };
 }
 
 async function packExpectError(cwd: string, env: NodeJS.ProcessEnv, ...args: string[]) {
@@ -47,9 +50,11 @@ async function packExpectError(cwd: string, env: NodeJS.ProcessEnv, ...args: str
   expect(err).not.toContain("panic:");
 
   const out = await Bun.readableStreamToText(stdout);
-  const exitCode = await exited;
 
-  return { out, err, exitCode };
+  const exitCode = await exited;
+  expect(exitCode).toBeGreaterThan(0);
+
+  return { out, err };
 }
 
 test("basic", async () => {
@@ -64,11 +69,9 @@ test("basic", async () => {
     write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
   ]);
 
-  const { exitCode } = await pack(packageDir, bunEnv);
-  expect(exitCode).toBe(0);
+  await pack(packageDir, bunEnv);
 
   const tarball = readTarball(join(packageDir, "pack-basic-1.2.3.tgz"));
-  // console.log(tarball);
   expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }, { "pathname": "package/index.js" }]);
 });
 
@@ -128,8 +131,7 @@ describe("package.json names and versions", () => {
         write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
       ]);
 
-      const { err, exitCode } = await packExpectError(packageDir, bunEnv);
-      expect(exitCode).toBe(1);
+      const { err } = await packExpectError(packageDir, bunEnv);
       expect(err).toContain(expectedError);
     });
   }
@@ -137,8 +139,7 @@ describe("package.json names and versions", () => {
   test("missing", async () => {
     await write(join(packageDir, "index.js"), "console.log('hello ./index.js')");
 
-    const { err, exitCode } = await packExpectError(packageDir, bunEnv);
-    expect(exitCode).toBe(1);
+    const { err } = await packExpectError(packageDir, bunEnv);
     expect(err).toContain(`error: No package.json was found for directory "${packageDir}`);
   });
 
@@ -186,9 +187,7 @@ describe("package.json names and versions", () => {
         write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
       ]);
 
-      const { exitCode } = fail ? await packExpectError(packageDir, bunEnv) : await pack(packageDir, bunEnv);
-      const expected = fail ? 1 : 0;
-      expect(exitCode).toBe(expected);
+      fail ? await packExpectError(packageDir, bunEnv) : await pack(packageDir, bunEnv);
       if (!fail) {
         const tarball = readTarball(join(packageDir, output));
         expect(tarball.entries).toHaveLength(2);
@@ -210,8 +209,7 @@ describe("flags", () => {
       write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
     ]);
 
-    const { out, exitCode } = await pack(packageDir, bunEnv, "--dry-run");
-    expect(exitCode).toBe(0);
+    const { out } = await pack(packageDir, bunEnv, "--dry-run");
 
     expect(out).toContain("files: 2");
 
@@ -230,20 +228,17 @@ describe("flags", () => {
     ]);
 
     for (const invalidGzipLevel of ["-1", "10", "kjefj"]) {
-      const { err, exitCode } = await packExpectError(packageDir, bunEnv, `--gzip-level=${invalidGzipLevel}`);
-      expect(exitCode).toBe(1);
+      const { err } = await packExpectError(packageDir, bunEnv, `--gzip-level=${invalidGzipLevel}`);
       expect(err).toBe(`error: compression level must be between 0 and 9, received ${invalidGzipLevel}\n`);
     }
 
-    let { exitCode } = await pack(packageDir, bunEnv, "--gzip-level=0");
-    expect(exitCode).toBe(0);
+    await pack(packageDir, bunEnv, "--gzip-level=0");
     const largerTarball = readTarball(join(packageDir, "pack-gzip-test-111111.1.11111111111111.tgz"));
     expect(largerTarball.entries).toHaveLength(2);
 
     await rm(join(packageDir, "pack-gzip-test-111111.1.11111111111111.tgz"));
 
-    ({ exitCode } = await pack(packageDir, bunEnv, "--gzip-level=9"));
-    expect(exitCode).toBe(0);
+    await pack(packageDir, bunEnv, "--gzip-level=9");
     const smallerTarball = readTarball(join(packageDir, "pack-gzip-test-111111.1.11111111111111.tgz"));
     expect(smallerTarball.entries).toHaveLength(2);
 
@@ -276,8 +271,7 @@ describe("flags", () => {
       ]);
 
       const dest = join(packageDir, path);
-      const { exitCode } = await pack(packageDir, bunEnv, `--destination=${dest}`);
-      expect(exitCode).toBe(0);
+      await pack(packageDir, bunEnv, `--destination=${dest}`);
 
       const tarball = readTarball(join(dest, "pack-dest-test-1.1.1.tgz"));
       expect(tarball.entries).toHaveLength(2);
@@ -329,7 +323,120 @@ describe("flags", () => {
   });
 });
 
-describe("workspaces", () => {});
+describe("workspaces", () => {
+  async function createBasicWorkspace() {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-workspace",
+          version: "2.2.2",
+          workspaces: ["pkgs/*"],
+        }),
+      ),
+      write(join(packageDir, "root.js"), "console.log('hello ./root.js')"),
+      write(join(packageDir, "pkgs", "pkg1", "package.json"), JSON.stringify({ name: "pkg1", version: "1.1.1" })),
+      write(join(packageDir, "pkgs", "pkg1", "index.js"), "console.log('hello ./index.js')"),
+    ]);
+  }
+  test("in a workspace", async () => {
+    await createBasicWorkspace();
+    await pack(join(packageDir, "pkgs", "pkg1"), bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pkgs", "pkg1", "pkg1-1.1.1.tgz"));
+    expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }, { "pathname": "package/index.js" }]);
+  });
+  test("in a workspace subdirectory", async () => {
+    await createBasicWorkspace();
+    await mkdir(join(packageDir, "pkgs", "pkg1", "subdir"));
+
+    await pack(join(packageDir, "pkgs", "pkg1", "subdir"), bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pkgs", "pkg1", "pkg1-1.1.1.tgz"));
+    expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }, { "pathname": "package/index.js" }]);
+  });
+  test("replaces workspace: protocol without lockfile", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-workspace-protocol",
+          version: "2.3.4",
+          workspaces: ["pkgs/*"],
+          dependencies: {
+            "pkg1": "workspace:1.1.1",
+          },
+        }),
+      ),
+      write(join(packageDir, "root.js"), "console.log('hello ./root.js')"),
+      write(join(packageDir, "pkgs", "pkg1", "package.json"), JSON.stringify({ name: "pkg1", version: "1.1.1" })),
+    ]);
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-workspace-protocol-2.3.4.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { "pathname": "package/package.json" },
+      { "pathname": "package/pkgs/pkg1/package.json" },
+      { "pathname": "package/root.js" },
+    ]);
+    expect(JSON.parse(tarball.entries[0].contents)).toEqual({
+      name: "pack-workspace-protocol",
+      version: "2.3.4",
+      workspaces: ["pkgs/*"],
+      dependencies: {
+        "pkg1": "1.1.1",
+      },
+    });
+  });
+
+  const withLockfileWorkspaceProtocolTests = [
+    { input: "workspace:^", expected: "^1.1.1" },
+    { input: "workspace:~", expected: "~1.1.1" },
+    { input: "workspace:1.x", expected: "1.x" },
+    { input: "workspace:1.1.x", expected: "1.1.x" },
+    { input: "workspace:*", expected: "1.1.1" },
+    { input: "workspace:-", expected: "-" },
+  ];
+
+  for (const { input, expected } of withLockfileWorkspaceProtocolTests) {
+    test(`replaces workspace: protocol with lockfile: ${input}`, async () => {
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "pack-workspace-protocol-with-lockfile",
+            version: "2.5.6",
+            workspaces: ["pkgs/*"],
+            dependencies: {
+              "pkg1": input,
+            },
+          }),
+        ),
+        write(join(packageDir, "root.js"), "console.log('hello ./root.js')"),
+        write(join(packageDir, "pkgs", "pkg1", "package.json"), JSON.stringify({ name: "pkg1", version: "1.1.1" })),
+      ]);
+
+      await runBunInstall(bunEnv, packageDir);
+      await pack(packageDir, bunEnv);
+
+      const tarball = readTarball(join(packageDir, "pack-workspace-protocol-with-lockfile-2.5.6.tgz"));
+      expect(tarball.entries).toMatchObject([
+        { "pathname": "package/package.json" },
+        { "pathname": "package/pkgs/pkg1/package.json" },
+        { "pathname": "package/root.js" },
+      ]);
+      expect(JSON.parse(tarball.entries[0].contents)).toEqual({
+        name: "pack-workspace-protocol-with-lockfile",
+        version: "2.5.6",
+        workspaces: ["pkgs/*"],
+        dependencies: {
+          "pkg1": expected,
+        },
+      });
+    });
+  }
+});
 
 test("unicode", async () => {
   await Promise.all([
@@ -343,8 +450,7 @@ test("unicode", async () => {
     write(join(packageDir, "äöüščří.js"), `console.log('hello ./äöüščří.js');`),
   ]);
 
-  const { exitCode } = await pack(packageDir, bunEnv);
-  expect(exitCode).toBe(0);
+  await pack(packageDir, bunEnv);
   const tarball = readTarball(join(packageDir, "pack-unicode-1.1.1.tgz"));
   expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }, { "pathname": "package/äöüščří.js" }]);
 });

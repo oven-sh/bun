@@ -1065,20 +1065,20 @@ pub const PackCommand = struct {
 
     fn pack(
         ctx: *Context,
-        package_json_path: stringZ,
+        abs_package_json_path: stringZ,
         comptime enable_ansi_colors: bool,
     ) PackError!void {
         _ = enable_ansi_colors;
         const manager = ctx.manager;
-        const json = switch (manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, package_json_path, .{
+        const json = switch (manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, abs_package_json_path, .{
             .guess_indentation = true,
         })) {
             .read_err => |err| {
-                Output.err(err, "failed to read package.json: {s}", .{package_json_path});
+                Output.err(err, "failed to read package.json: {s}", .{abs_package_json_path});
                 Global.crash();
             },
             .parse_err => |err| {
-                Output.err(err, "failed to parse package.json: {s}", .{package_json_path});
+                Output.err(err, "failed to parse package.json: {s}", .{abs_package_json_path});
                 Global.crash();
             },
             .entry => |entry| entry,
@@ -1112,6 +1112,8 @@ pub const PackCommand = struct {
             }
         };
 
+        const abs_workspace_path: string = strings.withoutTrailingSlash(strings.withoutSuffixComptime(abs_package_json_path, "package.json"));
+
         const postpack_script: ?string = postpack_script: {
             // --ignore-scripts
             if (!manager.options.do.run_scripts) break :postpack_script null;
@@ -1126,7 +1128,7 @@ pub const PackCommand = struct {
                         ctx.allocator,
                         prepack_script_str,
                         "prepack",
-                        FileSystem.instance.top_level_dir,
+                        abs_workspace_path,
                         this_bundler.env,
                         &.{},
                         manager.options.log_level == .silent,
@@ -1150,7 +1152,7 @@ pub const PackCommand = struct {
                         ctx.allocator,
                         prepare_script_str,
                         "prepare",
-                        FileSystem.instance.top_level_dir,
+                        abs_workspace_path,
                         this_bundler.env,
                         &.{},
                         manager.options.log_level == .silent,
@@ -1176,15 +1178,14 @@ pub const PackCommand = struct {
             break :postpack_script null;
         };
 
-        const package_json_dir = std.fs.path.dirname(package_json_path) orelse @panic("ooops");
         var root_dir = root_dir: {
             var path_buf: PathBuffer = undefined;
-            @memcpy(path_buf[0..package_json_dir.len], package_json_dir);
-            path_buf[package_json_dir.len] = 0;
-            break :root_dir std.fs.openDirAbsoluteZ(path_buf[0..package_json_dir.len :0], .{
+            @memcpy(path_buf[0..abs_workspace_path.len], abs_workspace_path);
+            path_buf[abs_workspace_path.len] = 0;
+            break :root_dir std.fs.openDirAbsoluteZ(path_buf[0..abs_workspace_path.len :0], .{
                 .iterate = true,
             }) catch |err| {
-                Output.err(err, "failed to open root directory: {s}\n", .{package_json_dir});
+                Output.err(err, "failed to open root directory: {s}\n", .{abs_workspace_path});
                 Global.crash();
             };
         };
@@ -1265,7 +1266,7 @@ pub const PackCommand = struct {
                 Output.pretty("\n{}\n\n", .{fmtTarballFilename(package_name, package_version)});
             } else {
                 var dest_buf: PathBuffer = undefined;
-                const abs_tarball_dest, _ = absTarballDestination(ctx, package_name, package_version, &dest_buf);
+                const abs_tarball_dest, _ = absTarballDestination(ctx, abs_workspace_path, package_name, package_version, &dest_buf);
                 Output.pretty("\n{s}\n\n", .{abs_tarball_dest});
             }
 
@@ -1277,7 +1278,7 @@ pub const PackCommand = struct {
                     ctx.allocator,
                     postpack_script_str,
                     "postpack",
-                    FileSystem.instance.top_level_dir,
+                    abs_workspace_path,
                     manager.env,
                     &.{},
                     manager.options.log_level == .silent,
@@ -1342,7 +1343,13 @@ pub const PackCommand = struct {
         print_buf.clearRetainingCapacity();
 
         var dest_buf: PathBuffer = undefined;
-        const abs_tarball_dest, const abs_tarball_dest_dir_end = absTarballDestination(ctx, package_name, package_version, &dest_buf);
+        const abs_tarball_dest, const abs_tarball_dest_dir_end = absTarballDestination(
+            ctx,
+            abs_workspace_path,
+            package_name,
+            package_version,
+            &dest_buf,
+        );
 
         {
             // create the directory if it doesn't exist
@@ -1479,7 +1486,7 @@ pub const PackCommand = struct {
                 ctx.allocator,
                 postpack_script_str,
                 "postpack",
-                FileSystem.instance.top_level_dir,
+                abs_workspace_path,
                 manager.env,
                 &.{},
                 manager.options.log_level == .silent,
@@ -1498,12 +1505,13 @@ pub const PackCommand = struct {
 
     fn absTarballDestination(
         ctx: *Context,
+        abs_workspace_path: string,
         package_name: string,
         package_version: string,
         dest_buf: []u8,
     ) struct { stringZ, usize } {
         const tarball_destination_dir = bun.path.joinAbsStringBuf(
-            FileSystem.instance.top_level_dir,
+            abs_workspace_path,
             dest_buf,
             &.{ctx.manager.options.pack_destination},
             .posix,

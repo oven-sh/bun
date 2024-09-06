@@ -59,6 +59,9 @@ Build-Dependency `
   -Script "cares" `
   -Outputs @("cares.lib")
 Build-Dependency `
+  -Script "zlib" `
+  -Outputs @("zlib.lib")
+Build-Dependency `
   -Script "libarchive" `
   -Outputs @("archive.lib")
 Build-Dependency `
@@ -70,9 +73,6 @@ Build-Dependency `
 Build-Dependency `
   -Script "tinycc" `
   -Outputs @("tcc.lib")
-Build-Dependency `
-  -Script "zlib" `
-  -Outputs @("zlib.lib")
 Build-Dependency `
   -Script "zstd" `
   -Outputs @("zstd.lib")

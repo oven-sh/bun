@@ -1,3 +1,4 @@
+#include "JavaScriptCore/JSCJSValue.h"
 #include "bun-uws/src/HttpParser.h"
 #include "root.h"
 #include "JSDOMGlobalObjectInlines.h"
@@ -25,7 +26,7 @@ using namespace WebCore;
 extern "C" uWS::HttpRequest* Request__getUWSRequest(void*);
 extern "C" void Request__setInternalEventCallback(void*, EncodedJSValue, JSC::JSGlobalObject*);
 extern "C" void Request__setTimeout(void*, EncodedJSValue, JSC::JSGlobalObject*);
-
+extern "C" void Server__setIdleTimeout(EncodedJSValue, EncodedJSValue, JSC::JSGlobalObject*);
 static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject* prototype, JSObject* objectValue, JSC::InternalFieldTuple* tuple, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -358,7 +359,22 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetTimeout, (JSGlobalObject * globalObject, CallF
         Request__setTimeout(jsRequest->wrapped(), JSValue::encode(seconds), globalObject);
     }
 
-    return JSValue::encode(jsNull());
+    return JSValue::encode(jsUndefined());
+}
+JSC_DEFINE_HOST_FUNCTION(jsHTTPSetServerIdleTimeout, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // This is an internal binding.
+    JSValue serverValue = callFrame->uncheckedArgument(0);
+    JSValue seconds = callFrame->uncheckedArgument(1);
+
+    ASSERT(callFrame->argumentCount() == 2);
+
+    Server__setIdleTimeout(JSValue::encode(serverValue), JSValue::encode(seconds), globalObject);
+
+    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsHTTPGetHeader, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -465,6 +481,9 @@ JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setRequestTimeout"_s)),
         JSC::JSFunction::create(vm, globalObject, 2, "setRequestTimeout"_s, jsHTTPSetTimeout, ImplementationVisibility::Public), 0);
 
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setServerIdleTimeout"_s)),
+        JSC::JSFunction::create(vm, globalObject, 2, "setServerIdleTimeout"_s, jsHTTPSetServerIdleTimeout, ImplementationVisibility::Public), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "Response"_s)),
         globalObject->JSResponseConstructor(), 0);

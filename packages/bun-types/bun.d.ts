@@ -2812,6 +2812,22 @@ declare module "bun" {
     requestIP(request: Request): SocketAddress | null;
 
     /**
+     * Reset the idleTimeout of the given Request to the number in seconds. 0 means no timeout.
+     *
+     * @example
+     * ```js
+     * export default {
+     *  async fetch(request, server) {
+     *    server.timeout(request, 60);
+     *    await Bun.sleep(30000);
+     *    return new Response("30 seconds have passed");
+     *  }
+     * }
+     * ```
+     */
+    timeout(request: Request, seconds: number): SocketAddress | null;
+
+    /**
      * Undo a call to {@link Server.unref}
      *
      * If the Server has already been stopped, this does nothing.

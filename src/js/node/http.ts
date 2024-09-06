@@ -13,6 +13,7 @@ const {
   assignHeaders: assignHeadersFast,
   assignEventCallback,
   setRequestTimeout,
+  setServerIdleTimeout,
   Response,
   Request,
   Headers,
@@ -24,6 +25,7 @@ const {
   assignHeaders: (object: any, req: Request, headersTuple: any) => boolean;
   assignEventCallback: (req: Request, callback: (event: number) => void) => void;
   setRequestTimeout: (req: Request, timeout: number) => void;
+  setServerIdleTimeout: (server: any, timeout: number) => void;
   Response: (typeof globalThis)["Response"];
   Request: (typeof globalThis)["Request"];
   Headers: (typeof globalThis)["Headers"];
@@ -237,6 +239,11 @@ var FakeSocket = class Socket extends Duplex {
   }
 
   setTimeout(timeout, callback) {
+    const socketData = this[kInternalSocketData];
+    if (!socketData) return; // sometimes 'this' is Socket not FakeSocket
+
+    const [server, http_res, req] = socketData;
+    http_res?.req?.setTimeout(timeout, callback);
     return this;
   }
 
@@ -706,7 +713,11 @@ Server.prototype = {
   },
 
   setTimeout(msecs, callback) {
-    // TODO:
+    const server = this[serverSymbol];
+    if (server) {
+      setServerIdleTimeout(server, Math.ceil(msecs / 1000));
+      typeof callback === "function" && this.once("timeout", callback);
+    }
     return this;
   },
 
@@ -942,8 +953,11 @@ IncomingMessage.prototype = {
     // noop
   },
   setTimeout(msecs, callback) {
-    setRequestTimeout(this[reqSymbol], Math.ceil(msecs / 1000));
-    this.once("timeout", callback);
+    const req = this[reqSymbol];
+    if (req) {
+      setRequestTimeout(req, Math.ceil(msecs / 1000));
+      typeof callback === "function" && this.once("timeout", callback);
+    }
     return this;
   },
   get socket() {

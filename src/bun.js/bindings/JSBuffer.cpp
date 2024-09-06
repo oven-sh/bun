@@ -179,6 +179,10 @@ static inline uint32_t parseIndex(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
     if (auto num = arg.tryGetAsUint32Index()) {
         return num.value();
     }
+    if (auto num2 = static_cast<size_t>(num)) {
+        scope.throwException(lexicalGlobalObject, Bun::Bun__ERR_OUT_OF_RANGE_static2(lexicalGlobalObject, name, 0, upperBound, arg));
+        return 0;
+    }
 
     scope.throwException(lexicalGlobalObject, Bun::Bun__ERR_INVALID_ARG_TYPE_static2(lexicalGlobalObject, name, "integer"_s, arg));
     return 0;

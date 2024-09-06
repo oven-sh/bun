@@ -1255,8 +1255,7 @@ function flushFirstWrite(self) {
   let firstWrite = self[firstWriteSymbol];
   // at this point, the user did not call end and we have not flushed the first write
   // we need to flush it now and behave like chunked encoding
-  const { promise: controllerPromise, resolve: resolveController } = $newPromiseCapability(GlobalPromise);
-  self[controllerSymbol] = controllerPromise;
+
   self._reply(
     new Response(
       new ReadableStream({
@@ -1265,8 +1264,6 @@ function flushFirstWrite(self) {
           self[controllerSymbol] = controller;
           if (firstWrite) controller.write(firstWrite);
           firstWrite = undefined;
-          resolveController(controller);
-
           if (!self[finishedSymbol]) {
             const { promise, resolve } = $newPromiseCapability(GlobalPromise);
             self[deferredSymbol] = resolve;
@@ -1317,16 +1314,10 @@ ServerResponse.prototype._writev = function (chunks, callback) {
 
 function ensureReadableStreamController(run) {
   const thisController = this[controllerSymbol];
-  if (thisController) {
-    if (thisController.then) {
-      return thisController.then(run);
-    }
-    return run(thisController);
-  }
+  if (thisController) return run(thisController);
   this.headersSent = true;
   let firstWrite = this[firstWriteSymbol];
-  const { promise: controllerPromise, resolve: resolveController } = $newPromiseCapability(GlobalPromise);
-  this[controllerSymbol] = controllerPromise;
+  this[controllerSymbol] = undefined;
   this._reply(
     new Response(
       new ReadableStream({
@@ -1336,8 +1327,6 @@ function ensureReadableStreamController(run) {
           if (firstWrite) controller.write(firstWrite);
           firstWrite = undefined;
           run(controller);
-          resolveController(controller);
-
           if (!this[finishedSymbol]) {
             const { promise, resolve } = $newPromiseCapability(GlobalPromise);
             this[deferredSymbol] = resolve;

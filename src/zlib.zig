@@ -1139,8 +1139,8 @@ pub const ZlibDecompressorStreaming = struct {
                         const header = &[_]u8{ 0x1f, 0x8b };
                         state.next_in = header.ptr;
                         state.avail_in = @intCast(header.len);
-                        var out: [CHUNK]u8 = undefined;
-                        state.avail_out = CHUNK;
+                        var out: [0]u8 = undefined;
+                        state.avail_out = 0;
                         state.next_out = &out;
                         const ret = inflate(state, this.flush);
                         bun.assert(ret == .Ok);

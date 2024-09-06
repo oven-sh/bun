@@ -1667,7 +1667,7 @@ pub const Interpreter = struct {
             .allocator = bun.default_allocator,
             .buffer = JSC.ArrayBuffer.fromBytes(@constCast(bytelist.slice()), .Uint8Array),
         };
-        return buffer.toNodeBuffer(this.event_loop.js.global);
+        return buffer.toNodeBuffer(globalThis);
     }
 
     fn asyncCmdDone(this: *ThisInterpreter, @"async": *Async) void {

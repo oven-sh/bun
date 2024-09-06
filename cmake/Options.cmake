@@ -8,11 +8,8 @@ optionx(BUN_LINK_ONLY BOOL "If only the linking step should be built" DEFAULT OF
 optionx(BUN_CPP_ONLY BOOL "If only the C++ part of Bun should be built" DEFAULT OFF)
 
 optionx(CI BOOL "If CI is enabled" DEFAULT OFF)
-
-if(CI)
-  optionx(BUILDKITE BOOL "If Buildkite is enabled" DEFAULT OFF)
-  optionx(GITHUB_ACTIONS BOOL "If GitHub Actions is enabled" DEFAULT OFF)
-endif()
+optionx(BUILDKITE BOOL "If Buildkite is enabled" DEFAULT OFF)
+optionx(GITHUB_ACTIONS BOOL "If GitHub Actions is enabled" DEFAULT OFF)
 
 if(BUILDKITE)
   optionx(BUILDKITE_COMMIT STRING "The commit hash")

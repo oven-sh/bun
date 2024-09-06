@@ -26,9 +26,9 @@ setenv(CCACHE_DIR ${CACHE_PATH}/ccache)
 setenv(CCACHE_BASEDIR ${CWD})
 setenv(CCACHE_NOHASHDIR 1)
 
-if(CCACHE_STRATEGY STREQUAL "read-only")
+if(CACHE_STRATEGY STREQUAL "read-only")
   setenv(CCACHE_READONLY 1)
-elseif(CCACHE_STRATEGY STREQUAL "write-only")
+elseif(CACHE_STRATEGY STREQUAL "write-only")
   setenv(CCACHE_RECACHE 1)
 endif()
 

@@ -2361,6 +2361,22 @@ it("should emit close when connection is aborted", async () => {
   }
 });
 
+it("must set headersSent to true after headers are sent", async () => {
+  const server = createServer().listen(0);
+  try {
+    await once(server, "listening");
+    fetch(`http://localhost:${server.address().port}`).then(res => res.text());
+    const [req, res] = await once(server, "request");
+    expect(res.headersSent).toBe(false);
+    const { promise, resolve } = Promise.withResolvers();
+    res.end("OK", resolve);
+    await promise;
+    expect(res.headersSent).toBe(true);
+  } finally {
+    server.close();
+  }
+});
+
 it("should emit timeout event", async () => {
   const server = http.createServer().listen(0);
   try {
@@ -2403,3 +2419,22 @@ it("should emit timeout event when using server.setTimeout", async () => {
     server.closeAllConnections();
   }
 }, 12_000);
+it("must set headersSent to true after headers are sent when using chunk encoded", async () => {
+  const server = createServer().listen(0);
+  try {
+    await once(server, "listening");
+    fetch(`http://localhost:${server.address().port}`).then(res => res.text());
+    const [req, res] = await once(server, "request");
+    expect(res.headersSent).toBe(false);
+    const { promise, resolve } = Promise.withResolvers();
+    res.write("first", () => {
+      res.write("second", () => {
+        res.end("OK", resolve);
+      });
+    });
+    await promise;
+    expect(res.headersSent).toBe(true);
+  } finally {
+    server.close();
+  }
+});

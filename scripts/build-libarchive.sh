@@ -33,7 +33,7 @@ cmake $CMAKE_FLAGS \
   -DENABLE_ZLIB=1 \
   -DENABLE_ZSTD=0 \
   -DZLIB_INCLUDE_DIR=$BUN_DEPS_DIR/zlib \
-  -DZLIB_LIBRARY=$BUN_DEPS_OUT_DIR/libz.a \
+  -DZLIB_LIBRARIES=$BUN_DEPS_OUT_DIR/libz.a \
   -GNinja \
   -B . -S ..
 cmake --build . --target libarchive.a --config Release -- -j$CPUS

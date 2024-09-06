@@ -28,17 +28,17 @@ const {
 } = $zig("node_crypto_binding.zig", "NodeCrypto.create");
 
 function hkdfSync(digest, ikm, salt, info, keylen) {
-  return _hkdfSync(digest, ikm, salt, info, keylen);
+  return _hkdfSync(digest, ikm, salt, info, keylen).buffer;
 }
 
 function hkdf(digest, ikm, salt, info, keylen, callback) {
   if (callback != null) {
     // Causes weird test failures
     // process.nextTick(() => callback(null, _hkdfSync(digest, ikm, salt, info, keylen)));
-    callback(null, _hkdfSync(digest, ikm, salt, info, keylen));
+    callback(null, hkdfSync(digest, ikm, salt, info, keylen));
     return;
   }
-  return _hkdfSync(digest, ikm, salt, info, keylen);
+  return hkdfSync(digest, ikm, salt, info, keylen);
 }
 
 function randomInt(min, max, callback) {

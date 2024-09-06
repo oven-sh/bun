@@ -135,7 +135,7 @@ pub const NodeCrypto = struct {
             };
         };
 
-        // This can also be a KeyObject
+        // This can also be a KeyObject according to node types, but that's not supported right now
         // Be sure to test with all listed here: <string> | <ArrayBuffer> | <Buffer> | <TypedArray> | <DataView> | <KeyObject>
         // Be sure this works with a keylen of 0
         const ikm = JSC.Node.StringOrBuffer.fromJS(globalThis, globalThis.bunVM().allocator, arguments[1]) orelse {

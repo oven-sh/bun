@@ -72,7 +72,7 @@ test("rejects excessive key size", () => {
   }
 
   try {
-    crypto.hkdfSync("sha512", "key", "salt", "info", 200000, (err, ab) => {})
+    crypto.hkdf("sha512", "key", "salt", "info", 200000, (err, ab) => {})
   } catch (e) {
     expect(e.toString()).toInclude("cannot be larger");
   }
@@ -90,8 +90,7 @@ test("trivial", async () => {
 
   expect(err).toBeNull();
   expect(outSync).toStrictEqual(out);
-  expect(out.toString("hex")).toStrictEqual("24156e2c35525baaf3d0fbb92b734c8032a110a3f12e2596e441e1924870d84c3a500652a723738024432451046fd237efad8392fb686c5277a59e0105391653");
-  // value from node
+  expect(Buffer.from(out).toString("hex")).toStrictEqual("24156e2c35525baaf3d0fbb92b734c8032a110a3f12e2596e441e1924870d84c3a500652a723738024432451046fd237efad8392fb686c5277a59e0105391653");
 });
 
 const rfcTestCase = async (testNo, digest, ikm, salt, info, keylen, expected) => {
@@ -107,7 +106,7 @@ const rfcTestCase = async (testNo, digest, ikm, salt, info, keylen, expected) =>
 
     expect(err).toBeNull();
     expect(outSync).toStrictEqual(out);
-    expect(out.toString("hex")).toStrictEqual(expected);
+    expect(Buffer.from(out).toString("hex")).toStrictEqual(expected);
   })
 }
 

@@ -2825,8 +2825,7 @@ declare module "bun" {
      * }
      * ```
      */
-    timeout(request: Request, seconds: number): SocketAddress | null;
-
+    timeout(request: Request, seconds: number): void;
     /**
      * Undo a call to {@link Server.unref}
      *

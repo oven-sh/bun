@@ -2139,7 +2139,10 @@ pub const bindings = struct {
                     const mode = libarchive.archive_entry_mode(archive_entry);
 
                     var entry_info: EntryInfo = .{
-                        .pathname = String.createUTF8(pathname),
+                        .pathname = if (comptime Environment.isWindows)
+                            String.createUTF16(pathname)
+                        else
+                            String.createUTF8(pathname),
                         .kind = String.static(@tagName(kind)),
                         .mode = mode,
                     };

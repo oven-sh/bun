@@ -106,10 +106,6 @@ pub const NodeCrypto = struct {
         callframe: *JSC.CallFrame,
     ) JSC.JSValue {
         const arguments = callframe.arguments(5).slice();
-        if (arguments.len < 5) {
-            globalThis.throwNotEnoughArguments("hkdfSync", 5, arguments.len);
-            return .null;
-        }
 
         // From BunObject PBKDF2 `fromJS`
         const algorithm = brk: {

@@ -31,6 +31,16 @@ function hkdfSync(digest, ikm, salt, info, keylen) {
   return _hkdfSync(digest, ikm, salt, info, keylen);
 }
 
+function hkdf(digest, ikm, salt, info, keylen, callback) {
+  if (callback != null) {
+    // Causes weird test failures
+    // process.nextTick(() => callback(null, _hkdfSync(digest, ikm, salt, info, keylen)));
+    callback(null, _hkdfSync(digest, ikm, salt, info, keylen));
+    return;
+  }
+  return _hkdfSync(digest, ikm, salt, info, keylen);
+}
+
 function randomInt(min, max, callback) {
   if (max == null) {
     max = min;
@@ -12177,6 +12187,7 @@ __export(crypto_exports, {
   randomUUID: () => randomUUID,
   randomInt: () => randomInt,
   hkdfSync: () => hkdfSync,
+  hkdf: () => hkdf,
   getCurves: () => getCurves,
   scrypt: () => scrypt,
   scryptSync: () => scryptSync,

@@ -47,6 +47,10 @@ function isReadableStream(value) {
   return typeof value === "object" && value !== null && value instanceof ReadableStream;
 }
 
+function isWritableStream(value) {
+  return typeof value === "object" && value !== null && value instanceof WritableStream;
+}
+
 function validateBoolean(value, name) {
   if (typeof value !== "boolean") throw ERR_INVALID_ARG_TYPE(name, "boolean", value);
 }
@@ -4350,7 +4354,86 @@ var require_writable = __commonJS({
     Writable.prototype[EE.captureRejectionSymbol] = function (err) {
       this.destroy(err);
     };
-    var webStreamsAdapters;
+    var webStreamsAdapters = {
+      newStreamWritableFromWritableStream(
+        writableStream: WritableStream,
+        options: {
+          highWaterMark?: number;
+          encoding?: string;
+          objectMode?: boolean;
+          signal?: AbortSignal;
+        } = {},
+      ) {
+        if (!isWritableStream(writableStream)) {
+          throw new ERR_INVALID_ARG_TYPE("writableStream", "WritableStream", writableStream);
+        }
+
+        validateObject(options, "options");
+        const {
+          highWaterMark,
+          encoding,
+          objectMode = false,
+          signal,
+          // native = true,
+        } = options;
+
+        if (encoding !== undefined && !Buffer.isEncoding(encoding)) {
+          // TODO: why does this err in typescript?
+          throw new ERR_INVALID_ARG_VALUE(encoding, "options.encoding");
+        }
+        validateBoolean(objectMode, "options.objectMode");
+
+        const nativeStream = getNativeWritableStream(writableStream, options);
+        return nativeStream;
+      },
+
+      newWritableStreamFromStreamWritable(streamWritable: any, options: any = {}) {
+        if (typeof streamWritable?._writableState !== "object") {
+          throw new ERR_INVALID_ARG_TYPE("streamReadable", "stream.Readable", streamWritable);
+        }
+        var { isDestroyed, isReadable } = require_utils();
+        if (isDestroyed(streamWritable) || !isReadable(streamWritable)) {
+          const writable = new WritableStream();
+          writable.close();
+          return writable;
+        }
+        const objectMode = streamWritable.writableObjectMode;
+        const highWaterMark = streamWritable.writableHighWaterMark;
+
+        const evaluateStrategyOrFallback = strategy => {
+          if (strategy) return strategy;
+          if (objectMode) {
+            return new CountQueuingStrategy({ highWaterMark });
+          }
+          return { highWaterMark };
+        };
+        const strategy = evaluateStrategyOrFallback(options?.strategy);
+
+        let controller;
+
+        return new WritableStream(
+          {
+            start(c) {
+              controller = c;
+            },
+
+            write(chunk) {
+              controller.enqueue(chunk);
+              if (controller.desiredSize <= 0) streamWritable.pause();
+            },
+
+            close() {
+              destroy(streamWritable);
+            },
+
+            abort(reason) {
+              destroy(streamWritable, reason);
+            },
+          },
+          strategy,
+        );
+      },
+    };
     function lazyWebStreams() {
       if (webStreamsAdapters === void 0) webStreamsAdapters = {};
       return webStreamsAdapters;
@@ -5830,6 +5913,21 @@ function getNativeReadableStream(Readable, stream, options) {
   transferToNativeReadable(stream);
 
   return new NativeReadable(ptr, options);
+}
+
+// Cargo culted from the above function
+// TODO: might not be correct impl
+function getNativeWritableStream(stream, options) {
+  const ptr = stream.$bunNativePtr;
+  if (!ptr || ptr === -1) {
+    $debug("no native readable stream");
+    return undefined;
+  }
+  const type = stream.$bunNativeType;
+  $assert(typeof type === "number", "Invalid native type");
+  $assert(typeof ptr === "object", "Invalid native ptr");
+
+  return new NativeWritable(ptr, options);
 }
 
 /** --- Bun native stream wrapper ---  */

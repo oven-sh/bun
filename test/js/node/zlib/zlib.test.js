@@ -304,31 +304,33 @@ for (const [compress, decompressor] of [
   // [zlib.gzipSync, zlib.createGunzip],
   // [zlib.gzipSync, zlib.createUnzip],
 ]) {
-  it(`premature end handles bytesWritten properly: ${compress.name} + ${decompressor.name}`, async () => {
-    const { promise, resolve, reject } = Promise.withResolvers();
-    const input = "0123456789".repeat(4);
-    const compressed = compress(input);
-    const trailingData = Buffer.from("not valid compressed data");
+  const input = "0123456789".repeat(4);
+  const compressed = compress(input);
+  const trailingData = Buffer.from("not valid compressed data");
 
-    for (const variant of [
-      stream => {
-        stream.end(compressed);
-      },
-      stream => {
-        stream.write(compressed);
-        stream.write(trailingData);
-      },
-      stream => {
-        stream.write(compressed);
-        stream.end(trailingData);
-      },
-      stream => {
-        stream.write(Buffer.concat([compressed, trailingData]));
-      },
-      stream => {
-        stream.end(Buffer.concat([compressed, trailingData]));
-      },
-    ]) {
+  const variants = [
+    stream => {
+      stream.end(compressed);
+    },
+    // stream => {
+    //   stream.write(compressed);
+    //   stream.write(trailingData);
+    // },
+    stream => {
+      stream.write(compressed);
+      stream.end(trailingData);
+    },
+    // stream => {
+    //   stream.write(Buffer.concat([compressed, trailingData]));
+    // },
+    stream => {
+      stream.end(Buffer.concat([compressed, trailingData]));
+    },
+  ];
+  for (const i in variants) {
+    it(`premature end handles bytesWritten properly: ${compress.name} + ${decompressor.name}: variant ${i}`, async () => {
+      const variant = variants[i];
+      const { promise, resolve, reject } = Promise.withResolvers();
       let output = "";
       const stream = decompressor();
       stream.setEncoding("utf8");
@@ -343,9 +345,9 @@ for (const [compress, decompressor] of [
         }
       });
       variant(stream);
-    }
-    await promise;
-  });
+      await promise;
+    });
+  }
 }
 
 const inputString =

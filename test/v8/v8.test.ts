@@ -247,7 +247,14 @@ function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, jsArgs:
         : directories.bunRelease;
   const exe = runtime == Runtime.node ? "node" : bunExe();
 
-  const cmd = [exe, join(baseDir, "main.js"), testName, JSON.stringify(jsArgs), JSON.stringify(thisValue ?? null)];
+  const cmd = [
+    exe,
+    ...(runtime == Runtime.bun ? ["--smol"] : []),
+    join(baseDir, "main.js"),
+    testName,
+    JSON.stringify(jsArgs),
+    JSON.stringify(thisValue ?? null),
+  ];
   if (buildMode == BuildMode.debug) {
     cmd.push("debug");
   }
@@ -255,7 +262,11 @@ function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, jsArgs:
   const exec = spawnSync({
     cmd,
     cwd: baseDir,
-    env: bunEnv,
+    env: {
+      ...bunEnv,
+      BUN_GARBAGE_COLLECTOR_LEVEL: "2",
+      BUN_JSC_randomIntegrityAuditRate: "1.0",
+    },
   });
   const errs = exec.stderr.toString();
   const crashMsg = `test ${testName} crashed under ${Runtime[runtime]} in ${BuildMode[buildMode]} mode`;

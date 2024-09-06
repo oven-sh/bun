@@ -382,6 +382,25 @@ void test_many_v8_locals(const FunctionCallbackInfo<Value> &info) {
   }
 }
 
+void print_cell_location(Local<Data> v8_value, const char *fmt, ...) {
+  (void)v8_value;
+  (void)fmt;
+  // va_list ap;
+  // va_start(ap, fmt);
+  // vprintf(fmt, ap);
+  // va_end(ap);
+
+  // uintptr_t *slot = *reinterpret_cast<uintptr_t **>(&v8_value);
+  // uintptr_t tagged = *slot;
+  // uintptr_t addr = tagged & ~3;
+  // struct ObjectLayout {
+  //   uintptr_t map;
+  //   void *cell;
+  // };
+  // void *cell = reinterpret_cast<ObjectLayout *>(addr)->cell;
+  // printf(" = %p\n", cell);
+}
+
 static Local<Object> setup_object_with_string_field(Isolate *isolate,
                                                     Local<Context> context,
                                                     Local<ObjectTemplate> tmp,
@@ -389,9 +408,10 @@ static Local<Object> setup_object_with_string_field(Isolate *isolate,
                                                     const std::string &str) {
   EscapableHandleScope ehs(isolate);
   Local<Object> o = tmp->NewInstance(context).ToLocalChecked();
-  // print_cell_location(o, "objects[%5d]          ", i);
+  print_cell_location(o, "objects[%3d]   ", i);
   Local<String> value =
       String::NewFromUtf8(isolate, str.c_str()).ToLocalChecked();
+  print_cell_location(value, "objects[%3d]->0", i);
 
   o->SetInternalField(0, value);
   return ehs.Escape(o);
@@ -418,19 +438,22 @@ void test_handle_scope_gc(const FunctionCallbackInfo<Value> &info) {
   Local<Context> context = isolate->GetCurrentContext();
 
   // allocate a ton of objects
-  constexpr size_t num_small_allocs = 10000;
+  constexpr size_t num_small_allocs = 500;
 
   Local<String> mini_strings[num_small_allocs];
   for (size_t i = 0; i < num_small_allocs; i++) {
     std::string cpp_str = std::to_string(i);
     mini_strings[i] =
         String::NewFromUtf8(isolate, cpp_str.c_str()).ToLocalChecked();
+    print_cell_location(mini_strings[i], "mini_strings[%3d]", i);
   }
 
   // allocate some objects with internal fields, to check that those are
   // traced
   Local<ObjectTemplate> tmp = ObjectTemplate::New(isolate);
   tmp->SetInternalFieldCount(2);
+  print_cell_location(tmp, "object template");
+  print_cell_location(context, "context");
   Local<Object> objects[num_small_allocs];
 
   for (size_t i = 0; i < num_small_allocs; i++) {

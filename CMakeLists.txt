@@ -127,6 +127,7 @@ else()
 endif()
 
 include(BuildBun)
+include(CompilerFlags)
 
 if(ICU_INCLUDE_DIR)
   include_directories(${ICU_INCLUDE_DIR})

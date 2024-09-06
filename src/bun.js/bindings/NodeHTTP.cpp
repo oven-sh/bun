@@ -1,5 +1,3 @@
-#include "JavaScriptCore/JSCJSValue.h"
-#include "bun-uws/src/HttpParser.h"
 #include "root.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "ZigGlobalObject.h"

@@ -4100,7 +4100,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     }
                 } else {
                     // if the timeout is 0, we don't need to trigger the timeout event
-                    this.clearTimeoutHandler();
+                    resp.clearTimeout();
                 }
                 return true;
             }
@@ -5884,6 +5884,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             return JSValue.jsUndefined();
         }
 
+        pub fn setIdleTimeout(this: *ThisServer, seconds: c_uint) void {
+            this.config.idleTimeout = @truncate(@min(seconds, 255));
+        }
+
         pub fn publish(this: *ThisServer, globalThis: *JSC.JSGlobalObject, topic: ZigString, message_value: JSValue, compress_value: ?JSValue, exception: JSC.C.ExceptionRef) JSValue {
             if (this.config.websocket == null)
                 return JSValue.jsNumber(0);
@@ -7214,3 +7218,37 @@ const welcome_page_html_gz = @embedFile("welcome-page.html.gz");
 extern fn Bun__addInspector(bool, *anyopaque, *JSC.JSGlobalObject) void;
 
 const assert = bun.assert;
+
+pub export fn Server__setIdleTimeout(
+    server: JSC.JSValue,
+    seconds: JSC.JSValue,
+    globalThis: *JSC.JSGlobalObject,
+) void {
+    if (!server.isObject()) {
+        globalThis.throw("Failed to set timeout: The 'this' value is not a Server.", .{});
+        return;
+    }
+
+    if (!seconds.isNumber()) {
+        globalThis.throw("Failed to set timeout: The provided value is not of type 'number'.", .{});
+        return;
+    }
+    const value = seconds.to(c_uint);
+    if (server.as(HTTPServer)) |this| {
+        this.setIdleTimeout(value);
+    } else if (server.as(HTTPSServer)) |this| {
+        this.setIdleTimeout(value);
+    } else if (server.as(DebugHTTPServer)) |this| {
+        this.setIdleTimeout(value);
+    } else if (server.as(DebugHTTPSServer)) |this| {
+        this.setIdleTimeout(value);
+    } else {
+        globalThis.throw("Failed to set timeout: The 'this' value is not a Server.", .{});
+    }
+}
+
+comptime {
+    if (!JSC.is_bindgen) {
+        _ = Server__setIdleTimeout;
+    }
+}

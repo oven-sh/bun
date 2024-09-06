@@ -48,6 +48,10 @@ async function build(args) {
   generateOptions["-B"] = buildPath;
   buildOptions["--build"] = buildPath;
 
+  if (!generateOptions["-S"]) {
+    generateOptions["-S"] = process.cwd();
+  }
+
   const cacheRead = isCacheReadEnabled();
   const cacheWrite = isCacheWriteEnabled();
   if (cacheRead || cacheWrite) {

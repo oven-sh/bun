@@ -2294,6 +2294,7 @@ it("should emit close when connection is aborted", async () => {
       .catch(() => {});
 
     const [req, res] = await once(server, "request");
+    expect(req.complete).toBe(false);
     const closeEvent = once(req, "close");
     controller.abort();
     await closeEvent;

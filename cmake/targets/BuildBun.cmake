@@ -663,14 +663,15 @@ else()
     ${WEBKIT_LIB_PATH}/libWTF.a
     ${WEBKIT_LIB_PATH}/libJavaScriptCore.a
   )
-  if(NOT APPLE)
+  if(NOT APPLE OR EXISTS ${WEBKIT_LIB_PATH}/libbmalloc.a)
     target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libbmalloc.a)
   endif()
 endif()
 
-target_include_directories(${bun} PRIVATE ${WEBKIT_INCLUDE_PATH})
+include_directories(${WEBKIT_INCLUDE_PATH})
+
 if(WEBKIT_PREBUILT AND NOT APPLE)
-  target_include_directories(${bun} PRIVATE ${WEBKIT_INCLUDE_PATH}/wtf/unicode)
+  include_directories(${WEBKIT_INCLUDE_PATH}/wtf/unicode)
 endif()
 
 # --- Dependencies ---

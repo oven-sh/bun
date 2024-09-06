@@ -91,7 +91,7 @@ declare module "bun:sqlite" {
              * @default false
              * @since v1.1.14
              */
-            safeInteger?: boolean;
+            safeIntegers?: boolean;
 
             /**
              * When set to `false` or `undefined`:

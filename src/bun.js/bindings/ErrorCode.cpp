@@ -416,6 +416,38 @@ extern "C" JSC::EncodedJSValue Bun__ERR_STRING_TOO_LONG(JSC::JSGlobalObject* glo
     return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STRING_TOO_LONG, message));
 }
 
+JSC::JSValue Bun__ERR_INVALID_ARG_VALUE_static(JSC::JSGlobalObject* globalObject, ASCIILiteral name, JSC::JSValue value, ASCIILiteral reason)
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    ASCIILiteral type;
+    {
+        auto sp = name.span8();
+        auto str = std::string_view((const char*)(sp.data()), sp.size());
+        auto has = str.find('.') == std::string::npos;
+        type = has ? "property"_s : "argument"_s;
+    }
+
+    auto value_string = JSValueToStringSafe(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto message = makeString("The "_s, type, " '"_s, name, "' "_s, reason, ". Received "_s, value_string);
+    return createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, message);
+}
+
+JSC::JSValue Bun__ERR_UNKNOWN_ENCODING_static(JSC::JSGlobalObject* globalObject, JSC::JSValue encoding)
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto encoding_string = JSValueToStringSafe(globalObject, encoding);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto message = makeString("Unknown encoding: "_s, encoding_string);
+    return createError(globalObject, ErrorCode::ERR_UNKNOWN_ENCODING, message);
+}
+
 } // namespace Bun
 
 JSC::JSValue WebCore::toJS(JSC::JSGlobalObject* globalObject, CommonAbortReason abortReason)

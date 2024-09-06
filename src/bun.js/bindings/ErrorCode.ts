@@ -37,6 +37,8 @@ export default [
   ["ERR_STRING_TOO_LONG", Error, "Error"],
   ["ERR_ILLEGAL_CONSTRUCTOR", TypeError, "TypeError"],
   ["ERR_INVALID_URL", TypeError, "TypeError"],
+  ["ERR_UNKNOWN_ENCODING", TypeError, "TypeError"],
+
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError, "TypeError"],
   ["ERR_BODY_ALREADY_USED", Error, "Error"],

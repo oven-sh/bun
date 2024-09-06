@@ -191,13 +191,13 @@ static inline uint32_t parseIndex(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
 static inline WebCore::BufferEncodingType parseEncoding(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSValue arg)
 {
     if (UNLIKELY(!arg.isString())) {
-        throwTypeError(lexicalGlobalObject, scope, "Expected string"_s);
+        scope.throwException(lexicalGlobalObject, Bun::Bun__ERR_INVALID_ARG_TYPE_static2(lexicalGlobalObject, "encoding"_s, "string"_s, arg));
         return WebCore::BufferEncodingType::utf8;
     }
 
     std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg);
     if (UNLIKELY(!encoded)) {
-        throwTypeError(lexicalGlobalObject, scope, "Invalid encoding"_s);
+        scope.throwException(lexicalGlobalObject, Bun::Bun__ERR_UNKNOWN_ENCODING_static(lexicalGlobalObject, arg));
         return WebCore::BufferEncodingType::utf8;
     }
 
@@ -476,7 +476,7 @@ static inline JSC::EncodedJSValue constructBufferFromStringAndEncoding(JSC::JSGl
     if (arg1 && arg1.isString()) {
         std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg1);
         if (!encoded) {
-            throwTypeError(lexicalGlobalObject, scope, "Invalid encoding"_s);
+            scope.throwException(lexicalGlobalObject, Bun::Bun__ERR_UNKNOWN_ENCODING_static(lexicalGlobalObject, arg1));
             return JSC::JSValue::encode(jsUndefined());
         }
 
@@ -536,6 +536,11 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSG
             auto startPtr = uint8Array->typedVector() + start;
             auto str_ = value.toWTFString(lexicalGlobalObject);
             ZigString str = Zig::toZigString(str_);
+
+            // make sure Buffer is zero-d in the case the string is empty
+            const unsigned char zero_int = 0;
+            auto zero_str = ZigString { .ptr = &zero_int, .len = 1 };
+            Bun__Buffer_fill(&zero_str, startPtr, end - start, encoding);
 
             if (UNLIKELY(!Bun__Buffer_fill(&str, startPtr, end - start, encoding))) {
                 throwTypeError(lexicalGlobalObject, scope, "Failed to decode value"_s);
@@ -1185,8 +1190,8 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlob
         if (str.len == 0) {
             memset(startPtr, 0, end - start);
         } else if (UNLIKELY(!Bun__Buffer_fill(&str, startPtr, end - start, encoding))) {
-            throwTypeError(lexicalGlobalObject, scope, "Failed to decode value"_s);
-            return JSC::JSValue::encode(jsUndefined());
+            scope.throwException(lexicalGlobalObject, Bun::Bun__ERR_INVALID_ARG_VALUE_static(lexicalGlobalObject, "value"_s, value));
+            return {};
         }
     } else if (auto* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(value)) {
         auto* startPtr = castedThis->typedVector() + start;

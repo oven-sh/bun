@@ -43,17 +43,18 @@ if(WIN32)
     /Z7 # Produce a .pdb file
   )
 else()
+  # TODO: -g3
   add_compile_options(
-    -g3                               # Emit as much debug information as possible (this is stripped in release)
+    -g1                               # Emit as much debug information as possible (this is stripped in release)
     -ggdb                             # Produce a format that is compatable with GDB
     -gdwarf-4                         # Produce DWARF v4 debug info
     -fno-eliminate-unused-debug-types # Don't eliminate unused debug symbols
   )
 endif()
 
-add_compile_options(
-  -fdebug-macro      # Emit debug info for macros
-  -fstandalone-debug # Emit debug info for non-system libraries
+# add_compile_options(
+#   -fdebug-macro      # Emit debug info for macros
+#   -fstandalone-debug # Emit debug info for non-system libraries
 )
 
 # --- RTTI ---

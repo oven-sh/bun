@@ -682,7 +682,7 @@ if(NOT BUN_CPP_ONLY)
     )
   endif()
 
-  if(APPLE AND bunStrip)
+  if(CMAKE_HOST_APPLE AND bunStrip)
     register_command(
       TARGET
         ${bun}

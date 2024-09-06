@@ -7,7 +7,6 @@ find_command(
     cargo
   PATHS
     $ENV{HOME}/.cargo/bin
-    /root/.cargo/bin
   REQUIRED
     OFF
 )

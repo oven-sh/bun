@@ -80,6 +80,9 @@ describe("napi", () => {
     it("keeps the parent handle scope alive", () => {
       checkSameOutput("test_napi_handle_scope_nesting", []);
     });
+    it("exists when calling a napi constructor", () => {
+      checkSameOutput("test_napi_class_constructor_handle_scope", []);
+    });
   });
 
   describe("escapable_handle_scope", () => {

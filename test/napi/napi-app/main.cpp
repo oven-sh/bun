@@ -366,6 +366,28 @@ napi_value test_napi_handle_scope_nesting(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+napi_value constructor(napi_env env, napi_callback_info info) {
+  napi_value this_value;
+  assert(napi_get_cb_info(env, info, nullptr, nullptr, &this_value, nullptr) ==
+         napi_ok);
+  napi_value property_value;
+  assert(napi_create_string_utf8(env, "meow", NAPI_AUTO_LENGTH,
+                                 &property_value) == napi_ok);
+  assert(napi_set_named_property(env, this_value, "foo", property_value) ==
+         napi_ok);
+  napi_value undefined;
+  assert(napi_get_undefined(env, &undefined) == napi_ok);
+  return undefined;
+}
+
+napi_value get_class_with_constructor(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value napi_class;
+  assert(napi_define_class(env, "NapiClass", NAPI_AUTO_LENGTH, constructor,
+                           nullptr, 0, nullptr, &napi_class) == napi_ok);
+  return napi_class;
+}
+
 Napi::Value RunCallback(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   Napi::Function cb = info[0].As<Napi::Function>();
@@ -404,6 +426,8 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
               Napi::Function::New(env, test_napi_escapable_handle_scope));
   exports.Set("test_napi_handle_scope_nesting",
               Napi::Function::New(env, test_napi_handle_scope_nesting));
+  exports.Set("get_class_with_constructor",
+              Napi::Function::New(env, get_class_with_constructor));
 
   return exports;
 }

@@ -1,4 +1,4 @@
-const tests = require("./build/Release/napitests.node");
+const tests = require("./module");
 if (process.argv[2] === "self") {
   console.log(
     tests(function (str) {

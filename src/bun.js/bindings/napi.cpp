@@ -1928,6 +1928,7 @@ JSC_DEFINE_HOST_FUNCTION(NapiClass_ConstructorFunction,
     });
     NAPICallFrame frame(JSC::ArgList(args), nullptr);
     frame.newTarget = newTarget;
+    Bun::NapiHandleScope handleScope(jsCast<Zig::GlobalObject*>(globalObject));
 
     napi->constructor()(globalObject, reinterpret_cast<JSC::CallFrame*>(NAPICallFrame::toNapiCallbackInfo(frame)));
     RETURN_IF_EXCEPTION(scope, {});

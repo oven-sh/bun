@@ -2360,3 +2360,46 @@ it("should emit close when connection is aborted", async () => {
     server.close();
   }
 });
+
+it("should emit timeout event", async () => {
+  const server = http.createServer().listen(0);
+  try {
+    await once(server, "listening");
+    fetch(`http://localhost:${server.address().port}`)
+      .then(res => res.text())
+      .catch(() => {});
+
+    const [req, res] = await once(server, "request");
+    expect(req.complete).toBe(false);
+    let callBackCalled = false;
+    req.setTimeout(1000, () => {
+      callBackCalled = true;
+    });
+    await once(req, "timeout");
+    expect(callBackCalled).toBe(true);
+  } finally {
+    server.closeAllConnections();
+  }
+}, 12_000);
+
+it("should emit timeout event when using server.setTimeout", async () => {
+  const server = http.createServer().listen(0);
+  try {
+    await once(server, "listening");
+    let callBackCalled = false;
+    server.setTimeout(1000, () => {
+      callBackCalled = true;
+    });
+    fetch(`http://localhost:${server.address().port}`)
+      .then(res => res.text())
+      .catch(() => {});
+
+    const [req, res] = await once(server, "request");
+    expect(req.complete).toBe(false);
+
+    await once(server, "timeout");
+    expect(callBackCalled).toBe(true);
+  } finally {
+    server.closeAllConnections();
+  }
+}, 12_000);

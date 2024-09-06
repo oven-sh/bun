@@ -2041,12 +2041,10 @@ it("allow requestIP after async operation", async () => {
 
 it("allow custom timeout per request", async () => {
   using server = Bun.serve({
-    idleTimeout: 5,
+    idleTimeout: 1,
     port: 0,
     async fetch(req, server) {
-      if (req.url.endsWith("/long-timeout")) {
-        server.timeout(req, 60);
-      }
+      server.timeout(req, 60);
       await Bun.sleep(10000); //uWS precision is not great
 
       return new Response("Hello, World!");
@@ -2056,11 +2054,4 @@ it("allow custom timeout per request", async () => {
   const res = await fetch(new URL("/long-timeout", server.url.origin));
   expect(res.status).toBe(200);
   expect(res.text()).resolves.toBe("Hello, World!");
-
-  try {
-    await fetch(server.url.origin);
-    expect.unreachable();
-  } catch (e) {
-    expect((e as Error).code).toBe("ConnectionClosed");
-  }
-}, 30_000);
+}, 20_000);

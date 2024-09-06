@@ -91,7 +91,10 @@ pub const Request = struct {
         globalThis: *JSC.JSGlobalObject,
     ) void {
         this.internal_event_callback = InternalJSEventCallback.init(callback, globalThis);
+        // we always have the abort event but we need to enable the timeout event as well in case of `node:http`.Server.setTimeout is set
+        this.request_context.enableTimeoutEvents();
     }
+
     pub export fn Request__setTimeout(
         this: *Request,
         seconds: JSC.JSValue,

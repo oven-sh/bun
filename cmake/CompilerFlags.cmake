@@ -3,6 +3,8 @@ include(Macros)
 # clang: https://clang.llvm.org/docs/CommandGuide/clang.html
 # clang-cl: https://clang.llvm.org/docs/UsersManual.html#id11
 
+# --- MSVC runtime ---
+
 if(WIN32)
   if(DEBUG)
     add_compile_options(/MTd) # Use static debug run-time
@@ -11,13 +13,58 @@ if(WIN32)
   endif()
 endif()
 
-# if(WIN32)
-#   if(DEBUG)
-#     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDebug")
-#   else()
-#     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
-#   endif()
-# endif()
+# --- Optimization level ---
+
+if(DEBUG)
+  if(WIN32)
+    add_compile_options(/O0)
+  else()
+    add_compile_options(-O0)
+  endif()
+elseif(ENABLE_SMOL)
+  if(WIN32)
+    add_compile_options(/Os)
+  else()
+    add_compile_options(-Os)
+  endif()
+else()
+  if(WIN32)
+    # TODO: change to /0t (same as -O3) to match macOS and Linux?
+    add_compile_options(/O2)
+  else()
+    add_compile_options(-O3)
+  endif()
+endif()
+
+# --- Debug symbols ---
+
+if(WIN32)
+  add_compile_options(
+    /Z7 # Produce a .pdb file
+  )
+else()
+  add_compile_options(
+    -g3                               # Emit as much debug information as possible (this is stripped in release)
+    -ggdb                             # Produce a format that is compatable with GDB
+    -gdwarf-4                         # Produce DWARF v4 debug info
+    -fno-eliminate-unused-debug-types # Don't eliminate unused debug symbols
+  )
+endif()
+
+add_compile_options(
+  -fdebug-macro      # Emit debug info for macros
+  -fstandalone-debug # Emit debug info for non-system libraries
+)
+
+# --- RTTI ---
+
+if(WIN32)
+  add_compile_options(/GR-)
+else()
+  add_compile_options(-fno-rtti)
+endif()
+
+# --- Other ---
 
 # Workaround for CMake and clang-cl bug.
 # https://github.com/ninja-build/ninja/issues/2280
@@ -47,10 +94,6 @@ if(NOT WIN32)
   add_compile_options(-fdiagnostics-color=always)
 endif()
 
-# if(NOT CI AND NOT WIN32)
-#   target_compile_options(${bun} PRIVATE -fdiagnostics-color=always)
-# endif()
-
 # Using -march=native can break older systems, instead use a specific CPU
 if(CPU STREQUAL "native")
   if(ARCH STREQUAL "aarch64")
@@ -66,35 +109,4 @@ else()
   message(FATAL_ERROR "No CPU specified, please set -DCPU=<string>")
 endif()
 
-# if(NOT CPU STREQUAL "native")
-#   # passing -march=native to clang will break older systems
-#   # by default on x64, CPU is set to "haswell" or "nehalem" depending on baseline
-#   # on arm, this argument will not be passed.
-#   target_compile_options(${bun} PUBLIC "-march=${CPU}")
-# else()
-#   if(APPLE AND ARCH STREQUAL "aarch64")
-#     # On arm macOS, we can set it to a minimum of the M1 cpu set. this might be the default already.
-#     target_compile_options(${bun} PUBLIC "-mcpu=apple-m1")
-#   endif()
-
-#   if(NOT WIN32 AND NOT APPLE AND ARCH STREQUAL "aarch64")
-#     # on arm64 linux, we set a minimum of armv8
-#     target_compile_options(${bun} PUBLIC -march=armv8-a+crc -mtune=ampere1)
-#   endif()
-# endif()
-
 add_compile_options(-ferror-limit=${ERROR_LIMIT})
-
-# target_compile_options(${bun} PUBLIC -ferror-limit=${ERROR_LIMIT})
-
-# --- To be removed ---
-
-# set(CMAKE_CXX_STANDARD 20)
-# set(CMAKE_C_STANDARD 17)
-# set(CMAKE_CXX_STANDARD_REQUIRED ON)
-# set(CMAKE_C_STANDARD_REQUIRED ON)
-
-# if(WIN32 AND ENABLE_LTO)
-#   set(CMAKE_LINKER_TYPE LLD)
-#   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
-# endif()

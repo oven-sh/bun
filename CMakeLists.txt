@@ -136,7 +136,7 @@ endif()
 # --- clang and linker flags ---
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     if(NOT WIN32)
-        target_compile_options(${bun} PUBLIC -O0 -g -g3 -ggdb -gdwarf-4
+        target_compile_options(${bun} PUBLIC
             -Werror=return-type
             -Werror=return-stack-address
             -Werror=implicit-function-declaration
@@ -163,7 +163,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         )
         target_link_libraries(${bun} PRIVATE -fsanitize=null)
     else()
-        target_compile_options(${bun} PUBLIC /Od /Z7)
+        target_compile_options(${bun} PUBLIC /Z7)
     endif()
 
     add_compile_definitions("BUN_DEBUG=1")
@@ -176,7 +176,7 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
         endif()
 
         # Leave -Werror=unused off in release builds so we avoid errors from being used in ASSERT
-        target_compile_options(${bun} PUBLIC -O3 ${LTO_FLAG} -g1
+        target_compile_options(${bun} PUBLIC ${LTO_FLAG} -g1
             -Werror=return-type
             -Werror=return-stack-address
             -Werror=implicit-function-declaration
@@ -204,7 +204,6 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
         endif()
 
         target_compile_options(${bun} PUBLIC
-            /O2
             ${LTO_FLAG}
             /Gy
             /Gw
@@ -255,7 +254,6 @@ else()
         -fno-c++-static-destructors
         -fvisibility=hidden
         -fvisibility-inlines-hidden
-        -fno-rtti
         -fno-omit-frame-pointer
         -mno-omit-leaf-frame-pointer
         -fno-pic

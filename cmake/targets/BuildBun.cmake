@@ -2,7 +2,7 @@ include(Macros)
 
 if(DEBUG)
   set(bun bun-debug)
-elseif(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
+elseif(ENABLE_SMOL)
   set(bun bun-smol-profile)
   set(bunStrip bun-smol)
 elseif(ENABLE_VALGRIND)

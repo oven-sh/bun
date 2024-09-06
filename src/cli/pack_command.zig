@@ -1514,7 +1514,7 @@ pub const PackCommand = struct {
             abs_workspace_path,
             dest_buf,
             &.{ctx.manager.options.pack_destination},
-            .posix,
+            .auto,
         );
 
         const tarball_name = std.fmt.bufPrint(dest_buf[strings.withoutTrailingSlash(tarball_destination_dir).len..], "/{}\x00", .{

@@ -604,8 +604,7 @@ pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
         const dec = bun.FDImpl.decode(fd);
         if (dec.kind == .system) {
             const uvfd = bun.toLibUVOwnedFD(fd) catch return .{ .err = Error.fromCode(.MFILE, .uv_open_osfhandle) };
-            defer _ = bun.sys.close(uvfd);
-            return sys_uv.fstat(fd);
+            return sys_uv.fstat(uvfd);
         } else return sys_uv.fstat(fd);
     }
 

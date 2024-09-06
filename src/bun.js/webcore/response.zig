@@ -1044,7 +1044,7 @@ pub const Fetch = struct {
                         };
                         readable.ptr.Bytes.onData(
                             .{
-                                .owned_and_done = bun.ByteList.initConst(chunk),
+                                .temporary_and_done = bun.ByteList.initConst(chunk),
                             },
                             bun.default_allocator,
                         );

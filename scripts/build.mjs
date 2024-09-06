@@ -2,7 +2,7 @@
 
 import { spawn as nodeSpawn } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 
 // https://cmake.org/cmake/help/latest/manual/cmake.1.html#generate-a-project-buildsystem
 const generateFlags = [
@@ -43,6 +43,7 @@ async function build(args) {
 
   const generateOptions = parseOptions(args, generateFlags);
   const buildOptions = parseOptions(args, buildFlags);
+  console.log({ generateOptions, buildOptions });
 
   const buildPath = resolve(generateOptions["-B"] || buildOptions["--build"] || "build");
   generateOptions["-B"] = buildPath;
@@ -78,6 +79,7 @@ async function build(args) {
   const generateArgs = Object.entries(generateOptions).flatMap(([flag, value]) =>
     flag.startsWith("-D") ? [`${flag}=${value}`] : [flag, value],
   );
+  console.log({ generateArgs });
   await spawn("cmake", generateArgs, { env });
 
   const envPath = resolve(buildPath, ".env");
@@ -92,6 +94,7 @@ async function build(args) {
   const buildArgs = Object.entries(buildOptions)
     .sort(([a], [b]) => (a === "--build" ? -1 : a.localeCompare(b)))
     .flatMap(([flag, value]) => [flag, value]);
+  console.log({ buildArgs });
   await spawn("cmake", buildArgs, { env });
 
   const buildFiles = ["ccache.log", "compile_commands.json"];
@@ -107,7 +110,7 @@ async function build(args) {
   }
 
   if (isBuildkite()) {
-    await Promise.all(buildArtifacts.map(path => spawn("buildkite-agent", ["artifact", "upload", path], { cwd: buildPath, env })));
+    await Promise.all(buildArtifacts.map(path => spawn("buildkite-agent", ["artifact", "upload", relative(buildPath, path)], { cwd: buildPath, env })));
   }
 }
 

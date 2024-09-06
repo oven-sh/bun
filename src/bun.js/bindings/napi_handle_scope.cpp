@@ -48,6 +48,10 @@ void NapiHandleScopeImpl::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     for (auto& handle : thisObject->m_storage) {
         visitor.append(handle);
     }
+
+    if (thisObject->m_parent) {
+        visitor.appendUnbarriered(thisObject->m_parent);
+    }
 }
 
 DEFINE_VISIT_CHILDREN(NapiHandleScopeImpl);

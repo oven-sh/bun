@@ -318,6 +318,54 @@ napi_value test_napi_escapable_handle_scope(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+napi_value test_napi_handle_scope_nesting(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  constexpr const char *str = "this is a long string meow meow meow";
+
+  // Create an outer handle scope, hidden on the heap (the one created in
+  // NAPIFunction::call is still on the stack
+  napi_handle_scope *outer_hs = new napi_handle_scope;
+  assert(napi_open_handle_scope(env, outer_hs) == napi_ok);
+
+  // Make a handle in the outer scope, on the heap so stack scanning can't see
+  // it
+  napi_value *outer_scope_handle = new napi_value;
+  assert(napi_create_string_utf8(env, str, NAPI_AUTO_LENGTH,
+                                 outer_scope_handle) == napi_ok);
+
+  // Make a new handle scope on the heap
+  napi_handle_scope *inner_hs = new napi_handle_scope;
+  assert(napi_open_handle_scope(env, inner_hs) == napi_ok);
+
+  // Allocate lots of memory to force GC
+  constexpr size_t big_string_length = 20'000'000;
+  auto *string_data = new char[big_string_length];
+  for (int i = 0; i < 100; i++) {
+    napi_value s;
+    memset(string_data, i + 1, big_string_length);
+    assert(napi_create_string_utf8(env, string_data, big_string_length, &s) ==
+           napi_ok);
+  }
+  delete[] string_data;
+
+  // Try to read our first handle. Did the outer handle scope get
+  // collected now that it's not on the global object?
+  char buf[64];
+  size_t len;
+  assert(napi_get_value_string_utf8(env, *outer_scope_handle, buf, sizeof(buf),
+                                    &len) == napi_ok);
+  assert(len == strlen(str));
+  assert(strcmp(buf, str) == 0);
+
+  // Clean up
+  assert(napi_close_handle_scope(env, *inner_hs) == napi_ok);
+  delete inner_hs;
+  assert(napi_close_handle_scope(env, *outer_hs) == napi_ok);
+  delete outer_hs;
+  delete outer_scope_handle;
+  return ok(env);
+}
+
 Napi::Value RunCallback(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   Napi::Function cb = info[0].As<Napi::Function>();
@@ -354,6 +402,8 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
               Napi::Function::New(env, test_napi_delete_property));
   exports.Set("test_napi_escapable_handle_scope",
               Napi::Function::New(env, test_napi_escapable_handle_scope));
+  exports.Set("test_napi_handle_scope_nesting",
+              Napi::Function::New(env, test_napi_handle_scope_nesting));
 
   return exports;
 }

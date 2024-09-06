@@ -77,6 +77,9 @@ describe("napi", () => {
     it("keeps bigints alive", () => {
       checkSameOutput("test_napi_handle_scope_bigint", []);
     }, 10000);
+    it("keeps the parent handle scope alive", () => {
+      checkSameOutput("test_napi_handle_scope_nesting", []);
+    });
   });
 
   describe("escapable_handle_scope", () => {

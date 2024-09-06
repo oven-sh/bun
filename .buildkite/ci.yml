@@ -204,6 +204,10 @@ steps:
           queue: "build-windows"
           os: "windows"
           arch: "x64"
+        retry:
+          automatic:
+            - exit_status: 255
+              limit: 5
         command:
           - "bun run build:ci --target dependencies"
       - key: "windows-x64-build-cpp"
@@ -212,6 +216,10 @@ steps:
           queue: "build-windows"
           os: "windows"
           arch: "x64"
+        retry:
+          automatic:
+            - exit_status: 255
+              limit: 5
         env:
           BUN_CPP_ONLY: "ON"
         command:
@@ -234,6 +242,10 @@ steps:
           - "windows-x64-build-deps"
           - "windows-x64-build-cpp"
           - "windows-x64-build-zig"
+        retry:
+          automatic:
+            - exit_status: 255
+              limit: 5
         env:
           BUN_LINK_ONLY: "ON"
         command:
@@ -249,6 +261,10 @@ steps:
           queue: "build-windows"
           os: "windows"
           arch: "x64"
+        retry:
+          automatic:
+            - exit_status: 255
+              limit: 5
         env:
           ENABLE_BASELINE: "ON"
         command:
@@ -259,6 +275,10 @@ steps:
           queue: "build-windows"
           os: "windows"
           arch: "x64"
+        retry:
+          automatic:
+            - exit_status: 255
+              limit: 5
         env:
           ENABLE_BASELINE: "ON"
           BUN_CPP_ONLY: "ON"
@@ -284,6 +304,10 @@ steps:
           - "windows-x64-baseline-build-deps"
           - "windows-x64-baseline-build-cpp"
           - "windows-x64-baseline-build-zig"
+        retry:
+          automatic:
+            - exit_status: 255
+              limit: 5
         env:
           ENABLE_BASELINE: "ON"
           BUN_LINK_ONLY: "ON"

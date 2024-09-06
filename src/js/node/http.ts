@@ -1286,7 +1286,7 @@ ServerResponse.prototype._write = function (chunk, encoding, callback) {
 
     // we still wanna to flush if the user await some time before writing again
     // keeping the first write is a good performance optimization
-    process.nextTick(flushFirstWrite, this);
+    setTimeout(flushFirstWrite, 1, this);
     return;
   }
 

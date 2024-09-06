@@ -517,6 +517,7 @@ test("Bun should be able to handle utf16 inside Content-Type header #11316", asy
 test("should be able to async upgrade using custom protocol", async () => {
   const { promise, resolve } = Promise.withResolvers<{ code: number; reason: string } | boolean>();
   using server = Bun.serve<unknown>({
+    port: 0,
     async fetch(req: Request, server: Server) {
       await Bun.sleep(1);
 

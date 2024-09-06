@@ -763,6 +763,15 @@ pub fn updatePosixSegfaultHandler(act: ?*std.posix.Sigaction) !void {
 
 var windows_segfault_handle: ?windows.HANDLE = null;
 
+pub fn resetOnPosix() void {
+    var act = std.posix.Sigaction{
+        .handler = .{ .sigaction = handleSegfaultPosix },
+        .mask = std.posix.empty_sigset,
+        .flags = (std.posix.SA.SIGINFO | std.posix.SA.RESTART | std.posix.SA.RESETHAND),
+    };
+    updatePosixSegfaultHandler(&act) catch {};
+}
+
 pub fn init() void {
     if (!enable) return;
     switch (bun.Environment.os) {
@@ -770,12 +779,7 @@ pub fn init() void {
             windows_segfault_handle = windows.kernel32.AddVectoredExceptionHandler(0, handleSegfaultWindows);
         },
         .mac, .linux => {
-            var act = std.posix.Sigaction{
-                .handler = .{ .sigaction = handleSegfaultPosix },
-                .mask = std.posix.empty_sigset,
-                .flags = (std.posix.SA.SIGINFO | std.posix.SA.RESTART | std.posix.SA.RESETHAND),
-            };
-            updatePosixSegfaultHandler(&act) catch {};
+            resetOnPosix();
         },
         else => @compileError("TODO"),
     }

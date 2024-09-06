@@ -630,7 +630,7 @@ pub const PackCommand = struct {
                         // with the dependency name as a dir entry, starting from the node_modules of the
                         // current bundled dependency
 
-                        for ([_]string{ "dependencies", "peerDependencies", "optionalDependencies" }) |dependency_group| {
+                        for ([_]string{ "dependencies", "optionalDependencies" }) |dependency_group| {
                             const dependencies_expr = json.get(dependency_group) orelse continue;
                             if (dependencies_expr.data != .e_object) continue;
 
@@ -1741,7 +1741,7 @@ pub const PackCommand = struct {
                                         }
 
                                         // only produce this error only when we need to get the workspace version
-                                        Output.errGeneric("Failed to resolve version for dependency \"{s}\" in \"{s}\". Run <cyan>`bun install`<r> and try again.", .{
+                                        Output.errGeneric("Failed to resolve version for workspace dependency \"{s}\" in \"{s}\". Run <cyan>`bun install`<r> and try again.", .{
                                             dependency_name,
                                             dependency_group,
                                         });

@@ -72,7 +72,6 @@ export CXXFLAGS="-O3 -fno-exceptions -fno-rtti -fvisibility=hidden -fvisibility-
 
 # libarchive requires zlib headers for gzip compression support. without them, it will attempt to spawn a gzip process
 export CFLAGS="$CFLAGS -I$BUN_DEPS_DIR/zlib "
-export CXXFLAGS="$CXXFLAGS -I$BUN_DEPS_DIR/zlib "
 
 # Add flags for LTO
 # We cannot enable LTO on macOS for dependencies because it requires -fuse-ld=lld and lld causes many segfaults on macOS (likely related to stack size)

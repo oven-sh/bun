@@ -104,9 +104,17 @@ if(CPU STREQUAL "native")
     endif()
   endif()
 elseif(CPU)
-  add_compile_options(-march=${CPU})
+  add_compile_options(-march=${CPU} -mtune=${CPU})
 else()
   message(FATAL_ERROR "No CPU specified, please set -DCPU=<string>")
 endif()
 
 add_compile_options(-ferror-limit=${ERROR_LIMIT})
+
+if(NOT WIN32)
+  add_compile_options(
+    -ffile-prefix-map=${CWD}=.
+    -ffile-prefix-map=${BUILD_PATH}=build
+    -ffile-prefix-map=${CACHE_PATH}=cache
+  )
+endif()

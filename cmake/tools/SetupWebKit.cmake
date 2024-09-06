@@ -63,7 +63,7 @@ file(REMOVE_RECURSE ${WEBKIT_PATH})
 file(RENAME ${CACHE_PATH}/bun-webkit ${WEBKIT_PATH})
 
 if(APPLE)
-  file(REMOVE_RECURSE ${WEBKIT_PATH}/include/unicode)
+  file(REMOVE_RECURSE ${WEBKIT_INCLUDE_PATH}/unicode)
 endif()
 
 # --- WebKit ---

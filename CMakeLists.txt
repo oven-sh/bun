@@ -96,8 +96,6 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     else()
         target_compile_options(${bun} PUBLIC /Z7)
     endif()
-
-    add_compile_definitions("BUN_DEBUG=1")
 elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
     set(LTO_FLAG "")
 
@@ -157,43 +155,6 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
             /delayload:IPHLPAPI.dll
         )
     endif()
-endif()
-
-if(WIN32)
-    add_compile_definitions(
-        "WIN32"
-        "_WINDOWS"
-        "WIN32_LEAN_AND_MEAN=1"
-        "_CRT_SECURE_NO_WARNINGS"
-        "BORINGSSL_NO_CXX=1" # lol
-    )
-
-    # set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
-
-    target_compile_options(${bun} PUBLIC "/EHsc" "/GR-" "-Xclang" "-fno-c++-static-destructors")
-
-    target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000" "/DEF:${CWD}/src/symbols.def" "/errorlimit:0")
-else()
-    target_compile_options(${bun} PUBLIC
-        -mtune=${CPU}
-        -fconstexpr-steps=2542484
-        -fconstexpr-depth=54
-        -fno-exceptions
-        -fno-asynchronous-unwind-tables
-        -fno-unwind-tables
-        -fno-c++-static-destructors
-        -fvisibility=hidden
-        -fvisibility-inlines-hidden
-        -fno-omit-frame-pointer
-        -mno-omit-leaf-frame-pointer
-        -fno-pic
-        -fno-pie
-        -faddrsig
-        -ffile-prefix-map=${CWD}=.
-        -ffile-prefix-map=${BUILD_PATH}=build
-        -ffile-prefix-map=${CACHE_PATH}=cache
-    )
 endif()
 
 if(APPLE)

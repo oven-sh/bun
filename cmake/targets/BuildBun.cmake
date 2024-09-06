@@ -625,6 +625,16 @@ if(APPLE)
   target_compile_definitions(${bun} PRIVATE _DARWIN_NON_CANCELABLE=1)
 endif()
 
+if(WIN32)
+  target_compile_definitions(${bun} PRIVATE
+    WIN32
+    _WINDOWS
+    WIN32_LEAN_AND_MEAN=1
+    _CRT_SECURE_NO_WARNINGS
+    BORINGSSL_NO_CXX=1 # lol
+  )
+endif()
+
 target_compile_definitions(${bun} PRIVATE
   _HAS_EXCEPTIONS=0
   LIBUS_USE_OPENSSL=1
@@ -644,7 +654,49 @@ target_compile_definitions(${bun} PRIVATE
   REPORTED_NODEJS_ABI_VERSION=${NODEJS_ABI_VERSION}
 )
 
-# --- C/C++ Options ---
+# --- Compile flags ---
+
+if(WIN32)
+  target_compile_options(${bun} PUBLIC
+    /EHsc
+    -Xclang -fno-c++-static-destructors
+  )
+else()
+  target_compile_options(${bun} PUBLIC
+    -fconstexpr-steps=2542484
+    -fconstexpr-depth=54
+    -fno-exceptions
+    -fno-asynchronous-unwind-tables
+    -fno-unwind-tables
+    -fno-c++-static-destructors
+    -fvisibility=hidden
+    -fvisibility-inlines-hidden
+    -fno-omit-frame-pointer
+    -mno-omit-leaf-frame-pointer
+    -fno-pic
+    -fno-pie
+    -faddrsig
+  )
+endif()
+
+# --- Link flags ---
+
+if(WIN32)
+  target_link_options(${bun} PUBLIC
+    /STACK:0x1200000,0x100000
+    /errorlimit:0
+  )
+endif()
+
+# --- Symbols list ---
+
+if(WIN32)
+  target_link_options(${bun} PUBLIC /DEF:${CWD}/src/symbols.def)
+elseif(APPLE)
+
+else()
+
+endif()
 
 # --- WebKit ---
 

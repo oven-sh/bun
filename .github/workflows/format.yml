@@ -1,7 +1,7 @@
 name: format
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && inputs.run-id  || github.ref }}
@@ -14,12 +14,12 @@ on:
         type: string
         description: The workflow ID to download artifacts (skips the build step)
   pull_request:
+    types: [opened, synchronize, reopened]
     paths:
-      - "**/*.{ts,js,json,md,toml,yml,yaml,tsx,jsx}"
+      - "**.{ts,js,json,md,toml,yml,yaml,tsx,jsx,zig,cjs,mjs}"
 
 jobs:
   format:
-    if: ${{ !inputs.run-id }}
     name: Run format
     uses: ./.github/workflows/run-format.yml
     secrets: inherit

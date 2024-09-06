@@ -133,51 +133,6 @@ describe("node:http", () => {
       }
     });
 
-    it("response body streaming is immediate (#13696)", async () => {
-      const totalChunks = 10;
-      const spacing = 50;
-      const acceptableDelay = 20;
-    
-      try {
-        var server = createServer(async (req, res) => {
-          res.writeHead(200, { "Content-Type": "text/plain" });
-          for (let i = 0; i < totalChunks; i++) {
-            res.write(new Date().getTime().toString() + "\n");
-    
-            if (i + 1 < totalChunks) await Bun.sleep(spacing);
-          }
-          res.end();
-        });
-        const url = await listen(server);
-        const res = await fetch(url);
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-    
-        let receivedChunks = 0;
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-    
-          receivedChunks++;
-    
-          // Verify that chunks are not held up longer than necessary
-          // at the receiver. This is likely to be in the single digits.
-          //
-          // #13696: Bun would delay the initial chunks and then send multiple
-          // chunks before real-time streaming started working.
-          expect(
-            new Date().getTime() - parseInt(decoder.decode(value).trimEnd())
-          ).toBeLessThan(acceptableDelay);
-        }
-    
-        // Verify that the correct number of chunks were sent (in case server
-        // decides to send no chunks at all).
-        expect(receivedChunks).toEqual(totalChunks);
-      } finally {
-        server.close();
-      }
-    });
-
     it("listen should return server", async () => {
       const server = createServer();
       const listenResponse = server.listen(0);
@@ -2479,6 +2434,51 @@ it("must set headersSent to true after headers are sent when using chunk encoded
     });
     await promise;
     expect(res.headersSent).toBe(true);
+  } finally {
+    server.close();
+  }
+});
+it("response body streaming is immediate (#13696)", async () => {
+  const totalChunks = 10;
+  const spacing = 50;
+  const acceptableDelay = 20;
+  let totalSize = 0;
+  let receivedSize = 0;
+  let server: Server;
+  try {
+    server = createServer(async (req, res) => {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      for (let i = 0; i < totalChunks; i++) {
+        const payload = `${new Date().getTime().toString()}\n`;
+        totalSize += payload.length;
+        res.write(payload);
+
+        if (i + 1 < totalChunks) await Bun.sleep(spacing);
+      }
+      res.end();
+    });
+    const url = await listen(server);
+    const res = await fetch(url);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+
+    let receivedChunks = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      receivedChunks++;
+      receivedSize += value.byteLength;
+
+      // Verify that chunks are not held up longer than necessary
+      // at the receiver. This is likely to be in the single digits.
+      //
+      // #13696: Bun would delay the initial chunks and then send multiple
+      // chunks before real-time streaming started working.
+      expect(new Date().getTime() - Number.parseInt(decoder.decode(value).trimEnd(), 10)).toBeLessThan(acceptableDelay);
+    }
+    expect(receivedChunks).toEqual(totalChunks);
+    expect(receivedSize).toEqual(totalSize);
   } finally {
     server.close();
   }

@@ -1287,7 +1287,7 @@ ServerResponse.prototype._write = function (chunk, encoding, callback) {
     this[firstWriteSymbol] = chunk;
     callback();
     const headers = this[headersSymbol];
-    const hasContentLength = headers && getHeader(this[headersSymbol], "Content-Length");
+    const hasContentLength = headers && headers.has("Content-Length");
     if (hasContentLength) {
       // wait for .end()
       return;
@@ -1310,7 +1310,7 @@ ServerResponse.prototype._writev = function (chunks, callback) {
     callback();
 
     const headers = this[headersSymbol];
-    const hasContentLength = headers && getHeader(this[headersSymbol], "Content-Length");
+    const hasContentLength = headers && headers.has("Content-Length");
     if (hasContentLength) {
       // wait for .end()
       return;

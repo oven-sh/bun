@@ -64,6 +64,7 @@ pub const PackCommand = struct {
             if (this.manager.options.log_level != .silent) {
                 const stats = this.stats;
                 Output.pretty(
+                    \\
                     \\<r><b><blue>Total files<r>: {d}
                     \\<r><b><blue>Unpacked size<r>: {}
                     \\
@@ -1251,11 +1252,11 @@ pub const PackCommand = struct {
             printArchivedFilesAndPackages(ctx, root_dir, true, &pack_queue, 0);
 
             if (manager.options.pack_destination.len == 0) {
-                Output.pretty("\n{}\n\n", .{fmtTarballFilename(package_name, package_version)});
+                Output.pretty("\n{}\n", .{fmtTarballFilename(package_name, package_version)});
             } else {
                 var dest_buf: PathBuffer = undefined;
                 const abs_tarball_dest, _ = absTarballDestination(ctx, abs_workspace_path, package_name, package_version, &dest_buf);
-                Output.pretty("\n{s}\n\n", .{abs_tarball_dest});
+                Output.pretty("\n{s}\n", .{abs_tarball_dest});
             }
 
             ctx.printStats();
@@ -1297,21 +1298,14 @@ pub const PackCommand = struct {
 
         switch (archive.writeSetFormatPaxRestricted()) {
             .failed, .fatal, .warn => {
-                Output.errGeneric("failed to set archive format to pax restricted: {s}", .{archive.errorString()});
+                Output.errGeneric("failed to set archive format: {s}", .{archive.errorString()});
                 Global.crash();
             },
             else => {},
         }
         switch (archive.writeSetCompressionGzip()) {
             .failed, .fatal, .warn => {
-                Output.errGeneric("failed to set compression to gzip: {s}", .{archive.errorString()});
-                Global.crash();
-            },
-            else => {},
-        }
-        switch (archive.writeAddFilterGzip()) {
-            .failed, .fatal, .warn => {
-                Output.errGeneric("failed to set filter to gzip: {s}", .{archive.errorString()});
+                Output.errGeneric("failed to set archive compression to gzip: {s}", .{archive.errorString()});
                 Global.crash();
             },
             else => {},
@@ -1461,9 +1455,9 @@ pub const PackCommand = struct {
         );
 
         if (manager.options.pack_destination.len == 0) {
-            Output.pretty("\n{}\n\n", .{fmtTarballFilename(package_name, package_version)});
+            Output.pretty("\n{}\n", .{fmtTarballFilename(package_name, package_version)});
         } else {
-            Output.pretty("\n{s}\n\n", .{abs_tarball_dest});
+            Output.pretty("\n{s}\n", .{abs_tarball_dest});
         }
 
         ctx.printStats();
@@ -1983,6 +1977,7 @@ pub const PackCommand = struct {
         pack_list: if (needs_size) *PackQueue else PackList,
         package_json_len: usize,
     ) void {
+        if (ctx.manager.options.log_level == .silent) return;
         const packed_fmt = "<r><b><cyan>packed<r> {} {s}";
 
         if (comptime needs_size) {

@@ -204,6 +204,31 @@ pub const Archive = opaque {
         return archive_write_set_format_pax_restricted(archive);
     }
 
+    pub extern fn archive_write_set_format_gnutar(*Archive) Result;
+    pub fn writeSetFormatGnutar(archive: *Archive) Result {
+        return archive_write_set_format_gnutar(archive);
+    }
+
+    pub extern fn archive_write_set_format_7zip(*Archive) Result;
+    pub fn writeSetFormat7zip(archive: *Archive) Result {
+        return archive_write_set_format_7zip(archive);
+    }
+
+    pub extern fn archive_write_set_format_pax(*Archive) Result;
+    pub fn writeSetFormatPax(archive: *Archive) Result {
+        return archive_write_set_format_pax(archive);
+    }
+
+    pub extern fn archive_write_set_format_ustar(*Archive) Result;
+    pub fn writeSetFormatUstar(archive: *Archive) Result {
+        return archive_write_set_format_ustar(archive);
+    }
+
+    pub extern fn archive_write_set_format_zip(*Archive) Result;
+    pub fn writeSetFormatZip(archive: *Archive) Result {
+        return archive_write_set_format_zip(archive);
+    }
+
     extern fn archive_write_set_compression_gzip(*Archive) Result;
     pub fn writeSetCompressionGzip(archive: *Archive) Result {
         return archive_write_set_compression_gzip(archive);
@@ -441,7 +466,6 @@ pub extern fn archive_write_add_filter_xz(*struct_archive) c_int;
 pub extern fn archive_write_add_filter_zstd(*struct_archive) c_int;
 pub extern fn archive_write_set_format(*struct_archive, format_code: c_int) c_int;
 pub extern fn archive_write_set_format_by_name(*struct_archive, name: [*c]const u8) c_int;
-pub extern fn archive_write_set_format_7zip(*struct_archive) c_int;
 pub extern fn archive_write_set_format_ar_bsd(*struct_archive) c_int;
 pub extern fn archive_write_set_format_ar_svr4(*struct_archive) c_int;
 pub extern fn archive_write_set_format_cpio(*struct_archive) c_int;
@@ -449,19 +473,15 @@ pub extern fn archive_write_set_format_cpio_bin(*struct_archive) c_int;
 pub extern fn archive_write_set_format_cpio_newc(*struct_archive) c_int;
 pub extern fn archive_write_set_format_cpio_odc(*struct_archive) c_int;
 pub extern fn archive_write_set_format_cpio_pwb(*struct_archive) c_int;
-pub extern fn archive_write_set_format_gnutar(*struct_archive) c_int;
 pub extern fn archive_write_set_format_iso9660(*struct_archive) c_int;
 pub extern fn archive_write_set_format_mtree(*struct_archive) c_int;
 pub extern fn archive_write_set_format_mtree_classic(*struct_archive) c_int;
-pub extern fn archive_write_set_format_pax(*struct_archive) c_int;
 pub extern fn archive_write_set_format_raw(*struct_archive) c_int;
 pub extern fn archive_write_set_format_shar(*struct_archive) c_int;
 pub extern fn archive_write_set_format_shar_dump(*struct_archive) c_int;
-pub extern fn archive_write_set_format_ustar(*struct_archive) c_int;
 pub extern fn archive_write_set_format_v7tar(*struct_archive) c_int;
 pub extern fn archive_write_set_format_warc(*struct_archive) c_int;
 pub extern fn archive_write_set_format_xar(*struct_archive) c_int;
-pub extern fn archive_write_set_format_zip(*struct_archive) c_int;
 pub extern fn archive_write_set_format_filter_by_ext(a: *struct_archive, filename: [*c]const u8) c_int;
 pub extern fn archive_write_set_format_filter_by_ext_def(a: *struct_archive, filename: [*c]const u8, def_ext: [*c]const u8) c_int;
 pub extern fn archive_write_zip_set_compression_deflate(*struct_archive) c_int;

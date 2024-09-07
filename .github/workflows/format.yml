@@ -14,9 +14,6 @@ on:
         type: string
         description: The workflow ID to download artifacts (skips the build step)
   pull_request:
-    types: [opened, synchronize, reopened]
-    paths:
-      - "**.{ts,js,json,md,toml,yml,yaml,tsx,jsx,zig,cjs,mjs,cpp,h,cc}"
 
 jobs:
   format:

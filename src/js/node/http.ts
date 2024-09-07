@@ -1317,6 +1317,7 @@ ServerResponse.prototype._writev = function (chunks, callback) {
     for (const chunk of chunks) {
       controller.write(chunk.chunk);
     }
+    callback();
   });
 };
 

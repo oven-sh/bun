@@ -30,6 +30,9 @@ const js_printer = bun.js_printer;
 const E = bun.js_parser.E;
 const Progress = bun.Progress;
 const JSON = bun.JSON;
+const BoringSSL = bun.BoringSSL;
+const sha = bun.sha;
+const LogLevel = PackageManager.Options.LogLevel;
 
 pub const PackCommand = struct {
     pub const Context = struct {
@@ -60,31 +63,54 @@ pub const PackCommand = struct {
             from_root_package_json: bool,
         };
 
-        pub fn printStats(this: *const Context) void {
-            if (this.manager.options.log_level != .silent) {
+        const IntegrityFormatter = struct {
+            bytes: [sha.SHA512.digest]u8,
+
+            pub fn format(this: IntegrityFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) !void {
+                var buf: [std.base64.standard.Encoder.calcSize(sha.SHA512.digest)]u8 = undefined;
+                const count = bun.simdutf.base64.encode(this.bytes[0..sha.SHA512.digest], &buf, false);
+
+                const encoded = buf[0..count];
+
+                try writer.print("sha512-{s}[...]{s}", .{ encoded[0..13], encoded[encoded.len - 15 ..] });
+            }
+        };
+
+        fn fmtIntegrity(bytes: [sha.SHA512.digest]u8) IntegrityFormatter {
+            return .{
+                .bytes = bytes,
+            };
+        }
+
+        pub fn printSummary(this: *const Context, sha1_digest: ?[sha.SHA1.digest]u8, sha512_digest: ?[sha.SHA512.digest]u8, comptime log_level: LogLevel) void {
+            if (comptime log_level != .silent) {
                 const stats = this.stats;
-                Output.pretty(
-                    \\
-                    \\<r><b><blue>Total files<r>: {d}
-                    \\<r><b><blue>Unpacked size<r>: {}
-                    \\
-                , .{
-                    stats.total_files,
+                Output.prettyln("\n<r><b><blue>Total files<r>: {d}", .{stats.total_files});
+                if (sha1_digest) |sha1| {
+                    Output.prettyln("<b><blue>Shasum<r>: {s}", .{bun.fmt.bytesToHex(sha1, .lower)});
+                }
+                if (sha512_digest) |sha512| {
+                    Output.prettyln("<b><blue>Integrity<r>: {}", .{fmtIntegrity(sha512)});
+                }
+                Output.prettyln("<b><blue>Unpacked size<r>: {}", .{
                     bun.fmt.size(stats.unpacked_size, .{ .space_between_number_and_unit = false }),
                 });
                 if (stats.packed_size > 0) {
-                    Output.pretty("<r><b><blue>Packed size<r>: {}\n", .{
+                    Output.pretty("<b><blue>Packed size<r>: {}\n", .{
                         bun.fmt.size(stats.packed_size, .{ .space_between_number_and_unit = false }),
                     });
                 }
                 if (stats.bundled_deps > 0) {
-                    Output.pretty("<r><b><blue>Bundled deps<r>: {d}\n", .{stats.bundled_deps});
+                    Output.pretty("<b><blue>Bundled deps<r>: {d}\n", .{stats.bundled_deps});
                 }
             }
         }
     };
 
     pub fn execWithManager(ctx: Command.Context, manager: *PackageManager) !void {
+        Output.prettyErrorln("<r><b>bun pack <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+        Output.flush();
+
         var lockfile: Lockfile = undefined;
         const load_from_disk_result = lockfile.loadFromDisk(
             manager,
@@ -168,9 +194,6 @@ pub const PackCommand = struct {
     }
 
     pub fn exec(ctx: Command.Context) !void {
-        Output.prettyErrorln("<r><b>bun pack <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
-        Output.flush();
-
         const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .pack);
 
         const manager, const original_cwd = PackageManager.init(ctx, cli, .pack) catch |err| {
@@ -259,7 +282,7 @@ pub const PackCommand = struct {
         ctx: *Context,
         includes: []const Pattern,
         root_dir: std.fs.Dir,
-        comptime log_level: PackageManager.Options.LogLevel,
+        comptime log_level: LogLevel,
     ) OOM!PackQueue {
         var pack_queue = PackQueue.init(ctx.allocator, {});
 
@@ -373,7 +396,7 @@ pub const PackCommand = struct {
         root_dir_info: DirInfo,
         pack_queue: *PackQueue,
         maybe_dedupe: ?*bun.StringHashMap(void),
-        comptime log_level: PackageManager.Options.LogLevel,
+        comptime log_level: LogLevel,
     ) OOM!void {
         var dirs: std.ArrayListUnmanaged(DirInfo) = .{};
         defer dirs.deinit(ctx.allocator);
@@ -492,7 +515,7 @@ pub const PackCommand = struct {
     fn iterateBundledDeps(
         ctx: *Context,
         root_dir: std.fs.Dir,
-        comptime log_level: PackageManager.Options.LogLevel,
+        comptime log_level: LogLevel,
     ) OOM!PackQueue {
         var bundled_pack_queue = PackQueue.init(ctx.allocator, {});
         if (ctx.bundled_deps.items.len == 0) return bundled_pack_queue;
@@ -588,7 +611,7 @@ pub const PackCommand = struct {
         bundled_pack_queue: *PackQueue,
         dedupe: *bun.StringHashMap(void),
         additional_bundled_deps: *std.ArrayListUnmanaged(DirInfo),
-        comptime log_level: PackageManager.Options.LogLevel,
+        comptime log_level: LogLevel,
     ) OOM!void {
         ctx.stats.bundled_deps += 1;
 
@@ -718,7 +741,7 @@ pub const PackCommand = struct {
     fn iterateProjectTree(
         ctx: *Context,
         root_dir: std.fs.Dir,
-        comptime log_level: PackageManager.Options.LogLevel,
+        comptime log_level: LogLevel,
     ) OOM!PackQueue {
         var pack_queue = PackQueue.init(ctx.allocator, {});
 
@@ -1058,7 +1081,7 @@ pub const PackCommand = struct {
     fn pack(
         ctx: *Context,
         abs_package_json_path: stringZ,
-        comptime log_level: PackageManager.Options.LogLevel,
+        comptime log_level: LogLevel,
     ) PackError!void {
         const manager = ctx.manager;
         const json = switch (manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, abs_package_json_path, .{
@@ -1070,6 +1093,11 @@ pub const PackCommand = struct {
             },
             .parse_err => |err| {
                 Output.err(err, "failed to parse package.json: {s}", .{abs_package_json_path});
+                switch (Output.enable_ansi_colors) {
+                    inline else => |enable_ansi_colors| {
+                        manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
+                    },
+                }
                 Global.crash();
             },
             .entry => |entry| entry,
@@ -1253,7 +1281,7 @@ pub const PackCommand = struct {
                 Output.pretty("\n{s}\n", .{abs_tarball_dest});
             }
 
-            ctx.printStats();
+            ctx.printSummary(null, null, log_level);
 
             if (postpack_script) |postpack_script_str| {
                 _ = RunCommand.runPackageScriptForeground(
@@ -1318,6 +1346,14 @@ pub const PackCommand = struct {
         }
         print_buf.clearRetainingCapacity();
 
+        switch (archive.writeSetOptions("gzip:!timestamp")) {
+            .failed, .fatal, .warn => {
+                Output.errGeneric("failed to unset gzip timestamp option: {s}", .{archive.errorString()});
+                Global.crash();
+            },
+            else => {},
+        }
+
         var dest_buf: PathBuffer = undefined;
         const abs_tarball_dest, const abs_tarball_dest_dir_end = absTarballDestination(
             ctx,
@@ -1350,7 +1386,6 @@ pub const PackCommand = struct {
         defer pack_list.deinit(ctx.allocator);
 
         var entry = Archive.Entry.new2(archive);
-        defer entry.free();
 
         const package_json_size = archive_with_progress: {
             var progress: if (log_level == .silent) void else Progress = if (comptime log_level == .silent) {} else .{};
@@ -1422,6 +1457,8 @@ pub const PackCommand = struct {
             break :archive_with_progress edited_package_json_size;
         };
 
+        entry.free();
+
         switch (archive.writeClose()) {
             .failed, .fatal, .warn => {
                 Output.errGeneric("failed to close archive: {s}", .{archive.errorString()});
@@ -1430,7 +1467,7 @@ pub const PackCommand = struct {
             else => {},
         }
 
-        switch (archive.free()) {
+        switch (archive.writeFree()) {
             .failed, .fatal, .warn => {
                 Output.errGeneric("failed to free archive: {s}", .{archive.errorString()});
                 Global.crash();
@@ -1438,12 +1475,39 @@ pub const PackCommand = struct {
             else => {},
         }
 
-        const tarball_stat = bun.sys.stat(abs_tarball_dest).unwrap() catch |err| {
-            Output.err(err, "failed to stat tarball file: \"{s}\"", .{abs_tarball_dest});
-            Global.crash();
-        };
+        var sha1_digest: sha.SHA1.Digest = undefined;
+        var sha512_digest: sha.SHA512.Digest = undefined;
 
-        ctx.stats.packed_size = @intCast(tarball_stat.size);
+        {
+            const tarball_file = File.open(abs_tarball_dest, bun.O.RDONLY, 0).unwrap() catch |err| {
+                Output.err(err, "failed to open tarball at: \"{s}\"", .{abs_tarball_dest});
+                Global.crash();
+            };
+            defer tarball_file.close();
+
+            const tarball_stat = tarball_file.stat().unwrap() catch |err| {
+                Output.err(err, "failed to stat tarball at: \"{s}\"", .{abs_tarball_dest});
+                Global.crash();
+            };
+
+            ctx.stats.packed_size = @intCast(tarball_stat.size);
+
+            const tarball = tarball_file.readToEnd(ctx.allocator).unwrap() catch |err| {
+                Output.err(err, "failed to read tarball at: \"{s}\"", .{abs_tarball_dest});
+                Global.crash();
+            };
+            defer ctx.allocator.free(tarball);
+
+            var sha1 = sha.SHA1.init();
+            defer sha1.deinit();
+            sha1.update(tarball);
+            sha1.final(&sha1_digest);
+
+            var sha512 = sha.SHA512.init();
+            defer sha512.deinit();
+            sha512.update(tarball);
+            sha512.final(&sha512_digest);
+        }
 
         printArchivedFilesAndPackages(
             ctx,
@@ -1459,7 +1523,7 @@ pub const PackCommand = struct {
             Output.pretty("\n{s}\n", .{abs_tarball_dest});
         }
 
-        ctx.printStats();
+        ctx.printSummary(sha1_digest, sha512_digest, log_level);
 
         if (postpack_script) |postpack_script_str| {
             _ = RunCommand.runPackageScriptForeground(
@@ -1985,19 +2049,17 @@ pub const PackCommand = struct {
         const packed_fmt = "<r><b><cyan>packed<r> {} {s}";
 
         if (comptime needs_size) {
-            {
-                const package_json_stat = bun.sys.fstatat(bun.toFD(root_dir), "package.json").unwrap() catch |err| {
-                    Output.err(err, "failed to stat package.json", .{});
-                    Global.crash();
-                };
+            const package_json_stat = bun.sys.fstatat(bun.toFD(root_dir), "package.json").unwrap() catch |err| {
+                Output.err(err, "failed to stat package.json", .{});
+                Global.crash();
+            };
 
-                ctx.stats.unpacked_size += @intCast(package_json_stat.size);
+            ctx.stats.unpacked_size += @intCast(package_json_stat.size);
 
-                Output.prettyln(packed_fmt, .{
-                    bun.fmt.size(package_json_stat.size, .{ .space_between_number_and_unit = false }),
-                    "package.json",
-                });
-            }
+            Output.prettyln("\n" ++ packed_fmt, .{
+                bun.fmt.size(package_json_stat.size, .{ .space_between_number_and_unit = false }),
+                "package.json",
+            });
 
             while (pack_list.removeOrNull()) |filename| {
                 const stat = bun.sys.fstatat(bun.toFD(root_dir), filename).unwrap() catch |err| {
@@ -2022,7 +2084,7 @@ pub const PackCommand = struct {
             return;
         }
 
-        Output.prettyln(packed_fmt, .{
+        Output.prettyln("\n" ++ packed_fmt, .{
             bun.fmt.size(package_json_len, .{ .space_between_number_and_unit = false }),
             "package.json",
         });

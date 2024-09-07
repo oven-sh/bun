@@ -189,6 +189,11 @@ pub const Archive = opaque {
         return archive_write_close(archive);
     }
 
+    pub extern fn archive_write_finish(*Archive) Result;
+    pub fn writeFinish(archive: *Archive) Result {
+        return archive_write_finish(archive);
+    }
+
     extern fn archive_free(*Archive) Result;
     pub fn free(archive: *Archive) Result {
         return archive_free(archive);
@@ -229,6 +234,11 @@ pub const Archive = opaque {
         return archive_write_set_format_zip(archive);
     }
 
+    pub extern fn archive_write_set_format_shar(*Archive) Result;
+    pub fn writeSetFormatShar(archive: *Archive) Result {
+        return archive_write_set_format_shar(archive);
+    }
+
     extern fn archive_write_set_compression_gzip(*Archive) Result;
     pub fn writeSetCompressionGzip(archive: *Archive) Result {
         return archive_write_set_compression_gzip(archive);
@@ -267,6 +277,16 @@ pub const Archive = opaque {
     extern fn archive_write_data(*Archive, ?*const anyopaque, usize) isize;
     pub fn writeData(archive: *Archive, data: []const u8) isize {
         return archive_write_data(archive, data.ptr, data.len);
+    }
+
+    pub extern fn archive_write_finish_entry(*Archive) Result;
+    pub fn writeFinishEntry(archive: *Archive) Result {
+        return archive_write_finish_entry(archive);
+    }
+
+    pub extern fn archive_write_free(*Archive) Result;
+    pub fn writeFree(archive: *Archive) Result {
+        return archive_write_free(archive);
     }
 
     pub const Entry = opaque {
@@ -477,7 +497,6 @@ pub extern fn archive_write_set_format_iso9660(*struct_archive) c_int;
 pub extern fn archive_write_set_format_mtree(*struct_archive) c_int;
 pub extern fn archive_write_set_format_mtree_classic(*struct_archive) c_int;
 pub extern fn archive_write_set_format_raw(*struct_archive) c_int;
-pub extern fn archive_write_set_format_shar(*struct_archive) c_int;
 pub extern fn archive_write_set_format_shar_dump(*struct_archive) c_int;
 pub extern fn archive_write_set_format_v7tar(*struct_archive) c_int;
 pub extern fn archive_write_set_format_warc(*struct_archive) c_int;
@@ -492,10 +511,7 @@ pub extern fn archive_write_open_filename_w(*struct_archive, _file: [*c]const wc
 pub extern fn archive_write_open_file(*struct_archive, _file: [*c]const u8) c_int;
 pub extern fn archive_write_open_FILE(*struct_archive, [*c]FILE) c_int;
 pub extern fn archive_write_data_block(*struct_archive, ?*const anyopaque, usize, la_int64_t) la_ssize_t;
-pub extern fn archive_write_finish_entry(*struct_archive) c_int;
 pub extern fn archive_write_fail(*struct_archive) c_int;
-pub extern fn archive_write_free(*struct_archive) c_int;
-pub extern fn archive_write_finish(*struct_archive) c_int;
 pub extern fn archive_write_set_format_option(_a: *struct_archive, m: [*c]const u8, o: [*c]const u8, v: [*c]const u8) c_int;
 pub extern fn archive_write_set_option(_a: *struct_archive, m: [*c]const u8, o: [*c]const u8, v: [*c]const u8) c_int;
 pub extern fn archive_write_set_passphrase(_a: *struct_archive, p: [*c]const u8) c_int;

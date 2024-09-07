@@ -35,6 +35,7 @@ class PerformanceEntry;
 
 class PerformanceObserverEntryList : public RefCounted<PerformanceObserverEntryList> {
     WTF_MAKE_FAST_ALLOCATED;
+
 public:
     static Ref<PerformanceObserverEntryList> create(Vector<RefPtr<PerformanceEntry>>&& entries);
 

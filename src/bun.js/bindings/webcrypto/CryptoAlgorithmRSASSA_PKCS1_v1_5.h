@@ -45,7 +45,6 @@ public:
     static ExceptionOr<bool> platformVerify(const CryptoKeyRSA&, const Vector<uint8_t>&, const Vector<uint8_t>&);
     static ExceptionOr<bool> platformVerifyWithAlgorithm(const CryptoKeyRSA&, CryptoAlgorithmIdentifier, const Vector<uint8_t>&, const Vector<uint8_t>&);
 
-    
 private:
     CryptoAlgorithmRSASSA_PKCS1_v1_5() = default;
     CryptoAlgorithmIdentifier identifier() const final;

@@ -292,7 +292,7 @@ auto CryptoAlgorithmAES_CTR::CounterBlockHelper::CounterBlockBits::operator~() c
     return { ~m_hi, ~m_lo };
 }
 
-auto CryptoAlgorithmAES_CTR::CounterBlockHelper::CounterBlockBits::operator <<=(unsigned shift) -> CounterBlockBits&
+auto CryptoAlgorithmAES_CTR::CounterBlockHelper::CounterBlockBits::operator<<=(unsigned shift) -> CounterBlockBits&
 {
     if (shift < 64) {
         m_hi = (m_hi << shift) | m_lo >> (64 - shift);
@@ -308,7 +308,7 @@ auto CryptoAlgorithmAES_CTR::CounterBlockHelper::CounterBlockBits::operator <<=(
     return *this;
 }
 
-auto CryptoAlgorithmAES_CTR::CounterBlockHelper::CounterBlockBits::operator &=(const CounterBlockBits& rhs) -> CounterBlockBits&
+auto CryptoAlgorithmAES_CTR::CounterBlockHelper::CounterBlockBits::operator&=(const CounterBlockBits& rhs) -> CounterBlockBits&
 {
     m_hi &= rhs.m_hi;
     m_lo &= rhs.m_lo;

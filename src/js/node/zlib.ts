@@ -29,7 +29,7 @@ const kFlushBuffers: Buffer[] = [];
 
 //
 
-function Base(method, options) {
+function ZlibBase(method, options) {
   if (options == null) options = {};
   if ($isObject(options)) {
     options.maxOutputLength ??= maxOutputLengthDefault;
@@ -45,8 +45,8 @@ function Base(method, options) {
   this[kHandle] = private_constructor(options, {}, null, method);
   stream.Transform.$call(this, options);
 }
-Base.prototype = Object.create(stream.Transform.prototype);
-ObjectDefineProperty(Base.prototype, "_handle", {
+ZlibBase.prototype = Object.create(stream.Transform.prototype);
+ObjectDefineProperty(ZlibBase.prototype, "_handle", {
   get: function () {
     return this[kHandle];
   },
@@ -54,22 +54,22 @@ ObjectDefineProperty(Base.prototype, "_handle", {
     //noop
   },
 });
-ObjectDefineProperty(Base.prototype, "bytesWritten", {
+ObjectDefineProperty(ZlibBase.prototype, "bytesWritten", {
   get: function () {
     return this[kHandle].bytesWritten;
   },
 });
-ObjectDefineProperty(Base.prototype, "bytesRead", {
+ObjectDefineProperty(ZlibBase.prototype, "bytesRead", {
   get: function () {
     return this[kHandle].bytesRead;
   },
 });
-ObjectDefineProperty(Base.prototype, "_closed", {
+ObjectDefineProperty(ZlibBase.prototype, "_closed", {
   get: function () {
     return this[kHandle].closed;
   },
 });
-Base.prototype.flush = function (kind, callback) {
+ZlibBase.prototype.flush = function (kind, callback) {
   if (typeof kind === "function" || (kind === undefined && !callback)) {
     callback = kind;
     kind = 3;
@@ -82,32 +82,32 @@ Base.prototype.flush = function (kind, callback) {
     this.write(kFlushBuffers[kind], "", callback);
   }
 };
-Base.prototype.reset = function () {
+ZlibBase.prototype.reset = function () {
   assert(this[kHandle], "zlib binding closed");
   return this[kHandle].reset();
 };
-Base.prototype.close = function (callback) {
+ZlibBase.prototype.close = function (callback) {
   if (callback) stream.finished(this, callback);
   this.destroy();
 };
-Base.prototype._transform = function _transform(chunk, encoding, callback) {
+ZlibBase.prototype._transform = function _transform(chunk, encoding, callback) {
   try {
     callback(undefined, this[kHandle].transformSync(chunk, encoding, false));
   } catch (err) {
     callback(err, undefined);
   }
 };
-Base.prototype._flush = function _flush(callback) {
+ZlibBase.prototype._flush = function _flush(callback) {
   try {
     callback(undefined, this[kHandle].transformSync("", undefined, true));
   } catch (err) {
     callback(err, undefined);
   }
 };
-Base.prototype._final = function (callback) {
+ZlibBase.prototype._final = function (callback) {
   callback();
 };
-Base.prototype._processChunk = function (chunk, flushFlag, cb) {
+ZlibBase.prototype._processChunk = function (chunk, flushFlag, cb) {
   // _processChunk() is left for backwards compatibility
   if (typeof cb === "function") processChunk(this, chunk, flushFlag, cb);
   else return processChunkSync(this, chunk, flushFlag);
@@ -125,9 +125,9 @@ function processChunk(self, chunk, flushFlag, cb) {
 //
 
 function Zlib(method, options) {
-  Base.$call(this, method, options);
+  ZlibBase.$call(this, method, options);
 }
-Zlib.prototype = Object.create(Base.prototype);
+Zlib.prototype = Object.create(ZlibBase.prototype);
 ObjectDefineProperty(Zlib.prototype, "_level", {
   get: function () {
     return this[kHandle].level;
@@ -154,17 +154,17 @@ Zlib.prototype._transform = function _transform(chunk, encoding, callback) {
 
 function BrotliCompress(opts) {
   if (!(this instanceof BrotliCompress)) return new BrotliCompress(opts);
-  Base.$call(this, BROTLI_ENCODE, opts);
+  ZlibBase.$call(this, BROTLI_ENCODE, opts);
 }
-BrotliCompress.prototype = Object.create(Base.prototype);
+BrotliCompress.prototype = Object.create(ZlibBase.prototype);
 
 //
 
 function BrotliDecompress(opts) {
   if (!(this instanceof BrotliDecompress)) return new BrotliDecompress(opts);
-  Base.$call(this, BROTLI_DECODE, opts);
+  ZlibBase.$call(this, BROTLI_DECODE, opts);
 }
-BrotliDecompress.prototype = Object.create(Base.prototype);
+BrotliDecompress.prototype = Object.create(ZlibBase.prototype);
 
 //
 

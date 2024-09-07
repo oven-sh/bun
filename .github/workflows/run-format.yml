@@ -21,6 +21,7 @@ jobs:
           sparse-checkout: |
             .prettierrc-ci
             .github
+            .vscode
             src
             scripts
             packages
@@ -29,6 +30,7 @@ jobs:
             package.json
             bun.lockb
             .vscode
+            .clang-format
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:

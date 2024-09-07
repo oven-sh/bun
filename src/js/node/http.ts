@@ -1329,7 +1329,7 @@ function ensureReadableStreamController(run) {
     new Response(
       new ReadableStream({
         type: "direct",
-        pull: async controller => {
+        pull: controller => {
           this[controllerSymbol] = controller;
           if (firstWrite) controller.write(firstWrite);
           firstWrite = undefined;
@@ -1337,7 +1337,7 @@ function ensureReadableStreamController(run) {
           if (!this[finishedSymbol]) {
             const { promise, resolve } = $newPromiseCapability(GlobalPromise);
             this[deferredSymbol] = resolve;
-            return await promise;
+            return promise;
           }
         },
       }),

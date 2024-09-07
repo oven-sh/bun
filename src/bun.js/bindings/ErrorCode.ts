@@ -34,10 +34,14 @@ export default [
   ["ERR_STREAM_DESTROYED", TypeError, "TypeError"],
   ["ERR_STREAM_NULL_VALUES", TypeError, "TypeError"],
   ["ERR_STREAM_WRITE_AFTER_END", TypeError, "TypeError"],
+  ["ERR_ZLIB_INITIALIZATION_FAILED", Error, "Error"],
   ["ERR_STRING_TOO_LONG", Error, "Error"],
-  ["ERR_ZLIB_INITIALIZATION_FAILED", TypeError, "TypeError"],
+  ["ERR_CRYPTO_SCRYPT_INVALID_PARAMETER", Error, "Error"],
+  ["ERR_CRYPTO_INVALID_SCRYPT_PARAMS", RangeError, "RangeError"],
+  ["MODULE_NOT_FOUND", Error, "Error"],
   ["ERR_ILLEGAL_CONSTRUCTOR", TypeError, "TypeError"],
   ["ERR_INVALID_URL", TypeError, "TypeError"],
+  ["ERR_BUFFER_TOO_LARGE", RangeError, "RangeError"],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError, "TypeError"],

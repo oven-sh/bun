@@ -1663,15 +1663,11 @@ pub const Interpreter = struct {
     fn ioToJSValue(globalThis: *JSGlobalObject, buf: *bun.ByteList) JSValue {
         const bytelist = buf.*;
         buf.* = .{};
-        const value = JSC.MarkedArrayBuffer.toNodeBuffer(
-            .{
-                .allocator = bun.default_allocator,
-                .buffer = JSC.ArrayBuffer.fromBytes(@constCast(bytelist.slice()), .Uint8Array),
-            },
-            globalThis,
-        );
-
-        return value;
+        const buffer: JSC.Buffer = .{
+            .allocator = bun.default_allocator,
+            .buffer = JSC.ArrayBuffer.fromBytes(@constCast(bytelist.slice()), .Uint8Array),
+        };
+        return buffer.toNodeBuffer(globalThis);
     }
 
     fn asyncCmdDone(this: *ThisInterpreter, @"async": *Async) void {

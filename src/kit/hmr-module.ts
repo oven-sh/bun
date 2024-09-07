@@ -1,3 +1,5 @@
+import * as runtimeHelpers from '../runtime.bun.js';
+
 const registry = new Map<Id, HotModule>()
 
 export type ModuleLoadFunction = (module: HotModule) => void;
@@ -29,6 +31,13 @@ export class HotModule {
   }
 }
 
+// {
+//   const runtime = new HotModule(0);
+//   runtime.exports = runtimeHelpers;
+//   runtime.__esModule = true;
+//   registry.set(0, runtime);
+// }
+
 export function loadModule(key: Id): HotModule {
   let module = registry.get(key);
   if (module) return module;
@@ -42,6 +51,6 @@ export function loadModule(key: Id): HotModule {
   return module;
 }
 
-// name(HotModule.prototype.importSync, '<HMR runtime> importSync')
-// name(HotModule.prototype.require, '<HMR runtime> require')
-// name(loadModule, '<HMR runtime> loadModule')
+runtimeHelpers.__name(HotModule.prototype.importSync, '<HMR runtime> importSync')
+runtimeHelpers.__name(HotModule.prototype.require, '<HMR runtime> require')
+runtimeHelpers.__name(loadModule, '<HMR runtime> loadModule')

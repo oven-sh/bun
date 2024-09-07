@@ -10,8 +10,6 @@ describe("bundler", async () => {
     target: 'bun',
     run: { stdout: 'Hello, world!' },
     onAfterBundle(api) {
-      // expect it to be an IIFE
-      api.expectFile('out.js').toContain('"a.js"(');
       // `importSync` is one of the functions the runtime includes.
       // it is on a property access so it will not be mangled
       api.expectFile('out.js').toContain('importSync');

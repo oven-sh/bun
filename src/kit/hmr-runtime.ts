@@ -1,4 +1,6 @@
-// This file is the 
+// This file is the entrypoint to the hot-module-reloading runtime
+// In the browser, this uses a WebSocket to communicate with the bundler.
+// On the server, communication is facilitated using a secret global.
 import { loadModule } from './hmr-module';
 import { showErrorOverlay } from './client/overlay';
 

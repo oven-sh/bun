@@ -2332,7 +2332,10 @@ fn NewPrinter(
                 .e_import_meta => {
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
-                    if (!p.options.import_meta_ref.isValid()) {
+                    if (p.options.module_type == .internal_kit_dev) {
+                        p.printSymbol(p.options.commonjs_module_ref);
+                        p.print(".importMeta()");
+                    } else if (!p.options.import_meta_ref.isValid()) {
                         // Most of the time, leave it in there
                         p.print("import.meta");
                     } else {
@@ -2360,6 +2363,8 @@ fn NewPrinter(
                         }
                         p.print("import.meta.main");
                     } else {
+                        bun.assert(p.options.module_type != .internal_kit_dev);
+
                         p.printSpaceBeforeIdentifier();
                         p.addSourceMapping(expr.loc);
 

@@ -3377,8 +3377,6 @@ pub const Graph = struct {
 
     use_directive_entry_points: UseDirective.List = .{},
 
-    // const_values: std.HashMapUnmanaged(Ref, Expr, Ref.HashCtx, 80) = .{},
-
     estimated_file_loader_count: usize = 0,
 
     additional_output_files: std.ArrayListUnmanaged(options.OutputFile) = .{},

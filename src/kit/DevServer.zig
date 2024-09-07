@@ -881,6 +881,12 @@ pub const c = struct {
     extern fn KitGetRequestHandlerFromModule(global: *DevGlobalObject, module: *JSC.JSString) JSValue;
 };
 
+pub fn reload(dev: *DevServer) void {
+    // TODO: given no arguments, this method is absolutely useless. We cannot do anything.
+    _ = dev;
+    Output.warn("TODO: initiate hot reload", .{});
+}
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 

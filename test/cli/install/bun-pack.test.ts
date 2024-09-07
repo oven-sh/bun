@@ -1,8 +1,8 @@
-import { spawn, write, file } from "bun";
-import { test, expect, describe, beforeEach } from "bun:test";
-import { bunExe, bunEnv, tmpdirSync, runBunInstall } from "harness";
+import { file, spawn, write } from "bun";
 import { readTarball } from "bun:internal-for-testing";
-import { exists, rename, rm, stat, mkdir } from "fs/promises";
+import { beforeEach, describe, expect, test } from "bun:test";
+import { exists, mkdir, rm } from "fs/promises";
+import { bunEnv, bunExe, runBunInstall, tmpdirSync } from "harness";
 import { join } from "path";
 
 var packageDir: string;

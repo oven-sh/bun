@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { readTarball } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { exists, mkdir, rm } from "fs/promises";
-import { bunEnv, bunExe, runBunInstall, tmpdirSync } from "harness";
+import { bunEnv, bunExe, runBunInstall, tmpdirSync, isWindows } from "harness";
 import { join } from "path";
 
 var packageDir: string;
@@ -931,7 +931,11 @@ describe("bins", () => {
     ]);
 
     expect(tarball.entries[0].perm & 0o644).toBe(0o644);
-    expect(tarball.entries[1].perm & (0o644 | 0o111)).toBe(0o644 | 0o111);
+    if (isWindows) {
+      expect(tarball.entries[1].perm & 0o111).toBe(0);
+    } else {
+      expect(tarball.entries[1].perm & (0o644 | 0o111)).toBe(0o644 | 0o111);
+    }
   });
 
   test("directory", async () => {
@@ -966,8 +970,13 @@ describe("bins", () => {
     ]);
 
     expect(tarball.entries[0].perm & 0o644).toBe(0o644);
-    expect(tarball.entries[1].perm & (0o644 | 0o111)).toBe(0o644 | 0o111);
-    expect(tarball.entries[2].perm & (0o644 | 0o111)).toBe(0o644 | 0o111);
+    if (isWindows) {
+      expect(tarball.entries[1].perm & 0o111).toBe(0);
+      expect(tarball.entries[2].perm & 0o111).toBe(0);
+    } else {
+      expect(tarball.entries[1].perm & (0o644 | 0o111)).toBe(0o644 | 0o111);
+      expect(tarball.entries[2].perm & (0o644 | 0o111)).toBe(0o644 | 0o111);
+    }
   });
 });
 

@@ -1295,7 +1295,7 @@ ServerResponse.prototype._write = function (chunk, encoding, callback) {
 
   ensureReadableStreamController.$call(this, controller => {
     controller.write(chunk);
-    callback();
+    controller.flush().finally(callback);
   });
 };
 
@@ -1310,12 +1310,12 @@ ServerResponse.prototype._writev = function (chunks, callback) {
     return;
   }
 
-  ensureReadableStreamController.$call(this, controller => {
+  ensureReadableStreamController.$call(this, async controller => {
     for (const chunk of chunks) {
       controller.write(chunk.chunk);
     }
 
-    callback();
+    controller.flush().finally(callback);
   });
 };
 
@@ -1329,7 +1329,7 @@ function ensureReadableStreamController(run) {
     new Response(
       new ReadableStream({
         type: "direct",
-        pull: controller => {
+        pull: async controller => {
           this[controllerSymbol] = controller;
           if (firstWrite) controller.write(firstWrite);
           firstWrite = undefined;
@@ -1337,7 +1337,7 @@ function ensureReadableStreamController(run) {
           if (!this[finishedSymbol]) {
             const { promise, resolve } = $newPromiseCapability(GlobalPromise);
             this[deferredSymbol] = resolve;
-            return promise;
+            return await promise;
           }
         },
       }),

@@ -9,16 +9,16 @@ body:
       value: |
         **Thank you so much** for submitting a crash report. You're helping us make Bun more reliable for everyone!
   - type: textarea
+    id: package_json
+    attributes:
+      label: `package.json` file
+      description: Can you upload your `package.json` file? This helps us reproduce the crash.
+      render: json
+  - type: textarea
     id: repro
     attributes:
       label: How can we reproduce the crash?
       description: Please provide a [minimal reproduction](https://stackoverflow.com/help/minimal-reproducible-example) using a GitHub repository, [Replit](https://replit.com/@replit/Bun) or [CodeSandbox](https://codesandbox.io/templates/bun)
-  - type: textarea
-    id: package_json
-    attributes:
-      label: package.json file
-      description: Can you upload your `package.json` file? It would help if you could provide a minimal reproduction.
-      render: json
   - type: textarea
     id: logs
     attributes:

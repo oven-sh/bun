@@ -251,7 +251,6 @@ template<typename T> struct JSConverter<IDLClampAdaptor<T>> {
     }
 };
 
-
 template<typename T> struct Converter<IDLEnforceRangeAdaptor<T>> : DefaultConverter<IDLEnforceRangeAdaptor<T>> {
     using ReturnType = typename IDLEnforceRangeAdaptor<T>::ImplementationType;
 
@@ -272,7 +271,6 @@ template<typename T> struct JSConverter<IDLEnforceRangeAdaptor<T>> {
         return JSConverter<T>::convert(value);
     }
 };
-
 
 // MARK: -
 // MARK: Floating point types

@@ -1398,19 +1398,6 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32 AND NOT ASSERT_ENABLED)
     )
 endif()
 
-if(WIN32)
-    # Kill all instances of bun before linking.
-    # This is necessary because the file is locked by the process.
-    add_custom_command(
-        TARGET ${bun}
-        PRE_LINK
-        COMMAND
-        "powershell"
-        "/C"
-        "Stop-Process -Name '${bun}' -Force -ErrorAction SilentlyContinue; exit 0"
-    )
-endif()
-
 # --- Dependencies ---
 if(USE_CUSTOM_ZLIB)
     include_directories(${BUN_DEPS_DIR}/zlib)

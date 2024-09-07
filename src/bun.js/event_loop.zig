@@ -382,6 +382,8 @@ const Lchown = JSC.Node.Async.lchown;
 const Unlink = JSC.Node.Async.unlink;
 const BrotliDecoder = JSC.API.BrotliDecoder;
 const BrotliEncoder = JSC.API.BrotliEncoder;
+const ZlibDecoder = JSC.API.ZlibDecoder;
+const ZlibEncoder = JSC.API.ZlibEncoder;
 
 const ShellGlobTask = bun.shell.interpret.Interpreter.Expansion.ShellGlobTask;
 const ShellRmTask = bun.shell.Interpreter.Builtin.Rm.ShellRmTask;
@@ -466,6 +468,8 @@ pub const Task = TaggedPointerUnion(.{
     Unlink,
     BrotliEncoder,
     BrotliDecoder,
+    ZlibEncoder,
+    ZlibDecoder,
     ShellGlobTask,
     ShellRmTask,
     ShellRmDirTask,
@@ -1226,6 +1230,14 @@ pub const EventLoop = struct {
                 },
                 @field(Task.Tag, typeBaseName(@typeName(BrotliDecoder))) => {
                     var any: *BrotliDecoder = task.get(BrotliDecoder).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ZlibEncoder))) => {
+                    var any: *ZlibEncoder = task.get(ZlibEncoder).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ZlibDecoder))) => {
+                    var any: *ZlibDecoder = task.get(ZlibDecoder).?;
                     any.runFromJSThread();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ProcessWaiterThreadTask))) => {

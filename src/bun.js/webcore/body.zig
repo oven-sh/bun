@@ -482,7 +482,7 @@ pub const Body = struct {
                     if (locked.readable.get()) |readable| {
                         return readable.value;
                     }
-                    if (locked.promise != null) {
+                    if (locked.promise != null or locked.action != .none) {
                         return JSC.WebCore.ReadableStream.used(globalThis);
                     }
                     var drain_result: JSC.WebCore.DrainResult = .{
@@ -982,7 +982,81 @@ pub const Body = struct {
                 this.Error.deinit();
             }
         }
+
+        pub fn tee(this: *Value, globalThis: *JSC.JSGlobalObject) Value {
+            var locked = &this.Locked;
+
+            if (locked.readable.isDisturbed(globalThis)) {
+                return Value{ .Used = {} };
+            }
+
+            if (locked.readable.tee(globalThis)) |readable| {
+                return Value{
+                    .Locked = .{
+                        .readable = JSC.WebCore.ReadableStream.Strong.init(readable, globalThis),
+                        .global = globalThis,
+                    },
+                };
+            }
+            if (locked.promise != null or locked.action != .none or locked.readable.has()) {
+                return Value{ .Used = {} };
+            }
+
+            var drain_result: JSC.WebCore.DrainResult = .{
+                .estimated_size = 0,
+            };
+
+            if (locked.onStartStreaming) |drain| {
+                locked.onStartStreaming = null;
+                drain_result = drain(locked.task.?);
+            }
+
+            if (drain_result == .empty or drain_result == .aborted) {
+                this.* = .{ .Null = {} };
+                return Value{ .Null = {} };
+            }
+
+            var reader = JSC.WebCore.ByteStream.Source.new(.{
+                .context = undefined,
+                .globalThis = globalThis,
+            });
+
+            reader.context.setup();
+
+            if (drain_result == .estimated_size) {
+                reader.context.highWaterMark = @as(Blob.SizeType, @truncate(drain_result.estimated_size));
+                reader.context.size_hint = @as(Blob.SizeType, @truncate(drain_result.estimated_size));
+            } else if (drain_result == .owned) {
+                reader.context.buffer = drain_result.owned.list;
+                reader.context.size_hint = @as(Blob.SizeType, @truncate(drain_result.owned.size_hint));
+            }
+
+            locked.readable = JSC.WebCore.ReadableStream.Strong.init(.{
+                .ptr = .{ .Bytes = &reader.context },
+                .value = reader.toReadableStream(globalThis),
+            }, globalThis);
+
+            if (locked.onReadableStreamAvailable) |onReadableStreamAvailable| {
+                onReadableStreamAvailable(locked.task.?, globalThis, locked.readable.get().?);
+            }
+
+            const teed = locked.readable.tee(globalThis) orelse return Value{ .Used = {} };
+
+            return Value{
+                .Locked = .{
+                    .readable = JSC.WebCore.ReadableStream.Strong.init(teed, globalThis),
+                    .global = globalThis,
+                },
+            };
+        }
+
         pub fn clone(this: *Value, globalThis: *JSC.JSGlobalObject) Value {
+            this.toBlobIfPossible();
+
+            if (this.* == .Locked) {
+                return this.tee(globalThis);
+            }
+
             if (this.* == .InternalBlob) {
                 var internal_blob = this.InternalBlob;
                 this.* = .{

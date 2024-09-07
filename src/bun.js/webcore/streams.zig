@@ -57,6 +57,10 @@ pub const ReadableStream = struct {
             return this.held.globalThis;
         }
 
+        pub fn has(this: *Strong) bool {
+            return this.held.has();
+        }
+
         pub fn isDisturbed(this: *const Strong, global: *JSC.JSGlobalObject) bool {
             if (this.get()) |stream| {
                 return stream.isDisturbed(global);
@@ -84,7 +88,28 @@ pub const ReadableStream = struct {
             // }
             this.held.deinit();
         }
+
+        pub fn tee(this: *Strong, global: *JSGlobalObject) ?ReadableStream {
+            if (this.get()) |stream| {
+                const first, const second = stream.tee(global) orelse return null;
+                this.held.set(global, first.value);
+                return second;
+            }
+            return null;
+        }
     };
+
+    extern fn ReadableStream__tee(stream: JSValue, globalThis: *JSGlobalObject, out1: *JSC.JSValue, out2: *JSC.JSValue) bool;
+    pub fn tee(this: *const ReadableStream, globalThis: *JSGlobalObject) ?struct { ReadableStream, ReadableStream } {
+        var out1: JSC.JSValue = .zero;
+        var out2: JSC.JSValue = .zero;
+        if (!ReadableStream__tee(this.value, globalThis, &out1, &out2)) {
+            return null;
+        }
+        const out_stream2 = ReadableStream.fromJS(out2, globalThis) orelse return null;
+        const out_stream1 = ReadableStream.fromJS(out1, globalThis) orelse return null;
+        return .{ out_stream1, out_stream2 };
+    }
 
     pub fn toJS(this: *const ReadableStream) JSValue {
         return this.value;

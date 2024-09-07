@@ -85,7 +85,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
     }
 
     size_t arrayLength = array->length();
-    if (arrayLength < 1) {
+    const auto returnEmptyArrayBufferView = [&]() -> EncodedJSValue {
         if (asUint8Array) {
             return JSValue::encode(
                 JSC::JSUint8Array::create(
@@ -95,6 +95,10 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
         }
 
         RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSArrayBuffer::create(vm, lexicalGlobalObject->arrayBufferStructure(), JSC::ArrayBuffer::create(static_cast<size_t>(0), 1))));
+    };
+
+    if (arrayLength < 1) {
+        return returnEmptyArrayBufferView();
     }
 
     size_t byteLength = 0;
@@ -149,7 +153,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
     byteLength = std::min(byteLength, maxLength);
 
     if (byteLength == 0) {
-        RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSArrayBuffer::create(vm, lexicalGlobalObject->arrayBufferStructure(), JSC::ArrayBuffer::create(static_cast<size_t>(0), 1))));
+        return returnEmptyArrayBufferView();
     }
 
     auto buffer = JSC::ArrayBuffer::tryCreateUninitialized(byteLength, 1);
@@ -237,6 +241,7 @@ JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArrays, (JSGlobalObject * globalObje
     auto arg2 = callFrame->argument(2);
     if (!arg2.isUndefined()) {
         asUint8Array = arg2.toBoolean(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
 
     return flattenArrayOfBuffersIntoArrayBufferOrUint8Array(globalObject, arrayValue, maxLength, asUint8Array);

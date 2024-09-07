@@ -261,10 +261,33 @@ pub const Response = struct {
     pub fn doClone(
         this: *Response,
         globalThis: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
+        callframe: *JSC.CallFrame,
     ) JSValue {
+        const this_value = callframe.this();
         const cloned = this.clone(globalThis);
-        return Response.makeMaybePooled(globalThis, cloned);
+        if (globalThis.hasException()) {
+            cloned.finalize();
+            return .zero;
+        }
+
+        const js_wrapper = Response.makeMaybePooled(globalThis, cloned);
+
+        if (js_wrapper != .zero) {
+            if (cloned.body.value == .Locked) {
+                if (cloned.body.value.Locked.readable.get()) |readable| {
+                    // If we are teed, then we need to update the cached .body
+                    // value to point to the new readable stream
+                    // We must do this on both the original and cloned response
+                    // but especially the original response since it will have a stale .body value now.
+                    Response.bodySetCached(js_wrapper, globalThis, readable.value);
+                    if (this.body.value.Locked.readable.get()) |other_readable| {
+                        Response.bodySetCached(this_value, globalThis, other_readable.value);
+                    }
+                }
+            }
+        }
+
+        return js_wrapper;
     }
 
     pub fn makeMaybePooled(globalObject: *JSC.JSGlobalObject, ptr: *Response) JSValue {

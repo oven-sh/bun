@@ -36,6 +36,10 @@ function generate(name) {
         fn: "doRequestIP",
         length: 1,
       },
+      timeout: {
+        fn: "doTimeout",
+        length: 2,
+      },
       port: {
         getter: "getPort",
       },

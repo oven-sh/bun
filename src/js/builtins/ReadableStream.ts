@@ -151,16 +151,67 @@ export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>)
   }
 
   result = Bun.readableStreamToArray(stream);
-  if ($isPromise(result)) {
-    // `result` is an InternalPromise, which doesn't have a `.then` method
-    // but `.then` isn't user-overridable, so we can use it safely.
-    return result.then(x => (x.length === 1 && x[0] instanceof ArrayBuffer ? x[0] : Bun.concatArrayBuffers(x)));
+
+  function toArrayBuffer(result: unknown[]) {
+    switch (result.length) {
+      case 0: {
+        return new ArrayBuffer(0);
+      }
+      case 1: {
+        const view = result[0];
+        if (view instanceof ArrayBuffer || view instanceof SharedArrayBuffer) {
+          return view;
+        }
+
+        if (ArrayBuffer.isView(view)) {
+          const buffer = view.buffer;
+          const byteOffset = view.byteOffset;
+          const byteLength = view.byteLength;
+          if (byteOffset === 0 && byteLength === buffer.byteLength) {
+            return buffer;
+          }
+
+          return buffer.slice(byteOffset, byteOffset + byteLength);
+        }
+
+        if (typeof view === "string") {
+          return new TextEncoder().encode(view);
+        }
+      }
+      default: {
+        let anyStrings = false;
+        for (const chunk of result) {
+          if (typeof chunk === "string") {
+            anyStrings = true;
+            break;
+          }
+        }
+
+        if (!anyStrings) {
+          return Bun.concatArrayBuffers(result, false);
+        }
+
+        const sink = new Bun.ArrayBufferSink();
+        sink.start();
+
+        for (const chunk of result) {
+          sink.write(chunk);
+        }
+
+        return sink.end() as Uint8Array;
+      }
+    }
   }
 
-  if (result.length === 1) {
-    return result[0];
+  if ($isPromise(result)) {
+    const completedResult = Bun.peek(result);
+    if (completedResult !== result) {
+      result = completedResult;
+    } else {
+      return result.then(toArrayBuffer);
+    }
   }
-  return Bun.concatArrayBuffers(result);
+  return $createFulfilledPromise(toArrayBuffer(result));
 }
 
 $linkTimeConstant;
@@ -180,22 +231,65 @@ export function readableStreamToBytes(stream: ReadableStream<ArrayBuffer>): Prom
   }
 
   result = Bun.readableStreamToArray(stream);
-  if ($isPromise(result)) {
-    // `result` is an InternalPromise, which doesn't have a `.then` method
-    // but `.then` isn't user-overridable, so we can use it safely.
-    return result.then(x => {
-      // Micro-optimization: if the result is a single Uint8Array chunk, let's just return it without cloning.
-      if (x.length === 1 && x[0] instanceof ArrayBuffer) {
-        return new Uint8Array(x[0]);
+
+  function toBytes(result: unknown[]) {
+    switch (result.length) {
+      case 0: {
+        return new Uint8Array(0);
       }
-      return Bun.concatArrayBuffers(x, Infinity, true);
-    });
+      case 1: {
+        const view = result[0];
+        if (view instanceof Uint8Array) {
+          return view;
+        }
+
+        if (ArrayBuffer.isView(view)) {
+          return new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+        }
+
+        if (view instanceof ArrayBuffer || view instanceof SharedArrayBuffer) {
+          return new Uint8Array(view);
+        }
+
+        if (typeof view === "string") {
+          return new TextEncoder().encode(view);
+        }
+      }
+      default: {
+        let anyStrings = false;
+        for (const chunk of result) {
+          if (typeof chunk === "string") {
+            anyStrings = true;
+            break;
+          }
+        }
+
+        if (!anyStrings) {
+          return Bun.concatArrayBuffers(result, true);
+        }
+
+        const sink = new Bun.ArrayBufferSink();
+        sink.start({ asUint8Array: true });
+
+        for (const chunk of result) {
+          sink.write(chunk);
+        }
+
+        return sink.end() as Uint8Array;
+      }
+    }
   }
 
-  if (result.length === 1 && result[0] instanceof ArrayBuffer) {
-    return new Uint8Array(result[0]);
+  if ($isPromise(result)) {
+    const completedResult = Bun.peek(result);
+    if (completedResult !== result) {
+      result = completedResult;
+    } else {
+      return result.then(toBytes);
+    }
   }
-  return Bun.concatArrayBuffers(result, Infinity, true);
+
+  return $createFulfilledPromise(toBytes(result));
 }
 
 $linkTimeConstant;
@@ -212,11 +306,22 @@ export function readableStreamToFormData(
 $linkTimeConstant;
 export function readableStreamToJSON(stream: ReadableStream): unknown {
   if ($isReadableStreamLocked(stream)) return Promise.$reject($makeTypeError("ReadableStream is locked"));
+  let result = $tryUseReadableStreamBufferedFastPath(stream, "json");
+  if (result) {
+    return result;
+  }
 
-  return (
-    $tryUseReadableStreamBufferedFastPath(stream, "json") ||
-    Promise.resolve(Bun.readableStreamToText(stream)).then(globalThis.JSON.parse)
-  );
+  let text = Bun.readableStreamToText(stream);
+  const peeked = Bun.peek(text);
+  if (peeked !== text) {
+    try {
+      return $createFulfilledPromise(globalThis.JSON.parse(peeked));
+    } catch (e) {
+      return Promise.reject(e);
+    }
+  }
+
+  return text.then(globalThis.JSON.parse);
 }
 
 $linkTimeConstant;

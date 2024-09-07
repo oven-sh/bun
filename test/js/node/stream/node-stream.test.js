@@ -402,9 +402,30 @@ it("Writable.toWeb", async () => {
 
   // Write some data
   const encoder = new TextEncoder();
-  await writer.write(encoder.encode("Hello, World!"));
+  await writer.write(encoder.encode("Hello,"));
+  await writer.write(encoder.encode(" World!"));
   await writer.close();
   expect(dataBuffer).toBe("Hello, World!");
+});
+
+it("Writable.fromWeb", async () => {
+  let dataBuffer = "";
+
+  // Create a Web WritableStream
+  const webWritable = new WritableStream({
+    write(chunk) {
+      dataBuffer += chunk.toString();
+    },
+  });
+
+  const nodeWritable = Writable.fromWeb(webWritable);
+
+  // Write some data
+  const encoder = new TextEncoder();
+  nodeWritable.write(encoder.encode("Hello, World!"), () => {
+    expect(dataBuffer).toBe("Hello, World!");
+  });
+  nodeWritable.end();
 });
 
 it("#9242.5 Stream has constructor", () => {

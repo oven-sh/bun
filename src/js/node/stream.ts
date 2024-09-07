@@ -4383,8 +4383,19 @@ var require_writable = __commonJS({
         }
         validateBoolean(objectMode, "options.objectMode");
 
-        const nativeStream = getNativeWritableStream(writableStream, options);
-        return nativeStream;
+        const nativeStream = getNativeWritable(writableStream, options);
+        return (
+          nativeStream ||
+          new Writable(
+            {
+              objectMode,
+              highWaterMark,
+              encoding,
+              signal,
+            },
+            writableStream,
+          )
+        );
       },
 
       newWritableStreamFromStreamWritable(streamWritable: any, options: any = {}) {
@@ -5916,7 +5927,7 @@ function getNativeReadableStream(Readable, stream, options) {
 
 // Cargo culted from the above function
 // TODO: might not be correct impl
-function getNativeWritableStream(stream, options) {
+function getNativeWritable(stream, options) {
   const ptr = stream.$bunNativePtr;
   if (!ptr || ptr === -1) {
     $debug("no native readable stream");

@@ -48,7 +48,10 @@ $CC = "clang-cl"
 $CXX = "clang-cl"
 
 $CFLAGS = '/O2 /Z7 /MT /O2 /Ob2 /DNDEBUG /U_DLL'
-$CXXFLAGS = '/O2 /Z7 /MT /O2 /Ob2 /DNDEBUG /U_DLL -Xclang -fno-c++-static-destructors '
+$CXXFLAGS = '/O2 /Z7 /MT /O2 /Ob2 /DNDEBUG /U_DLL -Xclang -fno-c++-static-destructors'
+
+# libarchive requires zlib headers for gzip compression support. without them, it will attempt to spawn a gzip process
+$CFLAGS += " /I$BUN_DEPS_DIR\zlib"
 
 if ($Lto) {
   $CXXFLAGS += " -fuse-ld=lld -flto -Xclang -emit-llvm-bc"

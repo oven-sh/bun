@@ -70,6 +70,9 @@ export FILE_PREFIX_MAP=" -ffile-prefix-map='${BUN_BASE_DIR}'=. -ffile-prefix-map
 export CFLAGS="-O3 -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -fno-asynchronous-unwind-tables -fno-unwind-tables $FILE_PREFIX_MAP "
 export CXXFLAGS="-O3 -fno-exceptions -fno-rtti -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-c++-static-destructors $FILE_PREFIX_MAP "
 
+# libarchive requires zlib headers for gzip compression support. without them, it will attempt to spawn a gzip process
+export CFLAGS="$CFLAGS -I$BUN_DEPS_DIR/zlib "
+
 # Add flags for LTO
 # We cannot enable LTO on macOS for dependencies because it requires -fuse-ld=lld and lld causes many segfaults on macOS (likely related to stack size)
 if [ "$USE_LTO" == "1" ] || [ "$USE_LTO" == "ON" ]; then

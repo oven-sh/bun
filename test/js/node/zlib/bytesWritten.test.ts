@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import * as zlib from "zlib";
 
 const expectStr = "abcdefghijklmnopqrstuvwxyz".repeat(2);

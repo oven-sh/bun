@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
-import zlib from "node:zlib";
+import { expect, test } from "bun:test";
 import { Readable } from "node:stream";
+import zlib from "node:zlib";
 
 test("yields data in more than one chunk", () => {
   const hasher_in = new Bun.CryptoHasher("sha256");

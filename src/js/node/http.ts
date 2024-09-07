@@ -1793,7 +1793,11 @@ class ClientRequest extends OutgoingMessage {
     this.#joinDuplicateHeaders = _joinDuplicateHeaders;
     if (options.pfx) {
       throw new Error("pfx is not supported");
+    } else {
+      const agentPfx = this.#agent?.pfx;
+      if (agentPfx) throw new Error("pfx is not supported");
     }
+
     if (options.rejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = options.rejectUnauthorized;
     else {
       const agentRejectUnauthorized = this.#agent?.rejectUnauthorized;
@@ -1805,6 +1809,15 @@ class ClientRequest extends OutgoingMessage {
           "ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
         );
       this._ensureTls().ca = options.ca;
+    } else {
+      const agentCa = this.#agent?.ca;
+      if (agentCa) {
+        if (!isValidTLSArray(agentCa))
+          throw new TypeError(
+            "agent ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+          );
+        this._ensureTls().ca = agentCa;
+      }
     }
     if (options.cert) {
       if (!isValidTLSArray(options.cert))
@@ -1812,6 +1825,15 @@ class ClientRequest extends OutgoingMessage {
           "cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
         );
       this._ensureTls().cert = options.cert;
+    } else {
+      const agentCert = this.#agent?.cert;
+      if (agentCert) {
+        if (!isValidTLSArray(agentCert))
+          throw new TypeError(
+            "agent cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+          );
+        this._ensureTls().cert = agentCert;
+      }
     }
     if (options.key) {
       if (!isValidTLSArray(options.key))
@@ -1819,23 +1841,57 @@ class ClientRequest extends OutgoingMessage {
           "key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
         );
       this._ensureTls().key = options.key;
+    } else {
+      const agentKey = this.#agent?.key;
+      if (agentKey) {
+        if (!isValidTLSArray(agentKey))
+          throw new TypeError(
+            "agent key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+          );
+        this._ensureTls().key = agentKey;
+      }
     }
     if (options.passphrase) {
       if (typeof options.passphrase !== "string") throw new TypeError("passphrase argument must be a string");
       this._ensureTls().passphrase = options.passphrase;
+    } else {
+      const agentPassphrase = this.#agent?.passphrase;
+      if (agentPassphrase) {
+        if (typeof agentPassphrase !== "string") throw new TypeError("agent passphrase argument must be a string");
+        this._ensureTls().passphrase = agentPassphrase;
+      }
     }
     if (options.ciphers) {
       if (typeof options.ciphers !== "string") throw new TypeError("ciphers argument must be a string");
       this._ensureTls().ciphers = options.ciphers;
+    } else {
+      const agentCiphers = this.#agent?.ciphers;
+      if (agentCiphers) {
+        if (typeof agentCiphers !== "string") throw new TypeError("agent ciphers argument must be a string");
+        this._ensureTls().ciphers = agentCiphers;
+      }
     }
     if (options.servername) {
       if (typeof options.servername !== "string") throw new TypeError("servername argument must be a string");
       this._ensureTls().servername = options.servername;
+    } else {
+      const agentServername = this.#agent?.servername;
+      if (agentServername) {
+        if (typeof agentServername !== "string") throw new TypeError("agent servername argument must be a string");
+        this._ensureTls().servername = agentServername;
+      }
     }
 
     if (options.secureOptions) {
       if (typeof options.secureOptions !== "number") throw new TypeError("secureOptions argument must be a string");
       this._ensureTls().secureOptions = options.secureOptions;
+    } else {
+      const agentSecureOptions = this.#agent?.secureOptions;
+      if (agentSecureOptions) {
+        if (typeof agentSecureOptions !== "number")
+          throw new TypeError("agent secureOptions argument must be a string");
+        this._ensureTls().secureOptions = agentSecureOptions;
+      }
     }
     this.#path = options.path || "/";
     if (cb) {

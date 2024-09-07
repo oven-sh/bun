@@ -1041,7 +1041,8 @@ fn handleTransformSyncStreamError(err: anyerror, globalThis: *JSC.JSGlobalObject
 }
 
 fn runCallback(callback: JSC.JSValue, globalObject: *JSC.JSGlobalObject, thisValue: JSC.JSValue, arguments: []const JSC.JSValue) ?void {
-    _ = callback.call(globalObject, thisValue, arguments);
+    const result = callback.call(globalObject, thisValue, arguments);
+    if (result.toError()) |_| return null;
     if (globalObject.hasException()) return null;
     return;
 }

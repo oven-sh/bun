@@ -172,15 +172,13 @@ pub const UpgradedDuplex = struct {
                 const buffer = JSC.BinaryType.toJS(.Buffer, data_, globalThis);
                 buffer.ensureStillAlive();
 
-                const result = writeOrEnd.call(globalThis, duplex, &[_]JSC.JSValue{buffer});
-                if (result.toError()) |err| {
-                    this.handlers.onError(this.handlers.ctx, err);
-                }
+                _ = writeOrEnd.call(globalThis, duplex, &.{buffer}) catch {
+                    this.handlers.onError(this.handlers.ctx, globalThis.takeException());
+                };
             } else {
-                const result = writeOrEnd.call(globalThis, duplex, &[_]JSC.JSValue{JSC.JSValue.jsNull()});
-                if (result.toError()) |err| {
-                    this.handlers.onError(this.handlers.ctx, err);
-                }
+                _ = writeOrEnd.call(globalThis, duplex, &.{.null}) catch {
+                    this.handlers.onError(this.handlers.ctx, globalThis.takeException());
+                };
             }
         }
     }

@@ -1580,6 +1580,8 @@ class ClientRequest extends OutgoingMessage {
       proxy = `${protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}`;
     } else {
       url = `${protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}${path}`;
+      // support agent proxy url/string for http/https
+      proxy = this.#agent?.proxy;
     }
     const tls = protocol === "https:" && this.#tls ? { ...this.#tls, serverName: this.#tls.servername } : undefined;
     try {
@@ -1597,6 +1599,7 @@ class ClientRequest extends OutgoingMessage {
       if (body && method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
         fetchOptions.body = body;
       }
+      console.error(proxy, tls);
 
       if (tls) {
         fetchOptions.tls = tls;
@@ -1675,7 +1678,6 @@ class ClientRequest extends OutgoingMessage {
 
   constructor(input, options, cb) {
     super();
-
     if (typeof input === "string") {
       const urlStr = input;
       try {
@@ -1793,6 +1795,10 @@ class ClientRequest extends OutgoingMessage {
       throw new Error("pfx is not supported");
     }
     if (options.rejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = options.rejectUnauthorized;
+    else {
+      const agentRejectUnauthorized = this.#agent?.rejectUnauthorized;
+      if (agentRejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = agentRejectUnauthorized;
+    }
     if (options.ca) {
       if (!isValidTLSArray(options.ca))
         throw new TypeError(

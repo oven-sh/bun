@@ -2489,21 +2489,23 @@ pub const Fetch = struct {
         };
 
         // proxy: string | undefined;
+
         url_proxy_buffer = extract_proxy: {
             const objects_to_try = [_]JSC.JSValue{
                 options_object orelse .zero,
                 request_init_object orelse .zero,
+                if (options_object) |obj| obj.get(globalThis, "agent") orelse .zero else .zero,
             };
             inline for (0..2) |i| {
-                if (objects_to_try[i] != .zero) {
+                if (!objects_to_try[i].isEmptyOrUndefinedOrNull()) {
                     if (objects_to_try[i].get(globalThis, "proxy")) |proxy_arg| {
-                        if (proxy_arg.isString() and proxy_arg.getLength(ctx) > 0) {
-                            var href = JSC.URL.hrefFromJS(proxy_arg, globalThis);
-                            if (href.tag == .Dead) {
-                                const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "fetch() proxy URL is invalid", .{}, ctx);
-                                is_error = true;
-                                return JSPromise.rejectedPromiseValue(globalThis, err);
-                            }
+                        var href = JSC.URL.hrefFromJS(proxy_arg, globalThis);
+                        if (href.tag == .Dead) {
+                            const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "fetch() proxy URL is invalid", .{}, ctx);
+                            is_error = true;
+                            return JSPromise.rejectedPromiseValue(globalThis, err);
+                        }
+                        if (!href.isEmpty()) {
                             defer href.deref();
                             const buffer = std.fmt.allocPrint(allocator, "{s}{}", .{ url_proxy_buffer, href }) catch {
                                 globalThis.throwOutOfMemory();

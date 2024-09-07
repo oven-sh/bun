@@ -1485,28 +1485,35 @@ pub const PackCommand = struct {
             };
             defer tarball_file.close();
 
-            const tarball_stat = tarball_file.stat().unwrap() catch |err| {
-                Output.err(err, "failed to stat tarball at: \"{s}\"", .{abs_tarball_dest});
-                Global.crash();
-            };
-
-            ctx.stats.packed_size = @intCast(tarball_stat.size);
-
-            const tarball = tarball_file.readToEnd(ctx.allocator).unwrap() catch |err| {
-                Output.err(err, "failed to read tarball at: \"{s}\"", .{abs_tarball_dest});
-                Global.crash();
-            };
-            defer ctx.allocator.free(tarball);
-
             var sha1 = sha.SHA1.init();
             defer sha1.deinit();
-            sha1.update(tarball);
-            sha1.final(&sha1_digest);
 
             var sha512 = sha.SHA512.init();
             defer sha512.deinit();
-            sha512.update(tarball);
+
+            var reader: std.io.BufferedReader(8192, File.Reader) = .{
+                .unbuffered_reader = tarball_file.reader(),
+            };
+
+            var size: usize = 0;
+            var read = reader.read(&read_buf) catch |err| {
+                Output.err(err, "failed to read tarball: \"{s}\"", .{abs_tarball_dest});
+                Global.crash();
+            };
+            while (read > 0) {
+                sha1.update(read_buf[0..read]);
+                sha512.update(read_buf[0..read]);
+                size += read;
+                read = reader.read(&read_buf) catch |err| {
+                    Output.err(err, "failed to read tarball: \"{s}\"", .{abs_tarball_dest});
+                    Global.crash();
+                };
+            }
+
+            sha1.final(&sha1_digest);
             sha512.final(&sha512_digest);
+
+            ctx.stats.packed_size = size;
         }
 
         printArchivedFilesAndPackages(

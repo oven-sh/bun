@@ -702,33 +702,3 @@ function(register_cmake_command)
     target_sources(${bun} PRIVATE ${MAKE_ARTIFACTS})
   endif()
 endfunction()
-
-# function(register_directory)
-#   set(args TARGET PATHS)
-#   cmake_parse_arguments(REGISTER "" "${args}" "" ${ARGN})
-
-#   if(NOT REGISTER_TARGET)
-#     message(FATAL_ERROR "register_directory: TARGET is required")
-#   endif()
-
-#   if(NOT TARGET ${REGISTER_TARGET})
-#     message(FATAL_ERROR "register_directory: TARGET is not a target: ${TARGET}")
-#   endif()
-
-#   if(NOT REGISTER_PATHS)
-#     message(FATAL_ERROR "register_directory: PATHS is required")
-#   endif()
-
-#   get_property(ALL_TARGETS DIRECTORY ${CWD} PROPERTY BUILDSYSTEM_TARGETS)
-#   foreach(target ${ALL_TARGETS})
-#     get_target_property(TARGET_INCLUDES ${target} INCLUDE_DIRECTORIES)
-#     get_target_property(TARGET_SOURCES ${target} SOURCES)
-#     set(TARGET_FILES ${TARGET_SOURCES} ${TARGET_INCLUDES})
-
-#     foreach(file ${TARGET_FILES})
-#       if(file MATCHES ${REGISTER_PATH})
-        
-#       endif()
-#     endforeach()
-#   endforeach()
-# endfunction()

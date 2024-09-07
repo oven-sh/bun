@@ -1605,7 +1605,6 @@ class ClientRequest extends OutgoingMessage {
       if (body && method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
         fetchOptions.body = body;
       }
-      console.error(proxy, tls);
 
       if (tls) {
         fetchOptions.tls = tls;

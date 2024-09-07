@@ -1298,6 +1298,7 @@ ServerResponse.prototype._write = function (chunk, encoding, callback) {
 
   ensureReadableStreamController.$call(this, controller => {
     controller.write(chunk);
+    //TODO: should we flush here?
     callback();
   });
 };
@@ -1321,6 +1322,7 @@ ServerResponse.prototype._writev = function (chunks, callback) {
     for (const chunk of chunks) {
       controller.write(chunk.chunk);
     }
+    //TODO: should we flush here?
     callback();
   });
 };

@@ -77,77 +77,77 @@ unsigned long long PerformanceTiming::fetchStart() const
 
 unsigned long long PerformanceTiming::domainLookupStart() const
 {
-return 0;
+    return 0;
 }
 
 unsigned long long PerformanceTiming::domainLookupEnd() const
 {
-return 0;
+    return 0;
 }
 
 unsigned long long PerformanceTiming::connectStart() const
 {
-return 0;
+    return 0;
 }
 
 unsigned long long PerformanceTiming::connectEnd() const
 {
-return 0;
+    return 0;
 }
 
 unsigned long long PerformanceTiming::secureConnectionStart() const
 {
-return 0;
+    return 0;
 }
 
 unsigned long long PerformanceTiming::requestStart() const
 {
-return 0;
+    return 0;
 }
 
 unsigned long long PerformanceTiming::responseStart() const
 {
-return 0;
+    return 0;
 }
 
 unsigned long long PerformanceTiming::responseEnd() const
 {
-return 0;
+    return 0;
 }
 
 unsigned long long PerformanceTiming::domLoading() const
 {
-return 0;
+    return 0;
 }
 
 unsigned long long PerformanceTiming::domInteractive() const
 {
-return 0;
+    return 0;
 }
 
 unsigned long long PerformanceTiming::domContentLoadedEventStart() const
 {
-return 0;
+    return 0;
 }
 
 unsigned long long PerformanceTiming::domContentLoadedEventEnd() const
 {
-return 0;
+    return 0;
 }
 
 unsigned long long PerformanceTiming::domComplete() const
 {
-return 0;
+    return 0;
 }
 
 unsigned long long PerformanceTiming::loadEventStart() const
 {
-return 0;
+    return 0;
 }
 
 unsigned long long PerformanceTiming::loadEventEnd() const
 {
-return 0;
+    return 0;
 }
 
 unsigned long long PerformanceTiming::monotonicTimeToIntegerMilliseconds(MonotonicTime timeStamp) const

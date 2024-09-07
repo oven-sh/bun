@@ -5,4 +5,5 @@ export default {
   ERR_SERVER_NOT_RUNNING: $newCppFunction("ErrorCode.cpp", "jsFunction_ERR_SERVER_NOT_RUNNING", 0),
   ERR_IPC_CHANNEL_CLOSED: $newCppFunction("ErrorCode.cpp", "jsFunction_ERR_IPC_CHANNEL_CLOSED", 0),
   ERR_SOCKET_BAD_TYPE: $newCppFunction("ErrorCode.cpp", "jsFunction_ERR_SOCKET_BAD_TYPE", 0),
+  ERR_INVALID_PROTOCOL: $newCppFunction("ErrorCode.cpp", "jsFunction_ERR_INVALID_PROTOCOL", 0),
 };

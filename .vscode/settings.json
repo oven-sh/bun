@@ -61,6 +61,7 @@
   "[h]": {
     "editor.defaultFormatter": "xaver.clang-format",
   },
+  "clangd.arguments": ["-header-insertion=never"],
 
   // JavaScript
   "prettier.enable": true,

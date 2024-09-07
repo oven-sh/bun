@@ -2225,19 +2225,12 @@ pub const bindings = struct {
                     return .zero;
                 },
                 else => {
-                    const pathname = if (comptime Environment.isWindows)
-                        std.mem.sliceTo(libarchive.archive_entry_pathname_w(archive_entry), 0)
-                    else
-                        std.mem.sliceTo(libarchive.archive_entry_pathname(archive_entry), 0);
-
+                    const pathname = std.mem.sliceTo(libarchive.archive_entry_pathname(archive_entry), 0);
                     const kind = bun.C.kindFromMode(libarchive.archive_entry_filetype(archive_entry));
                     const perm = libarchive.archive_entry_perm(archive_entry);
 
                     var entry_info: EntryInfo = .{
-                        .pathname = if (comptime Environment.isWindows)
-                            String.createUTF16(pathname)
-                        else
-                            String.createUTF8(pathname),
+                        .pathname = String.createUTF8(pathname),
                         .kind = String.static(@tagName(kind)),
                         .perm = perm,
                     };
@@ -2250,7 +2243,7 @@ pub const bindings = struct {
                         const read = libarchive.archive_read_data(archive, read_buf.items.ptr, size);
                         if (read < 0) {
                             global.throw("failed to read archive entry \"{}\": {s}", .{
-                                bun.fmt.fmtOSPath(pathname, .{}),
+                                bun.fmt.fmtPath(u8, pathname, .{}),
                                 Archive.errorString(@ptrCast(archive)),
                             });
                             return .zero;

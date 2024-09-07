@@ -315,6 +315,16 @@ pub const Archive = opaque {
             archive_entry_set_pathname_utf8(entry, pathname);
         }
 
+        extern fn archive_entry_copy_pathname(*Entry, [*c]const u8) void;
+        pub fn copyPathname(entry: *Entry, pathname: [:0]const u8) void {
+            return archive_entry_copy_pathname(entry, pathname);
+        }
+
+        pub extern fn archive_entry_copy_pathname_w(*Entry, [*c]const u16) void;
+        pub fn copyPathnameW(entry: *Entry, pathname: [:0]const u16) void {
+            return archive_entry_copy_pathname_w(entry, pathname);
+        }
+
         extern fn archive_entry_set_size(*Entry, i64) void;
         pub fn setSize(entry: *Entry, size: i64) void {
             archive_entry_set_size(entry, size);
@@ -679,8 +689,6 @@ pub extern fn archive_entry_copy_link_w(*struct_archive_entry, [*c]const wchar_t
 pub extern fn archive_entry_update_link_utf8(*struct_archive_entry, [*c]const u8) c_int;
 pub extern fn archive_entry_unset_mtime(*struct_archive_entry) void;
 pub extern fn archive_entry_set_nlink(*struct_archive_entry, c_uint) void;
-pub extern fn archive_entry_copy_pathname(*struct_archive_entry, [*c]const u8) void;
-pub extern fn archive_entry_copy_pathname_w(*struct_archive_entry, [*c]const wchar_t) void;
 pub extern fn archive_entry_update_pathname_utf8(*struct_archive_entry, [*c]const u8) c_int;
 pub extern fn archive_entry_set_rdev(*struct_archive_entry, dev_t) void;
 pub extern fn archive_entry_set_rdevmajor(*struct_archive_entry, dev_t) void;

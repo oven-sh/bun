@@ -270,11 +270,11 @@ pub const PackCommand = struct {
 
         try dirs.append(ctx.allocator, root_dir_info);
 
-        var included_files: std.ArrayListUnmanaged(stringZ) = .{};
-        defer included_files.deinit(ctx.allocator);
-
         var included_dirs: std.ArrayListUnmanaged(DirInfo) = .{};
         defer included_dirs.deinit(ctx.allocator);
+
+        var subpath_dedupe = bun.StringHashMap(void).init(ctx.allocator);
+        defer subpath_dedupe.deinit();
 
         // first find included dirs and files
         while (dirs.popOrNull()) |dir_info| {
@@ -321,17 +321,11 @@ pub const PackCommand = struct {
                     for (includes) |include| {
                         if (include.dirs_only and entry.kind != .directory) continue;
 
-                        // includes are always relative to root
+                        // include patterns are always relative to root
                         const match_path = entry_subpath;
                         switch (glob.matchImpl(include.glob, match_path)) {
-                            .match => {
-                                included = true;
-                            },
-
-                            .negate_no_match => {
-                                // only set to false if this entry is a directory
-                                if (entry.kind == .directory) included = false;
-                            },
+                            .match => included = true,
+                            .negate_no_match => included = false,
 
                             else => {},
                         }
@@ -352,30 +346,21 @@ pub const PackCommand = struct {
                         const subdir = openSubdir(dir, entry_name, entry_subpath);
                         try included_dirs.append(ctx.allocator, .{ subdir, entry_subpath, dir_depth + 1 });
                     },
-                    .file => try included_files.append(ctx.allocator, entry_subpath),
+                    .file => {
+                        const dedupe_entry = try subpath_dedupe.getOrPut(entry_subpath);
+                        bun.assertWithLocation(!dedupe_entry.found_existing, @src());
+                        if (dedupe_entry.found_existing) continue;
+
+                        try pack_queue.add(entry_subpath);
+                    },
                     else => unreachable,
                 }
             }
         }
 
-        var added_files = bun.StringHashMap(void).init(ctx.allocator);
-        defer added_files.deinit();
-
-        // for each file, add to `pack_list`. they cannot be excluded (unless through .npmignore/.gitignore)
-        // before adding any file check if it exists in the hash map first. the array from `files` means
-        // there could be duplicates
-        for (included_files.items) |file_subpath| {
-            const entry = try added_files.getOrPut(file_subpath);
-            if (entry.found_existing) {
-                continue;
-            }
-
-            try pack_queue.add(file_subpath);
-        }
-
         // for each included dir, traverse it's entries, exclude any with `negate_no_match`.
         for (included_dirs.items) |included_dir_info| {
-            try addEntireTree(ctx, included_dir_info, &pack_queue, &added_files);
+            try addEntireTree(ctx, included_dir_info, &pack_queue, &subpath_dedupe);
         }
 
         return pack_queue;
@@ -1747,7 +1732,7 @@ pub const PackCommand = struct {
                                         }
 
                                         // only produce this error only when we need to get the workspace version
-                                        Output.errGeneric("Failed to resolve version for workspace dependency \"{s}\" in \"{s}\". Run <cyan>`bun install`<r> and try again.", .{
+                                        Output.errGeneric("Failed to resolve workspace version for \"{s}\" in `{s}`. Run <cyan>`bun install`<r> and try again.", .{
                                             dependency_name,
                                             dependency_group,
                                         });
@@ -1998,11 +1983,6 @@ pub const PackCommand = struct {
         pack_list: if (needs_size) *PackQueue else PackList,
         package_json_len: usize,
     ) void {
-        for (ctx.bundled_deps.items) |dep| {
-            if (!dep.was_packed) continue;
-            Output.prettyln("<r><b><green>bundled<r> {s}", .{dep.name});
-        }
-
         const packed_fmt = "<r><b><cyan>packed<r> {} {s}";
 
         if (comptime needs_size) {
@@ -2034,6 +2014,12 @@ pub const PackCommand = struct {
                 });
             }
 
+            for (ctx.bundled_deps.items) |dep| {
+                if (!dep.was_packed) continue;
+                Output.prettyln("<r><b><green>bundled<r> {s}", .{dep.name});
+            }
+
+            Output.flush();
             return;
         }
 
@@ -2047,6 +2033,11 @@ pub const PackCommand = struct {
                 bun.fmt.size(entry.size, .{ .space_between_number_and_unit = false }),
                 entry.subpath,
             });
+        }
+
+        for (ctx.bundled_deps.items) |dep| {
+            if (!dep.was_packed) continue;
+            Output.prettyln("<r><b><green>bundled<r> {s}", .{dep.name});
         }
 
         Output.flush();

@@ -466,6 +466,39 @@ describe("workspaces", () => {
       });
     });
   }
+
+  test("fails gracefully when workspace version fails to resolve", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-workspace-protocol-fail",
+          version: "2.2.3",
+          workspaces: ["pkgs/*"],
+          dependencies: {
+            "pkg1": "workspace:*",
+          },
+        }),
+      ),
+      write(join(packageDir, "root.js"), "console.log('hello ./root.js')"),
+      write(join(packageDir, "pkgs", "pkg1", "package.json"), JSON.stringify({ name: "pkg1", version: "1.1.1" })),
+    ]);
+
+    const { err } = await packExpectError(packageDir, bunEnv);
+    expect(err).toContain(
+      'error: Failed to resolve workspace version for "pkg1" in `dependencies`. Run `bun install` and try again.',
+    );
+
+    await rm(join(packageDir, "pack-workspace-protocol-fail-2.2.3.tgz"));
+    await runBunInstall(bunEnv, packageDir);
+    await pack(packageDir, bunEnv);
+    const tarball = readTarball(join(packageDir, "pack-workspace-protocol-fail-2.2.3.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { "pathname": "package/package.json" },
+      { "pathname": "package/pkgs/pkg1/package.json" },
+      { "pathname": "package/root.js" },
+    ]);
+  });
 });
 
 test("lifecycle scripts execution order", async () => {
@@ -681,6 +714,39 @@ describe("bundledDependnecies", () => {
 
     const tarball = readTarball(join(packageDir, "pack-bundled-dep-not-dir-4.5.6.tgz"));
     expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }]);
+  });
+});
+
+describe("files", () => {
+  test("can include files and directories", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-files-1",
+          version: "1.1.1",
+          files: ["root.js", "subdir", "subdir2/subdir"],
+        }),
+      ),
+      write(join(packageDir, "root.js"), "console.log('hello ./root.js')"),
+      write(join(packageDir, "subdir", "index.js"), "console.log('hello ./subdir/index.js')"),
+      write(join(packageDir, "subdir", "anotherdir", "index.js"), "console.log('hello ./subdir/anotherdir/index.js')"),
+      write(join(packageDir, "subdir2", "subdir", "index.js"), "console.log('hello ./subdir2/subdir/index.js')"),
+
+      // should not be included
+      write(join(packageDir, "subdir2", "index.js"), "console.log('hello, dont include me!')"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-files-1-1.1.1.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { "pathname": "package/package.json" },
+      { "pathname": "package/root.js" },
+      { "pathname": "package/subdir/anotherdir/index.js" },
+      { "pathname": "package/subdir/index.js" },
+      { "pathname": "package/subdir2/subdir/index.js" },
+    ]);
   });
 });
 

@@ -74,8 +74,7 @@ cd build
 # so the cmake windows detection for this logic is not ran
 ZIG_OPTIMIZE="ReleaseFast"
 if [[ "$ZIG_OS" == "windows" ]]; then
-  # ZIG_OPTIMIZE="ReleaseSafe"
-  ZIG_OPTIMIZE="Debug" # temp
+  ZIG_OPTIMIZE="ReleaseSafe"
 fi
 
 run_command cmake .. "${CMAKE_FLAGS[@]}" \

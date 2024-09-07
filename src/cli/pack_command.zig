@@ -33,6 +33,7 @@ const JSON = bun.JSON;
 const BoringSSL = bun.BoringSSL;
 const sha = bun.sha;
 const LogLevel = PackageManager.Options.LogLevel;
+const FileDescriptor = bun.FileDescriptor;
 
 pub const PackCommand = struct {
     pub const Context = struct {
@@ -1226,15 +1227,7 @@ pub const PackCommand = struct {
                         var files_array = _files_array;
                         while (files_array.next()) |files_entry| {
                             if (files_entry.asString(ctx.allocator)) |file_entry_str| {
-                                // if (glob.detectGlobSyntax(file_entry_str)) {
-                                //     Output.errGeneric("glob syntax is unsupported in package.json `files`", .{});
-                                //     Global.crash();
-                                // }
-
-                                // TODO: support pattern matching in `files`
                                 const parsed = try Pattern.fromUTF8(ctx, file_entry_str) orelse continue;
-
-                                // try includes.append(ctx.allocator, file_entry_str);
                                 try includes.append(ctx.allocator, parsed);
                                 continue;
                             }
@@ -1410,13 +1403,20 @@ pub const PackCommand = struct {
             while (pack_queue.removeOrNull()) |pathname| {
                 defer if (comptime log_level != .silent) node.completeOne();
 
-                const file = File.openat(root_dir, pathname, bun.O.RDONLY, 0).unwrap() catch |err| {
+                const file = bun.sys.openat(bun.toFD(root_dir.fd), pathname, bun.O.RDONLY, 0).unwrap() catch |err| {
                     Output.err(err, "failed to open file: \"{s}\"", .{pathname});
                     Global.crash();
                 };
-                defer file.close();
-                const stat = file.stat().unwrap() catch |err| {
-                    Output.err(err, "failed to stat file: \"{}\"", .{file.handle});
+
+                const fd = bun.sys.toLibUVOwnedFD(file, .open, .close_on_fail).unwrap() catch |err| {
+                    Output.err(err, "failed to open file: \"{s}\"", .{pathname});
+                    Global.crash();
+                };
+
+                defer _ = bun.sys.close(fd);
+
+                const stat = bun.sys.sys_uv.fstat(fd).unwrap() catch |err| {
+                    Output.err(err, "failed to stat file: \"{s}\"", .{pathname});
                     Global.crash();
                 };
 
@@ -1424,7 +1424,7 @@ pub const PackCommand = struct {
 
                 entry = try addArchiveEntry(
                     ctx,
-                    file,
+                    fd,
                     stat,
                     pathname,
                     &read_buf,
@@ -1451,7 +1451,7 @@ pub const PackCommand = struct {
 
                 entry = try addArchiveEntry(
                     ctx,
-                    file,
+                    file.handle,
                     stat,
                     pathname,
                     &read_buf,
@@ -1648,7 +1648,6 @@ pub const PackCommand = struct {
         entry.setSize(@intCast(edited_package_json.len));
         // https://github.com/libarchive/libarchive/blob/898dc8319355b7e985f68a9819f182aaed61b53a/libarchive/archive_entry.h#L185
         entry.setFiletype(0o100000);
-        // TODO: is this correct on windows?
         entry.setPerm(@intCast(stat.mode));
         // '1985-10-26T08:15:00.000Z'
         // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L28
@@ -1669,7 +1668,7 @@ pub const PackCommand = struct {
 
     fn addArchiveEntry(
         ctx: *Context,
-        file: File,
+        file: FileDescriptor,
         stat: bun.Stat,
         filename: stringZ,
         read_buf: []u8,
@@ -1701,8 +1700,6 @@ pub const PackCommand = struct {
             // do not need to change
             if (isPackageBin(bins, filename)) perm |= 0o111;
         }
-
-        // TODO: is this correct on windows?
         entry.setPerm(@intCast(perm));
 
         // '1985-10-26T08:15:00.000Z'
@@ -1718,7 +1715,7 @@ pub const PackCommand = struct {
         }
 
         file_reader.* = .{
-            .unbuffered_reader = file.reader(),
+            .unbuffered_reader = File.from(file).reader(),
         };
 
         var read = file_reader.read(read_buf) catch |err| {
@@ -2062,14 +2059,14 @@ pub const PackCommand = struct {
     fn printArchivedFilesAndPackages(
         ctx: *Context,
         root_dir: std.fs.Dir,
-        comptime needs_size: bool,
-        pack_list: if (needs_size) *PackQueue else PackList,
+        comptime is_dry_run: bool,
+        pack_list: if (is_dry_run) *PackQueue else PackList,
         package_json_len: usize,
     ) void {
         if (ctx.manager.options.log_level == .silent) return;
         const packed_fmt = "<r><b><cyan>packed<r> {} {s}";
 
-        if (comptime needs_size) {
+        if (comptime is_dry_run) {
             const package_json_stat = bun.sys.fstatat(bun.toFD(root_dir), "package.json").unwrap() catch |err| {
                 Output.err(err, "failed to stat package.json", .{});
                 Global.crash();

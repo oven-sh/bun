@@ -134,19 +134,19 @@ pub const PackCommand = struct {
             },
         };
 
-        switch (Output.enable_ansi_colors) {
-            inline else => |enable_ansi_colors| {
+        switch (manager.options.log_level) {
+            inline else => |log_level| {
                 // var arena = std.heap.ArenaAllocator.init(ctx.allocator);
                 // defer arena.deinit();
 
-                if (manager.options.filter_patterns.len > 0) {
-                    // TODO: --filter
-                    // loop, convert, find matching workspaces, then pack each
-                    return;
-                }
+                // if (manager.options.filter_patterns.len > 0) {
+                //     // TODO: --filter
+                //     // loop, convert, find matching workspaces, then pack each
+                //     return;
+                // }
 
                 // just pack the current workspace
-                pack(&pack_ctx, manager.original_package_json_path, enable_ansi_colors) catch |err| {
+                pack(&pack_ctx, manager.original_package_json_path, log_level) catch |err| {
                     switch (err) {
                         error.OutOfMemory => bun.outOfMemory(),
                         error.MissingPackageName, error.MissingPackageVersion => {
@@ -258,8 +258,8 @@ pub const PackCommand = struct {
     fn iterateIncludedProjectTree(
         ctx: *Context,
         includes: []const Pattern,
-        root_dir_info: DirInfo,
-        comptime close_root_dir: bool,
+        root_dir: std.fs.Dir,
+        comptime log_level: PackageManager.Options.LogLevel,
     ) OOM!PackQueue {
         var pack_queue = PackQueue.init(ctx.allocator, {});
 
@@ -269,7 +269,7 @@ pub const PackCommand = struct {
         var dirs: std.ArrayListUnmanaged(DirInfo) = .{};
         defer dirs.deinit(ctx.allocator);
 
-        try dirs.append(ctx.allocator, root_dir_info);
+        try dirs.append(ctx.allocator, .{ root_dir, "", 1 });
 
         var included_dirs: std.ArrayListUnmanaged(DirInfo) = .{};
         defer included_dirs.deinit(ctx.allocator);
@@ -281,9 +281,7 @@ pub const PackCommand = struct {
         while (dirs.popOrNull()) |dir_info| {
             var dir, const dir_subpath, const dir_depth = dir_info;
             defer {
-                if (comptime close_root_dir) {
-                    dir.close();
-                } else if (dir_depth != root_dir_info[2]) {
+                if (dir_depth != 1) {
                     dir.close();
                 }
             }
@@ -363,7 +361,7 @@ pub const PackCommand = struct {
 
         // for each included dir, traverse it's entries, exclude any with `negate_no_match`.
         for (included_dirs.items) |included_dir_info| {
-            try addEntireTree(ctx, included_dir_info, &pack_queue, &subpath_dedupe);
+            try addEntireTree(ctx, included_dir_info, &pack_queue, &subpath_dedupe, log_level);
         }
 
         return pack_queue;
@@ -375,6 +373,7 @@ pub const PackCommand = struct {
         root_dir_info: DirInfo,
         pack_queue: *PackQueue,
         maybe_dedupe: ?*bun.StringHashMap(void),
+        comptime log_level: PackageManager.Options.LogLevel,
     ) OOM!void {
         var dirs: std.ArrayListUnmanaged(DirInfo) = .{};
         defer dirs.deinit(ctx.allocator);
@@ -420,7 +419,7 @@ pub const PackCommand = struct {
                 }
 
                 if (isExcluded(entry, entry_subpath, dir_depth, ignores.items)) |used_pattern_info| {
-                    if (ctx.manager.options.log_level.isVerbose()) {
+                    if (comptime log_level.isVerbose()) {
                         const pattern, const kind = used_pattern_info;
                         Output.prettyln("<r><blue>ignore<r> <d>[{s}:{}]<r> {s}{s}", .{
                             @tagName(kind),
@@ -493,6 +492,7 @@ pub const PackCommand = struct {
     fn iterateBundledDeps(
         ctx: *Context,
         root_dir: std.fs.Dir,
+        comptime log_level: PackageManager.Options.LogLevel,
     ) OOM!PackQueue {
         var bundled_pack_queue = PackQueue.init(ctx.allocator, {});
         if (ctx.bundled_deps.items.len == 0) return bundled_pack_queue;
@@ -548,6 +548,7 @@ pub const PackCommand = struct {
                     &bundled_pack_queue,
                     &dedupe,
                     &additional_bundled_deps,
+                    log_level,
                 );
 
                 break;
@@ -573,6 +574,7 @@ pub const PackCommand = struct {
                 &bundled_pack_queue,
                 &dedupe,
                 &additional_bundled_deps,
+                log_level,
             );
         }
 
@@ -586,6 +588,7 @@ pub const PackCommand = struct {
         bundled_pack_queue: *PackQueue,
         dedupe: *bun.StringHashMap(void),
         additional_bundled_deps: *std.ArrayListUnmanaged(DirInfo),
+        comptime log_level: PackageManager.Options.LogLevel,
     ) OOM!void {
         ctx.stats.bundled_deps += 1;
 
@@ -679,7 +682,7 @@ pub const PackCommand = struct {
                 }
 
                 if (isExcluded(entry, entry_subpath, dir_depth, &.{})) |used_pattern_info| {
-                    if (ctx.manager.options.log_level.isVerbose()) {
+                    if (comptime log_level.isVerbose()) {
                         const pattern, const kind = used_pattern_info;
                         Output.prettyln("<r><blue>ignore<r> <d>[{s}:{}]<r> {s}{s}", .{
                             @tagName(kind),
@@ -714,8 +717,8 @@ pub const PackCommand = struct {
     /// Returns a list of files to pack and another list of files from bundled dependencies
     fn iterateProjectTree(
         ctx: *Context,
-        root_dir_info: DirInfo,
-        comptime close_root_dir: bool,
+        root_dir: std.fs.Dir,
+        comptime log_level: PackageManager.Options.LogLevel,
     ) OOM!PackQueue {
         var pack_queue = PackQueue.init(ctx.allocator, {});
 
@@ -727,14 +730,12 @@ pub const PackCommand = struct {
         var dirs: std.ArrayListUnmanaged(DirInfo) = .{};
         defer dirs.deinit(ctx.allocator);
 
-        try dirs.append(ctx.allocator, root_dir_info);
+        try dirs.append(ctx.allocator, .{ root_dir, "", 1 });
 
         while (dirs.popOrNull()) |dir_info| {
             var dir, const dir_subpath, const dir_depth = dir_info;
             defer {
-                if (comptime close_root_dir) {
-                    dir.close();
-                } else if (dir_depth != 1) {
+                if (dir_depth != 1) {
                     dir.close();
                 }
             }
@@ -779,7 +780,7 @@ pub const PackCommand = struct {
                 }
 
                 if (isExcluded(entry, entry_subpath, dir_depth, ignores.items)) |used_pattern_info| {
-                    if (ctx.manager.options.log_level.isVerbose()) {
+                    if (comptime log_level.isVerbose()) {
                         const pattern, const kind = used_pattern_info;
                         Output.prettyln("<r><blue>ignore<r> <d>[{s}:{}]<r> {s}{s}", .{
                             @tagName(kind),
@@ -1057,9 +1058,8 @@ pub const PackCommand = struct {
     fn pack(
         ctx: *Context,
         abs_package_json_path: stringZ,
-        comptime enable_ansi_colors: bool,
+        comptime log_level: PackageManager.Options.LogLevel,
     ) PackError!void {
-        _ = enable_ansi_colors;
         const manager = ctx.manager;
         const json = switch (manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, abs_package_json_path, .{
             .guess_indentation = true,
@@ -1215,12 +1215,8 @@ pub const PackCommand = struct {
                         break :pack_queue try iterateIncludedProjectTree(
                             ctx,
                             includes.items,
-                            .{
-                                root_dir,
-                                "",
-                                1,
-                            },
-                            false,
+                            root_dir,
+                            log_level,
                         );
                     }
                 }
@@ -1232,17 +1228,13 @@ pub const PackCommand = struct {
             // pack from project root
             break :pack_queue try iterateProjectTree(
                 ctx,
-                .{
-                    root_dir,
-                    "",
-                    1,
-                },
-                false,
+                root_dir,
+                log_level,
             );
         };
         defer pack_queue.deinit();
 
-        var bundled_pack_queue = try iterateBundledDeps(ctx, root_dir);
+        var bundled_pack_queue = try iterateBundledDeps(ctx, root_dir, log_level);
         defer bundled_pack_queue.deinit();
 
         // +1 for package.json
@@ -1361,17 +1353,21 @@ pub const PackCommand = struct {
         defer entry.free();
 
         const package_json_size = archive_with_progress: {
-            var progress = Progress{};
-            progress.supports_ansi_escape_codes = Output.enable_ansi_colors;
-            var node = progress.start("", pack_queue.count() + bundled_pack_queue.count() + 1);
-            node.unit = " files";
-            defer node.end();
+            var progress: if (log_level == .silent) void else Progress = if (comptime log_level == .silent) {} else .{};
+            var node = if (comptime log_level == .silent) {} else node: {
+                progress.supports_ansi_escape_codes = Output.enable_ansi_colors;
+                var node: *Progress.Node = progress.start("", pack_queue.count() + bundled_pack_queue.count() + 1);
+                node.unit = " files";
+                break :node node;
+            };
+            defer if (comptime log_level != .silent) node.end();
 
             entry, const edited_package_json_size = try editAndArchivePackageJSON(ctx, archive, entry, root_dir, json);
-            node.completeOne();
+            if (comptime log_level != .silent) node.completeOne();
 
             while (pack_queue.removeOrNull()) |pathname| {
-                defer node.completeOne();
+                defer if (comptime log_level != .silent) node.completeOne();
+
                 const file = File.openat(root_dir, pathname, bun.O.RDONLY, 0).unwrap() catch |err| {
                     Output.err(err, "failed to open file: \"{s}\"", .{pathname});
                     Global.crash();
@@ -1398,7 +1394,8 @@ pub const PackCommand = struct {
             }
 
             while (bundled_pack_queue.removeOrNull()) |pathname| {
-                defer node.completeOne();
+                defer if (comptime log_level != .silent) node.completeOne();
+
                 const file = File.openat(root_dir, pathname, bun.O.RDONLY, 0).unwrap() catch |err| {
                     Output.err(err, "failed to open file: \"{s}\"", .{pathname});
                     Global.crash();

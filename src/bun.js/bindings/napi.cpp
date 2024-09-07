@@ -994,6 +994,7 @@ extern "C" void napi_module_register(napi_module* mod)
 
     JSC::Strong<JSC::JSObject> strongObject = { vm, object };
 
+    Bun::NapiHandleScope handleScope(globalObject);
     JSValue resultValue = toJS(mod->nm_register_func(toNapi(globalObject), toNapi(object, globalObject)));
 
     RETURN_IF_EXCEPTION(scope, void());

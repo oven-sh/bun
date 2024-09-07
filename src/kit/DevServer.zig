@@ -37,11 +37,12 @@ vm: *VirtualMachine,
 // Bundling
 bundle_thread: BundleThread,
 
-// Watch + HMR
-log_do_not_use: Log,
-bun_watcher: *HotReloader.Watcher,
+// // Watch + HMR
+// bun_watcher: *HotReloader.Watcher,
 /// Required by `bun.JSC.NewHotReloader`
 bundler: Bundler,
+/// Required by `Bundler`
+log_do_not_use: Log,
 
 pub const internal_prefix = "/_bun";
 pub const client_prefix = internal_prefix ++ "/client";
@@ -113,7 +114,7 @@ pub fn init(options: Options) *DevServer {
         .server_global = undefined,
         .vm = undefined,
         .dump_dir = dump_dir,
-        .bun_watcher = undefined,
+        // .bun_watcher = undefined,
         .bundler = undefined,
         .log_do_not_use = Log.init(bun.failing_allocator),
     });
@@ -145,9 +146,9 @@ pub fn init(options: Options) *DevServer {
     dev.bundler.configureLinker();
     dev.bundler.resolver.opts = dev.bundler.options;
 
-    const fs = bun.fs.FileSystem.init(options.cwd) catch @panic("Failed to init FileSystem");
-    dev.bun_watcher = HotReloader.init(dev, fs, options.verbose_watcher, false);
-    dev.bundler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
+    // const fs = bun.fs.FileSystem.init(options.cwd) catch @panic("Failed to init FileSystem");
+    // dev.bun_watcher = HotReloader.init(dev, fs, options.verbose_watcher, false);
+    // dev.bundler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
 
     dev.vm = VirtualMachine.initKit(.{
         .allocator = default_allocator,
@@ -882,7 +883,8 @@ pub const c = struct {
 };
 
 pub fn reload(dev: *DevServer) void {
-    // TODO: given no arguments, this method is absolutely useless. We cannot do anything.
+    // TODO: given no arguments, this method is absolutely useless. The watcher
+    // must be augmented with more information.
     _ = dev;
     Output.warn("TODO: initiate hot reload", .{});
 }

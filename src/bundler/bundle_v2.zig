@@ -330,7 +330,7 @@ pub const BundleV2 = struct {
     graph: Graph = Graph{},
     linker: LinkerContext = LinkerContext{ .loop = undefined },
     bun_watcher: ?*Watcher.Watcher = null,
-    kit_watcher: ?*bun.kit.DevServer.HotReloader.Watcher = null,
+    // kit_watcher: ?*bun.kit.DevServer.HotReloader.Watcher = null,
     plugins: ?*JSC.API.JSBundler.Plugin = null,
     completion: ?CompletionPtr = null,
     source_code_length: usize = 0,
@@ -2073,20 +2073,19 @@ pub const BundleV2 = struct {
                         );
                     }
                 }
-                // TODO: remove needless duplication
-                else if (this.kit_watcher) |watcher| {
-                    if (empty_result.watcher_data.fd != .zero and empty_result.watcher_data.fd != bun.invalid_fd) {
-                        _ = watcher.addFile(
-                            empty_result.watcher_data.fd,
-                            input_files.items(.source)[empty_result.source_index.get()].path.text,
-                            bun.hash32(input_files.items(.source)[empty_result.source_index.get()].path.text),
-                            graph.input_files.items(.loader)[empty_result.source_index.get()],
-                            empty_result.watcher_data.dir_fd,
-                            null,
-                            false,
-                        );
-                    }
-                }
+                // else if (this.kit_watcher) |watcher| {
+                //     if (empty_result.watcher_data.fd != .zero and empty_result.watcher_data.fd != bun.invalid_fd) {
+                //         _ = watcher.addFile(
+                //             empty_result.watcher_data.fd,
+                //             input_files.items(.source)[empty_result.source_index.get()].path.text,
+                //             bun.hash32(input_files.items(.source)[empty_result.source_index.get()].path.text),
+                //             graph.input_files.items(.loader)[empty_result.source_index.get()],
+                //             empty_result.watcher_data.dir_fd,
+                //             null,
+                //             false,
+                //         );
+                //     }
+                // }
             },
             .success => |*result| {
                 result.log.cloneToWithRecycled(this.bundler.log, true) catch unreachable;
@@ -2106,20 +2105,19 @@ pub const BundleV2 = struct {
                             );
                         }
                     }
-                    // TODO: remove needless duplication
-                    else if (this.kit_watcher) |watcher| {
-                        if (result.watcher_data.fd != .zero and result.watcher_data.fd != bun.invalid_fd) {
-                            _ = watcher.addFile(
-                                result.watcher_data.fd,
-                                result.source.path.text,
-                                bun.hash32(result.source.path.text),
-                                result.source.path.loader(&this.bundler.options.loaders) orelse options.Loader.file,
-                                result.watcher_data.dir_fd,
-                                result.watcher_data.package_json,
-                                false,
-                            );
-                        }
-                    }
+                    // else if (this.kit_watcher) |watcher| {
+                    //     if (result.watcher_data.fd != .zero and result.watcher_data.fd != bun.invalid_fd) {
+                    //         _ = watcher.addFile(
+                    //             result.watcher_data.fd,
+                    //             result.source.path.text,
+                    //             bun.hash32(result.source.path.text),
+                    //             result.source.path.loader(&this.bundler.options.loaders) orelse options.Loader.file,
+                    //             result.watcher_data.dir_fd,
+                    //             result.watcher_data.package_json,
+                    //             false,
+                    //         );
+                    //     }
+                    // }
                 }
 
                 // Warning: this array may resize in this function call
@@ -2395,12 +2393,12 @@ pub fn BundleThread(CompletionStruct: type) type {
                 heap,
             );
 
-            switch (CompletionStruct) {
-                bun.kit.DevServer.BundleTask => {
-                    this.kit_watcher = completion.route.dev.bun_watcher;
-                },
-                else => {},
-            }
+            // switch (CompletionStruct) {
+            //     bun.kit.DevServer.BundleTask => {
+            //         this.kit_watcher = completion.route.dev.bun_watcher;
+            //     },
+            //     else => {},
+            // }
 
             this.plugins = completion.plugins;
             this.completion = switch (CompletionStruct) {
@@ -2979,7 +2977,11 @@ pub const ParseTask = struct {
 
         errdefer if (task.contents_or_fd == .fd) entry.deinit(allocator);
 
-        const will_close_file_descriptor = task.contents_or_fd == .fd and !entry.fd.isStdio() and (this.ctx.bun_watcher == null and this.ctx.kit_watcher == null);
+        const will_close_file_descriptor = task.contents_or_fd == .fd and
+            !entry.fd.isStdio() and
+            (this.ctx.bun_watcher == null
+        // and this.ctx.kit_watcher == null
+        );
         if (will_close_file_descriptor) {
             _ = entry.closeFD();
         }

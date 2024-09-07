@@ -5,13 +5,13 @@ set(BUN_DEPENDENCIES
   BoringSSL
   Brotli
   Cares
-  LibArchive
   LibDeflate
   LolHtml
   Lshpack
   Mimalloc
   TinyCC
   Zlib
+  LibArchive # must be loaded after zlib
   Zstd
 )
 

@@ -27,7 +27,8 @@ export default [
       bytesWritten: {
         getter: "getBytesWritten",
       },
-      bytesRead: { // deprecated
+      bytesRead: {
+        // deprecated
         value: "bytesWritten",
       },
       closed: {
@@ -66,7 +67,8 @@ export default [
       bytesWritten: {
         getter: "getBytesWritten",
       },
-      bytesRead: { // deprecated
+      bytesRead: {
+        // deprecated
         value: "bytesWritten",
       },
       closed: {
@@ -108,7 +110,8 @@ export default [
       bytesWritten: {
         getter: "getBytesWritten",
       },
-      bytesRead: { // deprecated
+      bytesRead: {
+        // deprecated
         value: "bytesWritten",
       },
       level: {
@@ -161,7 +164,8 @@ export default [
       bytesWritten: {
         getter: "getBytesWritten",
       },
-      bytesRead: { // deprecated
+      bytesRead: {
+        // deprecated
         value: "bytesWritten",
       },
       level: {

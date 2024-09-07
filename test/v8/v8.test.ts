@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "bun";
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { beforeAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
 import assert from "node:assert";
 import fs from "node:fs/promises";

@@ -1289,9 +1289,11 @@ ServerResponse.prototype._write = function (chunk, encoding, callback) {
     const headers = this[headersSymbol];
     const hasContentLength = headers && getHeader(this[headersSymbol], "Content-Length");
     if (hasContentLength) {
+      // wait for .end()
       return;
     }
-
+    // We still wanna to wait for more writes if the user call 2 consecutives writes
+    // but if the user delay it too much we need to flush
     setTimeout(flushFirstWrite, 1, this);
     return;
   }
@@ -1310,9 +1312,12 @@ ServerResponse.prototype._writev = function (chunks, callback) {
     const headers = this[headersSymbol];
     const hasContentLength = headers && getHeader(this[headersSymbol], "Content-Length");
     if (hasContentLength) {
+      // wait for .end()
       return;
     }
 
+    // We still wanna to wait for more writes if the user call 2 consecutives writes
+    // but if the user delay it too much we need to flush
     setTimeout(flushFirstWrite, 1, this);
     return;
   }

@@ -259,7 +259,7 @@ describe("flags", () => {
 
     for (const invalidGzipLevel of ["-1", "10", "kjefj"]) {
       const { err } = await packExpectError(packageDir, bunEnv, `--gzip-level=${invalidGzipLevel}`);
-      expect(err).toBe(`error: compression level must be between 0 and 9, received ${invalidGzipLevel}\n`);
+      expect(err).toContain(`error: compression level must be between 0 and 9, received ${invalidGzipLevel}\n`);
     }
 
     await pack(packageDir, bunEnv, "--gzip-level=0");

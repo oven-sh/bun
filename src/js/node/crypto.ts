@@ -8751,6 +8751,17 @@ var require_curves = __commonJS({
         pre,
       ],
     });
+    defineCurve("x25519", {
+      type: "mont",
+      prime: "p25519",
+      p: "7fffffffffffffff ffffffffffffffff ffffffffffffffff ffffffffffffffed",
+      a: "76d06",
+      b: "1",
+      n: "1000000000000000 0000000000000000 14def9dea2f79cd6 5812631a5cf5d3ed",
+      hash: hash.sha256,
+      gRed: !1,
+      g: ["9"],
+    });
   },
 });
 

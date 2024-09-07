@@ -19,6 +19,7 @@ it("using pino does not crash, particularly on windows", async () => {
     ],
     env: bunEnv,
     stdio: ["inherit", "pipe", "pipe"],
+    cwd: import.meta.dir,
   });
 
   expect(proc.stderr.toString("utf8")).toBeEmpty();

@@ -110,7 +110,7 @@ void CryptoAlgorithmAES_CFB::generateKey(const CryptoAlgorithmParameters& parame
 void CryptoAlgorithmAES_CFB::importKey(CryptoKeyFormat format, KeyData&& data, const CryptoAlgorithmParameters& parameters, bool extractable, CryptoKeyUsageBitmap usages, KeyCallback&& callback, ExceptionCallback&& exceptionCallback)
 {
     using namespace CryptoAlgorithmAES_CFBInternal;
-    
+
     if (usagesAreInvalidForCryptoAlgorithmAES_CFB(usages)) {
         exceptionCallback(SyntaxError);
         return;

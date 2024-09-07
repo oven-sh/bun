@@ -1,2 +1,2 @@
 *.lut.h
-sqlite3_local.h
+sqlite/sqlite3_local.h

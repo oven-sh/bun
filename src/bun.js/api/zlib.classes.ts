@@ -37,6 +37,21 @@ export default [
         fn: "close",
         length: 0,
       },
+      chunkSize: {
+        getter: "getChunkSize",
+      },
+      flush: {
+        getter: "getFlush",
+      },
+      finishFlush: {
+        getter: "getFinishFlush",
+      },
+      fullFlush: {
+        getter: "getFullFlush",
+      },
+      maxOutputLength: {
+        getter: "getMaxOutputLength",
+      },
     },
   }),
   define({
@@ -75,6 +90,21 @@ export default [
       close: {
         fn: "close",
         length: 0,
+      },
+      chunkSize: {
+        getter: "getChunkSize",
+      },
+      flush: {
+        getter: "getFlush",
+      },
+      finishFlush: {
+        getter: "getFinishFlush",
+      },
+      fullFlush: {
+        getter: "getFullFlush",
+      },
+      maxOutputLength: {
+        getter: "getMaxOutputLength",
       },
     },
   }),
@@ -128,6 +158,21 @@ export default [
         fn: "params",
         length: 3,
       },
+      chunkSize: {
+        getter: "getChunkSize",
+      },
+      flush: {
+        getter: "getFlush",
+      },
+      finishFlush: {
+        getter: "getFinishFlush",
+      },
+      fullFlush: {
+        getter: "getFullFlush",
+      },
+      maxOutputLength: {
+        getter: "getMaxOutputLength",
+      },
     },
   }),
   define({
@@ -180,6 +225,21 @@ export default [
       params: {
         fn: "params",
         length: 3,
+      },
+      chunkSize: {
+        getter: "getChunkSize",
+      },
+      flush: {
+        getter: "getFlush",
+      },
+      finishFlush: {
+        getter: "getFinishFlush",
+      },
+      fullFlush: {
+        getter: "getFullFlush",
+      },
+      maxOutputLength: {
+        getter: "getMaxOutputLength",
       },
     },
   }),

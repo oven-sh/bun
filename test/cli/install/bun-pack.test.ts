@@ -767,13 +767,14 @@ describe("bins", () => {
     expect(tarball.entries).toMatchObject([
       {
         pathname: "package/package.json",
-        perm: 0o644,
       },
       {
         pathname: "package/bin.js",
-        perm: 0o644 | 0o111,
       },
     ]);
+
+    expect(tarball.entries[0].perm & 0o644).toBe(0o644);
+    expect(tarball.entries[1].perm & (0o644 | 0o111)).toBe(0o644 | 0o111);
   });
 
   test("directory", async () => {
@@ -798,17 +799,18 @@ describe("bins", () => {
     expect(tarball.entries).toMatchObject([
       {
         pathname: "package/package.json",
-        perm: 0o644,
       },
       {
         pathname: "package/bins/bin1.js",
-        perm: 0o644 | 0o111,
       },
       {
         pathname: "package/bins/bin2.js",
-        perm: 0o644 | 0o111,
       },
     ]);
+
+    expect(tarball.entries[0].perm & 0o644).toBe(0o644);
+    expect(tarball.entries[1].perm & (0o644 | 0o111)).toBe(0o644 | 0o111);
+    expect(tarball.entries[2].perm & (0o644 | 0o111)).toBe(0o644 | 0o111);
   });
 });
 

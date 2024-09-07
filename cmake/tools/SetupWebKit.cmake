@@ -9,14 +9,27 @@ else()
   set(DEFAULT_WEBKIT_PATH ${CWD}/src/bun.js/WebKit)
 endif()
 
-if(NOT WEBKIT_PREBUILT)
-  message(FATAL_ERROR "Not supported yet in CMake")
-endif()
-
 optionx(WEBKIT_PATH FILEPATH "The path to the WebKit directory" DEFAULT ${DEFAULT_WEBKIT_PATH})
 
 setx(WEBKIT_INCLUDE_PATH ${WEBKIT_PATH}/include)
 setx(WEBKIT_LIB_PATH ${WEBKIT_PATH}/lib)
+
+if(NOT WEBKIT_PREBUILT)
+  if(EXISTS ${WEBKIT_PATH}/cmakeconfig.h)
+    # You may need to run:
+    # make jsc-compile-debug jsc-copy-headers
+    include_directories(
+      ${WEBKIT_PATH}
+      ${WEBKIT_PATH}/JavaScriptCore/Headers/JavaScriptCore
+      ${WEBKIT_PATH}/JavaScriptCore/PrivateHeaders
+      ${WEBKIT_PATH}/bmalloc/Headers
+      ${WEBKIT_PATH}/WTF/Headers
+    )
+  endif()
+
+  # After this point, only prebuilt WebKit is supported
+  return()
+endif()
 
 if(EXISTS ${WEBKIT_PATH}/package.json)
   file(READ ${WEBKIT_PATH}/package.json WEBKIT_PACKAGE_JSON)

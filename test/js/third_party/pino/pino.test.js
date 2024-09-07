@@ -22,6 +22,11 @@ it("using pino does not crash, particularly on windows", async () => {
     cwd: import.meta.dir,
   });
 
-  expect(proc.stderr.toString("utf8")).toBeEmpty();
+  const err = proc.stderr.toString("utf8");
+  const out = proc.stdout.toString("utf8");
+
+  expect(err).toBeEmpty();
+  expect(out).toContain("\u001B[32mINFO\u001B[39m");
+  expect(out).toContain("\u001B[36mhi\u001B[39m\n");
   expect(proc.exitCode).toBe(0);
 });

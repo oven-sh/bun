@@ -97,7 +97,7 @@ ObjectDefineProperty(ZlibBase.prototype, "_maxOutputLength", {
 ZlibBase.prototype.flush = function (kind, callback) {
   if (typeof kind === "function" || (kind === undefined && !callback)) {
     callback = kind;
-    kind = 3;
+    kind = this._defaultFullFlushFlag;
   }
   if (this.writableFinished) {
     if (callback) process.nextTick(callback);

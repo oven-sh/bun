@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("Request with streaming body can be cloned", async () => {
   const stream = new ReadableStream({

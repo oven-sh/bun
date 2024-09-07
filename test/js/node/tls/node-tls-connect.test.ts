@@ -1,10 +1,8 @@
-import tls, { TLSSocket, connect as tlsConnect, checkServerIdentity, createServer, Server } from "tls";
+import { describe, expect, it } from "bun:test";
+import { tls as COMMON_CERT_ } from "harness";
 import net from "net";
 import { join } from "path";
-import { it, expect, describe } from "bun:test";
-import { tls as COMMON_CERT_ } from "harness";
-import { join } from "path";
-import tls, { checkServerIdentity, connect, TLSSocket } from "tls";
+import tls, { checkServerIdentity, connect as tlsConnect, TLSSocket } from "tls";
 
 import { Duplex } from "node:stream";
 

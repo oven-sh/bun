@@ -1,5 +1,4 @@
-import { test, expect, it } from "bun:test";
-import { join } from "path";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 
 test.skipIf(isWindows)("verify that we forward SIGINT from parent to child in bun run", () => {

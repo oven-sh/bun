@@ -1,5 +1,5 @@
 import type { Server } from "bun";
-import { afterAll, beforeAll, expect, test, describe } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { tls as tlsCert } from "harness";
 import { once } from "node:events";
 import net from "node:net";

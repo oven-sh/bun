@@ -1078,6 +1078,8 @@ pub const PackCommand = struct {
             };
     }
 
+    const BufferedFileReader = std.io.BufferedReader(1024 * 512, File.Reader);
+
     fn pack(
         ctx: *Context,
         abs_package_json_path: stringZ,
@@ -1310,8 +1312,6 @@ pub const PackCommand = struct {
         const bins = try getPackageBins(ctx, json.root);
         defer for (bins) |bin| ctx.allocator.free(bin.path);
 
-        var read_buf: [8192]u8 = undefined;
-
         var print_buf = std.ArrayList(u8).init(ctx.allocator);
         defer print_buf.deinit();
         const print_buf_writer = print_buf.writer();
@@ -1385,6 +1385,13 @@ pub const PackCommand = struct {
         var pack_list: PackList = .{};
         defer pack_list.deinit(ctx.allocator);
 
+        var read_buf: [8192]u8 = undefined;
+        const file_reader = try ctx.allocator.create(BufferedFileReader);
+        defer ctx.allocator.destroy(file_reader);
+        file_reader.* = .{
+            .unbuffered_reader = undefined,
+        };
+
         var entry = Archive.Entry.new2(archive);
 
         const package_json_size = archive_with_progress: {
@@ -1421,6 +1428,7 @@ pub const PackCommand = struct {
                     stat,
                     pathname,
                     &read_buf,
+                    file_reader,
                     archive,
                     entry,
                     &print_buf,
@@ -1447,6 +1455,7 @@ pub const PackCommand = struct {
                     stat,
                     pathname,
                     &read_buf,
+                    file_reader,
                     archive,
                     entry,
                     &print_buf,
@@ -1491,12 +1500,12 @@ pub const PackCommand = struct {
             var sha512 = sha.SHA512.init();
             defer sha512.deinit();
 
-            var reader: std.io.BufferedReader(8192, File.Reader) = .{
+            file_reader.* = .{
                 .unbuffered_reader = tarball_file.reader(),
             };
 
             var size: usize = 0;
-            var read = reader.read(&read_buf) catch |err| {
+            var read = file_reader.read(&read_buf) catch |err| {
                 Output.err(err, "failed to read tarball: \"{s}\"", .{abs_tarball_dest});
                 Global.crash();
             };
@@ -1504,7 +1513,7 @@ pub const PackCommand = struct {
                 sha1.update(read_buf[0..read]);
                 sha512.update(read_buf[0..read]);
                 size += read;
-                read = reader.read(&read_buf) catch |err| {
+                read = file_reader.read(&read_buf) catch |err| {
                     Output.err(err, "failed to read tarball: \"{s}\"", .{abs_tarball_dest});
                     Global.crash();
                 };
@@ -1664,6 +1673,7 @@ pub const PackCommand = struct {
         stat: bun.Stat,
         filename: stringZ,
         read_buf: []u8,
+        file_reader: *BufferedFileReader,
         archive: *Archive,
         entry: *Archive.Entry,
         print_buf: *std.ArrayList(u8),
@@ -1707,14 +1717,18 @@ pub const PackCommand = struct {
             else => {},
         }
 
-        var read = file.read(read_buf).unwrap() catch |err| {
-            Output.err(err, "failed to read file: {s}", .{filename});
+        file_reader.* = .{
+            .unbuffered_reader = file.reader(),
+        };
+
+        var read = file_reader.read(read_buf) catch |err| {
+            Output.err(err, "failed to read file: \"{s}\"", .{filename});
             Global.crash();
         };
         while (read > 0) {
             ctx.stats.unpacked_size += @intCast(archive.writeData(read_buf[0..read]));
-            read = file.read(read_buf).unwrap() catch |err| {
-                Output.err(err, "failed to read file: {s}", .{filename});
+            read = file_reader.read(read_buf) catch |err| {
+                Output.err(err, "failed to read file: \"{s}\"", .{filename});
                 Global.crash();
             };
         }

@@ -3,7 +3,7 @@ import { bunExe } from "bun:harness";
 import { bunEnv, randomPort } from "harness";
 import { createTest } from "node-harness";
 import { spawnSync } from "node:child_process";
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
 import nodefs, { unlinkSync } from "node:fs";
 import http, {
   Agent,
@@ -2150,51 +2150,6 @@ it("should error with faulty args", async () => {
   server.close();
 });
 
-it("should mark complete true", async () => {
-  const { promise: serve, resolve: resolveServe } = Promise.withResolvers();
-  const server = createServer(async (req, res) => {
-    let count = 0;
-    let data = "";
-    req.on("data", chunk => {
-      data += chunk.toString();
-    });
-    while (!req.complete) {
-      await Bun.sleep(100);
-      count++;
-      if (count > 10) {
-        res.writeHead(500, { "Content-Type": "text/plain" });
-        res.end("Request timeout");
-        return;
-      }
-    }
-    res.writeHead(200, { "Content-Type": "text/plain" });
-    res.end(data);
-  });
-
-  server.listen(0, () => {
-    resolveServe(`http://localhost:${server.address().port}`);
-  });
-
-  const url = await serve;
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        name: "Hotel 1",
-        price: 100,
-      }),
-    });
-
-    expect(response.status).toBe(200);
-    expect(await response.text()).toBe('{"name":"Hotel 1","price":100}');
-  } finally {
-    server.close();
-  }
-});
-
 it("should propagate exception in sync data handler", async () => {
   const { exitCode, stdout } = Bun.spawnSync({
     cmd: [bunExe(), "run", path.join(import.meta.dir, "node-http-error-in-data-handler-fixture.1.js")],
@@ -2365,3 +2320,86 @@ it("using node:http to do https: request fails", () => {
     message: `Protocol "https:" not supported. Expected "http:"`,
   });
 });
+
+it("should emit close, and complete should be true only after close #13373", async () => {
+  const server = http.createServer().listen(0);
+  try {
+    await once(server, "listening");
+    fetch(`http://localhost:${server.address().port}`)
+      .then(res => res.text())
+      .catch(() => {});
+
+    const [req, res] = await once(server, "request");
+    expect(req.complete).toBe(false);
+    const closeEvent = once(req, "close");
+    res.end("hi");
+
+    await closeEvent;
+    expect(req.complete).toBe(true);
+  } finally {
+    server.closeAllConnections();
+  }
+});
+
+it("should emit close when connection is aborted", async () => {
+  const server = http.createServer().listen(0);
+  try {
+    await once(server, "listening");
+    const controller = new AbortController();
+    fetch(`http://localhost:${server.address().port}`, { signal: controller.signal })
+      .then(res => res.text())
+      .catch(() => {});
+
+    const [req, res] = await once(server, "request");
+    expect(req.complete).toBe(false);
+    const closeEvent = once(req, "close");
+    controller.abort();
+    await closeEvent;
+    expect(req.complete).toBe(true);
+  } finally {
+    server.close();
+  }
+});
+
+it("should emit timeout event", async () => {
+  const server = http.createServer().listen(0);
+  try {
+    await once(server, "listening");
+    fetch(`http://localhost:${server.address().port}`)
+      .then(res => res.text())
+      .catch(() => {});
+
+    const [req, res] = await once(server, "request");
+    expect(req.complete).toBe(false);
+    let callBackCalled = false;
+    req.setTimeout(1000, () => {
+      callBackCalled = true;
+    });
+    await once(req, "timeout");
+    expect(callBackCalled).toBe(true);
+  } finally {
+    server.closeAllConnections();
+  }
+}, 12_000);
+
+it("should emit timeout event when using server.setTimeout", async () => {
+  const server = http.createServer().listen(0);
+  try {
+    await once(server, "listening");
+    let callBackCalled = false;
+    server.setTimeout(1000, () => {
+      callBackCalled = true;
+    });
+    fetch(`http://localhost:${server.address().port}`)
+      .then(res => res.text())
+      .catch(() => {});
+
+    const [req, res] = await once(server, "request");
+    expect(req.complete).toBe(false);
+
+    await once(server, "timeout");
+    expect(callBackCalled).toBe(true);
+  } finally {
+    server.closeAllConnections();
+  }
+}, 12_000);

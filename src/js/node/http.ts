@@ -11,6 +11,9 @@ const {
   getHeader,
   setHeader,
   assignHeaders: assignHeadersFast,
+  assignEventCallback,
+  setRequestTimeout,
+  setServerIdleTimeout,
   Response,
   Request,
   Headers,
@@ -20,6 +23,9 @@ const {
   getHeader: (headers: Headers, name: string) => string | undefined;
   setHeader: (headers: Headers, name: string, value: string) => void;
   assignHeaders: (object: any, req: Request, headersTuple: any) => boolean;
+  assignEventCallback: (req: Request, callback: (event: number) => void) => void;
+  setRequestTimeout: (req: Request, timeout: number) => void;
+  setServerIdleTimeout: (server: any, timeout: number) => void;
   Response: (typeof globalThis)["Response"];
   Request: (typeof globalThis)["Request"];
   Headers: (typeof globalThis)["Headers"];
@@ -233,6 +239,11 @@ var FakeSocket = class Socket extends Duplex {
   }
 
   setTimeout(timeout, callback) {
+    const socketData = this[kInternalSocketData];
+    if (!socketData) return; // sometimes 'this' is Socket not FakeSocket
+
+    const [server, http_res, req] = socketData;
+    http_res?.req?.setTimeout(timeout, callback);
     return this;
   }
 
@@ -421,6 +432,23 @@ function Server(options, callback) {
   return this;
 }
 
+function onRequestEvent(event) {
+  const [server, http_res, req] = this.socket[kInternalSocketData];
+  if (!http_res[finishedSymbol]) {
+    switch (event) {
+      case 0: // timeout
+        this.emit("timeout");
+        server.emit("timeout", req.socket);
+        break;
+      case 1: // abort
+        this.complete = true;
+        this.emit("close");
+        http_res[finishedSymbol] = true;
+        break;
+    }
+  }
+}
+
 Server.prototype = {
   ref() {
     this._unref = false;
@@ -584,6 +612,7 @@ Server.prototype = {
         this.serverName = tls.serverName || host || "localhost";
       }
       this[serverSymbol] = Bun.serve<any>({
+        idleTimeout: 0, // nodejs dont have a idleTimeout by default
         tls,
         port,
         hostname: host,
@@ -636,6 +665,7 @@ Server.prototype = {
           const prevIsNextIncomingMessageHTTPS = isNextIncomingMessageHTTPS;
           isNextIncomingMessageHTTPS = isHTTPS;
           const http_req = new RequestClass(req);
+          assignEventCallback(req, onRequestEvent.bind(http_req));
           isNextIncomingMessageHTTPS = prevIsNextIncomingMessageHTTPS;
 
           const upgrade = http_req.headers.upgrade;
@@ -683,7 +713,11 @@ Server.prototype = {
   },
 
   setTimeout(msecs, callback) {
-    // TODO:
+    const server = this[serverSymbol];
+    if (server) {
+      setServerIdleTimeout(server, Math.ceil(msecs / 1000));
+      typeof callback === "function" && this.once("timeout", callback);
+    }
     return this;
   },
 
@@ -770,6 +804,7 @@ function IncomingMessage(req, defaultIncomingOpts) {
   this._dumped = false;
   this[noBodySymbol] = false;
   this[abortedSymbol] = false;
+  this.complete = false;
   Readable.$call(this);
   var { type = "request", [kInternalRequest]: nodeReq } = defaultIncomingOpts || {};
 
@@ -799,8 +834,6 @@ function IncomingMessage(req, defaultIncomingOpts) {
     type === "request" // TODO: Add logic for checking for body on response
       ? requestHasNoBody(this.method, this)
       : false;
-
-  this.complete = !!this[noBodySymbol];
 }
 
 IncomingMessage.prototype = {
@@ -920,7 +953,11 @@ IncomingMessage.prototype = {
     // noop
   },
   setTimeout(msecs, callback) {
-    // noop
+    const req = this[reqSymbol];
+    if (req) {
+      setRequestTimeout(req, Math.ceil(msecs / 1000));
+      typeof callback === "function" && this.once("timeout", callback);
+    }
     return this;
   },
   get socket() {
@@ -1145,6 +1182,10 @@ function emitCloseNT(self) {
   }
 }
 
+function emitRequestCloseNT(self) {
+  self.emit("close");
+}
+
 function onServerResponseClose() {
   // EventEmitter.emit makes a copy of the 'close' listeners array before
   // calling the listeners. detachSocket() unregisters onServerResponseClose
@@ -1276,6 +1317,9 @@ function drainHeadersIfObservable() {
 }
 
 ServerResponse.prototype._final = function (callback) {
+  const req = this.req;
+  const shouldEmitClose = req && req.emit && !this[finishedSymbol];
+
   if (!this.headersSent) {
     var data = this[firstWriteSymbol] || "";
     this[firstWriteSymbol] = undefined;
@@ -1288,6 +1332,10 @@ ServerResponse.prototype._final = function (callback) {
         statusText: this.statusMessage ?? STATUS_CODES[this.statusCode],
       }),
     );
+    if (shouldEmitClose) {
+      req.complete = true;
+      process.nextTick(emitRequestCloseNT, req);
+    }
     callback && callback();
     return;
   }
@@ -1295,7 +1343,10 @@ ServerResponse.prototype._final = function (callback) {
   this[finishedSymbol] = true;
   ensureReadableStreamController.$call(this, controller => {
     controller.end();
-
+    if (shouldEmitClose) {
+      req.complete = true;
+      process.nextTick(emitRequestCloseNT, req);
+    }
     callback();
     const deferred = this[deferredSymbol];
     if (deferred) {
@@ -2157,6 +2208,10 @@ function _writeHead(statusCode, reason, obj, response) {
     // consisting only of the Status-Line and optional headers, and is
     // terminated by an empty line.
     response._hasBody = false;
+    const req = response.req;
+    if (req) {
+      req.complete = true;
+    }
   }
 }
 

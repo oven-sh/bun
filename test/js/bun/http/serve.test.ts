@@ -2038,3 +2038,20 @@ it("allow requestIP after async operation", async () => {
   expect(ip.address).toBeString();
   expect(ip.family).toBeString();
 });
+
+it("allow custom timeout per request", async () => {
+  using server = Bun.serve({
+    idleTimeout: 1,
+    port: 0,
+    async fetch(req, server) {
+      server.timeout(req, 60);
+      await Bun.sleep(10000); //uWS precision is not great
+
+      return new Response("Hello, World!");
+    },
+  });
+  expect(server.timeout).toBeFunction();
+  const res = await fetch(new URL("/long-timeout", server.url.origin));
+  expect(res.status).toBe(200);
+  expect(res.text()).resolves.toBe("Hello, World!");
+}, 20_000);

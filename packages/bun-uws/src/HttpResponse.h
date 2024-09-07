@@ -586,17 +586,36 @@ public:
         httpResponseData->onAborted = handler;
         return this;
     }
+
+    HttpResponse *onTimeout(void* userData,  HttpResponseData<SSL>::OnTimeoutCallback handler) {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        
+        httpResponseData->userData = userData;
+        httpResponseData->onTimeout = handler;
+        return this;
+    }
+
     HttpResponse* clearOnWritableAndAborted() {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
         httpResponseData->onWritable = nullptr;
         httpResponseData->onAborted = nullptr;
+        httpResponseData->onTimeout = nullptr;
+
         return this;
     }
+
     HttpResponse* clearOnAborted() {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
         httpResponseData->onAborted = nullptr;
+        return this;
+    }
+
+    HttpResponse* clearOnTimeout() {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+
+        httpResponseData->onTimeout = nullptr;
         return this;
     }
     /* Attach a read handler for data sent. Will be called with FIN set true if last segment. */

@@ -2555,6 +2555,12 @@ pub const AnyResponse = union(enum) {
             .TCP => |resp| resp.clearAborted(),
         };
     }
+    pub fn clearTimeout(this: AnyResponse) void {
+        return switch (this) {
+            .SSL => |resp| resp.clearTimeout(),
+            .TCP => |resp| resp.clearTimeout(),
+        };
+    }
 
     pub fn clearOnWritable(this: AnyResponse) void {
         return switch (this) {
@@ -3076,7 +3082,22 @@ pub fn NewApp(comptime ssl: bool) type {
             pub fn clearAborted(res: *Response) void {
                 uws_res_on_aborted(ssl_flag, res.downcast(), null, null);
             }
+            pub fn onTimeout(res: *Response, comptime UserDataType: type, comptime handler: fn (UserDataType, *Response) void, opcional_data: UserDataType) void {
+                const Wrapper = struct {
+                    pub fn handle(this: *uws_res, user_data: ?*anyopaque) callconv(.C) void {
+                        if (comptime UserDataType == void) {
+                            @call(bun.callmod_inline, handler, .{ {}, castRes(this), {} });
+                        } else {
+                            @call(bun.callmod_inline, handler, .{ @as(UserDataType, @ptrCast(@alignCast(user_data.?))), castRes(this) });
+                        }
+                    }
+                };
+                uws_res_on_timeout(ssl_flag, res.downcast(), Wrapper.handle, opcional_data);
+            }
 
+            pub fn clearTimeout(res: *Response) void {
+                uws_res_on_timeout(ssl_flag, res.downcast(), null, null);
+            }
             pub fn clearOnData(res: *Response) void {
                 uws_res_on_data(ssl_flag, res.downcast(), null, null);
             }
@@ -3400,6 +3421,8 @@ extern fn uws_res_has_responded(ssl: i32, res: *uws_res) bool;
 extern fn uws_res_on_writable(ssl: i32, res: *uws_res, handler: ?*const fn (*uws_res, u64, ?*anyopaque) callconv(.C) bool, user_data: ?*anyopaque) void;
 extern fn uws_res_clear_on_writable(ssl: i32, res: *uws_res) void;
 extern fn uws_res_on_aborted(ssl: i32, res: *uws_res, handler: ?*const fn (*uws_res, ?*anyopaque) callconv(.C) void, opcional_data: ?*anyopaque) void;
+extern fn uws_res_on_timeout(ssl: i32, res: *uws_res, handler: ?*const fn (*uws_res, ?*anyopaque) callconv(.C) void, opcional_data: ?*anyopaque) void;
+
 extern fn uws_res_on_data(
     ssl: i32,
     res: *uws_res,
@@ -3481,7 +3504,7 @@ extern fn us_socket_mark_needs_more_not_ssl(socket: ?*uws_res) void;
 
 extern fn uws_res_state(ssl: c_int, res: *const uws_res) State;
 
-pub const State = enum(i32) {
+pub const State = enum(u8) {
     HTTP_STATUS_CALLED = 1,
     HTTP_WRITE_CALLED = 2,
     HTTP_END_CALLED = 4,

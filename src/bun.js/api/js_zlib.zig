@@ -128,9 +128,10 @@ pub const ZlibEncoder = struct {
             this.stream.flush = @enumFromInt(int);
         }
 
-        const input_to_queue = JSC.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalThis, bun.default_allocator, input, optional_encoding, true) orelse {
+        const input_to_queue = JSC.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalThis, bun.default_allocator, input, optional_encoding, false) orelse {
             return globalThis.throwInvalidArgumentTypeValue("buffer", "string or an instance of Buffer, TypedArray, DataView, or ArrayBuffer", input);
         };
+        defer input_to_queue.deinit();
 
         if (is_last)
             this.has_called_end = true;
@@ -184,9 +185,10 @@ pub const ZlibEncoder = struct {
         };
         if (globalThis.hasException()) return .zero;
 
-        const input_to_queue = JSC.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalThis, bun.default_allocator, input, optional_encoding, true) orelse {
+        const input_to_queue = JSC.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalThis, bun.default_allocator, input, optional_encoding, false) orelse {
             return globalThis.throwInvalidArgumentTypeValue("buffer", "string or an instance of Buffer, TypedArray, DataView, or ArrayBuffer", input);
         };
+        defer input_to_queue.deinit();
 
         if (is_last)
             this.has_called_end = true;
@@ -669,7 +671,6 @@ pub const ZlibDecoder = struct {
             globalThis.throwInvalidArgumentType("ZlibDecoder.encode", "input", "Blob, String, or Buffer");
             return .zero;
         };
-        defer input_to_queue.deinit();
 
         _ = this.has_pending_activity.fetchAdd(1, .monotonic);
         if (is_last)

@@ -431,6 +431,41 @@ napi_value create_promise(const Napi::CallbackInfo &info) {
   return promise;
 }
 
+void napi_finalize_for_wrap(napi_env env, void *finalize_data,
+                            void *finalize_hint) {}
+
+napi_value test_napi_wrap(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value param = info[0];
+
+  int x = 5;
+  assert(napi_wrap(env, param, &x, nullptr, nullptr, nullptr) == napi_ok);
+
+  void *result;
+  assert(napi_unwrap(env, param, &result) == napi_ok);
+  assert(reinterpret_cast<int *>(result) == &x);
+
+  return ok(env);
+}
+
+napi_value test_napi_ref(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  napi_value object;
+  assert(napi_create_object(env, &object) == napi_ok);
+
+  napi_ref ref;
+  assert(napi_create_reference(env, object, 0, &ref) == napi_ok);
+
+  napi_value from_ref;
+  assert(napi_get_reference_value(env, ref, &from_ref) == napi_ok);
+  assert(from_ref != nullptr);
+  napi_valuetype typeof_result;
+  assert(napi_typeof(env, from_ref, &typeof_result) == napi_ok);
+  assert(typeof_result == napi_object);
+  return ok(env);
+}
+
 Napi::Value RunCallback(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   Napi::Function cb = info[0].As<Napi::Function>();
@@ -472,6 +507,8 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
   exports.Set("get_class_with_constructor",
               Napi::Function::New(env, get_class_with_constructor));
   exports.Set("create_promise", Napi::Function::New(env, create_promise));
+  exports.Set("test_napi_wrap", Napi::Function::New(env, test_napi_wrap));
+  exports.Set("test_napi_ref", Napi::Function::New(env, test_napi_ref));
 
   return exports;
 }

@@ -287,10 +287,6 @@ void NapiWeakValue::set(JSValue value, WeakHandleOwner& owner, void* context)
 void NapiWeakValue::setCell(JSCell* cell, WeakHandleOwner& owner, void* context)
 {
     switch (m_tag) {
-    case WeakTypeTag::Cell: {
-        m_value.cell = JSC::Weak<JSCell>(cell, &owner, context);
-        break;
-    }
     case WeakTypeTag::String: {
         m_value.string.clear();
         break;
@@ -299,6 +295,9 @@ void NapiWeakValue::setCell(JSCell* cell, WeakHandleOwner& owner, void* context)
         break;
     }
     }
+
+    m_value.cell = JSC::Weak<JSCell>(cell, &owner, context);
+    m_tag = WeakTypeTag::Cell;
 }
 
 void NapiWeakValue::setString(JSString* string, WeakHandleOwner& owner, void* context)

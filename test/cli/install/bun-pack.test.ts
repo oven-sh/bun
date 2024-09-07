@@ -353,6 +353,51 @@ describe("flags", () => {
   });
 });
 
+test("shasum and integrity are consistent", async () => {
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "pack-shasum",
+        version: "1.1.1",
+      }),
+    ),
+    write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
+  ]);
+
+  let { out } = await pack(packageDir, bunEnv);
+
+  const tarball = readTarball(join(packageDir, "pack-shasum-1.1.1.tgz"));
+  expect(tarball.entries).toMatchObject([
+    {
+      "pathname": "package/package.json",
+    },
+    {
+      "pathname": "package/index.js",
+    },
+  ]);
+
+  expect(out).toContain(`Shasum: ${tarball.shasum}`);
+
+  await rm(join(packageDir, "pack-shasum-1.1.1.tgz"));
+
+  ({ out } = await pack(packageDir, bunEnv));
+
+  const secondTarball = readTarball(join(packageDir, "pack-shasum-1.1.1.tgz"));
+  expect(secondTarball.entries).toMatchObject([
+    {
+      "pathname": "package/package.json",
+    },
+    {
+      "pathname": "package/index.js",
+    },
+  ]);
+
+  expect(out).toContain(`Shasum: ${secondTarball.shasum}`);
+  expect(tarball.shasum).toBe(secondTarball.shasum);
+  expect(tarball.integrity).toBe(secondTarball.integrity);
+});
+
 describe("workspaces", () => {
   async function createBasicWorkspace() {
     await Promise.all([

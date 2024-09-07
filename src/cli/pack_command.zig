@@ -2169,6 +2169,22 @@ pub const bindings = struct {
         };
         defer bun.default_allocator.free(tarball);
 
+        var sha1_digest: sha.SHA1.Digest = undefined;
+        var sha1 = sha.SHA1.init();
+        defer sha1.deinit();
+        sha1.update(tarball);
+        sha1.final(&sha1_digest);
+        const shasum_str = String.createFormat("{s}", .{bun.fmt.bytesToHex(sha1_digest, .lower)}) catch bun.outOfMemory();
+
+        var sha512_digest: sha.SHA512.Digest = undefined;
+        var sha512 = sha.SHA512.init();
+        defer sha512.deinit();
+        sha512.update(tarball);
+        sha512.final(&sha512_digest);
+        var base64_buf: [std.base64.standard.Encoder.calcSize(sha.SHA512.digest)]u8 = undefined;
+        const encode_count = bun.simdutf.base64.encode(&sha512_digest, &base64_buf, false);
+        const integrity_str = String.createUTF8(base64_buf[0..encode_count]);
+
         const EntryInfo = struct {
             pathname: String,
             kind: String,
@@ -2264,6 +2280,8 @@ pub const bindings = struct {
         const result = JSValue.createEmptyObject(global, 2);
         result.put(global, "entries", entries);
         result.put(global, "size", JSValue.jsNumber(tarball.len));
+        result.put(global, "shasum", shasum_str.toJS(global));
+        result.put(global, "integrity", integrity_str.toJS(global));
 
         return result;
     }

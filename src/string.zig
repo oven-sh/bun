@@ -3,6 +3,7 @@ const bun = @import("root").bun;
 const JSC = bun.JSC;
 const JSValue = bun.JSC.JSValue;
 const Parent = @This();
+const OOM = bun.OOM;
 
 pub const BufferOwnership = enum(u32) {
     BufferInternal,
@@ -438,7 +439,7 @@ pub const String = extern struct {
         return BunString__fromUTF16(bytes.ptr, bytes.len);
     }
 
-    pub fn createFormat(comptime fmt: [:0]const u8, args: anytype) !String {
+    pub fn createFormat(comptime fmt: [:0]const u8, args: anytype) OOM!String {
         if (comptime std.meta.fieldNames(@TypeOf(args)).len == 0) {
             return String.static(fmt);
         }

@@ -1286,6 +1286,7 @@ ServerResponse.prototype._write = function (chunk, encoding, callback) {
   if (this[firstWriteSymbol] === undefined && !this.headersSent) {
     this[firstWriteSymbol] = chunk;
     callback();
+    // TODO: check Content-Length and chunk size to avoid setTimeout here
 
     // we still wanna to flush if the user await some time before writing again
     // keeping the first write is a good performance optimization
@@ -1295,6 +1296,7 @@ ServerResponse.prototype._write = function (chunk, encoding, callback) {
 
   ensureReadableStreamController.$call(this, controller => {
     controller.write(chunk);
+    callback();
   });
 };
 
@@ -1302,6 +1304,8 @@ ServerResponse.prototype._writev = function (chunks, callback) {
   if (chunks.length === 1 && !this.headersSent && this[firstWriteSymbol] === undefined) {
     this[firstWriteSymbol] = chunks[0].chunk;
     callback();
+
+    // TODO: check Content-Length and chunk size to avoid setTimeout here
 
     // we still wanna to flush if the user await some time before writing again
     // keeping the first write is a good performance optimization

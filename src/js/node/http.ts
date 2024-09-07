@@ -1286,10 +1286,12 @@ ServerResponse.prototype._write = function (chunk, encoding, callback) {
   if (this[firstWriteSymbol] === undefined && !this.headersSent) {
     this[firstWriteSymbol] = chunk;
     callback();
-    // TODO: check Content-Length and chunk size to avoid setTimeout here
+    const headers = this[headersSymbol];
+    const hasContentLength = headers && getHeader(this[headersSymbol], "Content-Length");
+    if (hasContentLength) {
+      return;
+    }
 
-    // we still wanna to flush if the user await some time before writing again
-    // keeping the first write is a good performance optimization
     setTimeout(flushFirstWrite, 1, this);
     return;
   }
@@ -1305,10 +1307,12 @@ ServerResponse.prototype._writev = function (chunks, callback) {
     this[firstWriteSymbol] = chunks[0].chunk;
     callback();
 
-    // TODO: check Content-Length and chunk size to avoid setTimeout here
+    const headers = this[headersSymbol];
+    const hasContentLength = headers && getHeader(this[headersSymbol], "Content-Length");
+    if (hasContentLength) {
+      return;
+    }
 
-    // we still wanna to flush if the user await some time before writing again
-    // keeping the first write is a good performance optimization
     setTimeout(flushFirstWrite, 1, this);
     return;
   }

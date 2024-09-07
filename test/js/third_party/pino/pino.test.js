@@ -1,5 +1,5 @@
-import { it, expect } from "bun:test";
-import { bunExe, bunEnv } from "harness";
+import { expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 it("using pino does not crash, particularly on windows", async () => {
   const proc = Bun.spawnSync({

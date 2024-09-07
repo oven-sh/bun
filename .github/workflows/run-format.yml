@@ -29,7 +29,6 @@ jobs:
             bench
             package.json
             bun.lockb
-            .vscode
             .clang-format
       - name: Setup Bun
         uses: ./.github/actions/setup-bun

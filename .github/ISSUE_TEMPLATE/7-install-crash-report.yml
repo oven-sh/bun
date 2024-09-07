@@ -2,6 +2,7 @@ name: bun install crash report
 description: Report a crash in bun install
 labels:
   - npm
+  - crash
 body:
   - type: markdown
     attributes:

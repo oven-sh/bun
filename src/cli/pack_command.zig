@@ -322,8 +322,10 @@ pub const PackCommand = struct {
                     for (includes) |include| {
                         if (include.dirs_only and entry.kind != .directory) continue;
 
-                        // include patterns are always relative to root
-                        const match_path = entry_subpath;
+                        // include patters are not recursive unless they start with `**/`
+                        // normally the behavior of `index.js` and `**/index.js` are the same,
+                        // but includes require `**/`
+                        const match_path = if (include.@"leading **/") entry_name else entry_subpath;
                         switch (glob.matchImpl(include.glob, match_path)) {
                             .match => included = true,
                             .negate_no_match => included = false,
@@ -1791,8 +1793,11 @@ pub const PackCommand = struct {
         // can only match directories (had an ending slash, also trimmed)
         dirs_only: bool,
 
+        @"leading **/": bool,
+
         pub fn fromUTF8(ctx: *Context, pattern: string) OOM!?Pattern {
             var remain = pattern;
+            var @"has leading **/, (could start with '!')" = false;
             const has_leading_or_middle_slash, const has_trailing_slash, const add_negate = check_slashes: {
                 const before_length = remain.len;
 
@@ -1807,6 +1812,7 @@ pub const PackCommand = struct {
                 if (strings.hasPrefixComptime(remain, "**/")) {
                     remain = remain["**/".len..];
                     if (remain.len == 0) return null;
+                    @"has leading **/, (could start with '!')" = true;
                 }
 
                 const trailing_slash = remain[remain.len - 1] == '/';
@@ -1846,6 +1852,7 @@ pub const PackCommand = struct {
             return .{
                 .glob = buf[0 .. result.count + @intFromBool(add_negate)],
                 .rel_path = has_leading_or_middle_slash,
+                .@"leading **/" = @"has leading **/, (could start with '!')",
                 .dirs_only = has_trailing_slash,
             };
         }

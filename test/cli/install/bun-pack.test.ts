@@ -748,6 +748,52 @@ describe("files", () => {
       { "pathname": "package/subdir2/subdir/index.js" },
     ]);
   });
+
+  test("matches relative to root by default", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-files-3",
+          version: "1.2.3",
+          files: ["index.js"],
+        }),
+      ),
+      write(join(packageDir, "root.js"), "console.log('hello ./root.js')"),
+      write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
+      write(join(packageDir, "subdir", "index.js"), "console.log('hello ./subdir/index.js')"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+    const tarball = readTarball(join(packageDir, "pack-files-3-1.2.3.tgz"));
+    expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }, { "pathname": "package/index.js" }]);
+  });
+
+  test("recursive only if leading **/", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-files-2",
+          version: "1.2.123",
+          files: ["**/index.js"],
+        }),
+      ),
+      write(join(packageDir, "root.js"), "console.log('hello ./root.js')"),
+      write(join(packageDir, "subdir", "index.js"), "console.log('hello ./subdir/index.js')"),
+      write(join(packageDir, "subdir", "anotherdir", "index.js"), "console.log('hello ./subdir/anotherdir/index.js')"),
+      write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+    const tarball = readTarball(join(packageDir, "pack-files-2-1.2.123.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { "pathname": "package/package.json" },
+      { "pathname": "package/index.js" },
+      { "pathname": "package/subdir/anotherdir/index.js" },
+      { "pathname": "package/subdir/index.js" },
+    ]);
+  });
 });
 
 describe(".gitignore/.npmignore", () => {

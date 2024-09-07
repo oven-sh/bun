@@ -30,6 +30,21 @@
     {
       "type": "lldb",
       "request": "launch",
+      "name": "kit",
+      "program": "${workspaceFolder}/build/bun-debug",
+      "args": [
+        "run", "./start.ts", 
+      ],
+      "cwd": "/Users/dave/kt",
+      "env": {
+        "FORCE_COLOR": "1",
+        "GOMAXPROCS": "0",
+      },
+      "console": "internalConsole",
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
       "name": "bun test [file] --only",
       "program": "${workspaceFolder}/build/bun-debug",
       "args": ["test", "--only", "${file}"],

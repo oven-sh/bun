@@ -10,6 +10,7 @@ pub const Options = struct {
     routes: []Route,
     listen_config: uws.AppListenConfig = .{ .port = 3000 },
     dump_sources: ?[]const u8 = if (Environment.isDebug) ".kit-debug" else null,
+    verbose_watcher: bool = false,
     // TODO: make it possible to inherit a js VM
 };
 
@@ -27,16 +28,20 @@ address: struct {
     port: u16,
     hostname: [*:0]const u8,
 },
-listener: ?*App.ListenSocket = null,
+listener: ?*App.ListenSocket,
 
 // Server Runtime
 server_global: *DevGlobalObject,
 vm: *VirtualMachine,
 
 // Bundling
-// TODO: move more configuration here (define, etc)
-loaders: bun.StringArrayHashMap(bun.options.Loader),
 bundle_thread: BundleThread,
+
+// Watch + HMR
+log_do_not_use: Log,
+bun_watcher: *HotReloader.Watcher,
+/// Required by `bun.JSC.NewHotReloader`
+bundler: Bundler,
 
 pub const internal_prefix = "/_bun";
 pub const client_prefix = internal_prefix ++ "/client";
@@ -82,7 +87,7 @@ const ClientBundle = struct {
 
 pub fn init(options: Options) *DevServer {
     if (JSC.VirtualMachine.VMHolder.vm != null)
-        @panic("Assertion failed: cannot initialize kit.DevServer on a thread with an active JSC.VirtualMachine");
+        @panic("Cannot initialize kit.DevServer on a thread with an active JSC.VirtualMachine");
 
     const dump_dir = if (options.dump_sources) |dir|
         std.fs.cwd().makeOpenPath(dir, .{}) catch |err| dir: {
@@ -95,9 +100,6 @@ pub fn init(options: Options) *DevServer {
 
     const app = App.create(.{});
 
-    const loaders = bun.options.loadersFromTransformOptions(default_allocator, null, .bun) catch
-        bun.outOfMemory();
-
     const dev = bun.new(DevServer, .{
         .cwd = options.cwd,
         .app = app,
@@ -106,12 +108,46 @@ pub fn init(options: Options) *DevServer {
             .port = @intCast(options.listen_config.port),
             .hostname = options.listen_config.host orelse "localhost",
         },
-        .loaders = loaders,
+        .listener = null,
         .bundle_thread = BundleThread.uninitialized,
         .server_global = undefined,
         .vm = undefined,
         .dump_dir = dump_dir,
+        .bun_watcher = undefined,
+        .bundler = undefined,
+        .log_do_not_use = Log.init(bun.failing_allocator),
     });
+
+    dev.bundler = bun.Bundler.init(
+        default_allocator,
+        &dev.log_do_not_use,
+        std.mem.zeroes(bun.Schema.Api.TransformOptions),
+        null, // TODO:
+    ) catch bun.outOfMemory();
+
+    const loaders = bun.options.loadersFromTransformOptions(default_allocator, null, .bun) catch
+        bun.outOfMemory();
+
+    dev.bundler.options = .{
+        .entry_points = &.{},
+        .define = dev.bundler.options.define,
+        .loaders = loaders,
+        .log = &dev.log_do_not_use,
+        .output_dir = "", // this disables filesystem output
+        .output_format = .internal_kit_dev,
+        .out_extensions = bun.StringHashMap([]const u8).init(bun.failing_allocator),
+
+        // unused by all code
+        .resolve_mode = .dev,
+        // technically used (in macro) but should be removed
+        .transform_options = std.mem.zeroes(bun.Schema.Api.TransformOptions),
+    };
+    dev.bundler.configureLinker();
+    dev.bundler.resolver.opts = dev.bundler.options;
+
+    const fs = bun.fs.FileSystem.init(options.cwd) catch @panic("Failed to init FileSystem");
+    dev.bun_watcher = HotReloader.init(dev, fs, options.verbose_watcher, false);
+    dev.bundler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
 
     dev.vm = VirtualMachine.initKit(.{
         .allocator = default_allocator,
@@ -146,6 +182,13 @@ pub fn init(options: Options) *DevServer {
     }
 
     app.get(client_prefix ++ "/:route/:asset", *DevServer, dev, onAssetRequestInit);
+
+    app.ws(
+        internal_prefix ++ "/hmr",
+        dev,
+        0,
+        uws.WebSocketBehavior.Wrap(DevServer, DevWebSocket, false).apply(.{}),
+    );
 
     if (!has_fallback)
         app.any("/*", void, {}, onFallbackRoute);
@@ -553,6 +596,8 @@ pub const BundleTask = struct {
     }
 
     pub fn configureBundler(task: *BundleTask, bundler: *Bundler, allocator: Allocator) !void {
+        const dev = task.route.dev;
+
         bundler.* = try bun.Bundler.init(
             allocator,
             &task.log,
@@ -560,42 +605,36 @@ pub const BundleTask = struct {
             null, // TODO:
         );
 
-        bundler.options = .{
-            .entry_points = (&task.route.entry_point)[0..1],
-            .define = bundler.options.define,
-            .loaders = task.route.dev.loaders,
-            .log = &task.log,
-            .output_dir = "", // this disables filesystem output
-            .output_format = .internal_kit_dev,
-            .out_extensions = bun.StringHashMap([]const u8).init(bundler.allocator),
-            .react_fast_refresh = task.kind == .client,
+        const define = bundler.options.define;
+        bundler.options = dev.bundler.options;
 
-            .public_path = switch (task.kind) {
-                .client => task.route.clientPublicPath(),
-                .server => task.route.dev.cwd,
-            },
-            .target = switch (task.kind) {
-                .client => .browser,
-                .server => .bun,
-            },
-            .entry_naming = switch (task.kind) {
-                // Always name it "client.{js/css}" so that the server can know
-                // the entry-point script without waiting on a client bundle.
-                .client => "client.[ext]",
-                // For uniformity
-                .server => "server.[ext]",
-            },
-            .tree_shaking = false,
-            .minify_syntax = true,
+        bundler.options.define = define;
+        bundler.options.entry_points = (&task.route.entry_point)[0..1];
+        bundler.options.log = &task.log;
+        bundler.options.output_dir = ""; // this disables filesystem outpu;
+        bundler.options.output_format = .internal_kit_dev;
+        bundler.options.out_extensions = bun.StringHashMap([]const u8).init(bundler.allocator);
+        bundler.options.react_fast_refresh = task.kind == .client;
 
-            // unused by all code
-            .resolve_mode = .dev,
-            // technically used (in macro) but should be removed
-            .transform_options = std.mem.zeroes(bun.Schema.Api.TransformOptions),
+        bundler.options.public_path = switch (task.kind) {
+            .client => task.route.clientPublicPath(),
+            .server => task.route.dev.cwd,
         };
+        bundler.options.target = switch (task.kind) {
+            .client => .browser,
+            .server => .bun,
+        };
+        bundler.options.entry_naming = switch (task.kind) {
+            // Always name it "client.{js/css}" so that the server can know
+            // the entry-point script without waiting on a client bundle.
+            .client => "client.[ext]",
+            // For uniformity
+            .server => "server.[ext]",
+        };
+        bundler.options.tree_shaking = false;
+        bundler.options.minify_syntax = true;
 
         bundler.configureLinker();
-
         try bundler.configureDefines();
 
         // The following are from Vite: https://vitejs.dev/guide/env-and-mode
@@ -617,6 +656,7 @@ pub const BundleTask = struct {
         );
 
         bundler.resolver.opts = bundler.options;
+        bundler.resolver.watcher = dev.bundler.resolver.watcher;
     }
 
     pub fn completeMini(task: *BundleTask, _: *void) void {
@@ -773,6 +813,50 @@ fn dumpBundle(dump_dir: std.fs.Dir, route: *Route, kind: BundleKind, files: []Ou
     }
 }
 
+/// This function is required by `HotReloader`
+pub fn eventLoop(dev: *DevServer) *JSC.EventLoop {
+    return dev.vm.eventLoop();
+}
+
+pub fn onWebSocketUpgrade(
+    dev: *DevServer,
+    res: *Response,
+    req: *Request,
+    upgrade_ctx: *uws.uws_socket_context_t,
+    id: usize,
+) void {
+    assert(id == 0);
+
+    const dw = bun.new(DevWebSocket, .{ .dev = dev });
+    res.upgrade(
+        *DevWebSocket,
+        dw,
+        req.header("sec-websocket-key") orelse "",
+        req.header("sec-websocket-protocol") orelse "",
+        req.header("sec-websocket-extension") orelse "",
+        upgrade_ctx,
+    );
+}
+
+const DevWebSocket = struct {
+    dev: *DevServer,
+
+    pub fn onOpen(dw: *DevWebSocket, ws: AnyWebSocket) void {
+        _ = ws.send("bun!", .binary, false, false);
+        std.debug.print("open {*} {}\n", .{ dw, ws });
+    }
+
+    pub fn onMessage(dw: *DevWebSocket, ws: AnyWebSocket, msg: []const u8, opcode: uws.Opcode) void {
+        std.debug.print("message {*} {} {} '{s}'\n", .{ dw, ws, opcode, msg });
+    }
+
+    pub fn onClose(dw: *DevWebSocket, ws: AnyWebSocket, exit_code: i32, message: []const u8) void {
+        defer bun.destroy(dw);
+
+        std.debug.print("close {*} {} {} '{s}'\n", .{ dw, ws, exit_code, message });
+    }
+};
+
 /// Kit uses a special global object extending Zig::GlobalObject
 pub const DevGlobalObject = opaque {
     /// Safe downcast to use other Bun APIs
@@ -816,8 +900,10 @@ const Output = bun.Output;
 
 const uws = bun.uws;
 const App = uws.NewApp(false);
+const AnyWebSocket = uws.AnyWebSocket;
 const Request = uws.Request;
 const Response = App.Response;
+
 const MimeType = bun.http.MimeType;
 
 const JSC = bun.JSC;
@@ -826,3 +912,6 @@ const VirtualMachine = JSC.VirtualMachine;
 const JSModuleLoader = JSC.JSModuleLoader;
 const EventLoopHandle = JSC.EventLoopHandle;
 const JSInternalPromise = JSC.JSInternalPromise;
+
+pub const HotReloader = JSC.NewHotReloader(DevServer, JSC.EventLoop, false);
+pub const HotReloadTask = HotReloader.HotReloadTask;

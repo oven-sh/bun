@@ -32,10 +32,10 @@ pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JS
     const t = std.Thread.spawn(.{}, wipDevServer, .{options}) catch @panic("Failed to start");
     t.detach();
 
-    var keep_alive = bun.Async.KeepAlive.init();
-    keep_alive.ref(global.bunVM());
-
-    return .undefined;
+    {
+        var futex = std.atomic.Value(u32).init(0);
+        while (true) std.Thread.Futex.wait(&futex, 0);
+    }
 }
 
 // TODO: this function leaks memory and bad error handling, but that is OK since

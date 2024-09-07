@@ -330,6 +330,7 @@ pub const BundleV2 = struct {
     graph: Graph = Graph{},
     linker: LinkerContext = LinkerContext{ .loop = undefined },
     bun_watcher: ?*Watcher.Watcher = null,
+    kit_watcher: ?*bun.kit.DevServer.HotReloader.Watcher = null,
     plugins: ?*JSC.API.JSBundler.Plugin = null,
     completion: ?CompletionPtr = null,
     source_code_length: usize = 0,
@@ -735,7 +736,7 @@ pub const BundleV2 = struct {
         bundler.options.mark_builtins_as_external = bundler.options.target.isBun() or bundler.options.target == .node;
         bundler.resolver.opts.mark_builtins_as_external = bundler.options.target.isBun() or bundler.options.target == .node;
 
-        this.* = BundleV2{
+        this.* = .{
             .bundler = bundler,
             .client_bundler = bundler,
             .server_bundler = bundler,
@@ -768,11 +769,9 @@ pub const BundleV2 = struct {
         if (this.bundler.options.output_format == .internal_kit_dev) {
             this.bundler.options.tree_shaking = false;
             this.bundler.resolver.opts.tree_shaking = false;
-            this.bundler.linker.options.tree_shaking = false;
         } else {
             this.bundler.options.tree_shaking = true;
             this.bundler.resolver.opts.tree_shaking = true;
-            this.bundler.linker.options.tree_shaking = true;
         }
 
         this.linker.graph.bundler_graph = &this.graph;
@@ -2061,9 +2060,23 @@ pub const BundleV2 = struct {
                     });
                 }
 
-                if (this.bun_watcher != null) {
+                if (this.bun_watcher) |watcher| {
                     if (empty_result.watcher_data.fd != .zero and empty_result.watcher_data.fd != bun.invalid_fd) {
-                        _ = this.bun_watcher.?.addFile(
+                        _ = watcher.addFile(
+                            empty_result.watcher_data.fd,
+                            input_files.items(.source)[empty_result.source_index.get()].path.text,
+                            bun.hash32(input_files.items(.source)[empty_result.source_index.get()].path.text),
+                            graph.input_files.items(.loader)[empty_result.source_index.get()],
+                            empty_result.watcher_data.dir_fd,
+                            null,
+                            false,
+                        );
+                    }
+                }
+                // TODO: remove needless duplication
+                else if (this.kit_watcher) |watcher| {
+                    if (empty_result.watcher_data.fd != .zero and empty_result.watcher_data.fd != bun.invalid_fd) {
+                        _ = watcher.addFile(
                             empty_result.watcher_data.fd,
                             input_files.items(.source)[empty_result.source_index.get()].path.text,
                             bun.hash32(input_files.items(.source)[empty_result.source_index.get()].path.text),
@@ -2080,9 +2093,23 @@ pub const BundleV2 = struct {
 
                 {
                     // to minimize contention, we add watcher here
-                    if (this.bun_watcher != null) {
+                    if (this.bun_watcher) |watcher| {
                         if (result.watcher_data.fd != .zero and result.watcher_data.fd != bun.invalid_fd) {
-                            _ = this.bun_watcher.?.addFile(
+                            _ = watcher.addFile(
+                                result.watcher_data.fd,
+                                result.source.path.text,
+                                bun.hash32(result.source.path.text),
+                                result.source.path.loader(&this.bundler.options.loaders) orelse options.Loader.file,
+                                result.watcher_data.dir_fd,
+                                result.watcher_data.package_json,
+                                false,
+                            );
+                        }
+                    }
+                    // TODO: remove needless duplication
+                    else if (this.kit_watcher) |watcher| {
+                        if (result.watcher_data.fd != .zero and result.watcher_data.fd != bun.invalid_fd) {
+                            _ = watcher.addFile(
                                 result.watcher_data.fd,
                                 result.source.path.text,
                                 bun.hash32(result.source.path.text),
@@ -2367,6 +2394,13 @@ pub fn BundleThread(CompletionStruct: type) type {
                 JSC.WorkPool.get(),
                 heap,
             );
+
+            switch (CompletionStruct) {
+                bun.kit.DevServer.BundleTask => {
+                    this.kit_watcher = completion.route.dev.bun_watcher;
+                },
+                else => {},
+            }
 
             this.plugins = completion.plugins;
             this.completion = switch (CompletionStruct) {
@@ -2945,7 +2979,7 @@ pub const ParseTask = struct {
 
         errdefer if (task.contents_or_fd == .fd) entry.deinit(allocator);
 
-        const will_close_file_descriptor = task.contents_or_fd == .fd and !entry.fd.isStdio() and this.ctx.bun_watcher == null;
+        const will_close_file_descriptor = task.contents_or_fd == .fd and !entry.fd.isStdio() and (this.ctx.bun_watcher == null and this.ctx.kit_watcher == null);
         if (will_close_file_descriptor) {
             _ = entry.closeFD();
         }

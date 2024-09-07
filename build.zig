@@ -58,7 +58,7 @@ const BunBuildOptions = struct {
     /// A similar technique is used in C++ code for JavaScript builtins
     force_embed_code: bool = false,
 
-    /// `./build/codegen` or equivelent
+    /// `./build/codegen` or equivalent
     generated_code_dir: []const u8,
     no_llvm: bool,
 

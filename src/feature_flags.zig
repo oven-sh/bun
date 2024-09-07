@@ -16,12 +16,14 @@ pub const tracing = true;
 /// Disabled due to bugs
 pub const minify_javascript_string_length = false;
 
-pub const verbose_watcher = false;
+// TODO: remove this flag, it should use bun.Output.scoped
+pub const verbose_watcher = true;
 
 pub const css_supports_fence = true;
 
 pub const enable_entry_cache = true;
 
+// TODO: remove this flag, it should use bun.Output.scoped
 pub const verbose_fs = false;
 
 pub const watch_directories = true;
@@ -38,8 +40,6 @@ pub const is_macro_enabled = !env.isWasm and !env.isWasi;
 pub const force_macro = false;
 
 pub const include_filename_in_jsx = false;
-
-pub const verbose_analytics = false;
 
 pub const disable_compression_in_http_client = false;
 

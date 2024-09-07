@@ -1744,30 +1744,37 @@ pub const WebSocketBehavior = extern struct {
 
             const active_field_name = if (is_ssl) "ssl" else "tcp";
 
-            pub fn _open(raw_ws: *RawWebSocket) callconv(.C) void {
-                var ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
+            pub fn onOpen(raw_ws: *RawWebSocket) callconv(.C) void {
+                const ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
-                @call(bun.callmod_inline, Type.onOpen, .{ this, ws });
+                @call(bun.callmod_inline, Type.onOpen, .{
+                    this,
+                    ws,
+                });
             }
-            pub fn _message(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize, opcode: Opcode) callconv(.C) void {
-                var ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
+
+            pub fn onMessage(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize, opcode: Opcode) callconv(.C) void {
+                const ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
-                @call(
-                    .always_inline,
-                    Type.onMessage,
-                    .{ this, ws, if (length > 0) message[0..length] else "", opcode },
-                );
+                @call(.always_inline, Type.onMessage, .{
+                    this,
+                    ws,
+                    if (length > 0) message[0..length] else "",
+                    opcode,
+                });
             }
-            pub fn _drain(raw_ws: *RawWebSocket) callconv(.C) void {
-                var ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
+
+            pub fn onDrain(raw_ws: *RawWebSocket) callconv(.C) void {
+                const ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
                 @call(bun.callmod_inline, Type.onDrain, .{
                     this,
                     ws,
                 });
             }
-            pub fn _ping(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize) callconv(.C) void {
-                var ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
+
+            pub fn onPing(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize) callconv(.C) void {
+                const ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
                 @call(bun.callmod_inline, Type.onPing, .{
                     this,
@@ -1775,8 +1782,9 @@ pub const WebSocketBehavior = extern struct {
                     if (length > 0) message[0..length] else "",
                 });
             }
-            pub fn _pong(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize) callconv(.C) void {
-                var ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
+
+            pub fn onPong(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize) callconv(.C) void {
+                const ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
                 @call(bun.callmod_inline, Type.onPong, .{
                     this,
@@ -1784,30 +1792,30 @@ pub const WebSocketBehavior = extern struct {
                     if (length > 0) message[0..length] else "",
                 });
             }
-            pub fn _close(raw_ws: *RawWebSocket, code: i32, message: [*c]const u8, length: usize) callconv(.C) void {
-                var ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
+
+            pub fn onClose(raw_ws: *RawWebSocket, code: i32, message: [*c]const u8, length: usize) callconv(.C) void {
+                const ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
-                @call(
-                    .always_inline,
-                    Type.onClose,
-                    .{
-                        this,
-                        ws,
-                        code,
-                        if (length > 0 and message != null) message[0..length] else "",
-                    },
-                );
+                @call(.always_inline, Type.onClose, .{
+                    this,
+                    ws,
+                    code,
+                    if (length > 0 and message != null) message[0..length] else "",
+                });
             }
-            pub fn _upgrade(ptr: *anyopaque, res: *uws_res, req: *Request, context: *uws_socket_context_t, id: usize) callconv(.C) void {
-                @call(
-                    .always_inline,
-                    Server.onWebSocketUpgrade,
-                    .{ bun.cast(*Server, ptr), @as(*NewApp(is_ssl).Response, @ptrCast(res)), req, context, id },
-                );
+
+            pub fn onUpgrade(ptr: *anyopaque, res: *uws_res, req: *Request, context: *uws_socket_context_t, id: usize) callconv(.C) void {
+                @call(.always_inline, Server.onWebSocketUpgrade, .{
+                    bun.cast(*Server, ptr),
+                    @as(*NewApp(is_ssl).Response, @ptrCast(res)),
+                    req,
+                    context,
+                    id,
+                });
             }
 
             pub fn apply(behavior: WebSocketBehavior) WebSocketBehavior {
-                return WebSocketBehavior{
+                return .{
                     .compression = behavior.compression,
                     .maxPayloadLength = behavior.maxPayloadLength,
                     .idleTimeout = behavior.idleTimeout,
@@ -1816,13 +1824,13 @@ pub const WebSocketBehavior = extern struct {
                     .resetIdleTimeoutOnSend = behavior.resetIdleTimeoutOnSend,
                     .sendPingsAutomatically = behavior.sendPingsAutomatically,
                     .maxLifetime = behavior.maxLifetime,
-                    .upgrade = _upgrade,
-                    .open = _open,
-                    .message = _message,
-                    .drain = _drain,
-                    .ping = _ping,
-                    .pong = _pong,
-                    .close = _close,
+                    .upgrade = onUpgrade,
+                    .open = onOpen,
+                    .message = if (@hasDecl(Type, "onMessage")) onMessage else null,
+                    .drain = if (@hasDecl(Type, "onDrain")) onDrain else null,
+                    .ping = if (@hasDecl(Type, "onPing")) onPing else null,
+                    .pong = if (@hasDecl(Type, "onPong")) onPong else null,
+                    .close = onClose,
                 };
             }
         };

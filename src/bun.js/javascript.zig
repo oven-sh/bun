@@ -4038,12 +4038,38 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
         pub const Watcher = GenericWatcher.NewWatcher(*@This());
         const Reloader = @This();
 
-        onAccept: std.ArrayHashMapUnmanaged(GenericWatcher.HashType, bun.BabyList(OnAcceptCallback), bun.ArrayIdentityContext, false) = .{},
         ctx: *Ctx,
         verbose: bool = false,
         pending_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
         tombstones: bun.StringHashMapUnmanaged(*bun.fs.FileSystem.RealFS.EntriesOption) = .{},
+
+        pub fn init(ctx: *Ctx, fs: *bun.fs.FileSystem, verbose: bool, clear_screen_flag: bool) *@This().Watcher {
+            const reloader = bun.default_allocator.create(Reloader) catch bun.outOfMemory();
+            reloader.* = .{
+                .ctx = ctx,
+                .verbose = Environment.enable_logs or verbose,
+            };
+
+            clear_screen = clear_screen_flag;
+            const watcher = @This().Watcher.init(reloader, fs, bun.default_allocator) catch |err| {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
+            };
+            watcher.start() catch |err| {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                Output.panic("Failed to start File Watcher: {s}", .{@errorName(err)});
+            };
+            return watcher;
+        }
+
+        fn debug(comptime fmt: string, args: anytype) void {
+            if (Environment.enable_logs) {
+                Output.scoped(.hot_reloader, false)(fmt, args);
+            } else {
+                Output.prettyErrorln("<cyan>watcher<r><d>:<r> " ++ fmt, args);
+            }
+        }
 
         pub fn eventLoop(this: @This()) *EventLoopType {
             return this.ctx.eventLoop();
@@ -4101,7 +4127,8 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 if (comptime reload_immediately) {
                     Output.flush();
                     if (comptime Ctx == ImportWatcher) {
-                        this.reloader.ctx.rareData().closeAllListenSocketsForWatchMode();
+                        if (this.reloader.ctx.rare_data) |rare|
+                            rare.closeAllListenSocketsForWatchMode();
                     }
                     bun.reloadProcess(bun.default_allocator, clear_screen, false);
                     unreachable;
@@ -4123,21 +4150,6 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             }
         };
 
-        fn NewCallback(comptime FunctionSignature: type) type {
-            return union(enum) {
-                javascript_callback: JSC.Strong,
-                zig_callback: struct {
-                    ptr: *anyopaque,
-                    function: *const FunctionSignature,
-                },
-            };
-        }
-
-        pub const OnAcceptCallback = NewCallback(fn (
-            vm: *JSC.VirtualMachine,
-            specifier: []const u8,
-        ) void);
-
         pub fn enableHotModuleReloading(this: *Ctx) void {
             if (comptime @TypeOf(this.bun_watcher) == ImportWatcher) {
                 if (this.bun_watcher != .none)
@@ -4150,7 +4162,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             var reloader = bun.default_allocator.create(Reloader) catch bun.outOfMemory();
             reloader.* = .{
                 .ctx = this,
-                .verbose = if (@hasField(Ctx, "log")) this.log.level.atLeast(.info) else false,
+                .verbose = Environment.enable_logs or if (@hasField(Ctx, "log")) this.log.level.atLeast(.info) else false,
             };
 
             if (comptime @TypeOf(this.bun_watcher) == ImportWatcher) {
@@ -4229,8 +4241,10 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 } else {
                     return this.ctx.bun_watcher.hot;
                 }
-            } else {
+            } else if (@typeInfo(@TypeOf(this.ctx.bun_watcher)) == .Optional) {
                 return this.ctx.bun_watcher.?;
+            } else {
+                return this.ctx.bun_watcher;
             }
         }
 
@@ -4240,18 +4254,18 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             changed_files: []?[:0]u8,
             watchlist: GenericWatcher.WatchList,
         ) void {
-            var slice = watchlist.slice();
+            const slice = watchlist.slice();
             const file_paths = slice.items(.file_path);
-            var counts = slice.items(.count);
+            const counts = slice.items(.count);
             const kinds = slice.items(.kind);
             const hashes = slice.items(.hash);
             const parents = slice.items(.parent_hash);
             const file_descriptors = slice.items(.fd);
-            var ctx = this.getContext();
+            const ctx = this.getContext();
             defer ctx.flushEvictions();
             defer Output.flush();
 
-            var bundler = if (@TypeOf(this.ctx.bundler) == *bun.Bundler)
+            const bundler = if (@TypeOf(this.ctx.bundler) == *bun.Bundler)
                 this.ctx.bundler
             else
                 &this.ctx.bundler;
@@ -4277,9 +4291,8 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 // const path = Fs.PathName.init(file_path);
                 const id = hashes[event.index];
 
-                if (comptime Environment.isDebug) {
-                    Output.prettyErrorln("[watch] {s} ({s}, {})", .{ file_path, @tagName(kind), event.op });
-                }
+                if (this.verbose)
+                    debug("onFileUpdate {s} ({s}, {})", .{ file_path, @tagName(kind), event.op });
 
                 switch (kind) {
                     .file => {
@@ -4293,7 +4306,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         }
 
                         if (this.verbose)
-                            Output.prettyErrorln("<r><d>File changed: {s}<r>", .{fs.relativeTo(file_path)});
+                            debug("File changed: {s}", .{fs.relativeTo(file_path)});
 
                         if (event.op.write or event.op.delete or event.op.rename) {
                             current_task.append(id);
@@ -4415,13 +4428,13 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                     last_file_hash = file_hash;
 
                                     if (this.verbose)
-                                        Output.prettyErrorln("<r> <d>File change: {s}<r>", .{fs.relativeTo(abs_path)});
+                                        debug("File change: {s}", .{fs.relativeTo(abs_path)});
                                 }
                             }
                         }
 
                         if (this.verbose) {
-                            Output.prettyErrorln("<r> <d>Dir change: {s}<r>", .{fs.relativeTo(file_path)});
+                            debug("Dir change: {s}", .{fs.relativeTo(file_path)});
                         }
                     },
                 }

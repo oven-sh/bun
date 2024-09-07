@@ -20,10 +20,27 @@ try {
   // export it on the server side
   if (mode === 'server') 
     server_fetch_function = main.exports.default;
+
+  if (mode === 'client') {
+    const ws = new WebSocket('/_bun/hmr');
+    ws.onopen = (ev) => {
+      console.log(ev);
+    }
+    ws.onmessage = (ev) => {
+      console.log(ev);
+    }
+    ws.onclose = (ev) => {
+      console.log(ev);
+    }
+    ws.onerror = (ev) => {
+      console.log(ev);
+    }
+  }
 } catch (e) {
   if (mode !== 'client') throw e;
   showErrorOverlay(e);
 }
+
 
 
 export {}

@@ -116,7 +116,7 @@ pub fn SSLWrapper(comptime T: type) type {
             // We cannot shutdown read in SSL, the read direction is closed by the peer.
             // So we just ignore the onData data, we still wanna to wait until we received the shutdown
             const DummyReadHandler = struct {
-                fn onData(_: T, _: *This, _: []const u8) void {}
+                fn onData(_: T, _: []const u8) void {}
             };
             this.handlers.onData = DummyReadHandler.onData;
         }
@@ -133,7 +133,7 @@ pub fn SSLWrapper(comptime T: type) type {
             // The peer might continue sending data for some period of time before handling the local application's shutdown indication.
             // This will start a full shutdown process if fast_shutdown = false, we can assume that the other side will complete the 2-step shutdown ASAP.
             const ret = BoringSSL.SSL_shutdown(ssl);
-            if (fast_shutdown and ret == 0) {
+            if (fast_shutdown) {
                 // This allows for a more rapid shutdown process if the application does not wish to wait for the peer.
                 // This alternative "fast shutdown" approach should only be done if it is known that the peer will not send more data, otherwise there is a risk of an application exposing itself to a truncation attack.
                 // The full SSL_shutdown() process, in which both parties send close_notify alerts and SSL_shutdown() returns 1, provides a cryptographically authenticated indication of the end of a connection.
@@ -154,15 +154,16 @@ pub fn SSLWrapper(comptime T: type) type {
 
             // we sent the shutdown
             this.flags.sent_ssl_shutdown = ret >= 0;
-            defer if (ret < 0) {
+            if (ret < 0) {
                 const err = BoringSSL.SSL_get_error(ssl, ret);
                 BoringSSL.ERR_clear_error();
 
                 if (err == BoringSSL.SSL_ERROR_SSL or err == BoringSSL.SSL_ERROR_SYSCALL) {
                     this.flags.fatal_error = true;
                     this.triggerCloseCallback();
+                    return false;
                 }
-            };
+            }
             return ret == 1; // truly closed
         }
 
@@ -176,19 +177,19 @@ pub fn SSLWrapper(comptime T: type) type {
         }
 
         // Return if we have pending data to be read or write
-        pub fn hasPendingData(this: *This) bool {
+        pub fn hasPendingData(this: *const This) bool {
             const ssl = this.ssl orelse return false;
 
             return BoringSSL.BIO_ctrl_pending(BoringSSL.SSL_get_wbio(ssl)) > 0 or BoringSSL.BIO_ctrl_pending(BoringSSL.SSL_get_rbio(ssl)) > 0;
         }
 
         // We sent or received a shutdown (closing or closed)
-        pub fn isShutdown(this: *This) bool {
+        pub fn isShutdown(this: *const This) bool {
             return this.flags.closed_notified or this.flags.received_ssl_shutdown or this.flags.sent_ssl_shutdown;
         }
 
         // We sent and received the shutdown (fully closed)
-        pub fn isClosed(this: *This) bool {
+        pub fn isClosed(this: *const This) bool {
             return this.flags.received_ssl_shutdown and this.flags.sent_ssl_shutdown;
         }
 
@@ -424,7 +425,6 @@ pub fn SSLWrapper(comptime T: type) type {
                         if (read > 0) {
                             this.triggerDataCallback(buffer[0..read]);
                         }
-
                         this.triggerCloseCallback();
                         return false;
                     } else {

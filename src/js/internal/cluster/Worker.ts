@@ -23,8 +23,7 @@ function Worker(options) {
     this.process.on("message", (message, handle) => this.emit("message", message, handle));
   }
 }
-Worker.prototype = {};
-ObjectSetPrototypeOf(Worker.prototype, EventEmitter.prototype);
+Worker.prototype = Object.create(EventEmitter.prototype);
 
 Worker.prototype.kill = function () {
   this.destroy.$apply(this, arguments);

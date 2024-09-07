@@ -2,9 +2,10 @@
 const EventEmitter = require("node:events");
 const { isTypedArray } = require("node:util/types");
 const { Duplex, Readable, Writable } = require("node:stream");
-const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
+const { ERR_INVALID_ARG_TYPE, ERR_INVALID_PROTOCOL } = require("internal/errors");
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { kAutoDestroyed } = require("internal/shared");
+const { urlToHttpOptions } = require("internal/url");
 
 const {
   getHeader,
@@ -97,7 +98,6 @@ const INVALID_PATH_REGEX = /[^\u0021-\u00ff]/;
 const NODE_HTTP_WARNING =
   "WARN: Agent is mostly unused in Bun's implementation of http. If you see strange behavior, this is probably the cause.";
 
-var _defaultHTTPSAgent;
 var kInternalRequest = Symbol("kInternalRequest");
 const kInternalSocketData = Symbol.for("::bunternal::");
 const serverSymbol = Symbol.for("::bunternal::");
@@ -273,8 +273,7 @@ function Agent(options = kEmptyObject) {
   this.defaultPort = options.defaultPort || 80;
   this.protocol = options.protocol || "http:";
 }
-Agent.prototype = {};
-$setPrototypeDirect.$call(Agent.prototype, EventEmitter.prototype);
+Agent.prototype = Object.create(EventEmitter.prototype);
 
 ObjectDefineProperty(Agent, "globalAgent", {
   get: function () {
@@ -746,10 +745,6 @@ function assignHeaders(object, req) {
 }
 
 var defaultIncomingOpts = { type: "request" };
-
-function getDefaultHTTPSAgent() {
-  return (_defaultHTTPSAgent ??= new Agent({ defaultPort: 443, protocol: "https:" }));
-}
 
 function requestHasNoBody(method, req) {
   if ("GET" === method || "HEAD" === method || "TRACE" === method || "CONNECT" === method || "OPTIONS" === method)
@@ -1654,38 +1649,26 @@ class ClientRequest extends OutgoingMessage {
       options = ObjectAssign(input || {}, options);
     }
 
-    var defaultAgent = options._defaultAgent || Agent.globalAgent;
+    let agent = options.agent;
+    const defaultAgent = options._defaultAgent || Agent.globalAgent;
+    if (agent === false) {
+      agent = new defaultAgent.constructor();
+    } else if (agent == null) {
+      agent = defaultAgent;
+    } else if (typeof agent.addRequest !== "function") {
+      throw ERR_INVALID_ARG_TYPE("options.agent", "Agent-like Object, undefined, or false", agent);
+    }
+    this.#agent = agent;
 
-    let protocol = options.protocol;
-    if (!protocol) {
-      if (options.port === 443) {
-        protocol = "https:";
-      } else {
-        protocol = defaultAgent.protocol || "http:";
-      }
+    const protocol = options.protocol || defaultAgent.protocol;
+    let expectedProtocol = defaultAgent.protocol;
+    if (this.agent.protocol) {
+      expectedProtocol = this.agent.protocol;
+    }
+    if (protocol !== expectedProtocol) {
+      throw ERR_INVALID_PROTOCOL(protocol, expectedProtocol);
     }
     this.#protocol = protocol;
-
-    switch (this.#agent?.protocol) {
-      case undefined: {
-        break;
-      }
-      case "http:": {
-        if (protocol === "https:") {
-          defaultAgent = this.#agent = getDefaultHTTPSAgent();
-          break;
-        }
-      }
-      case "https:": {
-        if (protocol === "https") {
-          defaultAgent = this.#agent = Agent.globalAgent;
-          break;
-        }
-      }
-      default: {
-        break;
-      }
-    }
 
     if (options.path) {
       const path = String(options.path);
@@ -1696,16 +1679,8 @@ class ClientRequest extends OutgoingMessage {
       }
     }
 
-    // Since we don't implement Agent, we don't need this
-    if (protocol !== "http:" && protocol !== "https:" && protocol) {
-      const expectedProtocol = defaultAgent?.protocol ?? "http:";
-      throw new Error(`Protocol mismatch. Expected: ${expectedProtocol}. Got: ${protocol}`);
-      // throw new ERR_INVALID_PROTOCOL(protocol, expectedProtocol);
-    }
-
-    const defaultPort = protocol === "https:" ? 443 : 80;
-
-    this.#port = options.port || options.defaultPort || this.#agent?.defaultPort || defaultPort;
+    const defaultPort = options.defaultPort || this.#agent.defaultPort;
+    this.#port = options.port || defaultPort || 80;
     this.#useDefaultPort = this.#port === defaultPort;
     const host =
       (this.#host =
@@ -1950,24 +1925,6 @@ class ClientRequest extends OutgoingMessage {
 
     return this;
   }
-}
-
-function urlToHttpOptions(url) {
-  var { protocol, hostname, hash, search, pathname, href, port, username, password } = url;
-  return {
-    protocol,
-    hostname:
-      typeof hostname === "string" && StringPrototypeStartsWith.$call(hostname, "[")
-        ? StringPrototypeSlice.$call(hostname, 1, -1)
-        : hostname,
-    hash,
-    search,
-    pathname,
-    path: `${pathname || ""}${search || ""}`,
-    href,
-    port: port ? Number(port) : protocol === "https:" ? 443 : protocol === "http:" ? 80 : undefined,
-    auth: username || password ? `${decodeURIComponent(username)}:${decodeURIComponent(password)}` : undefined,
-  };
 }
 
 function validateHost(host, name) {

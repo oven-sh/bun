@@ -490,6 +490,14 @@ export function pipeToFinalize(pipeState) {
   else pipeState.promiseCapability.resolve.$call();
 }
 
+const enum TeeStateFlags {
+  canceled1 = 1 << 0,
+  canceled2 = 1 << 1,
+  reading = 1 << 2,
+  closedOrErrored = 1 << 3,
+  readAgain = 1 << 4,
+}
+
 export function readableStreamTee(stream, shouldClone) {
   $assert($isReadableStream(stream));
   $assert(typeof shouldClone === "boolean");
@@ -503,34 +511,41 @@ export function readableStreamTee(stream, shouldClone) {
   const reader = new $ReadableStreamDefaultReader(stream);
 
   const teeState = {
-    closedOrErrored: false,
-    canceled1: false,
-    canceled2: false,
+    stream,
+    flags: 0,
     reason1: undefined,
     reason2: undefined,
+    branch1Source: undefined,
+    branch2Source: undefined,
+    branch1: undefined,
+    branch2: undefined,
+    cancelPromiseCapability: $newPromiseCapability(Promise),
   };
-
-  teeState.cancelPromiseCapability = $newPromiseCapability(Promise);
 
   const pullFunction = $readableStreamTeePullFunction(teeState, reader, shouldClone);
 
-  const branch1Source = {};
-  $putByIdDirectPrivate(branch1Source, "pull", pullFunction);
-  $putByIdDirectPrivate(branch1Source, "cancel", $readableStreamTeeBranch1CancelFunction(teeState, stream));
+  const branch1Source = {
+    $pull: pullFunction,
+    $cancel: $readableStreamTeeBranch1CancelFunction(teeState, stream),
+  };
 
-  const branch2Source = {};
-  $putByIdDirectPrivate(branch2Source, "pull", pullFunction);
-  $putByIdDirectPrivate(branch2Source, "cancel", $readableStreamTeeBranch2CancelFunction(teeState, stream));
+  const branch2Source = {
+    $pull: pullFunction,
+    $cancel: $readableStreamTeeBranch2CancelFunction(teeState, stream),
+  };
 
   const branch1 = new $ReadableStream(branch1Source);
   const branch2 = new $ReadableStream(branch2Source);
 
   $getByIdDirectPrivate(reader, "closedPromiseCapability").promise.$then(undefined, function (e) {
-    if (teeState.closedOrErrored) return;
+    const flags = teeState.flags;
+    if (flags & TeeStateFlags.closedOrErrored) return;
     $readableStreamDefaultControllerError(branch1.$readableStreamController, e);
     $readableStreamDefaultControllerError(branch2.$readableStreamController, e);
-    teeState.closedOrErrored = true;
-    if (!teeState.canceled1 || !teeState.canceled2) teeState.cancelPromiseCapability.resolve.$call();
+    teeState.flags |= TeeStateFlags.closedOrErrored;
+
+    if (teeState.fllags & (TeeStateFlags.canceled1 | TeeStateFlags.canceled2))
+      teeState.cancelPromiseCapability.resolve.$call();
   });
 
   // Additional fields compared to the spec, as they are needed within pull/cancel functions.
@@ -541,36 +556,76 @@ export function readableStreamTee(stream, shouldClone) {
 }
 
 export function readableStreamTeePullFunction(teeState, reader, shouldClone) {
-  return function () {
-    Promise.prototype.$then.$call($readableStreamDefaultReaderRead(reader), function (result) {
-      $assert($isObject(result));
-      $assert(typeof result.done === "boolean");
-      if (result.done && !teeState.closedOrErrored) {
-        if (!teeState.canceled1) $readableStreamDefaultControllerClose(teeState.branch1.$readableStreamController);
-        if (!teeState.canceled2) $readableStreamDefaultControllerClose(teeState.branch2.$readableStreamController);
-        teeState.closedOrErrored = true;
-        if (!teeState.canceled1 || !teeState.canceled2) teeState.cancelPromiseCapability.resolve.$call();
-      }
-      if (teeState.closedOrErrored) return;
-      if (!teeState.canceled1)
-        $readableStreamDefaultControllerEnqueue(teeState.branch1.$readableStreamController, result.value);
-      if (!teeState.canceled2)
-        $readableStreamDefaultControllerEnqueue(
-          teeState.branch2.$readableStreamController,
-          shouldClone ? $structuredCloneForStream(result.value) : result.value,
-        );
-    });
+  "use strict";
+
+  const pullAlgorithm = function () {
+    if (teeState.flags & TeeStateFlags.reading) {
+      teeState.flags |= TeeStateFlags.readAgain;
+      return $Promise.$resolve();
+    }
+    teeState.flags |= TeeStateFlags.reading;
+    $Promise.prototype.$then.$call(
+      $readableStreamDefaultReaderRead(reader),
+      function (result) {
+        $assert($isObject(result));
+        $assert(typeof result.done === "boolean");
+        const { done, value } = result;
+        if (done) {
+          // close steps.
+          teeState.flags &= ~TeeStateFlags.reading;
+          if (!(teeState.flags & TeeStateFlags.canceled1))
+            $readableStreamDefaultControllerClose(teeState.branch1.$readableStreamController);
+          if (!(teeState.flags & TeeStateFlags.canceled2))
+            $readableStreamDefaultControllerClose(teeState.branch2.$readableStreamController);
+          if (!(teeState.flags & TeeStateFlags.canceled1) || !(teeState.flags & TeeStateFlags.canceled2))
+            teeState.cancelPromiseCapability.resolve.$call();
+          return;
+        }
+        // chunk steps.
+        teeState.flags &= ~TeeStateFlags.readAgain;
+        let chunk1 = value;
+        let chunk2 = value;
+        if (!(teeState.flags & TeeStateFlags.canceled2) && shouldClone) {
+          try {
+            chunk2 = $structuredCloneForStream(value);
+          } catch (e) {
+            $readableStreamDefaultControllerError(teeState.branch1.$readableStreamController, e);
+            $readableStreamDefaultControllerError(teeState.branch2.$readableStreamController, e);
+            $readableStreamCancel(teeState.stream, e).$then(
+              teeState.cancelPromiseCapability.resolve,
+              teeState.cancelPromiseCapability.reject,
+            );
+            return;
+          }
+        }
+        if (!(teeState.flags & TeeStateFlags.canceled1))
+          $readableStreamDefaultControllerEnqueue(teeState.branch1.$readableStreamController, chunk1);
+        if (!(teeState.flags & TeeStateFlags.canceled2))
+          $readableStreamDefaultControllerEnqueue(teeState.branch2.$readableStreamController, chunk2);
+        teeState.flags &= ~TeeStateFlags.reading;
+
+        $Promise.$resolve().$then(() => {
+          if (teeState.flags & TeeStateFlags.readAgain) pullAlgorithm();
+        });
+      },
+      () => {
+        // error steps.
+        teeState.flags &= ~TeeStateFlags.reading;
+      },
+    );
+    return $Promise.$resolve();
   };
+  return pullAlgorithm;
 }
 
 export function readableStreamTeeBranch1CancelFunction(teeState, stream) {
   return function (r) {
-    teeState.canceled1 = true;
+    teeState.flags |= TeeStateFlags.canceled1;
     teeState.reason1 = r;
-    if (teeState.canceled2) {
+    if (teeState.flags & TeeStateFlags.canceled2) {
       $readableStreamCancel(stream, [teeState.reason1, teeState.reason2]).$then(
-        teeState.cancelPromiseCapability.$resolve,
-        teeState.cancelPromiseCapability.$reject,
+        teeState.cancelPromiseCapability.resolve,
+        teeState.cancelPromiseCapability.reject,
       );
     }
     return teeState.cancelPromiseCapability.promise;
@@ -579,12 +634,12 @@ export function readableStreamTeeBranch1CancelFunction(teeState, stream) {
 
 export function readableStreamTeeBranch2CancelFunction(teeState, stream) {
   return function (r) {
-    teeState.canceled2 = true;
+    teeState.flags |= TeeStateFlags.canceled2;
     teeState.reason2 = r;
-    if (teeState.canceled1) {
+    if (teeState.flags & TeeStateFlags.canceled1) {
       $readableStreamCancel(stream, [teeState.reason1, teeState.reason2]).$then(
-        teeState.cancelPromiseCapability.$resolve,
-        teeState.cancelPromiseCapability.$reject,
+        teeState.cancelPromiseCapability.resolve,
+        teeState.cancelPromiseCapability.reject,
       );
     }
     return teeState.cancelPromiseCapability.promise;
@@ -922,6 +977,44 @@ export function noopDoneFunction() {
 
 export function onReadableStreamDirectControllerClosed(reason) {
   $throwTypeError("ReadableStreamDirectController is now closed");
+}
+
+export function tryUseReadableStreamBufferedFastPath(stream, method) {
+  // -- Fast path for Blob.prototype.stream(), fetch body streams, and incoming Request body streams --
+  const ptr = stream.$bunNativePtr;
+  if (
+    // only available on native streams
+    ptr &&
+    // don't even attempt it if the stream was used in some way
+    !$isReadableStreamDisturbed(stream) &&
+    // feature-detect if supported
+    $isCallable(ptr[method])
+  ) {
+    const promise = ptr[method]();
+    // if it throws, let it throw without setting $disturbed
+    stream.$disturbed = true;
+
+    // Clear the lazy load function.
+    $putByIdDirectPrivate(stream, "start", undefined);
+    $putByIdDirectPrivate(stream, "reader", {});
+
+    if (Bun.peek.status(promise) === "fulfilled") {
+      stream.$reader = undefined;
+      $readableStreamCloseIfPossible(stream);
+      return promise;
+    }
+
+    return promise
+      .catch(e => {
+        stream.$reader = undefined;
+        $readableStreamCancel(stream, e);
+        return Promise.$reject(e);
+      })
+      .finally(() => {
+        stream.$reader = undefined;
+        $readableStreamCloseIfPossible(stream);
+      });
+  }
 }
 
 export function onCloseDirectStream(reason) {
@@ -1862,18 +1955,22 @@ export function readableStreamIntoArray(stream) {
   var manyResult = reader.readMany();
 
   async function processManyResult(result) {
-    if (result.done) {
-      return [];
-    }
+    let { done, value } = result;
+    var chunks = value || [];
 
-    var chunks = result.value || [];
-
-    while (true) {
-      var thisResult = await reader.read();
-      if (thisResult.done) {
-        break;
+    while (!done) {
+      var thisResult = reader.readMany();
+      if ($isPromise(thisResult)) {
+        thisResult = await thisResult;
       }
-      chunks = chunks.concat(thisResult.value);
+
+      ({ done, value = [] } = thisResult);
+      const length = value.length || 0;
+      if (length > 1) {
+        chunks = chunks.concat(value);
+      } else if (length === 1) {
+        chunks.push(value[0]);
+      }
     }
 
     return chunks;

@@ -429,7 +429,7 @@ describe("node:http", () => {
     });
 
     it("should make a https:// GET request when passed string as first arg", done => {
-      const req = request("https://example.com", { headers: { "accept-encoding": "identity" } }, res => {
+      const req = https.request("https://example.com", { headers: { "accept-encoding": "identity" } }, res => {
         let data = "";
         res.setEncoding("utf8");
         res.on("data", chunk => {
@@ -1090,12 +1090,14 @@ describe("node:http", () => {
 
     test("should not decompress gzip, issue#4397", async () => {
       const { promise, resolve } = Promise.withResolvers();
-      request("https://bun.sh/", { headers: { "accept-encoding": "gzip" } }, res => {
-        res.on("data", function cb(chunk) {
-          resolve(chunk);
-          res.off("data", cb);
-        });
-      }).end();
+      https
+        .request("https://bun.sh/", { headers: { "accept-encoding": "gzip" } }, res => {
+          res.on("data", function cb(chunk) {
+            resolve(chunk);
+            res.off("data", cb);
+          });
+        })
+        .end();
       const chunk = await promise;
       expect(chunk.toString()).not.toContain("<html");
     });
@@ -2216,6 +2218,7 @@ it("should propagate exception in async data handler", async () => {
   expect(stdout.toString()).toContain("Test passed");
   expect(exitCode).toBe(0);
 });
+
 // This test is disabled because it can OOM the CI
 it.skip("should be able to stream huge amounts of data", async () => {
   const buf = Buffer.alloc(1024 * 1024 * 256);
@@ -2265,7 +2268,7 @@ it.skip("should be able to stream huge amounts of data", async () => {
 // TODO: today we use a workaround to continue event, we need to fix it in the future.
 it("should emit continue event #7480", done => {
   let receivedContinue = false;
-  const req = request(
+  const req = https.request(
     "https://example.com",
     { headers: { "accept-encoding": "identity", "expect": "100-continue" } },
     res => {
@@ -2290,7 +2293,7 @@ it("should emit continue event #7480", done => {
 
 it("should not emit continue event #7480", done => {
   let receivedContinue = false;
-  const req = request("https://example.com", { headers: { "accept-encoding": "identity" } }, res => {
+  const req = https.request("https://example.com", { headers: { "accept-encoding": "identity" } }, res => {
     let data = "";
     res.setEncoding("utf8");
     res.on("data", chunk => {
@@ -2307,4 +2310,58 @@ it("should not emit continue event #7480", done => {
     receivedContinue = true;
   });
   req.end();
+});
+
+it("http.Agent is configured correctly", () => {
+  const agent = new http.Agent();
+  expect(agent.defaultPort).toBe(80);
+  expect(agent.protocol).toBe("http:");
+});
+
+it("https.Agent is configured correctly", () => {
+  const agent = new https.Agent();
+  expect(agent.defaultPort).toBe(443);
+  expect(agent.protocol).toBe("https:");
+});
+
+it("http.get can use http.Agent", async () => {
+  const agent = new http.Agent();
+  const { promise, resolve } = Promise.withResolvers();
+  http.get({ agent, hostname: "google.com" }, resolve);
+  const response = await promise;
+  expect(response.req.port).toBe(80);
+  expect(response.req.protocol).toBe("http:");
+});
+
+it("https.get can use https.Agent", async () => {
+  const agent = new https.Agent();
+  const { promise, resolve } = Promise.withResolvers();
+  https.get({ agent, hostname: "google.com" }, resolve);
+  const response = await promise;
+  expect(response.req.port).toBe(443);
+  expect(response.req.protocol).toBe("https:");
+});
+
+it("http.request has the correct options", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  http.request("http://google.com/", resolve).end();
+  const response = await promise;
+  expect(response.req.port).toBe(80);
+  expect(response.req.protocol).toBe("http:");
+});
+
+it("https.request has the correct options", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  https.request("https://google.com/", resolve).end();
+  const response = await promise;
+  expect(response.req.port).toBe(443);
+  expect(response.req.protocol).toBe("https:");
+});
+
+it("using node:http to do https: request fails", () => {
+  expect(() => http.request("https://example.com")).toThrow(TypeError);
+  expect(() => http.request("https://example.com")).toThrow({
+    code: "ERR_INVALID_PROTOCOL",
+    message: `Protocol "https:" not supported. Expected "http:"`,
+  });
 });

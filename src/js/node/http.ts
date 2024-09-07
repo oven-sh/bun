@@ -1584,6 +1584,11 @@ class ClientRequest extends OutgoingMessage {
       // support agent proxy url/string for http/https
       proxy = this.#agent?.proxy;
     }
+    let keepalive = true;
+    const agentKeepalive = this.#agent?.keepalive;
+    if (agentKeepalive !== undefined) {
+      keepalive = agentKeepalive;
+    }
     const tls = protocol === "https:" && this.#tls ? { ...this.#tls, serverName: this.#tls.servername } : undefined;
     try {
       const fetchOptions: any = {
@@ -1595,6 +1600,7 @@ class ClientRequest extends OutgoingMessage {
         timeout: false,
         // Disable auto gzip/deflate
         decompress: false,
+        keepalive,
       };
 
       if (body && method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {

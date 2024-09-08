@@ -3330,32 +3330,35 @@ pub const JSGlobalObject = opaque {
             _ = this.throwInvalidPropertyTypeValue(field_name, "number", value);
             return null;
         }
-        const level_f64 = value.asNumber();
-        if (std.math.isNan(level_f64)) {
+        const f64_val = value.asNumber();
+        if (std.math.isNan(f64_val)) {
             return default;
         }
-        if (@floor(level_f64) != level_f64) {
+        if (@floor(f64_val) != f64_val) {
             _ = this.throwInvalidPropertyTypeValue(field_name, "integer", value);
             return null;
         }
-        if (level_f64 < min or level_f64 > max) {
-            this.throwRangeError(level_f64, .{ .field_name = comptime field_name, .min = min, .max = max });
+        const max_t = @min(max, std.math.maxInt(T));
+        const min_t = @max(min, std.math.minInt(T));
+        if (f64_val < min_t or f64_val > max_t) {
+            this.throwRangeError(f64_val, .{ .field_name = comptime field_name, .min = min, .max = max });
             return null;
         }
 
-        return @intFromFloat(level_f64);
+        return @intFromFloat(f64_val);
     }
 
     pub fn checkRangesOrGetDefault(this: *JSGlobalObject, obj: JSValue, comptime field_name: []const u8, comptime T: type, comptime min: i64, comptime max: i64, default: T) ?T {
-        if (obj.get(this, field_name)) |level_val| {
-            if (level_val == .undefined) {
+        if (obj.get(this, field_name)) |val| {
+            if (val == .undefined) {
                 return default;
             }
 
-            if (level_val.isInt32()) {
-                const min_t = @max(min, std.math.minInt(T));
-                const max_t = @min(max, std.math.maxInt(T));
-                const int = level_val.toInt32();
+            const min_t = @max(min, std.math.minInt(T));
+            const max_t = @min(max, std.math.maxInt(T));
+
+            if (val.isInt32()) {
+                const int = val.toInt32();
                 if (int < min_t or int > max_t) {
                     this.throwRangeError(int, .{ .field_name = comptime "options." ++ field_name, .min = min, .max = max });
                     return null;
@@ -3363,21 +3366,21 @@ pub const JSGlobalObject = opaque {
                 return @intCast(int);
             }
 
-            if (!level_val.isNumber()) {
-                _ = this.throwInvalidPropertyTypeValue("options." ++ field_name, "number", level_val);
+            if (!val.isNumber()) {
+                _ = this.throwInvalidPropertyTypeValue("options." ++ field_name, "number", val);
                 return null;
             }
-            const level_f64 = level_val.asNumber();
-            if (level_f64 < min or level_f64 > max or std.math.isNan(level_f64)) {
-                this.throwRangeError(level_f64, .{ .field_name = comptime "options." ++ field_name, .min = min, .max = max });
+            const f64_val = val.asNumber();
+            if (f64_val < min_t or f64_val > max_t or std.math.isNan(f64_val)) {
+                this.throwRangeError(f64_val, .{ .field_name = comptime "options." ++ field_name, .min = min, .max = max });
                 return null;
             }
-            if (@floor(level_f64) != level_f64) {
-                _ = this.throwInvalidPropertyTypeValue("options." ++ field_name, "integer", level_val);
+            if (@floor(f64_val) != f64_val) {
+                _ = this.throwInvalidPropertyTypeValue("options." ++ field_name, "integer", val);
                 return null;
             }
 
-            return @intFromFloat(level_f64);
+            return @intFromFloat(f64_val);
         }
         if (this.hasException()) return null;
         return default;
@@ -3388,24 +3391,26 @@ pub const JSGlobalObject = opaque {
     }
 
     pub fn checkMinOrGetDefaultU64(this: *JSGlobalObject, obj: JSValue, comptime field_name: []const u8, comptime T: type, comptime min: i64, default: T) ?T {
-        if (obj.get(this, field_name)) |level_val| {
-            if (level_val == .undefined) {
+        if (obj.get(this, field_name)) |val| {
+            if (val == .undefined) {
                 return default;
             }
-            if (!level_val.isNumber()) {
-                _ = this.throwInvalidPropertyTypeValue("options." ++ field_name, "number", level_val);
+            if (!val.isNumber()) {
+                _ = this.throwInvalidPropertyTypeValue("options." ++ field_name, "number", val);
                 return null;
             }
-            const level_f64 = level_val.asNumber();
-            if (level_f64 < min or level_f64 > std.math.maxInt(u52) or std.math.isNan(level_f64)) {
-                this.throwRangeError(level_f64, .{
+            const f64_val = val.asNumber();
+            const min_t = @max(min, std.math.minInt(T));
+
+            if (f64_val < min_t or f64_val > JSC.MAX_SAFE_INTEGER or std.math.isNan(f64_val)) {
+                this.throwRangeError(f64_val, .{
                     .field_name = comptime "options." ++ field_name,
                     .min = min,
                     .max = std.math.maxInt(u52),
                 });
                 return null;
             }
-            return @intFromFloat(level_f64);
+            return @intFromFloat(f64_val);
         }
         if (this.hasException()) return null;
         return default;

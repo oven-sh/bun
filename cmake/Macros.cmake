@@ -524,11 +524,11 @@ function(register_repository)
       "Cloning ${GIT_NAME}"
     COMMAND
       ${CMAKE_COMMAND}
-        -P ${CWD}/cmake/scripts/GitClone.cmake
         -DGIT_PATH=${GIT_PATH}
         -DGIT_REPOSITORY=${GIT_REPOSITORY}
         -DGIT_REF=${GIT_REF}
         -DGIT_NAME=${GIT_NAME}
+        -P ${CWD}/cmake/scripts/GitClone.cmake
     OUTPUTS
       ${GIT_PATH}
       ${GIT_EFFECTIVE_OUTPUTS}

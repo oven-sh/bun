@@ -1,16 +1,12 @@
 include(cmake/Macros.cmake)
 
-math(EXPR ARGC "${CMAKE_ARGC} - 1")
-foreach(i RANGE 1 ${ARGC})
-  set(ARGV${i} ${CMAKE_ARGV${i}})
-  if(ARGV${i} MATCHES "^-D(.*)=(.*)$")
-    setx(${CMAKE_MATCH_1} ${CMAKE_MATCH_2})
-  endif()
-endforeach()
-
 if(NOT GIT_PATH OR NOT GIT_REPOSITORY OR NOT GIT_REF)
   message(FATAL_ERROR "git_clone: GIT_PATH, GIT_REPOSITORY, and GIT_REF are required")
 endif()
+
+setx(GIT_PATH ${GIT_PATH})
+setx(GIT_REPOSITORY ${GIT_REPOSITORY})
+setx(GIT_REF ${GIT_REF})
 
 string(REGEX MATCH "([^/]+)$" GIT_ORIGINAL_NAME ${GIT_REPOSITORY})
 

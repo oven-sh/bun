@@ -334,9 +334,7 @@ pub const PackCommand = struct {
                         eql(entry_name, "LICENSE") or
                         eql(entry_name, "LICENCE") or
                         eql(entry_name, "README") or
-                        entry_name.len > "README.".len and eql(entry_name[0.."README.".len], "README.") or
-                        eql(entry_name, "CHANGELOG") or
-                        entry_name.len > "CHANGELOG.".len and eql(entry_name[0.."CHANGELOG.".len], "CHANGELOG.")))
+                        entry_name.len > "README.".len and eql(entry_name[0.."README.".len], "README.")))
                         included = true;
                 }
 

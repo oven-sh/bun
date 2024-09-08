@@ -763,6 +763,49 @@ describe("bundledDependnecies", () => {
 });
 
 describe("files", () => {
+  test("CHANGELOG is not included by default", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-files-changelog",
+          version: "1.1.1",
+          files: ["lib"],
+        }),
+      ),
+      write(join(packageDir, "CHANGELOG.md"), "hello"),
+      write(join(packageDir, "lib", "index.js"), "console.log('hello ./lib/index.js')"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+    const tarball = readTarball(join(packageDir, "pack-files-changelog-1.1.1.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { "pathname": "package/package.json" },
+      { "pathname": "package/lib/index.js" },
+    ]);
+  });
+  test("cannot exclude LICENSE", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-files-license",
+          version: "1.1.1",
+          files: ["lib", "!LICENSE"],
+        }),
+      ),
+      write(join(packageDir, "LICENSE"), "hello"),
+      write(join(packageDir, "lib", "index.js"), "console.log('hello ./lib/index.js')"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+    const tarball = readTarball(join(packageDir, "pack-files-license-1.1.1.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { "pathname": "package/package.json" },
+      { "pathname": "package/LICENSE" },
+      { "pathname": "package/lib/index.js" },
+    ]);
+  });
   test("can include files and directories", async () => {
     await Promise.all([
       write(

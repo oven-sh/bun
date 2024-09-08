@@ -8,6 +8,12 @@ const { promisify } = require("internal/promisify");
 const internalErrorName = $newZigFunction("node_util_binding.zig", "internalErrorName", 1);
 
 const NumberIsSafeInteger = Number.isSafeInteger;
+const ArrayIsArray = Array.isArray;
+const ObjectKeys = Object.keys;
+
+const ArrayPrototypeIncludes = Array.prototype.includes;
+const ArrayPrototypeJoin = Array.prototype.join;
+const ArrayPrototypeMap = Array.prototype.map;
 
 var cjs_exports;
 
@@ -200,21 +206,71 @@ var toUSVString = input => {
   return (input + "").toWellFormed();
 };
 
+// BEGIN DUPLICATED FROM src/js/node/child_process.ts
+function ERR_INVALID_ARG_VALUE(name, value, reason) {
+  const err = new Error(`The value "${value}" is invalid for argument '${name}'. Reason: ${reason}`);
+  err.code = "ERR_INVALID_ARG_VALUE";
+  return err;
+}
+
+/**
+ * @callback validateOneOf
+ * @template T
+ * @param {T} value
+ * @param {string} name
+ * @param {T[]} oneOf
+ */
+
+/** @type {validateOneOf} */
+const validateOneOf = (value, name, oneOf) => {
+  // const validateOneOf = hideStackFrames((value, name, oneOf) => {
+  if (!ArrayPrototypeIncludes.$call(oneOf, value)) {
+    const allowed = ArrayPrototypeJoin.$call(
+      ArrayPrototypeMap.$call(oneOf, v => (typeof v === "string" ? `'${v}'` : String(v))),
+      ", ",
+    );
+    const reason = "must be one of: " + allowed;
+    throw ERR_INVALID_ARG_VALUE(name, value, reason);
+  }
+};
+// END DUPLICATED FROM src/js/node/child_process.ts
+
+/**
+ * @param {string} code
+ * @returns {string}
+ */
+function escapeStyleCode(code) {
+  return `\u001b[${code}m`;
+}
+
 function styleText(format, text) {
   if (typeof text !== "string") {
     const e = new Error(`The text argument must be of type string. Received type ${typeof text}`);
     e.code = "ERR_INVALID_ARG_TYPE";
     throw e;
   }
+
+  if (ArrayIsArray(format)) {
+    let left = "";
+    let right = "";
+    for (const key of format) {
+      const formatCodes = inspect.colors[key];
+      if (formatCodes == null) {
+        validateOneOf(key, "format", ObjectKeys(inspect.colors));
+      }
+      left += escapeStyleCode(formatCodes[0]);
+      right = `${escapeStyleCode(formatCodes[1])}${right}`;
+    }
+
+    return `${left}${text}${right}`;
+  }
+
   const formatCodes = inspect.colors[format];
   if (formatCodes == null) {
-    const e = new Error(
-      `The value "${typeof format === "symbol" ? format.description : format}" is invalid for argument 'format'. Reason: must be one of: ${Object.keys(inspect.colors).join(", ")}`,
-    );
-    e.code = "ERR_INVALID_ARG_VALUE";
-    throw e;
+    validateOneOf(format, "format", ObjectKeys(inspect.colors));
   }
-  return `\u001b[${formatCodes[0]}m${text}\u001b[${formatCodes[1]}m`;
+
+  return `${escapeStyleCode(formatCodes[0])}${text}${escapeStyleCode(formatCodes[1])}`;
 }
 
 function getSystemErrorName(err: any) {

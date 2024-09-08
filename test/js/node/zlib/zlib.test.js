@@ -293,6 +293,9 @@ describe.each(["Deflate", "DeflateRaw", "Gzip"])("%s", constructor_name => {
       it.each([Infinity, -Infinity, -2])("%p", value => {
         expect(() => new zlib[constructor_name]({ [option_name]: value })).toThrow(RangeError);
       });
+      it.each([undefined])("%p", value => {
+        expect(() => new zlib[constructor_name]({ [option_name]: value })).not.toThrow();
+      });
     },
   );
 });

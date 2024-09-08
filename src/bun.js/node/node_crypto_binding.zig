@@ -175,17 +175,11 @@ pub const NodeCrypto = struct {
         if (keylen > max_keylen) {
             const digest_bun_str = arguments[0].toBunString(globalThis);
             defer digest_bun_str.deref();
-            globalThis.throw(
-                \\"keylen" cannot be larger than 255 times the byte size of the digest output in bytes.
-                \\Digest "{s}" is {} bytes, so the keylen limit is {}. Recieved {}.
-            ,
-                .{
-                    digest_bun_str.byteSlice(),
-                    BoringSSL.EVP_MD_size(algorithm),
-                    max_keylen,
-                    keylen,
-                },
-            );
+
+            var err = globalThis.createErrorInstance("Invalid key length", .{});
+            err.put(globalThis, ZigString.static("code"), ZigString.init(@tagName(.ERR_CRYPTO_INVALID_KEYLEN)).toJS(globalThis));
+            err.put(globalThis, ZigString.static("name"), ZigString.init("RangeError").toJS(globalThis));
+            globalThis.throwValue(err);
             return .null;
         }
 

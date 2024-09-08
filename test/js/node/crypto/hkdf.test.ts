@@ -42,8 +42,7 @@ test('rejects bad callback type', () => {
     expect(false).toBeTrue();
   } catch (e){
     expect(e).toBeInstanceOf(TypeError);
-    expect(e.toString()).toInclude("TypeError");
-    expect(e.toString()).toInclude("not a function");
+    expect(e.toString()).toInclude("must be of type function");
   }
 });
 
@@ -53,28 +52,33 @@ test("rejects negative key size", () => {
     expect(false).toBeTrue();
   } catch (e) {
     expect(e).toBeInstanceOf(RangeError);
-    expect(e.toString()).toInclude("range");
+    expect(e.toString()).toInclude("\"keylen\" is out of range")
   }
 
   try {
     crypto.hkdf("sha512", "key", "salt", "info", -10, (err, ab) => {});
     expect(false).toBeTrue();
   } catch (e) {
-    expect(e.toString()).toInclude("range");
+    expect(e).toBeInstanceOf(RangeError);
+    expect(e.toString()).toInclude("\"keylen\" is out of range")
   }
 });
 
 test("rejects excessive key size", () => {
   try {
     crypto.hkdfSync("sha512", "key", "salt", "info", 200000)
+    expect(false).toBeTrue();
   } catch (e) {
-    expect(e.toString()).toInclude("cannot be larger");
+    expect(e.code).toBe("ERR_CRYPTO_INVALID_KEYLEN");
+    expect(e.toString()).toInclude("Invalid key length");
   }
 
   try {
     crypto.hkdf("sha512", "key", "salt", "info", 200000, (err, ab) => {})
+    expect(false).toBeTrue();
   } catch (e) {
-    expect(e.toString()).toInclude("cannot be larger");
+    expect(e.code).toBe("ERR_CRYPTO_INVALID_KEYLEN");
+    expect(e.toString()).toInclude("Invalid key length");
   }
 });
 

@@ -36,13 +36,15 @@ function hkdfSync(digest, ikm, salt, info, keylen) {
 }
 
 function hkdf(digest, ikm, salt, info, keylen, callback) {
-  if (callback != null) {
-    // Causes weird test failures
-    // process.nextTick(() => callback(null, _hkdfSync(digest, ikm, salt, info, keylen)));
-    callback(null, hkdfSync(digest, ikm, salt, info, keylen));
-    return;
+  let res = hkdfSync(digest, ikm, salt, info, keylen);
+
+  if (!$isCallable(callback)) {
+    const err = new TypeError('The "callback" argument must be of type function. Received ' + typeof callback);
+    err.code = "ERR_INVALID_ARG_TYPE";
+    throw err;
   }
-  return hkdfSync(digest, ikm, salt, info, keylen);
+
+  process.nextTick(() => callback(null, res));
 }
 
 function randomInt(min, max, callback) {

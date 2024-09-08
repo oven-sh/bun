@@ -81,11 +81,15 @@ pub const BrotliEncoder = struct {
         const callback = arguments[2];
         const mode = arguments[3].to(u8);
 
-        _ = globalThis.checkMinOrGetDefault(opts, "chunkSize", u32, 64, 1024 * 16) orelse return .zero;
-        const maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)) orelse return .zero;
-        const flush = globalThis.checkRangesOrGetDefault(opts, "flush", u8, 0, 3, 0) orelse return .zero;
-        const finishFlush = globalThis.checkRangesOrGetDefault(opts, "finishFlush", u8, 0, 3, 2) orelse return .zero;
-        const fullFlush = globalThis.checkRangesOrGetDefault(opts, "fullFlush", u8, 0, 3, 1) orelse return .zero;
+        const chunk_size = globalThis.getInteger(opts, u32, 1024 * 48, .{
+            .min = 64,
+            .field_name = "chunkSize",
+        }) orelse return .zero;
+        _ = chunk_size; // autofix
+        const maxOutputLength = globalThis.getInteger(opts, usize, 0, .{ .max = std.math.maxInt(u52), .field_name = "maxOutputLength" }) orelse return .zero;
+        const flush = globalThis.getInteger(opts, u8, 0, .{ .max = 3, .field_name = "flush" }) orelse return .zero;
+        const finishFlush = globalThis.getInteger(opts, u8, 2, .{ .max = 3, .field_name = "finishFlush" }) orelse return .zero;
+        const fullFlush = globalThis.getInteger(opts, u8, 1, .{ .max = 3, .field_name = "fullFlush" }) orelse return .zero;
 
         var this: *BrotliEncoder = BrotliEncoder.new(.{
             .globalThis = globalThis,
@@ -464,11 +468,10 @@ pub const BrotliDecoder = struct {
         const callback = arguments[2];
         const mode = arguments[3].to(u8);
 
-        _ = globalThis.checkMinOrGetDefault(opts, "chunkSize", u32, 64, 1024 * 16) orelse return .zero;
-        const maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)) orelse return .zero;
-        const flush = globalThis.checkRangesOrGetDefault(opts, "flush", u8, 0, 6, 0) orelse return .zero;
-        const finishFlush = globalThis.checkRangesOrGetDefault(opts, "finishFlush", u8, 0, 6, 2) orelse return .zero;
-        const fullFlush = globalThis.checkRangesOrGetDefault(opts, "fullFlush", u8, 0, 6, 1) orelse return .zero;
+        const maxOutputLength = globalThis.getInteger(opts, usize, 0, .{ .max = std.math.maxInt(u52), .field_name = "maxOutputLength" }) orelse return .zero;
+        const flush = globalThis.getInteger(opts, u8, 0, .{ .max = 6, .field_name = "flush" }) orelse return .zero;
+        const finishFlush = globalThis.getInteger(opts, u8, 2, .{ .max = 6, .field_name = "finishFlush" }) orelse return .zero;
+        const fullFlush = globalThis.getInteger(opts, u8, 1, .{ .max = 6, .field_name = "fullFlush" }) orelse return .zero;
 
         var this: *BrotliDecoder = BrotliDecoder.new(.{
             .globalThis = globalThis,

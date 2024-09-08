@@ -891,6 +891,7 @@ pub fn WindowsBufferedWriter(
 ) type {
     return struct {
         source: ?Source = null,
+        owns_fd: bool = true,
         parent: *Parent = undefined,
         is_done: bool = false,
         // we use only one write_req, any queued data in outgoing will be flushed after this ends
@@ -1003,6 +1004,7 @@ pub fn WindowsBufferedWriter(
             this.is_done = true;
             if (this.pending_payload_size == 0) {
                 // will auto close when pending stuff get written
+                if (!this.owns_fd) return;
                 this.close();
             }
         }
@@ -1131,6 +1133,9 @@ pub fn WindowsStreamingWriter(
 ) type {
     return struct {
         source: ?Source = null,
+        /// if the source of this writer is a file descriptor, calling end() will not close it.
+        /// if it is a path, then we claim ownership and the backing fd will be closed by end().
+        owns_fd: bool = true,
         parent: *Parent = undefined,
         is_done: bool = false,
         // we use only one write_req, any queued data in outgoing will be flushed after this ends
@@ -1150,7 +1155,8 @@ pub fn WindowsStreamingWriter(
 
         fn onCloseSource(this: *WindowsWriter) void {
             this.source = null;
-            if (!this.closed_without_reporting) {
+            if (this.closed_without_reporting) {
+                this.closed_without_reporting = false;
                 onClose(this.parent);
             }
         }
@@ -1301,7 +1307,7 @@ pub fn WindowsStreamingWriter(
             // clean both buffers if needed
             this.outgoing.deinit();
             this.current_payload.deinit();
-            this.close();
+            this.closeWithoutReporting();
         }
 
         fn writeInternal(this: *WindowsWriter, buffer: anytype, comptime writeFn: anytype) WriteResult {
@@ -1378,10 +1384,13 @@ pub fn WindowsStreamingWriter(
                 return;
             }
 
-            this.is_done = true;
             this.closed_without_reporting = false;
-            // if we are done we can call close if not we wait all the data to be flushed
-            if (this.isDone()) {
+            this.is_done = true;
+
+            if (!this.hasPendingData()) {
+                if (!this.owns_fd) {
+                    return;
+                }
                 this.close();
             }
         }

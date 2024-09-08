@@ -1,5 +1,5 @@
-import * as Mitata from "../node_modules/mitata/src/cli.mjs";
 import process from "node:process";
+import * as Mitata from "../node_modules/mitata/src/cli.mjs";
 
 const asJSON = !!process?.env?.BENCHMARK_RUNNER;
 

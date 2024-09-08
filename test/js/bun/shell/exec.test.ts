@@ -1,9 +1,9 @@
 import { $ } from "bun";
-import { describe, test, expect } from "bun:test";
-import { createTestBuilder } from "./test_builder";
-const TestBuilder = createTestBuilder(import.meta.path);
+import { describe, expect, test } from "bun:test";
 import { bunEnv, tmpdirSync } from "harness";
 import { join } from "path";
+import { createTestBuilder } from "./test_builder";
+const TestBuilder = createTestBuilder(import.meta.path);
 
 const BUN = process.argv0;
 
@@ -19,7 +19,7 @@ describe("bun exec", () => {
   TestBuilder.command`${BUN} exec`
     .env(bunEnv)
     .stdout(
-      'Usage: bun exec <script>\n\nExecute a shell script directly from Bun.\n\nNote: If executing this from a shell, make sure to escape the string!\n\nExamples:\n  bunx exec "echo hi"\n  bunx exec "echo \\"hey friends\\"!"\n',
+      'Usage: bun exec <script>\n\nExecute a shell script directly from Bun.\n\nNote: If executing this from a shell, make sure to escape the string!\n\nExamples:\n  bun exec "echo hi"\n  bun exec "echo \\"hey friends\\"!"\n',
     )
     .runAsTest("no args prints help text");
 

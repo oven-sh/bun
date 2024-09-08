@@ -1,6 +1,7 @@
 
 #include "root.h"
 
+#include "ZigGlobalObject.h"
 #include "DOMException.h"
 #include "JavaScriptCore/Error.h"
 #include "JavaScriptCore/ErrorType.h"
@@ -15,6 +16,8 @@
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/JSType.h"
 #include "JavaScriptCore/Symbol.h"
+#include "wtf/Assertions.h"
+#include "wtf/text/ASCIIFastPath.h"
 #include "wtf/text/ASCIILiteral.h"
 #include "wtf/text/MakeString.h"
 #include "wtf/text/WTFString.h"
@@ -25,8 +28,6 @@
 
 #include "ErrorCode.h"
 
-extern "C" Zig::GlobalObject* Bun__getDefaultGlobalObject();
-
 static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code, bool isDOMExceptionPrototype = false)
 {
     JSC::JSObject* prototype;
@@ -34,11 +35,7 @@ static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* glo
     // Inherit from DOMException
     // But preserve the error.stack property.
     if (isDOMExceptionPrototype) {
-        auto* domGlobalObject = JSC::jsDynamicCast<Zig::GlobalObject*>(globalObject);
-        if (UNLIKELY(!domGlobalObject)) {
-            domGlobalObject = Bun__getDefaultGlobalObject();
-        }
-        // TODO: node:vm?
+        auto* domGlobalObject = defaultGlobalObject(globalObject);
         prototype = JSC::constructEmptyObject(globalObject, WebCore::JSDOMException::prototype(vm, *domGlobalObject));
     } else {
         switch (type) {
@@ -67,9 +64,19 @@ static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* glo
 extern "C" JSC::EncodedJSValue Bun__ERR_INVALID_ARG_TYPE(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue val_arg_name, JSC::EncodedJSValue val_expected_type, JSC::EncodedJSValue val_actual_value);
 extern "C" JSC::EncodedJSValue Bun__ERR_INVALID_ARG_TYPE_static(JSC::JSGlobalObject* globalObject, const ZigString* val_arg_name, const ZigString* val_expected_type, JSC::EncodedJSValue val_actual_value);
 extern "C" JSC::EncodedJSValue Bun__ERR_MISSING_ARGS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2, JSC::EncodedJSValue arg3);
+extern "C" JSC::EncodedJSValue Bun__ERR_MISSING_ARGS_static(JSC::JSGlobalObject* globalObject, const ZigString* arg1, const ZigString* arg2, const ZigString* arg3);
 extern "C" JSC::EncodedJSValue Bun__ERR_IPC_CHANNEL_CLOSED(JSC::JSGlobalObject* globalObject);
 
 // clang-format on
+
+#define EXPECT_ARG_COUNT(count__)                                                          \
+    do {                                                                                   \
+        auto argCount = callFrame->argumentCount();                                        \
+        if (argCount < count__) {                                                          \
+            JSC::throwTypeError(globalObject, scope, "requires " #count__ " arguments"_s); \
+            return {};                                                                     \
+        }                                                                                  \
+    } while (false)
 
 namespace Bun {
 
@@ -198,11 +205,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_INVALID_ARG_TYPE, (JSC::JSGlobalObject *
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto argCount = callFrame->argumentCount();
-    if (argCount < 3) {
-        JSC::throwTypeError(globalObject, scope, "requires 3 arguments"_s);
-        return {};
-    }
+    EXPECT_ARG_COUNT(3);
+
     auto arg_name = callFrame->argument(0);
     auto expected_type = callFrame->argument(1);
     auto actual_value = callFrame->argument(2);
@@ -248,11 +252,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_OUT_OF_RANGE, (JSC::JSGlobalObject * glo
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto argCount = callFrame->argumentCount();
-    if (argCount < 3) {
-        JSC::throwTypeError(globalObject, scope, "requires 3 arguments"_s);
-        return {};
-    }
+    EXPECT_ARG_COUNT(3);
 
     auto arg_name = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -317,6 +317,41 @@ extern "C" JSC::EncodedJSValue Bun__ERR_MISSING_ARGS(JSC::JSGlobalObject* global
     auto message = makeString("The \""_s, name1, "\", \""_s, name2, "\", and \""_s, name3, "\" arguments must be specified"_s);
     return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_MISSING_ARGS, message));
 }
+extern "C" JSC::EncodedJSValue Bun__ERR_MISSING_ARGS_static(JSC::JSGlobalObject* globalObject, const ZigString* arg1, const ZigString* arg2, const ZigString* arg3)
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (arg1 == nullptr) {
+        JSC::throwTypeError(globalObject, scope, "requires at least 1 argument"_s);
+        return {};
+    }
+
+    auto name1 = std::span<const unsigned char>(arg1->ptr, arg1->len);
+    ASSERT(WTF::charactersAreAllASCII(name1));
+
+    if (arg2 == nullptr) {
+        // 1 arg name passed
+        auto message = makeString("The \""_s, name1, "\" argument must be specified"_s);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_MISSING_ARGS, message));
+    }
+
+    auto name2 = std::span<const unsigned char>(arg2->ptr, arg2->len);
+    ASSERT(WTF::charactersAreAllASCII(name2));
+
+    if (arg3 == nullptr) {
+        // 2 arg names passed
+        auto message = makeString("The \""_s, name1, "\" and \""_s, name2, "\" arguments must be specified"_s);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_MISSING_ARGS, message));
+    }
+
+    auto name3 = std::span<const unsigned char>(arg3->ptr, arg3->len);
+    ASSERT(WTF::charactersAreAllASCII(name3));
+
+    // 3 arg names passed
+    auto message = makeString("The \""_s, name1, "\", \""_s, name2, "\", and \""_s, name3, "\" arguments must be specified"_s);
+    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_MISSING_ARGS, message));
+}
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_IPC_CHANNEL_CLOSED, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
 {
@@ -330,6 +365,23 @@ extern "C" JSC::EncodedJSValue Bun__ERR_IPC_CHANNEL_CLOSED(JSC::JSGlobalObject* 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_SOCKET_BAD_TYPE, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
 {
     return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_BAD_TYPE, "Bad socket type specified. Valid types are: udp4, udp6"_s));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_INVALID_PROTOCOL, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    EXPECT_ARG_COUNT(2);
+
+    auto actual = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto expected = callFrame->argument(1).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto message = makeString("Protocol \""_s, actual, "\" not supported. Expected \""_s, expected, "\""_s);
+    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_PROTOCOL, message));
 }
 
 } // namespace Bun
@@ -359,4 +411,25 @@ JSC::JSValue WebCore::toJS(JSC::JSGlobalObject* globalObject, CommonAbortReason 
 extern "C" JSC::EncodedJSValue WebCore__CommonAbortReason__toJS(JSC::JSGlobalObject* globalObject, WebCore::CommonAbortReason abortReason)
 {
     return JSC::JSValue::encode(WebCore::toJS(globalObject, abortReason));
+}
+
+JSC::JSObject* Bun::createInvalidThisError(JSC::JSGlobalObject* globalObject, const String& message)
+{
+    return Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_THIS, message);
+}
+
+JSC::JSObject* Bun::createInvalidThisError(JSC::JSGlobalObject* globalObject, JSC::JSValue thisValue, const ASCIILiteral typeName)
+{
+    if (thisValue.isEmpty() || thisValue.isUndefined()) {
+        return Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_THIS, makeString("Expected this to be instanceof "_s, typeName));
+    }
+
+    // Pathological case: the this value returns a string which is extremely long or causes an out of memory error.
+    const auto& typeString = thisValue.isString() ? String("a string"_s) : JSC::errorDescriptionForValue(globalObject, thisValue);
+    return Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_THIS, makeString("Expected this to be instanceof "_s, typeName, ", but received "_s, typeString));
+}
+
+JSC::EncodedJSValue Bun::throwError(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, Bun::ErrorCode code, const WTF::String& message)
+{
+    return JSC::JSValue::encode(scope.throwException(globalObject, createError(globalObject, code, message)));
 }

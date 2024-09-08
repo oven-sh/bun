@@ -1,6 +1,6 @@
+import path from "node:path";
 import NodeErrors from "../bun.js/bindings/ErrorCode.ts";
 const outputDir = process.argv[2];
-import path from "node:path";
 
 if (!outputDir) {
   throw new Error("Missing output directory");

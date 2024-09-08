@@ -140,7 +140,7 @@ function validateString(value, name) {
 }
 hideFromStack(validateString);
 
-function validateNumber(value, name, min = undefined, max) {
+function validateNumber(value, name, min?, max?) {
   if (typeof value !== "number") throw new ERR_INVALID_ARG_TYPE(name, "number", value);
 
   if (

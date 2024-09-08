@@ -2,7 +2,11 @@
 
 #include "root.h"
 
+#include "JavaScriptCore/Exception.h"
+#include "ErrorCode+List.h"
+#include "ErrorCode.h"
 #include "JavaScriptCore/ThrowScope.h"
+
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSType.h"
 #include "JavaScriptCore/NumberObject.h"
@@ -37,12 +41,14 @@
 #include "JavaScriptCore/JSClassRef.h"
 #include "JavaScriptCore/JSInternalPromise.h"
 #include "JavaScriptCore/JSMap.h"
+#include "JavaScriptCore/JSMapIterator.h"
 #include "JavaScriptCore/JSModuleLoader.h"
 #include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JavaScriptCore/JSONObject.h"
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/JSSet.h"
+#include "JavaScriptCore/JSSetIterator.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/ProxyObject.h"
 #include "JavaScriptCore/Microtask.h"
@@ -732,97 +738,28 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
-        // bool canPerformFastSet = JSSet::isAddFastAndNonObservable(set1->structure()) && JSSet::isAddFastAndNonObservable(set2->structure());
-
-        // // This code is loosely based on
-        // // https://github.com/oven-sh/WebKit/blob/657558d4d4c9c33f41b9670e72d96a5a39fe546e/Source/JavaScriptCore/runtime/HashMapImplInlines.h#L203-L211
-        // if (canPerformFastSet && set1->isIteratorProtocolFastAndNonObservable() && set2->isIteratorProtocolFastAndNonObservable()) {
-        //     auto* bucket = set1->head();
-        //     while (bucket) {
-        //         if (!bucket->deleted()) {
-        //             auto key = bucket->key();
-        //             RETURN_IF_EXCEPTION(*scope, false);
-        //             auto** bucket2ptr = set2->findBucket(globalObject, key);
-
-        //             if (bucket2ptr && (*bucket2ptr)->deleted()) {
-        //                 bucket2ptr = nullptr;
-        //             }
-
-        //             if (!bucket2ptr) {
-        //                 auto findDeepEqualKey = [&]() -> bool {
-        //                     auto* bucket = set2->head();
-        //                     while (bucket) {
-        //                         if (!bucket->deleted()) {
-        //                             auto key2 = bucket->key();
-        //                             if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key, key2, gcBuffer, stack, scope, false)) {
-        //                                 return true;
-        //                             }
-        //                         }
-        //                         bucket = bucket->next();
-        //                     }
-
-        //                     return false;
-        //                 };
-
-        //                 if (!findDeepEqualKey()) {
-        //                     return false;
-        //                 }
-        //             }
-        //         }
-        //         bucket = bucket->next();
-        //     }
-
-        //     return true;
-        // }
-
-        // This code path can be triggered when it is a class that extends from Set.
-        //
-        //    class MySet extends Set {}
-        //
-        IterationRecord iterationRecord1 = iteratorForIterable(globalObject, v1);
-        bool isEqual = true;
-
-        // https://github.com/oven-sh/bun/issues/7736
-        DeferGC deferGC(vm);
-
-        while (true) {
-            JSValue next1 = iteratorStep(globalObject, iterationRecord1);
-            if (next1.isFalse()) {
-                break;
+        auto iter1 = JSSetIterator::create(globalObject, set1->structure(), set1, IterationKind::Keys);
+        JSValue key1;
+        while (iter1->next(globalObject, key1)) {
+            if (set2->has(globalObject, key1)) {
+                continue;
             }
 
-            JSValue nextValue1 = iteratorValue(globalObject, next1);
-            RETURN_IF_EXCEPTION(*scope, false);
-
-            bool found = false;
-            IterationRecord iterationRecord2 = iteratorForIterable(globalObject, v2);
-            while (true) {
-                JSValue next2 = iteratorStep(globalObject, iterationRecord2);
-                if (UNLIKELY(next2.isFalse())) {
-                    break;
-                }
-
-                JSValue nextValue2 = iteratorValue(globalObject, next2);
-                RETURN_IF_EXCEPTION(*scope, false);
-
-                // set has unique values, no need to count
-                if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, nextValue1, nextValue2, gcBuffer, stack, scope, false)) {
-                    found = true;
-                    if (!nextValue1.isPrimitive()) {
-                        stack.append({ nextValue1, nextValue2 });
-                    }
+            // We couldn't find the key in the second set. This may be a false positive due to how
+            // JSValues are represented in JSC, so we need to fall back to a linear search to be sure.
+            auto iter2 = JSSetIterator::create(globalObject, set2->structure(), set2, IterationKind::Keys);
+            JSValue key2;
+            bool foundMatchingKey = false;
+            while (iter2->next(globalObject, key2)) {
+                if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false)) {
+                    foundMatchingKey = true;
                     break;
                 }
             }
 
-            if (!found) {
-                isEqual = false;
-                break;
+            if (!foundMatchingKey) {
+                return false;
             }
-        }
-
-        if (!isEqual) {
-            return false;
         }
 
         return true;
@@ -840,127 +777,34 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
-        // bool canPerformFastSet = JSMap::isSetFastAndNonObservable(map1->structure()) && JSMap::isSetFastAndNonObservable(map2->structure());
-
-        // // This code is loosely based on
-        // // https://github.com/oven-sh/WebKit/blob/657558d4d4c9c33f41b9670e72d96a5a39fe546e/Source/JavaScriptCore/runtime/HashMapImplInlines.h#L203-L211
-        // if (canPerformFastSet && map1->isIteratorProtocolFastAndNonObservable() && map2->isIteratorProtocolFastAndNonObservable()) {
-        //     auto* bucket = map1->head();
-        //     while (bucket) {
-        //         if (!bucket->deleted()) {
-        //             auto key = bucket->key();
-        //             auto value = bucket->value();
-        //             RETURN_IF_EXCEPTION(*scope, false);
-        //             auto** bucket2ptr = map2->findBucket(globalObject, key);
-        //             JSMap::BucketType* bucket2 = nullptr;
-
-        //             if (bucket2ptr) {
-        //                 bucket2 = *bucket2ptr;
-
-        //                 if (bucket2->deleted()) {
-        //                     bucket2 = nullptr;
-        //                 }
-        //             }
-
-        //             if (!bucket2) {
-        //                 auto findDeepEqualKey = [&]() -> JSMap::BucketType* {
-        //                     auto* bucket = map2->head();
-        //                     while (bucket) {
-        //                         if (!bucket->deleted()) {
-        //                             auto key2 = bucket->key();
-        //                             if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key, key2, gcBuffer, stack, scope, false)) {
-        //                                 return bucket;
-        //                             }
-        //                         }
-        //                         bucket = bucket->next();
-        //                     }
-
-        //                     return nullptr;
-        //                 };
-
-        //                 bucket2 = findDeepEqualKey();
-        //             }
-
-        //             if (!bucket2 || !Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, value, bucket2->value(), gcBuffer, stack, scope, false)) {
-        //                 return false;
-        //             }
-        //         }
-        //         bucket = bucket->next();
-        //     }
-
-        //     return true;
-        // }
-
-        // This code path can be triggered when it is a class that extends from Map.
-        //
-        //    class MyMap extends Map {}
-        //
-        IterationRecord iterationRecord1 = iteratorForIterable(globalObject, v1);
-        bool isEqual = true;
-
-        // https://github.com/oven-sh/bun/issues/7736
-        DeferGC deferGC(vm);
-
-        while (true) {
-            JSValue next1 = iteratorStep(globalObject, iterationRecord1);
-            if (next1.isFalse()) {
-                break;
-            }
-
-            JSValue nextValue1 = iteratorValue(globalObject, next1);
-            RETURN_IF_EXCEPTION(*scope, false);
-
-            if (UNLIKELY(!nextValue1.isObject())) {
-                return false;
-            }
-
-            JSObject* nextValueObject1 = asObject(nextValue1);
-
-            JSValue key1 = nextValueObject1->getIndex(globalObject, static_cast<unsigned>(0));
-            RETURN_IF_EXCEPTION(*scope, false);
-
-            bool found = false;
-
-            IterationRecord iterationRecord2 = iteratorForIterable(globalObject, v2);
-
-            while (true) {
-
-                JSValue next2 = iteratorStep(globalObject, iterationRecord2);
-                if (UNLIKELY(next2.isFalse())) {
-                    break;
-                }
-
-                JSValue nextValue2 = iteratorValue(globalObject, next2);
-                RETURN_IF_EXCEPTION(*scope, false);
-
-                if (UNLIKELY(!nextValue2.isObject())) {
-                    return false;
-                }
-
-                JSObject* nextValueObject2 = asObject(nextValue2);
-
-                JSValue key2 = nextValueObject2->getIndex(globalObject, static_cast<unsigned>(0));
-                RETURN_IF_EXCEPTION(*scope, false);
-
-                if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false)) {
-                    if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, nextValue1, nextValue2, gcBuffer, stack, scope, false)) {
-                        found = true;
-                        if (!nextValue1.isPrimitive()) {
-                            stack.append({ nextValue1, nextValue2 });
-                        }
+        auto iter1 = JSMapIterator::create(globalObject, map1->structure(), map1, IterationKind::Entries);
+        JSValue key1, value1;
+        while (iter1->nextKeyValue(globalObject, key1, value1)) {
+            JSValue value2 = map2->get(globalObject, key1);
+            if (value2.isUndefined()) {
+                // We couldn't find the key in the second map. This may be a false positive due to
+                // how JSValues are represented in JSC, so we need to fall back to a linear search
+                // to be sure.
+                auto iter2 = JSMapIterator::create(globalObject, map2->structure(), map2, IterationKind::Entries);
+                JSValue key2;
+                bool foundMatchingKey = false;
+                while (iter2->nextKeyValue(globalObject, key2, value2)) {
+                    if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false)) {
+                        foundMatchingKey = true;
                         break;
                     }
                 }
+
+                if (!foundMatchingKey) {
+                    return false;
+                }
+
+                // Compare both values below.
             }
 
-            if (!found) {
-                isEqual = false;
-                break;
+            if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, value1, value2, gcBuffer, stack, scope, false)) {
+                return false;
             }
-        }
-
-        if (!isEqual) {
-            return false;
         }
 
         return true;
@@ -1046,6 +890,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     case Uint16ArrayType:
     case Int32ArrayType:
     case Uint32ArrayType:
+    case Float16ArrayType:
     case Float32ArrayType:
     case Float64ArrayType:
     case BigInt64ArrayType:
@@ -1553,23 +1398,53 @@ WebCore__FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC__JSGlobalObject* 
     EnsureStillAliveScope argument0 = JSC::JSValue::decode(argument0_);
 
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
+    throwScope.assertNoException();
+
     // Note that we use IDLDOMString here rather than IDLByteString: while headers
     //  should be ASCII only, we want the headers->fill implementation to discover
     //  and error on invalid names and values
     using TargetType = IDLUnion<IDLSequence<IDLSequence<IDLDOMString>>, IDLRecord<IDLDOMString, IDLDOMString>>;
     using Converter = std::optional<Converter<TargetType>::ReturnType>;
+
     auto init = argument0.value().isUndefined() ? Converter() : Converter(convert<TargetType>(*lexicalGlobalObject, argument0.value()));
     RETURN_IF_EXCEPTION(throwScope, nullptr);
 
+    // if the headers are empty, return null
+    if (!init) {
+        return nullptr;
+    }
+
+    // [["", ""]] should be considered empty and return null
+    if (std::holds_alternative<Vector<Vector<String>>>(init.value())) {
+        const auto& sequence = std::get<Vector<Vector<String>>>(init.value());
+
+        if (sequence.size() == 0) {
+            return nullptr;
+        }
+    } else {
+        // {} should be considered empty and return null
+        const auto& record = std::get<Vector<KeyValuePair<String, String>>>(init.value());
+        if (record.size() == 0) {
+            return nullptr;
+        }
+    }
+
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
     headers->relaxAdoptionRequirement();
-    if (init) {
-        // `fill` doesn't set an exception on the VM if it fails, it returns an
-        //  ExceptionOr<void>.  So we need to check for the exception and, if set,
-        //  translate it to JSValue and throw it.
-        WebCore::propagateException(*lexicalGlobalObject, throwScope,
-            headers->fill(WTFMove(init.value())));
+
+    // `fill` doesn't set an exception on the VM if it fails, it returns an
+    //  ExceptionOr<void>.  So we need to check for the exception and, if set,
+    //  translate it to JSValue and throw it.
+    WebCore::propagateException(*lexicalGlobalObject, throwScope,
+        headers->fill(WTFMove(init.value())));
+
+    // If there's an exception, it will be thrown by the above call to fill().
+    // in that case, let's also free the headers to make memory leaks harder.
+    if (throwScope.exception()) {
+        headers->deref();
+        return nullptr;
     }
+
     return headers;
 }
 
@@ -1732,7 +1607,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
     }
     return headers;
 }
-WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(JSC__JSGlobalObject* arg0, void* arg1)
+WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
 {
     uWS::HttpRequest req = *reinterpret_cast<uWS::HttpRequest*>(arg1);
 
@@ -1805,11 +1680,12 @@ bool WebCore__FetchHeaders__has(WebCore__FetchHeaders* headers, const ZigString*
     } else
         return result.releaseReturnValue();
 }
-void WebCore__FetchHeaders__put_(WebCore__FetchHeaders* headers, const ZigString* arg1, const ZigString* arg2, JSC__JSGlobalObject* global)
+extern "C" void WebCore__FetchHeaders__put(WebCore__FetchHeaders* headers, HTTPHeaderName name, const ZigString* arg2, JSC__JSGlobalObject* global)
 {
     auto throwScope = DECLARE_THROW_SCOPE(global->vm());
+    throwScope.assertNoException(); // can't throw an exception when there's already one.
     WebCore::propagateException(*global, throwScope,
-        headers->set(Zig::toString(*arg1), Zig::toStringCopy(*arg2)));
+        headers->set(name, Zig::toStringCopy(*arg2)));
 }
 void WebCore__FetchHeaders__remove(WebCore__FetchHeaders* headers, const ZigString* arg1, JSC__JSGlobalObject* global)
 {
@@ -1866,17 +1742,26 @@ extern "C" JSC__JSValue ZigString__toJSONObject(const ZigString* strPtr, JSC::JS
     auto str = Zig::toString(*strPtr);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
+    if (str.isNull()) {
+        // isNull() will be true for empty strings and for strings which are too long.
+        // So we need to check the length is plausibly due to a long string.
+        if (strPtr->len > Bun__stringSyntheticAllocationLimit) {
+            scope.throwException(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_STRING_TOO_LONG, "Cannot parse a JSON string longer than 2^32-1 characters"_s));
+            return {};
+        }
+    }
+
+    auto catchScope = DECLARE_CATCH_SCOPE(globalObject->vm());
     // JSONParseWithException does not propagate exceptions as expected. See #5859
     JSValue result = JSONParse(globalObject, str);
 
-    if (!result && !scope.exception()) {
+    if (!result && !catchScope.exception())
         scope.throwException(globalObject, createSyntaxError(globalObject, "Failed to parse JSON"_s));
-    }
 
-    if (scope.exception()) {
-        auto* exception = scope.exception();
-        scope.clearException();
-        return JSC::JSValue::encode(exception);
+    if (catchScope.exception()) {
+        auto* exception = catchScope.exception();
+        catchScope.clearExceptionExceptTermination();
+        return JSC::JSValue::encode(exception->value());
     }
 
     return JSValue::encode(result);
@@ -2014,6 +1899,7 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC__JSValue value, JSC__
     case JSC::JSType::Uint16ArrayType:
     case JSC::JSType::Int32ArrayType:
     case JSC::JSType::Uint32ArrayType:
+    case JSC::JSType::Float16ArrayType:
     case JSC::JSType::Float32ArrayType:
     case JSC::JSType::Float64ArrayType:
     case JSC::JSType::BigInt64ArrayType:
@@ -2756,6 +2642,7 @@ bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
     case JSC::JSType::Uint16ArrayType:
     case JSC::JSType::Int32ArrayType:
     case JSC::JSType::Uint32ArrayType:
+    case JSC::JSType::Float16ArrayType:
     case JSC::JSType::Float32ArrayType:
     case JSC::JSType::Float64ArrayType:
     case JSC::JSType::BigInt64ArrayType:
@@ -2970,7 +2857,7 @@ JSC__JSValue ZigString__toExternalValue(const ZigString* arg0, JSC__JSGlobalObje
 
 VirtualMachine* JSC__JSGlobalObject__bunVM(JSC__JSGlobalObject* arg0)
 {
-    return reinterpret_cast<VirtualMachine*>(reinterpret_cast<Zig::GlobalObject*>(arg0)->bunVM());
+    return reinterpret_cast<VirtualMachine*>(WebCore::clientData(arg0->vm())->bunVM);
 }
 
 JSC__JSValue ZigString__toValueGC(const ZigString* arg0, JSC__JSGlobalObject* arg1)
@@ -3095,6 +2982,81 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject* globalObject,
     return result;
 }
 #pragma mark - JSC::JSPromise
+
+void JSC__AnyPromise__wrap(JSC__JSGlobalObject* globalObject, EncodedJSValue encodedPromise, void* ctx, JSC__JSValue (*func)(void*, JSC__JSGlobalObject*))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    JSValue promiseValue = JSC::JSValue::decode(encodedPromise);
+    ASSERT(!promiseValue.isEmpty());
+
+    JSValue result = JSC::JSValue::decode(func(ctx, globalObject));
+    if (scope.exception()) {
+        auto* exception = scope.exception();
+        scope.clearException();
+
+        if (auto* promise = jsDynamicCast<JSC::JSPromise*>(promiseValue)) {
+            promise->reject(globalObject, exception->value());
+            return;
+        }
+
+        if (auto* promise = jsDynamicCast<JSC::JSInternalPromise*>(promiseValue)) {
+            promise->reject(globalObject, exception->value());
+            return;
+        }
+
+        ASSERT_NOT_REACHED_WITH_MESSAGE("Non-promise value passed to AnyPromise.wrap");
+    }
+
+    if (auto* errorInstance = jsDynamicCast<JSC::ErrorInstance*>(result)) {
+        if (auto* promise = jsDynamicCast<JSC::JSPromise*>(promiseValue)) {
+            promise->reject(globalObject, errorInstance);
+            return;
+        }
+
+        if (auto* promise = jsDynamicCast<JSC::JSInternalPromise*>(promiseValue)) {
+            promise->reject(globalObject, errorInstance);
+            return;
+        }
+
+        ASSERT_NOT_REACHED_WITH_MESSAGE("Non-promise value passed to AnyPromise.wrap");
+    }
+
+    if (auto* promise = jsDynamicCast<JSC::JSPromise*>(promiseValue)) {
+        promise->resolve(globalObject, result);
+        return;
+    }
+    if (auto* promise = jsDynamicCast<JSC::JSInternalPromise*>(promiseValue)) {
+        promise->resolve(globalObject, result);
+        return;
+    }
+
+    ASSERT_NOT_REACHED_WITH_MESSAGE("Non-promise value passed to AnyPromise.wrap");
+}
+
+JSC__JSValue JSC__JSPromise__wrap(JSC__JSGlobalObject* globalObject, void* ctx, JSC__JSValue (*func)(void*, JSC__JSGlobalObject*))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    JSValue result = JSC::JSValue::decode(func(ctx, globalObject));
+    if (scope.exception()) {
+        auto* exception = scope.exception();
+        scope.clearException();
+        return JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, exception->value()));
+    }
+
+    if (auto* promise = jsDynamicCast<JSC::JSPromise*>(result)) {
+        return JSValue::encode(promise);
+    }
+
+    if (JSC::ErrorInstance* err = jsDynamicCast<JSC::ErrorInstance*>(result)) {
+        return JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, err));
+    }
+
+    return JSValue::encode(JSC::JSPromise::resolvedPromise(globalObject, result));
+}
 
 void JSC__JSPromise__reject(JSC__JSPromise* arg0, JSC__JSGlobalObject* globalObject,
     JSC__JSValue JSValue2)
@@ -4979,8 +4941,19 @@ void JSC__VM__throwError(JSC__VM* vm_, JSC__JSGlobalObject* arg1, JSC__JSValue e
     JSValue value = JSValue::decode(encodedValue);
     scope.assertNoException(); // can't throw an exception when there's already one.
     ASSERT(!value.isEmpty()); // can't throw an empty value.
-    JSC::JSObject* error = value.getObject();
-    JSC::Exception* exception = JSC::Exception::create(vm, error);
+
+    // This case can happen if we did not call .toError() on a JSValue.
+    if (value.isCell()) {
+        JSC::JSCell* cell = value.asCell();
+        if (cell->type() == JSC::CellType && cell->inherits<JSC::Exception>()) {
+            scope.throwException(arg1, jsCast<JSC::Exception*>(value));
+            return;
+        }
+    }
+
+    // Do not call .getObject() on it.
+    // https://github.com/oven-sh/bun/issues/13311
+    JSC::Exception* exception = JSC::Exception::create(vm, value);
     scope.throwException(arg1, exception);
 }
 
@@ -5277,7 +5250,12 @@ restart:
 
                 if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
                     if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
-                        propertyValue = slot.getPureResult();
+                        // If we can't use getPureResult, let's at least say it was a [Getter]
+                        if (!slot.isCacheableGetter()) {
+                            propertyValue = slot.getterSetter();
+                        } else {
+                            propertyValue = slot.getPureResult();
+                        }
                     } else if (slot.attributes() & PropertyAttribute::BuiltinOrFunction) {
                         propertyValue = slot.getValue(globalObject, property);
                     } else if (slot.isCustom()) {
@@ -5287,8 +5265,13 @@ restart:
                     } else if (object->getOwnPropertySlot(object, globalObject, property, slot)) {
                         propertyValue = slot.getValue(globalObject, property);
                     }
-                } else if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
-                    propertyValue = slot.getPureResult();
+                } else if (slot.isAccessor()) {
+                    // If we can't use getPureResult, let's at least say it was a [Getter]
+                    if (!slot.isCacheableGetter()) {
+                        propertyValue = slot.getterSetter();
+                    } else {
+                        propertyValue = slot.getPureResult();
+                    }
                 } else {
                     propertyValue = slot.getValue(globalObject, property);
                 }
@@ -5523,6 +5506,18 @@ extern "C" JSC__JSValue WebCore__AbortSignal__toJS(WebCore__AbortSignal* arg0, J
     return JSValue::encode(toJS<IDLInterface<WebCore__AbortSignal>>(*globalObject, *jsCast<JSDOMGlobalObject*>(globalObject), *abortSignal));
 }
 
+extern "C" void WebCore__AbortSignal__incrementPendingActivity(WebCore__AbortSignal* arg0)
+{
+    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
+    abortSignal->incrementPendingActivityCount();
+}
+
+extern "C" void WebCore__AbortSignal__decrementPendingActivity(WebCore__AbortSignal* arg0)
+{
+    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
+    abortSignal->decrementPendingActivityCount();
+}
+
 extern "C" WebCore__AbortSignal* WebCore__AbortSignal__signal(WebCore__AbortSignal* arg0, JSC::JSGlobalObject* globalObject, uint8_t reason)
 {
 
@@ -5754,6 +5749,16 @@ extern "C" EncodedJSValue JSC__createError(JSC::JSGlobalObject* globalObject, co
     return JSValue::encode(JSC::createError(globalObject, str->toWTFString(BunString::ZeroCopy)));
 }
 
+extern "C" EncodedJSValue JSC__createTypeError(JSC::JSGlobalObject* globalObject, const BunString* str)
+{
+    return JSValue::encode(JSC::createTypeError(globalObject, str->toWTFString(BunString::ZeroCopy)));
+}
+
+extern "C" EncodedJSValue JSC__createRangeError(JSC::JSGlobalObject* globalObject, const BunString* str)
+{
+    return JSValue::encode(JSC::createRangeError(globalObject, str->toWTFString(BunString::ZeroCopy)));
+}
+
 extern "C" EncodedJSValue ExpectMatcherUtils__getSingleton(JSC::JSGlobalObject* globalObject_)
 {
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject_);
@@ -5800,6 +5805,13 @@ extern "C" EncodedJSValue JSArray__constructArray(
 {
     return JSValue::encode(
         JSC::constructArray(global, (ArrayAllocationProfile*)nullptr, values, values_len));
+}
+
+extern "C" EncodedJSValue JSArray__constructEmptyArray(
+    JSC::JSGlobalObject* global,
+    size_t len)
+{
+    return JSValue::encode(JSC::constructEmptyArray(global, (ArrayAllocationProfile*)nullptr, len));
 }
 
 extern "C" bool JSGlobalObject__hasException(JSC::JSGlobalObject* globalObject)

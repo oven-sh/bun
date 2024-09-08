@@ -13,6 +13,10 @@ pub const Socket = opaque {};
 pub const ConnectingSocket = opaque {};
 const debug = bun.Output.scoped(.uws, false);
 const uws = @This();
+const SSLWrapper = @import("../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
+const TextEncoder = @import("../bun.js/webcore/encoding.zig").Encoder;
+const JSC = bun.JSC;
+const EventLoopTimer = @import("../bun.js//api//Timer.zig").EventLoopTimer;
 
 pub const CloseCode = enum(i32) {
     normal = 0,
@@ -56,7 +60,7 @@ pub const InternalLoopData = extern struct {
         return this.recv_buf[0..LIBUS_RECV_BUFFER_LENGTH];
     }
 
-    pub fn setParentEventLoop(this: *InternalLoopData, parent: bun.JSC.EventLoopHandle) void {
+    pub fn setParentEventLoop(this: *InternalLoopData, parent: JSC.EventLoopHandle) void {
         switch (parent) {
             .js => |ptr| {
                 this.parent_tag = 1;
@@ -69,23 +73,496 @@ pub const InternalLoopData = extern struct {
         }
     }
 
-    pub fn getParent(this: *InternalLoopData) bun.JSC.EventLoopHandle {
+    pub fn getParent(this: *InternalLoopData) JSC.EventLoopHandle {
         const parent = this.parent_ptr orelse @panic("Parent loop not set - pointer is null");
         return switch (this.parent_tag) {
             0 => @panic("Parent loop not set - tag is zero"),
-            1 => .{ .js = bun.cast(*bun.JSC.EventLoop, parent) },
-            2 => .{ .mini = bun.cast(*bun.JSC.MiniEventLoop, parent) },
+            1 => .{ .js = bun.cast(*JSC.EventLoop, parent) },
+            2 => .{ .mini = bun.cast(*JSC.MiniEventLoop, parent) },
             else => @panic("Parent loop data corrupted - tag is invalid"),
         };
+    }
+};
+
+pub const UpgradedDuplex = struct {
+    pub const CertError = struct {
+        error_no: i32 = 0,
+        code: [:0]const u8 = "",
+        reason: [:0]const u8 = "",
+
+        pub fn deinit(this: *CertError) void {
+            if (this.code.len > 0) {
+                bun.default_allocator.free(this.code);
+            }
+            if (this.reason.len > 0) {
+                bun.default_allocator.free(this.reason);
+            }
+        }
+    };
+
+    const WrapperType = SSLWrapper(*UpgradedDuplex);
+
+    wrapper: ?WrapperType,
+    origin: JSC.Strong = .{}, // any duplex
+    ssl_error: CertError = .{},
+    vm: *JSC.VirtualMachine,
+    handlers: Handlers,
+
+    onDataCallback: JSC.Strong = .{},
+    onEndCallback: JSC.Strong = .{},
+    onWritableCallback: JSC.Strong = .{},
+    onCloseCallback: JSC.Strong = .{},
+    event_loop_timer: EventLoopTimer = .{
+        .next = .{},
+        .tag = .UpgradedDuplex,
+    },
+    current_timeout: u32 = 0,
+
+    pub const Handlers = struct {
+        ctx: *anyopaque,
+        onOpen: *const fn (*anyopaque) void,
+        onHandshake: *const fn (*anyopaque, bool, uws.us_bun_verify_error_t) void,
+        onData: *const fn (*anyopaque, []const u8) void,
+        onClose: *const fn (*anyopaque) void,
+        onEnd: *const fn (*anyopaque) void,
+        onWritable: *const fn (*anyopaque) void,
+        onError: *const fn (*anyopaque, JSC.JSValue) void,
+        onTimeout: *const fn (*anyopaque) void,
+    };
+
+    const log = bun.Output.scoped(.UpgradedDuplex, false);
+    fn onOpen(this: *UpgradedDuplex) void {
+        log("onOpen", .{});
+        this.handlers.onOpen(this.handlers.ctx);
+    }
+
+    fn onData(this: *UpgradedDuplex, decoded_data: []const u8) void {
+        log("onData ({})", .{decoded_data.len});
+        this.handlers.onData(this.handlers.ctx, decoded_data);
+    }
+
+    fn onHandshake(this: *UpgradedDuplex, handshake_success: bool, ssl_error: uws.us_bun_verify_error_t) void {
+        log("onHandshake", .{});
+
+        this.ssl_error = .{
+            .error_no = ssl_error.error_no,
+            .code = if (ssl_error.code == null) "" else bun.default_allocator.dupeZ(u8, ssl_error.code[0..bun.len(ssl_error.code) :0]) catch bun.outOfMemory(),
+            .reason = if (ssl_error.reason == null) "" else bun.default_allocator.dupeZ(u8, ssl_error.reason[0..bun.len(ssl_error.reason) :0]) catch bun.outOfMemory(),
+        };
+        this.handlers.onHandshake(this.handlers.ctx, handshake_success, ssl_error);
+    }
+
+    fn onClose(this: *UpgradedDuplex) void {
+        log("onClose", .{});
+        defer this.deinit();
+
+        this.handlers.onClose(this.handlers.ctx);
+        // closes the underlying duplex
+        this.callWriteOrEnd(null, false);
+    }
+
+    fn callWriteOrEnd(this: *UpgradedDuplex, data: ?[]const u8, msg_more: bool) void {
+        if (this.vm.isShuttingDown()) {
+            return;
+        }
+        if (this.origin.get()) |duplex| {
+            const globalThis = this.origin.globalThis.?;
+            const writeOrEnd = if (msg_more) duplex.getFunction(globalThis, "write") catch return orelse return else duplex.getFunction(globalThis, "end") catch return orelse return;
+            if (data) |data_| {
+                const buffer = JSC.BinaryType.toJS(.Buffer, data_, globalThis);
+                buffer.ensureStillAlive();
+
+                const result = writeOrEnd.call(globalThis, duplex, &[_]JSC.JSValue{buffer});
+                if (result.toError()) |err| {
+                    this.handlers.onError(this.handlers.ctx, err);
+                }
+            } else {
+                const result = writeOrEnd.call(globalThis, duplex, &[_]JSC.JSValue{JSC.JSValue.jsNull()});
+                if (result.toError()) |err| {
+                    this.handlers.onError(this.handlers.ctx, err);
+                }
+            }
+        }
+    }
+
+    fn internalWrite(this: *UpgradedDuplex, encoded_data: []const u8) void {
+        this.resetTimeout();
+
+        // Possible scenarios:
+        // Scenario 1: will not write if vm is shutting down (we cannot do anything about it)
+        // Scenario 2: will not write if a exception is thrown (will be handled by onError)
+        // Scenario 3: will be queued in memory and will be flushed later
+        // Scenario 4: no write/end function exists (will be handled by onError)
+        this.callWriteOrEnd(encoded_data, true);
+    }
+
+    pub fn flush(this: *UpgradedDuplex) void {
+        if (this.wrapper) |*wrapper| {
+            _ = wrapper.flush();
+        }
+    }
+
+    fn onInternalReceiveData(this: *UpgradedDuplex, data: []const u8) void {
+        if (this.wrapper) |*wrapper| {
+            this.resetTimeout();
+            wrapper.receiveData(data);
+        }
+    }
+
+    fn onReceivedData(
+        globalObject: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) JSC.JSValue {
+        log("onReceivedData", .{});
+
+        const function = callframe.callee();
+        const args = callframe.arguments(1);
+
+        if (JSC.getFunctionData(function)) |self| {
+            const this = @as(*UpgradedDuplex, @ptrCast(@alignCast(self)));
+            if (args.len >= 1) {
+                const data_arg = args.ptr[0];
+                if (this.origin.has()) {
+                    if (data_arg.isEmptyOrUndefinedOrNull()) {
+                        return JSC.JSValue.jsUndefined();
+                    }
+                    if (data_arg.asArrayBuffer(globalObject)) |array_buffer| {
+                        // yay we can read the data
+                        const payload = array_buffer.slice();
+                        this.onInternalReceiveData(payload);
+                    } else {
+                        // node.js errors in this case with the same error, lets keep it consistent
+                        const error_value = globalObject.ERR_STREAM_WRAP("Stream has StringDecoder set or is in objectMode", .{}).toJS();
+                        error_value.ensureStillAlive();
+                        this.handlers.onError(this.handlers.ctx, error_value);
+                    }
+                }
+            }
+        }
+        return JSC.JSValue.jsUndefined();
+    }
+
+    fn onEnd(
+        globalObject: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) void {
+        log("onEnd", .{});
+        _ = globalObject;
+        const function = callframe.callee();
+
+        if (JSC.getFunctionData(function)) |self| {
+            const this = @as(*UpgradedDuplex, @ptrCast(@alignCast(self)));
+
+            if (this.wrapper != null) {
+                this.handlers.onEnd(this.handlers.ctx);
+            }
+        }
+    }
+
+    fn onWritable(
+        globalObject: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) JSC.JSValue {
+        log("onWritable", .{});
+
+        _ = globalObject;
+        const function = callframe.callee();
+
+        if (JSC.getFunctionData(function)) |self| {
+            const this = @as(*UpgradedDuplex, @ptrCast(@alignCast(self)));
+            // flush pending data
+            if (this.wrapper) |*wrapper| {
+                _ = wrapper.flush();
+            }
+            // call onWritable (will flush on demand)
+            this.handlers.onWritable(this.handlers.ctx);
+        }
+
+        return JSC.JSValue.jsUndefined();
+    }
+
+    fn onCloseJS(
+        globalObject: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) JSC.JSValue {
+        log("onCloseJS", .{});
+
+        _ = globalObject;
+        const function = callframe.callee();
+
+        if (JSC.getFunctionData(function)) |self| {
+            const this = @as(*UpgradedDuplex, @ptrCast(@alignCast(self)));
+            // flush pending data
+            if (this.wrapper) |*wrapper| {
+                _ = wrapper.shutdown(true);
+            }
+        }
+
+        return JSC.JSValue.jsUndefined();
+    }
+
+    pub fn onTimeout(this: *UpgradedDuplex) EventLoopTimer.Arm {
+        log("onTimeout", .{});
+
+        const has_been_cleared = this.event_loop_timer.state == .CANCELLED or this.vm.scriptExecutionStatus() != .running;
+
+        this.event_loop_timer.state = .FIRED;
+        this.event_loop_timer.heap = .{};
+
+        if (has_been_cleared) {
+            return .disarm;
+        }
+
+        this.handlers.onTimeout(this.handlers.ctx);
+
+        return .disarm;
+    }
+
+    pub fn from(
+        globalThis: *JSC.JSGlobalObject,
+        origin: JSC.JSValue,
+        handlers: UpgradedDuplex.Handlers,
+    ) UpgradedDuplex {
+        return UpgradedDuplex{
+            .vm = globalThis.bunVM(),
+            .origin = JSC.Strong.create(origin, globalThis),
+            .wrapper = null,
+            .handlers = handlers,
+        };
+    }
+
+    pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        const array = JSC.JSValue.createEmptyArray(globalThis, 4);
+        array.ensureStillAlive();
+
+        {
+            const callback = this.onDataCallback.get() orelse brk: {
+                const dataCallback = JSC.NewFunctionWithData(
+                    globalThis,
+                    null,
+                    0,
+                    onReceivedData,
+                    false,
+                    this,
+                );
+                dataCallback.ensureStillAlive();
+
+                JSC.setFunctionData(dataCallback, this);
+
+                this.onDataCallback = JSC.Strong.create(dataCallback, globalThis);
+                break :brk dataCallback;
+            };
+            array.putIndex(globalThis, 0, callback);
+        }
+
+        {
+            const callback = this.onEndCallback.get() orelse brk: {
+                const endCallback = JSC.NewFunctionWithData(
+                    globalThis,
+                    null,
+                    0,
+                    onReceivedData,
+                    false,
+                    this,
+                );
+                endCallback.ensureStillAlive();
+
+                JSC.setFunctionData(endCallback, this);
+
+                this.onEndCallback = JSC.Strong.create(endCallback, globalThis);
+                break :brk endCallback;
+            };
+            array.putIndex(globalThis, 1, callback);
+        }
+
+        {
+            const callback = this.onWritableCallback.get() orelse brk: {
+                const writableCallback = JSC.NewFunctionWithData(
+                    globalThis,
+                    null,
+                    0,
+                    onWritable,
+                    false,
+                    this,
+                );
+                writableCallback.ensureStillAlive();
+
+                JSC.setFunctionData(writableCallback, this);
+                this.onWritableCallback = JSC.Strong.create(writableCallback, globalThis);
+                break :brk writableCallback;
+            };
+            array.putIndex(globalThis, 2, callback);
+        }
+
+        {
+            const callback = this.onCloseCallback.get() orelse brk: {
+                const closeCallback = JSC.NewFunctionWithData(
+                    globalThis,
+                    null,
+                    0,
+                    onCloseJS,
+                    false,
+                    this,
+                );
+                closeCallback.ensureStillAlive();
+
+                JSC.setFunctionData(closeCallback, this);
+                this.onCloseCallback = JSC.Strong.create(closeCallback, globalThis);
+                break :brk closeCallback;
+            };
+            array.putIndex(globalThis, 3, callback);
+        }
+
+        return array;
+    }
+
+    pub fn startTLS(this: *UpgradedDuplex, ssl_options: JSC.API.ServerConfig.SSLConfig, is_client: bool) !void {
+        this.wrapper = try WrapperType.init(ssl_options, is_client, .{
+            .ctx = this,
+            .onOpen = UpgradedDuplex.onOpen,
+            .onHandshake = UpgradedDuplex.onHandshake,
+            .onData = UpgradedDuplex.onData,
+            .onClose = UpgradedDuplex.onClose,
+            .write = UpgradedDuplex.internalWrite,
+        });
+
+        this.wrapper.?.start();
+    }
+
+    pub fn encodeAndWrite(this: *UpgradedDuplex, data: []const u8, is_end: bool) i32 {
+        log("encodeAndWrite (len: {} - is_end: {})", .{ data.len, is_end });
+        if (this.wrapper) |*wrapper| {
+            return @as(i32, @intCast(wrapper.writeData(data) catch 0));
+        }
+        return 0;
+    }
+
+    pub fn rawWrite(this: *UpgradedDuplex, encoded_data: []const u8, _: bool) i32 {
+        this.internalWrite(encoded_data);
+        return @intCast(encoded_data.len);
+    }
+
+    pub fn close(this: *UpgradedDuplex) void {
+        if (this.wrapper) |*wrapper| {
+            _ = wrapper.shutdown(true);
+        }
+    }
+
+    pub fn shutdown(this: *UpgradedDuplex) void {
+        if (this.wrapper) |*wrapper| {
+            _ = wrapper.shutdown(false);
+        }
+    }
+
+    pub fn shutdownRead(this: *UpgradedDuplex) void {
+        if (this.wrapper) |*wrapper| {
+            _ = wrapper.shutdownRead();
+        }
+    }
+
+    pub fn isShutdown(this: *UpgradedDuplex) bool {
+        if (this.wrapper) |wrapper| {
+            return wrapper.isShutdown();
+        }
+        return true;
+    }
+
+    pub fn isClosed(this: *UpgradedDuplex) bool {
+        if (this.wrapper) |wrapper| {
+            return wrapper.isClosed();
+        }
+        return true;
+    }
+
+    pub fn isEstablished(this: *UpgradedDuplex) bool {
+        return !this.isClosed();
+    }
+
+    pub fn ssl(this: *UpgradedDuplex) ?*BoringSSL.SSL {
+        if (this.wrapper) |wrapper| {
+            return wrapper.ssl;
+        }
+        return null;
+    }
+
+    pub fn sslError(this: *UpgradedDuplex) us_bun_verify_error_t {
+        return .{
+            .error_no = this.ssl_error.error_no,
+            .code = @ptrCast(this.ssl_error.code.ptr),
+            .reason = @ptrCast(this.ssl_error.reason.ptr),
+        };
+    }
+
+    pub fn resetTimeout(this: *UpgradedDuplex) void {
+        this.setTimeoutInMilliseconds(this.current_timeout);
+    }
+    pub fn setTimeoutInMilliseconds(this: *UpgradedDuplex, ms: c_uint) void {
+        if (this.event_loop_timer.state == .ACTIVE) {
+            this.vm.timer.remove(&this.event_loop_timer);
+        }
+        this.current_timeout = ms;
+
+        // if the interval is 0 means that we stop the timer
+        if (ms == 0) {
+            return;
+        }
+
+        // reschedule the timer
+        this.event_loop_timer.next = bun.timespec.msFromNow(ms);
+        this.vm.timer.insert(&this.event_loop_timer);
+    }
+    pub fn setTimeout(this: *UpgradedDuplex, seconds: c_uint) void {
+        log("setTimeout({d})", .{seconds});
+        this.setTimeoutInMilliseconds(seconds * 1000);
+    }
+
+    pub fn deinit(this: *UpgradedDuplex) void {
+        log("deinit", .{});
+        // clear the timer
+        this.setTimeout(0);
+
+        if (this.wrapper) |*wrapper| {
+            wrapper.deinit();
+            this.wrapper = null;
+        }
+
+        this.origin.deinit();
+        if (this.onDataCallback.get()) |callback| {
+            JSC.setFunctionData(callback, null);
+            this.onDataCallback.deinit();
+        }
+        if (this.onEndCallback.get()) |callback| {
+            JSC.setFunctionData(callback, null);
+            this.onEndCallback.deinit();
+        }
+        if (this.onWritableCallback.get()) |callback| {
+            JSC.setFunctionData(callback, null);
+            this.onWritableCallback.deinit();
+        }
+        if (this.onCloseCallback.get()) |callback| {
+            JSC.setFunctionData(callback, null);
+            this.onCloseCallback.deinit();
+        }
+        var ssl_error = this.ssl_error;
+        ssl_error.deinit();
+        this.ssl_error = .{};
     }
 };
 
 pub const InternalSocket = union(enum) {
     done: *Socket,
     connecting: *ConnectingSocket,
-
+    detached: void,
+    upgradedDuplex: *UpgradedDuplex,
+    pub fn isDetached(this: InternalSocket) bool {
+        return this == .detached;
+    }
+    pub fn detach(this: *InternalSocket) void {
+        this.* = .detached;
+    }
     pub fn close(this: InternalSocket, comptime is_ssl: bool, code: CloseCode) void {
         switch (this) {
+            .detached => {},
             .done => |socket| {
                 debug("us_socket_close({d})", .{@intFromPtr(socket)});
                 _ = us_socket_close(
@@ -102,6 +579,9 @@ pub const InternalSocket = union(enum) {
                     socket,
                 );
             },
+            .upgradedDuplex => |socket| {
+                socket.close();
+            },
         }
     }
 
@@ -109,6 +589,8 @@ pub const InternalSocket = union(enum) {
         return switch (this) {
             .done => |socket| us_socket_is_closed(@intFromBool(is_ssl), socket) > 0,
             .connecting => |socket| us_connecting_socket_is_closed(@intFromBool(is_ssl), socket) > 0,
+            .detached => true,
+            .upgradedDuplex => |socket| socket.isClosed(),
         };
     }
 
@@ -116,6 +598,8 @@ pub const InternalSocket = union(enum) {
         return switch (this) {
             .done => this.done,
             .connecting => null,
+            .detached => null,
+            .upgradedDuplex => null,
         };
     }
 
@@ -123,11 +607,19 @@ pub const InternalSocket = union(enum) {
         return switch (this) {
             .done => switch (other) {
                 .done => this.done == other.done,
-                .connecting => false,
+                .upgradedDuplex, .connecting, .detached => false,
             },
             .connecting => switch (other) {
-                .done => false,
+                .upgradedDuplex, .done, .detached => false,
                 .connecting => this.connecting == other.connecting,
+            },
+            .detached => switch (other) {
+                .detached => true,
+                .upgradedDuplex, .done, .connecting => false,
+            },
+            .upgradedDuplex => switch (other) {
+                .upgradedDuplex => this.upgradedDuplex == other.upgradedDuplex,
+                .done, .connecting, .detached => false,
             },
         };
     }
@@ -138,22 +630,35 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         const ssl_int: i32 = @intFromBool(is_ssl);
         socket: InternalSocket,
         const ThisSocket = @This();
-
+        pub const detached: NewSocketHandler(is_ssl) = NewSocketHandler(is_ssl){ .socket = .{ .detached = {} } };
+        pub fn detach(this: *ThisSocket) void {
+            this.socket.detach();
+        }
+        pub fn isDetached(this: ThisSocket) bool {
+            return this.socket.isDetached();
+        }
         pub fn verifyError(this: ThisSocket) us_bun_verify_error_t {
-            const socket = this.socket.get() orelse return std.mem.zeroes(us_bun_verify_error_t);
-            const ssl_error: us_bun_verify_error_t = uws.us_socket_verify_error(comptime ssl_int, socket);
-            return ssl_error;
+            switch (this.socket) {
+                .done => |socket| return uws.us_socket_verify_error(comptime ssl_int, socket),
+                .upgradedDuplex => |socket| return socket.sslError(),
+                .connecting, .detached => return std.mem.zeroes(us_bun_verify_error_t),
+            }
         }
 
         pub fn isEstablished(this: ThisSocket) bool {
-            const socket = this.socket.get() orelse return false;
-            return us_socket_is_established(comptime ssl_int, socket) > 0;
+            switch (this.socket) {
+                .done => |socket| return us_socket_is_established(comptime ssl_int, socket) > 0,
+                .upgradedDuplex => |socket| return socket.isEstablished(),
+                .connecting, .detached => return false,
+            }
         }
 
         pub fn timeout(this: ThisSocket, seconds: c_uint) void {
             switch (this.socket) {
+                .upgradedDuplex => |socket| socket.setTimeout(seconds),
                 .done => |socket| us_socket_timeout(comptime ssl_int, socket, seconds),
                 .connecting => |socket| us_connecting_socket_timeout(comptime ssl_int, socket, seconds),
+                .detached => {},
             }
         }
 
@@ -177,6 +682,8 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         us_connecting_socket_long_timeout(comptime ssl_int, socket, 0);
                     }
                 },
+                .detached => {},
+                .upgradedDuplex => |socket| socket.setTimeout(seconds),
             }
         }
 
@@ -190,19 +697,24 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     us_connecting_socket_timeout(comptime ssl_int, socket, 0);
                     us_connecting_socket_long_timeout(comptime ssl_int, socket, minutes);
                 },
+                .detached => {},
+                .upgradedDuplex => |socket| socket.setTimeout(minutes * 60),
             }
         }
 
         pub fn startTLS(this: ThisSocket, is_client: bool) void {
-            const socket = this.socket.get() orelse @panic("socket is not open");
+            const socket = this.socket.get() orelse return;
             _ = us_socket_open(comptime ssl_int, socket, @intFromBool(is_client), null, 0);
         }
 
-        pub fn ssl(this: ThisSocket) *BoringSSL.SSL {
+        pub fn ssl(this: ThisSocket) ?*BoringSSL.SSL {
             if (comptime is_ssl) {
-                return @as(*BoringSSL.SSL, @ptrCast(this.getNativeHandle()));
+                if (this.getNativeHandle()) |handle| {
+                    return @as(*BoringSSL.SSL, @ptrCast(handle));
+                }
+                return null;
             }
-            @panic("socket is not a TLS socket");
+            return null;
         }
 
         // Note: this assumes that the socket is non-TLS and will be adopted and wrapped with a new TLS context
@@ -229,7 +741,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     }
 
                     if (comptime deref_) {
-                        return (TLSSocket.from(socket)).ext(ContextType).*;
+                        return (TLSSocket.from(socket)).ext(ContextType).?.*;
                     }
 
                     return (TLSSocket.from(socket)).ext(ContextType);
@@ -289,7 +801,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 }
                 pub fn on_connect_error(socket: *Socket, code: i32) callconv(.C) ?*Socket {
                     Fields.onConnectError(
-                        TLSSocket.from(socket).ext(ContextType).*,
+                        TLSSocket.from(socket).ext(ContextType).?.*,
                         TLSSocket.from(socket),
                         code,
                     );
@@ -328,7 +840,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 .on_long_timeout = SocketHandler.on_long_timeout,
             };
 
-            const this_socket = this.socket.get() orelse @panic("socket is not open");
+            const this_socket = this.socket.get() orelse return null;
 
             const socket = us_socket_wrap_with_tls(ssl_int, this_socket, options, events, socket_ext_size) orelse return null;
             return NewSocketHandler(true).from(socket);
@@ -338,6 +850,8 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             return @ptrCast(switch (this.socket) {
                 .done => |socket| us_socket_get_native_handle(comptime ssl_int, socket),
                 .connecting => |socket| us_connecting_socket_get_native_handle(comptime ssl_int, socket),
+                .detached => null,
+                .upgradedDuplex => |socket| if (is_ssl) @as(*anyopaque, @ptrCast(socket.ssl())) else null,
             } orelse return null);
         }
 
@@ -361,7 +875,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             us_socket_sendfile_needs_more(socket);
         }
 
-        pub fn ext(this: ThisSocket, comptime ContextType: type) *ContextType {
+        pub fn ext(this: ThisSocket, comptime ContextType: type) ?*ContextType {
             const alignment = if (ContextType == *anyopaque)
                 @sizeOf(usize)
             else
@@ -370,6 +884,8 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             const ptr = switch (this.socket) {
                 .done => |sock| us_socket_ext(comptime ssl_int, sock),
                 .connecting => |sock| us_connecting_socket_ext(comptime ssl_int, sock),
+                .detached => return null,
+                .upgradedDuplex => return null,
             };
 
             return @as(*align(alignment) ContextType, @ptrCast(@alignCast(ptr)));
@@ -380,44 +896,68 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             switch (this.socket) {
                 .done => |socket| return us_socket_context(comptime ssl_int, socket),
                 .connecting => |socket| return us_connecting_socket_context(comptime ssl_int, socket),
+                .detached => return null,
+                .upgradedDuplex => return null,
             }
         }
 
         pub fn flush(this: ThisSocket) void {
-            const socket = this.socket.get() orelse return;
-            return us_socket_flush(
-                comptime ssl_int,
-                socket,
-            );
-        }
-        pub fn write(this: ThisSocket, data: []const u8, msg_more: bool) i32 {
-            const socket = this.socket.get() orelse return 0;
-            const result = us_socket_write(
-                comptime ssl_int,
-                socket,
-                data.ptr,
-                // truncate to 31 bits since sign bit exists
-                @as(i32, @intCast(@as(u31, @truncate(data.len)))),
-                @as(i32, @intFromBool(msg_more)),
-            );
-
-            if (comptime Environment.allow_assert) {
-                debug("us_socket_write({*}, {d}) = {d}", .{ this.getNativeHandle(), data.len, result });
+            switch (this.socket) {
+                .upgradedDuplex => |socket| {
+                    return socket.flush();
+                },
+                .done => |socket| {
+                    return us_socket_flush(
+                        comptime ssl_int,
+                        socket,
+                    );
+                },
+                .connecting, .detached => return,
             }
+        }
 
-            return result;
+        pub fn write(this: ThisSocket, data: []const u8, msg_more: bool) i32 {
+            switch (this.socket) {
+                .upgradedDuplex => |socket| {
+                    return socket.encodeAndWrite(data, msg_more);
+                },
+                .done => |socket| {
+                    const result = us_socket_write(
+                        comptime ssl_int,
+                        socket,
+                        data.ptr,
+                        // truncate to 31 bits since sign bit exists
+                        @as(i32, @intCast(@as(u31, @truncate(data.len)))),
+                        @as(i32, @intFromBool(msg_more)),
+                    );
+
+                    if (comptime Environment.allow_assert) {
+                        debug("us_socket_write({*}, {d}) = {d}", .{ this.getNativeHandle(), data.len, result });
+                    }
+
+                    return result;
+                },
+                .connecting, .detached => return 0,
+            }
         }
 
         pub fn rawWrite(this: ThisSocket, data: []const u8, msg_more: bool) i32 {
-            const socket = this.socket.get() orelse return 0;
-            return us_socket_raw_write(
-                comptime ssl_int,
-                socket,
-                data.ptr,
-                // truncate to 31 bits since sign bit exists
-                @as(i32, @intCast(@as(u31, @truncate(data.len)))),
-                @as(i32, @intFromBool(msg_more)),
-            );
+            switch (this.socket) {
+                .done => |socket| {
+                    return us_socket_raw_write(
+                        comptime ssl_int,
+                        socket,
+                        data.ptr,
+                        // truncate to 31 bits since sign bit exists
+                        @as(i32, @intCast(@as(u31, @truncate(data.len)))),
+                        @as(i32, @intFromBool(msg_more)),
+                    );
+                },
+                .connecting, .detached => return 0,
+                .upgradedDuplex => |socket| {
+                    return socket.rawWrite(data, msg_more);
+                },
+            }
         }
         pub fn shutdown(this: ThisSocket) void {
             // debug("us_socket_shutdown({d})", .{@intFromPtr(this.socket)});
@@ -433,6 +973,10 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         comptime ssl_int,
                         socket,
                     );
+                },
+                .detached => {},
+                .upgradedDuplex => |socket| {
+                    socket.shutdown();
                 },
             }
         }
@@ -453,6 +997,10 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         socket,
                     );
                 },
+                .detached => {},
+                .upgradedDuplex => |socket| {
+                    socket.shutdownRead();
+                },
             }
         }
 
@@ -469,6 +1017,10 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         comptime ssl_int,
                         socket,
                     ) > 0;
+                },
+                .detached => return true,
+                .upgradedDuplex => |socket| {
+                    return socket.isShutdown();
                 },
             }
         }
@@ -495,6 +1047,10 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         socket,
                     );
                 },
+                .detached => return 0,
+                .upgradedDuplex => |socket| {
+                    return socket.sslError().error_no;
+                },
             }
         }
 
@@ -506,23 +1062,30 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             return this.socket.close(comptime is_ssl, code);
         }
         pub fn localPort(this: ThisSocket) i32 {
-            const socket = this.socket.get() orelse return 0;
-            return us_socket_local_port(
-                comptime ssl_int,
-                socket,
-            );
+            switch (this.socket) {
+                .done => |socket| {
+                    return us_socket_local_port(
+                        comptime ssl_int,
+                        socket,
+                    );
+                },
+                .upgradedDuplex, .connecting, .detached => return 0,
+            }
         }
         pub fn remoteAddress(this: ThisSocket, buf: [*]u8, length: *i32) void {
-            const socket = this.socket.get() orelse {
-                length.* = 0;
-                return;
-            };
-            return us_socket_remote_address(
-                comptime ssl_int,
-                socket,
-                buf,
-                length,
-            );
+            switch (this.socket) {
+                .done => |socket| {
+                    return us_socket_remote_address(
+                        comptime ssl_int,
+                        socket,
+                        buf,
+                        length,
+                    );
+                },
+                .upgradedDuplex, .connecting, .detached => return {
+                    length.* = 0;
+                },
+            }
         }
 
         /// Get the local address of a socket in binary format.
@@ -533,19 +1096,23 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         /// # Returns
         /// This function returns a slice of the buffer on success, or null on failure.
         pub fn localAddressBinary(this: ThisSocket, buf: []u8) ?[]const u8 {
-            const socket = this.socket.get() orelse return null;
-            var length: i32 = @intCast(buf.len);
-            us_socket_local_address(
-                comptime ssl_int,
-                socket,
-                buf.ptr,
-                &length,
-            );
+            switch (this.socket) {
+                .done => |socket| {
+                    var length: i32 = @intCast(buf.len);
+                    us_socket_local_address(
+                        comptime ssl_int,
+                        socket,
+                        buf.ptr,
+                        &length,
+                    );
 
-            if (length <= 0) {
-                return null;
+                    if (length <= 0) {
+                        return null;
+                    }
+                    return buf[0..@intCast(length)];
+                },
+                .upgradedDuplex, .connecting, .detached => return null,
             }
-            return buf[0..@intCast(length)];
         }
 
         /// Get the local address of a socket in text format.
@@ -633,6 +1200,12 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             return ctx;
         }
 
+        pub fn fromDuplex(
+            duplex: *UpgradedDuplex,
+        ) ThisSocket {
+            return ThisSocket{ .socket = .{ .upgradedDuplex = duplex } };
+        }
+
         pub fn fromFd(
             ctx: *SocketContext,
             handle: bun.FileDescriptor,
@@ -642,8 +1215,9 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         ) ?ThisSocket {
             const socket_ = ThisSocket{ .socket = .{ .done = us_socket_from_fd(ctx, @sizeOf(*anyopaque), bun.socketcast(handle)) orelse return null } };
 
-            const holder = socket_.ext(*anyopaque);
-            holder.* = this;
+            if (socket_.ext(*anyopaque)) |holder| {
+                holder.* = this;
+            }
 
             if (comptime socket_field_name) |field| {
                 @field(this, field) = socket_;
@@ -679,8 +1253,9 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 return error.FailedToOpenSocket;
 
             const socket_ = ThisSocket{ .socket = .{ .done = socket } };
-            const holder = socket_.ext(*anyopaque);
-            holder.* = ctx;
+            if (socket_.ext(*anyopaque)) |holder| {
+                holder.* = ctx;
+            }
             return socket_;
         }
 
@@ -721,9 +1296,9 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 ThisSocket{
                     .socket = .{ .connecting = @ptrCast(socket_ptr) },
                 };
-
-            const holder = socket.ext(*anyopaque);
-            holder.* = ptr;
+            if (socket.ext(*anyopaque)) |holder| {
+                holder.* = ptr;
+            }
             return socket;
         }
 
@@ -751,7 +1326,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     }
 
                     if (comptime deref_) {
-                        return (SocketHandlerType.from(socket)).ext(ContextType).*;
+                        return (SocketHandlerType.from(socket)).ext(ContextType).?.*;
                     }
 
                     return (SocketHandlerType.from(socket)).ext(ContextType);
@@ -806,7 +1381,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     const val = if (comptime ContextType == anyopaque)
                         us_connecting_socket_ext(comptime ssl_int, socket)
                     else if (comptime deref_)
-                        SocketHandlerType.fromConnecting(socket).ext(ContextType).*
+                        SocketHandlerType.fromConnecting(socket).ext(ContextType).?.*
                     else
                         SocketHandlerType.fromConnecting(socket).ext(ContextType);
                     Fields.onConnectError(
@@ -820,7 +1395,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     const val = if (comptime ContextType == anyopaque)
                         us_socket_ext(comptime ssl_int, socket)
                     else if (comptime deref_)
-                        SocketHandlerType.from(socket).ext(ContextType).*
+                        SocketHandlerType.from(socket).ext(ContextType).?.*
                     else
                         SocketHandlerType.from(socket).ext(ContextType);
                     Fields.onConnectError(
@@ -883,7 +1458,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     }
 
                     if (comptime deref_) {
-                        return (ThisSocket.from(socket)).ext(ContextType).*;
+                        return (ThisSocket.from(socket)).ext(ContextType).?.*;
                     }
 
                     return (ThisSocket.from(socket)).ext(ContextType);
@@ -945,7 +1520,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     const val = if (comptime ContextType == anyopaque)
                         us_connecting_socket_ext(comptime ssl_int, socket)
                     else if (comptime deref_)
-                        ThisSocket.fromConnecting(socket).ext(ContextType).*
+                        ThisSocket.fromConnecting(socket).ext(ContextType).?.*
                     else
                         ThisSocket.fromConnecting(socket).ext(ContextType);
                     Fields.onConnectError(
@@ -959,7 +1534,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     const val = if (comptime ContextType == anyopaque)
                         us_socket_ext(comptime ssl_int, socket)
                     else if (comptime deref_)
-                        ThisSocket.from(socket).ext(ContextType).*
+                        ThisSocket.from(socket).ext(ContextType).?.*
                     else
                         ThisSocket.from(socket).ext(ContextType);
 
@@ -1033,14 +1608,14 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             const new_socket = us_socket_context_adopt_socket(comptime ssl_int, socket_ctx, socket, -1) orelse return false;
             bun.assert(new_socket == socket);
             var adopted = ThisSocket.from(new_socket);
-            const holder = adopted.ext(*anyopaque);
-            holder.* = ctx;
+            if (adopted.ext(*anyopaque)) |holder| {
+                holder.* = ctx;
+            }
             @field(ctx, socket_field_name) = adopted;
             return true;
         }
     };
 }
-
 pub const SocketTCP = NewSocketHandler(false);
 pub const SocketTLS = NewSocketHandler(true);
 
@@ -1375,12 +1950,14 @@ pub const us_bun_socket_context_options_t = extern struct {
     client_renegotiation_limit: u32 = 3,
     client_renegotiation_window: u32 = 600,
 };
+pub extern fn create_ssl_context_from_bun_options(options: us_bun_socket_context_options_t) ?*BoringSSL.SSL_CTX;
 
 pub const us_bun_verify_error_t = extern struct {
     error_no: i32 = 0,
     code: [*c]const u8 = null,
     reason: [*c]const u8 = null,
 };
+pub extern fn us_ssl_socket_verify_error_from_ssl(ssl: *BoringSSL.SSL) us_bun_verify_error_t;
 
 pub const us_socket_events_t = extern struct {
     on_open: ?*const fn (*Socket, i32, [*c]u8, i32) callconv(.C) ?*Socket = null,
@@ -1860,6 +2437,166 @@ pub const SocketAddress = struct {
     is_ipv6: bool,
 };
 
+pub const AnyResponse = union(enum) {
+    SSL: *NewApp(true).Response,
+    TCP: *NewApp(false).Response,
+
+    pub fn timeout(this: AnyResponse, seconds: u8) void {
+        switch (this) {
+            .SSL => |resp| resp.timeout(seconds),
+            .TCP => |resp| resp.timeout(seconds),
+        }
+    }
+
+    pub fn writeStatus(this: AnyResponse, status: []const u8) void {
+        return switch (this) {
+            .SSL => |resp| resp.writeStatus(status),
+            .TCP => |resp| resp.writeStatus(status),
+        };
+    }
+
+    pub fn writeHeader(this: AnyResponse, key: []const u8, value: []const u8) void {
+        return switch (this) {
+            .SSL => |resp| resp.writeHeader(key, value),
+            .TCP => |resp| resp.writeHeader(key, value),
+        };
+    }
+
+    pub fn write(this: AnyResponse, data: []const u8) void {
+        return switch (this) {
+            .SSL => |resp| resp.write(data),
+            .TCP => |resp| resp.write(data),
+        };
+    }
+
+    pub fn end(this: AnyResponse, data: []const u8, close_connection: bool) void {
+        return switch (this) {
+            .SSL => |resp| resp.end(data, close_connection),
+            .TCP => |resp| resp.end(data, close_connection),
+        };
+    }
+
+    pub fn shouldCloseConnection(this: AnyResponse) bool {
+        return switch (this) {
+            .SSL => |resp| resp.shouldCloseConnection(),
+            .TCP => |resp| resp.shouldCloseConnection(),
+        };
+    }
+
+    pub fn tryEnd(this: AnyResponse, data: []const u8, total_size: usize, close_connection: bool) bool {
+        return switch (this) {
+            .SSL => |resp| resp.tryEnd(data, total_size, close_connection),
+            .TCP => |resp| resp.tryEnd(data, total_size, close_connection),
+        };
+    }
+
+    pub fn pause(this: AnyResponse) void {
+        return switch (this) {
+            .SSL => |resp| resp.pause(),
+            .TCP => |resp| resp.pause(),
+        };
+    }
+
+    pub fn @"resume"(this: AnyResponse) void {
+        return switch (this) {
+            .SSL => |resp| resp.@"resume"(),
+            .TCP => |resp| resp.@"resume"(),
+        };
+    }
+
+    pub fn writeHeaderInt(this: AnyResponse, key: []const u8, value: u64) void {
+        return switch (this) {
+            .SSL => |resp| resp.writeHeaderInt(key, value),
+            .TCP => |resp| resp.writeHeaderInt(key, value),
+        };
+    }
+
+    pub fn endWithoutBody(this: AnyResponse, close_connection: bool) void {
+        return switch (this) {
+            .SSL => |resp| resp.endWithoutBody(close_connection),
+            .TCP => |resp| resp.endWithoutBody(close_connection),
+        };
+    }
+
+    pub fn onWritable(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, u64, AnyResponse) bool, opcional_data: UserDataType) void {
+        const wrapper = struct {
+            pub fn ssl_handler(user_data: UserDataType, offset: u64, resp: *NewApp(true).Response) bool {
+                return handler(user_data, offset, .{ .SSL = resp });
+            }
+
+            pub fn tcp_handler(user_data: UserDataType, offset: u64, resp: *NewApp(false).Response) bool {
+                return handler(user_data, offset, .{ .TCP = resp });
+            }
+        };
+        return switch (this) {
+            .SSL => |resp| resp.onWritable(UserDataType, wrapper.ssl_handler, opcional_data),
+            .TCP => |resp| resp.onWritable(UserDataType, wrapper.tcp_handler, opcional_data),
+        };
+    }
+
+    pub fn onAborted(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, AnyResponse) void, opcional_data: UserDataType) void {
+        const wrapper = struct {
+            pub fn ssl_handler(user_data: UserDataType, resp: *NewApp(true).Response) void {
+                handler(user_data, .{ .SSL = resp });
+            }
+            pub fn tcp_handler(user_data: UserDataType, resp: *NewApp(false).Response) void {
+                handler(user_data, .{ .TCP = resp });
+            }
+        };
+        return switch (this) {
+            .SSL => |resp| resp.onAborted(UserDataType, wrapper.ssl_handler, opcional_data),
+            .TCP => |resp| resp.onAborted(UserDataType, wrapper.tcp_handler, opcional_data),
+        };
+    }
+
+    pub fn clearAborted(this: AnyResponse) void {
+        return switch (this) {
+            .SSL => |resp| resp.clearAborted(),
+            .TCP => |resp| resp.clearAborted(),
+        };
+    }
+    pub fn clearTimeout(this: AnyResponse) void {
+        return switch (this) {
+            .SSL => |resp| resp.clearTimeout(),
+            .TCP => |resp| resp.clearTimeout(),
+        };
+    }
+
+    pub fn clearOnWritable(this: AnyResponse) void {
+        return switch (this) {
+            .SSL => |resp| resp.clearOnWritable(),
+            .TCP => |resp| resp.clearOnWritable(),
+        };
+    }
+
+    pub fn clearOnData(this: AnyResponse) void {
+        return switch (this) {
+            .SSL => |resp| resp.clearOnData(),
+            .TCP => |resp| resp.clearOnData(),
+        };
+    }
+
+    pub fn endStream(this: AnyResponse, close_connection: bool) void {
+        return switch (this) {
+            .SSL => |resp| resp.endStream(close_connection),
+            .TCP => |resp| resp.endStream(close_connection),
+        };
+    }
+
+    pub fn corked(this: AnyResponse, comptime handler: anytype, args_tuple: anytype) void {
+        return switch (this) {
+            .SSL => |resp| resp.corked(handler, args_tuple),
+            .TCP => |resp| resp.corked(handler, args_tuple),
+        };
+    }
+
+    pub fn runCorkedWithType(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType) void, opcional_data: UserDataType) void {
+        return switch (this) {
+            .SSL => |resp| resp.runCorkedWithType(UserDataType, handler, opcional_data),
+            .TCP => |resp| resp.runCorkedWithType(UserDataType, handler, opcional_data),
+        };
+    }
+};
 pub fn NewApp(comptime ssl: bool) type {
     return opaque {
         const ssl_flag = @as(i32, @intFromBool(ssl));
@@ -1885,6 +2622,14 @@ pub fn NewApp(comptime ssl: bool) type {
             }
 
             return uws_app_destroy(ssl_flag, @as(*uws_app_s, @ptrCast(app)));
+        }
+
+        pub fn clearRoutes(app: *ThisApp) void {
+            if (comptime is_bindgen) {
+                unreachable;
+            }
+
+            return uws_app_clear_routes(ssl_flag, @as(*uws_app_t, @ptrCast(app)));
         }
 
         fn RouteHandler(comptime UserDataType: type, comptime handler: fn (UserDataType, *Request, *Response) void) type {
@@ -2012,7 +2757,7 @@ pub fn NewApp(comptime ssl: bool) type {
         }
         pub fn head(
             app: *ThisApp,
-            pattern: [:0]const u8,
+            pattern: []const u8,
             comptime UserDataType: type,
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
@@ -2020,7 +2765,7 @@ pub fn NewApp(comptime ssl: bool) type {
             if (comptime is_bindgen) {
                 unreachable;
             }
-            uws_app_head(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, user_data);
+            uws_app_head(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern.ptr, pattern.len, RouteHandler(UserDataType, handler).handle, user_data);
         }
         pub fn connect(
             app: *ThisApp,
@@ -2048,7 +2793,7 @@ pub fn NewApp(comptime ssl: bool) type {
         }
         pub fn any(
             app: *ThisApp,
-            pattern: [:0]const u8,
+            pattern: []const u8,
             comptime UserDataType: type,
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
@@ -2056,7 +2801,7 @@ pub fn NewApp(comptime ssl: bool) type {
             if (comptime is_bindgen) {
                 unreachable;
             }
-            uws_app_any(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, user_data);
+            uws_app_any(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern.ptr, pattern.len, RouteHandler(UserDataType, handler).handle, user_data);
         }
         pub fn domain(app: *ThisApp, pattern: [:0]const u8) void {
             uws_app_domain(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern);
@@ -2199,6 +2944,10 @@ pub fn NewApp(comptime ssl: bool) type {
                 return uws_res_state(ssl_flag, @as(*const uws_res, @ptrCast(@alignCast(res))));
             }
 
+            pub fn shouldCloseConnection(this: *const Response) bool {
+                return this.state().isHttpConnectionClose();
+            }
+
             pub fn prepareForSendfile(res: *Response) void {
                 return uws_res_prepare_for_sendfile(ssl_flag, res.downcast());
             }
@@ -2232,6 +2981,12 @@ pub fn NewApp(comptime ssl: bool) type {
             }
             pub fn endSendFile(res: *Response, write_offset: u64, close_connection: bool) void {
                 uws_res_end_sendfile(ssl_flag, res.downcast(), write_offset, close_connection);
+            }
+            pub fn timeout(res: *Response, seconds: u8) void {
+                uws_res_timeout(ssl_flag, res.downcast(), seconds);
+            }
+            pub fn resetTimeout(res: *Response) void {
+                uws_res_reset_timeout(ssl_flag, res.downcast());
             }
             pub fn write(res: *Response, data: []const u8) bool {
                 return uws_res_write(ssl_flag, res.downcast(), data.ptr, data.len);
@@ -2284,7 +3039,7 @@ pub fn NewApp(comptime ssl: bool) type {
             pub fn onWritable(
                 res: *Response,
                 comptime UserDataType: type,
-                comptime handler: fn (UserDataType, u64, *Response) callconv(.C) bool,
+                comptime handler: fn (UserDataType, u64, *Response) bool,
                 user_data: UserDataType,
             ) void {
                 const Wrapper = struct {
@@ -2312,7 +3067,6 @@ pub fn NewApp(comptime ssl: bool) type {
                 }
             }
             pub fn onAborted(res: *Response, comptime UserDataType: type, comptime handler: fn (UserDataType, *Response) void, opcional_data: UserDataType) void {
-                
                 const Wrapper = struct {
                     pub fn handle(this: *uws_res, user_data: ?*anyopaque) callconv(.C) void {
                         if (comptime UserDataType == void) {
@@ -2328,7 +3082,22 @@ pub fn NewApp(comptime ssl: bool) type {
             pub fn clearAborted(res: *Response) void {
                 uws_res_on_aborted(ssl_flag, res.downcast(), null, null);
             }
+            pub fn onTimeout(res: *Response, comptime UserDataType: type, comptime handler: fn (UserDataType, *Response) void, opcional_data: UserDataType) void {
+                const Wrapper = struct {
+                    pub fn handle(this: *uws_res, user_data: ?*anyopaque) callconv(.C) void {
+                        if (comptime UserDataType == void) {
+                            @call(bun.callmod_inline, handler, .{ {}, castRes(this), {} });
+                        } else {
+                            @call(bun.callmod_inline, handler, .{ @as(UserDataType, @ptrCast(@alignCast(user_data.?))), castRes(this) });
+                        }
+                    }
+                };
+                uws_res_on_timeout(ssl_flag, res.downcast(), Wrapper.handle, opcional_data);
+            }
 
+            pub fn clearTimeout(res: *Response) void {
+                uws_res_on_timeout(ssl_flag, res.downcast(), null, null);
+            }
             pub fn clearOnData(res: *Response) void {
                 uws_res_on_data(ssl_flag, res.downcast(), null, null);
             }
@@ -2368,22 +3137,19 @@ pub fn NewApp(comptime ssl: bool) type {
 
             pub fn corked(
                 res: *Response,
-                comptime Function: anytype,
-                args: anytype,
-            ) @typeInfo(@TypeOf(Function)).Fn.return_type.? {
+                comptime handler: anytype,
+                args_tuple: anytype,
+            ) void {
                 const Wrapper = struct {
-                    opts: @TypeOf(args),
-                    result: @typeInfo(@TypeOf(Function)).Fn.return_type.? = undefined,
-                    pub fn run(this: *@This()) void {
-                        this.result = Function(this.opts);
+                    const handler_fn = handler;
+                    const Args = *@TypeOf(args_tuple);
+                    pub fn handle(user_data: ?*anyopaque) callconv(.C) void {
+                        const args: Args = @alignCast(@ptrCast(user_data.?));
+                        @call(.always_inline, handler_fn, args.*);
                     }
                 };
-                var wrapped = Wrapper{
-                    .opts = args,
-                    .result = undefined,
-                };
-                runCorkedWithType(res, *Wrapper, Wrapper.run, &wrapped);
-                return wrapped.result;
+
+                uws_res_cork(ssl_flag, res.downcast(), @constCast(@ptrCast(&args_tuple)), Wrapper.handle);
             }
 
             pub fn runCorkedWithType(
@@ -2579,10 +3345,10 @@ extern fn uws_app_options(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, hand
 extern fn uws_app_delete(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
 extern fn uws_app_patch(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
 extern fn uws_app_put(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
-extern fn uws_app_head(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
+extern fn uws_app_head(ssl: i32, app: *uws_app_t, pattern: [*]const u8, pattern_len: usize, handler: uws_method_handler, user_data: ?*anyopaque) void;
 extern fn uws_app_connect(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
 extern fn uws_app_trace(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
-extern fn uws_app_any(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
+extern fn uws_app_any(ssl: i32, app: *uws_app_t, pattern: [*]const u8, pattern_len: usize, handler: uws_method_handler, user_data: ?*anyopaque) void;
 extern fn uws_app_run(ssl: i32, *uws_app_t) void;
 extern fn uws_app_domain(ssl: i32, app: *uws_app_t, domain: [*c]const u8) void;
 extern fn uws_app_listen(ssl: i32, app: *uws_app_t, port: i32, handler: uws_listen_handler, user_data: ?*anyopaque) void;
@@ -2646,6 +3412,8 @@ extern fn uws_res_write_header(ssl: i32, res: *uws_res, key: [*c]const u8, key_l
 extern fn uws_res_write_header_int(ssl: i32, res: *uws_res, key: [*c]const u8, key_length: usize, value: u64) void;
 extern fn uws_res_end_without_body(ssl: i32, res: *uws_res, close_connection: bool) void;
 extern fn uws_res_end_sendfile(ssl: i32, res: *uws_res, write_offset: u64, close_connection: bool) void;
+extern fn uws_res_timeout(ssl: i32, res: *uws_res, timeout: u8) void;
+extern fn uws_res_reset_timeout(ssl: i32, res: *uws_res) void;
 extern fn uws_res_write(ssl: i32, res: *uws_res, data: [*c]const u8, length: usize) bool;
 extern fn uws_res_get_write_offset(ssl: i32, res: *uws_res) u64;
 extern fn uws_res_override_write_offset(ssl: i32, res: *uws_res, u64) void;
@@ -2653,6 +3421,8 @@ extern fn uws_res_has_responded(ssl: i32, res: *uws_res) bool;
 extern fn uws_res_on_writable(ssl: i32, res: *uws_res, handler: ?*const fn (*uws_res, u64, ?*anyopaque) callconv(.C) bool, user_data: ?*anyopaque) void;
 extern fn uws_res_clear_on_writable(ssl: i32, res: *uws_res) void;
 extern fn uws_res_on_aborted(ssl: i32, res: *uws_res, handler: ?*const fn (*uws_res, ?*anyopaque) callconv(.C) void, opcional_data: ?*anyopaque) void;
+extern fn uws_res_on_timeout(ssl: i32, res: *uws_res, handler: ?*const fn (*uws_res, ?*anyopaque) callconv(.C) void, opcional_data: ?*anyopaque) void;
+
 extern fn uws_res_on_data(
     ssl: i32,
     res: *uws_res,
@@ -2734,7 +3504,7 @@ extern fn us_socket_mark_needs_more_not_ssl(socket: ?*uws_res) void;
 
 extern fn uws_res_state(ssl: c_int, res: *const uws_res) State;
 
-pub const State = enum(i32) {
+pub const State = enum(u8) {
     HTTP_STATUS_CALLED = 1,
     HTTP_WRITE_CALLED = 2,
     HTTP_END_CALLED = 4,
@@ -3100,3 +3870,5 @@ extern fn bun_clear_loop_at_thread_exit() void;
 pub fn onThreadExit() void {
     bun_clear_loop_at_thread_exit();
 }
+
+extern fn uws_app_clear_routes(ssl_flag: c_int, app: *uws_app_t) void;

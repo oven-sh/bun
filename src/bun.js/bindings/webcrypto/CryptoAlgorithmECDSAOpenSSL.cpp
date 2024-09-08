@@ -62,7 +62,7 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmECDSA::platformSign(const CryptoAlgo
             return Exception { OperationError };
         Vector<uint8_t> signature(derSigLength);
         uint8_t* p = signature.data();
-        if(i2d_ECDSA_SIG(sig.get(), &p) != derSigLength)
+        if (i2d_ECDSA_SIG(sig.get(), &p) != derSigLength)
             return Exception { OperationError };
         return signature;
     } else {
@@ -107,7 +107,7 @@ ExceptionOr<bool> CryptoAlgorithmECDSA::platformVerify(const CryptoAlgorithmEcds
         // Bail if the signature size isn't double the key size (i.e. concatenated r and s components).
         if (signature.size() != keySizeInBytes * 2)
             return false;
-        
+
         auto sig = ECDSASigPtr(ECDSA_SIG_new());
         auto r = BN_bin2bn(signature.data(), keySizeInBytes, nullptr);
         auto s = BN_bin2bn(signature.data() + keySizeInBytes, keySizeInBytes, nullptr);

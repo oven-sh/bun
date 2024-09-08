@@ -1,5 +1,5 @@
+import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { test, expect } from "bun:test";
 
 test("test bun target", async () => {
   const { success, outputs, logs } = await Bun.build({

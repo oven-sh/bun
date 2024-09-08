@@ -32,6 +32,7 @@ cmake $CMAKE_FLAGS \
   -DENABLE_WERROR=0 \
   -DENABLE_ZLIB=0 \
   -DENABLE_ZSTD=0 \
+  -DHAVE_ZLIB_H=1 \
   -GNinja \
   -B . -S ..
 cmake --build . --target libarchive.a --config Release -- -j$CPUS

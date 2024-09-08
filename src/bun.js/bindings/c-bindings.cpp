@@ -599,6 +599,12 @@ extern "C" int32_t open_as_nonblocking_tty(int32_t fd, int32_t mode)
 
 #endif
 
+extern "C" size_t Bun__ramSize()
+{
+    // This value is cached internally.
+    return WTF::ramSize();
+}
+
 #if !OS(WINDOWS)
 
 extern "C" void Bun__disableSOLinger(int fd)
@@ -615,6 +621,117 @@ extern "C" void Bun__disableSOLinger(SOCKET fd)
 {
     struct linger l = { 1, 0 };
     setsockopt(fd, SOL_SOCKET, SO_LINGER, (char*)&l, sizeof(l));
+}
+
+#endif
+
+// Handle signals in bun.spawnSync.
+// If we receive a signal, we want to forward the signal to the child process.
+#if OS(LINUX) || OS(DARWIN)
+#include <signal.h>
+#include <pthread.h>
+
+// Note: We only ever use bun.spawnSync on the main thread.
+extern "C" int64_t Bun__currentSyncPID = 0;
+static int Bun__pendingSignalToSend = 0;
+static struct sigaction previous_actions[NSIG];
+
+// This list of signals is copied from npm.
+// https://github.com/npm/cli/blob/fefd509992a05c2dfddbe7bc46931c42f1da69d7/workspaces/arborist/lib/signals.js#L26-L57
+#define FOR_EACH_POSIX_SIGNAL(M) \
+    M(SIGABRT);                  \
+    M(SIGALRM);                  \
+    M(SIGHUP);                   \
+    M(SIGINT);                   \
+    M(SIGTERM);                  \
+    M(SIGVTALRM);                \
+    M(SIGXCPU);                  \
+    M(SIGXFSZ);                  \
+    M(SIGUSR2);                  \
+    M(SIGTRAP);                  \
+    M(SIGSYS);                   \
+    M(SIGQUIT);                  \
+    M(SIGIOT);                   \
+    M(SIGIO);
+
+#if OS(LINUX)
+#define FOR_EACH_LINUX_ONLY_SIGNAL(M) \
+    M(SIGPOLL);                       \
+    M(SIGPWR);                        \
+    M(SIGSTKFLT);
+
+#endif
+
+#if OS(DARWIN)
+#define FOR_EACH_SIGNAL(M) FOR_EACH_POSIX_SIGNAL(M)
+#endif
+
+#if OS(LINUX)
+#define FOR_EACH_SIGNAL(M)   \
+    FOR_EACH_POSIX_SIGNAL(M) \
+    FOR_EACH_LINUX_ONLY_SIGNAL(M)
+#endif
+
+static void Bun__forwardSignalFromParentToChildAndRestorePreviousAction(pid_t pid, int sig)
+{
+    sigset_t restore_mask;
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigaddset(&mask, sig);
+    sigemptyset(&restore_mask);
+    sigaddset(&restore_mask, sig);
+    pthread_sigmask(SIG_BLOCK, &mask, &restore_mask);
+    kill(pid, sig);
+    pthread_sigmask(SIG_UNBLOCK, &restore_mask, nullptr);
+}
+
+extern "C" void Bun__sendPendingSignalIfNecessary()
+{
+    int sig = Bun__pendingSignalToSend;
+    Bun__pendingSignalToSend = 0;
+    int pid = Bun__currentSyncPID;
+    if (sig == 0 || pid == 0)
+        return;
+
+    Bun__forwardSignalFromParentToChildAndRestorePreviousAction(pid, sig);
+}
+
+extern "C" void Bun__registerSignalsForForwarding()
+{
+    Bun__pendingSignalToSend = 0;
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESETHAND;
+    sa.sa_handler = [](int sig) {
+        if (Bun__currentSyncPID == 0) {
+            Bun__pendingSignalToSend = sig;
+            return;
+        }
+
+        Bun__forwardSignalFromParentToChildAndRestorePreviousAction(Bun__currentSyncPID, sig);
+    };
+
+#define REGISTER_SIGNAL(SIG)                                 \
+    if (sigaction(SIG, &sa, &previous_actions[SIG]) == -1) { \
+    }
+
+    FOR_EACH_SIGNAL(REGISTER_SIGNAL)
+
+#undef REGISTER_SIGNAL
+}
+
+extern "C" void Bun__unregisterSignalsForForwarding()
+{
+    Bun__currentSyncPID = 0;
+
+#define UNREGISTER_SIGNAL(SIG)                                \
+    if (sigaction(SIG, &previous_actions[SIG], NULL) == -1) { \
+    }
+
+    FOR_EACH_SIGNAL(UNREGISTER_SIGNAL)
+    memset(previous_actions, 0, sizeof(previous_actions));
+#undef UNREGISTER_SIGNAL
 }
 
 #endif

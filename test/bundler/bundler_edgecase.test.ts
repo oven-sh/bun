@@ -1,6 +1,6 @@
+import { describe, expect } from "bun:test";
 import { join } from "node:path";
 import { itBundled } from "./expectBundled";
-import { describe, expect } from "bun:test";
 
 describe("bundler", () => {
   itBundled("edgecase/EmptyFile", {
@@ -1817,6 +1817,19 @@ describe("bundler", () => {
       `,
     },
     run: { stdout: "1" },
+  });
+  itBundled("edgecase/DoNotMoveTaggedTemplateLiterals", {
+    files: {
+      "/entry.ts": `
+        globalThis.z = () => console.log(2)
+        const y = await import('./second.ts');
+      `,
+      "/second.ts": `
+        console.log(1);
+        export const y = z\`zyx\`;
+      `,
+    },
+    run: { stdout: "1\n2" },
   });
 
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later

@@ -1,8 +1,8 @@
 // @ts-nocheck
-import readline from "node:readline";
-import { Writable, PassThrough } from "node:stream";
-import { EventEmitter } from "node:events";
 import { createTest } from "node-harness";
+import { EventEmitter } from "node:events";
+import readline from "node:readline";
+import { PassThrough, Writable } from "node:stream";
 const { beforeEach, describe, it, createDoneDotAll, createCallCheckCtx, assert } = createTest(import.meta.path);
 
 var {

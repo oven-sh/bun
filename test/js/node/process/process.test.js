@@ -277,6 +277,7 @@ const versions = existsSync(generated_versions_list);
 it("process.config", () => {
   expect(process.config).toEqual({
     variables: {
+      enable_lto: false,
       v8_enable_i8n_support: 1,
     },
     target_defaults: {},
@@ -425,6 +426,21 @@ describe("process.cpuUsage", () => {
     });
   });
 
+  it("throws for negative input", () => {
+    expect(() =>
+      process.cpuUsage({
+        user: -1,
+        system: 100,
+      }),
+    ).toThrow("The 'user' property must be a number between 0 and 2^53");
+    expect(() =>
+      process.cpuUsage({
+        user: 100,
+        system: -1,
+      }),
+    ).toThrow("The 'system' property must be a number between 0 and 2^53");
+  });
+
   // Skipped on Windows because it seems UV returns { user: 15000, system: 0 } constantly
   it.skipIf(process.platform === "win32")("works with diff", () => {
     const init = process.cpuUsage();
@@ -437,8 +453,8 @@ describe("process.cpuUsage", () => {
 
   it.skipIf(process.platform === "win32")("works with diff of different structure", () => {
     const init = {
-      user: 0,
       system: 0,
+      user: 0,
     };
     const delta = process.cpuUsage(init);
     expect(delta.user).toBeGreaterThan(0);
@@ -464,7 +480,8 @@ describe("process.cpuUsage", () => {
   // Skipped on Linux/Windows because it seems to not change as often as on macOS
   it.skipIf(process.platform !== "darwin")("increases monotonically", () => {
     const init = process.cpuUsage();
-    for (let i = 0; i < 10000; i++) {}
+    let start = performance.now();
+    while (performance.now() - start < 10) {}
     const another = process.cpuUsage();
     expect(another.user).toBeGreaterThan(init.user);
     expect(another.system).toBeGreaterThan(init.system);

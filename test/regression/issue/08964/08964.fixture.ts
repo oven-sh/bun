@@ -1,4 +1,4 @@
-import { describe, test, afterAll } from "bun:test";
+import { afterAll, describe, test } from "bun:test";
 
 var expected: number[] = [];
 var runs: number[] = [];

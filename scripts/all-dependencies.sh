@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
-set -eo pipefail
+set -euo pipefail
 source "$(dirname -- "${BASH_SOURCE[0]}")/env.sh"
+
+RELEASE="${RELEASE:-0}"
+CI="${CI:-}"
+BUILT_ANY=0
+SUBMODULES=
+CACHE_DIR=
+CACHE=0
+BUN_DEPS_CACHE_DIR="${BUN_DEPS_CACHE_DIR:-}"
 
 if [[ "$CI" ]]; then
     $(dirname -- "${BASH_SOURCE[0]}")/update-submodules.sh
@@ -23,17 +31,12 @@ while getopts "f" opt; do
     esac
 done
 
-BUILT_ANY=0
-SUBMODULES=
-CACHE_DIR=
-CACHE=0
-
 if [ "$RELEASE" == "1" ]; then
-  FORCE=1
+    FORCE=1
 elif [ -n "$BUN_DEPS_CACHE_DIR" ]; then
-  CACHE_DIR="$BUN_DEPS_CACHE_DIR"
-  CACHE=1
-  SUBMODULES="$(git submodule status)"
+    CACHE_DIR="$BUN_DEPS_CACHE_DIR"
+    CACHE=1
+    SUBMODULES="$(git submodule status)"
 fi
 
 dep() {
@@ -51,7 +54,7 @@ dep() {
         shift
         for lib in "${@:2}"; do
             if [ ! -f "$BUN_DEPS_OUT_DIR/$lib" ]; then
-                if [[ "$CACHE" == "1" && -f "$CACHE_DIR/$CACHE_KEY/$lib" ]]; then
+                if [[ "$CACHE" == "1" && -f "$CACHE_DIR/$CACHE_KEY/$lib" && "$script" != "libarchive" ]]; then
                     mkdir -p "$BUN_DEPS_OUT_DIR"
                     cp "$CACHE_DIR/$CACHE_KEY/$lib" "$BUN_DEPS_OUT_DIR/$lib"
                     printf "%s %s - already cached\n" "$script" "$lib"
@@ -91,12 +94,12 @@ dep() {
 
 dep boringssl boringssl libcrypto.a libssl.a libdecrepit.a
 dep c-ares cares libcares.a
+dep zlib zlib libz.a # Zlib must come before libarchive.
 dep libarchive libarchive libarchive.a
 dep lol-html lolhtml liblolhtml.a
 dep mimalloc mimalloc-debug libmimalloc-debug.a libmimalloc-debug.o
 dep mimalloc mimalloc libmimalloc.a libmimalloc.o
 dep tinycc tinycc libtcc.a
-dep zlib zlib libz.a
 dep zstd zstd libzstd.a
 dep libdeflate libdeflate libdeflate.a
 dep ls-hpack lshpack liblshpack.a

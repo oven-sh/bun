@@ -1,8 +1,8 @@
 import { readFileSync } from "fs";
+import { createRequire } from "module";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
-import { bench, run, group } from "./runner.mjs";
-import { createRequire } from "module";
+import { bench, group, run } from "./runner.mjs";
 const require = createRequire(import.meta.url);
 const esbuild_ = require("esbuild/lib/main");
 const swc_ = require("@swc/core");

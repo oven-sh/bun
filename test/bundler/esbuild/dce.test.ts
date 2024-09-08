@@ -1,6 +1,6 @@
-import { itBundled, dedent } from "../expectBundled";
 import { describe, expect } from "bun:test";
-import { isWindows } from 'harness';
+import { isWindows } from "harness";
+import { dedent, itBundled } from "../expectBundled";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_dce_test.go

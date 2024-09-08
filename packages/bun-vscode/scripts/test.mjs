@@ -1,5 +1,5 @@
-import { readdirSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { readdirSync } from "node:fs";
 
 const { pathname } = new URL("..", import.meta.url);
 process.chdir(pathname);

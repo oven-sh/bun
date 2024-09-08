@@ -3,8 +3,8 @@ cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
 set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
-set(Bun_VERSION "1.1.23")
-set(WEBKIT_TAG a060f087c2232fb20d82c321d21e074e735d3261)
+set(Bun_VERSION "1.1.28")
+set(WEBKIT_TAG 147ed53838e21525677492c27099567a6cd19c6b)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -29,7 +29,10 @@ cmake_path(APPEND LOCAL_ZIG_CACHE_DIR "local")
 cmake_path(APPEND GLOBAL_ZIG_CACHE_DIR "global")
 
 # Used in process.version, process.versions.node, napi, and elsewhere
-set(REPORTED_NODEJS_VERSION "22.3.0")
+set(REPORTED_NODEJS_VERSION "22.6.0")
+
+# Used in process.versions.modules and compared while loading V8 modules
+set(REPORTED_NODEJS_ABI_VERSION "127")
 
 # WebKit uses -std=gnu++20 on non-macOS non-Windows
 # If we do not set this, it will crash at startup on the first memory allocation.
@@ -664,6 +667,7 @@ file(GLOB BUN_CPP ${CONFIGURE_DEPENDS}
     "${BUN_SRC}/bun.js/bindings/sqlite/*.cpp"
     "${BUN_SRC}/bun.js/bindings/webcrypto/*.cpp"
     "${BUN_SRC}/bun.js/bindings/webcrypto/*/*.cpp"
+    "${BUN_SRC}/bun.js/bindings/v8/*.cpp"
     "${BUN_SRC}/deps/picohttpparser/picohttpparser.c"
 )
 list(APPEND BUN_RAW_SOURCES ${BUN_CPP})
@@ -824,6 +828,7 @@ if(NOT NO_CODEGEN)
         "${BUN_SRC}/js/thirdparty/*.ts"
         "${BUN_SRC}/js/internal/*.js"
         "${BUN_SRC}/js/internal/*.ts"
+        "${BUN_SRC}/js/internal/cluster/*.ts"
         "${BUN_SRC}/js/internal/util/*.js"
         "${BUN_SRC}/js/internal/fs/*.ts"
         "${BUN_SRC}/js/node/*.js"
@@ -1030,7 +1035,6 @@ add_compile_definitions(
     "LIBUS_USE_BORINGSSL=1"
     "WITH_BORINGSSL=1"
     "STATICALLY_LINKED_WITH_JavaScriptCore=1"
-    "STATICALLY_LINKED_WITH_WTF=1"
     "STATICALLY_LINKED_WITH_BMALLOC=1"
     "BUILDING_WITH_CMAKE=1"
     "JSC_OBJC_API_ENABLED=0"
@@ -1041,6 +1045,7 @@ add_compile_definitions(
     "BUILDING_JSCONLY__"
     "BUN_DYNAMIC_JS_LOAD_PATH=\"${BUN_WORKDIR}/js\""
     "REPORTED_NODEJS_VERSION=\"${REPORTED_NODEJS_VERSION}\""
+    "REPORTED_NODEJS_ABI_VERSION=${REPORTED_NODEJS_ABI_VERSION}"
 )
 
 if(NOT ASSERT_ENABLED)
@@ -1268,6 +1273,9 @@ else()
         -fno-pic
         -fno-pie
         -faddrsig
+        -ffile-prefix-map="${CMAKE_CURRENT_SOURCE_DIR}"=.
+        -ffile-prefix-map="${BUN_DEPS_DIR}"=src/deps
+        -ffile-prefix-map="${BUN_DEPS_OUT_DIR}"=src/deps
     )
 endif()
 
@@ -1367,19 +1375,6 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32 AND NOT ASSERT_ENABLED)
         POST_BUILD
         COMMAND ${STRIP} -s -x -S -o ${BUN_WORKDIR}/bun ${BUN_WORKDIR}/${bun}
         COMMENT "Stripping Symbols"
-    )
-endif()
-
-if(WIN32)
-    # Kill all instances of bun before linking.
-    # This is necessary because the file is locked by the process.
-    add_custom_command(
-        TARGET ${bun}
-        PRE_LINK
-        COMMAND
-        "powershell"
-        "/C"
-        "Stop-Process -Name '${bun}' -Force -ErrorAction SilentlyContinue; exit 0"
     )
 endif()
 
@@ -1625,12 +1620,14 @@ endif()
 
 if(BUN_TIDY_ONLY)
     find_program(CLANG_TIDY_EXE NAMES "clang-tidy")
-    set(CLANG_TIDY_COMMAND "${CLANG_TIDY_EXE}" "-checks=-*,clang-analyzer-*,-clang-analyzer-webkit.UncountedLambdaCapturesChecker" "--fix" "--fix-errors" "--format-style=webkit" "--warnings-as-errors=*")
+
+    # webkit ones are disabled disabled because it's noisy, e.g. for JavaScriptCore/Lookup.h
+    set(CLANG_TIDY_COMMAND "${CLANG_TIDY_EXE}" "-checks=-*,clang-analyzer-*,-clang-analyzer-webkit.UncountedLambdaCapturesChecker,-clang-analyzer-optin.core.EnumCastOutOfRange,-clang-analyzer-webkit.RefCntblBaseVirtualDtor" "--fix" "--fix-errors" "--format-style=webkit" "--warnings-as-errors=*")
     set_target_properties(${bun} PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_COMMAND}")
 endif()
 
 if(BUN_TIDY_ONLY_EXTRA)
     find_program(CLANG_TIDY_EXE NAMES "clang-tidy")
-    set(CLANG_TIDY_COMMAND "${CLANG_TIDY_EXE}" "-checks=-*,clang-analyzer-*,performance-*,-clang-analyzer-webkit.UncountedLambdaCapturesChecker" "--fix" "--fix-errors" "--format-style=webkit" "--warnings-as-errors=*")
+    set(CLANG_TIDY_COMMAND "${CLANG_TIDY_EXE}" "-checks=-*,clang-analyzer-*,performance-*,-clang-analyzer-webkit.UncountedLambdaCapturesChecker,-clang-analyzer-optin.core.EnumCastOutOfRange,-clang-analyzer-webkit.RefCntblBaseVirtualDtor" "--fix" "--fix-errors" "--format-style=webkit" "--warnings-as-errors=*")
     set_target_properties(${bun} PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_COMMAND}")
 endif()

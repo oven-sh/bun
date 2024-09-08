@@ -130,12 +130,6 @@ pub const BuildCommand = struct {
                 return;
             }
 
-            if (this_bundler.options.entry_points.len > 1) {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> multiple entry points are not supported with --compile", .{});
-                Global.exit(1);
-                return;
-            }
-
             if (ctx.bundler_options.outdir.len > 0) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile with --outdir", .{});
                 Global.exit(1);
@@ -177,7 +171,7 @@ pub const BuildCommand = struct {
             }
         }
 
-        if (ctx.bundler_options.outdir.len == 0) {
+        if (ctx.bundler_options.outdir.len == 0 and !ctx.bundler_options.compile) {
             if (this_bundler.options.entry_points.len > 1) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> Must use <b>--outdir<r> when specifying more than one entry point.", .{});
                 Global.exit(1);
@@ -595,14 +589,14 @@ fn printSummary(bundled_end: i128, minify_duration: u64, minified: bool, input_c
             Output.prettyln(
                 "  <green>minify<r>  -{} <d>(estimate)<r>",
                 .{
-                    bun.fmt.size(@as(usize, @intCast(delta))),
+                    bun.fmt.size(@as(usize, @intCast(delta)), .{}),
                 },
             );
         } else if (-delta > 1024) {
             Output.prettyln(
                 "  <b>minify<r>   +{} <d>(estimate)<r>",
                 .{
-                    bun.fmt.size(@as(usize, @intCast(-delta))),
+                    bun.fmt.size(@as(usize, @intCast(-delta)), .{}),
                 },
             );
         } else {

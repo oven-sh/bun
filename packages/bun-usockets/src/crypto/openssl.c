@@ -1058,15 +1058,8 @@ long us_internal_verify_peer_certificate( // NOLINT(runtime/int)
   }
   return err;
 }
+struct us_bun_verify_error_t us_ssl_socket_verify_error_from_ssl(SSL *ssl) {
 
-struct us_bun_verify_error_t
-us_internal_verify_error(struct us_internal_ssl_socket_t *s) {
-  if (us_internal_ssl_socket_is_closed(s) || us_internal_ssl_socket_is_shut_down(s)) {
-    return (struct us_bun_verify_error_t){
-        .error = 0, .code = NULL, .reason = NULL};
-  }
-
-  SSL *ssl = s->ssl;
   long x509_verify_error = // NOLINT(runtime/int)
       us_internal_verify_peer_certificate(ssl,
                                           X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT);
@@ -1081,6 +1074,17 @@ us_internal_verify_error(struct us_internal_ssl_socket_t *s) {
   return (struct us_bun_verify_error_t){
       .error = x509_verify_error, .code = code, .reason = reason};
 }
+
+struct us_bun_verify_error_t
+us_internal_verify_error(struct us_internal_ssl_socket_t *s) {
+  if (!s->ssl || us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s)) {
+    return (struct us_bun_verify_error_t){
+        .error = 0, .code = NULL, .reason = NULL};
+  }
+
+  return us_ssl_socket_verify_error_from_ssl(s->ssl);
+}
+
 
 int us_verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
   // From https://www.openssl.org/docs/man1.1.1/man3/SSL_verify_cb:
@@ -1820,6 +1824,7 @@ ssl_wrapped_context_on_close(struct us_internal_ssl_socket_t *s, int code,
     wrapped_context->old_events.on_close((struct us_socket_t *)s, code, reason);
   }
 
+  us_socket_context_unref(0, wrapped_context->tcp_context);
   return s;
 }
 
@@ -1976,6 +1981,7 @@ struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls(
   }
 
   struct us_socket_context_t *old_context = us_socket_context(0, s);
+  us_socket_context_ref(0,old_context);
 
   struct us_socket_context_t *context = us_create_bun_socket_context(
       1, old_context->loop, sizeof(struct us_wrapped_socket_context_t),
@@ -1998,6 +2004,7 @@ struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls(
   };
   wrapped_context->old_events = old_events;
   wrapped_context->events = events;
+  wrapped_context->tcp_context = old_context;
 
   // no need to wrap open because socket is already open (only new context will
   // be called so we can configure hostname and ssl stuff normally here before

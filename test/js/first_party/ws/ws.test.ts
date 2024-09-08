@@ -1,7 +1,7 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, nodeExe } from "harness";
+import { bunEnv, bunExe } from "harness";
 import path from "node:path";
 import { Server, WebSocket, WebSocketServer } from "ws";
 
@@ -454,3 +454,49 @@ async function listen(): Promise<URL> {
   }
   throw new Error("No URL found?");
 }
+it("WebSocketServer should handle backpressure", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const PAYLOAD_SIZE = 64 * 1024;
+  const ITERATIONS = 10;
+  const payload = Buffer.alloc(PAYLOAD_SIZE, "a");
+  let received = 0;
+
+  const wss = new WebSocketServer({ port: 0 });
+
+  wss.on("connection", function connection(ws) {
+    ws.onerror = reject;
+
+    let i = 0;
+
+    async function commit(err?: Error) {
+      if (err) {
+        reject(err);
+        return;
+      }
+      await Bun.sleep(10);
+
+      if (i < ITERATIONS) {
+        i++;
+        ws.send(payload, commit);
+      } else {
+        ws.close();
+      }
+    }
+
+    commit(undefined);
+  });
+
+  try {
+    const ws = new WebSocket("ws://localhost:" + wss.address().port);
+    ws.onmessage = event => {
+      received += event.data.byteLength;
+    };
+    ws.onclose = resolve;
+    ws.onerror = reject;
+    await promise;
+
+    expect(received).toBe(PAYLOAD_SIZE * ITERATIONS);
+  } finally {
+    wss.close();
+  }
+});

@@ -1,27 +1,28 @@
 import { file, spawn, write } from "bun";
+import { install_test_helpers } from "bun:internal-for-testing";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { ChildProcess, fork } from "child_process";
+import { copyFileSync, mkdirSync } from "fs";
+import { cp, exists, mkdir, readlink, rm, writeFile } from "fs/promises";
 import {
+  assertManifestsPopulated,
   bunExe,
   bunEnv as env,
   isLinux,
   isWindows,
-  toBeValidBin,
-  toHaveBins,
-  writeShebangScript,
-  tmpdirSync,
-  toMatchNodeModulesAt,
+  mergeWindowEnvs,
+  randomPort,
   runBunInstall,
   runBunUpdate,
   tempDirWithFiles,
-  randomPort,
-  mergeWindowEnvs,
+  tmpdirSync,
+  toBeValidBin,
+  toHaveBins,
+  toMatchNodeModulesAt,
+  writeShebangScript,
 } from "harness";
-import { join, sep, resolve } from "path";
-import { mkdirSync, copyFileSync } from "fs";
-import { rm, writeFile, mkdir, exists, cp, readlink } from "fs/promises";
+import { join, resolve, sep } from "path";
 import { readdirSorted } from "../dummy.registry";
-import { fork, ChildProcess } from "child_process";
-import { beforeAll, afterAll, beforeEach, test, expect, describe, it, setDefaultTimeout } from "bun:test";
-import { install_test_helpers } from "bun:internal-for-testing";
 const { parseLockfile } = install_test_helpers;
 const { iniInternals } = require("bun:internal-for-testing");
 const { loadNpmrc } = iniInternals;
@@ -93,11 +94,15 @@ beforeEach(async () => {
     join(packageDir, "bunfig.toml"),
     `
 [install]
-cache = false
+cache = "${join(packageDir, ".bun-cache")}"
 registry = "http://localhost:${port}/"
 `,
   );
 });
+
+function registryUrl() {
+  return `http://localhost:${port}/`;
+}
 
 /**
  * Returns auth token
@@ -436,6 +441,7 @@ describe("package.json indentation", async () => {
     });
 
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
     const rootPackageJson = await file(join(packageDir, "package.json")).text();
 
@@ -453,6 +459,7 @@ describe("package.json indentation", async () => {
     }));
 
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
     expect(await file(join(packageDir, "package.json")).text()).toBe(rootPackageJson);
     const workspacePackageJson = await file(join(packageDir, "packages", "bar", "package.json")).text();
@@ -484,12 +491,8 @@ describe("optionalDependencies", () => {
         `${optional ? "warn" : "error"}: GET http://localhost:${port}/missing-tarball/-/missing-tarball-1.0.0.tgz - `,
       );
       expect(await exited).toBe(optional ? 0 : 1);
-      expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
-        ".bin",
-        ".cache",
-        "uses-what-bin",
-        "what-bin",
-      ]);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+      expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", "uses-what-bin", "what-bin"]);
       expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
     });
   }
@@ -510,6 +513,7 @@ describe("optionalDependencies", () => {
         allowWarnings: true,
         savesLockfile: !rootOptional,
       });
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
       expect(err).toMatch(`warn: GET http://localhost:${port}/this-package-does-not-exist-in-the-registry - 404`);
     });
@@ -531,6 +535,8 @@ test("tarball override does not crash", async () => {
   );
 
   await runBunInstall(env, packageDir);
+
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
   expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
     name: "no-deps",
@@ -571,6 +577,7 @@ describe.each(["--production", "without --production"])("%s", flag => {
       });
 
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
       const initialHash = Bun.hash(await file(join(packageDir, "bun.lockb")).arrayBuffer());
 
@@ -589,6 +596,7 @@ describe.each(["--production", "without --production"])("%s", flag => {
       });
 
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
       expect(await file(join(packageDir, "node_modules", "bin-change-dir", "package.json")).json()).toMatchObject({
         name: "bin-change-dir",
@@ -605,6 +613,7 @@ describe.each(["--production", "without --production"])("%s", flag => {
       });
 
       expect(await exited).toBe(1);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
       // We should not have saved bun.lockb
       expect(Bun.hash(await file(join(packageDir, "bun.lockb")).arrayBuffer())).toBe(initialHash);
@@ -626,6 +635,7 @@ describe.each(["--production", "without --production"])("%s", flag => {
       });
 
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
       // We should not have saved bun.lockb
       expect(Bun.hash(await file(join(packageDir, "bun.lockb")).arrayBuffer())).toBe(initialHash);
@@ -668,6 +678,7 @@ describe.each(["--production", "without --production"])("%s", flag => {
         env,
       });
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
       await Promise.all([
         (async () =>
@@ -702,6 +713,8 @@ describe.each(["--production", "without --production"])("%s", flag => {
     });
 
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(await file(join(packageDir, "node_modules", "bin-change-dir", "package.json")).json()).toMatchObject({
       name: "bin-change-dir",
       version: prod ? "1.0.0" : "1.0.1",
@@ -773,6 +786,7 @@ test("hardlinks on windows dont fail with long paths", async () => {
     "1 package installed",
   ]);
   expect(await exited).toBe(0);
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 });
 
 test("basic 1", async () => {
@@ -811,6 +825,8 @@ test("basic 1", async () => {
   } as any);
   expect(await exited).toBe(0);
 
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
 
   ({ stdout, stderr, exited } = spawn({
@@ -834,6 +850,7 @@ test("basic 1", async () => {
     "1 package installed",
   ]);
   expect(await exited).toBe(0);
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 });
 
 test("manifest cache will invalidate when registry changes", async () => {
@@ -930,6 +947,7 @@ test("dependency from root satisfies range from dependency", async () => {
     version: "1.0.0",
   } as any);
   expect(await exited).toBe(0);
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
 
@@ -955,6 +973,7 @@ test("dependency from root satisfies range from dependency", async () => {
     "2 packages installed",
   ]);
   expect(await exited).toBe(0);
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 });
 
 test("duplicate names and versions in a manifest do not install incorrect packages", async () => {
@@ -987,6 +1006,8 @@ test("duplicate names and versions in a manifest do not install incorrect packag
   );
 
   await runBunInstall(env, packageDir);
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
   const lockfile = parseLockfile(packageDir);
   expect(lockfile).toMatchNodeModulesAt(packageDir);
   const results = await Promise.all([
@@ -1028,6 +1049,8 @@ describe("peerDependency index out of bounds", async () => {
         );
 
         await runBunInstall(env, packageDir);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
         const lockfile = parseLockfile(packageDir);
         expect(lockfile).toMatchNodeModulesAt(packageDir);
         const results = await Promise.all([
@@ -1044,6 +1067,7 @@ describe("peerDependency index out of bounds", async () => {
 
         await Promise.all([
           rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
+          rm(join(packageDir, ".bun-cache"), { recursive: true, force: true }),
           write(
             join(packageDir, "package.json"),
             JSON.stringify({
@@ -1056,6 +1080,8 @@ describe("peerDependency index out of bounds", async () => {
         ]);
 
         await runBunInstall(env, packageDir);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
         const newLockfile = parseLockfile(packageDir);
         expect(newLockfile).toMatchNodeModulesAt(packageDir);
         const newResults = await Promise.all([
@@ -1091,6 +1117,7 @@ describe("peerDependency index out of bounds", async () => {
     );
 
     await runBunInstall(env, packageDir);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
     // update version and delete node_modules and cache
     await Promise.all([
@@ -1105,10 +1132,13 @@ describe("peerDependency index out of bounds", async () => {
         }),
       ),
       rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
+      rm(join(packageDir, ".bun-cache"), { recursive: true, force: true }),
     ]);
 
     // this install would trigger the index out of bounds error
     await runBunInstall(env, packageDir);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     const lockfile = parseLockfile(packageDir);
     expect(lockfile).toMatchNodeModulesAt(packageDir);
   });
@@ -1153,6 +1183,7 @@ test("peerDependency in child npm dependency should not maintain old version whe
     version: "1.0.0",
   } as any);
   expect(await exited).toBe(0);
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
   await writeFile(
     join(packageDir, "package.json"),
@@ -1191,6 +1222,7 @@ test("peerDependency in child npm dependency should not maintain old version whe
     "1 package installed",
   ]);
   expect(await exited).toBe(0);
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 });
 
 test("package added after install", async () => {
@@ -1230,6 +1262,7 @@ test("package added after install", async () => {
     version: "1.1.0",
   } as any);
   expect(await exited).toBe(0);
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
   // add `no-deps` to root package.json with a smaller but still compatible
   // version for `one-range-dep`.
@@ -1276,6 +1309,7 @@ test("package added after install", async () => {
     version: "1.1.0",
   } as any);
   expect(await exited).toBe(0);
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
 
@@ -1301,6 +1335,7 @@ test("package added after install", async () => {
     "3 packages installed",
   ]);
   expect(await exited).toBe(0);
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 });
 
 test("--production excludes devDependencies in workspaces", async () => {
@@ -1345,11 +1380,13 @@ test("--production excludes devDependencies in workspaces", async () => {
 
   // without lockfile
   const expectedResults = [
-    [".cache", "a-dep", "no-deps", "pkg1", "pkg2"],
+    ["a-dep", "no-deps", "pkg1", "pkg2"],
     { name: "no-deps", version: "1.0.0" },
     { name: "a-dep", version: "1.0.2" },
   ];
   let { out } = await runBunInstall(env, packageDir, { production: true });
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     "+ no-deps@1.0.0",
@@ -1367,6 +1404,8 @@ test("--production excludes devDependencies in workspaces", async () => {
   // create non-production lockfile, then install with --production
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
   ({ out } = await runBunInstall(env, packageDir));
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     "+ a1@1.0.0",
@@ -1376,6 +1415,8 @@ test("--production excludes devDependencies in workspaces", async () => {
   ]);
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
   ({ out } = await runBunInstall(env, packageDir, { production: true }));
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     "+ no-deps@1.0.0",
@@ -1423,6 +1464,7 @@ test("--production without a lockfile will install and not save lockfile", async
     "1 package installed",
   ]);
   expect(await exited).toBe(0);
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
   expect(await exists(join(packageDir, "node_modules", "no-deps", "index.js"))).toBeTrue();
 });
@@ -1445,6 +1487,8 @@ describe("binaries", () => {
         ]);
 
         await runBunInstall(env, packageDir);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
         expect(join(packageDir, "node_modules", ".bin", "what-bin")).toBeValidBin(
           join("..", "what-bin", "what-bin.js"),
         );
@@ -1487,6 +1531,7 @@ describe("binaries", () => {
       "",
     ]);
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
     await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
 
@@ -1515,6 +1560,7 @@ describe("binaries", () => {
       "",
     ]);
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
   });
 
   test("will link binaries for packages installed multiple times", async () => {
@@ -1556,6 +1602,8 @@ describe("binaries", () => {
     // instead of using the root version (`1.5.0`).
 
     await runBunInstall(env, packageDir);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     const results = await Promise.all([
       file(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt")).text(),
       file(join(packageDir, "packages", "pkg1", "node_modules", "uses-what-bin", "what-bin.txt")).text(),
@@ -1601,6 +1649,8 @@ describe("binaries", () => {
       "1 package installed",
     ]);
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(await file(join(packageDir, "bin-1.0.0.txt")).text()).toEqual("success!");
     expect(await exists(join(packageDir, "bin-1.0.1.txt"))).toBeFalse();
 
@@ -1639,6 +1689,8 @@ describe("binaries", () => {
       "1 package installed",
     ]);
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(await file(join(packageDir, "bin-1.0.0.txt")).text()).toEqual("success!");
     expect(await file(join(packageDir, "bin-1.0.1.txt")).text()).toEqual("success!");
   });
@@ -1775,6 +1827,7 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
     "",
   ]);
   expect(await exited).toBe(0);
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
   let lockfile = parseLockfile(packageDir);
   expect(lockfile).toMatchNodeModulesAt(packageDir);
@@ -1817,6 +1870,7 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
     "",
   ]);
   expect(await exited).toBe(0);
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
   lockfile = parseLockfile(packageDir);
   expect(lockfile).toMatchNodeModulesAt(packageDir);
@@ -1857,10 +1911,11 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
     ]);
 
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
   }
 
   // delete cache
-  await rm(join(packageDir, "node_modules", ".cache"), { recursive: true, force: true });
+  await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
 
   ({ stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
@@ -1881,10 +1936,11 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
     expect.stringContaining("Checked 19 installs across 23 packages (no changes)"),
   ]);
   expect(await exited).toBe(0);
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
   // delete bun.lockb and cache
   await rm(join(packageDir, "bun.lockb"), { recursive: true, force: true });
-  await rm(join(packageDir, "node_modules", ".cache"), { recursive: true, force: true });
+  await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
 
   ({ stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
@@ -1896,6 +1952,7 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
   }));
 
   expect(await exited).toBe(0);
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
   [err, out] = await Promise.all([new Response(stderr).text(), new Response(stdout).text()]);
 
@@ -2016,6 +2073,8 @@ describe("hoisting", async () => {
         expect(out).toContain(`+ ${dep}@${dependencies[dep]}`);
       }
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).text()).toContain(expected);
 
       await rm(join(packageDir, "bun.lockb"));
@@ -2174,6 +2233,8 @@ describe("hoisting", async () => {
           expect(out).toContain(`+ ${dep}@${dependencies[dep]}`);
         }
         expect(await exited).toBe(0);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
         expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).text()).toContain(expected);
 
         await rm(join(packageDir, "bun.lockb"));
@@ -2197,6 +2258,8 @@ describe("hoisting", async () => {
         }
         expect(out).not.toContain("package installed");
         expect(await exited).toBe(0);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
         expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).text()).toContain(expected);
 
         await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
@@ -2217,6 +2280,8 @@ describe("hoisting", async () => {
         expect(err).not.toContain("error:");
         expect(out).not.toContain("package installed");
         expect(await exited).toBe(0);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
         expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).text()).toContain(expected);
       });
     }
@@ -2259,6 +2324,8 @@ describe("hoisting", async () => {
     ]);
 
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
       name: "no-deps",
       version: "1.0.0",
@@ -2306,6 +2373,8 @@ describe("hoisting", async () => {
     ]);
 
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
       name: "no-deps",
       version: "2.0.0",
@@ -2384,6 +2453,7 @@ describe("hoisting", async () => {
       version: "2.0.0",
     });
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
   });
 
   test("hoisting/using incorrect peer dep on initial install", async () => {
@@ -2423,6 +2493,8 @@ describe("hoisting", async () => {
     ]);
 
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
       name: "no-deps",
       version: "2.0.0",
@@ -2470,6 +2542,8 @@ describe("hoisting", async () => {
     ]);
 
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
       name: "no-deps",
       version: "1.0.0",
@@ -2519,6 +2593,7 @@ describe("hoisting", async () => {
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
       expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
         name: "no-deps",
@@ -2581,6 +2656,7 @@ describe("hoisting", async () => {
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
       expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
         name: "no-deps",
@@ -2641,6 +2717,7 @@ describe("hoisting", async () => {
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
       expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
         name: "no-deps",
@@ -2692,6 +2769,7 @@ describe("hoisting", async () => {
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
       expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
         name: "no-deps",
@@ -2742,6 +2820,8 @@ describe("workspaces", async () => {
       "2 packages installed",
     ]);
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(await file(join(packageDir, "package.json")).json()).toEqual({
       name: "root",
       workspaces: ["foo"],
@@ -2767,6 +2847,8 @@ describe("workspaces", async () => {
       "1 package installed",
     ]);
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(await file(join(packageDir, "foo", "package.json")).json()).toEqual({
       name: "foo",
       dependencies: {
@@ -2793,13 +2875,9 @@ describe("workspaces", async () => {
       "3 packages installed",
     ]);
     expect(await exited).toBe(0);
-    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
-      ".bin",
-      ".cache",
-      "foo",
-      "no-deps",
-      "what-bin",
-    ]);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", "foo", "no-deps", "what-bin"]);
 
     await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
     await rm(join(packageDir, "bun.lockb"));
@@ -2819,13 +2897,9 @@ describe("workspaces", async () => {
       "3 packages installed",
     ]);
     expect(await exited).toBe(0);
-    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
-      ".bin",
-      ".cache",
-      "foo",
-      "no-deps",
-      "what-bin",
-    ]);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", "foo", "no-deps", "what-bin"]);
   });
   test("adding packages in workspaces", async () => {
     await writeFile(
@@ -2875,6 +2949,8 @@ describe("workspaces", async () => {
       "3 packages installed",
     ]);
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(await exists(join(packageDir, "node_modules", "bar"))).toBeTrue();
     expect(await exists(join(packageDir, "node_modules", "boba"))).toBeTrue();
     expect(await exists(join(packageDir, "node_modules", "pkg5"))).toBeTrue();
@@ -2896,6 +2972,8 @@ describe("workspaces", async () => {
       "1 package installed",
     ]);
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(await file(join(packageDir, "package.json")).json()).toEqual({
       name: "foo",
       workspaces: ["packages/*"],
@@ -2922,6 +3000,8 @@ describe("workspaces", async () => {
       "3 packages installed",
     ]);
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(await file(join(packageDir, "packages", "boba", "package.json")).json()).toEqual({
       name: "boba",
       version: "1.0.0",
@@ -2931,7 +3011,6 @@ describe("workspaces", async () => {
       },
     });
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
-      ".cache",
       "@types",
       "bar",
       "boba",
@@ -2957,6 +3036,8 @@ describe("workspaces", async () => {
       "1 package installed",
     ]);
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(await file(join(packageDir, "packages", "boba", "package.json")).json()).toEqual({
       name: "boba",
       version: "1.0.0",
@@ -2967,7 +3048,6 @@ describe("workspaces", async () => {
       },
     });
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
-      ".cache",
       "@types",
       "bar",
       "boba",
@@ -3081,6 +3161,7 @@ describe("workspaces", async () => {
           "2 packages installed",
         ]);
         expect(await exited).toBe(0);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
         ({ stdout, stderr, exited } = spawn({
           cmd: [bunExe(), "install"],
@@ -3101,6 +3182,7 @@ describe("workspaces", async () => {
           "Checked 2 installs across 3 packages (no changes)",
         ]);
         expect(await exited).toBe(0);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
         await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
         await rm(join(packageDir, "bun.lockb"), { recursive: true, force: true });
@@ -3126,6 +3208,7 @@ describe("workspaces", async () => {
           "2 packages installed",
         ]);
         expect(await exited).toBe(0);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
         ({ stdout, stderr, exited } = spawn({
           cmd: [bunExe(), "install"],
@@ -3146,6 +3229,7 @@ describe("workspaces", async () => {
           "Checked 2 installs across 3 packages (no changes)",
         ]);
         expect(await exited).toBe(0);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
       });
     }
   }
@@ -3196,6 +3280,8 @@ describe("workspaces", async () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(await file(join(packageDir, "node_modules", "workspace-1", "package.json")).json()).toEqual({
         name: "workspace-1",
         version: "1.0.0",
@@ -3223,6 +3309,8 @@ describe("workspaces", async () => {
         "Checked 1 install across 2 packages (no changes)",
       ]);
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(await file(join(packageDir, "node_modules", "workspace-1", "package.json")).json()).toEqual({
         name: "workspace-1",
         version: "1.0.0",
@@ -3278,6 +3366,8 @@ describe("workspaces", async () => {
         "Checked 1 install across 2 packages (no changes)",
       ]);
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(await file(join(packageDir, "node_modules", "workspace-1", "package.json")).json()).toEqual({
         name: "workspace-1",
         version: "1.0.0",
@@ -3433,6 +3523,8 @@ describe("transitive file dependencies", () => {
     ]);
 
     var { out } = await runBunInstall(env, packageDir);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "14 packages installed"]);
 
     await checkHoistedFiles();
@@ -3442,11 +3534,15 @@ describe("transitive file dependencies", () => {
 
     // reinstall
     ({ out } = await runBunInstall(env, packageDir, { savesLockfile: false }));
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "14 packages installed"]);
 
     await checkHoistedFiles();
 
     ({ out } = await runBunInstall(env, packageDir, { savesLockfile: false }));
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
 
     await checkHoistedFiles();
@@ -3456,6 +3552,8 @@ describe("transitive file dependencies", () => {
 
     // install from workspace
     ({ out } = await runBunInstall(env, join(packageDir, "pkg1")));
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
       "+ @another-scope/file-dep@1.0.0",
@@ -3473,11 +3571,15 @@ describe("transitive file dependencies", () => {
     expect(await exists(join(packageDir, "pkg1", "node_modules"))).toBeFalse();
 
     ({ out } = await runBunInstall(env, join(packageDir, "pkg1"), { savesLockfile: false }));
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
 
     await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
 
     ({ out } = await runBunInstall(env, join(packageDir, "pkg1"), { savesLockfile: false }));
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
       "+ @another-scope/file-dep@1.0.0",
@@ -3537,6 +3639,8 @@ describe("transitive file dependencies", () => {
     ]);
 
     var { out } = await runBunInstall(env, packageDir);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
       "+ @another-scope/file-dep@1.0.1",
@@ -3557,6 +3661,8 @@ describe("transitive file dependencies", () => {
 
     // reinstall
     ({ out } = await runBunInstall(env, packageDir, { savesLockfile: false }));
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
       "+ @another-scope/file-dep@1.0.1",
@@ -3573,6 +3679,8 @@ describe("transitive file dependencies", () => {
     await checkUnhoistedFiles();
 
     ({ out } = await runBunInstall(env, packageDir, { savesLockfile: false }));
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
 
     await checkUnhoistedFiles();
@@ -3583,6 +3691,8 @@ describe("transitive file dependencies", () => {
 
     // install from workspace
     ({ out } = await runBunInstall(env, join(packageDir, "pkg1")));
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
       "+ @another-scope/file-dep@1.0.0",
@@ -3599,12 +3709,16 @@ describe("transitive file dependencies", () => {
     await checkUnhoistedFiles();
 
     ({ out } = await runBunInstall(env, join(packageDir, "pkg1"), { savesLockfile: false }));
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
 
     await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
     await rm(join(packageDir, "pkg1", "node_modules"), { recursive: true, force: true });
 
     ({ out } = await runBunInstall(env, join(packageDir, "pkg1"), { savesLockfile: false }));
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
       "+ @another-scope/file-dep@1.0.0",
@@ -3672,8 +3786,9 @@ describe("transitive file dependencies", () => {
       "13 packages installed",
     ]);
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
-      ".cache",
       "@another-scope",
       "@scoped",
       "aliased-file-dep",
@@ -3702,6 +3817,7 @@ describe("transitive file dependencies", () => {
     expect(err).not.toContain("panic:");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
     await checkHoistedFiles();
 
@@ -3723,7 +3839,6 @@ describe("transitive file dependencies", () => {
     expect(err).not.toContain("error:");
     expect(err).not.toContain("panic:");
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
-      ".cache",
       "@another-scope",
       "@scoped",
       "aliased-file-dep",
@@ -3733,6 +3848,7 @@ describe("transitive file dependencies", () => {
       "self-file-dep",
     ]);
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
     await checkHoistedFiles();
   });
@@ -3789,7 +3905,9 @@ describe("transitive file dependencies", () => {
       "2 packages installed",
     ]);
     expect(await exited).toBe(0);
-    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".cache", "pkg0", "pkg1"]);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["pkg0", "pkg1"]);
     expect(await file(join(packageDir, "node_modules", "pkg0", "package.json")).json()).toEqual({
       name: "pkg0",
       version: "1.1.1",
@@ -3816,6 +3934,7 @@ test("name from manifest is scoped and url encoded", async () => {
   );
 
   await runBunInstall(env, packageDir);
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
   const files = await Promise.all([
     file(join(packageDir, "node_modules", "@url", "encoding.2", "package.json")).json(),
@@ -3844,6 +3963,8 @@ describe("update", () => {
     );
 
     await runBunUpdate(env, packageDir);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(await file(join(packageDir, "package.json")).json()).toEqual({
       name: "foo",
       dependencies: {
@@ -3870,6 +3991,8 @@ describe("update", () => {
     );
 
     await runBunInstall(env, packageDir);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).toMatchObject({
       name: "a-dep",
       version: "1.0.10",
@@ -3877,6 +4000,8 @@ describe("update", () => {
 
     // Update without args, `latest` should stay
     await runBunUpdate(env, packageDir);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(await file(join(packageDir, "package.json")).json()).toEqual({
       name: "foo",
       dependencies: {
@@ -3886,6 +4011,8 @@ describe("update", () => {
 
     // Update with `a-dep` and `--latest`, `latest` should be replaced with the installed version
     await runBunUpdate(env, packageDir, ["a-dep"]);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(await file(join(packageDir, "package.json")).json()).toEqual({
       name: "foo",
       dependencies: {
@@ -3893,6 +4020,8 @@ describe("update", () => {
       },
     });
     await runBunUpdate(env, packageDir, ["--latest"]);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(await file(join(packageDir, "package.json")).json()).toEqual({
       name: "foo",
       dependencies: {
@@ -3916,6 +4045,8 @@ describe("update", () => {
         }),
       );
       async function check(version: string) {
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
         expect(await file(join(packageDir, "node_modules", dependency, "package.json")).json()).toMatchObject({
           name: "a-dep",
           version: version.replace(/.*@/, ""),
@@ -3957,12 +4088,16 @@ describe("update", () => {
       );
 
       await runBunInstall(env, packageDir);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
         name: "no-deps",
         version: "1.0.1",
       });
 
       let { out } = await runBunUpdate(env, packageDir);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(out).toEqual(["", "Checked 1 install across 2 packages (no changes)"]);
       expect(await file(join(packageDir, "package.json")).json()).toEqual({
         name: "foo",
@@ -3973,6 +4108,8 @@ describe("update", () => {
 
       // another update does not change anything (previously the version would update because it was changed to `^1.0.1`)
       ({ out } = await runBunUpdate(env, packageDir));
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(out).toEqual(["", "Checked 1 install across 2 packages (no changes)"]);
       expect(await file(join(packageDir, "package.json")).json()).toEqual({
         name: "foo",
@@ -4010,6 +4147,8 @@ describe("update", () => {
 
         if (latest) {
           await runBunUpdate(env, packageDir, ["--latest"]);
+          assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
           expect(await file(join(packageDir, "package.json")).json()).toEqual({
             name: "foo",
             dependencies: {
@@ -4032,6 +4171,8 @@ describe("update", () => {
           });
         } else {
           await runBunUpdate(env, packageDir);
+          assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
           expect(await file(join(packageDir, "package.json")).json()).toEqual({
             name: "foo",
             dependencies: {
@@ -4097,12 +4238,16 @@ describe("update", () => {
       );
 
       await runBunInstall(env, packageDir);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
         name: "no-deps",
         version: "1.0.1",
       });
 
       let { out } = await runBunUpdate(env, packageDir, ["no-deps"]);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(out).toEqual(["", "installed no-deps@1.0.1", "", expect.stringContaining("done"), ""]);
       expect(await file(join(packageDir, "package.json")).json()).toEqual({
         name: "foo",
@@ -4114,6 +4259,8 @@ describe("update", () => {
 
       // update with --latest should only change the update request and keep `~`
       ({ out } = await runBunUpdate(env, packageDir, ["no-deps", "--latest"]));
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(out).toEqual(["", "installed no-deps@2.0.0", "", "1 package installed"]);
       expect(await file(join(packageDir, "package.json")).json()).toEqual({
         name: "foo",
@@ -4137,6 +4284,8 @@ describe("update", () => {
       );
 
       await runBunUpdate(env, packageDir);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(await file(join(packageDir, "package.json")).json()).toEqual({
         name: "foo",
         dependencies: {
@@ -4160,6 +4309,8 @@ describe("update", () => {
       );
 
       await runBunUpdate(env, packageDir, ["aliased-dep"]);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(await file(join(packageDir, "package.json")).json()).toEqual({
         name: "foo",
         dependencies: {
@@ -4183,6 +4334,7 @@ describe("update", () => {
       );
 
       await runBunUpdate(env, packageDir);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
       expect(await file(join(packageDir, "package.json")).json()).toMatchObject({
         name: "foo",
@@ -4197,6 +4349,8 @@ describe("update", () => {
       });
 
       const { out } = await runBunUpdate(env, packageDir, ["--latest"]);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(out).toEqual(["", "^ aliased-dep 5.0.0-alpha.150 -> 5.0.0-alpha.153", "", "1 package installed"]);
       expect(await file(join(packageDir, "package.json")).json()).toMatchObject({
         name: "foo",
@@ -4218,6 +4372,8 @@ describe("update", () => {
     );
 
     let { out } = await runBunUpdate(env, packageDir, ["--no-save"]);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(out).toEqual(["", "+ a-dep@1.0.1", "", "1 package installed"]);
     expect(await file(join(packageDir, "package.json")).json()).toEqual({
       name: "foo",
@@ -4237,6 +4393,8 @@ describe("update", () => {
     );
 
     ({ out } = await runBunUpdate(env, packageDir, ["--no-save"]));
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(out).toEqual(["", "+ a-dep@1.0.10", "", "1 package installed"]);
     expect(await file(join(packageDir, "package.json")).json()).toEqual({
       name: "foo",
@@ -4247,6 +4405,8 @@ describe("update", () => {
 
     // now save
     ({ out } = await runBunUpdate(env, packageDir));
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(out).toEqual(["", "Checked 1 install across 2 packages (no changes)"]);
     expect(await file(join(packageDir, "package.json")).json()).toEqual({
       name: "foo",
@@ -4267,6 +4427,8 @@ describe("update", () => {
     );
 
     await runBunUpdate(env, packageDir);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(await file(join(packageDir, "package.json")).json()).toEqual({
       name: "foo",
       dependencies: {
@@ -4278,6 +4440,8 @@ describe("update", () => {
     });
     // update with package name does not update beyond version range
     await runBunUpdate(env, packageDir, ["dep-with-tags"]);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(await file(join(packageDir, "package.json")).json()).toEqual({
       name: "foo",
       dependencies: {
@@ -4290,6 +4454,8 @@ describe("update", () => {
 
     // now update with a higher version range
     await runBunUpdate(env, packageDir, ["dep-with-tags@^2.0.0"]);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(await file(join(packageDir, "package.json")).json()).toEqual({
       name: "foo",
       dependencies: {
@@ -4348,6 +4514,8 @@ describe("update", () => {
 
     // initial install, update root
     let { out } = await runBunUpdate(env, packageDir);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(out).toEqual([
       "",
       "+ a-dep@1.0.10",
@@ -4402,6 +4570,8 @@ describe("update", () => {
       "uses-what-bin",
       "a-dep@1.0.5",
     ]));
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(out).toEqual([
       "",
       "installed what-bin@1.5.0 with binaries:",
@@ -4446,6 +4616,8 @@ describe("update", () => {
     });
 
     ({ out } = await runBunUpdate(env, join(packageDir, "packages", "pkg1"), ["a-dep@^1.0.5"]));
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(out).toEqual(["", "installed a-dep@1.0.10", "", expect.stringMatching(/(\[\d+\.\d+m?s\])/), ""]);
     expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).toMatchObject({
       name: "a-dep",
@@ -4483,6 +4655,8 @@ describe("update", () => {
         );
 
         const { out } = args ? await runBunUpdate(env, packageDir, ["a-dep"]) : await runBunUpdate(env, packageDir);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
         expect(out).toEqual(["", args ? "installed a-dep@1.0.10" : "+ a-dep@1.0.10", "", "1 package installed"]);
         expect(await file(join(packageDir, "package.json")).json()).toEqual({
           name: "foo",
@@ -4531,6 +4705,7 @@ describe("update", () => {
     );
 
     await runBunInstall(env, packageDir);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
     expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
       version: "1.0.0",
@@ -4544,6 +4719,8 @@ describe("update", () => {
 
     // update no-deps, no range, no change
     let { out } = await runBunUpdate(env, packageDir, ["no-deps"]);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(out).toEqual(["", "installed no-deps@1.0.0", "", expect.stringMatching(/(\[\d+\.\d+m?s\])/), ""]);
     expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
       version: "1.0.0",
@@ -4551,6 +4728,8 @@ describe("update", () => {
 
     // update package that doesn't exist to workspace, should add to package.json
     ({ out } = await runBunUpdate(env, join(packageDir, "packages", "pkg1"), ["no-deps"]));
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(out).toEqual(["", "installed no-deps@2.0.0", "", "1 package installed"]);
     expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
       version: "1.0.0",
@@ -4577,6 +4756,8 @@ describe("update", () => {
     );
 
     ({ out } = await runBunUpdate(env, packageDir, ["no-deps"]));
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(out).toEqual(["", "installed no-deps@1.1.0", "", "1 package installed"]);
     expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
       version: "1.1.0",
@@ -4595,6 +4776,7 @@ describe("update", () => {
     );
 
     await runBunUpdate(env, packageDir, ["no-deps", "--latest"]);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
     const files = await Promise.all([
       file(join(packageDir, "node_modules", "no-deps", "package.json")).json(),
@@ -4618,6 +4800,8 @@ test("packages dependening on each other with aliases does not infinitely loop",
   );
 
   await runBunInstall(env, packageDir);
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
   const files = await Promise.all([
     file(join(packageDir, "node_modules", "alias-loop-1", "package.json")).json(),
     file(join(packageDir, "node_modules", "alias-loop-2", "package.json")).json(),
@@ -4664,6 +4848,8 @@ test("it should re-populate .bin folder if package is reinstalled", async () => 
     "1 package installed",
   ]);
   expect(await exited).toBe(0);
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
   const bin = process.platform === "win32" ? "what-bin.exe" : "what-bin";
   expect(Bun.which("what-bin", { PATH: join(packageDir, "node_modules", ".bin") })).toBe(
     join(packageDir, "node_modules", ".bin", bin),
@@ -4698,6 +4884,8 @@ test("it should re-populate .bin folder if package is reinstalled", async () => 
     expect.stringContaining("1 package installed"),
   ]);
   expect(await exited).toBe(0);
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
   expect(Bun.which("what-bin", { PATH: join(packageDir, "node_modules", ".bin") })).toBe(
     join(packageDir, "node_modules", ".bin", bin),
   );
@@ -4739,6 +4927,7 @@ test("one version with binary map", async () => {
     "1 package installed",
   ]);
   expect(await exited).toBe(0);
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
   expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toHaveBins(["map-bin", "map_bin"]);
   expect(join(packageDir, "node_modules", ".bin", "map-bin")).toBeValidBin(join("..", "map-bin", "bin", "map-bin"));
@@ -4777,6 +4966,7 @@ test("multiple versions with binary map", async () => {
     "1 package installed",
   ]);
   expect(await exited).toBe(0);
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
   expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toHaveBins(["map-bin", "map_bin"]);
   expect(join(packageDir, "node_modules", ".bin", "map-bin")).toBeValidBin(
@@ -4802,6 +4992,7 @@ test("duplicate dependency in optionalDependencies maintains sort order", async 
   );
 
   await runBunInstall(env, packageDir);
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
   const lockfile = parseLockfile(packageDir);
   expect(lockfile).toMatchNodeModulesAt(packageDir);
@@ -4880,6 +5071,7 @@ test("missing package on reinstall, some with binaries", async () => {
     "",
   ]);
   expect(await exited).toBe(0);
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
   await rm(join(packageDir, "node_modules", "native"), { recursive: true, force: true });
   await rm(join(packageDir, "node_modules", "left-pad"), { recursive: true, force: true });
@@ -4922,6 +5114,7 @@ test("missing package on reinstall, some with binaries", async () => {
     expect.stringContaining("7 packages installed"),
   ]);
   expect(await exited).toBe(0);
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
   expect(await exists(join(packageDir, "node_modules", "native", "package.json"))).toBe(true);
   expect(await exists(join(packageDir, "node_modules", "left-pad", "package.json"))).toBe(true);
@@ -4943,9 +5136,9 @@ test("missing package on reinstall, some with binaries", async () => {
 
 // waiter thread is only a thing on Linux.
 for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
-  const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
   describe("lifecycle scripts" + (forceWaiterThread ? " (waiter thread)" : ""), async () => {
     test("root package with all lifecycle scripts", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
       const writeScript = async (name: string) => {
         const contents = `
       import { writeFileSync, existsSync, rmSync } from "fs";
@@ -4999,6 +5192,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(await exists(join(packageDir, "preinstall.txt"))).toBeTrue();
       expect(await exists(join(packageDir, "install.txt"))).toBeTrue();
       expect(await exists(join(packageDir, "postinstall.txt"))).toBeTrue();
@@ -5054,6 +5249,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect.stringContaining("1 package installed"),
       ]);
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(await file(join(packageDir, "preinstall.txt")).text()).toBe("preinstall exists!");
       expect(await file(join(packageDir, "install.txt")).text()).toBe("install exists!");
       expect(await file(join(packageDir, "postinstall.txt")).text()).toBe("postinstall exists!");
@@ -5094,6 +5291,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       }));
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       err = await new Response(stderr).text();
       out = await new Response(stdout).text();
       expect(err).toContain("Saved lockfile");
@@ -5120,6 +5319,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("workspace lifecycle scripts", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -5187,6 +5388,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       var out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "2 packages installed"]);
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
       expect(await exists(join(packageDir, "preinstall.txt"))).toBeTrue();
       expect(await exists(join(packageDir, "install.txt"))).toBeTrue();
@@ -5209,6 +5411,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("dependency lifecycle scripts run before root lifecycle scripts", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       const script = '[[ -f "./node_modules/uses-what-bin-slow/what-bin.txt" ]]';
       await writeFile(
         join(packageDir, "package.json"),
@@ -5248,9 +5452,12 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
     });
 
     test("install a dependency with lifecycle scripts, then add to trusted dependencies and install again", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -5287,6 +5494,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "",
       ]);
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
       const depDir = join(packageDir, "node_modules", "all-lifecycle-scripts");
       expect(await exists(join(depDir, "preinstall.txt"))).toBeFalse();
@@ -5329,6 +5537,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect.stringContaining("Checked 1 install across 2 packages (no changes)"),
       ]);
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
       expect(await file(join(depDir, "preinstall.txt")).text()).toBe("preinstall!");
       expect(await file(join(depDir, "install.txt")).text()).toBe("install!");
@@ -5339,6 +5548,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("adding a package without scripts to trustedDependencies", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -5372,7 +5583,9 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", ".cache", "what-bin"]);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+      expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", "what-bin"]);
       const isWindows = process.platform === "win32";
       const what_bin_bins = !isWindows ? ["what-bin"] : ["what-bin.bunx", "what-bin.exe"];
       // prettier-ignore
@@ -5397,6 +5610,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "Checked 1 install across 2 packages (no changes)",
       ]);
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
       await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
       await rm(join(packageDir, "bun.lockb"));
@@ -5431,7 +5645,9 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", ".cache", "what-bin"]);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+      expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", "what-bin"]);
       expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toEqual(what_bin_bins);
 
       ({ stdout, stderr, exited } = spawn({
@@ -5453,7 +5669,9 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "Checked 1 install across 2 packages (no changes)",
       ]);
       expect(await exited).toBe(0);
-      expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", ".cache", "what-bin"]);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+      expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", "what-bin"]);
       expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toEqual(what_bin_bins);
 
       // add it to trusted dependencies
@@ -5488,11 +5706,15 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "Checked 1 install across 2 packages (no changes)",
       ]);
       expect(await exited).toBe(0);
-      expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", ".cache", "what-bin"]);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+      expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", "what-bin"]);
       expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toEqual(what_bin_bins);
     });
 
     test("lifecycle scripts run if node_modules is deleted", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -5526,7 +5748,10 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).not.toContain("error:");
       expect(await exists(join(packageDir, "node_modules", "lifecycle-postinstall", "postinstall.txt"))).toBeTrue();
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       await rm(join(packageDir, "node_modules"), { force: true, recursive: true });
+      await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
       ({ stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
@@ -5548,9 +5773,12 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).not.toContain("error:");
       expect(await exists(join(packageDir, "node_modules", "lifecycle-postinstall", "postinstall.txt"))).toBeTrue();
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
     });
 
     test("INIT_CWD is set to the correct directory", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -5602,12 +5830,16 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect.stringContaining("1 package installed"),
       ]);
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(await file(join(packageDir, "test.txt")).text()).toBe(packageDir);
       expect(await file(join(packageDir, "node_modules/lifecycle-init-cwd/test.txt")).text()).toBe(packageDir);
       expect(await file(join(packageDir, "node_modules/another-init-cwd/test.txt")).text()).toBe(packageDir);
     });
 
     test("failing lifecycle script should print output", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -5632,11 +5864,15 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const err = await new Response(stderr).text();
       expect(err).toContain("hello");
       expect(await exited).toBe(1);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       const out = await new Response(stdout).text();
       expect(out).toBeEmpty();
     });
 
     test("failing root lifecycle script should print output correctly", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -5657,6 +5893,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       });
 
       expect(await exited).toBe(1);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(await Bun.readableStreamToText(stdout)).toBeEmpty();
       const err = await Bun.readableStreamToText(stderr);
       expect(err).toContain("error: Oops!");
@@ -5664,6 +5902,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("exit 0 in lifecycle scripts works", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -5697,9 +5937,12 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "",
       ]);
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
     });
 
     test("--ignore-scripts should skip lifecycle scripts", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -5733,9 +5976,12 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
     });
 
     test("it should add `node-gyp rebuild` as the `install` script when `install` and `postinstall` don't exist and `binding.gyp` exists in the root of the package", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -5769,10 +6015,14 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect.stringContaining("2 packages installed"),
       ]);
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(await exists(join(packageDir, "node_modules/binding-gyp-scripts/build.node"))).toBeTrue();
     });
 
     test("automatic node-gyp scripts should not run for untrusted dependencies, and should run after adding to `trustedDependencies`", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       const packageJSON: any = {
         name: "foo",
         version: "1.0.0",
@@ -5806,6 +6056,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "",
       ]);
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(await exists(join(packageDir, "node_modules", "binding-gyp-scripts", "build.node"))).toBeFalse();
 
       packageJSON.trustedDependencies = ["binding-gyp-scripts"];
@@ -5827,10 +6079,14 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).not.toContain("warn:");
 
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(await exists(join(packageDir, "node_modules", "binding-gyp-scripts", "build.node"))).toBeTrue();
     });
 
     test("automatic node-gyp scripts work in package root", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -5865,6 +6121,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect.stringContaining("1 package installed"),
       ]);
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(await exists(join(packageDir, "build.node"))).toBeTrue();
 
       await rm(join(packageDir, "build.node"));
@@ -5879,10 +6137,14 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       }));
 
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(await exists(join(packageDir, "build.node"))).toBeTrue();
     });
 
     test("auto node-gyp scripts work when scripts exists other than `install` and `preinstall`", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -5922,11 +6184,15 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect.stringContaining("1 package installed"),
       ]);
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(await exists(join(packageDir, "build.node"))).toBeTrue();
     });
 
     for (const script of ["install", "preinstall"]) {
       test(`does not add auto node-gyp script when ${script} script exists`, async () => {
+        const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
         const packageJSON: any = {
           name: "foo",
           version: "1.0.0",
@@ -5961,11 +6227,15 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           expect.stringContaining("1 package installed"),
         ]);
         expect(await exited).toBe(0);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
         expect(await exists(join(packageDir, "build.node"))).toBeFalse();
       });
     }
 
     test("git dependencies also run `preprepare`, `prepare`, and `postprepare` scripts", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -6001,6 +6271,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "",
       ]);
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "preprepare.txt"))).toBeFalse();
       expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "prepare.txt"))).toBeFalse();
       expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "postprepare.txt"))).toBeFalse();
@@ -6036,6 +6308,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).not.toContain("warn:");
 
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "preprepare.txt"))).toBeTrue();
       expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "prepare.txt"))).toBeTrue();
       expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "postprepare.txt"))).toBeTrue();
@@ -6045,6 +6319,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("root lifecycle scripts should wait for dependency lifecycle scripts", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -6086,6 +6362,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "2 packages installed",
       ]);
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
     });
 
     async function createPackagesWithScripts(
@@ -6128,6 +6405,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     }
 
     test("reach max concurrent scripts", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       const scripts = {
         "preinstall": `${bunExe()} -e 'Bun.sleepSync(500)'`,
       };
@@ -6156,9 +6435,12 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "4 packages installed",
       ]);
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
     });
 
     test("stress test", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       const dependenciesList = await createPackagesWithScripts(500, {
         "postinstall": `${bunExe()} --version`,
       });
@@ -6187,9 +6469,12 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       ]);
 
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
     });
 
     test("it should install and use correct binary version", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       // this should install `what-bin` in two places:
       //
       // - node_modules/.bin/what-bin@1.5.0
@@ -6232,6 +6517,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "",
       ]);
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(await file(join(packageDir, "node_modules", "what-bin", "what-bin.js")).text()).toContain(
         "what-bin@1.5.0",
       );
@@ -6274,6 +6561,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).not.toContain("warn:");
 
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(await file(join(packageDir, "node_modules", "what-bin", "what-bin.js")).text()).toContain(
         "what-bin@1.0.0",
       );
@@ -6305,9 +6594,12 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect.stringContaining("3 packages installed"),
       ]);
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
     });
 
     test("node-gyp should always be available for lifecycle scripts", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -6336,10 +6628,13 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
       // if node-gyp isn't available, it would return a non-zero exit code
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
     });
 
     // if this test fails, `electron` might be removed from the default list
     test("default trusted dependencies should work", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -6374,9 +6669,12 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(out).not.toContain("Blocked");
       expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
     });
 
     test("default trusted dependencies should not be used of trustedDependencies is populated", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -6416,10 +6714,13 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "",
       ]);
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeFalse();
       expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
 
       await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
       await rm(join(packageDir, "bun.lockb"));
 
       await writeFile(
@@ -6462,12 +6763,15 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "",
       ]);
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
       expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
       expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
     });
 
     test("does not run any scripts if trustedDependencies is an empty list", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -6506,11 +6810,15 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "",
       ]);
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeFalse();
       expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
     });
 
     test("will run default trustedDependencies after install that didn't include them", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -6549,6 +6857,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "",
       ]);
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
 
       await writeFile(
@@ -6583,11 +6893,15 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "Checked 1 install across 2 packages (no changes)",
       ]);
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
       expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
     });
 
     describe("--trust", async () => {
       test("unhoisted untrusted scripts, none at root node_modules", async () => {
+        const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
         await Promise.all([
           write(
             join(packageDir, "package.json"),
@@ -6612,6 +6926,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         ]);
 
         await runBunInstall(testEnv, packageDir);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
         const results = await Promise.all([
           exists(join(packageDir, "node_modules", "pkg1", "node_modules", "uses-what-bin")),
@@ -6702,6 +7017,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       ];
       for (const { label, packageJson } of trustTests) {
         test(label, async () => {
+          const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
           await writeFile(join(packageDir, "package.json"), JSON.stringify(packageJson));
 
           let { stdout, stderr, exited } = spawn({
@@ -6760,6 +7077,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       }
       describe("packages without lifecycle scripts", async () => {
         test("initial install", async () => {
+          const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
           await writeFile(
             join(packageDir, "package.json"),
             JSON.stringify({
@@ -6798,6 +7117,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           });
         });
         test("already installed", async () => {
+          const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
           await writeFile(
             join(packageDir, "package.json"),
             JSON.stringify({
@@ -6876,6 +7197,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
     describe("updating trustedDependencies", async () => {
       test("existing trustedDependencies, unchanged trustedDependencies", async () => {
+        const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
         await writeFile(
           join(packageDir, "package.json"),
           JSON.stringify({
@@ -6909,6 +7232,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           expect.stringContaining("2 packages installed"),
         ]);
         expect(await exited).toBe(0);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
         expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
         expect(await file(join(packageDir, "package.json")).json()).toEqual({
           name: "foo",
@@ -6939,9 +7264,12 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           "Checked 2 installs across 3 packages (no changes)",
         ]);
         expect(await exited).toBe(0);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
       });
 
       test("existing trustedDependencies, removing trustedDependencies", async () => {
+        const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
         await writeFile(
           join(packageDir, "package.json"),
           JSON.stringify({
@@ -6975,6 +7303,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           expect.stringContaining("2 packages installed"),
         ]);
         expect(await exited).toBe(0);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
         expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
         expect(await file(join(packageDir, "package.json")).json()).toEqual({
           name: "foo",
@@ -7017,6 +7347,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           "Checked 2 installs across 3 packages (no changes)",
         ]);
         expect(await exited).toBe(0);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
         expect(await file(join(packageDir, "package.json")).json()).toEqual({
           name: "foo",
           dependencies: {
@@ -7027,6 +7359,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       });
 
       test("non-existent trustedDependencies, then adding it", async () => {
+        const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
         await writeFile(
           join(packageDir, "package.json"),
           JSON.stringify({
@@ -7059,6 +7393,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           expect.stringContaining("1 package installed"),
         ]);
         expect(await exited).toBe(0);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
         expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
         expect(await file(join(packageDir, "package.json")).json()).toEqual({
           name: "foo",
@@ -7103,11 +7439,15 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           "Checked 1 install across 2 packages (no changes)",
         ]);
         expect(await exited).toBe(0);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
         expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
       });
     });
 
     test("node -p should work in postinstall scripts", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -7139,11 +7479,14 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
       expect(await exists(join(packageDir, "postinstall.txt"))).toBeTrue();
     });
 
     test("ensureTempNodeGypScript works", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -7175,9 +7518,12 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
     });
 
     test("bun pm trust and untrusted on missing package", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -7212,6 +7558,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       ]);
       expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeFalse();
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
       // remove uses-what-bin from node_modules, bun pm trust and untrusted should handle missing package
       await rm(join(packageDir, "node_modules", "uses-what-bin"), { recursive: true, force: true });
@@ -7253,6 +7600,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       // for both cases, we need to update this test
       for (const withRm of [true, false]) {
         test(withRm ? "withRm" : "withoutRm", async () => {
+          const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
           await writeFile(
             join(packageDir, "package.json"),
             JSON.stringify({
@@ -7289,6 +7638,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             "",
           ]);
           expect(await exited).toBe(0);
+          assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
           expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeFalse();
 
           ({ stdout, stderr, exited } = spawn({
@@ -7427,6 +7778,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
     describe.if(!forceWaiterThread || process.platform === "linux")("does not use 100% cpu", async () => {
       test("install", async () => {
+        const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
         await writeFile(
           join(packageDir, "package.json"),
           JSON.stringify({
@@ -7448,12 +7801,15 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         });
 
         expect(await proc.exited).toBe(0);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
         expect(proc.resourceUsage()?.cpuTime.total).toBeLessThan(750_000);
       });
 
       // https://github.com/oven-sh/bun/issues/11252
       test.todoIf(isWindows)("bun pm trust", async () => {
+        const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
         const dep = isWindows ? "uses-what-bin-slow-window" : "uses-what-bin-slow";
         await writeFile(
           join(packageDir, "package.json"),
@@ -7475,6 +7831,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         });
 
         expect(await exited).toBe(0);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
         expect(await exists(join(packageDir, "node_modules", dep, "what-bin.txt"))).toBeFalse();
 
@@ -7497,6 +7854,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
   describe("stdout/stderr is inherited from root scripts during install", async () => {
     test("without packages", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       const exe = bunExe().replace(/\\/g, "\\\\");
       await writeFile(
         join(packageDir, "package.json"),
@@ -7541,9 +7900,12 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "",
       ]);
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
     });
 
     test("with a package", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
       const exe = bunExe().replace(/\\/g, "\\\\");
       await writeFile(
         join(packageDir, "package.json"),
@@ -7595,6 +7957,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "",
       ]);
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
     });
   });
 }
@@ -7755,6 +8118,8 @@ test("it should be able to find binary in node_modules/.bin from parent director
     expect.stringContaining("1 package installed"),
   ]);
   expect(await exited).toBe(0);
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
   expect(await file(join(packageDir, "morePackageDir", "missing-bin.txt")).text()).toBe("missing-bin@WHAT");
 });
 
@@ -7891,6 +8256,7 @@ describe("semver", () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
     });
   }
 
@@ -7919,6 +8285,8 @@ describe("semver", () => {
     var out = await new Response(stdout).text();
     expect(err).toContain('InvalidDependencyVersion parsing version "pre-1 || pre-2"');
     expect(await exited).toBe(1);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
     expect(out).toBeEmpty();
   });
 });
@@ -8117,6 +8485,7 @@ for (let i = 0; i < prereleaseTests.length; i++) {
           version: expected,
         } as any);
         expect(await exited).toBe(0);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
       });
     }
   });
@@ -8250,6 +8619,7 @@ for (let i = 0; i < prereleaseFailTests.length; i++) {
         expect(out).toBeEmpty();
         expect(err).toContain(`No version matching "${depVersion}" found for specifier "${depName}"`);
         expect(await exited).toBe(1);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
       });
     }
   });
@@ -8291,7 +8661,6 @@ describe("yarn tests", () => {
       "6 packages installed",
     ]);
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
-      ".cache",
       "dragon-test-1-a",
       "dragon-test-1-b",
       "dragon-test-1-c",
@@ -8317,6 +8686,7 @@ describe("yarn tests", () => {
       },
     } as any);
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
   });
 
   test("dragon test 2", async () => {
@@ -8379,7 +8749,6 @@ describe("yarn tests", () => {
       "3 packages installed",
     ]);
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
-      ".cache",
       "dragon-test-2-a",
       "dragon-test-2-b",
       "no-deps",
@@ -8390,6 +8759,7 @@ describe("yarn tests", () => {
     });
     expect(await exists(join(packageDir, "dragon-test-2-a", "node_modules"))).toBeFalse();
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
   });
 
   test("dragon test 3", async () => {
@@ -8425,7 +8795,6 @@ describe("yarn tests", () => {
       "3 packages installed",
     ]);
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
-      ".cache",
       "dragon-test-3-a",
       "dragon-test-3-b",
       "no-deps",
@@ -8441,6 +8810,7 @@ describe("yarn tests", () => {
       },
     } as any);
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
   });
 
   test("dragon test 4", async () => {
@@ -8485,12 +8855,7 @@ describe("yarn tests", () => {
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "3 packages installed"]);
-    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
-      ".cache",
-      "my-workspace",
-      "no-deps",
-      "peer-deps",
-    ]);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["my-workspace", "no-deps", "peer-deps"]);
     expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
       name: "no-deps",
       version: "1.0.0",
@@ -8503,6 +8868,7 @@ describe("yarn tests", () => {
       },
     } as any);
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
   });
 
   test("dragon test 5", async () => {
@@ -8559,7 +8925,6 @@ describe("yarn tests", () => {
     expect(err).not.toContain("error:");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "5 packages installed"]);
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
-      ".cache",
       "a",
       "b",
       "no-deps",
@@ -8582,6 +8947,7 @@ describe("yarn tests", () => {
       version: "1.0.0",
     } as any);
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
   });
 
   test.todo("dragon test 6", async () => {
@@ -8697,6 +9063,7 @@ describe("yarn tests", () => {
       "7 packages installed",
     ]);
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
   });
 
   test.todo("dragon test 7", async () => {
@@ -8738,6 +9105,7 @@ describe("yarn tests", () => {
       "7 packages installed",
     ]);
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
     await writeFile(
       join(packageDir, "test.js"),
@@ -8777,6 +9145,7 @@ describe("yarn tests", () => {
       ),
     ).toBeFalse();
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
   });
 
   test("dragon test 8", async () => {
@@ -8818,6 +9187,7 @@ describe("yarn tests", () => {
       "4 packages installed",
     ]);
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
   });
 
   test("dragon test 9", async () => {
@@ -8859,6 +9229,7 @@ describe("yarn tests", () => {
       await file(join(packageDir, "node_modules", "second", "package.json")).json(),
     );
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
   });
 
   test.todo("dragon test 10", async () => {
@@ -8932,6 +9303,7 @@ describe("yarn tests", () => {
       "  packages installed",
     ]);
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
   });
 
   test("dragon test 12", async () => {
@@ -8986,7 +9358,6 @@ describe("yarn tests", () => {
     expect(err).not.toContain("not found");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "4 packages installed"]);
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
-      ".cache",
       "fake-peer-deps",
       "no-deps",
       "peer-deps",
@@ -9001,6 +9372,7 @@ describe("yarn tests", () => {
       },
     } as any);
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
   });
 
   test("it should not warn when the peer dependency resolution is compatible", async () => {
@@ -9038,8 +9410,9 @@ describe("yarn tests", () => {
       "",
       "2 packages installed",
     ]);
-    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".cache", "no-deps", "peer-deps-fixed"]);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["no-deps", "peer-deps-fixed"]);
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
   });
 
   test("it should warn when the peer dependency resolution is incompatible", async () => {
@@ -9077,8 +9450,9 @@ describe("yarn tests", () => {
       "",
       "2 packages installed",
     ]);
-    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".cache", "no-deps", "peer-deps-fixed"]);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["no-deps", "peer-deps-fixed"]);
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
   });
 
   test("it should install in such a way that two identical packages with different peer dependencies are different instances", async () => {
@@ -9117,6 +9491,7 @@ describe("yarn tests", () => {
       "5 packages installed",
     ]);
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
     await writeFile(
       join(packageDir, "test.js"),
@@ -9184,6 +9559,7 @@ describe("yarn tests", () => {
     expect(out).toBe("true\ntrue\nfalse\n");
     expect(err).toBeEmpty();
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
   });
 
   test("it should install in such a way that two identical packages with the same peer dependencies are the same instances (simple)", async () => {
@@ -9222,6 +9598,7 @@ describe("yarn tests", () => {
       "4 packages installed",
     ]);
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
     await writeFile(
       join(packageDir, "test.js"),
@@ -9245,6 +9622,7 @@ describe("yarn tests", () => {
     expect(out).toBe("true\n");
     expect(err).toBeEmpty();
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
   });
 
   test("it should install in such a way that two identical packages with the same peer dependencies are the same instances (complex)", async () => {
@@ -9285,6 +9663,7 @@ describe("yarn tests", () => {
       "4 packages installed",
     ]);
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
     await writeFile(
       join(packageDir, "test.js"),
@@ -9308,6 +9687,7 @@ describe("yarn tests", () => {
     expect(out).toBe("true\n");
     expect(err).toBeEmpty();
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
   });
 
   test("it shouldn't deduplicate two packages with similar peer dependencies but different names", async () => {
@@ -9348,6 +9728,7 @@ describe("yarn tests", () => {
       "3 packages installed",
     ]);
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
     await writeFile(join(packageDir, "test.js"), `console.log(require('peer-deps') === require('peer-deps-too'));`);
 
@@ -9365,6 +9746,7 @@ describe("yarn tests", () => {
     expect(out).toBe("false\n");
     expect(err).toBeEmpty();
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
   });
 
   test("it should reinstall and rebuild dependencies deleted by the user on the next install", async () => {
@@ -9404,6 +9786,7 @@ describe("yarn tests", () => {
     ]);
     expect(await exists(join(packageDir, "node_modules/one-dep-scripted/success.txt"))).toBeTrue();
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
     await rm(join(packageDir, "node_modules/one-dep-scripted"), { recursive: true, force: true });
 
@@ -9423,6 +9806,7 @@ describe("yarn tests", () => {
     expect(err).not.toContain("not found");
     expect(await exists(join(packageDir, "node_modules/one-dep-scripted/success.txt"))).toBeTrue();
     expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
   });
 });
 
@@ -9463,6 +9847,8 @@ test("tarball `./` prefix, duplicate directory with file, and empty directory", 
   // the output because it is an empty directory.
 
   await runBunInstall(env, packageDir);
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
   const prefix = join(packageDir, "node_modules", "tarball-without-package-prefix");
   const results = await Promise.all([
     file(join(prefix, "package.json")).json(),
@@ -9498,6 +9884,321 @@ test("tarball `./` prefix, duplicate directory with file, and empty directory", 
       version: "1.0.0",
     },
   );
+});
+
+describe("outdated", () => {
+  const edgeCaseTests = [
+    {
+      description: "normal dep, smaller than column title",
+      packageJson: {
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+      },
+    },
+    {
+      description: "normal dep, larger than column title",
+      packageJson: {
+        dependencies: {
+          "prereleases-1": "1.0.0-future.1",
+        },
+      },
+    },
+    {
+      description: "dev dep, smaller than column title",
+      packageJson: {
+        devDependencies: {
+          "no-deps": "1.0.0",
+        },
+      },
+    },
+    {
+      description: "dev dep, larger than column title",
+      packageJson: {
+        devDependencies: {
+          "prereleases-1": "1.0.0-future.1",
+        },
+      },
+    },
+    {
+      description: "peer dep, smaller than column title",
+      packageJson: {
+        peerDependencies: {
+          "no-deps": "1.0.0",
+        },
+      },
+    },
+    {
+      description: "peer dep, larger than column title",
+      packageJson: {
+        peerDependencies: {
+          "prereleases-1": "1.0.0-future.1",
+        },
+      },
+    },
+    {
+      description: "optional dep, smaller than column title",
+      packageJson: {
+        optionalDependencies: {
+          "no-deps": "1.0.0",
+        },
+      },
+    },
+    {
+      description: "optional dep, larger than column title",
+      packageJson: {
+        optionalDependencies: {
+          "prereleases-1": "1.0.0-future.1",
+        },
+      },
+    },
+  ];
+
+  for (const { description, packageJson } of edgeCaseTests) {
+    test(description, async () => {
+      await write(join(packageDir, "package.json"), JSON.stringify(packageJson));
+      await runBunInstall(env, packageDir);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+      const testEnv = { ...env, FORCE_COLOR: "1" };
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "outdated"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      expect(await exited).toBe(0);
+
+      const err = await Bun.readableStreamToText(stderr);
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("panic:");
+      const out = await Bun.readableStreamToText(stdout);
+      expect(out).toMatchSnapshot();
+    });
+  }
+  test("in workspace", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          workspaces: ["pkg1"],
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          dependencies: {
+            "a-dep": "1.0.1",
+          },
+        }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir);
+
+    let { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "outdated"],
+      cwd: join(packageDir, "pkg1"),
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("panic:");
+    let out = await Bun.readableStreamToText(stdout);
+    expect(out).toContain("a-dep");
+    expect(out).not.toContain("no-deps");
+    expect(await exited).toBe(0);
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "outdated"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+
+    const err2 = await Bun.readableStreamToText(stderr);
+    expect(err2).not.toContain("error:");
+    expect(err2).not.toContain("panic:");
+    let out2 = await Bun.readableStreamToText(stdout);
+    expect(out2).toContain("no-deps");
+    expect(out2).not.toContain("a-dep");
+    expect(await exited).toBe(0);
+  });
+
+  test("NO_COLOR works", async () => {
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "a-dep": "1.0.1",
+        },
+      }),
+    );
+
+    await runBunInstall(env, packageDir);
+
+    const testEnv = { ...env, NO_COLOR: "1" };
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "outdated"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: testEnv,
+    });
+
+    const err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("panic:");
+
+    const out = await Bun.readableStreamToText(stdout);
+    expect(out).toContain("a-dep");
+    expect(out).toMatchSnapshot();
+
+    expect(await exited).toBe(0);
+  });
+
+  async function setupWorkspace() {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          dependencies: {
+            "a-dep": "1.0.1",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg2", "package.json"),
+        JSON.stringify({
+          name: "pkg2222222222222",
+          dependencies: {
+            "prereleases-1": "1.0.0-future.1",
+          },
+        }),
+      ),
+    ]);
+  }
+
+  async function runBunOutdated(env: any, cwd: string, ...args: string[]): Promise<string> {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "outdated", ...args],
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("panic:");
+    const out = await Bun.readableStreamToText(stdout);
+    const exitCode = await exited;
+    expect(exitCode).toBe(0);
+    return out;
+  }
+
+  test("--filter with workspace names and paths", async () => {
+    await setupWorkspace();
+    await runBunInstall(env, packageDir);
+
+    let out = await runBunOutdated(env, packageDir, "--filter", "*");
+    expect(out).toContain("foo");
+    expect(out).toContain("pkg1");
+    expect(out).toContain("pkg2222222222222");
+
+    out = await runBunOutdated(env, join(packageDir, "packages", "pkg1"), "--filter", "./");
+    expect(out).toContain("pkg1");
+    expect(out).not.toContain("foo");
+    expect(out).not.toContain("pkg2222222222222");
+
+    // in directory that isn't a workspace
+    out = await runBunOutdated(env, join(packageDir, "packages"), "--filter", "./*", "--filter", "!pkg1");
+    expect(out).toContain("pkg2222222222222");
+    expect(out).not.toContain("pkg1");
+    expect(out).not.toContain("foo");
+
+    out = await runBunOutdated(env, join(packageDir, "packages", "pkg1"), "--filter", "../*");
+    expect(out).not.toContain("foo");
+    expect(out).toContain("pkg2222222222222");
+    expect(out).toContain("pkg1");
+  });
+
+  test("dependency pattern args", async () => {
+    await setupWorkspace();
+    await runBunInstall(env, packageDir);
+
+    let out = await runBunOutdated(env, packageDir, "no-deps", "--filter", "*");
+    expect(out).toContain("no-deps");
+    expect(out).not.toContain("a-dep");
+    expect(out).not.toContain("prerelease-1");
+
+    out = await runBunOutdated(env, packageDir, "a-dep");
+    expect(out).not.toContain("a-dep");
+    expect(out).not.toContain("no-deps");
+    expect(out).not.toContain("prerelease-1");
+
+    out = await runBunOutdated(env, packageDir, "*", "--filter", "*");
+    expect(out).toContain("no-deps");
+    expect(out).toContain("a-dep");
+    expect(out).toContain("prereleases-1");
+  });
+
+  test("scoped workspace names", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "@foo/bar",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({
+          name: "@scope/pkg1",
+          dependencies: {
+            "a-dep": "1.0.1",
+          },
+        }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir);
+
+    let out = await runBunOutdated(env, packageDir, "--filter", "*");
+    expect(out).toContain("@foo/bar");
+    expect(out).toContain("@scope/pkg1");
+
+    out = await runBunOutdated(env, packageDir, "--filter", "*", "--filter", "!@foo/*");
+    expect(out).not.toContain("@foo/bar");
+    expect(out).toContain("@scope/pkg1");
+  });
 });
 
 // TODO: setup verdaccio to run across multiple test files, then move this and a few other describe

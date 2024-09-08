@@ -980,6 +980,7 @@ pub const PosixSpawnOptions = struct {
         inherit: void,
         ignore: void,
         buffer: void,
+        ipc: void,
         pipe: bun.FileDescriptor,
         dup2: struct { out: bun.JSC.Subprocess.StdioKind, to: bun.JSC.Subprocess.StdioKind },
     };
@@ -1049,6 +1050,7 @@ pub const WindowsSpawnOptions = struct {
         inherit: void,
         ignore: void,
         buffer: *bun.windows.libuv.Pipe,
+        ipc: *bun.windows.libuv.Pipe,
         pipe: bun.FileDescriptor,
         dup2: struct { out: bun.JSC.Subprocess.StdioKind, to: bun.JSC.Subprocess.StdioKind },
 
@@ -1284,7 +1286,7 @@ pub fn spawnProcessPosix(
             .inherit => {
                 try actions.inherit(fileno);
             },
-            .ignore => {
+            .ipc, .ignore => {
                 try actions.openZ(fileno, "/dev/null", flag | bun.O.CREAT, 0o664);
             },
             .path => |path| {
@@ -1403,7 +1405,7 @@ pub fn spawnProcessPosix(
             .path => |path| {
                 try actions.open(fileno, path, bun.O.RDWR | bun.O.CREAT, 0o664);
             },
-            .buffer => {
+            .ipc, .buffer => {
                 const fds: [2]bun.FileDescriptor = brk: {
                     var fds_: [2]std.c.fd_t = undefined;
                     const rc = std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &fds_);
@@ -1584,6 +1586,11 @@ pub fn spawnProcessWindows(
                 stdio.flags = uv.UV_INHERIT_FD;
                 stdio.data.fd = fd_i;
             },
+            .ipc => |my_pipe| {
+                // ipc option inside stdin, stderr or stdout are not supported
+                bun.default_allocator.destroy(my_pipe);
+                stdio.flags = uv.UV_IGNORE;
+            },
             .ignore => {
                 stdio.flags = uv.UV_IGNORE;
             },
@@ -1651,6 +1658,11 @@ pub fn spawnProcessWindows(
                 const fd = rc.int();
                 try uv_files_to_close.append(fd);
                 stdio.data.fd = fd;
+            },
+            .ipc => |my_pipe| {
+                try my_pipe.init(loop, true).unwrap();
+                stdio.flags = uv.UV_CREATE_PIPE | uv.UV_WRITABLE_PIPE | uv.UV_READABLE_PIPE | uv.UV_OVERLAPPED_PIPE;
+                stdio.data.stream = @ptrCast(my_pipe);
             },
             .buffer => |my_pipe| {
                 try my_pipe.init(loop, false).unwrap();
@@ -1736,7 +1748,7 @@ pub fn spawnProcessWindows(
 
     for (options.extra_fds, 0..) |*input, i| {
         switch (input.*) {
-            .buffer => {
+            .ipc, .buffer => {
                 result.extra_pipes.appendAssumeCapacity(.{ .buffer = @ptrCast(stdio_containers.items[3 + i].data.stream) });
             },
             else => {
@@ -2033,21 +2045,54 @@ pub const sync = struct {
         return spawnWithArgv(options, @ptrCast(args.items.ptr), @ptrCast(envp));
     }
 
+    // Forward signals from parent to the child process.
+    extern "C" fn Bun__registerSignalsForForwarding() void;
+    extern "C" fn Bun__unregisterSignalsForForwarding() void;
+
+    // The PID to forward signals to.
+    // Set to 0 when unregistering.
+    extern "C" var Bun__currentSyncPID: i64;
+
+    // Race condition: a signal could be sent before spawnProcessPosix returns.
+    // We need to make sure to send it after the process is spawned.
+    extern "C" fn Bun__sendPendingSignalIfNecessary() void;
+
     fn spawnPosix(
         options: *const Options,
         argv: [*:null]?[*:0]const u8,
         envp: [*:null]?[*:0]const u8,
     ) !Maybe(Result) {
+        Bun__currentSyncPID = 0;
+        Bun__registerSignalsForForwarding();
+        defer {
+            Bun__unregisterSignalsForForwarding();
+            bun.crash_handler.resetOnPosix();
+        }
         const process = switch (try spawnProcessPosix(&options.toSpawnOptions(), argv, envp)) {
             .err => |err| return .{ .err = err },
             .result => |proces| proces,
         };
+        Bun__currentSyncPID = @intCast(process.pid);
+
+        Bun__sendPendingSignalIfNecessary();
+
         var out = [2]std.ArrayList(u8){
             std.ArrayList(u8).init(bun.default_allocator),
             std.ArrayList(u8).init(bun.default_allocator),
         };
         var out_fds = [2]bun.FileDescriptor{ process.stdout orelse bun.invalid_fd, process.stderr orelse bun.invalid_fd };
+        var success = false;
         defer {
+            // If we're going to return an error,
+            // let's make sure to clean up the output buffers
+            // and kill the process
+            if (!success) {
+                for (&out) |*array_list| {
+                    array_list.clearAndFree();
+                }
+                _ = std.c.kill(process.pid, 1);
+            }
+
             for (out_fds) |fd| {
                 if (fd != bun.invalid_fd) {
                     _ = bun.sys.close(fd);
@@ -2078,13 +2123,14 @@ pub const sync = struct {
             for (&out_fds_to_wait_for, &out, &out_fds) |*fd, *bytes, *out_fd| {
                 if (fd.* == bun.invalid_fd) continue;
                 while (true) {
-                    bytes.ensureUnusedCapacity(16384) catch bun.outOfMemory();
+                    bytes.ensureUnusedCapacity(16384) catch {
+                        return .{ .err = bun.sys.Error.fromCode(.NOMEM, .recv) };
+                    };
                     switch (bun.sys.recvNonBlock(fd.*, bytes.unusedCapacitySlice())) {
                         .err => |err| {
                             if (err.isRetry() or err.getErrno() == .PIPE) {
                                 break;
                             }
-                            _ = std.c.kill(process.pid, 1);
                             return .{ .err = err };
                         },
                         .result => |bytes_read| {
@@ -2153,6 +2199,7 @@ pub const sync = struct {
             }
         }
 
+        success = true;
         return .{
             .result = Result{
                 .status = status,

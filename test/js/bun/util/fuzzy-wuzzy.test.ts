@@ -19,7 +19,7 @@
 
 const ENABLE_LOGGING = false;
 
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "bun:test";
 import { isWindows } from "harness";
 
 const Promise = globalThis.Promise;
@@ -136,6 +136,7 @@ const ignoreList = [
   Int8Array.prototype,
   Int16Array.prototype,
   Int32Array.prototype,
+  Float16Array.prototype,
   Float32Array.prototype,
   Float64Array.prototype,
   BigInt64Array.prototype,

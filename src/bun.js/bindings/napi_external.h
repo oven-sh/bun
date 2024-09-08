@@ -80,6 +80,7 @@ public:
         Base::finishCreation(vm);
         m_value = value;
         m_finalizerHint = finalizer_hint;
+        napi_env = this->globalObject();
         this->finalizer = finalizer;
     }
 
@@ -90,6 +91,7 @@ public:
     void* m_value;
     void* m_finalizerHint;
     void* finalizer;
+    JSGlobalObject* napi_env;
 
 #if BUN_DEBUG
     String sourceOriginURL = String();

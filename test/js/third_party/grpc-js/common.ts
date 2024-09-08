@@ -1,9 +1,9 @@
-import * as loader from "@grpc/proto-loader";
 import * as grpc from "@grpc/grpc-js";
-import path from "node:path";
+import * as loader from "@grpc/proto-loader";
 import { which } from "bun";
-import { AddressInfo } from "ws";
 import { readFileSync } from "fs";
+import path from "node:path";
+import { AddressInfo } from "ws";
 
 const nodeExecutable = which("node");
 async function nodeEchoServer(env: any) {

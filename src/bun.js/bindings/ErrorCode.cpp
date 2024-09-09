@@ -17,6 +17,7 @@
 #include "JavaScriptCore/JSType.h"
 #include "JavaScriptCore/Symbol.h"
 #include "wtf/Assertions.h"
+#include "wtf/Forward.h"
 #include "wtf/text/ASCIIFastPath.h"
 #include "wtf/text/ASCIILiteral.h"
 #include "wtf/text/MakeString.h"
@@ -465,6 +466,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_INVALID_PROTOCOL, (JSC::JSGlobalObject *
 
     auto message = makeString("Protocol \""_s, actual, "\" not supported. Expected \""_s, expected, "\""_s);
     return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_PROTOCOL, message));
+}
+
+JSC::JSValue new_ERR_INVALID_STATE(JSC::JSGlobalObject* globalObject, ASCIILiteral statemsg)
+{
+    auto message = makeString("Invalid state: "_s, statemsg);
+    return createError(globalObject, ErrorCode::ERR_INVALID_STATE, message);
 }
 
 } // namespace Bun

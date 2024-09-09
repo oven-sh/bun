@@ -43,6 +43,7 @@ export default [
   ["ERR_INVALID_URL", TypeError, "TypeError"],
   ["ERR_UNKNOWN_ENCODING", TypeError, "TypeError"],
   ["ERR_BUFFER_TOO_LARGE", RangeError, "RangeError"],
+  ["ERR_INVALID_STATE", Error, "Error"],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError, "TypeError"],

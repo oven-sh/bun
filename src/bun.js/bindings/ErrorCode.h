@@ -74,5 +74,6 @@ extern "C" JSC::EncodedJSValue Bun__ERR_IPC_CHANNEL_CLOSED(JSC::JSGlobalObject* 
 extern "C" JSC::EncodedJSValue Bun__ERR_STRING_TOO_LONG(JSC::JSGlobalObject* globalObject);
 JSC::JSValue Bun__ERR_INVALID_ARG_VALUE_static(JSC::JSGlobalObject* globalObject, ASCIILiteral name, JSC::JSValue value, ASCIILiteral reason = "is invalid"_s);
 JSC::JSValue Bun__ERR_UNKNOWN_ENCODING_static(JSC::JSGlobalObject* globalObject, JSC::JSValue encoding);
+JSC::JSValue new_ERR_INVALID_STATE(JSC::JSGlobalObject* globalObject, ASCIILiteral statemsg);
 
 }

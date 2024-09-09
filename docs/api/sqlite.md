@@ -620,15 +620,16 @@ class Database {
         },
   );
 
-  query<Params, ReturnType>(sql: string): Statement<Params, ReturnType>;
-  run(
+  query<ReturnType, Params>(sql: string): Statement<ReturnType, Params>;
+
+  run<Params>(
     sql: string,
-    params?: SQLQueryBindings,
+    ...params: Params[]
   ): { lastInsertRowid: number; changes: number };
   exec = this.run;
 }
 
-class Statement<Params, ReturnType> {
+class Statement<ReturnType, Params> {
   all(params: Params): ReturnType[];
   get(params: Params): ReturnType | undefined;
   run(params: Params): {

@@ -3088,10 +3088,9 @@ pub const Parser = struct {
             if (did_use_jsx) {
                 if (this.jsx.parse) {
                     this.jsx.hashForRuntimeTranspiler(hasher);
-                    const jsx_optimizations = [_]bool{
-                        this.features.jsx_optimization_inline,
-                        this.features.jsx_optimization_hoist,
-                    };
+                    // this holds the values for the jsx optimizaiton flags, which have both been removed
+                    // as the optimizations break newer versions of react, see https://github.com/oven-sh/bun/issues/11025
+                    const jsx_optimizations = [_]bool{ false, false };
                     hasher.update(std.mem.asBytes(&jsx_optimizations));
                 } else {
                     hasher.update("NO_JSX");
@@ -15733,13 +15732,11 @@ fn NewParser_(
             var key_prop_i: i32 = -1;
             var flags = Flags.JSXElement.Bitset{};
             var start_tag: ?ExprNodeIndex = null;
-            var can_be_inlined = false;
 
             // Fragments don't have props
             // Fragments of the form "React.Fragment" are not parsed as fragments.
             if (@as(JSXTag.TagType, tag.data) == .tag) {
                 start_tag = tag.data.tag;
-                can_be_inlined = p.options.features.jsx_optimization_inline;
 
                 var spread_loc: logger.Loc = logger.Loc.Empty;
                 var props = ListManaged(G.Property).init(p.allocator);
@@ -15766,8 +15763,6 @@ fn NewParser_(
                                 key_prop_i = i;
                             }
 
-                            can_be_inlined = can_be_inlined and special_prop != .ref;
-
                             const prop_name = p.newExpr(E.String{ .data = prop_name_literal }, key_range.loc);
 
                             // Parse the value
@@ -15791,7 +15786,6 @@ fn NewParser_(
                             switch (p.lexer.token) {
                                 .t_dot_dot_dot => {
                                     try p.lexer.next();
-                                    can_be_inlined = false;
 
                                     if (first_spread_prop_i == -1) first_spread_prop_i = i;
                                     spread_loc = p.lexer.loc();
@@ -15898,10 +15892,6 @@ fn NewParser_(
                     try p.lexer.expected(.t_greater_than);
                 }
 
-                if (can_be_inlined) {
-                    flags.insert(.can_be_inlined);
-                }
-
                 return p.newExpr(E.JSXElement{
                     .tag = start_tag,
                     .properties = properties,
@@ -15974,10 +15964,6 @@ fn NewParser_(
 
                         if (p.lexer.token != .t_greater_than) {
                             try p.lexer.expected(.t_greater_than);
-                        }
-
-                        if (can_be_inlined) {
-                            flags.insert(.can_be_inlined);
                         }
 
                         return p.newExpr(E.JSXElement{
@@ -16666,185 +16652,54 @@ fn NewParser_(
                                         .value = e_.children.ptr[0],
                                     }) catch bun.outOfMemory();
                                 }
-                                // --- These must be done in all cases --
 
-                                // Trivial elements can be inlined, removing the call to createElement or jsx()
-                                if (p.options.features.jsx_optimization_inline and e_.flags.contains(.can_be_inlined)) {
-                                    // The output object should look like this:
-                                    // https://babeljs.io/repl/#?browsers=defaults%2C%20not%20ie%2011%2C%20not%20ie_mob%2011&build=&builtIns=false&corejs=false&spec=false&loose=false&code_lz=FAMwrgdgxgLglgewgAgLIE8DCCC2AHJAUwhgAoBvAIwEMAvAXwEplzhl3kAnQmMTlADwAxBAmQA-AIwAmAMxsOAFgCsANgEB6EQnEBuYPWBA&debug=false&forceAllTransforms=false&shippedProposals=true&circleciRepo=&evaluate=false&fileSize=true&timeTravel=false&sourceType=module&lineWrap=true&presets=react%2Ctypescript&prettier=true&targets=&version=7.18.4&externalPlugins=%40babel%2Fplugin-transform-flow-strip-types%407.16.7%2C%40babel%2Fplugin-transform-react-inline-elements%407.16.7&assumptions=%7B%22arrayLikeIsIterable%22%3Atrue%2C%22constantReexports%22%3Atrue%2C%22constantSuper%22%3Atrue%2C%22enumerableModuleMeta%22%3Atrue%2C%22ignoreFunctionLength%22%3Atrue%2C%22ignoreToPrimitiveHint%22%3Atrue%2C%22mutableTemplateObject%22%3Atrue%2C%22iterableIsArray%22%3Atrue%2C%22noClassCalls%22%3Atrue%2C%22noNewArrows%22%3Atrue%2C%22noDocumentAll%22%3Atrue%2C%22objectRestNoSymbols%22%3Atrue%2C%22privateFieldsAsProperties%22%3Atrue%2C%22pureGetters%22%3Atrue%2C%22setComputedProperties%22%3Atrue%2C%22setClassMethods%22%3Atrue%2C%22setSpreadProperties%22%3Atrue%2C%22setPublicClassFields%22%3Atrue%2C%22skipForOfIteratorClosing%22%3Atrue%2C%22superIsCallableConstructor%22%3Atrue%7D
-                                    // return {
-                                    //     $$typeof: REACT_ELEMENT_TYPE,
-                                    //     type: type,
-                                    //     key: void 0 === key ? null : "" + key,
-                                    //     ref: null,
-                                    //     props: props,
-                                    //     _owner: null
-                                    // };
-                                    //
-                                    const key = if (maybe_key_value) |key_value| brk: {
-                                        // key: void 0 === key ? null : "" + key,
-                                        break :brk switch (key_value.data) {
-                                            .e_string => break :brk key_value,
-                                            .e_undefined, .e_null => p.newExpr(E.Null{}, key_value.loc),
-                                            else => p.newExpr(E.If{
-                                                .test_ = p.newExpr(E.Binary{
-                                                    .left = p.newExpr(E.Undefined{}, key_value.loc),
-                                                    .op = Op.Code.bin_strict_eq,
-                                                    .right = key_value,
-                                                }, key_value.loc),
-                                                .yes = p.newExpr(E.Null{}, key_value.loc),
-                                                .no = p.newExpr(
-                                                    E.Binary{
-                                                        .op = Op.Code.bin_add,
-                                                        .left = p.newExpr(&E.String.empty, key_value.loc),
-                                                        .right = key_value,
-                                                    },
-                                                    key_value.loc,
-                                                ),
-                                            }, key_value.loc),
-                                        };
-                                    } else p.newExpr(E.Null{}, expr.loc);
-                                    var jsx_element = p.allocator.alloc(G.Property, 6) catch unreachable;
+                                // Either:
+                                // jsxDEV(type, arguments, key, isStaticChildren, source, self)
+                                // jsx(type, arguments, key)
+                                const args = p.allocator.alloc(Expr, if (p.options.jsx.development) @as(usize, 6) else @as(usize, 2) + @as(usize, @intFromBool(maybe_key_value != null))) catch unreachable;
+                                args[0] = tag;
 
-                                    const props_object = p.newExpr(
-                                        E.Object{
-                                            .properties = G.Property.List.fromList(props),
-                                            .close_brace_loc = e_.close_tag_loc,
-                                        },
-                                        expr.loc,
-                                    );
-                                    const props_expression = brk: {
-                                        // we must check for default props
-                                        if (tag.data != .e_string) {
-                                            // We assume defaultProps is supposed to _not_ have side effects
-                                            // We do not support "key" or "ref" in defaultProps.
-                                            const defaultProps = p.newExpr(
-                                                E.Dot{
-                                                    .name = "defaultProps",
-                                                    .name_loc = tag.loc,
-                                                    .target = tag,
-                                                    .can_be_removed_if_unused = true,
-                                                    .call_can_be_unwrapped_if_unused = true,
-                                                },
-                                                tag.loc,
-                                            );
-                                            // props: MyComponent.defaultProps || {}
-                                            if (props.items.len == 0) {
-                                                break :brk p.newExpr(E.Binary{ .op = Op.Code.bin_logical_or, .left = defaultProps, .right = props_object }, defaultProps.loc);
-                                            } else {
-                                                var call_args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                                call_args[0..2].* = .{
-                                                    props_object,
-                                                    defaultProps,
-                                                };
-                                                // __merge(props, MyComponent.defaultProps)
-                                                // originally, we always inlined here
-                                                // see https://twitter.com/jarredsumner/status/1534084541236686848
-                                                // but, that breaks for defaultProps
-                                                // we assume that most components do not have defaultProps
-                                                // so __merge quickly checks if it needs to merge any props
-                                                // and if not, it passes along the props object
-                                                // this skips an extra allocation
-                                                break :brk p.callRuntime(tag.loc, "__merge", call_args);
-                                            }
-                                        }
+                                args[1] = p.newExpr(E.Object{
+                                    .properties = G.Property.List.fromList(props),
+                                }, expr.loc);
 
-                                        break :brk props_object;
-                                    };
-
-                                    jsx_element[0..6].* =
-                                        [_]G.Property{
-                                        G.Property{
-                                            .key = Expr{ .data = Prefill.Data.@"$$typeof", .loc = tag.loc },
-                                            .value = p.runtimeIdentifier(tag.loc, "$$typeof"),
-                                        },
-                                        G.Property{
-                                            .key = Expr{ .data = Prefill.Data.type, .loc = tag.loc },
-                                            .value = tag,
-                                        },
-                                        G.Property{
-                                            .key = Expr{ .data = Prefill.Data.key, .loc = key.loc },
-                                            .value = key,
-                                        },
-                                        // this is a de-opt
-                                        // any usage of ref should make it impossible for this code to be reached
-                                        G.Property{
-                                            .key = Expr{ .data = Prefill.Data.ref, .loc = expr.loc },
-                                            .value = p.newExpr(E.Null{}, expr.loc),
-                                        },
-                                        G.Property{
-                                            .key = Expr{ .data = Prefill.Data.props, .loc = expr.loc },
-                                            .value = props_expression,
-                                        },
-                                        G.Property{
-                                            .key = Expr{ .data = Prefill.Data._owner, .loc = key.loc },
-                                            .value = p.newExpr(
-                                                E.Null{},
-                                                expr.loc,
-                                            ),
+                                if (maybe_key_value) |key| {
+                                    args[2] = key;
+                                } else if (p.options.jsx.development) {
+                                    // if (maybeKey !== undefined)
+                                    args[2] = Expr{
+                                        .loc = expr.loc,
+                                        .data = .{
+                                            .e_undefined = E.Undefined{},
                                         },
                                     };
-
-                                    const output = p.newExpr(
-                                        E.Object{
-                                            .properties = G.Property.List.init(jsx_element),
-                                            .close_brace_loc = e_.close_tag_loc,
-                                        },
-                                        expr.loc,
-                                    );
-
-                                    return output;
-                                } else {
-                                    // -- The typical jsx automatic transform happens here --
-
-                                    // Either:
-                                    // jsxDEV(type, arguments, key, isStaticChildren, source, self)
-                                    // jsx(type, arguments, key)
-                                    const args = p.allocator.alloc(Expr, if (p.options.jsx.development) @as(usize, 6) else @as(usize, 2) + @as(usize, @intFromBool(maybe_key_value != null))) catch unreachable;
-                                    args[0] = tag;
-
-                                    args[1] = p.newExpr(E.Object{
-                                        .properties = G.Property.List.fromList(props),
-                                    }, expr.loc);
-
-                                    if (maybe_key_value) |key| {
-                                        args[2] = key;
-                                    } else if (p.options.jsx.development) {
-                                        // if (maybeKey !== undefined)
-                                        args[2] = Expr{
-                                            .loc = expr.loc,
-                                            .data = .{
-                                                .e_undefined = E.Undefined{},
-                                            },
-                                        };
-                                    }
-
-                                    if (p.options.jsx.development) {
-                                        // is the return type of the first child an array?
-                                        // It's dynamic
-                                        // Else, it's static
-                                        args[3] = Expr{
-                                            .loc = expr.loc,
-                                            .data = .{
-                                                .e_boolean = .{
-                                                    .value = is_static_jsx,
-                                                },
-                                            },
-                                        };
-
-                                        args[4] = p.newExpr(E.Undefined{}, expr.loc);
-                                        args[5] = Expr{ .data = Prefill.Data.This, .loc = expr.loc };
-                                    }
-
-                                    return p.newExpr(E.Call{
-                                        .target = p.jsxImportAutomatic(expr.loc, is_static_jsx),
-                                        .args = ExprNodeList.init(args),
-                                        // Enable tree shaking
-                                        .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
-                                        .was_jsx_element = true,
-                                        .close_paren_loc = e_.close_tag_loc,
-                                    }, expr.loc);
                                 }
+
+                                if (p.options.jsx.development) {
+                                    // is the return type of the first child an array?
+                                    // It's dynamic
+                                    // Else, it's static
+                                    args[3] = Expr{
+                                        .loc = expr.loc,
+                                        .data = .{
+                                            .e_boolean = .{
+                                                .value = is_static_jsx,
+                                            },
+                                        },
+                                    };
+
+                                    args[4] = p.newExpr(E.Undefined{}, expr.loc);
+                                    args[5] = Expr{ .data = Prefill.Data.This, .loc = expr.loc };
+                                }
+
+                                return p.newExpr(E.Call{
+                                    .target = p.jsxImportAutomatic(expr.loc, is_static_jsx),
+                                    .args = ExprNodeList.init(args),
+                                    // Enable tree shaking
+                                    .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
+                                    .was_jsx_element = true,
+                                    .close_paren_loc = e_.close_tag_loc,
+                                }, expr.loc);
                             } else {
                                 unreachable;
                             }

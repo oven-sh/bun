@@ -787,10 +787,10 @@ pub export fn napi_make_callback(env: napi_env, _: *anyopaque, recv_: napi_value
         else
             .undefined,
         if (arg_count > 0 and args != null)
-            args.?[0..arg_count]
+            @as([*]const JSC.JSValue, @ptrCast(args.?))[0..arg_count]
         else
             &.{},
-    ) catch // TODO: mark .pending_exception
+    ) catch // TODO: handle errors correctly
         env.takeException();
 
     if (maybe_result) |result| {

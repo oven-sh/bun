@@ -732,9 +732,9 @@ pub const Arguments = struct {
                 !ctx.bundler_options.minify_whitespace;
 
             if (args.options("--external").len > 0) {
-                var externals = try allocator.alloc([]u8, args.options("--external").len);
+                var externals = try allocator.alloc([]const u8, args.options("--external").len);
                 for (args.options("--external"), 0..) |external, i| {
-                    externals[i] = @constCast(external);
+                    externals[i] = external;
                 }
                 opts.external = externals;
             }

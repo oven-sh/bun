@@ -10,7 +10,7 @@ const { MessageChannel, BroadcastChannel, Worker: WebWorker } = globalThis;
 const SHARE_ENV = Symbol("nodejs.worker_threads.SHARE_ENV");
 
 const isMainThread = Bun.isMainThread;
-const { 0: _workerData, 1: _threadId, 2: _receiveMessageOnPort } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding");
+const [workerData, threadId, receiveMessageOnPort] = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding");
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 

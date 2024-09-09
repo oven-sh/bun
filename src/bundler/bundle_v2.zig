@@ -3020,7 +3020,6 @@ pub const ParseTask = struct {
         opts.features.allow_runtime = !source.index.isRuntime();
         opts.features.use_import_meta_require = target.isBun();
         opts.features.top_level_await = true;
-        opts.features.jsx_optimization_inline = target.isBun() and (bundler.options.jsx_optimization_inline orelse !task.jsx.development);
         opts.features.auto_import_jsx = task.jsx.parse and bundler.options.auto_import_jsx;
         opts.features.trim_unused_imports = loader.isTypeScript() or (bundler.options.trim_unused_imports orelse false);
         opts.features.inlining = bundler.options.minify_syntax;

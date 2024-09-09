@@ -207,7 +207,7 @@ pub const Request = struct {
 
     pub fn writeFormat(this: *Request, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         const Writer = @TypeOf(writer);
-        try writer.print("Request ({}) {{\n", .{bun.fmt.size(this.body.value.size())});
+        try writer.print("Request ({}) {{\n", .{bun.fmt.size(this.body.value.size(), .{})});
         {
             formatter.indent += 1;
             defer formatter.indent -|= 1;

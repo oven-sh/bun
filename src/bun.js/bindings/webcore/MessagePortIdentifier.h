@@ -75,6 +75,7 @@ template<> struct HashTraits<WebCore::MessagePortIdentifier> : GenericHashTraits
     static bool isDeletedValue(const WebCore::MessagePortIdentifier& slot) { return slot.processIdentifier.isHashTableDeletedValue(); }
 };
 
-template<> struct DefaultHash<WebCore::MessagePortIdentifier> : MessagePortIdentifierHash {};
+template<> struct DefaultHash<WebCore::MessagePortIdentifier> : MessagePortIdentifierHash {
+};
 
 } // namespace WTF

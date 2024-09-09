@@ -660,7 +660,7 @@ pub const Blob = struct {
         try writer.print(
             comptime Output.prettyFmt(" (<yellow>{any}<r>)", enable_ansi_colors),
             .{
-                bun.fmt.size(size),
+                bun.fmt.size(size, .{}),
             },
         );
     }

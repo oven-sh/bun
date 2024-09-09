@@ -127,6 +127,7 @@
 #include "libusockets.h"
 #include "ModuleLoader.h"
 #include "napi_external.h"
+#include "napi_handle_scope.h"
 #include "napi.h"
 #include "NodeHTTP.h"
 #include "NodeVM.h"
@@ -2899,6 +2900,10 @@ void GlobalObject::finishCreation(VM& vm)
                 Bun::NapiPrototype::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
         });
 
+    m_NapiHandleScopeImplStructure.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
+        init.set(Bun::NapiHandleScopeImpl::createStructure(init.vm, init.owner));
+    });
+
     m_cachedNodeVMGlobalObjectStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
             init.set(WebCore::createNodeVMGlobalObjectStructure(init.vm));
@@ -3580,6 +3585,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_pendingNapiModuleAndExports[0]);
     visitor.append(thisObject->m_pendingNapiModuleAndExports[1]);
 
+    visitor.append(thisObject->m_currentNapiHandleScopeImpl);
+
     thisObject->m_asyncBoundFunctionStructure.visit(visitor);
     thisObject->m_bunObject.visit(visitor);
     thisObject->m_cachedNodeVMGlobalObjectStructure.visit(visitor);
@@ -3618,6 +3625,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_NapiExternalStructure.visit(visitor);
     thisObject->m_NAPIFunctionStructure.visit(visitor);
     thisObject->m_NapiPrototypeStructure.visit(visitor);
+    thisObject->m_NapiHandleScopeImplStructure.visit(visitor);
     thisObject->m_nativeMicrotaskTrampoline.visit(visitor);
     thisObject->m_navigatorObject.visit(visitor);
     thisObject->m_NodeVMScriptClassStructure.visit(visitor);

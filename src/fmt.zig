@@ -10,6 +10,102 @@ const Environment = bun.Environment;
 
 pub usingnamespace std.fmt;
 
+pub fn Table(
+    comptime column_color: []const u8,
+    comptime column_left_pad: usize,
+    comptime column_right_pad: usize,
+    comptime enable_ansi_colors: bool,
+) type {
+    return struct {
+        column_names: []const []const u8,
+        column_inside_lengths: []const usize,
+
+        pub fn topLeftSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "┌" else "|";
+        }
+        pub fn topRightSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "┐" else "|";
+        }
+        pub fn topColumnSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "┬" else "-";
+        }
+
+        pub fn bottomLeftSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "└" else "|";
+        }
+        pub fn bottomRightSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "┘" else "|";
+        }
+        pub fn bottomColumnSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "┴" else "-";
+        }
+
+        pub fn middleLeftSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "├" else "|";
+        }
+        pub fn middleRightSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "┤" else "|";
+        }
+        pub fn middleColumnSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "┼" else "|";
+        }
+
+        pub fn horizontalEdge(_: *const @This()) string {
+            return if (enable_ansi_colors) "─" else "-";
+        }
+        pub fn verticalEdge(_: *const @This()) string {
+            return if (enable_ansi_colors) "│" else "|";
+        }
+
+        pub fn init(column_names_: []const []const u8, column_inside_lengths_: []const usize) @This() {
+            return .{
+                .column_names = column_names_,
+                .column_inside_lengths = column_inside_lengths_,
+            };
+        }
+
+        pub fn printTopLineSeparator(this: *const @This()) void {
+            this.printLine(this.topLeftSep(), this.topRightSep(), this.topColumnSep());
+        }
+
+        pub fn printBottomLineSeparator(this: *const @This()) void {
+            this.printLine(this.bottomLeftSep(), this.bottomRightSep(), this.bottomColumnSep());
+        }
+
+        pub fn printLineSeparator(this: *const @This()) void {
+            this.printLine(this.middleLeftSep(), this.middleRightSep(), this.middleColumnSep());
+        }
+
+        pub fn printLine(this: *const @This(), left_edge_separator: string, right_edge_separator: string, column_separator: string) void {
+            for (this.column_inside_lengths, 0..) |column_inside_length, i| {
+                if (i == 0) {
+                    Output.pretty("{s}", .{left_edge_separator});
+                } else {
+                    Output.pretty("{s}", .{column_separator});
+                }
+
+                for (0..column_left_pad + column_inside_length + column_right_pad) |_| Output.pretty("{s}", .{this.horizontalEdge()});
+
+                if (i == this.column_inside_lengths.len - 1) {
+                    Output.pretty("{s}\n", .{right_edge_separator});
+                }
+            }
+        }
+
+        pub fn printColumnNames(this: *const @This()) void {
+            for (this.column_inside_lengths, 0..) |column_inside_length, i| {
+                Output.pretty("{s}", .{this.verticalEdge()});
+                for (0..column_left_pad) |_| Output.pretty(" ", .{});
+                Output.pretty("<b><" ++ column_color ++ ">{s}<r>", .{this.column_names[i]});
+                for (this.column_names[i].len..column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
+                if (i == this.column_inside_lengths.len - 1) {
+                    Output.pretty("{s}\n", .{this.verticalEdge()});
+                }
+            }
+        }
+    };
+}
+
 const SharedTempBuffer = [32 * 1024]u8;
 fn getSharedBuffer() []u8 {
     return std.mem.asBytes(shared_temp_buffer_ptr orelse brk: {
@@ -96,6 +192,25 @@ pub fn formatUTF16TypeWithPathOptions(comptime Slice: type, slice_: Slice, write
 pub inline fn utf16(slice_: []const u16) FormatUTF16 {
     return FormatUTF16{ .buf = slice_ };
 }
+
+/// Debug, this does not handle invalid utf32
+pub inline fn debugUtf32PathFormatter(path: []const u32) DebugUTF32PathFormatter {
+    return DebugUTF32PathFormatter{ .path = path };
+}
+
+pub const DebugUTF32PathFormatter = struct {
+    path: []const u32,
+    pub fn format(this: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+        var path_buf: bun.PathBuffer = undefined;
+        const result = bun.simdutf.convert.utf32.to.utf8.with_errors.le(this.path, &path_buf);
+        const converted = if (result.isSuccessful())
+            path_buf[0..result.count]
+        else
+            "Invalid UTF32!";
+
+        try writer.writeAll(converted);
+    }
+};
 
 pub const FormatUTF16 = struct {
     buf: []const u16,
@@ -986,17 +1101,30 @@ pub fn fastDigitCount(x: u64) u64 {
 
 pub const SizeFormatter = struct {
     value: usize = 0,
+    opts: Options,
+
+    pub const Options = struct {
+        space_between_number_and_unit: bool = true,
+    };
 
     pub fn format(self: SizeFormatter, comptime _: []const u8, opts: fmt.FormatOptions, writer: anytype) !void {
         const math = std.math;
         const value = self.value;
         if (value == 0) {
-            return writer.writeAll("0 KB");
+            if (self.opts.space_between_number_and_unit) {
+                return writer.writeAll("0 KB");
+            } else {
+                return writer.writeAll("0KB");
+            }
         }
 
         if (value < 512) {
             try fmt.formatInt(self.value, 10, .lower, opts, writer);
-            return writer.writeAll(" bytes");
+            if (self.opts.space_between_number_and_unit) {
+                return writer.writeAll(" bytes");
+            } else {
+                return writer.writeByte('B');
+            }
         }
 
         const mags_si = " KMGTPEZY";
@@ -1006,21 +1134,31 @@ pub const SizeFormatter = struct {
         const suffix = mags_si[magnitude];
 
         if (suffix == ' ') {
-            try writer.print("{d:.2} KB", .{new_value / 1000.0});
+            if (self.opts.space_between_number_and_unit) {
+                try writer.print("{d:.2} KB", .{new_value / 1000.0});
+            } else {
+                try writer.print("{d:.2}KB", .{new_value / 1000.0});
+            }
             return;
         }
         const precision: usize = if (std.math.approxEqAbs(f64, new_value, @trunc(new_value), 0.100)) 1 else 2;
         try fmt.formatType(new_value, "d", .{ .precision = precision }, writer, 0);
-        try writer.writeAll(&.{ ' ', suffix, 'B' });
+        if (self.opts.space_between_number_and_unit) {
+            try writer.writeAll(&.{ ' ', suffix, 'B' });
+        } else {
+            try writer.writeAll(&.{ suffix, 'B' });
+        }
     }
 };
 
-pub fn size(value: anytype) SizeFormatter {
-    return switch (@TypeOf(value)) {
-        f64, f32, f128 => SizeFormatter{
-            .value = @as(u64, @intFromFloat(value)),
+pub fn size(value: anytype, opts: SizeFormatter.Options) SizeFormatter {
+    return .{
+        .value = switch (@TypeOf(value)) {
+            f64, f32, f128 => @intFromFloat(value),
+            i64, isize => @intCast(value),
+            else => value,
         },
-        else => SizeFormatter{ .value = value },
+        .opts = opts,
     };
 }
 

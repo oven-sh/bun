@@ -87,7 +87,7 @@ Bun.serve({
     // serve static text
     "/": new Response("Hello World"),
 
-    // server a file by buffering it in memory
+    // serve a file by buffering it in memory
     "/index.html": new Response(await Bun.file("./index.html").bytes(), {
       headers: {
         "Content-Type": "text/html",

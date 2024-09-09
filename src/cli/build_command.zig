@@ -564,14 +564,14 @@ fn printSummary(bundled_end: i128, minify_duration: u64, minified: bool, input_c
             Output.prettyln(
                 "  <green>minify<r>  -{} <d>(estimate)<r>",
                 .{
-                    bun.fmt.size(@as(usize, @intCast(delta))),
+                    bun.fmt.size(@as(usize, @intCast(delta)), .{}),
                 },
             );
         } else if (-delta > 1024) {
             Output.prettyln(
                 "  <b>minify<r>   +{} <d>(estimate)<r>",
                 .{
-                    bun.fmt.size(@as(usize, @intCast(-delta))),
+                    bun.fmt.size(@as(usize, @intCast(-delta)), .{}),
                 },
             );
         } else {

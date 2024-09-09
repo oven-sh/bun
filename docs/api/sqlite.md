@@ -66,7 +66,7 @@ const db = new Database("mydb.sqlite", { create: true });
 Added in Bun v1.1.14
 {% /callout %}
 
-By default, `bun:sqlite` requires binding parameters to include the `$`, `:`, or `@` prefix, and does not throw an error if a parameter is missing.
+By default, `bun:sqlite` requires binding parameters to include the `$`, `:`, or `@` prefix (see [binding values](#binding-values)), and does not throw an error if a parameter is missing.
 
 To instead throw an error when a parameter is missing and allow binding without a prefix, set `strict: true` on the `Database` constructor:
 

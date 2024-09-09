@@ -12186,8 +12186,7 @@ function toCryptoKey(key, asPublic) {
 function doAsymmetricCipher(key, message, operation, isEncrypt) {
   // Our crypto bindings expect the key to be a `JSCryptoKey` property within an object.
   const cryptoKey = toCryptoKey(key, isEncrypt);
-  const oaepLabel =
-    typeof key.oaepLabel === "string" ? Buffer.from(key.oaepLabel, key.encoding) : key.oaepLabel;
+  const oaepLabel = typeof key.oaepLabel === "string" ? Buffer.from(key.oaepLabel, key.encoding) : key.oaepLabel;
   const keyObject = {
     key: cryptoKey,
     oaepHash: key.oaepHash,
@@ -12198,13 +12197,13 @@ function doAsymmetricCipher(key, message, operation, isEncrypt) {
   return operation(keyObject, buffer);
 }
 
-crypto_exports.publicEncrypt = function(key, message) {
+crypto_exports.publicEncrypt = function (key, message) {
   return doAsymmetricCipher(key, message, publicEncrypt, true);
-}
+};
 
-crypto_exports.privateDecrypt = function(key, message) {
+crypto_exports.privateDecrypt = function (key, message) {
   return doAsymmetricCipher(key, message, privateDecrypt, false);
-}
+};
 
 __export(crypto_exports, {
   DEFAULT_ENCODING: () => DEFAULT_ENCODING,

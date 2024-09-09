@@ -244,39 +244,18 @@ function test_rsa(padding, encryptOaepHash, decryptOaepHash, exceptionThrown) {
 
   padding = constants[padding];
 
-    const encryptedBuffer = crypto.publicEncrypt(
-      {
-        key: rsaPubPem,
-        padding: padding,
-        oaepHash: encryptOaepHash,
-      },
-      bufferToEncrypt,
-    );
+  const encryptedBuffer = crypto.publicEncrypt(
+    {
+      key: rsaPubPem,
+      padding: padding,
+      oaepHash: encryptOaepHash,
+    },
+    bufferToEncrypt,
+  );
 
-    if (padding === constants.RSA_PKCS1_PADDING) {
-      expect(() => {
-        crypto.privateDecrypt(
-          {
-            key: rsaKeyPem,
-            padding: padding,
-            oaepHash: decryptOaepHash,
-          },
-          encryptedBuffer,
-        );
-      }).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
-
-      expect(() => {
-        crypto.privateDecrypt(
-          {
-            key: rsaPkcs8KeyPem,
-            padding: padding,
-            oaepHash: decryptOaepHash,
-          },
-          encryptedBuffer,
-        );
-      }).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
-    } else {
-      const decryptedBuffer = crypto.privateDecrypt(
+  if (padding === constants.RSA_PKCS1_PADDING) {
+    expect(() => {
+      crypto.privateDecrypt(
         {
           key: rsaKeyPem,
           padding: padding,
@@ -284,9 +263,10 @@ function test_rsa(padding, encryptOaepHash, decryptOaepHash, exceptionThrown) {
         },
         encryptedBuffer,
       );
-      expect(decryptedBuffer).toEqual(input);
+    }).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
 
-      const decryptedBufferPkcs8 = crypto.privateDecrypt(
+    expect(() => {
+      crypto.privateDecrypt(
         {
           key: rsaPkcs8KeyPem,
           padding: padding,
@@ -294,8 +274,28 @@ function test_rsa(padding, encryptOaepHash, decryptOaepHash, exceptionThrown) {
         },
         encryptedBuffer,
       );
-      expect(decryptedBufferPkcs8).toEqual(input);
-    }
+    }).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
+  } else {
+    const decryptedBuffer = crypto.privateDecrypt(
+      {
+        key: rsaKeyPem,
+        padding: padding,
+        oaepHash: decryptOaepHash,
+      },
+      encryptedBuffer,
+    );
+    expect(decryptedBuffer).toEqual(input);
+
+    const decryptedBufferPkcs8 = crypto.privateDecrypt(
+      {
+        key: rsaPkcs8KeyPem,
+        padding: padding,
+        oaepHash: decryptOaepHash,
+      },
+      encryptedBuffer,
+    );
+    expect(decryptedBufferPkcs8).toEqual(input);
+  }
 }
 
 test(`RSA with RSA_NO_PADDING`, () => {
@@ -367,9 +367,11 @@ describe("Invalid oaepHash and oaepLabel options", () => {
           },
           Buffer.alloc(10),
         );
-      }).toThrow(expect.objectContaining({
-        code: "ERR_CRYPTO_INVALID_DIGEST",
-      }));
+      }).toThrow(
+        expect.objectContaining({
+          code: "ERR_CRYPTO_INVALID_DIGEST",
+        }),
+      );
 
       [0, false, null, Symbol(), () => {}].forEach(oaepHash => {
         expect(() => {
@@ -380,9 +382,11 @@ describe("Invalid oaepHash and oaepLabel options", () => {
             },
             Buffer.alloc(10),
           );
-        }).toThrow(expect.objectContaining({
-          code: "ERR_INVALID_ARG_TYPE",
-        }));
+        }).toThrow(
+          expect.objectContaining({
+            code: "ERR_INVALID_ARG_TYPE",
+          }),
+        );
       });
     });
 
@@ -396,9 +400,11 @@ describe("Invalid oaepHash and oaepLabel options", () => {
             },
             Buffer.alloc(10),
           );
-        }).toThrow(expect.objectContaining({
-          code: "ERR_INVALID_ARG_TYPE",
-        }));
+        }).toThrow(
+          expect.objectContaining({
+            code: "ERR_INVALID_ARG_TYPE",
+          }),
+        );
       });
     });
   });

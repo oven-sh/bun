@@ -1,5 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
-import { clearInterval, clearTimeout, setInterval, setTimeout, promises } from "node:timers";
+import { clearInterval, clearTimeout, promises, setInterval, setTimeout } from "node:timers";
 import { promisify } from "util";
 
 for (const fn of [setTimeout, setInterval]) {

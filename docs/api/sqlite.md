@@ -75,7 +75,7 @@ To instead throw an error when a parameter is missing and allow binding without 
 import { Database } from "bun:sqlite";
 
 const strict = new Database(
-  ":memory:", 
+  ":memory:",
   { strict: true }
 );
 
@@ -648,14 +648,15 @@ class Statement<ReturnType, Params> {
   as(Class: new () => ReturnType): this;
 }
 
-type SQLQueryBindings =
+type PrimitiveSQLQueryBindings =
   | string
   | bigint
   | TypedArray
   | number
   | boolean
-  | null
-  | Record<string, string | bigint | TypedArray | number | boolean | null>;
+  | null;
+
+type SQLQueryBindings = PrimitiveSQLQueryBindings[] | Record<string, PrimitiveSQLQueryBindings>;
 ```
 
 ### Datatypes

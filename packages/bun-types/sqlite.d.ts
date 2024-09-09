@@ -199,11 +199,13 @@ declare module "bun:sqlite" {
      * | `bigint` | `INTEGER` |
      * | `null` | `NULL` |
      */
-    run<ParamsType extends SQLQueryBindings[]>(sqlQuery: string, ...bindings: ParamsType[]): Changes;
+    run<ParamsType extends SQLQueryBindings>(sqlQuery: string, bindings: ParamsType): Changes;
+    run(sqlQuery: string, ...bindings: PrimitiveSQLQueryBindings[]): Changes;
     /**
         This is an alias of {@link Database.prototype.run}
      */
-    exec<ParamsType extends SQLQueryBindings[]>(sqlQuery: string, ...bindings: ParamsType[]): Changes;
+    exec<ParamsType extends SQLQueryBindings>(sqlQuery: string, bindings: ParamsType): Changes;
+    exec(sqlQuery: string, ...bindings: PrimitiveSQLQueryBindings[]): Changes;
 
     /**
      * Compile a SQL query and return a {@link Statement} object. This is the
@@ -229,10 +231,9 @@ declare module "bun:sqlite" {
      *
      * Under the hood, this calls `sqlite3_prepare_v3`.
      */
-    query<ReturnType, ParamsType extends SQLQueryBindings | SQLQueryBindings[]>(
+    query<ReturnType, ParamsType extends SQLQueryBindings = []>(
       sqlQuery: string,
-    ): // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
-    Statement<ReturnType, ParamsType extends any[] ? ParamsType : [ParamsType]>;
+    ): Statement<ReturnType, ParamsType>;
 
     /**
      * Compile a SQL query and return a {@link Statement} object.
@@ -254,11 +255,10 @@ declare module "bun:sqlite" {
      *
      * Under the hood, this calls `sqlite3_prepare_v3`.
      */
-    prepare<ReturnType, ParamsType extends SQLQueryBindings | SQLQueryBindings[]>(
+    prepare<ReturnType, ParamsType extends SQLQueryBindings = []>(
       sqlQuery: string,
       params?: ParamsType,
-    ): // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
-    Statement<ReturnType, ParamsType extends any[] ? ParamsType : [ParamsType]>;
+    ): Statement<ReturnType, ParamsType>;
 
     /**
      * Is the database in a transaction?
@@ -515,7 +515,7 @@ declare module "bun:sqlite" {
    * // => undefined
    * ```
    */
-  export class Statement<ReturnType = unknown, ParamsType extends SQLQueryBindings[] = any[]> implements Disposable {
+  export class Statement<ReturnType = unknown, ParamsType extends SQLQueryBindings = []> implements Disposable {
     /**
      * Creates a new prepared statement from native code.
      *
@@ -542,7 +542,8 @@ declare module "bun:sqlite" {
      * // => [{bar: "foo"}]
      * ```
      */
-    all(...params: ParamsType): ReturnType[];
+    all(params: ParamsType): ReturnType[];
+    all(...params: PrimitiveSQLQueryBindings[]): ReturnType[];
 
     /**
      * Execute the prepared statement and return **the first** result.
@@ -577,7 +578,8 @@ declare module "bun:sqlite" {
      * | `bigint` | `INTEGER` |
      * | `null` | `NULL` |
      */
-    get(...params: ParamsType): ReturnType | null;
+    get(params: ParamsType): ReturnType | null;
+    get(...params: PrimitiveSQLQueryBindings[]): ReturnType | null;
 
     /**
      * Execute the prepared statement. This returns `undefined`.
@@ -609,7 +611,8 @@ declare module "bun:sqlite" {
      * | `bigint` | `INTEGER` |
      * | `null` | `NULL` |
      */
-    run(...params: ParamsType): Changes;
+    run(params: ParamsType): Changes;
+    run(...params: PrimitiveSQLQueryBindings[]): Changes;
 
     /**
      * Execute the prepared statement and return the results as an array of arrays.
@@ -649,7 +652,8 @@ declare module "bun:sqlite" {
      * | `bigint` | `INTEGER` |
      * | `null` | `NULL` |
      */
-    values(...params: ParamsType): Array<Array<string | bigint | number | boolean | Uint8Array>>;
+    values(params: ParamsType): Array<Array<string | bigint | number | boolean | Uint8Array>>;
+    values(...params: PrimitiveSQLQueryBindings[]): Array<Array<string | bigint | number | boolean | Uint8Array>>;
 
     /**
      * The names of the columns returned by the prepared statement.
@@ -1066,14 +1070,15 @@ declare module "bun:sqlite" {
    */
   export var native: any;
 
-  export type SQLQueryBindings =
+  export type PrimitiveSQLQueryBindings =
     | string
     | bigint
     | NodeJS.TypedArray
     | number
     | boolean
-    | null
-    | Record<string, string | bigint | NodeJS.TypedArray | number | boolean | null>;
+    | null;
+
+  export type SQLQueryBindings = PrimitiveSQLQueryBindings[] | Record<string, PrimitiveSQLQueryBindings>;
 
   export default Database;
 

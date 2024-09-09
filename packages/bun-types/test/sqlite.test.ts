@@ -26,8 +26,7 @@ expectType<void>(runResults);
 
 const query3 = db.prepare<
   { name: string; dob: number }, // return type first
-  // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
-  [{ $id: string }]
+  { $id: string }
 >("select name, dob from users where id = $id");
 const allResults3 = query3.all({ $id: "asdf" });
 expectType<Array<{ name: string; dob: number }>>(allResults3);

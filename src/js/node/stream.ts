@@ -38,6 +38,8 @@ const EE = require("node:events").EventEmitter;
 
 var __getOwnPropNames = Object.getOwnPropertyNames;
 
+const encoder = new TextEncoder();
+
 var __commonJS = (cb, mod: typeof module | undefined = undefined) =>
   function __require2() {
     return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
@@ -199,10 +201,61 @@ var require_primordials = __commonJS({
     };
   },
 });
+
 // node_modules/readable-stream/lib/ours/util.js
 var require_util = __commonJS({
   "node_modules/readable-stream/lib/ours/util.js"(exports, module) {
     "use strict";
+
+    const { StringPrototypeToLowerCase } = require_primordials();
+
+    function slowCases(enc: string) {
+      switch (enc.length) {
+        case 4:
+          if (enc === "UTF8") return "utf8";
+          if (enc === "ucs2" || enc === "UCS2") return "utf16le";
+          enc = StringPrototypeToLowerCase(enc);
+          if (enc === "utf8") return "utf8";
+          if (enc === "ucs2") return "utf16le";
+          break;
+        case 3:
+          if (enc === "hex" || enc === "HEX" || StringPrototypeToLowerCase(enc) === "hex") return "hex";
+          break;
+        case 5:
+          if (enc === "ascii") return "ascii";
+          if (enc === "ucs-2") return "utf16le";
+          if (enc === "UTF-8") return "utf8";
+          if (enc === "ASCII") return "ascii";
+          if (enc === "UCS-2") return "utf16le";
+          enc = StringPrototypeToLowerCase(enc);
+          if (enc === "utf-8") return "utf8";
+          if (enc === "ascii") return "ascii";
+          if (enc === "ucs-2") return "utf16le";
+          break;
+        case 6:
+          if (enc === "base64") return "base64";
+          if (enc === "latin1" || enc === "binary") return "latin1";
+          if (enc === "BASE64") return "base64";
+          if (enc === "LATIN1" || enc === "BINARY") return "latin1";
+          enc = StringPrototypeToLowerCase(enc);
+          if (enc === "base64") return "base64";
+          if (enc === "latin1" || enc === "binary") return "latin1";
+          break;
+        case 7:
+          if (enc === "utf16le" || enc === "UTF16LE" || StringPrototypeToLowerCase(enc) === "utf16le") return "utf16le";
+          break;
+        case 8:
+          if (enc === "utf-16le" || enc === "UTF-16LE" || StringPrototypeToLowerCase(enc) === "utf-16le")
+            return "utf16le";
+          break;
+        case 9:
+          if (enc === "base64url" || enc === "BASE64URL" || StringPrototypeToLowerCase(enc) === "base64url")
+            return "base64url";
+          break;
+        default:
+          if (enc === "") return "utf8";
+      }
+    }
 
     var AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
     var isBlob =
@@ -307,6 +360,10 @@ var require_util = __commonJS({
           case "object":
             return "{}";
         }
+      },
+      normalizeEncoding(enc: string) {
+        if (enc == null || enc === "utf8" || enc === "utf-8") return "utf8";
+        return slowCases(enc);
       },
       types: {
         isAsyncFunction(fn) {
@@ -3748,6 +3805,7 @@ var require_writable = __commonJS({
       ERR_STREAM_NULL_VALUES,
       ERR_STREAM_WRITE_AFTER_END,
       ERR_UNKNOWN_ENCODING,
+      ERR_STREAM_PREMATURE_CLOSE,
     } = require_errors().codes;
     ({ errorOrDestroy } = destroyImpl);
 
@@ -4354,12 +4412,17 @@ var require_writable = __commonJS({
     Writable.prototype[EE.captureRejectionSymbol] = function (err) {
       this.destroy(err);
     };
+
+    const { PromisePrototypeThen } = require_primordials();
+    var { normalizeEncoding } = require_util();
+    var { isWritableEnded } = require_utils();
+
     var webStreamsAdapters = {
       newStreamWritableFromWritableStream(
         writableStream: WritableStream,
         options: {
           highWaterMark?: number;
-          encoding?: string;
+          decodeStrings?: boolean;
           objectMode?: boolean;
           signal?: AbortSignal;
         } = {},
@@ -4371,31 +4434,143 @@ var require_writable = __commonJS({
         validateObject(options, "options");
         const {
           highWaterMark,
-          encoding,
+          decodeStrings = true,
           objectMode = false,
           signal,
           // native = true,
         } = options;
 
-        if (encoding !== undefined && !Buffer.isEncoding(encoding)) {
-          // TODO: why does this err in typescript?
-          throw new ERR_INVALID_ARG_VALUE(encoding, "options.encoding");
-        }
         validateBoolean(objectMode, "options.objectMode");
+        validateBoolean(decodeStrings, "options.decodeStrings");
 
         const nativeStream = getNativeWritable(writableStream, options);
-        return (
-          nativeStream ||
-          new Writable(
-            {
-              objectMode,
-              highWaterMark,
-              encoding,
-              signal,
-            },
-            writableStream,
-          )
+        if (nativeStream) return nativeStream;
+
+        const writer = writableStream.getWriter();
+        let closed = false;
+
+        const writable = new (Writable as any)({
+          objectMode,
+          highWaterMark,
+          decodeStrings,
+          signal,
+          writev(chunks, callback) {
+            function done(error) {
+              error = error.filter(e => e);
+              try {
+                callback(error.length === 0 ? undefined : error);
+              } catch (error) {
+                ProcessNextTick(() => destroy(writable, error));
+              }
+            }
+
+            PromisePrototypeThen(
+              writer.ready,
+              () => {
+                return PromisePrototypeThen(
+                  // TODO: This uses SafePromiseAll in Node.JS version
+                  // can't find the correct primordial in Bun
+                  Promise.all(chunks, data => writer.write(data.chunk)),
+                  done,
+                  done,
+                );
+              },
+              done,
+            );
+          },
+
+          write(chunk, encoding, callback) {
+            if (typeof chunk === "string" && decodeStrings && !objectMode) {
+              const enc = normalizeEncoding(encoding);
+
+              if (enc === "utf8") {
+                chunk = encoder.encode(chunk);
+              } else {
+                chunk = Buffer.from(chunk, encoding);
+                chunk = new Uint8Array(
+                  // TODO: Also all primordials
+                  // TypedArrayPrototypeGetBuffer(chunk),
+                  // TypedArrayPrototypeGetByteOffset(chunk),
+                  // TypedArrayPrototypeGetByteLength(chunk),
+                  chunk.buffer,
+                  chunk.byteOffset,
+                  chunk.byteLength,
+                );
+              }
+            }
+
+            function done(error) {
+              try {
+                callback(error);
+              } catch (error) {
+                destroy(writable, error);
+              }
+            }
+
+            PromisePrototypeThen(
+              writer.ready,
+              () => {
+                return PromisePrototypeThen(writer.write(chunk), done, done);
+              },
+              done,
+            );
+          },
+
+          destroy(error, callback) {
+            function done() {
+              try {
+                callback(error);
+              } catch (error) {
+                ProcessNextTick(() => {
+                  throw error;
+                });
+              }
+            }
+
+            if (!closed) {
+              if (error != null) {
+                PromisePrototypeThen(writer.abort(error), done, done);
+              } else {
+                PromisePrototypeThen(writer.close(), done, done);
+              }
+              return;
+            }
+
+            done();
+          },
+
+          final(callback) {
+            function done(error) {
+              try {
+                callback(error);
+              } catch (error) {
+                ProcessNextTick(() => destroy(writable, error));
+              }
+            }
+
+            if (!closed) {
+              PromisePrototypeThen(writer.close(), done, done);
+            }
+          },
+        });
+
+        PromisePrototypeThen(
+          writer.closed,
+          () => {
+            // If the WritableStream closes before the stream.Writable has been
+            // ended, we signal an error on the stream.Writable.
+            closed = true;
+            if (!isWritableEnded(writable)) destroy(writable, new ERR_STREAM_PREMATURE_CLOSE());
+          },
+          error => {
+            // If the WritableStream errors before the stream.Writable has been
+            // destroyed, signal an error on the stream.Writable.
+            closed = true;
+            destroy(writable, error);
+          },
         );
+
+        return writable;
       },
 
       newWritableStreamFromStreamWritable(streamWritable: any, options: any = {}) {

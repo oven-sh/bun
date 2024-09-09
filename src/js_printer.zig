@@ -1418,14 +1418,9 @@ fn NewPrinter(
                 }
             }
 
-            if (decls.len <= 1) return;
-            p.indent();
-            defer p.unindent();
-
             for (decls[1..]) |*decl| {
                 p.print(",");
-                p.printNewline();
-                p.printIndent();
+                p.printSpace();
 
                 p.printBinding(decl.binding);
 
@@ -5186,7 +5181,7 @@ fn NewPrinter(
         }
 
         inline fn printDisabledImport(p: *Printer) void {
-            p.print("(()=>({}))");
+            p.printWhitespacer(ws("(() => ({})"));
         }
 
         pub fn printLoadFromBundleWithoutCall(p: *Printer, import_record_index: u32) void {

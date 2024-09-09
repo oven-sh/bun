@@ -2336,7 +2336,10 @@ pub const Expect = struct {
             const prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
             vm.unhandled_pending_rejection_to_capture = &return_value;
             vm.onUnhandledRejection = &VirtualMachine.onQuietUnhandledRejectionHandlerCaptureValue;
-            const return_value_from_function = value.call(globalThis, .undefined, &.{}) catch globalThis.takeException();
+            const return_value_from_function: JSValue = value.call(globalThis, .undefined, &.{}) catch {
+                vm.global.handleRejectedPromises();
+                break :brk globalThis.takeException();
+            };
             vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
 
             vm.global.handleRejectedPromises();
@@ -2352,9 +2355,9 @@ pub const Expect = struct {
                     .fulfilled => {
                         break :brk null;
                     },
-                    .rejected => |err| {
+                    .rejected => |rejected| {
                         // since we know for sure it rejected, we should always return the error
-                        break :brk err.toError() orelse err;
+                        break :brk rejected.toError() orelse rejected;
                     },
                     .pending => unreachable,
                 }
@@ -2437,12 +2440,8 @@ pub const Expect = struct {
                 if (globalThis.hasException()) return .zero;
                 // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
                 if (expected_value.get(globalThis, "test")) |test_fn| {
-                    const matches = test_fn.call(globalThis, expected_value, &.{received_message}) catch {
-                        globalThis.clearException();
-                        return .undefined;
-                    };
-                    if (!matches.toBooleanSlow(globalThis))
-                        return .undefined;
+                    const matches = test_fn.call(globalThis, expected_value, &.{received_message}) catch globalThis.takeException();
+                    if (!matches.toBooleanSlow(globalThis)) return .undefined;
                 }
 
                 this.throw(globalThis, signature, "\n\nExpected pattern: not <green>{any}<r>\nReceived message: <red>{any}<r>\n", .{
@@ -2525,11 +2524,8 @@ pub const Expect = struct {
             if (expected_value.isRegExp()) {
                 if (_received_message) |received_message| {
                     // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
-                    if (expected_value.get(globalThis, "test")) |test_fn| brk: {
-                        const matches = test_fn.call(globalThis, expected_value, &.{received_message}) catch {
-                            globalThis.clearException();
-                            break :brk;
-                        };
+                    if (expected_value.get(globalThis, "test")) |test_fn| {
+                        const matches = test_fn.call(globalThis, expected_value, &.{received_message}) catch globalThis.takeException();
                         if (matches.toBooleanSlow(globalThis)) return .undefined;
                     }
                 }
@@ -2669,7 +2665,6 @@ pub const Expect = struct {
         this.throw(globalThis, signature, expected_fmt, .{expected_class});
         return .zero;
     }
-
     pub fn toMatchSnapshot(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) JSValue {
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();

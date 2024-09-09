@@ -15,6 +15,7 @@ export class HotModule {
 
   _ext_exports = undefined;
   __esModule = false;
+  _import_meta?: ImportMeta;
 
   constructor(public id: Id) {}
 
@@ -29,6 +30,14 @@ export class HotModule {
       ? exports
       : module._ext_exports ??= { ...exports, default: exports };
   }
+
+  importMeta() {
+    return this._import_meta ??= initImportMeta(this);
+  }
+}
+
+function initImportMeta(m: HotModule): ImportMeta {
+  throw new Error("TODO: import meta object");
 }
 
 // {

@@ -5010,7 +5010,7 @@ fn NewParser_(
         // If this is true, then all top-level statements are wrapped in a try/catch
         will_wrap_module_in_try_catch_for_using: bool = false,
 
-        /// Used for react refresh, it must be able to insert `const _s = $RefreshSig$`
+        /// Used for react refresh, it must be able to insert `const _s = $RefreshSig$();`
         nearest_stmt_list: ?*ListManaged(Stmt) = null,
 
         const RecentlyVisitedTSNamespace = struct {
@@ -6094,9 +6094,14 @@ fn NewParser_(
         }
 
         fn generateReactRefreshImportHmr(p: *P, parts: *ListManaged(js_ast.Part), comptime hot_module_reloading: bool) !void {
-            // If `hot_module_reloading`, we are going to generate `const { $RefreshSig$, $RefreshReg$ } = require("")`
-            // otherwise we are going to settle on an import statement. Using require is fine because `react-refresh` itself
-            // is already a CommonJS module.
+            // If `hot_module_reloading`, we are going to generate a require call:
+            //
+            //     const { $RefreshSig$, $RefreshReg$ } = require("react-refresh/runtime")`
+            //
+            // Otherwise we are going to settle on an import statement. Using
+            // require is fine in HMR bundling because `react-refresh` itself is
+            // already a CommonJS module, and it will actually be more efficient
+            // at runtime this way.
             const allocator = p.allocator;
             const import_record_index = p.addImportRecordByRange(.stmt, logger.Range.None, "react-refresh/runtime");
 
@@ -9014,7 +9019,7 @@ fn NewParser_(
                 }
             } else {
                 var path_name = fs.PathName.init(path.text);
-                const name = try path_name.nonUniqueNameString(p.allocator);
+                const name = try strings.append(p.allocator, "import_", try path_name.nonUniqueNameString(p.allocator));
                 stmt.namespace_ref = try p.newSymbol(.other, name);
                 var scope: *Scope = p.current_scope;
                 try scope.generated.push(p.allocator, stmt.namespace_ref);
@@ -21863,20 +21868,8 @@ fn NewParser_(
             _ = loc;
             _ = ref;
             _ = name;
-
-            // p.expr_list.ensureUnusedCapacity(2) catch unreachable;
-            // const start = p.expr_list.items.len;
-            // p.expr_list.appendAssumeCapacity(p.newExpr(E.Identifier{
-            //     .ref = ref,
-            // }, loc));
-            // p.expr_list.appendAssumeCapacity(p.newExpr(E.String{ .data = name }, loc));
-            // return p.s(S.SExpr{
-            //     // I believe that this is a spot we can do $RefreshReg$(name)
-            //     .value = p.callRuntime(loc, "__name", p.expr_list.items[start..p.expr_list.items.len]),
-
-            //     // Make sure tree shaking removes this if the function is never used
-            //     .does_not_affect_tree_shaking = true,
-            // }, loc);
+            // TODO:
+            @compileError("not implemented");
         }
 
         fn runtimeIdentifierRef(p: *P, loc: logger.Loc, comptime name: string) Ref {
@@ -22752,7 +22745,7 @@ fn NewParser_(
 
         pub fn computeTsEnumsMap(p: *const P, allocator: Allocator) !js_ast.Ast.TsEnumsMap {
             // When hot module reloading is enabled, we disable enum inlining
-            // to avoid making the hmr graph more complicated.
+            // to avoid making the HMR graph more complicated.
             if (p.options.features.hot_module_reloading)
                 return .{};
 

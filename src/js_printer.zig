@@ -5181,7 +5181,7 @@ fn NewPrinter(
         }
 
         inline fn printDisabledImport(p: *Printer) void {
-            p.printWhitespacer(ws("(() => ({})"));
+            p.printWhitespacer(ws("(() => ({}))"));
         }
 
         pub fn printLoadFromBundleWithoutCall(p: *Printer, import_record_index: u32) void {

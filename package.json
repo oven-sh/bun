@@ -42,6 +42,7 @@
     "typecheck": "tsc --noEmit && cd test && bun run typecheck",
     "fmt": "prettier --config=.prettierrc-ci --write --cache './{.vscode,src,test,bench,packages/{bun-types,bun-inspector-*,bun-vscode,bun-debug-adapter-protocol}}/**/*.{mjs,ts,tsx,js,jsx}'",
     "fmt:zig": "zig fmt src/*.zig src/*/*.zig src/*/*/*.zig src/*/*/*/*.zig",
+    "fmt:cpp": "clang-format -i src/bun.js/bindings/**/*.{cpp,h} --verbose",
     "lint": "eslint './**/*.d.ts' --cache",
     "lint:fix": "eslint './**/*.d.ts' --cache --fix",
     "test": "node scripts/runner.node.mjs ./build/bun-debug",

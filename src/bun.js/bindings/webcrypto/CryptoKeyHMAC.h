@@ -43,7 +43,7 @@ public:
     {
         return adoptRef(*new CryptoKeyHMAC(key, hash, extractable, usage));
     }
-    
+
     virtual ~CryptoKeyHMAC();
 
     static RefPtr<CryptoKeyHMAC> generate(size_t lengthBits, CryptoAlgorithmIdentifier hash, bool extractable, CryptoKeyUsageBitmap);

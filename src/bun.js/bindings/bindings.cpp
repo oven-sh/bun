@@ -5749,6 +5749,16 @@ extern "C" EncodedJSValue JSC__createError(JSC::JSGlobalObject* globalObject, co
     return JSValue::encode(JSC::createError(globalObject, str->toWTFString(BunString::ZeroCopy)));
 }
 
+extern "C" EncodedJSValue JSC__createTypeError(JSC::JSGlobalObject* globalObject, const BunString* str)
+{
+    return JSValue::encode(JSC::createTypeError(globalObject, str->toWTFString(BunString::ZeroCopy)));
+}
+
+extern "C" EncodedJSValue JSC__createRangeError(JSC::JSGlobalObject* globalObject, const BunString* str)
+{
+    return JSValue::encode(JSC::createRangeError(globalObject, str->toWTFString(BunString::ZeroCopy)));
+}
+
 extern "C" EncodedJSValue ExpectMatcherUtils__getSingleton(JSC::JSGlobalObject* globalObject_)
 {
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject_);
@@ -5795,6 +5805,13 @@ extern "C" EncodedJSValue JSArray__constructArray(
 {
     return JSValue::encode(
         JSC::constructArray(global, (ArrayAllocationProfile*)nullptr, values, values_len));
+}
+
+extern "C" EncodedJSValue JSArray__constructEmptyArray(
+    JSC::JSGlobalObject* global,
+    size_t len)
+{
+    return JSValue::encode(JSC::constructEmptyArray(global, (ArrayAllocationProfile*)nullptr, len));
 }
 
 extern "C" bool JSGlobalObject__hasException(JSC::JSGlobalObject* globalObject)

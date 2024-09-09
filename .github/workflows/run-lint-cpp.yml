@@ -65,17 +65,17 @@ jobs:
           echo "did_fail=$(cat did_fail.txt)" >> $GITHUB_OUTPUT
 
       - name: Upload format.log
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: format.log
           path: format.log
       - name: Upload PR
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: pr-number.txt
           path: pr-number.txt
       - name: Upload PR
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: did_fail.txt
           path: did_fail.txt

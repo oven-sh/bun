@@ -3,6 +3,7 @@ const bun = @import("root").bun;
 const JSC = bun.JSC;
 const JSValue = bun.JSC.JSValue;
 const Parent = @This();
+const OOM = bun.OOM;
 
 pub const BufferOwnership = enum(u32) {
     BufferInternal,
@@ -438,7 +439,7 @@ pub const String = extern struct {
         return BunString__fromUTF16(bytes.ptr, bytes.len);
     }
 
-    pub fn createFormat(comptime fmt: [:0]const u8, args: anytype) !String {
+    pub fn createFormat(comptime fmt: [:0]const u8, args: anytype) OOM!String {
         if (comptime std.meta.fieldNames(@TypeOf(args)).len == 0) {
             return String.static(fmt);
         }
@@ -590,6 +591,16 @@ pub const String = extern struct {
     pub fn toErrorInstance(this: *const String, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         defer this.deref();
         return JSC__createError(globalObject, this);
+    }
+
+    pub fn toTypeErrorInstance(this: *const String, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        defer this.deref();
+        return JSC__createTypeError(globalObject, this);
+    }
+
+    pub fn toRangeErrorInstance(this: *const String, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        defer this.deref();
+        return JSC__createRangeError(globalObject, this);
     }
 
     extern fn BunString__createExternal(
@@ -1258,6 +1269,8 @@ pub const String = extern struct {
     }
 
     extern fn JSC__createError(*JSC.JSGlobalObject, str: *const String) JSC.JSValue;
+    extern fn JSC__createTypeError(*JSC.JSGlobalObject, str: *const String) JSC.JSValue;
+    extern fn JSC__createRangeError(*JSC.JSGlobalObject, str: *const String) JSC.JSValue;
 
     fn concat(comptime n: usize, allocator: std.mem.Allocator, strings: *const [n]String) !String {
         var num_16bit: usize = 0;

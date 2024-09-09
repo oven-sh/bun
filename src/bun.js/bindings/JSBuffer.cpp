@@ -1,5 +1,7 @@
+
 #include "root.h"
 
+#include "JavaScriptCore/ExceptionHelpers.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/Error.h"
 #include "JavaScriptCore/JSArrayBufferView.h"
@@ -105,6 +107,86 @@ static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap64);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_toString);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_write);
 #pragma clang diagnostic pop
+
+namespace Bun {
+
+// Use a JSString* here to avoid unnecessarily joining the rope string.
+// If we're only getting the length property, it won't join the rope string.
+std::optional<double> byteLength(JSC::JSString* str, WebCore::BufferEncodingType encoding)
+{
+    if (str->length() == 0)
+        return 0;
+
+    switch (encoding) {
+
+    case WebCore::BufferEncodingType::ucs2:
+    case WebCore::BufferEncodingType::utf16le: {
+        // https://github.com/nodejs/node/blob/e676942f814915b2d24fc899bb42dc71ae6c8226/lib/buffer.js#L600
+        return str->length() * 2;
+    }
+
+    case WebCore::BufferEncodingType::latin1:
+    case WebCore::BufferEncodingType::ascii: {
+        // https://github.com/nodejs/node/blob/e676942f814915b2d24fc899bb42dc71ae6c8226/lib/buffer.js#L627
+        return str->length();
+    }
+
+    case WebCore::BufferEncodingType::base64:
+    case WebCore::BufferEncodingType::base64url: {
+        int64_t length = str->length();
+        const auto& view = str->tryGetValue(true);
+        if (UNLIKELY(view->isNull())) {
+            return std::nullopt;
+        }
+
+        if (view->is8Bit()) {
+            const auto span = view->span8();
+            if (span.data()[length - 1] == 0x3D) {
+                length--;
+
+                if (length > 1 && span.data()[length - 1] == '=')
+                    length--;
+            }
+        } else {
+            const auto span = view->span16();
+            if (span.data()[length - 1] == 0x3D) {
+                length--;
+
+                if (length > 1 && span.data()[length - 1] == '=')
+                    length--;
+            }
+        }
+
+        // https://github.com/nodejs/node/blob/e676942f814915b2d24fc899bb42dc71ae6c8226/lib/buffer.js#L579
+        return static_cast<double>((length * 3) >> 2);
+    }
+
+    case WebCore::BufferEncodingType::hex: {
+        return str->length() >> 1;
+    }
+
+    case WebCore::BufferEncodingType::utf8: {
+        const auto& view = str->tryGetValue(true);
+        if (UNLIKELY(view->isNull())) {
+            return std::nullopt;
+        }
+
+        if (view->is8Bit()) {
+            const auto span = view->span8();
+            return Bun__encoding__byteLengthLatin1(span.data(), span.size(), static_cast<uint8_t>(encoding));
+        } else {
+            const auto span = view->span16();
+            return Bun__encoding__byteLengthUTF16(span.data(), span.size(), static_cast<uint8_t>(encoding));
+        }
+    }
+    default: {
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    }
+
+    return std::nullopt;
+}
+}
 
 static JSUint8Array* allocBuffer(JSC::JSGlobalObject* lexicalGlobalObject, size_t byteLength)
 {
@@ -264,7 +346,11 @@ static inline JSC::EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlob
     if (UNLIKELY(str->length() == 0))
         return JSC::JSValue::encode(JSC::jsNumber(0));
 
-    const auto& view = str->tryGetValue(lexicalGlobalObject);
+    const auto& view = str->value(lexicalGlobalObject);
+    if (view->isNull()) {
+        return {};
+    }
+
     size_t written = 0;
 
     switch (encoding) {
@@ -615,73 +701,14 @@ static inline JSC::EncodedJSValue jsBufferByteLengthFromStringAndEncoding(JSC::J
         return JSC::JSValue::encode(jsUndefined());
     }
 
-    if (str->length() == 0)
-        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(0)));
-
-    int64_t written = 0;
-
-    switch (encoding) {
-
-    case WebCore::BufferEncodingType::ucs2:
-    case WebCore::BufferEncodingType::utf16le: {
-        // https://github.com/nodejs/node/blob/e676942f814915b2d24fc899bb42dc71ae6c8226/lib/buffer.js#L600
-        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(str->length() * 2)));
+    if (auto length = Bun::byteLength(str, encoding)) {
+        return JSValue::encode(jsNumber(*length));
+    }
+    if (!scope.exception()) {
+        throwOutOfMemoryError(lexicalGlobalObject, scope);
     }
 
-    case WebCore::BufferEncodingType::latin1:
-    case WebCore::BufferEncodingType::ascii: {
-        // https://github.com/nodejs/node/blob/e676942f814915b2d24fc899bb42dc71ae6c8226/lib/buffer.js#L627
-        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(str->length())));
-    }
-
-    case WebCore::BufferEncodingType::base64:
-    case WebCore::BufferEncodingType::base64url: {
-        int64_t length = str->length();
-        const auto& view = str->tryGetValue(lexicalGlobalObject);
-
-        if (view->is8Bit()) {
-            const auto span = view->span8();
-            if (span.data()[length - 1] == 0x3D) {
-                length--;
-
-                if (length > 1 && span.data()[length - 1] == '=')
-                    length--;
-            }
-        } else {
-            const auto span = view->span16();
-            if (span.data()[length - 1] == 0x3D) {
-                length--;
-
-                if (length > 1 && span.data()[length - 1] == '=')
-                    length--;
-            }
-        }
-
-        // https://github.com/nodejs/node/blob/e676942f814915b2d24fc899bb42dc71ae6c8226/lib/buffer.js#L579
-        return JSValue::encode(jsNumber(static_cast<double>((length * 3) >> 2)));
-    }
-
-    case WebCore::BufferEncodingType::hex: {
-        return JSValue::encode(jsNumber(str->length() >> 1));
-    }
-
-    case WebCore::BufferEncodingType::utf8: {
-        const auto& view = str->tryGetValue(lexicalGlobalObject);
-        if (view->is8Bit()) {
-            const auto span = view->span8();
-            written = Bun__encoding__byteLengthLatin1(span.data(), span.size(), static_cast<uint8_t>(encoding));
-        } else {
-            const auto span = view->span16();
-            written = Bun__encoding__byteLengthUTF16(span.data(), span.size(), static_cast<uint8_t>(encoding));
-        }
-        break;
-    }
-    default: {
-        break;
-    }
-    }
-
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(written)));
+    return {};
 }
 static inline JSC::EncodedJSValue jsBufferConstructorFunction_byteLengthBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {

@@ -3,7 +3,7 @@ cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
 set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
-set(Bun_VERSION "1.1.27")
+set(Bun_VERSION "1.1.28")
 set(WEBKIT_TAG 147ed53838e21525677492c27099567a6cd19c6b)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
@@ -1375,19 +1375,6 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32 AND NOT ASSERT_ENABLED)
         POST_BUILD
         COMMAND ${STRIP} -s -x -S -o ${BUN_WORKDIR}/bun ${BUN_WORKDIR}/${bun}
         COMMENT "Stripping Symbols"
-    )
-endif()
-
-if(WIN32)
-    # Kill all instances of bun before linking.
-    # This is necessary because the file is locked by the process.
-    add_custom_command(
-        TARGET ${bun}
-        PRE_LINK
-        COMMAND
-        "powershell"
-        "/C"
-        "Stop-Process -Name '${bun}' -Force -ErrorAction SilentlyContinue; exit 0"
     )
 endif()
 

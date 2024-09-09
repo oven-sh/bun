@@ -261,7 +261,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         if (PackageManager.verbose_install) {
             const decompressing_ended_at: u64 = bun.getRoughTickCount().ns();
             const elapsed = decompressing_ended_at - time_started_for_verbose_logs;
-            Output.prettyErrorln("[{s}] Extract {s}<r> (decompressed {} tgz file in {})", .{ name, tmpname, bun.fmt.size(tgz_bytes.len), bun.fmt.fmtDuration(elapsed) });
+            Output.prettyErrorln("[{s}] Extract {s}<r> (decompressed {} tgz file in {})", .{ name, tmpname, bun.fmt.size(tgz_bytes.len, .{}), bun.fmt.fmtDuration(elapsed) });
         }
 
         switch (this.resolution.tag) {

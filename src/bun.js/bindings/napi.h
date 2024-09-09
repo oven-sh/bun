@@ -1,9 +1,5 @@
 #pragma once
 
-namespace Zig {
-class GlobalObject;
-}
-
 #include "root.h"
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/VM.h>
@@ -14,6 +10,8 @@ class GlobalObject;
 #include "js_native_api_types.h"
 #include <JavaScriptCore/JSWeakValue.h>
 #include "JSFFIFunction.h"
+#include "ZigGlobalObject.h"
+#include "napi_handle_scope.h"
 
 namespace JSC {
 class JSGlobalObject;
@@ -38,14 +36,12 @@ static inline Zig::GlobalObject* toJS(napi_env val)
     return reinterpret_cast<Zig::GlobalObject*>(val);
 }
 
-static inline napi_value toNapi(JSC::EncodedJSValue val)
+static inline napi_value toNapi(JSC::JSValue val, Zig::GlobalObject* globalObject)
 {
-    return reinterpret_cast<napi_value>(val);
-}
-
-static inline napi_value toNapi(JSC::JSValue val)
-{
-    return toNapi(JSC::JSValue::encode(val));
+    if (val.isCell()) {
+        globalObject->m_currentNapiHandleScopeImpl.get()->append(val);
+    }
+    return reinterpret_cast<napi_value>(JSC::JSValue::encode(val));
 }
 
 static inline napi_env toNapi(JSC::JSGlobalObject* val)
@@ -60,7 +56,6 @@ public:
 
     void call(JSC::JSGlobalObject* globalObject, void* data);
 };
-
 
 // This is essentially JSC::JSWeakValue, except with a JSCell* instead of a
 // JSObject*. Sometimes, a napi embedder might want to store a JSC::Exception, a

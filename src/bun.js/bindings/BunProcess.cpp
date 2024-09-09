@@ -33,6 +33,8 @@
 
 #include "AsyncContextFrame.h"
 
+#include "napi_handle_scope.h"
+
 #ifndef WIN32
 #include <errno.h>
 #include <dlfcn.h>
@@ -405,6 +407,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
         JSC::throwTypeError(globalObject, scope, "symbol 'napi_register_module_v1' not found in native module. Is this a Node API (napi) module?"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
+
+    NapiHandleScope handleScope(globalObject);
 
     EncodedJSValue exportsValue = JSC::JSValue::encode(exports);
     JSC::JSValue resultValue = JSValue::decode(napi_register_module_v1(globalObject, exportsValue));

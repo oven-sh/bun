@@ -1338,6 +1338,38 @@ extern "C"
     }
   }
 
+  void uws_res_on_timeout(int ssl, uws_res_r res,
+                          void (*handler)(uws_res_r res, void *opcional_data),
+                          void *opcional_data)
+  {
+    if (ssl)
+    {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      auto* onTimeout = reinterpret_cast<void (*)(uWS::HttpResponse<true>*, void*)>(handler);
+      if (handler)
+      {
+        uwsRes->onTimeout(opcional_data, onTimeout);
+      }
+      else
+      {
+        uwsRes->clearOnTimeout();
+      }
+    }
+    else
+    {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      auto* onTimeout = reinterpret_cast<void (*)(uWS::HttpResponse<false>*, void*)>(handler);
+      if (handler)
+      {
+        uwsRes->onTimeout(opcional_data, onTimeout);
+      }
+      else
+      {
+        uwsRes->clearOnTimeout();
+      }
+    }
+  }
+
   void uws_res_on_data(int ssl, uws_res_r res,
                        void (*handler)(uws_res_r res, const char *chunk,
                                        size_t chunk_length, bool is_end,

@@ -2,11 +2,18 @@ name: bun install crash report
 description: Report a crash in bun install
 labels:
   - npm
+  - crash
 body:
   - type: markdown
     attributes:
       value: |
         **Thank you so much** for submitting a crash report. You're helping us make Bun more reliable for everyone!
+  - type: textarea
+    id: package_json
+    attributes:
+      label: `package.json` file
+      description: Can you upload your `package.json` file? This helps us reproduce the crash.
+      render: json
   - type: textarea
     id: repro
     attributes:

@@ -111,8 +111,6 @@ pub const todo_stuff = struct {
 
     pub const depth = "TODO: we need to go deeper";
 
-    pub const errors = "TODO: think about errors";
-
     pub const smallvec = "TODO: implement smallvec";
 
     pub const match_ignore_ascii_case = "TODO: implement match_ignore_ascii_case";
@@ -1882,13 +1880,13 @@ pub fn NestedRuleParser(comptime T: type) type {
 
             if (declarations.len() > 0) {
                 rules.v.insert(
-                    @compileError(todo_stuff.think_about_allocator),
+                    input.allocator(),
                     0,
                     .{
                         .style = StyleRule(T.CustomAtRuleParser.AtRule){
                             .selectors = selector.api.SelectorList.fromSelector(
-                                @compileError(todo_stuff.think_about_allocator),
-                                selector.api.Selector.fromComponent(.nesting),
+                                input.allocator(),
+                                selector.api.Selector.fromComponent(input.allocator(), .nesting),
                             ),
                             .declarations = declarations,
                             .vendor_prefix = VendorPrefix.empty(),
@@ -2318,6 +2316,10 @@ pub const Parser = struct {
     at_start_of: ?BlockType = null,
     stop_before: Delimiters = Delimiters.NONE,
 
+    pub inline fn allocator(self: *Parser) Allocator {
+        return self.input.tokenizer.allocator;
+    }
+
     pub fn new(input: *ParserInput) Parser {
         return Parser{
             .input = input,
@@ -2331,10 +2333,6 @@ pub const Parser = struct {
 
     pub fn currentSourceLocation(this: *const Parser) SourceLocation {
         return this.input.tokenizer.currentSourceLocation();
-    }
-
-    pub fn allocator(this: *Parser) Allocator {
-        return this.input.tokenizer.allocator;
     }
 
     /// Implementation of Vec::<T>::parse
@@ -2681,7 +2679,7 @@ pub const Parser = struct {
                     }.parse);
                     return switch (result) {
                         .result => |v| .{ .result = v },
-                        .err => .{ .err = e.basic() },
+                        .err => |e| .{ .err = e.basic() },
                     };
                 }
             },

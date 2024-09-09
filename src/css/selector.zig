@@ -95,20 +95,24 @@ pub const api = struct {
                 /// Components are large enough that we don't have much cache locality benefit
                 /// from reserving stack space for fewer of them.
                 ///
-                /// todo_stuff.smallvec
-                simple_selectors: ArrayList(GenericComponent(Impl)),
+                simple_selectors: css.SmallList(GenericComponent(Impl), 32) = .{},
 
                 /// The combinators, and the length of the compound selector to their left.
                 ///
-                /// todo_stuff.smallvec
-                combinators: ArrayList(struct { Combinator, usize }),
+                combinators: css.SmallList(struct { Combinator, usize }, 32) = .{},
 
                 /// The length of the current compound selector.
-                current_len: usize,
+                current_len: usize = 0,
+
+                allocator: Allocator,
 
                 const This = @This();
 
-                pub fn default() This {}
+                pub inline fn init(allocator: Allocator) This {
+                    return This{
+                        .allocator = allocator,
+                    };
+                }
 
                 /// Returns true if combinators have ever been pushed to this builder.
                 pub inline fn hasCombinators(this: *This) bool {
@@ -118,20 +122,20 @@ pub const api = struct {
                 /// Completes the current compound selector and starts a new one, delimited
                 /// by the given combinator.
                 pub inline fn pushCombinator(this: *This, combinator: Combinator) void {
-                    this.combinators.append(@compileError(css.todo_stuff.think_about_allocator), .{ combinator, this.current_len }) catch unreachable;
+                    this.combinators.append(this.allocator, .{ combinator, this.current_len }) catch unreachable;
                     this.current_len = 0;
                 }
 
                 /// Pushes a simple selector onto the current compound selector.
                 pub fn pushSimpleSelector(this: *This, ss: GenericComponent(Impl)) void {
                     bun.assert(!ss.isCombinator());
-                    this.simple_selectors.append(@compileError(css.todo_stuff.think_about_allocator), ss) catch unreachable;
+                    this.simple_selectors.append(this.allocator, ss) catch unreachable;
                     this.current_len += 1;
                 }
 
                 pub fn addNestingPrefix(this: *This) void {
-                    this.combinators.insert(@compileError(css.todo_stuff.think_about_allocator), 0, struct { Combinator.descendant, 1 }) catch unreachable;
-                    this.simple_selectors.insert(@compileError(css.todo_stuff.think_about_allocator), 0, .nesting);
+                    this.combinators.insert(this.allocator, 0, struct { Combinator.descendant, 1 }) catch unreachable;
+                    this.simple_selectors.insert(this.allocator, 0, .nesting);
                 }
 
                 /// Consumes the builder, producing a Selector.
@@ -190,7 +194,7 @@ pub const api = struct {
                     while (true) {
                         if (current_simple_selectors_i < current.len) {
                             components.append(
-                                @compileError(css.todo_stuff.think_about_allocator),
+                                this.allocator,
                                 current_simple_selectors[current_simple_selectors_i],
                             ) catch unreachable;
                             current_simple_selectors_i += 1;
@@ -203,7 +207,7 @@ pub const api = struct {
                                 current_simple_selectors = current2;
                                 combinator_i -= 1;
                                 components.append(
-                                    @compileError(css.todo_stuff.think_about_allocator),
+                                    this.allocator,
                                     .{ .combinator = combo },
                                 ) catch unreachable;
                             }
@@ -489,10 +493,8 @@ pub const api = struct {
             input.reset(&parser_state);
         }
 
-        var builder = selector_builder.SelectorBuilder(Impl).default();
-        errdefer {
-            @compileError(css.todo_stuff.think_mem_mgmt);
-        }
+        // PERF: allocations here
+        var builder = selector_builder.SelectorBuilder(Impl){};
 
         outer_loop: while (true) {
             // Parse a sequence of simple selectors.
@@ -743,11 +745,11 @@ pub const api = struct {
         if (combinator) |wombo_combo| {
             // https://www.w3.org/TR/selectors/#absolutizing
             selector.components.append(
-                @compileError(css.todo_stuff.think_about_allocator),
+                parser.allocator,
                 .{ .combinator = wombo_combo },
             ) catch unreachable;
             selector.components.append(
-                @compileError(css.todo_stuff.think_about_allocator),
+                parser.allocator,
                 scope,
             ) catch unreachable;
         }
@@ -946,10 +948,11 @@ pub const api = struct {
         },
 
         pub fn toCss(this: *const PseudoClass, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            var s = std.ArrayList(u8){};
-            const writer = s.writer();
+            var s = ArrayList(u8){};
+            // PERF(alloc): I don't like making these little allocations
+            const writer = s.writer(dest.allocator);
             const W2 = @TypeOf(writer);
-            var printer = Printer(W2).new(@compileError(css.todo_stuff.think_about_allocator), css.PrinterOptions{});
+            var printer = Printer(W2).new(dest.allocator, css.PrinterOptions{});
             try serialize.serializePseudoClass(this, W2, &printer, null);
             return dest.writeStr(s.items);
         }
@@ -1002,6 +1005,7 @@ pub const api = struct {
     pub const SelectorParser = struct {
         is_nesting_allowed: bool,
         options: *const css.ParserOptions,
+        allocator: Allocator,
 
         pub const Impl = impl.Selectors;
 
@@ -1265,13 +1269,8 @@ pub const api = struct {
                                     .err => |e| return .{ .err = e },
                                     .result => |v| v,
                                 };
-                                const alloc: Allocator = {
-                                    @compileError(css.todo_stuff.think_about_allocator);
-                                };
 
-                                const sel = alloc.create(Selector) catch unreachable;
-                                sel.* = selector;
-                                break :brk sel;
+                                break :brk bun.create(this.allocator, Selector, selector);
                             },
                         },
                     };
@@ -1283,13 +1282,8 @@ pub const api = struct {
                                     .err => |e| return .{ .err = e },
                                     .result => |v| v,
                                 };
-                                const alloc: Allocator = {
-                                    @compileError(css.todo_stuff.think_about_allocator);
-                                };
 
-                                const sel = alloc.create(Selector) catch unreachable;
-                                sel.* = selector;
-                                break :brk sel;
+                                break :brk bun.create(this.allocator, Selector, selector);
                             },
                         },
                     };
@@ -1598,8 +1592,8 @@ pub const api = struct {
                 return this.components.items.len;
             }
 
-            pub fn fromComponent(component: GenericComponent(Impl)) This {
-                var builder = SelectorBuilder(Impl).default();
+            pub fn fromComponent(allocator: Allocator, component: GenericComponent(Impl)) This {
+                var builder = SelectorBuilder(Impl).init(allocator);
                 if (component.asCombinator()) |combinator| {
                     builder.pushCombinator(combinator);
                 } else {
@@ -2113,10 +2107,11 @@ pub const api = struct {
         }
 
         pub fn toCss(this: *const PseudoElement, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            var s = std.ArrayList(u8){};
-            const writer = s.writer();
+            var s = ArrayList(u8){};
+            // PERF(alloc): I don't like making small allocations here for the string.
+            const writer = s.writer(dest.allocator);
             const W2 = @TypeOf(writer);
-            var printer = Printer(W2).new(@compileError(css.todo_stuff.think_about_allocator), css.PrinterOptions{});
+            var printer = Printer(W2).new(dest.allocator, css.PrinterOptions{});
             try serialize.serializePseudoElement(this, W2, &printer, null);
             return dest.writeStr(s.items);
         }
@@ -2234,10 +2229,7 @@ pub const api = struct {
             sink.pushSimpleSelector(.{
                 .local_name = LocalName{
                     .lower_name = brk: {
-                        const alloc: std.mem.Allocator = {
-                            @compileError(css.todo_stuff.think_about_allocator);
-                        };
-                        var lowercase = alloc.alloc(u8, name.len) catch unreachable;
+                        var lowercase = parser.allocator.alloc(u8, name.len) catch unreachable;
                         bun.strings.copyLowercase(name, lowercase[0..]);
                         break :brk lowercase;
                     },
@@ -2337,7 +2329,7 @@ pub const api = struct {
                                 pub fn parsefn(_: void, input2: *css.Parser) Result([]Impl.SelectorImpl.Identifier) {
                                     // todo_stuff.think_about_mem_mgmt
                                     var result = ArrayList(Impl.SelectorImpl.Identifier).initCapacity(
-                                        @compileError(css.todo_stuff.think_about_allocator),
+                                        parser.allocator,
                                         // TODO: source does this, should see if initializing to 1 is actually better
                                         // when appending empty std.ArrayList(T), it will usually initially reserve 8 elements,
                                         // maybe that's unnecessary, or maybe smallvec is gud here
@@ -2345,7 +2337,7 @@ pub const api = struct {
                                     ) catch unreachable;
 
                                     result.append(
-                                        @compileError(css.todo_stuff.think_about_allocator),
+                                        parser.allocator,
                                         switch (input2.expectIdent()) {
                                             .err => |e| return .{ .err = e },
                                             .result => |v| v,
@@ -2354,7 +2346,7 @@ pub const api = struct {
 
                                     while (!input.isExhausted()) {
                                         result.append(
-                                            @compileError(css.todo_stuff.think_about_allocator),
+                                            parser.allocator,
                                             switch (input.expectIdent()) {
                                                 .err => |e| return .{ .err = e },
                                                 .result => |v| v,
@@ -2470,10 +2462,6 @@ pub const api = struct {
     }
 
     pub fn parse_attribute_selector(comptime Impl: type, parser: *SelectorParser, input: *css.Parser) Result(GenericComponent(Impl)) {
-        const alloc: std.mem.Allocator = {
-            @compileError(css.todo_stuff.think_about_allocator);
-        };
-
         const N = attrs.NamespaceConstraint(struct {
             prefix: Impl.SelectorImpl.NamespacePrefix,
             url: Impl.SelectorImpl.NamespaceUrl,
@@ -2515,7 +2503,7 @@ pub const api = struct {
                 .result => |v| v,
                 .err => {
                     const local_name_lower = local_name_lower: {
-                        const lower = alloc.alloc(u8, local_name.len) catch unreachable;
+                        const lower = parser.allocator.alloc(u8, local_name.len) catch unreachable;
                         _ = bun.strings.copyLowercase(local_name, lower);
                         break :local_name_lower lower;
                     };
@@ -2528,9 +2516,7 @@ pub const api = struct {
                                 .never_matches = false,
                                 .operation = .exists,
                             };
-                            const v = alloc.create(@TypeOf(x)) catch unreachable;
-                            v.* = x;
-                            break :brk v;
+                            break :brk bun.create(parser.allocatr, @TypeOf(x), x);
                         };
                     } else {
                         return .{
@@ -2597,7 +2583,7 @@ pub const api = struct {
                 break :a null;
             }) |first_uppercase| {
                 const str = local_name[first_uppercase..];
-                const lower = alloc.alloc(u8, str.len) catch unreachable;
+                const lower = parser.allocator.alloc(u8, str.len) catch unreachable;
                 break :brk .{ bun.strings.copyLowercase(str, lower), false };
             } else {
                 break :brk .{ local_name, true };
@@ -2620,9 +2606,7 @@ pub const api = struct {
                             },
                         },
                     };
-                    const v = alloc.create(@TypeOf(x)) catch unreachable;
-                    v.* = x;
-                    break :brk v;
+                    break :brk bun.create(parser.allocator, @TypeOf(x), x);
                 },
             };
         } else {
@@ -3411,11 +3395,11 @@ pub const serialize = struct {
                 if (dest.minify) {
                     // PERF: should we put a scratch buffer in the printer
                     // Serialize as both an identifier and a string and choose the shorter one.
-                    var id = std.ArrayList(u8).init(@compileError(css.todo_stuff.think_about_allocator));
+                    var id = std.ArrayList(u8).init(dest.allocator);
                     const writer = id.writer();
                     css.serializer.serializeIdentifier(v.value, W, writer);
 
-                    const s = switch (css.to_css.string(@compileError(css.todo_stuff.think_about_allocator), CSSString, &v.value, css.PrinterOptions{})) {
+                    const s = switch (css.to_css.string(dest.allocator, CSSString, &v.value, css.PrinterOptions{})) {
                         .err => |e| return .{ .err = e },
                         .result => |v2| v2,
                     };

@@ -92,6 +92,7 @@ pub fn Printer(comptime Writer: type) type {
         ctx: ?*const css.StyleContext,
         scratchbuf: std.ArrayList(u8),
         err: ?css.PrinterError,
+        allocator: Allocator,
         // TODO: finish the fields
 
         const This = @This();
@@ -151,6 +152,7 @@ pub fn Printer(comptime Writer: type) type {
                 .pseudo_classes = options.pseudo_classes,
                 .indentation_buf = std.ArrayList(u8).init(allocator),
                 .scratchbuf = scratchbuf,
+                .allocator = allocator,
             };
         }
 

@@ -11,34 +11,15 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "bun build demo",
+      "name": "bun test [file]",
       "program": "${workspaceFolder}/build/bun-debug",
-      "args": [
-        "build", "./first.tsx", 
-      // "--format", "internal_kit_dev"
-    ],
-      "cwd": "/Users/dave/kt",
+      "args": ["test", "${file}"],
+      "cwd": "${workspaceFolder}/test",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_DEBUG_TreeShake": "1",
-        "BUN_DEBUG_LinkerCtx": "1",
-        "GOMAXPROCS": "0",
-      },
-      "console": "internalConsole",
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "kit",
-      "program": "${workspaceFolder}/build/bun-debug",
-      "args": [
-        "run", "./start.ts", 
-      ],
-      "cwd": "/Users/dave/kt",
-      "env": {
-        "FORCE_COLOR": "1",
-        "GOMAXPROCS": "0",
+        "BUN_DEBUG_jest": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
       },
       "console": "internalConsole",
     },

@@ -5271,6 +5271,7 @@ pub const Interpreter = struct {
             dirname: Dirname,
             basename: Basename,
             cp: Cp,
+            sleep: Sleep,
         };
 
         const Result = @import("../result.zig").Result;
@@ -5296,6 +5297,7 @@ pub const Interpreter = struct {
             dirname,
             basename,
             cp,
+            sleep,
 
             pub const DISABLED_ON_POSIX: []const Kind = &.{ .cat, .cp };
 
@@ -5324,6 +5326,7 @@ pub const Interpreter = struct {
                     .dirname => "usage: dirname string\n",
                     .basename => "usage: basename string\n",
                     .cp => "usage: cp [-R [-H | -L | -P]] [-fi | -n] [-aclpsvXx] source_file target_file\n       cp [-R [-H | -L | -P]] [-fi | -n] [-aclpsvXx] source_file ... target_directory\n",
+                    .sleep => "usage: sleep seconds\n",
                 };
             }
 
@@ -5502,6 +5505,7 @@ pub const Interpreter = struct {
                 .dirname => this.callImplWithType(Dirname, Ret, "dirname", field, args_),
                 .basename => this.callImplWithType(Basename, Ret, "basename", field, args_),
                 .cp => this.callImplWithType(Cp, Ret, "cp", field, args_),
+                .sleep => this.callImplWithType(Sleep, Ret, "sleep", field, args_),
             };
         }
 
@@ -10497,6 +10501,88 @@ pub const Interpreter = struct {
             }
         };
 
+        pub const Sleep = struct {
+            bltn: *Builtin,
+            state: enum { idle, waiting_io, err, done } = .idle,
+
+            pub fn start(this: *Sleep) Maybe(void) {
+                const args = this.bltn.argsSlice();
+                var iter = bun.SliceIterator([*:0]const u8).init(args);
+
+                if (args.len == 0) return this.fail(Builtin.Kind.usageString(.sleep));
+
+                var total: f64 = 0;
+                while (iter.next()) |arg| {
+                    const slice = bun.sliceTo(arg, 0);
+
+                    if (slice.len == 0 or slice[0] == '-') {
+                        return this.fail("sleep: invalid time interval\n");
+                    }
+
+                    const seconds = bun.fmt.parseFloat(f64, slice) catch {
+                        return this.fail("sleep: invalid time interval\n");
+                    };
+
+                    if (std.math.isInf(seconds)) {
+                        // if positive infinity is seen, set total to `-1`.
+                        // continue iterating to catch invalid args
+                        total = -1;
+                    } else if (std.math.isNan(seconds)) {
+                        return this.fail("sleep: invalid time interval\n");
+                    }
+
+                    if (total != -1) {
+                        total += seconds;
+                    }
+                }
+
+                if (this.state == .err) {
+                    return Maybe(void).success;
+                }
+
+                if (total != 0) {
+                    if (total == -1) {
+                        std.time.sleep(std.math.maxInt(u64));
+                    } else {
+                        std.time.sleep(@intFromFloat(@floor(total * @as(f64, std.time.ns_per_s))));
+                    }
+                }
+
+                this.state = .done;
+                this.bltn.done(0);
+
+                return Maybe(void).success;
+            }
+
+            pub fn deinit(_: *Sleep) void {}
+
+            pub fn fail(this: *Sleep, msg: string) Maybe(void) {
+                if (this.bltn.stderr.needsIO()) |safeguard| {
+                    this.state = .err;
+                    this.bltn.stderr.enqueue(this, msg, safeguard);
+                    return Maybe(void).success;
+                }
+                _ = this.bltn.writeNoIO(.stderr, msg);
+                this.bltn.done(1);
+                return Maybe(void).success;
+            }
+
+            pub fn onIOWriterChunk(this: *Sleep, _: usize, maybe_e: ?JSC.SystemError) void {
+                if (maybe_e) |e| {
+                    defer e.deref();
+                    this.state = .err;
+                    this.bltn.done(1);
+                    return;
+                }
+                if (this.state == .done) {
+                    this.bltn.done(0);
+                }
+                if (this.state == .err) {
+                    this.bltn.done(1);
+                }
+            }
+        };
+
         pub const Cp = struct {
             bltn: *Builtin,
             opts: Opts = .{},
@@ -12280,6 +12366,7 @@ pub const IOWriterChildPtr = struct {
         Interpreter.Builtin.Basename,
         Interpreter.Builtin.Cp,
         Interpreter.Builtin.Cp.ShellCpOutputTask,
+        Interpreter.Builtin.Sleep,
         shell.subproc.PipeReader.CapturedWriter,
     });
 

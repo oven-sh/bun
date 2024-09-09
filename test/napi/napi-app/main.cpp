@@ -1,12 +1,13 @@
 #include <node.h>
 
-#include <inttypes.h>
-#include <iostream>
 #include <napi.h>
-#include <stdarg.h>
-#include <stdio.h>
 
+#include <array>
 #include <cassert>
+#include <cstdarg>
+#include <cstdint>
+#include <cstdio>
+#include <iostream>
 
 napi_value fail(napi_env env, const char *msg) {
   napi_value result;

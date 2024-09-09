@@ -1,7 +1,7 @@
 import { bench, run } from "mitata";
 const crypto = require("node:crypto");
 
-const keyPair = crypto.generateKeyPairSync('rsa', {
+const keyPair = crypto.generateKeyPairSync("rsa", {
   modulusLength: 2048,
   publicKeyEncoding: {
     type: "spki",

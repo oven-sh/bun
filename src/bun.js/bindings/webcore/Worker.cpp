@@ -479,9 +479,9 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 
     JSObject* array = constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
 
-    array->putDirectIndex(globalObject, 0, workerData, false, 0);
-    array->putDirectIndex(globalObject, 1, threadId, false, 0);
-    array->putDirectIndex(globalObject, 2, JSFunction::create(vm, globalObject, 1, "receiveMessageOnPort"_s, jsReceiveMessageOnPort, ImplementationVisibility::Public, NoIntrinsic), false, 0);
+    array->putDirectIndex(globalObject, 0, workerData);
+    array->putDirectIndex(globalObject, 1, threadId);
+    array->putDirectIndex(globalObject, 2, JSFunction::create(vm, globalObject, 1, "receiveMessageOnPort"_s, jsReceiveMessageOnPort, ImplementationVisibility::Public, NoIntrinsic));
 
     return array;
 }

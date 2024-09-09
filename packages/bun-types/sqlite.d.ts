@@ -179,7 +179,7 @@ declare module "bun:sqlite" {
      * - `CREATE VIRTUAL TABLE`
      * - `CREATE TEMPORARY TABLE`
      *
-     * @param sql The SQL query to run
+     * @param sqlQuery The SQL query to run
      *
      * @param bindings Optional bindings for the query
      *
@@ -223,7 +223,7 @@ declare module "bun:sqlite" {
      * stmt.all();
      * ```
      *
-     * @param sql The SQL query to compile
+     * @param sqlQuery The SQL query to compile
      *
      * @returns `Statment` instance
      *
@@ -247,7 +247,7 @@ declare module "bun:sqlite" {
      * stmt.all("baz");
      * ```
      *
-     * @param sql The SQL query to compile
+     * @param sqlQuery The SQL query to compile
      * @param params Optional bindings for the query
      *
      * @returns `Statment` instance

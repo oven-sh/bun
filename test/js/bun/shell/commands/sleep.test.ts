@@ -36,8 +36,18 @@ describe("sleep", async () => {
     .duration(1000)
     .runAsTest("sleeps for sum of arguments");
 
-  Builder.command`sleep 1s`.exitCode(0).stdout("").stderr("").duration(1000).runAsTest("sleeps for seconds");
-  Builder.command`sleep 0.0167m`.exitCode(0).stdout("").stderr("").duration(1000).runAsTest("sleeps for minutes");
-  Builder.command`sleep 0.00028h`.exitCode(0).stdout("").stderr("").duration(1000).runAsTest("sleeps for hours");
-  Builder.command`sleep 0.0000116d`.exitCode(0).stdout("").stderr("").duration(1000).runAsTest("sleeps for days");
+  Builder.command`sleep .5s`.exitCode(0).stdout("").stderr("").duration(500).runAsTest("sleeps for seconds");
+  Builder.command`sleep ${1 / 60 / 2}m`.exitCode(0).stdout("").stderr("").duration(500).runAsTest("sleeps for minutes");
+  Builder.command`sleep ${1 / 60 / 60 / 2}h`
+    .exitCode(0)
+    .stdout("")
+    .stderr("")
+    .duration(500)
+    .runAsTest("sleeps for hours");
+  Builder.command`sleep ${1 / 60 / 60 / 24 / 2}d`
+    .exitCode(0)
+    .stdout("")
+    .stderr("")
+    .duration(500)
+    .runAsTest("sleeps for days");
 });

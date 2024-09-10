@@ -1055,3 +1055,23 @@ it("fs.createReadStream(filename) should be able to break inside async loop", as
     expect(true).toBe(true);
   }
 });
+
+it("pipeTo doesn't cause unhandled rejections on readable errors", async () => {
+  // https://github.com/WebKit/WebKit/blob/3a75b5d2de94aa396a99b454ac47f3be9e0dc726/LayoutTests/streams/pipeTo-unhandled-promise.html
+  let unhandledRejectionCaught = false;
+
+  const catchUnhandledRejection = () => {
+    unhandledRejectionCaught = true;
+  };
+  process.on("unhandledRejection", catchUnhandledRejection);
+
+  const writable = new WritableStream();
+  const readable = new ReadableStream({ start: c => c.error("error") });
+  readable.pipeTo(writable).catch(() => {});
+
+  await Bun.sleep(15);
+
+  process.off("unhandledRejection", catchUnhandledRejection);
+
+  expect(unhandledRejectionCaught).toBe(false);
+});

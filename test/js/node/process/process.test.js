@@ -1026,3 +1026,7 @@ describe("process.exitCode", () => {
     ]).toRunInlineFixture();
   });
 });
+
+it("process._exiting", () => {
+  expect(process._exiting).toBe(false);
+});

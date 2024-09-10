@@ -228,21 +228,6 @@ pub const Runtime = struct {
 
         set_breakpoint_on_first_line: bool = false,
 
-        /// Instead of jsx("div", {}, void 0)
-        /// ->
-        /// {
-        ///    "type": "div",
-        ///    "props": {},
-        ///    "children": [],
-        ///    key: void 0,
-        ///   $$typeof: Symbol.for("react.element"),
-        /// }
-        /// See also https://github.com/babel/babel/commit/3cad2872335e2130f2ff6335027617ebbe9b5a46
-        /// See also https://github.com/babel/babel/pull/2972
-        /// See also https://github.com/facebook/react/issues/5138
-        jsx_optimization_inline: bool = false,
-        jsx_optimization_hoist: bool = false,
-
         trim_unused_imports: bool = false,
 
         /// Use `import.meta.require()` instead of require()?

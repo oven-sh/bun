@@ -81,11 +81,15 @@ pub const BrotliEncoder = struct {
         const callback = arguments[2];
         const mode = arguments[3].to(u8);
 
-        _ = globalThis.checkMinOrGetDefault(opts, "chunkSize", u32, 64, 1024 * 16) orelse return .zero;
-        const maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)) orelse return .zero;
-        const flush = globalThis.checkRangesOrGetDefault(opts, "flush", u8, 0, 3, 0) orelse return .zero;
-        const finishFlush = globalThis.checkRangesOrGetDefault(opts, "finishFlush", u8, 0, 3, 2) orelse return .zero;
-        const fullFlush = globalThis.checkRangesOrGetDefault(opts, "fullFlush", u8, 0, 3, 1) orelse return .zero;
+        const chunk_size = globalThis.getInteger(opts, u32, 1024 * 48, .{
+            .min = 64,
+            .field_name = "chunkSize",
+        }) orelse return .zero;
+        _ = chunk_size; // autofix
+        const maxOutputLength = globalThis.getInteger(opts, usize, 0, .{ .max = std.math.maxInt(u52), .field_name = "maxOutputLength" }) orelse return .zero;
+        const flush = globalThis.getInteger(opts, u8, 0, .{ .max = 3, .field_name = "flush" }) orelse return .zero;
+        const finishFlush = globalThis.getInteger(opts, u8, 2, .{ .max = 3, .field_name = "finishFlush" }) orelse return .zero;
+        const fullFlush = globalThis.getInteger(opts, u8, 1, .{ .max = 3, .field_name = "fullFlush" }) orelse return .zero;
 
         var this: *BrotliEncoder = BrotliEncoder.new(.{
             .globalThis = globalThis,
@@ -180,6 +184,7 @@ pub const BrotliEncoder = struct {
         task: JSC.WorkPoolTask = .{ .callback = &runTask },
         encoder: *BrotliEncoder,
         is_async: bool,
+        vm: *JSC.VirtualMachine,
 
         pub usingnamespace bun.New(@This());
 
@@ -190,8 +195,6 @@ pub const BrotliEncoder = struct {
         }
 
         pub fn run(this: *EncodeJob) void {
-            const vm = this.encoder.globalThis.bunVMConcurrently();
-            defer this.encoder.poll_ref.unrefConcurrently(vm);
             defer {
                 _ = this.encoder.has_pending_activity.fetchSub(1, .monotonic);
             }
@@ -271,9 +274,7 @@ pub const BrotliEncoder = struct {
 
             if (this.is_async and any) {
                 _ = this.encoder.has_pending_activity.fetchAdd(1, .monotonic);
-                this.encoder.poll_ref.refConcurrently(vm);
-                this.encoder.poll_ref.refConcurrently(vm);
-                vm.enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(this.encoder)));
+                this.vm.enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(this.encoder)));
             }
         }
     };
@@ -307,6 +308,7 @@ pub const BrotliEncoder = struct {
         var task = EncodeJob.new(.{
             .encoder = this,
             .is_async = true,
+            .vm = this.globalThis.bunVM(),
         });
 
         {
@@ -317,7 +319,7 @@ pub const BrotliEncoder = struct {
             input_to_queue.protect();
             this.input.writeItem(input_to_queue) catch bun.outOfMemory();
         }
-        this.poll_ref.ref(this.globalThis.bunVM());
+        this.poll_ref.ref(task.vm);
         JSC.WorkPool.schedule(&task.task);
 
         return .undefined;
@@ -363,6 +365,7 @@ pub const BrotliEncoder = struct {
         var task: EncodeJob = .{
             .encoder = this,
             .is_async = false,
+            .vm = this.globalThis.bunVM(),
         };
 
         {
@@ -465,11 +468,10 @@ pub const BrotliDecoder = struct {
         const callback = arguments[2];
         const mode = arguments[3].to(u8);
 
-        _ = globalThis.checkMinOrGetDefault(opts, "chunkSize", u32, 64, 1024 * 16) orelse return .zero;
-        const maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)) orelse return .zero;
-        const flush = globalThis.checkRangesOrGetDefault(opts, "flush", u8, 0, 6, 0) orelse return .zero;
-        const finishFlush = globalThis.checkRangesOrGetDefault(opts, "finishFlush", u8, 0, 6, 2) orelse return .zero;
-        const fullFlush = globalThis.checkRangesOrGetDefault(opts, "fullFlush", u8, 0, 6, 1) orelse return .zero;
+        const maxOutputLength = globalThis.getInteger(opts, usize, 0, .{ .max = std.math.maxInt(u52), .field_name = "maxOutputLength" }) orelse return .zero;
+        const flush = globalThis.getInteger(opts, u8, 0, .{ .max = 6, .field_name = "flush" }) orelse return .zero;
+        const finishFlush = globalThis.getInteger(opts, u8, 2, .{ .max = 6, .field_name = "finishFlush" }) orelse return .zero;
+        const fullFlush = globalThis.getInteger(opts, u8, 1, .{ .max = 6, .field_name = "fullFlush" }) orelse return .zero;
 
         var this: *BrotliDecoder = BrotliDecoder.new(.{
             .globalThis = globalThis,
@@ -570,6 +572,7 @@ pub const BrotliDecoder = struct {
         var task = DecodeJob.new(.{
             .decoder = this,
             .is_async = true,
+            .vm = this.globalThis.bunVM(),
         });
 
         {
@@ -580,7 +583,7 @@ pub const BrotliDecoder = struct {
             input_to_queue.protect();
             this.input.writeItem(input_to_queue) catch bun.outOfMemory();
         }
-        this.poll_ref.ref(this.globalThis.bunVM());
+        this.poll_ref.ref(task.vm);
         JSC.WorkPool.schedule(&task.task);
 
         return .undefined;
@@ -626,6 +629,7 @@ pub const BrotliDecoder = struct {
         var task: DecodeJob = .{
             .decoder = this,
             .is_async = false,
+            .vm = this.globalThis.bunVM(),
         };
 
         {
@@ -641,7 +645,7 @@ pub const BrotliDecoder = struct {
             return JSC.Buffer.fromBytes(&.{}, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
         }
         if (this.write_failure != null) {
-            globalThis.vm().throwError(globalThis, this.write_failure.?.toError(globalThis));
+            globalThis.throwValue(this.write_failure.?.toError(globalThis));
             return .zero;
         }
         return this.collectOutputValue();
@@ -655,6 +659,7 @@ pub const BrotliDecoder = struct {
         task: JSC.WorkPoolTask = .{ .callback = &runTask },
         decoder: *BrotliDecoder,
         is_async: bool,
+        vm: *JSC.VirtualMachine,
 
         pub usingnamespace bun.New(@This());
 
@@ -665,8 +670,6 @@ pub const BrotliDecoder = struct {
         }
 
         pub fn run(this: *DecodeJob) void {
-            const vm = this.decoder.globalThis.bunVMConcurrently();
-            defer this.decoder.poll_ref.unrefConcurrently(vm);
             defer {
                 _ = this.decoder.has_pending_activity.fetchSub(1, .monotonic);
             }
@@ -735,9 +738,7 @@ pub const BrotliDecoder = struct {
 
             if (this.is_async and any) {
                 _ = this.decoder.has_pending_activity.fetchAdd(1, .monotonic);
-                this.decoder.poll_ref.refConcurrently(vm);
-                this.decoder.poll_ref.refConcurrently(vm);
-                vm.enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(this.decoder)));
+                this.vm.enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(this.decoder)));
             }
         }
     };

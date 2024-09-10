@@ -56,7 +56,7 @@ test("all worker_threads module properties are present", () => {
   expect(SHARE_ENV).toBeDefined();
   expect(setEnvironmentData).toBeFunction();
   expect(threadId).toBeNumber();
-  expect(workerData).toBeUndefined();
+  expect(workerData).toBeNull();
   expect(BroadcastChannel).toBeDefined();
   expect(MessageChannel).toBeDefined();
   expect(MessagePort).toBeDefined();

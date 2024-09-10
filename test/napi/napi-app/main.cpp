@@ -1,12 +1,13 @@
 #include <node.h>
 
-#include <inttypes.h>
-#include <iostream>
 #include <napi.h>
-#include <stdarg.h>
-#include <stdio.h>
 
+#include <array>
 #include <cassert>
+#include <cstdarg>
+#include <cstdint>
+#include <cstdio>
+#include <iostream>
 
 napi_value fail(napi_env env, const char *msg) {
   napi_value result;
@@ -431,6 +432,24 @@ napi_value create_promise(const Napi::CallbackInfo &info) {
   return promise;
 }
 
+napi_value test_napi_ref(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  napi_value object;
+  assert(napi_create_object(env, &object) == napi_ok);
+
+  napi_ref ref;
+  assert(napi_create_reference(env, object, 0, &ref) == napi_ok);
+
+  napi_value from_ref;
+  assert(napi_get_reference_value(env, ref, &from_ref) == napi_ok);
+  assert(from_ref != nullptr);
+  napi_valuetype typeof_result;
+  assert(napi_typeof(env, from_ref, &typeof_result) == napi_ok);
+  assert(typeof_result == napi_object);
+  return ok(env);
+}
+
 Napi::Value RunCallback(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   Napi::Function cb = info[0].As<Napi::Function>();
@@ -472,6 +491,7 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
   exports.Set("get_class_with_constructor",
               Napi::Function::New(env, get_class_with_constructor));
   exports.Set("create_promise", Napi::Function::New(env, create_promise));
+  exports.Set("test_napi_ref", Napi::Function::New(env, test_napi_ref));
 
   return exports;
 }

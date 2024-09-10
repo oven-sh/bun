@@ -724,13 +724,13 @@ pub const EventLoopTimer = struct {
 
     tag: Tag = .TimerCallback,
 
-    pub const Tag = enum {
+    pub const Tag = if (Environment.isWindows) enum {
         TimerCallback,
         TimerObject,
         TestRunner,
         StatWatcherScheduler,
         UpgradedDuplex,
-        WrappedPipe,
+        WindowsNamedPipe,
 
         pub fn Type(comptime T: Tag) type {
             return switch (T) {
@@ -739,7 +739,23 @@ pub const EventLoopTimer = struct {
                 .TestRunner => JSC.Jest.TestRunner,
                 .StatWatcherScheduler => StatWatcherScheduler,
                 .UpgradedDuplex => uws.UpgradedDuplex,
-                .WrappedPipe => uws.WrappedPipe,
+                .WindowsNamedPipe => uws.WindowsNamedPipe,
+            };
+        }
+    } else enum {
+        TimerCallback,
+        TimerObject,
+        TestRunner,
+        StatWatcherScheduler,
+        UpgradedDuplex,
+
+        pub fn Type(comptime T: Tag) type {
+            return switch (T) {
+                .TimerCallback => TimerCallback,
+                .TimerObject => TimerObject,
+                .TestRunner => JSC.Jest.TestRunner,
+                .StatWatcherScheduler => StatWatcherScheduler,
+                .UpgradedDuplex => uws.UpgradedDuplex,
             };
         }
     };
@@ -803,8 +819,10 @@ pub const EventLoopTimer = struct {
                 if (comptime t.Type() == uws.UpgradedDuplex) {
                     return container.onTimeout();
                 }
-                if (comptime t.Type() == uws.WrappedPipe) {
-                    return container.onTimeout();
+                if (Environment.isWindows) {
+                    if (comptime t.Type() == uws.WindowsNamedPipe) {
+                        return container.onTimeout();
+                    }
                 }
 
                 if (comptime t.Type() == JSC.Jest.TestRunner) {

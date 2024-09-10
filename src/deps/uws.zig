@@ -549,15 +549,16 @@ pub const UpgradedDuplex = struct {
     }
 };
 
-pub const WrappedPipe = struct {
+pub const WindowsNamedPipe = if (Environment.isWindows) struct {
     pub const CertError = UpgradedDuplex.CertError;
 
-    const WrapperType = SSLWrapper(*WrappedPipe);
+    const WrapperType = SSLWrapper(*WindowsNamedPipe);
     const uv = bun.windows.libuv;
     wrapper: ?WrapperType,
     pipe: if (Environment.isWindows) ?*uv.Pipe else void, // any duplex
+    vm: *bun.JSC.VirtualMachine, //TODO: create a timeout version that dont need the JSC VM
 
-    writer: bun.io.StreamingWriter(WrappedPipe, onWrite, onError, onWritable, onPipeClose) = .{},
+    writer: bun.io.StreamingWriter(WindowsNamedPipe, onWrite, onError, onWritable, onPipeClose) = .{},
 
     incoming: bun.ByteList = .{}, // Maybe we should use IPCBuffer here as well
     ssl_error: CertError = .{},
@@ -566,7 +567,7 @@ pub const WrappedPipe = struct {
 
     event_loop_timer: EventLoopTimer = .{
         .next = .{},
-        .tag = .WrappedPipe,
+        .tag = .WindowsNamedPipe,
     },
     current_timeout: u32 = 0,
     flags: Flags = .{},
@@ -588,10 +589,10 @@ pub const WrappedPipe = struct {
         onTimeout: *const fn (*anyopaque) void,
     };
 
-    const log = bun.Output.scoped(.WrappedPipe, false);
+    const log = bun.Output.scoped(.WindowsNamedPipe, false);
 
     fn onWritable(
-        this: *WrappedPipe,
+        this: *WindowsNamedPipe,
     ) void {
         log("onWritable", .{});
         // flush pending data
@@ -600,14 +601,14 @@ pub const WrappedPipe = struct {
         this.handlers.onWritable(this.handlers.ctx);
     }
 
-    fn onPipeClose(this: *WrappedPipe) void {
+    fn onPipeClose(this: *WindowsNamedPipe) void {
         log("onPipeClose", .{});
         this.flags.disconnected = true;
         this.pipe = null;
         this.handlers.onClose(this.handlers.ctx);
     }
 
-    fn onReadAlloc(this: *WrappedPipe, suggested_size: usize) []u8 {
+    fn onReadAlloc(this: *WindowsNamedPipe, suggested_size: usize) []u8 {
         var available = this.incoming.available();
         if (available.len < suggested_size) {
             this.incoming.ensureUnusedCapacity(bun.default_allocator, suggested_size) catch bun.outOfMemory();
@@ -616,7 +617,7 @@ pub const WrappedPipe = struct {
         return available.ptr[0..suggested_size];
     }
 
-    fn onRead(this: *WrappedPipe, buffer: []const u8) void {
+    fn onRead(this: *WindowsNamedPipe, buffer: []const u8) void {
         log("onRead ({})", .{buffer.len});
         this.incoming.len += @as(u32, @truncate(buffer.len));
         bun.assert(this.incoming.len <= this.incoming.cap);
@@ -634,7 +635,7 @@ pub const WrappedPipe = struct {
         this.incoming.len = 0;
     }
 
-    fn onWrite(this: *WrappedPipe, amount: usize, status: bun.io.WriteStatus) void {
+    fn onWrite(this: *WindowsNamedPipe, amount: usize, status: bun.io.WriteStatus) void {
         log("onWrite {d} {}", .{ amount, status });
 
         switch (status) {
@@ -645,26 +646,34 @@ pub const WrappedPipe = struct {
             },
             .end_of_file => {
                 this.handlers.onEnd(this.handlers.ctx);
+                // we dont allow half closed pipes right now
+                this.writer.close();
             },
         }
     }
 
-    fn onError(this: *WrappedPipe, err: bun.sys.Error) void {
-        log("onError", .{});
-        this.handlers.onError(this.handlers.ctx, err);
+    fn onReadError(this: *WindowsNamedPipe, err: bun.C.E) void {
+        log("onReadError", .{});
+        this.onError(bun.sys.Error.fromCode(err, .read));
     }
 
-    fn onOpen(this: *WrappedPipe) void {
+    fn onError(this: *WindowsNamedPipe, err: bun.sys.Error) void {
+        log("onError", .{});
+        this.handlers.onError(this.handlers.ctx, err);
+        this.close();
+    }
+
+    fn onOpen(this: *WindowsNamedPipe) void {
         log("onOpen", .{});
         this.handlers.onOpen(this.handlers.ctx);
     }
 
-    fn onData(this: *WrappedPipe, decoded_data: []const u8) void {
+    fn onData(this: *WindowsNamedPipe, decoded_data: []const u8) void {
         log("onData ({})", .{decoded_data.len});
         this.handlers.onData(this.handlers.ctx, decoded_data);
     }
 
-    fn onHandshake(this: *WrappedPipe, handshake_success: bool, ssl_error: uws.us_bun_verify_error_t) void {
+    fn onHandshake(this: *WindowsNamedPipe, handshake_success: bool, ssl_error: uws.us_bun_verify_error_t) void {
         log("onHandshake", .{});
 
         this.ssl_error = .{
@@ -675,7 +684,7 @@ pub const WrappedPipe = struct {
         this.handlers.onHandshake(this.handlers.ctx, handshake_success, ssl_error);
     }
 
-    fn onClose(this: *WrappedPipe) void {
+    fn onClose(this: *WindowsNamedPipe) void {
         log("onClose", .{});
         defer this.deinit();
 
@@ -684,7 +693,7 @@ pub const WrappedPipe = struct {
         this.callWriteOrEnd(null, false);
     }
 
-    fn callWriteOrEnd(this: *WrappedPipe, data: ?[]const u8, msg_more: bool) void {
+    fn callWriteOrEnd(this: *WindowsNamedPipe, data: ?[]const u8, msg_more: bool) void {
         if (data) |bytes| {
             if (bytes.len > 0) {
                 // ref because we have pending data
@@ -707,7 +716,7 @@ pub const WrappedPipe = struct {
         }
     }
 
-    fn internalWrite(this: *WrappedPipe, encoded_data: []const u8) void {
+    fn internalWrite(this: *WindowsNamedPipe, encoded_data: []const u8) void {
         this.resetTimeout();
 
         // Possible scenarios:
@@ -718,7 +727,7 @@ pub const WrappedPipe = struct {
         this.callWriteOrEnd(encoded_data, true);
     }
 
-    pub fn flush(this: *WrappedPipe) void {
+    pub fn flush(this: *WindowsNamedPipe) void {
         if (this.wrapper) |*wrapper| {
             _ = wrapper.flush();
         }
@@ -727,14 +736,14 @@ pub const WrappedPipe = struct {
         }
     }
 
-    fn onInternalReceiveData(this: *WrappedPipe, data: []const u8) void {
+    fn onInternalReceiveData(this: *WindowsNamedPipe, data: []const u8) void {
         if (this.wrapper) |*wrapper| {
             this.resetTimeout();
             wrapper.receiveData(data);
         }
     }
 
-    pub fn onTimeout(this: *WrappedPipe) EventLoopTimer.Arm {
+    pub fn onTimeout(this: *WindowsNamedPipe) EventLoopTimer.Arm {
         log("onTimeout", .{});
 
         const has_been_cleared = this.event_loop_timer.state == .CANCELLED or this.vm.scriptExecutionStatus() != .running;
@@ -752,20 +761,22 @@ pub const WrappedPipe = struct {
     }
 
     pub fn from(
-        pipe: if (Environment.isWindows) *uv.Pipe else void,
-        handlers: WrappedPipe.Handlers,
-    ) !WrappedPipe {
+        pipe: *uv.Pipe,
+        handlers: WindowsNamedPipe.Handlers,
+        vm: *JSC.VirtualMachine,
+    ) WindowsNamedPipe {
         if (Environment.isPosix) {
-            @compileError("WrappedPipe is not supported on POSIX systems");
+            @compileError("WindowsNamedPipe is not supported on POSIX systems");
         }
-        return WrappedPipe{
+        return WindowsNamedPipe{
+            .vm = vm,
             .pipe = pipe,
             .wrapper = null,
             .handlers = handlers,
         };
     }
-    fn onConnect(this: *WrappedPipe, status: uv.ReturnCode) void {
-        if (status.errEnum()) |err| {
+    fn onConnect(this: *WindowsNamedPipe, status: uv.ReturnCode) void {
+        if (status.toError(.connect2)) |err| {
             this.onError(err);
             return;
         }
@@ -773,6 +784,7 @@ pub const WrappedPipe = struct {
         if (this.start(true)) {
             if (this.isTLS()) {
                 if (this.wrapper) |*wrapper| {
+                    // trigger onOpen and start the handshake
                     wrapper.start();
                 }
             } else {
@@ -783,44 +795,90 @@ pub const WrappedPipe = struct {
         this.flush();
     }
 
-    pub fn connect(this: *WrappedPipe, path: []const u8, ssl_options: ?JSC.API.ServerConfig.SSLConfig) !void {
-        if (this.pipe == null) {
-            return bun.C.E.BADF;
+    pub fn open(this: *WindowsNamedPipe, fd: bun.FileDescriptor, ssl_options: ?JSC.API.ServerConfig.SSLConfig) JSC.Maybe(void) {
+        bun.assert(this.pipe != null);
+        this.flags.disconnected = true;
+
+        if (ssl_options) |tls| {
+            this.flags.is_ssl = true;
+            this.wrapper = WrapperType.init(tls, true, .{
+                .ctx = this,
+                .onOpen = WindowsNamedPipe.onOpen,
+                .onHandshake = WindowsNamedPipe.onHandshake,
+                .onData = WindowsNamedPipe.onData,
+                .onClose = WindowsNamedPipe.onClose,
+                .write = WindowsNamedPipe.internalWrite,
+            }) catch {
+                return .{
+                    .err = .{
+                        .errno = @intFromEnum(bun.C.E.PIPE),
+                        .syscall = .connect2,
+                    },
+                };
+            };
         }
+        const initResult = this.pipe.?.init(this.vm.uvLoop(), false);
+        if (initResult == .err) {
+            return initResult;
+        }
+
+        const openResult = this.pipe.?.open(fd);
+        if (openResult == .err) {
+            return openResult;
+        }
+
+        onConnect(this, uv.ReturnCode.zero);
+        return .{ .result = {} };
+    }
+    pub fn connect(this: *WindowsNamedPipe, path: []const u8, ssl_options: ?JSC.API.ServerConfig.SSLConfig) JSC.Maybe(void) {
+        bun.assert(this.pipe != null);
         this.flags.disconnected = true;
         // ref because we are connecting
         _ = this.pipe.?.ref();
 
         if (ssl_options) |tls| {
             this.flags.is_ssl = true;
-            this.wrapper = try WrapperType.init(tls, true, .{
+            this.wrapper = WrapperType.init(tls, true, .{
                 .ctx = this,
-                .onOpen = WrappedPipe.onOpen,
-                .onHandshake = WrappedPipe.onHandshake,
-                .onData = WrappedPipe.onData,
-                .onClose = WrappedPipe.onClose,
-                .write = WrappedPipe.internalWrite,
-            });
+                .onOpen = WindowsNamedPipe.onOpen,
+                .onHandshake = WindowsNamedPipe.onHandshake,
+                .onData = WindowsNamedPipe.onData,
+                .onClose = WindowsNamedPipe.onClose,
+                .write = WindowsNamedPipe.internalWrite,
+            }) catch {
+                return .{
+                    .err = .{
+                        .errno = @intFromEnum(bun.C.E.PIPE),
+                        .syscall = .connect2,
+                    },
+                };
+            };
         }
-        return this.pipe.connect(this.connect_req, path, WrappedPipe, onConnect);
+        const initResult = this.pipe.?.init(this.vm.uvLoop(), false);
+        if (initResult == .err) {
+            return initResult;
+        }
+
+        this.connect_req.data = this;
+        return this.pipe.?.connect(&this.connect_req, path, this, onConnect);
     }
-    pub fn startTLS(this: *WrappedPipe, ssl_options: JSC.API.ServerConfig.SSLConfig, is_client: bool) !void {
+    pub fn startTLS(this: *WindowsNamedPipe, ssl_options: JSC.API.ServerConfig.SSLConfig, is_client: bool) !void {
         this.flags.is_ssl = true;
         if (this.start(is_client)) {
             this.wrapper = try WrapperType.init(ssl_options, is_client, .{
                 .ctx = this,
-                .onOpen = WrappedPipe.onOpen,
-                .onHandshake = WrappedPipe.onHandshake,
-                .onData = WrappedPipe.onData,
-                .onClose = WrappedPipe.onClose,
-                .write = WrappedPipe.internalWrite,
+                .onOpen = WindowsNamedPipe.onOpen,
+                .onHandshake = WindowsNamedPipe.onHandshake,
+                .onData = WindowsNamedPipe.onData,
+                .onClose = WindowsNamedPipe.onClose,
+                .write = WindowsNamedPipe.internalWrite,
             });
 
             this.wrapper.?.start();
         }
     }
 
-    pub fn start(this: *WrappedPipe, is_client: bool) bool {
+    pub fn start(this: *WindowsNamedPipe, is_client: bool) bool {
         this.flags.is_client = is_client;
         if (this.pipe == null) {
             return false;
@@ -829,55 +887,55 @@ pub const WrappedPipe = struct {
         this.writer.setParent(this);
         const startPipeResult = this.writer.startWithPipe(this.pipe.?);
         if (startPipeResult == .err) {
-            this.onError(startPipeResult.getErrno());
+            this.onError(startPipeResult.err);
             return false;
         }
         const stream = this.writer.getStream() orelse {
-            this.onError(bun.C.E.PIPE);
+            this.onError(bun.sys.Error.fromCode(bun.C.E.PIPE, .read));
             return false;
         };
 
-        const readStartResult = stream.readStart(this, onReadAlloc, onError, onRead);
+        const readStartResult = stream.readStart(this, onReadAlloc, onReadError, onRead);
         if (readStartResult == .err) {
-            this.onError(startPipeResult.getErrno());
+            this.onError(readStartResult.err);
             return false;
         }
         return true;
     }
 
-    pub fn isTLS(this: *WrappedPipe) bool {
+    pub fn isTLS(this: *WindowsNamedPipe) bool {
         return this.flags.is_ssl;
     }
 
-    pub fn encodeAndWrite(this: *WrappedPipe, data: []const u8, is_end: bool) i32 {
+    pub fn encodeAndWrite(this: *WindowsNamedPipe, data: []const u8, is_end: bool) i32 {
         log("encodeAndWrite (len: {} - is_end: {})", .{ data.len, is_end });
         if (this.wrapper) |*wrapper| {
             return @as(i32, @intCast(wrapper.writeData(data) catch 0));
         } else {
             this.internalWrite(data);
         }
-        return 0;
+        return @intCast(data.len);
     }
 
-    pub fn rawWrite(this: *WrappedPipe, encoded_data: []const u8, _: bool) i32 {
+    pub fn rawWrite(this: *WindowsNamedPipe, encoded_data: []const u8, _: bool) i32 {
         this.internalWrite(encoded_data);
         return @intCast(encoded_data.len);
     }
 
-    pub fn close(this: *WrappedPipe) void {
+    pub fn close(this: *WindowsNamedPipe) void {
         if (this.wrapper) |*wrapper| {
             _ = wrapper.shutdown(true);
         }
         this.writer.end();
     }
 
-    pub fn shutdown(this: *WrappedPipe) void {
+    pub fn shutdown(this: *WindowsNamedPipe) void {
         if (this.wrapper) |*wrapper| {
             _ = wrapper.shutdown(false);
         }
     }
 
-    pub fn shutdownRead(this: *WrappedPipe) void {
+    pub fn shutdownRead(this: *WindowsNamedPipe) void {
         if (this.wrapper) |*wrapper| {
             _ = wrapper.shutdownRead();
         } else {
@@ -887,7 +945,7 @@ pub const WrappedPipe = struct {
         }
     }
 
-    pub fn isShutdown(this: *WrappedPipe) bool {
+    pub fn isShutdown(this: *WindowsNamedPipe) bool {
         if (this.wrapper) |wrapper| {
             return wrapper.isShutdown();
         }
@@ -895,25 +953,25 @@ pub const WrappedPipe = struct {
         return this.flags.disconnected or this.writer.is_done;
     }
 
-    pub fn isClosed(this: *WrappedPipe) bool {
+    pub fn isClosed(this: *WindowsNamedPipe) bool {
         if (this.wrapper) |wrapper| {
             return wrapper.isClosed();
         }
         return this.flags.disconnected;
     }
 
-    pub fn isEstablished(this: *WrappedPipe) bool {
+    pub fn isEstablished(this: *WindowsNamedPipe) bool {
         return !this.isClosed();
     }
 
-    pub fn ssl(this: *WrappedPipe) ?*BoringSSL.SSL {
+    pub fn ssl(this: *WindowsNamedPipe) ?*BoringSSL.SSL {
         if (this.wrapper) |wrapper| {
             return wrapper.ssl;
         }
         return null;
     }
 
-    pub fn sslError(this: *WrappedPipe) us_bun_verify_error_t {
+    pub fn sslError(this: *WindowsNamedPipe) us_bun_verify_error_t {
         return .{
             .error_no = this.ssl_error.error_no,
             .code = @ptrCast(this.ssl_error.code.ptr),
@@ -921,10 +979,10 @@ pub const WrappedPipe = struct {
         };
     }
 
-    pub fn resetTimeout(this: *WrappedPipe) void {
+    pub fn resetTimeout(this: *WindowsNamedPipe) void {
         this.setTimeoutInMilliseconds(this.current_timeout);
     }
-    pub fn setTimeoutInMilliseconds(this: *WrappedPipe, ms: c_uint) void {
+    pub fn setTimeoutInMilliseconds(this: *WindowsNamedPipe, ms: c_uint) void {
         if (this.event_loop_timer.state == .ACTIVE) {
             this.vm.timer.remove(&this.event_loop_timer);
         }
@@ -939,12 +997,12 @@ pub const WrappedPipe = struct {
         this.event_loop_timer.next = bun.timespec.msFromNow(ms);
         this.vm.timer.insert(&this.event_loop_timer);
     }
-    pub fn setTimeout(this: *WrappedPipe, seconds: c_uint) void {
+    pub fn setTimeout(this: *WindowsNamedPipe, seconds: c_uint) void {
         log("setTimeout({d})", .{seconds});
         this.setTimeoutInMilliseconds(seconds * 1000);
     }
 
-    pub fn deinit(this: *WrappedPipe) void {
+    pub fn deinit(this: *WindowsNamedPipe) void {
         log("deinit", .{});
         // clear the timer
         this.setTimeout(0);
@@ -957,14 +1015,14 @@ pub const WrappedPipe = struct {
         ssl_error.deinit();
         this.ssl_error = .{};
     }
-};
+} else void;
 
 pub const InternalSocket = union(enum) {
     done: *Socket,
     connecting: *ConnectingSocket,
     detached: void,
     upgradedDuplex: *UpgradedDuplex,
-    pipe: *WrappedPipe,
+    pipe: *WindowsNamedPipe,
     pub fn isDetached(this: InternalSocket) bool {
         return this == .detached;
     }
@@ -994,7 +1052,7 @@ pub const InternalSocket = union(enum) {
                 socket.close();
             },
             .pipe => |pipe| {
-                pipe.close();
+                if (Environment.isWindows) pipe.close();
             },
         }
     }
@@ -1005,7 +1063,7 @@ pub const InternalSocket = union(enum) {
             .connecting => |socket| us_connecting_socket_is_closed(@intFromBool(is_ssl), socket) > 0,
             .detached => true,
             .upgradedDuplex => |socket| socket.isClosed(),
-            .pipe => |pipe| pipe.isClosed(),
+            .pipe => |pipe| if (Environment.isWindows) pipe.isClosed() else true,
         };
     }
 
@@ -1038,7 +1096,7 @@ pub const InternalSocket = union(enum) {
                 .done, .connecting, .detached, .pipe => false,
             },
             .pipe => switch (other) {
-                .pipe => this.pipe == other.pipe,
+                .pipe => if (Environment.isWindows) other.pipe == other.pipe else false,
                 .done, .connecting, .detached, .upgradedDuplex => false,
             },
         };
@@ -1061,7 +1119,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             switch (this.socket) {
                 .done => |socket| return uws.us_socket_verify_error(comptime ssl_int, socket),
                 .upgradedDuplex => |socket| return socket.sslError(),
-                .pipe => |pipe| return pipe.sslError(),
+                .pipe => |pipe| if (Environment.isWindows) return pipe.sslError() else return std.mem.zeroes(us_bun_verify_error_t),
                 .connecting, .detached => return std.mem.zeroes(us_bun_verify_error_t),
             }
         }
@@ -1070,7 +1128,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             switch (this.socket) {
                 .done => |socket| return us_socket_is_established(comptime ssl_int, socket) > 0,
                 .upgradedDuplex => |socket| return socket.isEstablished(),
-                .pipe => |pipe| return pipe.isEstablished(),
+                .pipe => |pipe| if (Environment.isWindows) return pipe.isEstablished() else return false,
                 .connecting, .detached => return false,
             }
         }
@@ -1078,7 +1136,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         pub fn timeout(this: ThisSocket, seconds: c_uint) void {
             switch (this.socket) {
                 .upgradedDuplex => |socket| socket.setTimeout(seconds),
-                .pipe => |pipe| pipe.setTimeout(seconds),
+                .pipe => |pipe| if (Environment.isWindows) pipe.setTimeout(seconds),
                 .done => |socket| us_socket_timeout(comptime ssl_int, socket, seconds),
                 .connecting => |socket| us_connecting_socket_timeout(comptime ssl_int, socket, seconds),
                 .detached => {},
@@ -1107,7 +1165,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 },
                 .detached => {},
                 .upgradedDuplex => |socket| socket.setTimeout(seconds),
-                .pipe => |pipe| pipe.setTimeout(seconds),
+                .pipe => |pipe| if (Environment.isWindows) pipe.setTimeout(seconds),
             }
         }
 
@@ -1123,7 +1181,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 },
                 .detached => {},
                 .upgradedDuplex => |socket| socket.setTimeout(minutes * 60),
-                .pipe => |pipe| pipe.setTimeout(minutes * 60),
+                .pipe => |pipe| if (Environment.isWindows) pipe.setTimeout(minutes * 60),
             }
         }
 
@@ -1277,7 +1335,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 .connecting => |socket| us_connecting_socket_get_native_handle(comptime ssl_int, socket),
                 .detached => null,
                 .upgradedDuplex => |socket| if (is_ssl) @as(*anyopaque, @ptrCast(socket.ssl())) else null,
-                .pipe => |socket| if (is_ssl) @as(*anyopaque, @ptrCast(socket.ssl())) else null,
+                .pipe => |socket| if (is_ssl and Environment.isWindows) @as(*anyopaque, @ptrCast(socket.ssl() orelse return null)) else null,
             } orelse return null);
         }
 
@@ -1335,7 +1393,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     return socket.flush();
                 },
                 .pipe => |pipe| {
-                    return pipe.flush();
+                    return if (Environment.isWindows) pipe.flush() else return;
                 },
                 .done => |socket| {
                     return us_socket_flush(
@@ -1353,7 +1411,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     return socket.encodeAndWrite(data, msg_more);
                 },
                 .pipe => |pipe| {
-                    return pipe.encodeAndWrite(data, msg_more);
+                    return if (Environment.isWindows) pipe.encodeAndWrite(data, msg_more) else 0;
                 },
                 .done => |socket| {
                     const result = us_socket_write(
@@ -1392,7 +1450,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     return socket.rawWrite(data, msg_more);
                 },
                 .pipe => |pipe| {
-                    return pipe.rawWrite(data, msg_more);
+                    return if (Environment.isWindows) pipe.rawWrite(data, msg_more) else 0;
                 },
             }
         }
@@ -1416,7 +1474,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     socket.shutdown();
                 },
                 .pipe => |pipe| {
-                    pipe.shutdown();
+                    if (Environment.isWindows) pipe.shutdown();
                 },
             }
         }
@@ -1442,7 +1500,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     socket.shutdownRead();
                 },
                 .pipe => |pipe| {
-                    pipe.shutdownRead();
+                    if (Environment.isWindows) pipe.shutdownRead();
                 },
             }
         }
@@ -1466,7 +1524,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     return socket.isShutdown();
                 },
                 .pipe => |pipe| {
-                    return pipe.isShutdown();
+                    return if (Environment.isWindows) pipe.isShutdown() else false;
                 },
             }
         }
@@ -1498,7 +1556,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     return socket.sslError().error_no;
                 },
                 .pipe => |pipe| {
-                    return pipe.sslError().error_no;
+                    return if (Environment.isWindows) pipe.sslError().error_no else 0;
                 },
             }
         }
@@ -1653,6 +1711,15 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             duplex: *UpgradedDuplex,
         ) ThisSocket {
             return ThisSocket{ .socket = .{ .upgradedDuplex = duplex } };
+        }
+
+        pub fn fromNamedPipe(
+            pipe: *WindowsNamedPipe,
+        ) ThisSocket {
+            if (Environment.isWindows) {
+                return ThisSocket{ .socket = .{ .pipe = pipe } };
+            }
+            @compileError("WindowsNamedPipe is only available on Windows");
         }
 
         pub fn fromFd(

@@ -882,32 +882,33 @@ endif()
 # --- Dependencies ---
 
 set(BUN_DEPENDENCIES
-  boringssl
-  brotli
-  cares
-  libdeflate
-  lolhtml
-  lshpack
-  mimalloc
-  tinycc
-  zlib
-  libarchive # must be loaded after zlib
-  zstd
+  BoringSSL
+  Brotli
+  Cares
+  LibDeflate
+  LolHtml
+  Lshpack
+  Mimalloc
+  TinyCC
+  Zlib
+  LibArchive # must be loaded after zlib
+  Zstd
 )
 
 if(WIN32)
-  list(APPEND BUN_DEPENDENCIES libuv)
+  list(APPEND BUN_DEPENDENCIES Libuv)
 endif()
 
 if(USE_STATIC_SQLITE)
-  list(APPEND BUN_DEPENDENCIES sqlite)
+  list(APPEND BUN_DEPENDENCIES SQLite)
 endif()
 
 foreach(dependency ${BUN_DEPENDENCIES})
   include(Build${dependency})
 endforeach()
 
-add_custom_target(dependencies DEPENDS ${BUN_DEPENDENCIES})
+list(TRANSFORM BUN_DEPENDENCIES TOLOWER OUTPUT BUN_TARGETS)
+add_custom_target(dependencies DEPENDS ${BUN_TARGETS})
 
 if(APPLE)
   target_link_libraries(${bun} PRIVATE icucore resolv)

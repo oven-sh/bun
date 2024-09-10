@@ -549,11 +549,430 @@ pub const UpgradedDuplex = struct {
     }
 };
 
+pub const WrappedPipe = struct {
+    pub const CertError = UpgradedDuplex.CertError;
+
+    const WrapperType = SSLWrapper(*WrappedPipe);
+    const uv = bun.windows.libuv;
+    wrapper: ?WrapperType,
+    pipe: if (Environment.isWindows) ?*uv.Pipe else void, // any duplex
+
+    writer: bun.io.StreamingWriter(WrappedPipe, onWrite, onError, onWritable, onPipeClose) = .{},
+
+    incoming: bun.ByteList = .{}, // Maybe we should use IPCBuffer here as well
+    ssl_error: CertError = .{},
+    globalThis: *JSC.JSGlobalObject,
+    vm: *bun.JSC.VirtualMachine,
+    handlers: Handlers,
+    connect_req: uv.uv_connect_t = std.mem.zeroes(uv.uv_connect_t),
+
+    event_loop_timer: EventLoopTimer = .{
+        .next = .{},
+        .tag = .WrappedPipe,
+    },
+    current_timeout: u32 = 0,
+    flags: Flags = .{},
+
+    pub const Flags = packed struct {
+        disconnected: bool = true,
+        is_client: bool = false,
+        is_ssl: bool = false,
+    };
+    pub const Handlers = struct {
+        ctx: *anyopaque,
+        onOpen: *const fn (*anyopaque) void,
+        onHandshake: *const fn (*anyopaque, bool, uws.us_bun_verify_error_t) void,
+        onData: *const fn (*anyopaque, []const u8) void,
+        onClose: *const fn (*anyopaque) void,
+        onEnd: *const fn (*anyopaque) void,
+        onWritable: *const fn (*anyopaque) void,
+        onError: *const fn (*anyopaque, JSC.JSValue) void,
+        onTimeout: *const fn (*anyopaque) void,
+    };
+
+    const log = bun.Output.scoped(.WrappedPipe, false);
+
+    fn onWritable(
+        this: *WrappedPipe,
+    ) void {
+        log("onWritable", .{});
+        // flush pending data
+        this.flush();
+        // call onWritable (will flush on demand)
+        this.handlers.onWritable(this.handlers.ctx);
+    }
+
+    fn onPipeClose(this: *WrappedPipe) void {
+        log("onPipeClose", .{});
+        this.flags.disconnected = true;
+        this.pipe = null;
+        this.handlers.onClose(this.handlers.ctx);
+    }
+    fn onReadAlloc(this: *WrappedPipe, suggested_size: usize) []u8 {
+        var available = this.incoming.available();
+        if (available.len < suggested_size) {
+            this.incoming.ensureUnusedCapacity(bun.default_allocator, suggested_size) catch bun.outOfMemory();
+            available = this.incoming.available();
+        }
+        return available.ptr[0..suggested_size];
+    }
+
+    fn onRead(this: *WrappedPipe, buffer: []const u8) void {
+        log("onRead ({})", .{buffer.len});
+        this.incoming.len += @as(u32, @truncate(buffer.len));
+        bun.assert(this.incoming.len <= this.incoming.cap);
+        bun.assert(bun.isSliceInBuffer(buffer, this.incoming.allocatedSlice()));
+
+        const data = this.incoming.slice();
+
+        this.resetTimeout();
+
+        if (this.wrapper) |*wrapper| {
+            wrapper.receiveData(data);
+        } else {
+            this.handlers.onData(this.handlers.ctx, data);
+        }
+        this.incoming.len = 0;
+    }
+
+    fn onWrite(this: *WrappedPipe, amount: usize, status: bun.io.WriteStatus) void {
+        log("onWrite {d} {}", .{ amount, status });
+
+        switch (status) {
+            .pending => {},
+            .drained => {
+                // unref after sending all data
+                this.writer.source.?.pipe.unref();
+            },
+            .end_of_file => {
+                this.handlers.onEnd(this.handlers.ctx);
+            },
+        }
+    }
+
+    fn onError(this: *WrappedPipe, err: bun.sys.Error) void {
+        log("onError", .{});
+        if (this.vm.isShuttingDown()) {
+            this.writer.close();
+            return;
+        }
+        this.handlers.onError(this.handlers.ctx, err.toJSC(this.globalThis));
+    }
+
+    fn onOpen(this: *WrappedPipe) void {
+        log("onOpen", .{});
+        this.handlers.onOpen(this.handlers.ctx);
+    }
+
+    fn onData(this: *WrappedPipe, decoded_data: []const u8) void {
+        log("onData ({})", .{decoded_data.len});
+        this.handlers.onData(this.handlers.ctx, decoded_data);
+    }
+
+    fn onHandshake(this: *WrappedPipe, handshake_success: bool, ssl_error: uws.us_bun_verify_error_t) void {
+        log("onHandshake", .{});
+
+        this.ssl_error = .{
+            .error_no = ssl_error.error_no,
+            .code = if (ssl_error.code == null) "" else bun.default_allocator.dupeZ(u8, ssl_error.code[0..bun.len(ssl_error.code) :0]) catch bun.outOfMemory(),
+            .reason = if (ssl_error.reason == null) "" else bun.default_allocator.dupeZ(u8, ssl_error.reason[0..bun.len(ssl_error.reason) :0]) catch bun.outOfMemory(),
+        };
+        this.handlers.onHandshake(this.handlers.ctx, handshake_success, ssl_error);
+    }
+
+    fn onClose(this: *WrappedPipe) void {
+        log("onClose", .{});
+        defer this.deinit();
+
+        this.handlers.onClose(this.handlers.ctx);
+        // closes the underlying duplex
+        this.callWriteOrEnd(null, false);
+    }
+
+    fn callWriteOrEnd(this: *WrappedPipe, data: ?[]const u8, msg_more: bool) void {
+        if (data) |bytes| {
+            if (bytes.len > 0) {
+                // ref because we have pending data
+                this.writer.source.?.pipe.ref();
+                if (this.flags.disconnected) {
+                    // enqueue to be sent after connecting
+                    this.writer.outgoing.write(bytes) catch bun.outOfMemory();
+                } else {
+                    // write will enqueue the data if it cannot be sent
+                    _ = this.writer.write(bytes);
+                }
+            }
+        }
+
+        if (!msg_more) {
+            if (this.wrapper) |*wrapper| {
+                _ = wrapper.shutdown(false);
+            }
+            this.writer.end();
+        }
+    }
+
+    fn internalWrite(this: *WrappedPipe, encoded_data: []const u8) void {
+        this.resetTimeout();
+
+        // Possible scenarios:
+        // Scenario 1: will not write if is not connected yet but will enqueue the data
+        // Scenario 2: will not write if a exception is thrown (will be handled by onError)
+        // Scenario 3: will be queued in memory and will be flushed later
+        // Scenario 4: no write/end function exists (will be handled by onError)
+        this.callWriteOrEnd(encoded_data, true);
+    }
+
+    pub fn flush(this: *WrappedPipe) void {
+        if (this.wrapper) |*wrapper| {
+            _ = wrapper.flush();
+        }
+        if (!this.flags.disconnected) {
+            _ = this.writer.flush();
+        }
+    }
+
+    fn onInternalReceiveData(this: *WrappedPipe, data: []const u8) void {
+        if (this.wrapper) |*wrapper| {
+            this.resetTimeout();
+            wrapper.receiveData(data);
+        }
+    }
+
+    pub fn onTimeout(this: *WrappedPipe) EventLoopTimer.Arm {
+        log("onTimeout", .{});
+
+        const has_been_cleared = this.event_loop_timer.state == .CANCELLED or this.vm.scriptExecutionStatus() != .running;
+
+        this.event_loop_timer.state = .FIRED;
+        this.event_loop_timer.heap = .{};
+
+        if (has_been_cleared) {
+            return .disarm;
+        }
+
+        this.handlers.onTimeout(this.handlers.ctx);
+
+        return .disarm;
+    }
+
+    pub fn from(
+        globalThis: *JSC.JSGlobalObject,
+        pipe: if (Environment.isWindows) *uv.Pipe else void,
+        handlers: WrappedPipe.Handlers,
+    ) !WrappedPipe {
+        if (Environment.isPosix) {
+            @compileError("WrappedPipe is not supported on POSIX systems");
+        }
+        return WrappedPipe{
+            .vm = globalThis.bunVM(),
+            .globalThis = globalThis,
+            .pipe = pipe,
+            .wrapper = null,
+            .handlers = handlers,
+        };
+    }
+    fn onConnect(this: *WrappedPipe, status: uv.ReturnCode) void {
+        if (status.errEnum()) |err| {
+            this.onError(err);
+            return;
+        }
+        this.flags.disconnected = false;
+        if (this.start(true)) {
+            if (this.isTLS()) {
+                if (this.wrapper) |*wrapper| {
+                    wrapper.start();
+                }
+            } else {
+                // trigger onOpen
+                this.onOpen();
+            }
+        }
+        this.flush();
+    }
+
+    pub fn connect(this: *WrappedPipe, path: []const u8, ssl_options: ?JSC.API.ServerConfig.SSLConfig) !void {
+        if (this.pipe == null) {
+            return bun.C.E.BADF;
+        }
+        this.flags.disconnected = true;
+        // ref because we are connecting
+        _ = this.pipe.?.ref();
+
+        if (ssl_options) |tls| {
+            this.flags.is_ssl = true;
+            this.wrapper = try WrapperType.init(tls, true, .{
+                .ctx = this,
+                .onOpen = WrappedPipe.onOpen,
+                .onHandshake = WrappedPipe.onHandshake,
+                .onData = WrappedPipe.onData,
+                .onClose = WrappedPipe.onClose,
+                .write = WrappedPipe.internalWrite,
+            });
+        }
+        return this.pipe.connect(this.connect_req, path, WrappedPipe, onConnect);
+    }
+    pub fn startTLS(this: *WrappedPipe, ssl_options: JSC.API.ServerConfig.SSLConfig, is_client: bool) !void {
+        this.flags.is_ssl = true;
+        if (this.start(is_client)) {
+            this.wrapper = try WrapperType.init(ssl_options, is_client, .{
+                .ctx = this,
+                .onOpen = WrappedPipe.onOpen,
+                .onHandshake = WrappedPipe.onHandshake,
+                .onData = WrappedPipe.onData,
+                .onClose = WrappedPipe.onClose,
+                .write = WrappedPipe.internalWrite,
+            });
+
+            this.wrapper.?.start();
+        }
+    }
+
+    pub fn start(this: *WrappedPipe, is_client: bool) bool {
+        this.flags.is_client = is_client;
+        if (this.pipe == null) {
+            return false;
+        }
+        _ = this.pipe.?.unref();
+        this.writer.setParent(this);
+        const startPipeResult = this.writer.startWithPipe(this.pipe.?);
+        if (startPipeResult == .err) {
+            this.onError(startPipeResult.getErrno());
+            return false;
+        }
+        const stream = this.writer.getStream() orelse {
+            this.onError(bun.C.E.PIPE);
+            return false;
+        };
+
+        const readStartResult = stream.readStart(this, onReadAlloc, onError, onRead);
+        if (readStartResult == .err) {
+            this.onError(startPipeResult.getErrno());
+            return false;
+        }
+        return true;
+    }
+
+    pub fn isTLS(this: *WrappedPipe) bool {
+        return this.flags.is_ssl;
+    }
+
+    pub fn encodeAndWrite(this: *WrappedPipe, data: []const u8, is_end: bool) i32 {
+        log("encodeAndWrite (len: {} - is_end: {})", .{ data.len, is_end });
+        if (this.wrapper) |*wrapper| {
+            return @as(i32, @intCast(wrapper.writeData(data) catch 0));
+        } else {
+            this.internalWrite(data);
+        }
+        return 0;
+    }
+
+    pub fn rawWrite(this: *WrappedPipe, encoded_data: []const u8, _: bool) i32 {
+        this.internalWrite(encoded_data);
+        return @intCast(encoded_data.len);
+    }
+
+    pub fn close(this: *WrappedPipe) void {
+        if (this.wrapper) |*wrapper| {
+            _ = wrapper.shutdown(true);
+        }
+        this.writer.end();
+    }
+
+    pub fn shutdown(this: *WrappedPipe) void {
+        if (this.wrapper) |*wrapper| {
+            _ = wrapper.shutdown(false);
+        }
+    }
+
+    pub fn shutdownRead(this: *WrappedPipe) void {
+        if (this.wrapper) |*wrapper| {
+            _ = wrapper.shutdownRead();
+        } else {
+            if (this.writer.getStream()) |stream| {
+                _ = stream.readStop();
+            }
+        }
+    }
+
+    pub fn isShutdown(this: *WrappedPipe) bool {
+        if (this.wrapper) |wrapper| {
+            return wrapper.isShutdown();
+        }
+
+        return this.flags.disconnected or this.writer.is_done;
+    }
+
+    pub fn isClosed(this: *WrappedPipe) bool {
+        if (this.wrapper) |wrapper| {
+            return wrapper.isClosed();
+        }
+        return this.flags.disconnected;
+    }
+
+    pub fn isEstablished(this: *WrappedPipe) bool {
+        return !this.isClosed();
+    }
+
+    pub fn ssl(this: *WrappedPipe) ?*BoringSSL.SSL {
+        if (this.wrapper) |wrapper| {
+            return wrapper.ssl;
+        }
+        return null;
+    }
+
+    pub fn sslError(this: *WrappedPipe) us_bun_verify_error_t {
+        return .{
+            .error_no = this.ssl_error.error_no,
+            .code = @ptrCast(this.ssl_error.code.ptr),
+            .reason = @ptrCast(this.ssl_error.reason.ptr),
+        };
+    }
+
+    pub fn resetTimeout(this: *WrappedPipe) void {
+        this.setTimeoutInMilliseconds(this.current_timeout);
+    }
+    pub fn setTimeoutInMilliseconds(this: *WrappedPipe, ms: c_uint) void {
+        if (this.event_loop_timer.state == .ACTIVE) {
+            this.vm.timer.remove(&this.event_loop_timer);
+        }
+        this.current_timeout = ms;
+
+        // if the interval is 0 means that we stop the timer
+        if (ms == 0) {
+            return;
+        }
+
+        // reschedule the timer
+        this.event_loop_timer.next = bun.timespec.msFromNow(ms);
+        this.vm.timer.insert(&this.event_loop_timer);
+    }
+    pub fn setTimeout(this: *WrappedPipe, seconds: c_uint) void {
+        log("setTimeout({d})", .{seconds});
+        this.setTimeoutInMilliseconds(seconds * 1000);
+    }
+
+    pub fn deinit(this: *WrappedPipe) void {
+        log("deinit", .{});
+        // clear the timer
+        this.setTimeout(0);
+
+        if (this.wrapper) |*wrapper| {
+            wrapper.deinit();
+            this.wrapper = null;
+        }
+        var ssl_error = this.ssl_error;
+        ssl_error.deinit();
+        this.ssl_error = .{};
+    }
+};
+
 pub const InternalSocket = union(enum) {
     done: *Socket,
     connecting: *ConnectingSocket,
     detached: void,
     upgradedDuplex: *UpgradedDuplex,
+    pipe: *WrappedPipe,
     pub fn isDetached(this: InternalSocket) bool {
         return this == .detached;
     }
@@ -582,6 +1001,9 @@ pub const InternalSocket = union(enum) {
             .upgradedDuplex => |socket| {
                 socket.close();
             },
+            .pipe => |pipe| {
+                pipe.close();
+            },
         }
     }
 
@@ -591,6 +1013,7 @@ pub const InternalSocket = union(enum) {
             .connecting => |socket| us_connecting_socket_is_closed(@intFromBool(is_ssl), socket) > 0,
             .detached => true,
             .upgradedDuplex => |socket| socket.isClosed(),
+            .pipe => |pipe| pipe.isClosed(),
         };
     }
 
@@ -600,6 +1023,7 @@ pub const InternalSocket = union(enum) {
             .connecting => null,
             .detached => null,
             .upgradedDuplex => null,
+            .pipe => null,
         };
     }
 
@@ -607,19 +1031,23 @@ pub const InternalSocket = union(enum) {
         return switch (this) {
             .done => switch (other) {
                 .done => this.done == other.done,
-                .upgradedDuplex, .connecting, .detached => false,
+                .upgradedDuplex, .connecting, .detached, .pipe => false,
             },
             .connecting => switch (other) {
-                .upgradedDuplex, .done, .detached => false,
+                .upgradedDuplex, .done, .detached, .pipe => false,
                 .connecting => this.connecting == other.connecting,
             },
             .detached => switch (other) {
                 .detached => true,
-                .upgradedDuplex, .done, .connecting => false,
+                .upgradedDuplex, .done, .connecting, .pipe => false,
             },
             .upgradedDuplex => switch (other) {
                 .upgradedDuplex => this.upgradedDuplex == other.upgradedDuplex,
-                .done, .connecting, .detached => false,
+                .done, .connecting, .detached, .pipe => false,
+            },
+            .pipe => switch (other) {
+                .pipe => this.pipe == other.pipe,
+                .done, .connecting, .detached, .upgradedDuplex => false,
             },
         };
     }
@@ -641,6 +1069,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             switch (this.socket) {
                 .done => |socket| return uws.us_socket_verify_error(comptime ssl_int, socket),
                 .upgradedDuplex => |socket| return socket.sslError(),
+                .pipe => |pipe| return pipe.sslError(),
                 .connecting, .detached => return std.mem.zeroes(us_bun_verify_error_t),
             }
         }
@@ -649,6 +1078,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             switch (this.socket) {
                 .done => |socket| return us_socket_is_established(comptime ssl_int, socket) > 0,
                 .upgradedDuplex => |socket| return socket.isEstablished(),
+                .pipe => |pipe| return pipe.isEstablished(),
                 .connecting, .detached => return false,
             }
         }
@@ -656,6 +1086,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         pub fn timeout(this: ThisSocket, seconds: c_uint) void {
             switch (this.socket) {
                 .upgradedDuplex => |socket| socket.setTimeout(seconds),
+                .pipe => |pipe| pipe.setTimeout(seconds),
                 .done => |socket| us_socket_timeout(comptime ssl_int, socket, seconds),
                 .connecting => |socket| us_connecting_socket_timeout(comptime ssl_int, socket, seconds),
                 .detached => {},
@@ -684,6 +1115,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 },
                 .detached => {},
                 .upgradedDuplex => |socket| socket.setTimeout(seconds),
+                .pipe => |pipe| pipe.setTimeout(seconds),
             }
         }
 
@@ -699,6 +1131,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 },
                 .detached => {},
                 .upgradedDuplex => |socket| socket.setTimeout(minutes * 60),
+                .pipe => |pipe| pipe.setTimeout(minutes * 60),
             }
         }
 
@@ -852,6 +1285,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 .connecting => |socket| us_connecting_socket_get_native_handle(comptime ssl_int, socket),
                 .detached => null,
                 .upgradedDuplex => |socket| if (is_ssl) @as(*anyopaque, @ptrCast(socket.ssl())) else null,
+                .pipe => |socket| if (is_ssl) @as(*anyopaque, @ptrCast(socket.ssl())) else null,
             } orelse return null);
         }
 
@@ -886,6 +1320,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 .connecting => |sock| us_connecting_socket_ext(comptime ssl_int, sock),
                 .detached => return null,
                 .upgradedDuplex => return null,
+                .pipe => return null,
             };
 
             return @as(*align(alignment) ContextType, @ptrCast(@alignCast(ptr)));
@@ -898,6 +1333,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 .connecting => |socket| return us_connecting_socket_context(comptime ssl_int, socket),
                 .detached => return null,
                 .upgradedDuplex => return null,
+                .pipe => return null,
             }
         }
 
@@ -905,6 +1341,9 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             switch (this.socket) {
                 .upgradedDuplex => |socket| {
                     return socket.flush();
+                },
+                .pipe => |pipe| {
+                    return pipe.flush();
                 },
                 .done => |socket| {
                     return us_socket_flush(
@@ -920,6 +1359,9 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             switch (this.socket) {
                 .upgradedDuplex => |socket| {
                     return socket.encodeAndWrite(data, msg_more);
+                },
+                .pipe => |pipe| {
+                    return pipe.encodeAndWrite(data, msg_more);
                 },
                 .done => |socket| {
                     const result = us_socket_write(
@@ -957,6 +1399,9 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 .upgradedDuplex => |socket| {
                     return socket.rawWrite(data, msg_more);
                 },
+                .pipe => |pipe| {
+                    return pipe.rawWrite(data, msg_more);
+                },
             }
         }
         pub fn shutdown(this: ThisSocket) void {
@@ -977,6 +1422,9 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 .detached => {},
                 .upgradedDuplex => |socket| {
                     socket.shutdown();
+                },
+                .pipe => |pipe| {
+                    pipe.shutdown();
                 },
             }
         }
@@ -1001,6 +1449,9 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 .upgradedDuplex => |socket| {
                     socket.shutdownRead();
                 },
+                .pipe => |pipe| {
+                    pipe.shutdownRead();
+                },
             }
         }
 
@@ -1021,6 +1472,9 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 .detached => return true,
                 .upgradedDuplex => |socket| {
                     return socket.isShutdown();
+                },
+                .pipe => |pipe| {
+                    return pipe.isShutdown();
                 },
             }
         }
@@ -1051,6 +1505,9 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 .upgradedDuplex => |socket| {
                     return socket.sslError().error_no;
                 },
+                .pipe => |pipe| {
+                    return pipe.sslError().error_no;
+                },
             }
         }
 
@@ -1069,7 +1526,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         socket,
                     );
                 },
-                .upgradedDuplex, .connecting, .detached => return 0,
+                .pipe, .upgradedDuplex, .connecting, .detached => return 0,
             }
         }
         pub fn remoteAddress(this: ThisSocket, buf: [*]u8, length: *i32) void {
@@ -1082,7 +1539,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         length,
                     );
                 },
-                .upgradedDuplex, .connecting, .detached => return {
+                .pipe, .upgradedDuplex, .connecting, .detached => return {
                     length.* = 0;
                 },
             }
@@ -1111,7 +1568,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     }
                     return buf[0..@intCast(length)];
                 },
-                .upgradedDuplex, .connecting, .detached => return null,
+                .pipe, .upgradedDuplex, .connecting, .detached => return null,
             }
         }
 

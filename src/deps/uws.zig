@@ -561,8 +561,6 @@ pub const WrappedPipe = struct {
 
     incoming: bun.ByteList = .{}, // Maybe we should use IPCBuffer here as well
     ssl_error: CertError = .{},
-    globalThis: *JSC.JSGlobalObject,
-    vm: *bun.JSC.VirtualMachine,
     handlers: Handlers,
     connect_req: uv.uv_connect_t = std.mem.zeroes(uv.uv_connect_t),
 
@@ -586,7 +584,7 @@ pub const WrappedPipe = struct {
         onClose: *const fn (*anyopaque) void,
         onEnd: *const fn (*anyopaque) void,
         onWritable: *const fn (*anyopaque) void,
-        onError: *const fn (*anyopaque, JSC.JSValue) void,
+        onError: *const fn (*anyopaque, bun.sys.Error) void,
         onTimeout: *const fn (*anyopaque) void,
     };
 
@@ -657,7 +655,7 @@ pub const WrappedPipe = struct {
             this.writer.close();
             return;
         }
-        this.handlers.onError(this.handlers.ctx, err.toJSC(this.globalThis));
+        this.handlers.onError(this.handlers.ctx, err);
     }
 
     fn onOpen(this: *WrappedPipe) void {
@@ -758,7 +756,6 @@ pub const WrappedPipe = struct {
     }
 
     pub fn from(
-        globalThis: *JSC.JSGlobalObject,
         pipe: if (Environment.isWindows) *uv.Pipe else void,
         handlers: WrappedPipe.Handlers,
     ) !WrappedPipe {
@@ -766,8 +763,6 @@ pub const WrappedPipe = struct {
             @compileError("WrappedPipe is not supported on POSIX systems");
         }
         return WrappedPipe{
-            .vm = globalThis.bunVM(),
-            .globalThis = globalThis,
             .pipe = pipe,
             .wrapper = null,
             .handlers = handlers,

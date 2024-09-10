@@ -4539,9 +4539,21 @@ pub fn trim(slice: anytype, comptime values_to_strip: []const u8) @TypeOf(slice)
     var begin: usize = 0;
     var end: usize = slice.len;
 
-    while (begin < end and std.mem.indexOfScalar(u8, values_to_strip, slice[begin]) != null) : (begin += 1) {}
-    while (end > begin and std.mem.indexOfScalar(u8, values_to_strip, slice[end - 1]) != null) : (end -= 1) {}
+    while (begin < end and indexOfChar(values_to_strip, slice[begin]) != null) : (begin += 1) {}
+    while (end > begin and indexOfChar(values_to_strip, slice[end - 1]) != null) : (end -= 1) {}
     return slice[begin..end];
+}
+
+pub fn trimLeft(slice: anytype, comptime values_to_strip: []const u8) @TypeOf(slice) {
+    var begin: usize = 0;
+    while (begin < slice.len and indexOfChar(values_to_strip, slice[begin]) != null) : (begin += 1) {}
+    return slice[begin..];
+}
+
+pub fn trimRight(slice: anytype, comptime values_to_strip: []const u8) @TypeOf(slice) {
+    var end: usize = slice.len;
+    while (end > 0 and indexOfChar(values_to_strip, slice[end - 1]) != null) : (end -= 1) {}
+    return slice[0..end];
 }
 
 pub const whitespace_chars = [_]u8{ ' ', '\t', '\n', '\r', std.ascii.control_code.vt, std.ascii.control_code.ff };

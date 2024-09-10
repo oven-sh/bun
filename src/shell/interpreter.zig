@@ -10513,13 +10513,13 @@ pub const Interpreter = struct {
 
                 var total: f64 = 0;
                 while (iter.next()) |arg| {
-                    const slice = bun.sliceTo(arg, 0);
+                    const trimmed = bun.strings.trimLeft(bun.sliceTo(arg, 0), " ");
 
-                    if (slice.len == 0 or slice[0] == '-') {
+                    if (trimmed.len == 0 or trimmed[0] == '-') {
                         return this.fail("sleep: invalid time interval\n");
                     }
 
-                    const seconds = bun.fmt.parseFloat(f64, slice) catch {
+                    const seconds = bun.fmt.parseFloat(f64, trimmed) catch {
                         return this.fail("sleep: invalid time interval\n");
                     };
 

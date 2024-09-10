@@ -880,10 +880,6 @@ WEBKIT_ADD_SOURCE_DEPENDENCIES(
     "${BUN_SRC}/bun.js/bindings/InternalModuleRegistry.cpp"
     "${BUN_WORKDIR}/codegen/InternalModuleRegistryConstants.h"
 )
-WEBKIT_ADD_SOURCE_DEPENDENCIES(
-    "${BUN_SRC}/bun.js/bindings/InternalModuleRegistry.cpp"
-    "${BUN_WORKDIR}/codegen/kit_empty_file"
-)
 list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp")
 
 # --- Peechy API ---
@@ -985,6 +981,7 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.zig"
         "${BUN_WORKDIR}/codegen/ErrorCode.zig"
         "${BUN_WORKDIR}/codegen/ResolvedSourceTag.zig"
+        "${BUN_WORKDIR}/codegen/kit_empty_file"
         "${BUN_IDENTIFIER_CACHE_OUT}"
         "${BUN_SRC}/api/schema.zig"
         "${BUN_SRC}/bun.js/bindings/GeneratedJS2Native.zig"

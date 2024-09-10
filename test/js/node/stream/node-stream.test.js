@@ -386,26 +386,42 @@ it("Readable.fromWeb", async () => {
   expect(Buffer.concat(chunks).toString()).toBe("Hello World!\n");
 });
 
-it("Writable.toWeb", async () => {
-  let dataBuffer = "";
+describe("Writable.toWeb", () => {
+  it("Writable -> WritableStream", async () => {
+    let dataBuffer = "";
 
-  // Create a Node.js Writable stream
-  const nodeWritable = new Writable({
-    write(chunk, encoding, callback) {
-      dataBuffer += chunk.toString();
-      callback();
-    },
+    // Create a Node.js Writable stream
+    const nodeWritable = new Writable({
+      write(chunk, encoding, callback) {
+        dataBuffer += chunk.toString();
+        callback();
+      },
+    });
+
+    const webWritable = Writable.toWeb(nodeWritable);
+    const writer = webWritable.getWriter();
+
+    // Write some data
+    const encoder = new TextEncoder();
+    await writer.write(encoder.encode("Hello,"));
+    await writer.write(encoder.encode(" World!"));
+    await writer.close();
+    expect(dataBuffer).toBe("Hello, World!");
   });
 
-  const webWritable = Writable.toWeb(nodeWritable);
-  const writer = webWritable.getWriter();
+  it("Error handling", async () => {
+    const nodeWritable = new Writable({
+      write(chunk, encoding, callback) {
+        callback(new Error("Write error"));
+      },
+    });
 
-  // Write some data
-  const encoder = new TextEncoder();
-  await writer.write(encoder.encode("Hello,"));
-  await writer.write(encoder.encode(" World!"));
-  await writer.close();
-  expect(dataBuffer).toBe("Hello, World!");
+    const webWritable = Writable.toWeb(nodeWritable);
+
+    const writer = webWritable.getWriter();
+
+    expect(writer.write(new Uint8Array([1, 2, 3]))).rejects.toThrowError("Write error");
+  });
 });
 
 it("Writable.fromWeb", async () => {

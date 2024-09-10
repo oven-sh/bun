@@ -645,8 +645,7 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
                 this.writer.source.?.pipe.unref();
             },
             .end_of_file => {
-                this.handlers.onEnd(this.handlers.ctx);
-                // we dont allow half closed pipes right now
+                // we send FIN so we close after this
                 this.writer.close();
             },
         }
@@ -654,7 +653,13 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
 
     fn onReadError(this: *WindowsNamedPipe, err: bun.C.E) void {
         log("onReadError", .{});
-        this.onError(bun.sys.Error.fromCode(err, .read));
+        if (err == .EOF) {
+            // we received FIN but we dont allow half-closed connections right now
+            this.handlers.onEnd(this.handlers.ctx);
+        } else {
+            this.onError(bun.sys.Error.fromCode(err, .read));
+        }
+        this.writer.close();
     }
 
     fn onError(this: *WindowsNamedPipe, err: bun.sys.Error) void {
@@ -776,7 +781,7 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
         };
     }
     fn onConnect(this: *WindowsNamedPipe, status: uv.ReturnCode) void {
-        if (status.toError(.connect2)) |err| {
+        if (status.toError(.connect)) |err| {
             this.onError(err);
             return;
         }
@@ -812,7 +817,7 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
                 return .{
                     .err = .{
                         .errno = @intFromEnum(bun.C.E.PIPE),
-                        .syscall = .connect2,
+                        .syscall = .connect,
                     },
                 };
             };
@@ -849,7 +854,7 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
                 return .{
                     .err = .{
                         .errno = @intFromEnum(bun.C.E.PIPE),
-                        .syscall = .connect2,
+                        .syscall = .connect,
                     },
                 };
             };

@@ -2645,7 +2645,7 @@ pub fn translateUVErrorToE(code_in: anytype) bun.C.E {
         UV_EREMOTEIO => bun.C.E.REMOTEIO,
         UV_ECANCELED => bun.C.E.CANCELED,
         UV_ECHARSET => bun.C.E.CHARSET,
-        UV_EOF => bun.C.E.OF,
+        UV_EOF => bun.C.E.EOF,
         else => @enumFromInt(-code),
     };
 }
@@ -2750,7 +2750,7 @@ pub const ReturnCode = enum(c_int) {
                 UV_EREMOTEIO => @intFromEnum(bun.C.E.REMOTEIO),
                 UV_ECANCELED => @intFromEnum(bun.C.E.CANCELED),
                 UV_ECHARSET => @intFromEnum(bun.C.E.CHARSET),
-                UV_EOF => @intFromEnum(bun.C.E.OF),
+                UV_EOF => @intFromEnum(bun.C.E.EOF),
                 else => null,
             }
         else

@@ -16,9 +16,9 @@ function assert_target() {
   x64 | x86_64 | amd64)
     export ZIG_ARCH="x86_64"
     if [[ "$BUILDKITE_STEP_KEY" == *"baseline"* ]]; then
-      export ZIG_CPU_TARGET="nehalem"
+      export ZIG_CPU_TARGET="x86_64"
     else
-      export ZIG_CPU_TARGET="haswell"
+      export ZIG_CPU_TARGET="x86_64-v3"
     fi
     ;;
   aarch64 | arm64)

@@ -30,10 +30,10 @@ To build for Linux x64 (most servers):
 ```sh
 bun build --compile --target=bun-linux-x64 ./index.ts --outfile myapp
 
-# To support CPUs from before 2013, use the baseline version (nehalem)
+# To support CPUs from before 2013, use the baseline version (x86_64-v1)
 bun build --compile --target=bun-linux-x64-baseline ./index.ts --outfile myapp
 
-# To explicitly only support CPUs from 2013 and later, use the modern version (haswell)
+# To explicitly only support CPUs from 2013 and later, use the modern version (x86_64-v3)
 # modern is faster, but baseline is more compatible.
 bun build --compile --target=bun-linux-x64-modern ./index.ts --outfile myapp
 ```
@@ -50,10 +50,10 @@ To build for Windows x64:
 ```sh
 bun build --compile --target=bun-windows-x64 ./path/to/my/app.ts --outfile myapp
 
-# To support CPUs from before 2013, use the baseline version (nehalem)
+# To support CPUs from before 2013, use the baseline version (x86_64-v1)
 bun build --compile --target=bun-windows-x64-baseline ./path/to/my/app.ts --outfile myapp
 
-# To explicitly only support CPUs from 2013 and later, use the modern version (haswell)
+# To explicitly only support CPUs from 2013 and later, use the modern version (x86_64-v3)
 bun build --compile --target=bun-windows-x64-modern ./path/to/my/app.ts --outfile myapp
 
 # note: if no .exe extension is provided, Bun will automatically add it for Windows executables

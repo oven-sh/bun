@@ -835,6 +835,7 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
         onConnect(this, uv.ReturnCode.zero);
         return .{ .result = {} };
     }
+
     pub fn connect(this: *WindowsNamedPipe, path: []const u8, ssl_options: ?JSC.API.ServerConfig.SSLConfig) JSC.Maybe(void) {
         bun.assert(this.pipe != null);
         this.flags.disconnected = true;
@@ -929,7 +930,7 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
 
     pub fn close(this: *WindowsNamedPipe) void {
         if (this.wrapper) |*wrapper| {
-            _ = wrapper.shutdown(true);
+            _ = wrapper.shutdown(false);
         }
         this.writer.end();
     }

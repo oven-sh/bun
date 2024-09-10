@@ -990,11 +990,13 @@ pub const Listener = struct {
             if (port) |_| {
                 break :blk .{ .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice(), .port = port.? } };
             }
+
             break :blk .{ .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice() };
         };
 
         if (Environment.isWindows) {
             const isNamedPipe = switch (connection) {
+                // we check if the path is a named pipe otherwise we try to connect using AF_UNIX
                 .unix => |pipe_name| strings.startsWith(pipe_name, "\\\\.\\pipe\\") or strings.startsWith(pipe_name, "\\\\?\\pipe\\"),
                 .fd => |fd| brk: {
                     const uvfd = bun.uvfdcast(fd);
@@ -1021,6 +1023,7 @@ pub const Listener = struct {
                 var handlers_ptr = handlers.vm.allocator.create(Handlers) catch bun.outOfMemory();
                 handlers_ptr.* = handlers;
                 handlers_ptr.is_server = false;
+                handlers_ptr.protect();
 
                 var promise = JSC.JSPromise.create(globalObject);
                 const promise_value = promise.asValue(globalObject);
@@ -1038,6 +1041,7 @@ pub const Listener = struct {
                     });
                     TLSSocket.dataSetCached(tls.getThisValue(globalObject), globalObject, default_data);
                     tls.poll_ref.ref(handlers.vm);
+                    tls.ref();
                     if (connection == .unix) {
                         const named_pipe = WindowsNamedPipeContext.connect(globalObject, connection.unix, ssl, .{ .tls = tls }) catch {
                             return promise_value;
@@ -1060,6 +1064,7 @@ pub const Listener = struct {
                         .server_name = null,
                         .socket_context = null,
                     });
+                    tcp.ref();
                     TCPSocket.dataSetCached(tcp.getThisValue(globalObject), globalObject, default_data);
                     tcp.poll_ref.ref(handlers.vm);
 
@@ -1068,16 +1073,15 @@ pub const Listener = struct {
                             return promise_value;
                         };
                         tcp.socket = TCPSocket.Socket.fromNamedPipe(named_pipe);
-                        return promise_value;
                     } else {
                         // fd
                         const named_pipe = WindowsNamedPipeContext.open(globalObject, connection.fd, null, .{ .tcp = tcp }) catch {
                             return promise_value;
                         };
                         tcp.socket = TCPSocket.Socket.fromNamedPipe(named_pipe);
-                        return promise_value;
                     }
                 }
+                return promise_value;
             }
         }
 
@@ -3501,6 +3505,7 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
     globalThis: *JSC.JSGlobalObject,
     task: JSC.AnyTask,
     task_event: EventState = .Close,
+    is_open: bool = false,
     pub const EventState = enum(u8) {
         Close,
     };
@@ -3514,6 +3519,7 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
     usingnamespace bun.New(WindowsNamedPipeContext);
 
     fn onOpen(this: *WindowsNamedPipeContext) void {
+        this.is_open = true;
         switch (this.socket) {
             .tls => |tls| {
                 const socket = TLSSocket.Socket.fromNamedPipe(&this.named_pipe);
@@ -3584,18 +3590,31 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
     }
 
     fn onError(this: *WindowsNamedPipeContext, err: bun.sys.Error) void {
-        if (this.vm.isShuttingDown()) {
-            return;
-        }
+        if (this.is_open) {
+            if (this.vm.isShuttingDown()) {
+                // dont touch global just wait to close vm is shutting down
+                return;
+            }
 
-        switch (this.socket) {
-            .tls => |tls| {
-                tls.handleError(err.toJSC(this.globalThis));
-            },
-            .tcp => |tcp| {
-                tcp.handleError(err.toJSC(this.globalThis));
-            },
-            .none => {},
+            switch (this.socket) {
+                .tls => |tls| {
+                    tls.handleError(err.toJSC(this.globalThis));
+                },
+                .tcp => |tcp| {
+                    tcp.handleError(err.toJSC(this.globalThis));
+                },
+                .none => {},
+            }
+        } else {
+            switch (this.socket) {
+                .tls => |tls| {
+                    tls.handleConnectError(err.errno);
+                },
+                .tcp => |tcp| {
+                    tcp.handleConnectError(err.errno);
+                },
+                .none => {},
+            }
         }
     }
 
@@ -3614,14 +3633,16 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
     }
 
     fn onClose(this: *WindowsNamedPipeContext) void {
-        switch (this.socket) {
+        const socket = this.socket;
+        this.socket = .none;
+        switch (socket) {
             .tls => |tls| {
-                const socket = TLSSocket.Socket.fromNamedPipe(&this.named_pipe);
-                tls.onClose(socket, 0, null);
+                tls.onClose(TLSSocket.Socket.fromNamedPipe(&this.named_pipe), 0, null);
+                tls.deref();
             },
             .tcp => |tcp| {
-                const socket = TCPSocket.Socket.fromNamedPipe(&this.named_pipe);
-                tcp.onClose(socket, 0, null);
+                tcp.onClose(TCPSocket.Socket.fromNamedPipe(&this.named_pipe), 0, null);
+                tcp.deref();
             },
             .none => {},
         }

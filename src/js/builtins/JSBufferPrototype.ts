@@ -9,44 +9,78 @@ interface BufferExt extends Buffer {
 }
 
 export function setBigUint64(this: BufferExt, offset, value, le) {
+  if (offset === undefined) offset = 0;
   return (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigUint64(
     offset,
     value,
     le,
   );
 }
+
 export function readInt8(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  require("internal/validators").validateInteger(offset, "offset", 0);
   return (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getInt8(offset);
 }
+
 export function readUInt8(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  require("internal/validators").validateInteger(offset, "offset", 0);
   return (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getUint8(offset);
 }
+
 export function readInt16LE(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  require("internal/validators").validateInteger(offset, "offset", 0);
   return (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getInt16(offset, true);
 }
+
 export function readInt16BE(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  require("internal/validators").validateInteger(offset, "offset", 0);
   return (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getInt16(offset, false);
 }
+
 export function readUInt16LE(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  require("internal/validators").validateInteger(offset, "offset", 0);
   return (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getUint16(offset, true);
 }
+
 export function readUInt16BE(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  require("internal/validators").validateInteger(offset, "offset", 0);
   return (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getUint16(offset, false);
 }
+
 export function readInt32LE(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  require("internal/validators").validateInteger(offset, "offset", 0);
   return (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getInt32(offset, true);
 }
+
 export function readInt32BE(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  require("internal/validators").validateInteger(offset, "offset", 0);
   return (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getInt32(offset, false);
 }
+
 export function readUInt32LE(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  require("internal/validators").validateInteger(offset, "offset", 0);
   return (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getUint32(offset, true);
 }
+
 export function readUInt32BE(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  require("internal/validators").validateInteger(offset, "offset", 0);
   return (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getUint32(offset, false);
 }
 
 export function readIntLE(this: BufferExt, offset, byteLength) {
+  require("internal/validators").validateIntRange(byteLength, "byteLength", 1, 6);
+  require("internal/validators").validateIntRange(offset, "offset", 0, this.byteLength - byteLength);
+
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   switch (byteLength) {
     case 1: {
@@ -71,9 +105,12 @@ export function readIntLE(this: BufferExt, offset, byteLength) {
       return (last | ((last & (2 ** 15)) * 0x1fffe)) * 2 ** 32 + view.getUint32(offset, true);
     }
   }
-  throw new RangeError("byteLength must be >= 1 and <= 6");
 }
+
 export function readIntBE(this: BufferExt, offset, byteLength) {
+  require("internal/validators").validateIntRange(byteLength, "byteLength", 1, 6);
+  require("internal/validators").validateIntRange(offset, "offset", 0, this.byteLength - byteLength);
+
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   switch (byteLength) {
     case 1: {
@@ -98,9 +135,12 @@ export function readIntBE(this: BufferExt, offset, byteLength) {
       return (last | ((last & (2 ** 15)) * 0x1fffe)) * 2 ** 32 + view.getUint32(offset + 2, false);
     }
   }
-  throw new RangeError("byteLength must be >= 1 and <= 6");
 }
+
 export function readUIntLE(this: BufferExt, offset, byteLength) {
+  require("internal/validators").validateIntRange(byteLength, "byteLength", 1, 6);
+  require("internal/validators").validateIntRange(offset, "offset", 0, this.byteLength - byteLength);
+
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   switch (byteLength) {
     case 1: {
@@ -122,9 +162,12 @@ export function readUIntLE(this: BufferExt, offset, byteLength) {
       return view.getUint16(offset + 4, true) * 2 ** 32 + view.getUint32(offset, true);
     }
   }
-  throw new RangeError("byteLength must be >= 1 and <= 6");
 }
+
 export function readUIntBE(this: BufferExt, offset, byteLength) {
+  require("internal/validators").validateIntRange(byteLength, "byteLength", 1, 6);
+  require("internal/validators").validateIntRange(offset, "offset", 0, this.byteLength - byteLength);
+
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   switch (byteLength) {
     case 1: {
@@ -146,31 +189,53 @@ export function readUIntBE(this: BufferExt, offset, byteLength) {
       return view.getUint16(offset, false) * 2 ** 32 + view.getUint32(offset + 2, false);
     }
   }
-  throw new RangeError("byteLength must be >= 1 and <= 6");
 }
 
 export function readFloatLE(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  require("internal/validators").validateInteger(offset, "offset", 0);
   return (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getFloat32(offset, true);
 }
+
 export function readFloatBE(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  require("internal/validators").validateInteger(offset, "offset", 0);
   return (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getFloat32(offset, false);
 }
+
 export function readDoubleLE(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  require("internal/validators").validateInteger(offset, "offset", 0);
   return (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getFloat64(offset, true);
 }
+
 export function readDoubleBE(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  require("internal/validators").validateInteger(offset, "offset", 0);
   return (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getFloat64(offset, false);
 }
+
 export function readBigInt64LE(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  require("internal/validators").validateInteger(offset, "offset", 0);
   return (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getBigInt64(offset, true);
 }
+
 export function readBigInt64BE(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  require("internal/validators").validateInteger(offset, "offset", 0);
   return (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getBigInt64(offset, false);
 }
+
 export function readBigUInt64LE(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  require("internal/validators").validateInteger(offset, "offset", 0);
   return (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getBigUint64(offset, true);
 }
+
 export function readBigUInt64BE(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  require("internal/validators").validateInteger(offset, "offset", 0);
   return (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getBigUint64(offset, false);
 }
 

@@ -1075,3 +1075,22 @@ it("pipeTo doesn't cause unhandled rejections on readable errors", async () => {
 
   expect(unhandledRejectionCaught).toBe(false);
 });
+
+it("pipeThrough doesn't cause unhandled rejections on readable errors", async () => {
+  let unhandledRejectionCaught = false;
+
+  const catchUnhandledRejection = () => {
+    unhandledRejectionCaught = true;
+  };
+  process.on("unhandledRejection", catchUnhandledRejection);
+
+  const readable = new ReadableStream({ start: c => c.error("error") });
+  const ts = new TransformStream();
+  readable.pipeThrough(ts);
+
+  await Bun.sleep(15);
+
+  process.off("unhandledRejection", catchUnhandledRejection);
+
+  expect(unhandledRejectionCaught).toBe(false);
+});

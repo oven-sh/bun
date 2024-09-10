@@ -172,10 +172,7 @@ export function releaseLock(this) {
 
   if (!$getByIdDirectPrivate(this, "ownerReadableStream")) return;
 
-  if ($getByIdDirectPrivate(this, "readRequests")?.isNotEmpty())
-    throw new TypeError("There are still pending read requests, cannot release the lock");
-
-  $readableStreamReaderGenericRelease(this);
+  $readableStreamDefaultReaderRelease(this);
 }
 
 $getter;

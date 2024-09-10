@@ -1375,9 +1375,7 @@ export function readableStreamError(stream, error) {
   $markPromiseAsHandled(promise);
 
   if ($isReadableStreamDefaultReader(reader)) {
-    const requests = $getByIdDirectPrivate(reader, "readRequests");
-    $putByIdDirectPrivate(reader, "readRequests", $createFIFO());
-    for (var request = requests.shift(); request; request = requests.shift()) $rejectPromise(request, error);
+    $readableStreamDefaultReaderErrorReadRequests(reader, error);
   } else {
     $assert($isReadableStreamBYOBReader(reader));
     const requests = $getByIdDirectPrivate(reader, "readIntoRequests");
@@ -1612,6 +1610,12 @@ export function isReadableStreamDisturbed(stream) {
 }
 
 $visibility = "Private";
+export function readableStreamDefaultReaderRelease(reader) {
+  $readableStreamReaderGenericRelease(reader);
+  $readableStreamDefaultReaderErrorReadRequests(reader, $makeTypeError("releasing lock of reader"));
+}
+
+$visibility = "Private";
 export function readableStreamReaderGenericRelease(reader) {
   $assert(!!$getByIdDirectPrivate(reader, "ownerReadableStream"));
   $assert($getByIdDirectPrivate($getByIdDirectPrivate(reader, "ownerReadableStream"), "reader") === reader);
@@ -1637,6 +1641,12 @@ export function readableStreamReaderGenericRelease(reader) {
   }
   $putByIdDirectPrivate(stream, "reader", undefined);
   $putByIdDirectPrivate(reader, "ownerReadableStream", undefined);
+}
+
+export function readableStreamDefaultReaderErrorReadRequests(reader, error) {
+  const requests = $getByIdDirectPrivate(reader, "readRequests");
+  $putByIdDirectPrivate(reader, "readRequests", $createFIFO());
+  for (var request = requests.shift(); request; request = requests.shift()) $rejectPromise(request, error);
 }
 
 export function readableStreamDefaultControllerCanCloseOrEnqueue(controller) {

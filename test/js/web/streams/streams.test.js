@@ -772,6 +772,31 @@ it("ReadableStream errors the stream on pull rejection", async () => {
   expect(await read).toBe("read: pull rejected");
 });
 
+it("ReadableStream rejects pending reads when the lock is released", async () => {
+  let { resolve, promise } = Promise.withResolvers();
+  let stream = new ReadableStream({
+    async pull(controller) {
+      controller.enqueue("123");
+      await promise;
+      controller.enqueue("456");
+      controller.close();
+    },
+  });
+
+  let reader = stream.getReader();
+  expect((await reader.read()).value).toBe("123");
+
+  let read = reader.read();
+  reader.releaseLock();
+  expect(read).rejects.toThrow("releasing lock of reader");
+  expect(reader.closed).rejects.toThrow("releasing lock of reader");
+
+  resolve();
+
+  reader = stream.getReader();
+  expect((await reader.read()).value).toBe("456");
+});
+
 it("new Response(stream).arrayBuffer() (bytes)", async () => {
   var queue = [Buffer.from("abdefgh")];
   var stream = new ReadableStream({

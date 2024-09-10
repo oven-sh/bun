@@ -26,6 +26,7 @@ export function createTestBuilder(path: string) {
     file_equals: { [filename: string]: string | (() => string | Promise<string>) } = {};
     _doesNotExist: string[] = [];
     _timeout: number | undefined = undefined;
+    _expectedDuration: number | undefined = undefined;
 
     tempdir: string | undefined = undefined;
     _env: { [key: string]: string } | undefined = undefined;
@@ -213,8 +214,16 @@ export function createTestBuilder(path: string) {
       return this;
     }
 
-    async doChecks(stdout: Buffer, stderr: Buffer, exitCode: number): Promise<void> {
+    duration(ms: number): this {
+      this._expectedDuration = ms;
+      return this;
+    }
+
+    async doChecks(stdout: Buffer, stderr: Buffer, exitCode: number, durationMs: number): Promise<void> {
       const tempdir = this.tempdir || "NO_TEMP_DIR";
+      if (this._expectedDuration !== undefined) {
+        expect(durationMs).toBeGreaterThanOrEqual(this._expectedDuration);
+      }
       if (this.expected_stdout !== undefined) {
         if (typeof this.expected_stdout === "string") {
           expect(stdout.toString()).toEqual(this.expected_stdout.replaceAll("$TEMP_DIR", tempdir));
@@ -255,6 +264,7 @@ export function createTestBuilder(path: string) {
         return Promise.resolve(undefined);
       }
 
+      const startTime = performance.now();
       try {
         let finalPromise = Bun.$(this._scriptStr, ...this._expresssions);
         if (this.tempdir) finalPromise = finalPromise.cwd(this.tempdir);
@@ -262,17 +272,19 @@ export function createTestBuilder(path: string) {
         if (this._env) finalPromise = finalPromise.env(this._env);
         if (this._quiet) finalPromise = finalPromise.quiet();
         const output = await finalPromise;
+        const endTime = performance.now();
 
         const { stdout, stderr, exitCode } = output;
-        await this.doChecks(stdout, stderr, exitCode);
+        await this.doChecks(stdout, stderr, exitCode, endTime - startTime);
       } catch (err_) {
+        const endTime = performance.now();
         const err: ShellError = err_ as any;
         const { stdout, stderr, exitCode } = err;
         if (this.expected_error === undefined) {
           if (stdout === undefined || stderr === undefined || exitCode === undefined) {
             throw err_;
           }
-          this.doChecks(stdout, stderr, exitCode);
+          this.doChecks(stdout, stderr, exitCode, endTime - startTime);
           return;
         }
         if (this.expected_error === true) return undefined;

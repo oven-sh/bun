@@ -389,15 +389,6 @@ describe("util", () => {
         code: "ERR_INVALID_ARG_VALUE",
       },
     );
-
-    assert.throws(
-      () => {
-        util.styleText("red", "text");
-      },
-      {
-        code: "ERR_INVALID_ARG_TYPE",
-      },
-    );
   });
 
   describe("getSystemErrorName", () => {

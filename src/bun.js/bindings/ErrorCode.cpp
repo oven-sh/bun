@@ -183,34 +183,45 @@ WTF::String JSValueToStringSafe(JSC::JSGlobalObject* globalObject, JSValue arg)
 {
     ASSERT(!arg.isEmpty());
     if (!arg.isCell())
-        return arg.toString(globalObject)->getString(globalObject);
+        return arg.toWTFStringForConsole(globalObject);
 
     auto cell = arg.asCell();
-    auto jstype = cell->type();
-
-    if (jstype == JSC::JSType::StringType) {
-        return cell->toStringInline(globalObject)->getString(globalObject);
+    switch (cell->type()) {
+    case JSC::JSType::StringType: {
+        return arg.toWTFStringForConsole(globalObject);
     }
-    if (jstype == JSC::JSType::SymbolType) {
+    case JSC::JSType::SymbolType: {
+
         auto symbol = jsCast<Symbol*>(cell);
         auto result = symbol->tryGetDescriptiveString();
         if (result.has_value())
             return result.value();
+        return "Symbol"_s;
     }
-    return arg.toString(globalObject)->getString(globalObject);
-}
+    case JSC::JSType::InternalFunctionType:
+    case JSC::JSType::JSFunctionType: {
+        auto& vm = globalObject->vm();
+        auto catchScope = DECLARE_CATCH_SCOPE(vm);
+        auto name = JSC::getCalculatedDisplayName(vm, cell->getObject());
+        if (catchScope.exception()) {
+            catchScope.clearException();
+            name = "Function"_s;
+        }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_INVALID_ARG_TYPE, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+        if (!name.isNull() && name.length() > 0) {
+            return makeString("[Function: "_s, name, ']');
+        }
 
-    EXPECT_ARG_COUNT(3);
+        return "Function"_s;
+        break;
+    }
 
-    auto arg_name = callFrame->argument(0);
-    auto expected_type = callFrame->argument(1);
-    auto actual_value = callFrame->argument(2);
-    return Bun__ERR_INVALID_ARG_TYPE(globalObject, JSValue::encode(arg_name), JSValue::encode(expected_type), JSValue::encode(actual_value));
+    default: {
+        break;
+    }
+    }
+
+    return arg.toWTFStringForConsole(globalObject);
 }
 
 namespace Message {
@@ -221,7 +232,7 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
     auto actual_value_string = JSValueToStringSafe(globalObject, actual_value);
     RETURN_IF_EXCEPTION(scope, {});
 
-    return makeString("The \""_s, arg_name, "\" argument must be of type "_s, expected_type, ". Received: \""_s, actual_value_string, '"');
+    return makeString("The \""_s, arg_name, "\" argument must be of type "_s, expected_type, ". Received: "_s, actual_value_string);
 }
 
 WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const StringView& arg_name, JSC::JSArray* expected_types, JSValue actual_value)
@@ -253,7 +264,7 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
         result.append(expected_types->getDirectIndex(globalObject, length - 1).toWTFString(globalObject));
     }
 
-    result.append(". Received: \""_s, actual_value_string, '"');
+    result.append(". Received: "_s, actual_value_string);
 
     return result.toString();
 }
@@ -294,6 +305,21 @@ WTF::String ERR_OUT_OF_RANGE(JSC::ThrowScope& scope, JSC::JSGlobalObject* global
 
     return makeString("The value of \""_s, arg_name, "\" is out of range. It must be "_s, range, ". Received: \""_s, input, '"');
 }
+}
+
+static JSC::JSValue ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue arg0, JSValue arg1, JSValue arg2)
+{
+
+    if (auto* array = jsDynamicCast<JSC::JSArray*>(arg1)) {
+        const WTF::String argName = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        const auto msg = Bun::Message::ERR_INVALID_ARG_TYPE(scope, globalObject, argName, array, arg2);
+        return createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, msg);
+    }
+
+    const auto msg = Bun::Message::ERR_INVALID_ARG_TYPE(scope, globalObject, arg0, arg1, arg2);
+    return createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, msg);
 }
 
 extern "C" JSC::EncodedJSValue Bun__ERR_INVALID_ARG_TYPE(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue val_arg_name, JSC::EncodedJSValue val_expected_type, JSC::EncodedJSValue val_actual_value)
@@ -444,6 +470,19 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_INVALID_PROTOCOL, (JSC::JSGlobalObject *
     return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_PROTOCOL, message));
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_INVALID_ARG_TYPE, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    EXPECT_ARG_COUNT(3);
+
+    auto arg_name = callFrame->argument(0);
+    auto expected_type = callFrame->argument(1);
+    auto actual_value = callFrame->argument(2);
+    return JSValue::encode(ERR_INVALID_ARG_TYPE(scope, globalObject, arg_name, expected_type, actual_value));
+}
+
 } // namespace Bun
 
 JSC::JSValue WebCore::toJS(JSC::JSGlobalObject* globalObject, CommonAbortReason abortReason)
@@ -528,13 +567,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         JSValue arg1 = callFrame->argument(2);
         JSValue arg2 = callFrame->argument(3);
 
-        if (auto* array = jsDynamicCast<JSC::JSArray*>(arg1)) {
-            const auto msg = Bun::Message::ERR_INVALID_ARG_TYPE(scope, globalObject, arg0, array, arg2);
-            return JSC::JSValue::encode(createError(globalObject, error, msg));
-        }
-
-        const auto msg = Bun::Message::ERR_INVALID_ARG_TYPE(scope, globalObject, arg0, arg1, arg2);
-        return JSC::JSValue::encode(createError(globalObject, error, msg));
+        return JSValue::encode(ERR_INVALID_ARG_TYPE(scope, globalObject, arg0, arg1, arg2));
     }
 
     default: {

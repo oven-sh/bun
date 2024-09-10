@@ -409,6 +409,10 @@ describe("Writable.toWeb", () => {
     expect(dataBuffer).toBe("Hello, World!");
   });
 
+  it("Invalid constructor", () => {
+    expect(() => Writable.toWeb({})).toThrowError(TypeError);
+  });
+
   it("Error handling", async () => {
     const nodeWritable = new Writable({
       write(chunk, encoding, callback) {
@@ -424,25 +428,45 @@ describe("Writable.toWeb", () => {
   });
 });
 
-it("Writable.fromWeb", async () => {
-  let dataBuffer = "";
+describe("Writable.fromWeb", () => {
+  it("WritableStream -> Writable", async () => {
+    let dataBuffer = "";
 
-  // Create a Web WritableStream
-  const webWritable = new WritableStream({
-    write(chunk) {
-      dataBuffer += chunk.toString();
-    },
+    // Create a Web WritableStream
+    const webWritable = new WritableStream({
+      write(chunk) {
+        dataBuffer += chunk.toString();
+      },
+    });
+
+    const nodeWritable = Writable.fromWeb(webWritable);
+
+    // Write some data
+    const encoder = new TextEncoder();
+    nodeWritable.write(encoder.encode("Hello, "), () => {
+      nodeWritable.write(encoder.encode("World!"), () => {
+        expect(dataBuffer).toBe("Hello, World!");
+        nodeWritable.end();
+      });
+    });
   });
 
-  const nodeWritable = Writable.fromWeb(webWritable);
-
-  // Write some data
-  const encoder = new TextEncoder();
-  nodeWritable.write(encoder.encode("Hello, "), () => {
-    nodeWritable.write(encoder.encode("World!"), () => {
-      expect(dataBuffer).toBe("Hello, World!");
-      nodeWritable.end();
+  it.todo("Error handling", async () => {
+    const webWritable = new WritableStream({
+      write() {
+        throw new Error("Write error");
+      },
     });
+
+    // TODO: wrap in async
+    const nodeWritable = Writable.fromWeb(webWritable);
+
+    const encoder = new TextEncoder();
+    expect(() => nodeWritable.write(encoder.encode("Hello, "))).toThrowError("Write error");
+  });
+
+  it("Invalid constructor", () => {
+    expect(() => Writable.fromWeb({})).toThrowError(TypeError);
   });
 });
 

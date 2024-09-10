@@ -608,6 +608,7 @@ pub const WrappedPipe = struct {
         this.pipe = null;
         this.handlers.onClose(this.handlers.ctx);
     }
+
     fn onReadAlloc(this: *WrappedPipe, suggested_size: usize) []u8 {
         var available = this.incoming.available();
         if (available.len < suggested_size) {

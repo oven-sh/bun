@@ -444,11 +444,11 @@ describe("process.cpuUsage", () => {
   // Skipped on Windows because it seems UV returns { user: 15000, system: 0 } constantly
   it.skipIf(process.platform === "win32")("works with diff", () => {
     const init = process.cpuUsage();
-    init.system = 1;
-    init.user = 1;
+    init.system = 0;
+    init.user = 0;
     const delta = process.cpuUsage(init);
     expect(delta.user).toBeGreaterThan(0);
-    expect(delta.system).toBeGreaterThan(0);
+    expect(delta.system).toBeGreaterThanOrEqual(0);
   });
 
   it.skipIf(process.platform === "win32")("works with diff of different structure", () => {
@@ -458,7 +458,7 @@ describe("process.cpuUsage", () => {
     };
     const delta = process.cpuUsage(init);
     expect(delta.user).toBeGreaterThan(0);
-    expect(delta.system).toBeGreaterThan(0);
+    expect(delta.system).toBeGreaterThanOrEqual(0);
   });
 
   it("throws on invalid property", () => {

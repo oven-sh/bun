@@ -907,7 +907,7 @@ foreach(dependency ${BUN_DEPENDENCIES})
   include(Build${dependency})
 endforeach()
 
-list(TRANSFORM BUN_DEPENDENCIES TOLOWER OUTPUT BUN_TARGETS)
+list(TRANSFORM BUN_DEPENDENCIES TOLOWER OUTPUT_VARIABLE BUN_TARGETS)
 add_custom_target(dependencies DEPENDS ${BUN_TARGETS})
 
 if(APPLE)

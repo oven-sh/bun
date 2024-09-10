@@ -492,6 +492,7 @@ RUN --mount=type=cache,target=${CCACHE_DIR} \
   --mount=type=cache,target=${ZIG_LOCAL_CACHE_DIR} \
   mkdir -p build \
   && bun run $BUN_DIR/src/codegen/bundle-modules.ts --debug=OFF $BUN_DIR/build \
+  && bun run $BUN_DIR/src/codegen/kit-codegen.ts --debug=OFF --codegen-root=$BUN_DIR/build \
   && cd build \
   && cmake .. \
   -G Ninja \

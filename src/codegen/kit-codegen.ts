@@ -16,7 +16,7 @@ for (const arg of process.argv.slice(2)) {
 
 let { codegen_root, debug } = options as any;
 if (!codegen_root) {console.error('Missing --codegen_root=...'); process.exit(1);}
-if (debug === 'false' || debug === '0') debug = false;
+if (debug === 'false' || debug === '0' || debug == 'OFF') debug = false;
 
 const kit_dir = join(import.meta.dirname, '../kit');
 process.chdir(kit_dir); // to make bun build predictable in development

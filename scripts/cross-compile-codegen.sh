@@ -38,6 +38,7 @@ task() {
 }
 
 task bun ./src/codegen/bundle-modules.ts --debug=OFF "$OUT"
+task bun ./src/codegen/kit-codegen.ts --debug=OFF --codegen-root="$OUT"
 
 rm -rf "$OUT/tmp_functions"
 rm -rf "$OUT/tmp_modules"

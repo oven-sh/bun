@@ -12924,11 +12924,11 @@ pub const PackageManager = struct {
                 if (comptime log_level.isVerbose()) {
                     const name = this.lockfile.str(&this.names[package_id]);
                     if (!meta.os.isMatch() and !meta.arch.isMatch()) {
-                        Output.prettyErrorln("<d>Skip installing package '<b>{s}<r><d>': '{s}' os and '{s}' cpu unsupported", .{ name, Npm.OperatingSystem.current_name, Npm.Architecture.current_name });
+                        Output.prettyErrorln("<d>Skip installing '<b>{s}<r><d>' os and cpu unsupported", .{name});
                     } else if (!meta.os.isMatch()) {
-                        Output.prettyErrorln("<d>Skip installing package '<b>{s}<r><d>': '{s}' os unsupported", .{ name, Npm.OperatingSystem.current_name });
+                        Output.prettyErrorln("<d>Skip installing '<b>{s}<r><d>' os unsupported", .{name});
                     } else if (!meta.arch.isMatch()) {
-                        Output.prettyErrorln("<d>Skip installing package '<b>{s}<r><d>': '{s}' cpu unsupported", .{ name, Npm.Architecture.current_name });
+                        Output.prettyErrorln("<d>Skip installing '<b>{s}<r><d>' cpu unsupported", .{name});
                     }
                 }
 

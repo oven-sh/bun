@@ -324,16 +324,21 @@ fn Negatable(comptime T: type) type {
     return struct {
         added: T = T.none,
         removed: T = T.none,
-        had_any: bool = false,
+        had_wildcard: bool = false,
+        had_unrecognized_values: bool = false,
 
         // https://github.com/pnpm/pnpm/blob/1f228b0aeec2ef9a2c8577df1d17186ac83790f9/config/package-is-installable/src/checkPlatform.ts#L56-L86
         // https://github.com/npm/cli/blob/fefd509992a05c2dfddbe7bc46931c42f1da69d7/node_modules/npm-install-checks/lib/index.js#L2-L96
         pub fn combine(this: Negatable(T)) T {
-            const added = if (this.had_any) T.all_value else @intFromEnum(this.added);
+            const added = if (this.had_wildcard) T.all_value else @intFromEnum(this.added);
             const removed = @intFromEnum(this.removed);
 
             // If none were added or removed, all are allowed
             if (added == 0 and removed == 0) {
+                if (this.had_unrecognized_values) {
+                    return T.none;
+                }
+
                 // []
                 return T.all;
             }
@@ -359,14 +364,18 @@ fn Negatable(comptime T: type) type {
             }
 
             if (strings.eqlComptime(str, "any")) {
-                this.had_any = true;
+                this.had_wildcard = true;
                 return;
             }
 
             const is_not = str[0] == '!';
             const offset: usize = @intFromBool(is_not);
 
-            const field: u16 = T.NameMap.get(str[offset..]) orelse return;
+            const field: u16 = T.NameMap.get(str[offset..]) orelse {
+                if (!is_not)
+                    this.had_unrecognized_values = true;
+                return;
+            };
 
             if (is_not) {
                 this.* = .{ .added = this.added, .removed = @enumFromInt(@intFromEnum(this.removed) | field) };

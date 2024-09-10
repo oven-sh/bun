@@ -5,6 +5,8 @@ import { describe, expect, test } from "bun:test";
 
 describe("isArchitectureMatch", () => {
   const trues = [
+    ["wombo.com", "any"],
+    ["wombo.com", process.arch],
     [],
     ["any"],
     ["any", process.arch],
@@ -15,6 +17,7 @@ describe("isArchitectureMatch", () => {
     ["!mips", "!ia32"],
   ];
   const falses = [
+    ["wombo.com"],
     ["ia32"],
     ["any", "!" + process.arch],
     ["!" + process.arch],
@@ -43,6 +46,7 @@ describe("isOperatingSystemMatch", () => {
     ["!sunos", process.platform],
     ["sunos", process.platform],
     ["!aix", "!sunos"],
+    ["wombo.com", "!aix"],
   ];
   const falses = [
     ["aix"],

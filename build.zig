@@ -475,7 +475,7 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
         .{ .file = "ResolvedSourceTag.zig", .import = "ResolvedSourceTag" },
         .{ .file = "ErrorCode.zig", .import = "ErrorCode" },
         .{ .file = "kit.client.js", .import = "kit-codegen/kit.client.js", .enable = opts.shouldEmbedCode() },
-        .{ .file = "kit.server.js", .import = "kit-codegen/kit.client.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "kit.server.js", .import = "kit-codegen/kit.server.js", .enable = opts.shouldEmbedCode() },
     }) |entry| {
         if (!@hasField(@TypeOf(entry), "enable") or entry.enable) {
             const path = b.pathJoin(&.{ opts.generated_code_dir, entry.file });

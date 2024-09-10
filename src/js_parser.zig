@@ -19967,7 +19967,7 @@ fn NewParser_(
                     data.func = p.visitFunc(data.func, data.func.open_parens_loc);
 
                     const name_ref = data.func.name.?.ref.?;
-                    assert(name_ref.tag == .symbol);
+                    bun.assert(name_ref.tag == .symbol);
                     const name_symbol = &p.symbols.items[name_ref.innerIndex()];
                     const original_name = name_symbol.original_name;
 

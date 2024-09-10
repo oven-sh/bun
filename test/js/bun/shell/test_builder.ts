@@ -222,7 +222,7 @@ export function createTestBuilder(path: string) {
     async doChecks(stdout: Buffer, stderr: Buffer, exitCode: number, durationMs: number): Promise<void> {
       const tempdir = this.tempdir || "NO_TEMP_DIR";
       if (this._expectedDuration !== undefined) {
-        expect(durationMs).toBeGreaterThanOrEqual(this._expectedDuration);
+        expect(durationMs >= this._expectedDuration && durationMs <= this._expectedDuration + 200).toBeTrue();
       }
       if (this.expected_stdout !== undefined) {
         if (typeof this.expected_stdout === "string") {

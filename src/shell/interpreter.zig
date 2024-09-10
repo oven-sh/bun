@@ -10520,15 +10520,43 @@ pub const Interpreter = struct {
                 var total_seconds: f64 = 0;
                 while (iter.next()) |arg| {
                     invalid_interval: {
-                        const trimmed = bun.strings.trimLeft(bun.sliceTo(arg, 0), " ");
+                        var trimmed: string = bun.strings.trimLeft(bun.sliceTo(arg, 0), " ");
 
                         if (trimmed.len == 0 or trimmed[0] == '-') {
                             break :invalid_interval;
                         }
 
-                        const seconds = bun.fmt.parseFloat(f64, trimmed) catch {
+                        const maybe_unit: ?enum {
+                            seconds,
+                            minutes,
+                            hours,
+                            days,
+
+                            pub fn apply(unit: @This(), value: f64) f64 {
+                                return switch (unit) {
+                                    .seconds => value,
+                                    .minutes => value * 60,
+                                    .hours => value * 60 * 60,
+                                    .days => value * 60 * 60 * 24,
+                                };
+                            }
+                        } = switch (trimmed[trimmed.len - 1]) {
+                            's' => .seconds,
+                            'm' => .minutes,
+                            'h' => .hours,
+                            'd' => .days,
+                            else => null,
+                        };
+
+                        if (maybe_unit != null) {
+                            trimmed = trimmed[0 .. trimmed.len - 1];
+                        }
+
+                        const value = bun.fmt.parseFloat(f64, trimmed) catch {
                             break :invalid_interval;
                         };
+
+                        const seconds = if (maybe_unit) |unit| unit.apply(value) else value;
 
                         if (std.math.isInf(seconds)) {
                             // if positive infinity is seen, set total seconds to `-1`.

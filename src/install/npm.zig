@@ -395,16 +395,15 @@ pub const OperatingSystem = enum(u16) {
 
     pub const all_value: u16 = aix | darwin | freebsd | linux | openbsd | sunos | win32 | android;
 
+    pub const current: OperatingSystem = switch (Environment.os) {
+        .linux => @enumFromInt(linux),
+        .mac => @enumFromInt(darwin),
+        .windows => @enumFromInt(win32),
+        else => @compileError("Unsupported operating system: " ++ @tagName(Environment.os)),
+    };
+
     pub fn isMatch(this: OperatingSystem) bool {
-        if (comptime Environment.isLinux) {
-            return (@intFromEnum(this) & linux) != 0;
-        } else if (comptime Environment.isMac) {
-            return (@intFromEnum(this) & darwin) != 0;
-        } else if (comptime Environment.isWindows) {
-            return (@intFromEnum(this) & win32) != 0;
-        } else {
-            return false;
-        }
+        return (@intFromEnum(this) & @intFromEnum(current)) != 0;
     }
 
     pub inline fn has(this: OperatingSystem, other: u16) bool {
@@ -421,6 +420,13 @@ pub const OperatingSystem = enum(u16) {
         .{ "win32", win32 },
         .{ "android", android },
     });
+
+    pub const current_name = switch (Environment.os) {
+        .linux => "linux",
+        .mac => "darwin",
+        .windows => "win32",
+        else => @compileError("Unsupported operating system: " ++ @tagName(current)),
+    };
 
     pub fn negatable(this: OperatingSystem) Negatable(OperatingSystem) {
         return .{ .added = this, .removed = .none };
@@ -465,6 +471,9 @@ pub const Libc = enum(u8) {
         return .{ .added = this, .removed = .none };
     }
 
+    // TODO:
+    pub const current: Libc = @intFromEnum(glibc);
+
     const JSC = bun.JSC;
     pub fn jsFunctionLibcIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const args = callframe.arguments(1);
@@ -502,6 +511,18 @@ pub const Architecture = enum(u16) {
 
     pub const all_value: u16 = arm | arm64 | ia32 | mips | mipsel | ppc | ppc64 | s390 | s390x | x32 | x64;
 
+    pub const current: Architecture = switch (Environment.arch) {
+        .arm64 => @enumFromInt(arm64),
+        .x64 => @enumFromInt(x64),
+        else => @compileError("Specify architecture: " ++ Environment.arch),
+    };
+
+    pub const current_name = switch (Environment.arch) {
+        .arm64 => "arm64",
+        .x64 => "x64",
+        else => @compileError("Unsupported architecture: " ++ @tagName(current)),
+    };
+
     pub const NameMap = bun.ComptimeStringMap(u16, .{
         .{ "arm", arm },
         .{ "arm64", arm64 },
@@ -521,13 +542,7 @@ pub const Architecture = enum(u16) {
     }
 
     pub fn isMatch(this: Architecture) bool {
-        if (comptime Environment.isAarch64) {
-            return (@intFromEnum(this) & arm64) != 0;
-        } else if (comptime Environment.isX64) {
-            return (@intFromEnum(this) & x64) != 0;
-        } else {
-            return false;
-        }
+        return @intFromEnum(this) & @intFromEnum(current) != 0;
     }
 
     pub fn negatable(this: Architecture) Negatable(Architecture) {

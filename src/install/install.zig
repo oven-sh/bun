@@ -12921,6 +12921,17 @@ pub const PackageManager = struct {
                 if (comptime log_level.showProgress()) {
                     this.node.completeOne();
                 }
+                if (comptime log_level.isVerbose()) {
+                    const name = this.lockfile.str(&this.names[package_id]);
+                    if (!meta.os.isMatch() and !meta.arch.isMatch()) {
+                        Output.prettyErrorln("<d>Skip installing package '<b>{s}<r><d>': '{s}' os and '{s}' cpu unsupported", .{ name, Npm.OperatingSystem.current_name, Npm.Architecture.current_name });
+                    } else if (!meta.os.isMatch()) {
+                        Output.prettyErrorln("<d>Skip installing package '<b>{s}<r><d>': '{s}' os unsupported", .{ name, Npm.OperatingSystem.current_name });
+                    } else if (!meta.arch.isMatch()) {
+                        Output.prettyErrorln("<d>Skip installing package '<b>{s}<r><d>': '{s}' cpu unsupported", .{ name, Npm.Architecture.current_name });
+                    }
+                }
+
                 if (comptime increment_tree_count) this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
                 return;
             }

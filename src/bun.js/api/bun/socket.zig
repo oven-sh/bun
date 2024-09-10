@@ -980,7 +980,7 @@ pub const Listener = struct {
 
         vm.eventLoop().ensureWaker();
 
-        const connection: Listener.UnixOrHost = blk: {
+        var connection: Listener.UnixOrHost = blk: {
             if (opts.getTruthy(globalObject, "fd")) |fd_| {
                 if (fd_.isNumber()) {
                     const fd = fd_.asFileDescriptor();
@@ -996,10 +996,25 @@ pub const Listener = struct {
         if (Environment.isWindows) {
             const isNamedPipe = switch (connection) {
                 .unix => |pipe_name| strings.startsWith(pipe_name, "\\\\.\\pipe\\") or strings.startsWith(pipe_name, "\\\\?\\pipe\\"),
-                .fd => |fd| bun.windows.libuv.uv_guess_handle(bun.uvfdcast(fd)) == bun.windows.libuv.Handle.Type.named_pipe,
+                .fd => |fd| brk: {
+                    const uvfd = bun.uvfdcast(fd);
+                    const fd_type = bun.windows.libuv.uv_guess_handle(uvfd);
+                    if (fd_type == bun.windows.libuv.Handle.Type.named_pipe) {
+                        break :brk true;
+                    }
+                    if (fd_type == bun.windows.libuv.Handle.Type.unknown) {
+                        // is not a libuv fd, check if it's a named pipe
+                        const osfd: bun.windows.libuv.uv_os_fd_t = @ptrFromInt(@as(usize, @intCast(uvfd)));
+                        if (bun.windows.GetFileType(osfd) == bun.windows.FILE_TYPE_PIPE) {
+                            // yay its a named pipe lets make it a libuv fd
+                            connection.fd = bun.FDImpl.fromUV(bun.windows.libuv.uv_open_osfhandle(osfd)).encode();
+                            break :brk true;
+                        }
+                    }
+                    break :brk false;
+                },
                 else => false,
             };
-
             if (isNamedPipe) {
                 default_data.ensureStillAlive();
 
@@ -1053,12 +1068,14 @@ pub const Listener = struct {
                             return promise_value;
                         };
                         tcp.socket = TCPSocket.Socket.fromNamedPipe(named_pipe);
+                        return promise_value;
                     } else {
                         // fd
                         const named_pipe = WindowsNamedPipeContext.open(globalObject, connection.fd, null, .{ .tcp = tcp }) catch {
                             return promise_value;
                         };
                         tcp.socket = TCPSocket.Socket.fromNamedPipe(named_pipe);
+                        return promise_value;
                     }
                 }
             }

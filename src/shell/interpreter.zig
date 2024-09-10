@@ -10513,31 +10513,33 @@ pub const Interpreter = struct {
 
                 var total: f64 = 0;
                 while (iter.next()) |arg| {
-                    const trimmed = bun.strings.trimLeft(bun.sliceTo(arg, 0), " ");
+                    invalid_interval: {
+                        const trimmed = bun.strings.trimLeft(bun.sliceTo(arg, 0), " ");
 
-                    if (trimmed.len == 0 or trimmed[0] == '-') {
-                        return this.fail("sleep: invalid time interval\n");
+                        if (trimmed.len == 0 or trimmed[0] == '-') {
+                            break :invalid_interval;
+                        }
+
+                        const seconds = bun.fmt.parseFloat(f64, trimmed) catch {
+                            break :invalid_interval;
+                        };
+
+                        if (std.math.isInf(seconds)) {
+                            // if positive infinity is seen, set total to `-1`.
+                            // continue iterating to catch invalid args
+                            total = -1;
+                        } else if (std.math.isNan(seconds)) {
+                            break :invalid_interval;
+                        }
+
+                        if (total != -1) {
+                            total += seconds;
+                        }
+
+                        continue;
                     }
 
-                    const seconds = bun.fmt.parseFloat(f64, trimmed) catch {
-                        return this.fail("sleep: invalid time interval\n");
-                    };
-
-                    if (std.math.isInf(seconds)) {
-                        // if positive infinity is seen, set total to `-1`.
-                        // continue iterating to catch invalid args
-                        total = -1;
-                    } else if (std.math.isNan(seconds)) {
-                        return this.fail("sleep: invalid time interval\n");
-                    }
-
-                    if (total != -1) {
-                        total += seconds;
-                    }
-                }
-
-                if (this.state == .err) {
-                    return Maybe(void).success;
+                    return this.fail("sleep: invalid time interval\n");
                 }
 
                 if (total != 0) {

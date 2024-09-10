@@ -27,6 +27,12 @@ endif()
 # In the future, change those commands so that generated files are written to this path.
 optionx(CODEGEN_PATH FILEPATH "Path to the codegen directory" DEFAULT ${BUILD_PATH}/codegen)
 
+if(NOT CONFIGURE_DEPENDS)
+  set(CONFIGURE_DEPENDS "")
+else()
+  set(CONFIGURE_DEPENDS "CONFIGURE_DEPENDS")
+endif()
+
 # --- Codegen ---
 
 set(BUN_ZIG_IDENTIFIER_SOURCE ${CWD}/src/js_lexer)
@@ -574,7 +580,8 @@ elseif(BUN_CPP_ONLY)
       ${BUN_CPP_OUTPUT}
   )
 else()
-  add_executable(${bun} ${BUN_CPP_SOURCES} ${BUN_ZIG_OUTPUT})
+  add_executable(${bun} ${BUN_CPP_SOURCES})
+  target_link_libraries(${bun} PRIVATE ${BUN_ZIG_OUTPUT})
 endif()
 
 if(NOT bun STREQUAL "bun")
@@ -873,8 +880,6 @@ if(WEBKIT_PREBUILT AND NOT APPLE)
 endif()
 
 # --- Dependencies ---
-
-include(BuildDependencies)
 
 if(APPLE)
   target_link_libraries(${bun} PRIVATE icucore resolv)

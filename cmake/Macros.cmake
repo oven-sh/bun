@@ -455,7 +455,7 @@ function(register_bun_install)
   )
 
   if(NOT NPM_NODE_MODULES)
-    message(FATAL_ERROR "register_bun_install: package.json does not have dependencies?")
+    message(FATAL_ERROR "register_bun_install: ${NPM_CWD}/package.json does not have dependencies?")
   endif()
 
   register_command(

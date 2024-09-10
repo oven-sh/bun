@@ -1714,16 +1714,16 @@ pub const Subprocess = struct {
                         };
                     }
                 }
-            }
 
-            // need to update `cwd` before searching for executable with `Which.which`
-            if (args.getTruthy(globalThis, "cwd")) |cwd_| {
-                const cwd_str = cwd_.getZigString(globalThis);
-                if (cwd_str.len > 0) {
-                    cwd = cwd_str.toOwnedSliceZ(allocator) catch {
-                        globalThis.throwOutOfMemory();
-                        return .zero;
-                    };
+                // need to update `cwd` before searching for executable with `Which.which`
+                if (args.getTruthy(globalThis, "cwd")) |cwd_| {
+                    const cwd_str = cwd_.getZigString(globalThis);
+                    if (cwd_str.len > 0) {
+                        cwd = cwd_str.toOwnedSliceZ(allocator) catch {
+                            globalThis.throwOutOfMemory();
+                            return .zero;
+                        };
+                    }
                 }
             }
 

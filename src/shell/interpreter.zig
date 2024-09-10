@@ -42,6 +42,7 @@ const windows = bun.windows;
 const uv = windows.libuv;
 const Maybe = JSC.Maybe;
 const WTFStringImplStruct = @import("../string.zig").WTFStringImplStruct;
+const timespec = bun.timespec;
 
 const Pipe = [2]bun.FileDescriptor;
 const shell = @import("./shell.zig");
@@ -10503,7 +10504,12 @@ pub const Interpreter = struct {
 
         pub const Sleep = struct {
             bltn: *Builtin,
-            state: enum { idle, waiting_io, err, done } = .idle,
+            state: enum { idle, err, done } = .idle,
+
+            event_loop_timer: JSC.BunTimer.EventLoopTimer = .{
+                .next = .{},
+                .tag = .ShellSleepBuiltin,
+            },
 
             pub fn start(this: *Sleep) Maybe(void) {
                 const args = this.bltn.argsSlice();
@@ -10511,7 +10517,7 @@ pub const Interpreter = struct {
 
                 if (args.len == 0) return this.fail(Builtin.Kind.usageString(.sleep));
 
-                var total: f64 = 0;
+                var total_seconds: f64 = 0;
                 while (iter.next()) |arg| {
                     invalid_interval: {
                         const trimmed = bun.strings.trimLeft(bun.sliceTo(arg, 0), " ");
@@ -10525,15 +10531,15 @@ pub const Interpreter = struct {
                         };
 
                         if (std.math.isInf(seconds)) {
-                            // if positive infinity is seen, set total to `-1`.
+                            // if positive infinity is seen, set total seconds to `-1`.
                             // continue iterating to catch invalid args
-                            total = -1;
+                            total_seconds = -1;
                         } else if (std.math.isNan(seconds)) {
                             break :invalid_interval;
                         }
 
-                        if (total != -1) {
-                            total += seconds;
+                        if (total_seconds != -1) {
+                            total_seconds += seconds;
                         }
 
                         continue;
@@ -10542,11 +10548,34 @@ pub const Interpreter = struct {
                     return this.fail("sleep: invalid time interval\n");
                 }
 
-                if (total != 0) {
-                    if (total == -1) {
-                        std.time.sleep(std.math.maxInt(u64));
-                    } else {
-                        std.time.sleep(@intFromFloat(@floor(total * @as(f64, std.time.ns_per_s))));
+                if (total_seconds != 0) {
+                    switch (this.bltn.eventLoop()) {
+                        .js => |js| {
+                            const vm = js.getVmImpl();
+
+                            const milliseconds: i64 = if (total_seconds == -1)
+                                std.math.maxInt(i64)
+                            else
+                                @intFromFloat(@floor(total_seconds * @as(f64, std.time.ms_per_s)));
+
+                            const sleep_time = timespec.msFromNow(milliseconds);
+
+                            this.event_loop_timer.next = sleep_time;
+                            this.event_loop_timer.tag = .ShellSleepBuiltin;
+                            this.event_loop_timer.state = .ACTIVE;
+                            vm.timer.insert(&this.event_loop_timer);
+                            vm.timer.incrementTimerRef(1);
+                            return Maybe(void).success;
+                        },
+                        .mini => |mini| {
+                            _ = mini;
+                            const sleep_time: u64 = if (total_seconds == -1)
+                                std.math.maxInt(u64)
+                            else
+                                @intFromFloat(@floor(total_seconds * @as(f64, std.time.ns_per_s)));
+
+                            std.time.sleep(sleep_time);
+                        },
                     }
                 }
 
@@ -10582,6 +10611,22 @@ pub const Interpreter = struct {
                 if (this.state == .err) {
                     this.bltn.done(1);
                 }
+            }
+
+            pub fn onSleepFinish(this: *Sleep) JSC.BunTimer.EventLoopTimer.Arm {
+                switch (this.bltn.eventLoop()) {
+                    .js => |js| {
+                        const vm = js.getVmImpl();
+                        this.event_loop_timer.state = .FIRED;
+                        this.event_loop_timer.heap = .{};
+                        this.bltn.done(0);
+                        vm.timer.incrementTimerRef(-1);
+                    },
+                    .mini => |mini| {
+                        _ = mini;
+                    },
+                }
+                return .disarm;
             }
         };
 

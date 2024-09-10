@@ -1652,6 +1652,10 @@ pub const Path = struct {
         return hasher.final();
     }
 
+    /// This hash is used by the hot-module-reloading client in order to
+    /// identify modules. Since that code is JavaScript, the hash must remain in
+    /// range [-MAX_SAFE_INTEGER, MAX_SAFE_INTEGER] or else information is lost
+    /// due to floating-point precision.
     pub fn hashForKit(path: Path) u52 {
         return @truncate(path.hashKey());
     }

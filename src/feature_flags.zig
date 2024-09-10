@@ -17,7 +17,7 @@ pub const tracing = true;
 pub const minify_javascript_string_length = false;
 
 // TODO: remove this flag, it should use bun.Output.scoped
-pub const verbose_watcher = true;
+pub const verbose_watcher = false;
 
 pub const css_supports_fence = true;
 

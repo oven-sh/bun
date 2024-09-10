@@ -764,8 +764,6 @@ pub const BundleV2 = struct {
         // We don't expose an option to disable this. Kit requires tree-shaking
         // disabled since every export is always referenced in case a future
         // module depends on a previously unused export.
-        //
-        // TODO: tree-shaking could be applied still?
         if (this.bundler.options.output_format == .internal_kit_dev) {
             this.bundler.options.tree_shaking = false;
             this.bundler.resolver.opts.tree_shaking = false;

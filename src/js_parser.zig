@@ -23332,87 +23332,82 @@ fn NewParser_(
                 }
             }
 
-            if (wrap_mode == .bun_commonjs) {
-                // if remove_cjs_module_wrapper is true, `evaluateCommonJSModuleOnce` will put exports, require, module, __filename, and
-                // __dirname on the globalObject.
-                bun.assert(!p.options.features.remove_cjs_module_wrapper);
-                if (!p.options.features.remove_cjs_module_wrapper) {
-                    // This transforms the user's code into.
-                    //
-                    //   (function (exports, require, module, __filename, __dirname) {
-                    //      ...
-                    //   })
-                    //
-                    //  which is then called in `evaluateCommonJSModuleOnce`
-                    var args = allocator.alloc(Arg, 5 + @as(usize, @intFromBool(p.has_import_meta))) catch bun.outOfMemory();
-                    args[0..5].* = .{
-                        Arg{ .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty) },
-                        Arg{ .binding = p.b(B.Identifier{ .ref = p.require_ref }, logger.Loc.Empty) },
-                        Arg{ .binding = p.b(B.Identifier{ .ref = p.module_ref }, logger.Loc.Empty) },
-                        Arg{ .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty) },
-                        Arg{ .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty) },
-                    };
-                    if (p.has_import_meta) {
-                        p.import_meta_ref = p.newSymbol(.other, "$Bun_import_meta") catch bun.outOfMemory();
-                        args[5] = Arg{ .binding = p.b(B.Identifier{ .ref = p.import_meta_ref }, logger.Loc.Empty) };
-                    }
-
-                    var total_stmts_count: usize = 0;
-                    for (parts) |part| {
-                        total_stmts_count += part.stmts.len;
-                    }
-
-                    const preserve_strict_mode = p.module_scope.strict_mode == .explicit_strict_mode and
-                        !(parts.len > 0 and
-                        parts[0].stmts.len > 0 and
-                        parts[0].stmts[0].data == .s_directive);
-
-                    total_stmts_count += @as(usize, @intCast(@intFromBool(preserve_strict_mode)));
-
-                    const stmts_to_copy = allocator.alloc(Stmt, total_stmts_count) catch bun.outOfMemory();
-                    {
-                        var remaining_stmts = stmts_to_copy;
-                        if (preserve_strict_mode) {
-                            remaining_stmts[0] = p.s(
-                                S.Directive{
-                                    .value = "use strict",
-                                },
-                                p.module_scope_directive_loc,
-                            );
-                            remaining_stmts = remaining_stmts[1..];
-                        }
-
-                        for (parts) |part| {
-                            for (part.stmts, remaining_stmts[0..part.stmts.len]) |src, *dest| {
-                                dest.* = src;
-                            }
-                            remaining_stmts = remaining_stmts[part.stmts.len..];
-                        }
-                    }
-
-                    const wrapper = p.newExpr(
-                        E.Function{
-                            .func = G.Fn{
-                                .name = null,
-                                .open_parens_loc = logger.Loc.Empty,
-                                .args = args,
-                                .body = .{ .loc = logger.Loc.Empty, .stmts = stmts_to_copy },
-                                .flags = Flags.Function.init(.{ .is_export = false }),
-                            },
-                        },
-                        logger.Loc.Empty,
-                    );
-
-                    var top_level_stmts = p.allocator.alloc(Stmt, 1) catch bun.outOfMemory();
-                    parts[0].stmts = top_level_stmts;
-                    top_level_stmts[0] = p.s(
-                        S.SExpr{
-                            .value = wrapper,
-                        },
-                        logger.Loc.Empty,
-                    );
-                    parts.len = 1;
+            if (wrap_mode == .bun_commonjs and !p.options.features.remove_cjs_module_wrapper) {
+                // This transforms the user's code into.
+                //
+                //   (function (exports, require, module, __filename, __dirname) {
+                //      ...
+                //   })
+                //
+                //  which is then called in `evaluateCommonJSModuleOnce`
+                var args = allocator.alloc(Arg, 5 + @as(usize, @intFromBool(p.has_import_meta))) catch bun.outOfMemory();
+                args[0..5].* = .{
+                    Arg{ .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty) },
+                    Arg{ .binding = p.b(B.Identifier{ .ref = p.require_ref }, logger.Loc.Empty) },
+                    Arg{ .binding = p.b(B.Identifier{ .ref = p.module_ref }, logger.Loc.Empty) },
+                    Arg{ .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty) },
+                    Arg{ .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty) },
+                };
+                if (p.has_import_meta) {
+                    p.import_meta_ref = p.newSymbol(.other, "$Bun_import_meta") catch bun.outOfMemory();
+                    args[5] = Arg{ .binding = p.b(B.Identifier{ .ref = p.import_meta_ref }, logger.Loc.Empty) };
                 }
+
+                var total_stmts_count: usize = 0;
+                for (parts) |part| {
+                    total_stmts_count += part.stmts.len;
+                }
+
+                const preserve_strict_mode = p.module_scope.strict_mode == .explicit_strict_mode and
+                    !(parts.len > 0 and
+                    parts[0].stmts.len > 0 and
+                    parts[0].stmts[0].data == .s_directive);
+
+                total_stmts_count += @as(usize, @intCast(@intFromBool(preserve_strict_mode)));
+
+                const stmts_to_copy = allocator.alloc(Stmt, total_stmts_count) catch bun.outOfMemory();
+                {
+                    var remaining_stmts = stmts_to_copy;
+                    if (preserve_strict_mode) {
+                        remaining_stmts[0] = p.s(
+                            S.Directive{
+                                .value = "use strict",
+                            },
+                            p.module_scope_directive_loc,
+                        );
+                        remaining_stmts = remaining_stmts[1..];
+                    }
+
+                    for (parts) |part| {
+                        for (part.stmts, remaining_stmts[0..part.stmts.len]) |src, *dest| {
+                            dest.* = src;
+                        }
+                        remaining_stmts = remaining_stmts[part.stmts.len..];
+                    }
+                }
+
+                const wrapper = p.newExpr(
+                    E.Function{
+                        .func = G.Fn{
+                            .name = null,
+                            .open_parens_loc = logger.Loc.Empty,
+                            .args = args,
+                            .body = .{ .loc = logger.Loc.Empty, .stmts = stmts_to_copy },
+                            .flags = Flags.Function.init(.{ .is_export = false }),
+                        },
+                    },
+                    logger.Loc.Empty,
+                );
+
+                var top_level_stmts = p.allocator.alloc(Stmt, 1) catch bun.outOfMemory();
+                parts[0].stmts = top_level_stmts;
+                top_level_stmts[0] = p.s(
+                    S.SExpr{
+                        .value = wrapper,
+                    },
+                    logger.Loc.Empty,
+                );
+                parts.len = 1;
             }
 
             var top_level_symbols_to_parts = js_ast.Ast.TopLevelSymbolToParts{};

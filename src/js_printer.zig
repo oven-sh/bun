@@ -2032,12 +2032,13 @@ fn NewPrinter(
                     p.print("(");
                 }
 
-                if (p.options.module_type == .internal_kit_dev) {
+                if (p.options.input_files_for_kit) |input_files| {
+                    bun.assert(p.options.module_type == .internal_kit_dev);
                     p.printSpaceBeforeIdentifier();
                     p.printSymbol(p.options.commonjs_module_ref);
                     p.print(".require(");
                     {
-                        const path = p.options.input_files_for_kit.?[record.source_index.get()].path;
+                        const path = input_files[record.source_index.get()].path;
                         p.printInlinedEnum(.{ .number = @floatFromInt(path.hashForKit()) }, path.pretty, level);
                     }
                     p.print(")");

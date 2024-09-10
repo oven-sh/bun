@@ -6107,15 +6107,13 @@ fn NewParser_(
 
             const Item = if (hot_module_reloading) B.Object.Property else js_ast.ClauseItem;
 
-            var items = try List(Item).initCapacity(
-                allocator,
-                @as(usize, @intFromBool(p.react_refresh.register_used)) +
-                    @as(usize, @intFromBool(p.react_refresh.signature_used)),
-            );
+            const len = 1 + @as(usize, @intFromBool(p.react_refresh.register_used)) +
+                @as(usize, @intFromBool(p.react_refresh.signature_used));
+            var items = try List(Item).initCapacity(allocator, len);
 
             const stmts = try allocator.alloc(Stmt, 1);
             var declared_symbols = DeclaredSymbol.List{};
-            try declared_symbols.ensureTotalCapacity(allocator, 3);
+            try declared_symbols.ensureTotalCapacity(allocator, len);
 
             const namespace_ref = try p.newSymbol(.other, "RefreshRuntime");
             declared_symbols.appendAssumeCapacity(.{

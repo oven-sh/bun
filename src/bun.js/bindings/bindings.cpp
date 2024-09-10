@@ -4878,13 +4878,19 @@ void JSC__VM__holdAPILock(JSC__VM* arg0, void* ctx, void (*callback)(void* arg0)
     callback(ctx);
 }
 
+// The following two functions are copied 1:1 from JSLockHolder to provide a
+// new, more ergonomic binding for interacting with the lock from Zig
+// https://github.com/WebKit/WebKit/blob/main/Source/JavaScriptCore/runtime/JSLock.cpp
+
 extern "C" void JSC__VM__getAPILock(JSC::VM* vm)
 {
+    // https://github.com/WebKit/WebKit/blob/6cb5017d237ef7cb898582a22f05acca22322845/Source/JavaScriptCore/runtime/JSLock.cpp#L67
     vm->apiLock().lock();
 }
 
 extern "C"  void JSC__VM__releaseAPILock(JSC::VM* vm)
 {
+    // https://github.com/WebKit/WebKit/blob/6cb5017d237ef7cb898582a22f05acca22322845/Source/JavaScriptCore/runtime/JSLock.cpp#L72
     RefPtr<JSLock> apiLock(&vm->apiLock());
     apiLock->unlock();
 }

@@ -428,8 +428,8 @@ pub const ZlibEncoder = struct {
         const arguments = callframe.arguments(3).ptr;
         if (this.stream.mode != .DEFLATE) return .undefined;
 
-        const level = if (arguments[0] != .zero) (globalThis.checkRanges(arguments[0], "level", i16, -1, 9, -1) orelse return .zero) else this.stream.level;
-        const strategy = if (arguments[1] != .zero) (globalThis.checkRanges(arguments[1], "strategy", u8, 0, 4, 0) orelse return .zero) else this.stream.strategy;
+        const level = if (arguments[0] != .zero) (globalThis.validateIntegerRange(arguments[0], i16, -1, .{ .max = 9, .min = -1, .field_name = "level" }) orelse return .zero) else this.stream.level;
+        const strategy = if (arguments[1] != .zero) (globalThis.validateIntegerRange(arguments[1], u8, 0, .{ .max = 4, .min = 0, .field_name = "strategy" }) orelse return .zero) else this.stream.strategy;
         this.stream.params(level, strategy);
 
         if (arguments[2] != .zero) {
@@ -888,23 +888,26 @@ const Options = struct {
     fullFlush: u8,
 
     pub fn fromJS(globalThis: *JSC.JSGlobalObject, mode: bun.zlib.NodeMode, opts: JSC.JSValue) ?Options {
-        const chunkSize = globalThis.checkMinOrGetDefault(opts, "chunkSize", c_uint, 64, 1024 * 16) orelse return null;
-        const level = globalThis.checkRangesOrGetDefault(opts, "level", i16, -1, 9, -1) orelse return null;
-        const memLevel = globalThis.checkRangesOrGetDefault(opts, "memLevel", u8, 1, 9, 8) orelse return null;
-        const strategy = globalThis.checkRangesOrGetDefault(opts, "strategy", u8, 0, 4, 0) orelse return null;
-        const maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)) orelse return null;
-        const flush = globalThis.checkRangesOrGetDefault(opts, "flush", u8, 0, 5, 0) orelse return null;
-        const finishFlush = globalThis.checkRangesOrGetDefault(opts, "finishFlush", u8, 0, 5, 4) orelse return null;
-        const fullFlush = globalThis.checkRangesOrGetDefault(opts, "fullFlush", u8, 0, 5, 3) orelse return null;
+        const chunkSize = globalThis.getInteger(opts, c_uint, 48 * 1024, .{
+            .field_name = "chunkSize",
+            .min = 64,
+        }) orelse return null;
+        const level = globalThis.getInteger(opts, i16, -1, .{ .field_name = "level", .min = -1, .max = 9 }) orelse return null;
+        const memLevel = globalThis.getInteger(opts, u8, 8, .{ .field_name = "memLevel", .min = 8, .max = 255 }) orelse return null;
+        const strategy = globalThis.getInteger(opts, u8, 0, .{ .field_name = "strategy", .min = 0, .max = 4 }) orelse return null;
+        const maxOutputLength = globalThis.getInteger(opts, usize, std.math.maxInt(u52), .{ .field_name = "maxOutputLength", .min = 0, .max = std.math.maxInt(u52) }) orelse return null;
+        const flush = globalThis.getInteger(opts, u8, 0, .{ .field_name = "flush", .min = 0, .max = 5 }) orelse return null;
+        const finishFlush = globalThis.getInteger(opts, u8, 4, .{ .field_name = "finishFlush", .min = 0, .max = 5 }) orelse return null;
+        const fullFlush = globalThis.getInteger(opts, u8, 3, .{ .field_name = "fullFlush", .min = 0, .max = 5 }) orelse return null;
 
         const windowBits = switch (mode) {
             .NONE,
             .BROTLI_DECODE,
             .BROTLI_ENCODE,
             => unreachable,
-            .DEFLATE, .DEFLATERAW => globalThis.checkRangesOrGetDefault(opts, "windowBits", u8, 8, 15, 15) orelse return null,
+            .DEFLATE, .DEFLATERAW => globalThis.getInteger(opts, u8, 15, .{ .min = 8, .max = 15, .field_name = "windowBits" }) orelse return null,
             .INFLATE, .INFLATERAW => getWindowBits(globalThis, opts, "windowBits", u8, 8, 15, 15) orelse return null,
-            .GZIP => globalThis.checkRangesOrGetDefault(opts, "windowBits", i16, 9, 15, 15) orelse return null,
+            .GZIP => globalThis.getInteger(opts, i16, 15, .{ .min = 9, .max = 15, .field_name = "windowBits" }) orelse return null,
             .GUNZIP, .UNZIP => getWindowBits(globalThis, opts, "windowBits", i16, 9, 15, 15) orelse return null,
         };
 
@@ -942,40 +945,13 @@ const Options = struct {
     }
 
     // Specialization of globalThis.checkRangesOrGetDefault since windowBits also allows 0 when decompressing
-    fn getWindowBits(this: *JSC.JSGlobalObject, obj: JSC.JSValue, comptime field_name: []const u8, comptime T: type, min: T, max: T, default: T) ?T {
-        if (obj.get(this, field_name)) |level_val| {
-            if (!level_val.isNumber()) {
-                _ = this.throwInvalidPropertyTypeValue("options." ++ field_name, "number", level_val);
-                return null;
-            }
-            const level_f64 = level_val.asNumber();
-            if (level_f64 == 0) return 0;
-            if (std.math.isNan(level_f64)) return default;
-            if (level_f64 == std.math.inf(f64)) {
-                this.ERR_OUT_OF_RANGE("The value of \"options.{s}\" is out of range. It must be >= {d}. Received Infinity", .{ field_name, min }).throw();
-                return null;
-            }
-            if (level_f64 == -std.math.inf(f64)) {
-                this.ERR_OUT_OF_RANGE("The value of \"options.{s}\" is out of range. It must be >= {d}. Received -Infinity", .{ field_name, min }).throw();
-                return null;
-            }
-            if (@floor(level_f64) != level_f64) {
-                _ = this.throwInvalidPropertyTypeValue("options." ++ field_name, "integer", level_val);
-                return null;
-            }
-            if (level_f64 > std.math.maxInt(i32)) {
-                this.ERR_OUT_OF_RANGE("The value of \"options.{s}\" is out of range. It must be >= {d} and <= {d}. Received {d}", .{ field_name, min, max, level_f64 }).throw();
-                return null;
-            }
-            const level_i32 = level_val.toInt32();
-            if (level_i32 < min or level_i32 > max) {
-                this.ERR_OUT_OF_RANGE("The value of \"options.{s}\" is out of range. It must be >= {d} and <= {d}. Received {d}", .{ field_name, min, max, level_i32 }).throw();
-                return null;
-            }
-            return @intCast(level_i32);
-        }
-        if (this.hasException()) return null;
-        return default;
+    fn getWindowBits(this: *JSC.JSGlobalObject, obj: JSC.JSValue, comptime field_name: []const u8, comptime T: type, comptime min: T, comptime max: T, comptime default: T) ?T {
+        return this.getInteger(obj, T, default, .{
+            .field_name = field_name,
+            .min = min,
+            .max = max,
+            .always_allow_zero = true,
+        });
     }
 };
 

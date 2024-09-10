@@ -1321,7 +1321,7 @@ fn FormatSlice(comptime T: type, comptime delim: []const u8) type {
 }
 
 /// Uses WebKit's double formatter
-pub fn fmtDouble(number: f64) FormatDouble {
+pub fn double(number: f64) FormatDouble {
     return .{ .number = number };
 }
 
@@ -1435,3 +1435,64 @@ pub const fmt_js_test_bindings = struct {
         return str.toJS(globalThis);
     }
 };
+
+fn NewOutOfRangeFormatter(comptime T: type) type {
+    return struct {
+        value: T,
+        min: i64 = std.math.maxInt(i64),
+        max: i64 = std.math.maxInt(i64),
+        field_name: []const u8,
+
+        pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+            try writer.writeAll("The value of \"");
+            try writer.writeAll(self.field_name);
+            try writer.writeAll("\" ");
+            const min = self.min;
+            const max = self.max;
+
+            if (min != std.math.maxInt(i64) and max != std.math.maxInt(i64)) {
+                try std.fmt.format(writer, "must be >= {d} and <= {d}.", .{ min, max });
+            } else if (min != std.math.maxInt(i64)) {
+                try std.fmt.format(writer, "must be >= {d}.", .{min});
+            } else if (max != std.math.maxInt(i64)) {
+                try std.fmt.format(writer, "must be <= {d}.", .{max});
+            } else {
+                try writer.writeAll("must be within the range of values for type ");
+                try writer.writeAll(comptime @typeName(T));
+                try writer.writeAll(".");
+            }
+
+            if (comptime T == f64 or T == f32) {
+                try std.fmt.format(writer, " Received: {}", .{double(self.value)});
+            } else if (comptime T == []const u8) {
+                try std.fmt.format(writer, " Received: {s}", .{self.value});
+            } else {
+                try std.fmt.format(writer, " Received: {d}", .{self.value});
+            }
+        }
+    };
+}
+
+const DoubleOutOfRangeFormatter = NewOutOfRangeFormatter(f64);
+const IntOutOfRangeFormatter = NewOutOfRangeFormatter(i64);
+const StringOutOfRangeFormatter = NewOutOfRangeFormatter([]const u8);
+
+fn OutOfRangeFormatter(comptime T: type) type {
+    if (T == f64 or T == f32) {
+        return DoubleOutOfRangeFormatter;
+    } else if (T == []const u8) {
+        return StringOutOfRangeFormatter;
+    }
+
+    return IntOutOfRangeFormatter;
+}
+
+pub const OutOfRangeOptions = struct {
+    min: i64 = std.math.maxInt(i64),
+    max: i64 = std.math.maxInt(i64),
+    field_name: []const u8,
+};
+
+pub fn outOfRange(value: anytype, options: OutOfRangeOptions) OutOfRangeFormatter(@TypeOf(value)) {
+    return .{ .value = value, .min = options.min, .max = options.max, .field_name = options.field_name };
+}

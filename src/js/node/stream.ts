@@ -3807,6 +3807,7 @@ var require_writable = __commonJS({
       ERR_UNKNOWN_ENCODING,
       ERR_STREAM_PREMATURE_CLOSE,
     } = require_errors().codes;
+    var { AbortError } = require_errors();
     ({ errorOrDestroy } = destroyImpl);
 
     function Writable(options = {}) {
@@ -4414,8 +4415,9 @@ var require_writable = __commonJS({
     };
 
     const { PromisePrototypeThen } = require_primordials();
-    var { normalizeEncoding } = require_util();
+    var { normalizeEncoding, createDeferredPromise } = require_util();
     var { isWritableEnded } = require_utils();
+    var eos = require_end_of_stream();
 
     var webStreamsAdapters = {
       newStreamWritableFromWritableStream(
@@ -4596,6 +4598,42 @@ var require_writable = __commonJS({
         const strategy = evaluateStrategyOrFallback(options?.strategy);
 
         let controller;
+        let backpressurePromise;
+        let closed;
+
+        const cleanup = eos(streamWritable, error => {
+          if (error?.code === "ERR_STREAM_PREMATURE_CLOSE") {
+            const err = new AbortError(undefined, { cause: error });
+            error = err;
+          }
+
+          cleanup();
+          // This is a protection against non-standard, legacy streams
+          // that happen to emit an error event again after finished is called.
+          streamWritable.on("error", () => {});
+          if (error != null) {
+            if (backpressurePromise !== undefined)
+              backpressurePromise.reject(error);
+            // If closed is not undefined, the error is happening
+            // after the WritableStream close has already started.
+            // We need to reject it here.
+            if (closed !== undefined) {
+              closed.reject(error);
+              closed = undefined;
+            }
+            controller.error(error);
+            controller = undefined;
+            return;
+          }
+      
+          if (closed !== undefined) {
+            closed.resolve();
+            closed = undefined;
+            return;
+          }
+          controller.error(new AbortError());
+          controller = undefined;
+        });
 
         return new WritableStream(
           {
@@ -4604,14 +4642,26 @@ var require_writable = __commonJS({
             },
 
             write(chunk) {
-              streamWritable.write(chunk);
-            },
+              if (streamWritable.writableNeedDrain || !streamWritable.write(chunk)) {
+                backpressurePromise = createDeferredPromise();
 
-            close() {
-              streamWritable.destroy();
+                // TODO: May need to use primordials
+                return backpressurePromise.promise.finally(() => {
+                  backpressurePromise = undefined;
+                });
+              }
             },
 
             abort(reason) {
+              streamWritable.destroy(reason);
+            },
+
+            close() {
+              if (closed === undefined && !isWritableEnded(streamWritable)) {
+                closed = createDeferredPromise();
+                streamWritable.end();
+                return closed.promise;
+              }
               streamWritable.destroy(reason);
             },
           },

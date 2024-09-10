@@ -38,7 +38,7 @@ In the root `package.json`, the `"workspaces"` key is used to indicate which sub
 ```
 
 {% callout %}
-**Glob support** — Bun supports full glob syntax in `"workspaces"` (see [here](/docs/api/glob#supported-glob-patterns) for a comprehensive list of supported syntax), _except_ for exclusions (e.g. `!**/excluded/**`), which are not implemented yet.
+**Glob support** — Bun supports full glob syntax in `"workspaces"` (see [here](https://bun.sh/docs/api/glob#supported-glob-patterns) for a comprehensive list of supported syntax), _except_ for exclusions (e.g. `!**/excluded/**`), which are not implemented yet.
 {% /callout %}
 
 Each workspace has it's own `package.json` When referencing other packages in the monorepo, use `"workspace:*"` as the version field in your `package.json`.
@@ -61,7 +61,7 @@ Workspaces have a couple major benefits.
 
 - **Code can be split into logical parts.** If one package relies on another, you can simply add it as a dependency in `package.json`. If package `b` depends on `a`, `bun install` will install your local `packages/a` directory into `node_modules` instead of downloading it from the npm registry.
 - **Dependencies can be de-duplicated.** If `a` and `b` share a common dependency, it will be _hoisted_ to the root `node_modules` directory. This reduces redundant disk usage and minimizes "dependency hell" issues associated with having multiple versions of a package installed simultaneously.
-- **Run scripts in multiple packages.** You can use the [`--filter` flag](/docs/cli/filter) to easily run `package.json` scripts in multiple packages in your workspace.
+- **Run scripts in multiple packages.** You can use the [`--filter` flag](https://bun.sh/docs/cli/filter) to easily run `package.json` scripts in multiple packages in your workspace.
 
 {% callout %}
 ⚡️ **Speed** — Installs are fast, even for big monorepos. Bun installs the [Remix](https://github.com/remix-run/remix) monorepo in about `500ms` on Linux.

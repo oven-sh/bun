@@ -6,7 +6,7 @@ Bun is designed to start fast and run fast. Its transpiler and runtime are writt
 
 {% image src="/images/bun-run-speed.jpeg" caption="Bun vs Node.js vs Deno running Hello World" /%}
 
-<!-- If no `node_modules` directory is found in the working directory or above, Bun will abandon Node.js-style module resolution in favor of the `Bun module resolution algorithm`. Under Bun-style module resolution, all packages are _auto-installed_ on the fly into a [global module cache](/docs/install/cache). For full details on this algorithm, refer to [Runtime > Modules](/docs/runtime/modules). -->
+<!-- If no `node_modules` directory is found in the working directory or above, Bun will abandon Node.js-style module resolution in favor of the `Bun module resolution algorithm`. Under Bun-style module resolution, all packages are _auto-installed_ on the fly into a [global module cache](https://bun.sh/docs/install/cache). For full details on this algorithm, refer to [Runtime > Modules](https://bun.sh/docs/runtime/modules). -->
 
 Performance sensitive APIs like `Buffer`, `fetch`, and `Response` are heavily profiled and optimized. Under the hood Bun uses the [JavaScriptCore engine](https://developer.apple.com/documentation/javascriptcore), which is developed by Apple for Safari. It starts and runs faster than V8, the engine used by Node.js and Chromium-based browsers.
 
@@ -21,7 +21,7 @@ $ bun index.ts
 $ bun index.tsx
 ```
 
-Some aspects of Bun's runtime behavior are affected by the contents of your `tsconfig.json` file. Refer to [Runtime > TypeScript](/docs/runtime/typescript) page for details.
+Some aspects of Bun's runtime behavior are affected by the contents of your `tsconfig.json` file. Refer to [Runtime > TypeScript](https://bun.sh/docs/runtime/typescript) page for details.
 
 <!-- Before execution, Bun internally transforms all source files to vanilla JavaScript using its fast native transpiler. The transpiler looks at the files extension to determine how to handle it. -->
 
@@ -122,17 +122,17 @@ $ bun run ./my-wasm-app.whatever
 
 ## Node.js compatibility
 
-Long-term, Bun aims for complete Node.js compatibility. Most Node.js packages already work with Bun out of the box, but certain low-level APIs like `dgram` are still unimplemented. Track the current compatibility status at [Ecosystem > Node.js](/docs/runtime/nodejs-apis).
+Long-term, Bun aims for complete Node.js compatibility. Most Node.js packages already work with Bun out of the box, but certain low-level APIs like `dgram` are still unimplemented. Track the current compatibility status at [Ecosystem > Node.js](https://bun.sh/docs/runtime/nodejs-apis).
 
 Bun implements the Node.js module resolution algorithm, so dependencies can still be managed with `package.json`, `node_modules`, and CommonJS-style imports.
 
 {% callout %}
-**Note** — We recommend using Bun's [built-in package manager](/docs/cli/install) for a performance boost over other npm clients.
+**Note** — We recommend using Bun's [built-in package manager](https://bun.sh/docs/cli/install) for a performance boost over other npm clients.
 {% /callout %}
 
 ## Web APIs
 
-<!-- When prudent, Bun attempts to implement Web-standard APIs instead of introducing new APIs. Refer to [Runtime > Web APIs](/docs/web-apis) for a list of Web APIs that are available in Bun. -->
+<!-- When prudent, Bun attempts to implement Web-standard APIs instead of introducing new APIs. Refer to [Runtime > Web APIs](https://bun.sh/docs/web-apis) for a list of Web APIs that are available in Bun. -->
 
 Some Web APIs aren't relevant in the context of a server-first runtime like Bun, such as the [DOM API](https://developer.mozilla.org/en-US/docs/Web/API/HTML_DOM_API#html_dom_api_interfaces) or [History API](https://developer.mozilla.org/en-US/docs/Web/API/History_API). Many others, though, are broadly useful outside of the browser context; when possible, Bun implements these Web-standard APIs instead of introducing new APIs.
 
@@ -237,67 +237,67 @@ Bun exposes a set of Bun-specific APIs on the `Bun` global object and through a 
 
 ---
 
-- [HTTP](/docs/api/http)
+- [HTTP](https://bun.sh/docs/api/http)
 - `Bun.serve`
 
 ---
 
-- [File I/O](/docs/api/file-io)
+- [File I/O](https://bun.sh/docs/api/file-io)
 - `Bun.file` `Bun.write`
 
 ---
 
-- [Processes](/docs/api/spawn)
+- [Processes](https://bun.sh/docs/api/spawn)
 - `Bun.spawn` `Bun.spawnSync`
 
 ---
 
-- [TCP](/docs/api/tcp)
+- [TCP](https://bun.sh/docs/api/tcp)
 - `Bun.listen` `Bun.connect`
 
 ---
 
-- [Transpiler](/docs/api/transpiler)
+- [Transpiler](https://bun.sh/docs/api/transpiler)
 - `Bun.Transpiler`
 
 ---
 
-- [Routing](/docs/api/file-system-router)
+- [Routing](https://bun.sh/docs/api/file-system-router)
 - `Bun.FileSystemRouter`
 
 ---
 
-- [HTMLRewriter](/docs/api/html-rewriter)
+- [HTMLRewriter](https://bun.sh/docs/api/html-rewriter)
 - `HTMLRewriter`
 
 ---
 
-- [Utils](/docs/api/utils)
+- [Utils](https://bun.sh/docs/api/utils)
 - `Bun.peek` `Bun.which`
 
 ---
 
-- [SQLite](/docs/api/sqlite)
+- [SQLite](https://bun.sh/docs/api/sqlite)
 - `bun:sqlite`
 
 ---
 
-- [FFI](/docs/api/ffi)
+- [FFI](https://bun.sh/docs/api/ffi)
 - `bun:ffi`
 
 ---
 
-- [DNS](/docs/api/dns)
+- [DNS](https://bun.sh/docs/api/dns)
 - `bun:dns`
 
 ---
 
-- [Testing](/docs/api/test)
+- [Testing](https://bun.sh/docs/api/test)
 - `bun:test`
 
 ---
 
-- [Node-API](/docs/api/node-api)
+- [Node-API](https://bun.sh/docs/api/node-api)
 - `Node-API`
 
 ---
@@ -306,4 +306,4 @@ Bun exposes a set of Bun-specific APIs on the `Bun` global object and through a 
 
 ## Plugins
 
-Support for additional file types can be implemented with plugins. Refer to [Runtime > Plugins](/docs/bundler/plugins) for full documentation.
+Support for additional file types can be implemented with plugins. Refer to [Runtime > Plugins](https://bun.sh/docs/bundler/plugins) for full documentation.

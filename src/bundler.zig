@@ -594,18 +594,6 @@ pub const Bundler = struct {
         if (this.options.define.dots.get("NODE_ENV")) |NODE_ENV| {
             if (NODE_ENV.len > 0 and NODE_ENV[0].data.value == .e_string and NODE_ENV[0].data.value.e_string.eqlComptime("production")) {
                 this.options.production = true;
-
-                if (this.options.target.isBun()) {
-                    if (strings.eqlComptime(this.options.jsx.package_name, "react")) {
-                        if (this.options.jsx_optimization_inline == null) {
-                            this.options.jsx_optimization_inline = true;
-                        }
-
-                        if (this.options.jsx_optimization_hoist == null and (this.options.jsx_optimization_inline orelse false)) {
-                            this.options.jsx_optimization_hoist = true;
-                        }
-                    }
-                }
             }
         }
     }
@@ -1425,13 +1413,7 @@ pub const Bundler = struct {
                 opts.filepath_hash_for_hmr = file_hash orelse 0;
                 opts.features.auto_import_jsx = bundler.options.auto_import_jsx;
                 opts.warn_about_unbundled_modules = target.isNotBun();
-                opts.features.jsx_optimization_inline = opts.features.allow_runtime and
-                    (bundler.options.jsx_optimization_inline orelse (target.isBun() and jsx.parse and
-                    !jsx.development)) and
-                    (jsx.runtime == .automatic or jsx.runtime == .classic) and
-                    strings.eqlComptime(jsx.import_source.production, "react/jsx-runtime");
 
-                opts.features.jsx_optimization_hoist = bundler.options.jsx_optimization_hoist orelse opts.features.jsx_optimization_inline;
                 opts.features.inject_jest_globals = this_parse.inject_jest_globals;
                 opts.features.minify_syntax = bundler.options.minify_syntax;
                 opts.features.minify_identifiers = bundler.options.minify_identifiers;

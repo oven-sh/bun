@@ -3078,6 +3078,7 @@ void Process::finishCreation(JSC::VM& vm)
     });
 
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
+    putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(false), 0);
 }
 
 } // namespace Bun

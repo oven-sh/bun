@@ -1324,6 +1324,7 @@ ServerResponse.prototype._final = function (callback) {
     var data = this[firstWriteSymbol] || "";
     this[firstWriteSymbol] = undefined;
     this[finishedSymbol] = true;
+    this.headersSent = true; // https://github.com/oven-sh/bun/issues/3458
     drainHeadersIfObservable.$call(this);
     this._reply(
       new Response(data, {

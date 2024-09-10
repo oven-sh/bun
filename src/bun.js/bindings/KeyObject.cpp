@@ -21,6 +21,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 // IN THE SOFTWARE.
 
+#include "ErrorCode.h"
 #include "KeyObject.h"
 #include "JavaScriptCore/JSArrayBufferView.h"
 #include "JavaScriptCore/JSCJSValue.h"
@@ -47,18 +48,19 @@
 #include "JSBuffer.h"
 #include "CryptoAlgorithmHMAC.h"
 #include "CryptoAlgorithmEd25519.h"
+#include "CryptoAlgorithmRSA_OAEP.h"
 #include "CryptoAlgorithmRSA_PSS.h"
 #include "CryptoAlgorithmRSASSA_PKCS1_v1_5.h"
 #include "CryptoAlgorithmECDSA.h"
 #include "CryptoAlgorithmEcdsaParams.h"
+#include "CryptoAlgorithmRsaOaepParams.h"
 #include "CryptoAlgorithmRsaPssParams.h"
 #include "CryptoAlgorithmRegistry.h"
 #include "wtf/ForbidHeapAllocation.h"
 #include "wtf/Noncopyable.h"
 using namespace JSC;
 using namespace Bun;
-using JSGlobalObject
-    = JSC::JSGlobalObject;
+using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
 using JSValue = JSC::JSValue;
 using JSString = JSC::JSString;
@@ -81,6 +83,8 @@ JSC_DECLARE_HOST_FUNCTION(KeyObject__generateKeySync);
 JSC_DECLARE_HOST_FUNCTION(KeyObject__generateKeyPairSync);
 JSC_DECLARE_HOST_FUNCTION(KeyObject__Sign);
 JSC_DECLARE_HOST_FUNCTION(KeyObject__Verify);
+JSC_DECLARE_HOST_FUNCTION(KeyObject__publicEncrypt);
+JSC_DECLARE_HOST_FUNCTION(KeyObject__privateDecrypt);
 
 namespace WebCore {
 
@@ -571,7 +575,7 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createPrivateKey, (JSC::JSGlobalObject * glo
                 return JSValue::encode(JSC::jsUndefined());
             }
             auto pKeyID = EVP_PKEY_id(pkey.get());
-            auto impl = CryptoKeyRSA::create(pKeyID == EVP_PKEY_RSA_PSS ? CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5 : CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5, CryptoAlgorithmIdentifier::SHA_1, false, CryptoKeyType::Private, WTFMove(pkey), true, CryptoKeyUsageDecrypt);
+            auto impl = CryptoKeyRSA::create(pKeyID == EVP_PKEY_RSA_PSS ? CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5 : CryptoAlgorithmIdentifier::RSA_OAEP, CryptoAlgorithmIdentifier::SHA_1, false, CryptoKeyType::Private, WTFMove(pkey), true, CryptoKeyUsageDecrypt);
             return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
         } else if (type == "pkcs8"_s) {
 
@@ -1165,11 +1169,11 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createPublicKey, (JSC::JSGlobalObject * glob
                 }
 
                 auto pKeyID = EVP_PKEY_id(pkey.get());
-                return KeyObject__createRSAFromPrivate(globalObject, pkey.get(), pKeyID == EVP_PKEY_RSA_PSS ? CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5 : CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5);
+                return KeyObject__createRSAFromPrivate(globalObject, pkey.get(), pKeyID == EVP_PKEY_RSA_PSS ? CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5 : CryptoAlgorithmIdentifier::RSA_OAEP);
             }
 
             auto pKeyID = EVP_PKEY_id(pkey.get());
-            auto impl = CryptoKeyRSA::create(pKeyID == EVP_PKEY_RSA_PSS ? CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5 : CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5, CryptoAlgorithmIdentifier::SHA_1, false, CryptoKeyType::Public, WTFMove(pkey), true, CryptoKeyUsageEncrypt);
+            auto impl = CryptoKeyRSA::create(pKeyID == EVP_PKEY_RSA_PSS ? CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5 : CryptoAlgorithmIdentifier::RSA_OAEP, CryptoAlgorithmIdentifier::SHA_1, false, CryptoKeyType::Public, WTFMove(pkey), true, CryptoKeyUsageEncrypt);
             return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
         } else if (type == "spki"_s) {
             // We use d2i_PUBKEY() to import a public key.
@@ -2943,6 +2947,149 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__SymmetricKeySize, (JSC::JSGlobalObject * glo
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+static EncodedJSValue doAsymmetricCipher(JSGlobalObject* globalObject, CallFrame* callFrame, bool encrypt)
+{
+    auto count = callFrame->argumentCount();
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (count != 2) {
+        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_MISSING_ARGS,
+            "expected object as first argument"_s);
+    }
+
+    auto* jsKey = jsDynamicCast<JSObject*>(callFrame->uncheckedArgument(0));
+    if (!jsKey) {
+        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
+            "expected object as first argument"_s);
+    }
+
+    auto jsCryptoKeyValue = jsKey->getIfPropertyExists(
+        globalObject, PropertyName(Identifier::fromString(vm, "key"_s)));
+    if (jsCryptoKeyValue.isUndefinedOrNull() || jsCryptoKeyValue.isEmpty()) {
+        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
+            "expected key property in key object"_s);
+    }
+    auto* jsCryptoKey = jsDynamicCast<JSCryptoKey*>(jsCryptoKeyValue);
+
+    auto& cryptoKey = jsCryptoKey->wrapped();
+    // We should only encrypt to public keys, and decrypt with private keys.
+    if ((encrypt && cryptoKey.type() != CryptoKeyType::Public)
+        || (!encrypt && cryptoKey.type() != CryptoKeyType::Private)
+        // RSA-OAEP is the modern alternative to RSAES-PKCS1-v1_5, which is vulnerable to
+        // known-ciphertext attacks. Node.js does not support it either.
+        || cryptoKey.algorithmIdentifier() != CryptoAlgorithmIdentifier::RSA_OAEP) {
+        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_VALUE,
+            "unsupported key type for asymmetric encryption"_s);
+    }
+
+    bool setCustomHash = false;
+    auto oaepHash = WebCore::CryptoAlgorithmIdentifier::SHA_1;
+    auto jsOaepHash = jsKey->getIfPropertyExists(
+        globalObject, PropertyName(Identifier::fromString(vm, "oaepHash"_s)));
+    if (!jsOaepHash.isUndefined() && !jsOaepHash.isEmpty()) {
+        if (UNLIKELY(!jsOaepHash.isString())) {
+            return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
+                "expected string for oaepHash"_s);
+        }
+        auto oaepHashStr = jsOaepHash.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
+        auto oaepHashId = CryptoAlgorithmRegistry::singleton().identifier(oaepHashStr);
+        if (UNLIKELY(!oaepHashId)) {
+            return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_CRYPTO_INVALID_DIGEST,
+                "unsupported digest for oaepHash"_s);
+        }
+        switch (*oaepHashId) {
+        case WebCore::CryptoAlgorithmIdentifier::SHA_1:
+        case WebCore::CryptoAlgorithmIdentifier::SHA_224:
+        case WebCore::CryptoAlgorithmIdentifier::SHA_256:
+        case WebCore::CryptoAlgorithmIdentifier::SHA_384:
+        case WebCore::CryptoAlgorithmIdentifier::SHA_512: {
+            setCustomHash = true;
+            oaepHash = *oaepHashId;
+            break;
+        }
+        default: {
+            return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_CRYPTO_INVALID_DIGEST,
+                "unsupported digest for oaepHash"_s);
+        }
+        }
+    }
+
+    std::optional<BufferSource::VariantType> oaepLabel = std::nullopt;
+    auto jsOaepLabel = jsKey->getIfPropertyExists(
+        globalObject, PropertyName(Identifier::fromString(vm, "oaepLabel"_s)));
+    if (!jsOaepLabel.isUndefined() && !jsOaepLabel.isEmpty()) {
+        if (UNLIKELY(!jsOaepLabel.isCell())) {
+            return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
+                "expected Buffer or array-like object for oaepLabel"_s);
+        }
+        auto jsOaepLabelCell = jsOaepLabel.asCell();
+        auto jsOaepLabelType = jsOaepLabelCell->type();
+
+        if (isTypedArrayTypeIncludingDataView(jsOaepLabelType)) {
+            auto* jsBufferView = jsCast<JSArrayBufferView*>(jsOaepLabelCell);
+            oaepLabel = std::optional<BufferSource::VariantType>{jsBufferView->unsharedImpl()};
+        } else if (jsOaepLabelType == ArrayBufferType) {
+            auto* jsBuffer = jsDynamicCast<JSArrayBuffer*>(jsOaepLabelCell);
+            oaepLabel = std::optional<BufferSource::VariantType>{jsBuffer->impl()};
+        } else {
+            return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
+                "expected Buffer or array-like object for oaepLabel"_s);
+        }
+    }
+
+    auto padding = RSA_PKCS1_OAEP_PADDING;
+    auto jsPadding = jsKey->getIfPropertyExists(
+        globalObject, PropertyName(Identifier::fromString(vm, "padding"_s)));
+    if (!jsPadding.isUndefinedOrNull() && !jsPadding.isEmpty()) {
+        if (UNLIKELY(!jsPadding.isNumber())) {
+            return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
+                "expected number for padding"_s);
+        }
+        padding = jsPadding.toUInt32(globalObject);
+        if (padding == RSA_PKCS1_PADDING && !encrypt) {
+            return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_VALUE,
+                "RSA_PKCS1_PADDING is no longer supported for private decryption"_s);
+        }
+        if (padding != RSA_PKCS1_OAEP_PADDING && (setCustomHash || oaepLabel.has_value())) {
+            return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_VALUE,
+                "oaepHash/oaepLabel cannot be set without RSA_PKCS1_OAEP_PADDING"_s);
+        }
+    }
+
+    auto jsBuffer = KeyObject__GetBuffer(callFrame->uncheckedArgument(1));
+    if (jsBuffer.hasException()) {
+        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
+            "expected Buffer or array-like object as second argument"_s);
+    }
+    auto buffer = jsBuffer.releaseReturnValue();
+
+    auto params = CryptoAlgorithmRsaOaepParams{};
+    params.label = oaepLabel;
+    params.padding = padding;
+    const auto& rsaKey = downcast<CryptoKeyRSA>(cryptoKey);
+    auto operation = encrypt ? CryptoAlgorithmRSA_OAEP::platformEncryptWithHash : CryptoAlgorithmRSA_OAEP::platformDecryptWithHash;
+    auto result = operation(params, rsaKey, buffer, oaepHash);
+    if (result.hasException()) {
+        WebCore::propagateException(*globalObject, scope, result.releaseException());
+        return encodedJSUndefined();
+    }
+    auto outBuffer = result.releaseReturnValue();
+    return JSValue::encode(WebCore::createBuffer(globalObject, outBuffer));
+}
+
+JSC_DEFINE_HOST_FUNCTION(KeyObject__publicEncrypt, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return doAsymmetricCipher(globalObject, callFrame, true);
+}
+
+JSC_DEFINE_HOST_FUNCTION(KeyObject__privateDecrypt, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return doAsymmetricCipher(globalObject, callFrame, false);
+}
+
 JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -2973,6 +3120,11 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
 
     obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "sign"_s)), JSC::JSFunction::create(vm, globalObject, 3, "sign"_s, KeyObject__Sign, ImplementationVisibility::Public, NoIntrinsic), 0);
     obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "verify"_s)), JSC::JSFunction::create(vm, globalObject, 4, "verify"_s, KeyObject__Verify, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "publicEncrypt"_s)),
+        JSFunction::create(vm, globalObject, 2, "publicEncrypt"_s, KeyObject__publicEncrypt, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "privateDecrypt"_s)),
+        JSFunction::create(vm, globalObject, 2, "privateDecrypt"_s, KeyObject__privateDecrypt, ImplementationVisibility::Public, NoIntrinsic), 0);
 
     return obj;
 }

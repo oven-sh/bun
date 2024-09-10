@@ -606,7 +606,13 @@ pub const Arguments = struct {
                     ctx.runtime_options.eval.eval_and_print = true;
                 } else {
                     opts.port = std.fmt.parseInt(u16, port_str, 10) catch {
-                        Output.errGeneric("Invalid value for --port: \"{s}\". Must be a number\n", .{port_str});
+                        Output.errFmt(
+                            bun.fmt.outOfRange(port_str, .{
+                                .field_name = "--port",
+                                .min = 0,
+                                .max = std.math.maxInt(u16),
+                            }),
+                        );
                         Output.note("To evaluate TypeScript here, use 'bun --print'", .{});
                         Global.exit(1);
                     };

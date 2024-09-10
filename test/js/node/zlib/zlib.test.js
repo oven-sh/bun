@@ -290,8 +290,11 @@ describe.each(["Deflate", "DeflateRaw", "Gzip"])("%s", constructor_name => {
       it.each(["test", Symbol("bun"), 2n, {}, true])("%p", value => {
         expect(() => new zlib[constructor_name]({ [option_name]: value })).toThrow(TypeError);
       });
-      it.each([Infinity, -Infinity, -2])("%p", value => {
+      it.each([Number.MIN_SAFE_INTEGER - 1, Number.MAX_SAFE_INTEGER + 1, Infinity, -Infinity, -2])("%p", value => {
         expect(() => new zlib[constructor_name]({ [option_name]: value })).toThrow(RangeError);
+      });
+      it.each([undefined])("%p", value => {
+        expect(() => new zlib[constructor_name]({ [option_name]: value })).not.toThrow();
       });
     },
   );

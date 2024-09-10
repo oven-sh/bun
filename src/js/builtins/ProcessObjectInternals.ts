@@ -106,14 +106,7 @@ export function getStdinStream(fd) {
             $getByIdDirectPrivate(native, "readableStreamController"),
             "underlyingByteSource",
           ).$resume(false);
-        } catch (e) {
-          if (IS_BUN_DEVELOPMENT) {
-            // we assume this isn't possible, but because we aren't sure
-            // we will ignore if error during release, but make a big deal in debug
-            console.error(e);
-            $assert(!"reachable");
-          }
-        }
+        } catch (e) {}
       }
     }
   }
@@ -194,7 +187,11 @@ export function getStdinStream(fd) {
           unref();
         }
       }
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.code === "ERR_STREAM_RELEASE_LOCK") {
+        // Not a bug. Happens in unref().
+        return;
+      }
       stream.destroy(err);
     }
   }

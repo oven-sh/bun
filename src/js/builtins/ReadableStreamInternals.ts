@@ -1612,7 +1612,10 @@ export function isReadableStreamDisturbed(stream) {
 $visibility = "Private";
 export function readableStreamDefaultReaderRelease(reader) {
   $readableStreamReaderGenericRelease(reader);
-  $readableStreamDefaultReaderErrorReadRequests(reader, $makeTypeError("releasing lock of reader"));
+  $readableStreamDefaultReaderErrorReadRequests(
+    reader,
+    $ERR_STREAM_RELEASE_LOCK("Stream reader cancelled via releaseLock()"),
+  );
 }
 
 $visibility = "Private";
@@ -1623,11 +1626,11 @@ export function readableStreamReaderGenericRelease(reader) {
   if ($getByIdDirectPrivate($getByIdDirectPrivate(reader, "ownerReadableStream"), "state") === $streamReadable)
     $getByIdDirectPrivate(reader, "closedPromiseCapability").reject.$call(
       undefined,
-      $makeTypeError("releasing lock of reader whose stream is still in readable state"),
+      $ERR_STREAM_RELEASE_LOCK("Stream reader cancelled via releaseLock()"),
     );
   else
     $putByIdDirectPrivate(reader, "closedPromiseCapability", {
-      promise: $newHandledRejectedPromise($makeTypeError("reader released lock")),
+      promise: $newHandledRejectedPromise($ERR_STREAM_RELEASE_LOCK("Stream reader cancelled via releaseLock()")),
     });
 
   const promise = $getByIdDirectPrivate(reader, "closedPromiseCapability").promise;

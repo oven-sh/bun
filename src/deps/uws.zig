@@ -651,10 +651,6 @@ pub const WrappedPipe = struct {
 
     fn onError(this: *WrappedPipe, err: bun.sys.Error) void {
         log("onError", .{});
-        if (this.vm.isShuttingDown()) {
-            this.writer.close();
-            return;
-        }
         this.handlers.onError(this.handlers.ctx, err);
     }
 

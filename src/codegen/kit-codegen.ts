@@ -1,5 +1,5 @@
 import { join, basename } from 'node:path';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, existsSync } from 'node:fs';
 import assert from 'node:assert';
 
 // arg parsing
@@ -145,5 +145,8 @@ if(failed.length > 0) {
   process.exit(1);
 } else {
   console.log('-> kit.client.js, kit.server.js');
-  writeFileSync(join(codegen_root, 'kit_empty_file'), 'this is used to fulfill a cmake dependency');
+
+  const empty_file = join(codegen_root, 'kit_empty_file');
+  if (!existsSync(empty_file))
+    writeFileSync(empty_file, 'this is used to fulfill a cmake dependency');
 }

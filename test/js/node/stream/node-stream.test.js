@@ -422,10 +422,12 @@ it("Writable.fromWeb", async () => {
 
   // Write some data
   const encoder = new TextEncoder();
-  nodeWritable.write(encoder.encode("Hello, World!"), () => {
-    expect(dataBuffer).toBe("Hello, World!");
+  nodeWritable.write(encoder.encode("Hello, "), () => {
+    nodeWritable.write(encoder.encode("World!"), () => {
+      expect(dataBuffer).toBe("Hello, World!");
+      nodeWritable.end();
+    });
   });
-  nodeWritable.end();
 });
 
 it("#9242.5 Stream has constructor", () => {

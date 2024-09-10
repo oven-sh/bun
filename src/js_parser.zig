@@ -3078,7 +3078,7 @@ pub const Parser = struct {
             }
             break :brk .none;
         };
-        return .{ .ast = try p.toAST(parts, exports_kind, .{ .none = {} }, "") };
+        return .{ .ast = try p.toAST(parts, exports_kind, .none, "") };
     }
 
     pub fn parse(self: *Parser) !js_ast.Result {
@@ -5122,7 +5122,7 @@ fn NewParser_(
 
             // https://github.com/facebook/react/blob/d1afcb43fd506297109c32ff462f6f659f9110ae/packages/react-refresh/src/ReactFreshBabelPlugin.js#L408
             pub fn isHookName(id: []const u8) bool {
-                return id.len > 4 and
+                return id.len >= 4 and
                     strings.hasPrefixComptime(id, "use") and
                     switch (id[3]) {
                     'A'...'Z' => true,
@@ -24084,7 +24084,7 @@ pub fn newLazyExportAST(
     return result.ast;
 }
 
-const WrapMode = union(enum) {
+const WrapMode = enum {
     none,
     bun_commonjs,
 };

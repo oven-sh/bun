@@ -903,6 +903,10 @@ if(USE_STATIC_SQLITE)
   list(APPEND BUN_DEPENDENCIES sqlite)
 endif()
 
+foreach(dependency ${BUN_DEPENDENCIES})
+  include(Build${dependency})
+endforeach()
+
 add_custom_target(dependencies DEPENDS ${BUN_DEPENDENCIES})
 
 if(APPLE)

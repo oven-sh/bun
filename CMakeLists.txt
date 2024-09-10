@@ -46,17 +46,6 @@ include(SetupZig)
 # --- Targets ---
 
 include(BuildBun)
-include(BuildBoringSSL)
-include(BuildBrotli)
-include(BuildCares)
-include(BuildLibDeflate)
-include(BuildLolHtml)
-include(BuildLshpack)
-include(BuildMimalloc)
-include(BuildTinyCC)
-include(BuildZlib)
-include(BuildLibArchive) # must be loaded after zlib
-include(BuildZstd)
 
 # --- Flags ---
 

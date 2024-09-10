@@ -881,6 +881,30 @@ endif()
 
 # --- Dependencies ---
 
+set(BUN_DEPENDENCIES
+  boringssl
+  brotli
+  cares
+  libdeflate
+  lolhtml
+  lshpack
+  mimalloc
+  tinycc
+  zlib
+  libarchive # must be loaded after zlib
+  zstd
+)
+
+if(WIN32)
+  list(APPEND BUN_DEPENDENCIES libuv)
+endif()
+
+if(USE_STATIC_SQLITE)
+  list(APPEND BUN_DEPENDENCIES sqlite)
+endif()
+
+add_custom_target(dependencies DEPENDS ${BUN_DEPENDENCIES})
+
 if(APPLE)
   target_link_libraries(${bun} PRIVATE icucore resolv)
 endif()

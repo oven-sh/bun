@@ -450,7 +450,7 @@ JSC::JSValue Bun__ERR_UNKNOWN_ENCODING_static(JSC::JSGlobalObject* globalObject,
     auto message = makeString("Unknown encoding: "_s, encoding_string);
     return createError(globalObject, ErrorCode::ERR_UNKNOWN_ENCODING, message);
 }
-  
+
 JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_INVALID_PROTOCOL, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
@@ -472,6 +472,11 @@ JSC::JSValue new_ERR_INVALID_STATE(JSC::JSGlobalObject* globalObject, ASCIILiter
 {
     auto message = makeString("Invalid state: "_s, statemsg);
     return createError(globalObject, ErrorCode::ERR_INVALID_STATE, message);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_BUFFER_OUT_OF_BOUNDS, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_BUFFER_OUT_OF_BOUNDS, "Attempt to access memory outside buffer bounds"_s));
 }
 
 } // namespace Bun

@@ -252,8 +252,6 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
         result.append(" or "_s);
         result.append(expected_types->getDirectIndex(globalObject, 1).toWTFString(globalObject));
     } else {
-        result.append("one of "_s);
-
         for (unsigned i = 0; i < length - 1; i++) {
             if (i > 0)
                 result.append(", "_s);

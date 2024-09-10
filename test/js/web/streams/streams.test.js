@@ -758,6 +758,20 @@ it("ReadableStream for empty file closes immediately", async () => {
   expect(chunks.length).toBe(0);
 });
 
+it("ReadableStream errors the stream on pull rejection", async () => {
+  let stream = new ReadableStream({
+    pull(controller) {
+      return Promise.reject("pull rejected");
+    },
+  });
+
+  let reader = stream.getReader();
+  let closed = reader.closed.catch(err => `closed: ${err}`);
+  let read = reader.read().catch(err => `read: ${err}`);
+  expect(await Promise.race([closed, read])).toBe("closed: pull rejected");
+  expect(await read).toBe("read: pull rejected");
+});
+
 it("new Response(stream).arrayBuffer() (bytes)", async () => {
   var queue = [Buffer.from("abdefgh")];
   var stream = new ReadableStream({

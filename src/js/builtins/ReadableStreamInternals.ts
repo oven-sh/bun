@@ -1370,6 +1370,10 @@ export function readableStreamError(stream, error) {
 
   if (!reader) return;
 
+  $getByIdDirectPrivate(reader, "closedPromiseCapability").reject.$call(undefined, error);
+  const promise = $getByIdDirectPrivate(reader, "closedPromiseCapability").promise;
+  $markPromiseAsHandled(promise);
+
   if ($isReadableStreamDefaultReader(reader)) {
     const requests = $getByIdDirectPrivate(reader, "readRequests");
     $putByIdDirectPrivate(reader, "readRequests", $createFIFO());
@@ -1380,10 +1384,6 @@ export function readableStreamError(stream, error) {
     $putByIdDirectPrivate(reader, "readIntoRequests", $createFIFO());
     for (var request = requests.shift(); request; request = requests.shift()) $rejectPromise(request, error);
   }
-
-  $getByIdDirectPrivate(reader, "closedPromiseCapability").reject.$call(undefined, error);
-  const promise = $getByIdDirectPrivate(reader, "closedPromiseCapability").promise;
-  $markPromiseAsHandled(promise);
 }
 
 export function readableStreamDefaultControllerShouldCallPull(controller) {

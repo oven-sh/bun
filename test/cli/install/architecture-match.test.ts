@@ -1,7 +1,7 @@
 import { isArchitectureMatch, isOperatingSystemMatch } from "bun:internal-for-testing";
 import "harness";
 
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 describe("isArchitectureMatch", () => {
   const trues = [

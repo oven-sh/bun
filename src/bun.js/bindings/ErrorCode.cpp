@@ -296,11 +296,13 @@ WTF::String ERR_OUT_OF_RANGE(JSC::ThrowScope& scope, JSC::JSGlobalObject* global
     auto input = JSValueToStringSafe(globalObject, val_input);
     RETURN_IF_EXCEPTION(scope, {});
 
-    return makeString("The value of \""_s, arg_name, "\" is out of range. It must be "_s, range, ". Received: \""_s, input, '"');
+    return makeString("The value of \""_s, arg_name, "\" is out of range. It must be "_s, range, ". Received "_s, input);
 }
 }
 
-JSC::JSValue Bun__ERR_INVALID_ARG_TYPE_static2(JSC::JSGlobalObject* globalObject, ASCIILiteral val_arg_name, ASCIILiteral val_expected_type, JSC::JSValue val_actual_value)
+namespace ERR {
+
+JSC::JSValue INVALID_ARG_TYPE(JSC::JSGlobalObject* globalObject, ASCIILiteral val_arg_name, ASCIILiteral val_expected_type, JSC::JSValue val_actual_value, bool instance)
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -313,26 +315,68 @@ JSC::JSValue Bun__ERR_INVALID_ARG_TYPE_static2(JSC::JSGlobalObject* globalObject
 
     auto actual_value = JSValueToStringSafe(globalObject, val_actual_value);
     RETURN_IF_EXCEPTION(scope, {});
+
+    if (instance) {
+        auto message = makeString("The \""_s, arg_name, "\" argument must be an instance of "_s, expected_type, ". Received "_s, actual_value);
+        return createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, message);
+    }
 
     auto message = makeString("The \""_s, arg_name, "\" argument must be of type "_s, expected_type, ". Received "_s, actual_value);
     return createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, message);
 }
-JSC::JSValue Bun__ERR_INVALID_ARG_TYPE_static3(JSC::JSGlobalObject* globalObject, ASCIILiteral val_arg_name, ASCIILiteral val_expected_type, JSC::JSValue val_actual_value)
+
+JSC::JSValue OUT_OF_RANGE(JSC::JSGlobalObject* globalObject, ASCIILiteral arg_name, size_t lower, size_t upper, JSC::JSValue actual)
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto arg_name = val_arg_name.span8();
-    ASSERT(WTF::charactersAreAllASCII(arg_name));
-
-    auto expected_type = val_expected_type.span8();
-    ASSERT(WTF::charactersAreAllASCII(expected_type));
-
-    auto actual_value = JSValueToStringSafe(globalObject, val_actual_value);
+    auto lowerStr = jsNumber(lower).toWTFString(globalObject);
+    auto upperStr = jsNumber(upper).toWTFString(globalObject);
+    auto actual_value = JSValueToStringSafe(globalObject, actual);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto message = makeString("The \""_s, arg_name, "\" argument must be an instance of "_s, expected_type, ". Received "_s, actual_value);
-    return createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, message);
+    auto message = makeString("The value of \""_s, arg_name, "\" is out of range. It must be >= "_s, lowerStr, " && <= "_s, upperStr, ". Received "_s, actual_value);
+    return createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, message);
+}
+
+JSC::JSValue INVALID_ARG_VALUE(JSC::JSGlobalObject* globalObject, ASCIILiteral name, JSC::JSValue value, ASCIILiteral reason)
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    ASCIILiteral type;
+    {
+        auto sp = name.span8();
+        auto str = std::string_view((const char*)(sp.data()), sp.size());
+        auto has = str.find('.') == std::string::npos;
+        type = has ? "property"_s : "argument"_s;
+    }
+
+    auto value_string = JSValueToStringSafe(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto message = makeString("The "_s, type, " '"_s, name, "' "_s, reason, ". Received "_s, value_string);
+    return createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, message);
+}
+
+JSC::JSValue UNKNOWN_ENCODING(JSC::JSGlobalObject* globalObject, JSC::JSValue encoding)
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto encoding_string = JSValueToStringSafe(globalObject, encoding);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto message = makeString("Unknown encoding: "_s, encoding_string);
+    return createError(globalObject, ErrorCode::ERR_UNKNOWN_ENCODING, message);
+}
+
+JSC::JSValue INVALID_STATE(JSC::JSGlobalObject* globalObject, ASCIILiteral statemsg)
+{
+    auto message = makeString("Invalid state: "_s, statemsg);
+    return createError(globalObject, ErrorCode::ERR_INVALID_STATE, message);
+}
+
 }
 
 static JSC::JSValue ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue arg0, JSValue arg1, JSValue arg2)
@@ -385,19 +429,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_OUT_OF_RANGE, (JSC::JSGlobalObject * glo
     auto message = Message::ERR_OUT_OF_RANGE(scope, globalObject, callFrame->argument(0), callFrame->argument(1), callFrame->argument(2));
     RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, message));
-}
-JSC::JSValue Bun__ERR_OUT_OF_RANGE_static2(JSC::JSGlobalObject* globalObject, ASCIILiteral arg_name, size_t lower, size_t upper, JSC::JSValue actual)
-{
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto lowerStr = jsNumber(lower).toWTFString(globalObject);
-    auto upperStr = jsNumber(upper).toWTFString(globalObject);
-    auto actual_value = JSValueToStringSafe(globalObject, actual);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    auto message = makeString("The value of \""_s, arg_name, "\" is out of range. It must be >= "_s, lowerStr, " && <= "_s, upperStr, ". Received "_s, actual_value);
-    return createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, message);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_IPC_DISCONNECTED, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
@@ -509,38 +540,6 @@ extern "C" JSC::EncodedJSValue Bun__ERR_STRING_TOO_LONG(JSC::JSGlobalObject* glo
     return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STRING_TOO_LONG, message));
 }
 
-JSC::JSValue Bun__ERR_INVALID_ARG_VALUE_static(JSC::JSGlobalObject* globalObject, ASCIILiteral name, JSC::JSValue value, ASCIILiteral reason)
-{
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    ASCIILiteral type;
-    {
-        auto sp = name.span8();
-        auto str = std::string_view((const char*)(sp.data()), sp.size());
-        auto has = str.find('.') == std::string::npos;
-        type = has ? "property"_s : "argument"_s;
-    }
-
-    auto value_string = JSValueToStringSafe(globalObject, value);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    auto message = makeString("The "_s, type, " '"_s, name, "' "_s, reason, ". Received "_s, value_string);
-    return createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, message);
-}
-
-JSC::JSValue Bun__ERR_UNKNOWN_ENCODING_static(JSC::JSGlobalObject* globalObject, JSC::JSValue encoding)
-{
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto encoding_string = JSValueToStringSafe(globalObject, encoding);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    auto message = makeString("Unknown encoding: "_s, encoding_string);
-    return createError(globalObject, ErrorCode::ERR_UNKNOWN_ENCODING, message);
-}
-
 JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_INVALID_PROTOCOL, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
@@ -556,12 +555,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_INVALID_PROTOCOL, (JSC::JSGlobalObject *
 
     auto message = makeString("Protocol \""_s, actual, "\" not supported. Expected \""_s, expected, "\""_s);
     return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_PROTOCOL, message));
-}
-
-JSC::JSValue new_ERR_INVALID_STATE(JSC::JSGlobalObject* globalObject, ASCIILiteral statemsg)
-{
-    auto message = makeString("Invalid state: "_s, statemsg);
-    return createError(globalObject, ErrorCode::ERR_INVALID_STATE, message);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_BUFFER_OUT_OF_BOUNDS, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))

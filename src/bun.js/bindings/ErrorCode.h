@@ -67,15 +67,19 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeErrorWithCode);
 
 extern "C" JSC::EncodedJSValue Bun__ERR_INVALID_ARG_TYPE(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue val_arg_name, JSC::EncodedJSValue val_expected_type, JSC::EncodedJSValue val_actual_value);
 extern "C" JSC::EncodedJSValue Bun__ERR_INVALID_ARG_TYPE_static(JSC::JSGlobalObject* globalObject, const ZigString* val_arg_name, const ZigString* val_expected_type, JSC::EncodedJSValue val_actual_value);
-JSC::JSValue Bun__ERR_INVALID_ARG_TYPE_static2(JSC::JSGlobalObject* globalObject, ASCIILiteral val_arg_name, ASCIILiteral val_expected_type, JSC::JSValue val_actual_value);
-JSC::JSValue Bun__ERR_INVALID_ARG_TYPE_static3(JSC::JSGlobalObject* globalObject, ASCIILiteral val_arg_name, ASCIILiteral val_expected_type, JSC::JSValue val_actual_value);
-JSC::JSValue Bun__ERR_OUT_OF_RANGE_static2(JSC::JSGlobalObject* globalObject, ASCIILiteral arg_name, size_t lower, size_t upper, JSC::JSValue actual);
 extern "C" JSC::EncodedJSValue Bun__ERR_MISSING_ARGS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2, JSC::EncodedJSValue arg3);
 extern "C" JSC::EncodedJSValue Bun__ERR_MISSING_ARGS_static(JSC::JSGlobalObject* globalObject, const ZigString* arg1, const ZigString* arg2, const ZigString* arg3);
 extern "C" JSC::EncodedJSValue Bun__ERR_IPC_CHANNEL_CLOSED(JSC::JSGlobalObject* globalObject);
 extern "C" JSC::EncodedJSValue Bun__ERR_STRING_TOO_LONG(JSC::JSGlobalObject* globalObject);
-JSC::JSValue Bun__ERR_INVALID_ARG_VALUE_static(JSC::JSGlobalObject* globalObject, ASCIILiteral name, JSC::JSValue value, ASCIILiteral reason = "is invalid"_s);
-JSC::JSValue Bun__ERR_UNKNOWN_ENCODING_static(JSC::JSGlobalObject* globalObject, JSC::JSValue encoding);
-JSC::JSValue new_ERR_INVALID_STATE(JSC::JSGlobalObject* globalObject, ASCIILiteral statemsg);
+
+namespace ERR {
+
+JSC::JSValue INVALID_ARG_TYPE(JSC::JSGlobalObject* globalObject, ASCIILiteral val_arg_name, ASCIILiteral val_expected_type, JSC::JSValue val_actual_value, bool instance = false);
+JSC::JSValue OUT_OF_RANGE(JSC::JSGlobalObject* globalObject, ASCIILiteral arg_name, size_t lower, size_t upper, JSC::JSValue actual);
+JSC::JSValue INVALID_ARG_VALUE(JSC::JSGlobalObject* globalObject, ASCIILiteral name, JSC::JSValue value, ASCIILiteral reason = "is invalid"_s);
+JSC::JSValue UNKNOWN_ENCODING(JSC::JSGlobalObject* globalObject, JSC::JSValue encoding);
+JSC::JSValue INVALID_STATE(JSC::JSGlobalObject* globalObject, ASCIILiteral statemsg);
+
+}
 
 }

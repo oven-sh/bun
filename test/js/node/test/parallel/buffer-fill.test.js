@@ -268,7 +268,7 @@ test("Check exceptions", () => {
     expect.objectContaining({
       code: "ERR_UNKNOWN_ENCODING",
       name: "TypeError",
-      message: "Unknown encoding: node rocks!",
+      message: `Unknown encoding: "node rocks!"`,
     }),
   );
 
@@ -288,7 +288,7 @@ test("Check exceptions", () => {
     expect.objectContaining({
       code: "ERR_UNKNOWN_ENCODING",
       name: "TypeError",
-      message: "Unknown encoding: foo",
+      message: `Unknown encoding: "foo"`,
     }),
   );
 });

@@ -442,9 +442,14 @@ WEBKIT_ADD_SOURCE_DEPENDENCIES(
 
 # --- Zig ---
 
-file(GLOB_RECURSE BUN_ZIG_SOURCES ${CONFIGURE_DEPENDS}
+# Does not use GLOB_RECURSE because it makes configure really slow with WebKit
+# We might want to consider moving our dependencies out of src/ because of this.
+file(GLOB BUN_ZIG_SOURCES ${CONFIGURE_DEPENDS}
   ${CWD}/*.zig
-  ${CWD}/src/*.zig
+  ${CWD}/src/*/*.zig
+  ${CWD}/src/*/*/*.zig
+  ${CWD}/src/*/*/*/*.zig
+  ${CWD}/src/*/*/*/*/*.zig
 )
 
 list(APPEND BUN_ZIG_SOURCES
@@ -463,8 +468,6 @@ set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.o)
 register_command(
   TARGET
     bun-zig
-  GROUP
-    console
   COMMENT
     "Building src/*.zig for ${ZIG_TARGET}"
   COMMAND
@@ -490,6 +493,7 @@ register_command(
     clone-zig
 )
 
+set_property(TARGET bun-zig PROPERTY JOB_POOL compile_pool)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
 
 # --- C/C++ Sources ---

@@ -153,7 +153,7 @@ Some methods are not optimized yet.
 
 ### [`node:util`](https://nodejs.org/api/util.html)
 
-🟡 Missing `MIMEParams` `MIMEType` `aborted` `debug` `getSystemErrorMap` `transferableAbortController` `transferableAbortSignal` `stripVTControlCharacters`
+🟡 Missing `MIMEParams` `MIMEType` `debug` `getSystemErrorMap` `transferableAbortController` `transferableAbortSignal` `stripVTControlCharacters`
 
 ### [`node:v8`](https://nodejs.org/api/v8.html)
 
@@ -173,7 +173,7 @@ Some methods are not optimized yet.
 
 ### [`node:zlib`](https://nodejs.org/api/zlib.html)
 
-🟡 Unoptimized.
+🟡 Partially optimized.
 
 ## Globals
 

@@ -443,10 +443,13 @@ WEBKIT_ADD_SOURCE_DEPENDENCIES(
 # --- Zig ---
 
 file(GLOB_RECURSE BUN_ZIG_SOURCES ${CONFIGURE_DEPENDS}
-  ${CWD}/*.zig
+  ${CWD}/src/*.zig
 )
 
 list(APPEND BUN_ZIG_SOURCES
+  ${CWD}/build.zig
+  ${CWD}/root.zig
+  ${CWD}/root_wasm.zig
   ${BUN_ZIG_IDENTIFIER_OUTPUTS}
   ${BUN_ERROR_OUTPUTS}
   ${BUN_FALLBACK_DECODER_OUTPUT}

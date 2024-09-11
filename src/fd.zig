@@ -301,8 +301,12 @@ pub const FDImpl = packed struct {
 
     /// This "fails" if not given an int32, returning null in that case
     pub fn fromJS(value: JSValue) ?FDImpl {
-        if (!value.isInt32()) return null;
-        const fd = value.asInt32();
+        if (!value.isAnyInt()) return null;
+        const fd64 = value.toInt64();
+        if (fd64 < 0 or fd64 > std.math.maxInt(i32)) {
+            return null;
+        }
+        const fd: i32 = @intCast(fd64);
         if (comptime env.isWindows) {
             return switch (bun.FDTag.get(fd)) {
                 .stdin => FDImpl.decode(bun.STDIN_FD),
@@ -317,11 +321,12 @@ pub const FDImpl = packed struct {
     // If a non-number is given, returns null.
     // If the given number is not an fd (negative), an error is thrown and error.JSException is returned.
     pub fn fromJSValidated(value: JSValue, global: *JSC.JSGlobalObject, exception_ref: JSC.C.ExceptionRef) !?FDImpl {
-        if (!value.isInt32()) return null;
-        const fd = value.asInt32();
-        if (!JSC.Node.Valid.fileDescriptor(fd, global, exception_ref)) {
+        if (!value.isAnyInt()) return null;
+        const fd64 = value.toInt64();
+        if (!JSC.Node.Valid.fileDescriptor(fd64, global, exception_ref)) {
             return error.JSException;
         }
+        const fd: i32 = @intCast(fd64);
 
         if (comptime env.isWindows) {
             return switch (bun.FDTag.get(fd)) {

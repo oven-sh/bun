@@ -1751,29 +1751,26 @@ pub const Subprocess = struct {
                     var arg0 = first_cmd.toSliceOrNullWithAllocator(globalThis, allocator) orelse return .zero;
                     defer arg0.deinit();
 
-                    // skip this step on windows, libuv will do it
-                    if (comptime !Environment.isWindows) {
-                        if (argv0 == null) {
-                            var path_buf: bun.PathBuffer = undefined;
-                            const resolved = Which.which(&path_buf, PATH, cwd, arg0.slice()) orelse {
-                                globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{arg0.slice()});
-                                return .zero;
-                            };
-                            argv0 = allocator.dupeZ(u8, resolved) catch {
-                                globalThis.throwOutOfMemory();
-                                return .zero;
-                            };
-                        } else {
-                            var path_buf: bun.PathBuffer = undefined;
-                            const resolved = Which.which(&path_buf, PATH, cwd, bun.sliceTo(argv0.?, 0)) orelse {
-                                globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{arg0.slice()});
-                                return .zero;
-                            };
-                            argv0 = allocator.dupeZ(u8, resolved) catch {
-                                globalThis.throwOutOfMemory();
-                                return .zero;
-                            };
-                        }
+                    if (argv0 == null) {
+                        var path_buf: bun.PathBuffer = undefined;
+                        const resolved = Which.which(&path_buf, PATH, cwd, arg0.slice()) orelse {
+                            globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{arg0.slice()});
+                            return .zero;
+                        };
+                        argv0 = allocator.dupeZ(u8, resolved) catch {
+                            globalThis.throwOutOfMemory();
+                            return .zero;
+                        };
+                    } else {
+                        var path_buf: bun.PathBuffer = undefined;
+                        const resolved = Which.which(&path_buf, PATH, cwd, bun.sliceTo(argv0.?, 0)) orelse {
+                            globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{arg0.slice()});
+                            return .zero;
+                        };
+                        argv0 = allocator.dupeZ(u8, resolved) catch {
+                            globalThis.throwOutOfMemory();
+                            return .zero;
+                        };
                     }
 
                     argv.appendAssumeCapacity(allocator.dupeZ(u8, arg0.slice()) catch {

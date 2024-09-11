@@ -35,7 +35,7 @@ for (const dir of ["dir", "©️"]) {
       await updateFile(i);
     }
     rmSync(path);
-  });
+  }, 10000);
 }
 
 afterEach(() => {

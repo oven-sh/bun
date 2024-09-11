@@ -7,6 +7,7 @@
 #include "libusockets.h"
 #include "_libusockets.h"
 #include "BunClientData.h"
+#include "EventLoopTask.h"
 
 extern "C" void Bun__startLoop(us_loop_t* loop);
 

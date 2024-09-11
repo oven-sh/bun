@@ -6732,18 +6732,20 @@ pub const NodeFS = struct {
             };
         }
 
-        if (comptime Environment.isMac) {
+        if (comptime Environment.isMac) try_with_clonefile: {
             if (Maybe(Return.Cp).errnoSysP(C.clonefile(src, dest, 0), .clonefile, src)) |err| {
                 switch (err.getErrno()) {
-                    .ACCES,
-                    .NAMETOOLONG,
-                    .ROFS,
-                    .PERM,
-                    .INVAL,
-                    => {
+                    .NAMETOOLONG, .ROFS, .INVAL, .ACCES, .PERM => |errno| {
+                        if (errno == .ACCES or errno == .PERM) {
+                            if (args.flags.force) {
+                                break :try_with_clonefile;
+                            }
+                        }
+
                         @memcpy(this.sync_error_buf[0..src.len], src);
                         return .{ .err = err.err.withPath(this.sync_error_buf[0..src.len]) };
                     },
+
                     // Other errors may be due to clonefile() not being supported
                     // We'll fall back to other implementations
                     else => {},

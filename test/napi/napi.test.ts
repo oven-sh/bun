@@ -116,6 +116,12 @@ describe("napi", () => {
       );
     });
   });
+
+  describe("napi_ref", () => {
+    it("can recover the value from a weak ref", () => {
+      checkSameOutput("test_napi_ref", []);
+    });
+  });
 });
 
 function checkSameOutput(test: string, args: any[] | string) {

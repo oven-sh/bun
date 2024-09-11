@@ -77,11 +77,11 @@ Some methods are not optimized yet.
 
 ### [`node:module`](https://nodejs.org/api/module.html)
 
-🟡 Missing `runMain` `syncBuiltinESMExports`, `Module#load()`. Attempts to override or patch the module cache will fail.
+🟡 Missing `runMain` `syncBuiltinESMExports`, `Module#load()`. Overriding `require.cache` is supported for ESM & CJS modules. `module._extensions`, `module._pathCache`, `module._cache` are no-ops. `module.register` is not implemented and we recommend using a [`Bun.plugin`](https://bun.sh/docs/runtime/plugins) in the meantime.
 
 ### [`node:net`](https://nodejs.org/api/net.html)
 
-🟡 Missing `SocketAddress` `Stream`. `BlockList` exists but is a no-op.
+🟡 `SocketAddress` class not exposed (but implemented). `BlockList` exists but is a no-op.
 
 ### [`node:os`](https://nodejs.org/api/os.html)
 

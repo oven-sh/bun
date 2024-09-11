@@ -1,7 +1,7 @@
-import { semver } from "bun";
+import { semver, write } from "bun";
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isWindows, nodeExe, shellExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, nodeExe, shellExe, tmpdirSync, runBunInstall } from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, spawn, spawnSync } from "node:child_process";
 import { promisify } from "node:util";
 import path from "path";
@@ -64,6 +64,33 @@ describe("spawn()", () => {
   it("should spawn a process", () => {
     const child = spawn("bun", ["-v"]);
     expect(!!child).toBe(true);
+  });
+
+  it("should use cwd from options to search for executables", async () => {
+    const tmpdir = tmpdirSync();
+    await Promise.all([
+      write(
+        path.join(tmpdir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            foo: "file:foo-1.2.3.tgz",
+          },
+        }),
+      ),
+      fs.promises.cp(path.join(import.meta.dir, "fixtures", "foo-1.2.3.tgz"), path.join(tmpdir, "foo-1.2.3.tgz")),
+    ]);
+    await runBunInstall(bunEnv, tmpdir);
+
+    const { exitCode, out } = await new Promise<any>(resolve => {
+      const child = spawn("./node_modules/.bin/foo", { cwd: tmpdir, env: bunEnv });
+      child.on("exit", async exitCode => {
+        const out = await new Response(child.stdout).text();
+        resolve({ exitCode, out });
+      });
+    });
+    expect(out).toBe("hello bun!\n");
+    expect(exitCode).toBe(0);
   });
 
   it("should disallow invalid filename", () => {

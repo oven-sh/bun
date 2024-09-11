@@ -377,6 +377,15 @@ JSC::JSValue INVALID_STATE(JSC::JSGlobalObject* globalObject, ASCIILiteral state
     return createError(globalObject, ErrorCode::ERR_INVALID_STATE, message);
 }
 
+JSC::JSValue STRING_TOO_LONG(JSC::JSGlobalObject* globalObject)
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto message = makeString("Cannot create a string longer than "_s, MAX_STRING_LENGTH, " characters"_s);
+    return createError(globalObject, ErrorCode::ERR_STRING_TOO_LONG, message);
+}
+
 //
 //
 //
@@ -404,6 +413,11 @@ JSC::JSValue throw_UNKNOWN_ENCODING(JSC::ThrowScope& throwScope, JSC::JSGlobalOb
 JSC::JSValue throw_INVALID_STATE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral statemsg)
 {
     throwScope.throwException(globalObject, INVALID_STATE(globalObject, statemsg));
+    return {};
+}
+JSC::JSValue throw_STRING_TOO_LONG(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    throwScope.throwException(globalObject, STRING_TOO_LONG(globalObject));
     return {};
 }
 
@@ -559,15 +573,6 @@ extern "C" JSC::EncodedJSValue Bun__ERR_IPC_CHANNEL_CLOSED(JSC::JSGlobalObject* 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_SOCKET_BAD_TYPE, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
 {
     return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_BAD_TYPE, "Bad socket type specified. Valid types are: udp4, udp6"_s));
-}
-
-extern "C" JSC::EncodedJSValue Bun__ERR_STRING_TOO_LONG(JSC::JSGlobalObject* globalObject)
-{
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto message = makeString("Cannot create a string longer than "_s, MAX_STRING_LENGTH, " characters"_s);
-    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STRING_TOO_LONG, message));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_INVALID_PROTOCOL, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

@@ -1511,8 +1511,8 @@ static inline JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObj
         RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsEmptyString(vm)));
     }
     if (length > MAX_STRING_LENGTH) {
-        scope.throwException(lexicalGlobalObject, JSValue::decode(Bun::Bun__ERR_STRING_TOO_LONG(lexicalGlobalObject)));
-        return JSC::JSValue::encode(jsUndefined());
+        Bun::ERR::throw_STRING_TOO_LONG(scope, lexicalGlobalObject);
+        return {};
     }
 
     JSC::EncodedJSValue ret = 0;

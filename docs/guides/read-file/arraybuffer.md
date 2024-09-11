@@ -25,4 +25,4 @@ bytes.length;
 
 ---
 
-Refer to the [Typed arrays](/docs/api/binary-data#typedarray) docs for more information on working with typed arrays in Bun.
+Refer to the [Typed arrays](https://bun.sh/docs/api/binary-data#typedarray) docs for more information on working with typed arrays in Bun.

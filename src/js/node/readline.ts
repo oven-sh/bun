@@ -258,14 +258,6 @@ var NodeError = getNodeErrorByName("Error");
 var NodeTypeError = getNodeErrorByName("TypeError");
 var NodeRangeError = getNodeErrorByName("RangeError");
 
-class ERR_INVALID_ARG_TYPE extends NodeTypeError {
-  constructor(name, type, value) {
-    super(`The "${name}" argument must be of type ${type}. Received type ${typeof value}`, {
-      code: "ERR_INVALID_ARG_TYPE",
-    });
-  }
-}
-
 class ERR_INVALID_ARG_VALUE extends NodeTypeError {
   constructor(name, value, reason = "not specified") {
     super(`The value "${String(value)}" is invalid for argument '${name}'. Reason: ${reason}`, {
@@ -315,7 +307,7 @@ class AbortError extends Error {
  * @returns {asserts value is Function}
  */
 function validateFunction(value, name) {
-  if (typeof value !== "function") throw new ERR_INVALID_ARG_TYPE(name, "Function", value);
+  if (typeof value !== "function") throw $ERR_INVALID_ARG_TYPE(name, "Function", value);
 }
 
 /**
@@ -325,7 +317,7 @@ function validateFunction(value, name) {
  */
 function validateAbortSignal(signal, name) {
   if (signal !== undefined && (signal === null || typeof signal !== "object" || !("aborted" in signal))) {
-    throw new ERR_INVALID_ARG_TYPE(name, "AbortSignal", signal);
+    throw $ERR_INVALID_ARG_TYPE(name, "AbortSignal", signal);
   }
 }
 
@@ -339,7 +331,7 @@ function validateAbortSignal(signal, name) {
 function validateArray(value, name, minLength = 0) {
   // var validateArray = hideStackFrames((value, name, minLength = 0) => {
   if (!$isJSArray(value)) {
-    throw new ERR_INVALID_ARG_TYPE(name, "Array", value);
+    throw $ERR_INVALID_ARG_TYPE(name, "Array", value);
   }
   if (value.length < minLength) {
     var reason = `must be longer than ${minLength}`;
@@ -354,7 +346,7 @@ function validateArray(value, name, minLength = 0) {
  * @returns {asserts value is string}
  */
 function validateString(value, name) {
-  if (typeof value !== "string") throw new ERR_INVALID_ARG_TYPE(name, "string", value);
+  if (typeof value !== "string") throw $ERR_INVALID_ARG_TYPE(name, "string", value);
 }
 
 /**
@@ -364,7 +356,7 @@ function validateString(value, name) {
  * @returns {asserts value is boolean}
  */
 function validateBoolean(value, name) {
-  if (typeof value !== "boolean") throw new ERR_INVALID_ARG_TYPE(name, "boolean", value);
+  if (typeof value !== "boolean") throw $ERR_INVALID_ARG_TYPE(name, "boolean", value);
 }
 
 /**
@@ -387,7 +379,7 @@ function validateObject(value, name, options = null) {
     (!allowArray && $isJSArray.$call(null, value)) ||
     (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
   ) {
-    throw new ERR_INVALID_ARG_TYPE(name, "object", value);
+    throw $ERR_INVALID_ARG_TYPE(name, "object", value);
   }
 }
 
@@ -400,7 +392,7 @@ function validateObject(value, name, options = null) {
  * @returns {asserts value is number}
  */
 function validateInteger(value, name, min = NumberMIN_SAFE_INTEGER, max = NumberMAX_SAFE_INTEGER) {
-  if (typeof value !== "number") throw new ERR_INVALID_ARG_TYPE(name, "number", value);
+  if (typeof value !== "number") throw $ERR_INVALID_ARG_TYPE(name, "number", value);
   if (!NumberIsInteger(value)) throw new ERR_OUT_OF_RANGE(name, "an integer", value);
   if (value < min || value > max) throw new ERR_OUT_OF_RANGE(name, `>= ${min} && <= ${max}`, value);
 }
@@ -414,7 +406,7 @@ function validateInteger(value, name, min = NumberMIN_SAFE_INTEGER, max = Number
  */
 function validateUint32(value, name, positive = false) {
   if (typeof value !== "number") {
-    throw new ERR_INVALID_ARG_TYPE(name, "number", value);
+    throw $ERR_INVALID_ARG_TYPE(name, "number", value);
   }
 
   if (!NumberIsInteger(value)) {
@@ -2897,7 +2889,7 @@ class Readline {
 
   constructor(stream, options = undefined) {
     isWritable ??= require("node:stream").isWritable;
-    if (!isWritable(stream)) throw new ERR_INVALID_ARG_TYPE("stream", "Writable", stream);
+    if (!isWritable(stream)) throw $ERR_INVALID_ARG_TYPE("stream", "Writable", stream);
     this.#stream = stream;
     if (options?.autoCommit != null) {
       validateBoolean(options.autoCommit, "options.autoCommit");

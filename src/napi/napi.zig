@@ -364,6 +364,9 @@ pub export fn napi_create_string_latin1(env: napi_env, str: ?[*]const u8, length
     }
 
     var string, const bytes = bun.String.createUninitialized(.latin1, slice.len);
+    if (string.tag == .Dead) {
+        return .generic_failure;
+    }
     defer string.deref();
 
     @memcpy(bytes, slice);
@@ -425,6 +428,9 @@ pub export fn napi_create_string_utf16(env: napi_env, str: ?[*]const char16_t, l
     }
 
     var string, const chars = bun.String.createUninitialized(.utf16, slice.len);
+    if (string.tag == .Dead) {
+        return .generic_failure;
+    }
     defer string.deref();
 
     @memcpy(chars, slice);

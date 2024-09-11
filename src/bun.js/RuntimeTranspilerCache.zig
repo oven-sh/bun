@@ -279,6 +279,9 @@ pub const RuntimeTranspilerCache = struct {
                 },
                 .latin1 => brk: {
                     var latin1, const bytes = bun.String.createUninitialized(.latin1, this.metadata.output_byte_length);
+                    if (latin1.tag == .Dead) {
+                        return error.OutOfMemory;
+                    }
                     errdefer latin1.deref();
                     const read_bytes = try file.preadAll(bytes, this.metadata.output_byte_offset);
 
@@ -296,6 +299,9 @@ pub const RuntimeTranspilerCache = struct {
                 },
                 .utf16 => brk: {
                     var string, const chars = bun.String.createUninitialized(.utf16, this.metadata.output_byte_length / 2);
+                    if (string.tag == .Dead) {
+                        return error.OutOfMemory;
+                    }
                     errdefer string.deref();
 
                     const read_bytes = try file.preadAll(std.mem.sliceAsBytes(chars), this.metadata.output_byte_offset);

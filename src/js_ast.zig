@@ -2518,6 +2518,10 @@ pub const E = struct {
 
             if (s.is_utf16) {
                 var out, const chars = bun.String.createUninitialized(.utf16, s.len());
+                if (out.tag == .Dead) {
+                    globalObject.throwOutOfMemory();
+                    return .zero;
+                }
                 defer out.deref();
                 @memcpy(chars, s.slice16());
                 return out.toJS(globalObject);
@@ -2530,6 +2534,10 @@ pub const E = struct {
                 defer allocator.free(decoded);
 
                 var out, const chars = bun.String.createUninitialized(.utf16, decoded.len);
+                if (out.tag == .Dead) {
+                    globalObject.throwOutOfMemory();
+                    return .zero;
+                }
                 defer out.deref();
                 @memcpy(chars, decoded);
 

@@ -1114,8 +1114,8 @@ pub const Encoder = struct {
                     return bun.String.createExternalGloballyAllocated(.latin1, input);
                 }
 
-                const str, const chars = bun.String.createUninitialized(.latin1, input.len);
                 defer bun.default_allocator.free(input);
+                const str, const chars = bun.String.createUninitialized(.latin1, input.len);
                 if (str.tag == .Dead) {
                     return str;
                 }
@@ -1201,6 +1201,10 @@ pub const Encoder = struct {
         switch (comptime encoding) {
             .ascii => {
                 var str, const chars = bun.String.createUninitialized(.latin1, len);
+                if (str.tag == .Dead) {
+                    global.throwOutOfMemory();
+                    return .zero;
+                }
                 defer str.deref();
 
                 strings.copyLatin1IntoASCII(chars, input);
@@ -1208,6 +1212,10 @@ pub const Encoder = struct {
             },
             .latin1 => {
                 var str, const chars = bun.String.createUninitialized(.latin1, len);
+                if (str.tag == .Dead) {
+                    global.throwOutOfMemory();
+                    return .zero;
+                }
                 defer str.deref();
 
                 @memcpy(chars, input);
@@ -1228,6 +1236,10 @@ pub const Encoder = struct {
                 if (len / 2 == 0) return ZigString.Empty.toJS(global);
 
                 var output, const chars = bun.String.createUninitialized(.utf16, len / 2);
+                if (output.tag == .Dead) {
+                    global.throwOutOfMemory();
+                    return .zero;
+                }
                 defer output.deref();
                 var output_bytes = std.mem.sliceAsBytes(chars);
                 output_bytes[output_bytes.len - 1] = 0;
@@ -1238,6 +1250,10 @@ pub const Encoder = struct {
 
             .hex => {
                 var str, const chars = bun.String.createUninitialized(.latin1, len * 2);
+                if (str.tag == .Dead) {
+                    global.throwOutOfMemory();
+                    return .zero;
+                }
                 defer str.deref();
 
                 const wrote = strings.encodeBytesToHex(chars, input);
@@ -1247,6 +1263,10 @@ pub const Encoder = struct {
 
             .base64url => {
                 var out, const chars = bun.String.createUninitialized(.latin1, bun.base64.urlSafeEncodeLen(input));
+                if (out.tag == .Dead) {
+                    global.throwOutOfMemory();
+                    return .zero;
+                }
                 defer out.deref();
                 _ = bun.base64.encodeURLSafe(chars, input);
                 return out.toJS(global);
@@ -1254,7 +1274,11 @@ pub const Encoder = struct {
 
             .base64 => {
                 const to_len = bun.base64.encodeLen(input);
-                var to = allocator.alloc(u8, to_len) catch return ZigString.init("Out of memory").toErrorInstance(global);
+                var to = allocator.alloc(u8, to_len) catch {
+                    global.throwOutOfMemory();
+                    return .zero;
+                };
+
                 const wrote = bun.base64.encode(to, input);
                 return ZigString.init(to[0..wrote]).toExternalValue(global);
             },

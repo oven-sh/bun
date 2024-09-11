@@ -60,7 +60,22 @@ async function build(args) {
       const mainCachePath = getCachePath(getDefaultBranch());
       if (existsSync(mainCachePath)) {
         mkdirSync(cachePath, { recursive: true });
-        cpSync(mainCachePath, cachePath, { recursive: true, force: true });
+        try {
+          cpSync(mainCachePath, cachePath, { recursive: true, force: true });
+        } catch (err) {
+          switch (err?.code) {
+            case "EPERM":
+            case "EACCES":
+              try {
+                chmodSync(mainCachePath, 0o777);
+              } catch (e2) {}
+
+              cpSync(mainCachePath, cachePath, { recursive: true, force: true });
+              break;
+            default:
+              throw err;
+          }
+        }
       }
     }
     generateOptions["-DCACHE_PATH"] = cmakePath(cachePath);

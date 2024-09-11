@@ -932,14 +932,18 @@ pub const Listener = struct {
         if (this.handlers.active_connections == 0) {
             this.handlers.unprotect();
             // deiniting the context will also close the listener
-            this.socket_context.?.deinit(this.ssl);
-            this.socket_context = null;
+            if (this.socket_context) |ctx| {
+                this.socket_context = null;
+                ctx.deinit(this.ssl);
+            }
             this.strong_self.clear();
             this.strong_data.clear();
         } else {
             if (force_close) {
                 // close all connections in this context and wait for them to close
-                this.socket_context.?.close(this.ssl);
+                if (this.socket_context) |ctx| {
+                    ctx.close(this.ssl);
+                }
             } else {
                 // only close the listener and wait for the connections to close by it self
                 switch (listener) {

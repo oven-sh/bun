@@ -559,7 +559,7 @@ static inline JSC::EncodedJSValue constructBufferFromStringAndEncoding(JSC::JSGl
 
     auto* str = arg0.toString(lexicalGlobalObject);
 
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (arg1 && arg1.isString()) {
         std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg1);
@@ -618,7 +618,7 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSG
                 EnsureStillAliveScope arg2 = callFrame->uncheckedArgument(2);
                 if (!arg2.value().isUndefined()) {
                     encoding = parseEncoding(lexicalGlobalObject, scope, arg2.value());
-                    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+                    RETURN_IF_EXCEPTION(scope, {});
                 }
             }
             auto startPtr = uint8Array->typedVector() + start;
@@ -666,7 +666,7 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSG
             auto value_ = value.toInt32(lexicalGlobalObject) & 0xFF;
 
             auto value_uint8 = static_cast<uint8_t>(value_);
-            RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+            RETURN_IF_EXCEPTION(scope, {});
 
             auto length = uint8Array->byteLength();
             auto start = 0;
@@ -983,25 +983,25 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSG
         sourceEndValue = callFrame->uncheckedArgument(4);
         if (sourceEndValue != jsUndefined())
             sourceEnd = parseIndex(lexicalGlobalObject, throwScope, "sourceEnd"_s, sourceEndValue, sourceEndInit);
-        RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
+        RETURN_IF_EXCEPTION(throwScope, {});
         FALLTHROUGH;
     case 4:
         sourceStartValue = callFrame->uncheckedArgument(3);
         if (sourceStartValue != jsUndefined())
             sourceStart = parseIndex(lexicalGlobalObject, throwScope, "sourceStart"_s, sourceStartValue, sourceEndInit);
-        RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
+        RETURN_IF_EXCEPTION(throwScope, {});
         FALLTHROUGH;
     case 3:
         targetEndValue = callFrame->uncheckedArgument(2);
         if (targetEndValue != jsUndefined())
             targetEnd = parseIndex(lexicalGlobalObject, throwScope, "targetEnd"_s, targetEndValue, targetEndInit);
-        RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
+        RETURN_IF_EXCEPTION(throwScope, {});
         FALLTHROUGH;
     case 2:
         targetStartValue = callFrame->uncheckedArgument(1);
         if (targetStartValue != jsUndefined())
             targetStart = parseIndex(lexicalGlobalObject, throwScope, "targetStart"_s, targetStartValue, targetEndInit);
-        RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
+        RETURN_IF_EXCEPTION(throwScope, {});
         break;
     case 1:
     case 0:
@@ -1077,17 +1077,17 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_copyBody(JSC::JSGlob
     default:
         sourceEndValue = callFrame->uncheckedArgument(3);
         sourceEnd = parseIndex(lexicalGlobalObject, throwScope, "sourceEnd"_s, callFrame->uncheckedArgument(3), sourceEndInit);
-        RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
+        RETURN_IF_EXCEPTION(throwScope, {});
         FALLTHROUGH;
     case 3:
         sourceStartValue = callFrame->uncheckedArgument(2);
         sourceStart = parseIndex(lexicalGlobalObject, throwScope, "sourceStart"_s, callFrame->uncheckedArgument(2), sourceEndInit);
-        RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
+        RETURN_IF_EXCEPTION(throwScope, {});
         FALLTHROUGH;
     case 2:
         targetStartValue = callFrame->uncheckedArgument(1);
         targetStart = parseIndex(lexicalGlobalObject, throwScope, "targetStart"_s, callFrame->uncheckedArgument(1), targetEnd);
-        RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
+        RETURN_IF_EXCEPTION(throwScope, {});
         break;
     case 1:
     case 0:
@@ -1188,17 +1188,17 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlob
 
     if (!encodingValue.isUndefined()) {
         encoding = parseEncoding(lexicalGlobalObject, scope, encodingValue);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     if (!offsetValue.isUndefined()) {
         start = parseIndex(lexicalGlobalObject, scope, "start"_s, offsetValue, limit);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     if (!lengthValue.isUndefined()) {
         end = parseIndex(lexicalGlobalObject, scope, "end"_s, lengthValue, limit - start);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     if (start >= end) {
@@ -1255,7 +1255,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlob
         auto value_ = value.toInt32(lexicalGlobalObject) & 0xFF;
 
         auto value_uint8 = static_cast<uint8_t>(value_);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+        RETURN_IF_EXCEPTION(scope, {});
 
         auto startPtr = castedThis->typedVector() + start;
         auto endPtr = castedThis->typedVector() + end;
@@ -1617,12 +1617,12 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
 
     if (!arg1.isUndefined()) {
         encoding = parseEncoding(lexicalGlobalObject, scope, arg1);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     if (!arg2.isUndefined()) {
         int32_t istart = arg2.toInt32(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (istart < 0) {
             throwTypeError(lexicalGlobalObject, scope, "Start must be a positive integer"_s);
@@ -1635,7 +1635,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
     if (!arg3.isUndefined()) {
         // length is end
         end = std::min(byteLength, static_cast<uint32_t>(arg3.toInt32(lexicalGlobalObject)));
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     return jsBufferToString(vm, lexicalGlobalObject, castedThis, start, end > start ? end - start : 0, encoding);
@@ -1815,7 +1815,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlo
         // https://github.com/nodejs/node/blob/e676942f814915b2d24fc899bb42dc71ae6c8226/lib/buffer.js#L1056
         encodingValue = offsetValue;
         setEncoding();
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+        RETURN_IF_EXCEPTION(scope, {});
         RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, encoding));
     }
 
@@ -1825,7 +1825,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlo
     }
 
     int32_t userOffset = offsetValue.toInt32(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+    RETURN_IF_EXCEPTION(scope, {});
     if (userOffset < 0 || userOffset > max) {
         throwNodeRangeError(lexicalGlobalObject, scope, "Offset is out of bounds"_s);
         return JSC::JSValue::encode(jsUndefined());
@@ -1839,13 +1839,13 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlo
     } else if (lengthValue.isString()) {
         encodingValue = lengthValue;
         setEncoding();
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+        RETURN_IF_EXCEPTION(scope, {});
         length = remaining;
     } else {
         setEncoding();
 
         int32_t userLength = lengthValue.toInt32(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+        RETURN_IF_EXCEPTION(scope, {});
         length = std::min(static_cast<uint32_t>(userLength), remaining);
     }
 

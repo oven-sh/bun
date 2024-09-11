@@ -285,6 +285,22 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
 
     return ERR_INVALID_ARG_TYPE(scope, globalObject, arg_name, expected_type, val_actual_value);
 }
+
+WTF::String ERR_OUT_OF_RANGE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue val_arg_name, JSValue val_range, JSValue val_input)
+{
+    auto arg_name = val_arg_name.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto range = val_range.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto input = JSValueToStringSafe(globalObject, val_input);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return makeString("The value of \""_s, arg_name, "\" is out of range. It must be "_s, range, ". Received: \""_s, input, '"');
+}
+}
+
 JSC::JSValue Bun__ERR_INVALID_ARG_TYPE_static2(JSC::JSGlobalObject* globalObject, ASCIILiteral val_arg_name, ASCIILiteral val_expected_type, JSC::JSValue val_actual_value)
 {
     JSC::VM& vm = globalObject->vm();
@@ -318,21 +334,6 @@ JSC::JSValue Bun__ERR_INVALID_ARG_TYPE_static3(JSC::JSGlobalObject* globalObject
 
     auto message = makeString("The \""_s, arg_name, "\" argument must be an instance of "_s, expected_type, ". Received "_s, actual_value);
     return createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, message);
-}
-
-WTF::String ERR_OUT_OF_RANGE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue val_arg_name, JSValue val_range, JSValue val_input)
-{
-    auto arg_name = val_arg_name.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    auto range = val_range.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    auto input = JSValueToStringSafe(globalObject, val_input);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    return makeString("The value of \""_s, arg_name, "\" is out of range. It must be "_s, range, ". Received: \""_s, input, '"');
-}
 }
 
 static JSC::JSValue ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue arg0, JSValue arg1, JSValue arg2)

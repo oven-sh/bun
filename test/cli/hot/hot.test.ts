@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
-import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
+import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync, existsSync } from "fs";
 import { bunEnv, bunExe, isDebug, tmpdirSync } from "harness";
 import { join } from "path";
 
@@ -487,6 +487,7 @@ throw new Error('0');`,
       stderr: "inherit",
       stdin: "ignore",
     });
+    while (!existsSync(hotRunnerRoot)) {}
     await using runner = spawn({
       cmd: [bunExe(), "--hot", "run", hotRunnerRoot],
       env: bunEnv,
@@ -576,6 +577,7 @@ throw new Error('0');`,
       stderr: "ignore",
       stdin: "ignore",
     });
+    while (!existsSync(hotRunnerRoot)) {}
     await using runner = spawn({
       cmd: [
         //

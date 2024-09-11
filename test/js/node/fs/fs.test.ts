@@ -2563,6 +2563,12 @@ describe("fs/promises", () => {
   });
 });
 
+it("fstatSync(decimal)", () => {
+  expect(() => fstatSync(eval("1.0"))).not.toThrow();
+  expect(() => fstatSync(eval("0.0"))).not.toThrow();
+  expect(() => fstatSync(eval("2.0"))).not.toThrow();
+});
+
 it("fstat on a large file", () => {
   var dest: string = "",
     fd;

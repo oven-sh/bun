@@ -46,6 +46,8 @@
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
+#include <cmath>
+#include <limits>
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
@@ -247,6 +249,8 @@ static int normalizeCompareVal(int val, size_t a_length, size_t b_length)
     return val;
 }
 
+const unsigned U32_MAX = std::numeric_limits<unsigned>().max();
+
 static inline uint32_t parseIndex(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, ASCIILiteral name, JSValue arg, size_t upperBound)
 {
     if (!arg.isNumber()) {
@@ -259,15 +263,15 @@ static inline uint32_t parseIndex(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
         Bun::ERR::throw_OUT_OF_RANGE(scope, lexicalGlobalObject, name, 0, upperBound, arg);
         return 0;
     }
-    if (auto num = arg.tryGetAsUint32Index()) {
-        return num.value();
-    }
-    if (auto num2 = static_cast<size_t>(num)) {
-        Bun::ERR::throw_OUT_OF_RANGE(scope, lexicalGlobalObject, name, 0, upperBound, arg);
+    double intpart;
+    if (std::modf(num, &intpart) != 0) {
+        Bun::ERR::throw_INVALID_ARG_TYPE(scope, lexicalGlobalObject, name, "integer"_s, arg);
         return 0;
     }
-
-    Bun::ERR::throw_INVALID_ARG_TYPE(scope, lexicalGlobalObject, name, "integer"_s, arg);
+    if (intpart < U32_MAX) {
+        return intpart;
+    }
+    Bun::ERR::throw_OUT_OF_RANGE(scope, lexicalGlobalObject, name, 0, upperBound, arg);
     return 0;
 }
 

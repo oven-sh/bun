@@ -21,7 +21,7 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 const { Duplex } = require("node:stream");
 const EventEmitter = require("node:events");
-const { addServerName, upgradeDuplexToTLS } = require("../internal/net");
+const { addServerName, upgradeDuplexToTLS, isNamedPipeSocket } = require("../internal/net");
 const { ExceptionWithHostPort } = require("internal/shared");
 const { ERR_SERVER_NOT_RUNNING } = require("internal/errors");
 
@@ -561,6 +561,11 @@ const Socket = (function (InternalSocket) {
       // start using existing connection
       try {
         if (connection) {
+          const socket = connection[bunSocketInternal];
+          if (!upgradeDuplex && socket) {
+            // if is named pipe socket we can upgrade it using the same wrapper than we use for duplex
+            upgradeDuplex = isNamedPipeSocket(socket);
+          }
           if (upgradeDuplex) {
             this.connecting = true;
             this.#upgraded = connection;
@@ -578,8 +583,6 @@ const Socket = (function (InternalSocket) {
 
             this[bunSocketInternal] = result;
           } else {
-            const socket = connection[bunSocketInternal];
-
             if (socket) {
               this.connecting = true;
               this.#upgraded = connection;

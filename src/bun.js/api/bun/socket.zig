@@ -3077,8 +3077,7 @@ fn NewSocket(comptime ssl: bool) type {
             if (comptime ssl) {
                 return JSValue.jsUndefined();
             }
-
-            if (this.socket.isDetached()) {
+            if (this.socket.isDetached() or this.socket.isNamedPipe()) {
                 return JSValue.jsUndefined();
             }
             const args = callframe.arguments(1);
@@ -4086,9 +4085,27 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.C
 
     return array;
 }
+
+pub fn jsIsNamedPipeSocket(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    JSC.markBinding(@src());
+
+    const arguments = callframe.arguments(3);
+    if (arguments.len < 1) {
+        global.throwNotEnoughArguments("isNamedPipeSocket", 1, arguments.len);
+        return .zero;
+    }
+    const socket = arguments.ptr[0];
+    if (socket.as(TCPSocket)) |this| {
+        return JSC.JSValue.jsBoolean(this.socket.isNamedPipe());
+    } else if (socket.as(TLSSocket)) |this| {
+        return JSC.JSValue.jsBoolean(this.socket.isNamedPipe());
+    }
+    return JSC.JSValue.jsFalse();
+}
 pub fn createNodeTLSBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
     return JSC.JSArray.create(global, &.{
         JSC.JSFunction.create(global, "addServerName", JSC.toJSHostFunction(jsAddServerName), 3, .{}),
         JSC.JSFunction.create(global, "upgradeDuplexToTLS", JSC.toJSHostFunction(jsUpgradeDuplexToTLS), 2, .{}),
+        JSC.JSFunction.create(global, "isNamedPipeSocket", JSC.toJSHostFunction(jsIsNamedPipeSocket), 1, .{}),
     });
 }

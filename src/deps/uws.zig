@@ -1087,6 +1087,9 @@ pub const InternalSocket = union(enum) {
     pub fn isDetached(this: InternalSocket) bool {
         return this == .detached;
     }
+    pub fn isNamedPipe(this: InternalSocket) bool {
+        return this == .pipe;
+    }
     pub fn detach(this: *InternalSocket) void {
         this.* = .detached;
     }

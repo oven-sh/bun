@@ -3130,12 +3130,7 @@ fn NewSocket(comptime ssl: bool) type {
             var strong_array = JSC.Strong.create(array, globalObject);
             defer strong_array.deinit();
 
-            const should_deref = !this.socket.isDetached();
-            defer {
-                if (should_deref) {
-                    this.deref();
-                }
-            }
+            defer this.deref();
 
             // detach and invalidate the old instance
             this.socket.detach();

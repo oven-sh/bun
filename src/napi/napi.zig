@@ -65,8 +65,8 @@ pub const Ref = opaque {
     extern fn napi_set_ref(ref: *Ref, value: JSC.JSValue) void;
 };
 pub const NapiHandleScope = opaque {
-    extern fn NapiHandleScope__push(globalObject: *JSC.JSGlobalObject, escapable: bool) *NapiHandleScope;
-    extern fn NapiHandleScope__pop(globalObject: *JSC.JSGlobalObject, current: *NapiHandleScope) void;
+    extern fn NapiHandleScope__push(globalObject: *JSC.JSGlobalObject, escapable: bool) ?*NapiHandleScope;
+    extern fn NapiHandleScope__pop(globalObject: *JSC.JSGlobalObject, current: ?*NapiHandleScope) void;
     extern fn NapiHandleScope__append(globalObject: *JSC.JSGlobalObject, value: JSC.JSValueReprInt) void;
     extern fn NapiHandleScope__escape(handleScope: *NapiHandleScope, value: JSC.JSValueReprInt) bool;
 
@@ -74,7 +74,7 @@ pub const NapiHandleScope = opaque {
         return NapiHandleScope__push(env, escapable);
     }
 
-    pub fn pop(self: *NapiHandleScope, env: napi_env) void {
+    pub fn pop(self: ?*NapiHandleScope, env: napi_env) void {
         NapiHandleScope__pop(env, self);
     }
 
@@ -89,8 +89,8 @@ pub const NapiHandleScope = opaque {
     }
 };
 
-pub const napi_handle_scope = *NapiHandleScope;
-pub const napi_escapable_handle_scope = *NapiHandleScope;
+pub const napi_handle_scope = ?*NapiHandleScope;
+pub const napi_escapable_handle_scope = ?*NapiHandleScope;
 pub const napi_callback_info = *JSC.CallFrame;
 pub const napi_deferred = *JSC.JSPromise.Strong;
 
@@ -744,7 +744,7 @@ pub extern fn napi_reference_unref(env: napi_env, ref: *Ref, result: [*c]u32) na
 pub extern fn napi_get_reference_value(env: napi_env, ref: *Ref, result: *napi_value) napi_status;
 pub extern fn napi_get_reference_value_internal(ref: *Ref) JSC.JSValue;
 
-pub export fn napi_open_handle_scope(env: napi_env, result_: ?*?napi_handle_scope) napi_status {
+pub export fn napi_open_handle_scope(env: napi_env, result_: ?*napi_handle_scope) napi_status {
     log("napi_open_handle_scope", .{});
     const result = result_ orelse {
         return invalidArg();
@@ -753,7 +753,7 @@ pub export fn napi_open_handle_scope(env: napi_env, result_: ?*?napi_handle_scop
     return .ok;
 }
 
-pub export fn napi_close_handle_scope(env: napi_env, handle_scope: ?napi_handle_scope) napi_status {
+pub export fn napi_close_handle_scope(env: napi_env, handle_scope: napi_handle_scope) napi_status {
     log("napi_close_handle_scope", .{});
     if (handle_scope) |scope| {
         scope.pop(env);
@@ -832,16 +832,19 @@ pub export fn napi_open_escapable_handle_scope(env: napi_env, result_: ?*?napi_e
     result.* = NapiHandleScope.push(env, true);
     return .ok;
 }
-pub export fn napi_close_escapable_handle_scope(env: napi_env, scope: ?napi_escapable_handle_scope) napi_status {
+pub export fn napi_close_escapable_handle_scope(env: napi_env, scope: napi_escapable_handle_scope) napi_status {
     log("napi_close_escapable_handle_scope", .{});
     if (scope) |s| {
         s.pop(env);
     }
     return .ok;
 }
-pub export fn napi_escape_handle(_: napi_env, scope: napi_escapable_handle_scope, escapee: napi_value, result_: ?*napi_value) napi_status {
+pub export fn napi_escape_handle(_: napi_env, scope_: napi_escapable_handle_scope, escapee: napi_value, result_: ?*napi_value) napi_status {
     log("napi_escape_handle", .{});
     const result = result_ orelse {
+        return invalidArg();
+    };
+    const scope = scope_ orelse {
         return invalidArg();
     };
     scope.escape(escapee.get()) catch return .escape_called_twice;

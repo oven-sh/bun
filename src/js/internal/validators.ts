@@ -33,7 +33,7 @@ export default {
   },
 
   validateInteger: (value, name, min = Number.MIN_SAFE_INTEGER, max = Number.MAX_SAFE_INTEGER) => {
-    max = Math.max(min, max); //
+    max = Math.max(min, max);
     if (typeof value !== "number") throw ERR_INVALID_ARG_TYPE(name, "number", value);
     if (!Number.isInteger(value)) throw ERR_OUT_OF_RANGE(name, "an integer", value);
     if (value < min || value > max) throw ERR_OUT_OF_RANGE(name, `>= ${min} and <= ${max}`, value);

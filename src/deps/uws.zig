@@ -800,6 +800,52 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
         this.flush();
     }
 
+    pub fn getAcceptedBy(this: *WindowsNamedPipe, server: *uv.Pipe, ssl_ctx: ?*BoringSSL.SSL_CTX) JSC.Maybe(void) {
+        bun.assert(this.pipe != null);
+        this.flags.disconnected = true;
+
+        if (ssl_ctx) |tls| {
+            this.flags.is_ssl = true;
+            this.wrapper = WrapperType.initWithCTX(tls, false, .{
+                .ctx = this,
+                .onOpen = WindowsNamedPipe.onOpen,
+                .onHandshake = WindowsNamedPipe.onHandshake,
+                .onData = WindowsNamedPipe.onData,
+                .onClose = WindowsNamedPipe.onClose,
+                .write = WindowsNamedPipe.internalWrite,
+            }) catch {
+                return .{
+                    .err = .{
+                        .errno = @intFromEnum(bun.C.E.PIPE),
+                        .syscall = .connect,
+                    },
+                };
+            };
+        }
+        const initResult = this.pipe.?.init(this.vm.uvLoop(), false);
+        if (initResult == .err) {
+            return initResult;
+        }
+
+        const openResult = server.accept(this.pipe.?);
+        if (openResult == .err) {
+            return openResult;
+        }
+
+        this.flags.disconnected = false;
+        if (this.start(false)) {
+            if (this.isTLS()) {
+                if (this.wrapper) |*wrapper| {
+                    // trigger onOpen and start the handshake
+                    wrapper.start();
+                }
+            } else {
+                // trigger onOpen
+                this.onOpen();
+            }
+        }
+        return .{ .result = {} };
+    }
     pub fn open(this: *WindowsNamedPipe, fd: bun.FileDescriptor, ssl_options: ?JSC.API.ServerConfig.SSLConfig) JSC.Maybe(void) {
         bun.assert(this.pipe != null);
         this.flags.disconnected = true;

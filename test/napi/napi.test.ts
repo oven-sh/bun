@@ -121,6 +121,9 @@ describe("napi", () => {
     it("can recover the value from a weak ref", () => {
       checkSameOutput("test_napi_ref", []);
     });
+    it("allows creating a handle scope in the finalizer", () => {
+      checkSameOutput("test_napi_handle_scope_finalizer", []);
+    });
   });
 });
 
@@ -135,7 +138,13 @@ function checkSameOutput(test: string, args: any[] | string) {
 
 function runOn(executable: string, test: string, args: any[] | string) {
   const exec = spawnSync({
-    cmd: [executable, join(__dirname, "napi-app/main.js"), test, typeof args == "string" ? args : JSON.stringify(args)],
+    cmd: [
+      executable,
+      "--expose-gc",
+      join(__dirname, "napi-app/main.js"),
+      test,
+      typeof args == "string" ? args : JSON.stringify(args),
+    ],
     env: bunEnv,
   });
   const errs = exec.stderr.toString();

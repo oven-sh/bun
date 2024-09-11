@@ -173,7 +173,7 @@ Some methods are not optimized yet.
 
 ### [`node:zlib`](https://nodejs.org/api/zlib.html)
 
-🟡 Partially optimized.
+🟡 Partially optimized, but brotli uses too much memory right now.
 
 ## Globals
 

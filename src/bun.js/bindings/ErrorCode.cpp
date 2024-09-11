@@ -505,7 +505,7 @@ extern "C" JSC::EncodedJSValue Bun__ERR_STRING_TOO_LONG(JSC::JSGlobalObject* glo
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto message = makeString("Cannot create a string longer than "_s, std::numeric_limits<int>().max(), " characters"_s);
+    auto message = makeString("Cannot create a string longer than "_s, MAX_STRING_LENGTH, " characters"_s);
     return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STRING_TOO_LONG, message));
 }
 

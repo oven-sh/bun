@@ -948,7 +948,7 @@ pub const Listener = struct {
                 // only close the listener and wait for the connections to close by it self
                 switch (listener) {
                     .uws => |socket| socket.close(this.ssl),
-                    .namedPipe => |namedPipe| namedPipe.closePipeAndDeinit(),
+                    .namedPipe => |namedPipe| if (Environment.isWindows) namedPipe.closePipeAndDeinit(),
                     .none => {},
                 }
             }
@@ -961,7 +961,7 @@ pub const Listener = struct {
         this.listener = .none;
         switch (listener) {
             .uws => |socket| socket.close(this.ssl),
-            .namedPipe => |namedPipe| namedPipe.closePipeAndDeinit(),
+            .namedPipe => |namedPipe| if (Environment.isWindows) namedPipe.closePipeAndDeinit(),
             .none => {},
         }
         this.deinit();
@@ -3816,9 +3816,6 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
         if (result == .err) {
             // connection dropped
             client.deinit();
-        } else {
-            // accepted default timeout is 120 seconds
-            client.named_pipe.setTimeout(120);
         }
     }
     fn onPipeClosed(pipe: *uv.Pipe) callconv(.C) void {
@@ -4100,7 +4097,7 @@ pub fn jsIsNamedPipeSocket(global: *JSC.JSGlobalObject, callframe: *JSC.CallFram
     } else if (socket.as(TLSSocket)) |this| {
         return JSC.JSValue.jsBoolean(this.socket.isNamedPipe());
     }
-    return JSC.JSValue.jsFalse();
+    return JSC.JSValue.jsBoolean(false);
 }
 pub fn createNodeTLSBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
     return JSC.JSArray.create(global, &.{

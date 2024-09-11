@@ -14,7 +14,6 @@ it.if(isWindows)("should work with named pipes and tls", async () => {
       server = createServer(tls, socket => {
         socket.on("data", data => {
           const message = data.toString();
-          console.log(`Message received from client: ${message}`);
           socket.write("Goodbye World!");
           resolveMessageReceived(message);
         });
@@ -39,6 +38,14 @@ it.if(isWindows)("should work with named pipes and tls", async () => {
     }
   }
 
-  await test(`\\\\.\\pipe\\test\\${randomUUID()}`);
-  await test(`\\\\?\\pipe\\test\\${randomUUID()}`);
+  const batch = [];
+  for (let i = 0; i < 200; i++) {
+    batch.push(test(`\\\\.\\pipe\\test\\${randomUUID()}`));
+    batch.push(test(`\\\\?\\pipe\\test\\${randomUUID()}`));
+    if (i % 50 === 0) {
+      await Promise.all(batch);
+      batch.length = 0;
+    }
+  }
+  await Promise.all(batch);
 });

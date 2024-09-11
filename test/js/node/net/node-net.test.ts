@@ -604,4 +604,5 @@ it.if(isWindows)("should work with named pipes", async () => {
       batch.length = 0;
     }
   }
+  await Promise.all(batch);
 });

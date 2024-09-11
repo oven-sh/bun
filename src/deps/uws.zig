@@ -832,6 +832,8 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
                     },
                 };
             };
+            // ref because we are accepting will unref when wrapper deinit
+            _ = BoringSSL.SSL_CTX_up_ref(tls);
         }
         const initResult = this.pipe.?.init(this.vm.uvLoop(), false);
         if (initResult == .err) {

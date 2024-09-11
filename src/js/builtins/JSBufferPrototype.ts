@@ -241,6 +241,7 @@ export function readBigUInt64BE(this: BufferExt, offset) {
 
 export function writeInt8(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
+  require("internal/validators").validateInteger(value, "value", -128, 127);
   require("internal/validators").validateInteger(offset, "offset", 0);
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt8(offset, value);
   return offset + 1;
@@ -248,6 +249,7 @@ export function writeInt8(this: BufferExt, value, offset) {
 
 export function writeUInt8(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
+  require("internal/validators").validateInteger(value, "value", 0, 255);
   require("internal/validators").validateInteger(offset, "offset", 0);
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint8(offset, value);
   return offset + 1;
@@ -255,6 +257,7 @@ export function writeUInt8(this: BufferExt, value, offset) {
 
 export function writeInt16LE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
+  require("internal/validators").validateInteger(value, "value", -32768, 32767);
   require("internal/validators").validateInteger(offset, "offset", 0);
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt16(offset, value, true);
   return offset + 2;
@@ -262,6 +265,7 @@ export function writeInt16LE(this: BufferExt, value, offset) {
 
 export function writeInt16BE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
+  require("internal/validators").validateInteger(value, "value", -32768, 32767);
   require("internal/validators").validateInteger(offset, "offset", 0);
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt16(offset, value, false);
   return offset + 2;
@@ -269,6 +273,7 @@ export function writeInt16BE(this: BufferExt, value, offset) {
 
 export function writeUInt16LE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
+  require("internal/validators").validateInteger(value, "value", 0, 65535);
   require("internal/validators").validateInteger(offset, "offset", 0);
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint16(offset, value, true);
   return offset + 2;
@@ -276,6 +281,7 @@ export function writeUInt16LE(this: BufferExt, value, offset) {
 
 export function writeUInt16BE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
+  require("internal/validators").validateInteger(value, "value", 0, 65535);
   require("internal/validators").validateInteger(offset, "offset", 0);
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint16(offset, value, false);
   return offset + 2;
@@ -283,6 +289,7 @@ export function writeUInt16BE(this: BufferExt, value, offset) {
 
 export function writeInt32LE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
+  require("internal/validators").validateInteger(value, "value", -2147483648, 2147483647);
   require("internal/validators").validateInteger(offset, "offset", 0);
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt32(offset, value, true);
   return offset + 4;
@@ -290,6 +297,7 @@ export function writeInt32LE(this: BufferExt, value, offset) {
 
 export function writeInt32BE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
+  require("internal/validators").validateInteger(value, "value", -2147483648, 2147483647);
   require("internal/validators").validateInteger(offset, "offset", 0);
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt32(offset, value, false);
   return offset + 4;
@@ -297,6 +305,7 @@ export function writeInt32BE(this: BufferExt, value, offset) {
 
 export function writeUInt32LE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
+  require("internal/validators").validateInteger(value, "value", 0, 4294967295);
   require("internal/validators").validateInteger(offset, "offset", 0);
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint32(offset, value, true);
   return offset + 4;
@@ -304,6 +313,7 @@ export function writeUInt32LE(this: BufferExt, value, offset) {
 
 export function writeUInt32BE(this: BufferExt, value, offset) {
   if (offset === undefined) offset = 0;
+  require("internal/validators").validateInteger(value, "value", 0, 4294967295);
   require("internal/validators").validateInteger(offset, "offset", 0);
   (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint32(offset, value, false);
   return offset + 4;
@@ -312,6 +322,8 @@ export function writeUInt32BE(this: BufferExt, value, offset) {
 export function writeIntLE(this: BufferExt, value, offset, byteLength) {
   require("internal/validators").validateIntRange(byteLength, "byteLength", 1, 6);
   require("internal/validators").validateIntRange(offset, "offset", 0, this.byteLength - byteLength);
+  const bitLength = byteLength * 8;
+  require("internal/validators").validateIntRange(value, "value", -(2 ** (bitLength - 1)), 2 ** (bitLength - 1) - 1);
 
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   switch (byteLength) {
@@ -349,6 +361,8 @@ export function writeIntLE(this: BufferExt, value, offset, byteLength) {
 export function writeIntBE(this: BufferExt, value, offset, byteLength) {
   require("internal/validators").validateIntRange(byteLength, "byteLength", 1, 6);
   require("internal/validators").validateIntRange(offset, "offset", 0, this.byteLength - byteLength);
+  const bitLength = byteLength * 8;
+  require("internal/validators").validateIntRange(value, "value", -(2 ** (bitLength - 1)), 2 ** (bitLength - 1) - 1);
 
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   switch (byteLength) {
@@ -386,6 +400,8 @@ export function writeIntBE(this: BufferExt, value, offset, byteLength) {
 export function writeUIntLE(this: BufferExt, value, offset, byteLength) {
   require("internal/validators").validateIntRange(byteLength, "byteLength", 1, 6);
   require("internal/validators").validateIntRange(offset, "offset", 0, this.byteLength - byteLength);
+  const bitLength = byteLength * 8;
+  require("internal/validators").validateIntRange(value, "value", 0, 2 ** bitLength - 1);
 
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   switch (byteLength) {
@@ -423,6 +439,8 @@ export function writeUIntLE(this: BufferExt, value, offset, byteLength) {
 export function writeUIntBE(this: BufferExt, value, offset, byteLength) {
   require("internal/validators").validateIntRange(byteLength, "byteLength", 1, 6);
   require("internal/validators").validateIntRange(offset, "offset", 0, this.byteLength - byteLength);
+  const bitLength = byteLength * 8;
+  require("internal/validators").validateIntRange(value, "value", 0, 2 ** bitLength - 1);
 
   const view = (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength));
   switch (byteLength) {

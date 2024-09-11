@@ -36,7 +36,7 @@
     "build:logs": "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -DENABLE_LOGS=ON -B build/release-logs",
     "build:safe": "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -DZIG_OPTIMIZE=ReleaseSafe -B build/release-safe",
     "build:smol": "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=MinSizeRel -B build/release-smol",
-    "build:release:local": "cmake . -DCMAKE_BUILD_TYPE=Release -DWEBKIT_DIR=$(pwd)/src/bun.js/WebKit/WebKitBuild/Release -GNinja -Bbuild-release-local && ninja -Cbuild-release-local",
+    "build:release:local": "cmake . -DCMAKE_BUILD_TYPE=Release -DWEBKIT_DIR=$(pwd)/vendor/WebKit/WebKitBuild/Release -GNinja -Bbuild-release-local && ninja -Cbuild-release-local",
     "build:release:with_logs": "cmake . -DCMAKE_BUILD_TYPE=Release -DENABLE_LOGS=true -GNinja -Bbuild-release && ninja -Cbuild-release",
     "build:debug-zig-release": "cmake . -DCMAKE_BUILD_TYPE=Release -DZIG_OPTIMIZE=Debug -GNinja -Bbuild-debug-zig-release && ninja -Cbuild-debug-zig-release",
     "bump": "bun ./scripts/bump.ts",

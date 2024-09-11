@@ -27,11 +27,13 @@ endif()
 # In the future, change those commands so that generated files are written to this path.
 optionx(CODEGEN_PATH FILEPATH "Path to the codegen directory" DEFAULT ${BUILD_PATH}/codegen)
 
-if(NOT CONFIGURE_DEPENDS)
-  set(CONFIGURE_DEPENDS "")
-else()
-  set(CONFIGURE_DEPENDS "CONFIGURE_DEPENDS")
-endif()
+set(CONFIGURE_DEPENDS "CONFIGURE_DEPENDS")
+
+# if(NOT DEFINED CONFIGURE_DEPENDS OR CONFIGURE_DEPENDS)
+#   set(CONFIGURE_DEPENDS "CONFIGURE_DEPENDS")
+# else()
+#   set(CONFIGURE_DEPENDS "")
+# endif()
 
 # --- Codegen ---
 
@@ -442,14 +444,8 @@ WEBKIT_ADD_SOURCE_DEPENDENCIES(
 
 # --- Zig ---
 
-# Does not use GLOB_RECURSE because it makes configure really slow with WebKit
-# We might want to consider moving our dependencies out of src/ because of this.
-file(GLOB BUN_ZIG_SOURCES ${CONFIGURE_DEPENDS}
+file(GLOB_RECURSE BUN_ZIG_SOURCES ${CONFIGURE_DEPENDS}
   ${CWD}/*.zig
-  ${CWD}/src/*/*.zig
-  ${CWD}/src/*/*/*.zig
-  ${CWD}/src/*/*/*/*.zig
-  ${CWD}/src/*/*/*/*/*.zig
 )
 
 list(APPEND BUN_ZIG_SOURCES
@@ -498,7 +494,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
 
 # --- C/C++ Sources ---
 
-set(BUN_DEPS_SOURCE ${CWD}/src/deps)
+set(BUN_DEPS_SOURCE ${CWD}/vendor)
 set(BUN_USOCKETS_SOURCE ${CWD}/packages/bun-usockets)
 
 file(GLOB BUN_CXX_SOURCES ${CONFIGURE_DEPENDS}
@@ -621,8 +617,8 @@ target_include_directories(${bun} PRIVATE
   ${CWD}/src/bun.js/modules
   ${CWD}/src/js/builtins
   ${CWD}/src/napi
-  ${CWD}/src/deps
-  ${CWD}/src/deps/picohttpparser
+  ${CWD}/vendor
+  ${CWD}/vendor/picohttpparser
   ${CODEGEN_PATH}
 )
 

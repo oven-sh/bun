@@ -501,7 +501,7 @@ function(register_repository)
   endif()
 
   if(NOT GIT_PATH)
-    set(GIT_PATH ${CWD}/src/deps/${GIT_NAME})
+    set(GIT_PATH ${CWD}/vendor/${GIT_NAME})
   endif()
 
   if(GIT_COMMIT)
@@ -562,7 +562,7 @@ function(register_cmake_command)
   endif()
 
   if(NOT MAKE_CWD)
-    set(MAKE_CWD ${CWD}/src/deps/${MAKE_TARGET})
+    set(MAKE_CWD ${CWD}/vendor/${MAKE_TARGET})
   endif()
 
   if(NOT MAKE_BUILD_PATH)

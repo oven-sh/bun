@@ -54,6 +54,7 @@ beforeAll(() => {
   });
 
   writeFileSync(`${dir}/test.js`, `import {foo} from 'custom/test';\nconsole.log(foo);`);
+  writeFileSync(`${dir}/test.test.js`, `import {foo} from 'custom/test';\nconsole.log(foo);`);
   writeFileSync(`${dir}/test.cjs`, `const {foo} = require("custom2/test");\nconsole.log(foo);`);
   writeFileSync(
     `${dir}/multiple-conditions.js`,
@@ -79,6 +80,17 @@ beforeAll(() => {
 it("custom condition 'import' in package.json resolves", async () => {
   const { exitCode, stdout } = Bun.spawnSync({
     cmd: [bunExe(), "--conditions=first", `${dir}/test.js`],
+    env: bunEnv,
+    cwd: import.meta.dir,
+  });
+
+  expect(exitCode).toBe(0);
+  expect(stdout.toString("utf8")).toBe("1\n");
+});
+
+it("custom condition 'import' in package.json resolves in bun test", async () => {
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), "test", "--conditions=first", `${dir}/test.test.js`],
     env: bunEnv,
     cwd: import.meta.dir,
   });

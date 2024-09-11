@@ -1179,6 +1179,9 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         pub fn isDetached(this: ThisSocket) bool {
             return this.socket.isDetached();
         }
+        pub fn isNamedPipe(this: ThisSocket) bool {
+            return this.socket.isNamedPipe();
+        }
         pub fn verifyError(this: ThisSocket) us_bun_verify_error_t {
             switch (this.socket) {
                 .done => |socket| return uws.us_socket_verify_error(comptime ssl_int, socket),

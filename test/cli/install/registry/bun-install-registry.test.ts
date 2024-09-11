@@ -1739,24 +1739,22 @@ describe("binaries", () => {
       const out = await Bun.readableStreamToText(stdout);
       expect(await exited).toBe(0);
 
-      const cwd = global ? join(packageDir, "global-bin-dir") : packageDir;
-
-      await runBin("dep-with-file-bin", "file-bin\n", cwd, global);
-      await runBin("single-entry-map-bin", "single-entry-map-bin\n", cwd, global);
-      await runBin("directory-bin-1", "directory-bin-1\n", cwd, global);
-      await runBin("directory-bin-2", "directory-bin-2\n", cwd, global);
-      await runBin("map-bin-1", "map-bin-1\n", cwd, global);
-      await runBin("map-bin-2", "map-bin-2\n", cwd, global);
+      await runBin("dep-with-file-bin", "file-bin\n", global);
+      await runBin("single-entry-map-bin", "single-entry-map-bin\n", global);
+      await runBin("directory-bin-1", "directory-bin-1\n", global);
+      await runBin("directory-bin-2", "directory-bin-2\n", global);
+      await runBin("map-bin-1", "map-bin-1\n", global);
+      await runBin("map-bin-2", "map-bin-2\n", global);
     });
   }
 
-  async function runBin(binName: string, expected: string, cwd: string, global: boolean) {
-    const args = [bunExe(), ...(global ? ["run"] : []), `${!isWindows && global ? "./" : ""}${binName}`];
+  async function runBin(binName: string, expected: string, global: boolean) {
+    const args = global ? [`./global-bin-dir/${binName}`] : [bunExe(), binName];
     const result = Bun.spawn({
       cmd: args,
       stdout: "pipe",
       stderr: "pipe",
-      cwd,
+      cwd: packageDir,
       env,
     });
 

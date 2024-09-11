@@ -309,24 +309,42 @@ const Handlers = struct {
 
 pub const SocketConfig = struct {
     hostname_or_unix: JSC.ZigString.Slice,
+    fd: bun.FileDescriptor = bun.invalid_fd,
     port: ?u16 = null,
     ssl: ?JSC.API.ServerConfig.SSLConfig = null,
     handlers: Handlers,
     default_data: JSC.JSValue = .zero,
     exclusive: bool = false,
 
+    const AllowFD = enum {
+        allow_fd,
+        dont_allow_fd,
+    };
+
     pub fn fromJS(
         vm: *JSC.VirtualMachine,
         opts: JSC.JSValue,
         globalObject: *JSC.JSGlobalObject,
         exception: JSC.C.ExceptionRef,
+        allow_fd: AllowFD,
     ) ?SocketConfig {
+        var success = false;
         var hostname_or_unix: JSC.ZigString.Slice = JSC.ZigString.Slice.empty;
         var port: ?u16 = null;
         var exclusive = false;
+        var fd: bun.FileDescriptor = bun.invalid_fd;
 
         var ssl: ?JSC.API.ServerConfig.SSLConfig = null;
         var default_data = JSValue.zero;
+        defer {
+            if (!success) {
+                hostname_or_unix.deinit();
+
+                if (ssl) |*ssl_config| {
+                    ssl_config.deinit();
+                }
+            }
+        }
 
         if (opts.getTruthy(globalObject, "tls")) |tls| {
             if (tls.isBoolean()) {
@@ -342,10 +360,14 @@ pub const SocketConfig = struct {
             }
         }
 
+        if (globalObject.hasException()) {
+            return null;
+        }
+
         hostname_or_unix: {
-            if (opts.getTruthy(globalObject, "fd")) |fd_| {
-                if (fd_.isNumber()) {
-                    break :hostname_or_unix;
+            if (allow_fd == .allow_fd) {
+                if (opts.getTruthy(globalObject, "fd")) |fd_| {
+                    fd = JSC.Node.fileDescriptorFromJS(globalObject, fd_, exception) orelse return null;
                 }
             }
 
@@ -367,8 +389,16 @@ pub const SocketConfig = struct {
                 }
             }
 
+            if (globalObject.hasException()) {
+                return null;
+            }
+
             if (opts.getTruthy(globalObject, "exclusive")) |_| {
                 exclusive = true;
+            }
+
+            if (globalObject.hasException()) {
+                return null;
             }
 
             if (opts.getTruthy(globalObject, "hostname") orelse opts.getTruthy(globalObject, "host")) |hostname| {
@@ -425,21 +455,34 @@ pub const SocketConfig = struct {
             return null;
         }
 
+        if (globalObject.hasException()) {
+            return null;
+        }
+
         var handlers = Handlers.fromJS(globalObject, opts.get(globalObject, "socket") orelse JSValue.zero, exception) orelse {
-            hostname_or_unix.deinit();
             return null;
         };
+
+        if (globalObject.hasException()) {
+            return null;
+        }
 
         if (opts.fastGet(globalObject, .data)) |default_data_value| {
             default_data = default_data_value;
         }
 
+        if (globalObject.hasException()) {
+            return null;
+        }
+
         handlers.protect();
+        success = true;
 
         return SocketConfig{
             .hostname_or_unix = hostname_or_unix,
             .port = port,
             .ssl = ssl,
+            .fd = fd,
             .handlers = handlers,
             .default_data = default_data,
             .exclusive = exclusive,
@@ -571,7 +614,11 @@ pub const Listener = struct {
 
         const vm = JSC.VirtualMachine.get();
 
-        var socket_config = SocketConfig.fromJS(vm, opts, globalObject, exception) orelse {
+        var socket_config = SocketConfig.fromJS(vm, opts, globalObject, exception, .dont_allow_fd) orelse {
+            if (exception[0] != null and !globalObject.hasException()) {
+                globalObject.throwValue(exception[0].?.value());
+            }
+
             return .zero;
         };
 
@@ -963,7 +1010,10 @@ pub const Listener = struct {
         }
         const vm = globalObject.bunVM();
 
-        const socket_config = SocketConfig.fromJS(vm, opts, globalObject, exception) orelse {
+        const socket_config = SocketConfig.fromJS(vm, opts, globalObject, exception, .allow_fd) orelse {
+            if (exception[0] != null and !globalObject.hasException()) {
+                globalObject.throwValue(exception[0].?.value());
+            }
             return .zero;
         };
 
@@ -994,12 +1044,10 @@ pub const Listener = struct {
         };
 
         const connection: Listener.UnixOrHost = blk: {
-            if (opts.getTruthy(globalObject, "fd")) |fd_| {
-                if (fd_.isNumber()) {
-                    const fd = fd_.asFileDescriptor();
-                    break :blk .{ .fd = fd };
-                }
+            if (socket_config.fd != bun.invalid_fd) {
+                break :blk .{ .fd = socket_config.fd };
             }
+
             if (port) |_| {
                 break :blk .{ .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice(), .port = port.? } };
             }

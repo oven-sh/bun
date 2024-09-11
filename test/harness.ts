@@ -1,7 +1,7 @@
-import { gc as bunGC, spawnSync, unsafe, which } from "bun";
+import { gc as bunGC, spawnSync, unsafe, which, sleep } from "bun";
 import { heapStats } from "bun:jsc";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { readFile, readlink, writeFile } from "fs/promises";
+import { readFile, readlink, writeFile, exists } from "fs/promises";
 import fs, { closeSync, openSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
@@ -1284,3 +1284,9 @@ Object.defineProperty(globalThis, "gc", {
   enumerable: false,
   configurable: true,
 });
+
+export async function waitForFileToExist(path: string, interval: number) {
+  while (!(await exists(path))) {
+    await sleep(interval);
+  }
+}

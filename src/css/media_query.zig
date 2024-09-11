@@ -590,7 +590,6 @@ const MediaFeatureId = union(enum) {
     /// The non-standard -moz-device-pixel-ratio media feature.
     @"-moz-device-pixel-ratio",
 
-    pub usingnamespace css.DefineEnumProperty(@This());
     pub usingnamespace css.DeriveValueType(@This());
 
     pub const ValueTypeMap = .{
@@ -650,6 +649,18 @@ const MediaFeatureId = union(enum) {
                 return this.toCss(W, dest);
             },
         }
+    }
+
+    pub inline fn asStr(this: *const @This()) []const u8 {
+        return css.enum_property_util.asStr(@This(), this);
+    }
+
+    pub inline fn parse(input: *css.Parser) Result(@This()) {
+        return css.enum_property_util.parse(@This(), input);
+    }
+
+    pub inline fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+        return css.enum_property_util.toCss(@This(), this, W, dest);
     }
 };
 

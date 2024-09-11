@@ -406,6 +406,35 @@ pub fn DeriveToCss(comptime T: type) type {
     };
 }
 
+pub const enum_property_util = struct {
+    pub fn asStr(comptime T: type, this: *const T) []const u8 {
+        const tag = @intFromEnum(this);
+        inline for (std.meta.fields(T)) |field| {
+            if (tag == field.tag) return field.name;
+        }
+        unreachable;
+    }
+
+    pub fn parse(comptime T: type, input: *Parser) Result(T) {
+        const location = input.currentSourceLocation();
+        const ident = switch (input.expectIdent()) {
+            .err => |e| return .{ .err = e },
+            .result => |v| v,
+        };
+
+        // todo_stuff.match_ignore_ascii_case
+        inline for (std.meta.fields(T)) |field| {
+            if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, field.name)) return .{ .result = @enumFromInt(field.value) };
+        }
+
+        return location.newUnexpectedTokenError(.{ .ident = ident });
+    }
+
+    pub fn toCss(comptime T: type, this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        return dest.writeStr(asStr(this));
+    }
+};
+
 pub fn DefineEnumProperty(comptime T: type) type {
     const fields: []const std.builtin.Type.EnumField = std.meta.fields(T);
 

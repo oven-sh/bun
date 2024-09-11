@@ -42,7 +42,7 @@ pub const Composes = struct {
 /// Defines where the class names referenced in the `composes` property are located.
 ///
 /// See [Composes](Composes).
-const Specifier = union(enum) {
+pub const Specifier = union(enum) {
     /// The referenced name is global.
     global,
     /// The referenced name comes from the specified file.

@@ -1,5 +1,3 @@
-
-
 #include "root.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
@@ -150,6 +148,7 @@
 #include "wtf/text/OrdinalNumber.h"
 #include "ErrorCode.h"
 #include "v8/V8GlobalInternals.h"
+#include "EventLoopTask.h"
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"

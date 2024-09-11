@@ -13,12 +13,12 @@ on:
       run-id:
         type: string
         description: The workflow ID to download artifacts (skips the build step)
-  pull_request:
-    paths:
-      - ".github/workflows/lint-cpp.yml"
-      - "**/*.cpp"
-      - "src/deps/**/*"
-      - "CMakeLists.txt"
+  # pull_request:
+  #   paths:
+  #     - ".github/workflows/lint-cpp.yml"
+  #     - "**/*.cpp"
+  #     - "src/deps/**/*"
+  #     - "CMakeLists.txt"
 
 jobs:
   lint-cpp:

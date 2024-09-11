@@ -617,6 +617,7 @@ target_include_directories(${bun} PRIVATE
   ${CWD}/src/bun.js/modules
   ${CWD}/src/js/builtins
   ${CWD}/src/napi
+  ${CWD}/src/deps
   ${CWD}/vendor
   ${CWD}/vendor/picohttpparser
   ${CODEGEN_PATH}

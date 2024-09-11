@@ -20,6 +20,7 @@ setx(BUILD_PATH ${CMAKE_BINARY_DIR})
 optionx(CACHE_PATH STRING "The path to the cache directory" DEFAULT ${BUILD_PATH}/cache)
 optionx(CACHE_STRATEGY "read-write|read-only|write-only|none" "The strategy to use for caching" DEFAULT "read-write")
 optionx(TMP_PATH STRING "The path to the temporary directory" DEFAULT ${BUILD_PATH}/tmp)
+optionx(FRESH BOOL "Set when --fresh is used" DEFAULT OFF)
 
 # --- Compilers ---
 

@@ -624,6 +624,10 @@ function(register_cmake_command)
     list(APPEND MAKE_EFFECTIVE_ARGS -DCMAKE_${flag}=${MAKE_${flag}})
   endforeach()
 
+  if(DEFINED FRESH)
+    list(APPEND MAKE_EFFECTIVE_ARGS --fresh)
+  endif()
+
   register_command(
     COMMENT "Configuring ${MAKE_TARGET}"
     TARGET configure-${MAKE_TARGET}

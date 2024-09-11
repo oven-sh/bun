@@ -487,7 +487,7 @@ throw new Error('0');`,
       stderr: "inherit",
       stdin: "ignore",
     });
-    await waitForFileToExist(hotRunnerRoot, 5);
+    waitForFileToExist(hotRunnerRoot, 20);
     await using runner = spawn({
       cmd: [bunExe(), "--hot", "run", hotRunnerRoot],
       env: bunEnv,
@@ -577,7 +577,7 @@ throw new Error('0');`,
       stderr: "ignore",
       stdin: "ignore",
     });
-    await waitForFileToExist(hotRunnerRoot, 5);
+    waitForFileToExist(hotRunnerRoot, 20);
     await using runner = spawn({
       cmd: [
         //

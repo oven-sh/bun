@@ -302,7 +302,7 @@ WTF::String ERR_OUT_OF_RANGE(JSC::ThrowScope& scope, JSC::JSGlobalObject* global
 
 namespace ERR {
 
-JSC::JSValue INVALID_ARG_TYPE(JSC::JSGlobalObject* globalObject, ASCIILiteral val_arg_name, ASCIILiteral val_expected_type, JSC::JSValue val_actual_value, bool instance)
+JSC::JSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral val_arg_name, ASCIILiteral val_expected_type, JSC::JSValue val_actual_value, bool instance)
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -318,14 +318,16 @@ JSC::JSValue INVALID_ARG_TYPE(JSC::JSGlobalObject* globalObject, ASCIILiteral va
 
     if (instance) {
         auto message = makeString("The \""_s, arg_name, "\" argument must be an instance of "_s, expected_type, ". Received "_s, actual_value);
-        return createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, message);
+        throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, message));
+        return {};
     }
 
     auto message = makeString("The \""_s, arg_name, "\" argument must be of type "_s, expected_type, ". Received "_s, actual_value);
-    return createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, message);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, message));
+    return {};
 }
 
-JSC::JSValue OUT_OF_RANGE(JSC::JSGlobalObject* globalObject, ASCIILiteral arg_name, size_t lower, size_t upper, JSC::JSValue actual)
+JSC::JSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral arg_name, size_t lower, size_t upper, JSC::JSValue actual)
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -336,10 +338,11 @@ JSC::JSValue OUT_OF_RANGE(JSC::JSGlobalObject* globalObject, ASCIILiteral arg_na
     RETURN_IF_EXCEPTION(scope, {});
 
     auto message = makeString("The value of \""_s, arg_name, "\" is out of range. It must be >= "_s, lowerStr, " && <= "_s, upperStr, ". Received "_s, actual_value);
-    return createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, message);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, message));
+    return {};
 }
 
-JSC::JSValue INVALID_ARG_VALUE(JSC::JSGlobalObject* globalObject, ASCIILiteral name, JSC::JSValue value, ASCIILiteral reason)
+JSC::JSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral name, JSC::JSValue value, ASCIILiteral reason)
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -356,10 +359,11 @@ JSC::JSValue INVALID_ARG_VALUE(JSC::JSGlobalObject* globalObject, ASCIILiteral n
     RETURN_IF_EXCEPTION(scope, {});
 
     auto message = makeString("The "_s, type, " '"_s, name, "' "_s, reason, ". Received "_s, value_string);
-    return createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, message);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, message));
+    return {};
 }
 
-JSC::JSValue UNKNOWN_ENCODING(JSC::JSGlobalObject* globalObject, JSC::JSValue encoding)
+JSC::JSValue UNKNOWN_ENCODING(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue encoding)
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -368,56 +372,24 @@ JSC::JSValue UNKNOWN_ENCODING(JSC::JSGlobalObject* globalObject, JSC::JSValue en
     RETURN_IF_EXCEPTION(scope, {});
 
     auto message = makeString("Unknown encoding: "_s, encoding_string);
-    return createError(globalObject, ErrorCode::ERR_UNKNOWN_ENCODING, message);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_ENCODING, message));
+    return {};
 }
 
-JSC::JSValue INVALID_STATE(JSC::JSGlobalObject* globalObject, ASCIILiteral statemsg)
+JSC::JSValue INVALID_STATE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral statemsg)
 {
     auto message = makeString("Invalid state: "_s, statemsg);
-    return createError(globalObject, ErrorCode::ERR_INVALID_STATE, message);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_STATE, message));
+    return {};
 }
 
-JSC::JSValue STRING_TOO_LONG(JSC::JSGlobalObject* globalObject)
+JSC::JSValue STRING_TOO_LONG(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto message = makeString("Cannot create a string longer than "_s, MAX_STRING_LENGTH, " characters"_s);
-    return createError(globalObject, ErrorCode::ERR_STRING_TOO_LONG, message);
-}
-
-//
-//
-//
-
-JSC::JSValue throw_INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral val_arg_name, ASCIILiteral val_expected_type, JSC::JSValue val_actual_value, bool instance)
-{
-    throwScope.throwException(globalObject, INVALID_ARG_TYPE(globalObject, val_arg_name, val_expected_type, val_actual_value, instance));
-    return {};
-}
-JSC::JSValue throw_OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral arg_name, size_t lower, size_t upper, JSC::JSValue actual)
-{
-    throwScope.throwException(globalObject, OUT_OF_RANGE(globalObject, arg_name, lower, upper, actual));
-    return {};
-}
-JSC::JSValue throw_INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral name, JSC::JSValue value, ASCIILiteral reason)
-{
-    throwScope.throwException(globalObject, INVALID_ARG_VALUE(globalObject, name, value, reason));
-    return {};
-}
-JSC::JSValue throw_UNKNOWN_ENCODING(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue encoding)
-{
-    throwScope.throwException(globalObject, UNKNOWN_ENCODING(globalObject, encoding));
-    return {};
-}
-JSC::JSValue throw_INVALID_STATE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral statemsg)
-{
-    throwScope.throwException(globalObject, INVALID_STATE(globalObject, statemsg));
-    return {};
-}
-JSC::JSValue throw_STRING_TOO_LONG(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
-{
-    throwScope.throwException(globalObject, STRING_TOO_LONG(globalObject));
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_STRING_TOO_LONG, message));
     return {};
 }
 

@@ -146,20 +146,3 @@ zig-out
 test/node.js/upstream
 .zig-cache
 scripts/env.local
-
-# Dependencies
-/src/bun.js/WebKit
-/src/deps/boringssl
-/src/deps/brotli
-/src/deps/c*ares
-/src/deps/lol*html
-/src/deps/libarchive
-/src/deps/libdeflate
-/src/deps/libuv
-/src/deps/ls*hpack
-/src/deps/mimalloc
-/src/deps/picohttpparser
-/src/deps/tinycc
-/src/deps/zstd
-/src/deps/zlib
-/src/deps/zig

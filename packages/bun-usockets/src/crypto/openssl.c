@@ -1278,11 +1278,6 @@ SSL_CTX *create_ssl_context_from_bun_options(
   }
 
   /* This must be free'd with free_ssl_context, not SSL_CTX_free */
-  if (ERR_get_error() != 0) {
-    free_ssl_context(ssl_context);
-    return NULL;
-  }
-
   return ssl_context;
 }
 

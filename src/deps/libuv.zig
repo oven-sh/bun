@@ -1312,7 +1312,7 @@ pub const Pipe = extern struct {
     }
 
     pub fn listenNamedPipe(this: *@This(), named_pipe: []const u8, backlog: i32, context: anytype, comptime onClientConnect: *const (fn (@TypeOf(context), ReturnCode) void)) Maybe(void) {
-        if (this.bind(named_pipe, 0).asErr()) |err| {
+        if (this.bind(named_pipe, UV_PIPE_NO_TRUNCATE).asErr()) |err| {
             return .{ .err = err };
         }
         return this.listen(backlog, context, onClientConnect);
@@ -1332,8 +1332,7 @@ pub const Pipe = extern struct {
                 onConnect(@ptrCast(@alignCast(handle.data)), status);
             }
         };
-
-        if (uv_pipe_connect2(req, this, @ptrCast(name.ptr), name.len, 0, &Wrapper.uvConnectCb).toError(.connect2)) |err| {
+        if (uv_pipe_connect2(req, this, @ptrCast(name.ptr), name.len, UV_PIPE_NO_TRUNCATE, &Wrapper.uvConnectCb).toError(.connect2)) |err| {
             return .{ .err = err };
         }
         return .{ .result = {} };

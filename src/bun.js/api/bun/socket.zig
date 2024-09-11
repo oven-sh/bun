@@ -3833,6 +3833,7 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
         if (socket != .listener) {
             return error.InvalidOptions;
         }
+
         const this = WindowsNamedPipeContext.create(globalThis, socket);
         if (ssl_config) |ssl_options| {
             BoringSSL.load();
@@ -3850,6 +3851,12 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
         }
 
         this.uvPipe.listenNamedPipe(path, backlog, this, onClientConnect).unwrap() catch return error.FailedToBindPipe;
+        _ = uv.uv_pipe_chmod(&this.uvPipe, uv.UV_WRITABLE | uv.UV_READABLE);
+        //TODO: add readableAll and writableAll support if someone needs it
+        // if(uv.uv_pipe_chmod(&this.uvPipe, uv.UV_WRITABLE | uv.UV_READABLE) != 0) {
+        // this.closePipeAndDeinit();
+        // return error.FailedChmodPipe;
+        //}
 
         return this;
     }

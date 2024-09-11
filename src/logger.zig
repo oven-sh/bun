@@ -713,7 +713,7 @@ pub const Log = struct {
 
     pub fn toJS(this: Log, global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, fmt: string) JSC.JSValue {
         const msgs: []const Msg = this.msgs.items;
-        var errors_stack: [256]*anyopaque = undefined;
+        var errors_stack: [256]JSC.JSValue = undefined;
 
         const count = @as(u16, @intCast(@min(msgs.len, errors_stack.len)));
         switch (count) {
@@ -728,12 +728,12 @@ pub const Log = struct {
             else => {
                 for (msgs[0..count], 0..) |msg, i| {
                     errors_stack[i] = switch (msg.metadata) {
-                        .build => JSC.BuildMessage.create(global, allocator, msg).asVoid(),
-                        .resolve => JSC.ResolveMessage.create(global, allocator, msg, "").asVoid(),
+                        .build => JSC.BuildMessage.create(global, allocator, msg),
+                        .resolve => JSC.ResolveMessage.create(global, allocator, msg, ""),
                     };
                 }
                 const out = JSC.ZigString.init(fmt);
-                const agg = global.createAggregateError(errors_stack[0..count].ptr, count, &out);
+                const agg = global.createAggregateError(errors_stack[0..count], &out);
                 return agg;
             },
         }

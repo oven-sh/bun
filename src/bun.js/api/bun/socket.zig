@@ -210,8 +210,8 @@ const Handlers = struct {
             return false;
         }
 
-        _ = onError.call(globalObject, thisValue, err) catch
-            globalObject.reportActiveExceptionAsUnhandled();
+        _ = onError.call(globalObject, thisValue, err) catch |e|
+            globalObject.reportActiveExceptionAsUnhandled(e);
 
         return true;
     }
@@ -1253,8 +1253,8 @@ fn NewSocket(comptime ssl: bool) type {
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
-            _ = callback.call(globalObject, this_value, &.{this_value}) catch {
-                _ = handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeException() });
+            _ = callback.call(globalObject, this_value, &.{this_value}) catch |err| {
+                _ = handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeException(err) });
             };
         }
         pub fn onTimeout(
@@ -1279,8 +1279,8 @@ fn NewSocket(comptime ssl: bool) type {
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
-            _ = callback.call(globalObject, this_value, &.{this_value}) catch {
-                _ = handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeException() });
+            _ = callback.call(globalObject, this_value, &.{this_value}) catch |err| {
+                _ = handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeException(err) });
             };
         }
 
@@ -1330,7 +1330,7 @@ fn NewSocket(comptime ssl: bool) type {
             const result = callback.call(globalObject, this_value, &[_]JSValue{
                 this_value,
                 err_value,
-            }) catch globalObject.takeException();
+            }) catch |e| globalObject.takeException(e);
 
             if (result.toError()) |err_val| {
                 if (handlers.rejectPromise(err_val)) return;
@@ -1451,7 +1451,7 @@ fn NewSocket(comptime ssl: bool) type {
             defer vm.eventLoop().exit();
             const result = callback.call(globalObject, this_value, &[_]JSValue{
                 this_value,
-            }) catch globalObject.takeException();
+            }) catch |err| globalObject.takeException(err);
 
             if (result.toError()) |err| {
                 defer this.markInactive();
@@ -1500,8 +1500,8 @@ fn NewSocket(comptime ssl: bool) type {
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
-            _ = callback.call(globalObject, this_value, &.{this_value}) catch {
-                _ = handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeException() });
+            _ = callback.call(globalObject, this_value, &.{this_value}) catch |err| {
+                _ = handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeException(err) });
             };
         }
 
@@ -1542,7 +1542,7 @@ fn NewSocket(comptime ssl: bool) type {
             // open callback only have 1 parameters and its the socket
             // you should use getAuthorizationError and authorized getter to get those values in this case
             if (is_open) {
-                result = callback.call(globalObject, this_value, &[_]JSValue{this_value}) catch globalObject.takeException();
+                result = callback.call(globalObject, this_value, &[_]JSValue{this_value}) catch |err| globalObject.takeException(err);
 
                 // only call onOpen once for clients
                 if (!handlers.is_server) {
@@ -1573,7 +1573,7 @@ fn NewSocket(comptime ssl: bool) type {
                     this_value,
                     JSValue.jsBoolean(authorized),
                     authorization_error,
-                }) catch globalObject.takeException();
+                }) catch |err| globalObject.takeException(err);
             }
 
             if (result.toError()) |err_value| {
@@ -1615,8 +1615,8 @@ fn NewSocket(comptime ssl: bool) type {
             _ = callback.call(globalObject, this_value, &[_]JSValue{
                 this_value,
                 JSValue.jsNumber(@as(i32, err)),
-            }) catch {
-                _ = handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeException() });
+            }) catch |e| {
+                _ = handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeException(e) });
             };
         }
 
@@ -1645,8 +1645,8 @@ fn NewSocket(comptime ssl: bool) type {
             _ = callback.call(globalObject, this_value, &[_]JSValue{
                 this_value,
                 output_value,
-            }) catch {
-                _ = handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeException() });
+            }) catch |err| {
+                _ = handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeException(err) });
             };
         }
 

@@ -137,7 +137,7 @@ pub const Request = struct {
             if (this.function.get()) |callback| {
                 _ = callback.call(globalThis, JSC.JSValue.jsUndefined(), &.{JSC.JSValue.jsNumber(
                     @intFromEnum(eventType),
-                )}) catch globalThis.reportActiveExceptionAsUnhandled();
+                )}) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
                 return true;
             }
             return false;

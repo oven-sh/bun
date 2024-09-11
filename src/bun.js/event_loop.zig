@@ -881,8 +881,8 @@ pub const EventLoop = struct {
         this.enter();
         defer this.exit();
 
-        _ = callback.call(globalObject, thisValue, arguments) catch
-            globalObject.takeException();
+        _ = callback.call(globalObject, thisValue, arguments) catch |err|
+            globalObject.reportActiveExceptionAsUnhandled(err);
     }
 
     fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, comptime queue_name: []const u8) u32 {

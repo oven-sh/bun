@@ -1709,7 +1709,7 @@ pub const Interpreter = struct {
                         JSValue.jsNumberFromU16(exit_code),
                         this.getBufferedStdout(globalThis),
                         this.getBufferedStderr(globalThis),
-                    }) catch globalThis.reportActiveExceptionAsUnhandled();
+                    }) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
                     JSC.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .undefined);
                     JSC.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .undefined);
                     loop.exit();
@@ -1739,7 +1739,7 @@ pub const Interpreter = struct {
                         JSValue.jsNumberFromChar(1),
                         this.getBufferedStdout(globalThis),
                         this.getBufferedStderr(globalThis),
-                    }) catch globalThis.reportActiveExceptionAsUnhandled();
+                    }) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
                     JSC.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .undefined);
                     JSC.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .undefined);
 

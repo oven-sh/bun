@@ -2537,7 +2537,7 @@ pub const VirtualMachine = struct {
                 return;
             },
             else => {
-                var errors_stack: [256]*anyopaque = undefined;
+                var errors_stack: [256]JSValue = undefined;
 
                 const len = @min(log.msgs.items.len, errors_stack.len);
                 const errors = errors_stack[0..len];
@@ -2545,21 +2545,20 @@ pub const VirtualMachine = struct {
 
                 for (logs, errors) |msg, *current| {
                     current.* = switch (msg.metadata) {
-                        .build => BuildMessage.create(globalThis, globalThis.allocator(), msg).asVoid(),
+                        .build => BuildMessage.create(globalThis, globalThis.allocator(), msg),
                         .resolve => ResolveMessage.create(
                             globalThis,
                             globalThis.allocator(),
                             msg,
                             referrer.toUTF8(bun.default_allocator).slice(),
-                        ).asVoid(),
+                        ),
                     };
                 }
 
                 ret.* = ErrorableResolvedSource.err(
                     err,
                     globalThis.createAggregateError(
-                        errors.ptr,
-                        @as(u16, @intCast(errors.len)),
+                        errors,
                         &ZigString.init(
                             std.fmt.allocPrint(globalThis.allocator(), "{d} errors building \"{}\"", .{
                                 errors.len,

@@ -424,7 +424,7 @@ pub const StatWatcher = struct {
                 jsvalue,
                 jsvalue,
             },
-        ) catch this.globalThis.reportActiveExceptionAsUnhandled();
+        ) catch |err| this.globalThis.reportActiveExceptionAsUnhandled(err);
 
         vm.rareData().nodeFSStatWatcherScheduler(vm).append(this);
     }
@@ -457,7 +457,7 @@ pub const StatWatcher = struct {
                 current_jsvalue,
                 prev_jsvalue,
             },
-        ) catch this.globalThis.reportActiveExceptionAsUnhandled();
+        ) catch |err| this.globalThis.reportActiveExceptionAsUnhandled(err);
     }
 
     pub fn onTimerInterval(timer: *uws.Timer) callconv(.C) void {

@@ -279,7 +279,7 @@ pub const ZlibEncoder = struct {
                 &.{this.write_failure.?.toError(this.globalThis)}
             else
                 &.{ .null, this.collectOutputValue() },
-        ) catch this.globalThis.reportActiveExceptionAsUnhandled();
+        ) catch |err| this.globalThis.reportActiveExceptionAsUnhandled(err);
     }
 
     pub fn hasPendingActivity(this: *@This()) callconv(.C) bool {
@@ -705,7 +705,7 @@ pub const ZlibDecoder = struct {
                 &.{this.write_failure.?.toError(this.globalThis)}
             else
                 &.{ .null, this.collectOutputValue() },
-        ) catch this.globalThis.reportActiveExceptionAsUnhandled();
+        ) catch |err| this.globalThis.reportActiveExceptionAsUnhandled(err);
     }
 
     pub fn hasPendingActivity(this: *@This()) callconv(.C) bool {

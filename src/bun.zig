@@ -57,8 +57,15 @@ pub inline fn namedAllocator(comptime name: [:0]const u8) std.mem.Allocator {
     return default_allocator;
 }
 
-pub const OOM = error{
-    OutOfMemory,
+pub const OOM = error{OutOfMemory};
+
+pub const JSError = error{
+    /// There is an active exception on the global object. Options:
+    ///
+    /// - Bubble it up to the caller
+    /// - Call `global.takeException(err)` to get the JSValue of the exception,
+    /// - Call `global.reportActiveExceptionAsUnhandled(err)` to make it unhandled.
+    JSError,
 };
 
 pub const C = @import("root").C;

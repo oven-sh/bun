@@ -271,8 +271,8 @@ fn onServerRequestWithBundle(route: *Route, resp: *Response, ctx: BundleKind.ser
         global,
         .undefined,
         &.{context},
-    ) catch {
-        const exception = global.takeException();
+    ) catch |err| {
+        const exception = global.takeException(err);
         const fail: Failure = .{ .request_handler = exception };
         fail.printToConsole(route, .server);
         fail.sendAsHttpResponse(resp, route, .server);

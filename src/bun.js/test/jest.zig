@@ -2146,12 +2146,10 @@ inline fn createEach(
 
 fn callJSFunctionForTestRunner(vm: *JSC.VirtualMachine, globalObject: *JSGlobalObject, function: JSValue, args: []const JSValue) JSValue {
     vm.eventLoop().enter();
-    defer {
-        vm.eventLoop().exit();
-    }
+    defer vm.eventLoop().exit();
 
     globalObject.clearTerminationException();
-    return function.call(globalObject, .undefined, args) catch globalObject.takeException();
+    return function.call(globalObject, .undefined, args) catch |err| globalObject.takeException(err);
 }
 
 const assert = bun.assert;

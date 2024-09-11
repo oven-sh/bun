@@ -790,8 +790,8 @@ pub export fn napi_make_callback(env: napi_env, _: *anyopaque, recv_: napi_value
             @as([*]const JSC.JSValue, @ptrCast(args.?))[0..arg_count]
         else
             &.{},
-    ) catch // TODO: handle errors correctly
-        env.takeException();
+    ) catch |err| // TODO: handle errors correctly
+        env.takeException(err);
 
     if (maybe_result) |result| {
         result.set(env, res);
@@ -1565,8 +1565,8 @@ pub const ThreadSafeFunction = struct {
                     return;
                 }
 
-                _ = js_function.call(globalObject, .undefined, &.{}) catch
-                    globalObject.reportActiveExceptionAsUnhandled();
+                _ = js_function.call(globalObject, .undefined, &.{}) catch |err|
+                    globalObject.reportActiveExceptionAsUnhandled(err);
             },
             .c => |cb| {
                 if (comptime bun.Environment.isDebug) {

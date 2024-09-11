@@ -3230,9 +3230,9 @@ pub const JSGlobalObject = opaque {
         return this;
     }
 
-    extern fn JSC__JSGlobalObject__createAggregateError(*JSGlobalObject, [*]*anyopaque, u16, *const ZigString) JSValue;
-    pub fn createAggregateError(globalObject: *JSGlobalObject, errors: [*]*anyopaque, errors_len: u16, message: *const ZigString) JSValue {
-        return JSC__JSGlobalObject__createAggregateError(globalObject, errors, errors_len, message);
+    extern fn JSC__JSGlobalObject__createAggregateError(*JSGlobalObject, [*]const JSValue, usize, *const ZigString) JSValue;
+    pub fn createAggregateError(globalObject: *JSGlobalObject, errors: []const JSValue, message: *const ZigString) JSValue {
+        return JSC__JSGlobalObject__createAggregateError(globalObject, errors.ptr, errors.len, message);
     }
 
     extern fn JSC__JSGlobalObject__generateHeapSnapshot(*JSGlobalObject) JSValue;
@@ -3248,10 +3248,16 @@ pub const JSGlobalObject = opaque {
         return JSGlobalObject__clearException(this);
     }
 
-    /// Clears the current exception and returns that value.
-    /// If you want to query for an exception as well, use tryTakeException
-    pub fn takeException(this: *JSGlobalObject) JSValue {
-        if (bun.Environment.allow_assert) bun.assert(this.hasException());
+    /// Clears the current exception and returns that value. Requires compile-time
+    /// proof of an exception via `error.JSError`
+    pub fn takeException(this: *JSGlobalObject, proof: bun.JSError) JSValue {
+        switch (proof) {
+            error.JSError => {},
+        }
+
+        if (bun.Environment.allow_assert)
+            bun.assert(this.hasException());
+
         return this.tryTakeException() orelse {
             bun.assert(false);
             return .zero;
@@ -3269,12 +3275,11 @@ pub const JSGlobalObject = opaque {
     ///
     /// The pattern:
     ///
-    ///     const result = value.call(...) catch
-    ///         return global.reportActiveExceptionAsUnhandled();
+    ///     const result = value.call(...) catch |err|
+    ///         return global.reportActiveExceptionAsUnhandled(err);
     ///
-    /// This asserts that there is an exception.
-    pub fn reportActiveExceptionAsUnhandled(this: *JSGlobalObject) void {
-        _ = this.bunVM().uncaughtException(this, this.takeException(), false);
+    pub fn reportActiveExceptionAsUnhandled(this: *JSGlobalObject, err: bun.JSError) void {
+        _ = this.bunVM().uncaughtException(this, this.takeException(err), false);
     }
 
     pub fn vm(this: *JSGlobalObject) *VM {
@@ -4089,7 +4094,7 @@ pub const JSValue = enum(JSValueReprInt) {
         arguments: [*]const JSValue,
     ) JSValue;
 
-    pub fn call(function: JSValue, global: *JSGlobalObject, thisValue: JSC.JSValue, args: []const JSC.JSValue) !JSC.JSValue {
+    pub fn call(function: JSValue, global: *JSGlobalObject, thisValue: JSC.JSValue, args: []const JSC.JSValue) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
         if (comptime bun.Environment.isDebug) {
             const loop = JSC.VirtualMachine.get().eventLoop();
@@ -4107,7 +4112,7 @@ pub const JSValue = enum(JSValueReprInt) {
             args.len,
             args.ptr,
         );
-        if (value == .zero) return error.JSException;
+        if (value == .zero) return error.JSError;
         return value;
     }
 

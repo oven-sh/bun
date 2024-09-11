@@ -2287,8 +2287,6 @@ bool JSC__JSValue__jestDeepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, J
     return Bun__deepMatch<true>(obj, subset, globalObject, &scope, replacePropsWithAsymmetricMatchers, false);
 }
 
-// This is the same as the C API version, except it returns a JSValue which may be a *Exception
-// We want that so we can return stack traces.
 extern "C" JSC__JSValue Bun__JSValue__call(JSContextRef ctx, JSC__JSValue object,
     JSC__JSValue thisObject, size_t argumentCount,
     const JSValueRef* arguments)
@@ -2296,10 +2294,8 @@ extern "C" JSC__JSValue Bun__JSValue__call(JSContextRef ctx, JSC__JSValue object
     JSC::JSGlobalObject* globalObject = toJS(ctx);
     JSC::VM& vm = globalObject->vm();
 
-#if BUN_DEBUG
     // This is a redundant check, but we add it to make the error message clearer.
     ASSERT_WITH_MESSAGE(!vm.isCollectorBusyOnCurrentThread(), "Cannot call function inside a finalizer or while GC is running on same thread.");
-#endif
 
     if (UNLIKELY(!object))
         return JSC::JSValue::encode(JSC::JSValue());
@@ -2762,7 +2758,7 @@ JSC__JSValue JSC__JSValue__createStringArray(JSC__JSGlobalObject* globalObject, 
 }
 
 JSC__JSValue JSC__JSGlobalObject__createAggregateError(JSC__JSGlobalObject* globalObject,
-    void** errors, uint16_t errors_count,
+    const JSValue* errors, size_t errors_count,
     const ZigString* arg3)
 {
     JSC::VM& vm = globalObject->vm();
@@ -2778,9 +2774,8 @@ JSC__JSValue JSC__JSGlobalObject__createAggregateError(JSC__JSGlobalObject* glob
                  globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
                  errors_count))) {
 
-            for (uint16_t i = 0; i < errors_count; ++i) {
-                array->initializeIndexWithoutBarrier(
-                    initializationScope, i, JSC::JSValue(reinterpret_cast<JSC::JSCell*>(errors[i])));
+            for (size_t i = 0; i < errors_count; ++i) {
+                array->initializeIndexWithoutBarrier(initializationScope, i, errors[i]);
             }
         }
     }
@@ -5847,7 +5842,7 @@ extern "C" JSC::EncodedJSValue JSGlobalObject__tryTakeException(JSC::JSGlobalObj
 
     if (auto exception = scope.exception()) {
         scope.clearException();
-        return JSC::JSValue::encode(exception->value());
+        return JSC::JSValue::encode(exception);
     }
 
     return {};

@@ -165,7 +165,7 @@ pub const BrotliEncoder = struct {
                 &.{this.write_failure.?.toError(this.globalThis)}
             else
                 &.{ .null, this.collectOutputValue() },
-        ) catch this.globalThis.reportActiveExceptionAsUnhandled();
+        ) catch |err| this.globalThis.reportActiveExceptionAsUnhandled(err);
     }
 
     // We can only run one encode job at a time
@@ -526,7 +526,7 @@ pub const BrotliDecoder = struct {
                 &.{this.write_failure.?.toError(this.globalThis)}
             else
                 &.{ .null, this.collectOutputValue() },
-        ) catch this.globalThis.reportActiveExceptionAsUnhandled();
+        ) catch |err| this.globalThis.reportActiveExceptionAsUnhandled(err);
     }
 
     fn drainFreelist(this: *BrotliDecoder) void {

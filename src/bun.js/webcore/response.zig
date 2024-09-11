@@ -1305,7 +1305,7 @@ pub const Fetch = struct {
                             globalObject,
                             .undefined,
                             &.{ js_hostname, js_cert },
-                        ) catch globalObject.takeException();
+                        ) catch |err| globalObject.takeException(err);
 
                         // > Returns <Error> object [...] on failure
                         if (check_result.isAnyError()) {

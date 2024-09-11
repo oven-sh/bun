@@ -42,8 +42,8 @@ fn onDrain(socket: *uws.udp.Socket) callconv(.C) void {
     const event_loop = vm.eventLoop();
     event_loop.enter();
     defer event_loop.exit();
-    _ = callback.call(this.globalThis, this.thisValue, &.{this.thisValue}) catch {
-        _ = this.callErrorHandler(.zero, &.{this.globalThis.takeException()});
+    _ = callback.call(this.globalThis, this.thisValue, &.{this.thisValue}) catch |err| {
+        _ = this.callErrorHandler(.zero, &.{this.globalThis.takeException(err)});
     };
 }
 
@@ -95,8 +95,8 @@ fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) c
             udpSocket.config.binary_type.toJS(slice, globalThis),
             JSC.jsNumber(port),
             JSC.ZigString.init(std.mem.span(hostname.?)).toJS(globalThis),
-        }) catch {
-            _ = udpSocket.callErrorHandler(.zero, &.{udpSocket.globalThis.takeException()});
+        }) catch |err| {
+            _ = udpSocket.callErrorHandler(.zero, &.{udpSocket.globalThis.takeException(err)});
         };
     }
 }
@@ -365,7 +365,7 @@ pub const UDPSocket = struct {
             return false;
         }
 
-        _ = callback.call(globalThis, thisValue, err) catch globalThis.reportActiveExceptionAsUnhandled();
+        _ = callback.call(globalThis, thisValue, err) catch |e| globalThis.reportActiveExceptionAsUnhandled(e);
 
         return true;
     }

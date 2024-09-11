@@ -540,7 +540,7 @@ pub const FSWatcher = struct {
                 _ = listener.callWithGlobalThis(
                     this.globalThis,
                     &args,
-                ) catch this.globalThis.reportActiveExceptionAsUnhandled();
+                ) catch |e| this.globalThis.reportActiveExceptionAsUnhandled(e);
             }
         }
     }
@@ -561,7 +561,7 @@ pub const FSWatcher = struct {
                 _ = listener.callWithGlobalThis(
                     globalObject,
                     &args,
-                ) catch this.globalThis.reportActiveExceptionAsUnhandled();
+                ) catch |e| this.globalThis.reportActiveExceptionAsUnhandled(e);
             }
         }
     }
@@ -603,7 +603,7 @@ pub const FSWatcher = struct {
         _ = listener.callWithGlobalThis(
             globalObject,
             &args,
-        ) catch globalObject.reportActiveExceptionAsUnhandled();
+        ) catch |err| globalObject.reportActiveExceptionAsUnhandled(err);
     }
 
     pub fn doRef(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {

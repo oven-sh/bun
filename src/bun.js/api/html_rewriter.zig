@@ -887,7 +887,7 @@ fn HandlerCallback(
                 else
                     JSValue.zero,
                 &.{zig_element.toJS(this.global)},
-            ) catch this.global.takeException();
+            ) catch |err| this.global.takeException(err);
 
             if (!result.isUndefinedOrNull()) {
                 if (result.isError() or result.isAggregateError(this.global)) {

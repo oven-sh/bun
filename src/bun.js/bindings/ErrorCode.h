@@ -70,7 +70,6 @@ extern "C" JSC::EncodedJSValue Bun__ERR_INVALID_ARG_TYPE(JSC::JSGlobalObject* gl
 extern "C" JSC::EncodedJSValue Bun__ERR_INVALID_ARG_TYPE_static(JSC::JSGlobalObject* globalObject, const ZigString* val_arg_name, const ZigString* val_expected_type, JSC::EncodedJSValue val_actual_value);
 extern "C" JSC::EncodedJSValue Bun__ERR_MISSING_ARGS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2, JSC::EncodedJSValue arg3);
 extern "C" JSC::EncodedJSValue Bun__ERR_MISSING_ARGS_static(JSC::JSGlobalObject* globalObject, const ZigString* arg1, const ZigString* arg2, const ZigString* arg3);
-extern "C" JSC::EncodedJSValue Bun__ERR_IPC_CHANNEL_CLOSED(JSC::JSGlobalObject* globalObject);
 
 namespace ERR {
 
@@ -80,6 +79,7 @@ JSC::JSValue INVALID_ARG_VALUE(JSC::JSGlobalObject* globalObject, ASCIILiteral n
 JSC::JSValue UNKNOWN_ENCODING(JSC::JSGlobalObject* globalObject, JSC::JSValue encoding);
 JSC::JSValue INVALID_STATE(JSC::JSGlobalObject* globalObject, ASCIILiteral statemsg);
 JSC::JSValue STRING_TOO_LONG(JSC::JSGlobalObject* globalObject);
+JSC::JSValue IPC_CHANNEL_CLOSED(JSC::JSGlobalObject* globalObject);
 
 JSC::JSValue throw_INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral val_arg_name, ASCIILiteral val_expected_type, JSC::JSValue val_actual_value, bool instance = false);
 JSC::JSValue throw_OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral arg_name, size_t lower, size_t upper, JSC::JSValue actual);
@@ -87,6 +87,7 @@ JSC::JSValue throw_INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
 JSC::JSValue throw_UNKNOWN_ENCODING(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue encoding);
 JSC::JSValue throw_INVALID_STATE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral statemsg);
 JSC::JSValue throw_STRING_TOO_LONG(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject);
+// throw_IPC_CHANNEL_CLOSED
 
 }
 

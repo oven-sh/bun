@@ -386,6 +386,11 @@ JSC::JSValue STRING_TOO_LONG(JSC::JSGlobalObject* globalObject)
     return createError(globalObject, ErrorCode::ERR_STRING_TOO_LONG, message);
 }
 
+JSC::JSValue IPC_CHANNEL_CLOSED(JSC::JSGlobalObject* globalObject)
+{
+    return createError(globalObject, ErrorCode::ERR_IPC_CHANNEL_CLOSED, "Channel closed."_s);
+}
+
 //
 //
 //
@@ -563,11 +568,7 @@ extern "C" JSC::EncodedJSValue Bun__ERR_MISSING_ARGS_static(JSC::JSGlobalObject*
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_IPC_CHANNEL_CLOSED, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
 {
-    return Bun__ERR_IPC_CHANNEL_CLOSED(globalObject);
-}
-extern "C" JSC::EncodedJSValue Bun__ERR_IPC_CHANNEL_CLOSED(JSC::JSGlobalObject* globalObject)
-{
-    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_CHANNEL_CLOSED, "Channel closed."_s));
+    return JSValue::encode(Bun::ERR::IPC_CHANNEL_CLOSED(globalObject));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_SOCKET_BAD_TYPE, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))

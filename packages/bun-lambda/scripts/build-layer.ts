@@ -42,6 +42,11 @@ export class BuildCommand extends Command {
       description: "If the layer should be public.",
       default: false,
     }),
+    profile: Flags.string({
+      description: "The AWS CLI profile to use.",
+      multiple: false,
+      default: "default",
+    }),
   };
 
   async run() {

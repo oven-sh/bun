@@ -446,12 +446,10 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocUnsafeBody(JS
 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    if (callFrame->argumentCount() < 1)
-        return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
-
-    JSValue lengthValue = callFrame->uncheckedArgument(0);
+    JSValue lengthValue = callFrame->argument(0);
     if (UNLIKELY(!lengthValue.isNumber())) {
-        throwTypeError(lexicalGlobalObject, throwScope, "size argument must be a number"_s);
+        // throwTypeError(lexicalGlobalObject, throwScope, "size argument must be a number"_s);
+        throwScope.throwException(lexicalGlobalObject, Bun::Bun__ERR_INVALID_ARG_TYPE_static2(lexicalGlobalObject, "size"_s, "number"_s, lengthValue));
         return {};
     }
 

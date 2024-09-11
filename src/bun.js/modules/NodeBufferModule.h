@@ -46,11 +46,9 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isUtf8,
     }
 
     if (UNLIKELY(impl->isDetached())) {
-      throwScope.throwException(
-          lexicalGlobalObject,
-          Bun::ERR::INVALID_STATE(lexicalGlobalObject,
-                                  "Cannot validate on a detached buffer"_s));
-      return JSValue::encode({});
+      Bun::ERR::throw_INVALID_STATE(throwScope, lexicalGlobalObject,
+                                    "Cannot validate on a detached buffer"_s);
+      return {};
     }
 
     byteLength = impl->byteLength();
@@ -100,11 +98,9 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isAscii,
                  JSC::jsDynamicCast<JSC::JSArrayBuffer *>(buffer)) {
     auto *impl = arrayBuffer->impl();
     if (UNLIKELY(impl->isDetached())) {
-      throwScope.throwException(
-          lexicalGlobalObject,
-          Bun::ERR::INVALID_STATE(lexicalGlobalObject,
-                                  "Cannot validate on a detached buffer"_s));
-      return JSValue::encode({});
+      Bun::ERR::throw_INVALID_STATE(throwScope, lexicalGlobalObject,
+                                    "Cannot validate on a detached buffer"_s);
+      return {};
     }
 
     if (!impl) {

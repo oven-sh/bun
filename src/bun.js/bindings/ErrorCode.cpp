@@ -377,6 +377,36 @@ JSC::JSValue INVALID_STATE(JSC::JSGlobalObject* globalObject, ASCIILiteral state
     return createError(globalObject, ErrorCode::ERR_INVALID_STATE, message);
 }
 
+//
+//
+//
+
+JSC::JSValue throw_INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral val_arg_name, ASCIILiteral val_expected_type, JSC::JSValue val_actual_value, bool instance)
+{
+    throwScope.throwException(globalObject, INVALID_ARG_TYPE(globalObject, val_arg_name, val_expected_type, val_actual_value, instance));
+    return {};
+}
+JSC::JSValue throw_OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral arg_name, size_t lower, size_t upper, JSC::JSValue actual)
+{
+    throwScope.throwException(globalObject, OUT_OF_RANGE(globalObject, arg_name, lower, upper, actual));
+    return {};
+}
+JSC::JSValue throw_INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral name, JSC::JSValue value, ASCIILiteral reason)
+{
+    throwScope.throwException(globalObject, INVALID_ARG_VALUE(globalObject, name, value, reason));
+    return {};
+}
+JSC::JSValue throw_UNKNOWN_ENCODING(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue encoding)
+{
+    throwScope.throwException(globalObject, UNKNOWN_ENCODING(globalObject, encoding));
+    return {};
+}
+JSC::JSValue throw_INVALID_STATE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral statemsg)
+{
+    throwScope.throwException(globalObject, INVALID_STATE(globalObject, statemsg));
+    return {};
+}
+
 }
 
 static JSC::JSValue ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue arg0, JSValue arg1, JSValue arg2)

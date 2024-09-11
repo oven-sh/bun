@@ -449,8 +449,7 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocUnsafeBody(JS
 
     JSValue lengthValue = callFrame->argument(0);
     if (UNLIKELY(!lengthValue.isNumber())) {
-        // throwTypeError(lexicalGlobalObject, throwScope, "size argument must be a number"_s);
-        throwScope.throwException(lexicalGlobalObject, Bun::ERR::INVALID_ARG_TYPE(lexicalGlobalObject, "size"_s, "number"_s, lengthValue));
+        Bun::ERR::throw_INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "size"_s, "number"_s, lengthValue);
         return {};
     }
 
@@ -755,7 +754,7 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_compareBody(JSC::J
     auto castedThisValue = callFrame->argument(0);
     JSC::JSArrayBufferView* castedThis = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(castedThisValue);
     if (UNLIKELY(!castedThis)) {
-        throwScope.throwException(lexicalGlobalObject, Bun::ERR::INVALID_ARG_TYPE(lexicalGlobalObject, "buf1"_s, "Buffer or Uint8Array"_s, castedThisValue, true));
+        Bun::ERR::throw_INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "buf1"_s, "Buffer or Uint8Array"_s, castedThisValue, true);
         return {};
     }
     if (UNLIKELY(castedThis->isDetached())) {
@@ -766,7 +765,7 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_compareBody(JSC::J
     auto buffer = callFrame->argument(1);
     JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(buffer);
     if (UNLIKELY(!view)) {
-        throwScope.throwException(lexicalGlobalObject, Bun::ERR::INVALID_ARG_TYPE(lexicalGlobalObject, "buf2"_s, "Buffer or Uint8Array"_s, buffer, true));
+        Bun::ERR::throw_INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "buf2"_s, "Buffer or Uint8Array"_s, buffer, true);
         return {};
     }
     if (UNLIKELY(view->isDetached())) {
@@ -954,7 +953,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSG
     JSC::JSUint8Array* view = JSC::jsDynamicCast<JSC::JSUint8Array*>(arg0);
 
     if (UNLIKELY(!view)) {
-        throwScope.throwException(lexicalGlobalObject, Bun::ERR::INVALID_ARG_TYPE(lexicalGlobalObject, "target"_s, "Buffer or Uint8Array"_s, arg0, true));
+        Bun::ERR::throw_INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "target"_s, "Buffer or Uint8Array"_s, arg0, true);
         return {};
     }
 
@@ -1007,19 +1006,19 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSG
     }
 
     if (targetStart > targetEndInit && targetStart <= targetEnd) {
-        throwScope.throwException(lexicalGlobalObject, Bun::ERR::OUT_OF_RANGE(lexicalGlobalObject, "targetStart"_s, 0, targetEndInit, targetStartValue));
+        Bun::ERR::throw_OUT_OF_RANGE(throwScope, lexicalGlobalObject, "targetStart"_s, 0, targetEndInit, targetStartValue);
         return {};
     }
     if (targetEnd > targetEndInit && targetEnd >= targetStart) {
-        throwScope.throwException(lexicalGlobalObject, Bun::ERR::OUT_OF_RANGE(lexicalGlobalObject, "targetEnd"_s, 0, targetEndInit, targetEndValue));
+        Bun::ERR::throw_OUT_OF_RANGE(throwScope, lexicalGlobalObject, "targetEnd"_s, 0, targetEndInit, targetEndValue);
         return {};
     }
     if (sourceStart > sourceEndInit && sourceStart <= sourceEnd) {
-        throwScope.throwException(lexicalGlobalObject, Bun::ERR::OUT_OF_RANGE(lexicalGlobalObject, "sourceStart"_s, 0, sourceEndInit, sourceStartValue));
+        Bun::ERR::throw_OUT_OF_RANGE(throwScope, lexicalGlobalObject, "sourceStart"_s, 0, sourceEndInit, sourceStartValue);
         return {};
     }
     if (sourceEnd > sourceEndInit && sourceEnd >= sourceStart) {
-        throwScope.throwException(lexicalGlobalObject, Bun::ERR::OUT_OF_RANGE(lexicalGlobalObject, "sourceEnd"_s, 0, sourceEndInit, sourceEndValue));
+        Bun::ERR::throw_OUT_OF_RANGE(throwScope, lexicalGlobalObject, "sourceEnd"_s, 0, sourceEndInit, sourceEndValue);
         return {};
     }
 

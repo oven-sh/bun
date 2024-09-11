@@ -23141,14 +23141,20 @@ fn NewParser_(
         pub fn handleReactRefreshPostVisitFunctionBody(p: *P, stmts: *ListManaged(Stmt), hook: *ReactRefresh.HookContext) void {
             bun.assert(p.options.features.react_fast_refresh);
 
-            // we need to prepend `_s();` as a statement.
+            // We need to prepend `_s();` as a statement.
             if (stmts.items.len == stmts.capacity) {
-                // would have to re-alloc the array in general
+                // If the ArrayList does not have enough capacity, it is
+                // re-allocated entirely to fit. Only one slot of new capacity
+                // is used since we know this statement list is not going to be
+                // appended to afterwards; This function is a post-visit handler.
                 const new_stmts = p.allocator.alloc(Stmt, stmts.items.len + 1) catch bun.outOfMemory();
                 @memcpy(new_stmts[1..], stmts.items);
                 stmts.deinit();
                 stmts.* = ListManaged(Stmt).fromOwnedSlice(p.allocator, new_stmts);
             } else {
+                // The array has enough capacity, so there is no possibility of
+                // allocation failure. We just move all of the statements over
+                // by one, and increase the length using `addOneAssumeCapacity`
                 _ = stmts.addOneAssumeCapacity();
                 bun.copy(Stmt, stmts.items[1..], stmts.items[0 .. stmts.items.len - 1]);
             }

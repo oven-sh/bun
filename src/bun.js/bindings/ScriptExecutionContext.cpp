@@ -3,7 +3,6 @@
 #include "ScriptExecutionContext.h"
 #include "MessagePort.h"
 
-#include "webcore/WebSocket.h"
 #include "libusockets.h"
 #include "_libusockets.h"
 #include "BunClientData.h"

@@ -3849,9 +3849,20 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
         if (initResult == .err) {
             return error.FailedToInitPipe;
         }
+        if (path[path.len - 1] == 0) {
+            // is already null terminated
+            const slice_z = path[0 .. path.len - 1 :0];
+            this.uvPipe.listenNamedPipe(slice_z, backlog, this, onClientConnect).unwrap() catch return error.FailedToBindPipe;
+        } else {
+            var path_buf: bun.PathBuffer = undefined;
+            // we need to null terminate the path
+            const len = @min(path.len, path_buf.len - 1);
 
-        this.uvPipe.listenNamedPipe(path, backlog, this, onClientConnect).unwrap() catch return error.FailedToBindPipe;
-        _ = uv.uv_pipe_chmod(&this.uvPipe, uv.UV_WRITABLE | uv.UV_READABLE);
+            @memcpy(path_buf[0..len], path[0..len]);
+            path_buf[len] = 0;
+            const slice_z = path_buf[0..len :0];
+            this.uvPipe.listenNamedPipe(slice_z, backlog, this, onClientConnect).unwrap() catch return error.FailedToBindPipe;
+        }
         //TODO: add readableAll and writableAll support if someone needs it
         // if(uv.uv_pipe_chmod(&this.uvPipe, uv.UV_WRITABLE | uv.UV_READABLE) != 0) {
         // this.closePipeAndDeinit();
@@ -3901,7 +3912,20 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
             this.onClose();
         }
 
-        try this.named_pipe.connect(path, ssl_config).unwrap();
+        if (path[path.len - 1] == 0) {
+            // is already null terminated
+            const slice_z = path[0 .. path.len - 1 :0];
+            try this.named_pipe.connect(slice_z, ssl_config).unwrap();
+        } else {
+            var path_buf: bun.PathBuffer = undefined;
+            // we need to null terminate the path
+            const len = @min(path.len, path_buf.len - 1);
+
+            @memcpy(path_buf[0..len], path[0..len]);
+            path_buf[len] = 0;
+            const slice_z = path_buf[0..len :0];
+            try this.named_pipe.connect(slice_z, ssl_config).unwrap();
+        }
         return &this.named_pipe;
     }
     fn deinit(this: *WindowsNamedPipeContext) void {

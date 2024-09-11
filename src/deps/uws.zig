@@ -642,7 +642,9 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
             .pending => {},
             .drained => {
                 // unref after sending all data
-                this.writer.source.?.pipe.unref();
+                if (this.writer.source) |source| {
+                    source.pipe.unref();
+                }
             },
             .end_of_file => {
                 // we send FIN so we close after this
@@ -702,7 +704,9 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
         if (data) |bytes| {
             if (bytes.len > 0) {
                 // ref because we have pending data
-                this.writer.source.?.pipe.ref();
+                if (this.writer.source) |source| {
+                    source.pipe.ref();
+                }
                 if (this.flags.disconnected) {
                     // enqueue to be sent after connecting
                     this.writer.outgoing.write(bytes) catch bun.outOfMemory();
@@ -781,10 +785,15 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
         };
     }
     fn onConnect(this: *WindowsNamedPipe, status: uv.ReturnCode) void {
+        if (this.pipe) |pipe| {
+            _ = pipe.unref();
+        }
+
         if (status.toError(.connect)) |err| {
             this.onError(err);
             return;
         }
+
         this.flags.disconnected = false;
         if (this.start(true)) {
             if (this.isTLS()) {

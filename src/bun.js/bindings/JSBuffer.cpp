@@ -619,12 +619,11 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSG
             }
             auto startPtr = uint8Array->typedVector() + start;
             auto str_ = value.toWTFString(lexicalGlobalObject);
+            if (str_.isEmpty()) {
+                memset(startPtr, 0, length);
+                RELEASE_AND_RETURN(scope, JSC::JSValue::encode(uint8Array));
+            }
             ZigString str = Zig::toZigString(str_);
-
-            // make sure Buffer is zero-d in the case the string is empty
-            const unsigned char zero_int = 0;
-            auto zero_str = ZigString { .ptr = &zero_int, .len = 1 };
-            Bun__Buffer_fill(&zero_str, startPtr, end - start, encoding);
 
             if (UNLIKELY(!Bun__Buffer_fill(&str, startPtr, end - start, encoding))) {
                 throwTypeError(lexicalGlobalObject, scope, "Failed to decode value"_s);

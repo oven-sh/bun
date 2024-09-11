@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn as nodeSpawn } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, mkdirSync, cpSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, mkdirSync, cpSync, chmodSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
 // https://cmake.org/cmake/help/latest/manual/cmake.1.html#generate-a-project-buildsystem
@@ -62,18 +62,20 @@ async function build(args) {
         mkdirSync(cachePath, { recursive: true });
         try {
           cpSync(mainCachePath, cachePath, { recursive: true, force: true });
-        } catch (err) {
-          switch (err?.code) {
+        } catch (error) {
+          const { code } = error;
+          switch (code) {
             case "EPERM":
             case "EACCES":
               try {
                 chmodSync(mainCachePath, 0o777);
-              } catch (e2) {}
-
-              cpSync(mainCachePath, cachePath, { recursive: true, force: true });
+                cpSync(mainCachePath, cachePath, { recursive: true, force: true });
+              } catch (error) {
+                console.warn("Failed to copy cache with permissions fix", error);
+              }
               break;
             default:
-              throw err;
+              console.warn("Failed to copy cache", error);
           }
         }
       }
@@ -127,7 +129,11 @@ async function build(args) {
   }
 
   if (isBuildkite()) {
-    await Promise.all(buildArtifacts.map(path => spawn("buildkite-agent", ["artifact", "upload", relative(buildPath, path)], { cwd: buildPath, env })));
+    await Promise.all(
+      buildArtifacts.map(path =>
+        spawn("buildkite-agent", ["artifact", "upload", relative(buildPath, path)], { cwd: buildPath, env }),
+      ),
+    );
   }
 }
 

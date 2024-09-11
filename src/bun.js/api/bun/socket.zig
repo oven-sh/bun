@@ -3797,8 +3797,8 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
     }
 
     fn onClientConnect(this: *WindowsNamedPipeContext, status: uv.ReturnCode) void {
-        if (status != uv.ReturnCode.zero) {
-            // connection dropped
+        if (status != uv.ReturnCode.zero or this.vm.isShuttingDown()) {
+            // connection dropped or vm is shutting down
             return;
         }
         bun.assert(this.socket == .listener);

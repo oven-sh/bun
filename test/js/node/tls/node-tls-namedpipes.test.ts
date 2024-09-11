@@ -1,10 +1,10 @@
 import { expect, it } from "bun:test";
-import { tls } from "harness";
+import { tls, isWindows } from "harness";
 import { connect, createServer } from "node:tls";
 import { once } from "node:events";
 import { randomUUID } from "node:crypto";
 
-it("should work with named pipes and tls", async () => {
+it.if(isWindows)("should work with named pipes and tls", async () => {
   async function test(pipe_name: string) {
     const { promise: messageReceived, resolve: resolveMessageReceived } = Promise.withResolvers();
     const { promise: clientReceived, resolve: resolveClientReceived } = Promise.withResolvers();

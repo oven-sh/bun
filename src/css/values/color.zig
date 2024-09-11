@@ -1301,7 +1301,7 @@ pub const LAB = struct {
 
     pub usingnamespace AdjustPowerlessLAB(@This());
     pub usingnamespace DeriveInterpolate(@This(), "l", "a", "b");
-    pub usingnamespace RecangularPremultiply(@This(), "x", "y", "z");
+    pub usingnamespace RecangularPremultiply(@This(), "l", "a", "b");
 
     pub usingnamespace color_conversions.convert_LAB;
 
@@ -1327,7 +1327,7 @@ pub const SRGB = struct {
     pub usingnamespace BoundedColorGamut(@This());
 
     pub usingnamespace DeriveInterpolate(@This(), "r", "g", "b");
-    pub usingnamespace RecangularPremultiply(@This(), "a", "b", "c");
+    pub usingnamespace RecangularPremultiply(@This(), "r", "g", "b");
 
     pub usingnamespace color_conversions.convert_SRGB;
 
@@ -1567,9 +1567,9 @@ pub const XYZd50 = struct {
     pub usingnamespace color_conversions.convert_XYZd50;
 
     pub const ChannelTypeMap = .{
-        .r = ChannelType{ .percentage = true },
-        .g = ChannelType{ .percentage = true },
-        .b = ChannelType{ .percentage = true },
+        .x = ChannelType{ .percentage = true },
+        .y = ChannelType{ .percentage = true },
+        .z = ChannelType{ .percentage = true },
     };
 };
 
@@ -1593,9 +1593,9 @@ pub const XYZd65 = struct {
     pub usingnamespace color_conversions.convert_XYZd65;
 
     pub const ChannelTypeMap = .{
-        .r = ChannelType{ .percentage = true },
-        .g = ChannelType{ .percentage = true },
-        .b = ChannelType{ .percentage = true },
+        .x = ChannelType{ .percentage = true },
+        .y = ChannelType{ .percentage = true },
+        .z = ChannelType{ .percentage = true },
     };
 };
 
@@ -2091,6 +2091,7 @@ pub const ChannelType = packed struct(u8) {
     angle: bool = false,
     /// Channel represents a number.
     number: bool = false,
+    __unused: u5 = 0,
 
     pub usingnamespace css.Bitflags(@This());
 };
@@ -2496,17 +2497,17 @@ pub fn DefineColorspace(comptime T: type) type {
     const b = fields[1].name;
     const c = fields[2].name;
     const alpha = "alpha";
-    if (!@hasDecl(T, "alpha")) {
+    if (!@hasField(T, "alpha")) {
         @compileError("A Colorspace must define an alpha field");
     }
 
-    if (!@hasDecl(ChannelTypeMap, a)) {
+    if (!@hasField(@TypeOf(ChannelTypeMap), a)) {
         @compileError("A Colorspace must define a field for each channel, missing: " ++ a);
     }
-    if (!@hasDecl(ChannelTypeMap, b)) {
+    if (!@hasField(@TypeOf(ChannelTypeMap), b)) {
         @compileError("A Colorspace must define a field for each channel, missing: " ++ b);
     }
-    if (!@hasDecl(ChannelTypeMap, c)) {
+    if (!@hasField(@TypeOf(ChannelTypeMap), c)) {
         @compileError("A Colorspace must define a field for each channel, missing: " ++ c);
     }
 
@@ -2628,9 +2629,9 @@ pub fn DeriveInterpolate(
     comptime b: []const u8,
     comptime c: []const u8,
 ) type {
-    if (!@hasDecl(T, a)) @compileError("Missing field: " ++ a);
-    if (!@hasDecl(T, b)) @compileError("Missing field: " ++ b);
-    if (!@hasDecl(T, c)) @compileError("Missing field: " ++ c);
+    if (!@hasField(T, a)) @compileError("Missing field: " ++ a);
+    if (!@hasField(T, b)) @compileError("Missing field: " ++ b);
+    if (!@hasField(T, c)) @compileError("Missing field: " ++ c);
 
     return struct {
         pub fn fillMissingComponents(this: *T, other: *T) void {
@@ -2674,9 +2675,9 @@ pub fn RecangularPremultiply(
     comptime b: []const u8,
     comptime c: []const u8,
 ) type {
-    if (!@hasDecl(T, a)) @compileError("Missing field: " ++ a);
-    if (!@hasDecl(T, b)) @compileError("Missing field: " ++ b);
-    if (!@hasDecl(T, c)) @compileError("Missing field: " ++ c);
+    if (!@hasField(T, a)) @compileError("Missing field: " ++ a);
+    if (!@hasField(T, b)) @compileError("Missing field: " ++ b);
+    if (!@hasField(T, c)) @compileError("Missing field: " ++ c);
     return struct {
         pub fn premultiply(this: *T) void {
             if (!std.math.isNan(this.alpha)) {
@@ -2703,8 +2704,8 @@ pub fn PolarPremultiply(
     comptime a: []const u8,
     comptime b: []const u8,
 ) type {
-    if (!@hasDecl(T, a)) @compileError("Missing field: " ++ a);
-    if (!@hasDecl(T, b)) @compileError("Missing field: " ++ b);
+    if (!@hasField(T, a)) @compileError("Missing field: " ++ a);
+    if (!@hasField(T, b)) @compileError("Missing field: " ++ b);
     return struct {
         pub fn premultiply(this: *T) void {
             if (!std.math.isNan(this.alpha)) {

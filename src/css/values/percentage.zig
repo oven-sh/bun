@@ -78,7 +78,7 @@ pub fn DimensionPercentage(comptime D: type) type {
             if (input.tryParse(Calc(This, .{})).asValue()) |calc_value| {
                 if (calc_value == .value) return calc_value.value.*;
                 return .{
-                    .calc = bun.create(@compileError(css.todo_stuff.think_about_allocator), This, calc_value),
+                    .calc = bun.create(input.allocator(), This, calc_value),
                 };
             }
 

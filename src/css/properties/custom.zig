@@ -175,7 +175,7 @@ pub const TokenList = struct {
 
         // Slice off leading and trailing whitespace if there are at least two tokens.
         // If there is only one token, we must preserve it. e.g. `--foo: ;` is valid.
-        // TODO(zack): this feels like a common codepath, idk how I feel about reallocating a new array just to slice off whitespace.
+        // PERF(alloc): this feels like a common codepath, idk how I feel about reallocating a new array just to slice off whitespace.
         if (tokens.items.len >= 2) {
             var slice = tokens.items[0..];
             if (tokens.items.len > 0 and tokens.items[0].isWhitespace()) {
@@ -185,8 +185,8 @@ pub const TokenList = struct {
                 slice = slice[0 .. slice.len - 1];
             }
             var newlist = ArrayList(TokenOrValue){};
-            newlist.insertSlice(@compileError(css.todo_stuff.think_about_allocator), 0, slice) catch unreachable;
-            tokens.deinit(@compileError(css.todo_stuff.think_about_allocator));
+            newlist.insertSlice(input.allocator(), 0, slice) catch unreachable;
+            tokens.deinit(input.allocator());
             return .{ .result = newlist };
         }
 
@@ -204,12 +204,11 @@ pub const TokenList = struct {
         depth: usize,
     ) Result(void) {
         if (depth > 500) {
-            return input.newCustomError(css.ParserError.maximum_nesting_depth);
+            return .{ .err = input.newCustomError(css.ParserError.maximum_nesting_depth) };
         }
 
         while (true) {
             const state = input.state();
-            _ = state; // autofix
             const token = switch (input.nextIncludingWhitespace()) {
                 .result => |vv| vv,
                 .err => break,
@@ -217,7 +216,7 @@ pub const TokenList = struct {
             switch (token.*) {
                 .open_paren, .open_square, .open_curly => {
                     tokens.append(
-                        @compileError(css.todo_stuff.think_about_allocator),
+                        input.allocator(),
                         .{ .token = token.* },
                     ) catch unreachable;
                     const closing_delimiter = switch (token.*) {
@@ -246,13 +245,13 @@ pub const TokenList = struct {
                     };
                     if (input.parseNestedBlock(void, &closure, closure.parsefn).asErr()) |e| return .{ .err = e };
                     tokens.append(
-                        @compileError(css.todo_stuff.thinknk_about_allocator),
+                        input.allocator(),
                         .{ .token = closing_delimiter },
                     ) catch unreachable;
                 },
                 .function => {
                     tokens.append(
-                        @compileError(css.todo_stuff.think_about_allocator),
+                        input.allocator(),
                         .{ .token = token.* },
                     ) catch unreachable;
                     const Closure = struct {
@@ -275,18 +274,28 @@ pub const TokenList = struct {
                     };
                     if (input.parseNestedBlock(void, &closure, closure.parsefn).asErr()) |e| return .{ .err = e };
                     tokens.append(
-                        @compileError(css.todo_stuff.thinknk_about_allocator),
+                        input.allocator(),
                         .{ .token = .close_paren },
                     ) catch unreachable;
                 },
                 else => {
+                    if (token.isParseError()) {
+                        return .{
+                            .err = css.ParseError(css.ParserError){
+                                .kind = .{ .basic = .{ .unexpected_token = token } },
+                                .location = state.sourceLocation(),
+                            },
+                        };
+                    }
                     tokens.append(
-                        @compileError(css.todo_stuff.think_about_allocator),
+                        input.allocator(),
                         .{ .token = token.* },
                     ) catch unreachable;
                 },
             }
         }
+
+        return .{ .result = {} };
     }
 
     pub fn parseInto(
@@ -314,7 +323,7 @@ pub const TokenList = struct {
                     // Otherwise, replace all whitespace and comments with a single space character.
                     if (!last_is_delim) {
                         tokens.append(
-                            @compileError(css.todo_stuff.think_about_allocator),
+                            input.allocator(),
                             .{ .token = .{ .whitespace = " " } },
                         ) catch unreachable;
                         last_is_whitespace = true;
@@ -324,14 +333,14 @@ pub const TokenList = struct {
                     // Attempt to parse embedded color values into hex tokens.
                     if (tryParseColorToken(f, &state, input)) |color| {
                         tokens.append(
-                            @compileError(css.todo_stuff.think_about_allocator),
+                            input.allocator(),
                             .{ .color = color },
                         ) catch unreachable;
                         last_is_delim = false;
                         last_is_whitespace = true;
                     } else if (input.tryParse(UnresolvedColor.parse, .{ f, options }).asValue()) |color| {
                         tokens.append(
-                            @compileError(css.todo_stuff.think_about_allocator),
+                            input.allocator(),
                             .{ .unresolved_color = color },
                         ) catch unreachable;
                         last_is_delim = false;
@@ -339,7 +348,7 @@ pub const TokenList = struct {
                     } else if (bun.strings.eql(f, "url")) {
                         input.reset(&state);
                         tokens.append(
-                            @compileError(css.todo_stuff.think_about_allocator),
+                            input.allocator(),
                             .{ .url = switch (Url.parse(input)) {
                                 .result => |vv| vv,
                                 .err => |e| return .{ .err = e },
@@ -370,7 +379,7 @@ pub const TokenList = struct {
                             .err => |e| return .{ .err = e },
                         };
                         tokens.append(
-                            @compileError(css.todo_stuff.think_about_allocator),
+                            input.allocator(),
                             @"var",
                         ) catch unreachable;
                         last_is_delim = true;
@@ -396,7 +405,7 @@ pub const TokenList = struct {
                             .err => |e| return .{ .err = e },
                         };
                         tokens.append(
-                            @compileError(css.todo_stuff.think_about_allocator),
+                            input.allocator(),
                             env,
                         ) catch unreachable;
                         last_is_delim = true;
@@ -422,7 +431,7 @@ pub const TokenList = struct {
                             .err => |e| return .{ .err = e },
                         };
                         tokens.append(
-                            @compileError(css.todo_stuff.think_about_allocator),
+                            input.allocator(),
                             .{
                                 .function = .{
                                     .name = f,
@@ -443,13 +452,13 @@ pub const TokenList = struct {
                     brk: {
                         const r, const g, const b, const a = css.color.parseHashColor(h) orelse {
                             tokens.append(
-                                @compileError(css.todo_stuff.think_about_allocator),
+                                input.allocator(),
                                 .{ .token = .{ .hash = h } },
                             ) catch unreachable;
                             break :brk;
                         };
                         tokens.append(
-                            @compileError(css.todo_stuff.think_about_allocator),
+                            input.allocator(),
                             .{
                                 .color = CssColor{ .rgba = RGBA.new(r, g, b, a) },
                             },
@@ -461,7 +470,7 @@ pub const TokenList = struct {
                 .unquoted_url => {
                     input.reset(&state);
                     tokens.append(
-                        @compileError(css.todo_stuff.think_about_allocator),
+                        input.allocator(),
                         .{ .url = switch (Url.parse(input)) {
                             .result => |vv| vv,
                             .err => |e| return .{ .err = e },
@@ -472,14 +481,14 @@ pub const TokenList = struct {
                 },
                 .ident => |name| {
                     if (bun.strings.startsWith(name, "--")) {
-                        tokens.append(@compileError(css.todo_stuff.think_about_allocator), .{ .dashed_ident = name }) catch unreachable;
+                        tokens.append(input.allocator(), .{ .dashed_ident = name }) catch unreachable;
                         last_is_delim = false;
                         last_is_whitespace = false;
                     }
                 },
                 .open_paren, .open_square, .open_curly => {
                     tokens.append(
-                        @compileError(css.todo_stuff.think_about_allocator),
+                        input.allocator(),
                         .{ .token = tok.* },
                     ) catch unreachable;
                     const closing_delimiter = switch (tok.*) {
@@ -508,7 +517,7 @@ pub const TokenList = struct {
                     };
                     if (input.parseNestedBlock(void, &closure, closure.parsefn).asErr()) |e| return .{ .err = e };
                     tokens.append(
-                        @compileError(css.todo_stuff.think_about_allocator),
+                        input.allocator(),
                         .{ .token = closing_delimiter },
                     ) catch unreachable;
                     last_is_delim = true; // Whitespace is not required after any of these chars.
@@ -527,7 +536,7 @@ pub const TokenList = struct {
                         TokenOrValue{ .token = tok.* };
 
                     tokens.append(
-                        @compileError(css.todo_stuff.think_about_allocator),
+                        input.allocator(),
                         value,
                     ) catch unreachable;
 
@@ -557,13 +566,15 @@ pub const TokenList = struct {
                 last.* = .{ .token = tok.* };
             } else {
                 tokens.append(
-                    @compileError(css.todo_stuff.think_about_allocator),
+                    input.allocator(),
                     .{ .token = tok.* },
                 ) catch unreachable;
             }
 
             last_is_whitespace = false;
         }
+
+        return .{ .result = {} };
     }
 };
 pub const TokenListFns = TokenList;
@@ -887,13 +898,12 @@ pub const EnvironmentVariable = struct {
             .err => |e| return .{ .err = e },
         };
         var indices = ArrayList(i32){};
-        errdefer indices.deinit(@compileError(css.todo_stuff.think_about_allocator));
         while (switch (input.tryParse(CSSIntegerFns.parse, .{})) {
             .result => |v| v,
             .err => null,
         }) |idx| {
             indices.append(
-                @compileError(css.todo_stuff.think_about_allocator),
+                input.allocator(),
                 idx,
             ) catch unreachable;
         }
@@ -952,7 +962,7 @@ pub const EnvironmentVariableName = union(enum) {
 
         if (input.tryParse(DashedIdentReference.parseWithOptions, .{
             css.ParserOptions.default(
-                @compileError(css.todo_stuff.think_about_allocator),
+                input.allocator(),
             ),
         }).asValue()) |dashed| {
             return .{ .result = .{ .custom = dashed } };

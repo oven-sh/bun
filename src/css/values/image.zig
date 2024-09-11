@@ -141,7 +141,7 @@ pub const ImageSetOption = struct {
     ) PrintErr!void {
         if (this.image.* == .url and !is_prefixed) {
             const _dep: ?UrlDependency = if (dest.dependencies != null)
-                UrlDependency.new(&this.image.url.url, dest.filename())
+                UrlDependency.new(dest.allocator, &this.image.url.url, dest.filename())
             else
                 null;
 
@@ -149,7 +149,7 @@ pub const ImageSetOption = struct {
                 try css.serializer.serializeString(dep.placeholder, W, dest);
                 if (dest.dependencies) |*dependencies| {
                     dependencies.append(
-                        @compileError(css.todo_stuff.think_about_allocator),
+                        dest.allocator,
                         .{ .url = dep },
                     ) catch bun.outOfMemory();
                 }

@@ -41,7 +41,7 @@ pub const FontPaletteValuesRule = struct {
         while (parser.next()) |result| {
             if (result) |decl| {
                 properties.append(
-                    @compileError(css.todo_stuff.think_about_allocator),
+                    input.allocator(),
                     decl,
                 ) catch unreachable;
             }

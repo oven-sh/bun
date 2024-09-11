@@ -234,7 +234,7 @@ pub const LinearGradient = struct {
             break :brk true;
         }) {
             var flipped_items = ArrayList(GradientItem(LengthPercentage)).initCapacity(
-                @compileError(css.todo_stuff.think_about_allocator),
+                dest.allocator,
                 this.items.items.len,
             ) catch bun.outOfMemory();
             defer flipped_items.deinit();
@@ -999,7 +999,7 @@ pub fn parseItems(comptime D: type, input: *css.Parser) Result(ArrayList(Gradien
                     };
 
                     if (i.tryParse(comptime css.generic.parseFor(D), .{})) |position| {
-                        const color = stop.color.clone(@compileError(css.todo_stuff.think_about_allocator));
+                        const color = stop.color.clone(i.allocator());
                         closure.items.append(.{ .color_stop = stop }) catch bun.outOfMemory();
                         closure.items.append(.{ .color_stop = .{
                             .color = color,

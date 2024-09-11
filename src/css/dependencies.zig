@@ -96,9 +96,9 @@ pub const UrlDependency = struct {
     /// The location of the dependency in the source file.
     loc: SourceRange,
 
-    pub fn new(url: *const Url, filename: []const u8) UrlDependency {
+    pub fn new(allocator: Allocator, url: *const Url, filename: []const u8) UrlDependency {
+        _ = allocator; // autofix
         const placeholder = css.css_modules.hash(
-            @compileError(css.todo_stuff.think_about_allocator),
             "{s}_{s}",
             .{ filename, url.url },
             false,

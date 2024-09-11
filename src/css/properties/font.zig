@@ -217,9 +217,7 @@ pub const FontFamily = union(enum) {
             return .{ .generic = value };
         }
 
-        const stralloc = {
-            @compileError(css.todo_stuff.think_about_allocator);
-        };
+        const stralloc = input.allocator();
         const value = try input.expectIdent();
         var string: ?ArrayList(u8) = null;
         while (input.tryParse(css.Parser.expectIdent)) |ident| {
@@ -250,24 +248,20 @@ pub const FontFamily = union(enum) {
                 // https://www.w3.org/TR/css-fonts-4/#family-name-syntax
 
                 if (val.len > 0 and
-                    if (css.parse_utility.parseString(
-                    @compileError(css.todo_stuff.think_about_allocator),
+                    !css.parse_utility.parseString(
+                    dest.allocator,
                     GenericFontFamily,
                     GenericFontFamily.parse,
-                ))
-                    false
-                else
-                    true)
-                {
+                ).isOk()) {
                     var id = ArrayList(u8){};
-                    defer id.deinit(@compileError(css.todo_stuff.think_about_allocator));
+                    defer id.deinit(dest.allocator);
                     var first = true;
                     var split_iter = std.mem.splitScalar(u8, val, ' ');
                     while (split_iter.next()) |slice| {
                         if (first) {
                             first = false;
                         } else {
-                            try id.append(@compileError(css.todo_stuff.think_about_allocator), ' ');
+                            try id.append(dest.allocator, ' ');
                         }
                         try css.serializer.serializeIdentifier(slice, W, dest);
                     }

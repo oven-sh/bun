@@ -20,7 +20,7 @@ pub const LayerName = struct {
         var parts: css.SmallList([]const u8, 1) = .{};
         const ident = try input.expectIdent();
         parts.append(
-            @compileError(css.todo_stuff.think_about_allocator),
+            input.allocator(),
             ident,
         ) catch bun.outOfMemory();
 
@@ -62,7 +62,7 @@ pub const LayerName = struct {
                     .result => |vvv| vvv,
                 };
                 parts.append(
-                    @compileError(css.todo_stuff.think_about_allocator),
+                    input.allocator(),
                     name,
                 ) catch bun.outOfMemory();
             }

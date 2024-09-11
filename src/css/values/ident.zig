@@ -9,7 +9,7 @@ pub const Result = css.Result;
 pub const Printer = css.Printer;
 pub const PrintErr = css.PrintErr;
 
-const Specifier = css.css_properties.css_modules.Specifier;
+pub const Specifier = css.css_properties.css_modules.Specifier;
 
 /// A CSS [`<dashed-ident>`](https://www.w3.org/TR/css-values-4/#dashed-idents) reference.
 ///

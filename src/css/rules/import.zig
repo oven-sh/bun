@@ -41,7 +41,7 @@ pub const ImportRule = struct {
 
     pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
         const dep = if (dest.dependencies != null) dependencies.ImportDependency.new(
-            @compileError(css.todo_stuff.think_about_allocator),
+            dest.allocator,
             dest.filename(),
         ) else null;
 
@@ -54,7 +54,7 @@ pub const ImportRule = struct {
 
             if (dest.dependencies) |*deps| {
                 deps.append(
-                    @compileError(css.todo_stuff.think_about_allocator),
+                    dest.allocator,
                     Dependency{ .import = d },
                 ) catch unreachable;
             }

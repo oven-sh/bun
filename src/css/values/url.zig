@@ -87,7 +87,7 @@ pub const Url = struct {
         dest: *Printer(W),
     ) PrintErr!void {
         const dep: ?UrlDependency = if (dest.dependencies != null)
-            UrlDependency.new(this, dest.filename())
+            UrlDependency.new(dest.allocator, this, dest.filename())
         else
             null;
 
@@ -107,7 +107,8 @@ pub const Url = struct {
 
         if (dest.minify) {
             var buf = ArrayList(u8){};
-            var bufw = buf.writer(@compileError(css.todo_stuff.think_about_allocator));
+            // PERF(alloc) we could use stack fallback here?
+            var bufw = buf.writer(dest.allocator);
             const BufW = @TypeOf(bufw);
             defer buf.deinit();
             try (css.Token{ .unquoted_url = this.url }).toCss(BufW, &bufw);
@@ -117,7 +118,8 @@ pub const Url = struct {
             if (buf.items.len > this.url.len + 7) {
                 var buf2 = ArrayList(u8){};
                 defer buf2.deinit();
-                bufw = buf2.writer(@compileError(css.todo_stuff.think_about_allocator));
+                // PERF(alloc) we could use stack fallback here?
+                bufw = buf2.writer(dest.allocator);
                 try css.serializer.serializeString(this.url, BufW, &bufw);
                 if (buf2.items.len + 5 < buf.items.len) {
                     try dest.writeStr("url(");

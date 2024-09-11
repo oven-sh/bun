@@ -1,5 +1,6 @@
 const std = @import("std");
 const bun = @import("root").bun;
+const Allocator = std.mem.Allocator;
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
@@ -54,17 +55,11 @@ pub fn Calc(comptime V: type) type {
         fn mulValueF32(lhs: V, rhs: f32) V {
             return switch (V) {
                 f32 => lhs * rhs,
-                // todo_stuff.depth
                 Angle => lhs.mulF32(rhs),
-                // todo_stuff.depth
                 CSSNumber => lhs * rhs,
-                // todo_stuff.depth
                 Length => lhs.mulF32(rhs),
-                // todo_stuff.depth
                 Percentage => lhs.mulF32(rhs),
-                // todo_stuff.depth
                 Time => lhs.mulF32(rhs),
-                // todo_stuff.depth
                 else => lhs.mulF32(rhs),
             };
         }
@@ -175,7 +170,7 @@ pub fn Calc(comptime V: type) type {
                 if (calc == .value or calc == .number) return .{ .result = calc };
                 return .{ .result = Calc(V){
                     .function = bun.create(
-                        @compileError(css.todo_stuff.think_about_allocator),
+                        input.allocator(),
                         MathFunction(V),
                         MathFunction(V){ .calc = calc },
                     ),
@@ -195,14 +190,14 @@ pub fn Calc(comptime V: type) type {
                     .result => |vv| vv,
                     .err => |e| return .{ .err = e },
                 };
-                // PERF: i don't like this additional allocation
+                // PERF(alloc): i don't like this additional allocation
                 var reduced: ArrayList(This) = This.reducedArgs(&args, std.math.Order.lt);
                 if (reduced.items.len == 1) {
                     return reduced.orderedRemove(0);
                 }
                 return This{
                     .function = bun.create(
-                        @compileError(css.todo_stuff.think_about_allocator),
+                        input.allocator(),
                         MathFunction(V),
                         MathFunction(V){ .min = reduced },
                     ),
@@ -229,7 +224,7 @@ pub fn Calc(comptime V: type) type {
                 }
                 return .{ .result = This{
                     .function = bun.create(
-                        @compileError(css.todo_stuff.think_about_allocator),
+                        input.allocator(),
                         MathFunction(V),
                         MathFunction(V){ .max = reduced },
                     ),
@@ -293,11 +288,11 @@ pub fn Calc(comptime V: type) type {
                     0b00 => center,
                     0b10 => This{
                         .function = bun.create(
-                            @compileError(css.todo_stuff.think_about_allocator),
+                            input.allocator(),
                             MathFunction(V),
                             MathFunction(V){
                                 .max = arr2(
-                                    @compileError(css.todo_stuff.think_about_allocator),
+                                    input.allocator(),
                                     min.?,
                                     center,
                                 ),
@@ -306,11 +301,11 @@ pub fn Calc(comptime V: type) type {
                     },
                     0b01 => This{
                         .function = bun.create(
-                            @compileError(css.todo_stuff.think_about_allocator),
+                            input.allocator(),
                             MathFunction(V),
                             MathFunction(V){
                                 .min = arr2(
-                                    @compileError(css.todo_stuff.think_about_allocator),
+                                    input.allocator(),
                                     max.?,
                                     center,
                                 ),
@@ -319,7 +314,7 @@ pub fn Calc(comptime V: type) type {
                     },
                     0b11 => This{
                         .function = bun.create(
-                            @compileError(css.todo_stuff.think_about_allocator),
+                            input.allocator(),
                             MathFunction(V),
                             MathFunction(V){
                                 .clamp = .{
@@ -450,19 +445,18 @@ pub fn Calc(comptime V: type) type {
                 const Closure = struct {
                     ctx: @TypeOf(ctx),
                     pub inline fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
-                        _ = i; // autofix
-                        const res = This.parseAtan2(input, self.ctx, parseIdent);
+                        const res = This.parseAtan2(i, self.ctx, parseIdent);
                         if (V.tryFromAngle(res)) |v| {
                             return This{
                                 .value = bun.create(
-                                    @compileError(css.todo_stuff.think_about_allocator),
+                                    i.allocator(),
                                     V,
                                     v,
                                 ),
                             };
                         }
 
-                        return input.newCustomError(css.ParserError.invalid_value);
+                        return i.newCustomError(css.ParserError.invalid_value);
                     }
                 };
                 var closure = Closure{ .ctx = ctx };
@@ -519,11 +513,11 @@ pub fn Calc(comptime V: type) type {
                     ctx: @TypeOf(ctx),
                     pub inline fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
                         const args = i.parseCommaSeparatedWithCtx(This, self, parseOne);
-                        const v = switch (This.parseHypot(&args)) {
+                        const v = switch (This.parseHypot(i.allocator(), &args)) {
                             .result => |vv| vv,
                             .err => return This{
                                 .function = bun.create(
-                                    @compileError(css.todo_stuff.think_about_allocator),
+                                    i.allocator(),
                                     MathFunction,
                                     MathFunction(V){ .hypot = args },
                                 ),
@@ -547,11 +541,11 @@ pub fn Calc(comptime V: type) type {
                             .err => |e| return .{ .err = e },
                         };
                         return .{
-                            .result = switch (This.applyMap(&v, .abs)) {
+                            .result = switch (This.applyMap(&v, i.allocator(), .abs)) {
                                 .result => |vv| vv,
                                 .err => This{
                                     .function = bun.create(
-                                        @compileError(css.todo_stuff.think_about_allocator),
+                                        i.allocator(),
                                         MathFunction(V),
                                         MathFunction(V){ .abs = v },
                                     ),
@@ -590,7 +584,7 @@ pub fn Calc(comptime V: type) type {
 
                         return .{ .result = This{
                             .function = bun.create(
-                                @compileError(css.todo_stuff.think_about_allocator),
+                                i.allocator(),
                                 MathFunction(V),
                                 MathFunction(V){ .sign = v },
                             ),
@@ -622,9 +616,9 @@ pub fn Calc(comptime V: type) type {
                 .err => |e| return .{ .err = e },
             };
 
-            const val = This.applyOp(&a, &b, ctx_for_op_and_fallback, op) orelse This{
+            const val = This.applyOp(&a, &b, input.allocator(), ctx_for_op_and_fallback, op) orelse This{
                 .function = bun.create(
-                    @compileError(css.todo_stuff.think_about_allocator),
+                    input.allocator(),
                     MathFunction(V),
                     fallback(ctx_for_op_and_fallback, a, b),
                 ),
@@ -662,14 +656,14 @@ pub fn Calc(comptime V: type) type {
                     };
                     if (next_tok.* == .delim and next_tok.delim == '+') {
                         const next = Calc(V).parseProduct(input, ctx, parse_ident);
-                        cur = cur.add(@compileError(css.todo_stuff.think_about_allocator), next);
+                        cur = cur.add(input.allocator(), next);
                     } else if (next_tok.* == .delim and next_tok.delim == '-') {
                         var rhs = switch (This.parseProduct(input, ctx, parse_ident)) {
                             .result => |vv| vv,
                             .err => |e| return .{ .err = e },
                         };
                         rhs = rhs.mul_f32(-1.0);
-                        cur = cur.add(@compileError(css.todo_stuff.think_about_allocator), rhs);
+                        cur = cur.add(input.allocator(), rhs);
                     } else {
                         return input.newCustomError(next_tok.*);
                     }
@@ -788,7 +782,7 @@ pub fn Calc(comptime V: type) type {
             };
             return .{ .result = .{
                 .value = bun.create(
-                    @compileError(css.todo_stuff.think_about_allocator),
+                    input.allocator(),
                     V,
                     value,
                 ),
@@ -843,20 +837,20 @@ pub fn Calc(comptime V: type) type {
                             .number => break :rad trig_fn.run(v.number),
                             else => {},
                         }
-                        return input.newCustomError(css.ParserError.invalid_value);
+                        return i.newCustomError(css.ParserError.invalid_value);
                     };
 
                     if (to_angle and !std.math.isNan(rad)) {
                         if (V.tryFromAngle(.{ .rad = rad })) |val| {
                             return .{
                                 .value = bun.create(
-                                    @compileError(css.todo_stuff.think_about_allocator),
+                                    i.allocator(),
                                     V,
                                     val,
                                 ),
                             };
                         }
-                        return input.newCustomError(css.ParserError.invalid_value);
+                        return i.newCustomError(css.ParserError.invalid_value);
                     } else {
                         return .{ .number = rad };
                     }
@@ -995,7 +989,7 @@ pub fn Calc(comptime V: type) type {
             return .{ .result = val };
         }
 
-        pub fn parseHypot(args: *ArrayList(This)) Result(?This) {
+        pub fn parseHypot(allocator: Allocator, args: *ArrayList(This)) Result(?This) {
             if (args.items.len == 1) {
                 const v = args.items[0];
                 args.items[0] = This{ .number = 0 };
@@ -1003,12 +997,13 @@ pub fn Calc(comptime V: type) type {
             }
 
             if (args.items.len == 2) {
-                return This.applyOp(&args.items[0], args.items[1], void, hypot);
+                return This.applyOp(&args.items[0], args.items[1], allocator, void, hypot);
             }
 
             var i: usize = 0;
             const first = if (This.applyMap(
                 &args.items[0],
+                allocator,
                 powi2,
             )) |v| v else return null;
             i += 1;
@@ -1020,7 +1015,7 @@ pub fn Calc(comptime V: type) type {
                         return a + std.math.powi(f32, b, 2);
                     }
                 };
-                sum = This.applyOp(&sum, arg, {}, Fn.applyOpFn) orelse {
+                sum = This.applyOp(&sum, arg, allocator, {}, Fn.applyOpFn) orelse {
                     errored = true;
                     break;
                 };
@@ -1028,19 +1023,20 @@ pub fn Calc(comptime V: type) type {
 
             if (errored) return null;
 
-            return This.applyMap(&sum, sqrtf32);
+            return This.applyMap(&sum, allocator, sqrtf32);
         }
 
         pub fn applyOp(
             a: *const This,
             b: *const This,
+            allocator: std.mem.Allocator,
             ctx: anytype,
             comptime op: *const fn (@TypeOf(ctx), f32, f32) f32,
         ) ?This {
             if (a.* == .number and b.* == .number) {
                 return This{
                     .value = bun.create(
-                        @compileError(css.todo_stuff.think_about_allocator),
+                        allocator,
                         V,
                         op(ctx, a.number, b.number),
                     ),
@@ -1056,14 +1052,14 @@ pub fn Calc(comptime V: type) type {
             return null;
         }
 
-        pub fn applyMap(this: *const This, comptime op: *const fn (f32) f32) ?This {
+        pub fn applyMap(this: *const This, allocator: Allocator, comptime op: *const fn (f32) f32) ?This {
             switch (this.*) {
                 .number => |n| return This{ .number = op(n) },
                 .value => |v| {
                     if (v.tryMap(op)) |new_v| {
                         return This{
                             .value = bun.create(
-                                @compileError(css.todo_stuff.think_about_allocator),
+                                allocator,
                                 V,
                                 new_v,
                             ),
@@ -1138,7 +1134,7 @@ pub fn Calc(comptime V: type) type {
             return css.signfns.isSignNegative(this.trySign()) orelse return false;
         }
 
-        pub fn mulF32(this: *const @This(), other: f32) This {
+        pub fn mulF32(this: *const @This(), allocator: Allocator, other: f32) This {
             if (other == 1.0) {
                 return this.*;
             }
@@ -1148,14 +1144,14 @@ pub fn Calc(comptime V: type) type {
                 .number => This{ .number = this.number * other },
                 .sum => This{ .sum = .{
                     .left = bun.create(
-                        @compileError(css.todo_stuff.think_about_allocator),
+                        allocator,
                         This,
-                        this.sum.left.mulF32(other),
+                        this.sum.left.mulF32(allocator, other),
                     ),
                     .right = bun.create(
-                        @compileError(css.todo_stuff.think_about_allocator),
+                        allocator,
                         This,
-                        this.sum.right.mulF32(other),
+                        this.sum.right.mulF32(allocator, other),
                     ),
                 } },
                 .product => {
@@ -1173,10 +1169,10 @@ pub fn Calc(comptime V: type) type {
                 .function => switch (this.function) {
                     .calc => This{
                         .function = bun.create(
-                            @compileError(css.todo_stuff.think_about_allocator),
+                            allocator,
                             MathFunction(V),
                             MathFunction(V){
-                                .calc = this.function.calc.mulF32(other),
+                                .calc = this.function.calc.mulF32(allocator, other),
                             },
                         ),
                     },

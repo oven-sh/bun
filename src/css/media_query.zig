@@ -56,7 +56,7 @@ pub const MediaList = struct {
                     return .{ .err = e };
                 },
             };
-            media_queries.append(@compileError(css.todo_stuff.think_about_allocator), mq) catch bun.outOfMemory();
+            media_queries.append(input.allocator(), mq) catch bun.outOfMemory();
 
             if (input.next()) |tok| {
                 if (tok.* != .comma) {
@@ -381,10 +381,6 @@ pub fn parseQueryCondition(
         return location.newUnexpectedTokenError(tok.*);
     };
 
-    const alloc: Allocator = {
-        @compileError(css.todo_stuff.think_about_allocator);
-    };
-
     const first_condition: QueryCondition = first_condition: {
         const val: u8 = @as(u8, @intFromBool(is_negation)) << 1 | @as(u8, @intFromBool(is_style));
         // (is_negation, is_style)
@@ -395,7 +391,7 @@ pub fn parseQueryCondition(
                     .err => |e| return .{ .err = e },
                     .result => |v| v,
                 };
-                return QueryCondition.createNegation(bun.create(alloc, QueryCondition, inner_condition));
+                return QueryCondition.createNegation(bun.create(input.allocator(), QueryCondition, inner_condition));
             },
             // (true, true)
             0b11 => {
@@ -403,7 +399,7 @@ pub fn parseQueryCondition(
                     .err => |e| return .{ .err = e },
                     .result => |v| v,
                 };
-                return QueryCondition.createNegation(bun.create(alloc, QueryCondition, inner_condition));
+                return QueryCondition.createNegation(bun.create(input.allocator(), QueryCondition, inner_condition));
             },
             0b00 => break :first_condition switch (parseParenBlock(QueryCondition, input, flags)) {
                 .err => |e| return .{ .err = e },
@@ -428,11 +424,11 @@ pub fn parseQueryCondition(
 
     var conditions = ArrayList(QueryCondition){};
     conditions.append(
-        @compileError(css.todo_stuff.think_about_allocator),
+        input.allocator(),
         first_condition,
     ) catch unreachable;
     conditions.append(
-        @compileError(css.todo_stuff.think_about_allocator),
+        input.allocator(),
         switch (parseParensOrFunction(QueryCondition, input, flags)) {
             .err => |e| return .{ .err = e },
             .result => |v| v,
@@ -450,7 +446,7 @@ pub fn parseQueryCondition(
         }
 
         conditions.append(
-            @compileError(css.todo_stuff.think_about_allocator),
+            input.allocator(),
             switch (parseParensOrFunction(QueryCondition, input, flags)) {
                 .err => |e| return .{ .err = e },
                 .result => |v| v,
@@ -1150,9 +1146,6 @@ pub fn MediaFeatureName(comptime FeatureId: type) type {
 
         /// Parses a media feature name.
         pub fn parse(input: *css.Parser) Result(struct { This, ?MediaFeatureComparison }) {
-            const alloc: Allocator = {
-                @compileError(css.todo_stuff.think_about_allocator);
-            };
             const ident = switch (input.expectIdent()) {
                 .err => |e| return .{ .err = e },
                 .result => |v| v,
@@ -1188,7 +1181,7 @@ pub fn MediaFeatureName(comptime FeatureId: type) type {
 
             const final_name = if (is_webkit) name: {
                 // PERF: stack buffer here?
-                break :name std.fmt.allocPrint(alloc, "-webkit-{s}", .{}) catch bun.outOfMemory();
+                break :name std.fmt.allocPrint(input.allocator(), "-webkit-{s}", .{}) catch bun.outOfMemory();
             } else name;
 
             if (FeatureId.parseString(final_name)) |standard| {

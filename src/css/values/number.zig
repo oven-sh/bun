@@ -25,10 +25,10 @@ pub const CSSNumberFns = struct {
     pub fn toCss(this: *const CSSNumber, comptime W: type, dest: *Printer(W)) PrintErr!void {
         const number: f32 = this.*;
         if (number != 0.0 and @abs(number) < 1.0) {
-            // PERF: Use temp allocation here?
-            // why the extra allocation anyway?
+            // PERF(alloc): Use temp allocation here?
+            // why the extra allocation anyway? isn't max amount of digits to stringify an f32 small?
             var s = ArrayList(u8){};
-            const writer = s.writer(@compileError(css.todo_stuff.think_about_allocator));
+            const writer = s.writer(dest.allocator);
             const W2 = @TypeOf(writer);
             try css.to_css.float32(number, W2, writer);
             if (number < 0.0) {

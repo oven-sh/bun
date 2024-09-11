@@ -194,13 +194,9 @@ pub fn parse_declaration(
     const important = if (input.tryParse(Fn.parsefn, .{}).isOk()) true else false;
     if (input.expectExhausted().asErr()) |e| return .{ .err = e };
     if (important) {
-        important_declarations.append(comptime {
-            @compileError(css.todo_stuff.think_about_allocator);
-        }, property) catch bun.outOfMemory();
+        important_declarations.append(input.allocator(), property) catch bun.outOfMemory();
     } else {
-        declarations.append(comptime {
-            @compileError(css.todo_stuff.think_about_allocator);
-        }, property);
+        declarations.append(input.allocator(), property);
     }
     return;
 }

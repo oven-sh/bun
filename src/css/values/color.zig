@@ -532,10 +532,7 @@ pub fn parseLab(
                 .err => |e| return .{ .err = e },
             };
             const lab = func(l, a, b, alpha);
-            const allocator: Allocator = {
-                @compileError(css.todo_stuff.think_about_allocator);
-            };
-            const heap_lab = bun.create(allocator, LABColor, lab) catch unreachable;
+            const heap_lab = bun.create(i.allocator(), LABColor, lab) catch unreachable;
             heap_lab.* = lab;
             return .{ .result = CssColor{ .lab = heap_lab } };
         }
@@ -606,7 +603,7 @@ pub fn parseLch(
             const lab = func(l, c, h, alpha);
             return .{
                 .result = .{
-                    .lab = bun.create(@compileError(css.todo_stuff.think_about_allocator), LABColor, lab),
+                    .lab = bun.create(i.allocator(), LABColor, lab),
                 },
             };
         }
@@ -628,6 +625,7 @@ pub fn parseHslHwb(
     parser: *ComponentParser,
     allows_legacy: bool,
     comptime func: *const fn (
+        Allocator,
         f32,
         f32,
         f32,
@@ -652,7 +650,7 @@ pub fn parseHslHwb(
                 .err => |e| return .{ .err = e },
             };
 
-            return .{ .result = func(h, a, b, alpha) };
+            return .{ .result = func(i.allocator(), h, a, b, alpha) };
         }
     };
 
@@ -733,7 +731,6 @@ fn parseRgb(input: *css.Parser, parser: *ComponentParser) Result(CssColor) {
         }
 
         pub fn parseRelativeFn(i: *css.Parser, p: *css.Parser, this: *@This()) Result(CssColor) {
-            _ = i; // autofix
             _ = this; // autofix
             const r, const g, const b, const is_legacy = switch (parseRgbComponents(input, p)) {
                 .result => |vv| vv,
@@ -774,7 +771,7 @@ fn parseRgb(input: *css.Parser, parser: *ComponentParser) Result(CssColor) {
                 return .{
                     .result = .{
                         .float = bun.create(
-                            @compileError(css.todo_stuff.think_about_allocator),
+                            i.allocator(),
                             FloatColor,
                             .{
                                 .srgb = .{
@@ -953,7 +950,7 @@ pub fn parseeColorFunction(location: css.SourceLocation, function: []const u8, i
         bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "hsla"))
     {
         const Fn = struct {
-            pub fn parsefn(h: f32, s: f32, l: f32, a: f32) CssColor {
+            pub fn parsefn(allocator: Allocator, h: f32, s: f32, l: f32, a: f32) CssColor {
                 const hsl = HSL{ .h = h, .s = s, .l = l, .alpha = a };
 
                 if (!std.math.isNan(h) and !std.math.isNan(s) and !std.math.isNan(l) and !std.math.isNan(a)) {
@@ -962,7 +959,7 @@ pub fn parseeColorFunction(location: css.SourceLocation, function: []const u8, i
 
                 return .{
                     .float = bun.create(
-                        @compileError(css.todo_stuff.think_about_allocator),
+                        allocator,
                         FloatColor,
                         .{ .hsl = hsl },
                     ),
@@ -972,7 +969,14 @@ pub fn parseeColorFunction(location: css.SourceLocation, function: []const u8, i
         return parseHslHwb(HSL, input, &parser, true, Fn.parsefn);
     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "hwb")) {
         const Fn = struct {
-            pub fn parsefn() void {}
+            pub fn parsefn(allocator: Allocator, h: f32, w: f32, b: f32, a: f32) CssColor {
+                const hwb = HWB{ .h = h, .w = w, .b = b, .alpha = a };
+                if (!std.math.isNan(h) and !std.math.isNan(w) and !std.math.isNan(b) and !std.math.isNan(a)) {
+                    return .{ .rgba = hwb.intoRGBA() };
+                } else {
+                    return .{ .float = bun.create(allocator, FloatColor, .{ .hwb = hwb }) };
+                }
+            }
         };
         return parseHslHwb(HWB, input, &parser, true, Fn.parsefn);
     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "rgb") or
@@ -991,7 +995,7 @@ pub fn parseeColorFunction(location: css.SourceLocation, function: []const u8, i
                 const light = switch (first_color) {
                     .light_dark => |c| c.light,
                     else => |light| bun.create(
-                        @compileError(css.todo_stuff.think_about_allocator),
+                        i.allocator(),
                         CssColor,
                         light,
                     ),
@@ -1006,7 +1010,7 @@ pub fn parseeColorFunction(location: css.SourceLocation, function: []const u8, i
                 const dark = switch (second_color) {
                     .light_dark => |c| c.dark,
                     else => |dark| bun.create(
-                        @compileError(css.todo_stuff.think_about_allocator),
+                        i.allocator(),
                         CssColor,
                         dark,
                     ),
@@ -2104,29 +2108,29 @@ pub fn parsePredefined(input: *css.Parser, parser: *ComponentParser) Result(CssC
             else
                 null;
 
-            const colorspace = if (input.expectIdent().asErr()) |e| return .{ .err = e };
+            const colorspace = if (i.expectIdent().asErr()) |e| return .{ .err = e };
 
             if (from) |f| {
                 if (f == .light_dark) {
-                    const state = input.state();
+                    const state = i.state();
                     const light = switch (parsePredefinedRelative(i, this.p, &colorspace, f.light_dark.light)) {
                         .result => |vv| vv,
                         .err => |e| return .{ .err = e },
                     };
-                    input.reset(&state);
-                    const dark = switch (parsePredefinedRelative(input, this.p, colorspace, f.light_dark.dark)) {
+                    i.reset(&state);
+                    const dark = switch (parsePredefinedRelative(i, this.p, colorspace, f.light_dark.dark)) {
                         .result => |vv| vv,
                         .err => |e| return .{ .err = e },
                     };
                     return .{ .result = CssColor{
                         .light_dark = .{
                             .light = bun.create(
-                                @compileError(css.todo_stuff.think_about_allocator),
+                                i.allocator(),
                                 CssColor,
                                 light,
                             ),
                             .dark = bun.create(
-                                @compileError(css.todo_stuff.think_about_allocator),
+                                i.allocator(),
                                 CssColor,
                                 dark,
                             ),
@@ -2135,7 +2139,7 @@ pub fn parsePredefined(input: *css.Parser, parser: *ComponentParser) Result(CssC
                 }
             }
 
-            return parsePredefinedRelative(input, parser, colorspace, if (from) |*f| f else null);
+            return parsePredefinedRelative(i, parser, colorspace, if (from) |*f| f else null);
         }
     };
 

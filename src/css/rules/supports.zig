@@ -53,7 +53,7 @@ pub const SupportsCondition = union(enum) {
 
     fn clone(this: *const SupportsCondition) SupportsCondition {
         _ = this; // autofix
-        @compileError(css.todo_stuff.think_about_allocator);
+        @compileError(css.todo_stuff.depth);
     }
 
     fn needsParens(this: *const SupportsCondition, parent: *const SupportsCondition) bool {
@@ -79,7 +79,7 @@ pub const SupportsCondition = union(enum) {
             return .{
                 .result = .{
                     .not = bun.create(
-                        @compileError(css.todo_stuff.think_about_allocator),
+                        input.allocator(),
                         SupportsCondition,
                         in_parens,
                     ),
@@ -93,9 +93,7 @@ pub const SupportsCondition = union(enum) {
         };
         var expected_type: ?i32 = null;
         var conditions = ArrayList(SupportsCondition){};
-        const mapalloc: std.mem.Allocator = {
-            @compileError(css.todo_stuff.think_about_allocator);
-        };
+        const mapalloc: std.mem.Allocator = input.allocator();
         var seen_declarations = std.ArrayHashMap(
             SeenDeclKey,
             usize,
@@ -113,6 +111,7 @@ pub const SupportsCondition = union(enum) {
             },
             false,
         ).init(mapalloc);
+        defer seen_declarations.deinit();
 
         while (true) {
             const Closure = struct {
@@ -150,7 +149,7 @@ pub const SupportsCondition = union(enum) {
             switch (_condition) {
                 .result => |condition| {
                     if (conditions.items.len == 0) {
-                        conditions.append(@compileError(css.todo_stuff.think_about_allocator), in_parens.clone());
+                        conditions.append(input.allocator(), in_parens.clone());
                         if (in_parens == .declaration) {
                             const property_id = in_parens.declaration.property_id;
                             const value = in_parens.declaration.value;
@@ -176,14 +175,14 @@ pub const SupportsCondition = union(enum) {
                             }
                         } else {
                             seen_declarations.put(key, conditions.items.len) catch bun.outOfMemory();
-                            conditions.append(@compileError(css.todo_stuff.think_about_allocator), SupportsCondition{
+                            conditions.append(input.allocator(), SupportsCondition{
                                 .property_id = property_id,
                                 .value = value,
                             }) catch bun.outOfMemory();
                         }
                     } else {
                         conditions.append(
-                            @compileError(css.todo_stuff.think_about_allocator),
+                            input.allocator(),
                             condition,
                         ) catch bun.outOfMemory();
                     }
@@ -193,7 +192,9 @@ pub const SupportsCondition = union(enum) {
         }
 
         if (conditions.items.len() == 1) {
-            return conditions.pop();
+            const ret = conditions.pop();
+            defer conditions.deinit(input.allocator());
+            return ret;
         }
 
         if (expected_type == 1) return .{ .@"and" = conditions };

@@ -1,4 +1,5 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const bun = @import("root").bun;
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
@@ -219,12 +220,12 @@ pub const Length = union(enum) {
     /// A computed length value using `calc()`.
     calc: *Calc(Length),
 
-    pub fn mulF32(this: *const Length, other: f32) Length {
+    pub fn mulF32(this: *const Length, allocator: Allocator, other: f32) Length {
         return switch (this.*) {
             .value => Length{ .value = this.value * other },
             .calc => Length{
                 .calc = bun.create(
-                    @compileError(css.todo_stuff.think_about_allocator),
+                    allocator,
                     Calc(Length),
                     this.calc.* * other,
                 ),
@@ -238,7 +239,7 @@ pub const Length = union(enum) {
             if (calc_value == .value) return .{ .calc = calc_value.value.* };
             return .{
                 .calc = bun.create(
-                    @compileError(css.todo_stuff.think_about_allocator),
+                    input.allocator(),
                     Calc(Length),
                     calc_value,
                 ),

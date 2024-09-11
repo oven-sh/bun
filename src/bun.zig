@@ -83,6 +83,7 @@ pub const glob = @import("./glob.zig");
 pub const patch = @import("./patch.zig");
 pub const ini = @import("./ini.zig");
 pub const Bitflags = @import("./bitflags.zig").Bitflags;
+pub const css = @import("./css/css_parser.zig");
 
 pub const shell = struct {
     pub usingnamespace @import("./shell/shell.zig");

@@ -94,24 +94,18 @@ pub const PrintErr = error{
     lol,
 };
 
+// TODO: smallvec
 pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
     _ = N; // autofix
-    {
-        @compileError(todo_stuff.smallvec);
-    }
     return ArrayList(T);
 }
 
 pub const Bitflags = bun.Bitflags;
 
 pub const todo_stuff = struct {
-    pub const think_about_allocator = "TODO: think about how to pass allocator";
-
     pub const think_mem_mgmt = "TODO: think about memory management";
 
     pub const depth = "TODO: we need to go deeper";
-
-    pub const smallvec = "TODO: implement smallvec";
 
     pub const match_ignore_ascii_case = "TODO: implement match_ignore_ascii_case";
 
@@ -465,7 +459,7 @@ pub fn DefineListShorthand(comptime T: type) type {
 
 fn consume_until_end_of_block(block_type: BlockType, tokenizer: *Tokenizer) void {
     const StackCount = 16;
-    var sfb = std.heap.stackFallback(@sizeOf(BlockType) * StackCount, @compileError(todo_stuff.think_about_allocator));
+    var sfb = std.heap.stackFallback(@sizeOf(BlockType) * StackCount, tokenizer.allocator);
     const alloc = sfb.get();
     var stack = std.ArrayList(BlockType).initCapacity(alloc, StackCount) catch unreachable;
     defer stack.deinit();
@@ -763,6 +757,27 @@ pub fn ValidQualifiedRuleParser(comptime T: type) void {
 }
 
 pub const DefaultAtRule = struct {};
+
+pub const DefaultAtRuleParser = struct {
+    const This = @This();
+
+    pub const AtRuleParser = struct {
+        pub const Prelude = void;
+        pub const AtRule = DefaultAtRule;
+
+        pub fn parsePrelude(_: *This, name: []const u8, input: *Parser) Result(Prelude) {
+            return .{ .err = input.newError(BasicParseErrorKind{ .at_rule_invalid = name }) };
+        }
+
+        pub fn parseBlock(_: *This, _: AtRuleParser.Prelude, _: *const ParserState, input: *Parser) Result(AtRuleParser.AtRule) {
+            return .{ .err = input.newError(BasicParseErrorKind.at_rule_body_invalid) };
+        }
+
+        pub fn ruleWithoutBlock(_: *This, _: AtRuleParser.Prelude, _: *const ParserState) Maybe(AtRuleParser.AtRule, void) {
+            return .{ .err = {} };
+        }
+    };
+};
 
 /// Same as `ValidAtRuleParser` but modified to provide parser options
 pub fn ValidCustomAtRuleParser(comptime T: type) void {
@@ -1197,6 +1212,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                 .rules = &this.rules,
                 .is_in_style_rule = false,
                 .allow_declarations = false,
+                .allocator = this.allocator,
             };
         }
     };
@@ -1216,6 +1232,7 @@ pub fn NestedRuleParser(comptime T: type) type {
         rules: *CssRuleList(T.CustomAtRuleParser.AtRule),
         is_in_style_rule: bool,
         allow_declarations: bool,
+        allocator: Allocator,
 
         const This = @This();
 
@@ -1420,14 +1437,14 @@ pub fn NestedRuleParser(comptime T: type) type {
                         while (parser.next()) |result| {
                             if (result) |decl| {
                                 properties.append(
-                                    @compileError(todo_stuff.think_about_allocator),
+                                    input.allocator(),
                                     decl,
                                 ) catch bun.outOfMemory();
                             }
                         }
 
                         this.rules.v.append(
-                            @compileError(todo_stuff.think_about_allocator),
+                            input.allocator,
                             .{ .font_face = css_rules.font_face.FontFaceRule{
                                 .properties = properties,
                                 .loc = loc,
@@ -1441,14 +1458,14 @@ pub fn NestedRuleParser(comptime T: type) type {
                             .result => |v| v,
                         };
                         this.rules.v.append(
-                            @compileError(todo_stuff.think_about_allocator),
+                            input.allocator(),
                             .{ .font_palette_values = rule },
                         ) catch bun.outOfMemory();
                     },
                     .counter_style => {
                         const name = prelude.counter_style;
                         this.rules.v.append(
-                            @compileError(todo_stuff.think_about_allocator),
+                            input.allocator(),
                             .{
                                 .counter_style = css_rules.counter_style.CounterStyleRule{
                                     .name = name,
@@ -1468,7 +1485,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                             .result => |v| v,
                         };
                         this.rules.v.append(
-                            @compileError(todo_stuff.think_about_allocator),
+                            input.allocator(),
                             .{
                                 .media = css_rules.media.MediaRule(T.CustomAtRuleParser.AtRule){
                                     .query = query,
@@ -1484,7 +1501,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                             .err => |e| return .{ .err = e },
                             .result => |v| v,
                         };
-                        this.rules.v.append(@compileError(todo_stuff.think_about_allocator), .{
+                        this.rules.v.append(input.allocator(), .{
                             .supports = css_rules.supports.SupportsRule{
                                 .condition = condition,
                                 .rules = rules,
@@ -1498,7 +1515,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                             .result => |v| v,
                         };
                         this.rules.v.append(
-                            @compileError(todo_stuff.think_about_allocator),
+                            input.allocator(),
                             .{
                                 .container = css_rules.container.ContainerRule(T.CustomAtRuleParser.AtRule){
                                     .name = prelude.container.name,
@@ -1515,7 +1532,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                             .result => |v| v,
                         };
                         this.rules.v.append(
-                            @compileError(todo_stuff.think_about_allocator),
+                            input.allocator(),
                             .{
                                 .scope = css_rules.scope.ScopeRule(T.CustomAtRuleParser.AtRule){
                                     .scope_start = prelude.scope.scope_start,
@@ -1527,7 +1544,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                         ) catch bun.outOfMemory();
                     },
                     .viewport => {
-                        this.rules.v.append(@compileError(todo_stuff.think_about_allocator), .{
+                        this.rules.v.append(input.allocator(), .{
                             .viewport = css_rules.viewport.ViewportRule{
                                 .vendor_prefix = prelude.viewport,
                                 .declarations = switch (DeclarationBlock.parse(input, this.options)) {
@@ -1547,13 +1564,13 @@ pub fn NestedRuleParser(comptime T: type) type {
                         while (iter.next()) |result| {
                             if (result) |keyframe| {
                                 keyframes.append(
-                                    @compileError(todo_stuff.think_about_allocator),
+                                    input.allocator(),
                                     keyframe,
                                 ) catch bun.outOfMemory();
                             }
                         }
 
-                        this.rules.v.append(@compileError(todo_stuff.think_about_allocator), .{
+                        this.rules.v.append(input.allocator(), .{
                             .keyframes = css_rules.keyframes.KeyframesRule{
                                 .name = prelude.keyframes.name,
                                 .keyframes = keyframes,
@@ -1569,7 +1586,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                             .result => |v| v,
                         };
                         this.rules.v.append(
-                            @compileError(todo_stuff.think_about_allocator),
+                            input.allocator(),
                             .{ .page = rule },
                         ) catch bun.outOfMemory();
                     },
@@ -1578,7 +1595,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                             .err => |e| return .{ .err = e },
                             .result => |v| v,
                         };
-                        this.rules.v.append(@compileError(todo_stuff.think_about_allocator), .{
+                        this.rules.v.append(input.allocator(), .{
                             .moz_document = css_rules.document.MozDocumentRule(T.CustomAtRuleParser.AtRule){
                                 .rules = rules,
                                 .loc = loc,
@@ -1597,13 +1614,13 @@ pub fn NestedRuleParser(comptime T: type) type {
                             .result => |v| v,
                         };
 
-                        this.rules.v.append(@compileError(todo_stuff.think_about_allocator), .{
+                        this.rules.v.append(input.allocator(), .{
                             .layer_block = css_rules.layer.LayerBlockRule{ .name = name, .rules = rules, .loc = loc },
                         });
                     },
                     .property => {
                         const name = prelude.property[0];
-                        this.rules.v.append(@compileError(todo_stuff.think_about_allocator), .{
+                        this.rules.v.append(input.allocator(), .{
                             .property = switch (css_rules.property.PropertyRule.parse(name, input, loc)) {
                                 .err => |e| return .{ .err = e },
                                 .result => |v| v,
@@ -1620,7 +1637,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                             .result => |v| v,
                         };
                         this.rules.v.append(
-                            @compileError(todo_stuff.think_about_allocator),
+                            input.allocator(),
                             .{
                                 .starting_style = css_rules.starting_style.StartingStyleRule{
                                     .rules = rules,
@@ -1638,7 +1655,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                         const declarations = result[0];
                         const rules = result[1];
                         this.rules.v.append(
-                            @compileError(todo_stuff.think_about_allocator),
+                            input.allocator(),
                             .{
                                 .nesting = css_rules.nesting.NestingRule{
                                     .style = css_rules.style.StyleRule(T.CustomAtRuleParser.AtRule){
@@ -1656,7 +1673,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                     .font_feature_values => bun.unreachablePanic("", .{}),
                     .unknown => {
                         this.rules.v.append(
-                            @compileError(todo_stuff.think_about_allocator),
+                            input.allocator(),
                             .{
                                 .unknown = css_rules.unknown.UnknownAtRule{
                                     .name = prelude.unknown.name,
@@ -1672,7 +1689,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                     },
                     .custom => {
                         this.rules.v.append(
-                            @compileError(todo_stuff.think_about_allocator),
+                            input.allocator(),
                             .{
                                 .custom = switch (parse_custom_at_rule_body(T, prelude, input, start, this.options, this.at_rule_parser, this.is_in_style_rule)) {
                                     .err => |e| return .{ .err = e },
@@ -1697,7 +1714,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                         }
 
                         this.rules.v.append(
-                            @compileError(todo_stuff.think_about_allocator),
+                            this.allocator,
                             .{
                                 .layer_statement = css_rules.layer.LayerStatementRule{
                                     .names = prelude.layer.names,
@@ -1709,7 +1726,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                     },
                     .unknown => {
                         this.rules.v.append(
-                            @compileError(todo_stuff.think_about_allocator),
+                            this.allocator,
                             .{
                                 .unknown = css_rules.unknown.UnknownAtRule{
                                     .name = prelude.unknown.name,
@@ -1723,7 +1740,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                     },
                     .custom => {
                         this.rules.v.append(
-                            @compileError(todo_stuff.think_about_allocator),
+                            this.allocator,
                             .{
                                 .custom = switch (parse_custom_at_rule_body(T, prelude, null, start, this.options, this.at_rule_parser, this.is_in_style_rule)) {
                                     .err => |e| return .{ .err = e },
@@ -1827,7 +1844,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                         iter.parser.declarations.clearRetainingCapacity();
                         iter.parser.important_declarations.clearRetainingCapacity();
                         errors.append(
-                            @compileError(todo_stuff.think_about_allocator),
+                            this.allocator,
                             e,
                         ) catch bun.outOfMemory();
                     } else {
@@ -2049,6 +2066,11 @@ pub fn StyleSheet(comptime AtRule: type) type {
             }
         }
 
+        pub fn parse(allocator: Allocator, code: []const u8, options: ParserOptions) Maybe(This, Err(ParserError)) {
+            var default_at_rule_parser = DefaultAtRuleParser{};
+            return parseWith(allocator, code, options, DefaultAtRuleParser, &default_at_rule_parser);
+        }
+
         /// Parse a style sheet from a string.
         pub fn parseWith(
             allocator: Allocator,
@@ -2056,7 +2078,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
             options: ParserOptions,
             comptime P: type,
             at_rule_parser: *P,
-        ) Maybe(This, Error(ParserError)) {
+        ) Maybe(This, Err(ParserError)) {
             var input = ParserInput.new(allocator, code);
             var parser = Parser.new(allocator, &input);
 
@@ -2198,7 +2220,7 @@ pub fn RuleBodyParser(comptime P: type) type {
                     .at_keyword => {
                         const name = tok.at_keyword;
                         return parse_at_rule(
-                            @compileError(todo_stuff.think_about_allocator),
+                            this.input.allocator,
                             &start,
                             name,
                             this.input,
@@ -2383,19 +2405,25 @@ pub const Parser = struct {
         // TODO(zack): might be faster to use stack fallback here
         // in the common case we may have just 1, but I feel like it is also very common to have >1
         // which means every time we have >1 items we will always incur 1 more additional allocation
+        const sfb = std.heap.stackFallback(@sizeOf(T), this.allocator());
+        const alloc = sfb.get();
         var values = ArrayList(T){};
-        values.initCapacity(@compileError(todo_stuff.think_about_allocator), 1) catch unreachable;
+        values.initCapacity(alloc, 1) catch unreachable;
 
         while (true) {
             this.skipWhitespace(); // Unnecessary for correctness, but may help try() in parse_one rewind less.
             if (this.parseUntilBefore(Delimiters{ .comma = true }, {}, voidWrap(T, parse_one))) |v| {
-                values.append(@compileError(todo_stuff.think_about_allocator), v) catch unreachable;
+                values.append(alloc, v) catch unreachable;
             } else |e| {
                 if (!ignore_errors) return e;
             }
             const tok = switch (this.next()) {
                 .result => |v| v,
-                .err => return values,
+                .err => {
+                    const needs_clone = values.items.len == 1;
+                    if (needs_clone) return values.clone(this.allocator()) catch bun.outOfMemory();
+                    return values;
+                },
             };
             if (tok != .comma) bun.unreachablePanic("", .{});
         }
@@ -2994,7 +3022,7 @@ pub const nth = struct {
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "n-")) {
                         return if (parse_signless_b(input, a).asErr()) |e| return .{ .err = e };
                     } else {
-                        if (parse_n_dash_digits(unit)) |b| {
+                        if (parse_n_dash_digits(input.allocator, unit)) |b| {
                             return .{ a, b };
                         } else {
                             return input.newBasicUnexpectedTokenError(.{ .ident = unit });
@@ -3019,7 +3047,7 @@ pub const nth = struct {
                     return if (parse_signless_b(input, -1, -1).asErr()) |e| return .{ .err = e };
                 } else {
                     const slice, const a = if (bun.strings.startsWithChar(value, '-')) .{ value[1..], -1 } else .{ value, 1 };
-                    if (parse_n_dash_digits(slice)) |b| return .{ a, b };
+                    if (parse_n_dash_digits(input.allocator, slice)) |b| return .{ a, b };
                     return input.newBasicUnexpectedTokenError(.{ .ident = value });
                 }
             },
@@ -3035,7 +3063,7 @@ pub const nth = struct {
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(value, "-n")) {
                         return if (parse_signless_b(input, 1, -1).asErr()) |e| return .{ .err = e };
                     } else {
-                        if (parse_n_dash_digits(value)) |b| {
+                        if (parse_n_dash_digits(input.allocator, value)) |b| {
                             return .{ 1, b };
                         } else {
                             return input.newBasicUnexpectedTokenError(.{ .ident = value });
@@ -3079,7 +3107,7 @@ pub const nth = struct {
         return input.newBasicUnexpectedTokenError(tok.*);
     }
 
-    fn parse_n_dash_digits(str: []const u8) Maybe(i32, void) {
+    fn parse_n_dash_digits(allocator: Allocator, str: []const u8) Maybe(i32, void) {
         const bytes = str;
         if (bytes.len >= 3 and
             bun.strings.eqlCaseInsensitiveASCIIICheckLength(bytes[0..2], "n-") and
@@ -3089,14 +3117,14 @@ pub const nth = struct {
             }
             break :brk true;
         }) {
-            return parse_number_saturate(str[1..]); // Include the minus sign
+            return parse_number_saturate(allocator, str[1..]); // Include the minus sign
         } else {
             return .{ .err = {} };
         }
     }
 
-    fn parse_number_saturate(string: []const u8) Maybe(i32, void) {
-        var input = ParserInput.new(@compileError(todo_stuff.think_about_allocator), string);
+    fn parse_number_saturate(allocator: Allocator, string: []const u8) Maybe(i32, void) {
+        var input = ParserInput.new(allocator, string);
         var parser = Parser.new(&input);
         const tok = switch (parser.nextIncludingWhitespaceAndComments()) {
             .result => |v| v,

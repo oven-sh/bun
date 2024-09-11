@@ -80,7 +80,7 @@ pub fn CssRule(comptime Rule: type) type {
         /// A placeholder for a rule that was removed.
         ignored,
         /// An unknown at-rule.
-        unknown: unknown.UnknownAtRule(Rule),
+        unknown: unknown.UnknownAtRule,
         /// A custom at-rule.
         custom: Rule,
 
@@ -139,7 +139,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
                         } else null;
 
                         if (dest.dependencies) |*deps| {
-                            deps.append(@compileError(css.todo_stuff.think_about_allocator), dep.?) catch unreachable;
+                            deps.append(dest.allocator, dep.?) catch unreachable;
                             continue;
                         }
                     }

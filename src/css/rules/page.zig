@@ -48,7 +48,7 @@ pub const PageSelector = struct {
                 .err => |e| return .{ .err = e },
             }) {
                 pseudo_classes.append(
-                    @compileError(css.todo_stuff.think_about_allocator),
+                    input.allocator(),
                     switch (PagePseudoClass.parse(input)) {
                         .result => |vv| vv,
                         .err => |e| return .{ .err = e },
@@ -315,7 +315,7 @@ pub const PageRuleParser = struct {
         pub fn parsePrelude(_: *This, name: []const u8, input: *css.Parser) Result(Prelude) {
             const loc = input.currentSourceLocation();
             return switch (css.parse_utility.parseString(
-                @compileError(css.todo_stuff.think_about_allocator),
+                input.allocator(),
                 PageMarginBox,
                 name,
                 PageMarginBox.parse,
@@ -333,7 +333,7 @@ pub const PageRuleParser = struct {
                 .result => |vv| vv,
                 .err => |e| return .{ .err = e },
             };
-            this.rules.append(@compileError(css.todo_stuff.think_about_allocator), PageMarginRule{
+            this.rules.append(input.allocator(), PageMarginRule{
                 .margin_box = prelude,
                 .declarations = declarations,
                 .loc = Location{

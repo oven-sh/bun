@@ -60,13 +60,13 @@ pub const SyntaxString = union(enum) {
 
     pub fn parse(input: *css.Parser) Result(SyntaxString) {
         const string = input.expectString();
-        const result = SyntaxString.parseString(string);
+        const result = SyntaxString.parseString(input.allocator(), string);
         if (result.isErr()) return input.newCustomError(css.ParserError.invalid_value);
         return result;
     }
 
     /// Parses a syntax string.
-    pub fn parseString(input: []const u8) css.Maybe(SyntaxString, void) {
+    pub fn parseString(allocator: std.mem.Allocator, input: []const u8) css.Maybe(SyntaxString, void) {
         // https://drafts.css-houdini.org/css-properties-values-api/#parsing-syntax
         var trimmed_input = std.mem.trimLeft(u8, input, SPACE_CHARACTERS);
         if (trimmed_input.len == 0) {
@@ -79,10 +79,11 @@ pub const SyntaxString = union(enum) {
 
         var components = ArrayList(SyntaxComponent){};
 
+        // PERF(alloc): count first?
         while (true) {
             const component = try SyntaxComponent.parseString(&trimmed_input);
             try components.append(
-                @compileError(css.todo_stuff.think_about_allocator),
+                allocator,
                 component,
             );
 

@@ -2982,6 +2982,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
 
             var socket_config = ssl_opts.?;
+            ssl_opts = null;
             defer socket_config.deinit();
             const options = socket_config.asUSockets();
 
@@ -3005,10 +3006,10 @@ fn NewSocket(comptime ssl: bool) type {
                 .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p[0..protos_len]) catch bun.outOfMemory()) else null,
                 .server_name = if (socket_config.server_name) |server_name| (bun.default_allocator.dupe(u8, server_name[0..bun.len(server_name)]) catch bun.outOfMemory()) else null,
                 .socket_context = null, // only set after the wrapTLS
+                .flags = .{
+                    .is_active = false,
+                },
             });
-
-            const tls_js_value = tls.getThisValue(globalObject);
-            TLSSocket.dataSetCached(tls_js_value, globalObject, default_data);
 
             const TCPHandler = NewWrappedHandler(false);
 
@@ -3022,11 +3023,50 @@ fn NewSocket(comptime ssl: bool) type {
                 WrappedSocket,
                 TLSHandler,
             ) orelse {
-                handlers_ptr.unprotect();
-                handlers.vm.allocator.destroy(handlers_ptr);
-                bun.default_allocator.destroy(tls);
+                const err = BoringSSL.ERR_get_error();
+                defer {
+                    if (err != 0) {
+                        BoringSSL.ERR_clear_error();
+                    }
+                }
+                tls.wrapped = .none;
+
+                // Reset config to TCP
+                uws.NewSocketHandler(false).configure(
+                    this.socket.context().?,
+                    true,
+                    *TCPSocket,
+                    struct {
+                        pub const onOpen = NewSocket(false).onOpen;
+                        pub const onClose = NewSocket(false).onClose;
+                        pub const onData = NewSocket(false).onData;
+                        pub const onWritable = NewSocket(false).onWritable;
+                        pub const onTimeout = NewSocket(false).onTimeout;
+                        pub const onConnectError = NewSocket(false).onConnectError;
+                        pub const onEnd = NewSocket(false).onEnd;
+                        pub const onHandshake = NewSocket(false).onHandshake;
+                    },
+                );
+
+                tls.deref();
+
+                // If BoringSSL gave us an error code, let's use it.
+                if (err != 0 and !globalObject.hasException()) {
+                    globalObject.throwValue(BoringSSL.ERR_toJS(globalObject, err));
+                }
+
+                // If BoringSSL did not give us an error code, let's throw a generic error.
+                if (!globalObject.hasException()) {
+                    globalObject.throw("Failed to upgrade socket from TCP -> TLS. Is the TLS config correct?", .{});
+                }
+
                 return JSValue.jsUndefined();
             };
+
+            // Do not create the JS Wrapper object until _after_ we've validated the TLS config.
+            // Otherwise, JSC will GC it and the lifetime gets very complicated.
+            const tls_js_value = tls.getThisValue(globalObject);
+            TLSSocket.dataSetCached(tls_js_value, globalObject, default_data);
 
             tls.socket = new_socket;
             tls.socket_context = new_socket.context(); // owns the new tls context that have a ref from the old one

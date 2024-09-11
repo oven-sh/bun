@@ -1,6 +1,6 @@
 import type { Socket } from "bun";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
-import { expect, it } from "bun:test";
+import { expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, expectMaxObjectTypeCount, isWindows, tls } from "harness";
 it("should coerce '0' to 0", async () => {
   const listener = Bun.listen({
@@ -494,6 +494,106 @@ it("should not call drain before handshake", async () => {
   });
   await promise;
   expect(socket.authorized).toBe(true);
+});
+it("upgradeTLS handles errors", async () => {
+  using server = Bun.serve({
+    tls,
+    async fetch(req) {
+      return new Response("Hello World");
+    },
+  });
+  let body = "";
+  let rawBody = Buffer.alloc(0);
+
+  using socket = await Bun.connect({
+    hostname: "localhost",
+    port: server.port,
+    socket: {
+      data(socket, data) {
+        rawBody = Buffer.concat([rawBody, data]);
+      },
+      close() {},
+      error(err) {},
+    },
+  });
+
+  const handlers = {
+    data: Buffer.from("GET / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n"),
+    socket: {
+      data: jest.fn(),
+      close: jest.fn(),
+      drain: jest.fn(),
+      error: jest.fn(),
+      open: jest.fn(),
+    },
+  };
+  expect(() =>
+    socket.upgradeTLS({
+      ...handlers,
+      tls: {
+        ca: "invalid certificate!",
+      },
+    }),
+  ).toThrow(
+    expect.objectContaining({
+      code: "ERR_BORINGSSL",
+    }),
+  );
+
+  expect(() =>
+    socket.upgradeTLS({
+      ...handlers,
+      tls: {
+        cert: "invalid certificate!",
+      },
+    }),
+  ).toThrow(
+    expect.objectContaining({
+      code: "ERR_BORINGSSL",
+    }),
+  );
+
+  expect(() =>
+    socket.upgradeTLS({
+      ...handlers,
+      tls: {
+        ...tls,
+        key: "invalid key!",
+      },
+    }),
+  ).toThrow(
+    expect.objectContaining({
+      code: "ERR_BORINGSSL",
+    }),
+  );
+
+  expect(() =>
+    socket.upgradeTLS({
+      ...handlers,
+      tls: {
+        ...tls,
+        key: "invalid key!",
+        cert: "invalid cert!",
+      },
+    }),
+  ).toThrow(
+    expect.objectContaining({
+      code: "ERR_BORINGSSL",
+    }),
+  );
+
+  expect(() =>
+    socket.upgradeTLS({
+      ...handlers,
+      tls: {},
+    }),
+  ).toThrow();
+
+  expect(handlers.socket.close).not.toHaveBeenCalled();
+  expect(handlers.socket.error).not.toHaveBeenCalled();
+  expect(handlers.socket.data).not.toHaveBeenCalled();
+  expect(handlers.socket.drain).not.toHaveBeenCalled();
+  expect(handlers.socket.open).not.toHaveBeenCalled();
 });
 it("should be able to upgrade to TLS", async () => {
   using server = Bun.serve({

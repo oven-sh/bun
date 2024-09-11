@@ -47,4 +47,5 @@ export default [
   ["ERR_FORMDATA_PARSE_ERROR", TypeError, "TypeError"],
   ["ERR_BODY_ALREADY_USED", Error, "Error"],
   ["ERR_STREAM_WRAP", Error, "Error"],
+  ["ERR_BORINGSSL", Error, "Error"],
 ] as ErrorCodeMapping;

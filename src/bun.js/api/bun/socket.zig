@@ -2904,6 +2904,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
 
             var exception: JSC.C.JSValueRef = null;
+            var success = false;
 
             const opts = args.ptr[0];
             if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
@@ -2915,13 +2916,34 @@ fn NewSocket(comptime ssl: bool) type {
                 globalObject.throw("Expected \"socket\" option", .{});
                 return .zero;
             };
+            if (globalObject.hasException()) {
+                return .zero;
+            }
 
             var handlers = Handlers.fromJS(globalObject, socket_obj, &exception) orelse {
-                globalObject.throwValue(exception.?.value());
+                if (!globalObject.hasException() and exception != null) {
+                    globalObject.throwValue(exception.?.value());
+                }
+
                 return .zero;
             };
 
+            if (!globalObject.hasException() and exception != null) {
+                globalObject.throwValue(exception.?.value());
+            }
+
+            if (globalObject.hasException()) {
+                return .zero;
+            }
+
             var ssl_opts: ?JSC.API.ServerConfig.SSLConfig = null;
+            defer {
+                if (!success) {
+                    if (ssl_opts) |*ssl_config| {
+                        ssl_config.deinit();
+                    }
+                }
+            }
 
             if (opts.getTruthy(globalObject, "tls")) |tls| {
                 if (tls.isBoolean()) {
@@ -2931,10 +2953,18 @@ fn NewSocket(comptime ssl: bool) type {
                 } else {
                     if (JSC.API.ServerConfig.SSLConfig.inJS(JSC.VirtualMachine.get(), globalObject, tls, &exception)) |ssl_config| {
                         ssl_opts = ssl_config;
-                    } else if (exception != null) {
-                        return .zero;
                     }
                 }
+            }
+
+            if (exception != null) {
+                if (!globalObject.hasException()) {
+                    globalObject.throwValue(exception.?.value());
+                }
+            }
+
+            if (globalObject.hasException()) {
+                return .zero;
             }
 
             if (ssl_opts == null) {
@@ -2946,6 +2976,9 @@ fn NewSocket(comptime ssl: bool) type {
             if (opts.fastGet(globalObject, .data)) |default_data_value| {
                 default_data = default_data_value;
                 default_data.ensureStillAlive();
+            }
+            if (globalObject.hasException()) {
+                return .zero;
             }
 
             var socket_config = ssl_opts.?;
@@ -2998,10 +3031,11 @@ fn NewSocket(comptime ssl: bool) type {
             tls.socket = new_socket;
             tls.socket_context = new_socket.context(); // owns the new tls context that have a ref from the old one
             tls.ref();
+            const vm = handlers.vm;
 
-            var raw_handlers_ptr = handlers.vm.allocator.create(Handlers) catch bun.outOfMemory();
+            var raw_handlers_ptr = vm.allocator.create(Handlers) catch bun.outOfMemory();
             raw_handlers_ptr.* = .{
-                .vm = globalObject.bunVM(),
+                .vm = vm,
                 .globalObject = globalObject,
                 .onOpen = this.handlers.onOpen,
                 .onClose = this.handlers.onClose,
@@ -3048,25 +3082,39 @@ fn NewSocket(comptime ssl: bool) type {
                 ctx.* = .{ .tcp = raw, .tls = tls };
             }
 
-            // start TLS handshake after we set ext
-            new_socket.startTLS(!this.handlers.is_server);
+            const array = JSC.JSValue.createEmptyArray(globalObject, 2);
+            array.putIndex(globalObject, 0, raw_js_value);
+            array.putIndex(globalObject, 1, tls_js_value);
 
-            //detach and invalidate the old instance
+            // Ensure we keep the JS values alive until the end of this function call.
+            var strong_array = JSC.Strong.create(array, globalObject);
+            defer strong_array.deinit();
+
+            const should_deref = !this.socket.isDetached();
+            defer {
+                if (should_deref) {
+                    this.deref();
+                }
+            }
+
+            // detach and invalidate the old instance
             this.socket.detach();
-            this.deref();
+
             if (this.flags.is_active) {
-                const vm = this.handlers.vm;
+                this.poll_ref.disable();
                 this.flags.is_active = false;
                 // will free handlers when hits 0 active connections
                 // the connection can be upgraded inside a handler call so we need to garantee that it will be still alive
                 this.handlers.markInactive();
-                this.poll_ref.unref(vm);
+
                 this.has_pending_activity.store(false, .release);
             }
 
-            const array = JSC.JSValue.createEmptyArray(globalObject, 2);
-            array.putIndex(globalObject, 0, raw_js_value);
-            array.putIndex(globalObject, 1, tls_js_value);
+            // start TLS handshake after we set extension on the socket
+
+            new_socket.startTLS(!is_server);
+
+            success = true;
             return array;
         }
     };

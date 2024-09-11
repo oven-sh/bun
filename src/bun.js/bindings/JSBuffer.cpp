@@ -250,37 +250,37 @@ static int normalizeCompareVal(int val, size_t a_length, size_t b_length)
 static inline uint32_t parseIndex(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, ASCIILiteral name, JSValue arg, size_t upperBound)
 {
     if (!arg.isNumber()) {
-        scope.throwException(lexicalGlobalObject, Bun::ERR::INVALID_ARG_TYPE(lexicalGlobalObject, name, "number"_s, arg));
+        Bun::ERR::throw_INVALID_ARG_TYPE(scope, lexicalGlobalObject, name, "number"_s, arg);
         return 0;
     }
 
     auto num = arg.asNumber();
     if (num < 0 || std::isinf(num)) {
-        scope.throwException(lexicalGlobalObject, Bun::ERR::OUT_OF_RANGE(lexicalGlobalObject, name, 0, upperBound, arg));
+        Bun::ERR::throw_OUT_OF_RANGE(scope, lexicalGlobalObject, name, 0, upperBound, arg);
         return 0;
     }
     if (auto num = arg.tryGetAsUint32Index()) {
         return num.value();
     }
     if (auto num2 = static_cast<size_t>(num)) {
-        scope.throwException(lexicalGlobalObject, Bun::ERR::OUT_OF_RANGE(lexicalGlobalObject, name, 0, upperBound, arg));
+        Bun::ERR::throw_OUT_OF_RANGE(scope, lexicalGlobalObject, name, 0, upperBound, arg);
         return 0;
     }
 
-    scope.throwException(lexicalGlobalObject, Bun::ERR::INVALID_ARG_TYPE(lexicalGlobalObject, name, "integer"_s, arg));
+    Bun::ERR::throw_INVALID_ARG_TYPE(scope, lexicalGlobalObject, name, "integer"_s, arg);
     return 0;
 }
 
 static inline WebCore::BufferEncodingType parseEncoding(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSValue arg)
 {
     if (UNLIKELY(!arg.isString())) {
-        scope.throwException(lexicalGlobalObject, Bun::ERR::INVALID_ARG_TYPE(lexicalGlobalObject, "encoding"_s, "string"_s, arg));
+        Bun::ERR::throw_INVALID_ARG_TYPE(scope, lexicalGlobalObject, "encoding"_s, "string"_s, arg);
         return WebCore::BufferEncodingType::utf8;
     }
 
     std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg);
     if (UNLIKELY(!encoded)) {
-        scope.throwException(lexicalGlobalObject, Bun::ERR::UNKNOWN_ENCODING(lexicalGlobalObject, arg));
+        Bun::ERR::throw_UNKNOWN_ENCODING(scope, lexicalGlobalObject, arg);
         return WebCore::BufferEncodingType::utf8;
     }
 
@@ -560,7 +560,7 @@ static inline JSC::EncodedJSValue constructBufferFromStringAndEncoding(JSC::JSGl
     if (arg1 && arg1.isString()) {
         std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg1);
         if (!encoded) {
-            scope.throwException(lexicalGlobalObject, Bun::ERR::UNKNOWN_ENCODING(lexicalGlobalObject, arg1));
+            Bun::ERR::throw_UNKNOWN_ENCODING(scope, lexicalGlobalObject, arg1);
             return JSC::JSValue::encode(jsUndefined());
         }
 
@@ -741,7 +741,7 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_byteLengthBody(JSC
         return JSValue::encode(jsNumber(arrayBuffer->impl()->byteLength()));
     }
 
-    scope.throwException(lexicalGlobalObject, Bun::ERR::INVALID_ARG_TYPE(lexicalGlobalObject, "string"_s, "string or an instance of Buffer or ArrayBuffer"_s, callFrame->argument(0)));
+    Bun::ERR::throw_INVALID_ARG_TYPE(scope, lexicalGlobalObject, "string"_s, "string or an instance of Buffer or ArrayBuffer"_s, callFrame->argument(0));
     return JSC::JSValue::encode(jsUndefined());
 }
 
@@ -1214,7 +1214,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlob
         if (str.len == 0) {
             memset(startPtr, 0, end - start);
         } else if (UNLIKELY(!Bun__Buffer_fill(&str, startPtr, end - start, encoding))) {
-            scope.throwException(lexicalGlobalObject, Bun::ERR::INVALID_ARG_VALUE(lexicalGlobalObject, "value"_s, value));
+            Bun::ERR::throw_INVALID_ARG_VALUE(scope, lexicalGlobalObject, "value"_s, value);
             return {};
         }
     } else if (auto* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(value)) {

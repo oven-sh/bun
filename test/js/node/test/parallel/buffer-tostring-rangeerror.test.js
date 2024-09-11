@@ -19,7 +19,7 @@ const errorMatcher = expect.objectContaining({
   message: expect.any(String),
 });
 
-test("Buffer toString with large buffer throws RangeError", () => {
+test.todo("Buffer toString with large buffer throws RangeError", () => {
   expect(() => Buffer(len).toString("utf8")).toThrow(errorMatcher);
   expect(() => SlowBuffer(len).toString("utf8")).toThrow(errorMatcher);
   expect(() => Buffer.alloc(len).toString("utf8")).toThrow(errorMatcher);

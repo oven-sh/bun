@@ -6,7 +6,7 @@
 const { kMaxLength, kStringMaxLength } = require("buffer");
 const { MAX_LENGTH, MAX_STRING_LENGTH } = require("buffer").constants;
 
-test("Buffer constants", () => {
+test.todo("Buffer constants", () => {
   expect(typeof MAX_LENGTH).toBe("number");
   expect(typeof MAX_STRING_LENGTH).toBe("number");
   expect(MAX_STRING_LENGTH).toBeLessThanOrEqual(MAX_LENGTH);

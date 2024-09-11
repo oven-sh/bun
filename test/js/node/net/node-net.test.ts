@@ -1,6 +1,6 @@
 import { Socket as _BunSocket, resolve, TCPSocketListener } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tmpdirSync, isWindows } from "harness";
 import { connect, createServer, createConnection, isIP, isIPv4, isIPv6, Server, Socket, Stream } from "node:net";
 import { join } from "node:path";
 import { once } from "node:events";
@@ -563,7 +563,7 @@ it("should not hang after destroy", async () => {
   }
 });
 
-it("should work with named pipes", async () => {
+it.if(isWindows)("should work with named pipes", async () => {
   async function test(pipe_name: string) {
     const { promise: messageReceived, resolve: resolveMessageReceived } = Promise.withResolvers();
     const { promise: clientReceived, resolve: resolveClientReceived } = Promise.withResolvers();
@@ -573,15 +573,12 @@ it("should work with named pipes", async () => {
       server = createServer(socket => {
         socket.on("data", data => {
           const message = data.toString();
-          console.log(`Message received from client: ${message}`);
-          socket.write("Goodbye World!");
+          socket.end("Goodbye World!");
           resolveMessageReceived(message);
         });
       });
 
       server.listen(pipe_name);
-      await once(server, "listening");
-
       client = connect(pipe_name).on("data", data => {
         const message = data.toString();
         resolveClientReceived(message);
@@ -598,6 +595,13 @@ it("should work with named pipes", async () => {
     }
   }
 
-  await test(`\\\\.\\pipe\\test\\${randomUUID()}`);
-  await test(`\\\\?\\pipe\\test\\${randomUUID()}`);
+  const batch = [];
+  for (let i = 0; i < 200; i++) {
+    batch.push(test(`\\\\.\\pipe\\test\\${randomUUID()}`));
+    batch.push(test(`\\\\?\\pipe\\test\\${randomUUID()}`));
+    if (i % 50 === 0) {
+      await Promise.all(batch);
+      batch.length = 0;
+    }
+  }
 });

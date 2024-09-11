@@ -146,8 +146,8 @@ pub const UpgradedDuplex = struct {
 
         this.ssl_error = .{
             .error_no = ssl_error.error_no,
-            .code = if (ssl_error.code == null) "" else bun.default_allocator.dupeZ(u8, ssl_error.code[0..bun.len(ssl_error.code) :0]) catch bun.outOfMemory(),
-            .reason = if (ssl_error.reason == null) "" else bun.default_allocator.dupeZ(u8, ssl_error.reason[0..bun.len(ssl_error.reason) :0]) catch bun.outOfMemory(),
+            .code = if (ssl_error.code == null or ssl_error.error_no == 0) "" else bun.default_allocator.dupeZ(u8, ssl_error.code[0..bun.len(ssl_error.code) :0]) catch bun.outOfMemory(),
+            .reason = if (ssl_error.reason == null or ssl_error.error_no == 0) "" else bun.default_allocator.dupeZ(u8, ssl_error.reason[0..bun.len(ssl_error.reason) :0]) catch bun.outOfMemory(),
         };
         this.handlers.onHandshake(this.handlers.ctx, handshake_success, ssl_error);
     }
@@ -574,6 +574,7 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
 
     pub const Flags = packed struct {
         disconnected: bool = true,
+        is_closed: bool = false,
         is_client: bool = false,
         is_ssl: bool = false,
     };
@@ -605,7 +606,8 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
         log("onPipeClose", .{});
         this.flags.disconnected = true;
         this.pipe = null;
-        this.handlers.onClose(this.handlers.ctx);
+        this.writer.source = null;
+        this.onClose();
     }
 
     fn onReadAlloc(this: *WindowsNamedPipe, suggested_size: usize) []u8 {
@@ -685,19 +687,19 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
 
         this.ssl_error = .{
             .error_no = ssl_error.error_no,
-            .code = if (ssl_error.code == null) "" else bun.default_allocator.dupeZ(u8, ssl_error.code[0..bun.len(ssl_error.code) :0]) catch bun.outOfMemory(),
-            .reason = if (ssl_error.reason == null) "" else bun.default_allocator.dupeZ(u8, ssl_error.reason[0..bun.len(ssl_error.reason) :0]) catch bun.outOfMemory(),
+            .code = if (ssl_error.code == null or ssl_error.error_no == 0) "" else bun.default_allocator.dupeZ(u8, ssl_error.code[0..bun.len(ssl_error.code) :0]) catch bun.outOfMemory(),
+            .reason = if (ssl_error.reason == null or ssl_error.error_no == 0) "" else bun.default_allocator.dupeZ(u8, ssl_error.reason[0..bun.len(ssl_error.reason) :0]) catch bun.outOfMemory(),
         };
         this.handlers.onHandshake(this.handlers.ctx, handshake_success, ssl_error);
     }
 
     fn onClose(this: *WindowsNamedPipe) void {
         log("onClose", .{});
-        defer this.deinit();
-
-        this.handlers.onClose(this.handlers.ctx);
-        // closes the underlying duplex
-        this.callWriteOrEnd(null, false);
+        if (!this.flags.is_closed) {
+            this.flags.is_closed = true; // only call onClose once
+            this.handlers.onClose(this.handlers.ctx);
+            this.deinit();
+        }
     }
 
     fn callWriteOrEnd(this: *WindowsNamedPipe, data: ?[]const u8, msg_more: bool) void {
@@ -1062,12 +1064,15 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
         log("setTimeout({d})", .{seconds});
         this.setTimeoutInMilliseconds(seconds * 1000);
     }
-
+    /// Free internal resources, it can be called multiple times
     pub fn deinit(this: *WindowsNamedPipe) void {
         log("deinit", .{});
         // clear the timer
         this.setTimeout(0);
-
+        if (this.writer.getStream()) |stream| {
+            _ = stream.readStop();
+        }
+        this.writer.deinit();
         if (this.wrapper) |*wrapper| {
             wrapper.deinit();
             this.wrapper = null;

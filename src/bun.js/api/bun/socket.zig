@@ -466,7 +466,7 @@ pub const Listener = struct {
 
     pub const ListenerType = union(enum) {
         uws: *uws.ListenSocket,
-        namedPipe: *WindowsNamedPipeContext,
+        namedPipe: *WindowsNamedPipeListeningContext,
         none: void,
     };
 
@@ -629,7 +629,7 @@ pub const Listener = struct {
 
                     this.listener = .{
                         // we need to add support for the backlog parameter on listen here we use the default value of nodejs
-                        .namedPipe = WindowsNamedPipeContext.listen(globalObject, pipe_name, 511, ssl, .{ .listener = this }) catch {
+                        .namedPipe = WindowsNamedPipeListeningContext.listen(globalObject, pipe_name, 511, ssl, this) catch {
                             exception.* = JSC.toInvalidArguments("Failed to listen at {s}", .{pipe_name}, globalObject).asObjectRef();
                             this.deinit();
                             return .zero;
@@ -3592,26 +3592,132 @@ pub const DuplexUpgradeContext = struct {
     }
 };
 
+pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
+    uvPipe: uv.Pipe = std.mem.zeroes(uv.Pipe),
+    listener: ?*Listener,
+    globalThis: *JSC.JSGlobalObject,
+    vm: *JSC.VirtualMachine,
+    ctx: ?*BoringSSL.SSL_CTX = null, // server reuses the same ctx
+    usingnamespace bun.New(WindowsNamedPipeListeningContext);
+
+    fn onClientConnect(this: *WindowsNamedPipeListeningContext, status: uv.ReturnCode) void {
+        if (status != uv.ReturnCode.zero or this.vm.isShuttingDown() or this.listener == null) {
+            // connection dropped or vm is shutting down or we are deiniting/closing
+            return;
+        }
+        const listener = this.listener.?;
+        const socket: WindowsNamedPipeContext.SocketType = brk: {
+            if (this.ctx) |_| {
+                break :brk .{ .tls = Listener.onNamePipeCreated(true, listener) };
+            } else {
+                break :brk .{ .tcp = Listener.onNamePipeCreated(false, listener) };
+            }
+        };
+
+        const client = WindowsNamedPipeContext.create(this.globalThis, socket);
+        const result = client.named_pipe.getAcceptedBy(&this.uvPipe, this.ctx);
+        if (result == .err) {
+            // connection dropped
+            client.deinit();
+        }
+    }
+    fn onPipeClosed(pipe: *uv.Pipe) callconv(.C) void {
+        const this: *WindowsNamedPipeListeningContext = @ptrCast(@alignCast(pipe.data));
+        this.deinit();
+    }
+
+    pub fn closePipeAndDeinit(this: *WindowsNamedPipeListeningContext) void {
+        this.listener = null;
+        this.uvPipe.data = this;
+        this.uvPipe.close(onPipeClosed);
+    }
+
+    pub fn listen(globalThis: *JSC.JSGlobalObject, path: []const u8, backlog: i32, ssl_config: ?JSC.API.ServerConfig.SSLConfig, listener: *Listener) !*WindowsNamedPipeListeningContext {
+        const this = WindowsNamedPipeListeningContext.new(.{
+            .globalThis = globalThis,
+            .vm = globalThis.bunVM(),
+            .listener = listener,
+        });
+
+        if (ssl_config) |ssl_options| {
+            BoringSSL.load();
+
+            const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
+            // Create SSL context using uSockets to match behavior of node.js
+            const ctx = uws.create_ssl_context_from_bun_options(ctx_opts) orelse return error.InvalidOptions; // invalid options
+            errdefer BoringSSL.SSL_CTX_free(ctx);
+            this.ctx = ctx;
+        }
+
+        const initResult = this.uvPipe.init(this.vm.uvLoop(), false);
+        if (initResult == .err) {
+            return error.FailedToInitPipe;
+        }
+        if (path[path.len - 1] == 0) {
+            // is already null terminated
+            const slice_z = path[0 .. path.len - 1 :0];
+            this.uvPipe.listenNamedPipe(slice_z, backlog, this, onClientConnect).unwrap() catch return error.FailedToBindPipe;
+        } else {
+            var path_buf: bun.PathBuffer = undefined;
+            // we need to null terminate the path
+            const len = @min(path.len, path_buf.len - 1);
+
+            @memcpy(path_buf[0..len], path[0..len]);
+            path_buf[len] = 0;
+            const slice_z = path_buf[0..len :0];
+            this.uvPipe.listenNamedPipe(slice_z, backlog, this, onClientConnect).unwrap() catch return error.FailedToBindPipe;
+        }
+        //TODO: add readableAll and writableAll support if someone needs it
+        // if(uv.uv_pipe_chmod(&this.uvPipe, uv.UV_WRITABLE | uv.UV_READABLE) != 0) {
+        // this.closePipeAndDeinit();
+        // return error.FailedChmodPipe;
+        //}
+
+        return this;
+    }
+
+    fn runEvent(this: *WindowsNamedPipeListeningContext) void {
+        switch (this.task_event) {
+            .deinit => {
+                this.deinit();
+            },
+            .none => @panic("Invalid event state"),
+        }
+    }
+
+    fn deinitInNextTick(this: *WindowsNamedPipeListeningContext) void {
+        bun.assert(this.task_event != .deinit);
+        this.task_event = .deinit;
+        this.vm.enqueueTask(JSC.Task.init(&this.task));
+    }
+
+    fn deinit(this: *WindowsNamedPipeListeningContext) void {
+        this.listener = null;
+        if (this.ctx) |ctx| {
+            this.ctx = null;
+            BoringSSL.SSL_CTX_free(ctx);
+        }
+        this.destroy();
+    }
+} else void;
 pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
     named_pipe: uws.WindowsNamedPipe,
-    uvPipe: uv.Pipe = std.mem.zeroes(uv.Pipe),
     socket: SocketType,
 
     // task used to deinit the context in the next tick, vm is used to enqueue the task
     vm: *JSC.VirtualMachine,
     globalThis: *JSC.JSGlobalObject,
     task: JSC.AnyTask,
-    task_event: EventState = .Close,
+    task_event: EventState = .none,
     is_open: bool = false,
-    ctx: ?*BoringSSL.SSL_CTX = null, // server reuses the same ctx
     pub const EventState = enum(u8) {
-        Close,
+        deinit,
+        none,
     };
 
     pub const SocketType = union(enum) {
         tls: *TLSSocket,
         tcp: *TCPSocket,
-        listener: *Listener,
         none: void,
     };
 
@@ -3628,7 +3734,7 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
                 const socket = TCPSocket.Socket.fromNamedPipe(&this.named_pipe);
                 tcp.onOpen(socket);
             },
-            else => {},
+            .none => {},
         }
     }
 
@@ -3642,7 +3748,7 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
                 const socket = TCPSocket.Socket.fromNamedPipe(&this.named_pipe);
                 tcp.onData(socket, decoded_data);
             },
-            else => {},
+            .none => {},
         }
     }
 
@@ -3656,7 +3762,7 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
                 const socket = TCPSocket.Socket.fromNamedPipe(&this.named_pipe);
                 tcp.onHandshake(socket, @intFromBool(success), ssl_error);
             },
-            else => {},
+            .none => {},
         }
     }
 
@@ -3670,7 +3776,7 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
                 const socket = TCPSocket.Socket.fromNamedPipe(&this.named_pipe);
                 tcp.onEnd(socket);
             },
-            else => {},
+            .none => {},
         }
     }
 
@@ -3684,7 +3790,7 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
                 const socket = TCPSocket.Socket.fromNamedPipe(&this.named_pipe);
                 tcp.onWritable(socket);
             },
-            else => {},
+            .none => {},
         }
     }
 
@@ -3727,7 +3833,7 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
                 const socket = TCPSocket.Socket.fromNamedPipe(&this.named_pipe);
                 tcp.onTimeout(socket);
             },
-            else => {},
+            .none => {},
         }
     }
 
@@ -3743,7 +3849,7 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
                 tcp.onClose(TCPSocket.Socket.fromNamedPipe(&this.named_pipe), 0, null);
                 tcp.deref();
             },
-            else => {},
+            .none => {},
         }
 
         this.deinitInNextTick();
@@ -3751,14 +3857,16 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
 
     fn runEvent(this: *WindowsNamedPipeContext) void {
         switch (this.task_event) {
-            .Close => {
-                this.named_pipe.close();
+            .deinit => {
+                this.deinit();
             },
+            .none => @panic("Invalid event state"),
         }
     }
 
     fn deinitInNextTick(this: *WindowsNamedPipeContext) void {
-        this.task_event = .Close;
+        bun.assert(this.task_event != .deinit);
+        this.task_event = .deinit;
         this.vm.enqueueTask(JSC.Task.init(&this.task));
     }
 
@@ -3771,18 +3879,9 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
             .socket = socket,
             .named_pipe = undefined,
         });
-        switch (socket) {
-            .tls => |tls| {
-                tls.ref();
-            },
-            .tcp => |tcp| {
-                tcp.ref();
-            },
-            else => {},
-        }
-        this.task = JSC.AnyTask.New(WindowsNamedPipeContext, WindowsNamedPipeContext.runEvent).init(this);
 
-        this.named_pipe = uws.WindowsNamedPipe.from(&this.uvPipe, .{
+        // named_pipe owns the pipe (PipeWriter owns the pipe and will close and deinit it)
+        this.named_pipe = uws.WindowsNamedPipe.from(bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory(), .{
             .ctx = this,
             .onOpen = @ptrCast(&WindowsNamedPipeContext.onOpen),
             .onData = @ptrCast(&WindowsNamedPipeContext.onData),
@@ -3793,90 +3892,26 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
             .onTimeout = @ptrCast(&WindowsNamedPipeContext.onTimeout),
             .onClose = @ptrCast(&WindowsNamedPipeContext.onClose),
         }, vm);
-        return this;
-    }
+        this.task = JSC.AnyTask.New(WindowsNamedPipeContext, WindowsNamedPipeContext.runEvent).init(this);
 
-    fn onClientConnect(this: *WindowsNamedPipeContext, status: uv.ReturnCode) void {
-        if (status != uv.ReturnCode.zero or this.vm.isShuttingDown()) {
-            // connection dropped or vm is shutting down
-            return;
+        switch (socket) {
+            .tls => |tls| {
+                tls.ref();
+            },
+            .tcp => |tcp| {
+                tcp.ref();
+            },
+            .none => {},
         }
-        bun.assert(this.socket == .listener);
-        const listener = this.socket.listener;
-        const socket: SocketType = brk: {
-            if (this.ctx) |_| {
-                break :brk .{ .tls = Listener.onNamePipeCreated(true, listener) };
-            } else {
-                break :brk .{ .tcp = Listener.onNamePipeCreated(false, listener) };
-            }
-        };
-
-        const client = WindowsNamedPipeContext.create(this.globalThis, socket);
-        const result = client.named_pipe.getAcceptedBy(&this.uvPipe, this.ctx);
-        if (result == .err) {
-            // connection dropped
-            client.deinit();
-        }
-    }
-    fn onPipeClosed(pipe: *uv.Pipe) callconv(.C) void {
-        const this: *WindowsNamedPipeContext = @ptrCast(@alignCast(pipe.data));
-        this.deinitInNextTick();
-    }
-
-    pub fn closePipeAndDeinit(this: *WindowsNamedPipeContext) void {
-        this.socket = .none;
-        this.uvPipe.data = this;
-        this.uvPipe.close(onPipeClosed);
-    }
-
-    pub fn listen(globalThis: *JSC.JSGlobalObject, path: []const u8, backlog: i32, ssl_config: ?JSC.API.ServerConfig.SSLConfig, socket: SocketType) !*WindowsNamedPipeContext {
-        if (socket != .listener) {
-            return error.InvalidOptions;
-        }
-
-        const this = WindowsNamedPipeContext.create(globalThis, socket);
-        if (ssl_config) |ssl_options| {
-            BoringSSL.load();
-
-            const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
-            // Create SSL context using uSockets to match behavior of node.js
-            const ctx = uws.create_ssl_context_from_bun_options(ctx_opts) orelse return error.InvalidOptions; // invalid options
-            errdefer BoringSSL.SSL_CTX_free(ctx);
-            this.ctx = ctx;
-        }
-
-        const initResult = this.uvPipe.init(this.vm.uvLoop(), false);
-        if (initResult == .err) {
-            return error.FailedToInitPipe;
-        }
-        if (path[path.len - 1] == 0) {
-            // is already null terminated
-            const slice_z = path[0 .. path.len - 1 :0];
-            this.uvPipe.listenNamedPipe(slice_z, backlog, this, onClientConnect).unwrap() catch return error.FailedToBindPipe;
-        } else {
-            var path_buf: bun.PathBuffer = undefined;
-            // we need to null terminate the path
-            const len = @min(path.len, path_buf.len - 1);
-
-            @memcpy(path_buf[0..len], path[0..len]);
-            path_buf[len] = 0;
-            const slice_z = path_buf[0..len :0];
-            this.uvPipe.listenNamedPipe(slice_z, backlog, this, onClientConnect).unwrap() catch return error.FailedToBindPipe;
-        }
-        //TODO: add readableAll and writableAll support if someone needs it
-        // if(uv.uv_pipe_chmod(&this.uvPipe, uv.UV_WRITABLE | uv.UV_READABLE) != 0) {
-        // this.closePipeAndDeinit();
-        // return error.FailedChmodPipe;
-        //}
 
         return this;
     }
 
     pub fn open(globalThis: *JSC.JSGlobalObject, fd: bun.FileDescriptor, ssl_config: ?JSC.API.ServerConfig.SSLConfig, socket: SocketType) !*uws.WindowsNamedPipe {
+        // TODO: reuse the same context for multiple connections when possibles
+
         const this = WindowsNamedPipeContext.create(globalThis, socket);
-        if (socket == .listener) {
-            return error.InvalidOptions;
-        }
+
         errdefer {
             switch (socket) {
                 .tls => |tls| {
@@ -3885,20 +3920,18 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
                 .tcp => |tcp| {
                     tcp.handleConnectError(@intFromEnum(bun.C.SystemErrno.ENOENT));
                 },
-                else => {},
+                .none => {},
             }
-            this.onClose();
+            this.deinitInNextTick();
         }
-
         try this.named_pipe.open(fd, ssl_config).unwrap();
         return &this.named_pipe;
     }
 
     pub fn connect(globalThis: *JSC.JSGlobalObject, path: []const u8, ssl_config: ?JSC.API.ServerConfig.SSLConfig, socket: SocketType) !*uws.WindowsNamedPipe {
+        // TODO: reuse the same context for multiple connections when possibles
+
         const this = WindowsNamedPipeContext.create(globalThis, socket);
-        if (socket == .listener) {
-            return error.InvalidOptions;
-        }
         errdefer {
             switch (socket) {
                 .tls => |tls| {
@@ -3907,9 +3940,9 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
                 .tcp => |tcp| {
                     tcp.handleConnectError(@intFromEnum(bun.C.SystemErrno.ENOENT));
                 },
-                else => {},
+                .none => {},
             }
-            this.onClose();
+            this.deinitInNextTick();
         }
 
         if (path[path.len - 1] == 0) {
@@ -3940,11 +3973,8 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
             },
             else => {},
         }
-        this.named_pipe.deinit();
 
-        if (this.ctx) |ctx| {
-            BoringSSL.SSL_CTX_free(ctx);
-        }
+        this.named_pipe.deinit();
         this.destroy();
     }
 } else void;

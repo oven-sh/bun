@@ -5684,4 +5684,6 @@ pub const PropertyIdTag = enum(u16) {
     container,
     @"view-transition-name",
     @"color-scheme",
+    all,
+    custom,
 };

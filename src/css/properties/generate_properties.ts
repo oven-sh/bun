@@ -46,6 +46,8 @@ function generatePropertyIdTag(property_defs: Record<string, PropertyDef>): stri
   ${Object.keys(property_defs)
     .map(key => `${escapeIdent(key)},`)
     .join("\n")}
+    all,
+    custom,
 };`;
 }
 
@@ -1514,7 +1516,7 @@ generateCode({
 });
 
 function prelude() {
-  return `const std = @import("std");
+  return /* zig */ `const std = @import("std");
 const bun = @import("root").bun;
 const Allocator = std.mem.Allocator;
 

@@ -27,13 +27,11 @@ endif()
 # In the future, change those commands so that generated files are written to this path.
 optionx(CODEGEN_PATH FILEPATH "Path to the codegen directory" DEFAULT ${BUILD_PATH}/codegen)
 
-set(CONFIGURE_DEPENDS "CONFIGURE_DEPENDS")
-
-# if(NOT DEFINED CONFIGURE_DEPENDS OR CONFIGURE_DEPENDS)
-#   set(CONFIGURE_DEPENDS "CONFIGURE_DEPENDS")
-# else()
-#   set(CONFIGURE_DEPENDS "")
-# endif()
+if(NOT DEFINED CONFIGURE_DEPENDS OR CONFIGURE_DEPENDS)
+  set(CONFIGURE_DEPENDS "CONFIGURE_DEPENDS")
+else()
+  set(CONFIGURE_DEPENDS "")
+endif()
 
 # --- Codegen ---
 
@@ -494,7 +492,6 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
 
 # --- C/C++ Sources ---
 
-set(BUN_DEPS_SOURCE ${CWD}/vendor)
 set(BUN_USOCKETS_SOURCE ${CWD}/packages/bun-usockets)
 
 file(GLOB BUN_CXX_SOURCES ${CONFIGURE_DEPENDS}
@@ -506,8 +503,8 @@ file(GLOB BUN_CXX_SOURCES ${CONFIGURE_DEPENDS}
   ${CWD}/src/bun.js/bindings/webcrypto/*.cpp
   ${CWD}/src/bun.js/bindings/webcrypto/*/*.cpp
   ${CWD}/src/bun.js/bindings/v8/*.cpp
+  ${CWD}/src/deps/*.cpp
   ${BUN_USOCKETS_SOURCE}/src/crypto/*.cpp
-  ${BUN_DEPS_SOURCE}/*.cpp
 )
 
 file(GLOB BUN_C_SOURCES ${CONFIGURE_DEPENDS}
@@ -528,7 +525,7 @@ register_repository(
     picohttpparser.c
 )
 
-list(APPEND BUN_C_SOURCES ${BUN_DEPS_SOURCE}/picohttpparser/picohttpparser.c)
+list(APPEND BUN_C_SOURCES ${CWD}/vendor/picohttpparser/picohttpparser.c)
 
 if(WIN32)
   list(APPEND BUN_C_SOURCES ${CWD}/src/bun.js/bindings/windows/musl-memmem.c)

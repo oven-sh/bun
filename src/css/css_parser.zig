@@ -198,6 +198,13 @@ pub fn voidWrap(comptime T: type, comptime parsefn: *const fn (*Parser) Result(T
     return Wrapper.wrapped;
 }
 
+pub fn DefineListShorthand(comptime T: type) type {
+    _ = T; // autofix
+    // TODO: implement this when we implement visit?
+    // does nothing now
+    return struct {};
+}
+
 pub fn DefineShorthand(comptime T: type, comptime property_name: PropertyIdTag) type {
     // TODO: validate map, make sure each field is set
     // make sure each field is same index as in T
@@ -479,11 +486,6 @@ pub fn DeriveValueType(comptime T: type) type {
             return @field(ValueTypeMap, @tagName(this.*));
         }
     };
-}
-
-pub fn DefineListShorthand(comptime T: type) type {
-    _ = T; // autofix
-    @compileError(todo_stuff.depth);
 }
 
 fn consume_until_end_of_block(block_type: BlockType, tokenizer: *Tokenizer) void {

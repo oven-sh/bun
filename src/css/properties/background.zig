@@ -19,6 +19,8 @@ const DashedIdent = css.css_values.ident.DashedIdent;
 const Image = css.css_values.image.Image;
 const CssColor = css.css_values.color.CssColor;
 const Ratio = css.css_values.ratio.Ratio;
+const HorizontalPosition = css.css_values.position.HorizontalPosition;
+const VerticalPosition = css.css_values.position.HorizontalPosition;
 
 /// A value for the [background](https://www.w3.org/TR/css-backgrounds-3/#background) shorthand property.
 pub const Background = struct {
@@ -56,11 +58,19 @@ pub const BackgroundSize = union(enum) {
 };
 
 /// A value for the [background-position](https://drafts.csswg.org/css-backgrounds/#background-position) shorthand property.
-pub const BackgroundPosition = css.DefineListShorthand(struct {
-    comptime {
-        @compileError(css.todo_stuff.depth);
-    }
-});
+pub const BackgroundPosition = struct {
+    /// The x-position.
+    x: HorizontalPosition,
+    /// The y-position.
+    y: VerticalPosition,
+
+    pub usingnamespace css.DefineListShorthand(@This());
+
+    const PropertyFieldMap = .{
+        .x = css.PropertyIdTag.@"background-position-x",
+        .y = css.PropertyIdTag.@"background-position-y",
+    };
+};
 
 /// A value for the [background-repeat](https://www.w3.org/TR/css-backgrounds-3/#background-repeat) property.
 pub const BackgroundRepeat = struct {
@@ -78,15 +88,44 @@ pub const BackgroundRepeat = struct {
 pub const BackgroundRepeatKeyword = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
 
 /// A value for the [background-attachment](https://www.w3.org/TR/css-backgrounds-3/#background-attachment) property.
-pub const BackgroundAttachment = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
+pub const BackgroundAttachment = enum {
+    /// The background scrolls with the container.
+    scroll,
+    /// The background is fixed to the viewport.
+    fixed,
+    /// The background is fixed with regard to the element's contents.
+    local,
+
+    pub usingnamespace css.DefineEnumProperty(@This());
+};
 
 /// A value for the [background-origin](https://www.w3.org/TR/css-backgrounds-3/#background-origin) property.
-pub const BackgroundOrigin = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
+pub const BackgroundOrigin = enum {
+    /// The position is relative to the border box.
+    @"border-box",
+    /// The position is relative to the padding box.
+    @"padding-box",
+    /// The position is relative to the content box.
+    @"content-box",
+
+    pub usingnamespace css.DefineEnumProperty(@This());
+};
 
 /// A value for the [background-clip](https://drafts.csswg.org/css-backgrounds-4/#background-clip) property.
-pub const BackgroundClip = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
+pub const BackgroundClip = enum {
+    /// The background is clipped to the border box.
+    @"border-box",
+    /// The background is clipped to the padding box.
+    @"padding-box",
+    /// The background is clipped to the content box.
+    @"content-box",
+    /// The background is clipped to the area painted by the border.
+    border,
+    /// The background is clipped to the text content of the element.
+    text,
 
-pub const BoxSizing = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
+    pub usingnamespace css.DefineEnumProperty(@This());
+};
 
 /// A value for the [aspect-ratio](https://drafts.csswg.org/css-sizing-4/#aspect-ratio) property.
 pub const AspectRatio = struct {

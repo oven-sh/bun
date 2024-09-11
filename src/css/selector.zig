@@ -69,7 +69,7 @@ pub const api = struct {
         _ = T.SelectorImpl.BorrowedNamespaceUrl;
         _ = T.SelectorImpl.BorrowedLocalName;
 
-        _ = T.SelectorImpl.NonTSsSeudoClass;
+        _ = T.SelectorImpl.NonTSPseudoClass;
         _ = T.SelectorImpl.VendorPrefix;
         _ = T.SelectorImpl.PseudoElement;
     }
@@ -790,11 +790,15 @@ pub const api = struct {
         _ = T.SelectorParser.deepCombinatorEnabled;
     }
 
-    pub const Direction = css.DefineEnumProperty(struct {
-        comptime {
-            @compileError(css.todo_stuff.enum_property);
-        }
-    });
+    /// The [:dir()](https://drafts.csswg.org/selectors-4/#the-dir-pseudo) pseudo class.
+    pub const Direction = enum {
+        /// Left to right
+        ltr,
+        /// Right to left
+        rtl,
+
+        pub usingnamespace css.DefineEnumProperty(@This());
+    };
 
     /// A pseudo class.
     pub const PseudoClass = union(enum) {
@@ -1718,7 +1722,7 @@ pub const api = struct {
             /// in the rule hash, so we do that too.
             ///
             /// See https://github.com/w3c/csswg-drafts/issues/2158
-            host: ?GenericSelector(Impl.SelectorImpl.Identifier),
+            host: ?GenericSelector(Impl),
             /// The `:where` pseudo-class.
             ///
             /// https://drafts.csswg.org/selectors/#zero-matches

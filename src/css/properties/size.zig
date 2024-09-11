@@ -80,3 +80,42 @@ pub const MaxSize = union(enum) {
     /// The `contain` keyword.
     contain,
 };
+
+/// A value for the [aspect-ratio](https://drafts.csswg.org/css-sizing-4/#aspect-ratio) property.
+pub const AspectRatio = struct {
+    /// The `auto` keyword.
+    auto: bool,
+    /// A preferred aspect ratio for the box, specified as width / height.
+    ratio: ?Ratio,
+
+    pub fn parse(input: *css.Parser) css.Result(AspectRatio) {
+        const location = input.currentSourceLocation();
+        var auto = input.tryParse(css.Parser.expectIdentMatching, .{"auto"});
+
+        const ratio = input.tryParse(Ratio.parse, .{});
+        if (auto.isErr()) {
+            auto = input.tryParse(css.Parser.expectIdentMatching, .{"auto"});
+        }
+        if (auto.isErr() and ratio.isErr()) {
+            return .{ .err = location.newCustomError(css.ParserError.invalid_value) };
+        }
+
+        return .{
+            .result = AspectRatio{
+                .auto = auto.isOk(),
+                .ratio = ratio.asValue(),
+            },
+        };
+    }
+
+    pub fn toCss(this: *const AspectRatio, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+        if (this.auto) {
+            try dest.writeStr("auto");
+        }
+
+        if (this.ratio) |*ratio| {
+            if (this.auto) try dest.writeChar(' ');
+            try ratio.toCss(W, dest);
+        }
+    }
+};

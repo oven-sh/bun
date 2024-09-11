@@ -36,9 +36,38 @@ pub const Display = union(enum) {
 };
 
 /// A value for the [visibility](https://drafts.csswg.org/css-display-3/#visibility) property.
-pub const Visibility = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
+pub const Visibility = enum {
+    /// The element is visible.
+    visible,
+    /// The element is hidden.
+    hidden,
+    /// The element is collapsed.
+    collapse,
 
-pub const DisplayKeyword = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
+    pub usingnamespace css.DefineEnumProperty(@This());
+};
+
+/// A `display` keyword.
+///
+/// See [Display](Display).
+pub const DisplayKeyword = enum {
+    none,
+    contents,
+    @"table-row-group",
+    @"table-header-group",
+    @"table-footer-group",
+    @"table-row",
+    @"table-cell",
+    @"table-column-group",
+    @"table-column",
+    @"table-caption",
+    @"ruby-base",
+    @"ruby-text",
+    @"ruby-base-container",
+    @"ruby-text-container",
+
+    pub usingnamespace css.DefineEnumProperty(@This());
+};
 
 /// A pair of inside and outside display values, as used in the `display` property.
 ///
@@ -53,7 +82,14 @@ pub const DisplayPair = struct {
 };
 
 /// A [`<display-outside>`](https://drafts.csswg.org/css-display-3/#typedef-display-outside) value.
-pub const DisplayOutside = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
+pub const DisplayOutside = enum {
+    block,
+    @"inline",
+    @"run-in",
+
+    pub usingnamespace css.DefineEnumProperty(@This());
+};
+
 /// A [`<display-inside>`](https://drafts.csswg.org/css-display-3/#typedef-display-inside) value.
 pub const DisplayInside = union(enum) {
     flow,

@@ -146,7 +146,7 @@ async function runTests() {
           },
         });
         if (!error) {
-          break downloadLoop;
+          break;
         }
         const { code } = error;
         if (code === "EBUSY") {
@@ -917,21 +917,10 @@ function getRelevantTests(cwd) {
     filteredTests.push(...Array.from(smokeTests));
     console.log("Smoking tests:", filteredTests.length, "/", availableTests.length);
   } else if (maxShards > 1) {
-    for (let i = 0; i < availableTests.length; i++) {
-      if (i % maxShards === shardId) {
-        filteredTests.push(availableTests[i]);
-      }
-    }
-    console.log(
-      "Sharding tests:",
-      shardId,
-      "/",
-      maxShards,
-      "with tests",
-      filteredTests.length,
-      "/",
-      availableTests.length,
-    );
+    const firstTest = shardId * Math.ceil(availableTests.length / maxShards);
+    const lastTest = Math.min(firstTest + Math.ceil(availableTests.length / maxShards), availableTests.length);
+    filteredTests.push(...availableTests.slice(firstTest, lastTest));
+    console.log("Sharding tests:", firstTest, "...", lastTest, "/", availableTests.length);
   } else {
     filteredTests.push(...availableTests);
   }

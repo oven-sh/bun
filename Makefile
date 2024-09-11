@@ -1,10 +1,3 @@
-# ------------------------------------------------------------
-#                         WARNING
-# ------------------------------------------------------------
-# This file is very old and will be removed soon!
-# You can build Bun using `cmake` or `bun run build`
-# ------------------------------------------------------------
-
 SHELL := $(shell which bash) # Use bash syntax to be consistent
 
 OS_NAME := $(shell uname -s | tr '[:upper:]' '[:lower:]')

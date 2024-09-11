@@ -1,3 +1,4 @@
+/// <reference types="../../build/codegen/generated.d.ts" />
 // Typedefs for JSC intrinsics. Instead of @, we use $
 type TODO = any;
 
@@ -539,3 +540,9 @@ declare var $Buffer: {
 declare interface Error {
   code?: string;
 }
+
+/**
+ * -- Error Codes with manual messages
+ */
+declare function $ERR_INVALID_ARG_TYPE(argName: string, expectedType: string, actualValue: string): TypeError;
+declare function $ERR_INVALID_ARG_TYPE(argName: string, expectedTypes: any[], actualValue: string): TypeError;

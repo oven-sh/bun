@@ -1014,6 +1014,11 @@ pub inline fn errGeneric(comptime fmt: []const u8, args: anytype) void {
     prettyErrorln("<r><red>error<r><d>:<r> " ++ fmt, args);
 }
 
+/// Print a red error message with "error: " as the prefix and a formatted message.
+pub inline fn errFmt(formatter: anytype) void {
+    return errGeneric("{}", .{formatter});
+}
+
 /// This struct is a workaround a Windows terminal bug.
 /// TODO: when https://github.com/microsoft/terminal/issues/16606 is resolved, revert this commit.
 pub var buffered_stdin = std.io.BufferedReader(4096, File.Reader){

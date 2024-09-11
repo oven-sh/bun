@@ -30,6 +30,10 @@ napi_value ok(napi_env env) {
   return result;
 }
 
+static void run_gc(const Napi::CallbackInfo &info) {
+  info[0].As<Napi::Function>().Call(0, nullptr);
+}
+
 napi_value test_issue_7685(const Napi::CallbackInfo &info) {
   Napi::Env env(info.Env());
   Napi::HandleScope scope(env);
@@ -39,7 +43,7 @@ napi_value test_issue_7685(const Napi::CallbackInfo &info) {
       Napi::Error::New(env, #expr).ThrowAsJavaScriptException();               \
     }                                                                          \
   }
-  napi_assert(info[0].IsNumber());
+  // info[0] is a function to run the GC
   napi_assert(info[1].IsNumber());
   napi_assert(info[2].IsNumber());
   napi_assert(info[3].IsNumber());
@@ -47,6 +51,7 @@ napi_value test_issue_7685(const Napi::CallbackInfo &info) {
   napi_assert(info[5].IsNumber());
   napi_assert(info[6].IsNumber());
   napi_assert(info[7].IsNumber());
+  napi_assert(info[8].IsNumber());
 #undef napi_assert
   return ok(env);
 }
@@ -114,9 +119,13 @@ napi_value
 test_napi_get_value_string_utf8_with_buffer(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
 
+  // info[0] is a function to run the GC
+  napi_value string_js = info[1];
+  napi_value chars_to_copy_js = info[2];
+
   // get how many chars we need to copy
   uint32_t _len;
-  if (napi_get_value_uint32(env, info[1], &_len) != napi_ok) {
+  if (napi_get_value_uint32(env, chars_to_copy_js, &_len) != napi_ok) {
     return fail(env, "call to napi_get_value_uint32 failed");
   }
   size_t len = (size_t)_len;
@@ -133,7 +142,8 @@ test_napi_get_value_string_utf8_with_buffer(const Napi::CallbackInfo &info) {
   memset(buf, '*', BUF_SIZE);
   buf[BUF_SIZE - 1] = '\0';
 
-  if (napi_get_value_string_utf8(env, info[0], buf, len, &copied) != napi_ok) {
+  if (napi_get_value_string_utf8(env, string_js, buf, len, &copied) !=
+      napi_ok) {
     return fail(env, "call to napi_get_value_string_utf8 failed");
   }
 
@@ -154,13 +164,8 @@ napi_value test_napi_handle_scope_string(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
 
   constexpr size_t num_small_strings = 10000;
-  constexpr size_t num_large_strings = 100;
-  constexpr size_t large_string_size = 20'000'000;
 
   auto *small_strings = new napi_value[num_small_strings];
-  auto *large_strings = new napi_value[num_large_strings];
-  auto *string_data = new char[large_string_size];
-  string_data[large_string_size - 1] = 0;
 
   for (size_t i = 0; i < num_small_strings; i++) {
     std::string cpp_str = std::to_string(i);
@@ -168,24 +173,18 @@ napi_value test_napi_handle_scope_string(const Napi::CallbackInfo &info) {
                                    &small_strings[i]) == napi_ok);
   }
 
-  for (size_t i = 0; i < num_large_strings; i++) {
-    memset(string_data, i + 1, large_string_size);
-    assert(napi_create_string_utf8(env, string_data, large_string_size,
-                                   &large_strings[i]) == napi_ok);
+  run_gc(info);
 
-    for (size_t j = 0; j < num_small_strings; j++) {
-      char buf[16];
-      size_t result;
-      assert(napi_get_value_string_utf8(env, small_strings[j], buf, sizeof buf,
-                                        &result) == napi_ok);
-      printf("%s\n", buf);
-      assert(atoi(buf) == (int)j);
-    }
+  for (size_t j = 0; j < num_small_strings; j++) {
+    char buf[16];
+    size_t result;
+    assert(napi_get_value_string_utf8(env, small_strings[j], buf, sizeof buf,
+                                      &result) == napi_ok);
+    printf("%s\n", buf);
+    assert(atoi(buf) == (int)j);
   }
 
   delete[] small_strings;
-  delete[] large_strings;
-  delete[] string_data;
   return ok(env);
 }
 
@@ -194,15 +193,10 @@ napi_value test_napi_handle_scope_bigint(const Napi::CallbackInfo &info) {
   // test/v8/v8-module/main.cpp -- see comments there for explanation
   Napi::Env env = info.Env();
 
-  constexpr size_t num_small_ints = 100;
-  constexpr size_t num_large_ints = 10000;
-  constexpr size_t small_int_size = 16;
-  // JSC bigint size limit = 1<<20 bits
-  constexpr size_t large_int_size = (1 << 20) / 64;
+  constexpr size_t num_small_ints = 10000;
+  constexpr size_t small_int_size = 100;
 
   auto *small_ints = new napi_value[num_small_ints];
-  auto *large_ints = new napi_value[num_large_ints];
-  std::vector<uint64_t> int_words(large_int_size);
 
   for (size_t i = 0; i < num_small_ints; i++) {
     std::array<uint64_t, small_int_size> words;
@@ -211,33 +205,29 @@ napi_value test_napi_handle_scope_bigint(const Napi::CallbackInfo &info) {
                                     &small_ints[i]) == napi_ok);
   }
 
-  for (size_t i = 0; i < num_large_ints; i++) {
-    std::fill(int_words.begin(), int_words.end(), i + 1);
-    assert(napi_create_bigint_words(env, 0, large_int_size, int_words.data(),
-                                    &large_ints[i]) == napi_ok);
+  run_gc(info);
 
-    for (size_t j = 0; j < num_small_ints; j++) {
-      std::array<uint64_t, small_int_size> words;
-      int sign;
-      size_t word_count = words.size();
-      assert(napi_get_value_bigint_words(env, small_ints[j], &sign, &word_count,
-                                         words.data()) == napi_ok);
-      printf("%d, %zu\n", sign, word_count);
-      assert(sign == 0 && word_count == words.size());
-      assert(std::all_of(words.begin(), words.end(),
-                         [j](const uint64_t &w) { return w == j + 1; }));
-    }
+  for (size_t j = 0; j < num_small_ints; j++) {
+    std::array<uint64_t, small_int_size> words;
+    int sign;
+    size_t word_count = words.size();
+    assert(napi_get_value_bigint_words(env, small_ints[j], &sign, &word_count,
+                                       words.data()) == napi_ok);
+    printf("%d, %zu\n", sign, word_count);
+    assert(sign == 0 && word_count == words.size());
+    assert(std::all_of(words.begin(), words.end(),
+                       [j](const uint64_t &w) { return w == j + 1; }));
   }
 
   delete[] small_ints;
-  delete[] large_ints;
   return ok(env);
 }
 
 napi_value test_napi_delete_property(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
 
-  napi_value object = info[0];
+  // info[0] is a function to run the GC
+  napi_value object = info[1];
   napi_valuetype type;
   assert(napi_typeof(env, object, &type) == napi_ok);
   assert(type == napi_object);
@@ -268,20 +258,26 @@ napi_value test_napi_delete_property(const Napi::CallbackInfo &info) {
 }
 
 void store_escaped_handle(napi_env env, napi_value *out, const char *str) {
-  napi_escapable_handle_scope ehs;
-  assert(napi_open_escapable_handle_scope(env, &ehs) == napi_ok);
-  napi_value s;
-  assert(napi_create_string_utf8(env, str, NAPI_AUTO_LENGTH, &s) == napi_ok);
-  napi_value escaped;
-  assert(napi_escape_handle(env, ehs, s, &escaped) == napi_ok);
+  // Allocate these values on the heap so they cannot be seen by stack scanning
+  // after this function returns. An earlier version tried putting them on the
+  // stack and using volatile stores to set them to nullptr, but that wasn't
+  // effective when the NAPI module was built in release mode as extra copies of
+  // the pointers would still be left in uninitialized stack memory.
+  napi_escapable_handle_scope *ehs = new napi_escapable_handle_scope;
+  napi_value *s = new napi_value;
+  napi_value *escaped = new napi_value;
+  assert(napi_open_escapable_handle_scope(env, ehs) == napi_ok);
+  assert(napi_create_string_utf8(env, str, NAPI_AUTO_LENGTH, s) == napi_ok);
+  assert(napi_escape_handle(env, *ehs, *s, escaped) == napi_ok);
   // can't call a second time
-  assert(napi_escape_handle(env, ehs, s, &escaped) == napi_escape_called_twice);
-  assert(napi_close_escapable_handle_scope(env, ehs) == napi_ok);
-  *out = escaped;
+  assert(napi_escape_handle(env, *ehs, *s, escaped) ==
+         napi_escape_called_twice);
+  assert(napi_close_escapable_handle_scope(env, *ehs) == napi_ok);
+  *out = *escaped;
 
-  // try to defeat stack scanning
-  *(volatile napi_value *)(&s) = nullptr;
-  *(volatile napi_value *)(&escaped) = nullptr;
+  delete escaped;
+  delete s;
+  delete ehs;
 }
 
 napi_value test_napi_escapable_handle_scope(const Napi::CallbackInfo &info) {
@@ -289,7 +285,7 @@ napi_value test_napi_escapable_handle_scope(const Napi::CallbackInfo &info) {
 
   // allocate space for a napi_value on the heap
   // use store_escaped_handle to put the value into it
-  // allocate some big objects to trigger GC
+  // trigger GC
   // the napi_value should still be valid even though it can't be found on the
   // stack, because it escaped into the current handle scope
 
@@ -298,15 +294,7 @@ napi_value test_napi_escapable_handle_scope(const Napi::CallbackInfo &info) {
   napi_value *hidden = new napi_value;
   store_escaped_handle(env, hidden, str);
 
-  constexpr size_t big_string_length = 20'000'000;
-  auto *string_data = new char[big_string_length];
-  for (int i = 0; i < 100; i++) {
-    napi_value s;
-    memset(string_data, i + 1, big_string_length);
-    assert(napi_create_string_utf8(env, string_data, big_string_length, &s) ==
-           napi_ok);
-  }
-  delete[] string_data;
+  run_gc(info);
 
   char buf[64];
   size_t len;
@@ -338,16 +326,8 @@ napi_value test_napi_handle_scope_nesting(const Napi::CallbackInfo &info) {
   napi_handle_scope *inner_hs = new napi_handle_scope;
   assert(napi_open_handle_scope(env, inner_hs) == napi_ok);
 
-  // Allocate lots of memory to force GC
-  constexpr size_t big_string_length = 20'000'000;
-  auto *string_data = new char[big_string_length];
-  for (int i = 0; i < 100; i++) {
-    napi_value s;
-    memset(string_data, i + 1, big_string_length);
-    assert(napi_create_string_utf8(env, string_data, big_string_length, &s) ==
-           napi_ok);
-  }
-  delete[] string_data;
+  // Force GC
+  run_gc(info);
 
   // Try to read our first handle. Did the outer handle scope get
   // collected now that it's not on the global object?
@@ -452,6 +432,7 @@ napi_value test_napi_ref(const Napi::CallbackInfo &info) {
 
 Napi::Value RunCallback(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
+  // this function is invoked without the GC callback
   Napi::Function cb = info[0].As<Napi::Function>();
   return cb.Call(env.Global(), {Napi::String::New(env, "hello world")});
 }

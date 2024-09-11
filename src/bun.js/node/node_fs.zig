@@ -5801,11 +5801,9 @@ pub const NodeFS = struct {
                     },
                 },
                 .string => brk: {
-                    const str = bun.SliceWithUnderlyingString.transcodeFromOwnedSlice(@constCast(ret.result.string), args.encoding);
-
-                    if (str.underlying.tag == .Dead and str.utf8.len == 0) {
+                    const str = bun.SliceWithUnderlyingString.transcodeFromOwnedSlice(@constCast(ret.result.string), args.encoding) catch {
                         return .{ .err = Syscall.Error.fromCode(.NOMEM, .read).withPathLike(args.path) };
-                    }
+                    };
 
                     break :brk .{ .result = .{ .string = str } };
                 },

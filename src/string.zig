@@ -271,6 +271,7 @@ pub const StringImplAllocator = struct {
 pub const Tag = enum(u8) {
     /// String is not valid. Observed on some failed operations.
     /// To prevent crashes, this value acts similarly to .Empty (such as length = 0)
+    /// Prefer `error.OutOfMemory` instead of this value.
     Dead = 0,
     /// String is backed by a WTF::StringImpl from JavaScriptCore.
     /// Can be in either `latin1` or `utf16le` encodings.
@@ -314,8 +315,8 @@ pub const String = extern struct {
     extern fn BunString__fromBytes(bytes: [*]const u8, len: usize) String;
     extern fn BunString__fromUTF16(bytes: [*]const u16, len: usize) String;
     extern fn BunString__fromUTF16ToLatin1(bytes: [*]const u16, len: usize) String;
-    extern fn BunString__fromLatin1Unitialized(len: usize) String;
-    extern fn BunString__fromUTF16Unitialized(len: usize) String;
+    extern fn BunString__fromLatin1Uninitialized(len: usize) String;
+    extern fn BunString__fromUTF16Uninitialized(len: usize) String;
 
     pub fn ascii(bytes: []const u8) String {
         return String{ .tag = .ZigString, .value = .{ .ZigString = ZigString.init(bytes) } };
@@ -369,11 +370,11 @@ pub const String = extern struct {
         return createUTF8(utf8_slice);
     }
 
-    fn createUninitializedLatin1(len: usize) struct { String, []u8 } {
+    fn createUninitializedLatin1(len: usize) !struct { String, []u8 } {
         bun.assert(len > 0);
-        const string = BunString__fromLatin1Unitialized(len);
+        const string = BunString__fromLatin1Uninitialized(len);
         if (string.tag == .Dead) {
-            return .{ dead, &[_]u8{} };
+            return error.OutOfMemory;
         }
 
         const wtf = string.value.WTFStringImpl;
@@ -383,11 +384,11 @@ pub const String = extern struct {
         };
     }
 
-    fn createUninitializedUTF16(len: usize) struct { String, []u16 } {
+    fn createUninitializedUTF16(len: usize) !struct { String, []u16 } {
         bun.assert(len > 0);
-        const string = BunString__fromUTF16Unitialized(len);
+        const string = BunString__fromUTF16Uninitialized(len);
         if (string.tag == .Dead) {
-            return .{ dead, &[_]u16{} };
+            return error.OutOfMemory;
         }
 
         const wtf = string.value.WTFStringImpl;
@@ -414,12 +415,10 @@ pub const String = extern struct {
     ///
     /// This is not allowed on zero-length strings, in this case you should
     /// check earlier and use String.empty in that case.
-    ///
-    /// If the length is too large, this will return a dead string.
     pub fn createUninitialized(
         comptime kind: WTFStringEncoding,
         len: usize,
-    ) struct { String, [](kind.Byte()) } {
+    ) OOM!struct { String, [](kind.Byte()) } {
         bun.assert(len > 0);
         return switch (comptime kind) {
             .latin1 => createUninitializedLatin1(len),
@@ -486,10 +485,8 @@ pub const String = extern struct {
         }
 
         if (this.isUTF16()) {
-            const new, const bytes = createUninitialized(.utf16, this.length());
-            if (new.tag != .Dead) {
-                @memcpy(bytes, this.value.ZigString.utf16Slice());
-            }
+            const new, const bytes = createUninitialized(.utf16, this.length()) catch bun.outOfMemory();
+            @memcpy(bytes, this.value.ZigString.utf16Slice());
             return new;
         }
 
@@ -1374,7 +1371,7 @@ pub const SliceWithUnderlyingString = struct {
     /// Transcode a byte array to an encoded String, avoiding unnecessary copies.
     ///
     /// owned_input_bytes ownership is transferred to this function
-    pub fn transcodeFromOwnedSlice(owned_input_bytes: []u8, encoding: JSC.Node.Encoding) SliceWithUnderlyingString {
+    pub fn transcodeFromOwnedSlice(owned_input_bytes: []u8, encoding: JSC.Node.Encoding) OOM!SliceWithUnderlyingString {
         if (owned_input_bytes.len == 0) {
             return .{
                 .utf8 = ZigString.Slice.empty,
@@ -1383,7 +1380,7 @@ pub const SliceWithUnderlyingString = struct {
         }
 
         return .{
-            .underlying = JSC.WebCore.Encoder.toBunStringFromOwnedSlice(owned_input_bytes, encoding),
+            .underlying = try JSC.WebCore.Encoder.toBunStringFromOwnedSlice(owned_input_bytes, encoding),
         };
     }
 

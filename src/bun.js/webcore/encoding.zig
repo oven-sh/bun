@@ -35,6 +35,8 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const VirtualMachine = JSC.VirtualMachine;
 const Task = @import("../javascript.zig").Task;
 
+const OOM = bun.OOM;
+
 const picohttp = bun.picohttp;
 
 pub const TextEncoder = struct {
@@ -1104,7 +1106,8 @@ pub const Encoder = struct {
         };
     }
 
-    pub fn toBunStringFromOwnedSlice(input: []u8, encoding: JSC.Node.Encoding) bun.String {
+    /// Even in the error cases, the input bytes will be freed
+    pub fn toBunStringFromOwnedSlice(input: []u8, encoding: JSC.Node.Encoding) OOM!bun.String {
         if (input.len == 0)
             return bun.String.empty;
 
@@ -1115,10 +1118,7 @@ pub const Encoder = struct {
                 }
 
                 defer bun.default_allocator.free(input);
-                const str, const chars = bun.String.createUninitialized(.latin1, input.len);
-                if (str.tag == .Dead) {
-                    return str;
-                }
+                const str, const chars = try bun.String.createUninitialized(.latin1, input.len);
                 strings.copyLatin1IntoASCII(chars, input);
                 return str;
             },
@@ -1126,9 +1126,9 @@ pub const Encoder = struct {
                 return bun.String.createExternalGloballyAllocated(.latin1, input);
             },
             .buffer, .utf8 => {
-                const converted = strings.toUTF16Alloc(bun.default_allocator, input, false, false) catch {
+                const converted = strings.toUTF16Alloc(bun.default_allocator, input, false, false) catch |err| {
                     bun.default_allocator.free(input);
-                    return bun.String.dead;
+                    return err;
                 };
 
                 if (converted) |utf16| {
@@ -1152,11 +1152,7 @@ pub const Encoder = struct {
 
             .hex => {
                 defer bun.default_allocator.free(input);
-                const str, const chars = bun.String.createUninitialized(.latin1, input.len * 2);
-
-                if (str.tag == .Dead) {
-                    return str;
-                }
+                const str, const chars = try bun.String.createUninitialized(.latin1, input.len * 2);
 
                 const wrote = strings.encodeBytesToHex(chars, input);
 
@@ -1174,17 +1170,15 @@ pub const Encoder = struct {
             // appears inconsistent with Node.js.
             .base64url => {
                 defer bun.default_allocator.free(input);
-                const out, const chars = bun.String.createUninitialized(.latin1, bun.base64.urlSafeEncodeLen(input));
-                if (out.tag != .Dead) {
-                    _ = bun.base64.encodeURLSafe(chars, input);
-                }
+                const out, const chars = try bun.String.createUninitialized(.latin1, bun.base64.urlSafeEncodeLen(input));
+                _ = bun.base64.encodeURLSafe(chars, input);
                 return out;
             },
 
             .base64 => {
                 defer bun.default_allocator.free(input);
                 const to_len = bun.base64.encodeLen(input);
-                const to = bun.default_allocator.alloc(u8, to_len) catch return bun.String.dead;
+                const to = try bun.default_allocator.alloc(u8, to_len);
                 const wrote = bun.base64.encode(to, input);
                 return bun.String.createExternalGloballyAllocated(.latin1, to[0..wrote]);
             },
@@ -1200,22 +1194,20 @@ pub const Encoder = struct {
 
         switch (comptime encoding) {
             .ascii => {
-                var str, const chars = bun.String.createUninitialized(.latin1, len);
-                if (str.tag == .Dead) {
+                var str, const chars = bun.String.createUninitialized(.latin1, len) catch {
                     global.throwOutOfMemory();
                     return .zero;
-                }
+                };
                 defer str.deref();
 
                 strings.copyLatin1IntoASCII(chars, input);
                 return str.toJS(global);
             },
             .latin1 => {
-                var str, const chars = bun.String.createUninitialized(.latin1, len);
-                if (str.tag == .Dead) {
+                var str, const chars = bun.String.createUninitialized(.latin1, len) catch {
                     global.throwOutOfMemory();
                     return .zero;
-                }
+                };
                 defer str.deref();
 
                 @memcpy(chars, input);
@@ -1235,11 +1227,10 @@ pub const Encoder = struct {
                 // Avoid incomplete characters
                 if (len / 2 == 0) return ZigString.Empty.toJS(global);
 
-                var output, const chars = bun.String.createUninitialized(.utf16, len / 2);
-                if (output.tag == .Dead) {
+                var output, const chars = bun.String.createUninitialized(.utf16, len / 2) catch {
                     global.throwOutOfMemory();
                     return .zero;
-                }
+                };
                 defer output.deref();
                 var output_bytes = std.mem.sliceAsBytes(chars);
                 output_bytes[output_bytes.len - 1] = 0;
@@ -1249,11 +1240,10 @@ pub const Encoder = struct {
             },
 
             .hex => {
-                var str, const chars = bun.String.createUninitialized(.latin1, len * 2);
-                if (str.tag == .Dead) {
+                var str, const chars = bun.String.createUninitialized(.latin1, len * 2) catch {
                     global.throwOutOfMemory();
                     return .zero;
-                }
+                };
                 defer str.deref();
 
                 const wrote = strings.encodeBytesToHex(chars, input);
@@ -1262,11 +1252,10 @@ pub const Encoder = struct {
             },
 
             .base64url => {
-                var out, const chars = bun.String.createUninitialized(.latin1, bun.base64.urlSafeEncodeLen(input));
-                if (out.tag == .Dead) {
+                var out, const chars = bun.String.createUninitialized(.latin1, bun.base64.urlSafeEncodeLen(input)) catch {
                     global.throwOutOfMemory();
                     return .zero;
-                }
+                };
                 defer out.deref();
                 _ = bun.base64.encodeURLSafe(chars, input);
                 return out.toJS(global);

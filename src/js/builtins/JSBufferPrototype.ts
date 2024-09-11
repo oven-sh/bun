@@ -193,25 +193,25 @@ export function readUIntBE(this: BufferExt, offset, byteLength) {
 
 export function readFloatLE(this: BufferExt, offset) {
   if (offset === undefined) offset = 0;
-  require("internal/validators").validateInteger(offset, "offset", 0);
+  require("internal/validators").validateBounds(offset, "offset", 0, this, 4);
   return (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getFloat32(offset, true);
 }
 
 export function readFloatBE(this: BufferExt, offset) {
   if (offset === undefined) offset = 0;
-  require("internal/validators").validateInteger(offset, "offset", 0);
+  require("internal/validators").validateBounds(offset, "offset", 0, this, 4);
   return (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getFloat32(offset, false);
 }
 
 export function readDoubleLE(this: BufferExt, offset) {
   if (offset === undefined) offset = 0;
-  require("internal/validators").validateInteger(offset, "offset", 0);
+  require("internal/validators").validateBounds(offset, "offset", 0, this, 8);
   return (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getFloat64(offset, true);
 }
 
 export function readDoubleBE(this: BufferExt, offset) {
   if (offset === undefined) offset = 0;
-  require("internal/validators").validateInteger(offset, "offset", 0);
+  require("internal/validators").validateBounds(offset, "offset", 0, this, 8);
   return (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getFloat64(offset, false);
 }
 

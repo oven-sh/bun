@@ -8,7 +8,8 @@ nativeTests.test_napi_class_constructor_handle_scope = () => {
 
 nativeTests.test_napi_handle_scope_finalizer = async () => {
   // Create a weak reference, which will be collected eventually
-  nativeTests.create_ref_with_finalizer();
+  // Pass false in Node.js so it does not create a handle scope
+  nativeTests.create_ref_with_finalizer(Boolean(process.isBun));
 
   // Wait until it actually has been collected by ticking the event loop and forcing GC
   while (!nativeTests.was_finalize_called()) {

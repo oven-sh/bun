@@ -453,22 +453,32 @@ napi_value test_napi_ref(const Napi::CallbackInfo &info) {
 static bool finalize_called = false;
 
 void finalize_cb(napi_env env, void *finalize_data, void *finalize_hint) {
-  napi_handle_scope hs;
-  assert(napi_open_handle_scope(env, &hs) == napi_ok);
-  assert(napi_close_handle_scope(env, hs) == napi_ok);
-
+  // only do this in bun
+  bool &create_handle_scope = *reinterpret_cast<bool *>(finalize_hint);
+  if (create_handle_scope) {
+    napi_handle_scope hs;
+    assert(napi_open_handle_scope(env, &hs) == napi_ok);
+    assert(napi_close_handle_scope(env, hs) == napi_ok);
+  }
+  delete &create_handle_scope;
   finalize_called = true;
 }
 
 napi_value create_ref_with_finalizer(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
+  napi_value create_handle_scope_in_finalizer = info[0];
 
   napi_value object;
   assert(napi_create_object(env, &object) == napi_ok);
+
+  bool *finalize_hint = new bool;
+  assert(napi_get_value_bool(env, create_handle_scope_in_finalizer,
+                             finalize_hint) == napi_ok);
+
   napi_ref ref;
 
-  assert(napi_wrap(env, object, nullptr, finalize_cb, nullptr, &ref) ==
-         napi_ok);
+  assert(napi_wrap(env, object, nullptr, finalize_cb,
+                   reinterpret_cast<bool *>(finalize_hint), &ref) == napi_ok);
 
   return ok(env);
 }

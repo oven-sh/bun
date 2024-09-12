@@ -61,6 +61,12 @@ export function getStdioWriteStream(fd) {
 }
 
 export function getStdinStream(fd) {
+  const tty = require("node:tty");
+  if (!tty.isatty(fd)) {
+    const fs = require("node:fs");
+    return new fs.ReadStream(fd);
+  }
+
   // Ideally we could use this:
   // return require("node:stream")[Symbol.for("::bunternal::")]._ReadableFromWeb(Bun.stdin.stream());
   // but we need to extend TTY/FS ReadStream
@@ -111,9 +117,7 @@ export function getStdinStream(fd) {
     }
   }
 
-  const tty = require("node:tty");
-  const ReadStream = tty.isatty(fd) ? tty.ReadStream : require("node:fs").ReadStream;
-  const stream = new ReadStream(fd);
+  const stream = new tty.ReadStream(fd);
 
   const originalOn = stream.on;
 

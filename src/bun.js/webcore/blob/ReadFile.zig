@@ -730,7 +730,9 @@ pub const ReadFileUV = struct {
     }
 
     pub fn queueRead(this: *ReadFileUV) void {
-        if (this.remainingBuffer().len > 0 and this.errno == null and !this.read_eof) {
+        // if not a regular file, buffer capacity is arbitrary, and running out doesn't mean we're
+        // at the end of the file
+        if ((this.remainingBuffer().len > 0 or !this.is_regular_file) and this.errno == null and !this.read_eof) {
             log("ReadFileUV.queueRead - this.remainingBuffer().len = {d}", .{this.remainingBuffer().len});
 
             if (!this.is_regular_file) {

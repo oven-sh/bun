@@ -2497,7 +2497,6 @@ pub const Fetch = struct {
         };
 
         // proxy: string | undefined;
-
         url_proxy_buffer = extract_proxy: {
             const objects_to_try = [_]JSC.JSValue{
                 options_object orelse .zero,

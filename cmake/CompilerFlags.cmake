@@ -1,5 +1,3 @@
-include(Macros)
-
 # clang: https://clang.llvm.org/docs/CommandGuide/clang.html
 # clang-cl: https://clang.llvm.org/docs/UsersManual.html#id11
 

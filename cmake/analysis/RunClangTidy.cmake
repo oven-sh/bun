@@ -1,7 +1,5 @@
 # https://clang.llvm.org/extra/clang-tidy/
 
-include(Macros)
-
 find_command(
   VARIABLE
     CLANG_TIDY_PROGRAM

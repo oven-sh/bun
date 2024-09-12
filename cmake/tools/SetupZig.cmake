@@ -1,5 +1,3 @@
-include(Macros)
-
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
   set(DEFAULT_ZIG_ARCH "aarch64")
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "amd64|x86_64|x64|AMD64")
@@ -47,7 +45,7 @@ optionx(ZIG_VERSION STRING "The version of zig to use" DEFAULT "0.13.0")
 optionx(ZIG_LOCAL_CACHE_DIR FILEPATH "The path to local the zig cache directory" DEFAULT ${CACHE_PATH}/zig/local)
 optionx(ZIG_GLOBAL_CACHE_DIR FILEPATH "The path to the global zig cache directory" DEFAULT ${CACHE_PATH}/zig/global)
 optionx(ZIG_BIN_CACHE_DIR FILEPATH "The path to the zig binary cache directory" DEFAULT ${CACHE_PATH}/zig/bin)
-optionx(ZIG_REPOSITORY_PATH FILEPATH "The path to the Zig repository" DEFAULT ${CWD}/vendor/zig)
+optionx(ZIG_REPOSITORY_PATH FILEPATH "The path to the Zig repository" DEFAULT ${VENDOR_PATH}/zig)
 
 register_repository(
   NAME

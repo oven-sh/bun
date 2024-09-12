@@ -1,5 +1,3 @@
-include(Macros)
-
 if(DEBUG)
   set(bun bun-debug)
 elseif(ENABLE_SMOL)
@@ -572,7 +570,7 @@ register_repository(
     picohttpparser.c
 )
 
-list(APPEND BUN_C_SOURCES ${CWD}/vendor/picohttpparser/picohttpparser.c)
+list(APPEND BUN_C_SOURCES ${VENDOR_PATH}/picohttpparser/picohttpparser.c)
 
 if(WIN32)
   list(APPEND BUN_C_SOURCES ${CWD}/src/bun.js/bindings/windows/musl-memmem.c)
@@ -662,9 +660,9 @@ target_include_directories(${bun} PRIVATE
   ${CWD}/src/js/builtins
   ${CWD}/src/napi
   ${CWD}/src/deps
-  ${CWD}/vendor
-  ${CWD}/vendor/picohttpparser
   ${CODEGEN_PATH}
+  ${VENDOR_PATH}
+  ${VENDOR_PATH}/picohttpparser
 )
 
 # --- C/C++ Definitions ---

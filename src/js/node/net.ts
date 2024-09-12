@@ -569,7 +569,6 @@ const Socket = (function (InternalSocket) {
           if (upgradeDuplex) {
             this.connecting = true;
             this.#upgraded = connection;
-
             const [result, events] = upgradeDuplexToTLS(connection, {
               data: this,
               tls,
@@ -606,26 +605,46 @@ const Socket = (function (InternalSocket) {
               // wait to be connected
               connection.once("connect", () => {
                 const socket = connection[bunSocketInternal];
-                if (!socket) return;
+                if (!upgradeDuplex && socket) {
+                  // if is named pipe socket we can upgrade it using the same wrapper than we use for duplex
+                  upgradeDuplex = isNamedPipeSocket(socket);
+                }
+                if (upgradeDuplex) {
+                  this.connecting = true;
+                  this.#upgraded = connection;
 
-                this.connecting = true;
-                this.#upgraded = connection;
-                const result = socket.upgradeTLS({
-                  data: this,
-                  tls,
-                  socket: this.#handlers,
-                });
+                  const [result, events] = upgradeDuplexToTLS(connection, {
+                    data: this,
+                    tls,
+                    socket: this.#handlers,
+                  });
 
-                if (result) {
-                  const [raw, tls] = result;
-                  // replace socket
-                  connection[bunSocketInternal] = raw;
-                  this.once("end", this.#closeRawConnection);
-                  raw.connecting = false;
-                  this[bunSocketInternal] = tls;
+                  connection.on("data", events[0]);
+                  connection.on("end", events[1]);
+                  connection.on("drain", events[2]);
+                  connection.on("close", events[3]);
+
+                  this[bunSocketInternal] = result;
                 } else {
-                  this[bunSocketInternal] = null;
-                  throw new Error("Invalid socket");
+                  this.connecting = true;
+                  this.#upgraded = connection;
+                  const result = socket.upgradeTLS({
+                    data: this,
+                    tls,
+                    socket: this.#handlers,
+                  });
+
+                  if (result) {
+                    const [raw, tls] = result;
+                    // replace socket
+                    connection[bunSocketInternal] = raw;
+                    this.once("end", this.#closeRawConnection);
+                    raw.connecting = false;
+                    this[bunSocketInternal] = tls;
+                  } else {
+                    this[bunSocketInternal] = null;
+                    throw new Error("Invalid socket");
+                  }
                 }
               });
             }

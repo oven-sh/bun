@@ -1408,7 +1408,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 .done => |socket| us_socket_get_native_handle(comptime ssl_int, socket),
                 .connecting => |socket| us_connecting_socket_get_native_handle(comptime ssl_int, socket),
                 .detached => null,
-                .upgradedDuplex => |socket| if (is_ssl) @as(*anyopaque, @ptrCast(socket.ssl())) else null,
+                .upgradedDuplex => |socket| if (is_ssl) @as(*anyopaque, @ptrCast(socket.ssl() orelse return null)) else null,
                 .pipe => |socket| if (is_ssl and Environment.isWindows) @as(*anyopaque, @ptrCast(socket.ssl() orelse return null)) else null,
             } orelse return null);
         }

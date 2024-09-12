@@ -1,8 +1,10 @@
 import { expect, it } from "bun:test";
-import { tls, isWindows } from "harness";
+import { tls, isWindows, expectMaxObjectTypeCount } from "harness";
 import { connect, createServer } from "node:tls";
+import net from "node:net";
 import { once } from "node:events";
 import { randomUUID } from "node:crypto";
+import { heapStats } from "bun:jsc";
 
 it.if(isWindows)("should work with named pipes and tls", async () => {
   async function test(pipe_name: string) {
@@ -39,6 +41,8 @@ it.if(isWindows)("should work with named pipes and tls", async () => {
   }
 
   const batch = [];
+
+  const before = heapStats().objectTypeCounts.TLSSocket || 0;
   for (let i = 0; i < 200; i++) {
     batch.push(test(`\\\\.\\pipe\\test\\${randomUUID()}`));
     batch.push(test(`\\\\?\\pipe\\test\\${randomUUID()}`));
@@ -48,4 +52,5 @@ it.if(isWindows)("should work with named pipes and tls", async () => {
     }
   }
   await Promise.all(batch);
+  expectMaxObjectTypeCount(expect, "TLSSocket", before);
 });

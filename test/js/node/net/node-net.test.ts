@@ -1,10 +1,11 @@
 import { Socket as _BunSocket, resolve, TCPSocketListener } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync, isWindows } from "harness";
+import { bunEnv, bunExe, tmpdirSync, isWindows, expectMaxObjectTypeCount } from "harness";
 import { connect, createServer, createConnection, isIP, isIPv4, isIPv6, Server, Socket, Stream } from "node:net";
 import { join } from "node:path";
 import { once } from "node:events";
 import { randomUUID } from "node:crypto";
+import { heapStats } from "bun:jsc";
 
 const socket_domain = tmpdirSync();
 
@@ -596,6 +597,7 @@ it.if(isWindows)("should work with named pipes", async () => {
   }
 
   const batch = [];
+  const before = heapStats().objectTypeCounts.TLSSocket || 0;
   for (let i = 0; i < 200; i++) {
     batch.push(test(`\\\\.\\pipe\\test\\${randomUUID()}`));
     batch.push(test(`\\\\?\\pipe\\test\\${randomUUID()}`));
@@ -605,4 +607,5 @@ it.if(isWindows)("should work with named pipes", async () => {
     }
   }
   await Promise.all(batch);
+  expectMaxObjectTypeCount(expect, "TCPSocket", before);
 });

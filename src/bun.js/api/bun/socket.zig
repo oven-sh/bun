@@ -3723,6 +3723,7 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
     };
 
     usingnamespace bun.New(WindowsNamedPipeContext);
+    const log = Output.scoped(.WindowsNamedPipeContext, false);
 
     fn onOpen(this: *WindowsNamedPipeContext) void {
         this.is_open = true;
@@ -3963,6 +3964,7 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
         return &this.named_pipe;
     }
     fn deinit(this: *WindowsNamedPipeContext) void {
+        log("deinit", .{});
         const socket = this.socket;
         this.socket = .none;
         switch (socket) {

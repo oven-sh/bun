@@ -606,7 +606,6 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
         log("onPipeClose", .{});
         this.flags.disconnected = true;
         this.pipe = null;
-        this.writer.source = null;
         this.onClose();
     }
 

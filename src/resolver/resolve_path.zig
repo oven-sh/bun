@@ -74,7 +74,13 @@ pub fn isParentOrEqual(parent_: []const u8, child: []const u8) ParentEqual {
     while (parent.len > 0 and isSepAny(parent[parent.len - 1])) {
         parent = parent[0 .. parent.len - 1];
     }
-    if (std.mem.indexOf(u8, child, parent) != 0) return .unrelated;
+
+    const contains = if (comptime bun.Environment.isLinux)
+        strings.containsCaseInsensitiveASCII
+    else
+        strings.contains;
+    if (!contains(child, parent)) return .unrelated;
+
     if (child.len == parent.len) return .equal;
     if (isSepAny(child[parent.len])) return .parent;
     return .unrelated;
@@ -681,7 +687,7 @@ pub fn windowsFilesystemRootT(comptime T: type, path: []const T) []const T {
     {
         if (bun.strings.indexAnyComptimeT(T, path[3..], "/\\")) |idx| {
             if (bun.strings.indexAnyComptimeT(T, path[4 + idx ..], "/\\")) |idx_second| {
-                return path[0 .. idx + idx_second + 4];
+                return path[0 .. idx + idx_second + 4 + 1]; // +1 to skip second separator
             }
             return path[0..];
         }

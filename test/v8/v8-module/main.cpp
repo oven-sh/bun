@@ -1,4 +1,8 @@
 #include <node.h>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
+#include <uv.h>
 
 #include <cinttypes>
 #include <cstdarg>
@@ -466,6 +470,24 @@ void test_handle_scope_gc(const FunctionCallbackInfo<Value> &info) {
   delete[] string_data;
 }
 
+void test_uv_os_getpid(const FunctionCallbackInfo<Value> &info) {
+#ifndef _WIN32
+  assert(getpid() == uv_os_getpid());
+#else
+  assert(0 && "unreachable");
+#endif
+  return ok(info);
+}
+
+void test_uv_os_getppid(const FunctionCallbackInfo<Value> &info) {
+#ifndef _WIN32
+  assert(getppid() == uv_os_getppid());
+#else
+  assert(0 && "unreachable");
+#endif
+  return ok(info);
+}
+
 void initialize(Local<Object> exports, Local<Value> module,
                 Local<Context> context) {
   NODE_SET_METHOD(exports, "test_v8_native_call", test_v8_native_call);
@@ -492,6 +514,8 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "global_set", GlobalTestWrapper::set);
   NODE_SET_METHOD(exports, "test_many_v8_locals", test_many_v8_locals);
   NODE_SET_METHOD(exports, "test_handle_scope_gc", test_handle_scope_gc);
+  NODE_SET_METHOD(exports, "test_uv_os_getpid", test_uv_os_getpid);
+  NODE_SET_METHOD(exports, "test_uv_os_getppid", test_uv_os_getppid);
 
   // without this, node hits a UAF deleting the Global
   node::AddEnvironmentCleanupHook(context->GetIsolate(),

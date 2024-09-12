@@ -1296,6 +1296,7 @@ pub const Printer = struct {
 
             const loader = try allocator.create(DotEnv.Loader);
             loader.* = DotEnv.Loader.init(map, allocator);
+            loader.quiet = true;
             break :brk loader;
         };
 

@@ -1800,19 +1800,7 @@ pub const Crypto = struct {
     };
 
     pub fn createCryptoError(globalThis: *JSC.JSGlobalObject, err_code: u32) JSValue {
-        var outbuf: [128 + 1 + "BoringSSL error: ".len]u8 = undefined;
-        @memset(&outbuf, 0);
-        outbuf[0.."BoringSSL error: ".len].* = "BoringSSL error: ".*;
-        const message_buf = outbuf["BoringSSL error: ".len..];
-
-        _ = BoringSSL.ERR_error_string_n(err_code, message_buf, message_buf.len);
-
-        const error_message: []const u8 = bun.sliceTo(outbuf[0..], 0);
-        if (error_message.len == "BoringSSL error: ".len) {
-            return ZigString.static("Unknown BoringSSL error").toErrorInstance(globalThis);
-        }
-
-        return ZigString.fromUTF8(error_message).toErrorInstance(globalThis);
+        return BoringSSL.ERR_toJS(globalThis, err_code);
     }
     const unknown_password_algorithm_message = "unknown algorithm, expected one of: \"bcrypt\", \"argon2id\", \"argon2d\", \"argon2i\" (default is \"argon2id\")";
 

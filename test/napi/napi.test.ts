@@ -121,6 +121,9 @@ describe("napi", () => {
     it("can recover the value from a weak ref", () => {
       checkSameOutput("test_napi_ref", []);
     });
+    it("allows creating a handle scope in the finalizer", () => {
+      checkSameOutput("test_napi_handle_scope_finalizer", []);
+    });
   });
 });
 

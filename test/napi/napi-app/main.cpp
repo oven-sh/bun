@@ -430,6 +430,45 @@ napi_value test_napi_ref(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+static bool finalize_called = false;
+
+void finalize_cb(napi_env env, void *finalize_data, void *finalize_hint) {
+  // only do this in bun
+  bool &create_handle_scope = *reinterpret_cast<bool *>(finalize_hint);
+  if (create_handle_scope) {
+    napi_handle_scope hs;
+    assert(napi_open_handle_scope(env, &hs) == napi_ok);
+    assert(napi_close_handle_scope(env, hs) == napi_ok);
+  }
+  delete &create_handle_scope;
+  finalize_called = true;
+}
+
+napi_value create_ref_with_finalizer(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value create_handle_scope_in_finalizer = info[0];
+
+  napi_value object;
+  assert(napi_create_object(env, &object) == napi_ok);
+
+  bool *finalize_hint = new bool;
+  assert(napi_get_value_bool(env, create_handle_scope_in_finalizer,
+                             finalize_hint) == napi_ok);
+
+  napi_ref ref;
+
+  assert(napi_wrap(env, object, nullptr, finalize_cb,
+                   reinterpret_cast<bool *>(finalize_hint), &ref) == napi_ok);
+
+  return ok(env);
+}
+
+napi_value was_finalize_called(const Napi::CallbackInfo &info) {
+  napi_value ret;
+  assert(napi_get_boolean(info.Env(), finalize_called, &ret) == napi_ok);
+  return ret;
+}
+
 Napi::Value RunCallback(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   // this function is invoked without the GC callback
@@ -473,6 +512,10 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
               Napi::Function::New(env, get_class_with_constructor));
   exports.Set("create_promise", Napi::Function::New(env, create_promise));
   exports.Set("test_napi_ref", Napi::Function::New(env, test_napi_ref));
+  exports.Set("create_ref_with_finalizer",
+              Napi::Function::New(env, create_ref_with_finalizer));
+  exports.Set("was_finalize_called",
+              Napi::Function::New(env, was_finalize_called));
 
   return exports;
 }

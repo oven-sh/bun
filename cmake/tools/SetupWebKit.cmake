@@ -1,6 +1,6 @@
 include(Macros)
 
-optionx(WEBKIT_VERSION STRING "The version of WebKit to use" DEFAULT "489721e8ce80dc82e20bf861b4986b3c2eeceed9")
+optionx(WEBKIT_VERSION STRING "The version of WebKit to use" DEFAULT "4db913769178d2aaae20413b995bb19e7801d7f7")
 optionx(WEBKIT_PREBUILT BOOL "If a pre-built version of WebKit should be used" DEFAULT ON)
 
 if(WEBKIT_PREBUILT)

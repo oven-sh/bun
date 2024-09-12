@@ -503,6 +503,22 @@ endif()
 
 set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.o)
 
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
+  if(APPLE)
+    set(ZIG_CPU "apple_m1")
+  else()
+    set(ZIG_CPU "native")
+  endif()
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|X86_64|x64|X64|amd64|AMD64")
+  if(ENABLE_BASELINE)
+    set(ZIG_CPU "nehalem")
+  else()
+    set(ZIG_CPU "haswell")
+  endif()
+else()
+  unsupported(CMAKE_SYSTEM_PROCESSOR)
+endif()
+
 register_command(
   TARGET
     bun-zig

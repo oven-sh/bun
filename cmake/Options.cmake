@@ -53,16 +53,6 @@ if(ARCH STREQUAL "x64")
   optionx(ENABLE_BASELINE BOOL "If baseline features should be used for older CPUs (e.g. disables AVX, AVX2)" DEFAULT OFF)
 endif()
 
-if(ARCH STREQUAL "aarch64")
-  set(DEFAULT_CPU "native")
-elseif(ENABLE_BASELINE)
-  set(DEFAULT_CPU "nehalem")
-else()
-  set(DEFAULT_CPU "haswell")
-endif()
-
-optionx(CPU STRING "The CPU to use for the compiler" DEFAULT ${DEFAULT_CPU})
-
 optionx(ENABLE_LOGS BOOL "If debug logs should be enabled" DEFAULT ${DEBUG})
 optionx(ENABLE_ASSERTIONS BOOL "If debug assertions should be enabled" DEFAULT ${DEBUG})
 

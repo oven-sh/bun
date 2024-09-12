@@ -636,6 +636,93 @@ pub const Log = struct {
         };
     }
 
+    const OutputInterface = struct {
+        log: *Log,
+
+        pub fn err(this: OutputInterface, error_name: anytype, comptime fmt: []const u8, args: anytype) void {
+            const T = @TypeOf(error_name);
+            const info = @typeInfo(T);
+
+            if (comptime T == bun.sys.Error or info == .Pointer and info.Pointer.child == bun.sys.Error) {
+                this.prettyErrorln(fmt ++ " ({s})", args ++ .{error_name});
+                return;
+            }
+
+            const display_name, const is_comptime_name = display_name: {
+
+                // Zig string literals are of type *const [n:0]u8
+                // we assume that no one will pass this type from not using a string literal.
+                if (info == .Pointer and info.Pointer.size == .One and info.Pointer.is_const) {
+                    const child_info = @typeInfo(info.Pointer.child);
+                    if (child_info == .Array and child_info.Array.child == u8) {
+                        if (child_info.Array.len == 0) @compileError("Output.err should not be passed an empty string (use errGeneric)");
+                        break :display_name .{ error_name, true };
+                    }
+                }
+
+                // other zig strings we shall treat as dynamic
+                if (comptime bun.trait.isZigString(T)) {
+                    break :display_name .{ error_name, false };
+                }
+
+                // error unions
+                if (info == .ErrorSet) {
+                    if (info.ErrorSet) |errors| {
+                        if (errors.len == 0) {
+                            @compileError("Output.err was given an empty error set");
+                        }
+
+                        // TODO: convert zig errors to errno for better searchability?
+                        if (errors.len == 1) break :display_name .{ errors[0].name, true };
+                    }
+
+                    break :display_name .{ @errorName(error_name), false };
+                }
+
+                // enum literals
+                if (info == .EnumLiteral) {
+                    const tag = @tagName(info);
+                    comptime bun.assert(tag.len > 0); // how?
+                    if (tag[0] != 'E') break :display_name .{ "E" ++ tag, true };
+                    break :display_name .{ tag, true };
+                }
+
+                // enums
+                if (info == .Enum) {
+                    const errno: bun.C.SystemErrno = @enumFromInt(@intFromEnum(info));
+                    break :display_name .{ @tagName(errno), false };
+                }
+
+                @compileLog(error_name);
+                @compileError("err() was given unsupported type: " ++ @typeName(T) ++ " (." ++ @tagName(info) ++ ")");
+            };
+            _ = is_comptime_name; // autofix
+
+            // if the name is known at compile time, we can do better and use it at compile time
+
+            this.prettyErrorln(fmt ++ " ({s})", args ++ .{display_name});
+        }
+
+        pub fn errGeneric(this: OutputInterface, comptime fmt: []const u8, args: anytype) void {
+            this.log.addErrorFmt(null, Loc.Empty, this.log.msgs.allocator, fmt, args) catch bun.outOfMemory();
+        }
+
+        pub fn prettyErrorln(this: OutputInterface, comptime fmt: []const u8, args: anytype) void {
+            switch (Output.enable_ansi_colors) {
+                inline else => |enable_ansi_colors| {
+                    this.log.addErrorFmt(null, Loc.Empty, this.log.msgs.allocator, Output.prettyFmt(
+                        fmt,
+                        enable_ansi_colors,
+                    ), args) catch bun.outOfMemory();
+                },
+            }
+        }
+    };
+
+    pub fn output(this: *Log) OutputInterface {
+        return .{ .log = this };
+    }
+
     pub const Level = enum(i8) {
         verbose, // 0
         debug, // 1

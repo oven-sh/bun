@@ -1499,6 +1499,10 @@ declare module "bun" {
 
   type ModuleFormat = "esm"; // later: "cjs", "iife"
 
+  type CompileTargetOperatingSystem = "windows" | "macos" | "linux";
+  type CompileTargetArchitecture = "x64" | "arm64";
+  type CompileTargetBaselineOrModern = "baseline" | "modern";
+
   interface BuildConfig {
     entrypoints: string[]; // list of file path
     outdir?: string; // output directory
@@ -1561,6 +1565,16 @@ declare module "bun" {
     //       /** Only works when runtime=automatic */
     //       importSource?: string; // default: "react"
     //     };
+
+    /**
+     * Generate a single-file standalone executable
+     */
+    compile?:
+      | true
+      | false
+      | `${CompileTargetOperatingSystem}-${CompileTargetArchitecture}`
+      | `${CompileTargetArchitecture}-${CompileTargetOperatingSystem}`
+      | `${CompileTargetBaselineOrModern}`;
   }
 
   namespace Password {

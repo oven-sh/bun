@@ -311,6 +311,7 @@ pub const StandaloneModuleGraph = struct {
         try string_builder.allocate(allocator);
 
         var modules = try std.ArrayList(CompiledModuleGraphFile).initCapacity(allocator, module_count);
+        defer modules.deinit();
 
         var source_map_header_list = std.ArrayList(u8).init(allocator);
         defer source_map_header_list.deinit();
@@ -391,11 +392,11 @@ pub const StandaloneModuleGraph = struct {
     else
         std.mem.page_size;
 
-    pub fn inject(bytes: []const u8, self_exe: [:0]const u8) bun.FileDescriptor {
+    pub fn inject(bytes: []const u8, self_exe: [:0]const u8, log: anytype) !struct { bun.FileDescriptor, usize } {
         var buf: bun.PathBuffer = undefined;
         var zname: [:0]const u8 = bun.span(bun.fs.FileSystem.instance.tmpname("bun-build", &buf, @as(u64, @bitCast(std.time.milliTimestamp()))) catch |err| {
-            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get temporary file name: {s}", .{@errorName(err)});
-            Global.exit(1);
+            log.err(err, "failed to get temporary file name", .{});
+            return error.Fatal;
         });
 
         const cleanup = struct {
@@ -419,8 +420,8 @@ pub const StandaloneModuleGraph = struct {
                 const out = out_buf[0..zname.len :0];
 
                 bun.copyFile(in, out).unwrap() catch |err| {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
-                    Global.exit(1);
+                    log.err(err, "failed to copy bun executable into temporary file", .{});
+                    return error.Fatal;
                 };
                 const file = bun.sys.openFileAtWindows(
                     bun.invalid_fd,
@@ -432,8 +433,8 @@ pub const StandaloneModuleGraph = struct {
                     // create options
                     w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
                 ).unwrap() catch |e| {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}", .{e});
-                    Global.exit(1);
+                    log.err(e, "failed to open temporary file to copy bun into", .{});
+                    return error.Fatal;
                 };
 
                 break :brk file;
@@ -486,8 +487,8 @@ pub const StandaloneModuleGraph = struct {
                                     else => break,
                                 }
 
-                                Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}", .{err});
-                                Global.exit(1);
+                                log.err(err, "failed to open temporary file to copy bun into", .{});
+                                return error.Fatal;
                             }
                         },
                     }
@@ -507,9 +508,9 @@ pub const StandaloneModuleGraph = struct {
                                 }
                             }
 
-                            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open bun executable to copy from as read-only\n{}", .{err});
+                            log.err(err, "failed to open bun executable to copy from as read-only", .{});
                             cleanup(zname, fd);
-                            Global.exit(1);
+                            return error.Fatal;
                         },
                     }
                 }
@@ -519,9 +520,9 @@ pub const StandaloneModuleGraph = struct {
             defer _ = Syscall.close(self_fd);
 
             bun.copyFile(self_fd.cast(), fd.cast()).unwrap() catch |err| {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
+                log.err(err, "failed to copy bun executable into temporary file", .{});
                 cleanup(zname, fd);
-                Global.exit(1);
+                return error.Fatal;
             };
             break :brk fd;
         };
@@ -530,18 +531,18 @@ pub const StandaloneModuleGraph = struct {
 
         if (Environment.isWindows) {
             total_byte_count = bytes.len + 8 + (Syscall.setFileOffsetToEndWindows(cloned_executable_fd).unwrap() catch |err| {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> failed to seek to end of temporary file\n{}", .{err});
+                log.err(err, "failed to seek to end of temporary file", .{});
                 cleanup(zname, cloned_executable_fd);
-                Global.exit(1);
+                return error.Fatal;
             });
         } else {
             const seek_position = @as(u64, @intCast(brk: {
                 const fstat = switch (Syscall.fstat(cloned_executable_fd)) {
                     .result => |res| res,
                     .err => |err| {
-                        Output.prettyErrorln("{}", .{err});
+                        log.err(err, "failed to get file size of temporary file", .{});
                         cleanup(zname, cloned_executable_fd);
-                        Global.exit(1);
+                        return error.Fatal;
                     },
                 };
 
@@ -560,15 +561,15 @@ pub const StandaloneModuleGraph = struct {
             //
             switch (Syscall.setFileOffset(cloned_executable_fd, seek_position)) {
                 .err => |err| {
-                    Output.prettyErrorln(
-                        "{}\nwhile seeking to end of temporary file (pos: {d})",
+                    log.err(
+                        err,
+                        "failed to seek to end of temporary file (pos: {d})",
                         .{
-                            err,
                             seek_position,
                         },
                     );
                     cleanup(zname, cloned_executable_fd);
-                    Global.exit(1);
+                    return error.Fatal;
                 },
                 else => {},
             }
@@ -579,10 +580,9 @@ pub const StandaloneModuleGraph = struct {
             switch (Syscall.write(cloned_executable_fd, bytes)) {
                 .result => |written| remain = remain[written..],
                 .err => |err| {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to write to temporary file\n{}", .{err});
+                    log.err(err, "failed to write to temporary file", .{});
                     cleanup(zname, cloned_executable_fd);
-
-                    Global.exit(1);
+                    return error.Fatal;
                 },
             }
         }
@@ -593,19 +593,19 @@ pub const StandaloneModuleGraph = struct {
             _ = bun.C.fchmod(cloned_executable_fd.int(), 0o777);
         }
 
-        return cloned_executable_fd;
+        return .{ cloned_executable_fd, total_byte_count };
     }
 
     pub const CompileTarget = @import("./compile_target.zig");
 
-    pub fn download(allocator: std.mem.Allocator, target: *const CompileTarget, env: *bun.DotEnv.Loader) ![:0]const u8 {
+    pub fn download(allocator: std.mem.Allocator, target: *const CompileTarget, env: *bun.DotEnv.Loader, log: anytype) ![:0]const u8 {
         var exe_path_buf: bun.PathBuffer = undefined;
         var version_str_buf: [1024]u8 = undefined;
         const version_str = try std.fmt.bufPrintZ(&version_str_buf, "{}", .{target});
         var needs_download: bool = true;
         const dest_z = target.exePath(&exe_path_buf, version_str, env, &needs_download);
         if (needs_download) {
-            try target.downloadToPath(env, allocator, dest_z);
+            try target.downloadToPath(env, allocator, dest_z, @TypeOf(log) == type and log == Output, log);
         }
 
         return try allocator.dupeZ(u8, dest_z);
@@ -614,29 +614,49 @@ pub const StandaloneModuleGraph = struct {
     pub fn toExecutable(
         target: *const CompileTarget,
         allocator: std.mem.Allocator,
-        output_files: []const bun.options.OutputFile,
+        output_files: []bun.options.OutputFile,
         root_dir: std.fs.Dir,
         module_prefix: []const u8,
         outfile: []const u8,
         env: *bun.DotEnv.Loader,
+        log: anytype,
+        hash_ptr: ?*u64,
     ) !void {
         const bytes = try toBytes(allocator, module_prefix, output_files);
         if (bytes.len == 0) return;
 
-        const fd = inject(
+        if (hash_ptr) |hash| {
+            hash.* = std.hash.XxHash64.hash(0, bytes);
+        }
+
+        defer allocator.free(bytes);
+        var download_path: [:0]const u8 = "";
+        defer {
+            if (download_path.len > 0) {
+                allocator.free(download_path);
+            }
+        }
+        const fd, const total_bytes_written = try inject(
             bytes,
             if (target.isDefault())
                 bun.selfExePath() catch |err| {
-                    Output.err(err, "failed to get self executable path", .{});
-                    Global.exit(1);
+                    log.err(err, "failed to get self executable path", .{});
+                    return err;
                 }
-            else
-                download(allocator, target, env) catch |err| {
-                    Output.err(err, "failed to download cross-compiled bun executable", .{});
-                    Global.exit(1);
-                },
+            else brk: {
+                download_path = download(allocator, target, env, log) catch |err| {
+                    if (err != error.Fatal) {
+                        log.err(err, "failed to download cross-compiled bun executable", .{});
+                    }
+                    return err;
+                };
+                break :brk download_path;
+            },
+            log,
         );
         fd.assertKind(.system);
+
+        output_files[0].size = total_bytes_written;
 
         if (Environment.isWindows) {
             var outfile_buf: bun.OSPathBuffer = undefined;
@@ -650,22 +670,22 @@ pub const StandaloneModuleGraph = struct {
 
             bun.C.moveOpenedFileAtLoose(fd, bun.toFD(root_dir.fd), outfile_slice, true).unwrap() catch |err| {
                 if (err == error.EISDIR) {
-                    Output.errGeneric("{} is a directory. Please choose a different --outfile or delete the directory", .{bun.fmt.utf16(outfile_slice)});
+                    log.errGeneric("{} is a directory. Please choose a different --outfile or delete the directory", .{bun.fmt.utf16(outfile_slice)});
                 } else {
-                    Output.err(err, "failed to move executable to result path", .{});
+                    log.err(err, "failed to move executable to result path", .{});
                 }
 
                 _ = bun.C.deleteOpenedFile(fd);
 
-                Global.exit(1);
+                return error.Fatal;
             };
             return;
         }
 
         var buf: bun.PathBuffer = undefined;
         const temp_location = bun.getFdPath(fd, &buf) catch |err| {
-            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get path for fd: {s}", .{@errorName(err)});
-            Global.exit(1);
+            log.errGeneric("failed to get path for fd: {s}", .{@errorName(err)});
+            return error.Fatal;
         };
 
         if (comptime Environment.isMac) {
@@ -699,15 +719,15 @@ pub const StandaloneModuleGraph = struct {
             bun.sliceTo(&(try std.posix.toPosixPath(std.fs.path.basename(outfile))), 0),
         ) catch |err| {
             if (err == error.IsDir) {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> {} is a directory. Please choose a different --outfile or delete the directory", .{bun.fmt.quote(outfile)});
+                log.errGeneric("{} is a directory. Please choose a different --outfile or delete the directory", .{bun.fmt.quote(outfile)});
             } else {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> failed to rename {s} to {s}: {s}", .{ temp_location, outfile, @errorName(err) });
+                log.errGeneric("failed to rename {s} to {s}: {s}", .{ temp_location, outfile, @errorName(err) });
             }
             _ = Syscall.unlink(
                 &(try std.posix.toPosixPath(temp_location)),
             );
 
-            Global.exit(1);
+            return error.Fatal;
         };
     }
 

@@ -21,6 +21,40 @@ const testing = std.testing;
 const assert = (std.debug).assert;
 const Progress = @This();
 
+/// An implementation of Progress that doesn't do anything.
+/// This makes it easier to reuse code that uses Progress in places where a progress bar is disabled.
+pub const NoOp = struct {
+    pub fn start(this: *@This(), name: []const u8, estimated_total_items: usize) *NoOp {
+        _ = this; // autofix
+        _ = name; // autofix
+        _ = estimated_total_items; // autofix
+        return undefined;
+    }
+
+    pub fn end(this: *@This()) void {
+        _ = this; // autofix
+    }
+    pub fn completeOne(this: *@This()) void {
+        _ = this; // autofix
+    }
+    pub fn setName(this: *@This(), name: []const u8) void {
+        _ = this; // autofix
+        _ = name; // autofix
+    }
+    pub fn setUnit(this: *@This(), unit: []const u8) void {
+        _ = this; // autofix
+        _ = unit; // autofix
+    }
+    pub fn setEstimatedTotalItems(this: *@This(), count: usize) void {
+        _ = this; // autofix
+        _ = count; // autofix
+    }
+
+    pub fn refresh(this: *@This()) void {
+        _ = this; // autofix
+    }
+};
+
 /// `null` if the current node (and its children) should
 /// not print on update()
 terminal: ?std.fs.File = undefined,

@@ -901,6 +901,13 @@ pub const Valid = struct {
             return false;
         }
 
+        const fd_t = if (Environment.isWindows) bun.windows.libuv.uv_file else bun.FileDescriptorInt;
+
+        if (fd > std.math.maxInt(fd_t)) {
+            JSC.throwInvalidArguments("Invalid file descriptor, must not be greater than {d}", .{std.math.maxInt(fd_t)}, ctx, exception);
+            return false;
+        }
+
         return true;
     }
 

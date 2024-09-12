@@ -5003,6 +5003,14 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     /// Call `toString()` on the JSValue and clone the result.
+    /// On exception, this returns null.
+    pub fn toSliceOrNullWithAllocator(this: JSValue, globalThis: *JSGlobalObject, allocator: std.mem.Allocator) ?ZigString.Slice {
+        const str = bun.String.tryFromJS(this, globalThis) orelse return null;
+        defer str.deref();
+        return str.toUTF8(allocator);
+    }
+
+    /// Call `toString()` on the JSValue and clone the result.
     /// On exception or out of memory, this returns null.
     ///
     /// Remember that `Symbol` throws an exception when you call `toString()`.

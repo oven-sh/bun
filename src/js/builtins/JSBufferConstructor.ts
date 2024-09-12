@@ -31,7 +31,7 @@ export function from(items) {
   }
   if (typeof items === "object") {
     if (items.type === "Buffer" && Array.isArray(items.data)) {
-      return new $Buffer(Uint8Array.from(items.data).buffer);
+      return new $Buffer(items.data);
     }
   }
 

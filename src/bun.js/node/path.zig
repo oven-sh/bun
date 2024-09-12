@@ -8,7 +8,7 @@ const typeBaseNameT = bun.meta.typeBaseNameT;
 const validators = @import("./util/validators.zig");
 const validateObject = validators.validateObject;
 const validateString = validators.validateString;
-const stack_fallback_size_large = 32 * @sizeOf([]const u8); // up to 32 strings on the stack
+const stack_fallback_size_large = 32 * @sizeOf([]const u8) + ((stack_fallback_size_small * 3) + 64); // up to 32 strings on the stack
 const Syscall = bun.sys;
 const strings = bun.strings;
 const L = strings.literal;
@@ -2802,6 +2802,7 @@ pub fn resolve(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]
 
     var paths = allocator.alloc(string, args_len) catch bun.outOfMemory();
     defer allocator.free(paths);
+    var path_count: usize = 0;
 
     for (0..args_len, args_ptr) |i, path_ptr| {
         // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
@@ -2810,9 +2811,12 @@ pub fn resolve(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]
             return .zero;
         };
         const pathZStr = path_ptr.getZigString(globalObject);
-        paths[i] = if (pathZStr.len > 0) pathZStr.toSlice(allocator).slice() else "";
+        if (pathZStr.len > 0) {
+            paths[path_count] = pathZStr.toSlice(allocator).slice();
+            path_count += 1;
+        }
     }
-    return resolveJS_T(u8, globalObject, allocator, isWindows, paths);
+    return resolveJS_T(u8, globalObject, allocator, isWindows, paths[0..path_count]);
 }
 
 /// Based on Node v21.6.1 path.win32.toNamespacedPath:

@@ -667,6 +667,10 @@ target_include_directories(${bun} PRIVATE
 
 # --- C/C++ Definitions ---
 
+if(ENABLE_ASSERTIONS)
+  target_compile_definitions(${bun} PRIVATE ASSERT_ENABLED=1)
+endif()
+
 if(DEBUG)
   target_compile_definitions(${bun} PRIVATE BUN_DEBUG=1)
 endif()
@@ -712,31 +716,10 @@ endif()
 
 # --- Compiler options ---
 
-if(WIN32)
-  target_compile_options(${bun} PUBLIC
-    /EHsc
-    -Xclang -fno-c++-static-destructors
-  )
-  if(RELEASE)
-    target_compile_options(${bun} PUBLIC
-      /Gy
-      /Gw
-      /GF
-      /GA
-    )
-  endif()
-else()
+if(NOT WIN32)
   target_compile_options(${bun} PUBLIC
     -fconstexpr-steps=2542484
     -fconstexpr-depth=54
-    -fno-exceptions
-    -fno-asynchronous-unwind-tables
-    -fno-unwind-tables
-    -fno-c++-static-destructors
-    -fvisibility=hidden
-    -fvisibility-inlines-hidden
-    -fno-omit-frame-pointer
-    -mno-omit-leaf-frame-pointer
     -fno-pic
     -fno-pie
     -faddrsig
@@ -854,22 +837,6 @@ else()
     -Wl,-z,lazy
     -Wl,-z,norelro
   )
-endif()
-
-# --- LTO options ---
-
-if(ENABLE_LTO)
-  if(WIN32)
-    target_link_options(${bun} PUBLIC -flto)
-    target_compile_options(${bun} PUBLIC -flto -Xclang -emit-llvm-bc)
-  else()
-    target_compile_options(${bun} PUBLIC
-      -flto=full
-      -emit-llvm
-      -fwhole-program-vtables
-      -fforce-emit-vtables
-    )
-  endif()
 endif()
 
 # --- Symbols list ---

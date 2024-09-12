@@ -117,10 +117,21 @@ optionx(CMAKE_BUILD_PARALLEL_LEVEL STRING "The number of parallel build jobs" DE
 
 setx(CWD ${CMAKE_SOURCE_DIR})
 setx(BUILD_PATH ${CMAKE_BINARY_DIR})
-optionx(VENDOR_PATH FILEPATH "The path to the vendor directory" DEFAULT ${CWD}/vendor)
+
 optionx(CACHE_PATH FILEPATH "The path to the cache directory" DEFAULT ${BUILD_PATH}/cache)
 optionx(CACHE_STRATEGY "read-write|read-only|write-only|none" "The strategy to use for caching" DEFAULT "read-write")
+
+optionx(CI BOOL "If CI is enabled" DEFAULT OFF)
+
+if(CI)
+  set(DEFAULT_VENDOR_PATH ${CACHE_PATH}/vendor)
+else()
+  set(DEFAULT_VENDOR_PATH ${CWD}/vendor)
+endif()
+
+optionx(VENDOR_PATH FILEPATH "The path to the vendor directory" DEFAULT ${DEFAULT_VENDOR_PATH})
 optionx(TMP_PATH FILEPATH "The path to the temporary directory" DEFAULT ${BUILD_PATH}/tmp)
+
 optionx(FRESH BOOL "Set when --fresh is used" DEFAULT OFF)
 optionx(CLEAN BOOL "Set when --clean is used" DEFAULT OFF)
 
@@ -761,4 +772,114 @@ function(register_cmake_command)
   if(BUN_LINK_ONLY)
     target_sources(${bun} PRIVATE ${MAKE_ARTIFACTS})
   endif()
+endfunction()
+
+# register_compiler_flag()
+# Description:
+#   Registers a compiler flag, similar to `add_compile_options()`, but has more validation and features.
+# Arguments:
+#   flags string[]     - The flags to register
+#   DESCRIPTION string - The description of the flag
+#   LANGUAGES string[] - The languages to register the flag (default: C, CXX)
+#   TARGETS string[]   - The targets to register the flag (default: all)
+function(register_compiler_flags)
+  set(args DESCRIPTION)
+  set(multiArgs LANGUAGES TARGETS)
+  cmake_parse_arguments(COMPILER "" "${args}" "${multiArgs}" ${ARGN})
+
+  if(NOT COMPILER_LANGUAGES)
+    set(COMPILER_LANGUAGES C CXX)
+  endif()
+
+  set(COMPILER_FLAGS)
+  foreach(flag ${COMPILER_UNPARSED_ARGUMENTS})
+    if(flag STREQUAL "ON")
+      continue()
+    elseif(flag STREQUAL "OFF")
+      list(POP_BACK COMPILER_FLAGS)
+    elseif(flag MATCHES "^(-|/)")
+      list(APPEND COMPILER_FLAGS ${flag})
+    else()
+      message(FATAL_ERROR "register_compiler_flags: Invalid flag: \"${flag}\"")
+    endif()
+  endforeach()
+  list(JOIN COMPILER_FLAGS " " COMPILER_FLAGS)
+
+  foreach(target ${COMPILER_TARGETS})
+    if(NOT TARGET ${target})
+      message(FATAL_ERROR "register_compiler_flags: \"${target}\" is not a target")
+    endif()
+  endforeach()
+
+  foreach(lang ${COMPILER_LANGUAGES})
+    if(NOT COMPILER_TARGETS)
+      set(CMAKE_${lang}_FLAGS "${CMAKE_${lang}_FLAGS} ${COMPILER_FLAGS}" PARENT_SCOPE)
+    endif()
+
+    foreach(target ${COMPILER_TARGETS})
+      set(${target}_CMAKE_${lang}_FLAGS "${${target}_CMAKE_${lang}_FLAGS} ${COMPILER_FLAGS}" PARENT_SCOPE)
+    endforeach()
+  endforeach()
+
+  foreach(lang ${COMPILER_LANGUAGES})
+    if(NOT COMPILER_TARGETS)
+      add_compile_options($<$<COMPILE_LANGUAGE:${lang}>:${COMPILER_FLAGS}>)
+    endif()
+    
+    foreach(target ${COMPILER_TARGETS})
+      get_target_property(type ${target} TYPE)
+      if(type MATCHES "EXECUTABLE|LIBRARY")
+        target_compile_options(${target} PRIVATE $<$<COMPILE_LANGUAGE:${lang}>:${COMPILER_FLAGS}>)
+      endif()
+    endforeach()
+  endforeach()
+endfunction()
+
+function(register_compiler_definitions)
+  
+endfunction()
+
+# register_linker_flags()
+# Description:
+#   Registers a linker flag, similar to `add_link_options()`.
+# Arguments:
+#   flags string[]     - The flags to register
+#   DESCRIPTION string - The description of the flag
+function(register_linker_flags)
+  set(args DESCRIPTION)
+  cmake_parse_arguments(LINKER "" "${args}" "" ${ARGN})
+
+  foreach(flag ${LINKER_UNPARSED_ARGUMENTS})
+    if(flag STREQUAL "ON")
+      continue()
+    elseif(flag STREQUAL "OFF")
+      list(POP_FRONT LINKER_FLAGS)
+    elseif(flag MATCHES "^(-|/)")
+      list(APPEND LINKER_FLAGS ${flag})
+    else()
+      message(FATAL_ERROR "register_linker_flags: Invalid flag: \"${flag}\"")
+    endif()
+  endforeach()
+
+  add_link_options(${LINKER_FLAGS})
+endfunction()
+
+function(print_compiler_flags)
+  get_property(targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+  set(languages C CXX)
+  foreach(target ${targets})
+    get_target_property(type ${target} TYPE)
+    message(STATUS "Target: ${target}")
+    foreach(lang ${languages})
+      if(${target}_CMAKE_${lang}_FLAGS)
+        message(STATUS "  ${lang} Flags: ${${target}_CMAKE_${lang}_FLAGS}")
+      endif()
+    endforeach()
+  endforeach()
+  foreach(lang ${languages})
+    message(STATUS "Language: ${lang}")
+    if(CMAKE_${lang}_FLAGS)
+      message(STATUS "  Flags: ${CMAKE_${lang}_FLAGS}")
+    endif()
+  endforeach()
 endfunction()

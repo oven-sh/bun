@@ -64,7 +64,7 @@ export function getStdinStream(fd) {
   const tty = require("node:tty");
   if (!tty.isatty(fd)) {
     const fs = require("node:fs");
-    return new fs.ReadStream(fd);
+    return new fs.ReadStream(null, { fd: fd, autoClose: false });
   }
 
   // Ideally we could use this:

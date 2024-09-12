@@ -65,16 +65,16 @@ pub const Ref = opaque {
     extern fn napi_set_ref(ref: *Ref, value: JSC.JSValue) void;
 };
 pub const NapiHandleScope = opaque {
-    extern fn NapiHandleScope__push(globalObject: *JSC.JSGlobalObject, escapable: bool) *NapiHandleScope;
-    extern fn NapiHandleScope__pop(globalObject: *JSC.JSGlobalObject, current: *NapiHandleScope) void;
+    extern fn NapiHandleScope__push(globalObject: *JSC.JSGlobalObject, escapable: bool) ?*NapiHandleScope;
+    extern fn NapiHandleScope__pop(globalObject: *JSC.JSGlobalObject, current: ?*NapiHandleScope) void;
     extern fn NapiHandleScope__append(globalObject: *JSC.JSGlobalObject, value: JSC.JSValueReprInt) void;
     extern fn NapiHandleScope__escape(handleScope: *NapiHandleScope, value: JSC.JSValueReprInt) bool;
 
-    pub fn push(env: napi_env, escapable: bool) *NapiHandleScope {
+    pub fn push(env: napi_env, escapable: bool) ?*NapiHandleScope {
         return NapiHandleScope__push(env, escapable);
     }
 
-    pub fn pop(self: *NapiHandleScope, env: napi_env) void {
+    pub fn pop(self: ?*NapiHandleScope, env: napi_env) void {
         NapiHandleScope__pop(env, self);
     }
 
@@ -89,8 +89,8 @@ pub const NapiHandleScope = opaque {
     }
 };
 
-pub const napi_handle_scope = *NapiHandleScope;
-pub const napi_escapable_handle_scope = *NapiHandleScope;
+pub const napi_handle_scope = ?*NapiHandleScope;
+pub const napi_escapable_handle_scope = ?*NapiHandleScope;
 pub const napi_callback_info = *JSC.CallFrame;
 pub const napi_deferred = *JSC.JSPromise.Strong;
 
@@ -755,7 +755,10 @@ pub export fn napi_open_handle_scope(env: napi_env, result_: ?*napi_handle_scope
 
 pub export fn napi_close_handle_scope(env: napi_env, handle_scope: napi_handle_scope) napi_status {
     log("napi_close_handle_scope", .{});
-    handle_scope.pop(env);
+    if (handle_scope) |scope| {
+        scope.pop(env);
+    }
+
     return .ok;
 }
 
@@ -821,7 +824,7 @@ fn notImplementedYet(comptime name: []const u8) void {
     );
 }
 
-pub export fn napi_open_escapable_handle_scope(env: napi_env, result_: ?*napi_escapable_handle_scope) napi_status {
+pub export fn napi_open_escapable_handle_scope(env: napi_env, result_: ?*?napi_escapable_handle_scope) napi_status {
     log("napi_open_escapable_handle_scope", .{});
     const result = result_ orelse {
         return invalidArg();
@@ -831,12 +834,17 @@ pub export fn napi_open_escapable_handle_scope(env: napi_env, result_: ?*napi_es
 }
 pub export fn napi_close_escapable_handle_scope(env: napi_env, scope: napi_escapable_handle_scope) napi_status {
     log("napi_close_escapable_handle_scope", .{});
-    scope.pop(env);
+    if (scope) |s| {
+        s.pop(env);
+    }
     return .ok;
 }
-pub export fn napi_escape_handle(_: napi_env, scope: napi_escapable_handle_scope, escapee: napi_value, result_: ?*napi_value) napi_status {
+pub export fn napi_escape_handle(_: napi_env, scope_: napi_escapable_handle_scope, escapee: napi_value, result_: ?*napi_value) napi_status {
     log("napi_escape_handle", .{});
     const result = result_ orelse {
+        return invalidArg();
+    };
+    const scope = scope_ orelse {
         return invalidArg();
     };
     scope.escape(escapee.get()) catch return .escape_called_twice;
@@ -1195,7 +1203,7 @@ pub const napi_async_work = struct {
 
     pub fn runFromJS(this: *napi_async_work) void {
         const handle_scope = NapiHandleScope.push(this.global, false);
-        defer handle_scope.pop(this.global);
+        defer if (handle_scope) |scope| scope.pop(this.global);
         this.complete.?(
             this.global,
             if (this.status.load(.seq_cst) == @intFromEnum(Status.cancelled))
@@ -1577,7 +1585,7 @@ pub const ThreadSafeFunction = struct {
                 }
 
                 const handle_scope = NapiHandleScope.push(globalObject, false);
-                defer handle_scope.pop(globalObject);
+                defer if (handle_scope) |scope| scope.pop(globalObject);
                 cb.napi_threadsafe_function_call_js(globalObject, napi_value.create(globalObject, cb.js), this.ctx, task);
             },
         }

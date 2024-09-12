@@ -1714,6 +1714,17 @@ pub const Subprocess = struct {
                         };
                     }
                 }
+
+                // need to update `cwd` before searching for executable with `Which.which`
+                if (args.getTruthy(globalThis, "cwd")) |cwd_| {
+                    const cwd_str = cwd_.getZigString(globalThis);
+                    if (cwd_str.len > 0) {
+                        cwd = cwd_str.toOwnedSliceZ(allocator) catch {
+                            globalThis.throwOutOfMemory();
+                            return .zero;
+                        };
+                    }
+                }
             }
 
             {
@@ -1737,7 +1748,7 @@ pub const Subprocess = struct {
 
                 {
                     var first_cmd = cmds_array.next().?;
-                    var arg0 = first_cmd.toSlice(globalThis, allocator);
+                    var arg0 = first_cmd.toSliceOrNullWithAllocator(globalThis, allocator) orelse return .zero;
                     defer arg0.deinit();
 
                     if (argv0 == null) {
@@ -1761,6 +1772,7 @@ pub const Subprocess = struct {
                             return .zero;
                         };
                     }
+
                     argv.appendAssumeCapacity(allocator.dupeZ(u8, arg0.slice()) catch {
                         globalThis.throwOutOfMemory();
                         return .zero;
@@ -1825,16 +1837,6 @@ pub const Subprocess = struct {
                         onDisconnect_
                     else
                         onDisconnect_.withAsyncContextIfNeeded(globalThis);
-                }
-
-                if (args.getTruthy(globalThis, "cwd")) |cwd_| {
-                    const cwd_str = cwd_.getZigString(globalThis);
-                    if (cwd_str.len > 0) {
-                        cwd = cwd_str.toOwnedSliceZ(allocator) catch {
-                            globalThis.throwOutOfMemory();
-                            return .zero;
-                        };
-                    }
                 }
 
                 if (args.getTruthy(globalThis, "onExit")) |onExit_| {

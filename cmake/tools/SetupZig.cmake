@@ -84,7 +84,7 @@ find_command(
     OFF
 )
 
-if(NOT CMAKE_ZIG_COMPILER)
+if(CMAKE_ZIG_COMPILER)
   return()
 endif()
 

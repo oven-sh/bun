@@ -2492,6 +2492,7 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
             // Translated from the following JS code:
             //   path = process.env[`=${resolvedDevice}`] || process.cwd();
             if (comptime Environment.isWindows) {
+                var u16Buf: bun.WPathBuffer = undefined;
                 // Windows has the concept of drive-specific current working
                 // directories. If we've resolved a drive letter but not yet an
                 // absolute path, get cwd for that drive, or the process cwd if
@@ -2514,8 +2515,7 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
                     if (T == u16) {
                         break :brk buf2[0..bufSize];
                     } else {
-                        var u16Buf: bun.WPathBuffer = undefined;
-                        bufSize = std.unicode.wtf16LeToWtf8(&u16Buf, buf2[0..bufSize]);
+                        bufSize = std.unicode.wtf16LeToWtf8(buf2[0..bufSize], &u16Buf);
                         break :brk u16Buf[0..bufSize :0];
                     }
                 };

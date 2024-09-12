@@ -53,8 +53,8 @@ public:
 protected:
     JSDOMConstructorBase(JSC::VM& vm, JSC::Structure* structure, JSC::NativeFunction functionForConstruct, JSC::NativeFunction functionForCall = nullptr)
         : Base(vm, structure,
-              functionForCall ? functionForCall : callThrowTypeErrorForJSDOMConstructor,
-              functionForConstruct ? functionForConstruct : callThrowTypeErrorForJSDOMConstructor)
+            functionForCall ? functionForCall : callThrowTypeErrorForJSDOMConstructor,
+            functionForConstruct ? functionForConstruct : callThrowTypeErrorForJSDOMConstructor)
     {
     }
 };

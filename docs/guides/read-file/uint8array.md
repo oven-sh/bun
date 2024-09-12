@@ -18,4 +18,4 @@ byteArray.length; // length of byteArray
 
 ---
 
-Refer to [API > Binary data > Typed arrays](/docs/api/binary-data#typedarray) for more information on working with `Uint8Array` and other binary data formats in Bun.
+Refer to [API > Binary data > Typed arrays](https://bun.sh/docs/api/binary-data#typedarray) for more information on working with `Uint8Array` and other binary data formats in Bun.

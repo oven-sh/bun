@@ -35,6 +35,12 @@ extern "C" JSC::EncodedJSValue Bun__encoding__toStringUTF8(const uint8_t* input,
 extern "C" bool Bun__Buffer_fill(ZigString*, void*, size_t, WebCore::BufferEncodingType);
 extern "C" bool JSBuffer__isBuffer(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 
+namespace Bun {
+
+std::optional<double> byteLength(JSC::JSString* str, WebCore::BufferEncodingType encoding);
+
+}
+
 namespace WebCore {
 
 JSC::JSUint8Array* createUninitializedBuffer(JSC::JSGlobalObject* lexicalGlobalObject, size_t length);

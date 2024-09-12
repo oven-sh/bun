@@ -38,11 +38,11 @@ namespace WebCore {
 
 ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_OAEP::platformEncrypt(const CryptoAlgorithmRsaOaepParams& parameters, const CryptoKeyRSA& key, const Vector<uint8_t>& plainText)
 {
-#if 1 // defined(EVP_PKEY_CTX_set_rsa_oaep_md) && defined(EVP_PKEY_CTX_set_rsa_mgf1_md) && defined(EVP_PKEY_CTX_set0_rsa_oaep_label)
-    const EVP_MD* md = digestAlgorithm(key.hashAlgorithmIdentifier());
-    if (!md)
-        return Exception { NotSupportedError };
+    return CryptoAlgorithmRSA_OAEP::platformEncryptWithHash(parameters, key, plainText, key.hashAlgorithmIdentifier());
+}
 
+ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_OAEP::platformEncryptWithHash(const CryptoAlgorithmRsaOaepParams& parameters, const CryptoKeyRSA& key, const Vector<uint8_t>& plainText, CryptoAlgorithmIdentifier hashIdentifier)
+{
     auto ctx = EvpPKeyCtxPtr(EVP_PKEY_CTX_new(key.platformKey(), nullptr));
     if (!ctx)
         return Exception { OperationError };
@@ -50,14 +50,25 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_OAEP::platformEncrypt(const Cryp
     if (EVP_PKEY_encrypt_init(ctx.get()) <= 0)
         return Exception { OperationError };
 
-    if (EVP_PKEY_CTX_set_rsa_padding(ctx.get(), RSA_PKCS1_OAEP_PADDING) <= 0)
+    auto padding = parameters.padding;
+    if (padding == 0) {
+        padding = RSA_PKCS1_OAEP_PADDING;
+    }
+
+    if (EVP_PKEY_CTX_set_rsa_padding(ctx.get(), padding) <= 0)
         return Exception { OperationError };
 
-    if (EVP_PKEY_CTX_set_rsa_oaep_md(ctx.get(), md) <= 0)
-        return Exception { OperationError };
+    if (padding == RSA_PKCS1_OAEP_PADDING) {
+        const EVP_MD* md = digestAlgorithm(hashIdentifier);
+        if (!md)
+            return Exception { NotSupportedError };
 
-    if (EVP_PKEY_CTX_set_rsa_mgf1_md(ctx.get(), md) <= 0)
-        return Exception { OperationError };
+        if (EVP_PKEY_CTX_set_rsa_oaep_md(ctx.get(), md) <= 0)
+            return Exception { OperationError };
+
+        if (EVP_PKEY_CTX_set_rsa_mgf1_md(ctx.get(), md) <= 0)
+            return Exception { OperationError };
+    }
 
     if (!parameters.labelVector().isEmpty()) {
         size_t labelSize = parameters.labelVector().size();
@@ -80,18 +91,15 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_OAEP::platformEncrypt(const Cryp
     cipherText.shrink(cipherTextLen);
 
     return cipherText;
-#else
-    return Exception { NotSupportedError };
-#endif
 }
 
 ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_OAEP::platformDecrypt(const CryptoAlgorithmRsaOaepParams& parameters, const CryptoKeyRSA& key, const Vector<uint8_t>& cipherText)
 {
-#if 1 // defined(EVP_PKEY_CTX_set_rsa_oaep_md) && defined(EVP_PKEY_CTX_set_rsa_mgf1_md) && defined(EVP_PKEY_CTX_set0_rsa_oaep_label)
-    const EVP_MD* md = digestAlgorithm(key.hashAlgorithmIdentifier());
-    if (!md)
-        return Exception { NotSupportedError };
+    return CryptoAlgorithmRSA_OAEP::platformDecryptWithHash(parameters, key, cipherText, key.hashAlgorithmIdentifier());
+}
 
+ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_OAEP::platformDecryptWithHash(const CryptoAlgorithmRsaOaepParams& parameters, const CryptoKeyRSA& key, const Vector<uint8_t>& cipherText, CryptoAlgorithmIdentifier hashIdentifier)
+{
     auto ctx = EvpPKeyCtxPtr(EVP_PKEY_CTX_new(key.platformKey(), nullptr));
     if (!ctx)
         return Exception { OperationError };
@@ -99,14 +107,25 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_OAEP::platformDecrypt(const Cryp
     if (EVP_PKEY_decrypt_init(ctx.get()) <= 0)
         return Exception { OperationError };
 
-    if (EVP_PKEY_CTX_set_rsa_padding(ctx.get(), RSA_PKCS1_OAEP_PADDING) <= 0)
+    auto padding = parameters.padding;
+    if (padding == 0) {
+        padding = RSA_PKCS1_OAEP_PADDING;
+    }
+
+    if (EVP_PKEY_CTX_set_rsa_padding(ctx.get(), padding) <= 0)
         return Exception { OperationError };
 
-    if (EVP_PKEY_CTX_set_rsa_oaep_md(ctx.get(), md) <= 0)
-        return Exception { OperationError };
+    if (padding == RSA_PKCS1_OAEP_PADDING) {
+        const EVP_MD* md = digestAlgorithm(hashIdentifier);
+        if (!md)
+            return Exception { NotSupportedError };
 
-    if (EVP_PKEY_CTX_set_rsa_mgf1_md(ctx.get(), md) <= 0)
-        return Exception { OperationError };
+        if (EVP_PKEY_CTX_set_rsa_oaep_md(ctx.get(), md) <= 0)
+            return Exception { OperationError };
+
+        if (EVP_PKEY_CTX_set_rsa_mgf1_md(ctx.get(), md) <= 0)
+            return Exception { OperationError };
+    }
 
     if (!parameters.labelVector().isEmpty()) {
         size_t labelSize = parameters.labelVector().size();
@@ -129,9 +148,6 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_OAEP::platformDecrypt(const Cryp
     plainText.shrink(plainTextLen);
 
     return plainText;
-#else
-    return Exception { NotSupportedError };
-#endif
 }
 
 } // namespace WebCore

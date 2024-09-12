@@ -9,7 +9,7 @@ $ bun index.ts
 $ bun index.tsx
 ```
 
-Some aspects of Bun's runtime behavior are affected by the contents of your `tsconfig.json` file. Refer to [Runtime > TypeScript](/docs/runtime/typescript) page for details.
+Some aspects of Bun's runtime behavior are affected by the contents of your `tsconfig.json` file. Refer to [Runtime > TypeScript](https://bun.sh/docs/runtime/typescript) page for details.
 
 ## JSX
 
@@ -85,15 +85,15 @@ $ bun run ./my-wasm-app.whatever
 You can import sqlite databases directly into your code. Bun will automatically load the database and return a `Database` object.
 
 ```ts
-import db from "./my.db" with {type: "sqlite"};
+import db from "./my.db" with { type: "sqlite" };
 console.log(db.query("select * from users LIMIT 1").get());
 ```
 
-This uses [`bun:sqlite`](/docs/api/sqlite).
+This uses [`bun:sqlite`](https://bun.sh/docs/api/sqlite).
 
 ## Custom loaders
 
-Support for additional file types can be implemented with plugins. Refer to [Runtime > Plugins](/docs/bundler/plugins) for full documentation.
+Support for additional file types can be implemented with plugins. Refer to [Runtime > Plugins](https://bun.sh/docs/bundler/plugins) for full documentation.
 
 <!--
 

@@ -21,6 +21,7 @@ jobs:
           sparse-checkout: |
             .prettierrc-ci
             .github
+            .vscode
             src
             scripts
             packages
@@ -28,7 +29,7 @@ jobs:
             bench
             package.json
             bun.lockb
-            .vscode
+            .clang-format
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
@@ -46,6 +47,9 @@ jobs:
       - name: Format Zig
         run: |
           bun fmt:zig
+      - name: Format Cpp
+        run: |
+          bun fmt:cpp
       - name: Commit
         uses: stefanzweifel/git-auto-commit-action@v5
         with:

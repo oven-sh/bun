@@ -604,8 +604,7 @@ pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
         const dec = bun.FDImpl.decode(fd);
         if (dec.kind == .system) {
             const uvfd = bun.toLibUVOwnedFD(fd) catch return .{ .err = Error.fromCode(.MFILE, .uv_open_osfhandle) };
-            defer _ = bun.sys.close(uvfd);
-            return sys_uv.fstat(fd);
+            return sys_uv.fstat(uvfd);
         } else return sys_uv.fstat(fd);
     }
 
@@ -657,7 +656,16 @@ pub fn mkdiratW(dir_fd: bun.FileDescriptor, file_path: []const u16, _: i32) Mayb
 }
 
 pub fn fstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
-    if (Environment.isWindows) @compileError("Use fstat on Windows");
+    if (Environment.isWindows) {
+        return switch (openatWindowsA(fd, path, 0)) {
+            .result => |file| {
+                // :(
+                defer _ = close(file);
+                return fstat(file);
+            },
+            .err => |err| Maybe(bun.Stat){ .err = err },
+        };
+    }
     var stat_ = mem.zeroes(bun.Stat);
     if (Maybe(bun.Stat).errnoSys(sys.fstatat(fd.int(), path, &stat_, 0), .fstatat)) |err| {
         log("fstatat({}, {s}) = {s}", .{ fd, path, @tagName(err.getErrno()) });
@@ -3001,6 +3009,10 @@ pub const File = struct {
             .result => |fd| .{ .result = .{ .handle = fd } },
             .err => |err| .{ .err = err },
         };
+    }
+
+    pub fn open(path: anytype, flags: bun.Mode, mode: bun.Mode) Maybe(File) {
+        return File.openat(bun.FD.cwd(), path, flags, mode);
     }
 
     pub fn openatOSPath(other: anytype, path: bun.OSPathSliceZ, flags: bun.Mode, mode: bun.Mode) Maybe(File) {

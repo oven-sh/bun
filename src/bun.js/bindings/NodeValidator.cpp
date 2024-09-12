@@ -54,6 +54,41 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateInteger, (JSC::JSGlobalObject * glob
 //
 //
 
+JSC_DEFINE_HOST_FUNCTION(jsFunction_validateIntRange, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto value = callFrame->argument(0);
+    auto name = callFrame->argument(1);
+    auto min = callFrame->argument(2);
+    auto max = callFrame->argument(3);
+
+    if (!value.isNumber()) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
+    }
+    if (!min.isNumber()) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "min"_s, "number"_s, value);
+    }
+    if (!max.isNumber()) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "max"_s, "number"_s, value);
+    }
+
+    auto value_num = value.asNumber();
+    auto min_num = min.asNumber();
+    auto max_num = max.asNumber();
+
+    if (value_num < min_num || value_num > max_num || std::isinf(value_num)) {
+        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, max_num, value);
+    }
+    double intpart;
+    if (std::modf(value_num, &intpart) != 0) {
+        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateBounds, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();

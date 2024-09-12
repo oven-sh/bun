@@ -27,7 +27,7 @@ endif()
 # In the future, change those commands so that generated files are written to this path.
 optionx(CODEGEN_PATH FILEPATH "Path to the codegen directory" DEFAULT ${BUILD_PATH}/codegen)
 
-if(NOT DEFINED CONFIGURE_DEPENDS OR CONFIGURE_DEPENDS)
+if((NOT DEFINED CONFIGURE_DEPENDS AND NOT CI) OR CONFIGURE_DEPENDS)
   set(CONFIGURE_DEPENDS "CONFIGURE_DEPENDS")
 else()
   set(CONFIGURE_DEPENDS "")

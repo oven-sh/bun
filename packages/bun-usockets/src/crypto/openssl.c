@@ -1986,6 +1986,12 @@ struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls(
   struct us_socket_context_t *context = us_create_bun_socket_context(
       1, old_context->loop, sizeof(struct us_wrapped_socket_context_t),
       options);
+  
+  // Handle SSL context creation failure
+  if (UNLIKELY(!context)) {
+    return NULL;
+  }
+
   struct us_internal_ssl_socket_context_t *tls_context =
       (struct us_internal_ssl_socket_context_t *)context;
 

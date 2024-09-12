@@ -132,7 +132,7 @@ pub fn getCpuModel(os: OperatingSystem, arch: Arch) ?Target.Query.CpuModel {
 pub fn build(b: *Build) !void {
     std.log.info("zig compiler v{s}", .{builtin.zig_version_string});
 
-    b.zig_lib_dir = b.zig_lib_dir orelse b.path("src/deps/zig/lib");
+    b.zig_lib_dir = b.zig_lib_dir orelse b.path("vendor/zig/lib");
 
     var target_query = b.standardTargetOptionsQueryOnly(.{});
     const optimize = b.standardOptimizeOption(.{});

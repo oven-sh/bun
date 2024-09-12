@@ -80,11 +80,24 @@ NapiHandleScopeImpl::Slot* NapiHandleScopeImpl::reserveSlot()
 
 NapiHandleScopeImpl* NapiHandleScope::push(Zig::GlobalObject* globalObject, bool escapable)
 {
-    auto* impl = NapiHandleScopeImpl::create(globalObject->vm(),
+    auto& vm = globalObject->vm();
+    // Do not create a new handle scope while a finalizer is in progress
+    // This state is possible because we call napi finalizers immediately
+    // so a finalizer can be called while an allocation is in progress.
+    // An example where this happens:
+    // 1. Use the `sqlite3` package
+    // 2. Do an allocation in a hot code path
+    // 3. the napi_ref finalizer is called while the constructor is running
+    // 4. The finalizer creates a new handle scope (yes, it should not do that. No, we can't change that.)
+    if (vm.heap.mutatorState() == JSC::MutatorState::Sweeping) {
+        return nullptr;
+    }
+
+    auto* impl = NapiHandleScopeImpl::create(vm,
         globalObject->NapiHandleScopeImplStructure(),
         globalObject->m_currentNapiHandleScopeImpl.get(),
         escapable);
-    globalObject->m_currentNapiHandleScopeImpl.set(globalObject->vm(), globalObject, impl);
+    globalObject->m_currentNapiHandleScopeImpl.set(vm, globalObject, impl);
     return impl;
 }
 

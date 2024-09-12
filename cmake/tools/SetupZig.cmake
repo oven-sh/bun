@@ -47,7 +47,7 @@ optionx(ZIG_VERSION STRING "The version of zig to use" DEFAULT "0.13.0")
 optionx(ZIG_LOCAL_CACHE_DIR FILEPATH "The path to local the zig cache directory" DEFAULT ${CACHE_PATH}/zig/local)
 optionx(ZIG_GLOBAL_CACHE_DIR FILEPATH "The path to the global zig cache directory" DEFAULT ${CACHE_PATH}/zig/global)
 optionx(ZIG_BIN_CACHE_DIR FILEPATH "The path to the zig binary cache directory" DEFAULT ${CACHE_PATH}/zig/bin)
-optionx(ZIG_REPOSITORY_PATH FILEPATH "The path to the Zig repository" DEFAULT ${CWD}/src/deps/zig)
+optionx(ZIG_REPOSITORY_PATH FILEPATH "The path to the Zig repository" DEFAULT ${CWD}/vendor/zig)
 
 register_repository(
   NAME
@@ -116,7 +116,6 @@ else()
 endif()
 
 setx(ZIG_DOWNLOAD_URL https://ziglang.org/download/${ZIG_VERSION}/${ZIG_FILENAME})
-
 file(DOWNLOAD ${ZIG_DOWNLOAD_URL} ${ZIG_BIN_CACHE_DIR}/${ZIG_FILENAME})
 file(ARCHIVE_EXTRACT INPUT ${ZIG_BIN_CACHE_DIR}/${ZIG_FILENAME} DESTINATION ${ZIG_BIN_CACHE_DIR})
 file(REMOVE ${ZIG_BIN_CACHE_DIR}/${ZIG_FILENAME})

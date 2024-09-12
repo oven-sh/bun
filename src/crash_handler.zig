@@ -834,6 +834,8 @@ pub fn printMetadata(writer: anytype) !void {
         try writer.writeAll(Output.prettyFmt("<r><d>", true));
     }
 
+    var is_ancient_cpu = false;
+
     try writer.writeAll(metadata_version_line);
     {
         const platform = bun.Analytics.GenerateHeader.GeneratePlatform.forOS();
@@ -851,6 +853,12 @@ pub fn printMetadata(writer: anytype) !void {
             try writer.print("macOS v{s}\n", .{platform.version});
         } else if (bun.Environment.isWindows) {
             try writer.print("Windows v{s}\n", .{std.zig.system.windows.detectRuntimeVersion()});
+        }
+
+        if (comptime bun.Environment.isX64) {
+            if (!cpu_features.avx and !cpu_features.avx2 and !cpu_features.avx512) {
+                is_ancient_cpu = true;
+            }
         }
 
         if (!cpu_features.isEmpty()) {
@@ -907,6 +915,12 @@ pub fn printMetadata(writer: anytype) !void {
         try writer.writeAll(Output.prettyFmt("<r>", true));
     }
     try writer.writeAll("\n");
+
+    if (comptime bun.Environment.isX64) {
+        if (is_ancient_cpu) {
+            try writer.writeAll("CPU lacks AVX support. Please consider upgrading to a newer CPU.\n");
+        }
+    }
 }
 
 fn waitForOtherThreadToFinishPanicking() void {

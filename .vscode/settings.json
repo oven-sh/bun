@@ -12,8 +12,7 @@
   "search.exclude": {
     "node_modules": true,
     ".git": true,
-    "src/bun.js/WebKit": true,
-    "src/deps/*/**": true,
+    "vendor/*/**": true,
     "test/node.js/upstream": true,
     // This will fill up your whole search history.
     "test/js/node/test/fixtures": true,
@@ -30,7 +29,7 @@
   // Zig
   "zig.initialSetupDone": true,
   "zig.buildOption": "build",
-  "zig.zls.zigLibPath": "${workspaceFolder}/src/deps/zig/lib",
+  "zig.zls.zigLibPath": "${workspaceFolder}/vendor/zig/lib",
   "zig.buildArgs": ["-Dgenerated-code=./build/codegen"],
   "zig.zls.buildOnSaveStep": "check",
   // "zig.zls.enableBuildOnSave": true,

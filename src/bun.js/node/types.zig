@@ -2027,7 +2027,8 @@ pub const Process = struct {
                 fs.top_level_dir_buf[len + 1] = 0;
                 fs.top_level_dir = fs.top_level_dir_buf[0 .. len + 1];
 
-                return .undefined;
+                var str = bun.String.createUTF8(strings.withoutTrailingSlash(fs.top_level_dir));
+                return str.transferToJS(globalObject);
             },
             .err => |e| {
                 globalObject.throwValue(e.toJSC(globalObject));

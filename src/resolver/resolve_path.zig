@@ -75,7 +75,7 @@ pub fn isParentOrEqual(parent_: []const u8, child: []const u8) ParentEqual {
         parent = parent[0 .. parent.len - 1];
     }
 
-    const contains = if (comptime bun.Environment.isLinux)
+    const contains = if (comptime !bun.Environment.isLinux)
         strings.containsCaseInsensitiveASCII
     else
         strings.contains;

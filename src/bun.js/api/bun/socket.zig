@@ -1113,7 +1113,6 @@ pub const Listener = struct {
                 var handlers_ptr = handlers.vm.allocator.create(Handlers) catch bun.outOfMemory();
                 handlers_ptr.* = handlers;
                 handlers_ptr.is_server = false;
-                handlers_ptr.protect();
 
                 var promise = JSC.JSPromise.create(globalObject);
                 const promise_value = promise.asValue(globalObject);

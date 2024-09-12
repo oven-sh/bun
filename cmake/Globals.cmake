@@ -280,9 +280,9 @@ function(find_command)
   endif()
 
   if(${CMD_VARIABLE} MATCHES "NOTFOUND")
-    unset(${CMD_VARIABLE})
+    unset(${CMD_VARIABLE} PARENT_SCOPE)
   else()
-    setx(${CMD_VARIABLE} ${${CMD_VARIABLE}})
+    setx(${CMD_VARIABLE} ${${CMD_VARIABLE}} PARENT_SCOPE)
   endif()
 endfunction()
 

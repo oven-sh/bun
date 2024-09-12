@@ -567,7 +567,7 @@ pub const Arguments = struct {
 
         ctx.passthrough = args.remaining();
 
-        if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .BuildCommand) {
+        if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .BuildCommand or cmd == .TestCommand) {
             if (args.options("--conditions").len > 0) {
                 opts.conditions = args.options("--conditions");
             }

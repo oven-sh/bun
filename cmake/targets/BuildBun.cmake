@@ -510,6 +510,7 @@ file(GLOB BUN_CXX_SOURCES ${CONFIGURE_DEPENDS}
   ${CWD}/src/bun.js/bindings/webcrypto/*.cpp
   ${CWD}/src/bun.js/bindings/webcrypto/*/*.cpp
   ${CWD}/src/bun.js/bindings/v8/*.cpp
+  ${CWD}/src/bun.js/bindings/v8/shim/*.cpp
   ${BUN_USOCKETS_SOURCE}/src/crypto/*.cpp
   ${BUN_DEPS_SOURCE}/*.cpp
 )

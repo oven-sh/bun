@@ -26,6 +26,7 @@ parse_package_json(VERSION_VARIABLE DEFAULT_VERSION)
 optionx(VERSION STRING "The version of Bun" DEFAULT ${DEFAULT_VERSION})
 project(Bun VERSION ${VERSION})
 include(Options)
+include(CompilerFlags)
 
 # --- Tools ---
 
@@ -38,7 +39,3 @@ include(SetupRust)
 # --- Targets ---
 
 include(BuildBun)
-
-# --- Flags ---
-
-include(CompilerFlags)

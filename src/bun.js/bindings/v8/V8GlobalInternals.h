@@ -8,6 +8,7 @@
 namespace v8 {
 
 class HandleScope;
+class HandleScopeBuffer;
 
 class GlobalInternals : public JSC::JSCell {
 public:
@@ -53,6 +54,8 @@ public:
         return m_V8FunctionStructure.getInitializedOnMainThread(globalObject);
     }
 
+    HandleScopeBuffer* globalHandles() const { return m_GlobalHandles.getInitializedOnMainThread(this); }
+
     HandleScope* currentHandleScope() const { return m_CurrentHandleScope; }
 
     void setCurrentHandleScope(HandleScope* handleScope) { m_CurrentHandleScope = handleScope; }
@@ -79,6 +82,8 @@ private:
     JSC::LazyClassStructure m_FunctionTemplateStructure;
     JSC::LazyClassStructure m_V8FunctionStructure;
     HandleScope* m_CurrentHandleScope;
+    JSC::LazyProperty<GlobalInternals, HandleScopeBuffer> m_GlobalHandles;
+
     Oddball undefinedValue;
     Oddball nullValue;
     Oddball trueValue;

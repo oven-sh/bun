@@ -176,7 +176,7 @@ pub const struct_bn_mont_ctx_st = extern struct {
 };
 pub const BN_MONT_CTX = struct_bn_mont_ctx_st;
 pub const struct_bn_blinding_st = opaque {};
-pub const BN_BLINDING = struct_bn_blinding_st; // src/deps/boringssl/include/openssl/rsa.h:788:12: warning: struct demoted to opaque type - has bitfield
+pub const BN_BLINDING = struct_bn_blinding_st; // boringssl/include/openssl/rsa.h:788:12: warning: struct demoted to opaque type - has bitfield
 pub const struct_rsa_st = opaque {};
 pub const RSA = struct_rsa_st;
 pub const struct_dsa_st = extern struct {
@@ -292,8 +292,8 @@ pub const struct_buf_mem_st = extern struct {
     max: usize,
 };
 pub const BUF_MEM = struct_buf_mem_st;
-pub const CBB = struct_cbb_st; // src/deps/boringssl/include/openssl/bytestring.h:403:12: warning: struct demoted to opaque type - has bitfield
-pub const struct_cbb_buffer_st = opaque {}; // src/deps/boringssl/include/openssl/bytestring.h:418:12: warning: struct demoted to opaque type - has bitfield
+pub const CBB = struct_cbb_st; // boringssl/include/openssl/bytestring.h:403:12: warning: struct demoted to opaque type - has bitfield
+pub const struct_cbb_buffer_st = opaque {}; // boringssl/include/openssl/bytestring.h:418:12: warning: struct demoted to opaque type - has bitfield
 pub const struct_cbb_child_st = opaque {};
 const union_unnamed_3 = extern union {
     base: struct_cbb_buffer_st,
@@ -18737,7 +18737,7 @@ pub extern fn RAND_bytes(buf: [*]u8, len: usize) c_int;
 /// Hence, this function should never be called by libraries.
 pub extern fn RAND_enable_fork_unsafe_buffering(c_int) void;
 
-pub extern fn SSL_new(ctx: ?*SSL_CTX) *SSL;
+pub extern fn SSL_new(ctx: ?*SSL_CTX) ?*SSL;
 
 pub extern fn EVP_md4() *const EVP_MD;
 pub extern fn EVP_md5() *const EVP_MD;

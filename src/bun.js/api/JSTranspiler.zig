@@ -526,19 +526,6 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         transpiler.runtime.allow_runtime = flag;
     }
 
-    if (object.getOptional(globalThis, "jsxOptimizationInline", bool) catch return transpiler) |flag| {
-        transpiler.runtime.jsx_optimization_inline = flag;
-    }
-
-    if (object.getOptional(globalThis, "jsxOptimizationHoist", bool) catch return transpiler) |flag| {
-        transpiler.runtime.jsx_optimization_hoist = flag;
-
-        if (!transpiler.runtime.jsx_optimization_inline and transpiler.runtime.jsx_optimization_hoist) {
-            JSC.throwInvalidArguments("jsxOptimizationHoist requires jsxOptimizationInline", .{}, globalObject, exception);
-            return transpiler;
-        }
-    }
-
     if (object.getOptional(globalThis, "inline", bool) catch return transpiler) |flag| {
         transpiler.runtime.inlining = flag;
     }

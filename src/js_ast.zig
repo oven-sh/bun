@@ -271,8 +271,6 @@ pub const Flags = struct {
     pub const JSXElement = enum {
         is_key_after_spread,
         has_any_dynamic,
-        can_be_inlined,
-        can_be_hoisted,
         pub const Bitset = std.enums.EnumSet(JSXElement);
     };
 

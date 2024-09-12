@@ -1,7 +1,7 @@
+import assert from "node:assert";
 import cluster from "node:cluster";
 import http from "node:http";
 import { availableParallelism } from "node:os";
-import assert from "node:assert";
 
 const numCPUs = availableParallelism();
 let workers = 0;
@@ -36,6 +36,7 @@ if (cluster.isPrimary) {
     .listen(8000, () => {
       process.send("hello");
       server.close();
+
       process.disconnect();
     });
 

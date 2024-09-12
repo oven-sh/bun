@@ -1,5 +1,5 @@
+import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import fs from "fs";
-import { test, expect, beforeAll, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { join } from "path";
 

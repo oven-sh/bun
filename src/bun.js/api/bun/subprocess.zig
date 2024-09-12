@@ -202,6 +202,9 @@ pub const Subprocess = struct {
     flags: Flags = .{},
 
     weak_file_sink_stdin_ptr: ?*JSC.WebCore.FileSink = null,
+    ref_count: u32 = 1,
+
+    usingnamespace bun.NewRefCounted(@This(), Subprocess.deinit);
 
     pub const Flags = packed struct {
         is_sync: bool = false,
@@ -345,7 +348,7 @@ pub const Subprocess = struct {
         return this.has_pending_activity.load(.acquire);
     }
 
-    pub fn ref(this: *Subprocess) void {
+    pub fn jsRef(this: *Subprocess) void {
         this.process.enableKeepingEventLoopAlive();
 
         if (!this.hasCalledGetter(.stdin)) {
@@ -364,7 +367,7 @@ pub const Subprocess = struct {
     }
 
     /// This disables the keeping process alive flag on the poll and also in the stdin, stdout, and stderr
-    pub fn unref(this: *Subprocess) void {
+    pub fn jsUnref(this: *Subprocess) void {
         this.process.disableKeepingEventLoopAlive();
 
         if (!this.hasCalledGetter(.stdin)) {
@@ -675,7 +678,6 @@ pub const Subprocess = struct {
         if (this.hasExited()) {
             return .{ .result = {} };
         }
-
         return this.process.kill(@intCast(sig));
     }
 
@@ -691,23 +693,20 @@ pub const Subprocess = struct {
     }
 
     pub fn doRef(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
-        this.ref();
+        this.jsRef();
         return .undefined;
     }
 
     pub fn doUnref(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
-        this.unref();
+        this.jsUnref();
         return .undefined;
     }
 
     pub fn onStdinDestroyed(this: *Subprocess) void {
         this.flags.has_stdin_destructor_called = true;
         this.weak_file_sink_stdin_ptr = null;
-
-        if (this.flags.finalized) {
-            // if the process has already been garbage collected, we can free the memory now
-            bun.default_allocator.destroy(this);
-        } else {
+        defer this.deref();
+        if (!this.flags.finalized) {
             // otherwise update the pending activity flag
             this.updateHasPendingActivity();
         }
@@ -736,19 +735,21 @@ pub const Subprocess = struct {
 
         return .undefined;
     }
-
+    pub fn disconnectIPC(this: *Subprocess, nextTick: bool) void {
+        const ipc_data = this.ipc() orelse return;
+        ipc_data.close(nextTick);
+    }
     pub fn disconnect(this: *Subprocess, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         _ = globalThis;
         _ = callframe;
-        const ipc_data = this.ipc_maybe() orelse return .undefined;
-        ipc_data.close();
-        this.ipc_data = null;
+        this.disconnectIPC(true);
         return .undefined;
     }
 
     pub fn getConnected(this: *Subprocess, globalThis: *JSGlobalObject) JSValue {
         _ = globalThis;
-        return JSValue.jsBoolean(this.ipc_maybe() != null);
+        const ipc_data = this.ipc();
+        return JSValue.jsBoolean(ipc_data != null and ipc_data.?.disconnected == false);
     }
 
     pub fn pid(this: *const Subprocess) i32 {
@@ -837,7 +838,7 @@ pub const Subprocess = struct {
             ref_count: u32 = 1,
             buffer: []const u8 = "",
 
-            pub usingnamespace bun.NewRefCounted(@This(), deinit);
+            pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
             const This = @This();
             const print = bun.Output.scoped(.StaticPipeWriter, false);
 
@@ -961,7 +962,7 @@ pub const Subprocess = struct {
         pub const IOReader = bun.io.BufferedReader;
         pub const Poll = IOReader;
 
-        pub usingnamespace bun.NewRefCounted(PipeReader, deinit);
+        pub usingnamespace bun.NewRefCounted(PipeReader, PipeReader.deinit);
 
         pub fn hasPendingActivity(this: *const PipeReader) bool {
             if (this.state == .pending)
@@ -1238,6 +1239,7 @@ pub const Subprocess = struct {
                             }
                             pipe.writer.setParent(pipe);
                             subprocess.weak_file_sink_stdin_ptr = pipe;
+                            subprocess.ref();
                             subprocess.flags.has_stdin_destructor_called = false;
 
                             return Writable{
@@ -1296,6 +1298,7 @@ pub const Subprocess = struct {
                     }
 
                     subprocess.weak_file_sink_stdin_ptr = pipe;
+                    subprocess.ref();
                     subprocess.flags.has_stdin_destructor_called = false;
 
                     pipe.writer.handle.poll.flags.insert(.socket);
@@ -1347,6 +1350,7 @@ pub const Subprocess = struct {
                     } else {
                         subprocess.flags.has_stdin_destructor_called = false;
                         subprocess.weak_file_sink_stdin_ptr = pipe;
+                        subprocess.ref();
                         if (@intFromPtr(pipe.signal.ptr) == @intFromPtr(subprocess)) {
                             pipe.signal.clear();
                         }
@@ -1415,6 +1419,8 @@ pub const Subprocess = struct {
         this_jsvalue.ensureStillAlive();
         this.pid_rusage = rusage.*;
         const is_sync = this.flags.is_sync;
+        defer this.deref();
+        defer this.disconnectIPC(true);
 
         var stdin: ?*JSC.WebCore.FileSink = this.weak_file_sink_stdin_ptr;
         var existing_stdin_value = JSC.JSValue.zero;
@@ -1557,6 +1563,11 @@ pub const Subprocess = struct {
         this.on_disconnect_callback.deinit();
     }
 
+    pub fn deinit(this: *Subprocess) void {
+        log("deinit", .{});
+        this.destroy();
+    }
+
     pub fn finalize(this: *Subprocess) callconv(.C) void {
         log("finalize", .{});
         // Ensure any code which references the "this" value doesn't attempt to
@@ -1571,10 +1582,7 @@ pub const Subprocess = struct {
         this.process.deref();
 
         this.flags.finalized = true;
-        if (this.weak_file_sink_stdin_ptr == null) {
-            // if no file sink exists we can free immediately
-            bun.default_allocator.destroy(this);
-        }
+        this.deref();
     }
 
     pub fn getExited(
@@ -1706,6 +1714,17 @@ pub const Subprocess = struct {
                         };
                     }
                 }
+
+                // need to update `cwd` before searching for executable with `Which.which`
+                if (args.getTruthy(globalThis, "cwd")) |cwd_| {
+                    const cwd_str = cwd_.getZigString(globalThis);
+                    if (cwd_str.len > 0) {
+                        cwd = cwd_str.toOwnedSliceZ(allocator) catch {
+                            globalThis.throwOutOfMemory();
+                            return .zero;
+                        };
+                    }
+                }
             }
 
             {
@@ -1729,7 +1748,7 @@ pub const Subprocess = struct {
 
                 {
                     var first_cmd = cmds_array.next().?;
-                    var arg0 = first_cmd.toSlice(globalThis, allocator);
+                    var arg0 = first_cmd.toSliceOrNullWithAllocator(globalThis, allocator) orelse return .zero;
                     defer arg0.deinit();
 
                     if (argv0 == null) {
@@ -1753,6 +1772,7 @@ pub const Subprocess = struct {
                             return .zero;
                         };
                     }
+
                     argv.appendAssumeCapacity(allocator.dupeZ(u8, arg0.slice()) catch {
                         globalThis.throwOutOfMemory();
                         return .zero;
@@ -1817,16 +1837,6 @@ pub const Subprocess = struct {
                         onDisconnect_
                     else
                         onDisconnect_.withAsyncContextIfNeeded(globalThis);
-                }
-
-                if (args.getTruthy(globalThis, "cwd")) |cwd_| {
-                    const cwd_str = cwd_.getZigString(globalThis);
-                    if (cwd_str.len > 0) {
-                        cwd = cwd_str.toOwnedSliceZ(allocator) catch {
-                            globalThis.throwOutOfMemory();
-                            return .zero;
-                        };
-                    }
                 }
 
                 if (args.getTruthy(globalThis, "onExit")) |onExit_| {
@@ -2057,25 +2067,36 @@ pub const Subprocess = struct {
             } else {},
         };
 
-        const process_allocator = globalThis.allocator();
-        var subprocess = process_allocator.create(Subprocess) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
+        var subprocess = Subprocess.new(.{
+            .globalThis = globalThis,
+            .process = undefined,
+            .pid_rusage = null,
+            .stdin = undefined,
+            .stdout = undefined,
+            .stderr = undefined,
+            .stdio_pipes = .{},
+            .on_exit_callback = .{},
+            .on_disconnect_callback = .{},
+            .ipc_data = null,
+            .ipc_callback = .{},
+            .flags = .{
+                .is_sync = is_sync,
+            },
+        });
 
         var spawned = switch (bun.spawn.spawnProcess(
             &spawn_options,
             @ptrCast(argv.items.ptr),
             @ptrCast(env_array.items.ptr),
         ) catch |err| {
-            process_allocator.destroy(subprocess);
+            subprocess.deref();
             spawn_options.deinit();
             globalThis.throwError(err, ": failed to spawn process");
 
             return .zero;
         }) {
             .err => |err| {
-                process_allocator.destroy(subprocess);
+                subprocess.deref();
                 spawn_options.deinit();
                 globalThis.throwValue(err.toJSC(globalThis));
                 return .zero;
@@ -2093,7 +2114,7 @@ pub const Subprocess = struct {
                         @sizeOf(*Subprocess),
                         spawned.extra_pipes.items[@intCast(ipc_channel)].cast(),
                     ) orelse {
-                        process_allocator.destroy(subprocess);
+                        subprocess.deref();
                         spawn_options.deinit();
                         globalThis.throw("failed to create socket pair", .{});
                         return .zero;
@@ -2156,23 +2177,28 @@ pub const Subprocess = struct {
                 .is_sync = is_sync,
             },
         };
+        subprocess.ref(); // + one ref for the process
         subprocess.process.setExitHandler(subprocess);
 
         if (subprocess.ipc_data) |*ipc_data| {
             if (Environment.isPosix) {
                 if (posix_ipc_info.ext(*Subprocess)) |ctx| {
                     ctx.* = subprocess;
+                    subprocess.ref(); // + one ref for the IPC
                 }
             } else {
+                subprocess.ref(); // + one ref for the IPC
+
                 if (ipc_data.configureServer(
                     Subprocess,
                     subprocess,
                     subprocess.stdio_pipes.items[@intCast(ipc_channel)].buffer,
                 ).asErr()) |err| {
-                    process_allocator.destroy(subprocess);
+                    subprocess.deref();
                     globalThis.throwValue(err.toJSC(globalThis));
                     return .zero;
                 }
+                subprocess.stdio_pipes.items[@intCast(ipc_channel)] = .unavailable;
             }
             ipc_data.writeVersionPacket();
         }
@@ -2319,8 +2345,12 @@ pub const Subprocess = struct {
     pub fn handleIPCClose(this: *Subprocess) void {
         IPClog("Subprocess#handleIPCClose", .{});
         this.updateHasPendingActivity();
-        const ok = this.ipc_data != null;
-        if (ok) this.ipc().internal_msg_queue.deinit();
+        defer this.deref();
+        var ok = false;
+        if (this.ipc()) |ipc_data| {
+            ok = true;
+            ipc_data.internal_msg_queue.deinit();
+        }
         this.ipc_data = null;
 
         const this_jsvalue = this.this_jsvalue;
@@ -2330,11 +2360,7 @@ pub const Subprocess = struct {
         }
     }
 
-    pub fn ipc(this: *Subprocess) *IPC.IPCData {
-        return &this.ipc_data.?;
-    }
-
-    pub fn ipc_maybe(this: *Subprocess) ?*IPC.IPCData {
+    pub fn ipc(this: *Subprocess) ?*IPC.IPCData {
         return &(this.ipc_data orelse return null);
     }
 

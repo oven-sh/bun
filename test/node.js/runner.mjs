@@ -1,6 +1,6 @@
 import { parseArgs } from "node:util";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, appendFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, appendFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import readline from "node:readline/promises";
@@ -425,6 +425,10 @@ function getMetadata(execPath) {
     os: process.platform,
     arch: process.arch,
   };
+}
+
+function tmpdirSync(pattern = "bun.test.") {
+  return mkdtempSync(join(realpathSync(tmpdir()), pattern));
 }
 
 main().catch(error => {

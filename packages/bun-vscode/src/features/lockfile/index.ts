@@ -1,5 +1,5 @@
-import * as vscode from "vscode";
 import { spawn } from "node:child_process";
+import * as vscode from "vscode";
 import { styleLockfile } from "./lockfile.style";
 
 export type BunLockfile = vscode.CustomDocument & {

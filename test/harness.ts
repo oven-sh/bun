@@ -1,10 +1,10 @@
-import { gc as bunGC, spawnSync, unsafe, which } from "bun";
-import { describe, test, expect, afterAll, beforeAll } from "bun:test";
-import { readlink, readFile, writeFile } from "fs/promises";
-import { isAbsolute, join, dirname } from "path";
-import fs, { openSync, closeSync } from "node:fs";
-import os from "node:os";
+import { gc as bunGC, sleepSync, spawnSync, unsafe, which } from "bun";
 import { heapStats } from "bun:jsc";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { readFile, readlink, writeFile } from "fs/promises";
+import fs, { closeSync, openSync } from "node:fs";
+import os from "node:os";
+import { dirname, isAbsolute, join } from "path";
 
 type Awaitable<T> = T | Promise<T>;
 
@@ -296,7 +296,7 @@ const binaryTypes = {
   "int8array": Int8Array,
   "int16array": Int16Array,
   "int32array": Int32Array,
-  "float16array": Float16Array,
+  "float16array": globalThis.Float16Array,
   "float32array": Float32Array,
   "float64array": Float64Array,
 } as const;
@@ -1263,4 +1263,30 @@ https://buildkite.com/docs/pipelines/security/secrets/buildkite-secrets`;
   process.env[name] = value;
 
   return value;
+}
+
+export function assertManifestsPopulated(absCachePath: string, registryUrl: string) {
+  const { npm_manifest_test_helpers } = require("bun:internal-for-testing");
+  const { parseManifest } = npm_manifest_test_helpers;
+
+  for (const file of fs.readdirSync(absCachePath)) {
+    if (!file.endsWith(".npm")) continue;
+
+    const manifest = parseManifest(join(absCachePath, file), registryUrl);
+    expect(manifest.versions.length).toBeGreaterThan(0);
+  }
+}
+
+// Make it easier to run some node tests.
+Object.defineProperty(globalThis, "gc", {
+  value: Bun.gc,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
+
+export function waitForFileToExist(path: string, interval: number) {
+  while (!fs.existsSync(path)) {
+    sleepSync(interval);
+  }
 }

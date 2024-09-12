@@ -115,6 +115,7 @@ pub const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
 pub const ExecCommand = @import("./cli/exec_command.zig").ExecCommand;
 pub const PatchCommand = @import("./cli/patch_command.zig").PatchCommand;
 pub const PatchCommitCommand = @import("./cli/patch_commit_command.zig").PatchCommitCommand;
+pub const OutdatedCommand = @import("./cli/outdated_command.zig").OutdatedCommand;
 
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
@@ -208,6 +209,7 @@ pub const Arguments = struct {
         clap.parseParam("-u, --origin <STR>") catch unreachable,
         clap.parseParam("--conditions <STR>...             Pass custom conditions to resolve") catch unreachable,
         clap.parseParam("--fetch-preconnect <STR>...       Preconnect to a URL while code is loading") catch unreachable,
+        clap.parseParam("--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -240,7 +242,7 @@ pub const Arguments = struct {
         clap.parseParam("--target <STR>                   The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\"") catch unreachable,
         clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
         clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
-        clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'inline', 'external', or 'none'") catch unreachable,
+        clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'linked', 'inline', 'external', or 'none'") catch unreachable,
         clap.parseParam("--format <STR>                   Specifies the module format to build to. Only \"esm\" is supported.") catch unreachable,
         clap.parseParam("--root <STR>                     Root directory used for multiple entry points") catch unreachable,
         clap.parseParam("--splitting                      Enable code splitting") catch unreachable,
@@ -565,7 +567,7 @@ pub const Arguments = struct {
 
         ctx.passthrough = args.remaining();
 
-        if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .BuildCommand) {
+        if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .BuildCommand or cmd == .TestCommand) {
             if (args.options("--conditions").len > 0) {
                 opts.conditions = args.options("--conditions");
             }
@@ -604,10 +606,28 @@ pub const Arguments = struct {
                     ctx.runtime_options.eval.eval_and_print = true;
                 } else {
                     opts.port = std.fmt.parseInt(u16, port_str, 10) catch {
-                        Output.errGeneric("Invalid value for --port: \"{s}\". Must be a number\n", .{port_str});
+                        Output.errFmt(
+                            bun.fmt.outOfRange(port_str, .{
+                                .field_name = "--port",
+                                .min = 0,
+                                .max = std.math.maxInt(u16),
+                            }),
+                        );
                         Output.note("To evaluate TypeScript here, use 'bun --print'", .{});
                         Global.exit(1);
                     };
+                }
+            }
+
+            if (args.option("--max-http-header-size")) |size_str| {
+                const size = std.fmt.parseInt(usize, size_str, 10) catch {
+                    Output.errGeneric("Invalid value for --max-http-header-size: \"{s}\". Must be a positive integer\n", .{size_str});
+                    Global.exit(1);
+                };
+                if (size == 0) {
+                    bun.http.max_http_header_size = 1024 * 1024 * 1024;
+                } else {
+                    bun.http.max_http_header_size = size;
                 }
             }
 
@@ -1082,6 +1102,8 @@ pub const HelpCommand = struct {
         \\  <b><blue>add<r>       <d>{s:<16}<r>     Add a dependency to package.json <d>(bun a)<r>
         \\  <b><blue>remove<r>    <d>{s:<16}<r>     Remove a dependency from package.json <d>(bun rm)<r>
         \\  <b><blue>update<r>    <d>{s:<16}<r>     Update outdated dependencies
+        \\  <b><blue>outdated<r>                       Display latest versions of outdated dependencies
+        \\  <b><blue>pack<r>                           Archive the current workspace package
         \\  <b><blue>link<r>      <d>[\<package\>]<r>          Register or link a local npm package
         \\  <b><blue>unlink<r>                         Unregister a local npm package
         \\  <b><blue>patch <d>\<pkg\><r>                    Prepare a package for patching
@@ -1438,6 +1460,8 @@ pub const Command = struct {
 
             RootCommandMatcher.case("exec") => .ExecCommand,
 
+            RootCommandMatcher.case("outdated") => .OutdatedCommand,
+
             // These are reserved for future use by Bun, so that someone
             // doing `bun deploy` to run a script doesn't accidentally break
             // when we add our actual command
@@ -1452,7 +1476,6 @@ pub const Command = struct {
             RootCommandMatcher.case("whoami") => .ReservedCommand,
             RootCommandMatcher.case("publish") => .ReservedCommand,
             RootCommandMatcher.case("prune") => .ReservedCommand,
-            RootCommandMatcher.case("outdated") => .ReservedCommand,
             RootCommandMatcher.case("list") => .ReservedCommand,
             RootCommandMatcher.case("why") => .ReservedCommand,
 
@@ -1572,6 +1595,13 @@ pub const Command = struct {
                 const ctx = try Command.init(allocator, log, .PatchCommitCommand);
 
                 try PatchCommitCommand.exec(ctx);
+                return;
+            },
+            .OutdatedCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .OutdatedCommand) unreachable;
+                const ctx = try Command.init(allocator, log, .OutdatedCommand);
+
+                try OutdatedCommand.exec(ctx);
                 return;
             },
             .BunxCommand => {
@@ -2141,6 +2171,7 @@ pub const Command = struct {
         ExecCommand,
         PatchCommand,
         PatchCommitCommand,
+        OutdatedCommand,
 
         /// Used by crash reports.
         ///
@@ -2172,6 +2203,7 @@ pub const Command = struct {
                 .ExecCommand => 'e',
                 .PatchCommand => 'x',
                 .PatchCommitCommand => 'z',
+                .OutdatedCommand => 'o',
             };
         }
 
@@ -2395,6 +2427,11 @@ pub const Command = struct {
                     , .{});
                     Output.flush();
                 },
+                .OutdatedCommand => {
+                    Install.PackageManager.CommandLineArguments.printHelp(switch (cmd) {
+                        .OutdatedCommand => .outdated,
+                    });
+                },
                 else => {
                     HelpCommand.printWithReason(.explicit);
                 },
@@ -2403,7 +2440,16 @@ pub const Command = struct {
 
         pub fn readGlobalConfig(this: Tag) bool {
             return switch (this) {
-                .BunxCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand, .UpdateCommand, .PatchCommand, .PatchCommitCommand => true,
+                .BunxCommand,
+                .PackageManagerCommand,
+                .InstallCommand,
+                .AddCommand,
+                .RemoveCommand,
+                .UpdateCommand,
+                .PatchCommand,
+                .PatchCommitCommand,
+                .OutdatedCommand,
+                => true,
                 else => false,
             };
         }
@@ -2420,6 +2466,7 @@ pub const Command = struct {
                 .UpdateCommand,
                 .PatchCommand,
                 .PatchCommitCommand,
+                .OutdatedCommand,
                 => true,
                 else => false,
             };
@@ -2439,6 +2486,7 @@ pub const Command = struct {
             .AutoCommand = true,
             .RunCommand = true,
             .RunAsNodeCommand = true,
+            .OutdatedCommand = true,
         });
 
         pub const always_loads_config: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{
@@ -2452,6 +2500,7 @@ pub const Command = struct {
             .PatchCommitCommand = true,
             .PackageManagerCommand = true,
             .BunxCommand = true,
+            .OutdatedCommand = true,
         });
 
         pub const uses_global_options: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(true, .{
@@ -2466,6 +2515,7 @@ pub const Command = struct {
             .LinkCommand = false,
             .UnlinkCommand = false,
             .BunxCommand = false,
+            .OutdatedCommand = false,
         });
     };
 };

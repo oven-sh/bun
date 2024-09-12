@@ -1157,8 +1157,9 @@ pub fn WindowsStreamingWriter(
             this.source = null;
             if (this.closed_without_reporting) {
                 this.closed_without_reporting = false;
-                onClose(this.parent);
+                return;
             }
+            onClose(this.parent);
         }
 
         pub fn startWithCurrentPipe(this: *WindowsWriter) bun.JSC.Maybe(void) {
@@ -1385,11 +1386,14 @@ pub fn WindowsStreamingWriter(
             }
 
             this.closed_without_reporting = false;
-            if (!this.owns_fd) {
-                this.is_done = true;
-                return;
+            this.is_done = true;
+
+            if (!this.hasPendingData()) {
+                if (!this.owns_fd) {
+                    return;
+                }
+                this.close();
             }
-            this.close();
         }
     };
 }

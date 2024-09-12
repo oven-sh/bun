@@ -1,6 +1,6 @@
+import { describe, expect } from "bun:test";
 import { join } from "node:path";
 import { itBundled } from "./expectBundled";
-import { describe, expect } from "bun:test";
 
 describe("bundler", () => {
   itBundled("edgecase/EmptyFile", {

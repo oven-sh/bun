@@ -57,6 +57,10 @@ pub inline fn namedAllocator(comptime name: [:0]const u8) std.mem.Allocator {
     return default_allocator;
 }
 
+pub const OOM = error{
+    OutOfMemory,
+};
+
 pub const C = @import("root").C;
 pub const sha = @import("./sha.zig");
 pub const FeatureFlags = @import("feature_flags.zig");
@@ -813,14 +817,23 @@ pub fn openDirForIteration(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
 }
 
 pub fn openDirAbsolute(path_: []const u8) !std.fs.Dir {
-    if (comptime Environment.isWindows) {
-        const res = try sys.openDirAtWindowsA(invalid_fd, path_, .{ .iterable = true, .can_rename_or_delete = true, .read_only = true }).unwrap();
-        return res.asDir();
-    } else {
-        const fd = try sys.openA(path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0).unwrap();
-        return fd.asDir();
-    }
+    const fd = if (comptime Environment.isWindows)
+        try sys.openDirAtWindowsA(invalid_fd, path_, .{ .iterable = true, .can_rename_or_delete = true, .read_only = true }).unwrap()
+    else
+        try sys.openA(path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0).unwrap();
+
+    return fd.asDir();
 }
+
+pub fn openDirAbsoluteNotForDeletingOrRenaming(path_: []const u8) !std.fs.Dir {
+    const fd = if (comptime Environment.isWindows)
+        try sys.openDirAtWindowsA(invalid_fd, path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true }).unwrap()
+    else
+        try sys.openA(path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0).unwrap();
+
+    return fd.asDir();
+}
+
 pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;
 pub fn getRuntimeFeatureFlag(comptime flag: [:0]const u8) bool {
     return struct {
@@ -3657,4 +3670,62 @@ pub fn tagName(comptime Enum: type, value: Enum) ?[:0]const u8 {
 extern "C" fn Bun__ramSize() usize;
 pub fn getTotalMemorySize() usize {
     return Bun__ramSize();
+}
+
+pub const WeakPtrData = packed struct(u32) {
+    reference_count: u31 = 0,
+    finalized: bool = false,
+
+    pub fn onFinalize(this: *WeakPtrData) bool {
+        bun.debugAssert(!this.finalized);
+        this.finalized = true;
+        return this.reference_count == 0;
+    }
+};
+
+pub fn WeakPtr(comptime T: type, comptime weakable_field: std.meta.FieldEnum(T)) type {
+    return struct {
+        const WeakRef = @This();
+
+        value: ?*T = null,
+        pub fn create(req: *T) WeakRef {
+            bun.debugAssert(!@field(req, @tagName(weakable_field)).finalized);
+            @field(req, @tagName(weakable_field)).reference_count += 1;
+            return .{ .value = req };
+        }
+
+        comptime {
+            if (@TypeOf(@field(@as(T, undefined), @tagName(weakable_field))) != WeakPtrData) {
+                @compileError("Expected " ++ @typeName(T) ++ " to have a " ++ @typeName(WeakPtrData) ++ " field named " ++ @tagName(weakable_field));
+            }
+        }
+
+        fn deinitInternal(this: *WeakRef, value: *T) void {
+            const weak_data: *WeakPtrData = &@field(value, @tagName(weakable_field));
+
+            this.value = null;
+            const count = weak_data.reference_count - 1;
+            weak_data.reference_count = count;
+            if (weak_data.finalized and count == 0) {
+                value.destroy();
+            }
+        }
+
+        pub fn deinit(this: *WeakRef) void {
+            if (this.value) |value| {
+                this.deinitInternal(value);
+            }
+        }
+
+        pub fn get(this: *WeakRef) ?*T {
+            if (this.value) |value| {
+                if (!@field(value, @tagName(weakable_field)).finalized) {
+                    return value;
+                }
+
+                this.deinitInternal(value);
+            }
+            return null;
+        }
+    };
 }

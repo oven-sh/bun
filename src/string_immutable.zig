@@ -6161,6 +6161,13 @@ pub fn withoutPrefixComptime(input: []const u8, comptime prefix: []const u8) []c
     return input;
 }
 
+pub fn withoutPrefixIfPossibleComptime(input: string, comptime prefix: string) ?string {
+    if (hasPrefixComptime(input, prefix)) {
+        return input[prefix.len..];
+    }
+    return null;
+}
+
 // extern "C" bool icu_hasBinaryProperty(UChar32 cp, unsigned int prop)
 extern fn icu_hasBinaryProperty(c: u32, which: c_uint) bool;
 

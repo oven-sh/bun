@@ -1,8 +1,8 @@
-import { test, expect } from "bun:test";
-import { join } from "path";
-import { tmpdir } from "os";
 import { write } from "bun";
+import { expect, test } from "bun:test";
 import { unlinkSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 test("bun-file-exists", async () => {
   expect(await Bun.file(import.meta.path).exists()).toBeTrue();
   expect(await Bun.file(import.meta.path + "boop").exists()).toBeFalse();

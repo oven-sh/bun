@@ -2,7 +2,7 @@
 
 const buildMode = process.argv[5];
 
-const tests = require(`./build/${buildMode === "debug" ? "Debug" : "Release"}/v8tests`);
+const tests = require("./module")(buildMode === "debug");
 
 const testName = process.argv[2];
 const args = JSON.parse(process.argv[3] ?? "[]");

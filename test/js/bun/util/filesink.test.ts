@@ -167,8 +167,8 @@ describe("FileSink", () => {
 });
 
 import fs from "node:fs";
-import util from "node:util";
 import path from "node:path";
+import util from "node:util";
 
 it("end doesn't close when backed by a file descriptor", async () => {
   using _ = fileDescriptorLeakChecker();
@@ -205,3 +205,15 @@ it("write result is not cummulative", async () => {
   await writer.end();
   await util.promisify(fs.close)(fd);
 });
+
+if (isWindows) {
+  it("ENOENT, Windows", () => {
+    expect(() => Bun.file("A:\\this-does-not-exist.txt").writer()).toThrow(
+      expect.objectContaining({
+        code: "ENOENT",
+        path: "A:\\this-does-not-exist.txt",
+        syscall: "open",
+      }),
+    );
+  });
+}

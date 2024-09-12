@@ -1169,7 +1169,7 @@ pub const E = enum(u16) {
     HWPOISON = 133,
     UNKNOWN = 134,
     CHARSET = 135,
-    OF = 136,
+    EOF = 136,
 
     UV_E2BIG = -uv.UV_E2BIG,
     UV_EACCES = -uv.UV_EACCES,

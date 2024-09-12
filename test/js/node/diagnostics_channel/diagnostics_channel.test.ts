@@ -1,7 +1,7 @@
 import { gc } from "bun";
-import { describe, test, expect, mock, beforeEach } from "bun:test";
-import { channel, Channel, hasSubscribers, subscribe, unsubscribe } from "node:diagnostics_channel";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { channel, Channel, hasSubscribers, subscribe, unsubscribe } from "node:diagnostics_channel";
 
 describe("Channel", () => {
   // test-diagnostics-channel-has-subscribers.js

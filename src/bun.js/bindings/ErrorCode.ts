@@ -18,6 +18,7 @@ export default [
   ["ERR_HTTP2_INVALID_SINGLE_VALUE_HEADER", TypeError, "TypeError"],
   ["ERR_INVALID_ARG_TYPE", TypeError, "TypeError"],
   ["ERR_INVALID_ARG_VALUE", TypeError, "TypeError"],
+  ["ERR_INVALID_PROTOCOL", TypeError, "TypeError"],
   ["ERR_INVALID_THIS", TypeError, "TypeError"],
   ["ERR_IPC_CHANNEL_CLOSED", Error, "Error"],
   ["ERR_IPC_DISCONNECTED", Error, "Error"],
@@ -33,10 +34,18 @@ export default [
   ["ERR_STREAM_DESTROYED", TypeError, "TypeError"],
   ["ERR_STREAM_NULL_VALUES", TypeError, "TypeError"],
   ["ERR_STREAM_WRITE_AFTER_END", TypeError, "TypeError"],
-  ["ERR_ZLIB_INITIALIZATION_FAILED", TypeError, "TypeError"],
+  ["ERR_ZLIB_INITIALIZATION_FAILED", Error, "Error"],
   ["ERR_STRING_TOO_LONG", Error, "Error"],
+  ["ERR_CRYPTO_SCRYPT_INVALID_PARAMETER", Error, "Error"],
+  ["ERR_CRYPTO_INVALID_SCRYPT_PARAMS", RangeError, "RangeError"],
+  ["MODULE_NOT_FOUND", Error, "Error"],
+  ["ERR_ILLEGAL_CONSTRUCTOR", TypeError, "TypeError"],
+  ["ERR_INVALID_URL", TypeError, "TypeError"],
+  ["ERR_BUFFER_TOO_LARGE", RangeError, "RangeError"],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError, "TypeError"],
   ["ERR_BODY_ALREADY_USED", Error, "Error"],
+  ["ERR_STREAM_WRAP", Error, "Error"],
+  ["ERR_BORINGSSL", Error, "Error"],
 ] as ErrorCodeMapping;

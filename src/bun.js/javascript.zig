@@ -1304,11 +1304,11 @@ pub const VirtualMachine = struct {
         this.exit_handler.dispatchOnExit();
 
         const rare_data = this.rare_data orelse return;
-        var hook = rare_data.cleanup_hook orelse return;
-        hook.execute();
-        while (hook.next) |next| {
-            next.execute();
-            hook = next;
+        var hooks = rare_data.cleanup_hooks;
+        defer if (!is_main_thread_vm) hooks.clearAndFree(bun.default_allocator);
+        rare_data.cleanup_hooks = .{};
+        for (hooks.items) |hook| {
+            hook.execute();
         }
     }
 
@@ -1861,8 +1861,14 @@ pub const VirtualMachine = struct {
             .handler = ModuleLoader.AsyncModule.Queue.onWakeHandler,
             .onDependencyError = JSC.ModuleLoader.AsyncModule.Queue.onDependencyError,
         };
+        vm.bundler.resolver.standalone_module_graph = opts.graph;
 
-        vm.bundler.configureLinker();
+        if (opts.graph == null) {
+            vm.bundler.configureLinker();
+        } else {
+            vm.bundler.configureLinkerWithAutoJSX(false);
+        }
+
         try vm.bundler.configureFramework(false);
         vm.smol = opts.smol;
         vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
@@ -3797,7 +3803,7 @@ pub const VirtualMachine = struct {
 
         const node_cluster_binding = @import("./node/node_cluster_binding.zig");
 
-        pub fn ipc(this: *IPCInstance) *IPC.IPCData {
+        pub fn ipc(this: *IPCInstance) ?*IPC.IPCData {
             return &this.data;
         }
 
@@ -3845,12 +3851,14 @@ pub const VirtualMachine = struct {
         extern fn Bun__setChannelRef(*JSC.JSGlobalObject, bool) void;
 
         export fn Bun__closeChildIPC(global: *JSGlobalObject) void {
-            const ipc_data = &global.bunVM().ipc.?.initialized.data;
-            JSC.VirtualMachine.get().enqueueImmediateTask(JSC.ManagedTask.New(IPC.IPCData, closeReal).init(ipc_data));
-        }
-
-        fn closeReal(ipc_data: *IPC.IPCData) void {
-            ipc_data.close();
+            if (global.bunVM().ipc) |*current_ipc| {
+                switch (current_ipc.*) {
+                    .initialized => |instance| {
+                        instance.data.close(true);
+                    },
+                    .waiting => {},
+                }
+            }
         }
 
         pub const Handlers = IPC.NewIPCHandler(IPCInstance);
@@ -3882,6 +3890,8 @@ pub const VirtualMachine = struct {
                     .data = undefined,
                 });
 
+                this.ipc = .{ .initialized = instance };
+
                 const socket = IPC.Socket.fromFd(context, opts.info, IPCInstance, instance, null) orelse {
                     instance.destroy();
                     this.ipc = null;
@@ -3901,6 +3911,8 @@ pub const VirtualMachine = struct {
                     .data = .{ .mode = opts.mode },
                 });
 
+                this.ipc = .{ .initialized = instance };
+
                 instance.data.configureClient(IPCInstance, instance, opts.info) catch {
                     instance.destroy();
                     this.ipc = null;
@@ -3911,8 +3923,6 @@ pub const VirtualMachine = struct {
                 break :instance instance;
             },
         };
-
-        this.ipc = .{ .initialized = instance };
 
         instance.data.writeVersionPacket();
 

@@ -16,4 +16,4 @@ const buffer = Buffer.from(arrbuf);
 
 ---
 
-Refer to [Binary data > Buffer](/docs/api/binary-data#buffer) for more information on working with `Buffer` and other binary data formats in Bun.
+Refer to [Binary data > Buffer](https://bun.sh/docs/api/binary-data#buffer) for more information on working with `Buffer` and other binary data formats in Bun.

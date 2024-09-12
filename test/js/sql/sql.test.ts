@@ -1,5 +1,5 @@
 import { postgres, sql } from "bun:sql";
-import { expect, test as test, describe } from "bun:test";
+import { expect, test } from "bun:test";
 import { isCI } from "harness";
 
 if (!isCI) {

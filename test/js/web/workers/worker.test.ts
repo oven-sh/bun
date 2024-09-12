@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe } from "harness";
 import path from "path";
 import wt from "worker_threads";
 
@@ -309,15 +309,14 @@ describe("worker_threads", () => {
   test("worker with eval = true succeeds with valid code", async () => {
     let message;
     const worker = new wt.Worker("postMessage('hello')", { eval: true });
-    worker.on('message', e => {
+    worker.on("message", e => {
       message = e;
     });
     const p = new Promise((resolve, reject) => {
-      worker.on('error', reject);
-      worker.on('exit', resolve);
-    })
+      worker.on("error", reject);
+      worker.on("exit", resolve);
+    });
     await p;
     expect(message).toEqual("hello");
   });
-
 });

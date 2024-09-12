@@ -1,5 +1,5 @@
-import { describe, it, expect } from "bun:test";
 import { escapeHTML } from "bun";
+import { describe, expect, it } from "bun:test";
 
 describe("escapeHTML", () => {
   // The matrix of cases we need to test for:

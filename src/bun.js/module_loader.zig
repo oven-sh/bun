@@ -2113,6 +2113,58 @@ pub const ModuleLoader = struct {
             },
 
             else => {
+                if (virtual_source == null) {
+                    if (comptime !disable_transpilying) {
+                        if (jsc_vm.isWatcherEnabled()) auto_watch: {
+                            if (std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
+                                const input_fd: bun.StoredFileDescriptorType = brk: {
+                                    // on macOS, we need a file descriptor to receive event notifications on it.
+                                    // so we use O_EVTONLY to open the file descriptor without asking any additional permissions.
+                                    if (comptime Environment.isMac) {
+                                        switch (bun.sys.open(
+                                            &(std.posix.toPosixPath(path.text) catch break :auto_watch),
+                                            bun.C.O_EVTONLY,
+                                            0,
+                                        )) {
+                                            .err => break :auto_watch,
+                                            .result => |fd| break :brk @enumFromInt(fd.cast()),
+                                        }
+                                    } else {
+                                        // Otherwise, don't even bother opening it.
+                                        break :brk .zero;
+                                    }
+                                };
+                                const hash = JSC.GenericWatcher.getHash(path.text);
+                                switch (jsc_vm.bun_watcher.addFile(
+                                    input_fd,
+                                    path.text,
+                                    hash,
+                                    loader,
+                                    .zero,
+                                    null,
+                                    true,
+                                )) {
+                                    .err => {
+                                        if (comptime Environment.isMac) {
+                                            // If any error occurs and we just
+                                            // opened the file descriptor to
+                                            // receive event notifications on
+                                            // it, we should close it.
+                                            if (input_fd != .zero) {
+                                                _ = bun.sys.close(bun.toFD(input_fd));
+                                            }
+                                        }
+
+                                        // we don't consider it a failure if we cannot watch the file
+                                        // they didn't open the file
+                                    },
+                                    .result => {},
+                                }
+                            }
+                        }
+                    }
+                }
+
                 var stack_buf = std.heap.stackFallback(4096, jsc_vm.allocator);
                 const allocator = stack_buf.get();
                 var buf = MutableString.init2048(allocator) catch bun.outOfMemory();
@@ -2292,7 +2344,7 @@ pub const ModuleLoader = struct {
                     virtual_source = &virtual_source_to_use.?;
                 }
             } else {
-                ret.* = ErrorableResolvedSource.err(error.JSErrorObject, globalObject.createErrorInstanceWithCode(.MODULE_NOT_FOUND, "Blob not found", .{}).asVoid());
+                ret.* = ErrorableResolvedSource.err(error.JSErrorObject, globalObject.MODULE_NOT_FOUND("Blob not found", .{}).toJS().asVoid());
                 return null;
             }
         }

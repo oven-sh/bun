@@ -72,6 +72,7 @@ pub const BunObject = struct {
     pub const stdout = toJSGetter(Bun.getStdout);
     pub const unsafe = toJSGetter(Bun.getUnsafe);
     pub const semver = toJSGetter(Bun.getSemver);
+    pub const embeddedFiles = toJSGetter(Bun.getEmbeddedFiles);
     // --- Getters ---
 
     fn getterName(comptime baseName: anytype) [:0]const u8 {
@@ -131,6 +132,7 @@ pub const BunObject = struct {
         @export(BunObject.stdout, .{ .name = getterName("stdout") });
         @export(BunObject.unsafe, .{ .name = getterName("unsafe") });
         @export(BunObject.semver, .{ .name = getterName("semver") });
+        @export(BunObject.embeddedFiles, .{ .name = getterName("embeddedFiles") });
         // --- Getters --
 
         // -- Callbacks --
@@ -1798,19 +1800,7 @@ pub const Crypto = struct {
     };
 
     pub fn createCryptoError(globalThis: *JSC.JSGlobalObject, err_code: u32) JSValue {
-        var outbuf: [128 + 1 + "BoringSSL error: ".len]u8 = undefined;
-        @memset(&outbuf, 0);
-        outbuf[0.."BoringSSL error: ".len].* = "BoringSSL error: ".*;
-        const message_buf = outbuf["BoringSSL error: ".len..];
-
-        _ = BoringSSL.ERR_error_string_n(err_code, message_buf, message_buf.len);
-
-        const error_message: []const u8 = bun.sliceTo(outbuf[0..], 0);
-        if (error_message.len == "BoringSSL error: ".len) {
-            return ZigString.static("Unknown BoringSSL error").toErrorInstance(globalThis);
-        }
-
-        return ZigString.fromUTF8(error_message).toErrorInstance(globalThis);
+        return BoringSSL.ERR_toJS(globalThis, err_code);
     }
     const unknown_password_algorithm_message = "unknown algorithm, expected one of: \"bcrypt\", \"argon2id\", \"argon2d\", \"argon2i\" (default is \"argon2id\")";
 
@@ -3786,6 +3776,42 @@ pub fn getGlobConstructor(
     _: *JSC.JSObject,
 ) JSC.JSValue {
     return JSC.API.Glob.getConstructor(globalThis);
+}
+
+pub fn getEmbeddedFiles(
+    globalThis: *JSC.JSGlobalObject,
+    _: *JSC.JSObject,
+) JSC.JSValue {
+    const vm = globalThis.bunVM();
+    const graph = vm.standalone_module_graph orelse return JSC.JSValue.createEmptyArray(globalThis, 0);
+
+    const unsorted_files = graph.files.values();
+    var sort_indices = std.ArrayList(u32).initCapacity(bun.default_allocator, unsorted_files.len) catch bun.outOfMemory();
+    defer sort_indices.deinit();
+    for (0..unsorted_files.len) |index| {
+        // Some % of people using `bun build --compile` want to obscure the source code
+        // We don't really do that right now, but exposing the output source
+        // code here as an easily accessible Blob is even worse for them.
+        // So let's omit any source code files from the list.
+        if (unsorted_files[index].loader.isJavaScriptLike()) continue;
+        sort_indices.appendAssumeCapacity(@intCast(index));
+    }
+
+    var i: u32 = 0;
+    var array = JSC.JSValue.createEmptyArray(globalThis, sort_indices.items.len);
+    std.mem.sort(u32, sort_indices.items, unsorted_files, bun.StandaloneModuleGraph.File.lessThanByIndex);
+    for (sort_indices.items) |index| {
+        const file = &unsorted_files[index];
+        // We call .dupe() on this to ensure that we don't return a blob that might get freed later.
+        const input_blob = file.blob(globalThis);
+        const blob = JSC.WebCore.Blob.new(input_blob.dupeWithContentType(true));
+        blob.allocator = bun.default_allocator;
+        blob.name = input_blob.name.dupeRef();
+        array.putIndex(globalThis, i, blob.toJS(globalThis));
+        i += 1;
+    }
+
+    return array;
 }
 
 pub fn getSemver(

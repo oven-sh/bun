@@ -111,11 +111,11 @@ private:
     class Internals {
     private:
         FunctionCallback callback;
-        JSC::JSValue data;
+        JSC::WriteBarrier<JSC::Unknown> data;
 
-        Internals(FunctionCallback callback_, JSC::JSValue data_)
+        Internals(FunctionCallback callback_, JSC::VM& vm, FunctionTemplate* owner, JSC::JSValue data_)
             : callback(callback_)
-            , data(data_)
+            , data(vm, owner, data_)
         {
         }
 
@@ -144,7 +144,7 @@ private:
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES functionCall(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 
     FunctionTemplate(JSC::VM& vm, JSC::Structure* structure, FunctionCallback callback, JSC::JSValue data)
-        : __internals(callback, data)
+        : __internals(callback, vm, this, data)
         , Base(vm, structure, functionCall, JSC::callHostFunctionAsConstructor)
     {
     }

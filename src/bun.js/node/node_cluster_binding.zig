@@ -185,7 +185,7 @@ pub fn sendHelperPrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
     const handle = arguments[2];
     const callback = arguments[3];
 
-    const ipc_data = subprocess.ipc_maybe() orelse return .false;
+    const ipc_data = subprocess.ipc() orelse return .false;
 
     if (message.isUndefined()) {
         return globalThis.throwValueRet(globalThis.ERR_MISSING_ARGS_static(ZigString.static("message"), null, null));
@@ -219,14 +219,14 @@ pub fn sendHelperPrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
 pub fn onInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
     const arguments = callframe.arguments(3).ptr;
     const subprocess = arguments[0].as(bun.JSC.Subprocess).?;
-    const ipc_data = subprocess.ipc();
+    const ipc_data = subprocess.ipc() orelse return .undefined;
     ipc_data.internal_msg_queue.worker = JSC.Strong.create(arguments[1], globalThis);
     ipc_data.internal_msg_queue.cb = JSC.Strong.create(arguments[2], globalThis);
     return .undefined;
 }
 
 pub fn handleInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, subprocess: *JSC.Subprocess, message: JSC.JSValue) void {
-    const ipc_data = subprocess.ipc();
+    const ipc_data = subprocess.ipc() orelse return;
 
     const event_loop = globalThis.bunVM().eventLoop();
 

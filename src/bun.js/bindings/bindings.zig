@@ -2071,6 +2071,17 @@ pub const AbortSignal = extern opaque {
         return WebCore__AbortSignal__signal(this, globalObject, reason);
     }
 
+    extern fn WebCore__AbortSignal__incrementPendingActivity(*AbortSignal) void;
+    extern fn WebCore__AbortSignal__decrementPendingActivity(*AbortSignal) void;
+
+    pub fn pendingActivityRef(this: *AbortSignal) void {
+        return WebCore__AbortSignal__incrementPendingActivity(this);
+    }
+
+    pub fn pendingActivityUnref(this: *AbortSignal) void {
+        return WebCore__AbortSignal__decrementPendingActivity(this);
+    }
+
     /// This function is not threadsafe. aborted is a boolean, not an atomic!
     pub fn aborted(this: *AbortSignal) bool {
         return cppFn("aborted", .{this});
@@ -2912,6 +2923,27 @@ pub const JSGlobalObject = opaque {
         this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be of type {s}. Received {}", .{ argname, typename, bun.fmt.quote(ty_str.slice()) }).throw();
         return .zero;
     }
+    pub fn throwInvalidArgumentRangeValue(
+        this: *JSGlobalObject,
+        argname: []const u8,
+        typename: []const u8,
+        value: i64,
+    ) JSValue {
+        this.ERR_OUT_OF_RANGE("The \"{s}\" is out of range. {s}. Received {}", .{ argname, typename, value }).throw();
+        return .zero;
+    }
+
+    pub fn throwInvalidPropertyTypeValue(
+        this: *JSGlobalObject,
+        field: []const u8,
+        typename: []const u8,
+        value: JSValue,
+    ) JSValue {
+        const ty_str = value.jsTypeString(this).toSlice(this, bun.default_allocator);
+        defer ty_str.deinit();
+        this.ERR_INVALID_ARG_TYPE("The \"{s}\" property must be of type {s}. Received {s}", .{ field, typename, ty_str.slice() }).throw();
+        return .zero;
+    }
 
     pub fn createNotEnoughArguments(
         this: *JSGlobalObject,
@@ -2991,12 +3023,6 @@ pub const JSGlobalObject = opaque {
         }
     }
 
-    pub fn createErrorInstanceWithCode(this: *JSGlobalObject, code: JSC.Node.ErrorCode, comptime fmt: [:0]const u8, args: anytype) JSValue {
-        var err = this.createErrorInstance(fmt, args);
-        err.put(this, ZigString.static("code"), ZigString.init(@tagName(code)).toJS(this));
-        return err;
-    }
-
     pub fn createTypeErrorInstance(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
         if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
             var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
@@ -3009,12 +3035,6 @@ pub const JSGlobalObject = opaque {
         } else {
             return ZigString.static(fmt).toTypeErrorInstance(this);
         }
-    }
-
-    fn createTypeErrorInstanceWithCode(this: *JSGlobalObject, code: JSC.Node.ErrorCode, comptime fmt: [:0]const u8, args: anytype) JSValue {
-        var err = this.createTypeErrorInstance(fmt, args);
-        err.put(this, ZigString.static("code"), ZigString.init(@tagName(code)).toJS(this));
-        return err;
     }
 
     pub fn createSyntaxErrorInstance(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
@@ -3043,12 +3063,6 @@ pub const JSGlobalObject = opaque {
         } else {
             return ZigString.static(fmt).toRangeErrorInstance(this);
         }
-    }
-
-    pub fn createRangeErrorInstanceWithCode(this: *JSGlobalObject, code: JSC.Node.ErrorCode, comptime fmt: [:0]const u8, args: anytype) JSValue {
-        var err = this.createRangeErrorInstance(fmt, args);
-        err.put(this, ZigString.static("code"), ZigString.init(@tagName(code)).toJS(this));
-        return err;
     }
 
     pub fn createRangeError(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
@@ -3301,6 +3315,86 @@ pub const JSGlobalObject = opaque {
         return Bun__ERR_INVALID_ARG_TYPE_static(this, arg_name, etype, atype);
     }
 
+    pub fn throwRangeError(this: *JSGlobalObject, value: anytype, options: bun.fmt.OutOfRangeOptions) void {
+        // This works around a Zig compiler bug
+        // when using this.ERR_OUT_OF_RANGE.
+        JSC.Error.ERR_OUT_OF_RANGE.throw(this, "{}", .{bun.fmt.outOfRange(value, options)});
+    }
+
+    pub const IntegerRange = struct {
+        min: comptime_int = JSC.MIN_SAFE_INTEGER,
+        max: comptime_int = JSC.MAX_SAFE_INTEGER,
+        field_name: []const u8 = "",
+        always_allow_zero: bool = false,
+    };
+
+    pub fn validateIntegerRange(this: *JSGlobalObject, value: JSValue, comptime T: type, default: T, comptime range: IntegerRange) ?T {
+        if (value == .undefined or value == .zero) {
+            return default;
+        }
+
+        const min_t = comptime @max(range.min, std.math.minInt(T), JSC.MIN_SAFE_INTEGER);
+        const max_t = comptime @min(range.max, std.math.maxInt(T), JSC.MAX_SAFE_INTEGER);
+
+        comptime {
+            if (min_t > max_t) {
+                @compileError("max must be less than min");
+            }
+
+            if (max_t < min_t) {
+                @compileError("max must be less than min");
+            }
+        }
+        const field_name = comptime range.field_name;
+        const always_allow_zero = comptime range.always_allow_zero;
+        const min = range.min;
+        const max = range.max;
+
+        if (value.isInt32()) {
+            const int = value.toInt32();
+            if (always_allow_zero and int == 0) {
+                return 0;
+            }
+            if (int < min_t or int > max_t) {
+                this.throwRangeError(int, .{ .field_name = field_name, .min = min, .max = max });
+                return null;
+            }
+            return @intCast(int);
+        }
+
+        if (!value.isNumber()) {
+            _ = this.throwInvalidPropertyTypeValue(field_name, "number", value);
+            return null;
+        }
+        const f64_val = value.asNumber();
+        if (always_allow_zero and f64_val == 0) {
+            return 0;
+        }
+
+        if (std.math.isNan(f64_val)) {
+            // node treats NaN as default
+            return default;
+        }
+        if (@floor(f64_val) != f64_val) {
+            _ = this.throwInvalidPropertyTypeValue(field_name, "integer", value);
+            return null;
+        }
+        if (f64_val < min_t or f64_val > max_t) {
+            this.throwRangeError(f64_val, .{ .field_name = comptime field_name, .min = min, .max = max });
+            return null;
+        }
+
+        return @intFromFloat(f64_val);
+    }
+
+    pub fn getInteger(this: *JSGlobalObject, obj: JSValue, comptime T: type, default: T, comptime range: IntegerRange) ?T {
+        if (obj.get(this, range.field_name)) |val| {
+            return this.validateIntegerRange(val, T, default, range);
+        }
+        if (this.hasException()) return null;
+        return default;
+    }
+
     extern fn Bun__ERR_MISSING_ARGS_static(*JSGlobalObject, *const ZigString, ?*const ZigString, ?*const ZigString) JSValue;
     pub fn ERR_MISSING_ARGS_static(this: *JSGlobalObject, arg1: *const ZigString, arg2: ?*const ZigString, arg3: ?*const ZigString) JSValue {
         return Bun__ERR_MISSING_ARGS_static(this, arg1, arg2, arg3);
@@ -3476,21 +3570,21 @@ pub const JSValue = enum(JSValueReprInt) {
         JSGenerator = 63,
         JSAsyncGenerator = 64,
         JSArrayIterator = 65,
-        JSMapIterator = 66,
-        JSSetIterator = 67,
-        JSStringIterator = 68,
-        JSPromise = 69,
-        JSMap = 70,
-        JSSet = 71,
-        JSWeakMap = 72,
-        JSWeakSet = 73,
-        WebAssemblyModule = 74,
-        WebAssemblyInstance = 75,
-        WebAssemblyGCObject = 76,
-        StringObject = 77,
-        DerivedStringObject = 78,
-
-        InternalFieldTuple = 79,
+        JSIterator = 66,
+        JSMapIterator = 67,
+        JSSetIterator = 68,
+        JSStringIterator = 69,
+        JSPromise = 70,
+        JSMap = 71,
+        JSSet = 72,
+        JSWeakMap = 73,
+        JSWeakSet = 74,
+        WebAssemblyModule = 75,
+        WebAssemblyInstance = 76,
+        WebAssemblyGCObject = 77,
+        StringObject = 78,
+        DerivedStringObject = 79,
+        InternalFieldTuple = 80,
 
         MaxJS = 0b11111111,
         Event = 0b11101111,
@@ -3827,6 +3921,10 @@ pub const JSValue = enum(JSValueReprInt) {
     /// This does not call [Symbol.toPrimitive] or [Symbol.toStringTag].
     /// This is only safe when you don't want to do conversions across non-primitive types.
     pub fn to(this: JSValue, comptime T: type) T {
+        if (@typeInfo(T) == .Enum) {
+            const Int = @typeInfo(T).Enum.tag_type;
+            return @enumFromInt(this.to(Int));
+        }
         return switch (comptime T) {
             u32 => toU32(this),
             u16 => toU16(this),
@@ -3955,6 +4053,8 @@ pub const JSValue = enum(JSValueReprInt) {
                 putZigString(value, global, key, result);
             } else if (Elem == bun.String) {
                 putBunString(value, global, key, result);
+            } else if (std.meta.Elem(Key) == u8) {
+                putZigString(value, global, &ZigString.init(key), result);
             } else {
                 @compileError("Unsupported key type in put(). Expected ZigString or bun.String, got " ++ @typeName(Elem));
             }
@@ -4422,7 +4522,7 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn jsNumberFromInt64(i: i64) JSValue {
-        if (i <= std.math.maxInt(i32)) {
+        if (i <= std.math.maxInt(i32) and i >= std.math.minInt(i32)) {
             return jsNumberFromInt32(@as(i32, @intCast(i)));
         }
 
@@ -4829,6 +4929,14 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     /// Call `toString()` on the JSValue and clone the result.
+    /// On exception, this returns null.
+    pub fn toSliceOrNullWithAllocator(this: JSValue, globalThis: *JSGlobalObject, allocator: std.mem.Allocator) ?ZigString.Slice {
+        const str = bun.String.tryFromJS(this, globalThis) orelse return null;
+        defer str.deref();
+        return str.toUTF8(allocator);
+    }
+
+    /// Call `toString()` on the JSValue and clone the result.
     /// On exception or out of memory, this returns null.
     ///
     /// Remember that `Symbol` throws an exception when you call `toString()`.
@@ -4976,6 +5084,8 @@ pub const JSValue = enum(JSValueReprInt) {
         return zig_str;
     }
 
+    /// Equivalent to `obj.property` in JavaScript.
+    /// Reminder: `undefined` is a value!
     pub fn get(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
         if (comptime bun.Environment.isDebug) {
             if (BuiltinName.has(property)) {
@@ -6212,6 +6322,12 @@ pub const JSArray = opaque {
         return JSArray__constructArray(global, items.ptr, items.len);
     }
 
+    extern fn JSArray__constructEmptyArray(*JSGlobalObject, usize) JSValue;
+
+    pub fn createEmpty(global: *JSGlobalObject, len: usize) JSValue {
+        return JSArray__constructEmptyArray(global, len);
+    }
+
     pub fn iterator(array: *JSArray, global: *JSGlobalObject) JSArrayIterator {
         return JSValue.fromCell(array).arrayIterator(global);
     }
@@ -6558,3 +6674,31 @@ comptime {
     // because zig will complain about outside-of-module stuff
     _ = @import("./GeneratedJS2Native.zig");
 }
+
+// Error's cannot be created off of the main thread. So we use this to store the
+// information until its ready to be materialized later.
+pub const DeferredError = struct {
+    kind: Kind,
+    code: JSC.Node.ErrorCode,
+    msg: bun.String,
+
+    pub const Kind = enum { plainerror, typeerror, rangeerror };
+
+    pub fn from(kind: Kind, code: JSC.Node.ErrorCode, comptime fmt: [:0]const u8, args: anytype) DeferredError {
+        return .{
+            .kind = kind,
+            .code = code,
+            .msg = bun.String.createFormat(fmt, args) catch bun.outOfMemory(),
+        };
+    }
+
+    pub fn toError(this: *const DeferredError, globalThis: *JSGlobalObject) JSValue {
+        const err = switch (this.kind) {
+            .plainerror => this.msg.toErrorInstance(globalThis),
+            .typeerror => this.msg.toTypeErrorInstance(globalThis),
+            .rangeerror => this.msg.toRangeErrorInstance(globalThis),
+        };
+        err.put(globalThis, ZigString.static("code"), ZigString.init(@tagName(this.code)).toJS(globalThis));
+        return err;
+    }
+};

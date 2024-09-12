@@ -430,6 +430,19 @@ pub const ArrayBuffer = extern struct {
         return out;
     }
 
+    extern "C" fn JSArrayBuffer__fromDefaultAllocator(*JSC.JSGlobalObject, ptr: [*]u8, len: usize) JSC.JSValue;
+    pub fn toJSFromDefaultAllocator(globalThis: *JSC.JSGlobalObject, bytes: []u8) JSC.JSValue {
+        return JSArrayBuffer__fromDefaultAllocator(globalThis, bytes.ptr, bytes.len);
+    }
+
+    pub fn fromDefaultAllocator(globalThis: *JSC.JSGlobalObject, bytes: []u8, comptime typed_array_type: JSC.JSValue.JSType) JSC.JSValue {
+        return switch (typed_array_type) {
+            .ArrayBuffer => JSArrayBuffer__fromDefaultAllocator(globalThis, bytes.ptr, bytes.len),
+            .Uint8Array => JSC.JSUint8Array.fromBytes(globalThis, bytes),
+            else => @compileError("Not implemented yet"),
+        };
+    }
+
     pub fn fromBytes(bytes: []u8, typed_array_type: JSC.JSValue.JSType) ArrayBuffer {
         return ArrayBuffer{ .offset = 0, .len = @as(u32, @intCast(bytes.len)), .byte_len = @as(u32, @intCast(bytes.len)), .typed_array_type = typed_array_type, .ptr = bytes.ptr };
     }
@@ -634,18 +647,18 @@ pub const MarkedArrayBuffer = struct {
         }
     }
 
-    pub fn init(allocator: std.mem.Allocator, size: u32, typed_array_type: js.JSTypedArrayType) !*MarkedArrayBuffer {
+    pub fn init(allocator: std.mem.Allocator, size: u32, typed_array_type: JSC.JSValue.JSType) !*MarkedArrayBuffer {
         const bytes = try allocator.alloc(u8, size);
         const container = try allocator.create(MarkedArrayBuffer);
         container.* = MarkedArrayBuffer.fromBytes(bytes, allocator, typed_array_type);
         return container;
     }
 
-    pub fn toNodeBuffer(this: MarkedArrayBuffer, ctx: js.JSContextRef) JSC.JSValue {
+    pub fn toNodeBuffer(this: *const MarkedArrayBuffer, ctx: js.JSContextRef) JSC.JSValue {
         return JSValue.createBufferWithCtx(ctx, this.buffer.byteSlice(), this.buffer.ptr, MarkedArrayBuffer_deallocator);
     }
 
-    pub fn toJSObjectRef(this: MarkedArrayBuffer, ctx: js.JSContextRef, exception: js.ExceptionRef) js.JSObjectRef {
+    pub fn toJSObjectRef(this: *const MarkedArrayBuffer, ctx: js.JSContextRef, exception: js.ExceptionRef) js.JSObjectRef {
         if (!this.buffer.value.isEmptyOrUndefinedOrNull()) {
             return this.buffer.value.asObjectRef();
         }
@@ -671,7 +684,7 @@ pub const MarkedArrayBuffer = struct {
     }
 
     // TODO: refactor this
-    pub fn toJS(this: *MarkedArrayBuffer, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJS(this: *const MarkedArrayBuffer, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         var exception = [_]JSC.C.JSValueRef{null};
         const obj = this.toJSObjectRef(globalObject, &exception);
 

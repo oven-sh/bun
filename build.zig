@@ -89,10 +89,8 @@ const BunBuildOptions = struct {
 
 pub fn getOSVersionMin(os: OperatingSystem) ?Target.Query.OsVersion {
     return switch (os) {
-        // bun needs macOS 12 to work properly due to icucore, but we have been
-        // compiling everything with 11 as the minimum.
         .mac => .{
-            .semver = .{ .major = 11, .minor = 0, .patch = 0 },
+            .semver = .{ .major = 13, .minor = 0, .patch = 0 },
         },
 
         // Windows 10 1809 is the minimum supported version
@@ -134,7 +132,7 @@ pub fn getCpuModel(os: OperatingSystem, arch: Arch) ?Target.Query.CpuModel {
 pub fn build(b: *Build) !void {
     std.log.info("zig compiler v{s}", .{builtin.zig_version_string});
 
-    b.zig_lib_dir = b.zig_lib_dir orelse b.path("src/deps/zig/lib");
+    b.zig_lib_dir = b.zig_lib_dir orelse b.path("vendor/zig/lib");
 
     var target_query = b.standardTargetOptionsQueryOnly(.{});
     const optimize = b.standardOptimizeOption(.{});

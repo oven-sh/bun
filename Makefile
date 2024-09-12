@@ -1,3 +1,10 @@
+# ------------------------------------------------------------
+#                         WARNING
+# ------------------------------------------------------------
+# This file is very old and will be removed soon!
+# You can build Bun using `cmake` or `bun run build`
+# ------------------------------------------------------------
+
 SHELL := $(shell which bash) # Use bash syntax to be consistent
 
 OS_NAME := $(shell uname -s | tr '[:upper:]' '[:lower:]')
@@ -366,7 +373,7 @@ ifeq ($(OS_NAME),linux)
 endif
 
 ifeq ($(OS_NAME),darwin)
-MACOS_MIN_FLAG=-mmacosx-version-min=$(MIN_MACOS_VERSION)
+MACOS_MIN_FLAG=-mmacos-version-min=$(MIN_MACOS_VERSION)
 POSIX_PKG_MANAGER=brew
 INCLUDE_DIRS += $(MAC_INCLUDE_DIRS)
 endif

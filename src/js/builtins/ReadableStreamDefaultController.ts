@@ -41,7 +41,6 @@ export function enqueue(this, chunk) {
 
 export function error(this, err) {
   if (!$isReadableStreamDefaultController(this)) throw $makeThisTypeError("ReadableStreamDefaultController", "error");
-
   $readableStreamDefaultControllerError(this, err);
 }
 

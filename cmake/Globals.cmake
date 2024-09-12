@@ -279,7 +279,11 @@ function(find_command)
     message(FATAL_ERROR "Command not found: \"${CMD_COMMAND}\"")
   endif()
 
-  setx(${CMD_VARIABLE} ${${CMD_VARIABLE}})
+  if(${CMD_VARIABLE} MATCHES "NOTFOUND")
+    unset(${CMD_VARIABLE})
+  else()
+    setx(${CMD_VARIABLE} ${${CMD_VARIABLE}})
+  endif()
 endfunction()
 
 # register_command()

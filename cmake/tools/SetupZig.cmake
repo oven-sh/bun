@@ -3,7 +3,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "amd64|x86_64|x64|AMD64")
   set(DEFAULT_ZIG_ARCH "x86_64")
 else()
-  message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
+  unsupported(CMAKE_SYSTEM_PROCESSOR)
 endif()
 
 if(APPLE)
@@ -13,7 +13,7 @@ elseif(WIN32)
 elseif(LINUX)
   set(DEFAULT_ZIG_TARGET ${DEFAULT_ZIG_ARCH}-linux-gnu)
 else()
-  message(FATAL_ERROR "Unsupported operating system: ${CMAKE_SYSTEM_NAME}")
+  unsupported(CMAKE_SYSTEM_NAME)
 endif()
 
 optionx(ZIG_TARGET STRING "The zig target to use" DEFAULT ${DEFAULT_ZIG_TARGET})
@@ -26,6 +26,8 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
   set(DEFAULT_ZIG_OPTIMIZE "ReleaseSmall")
 elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
   set(DEFAULT_ZIG_OPTIMIZE "Debug")
+else()
+  unsupported(CMAKE_BUILD_TYPE)
 endif()
 
 # Since Bun 1.1, Windows has been built using ReleaseSafe.
@@ -44,7 +46,9 @@ optionx(ZIG_OBJECT_FORMAT "obj|bc" "Output file format for Zig object files" DEF
 optionx(ZIG_VERSION STRING "The version of zig to use" DEFAULT "0.13.0")
 optionx(ZIG_LOCAL_CACHE_DIR FILEPATH "The path to local the zig cache directory" DEFAULT ${CACHE_PATH}/zig/local)
 optionx(ZIG_GLOBAL_CACHE_DIR FILEPATH "The path to the global zig cache directory" DEFAULT ${CACHE_PATH}/zig/global)
-optionx(ZIG_REPOSITORY_PATH FILEPATH "The path to the Zig repository" DEFAULT ${VENDOR_PATH}/zig)
+
+setx(ZIG_REPOSITORY_PATH ${VENDOR_PATH}/zig)
+setx(ZIG_PATH ${CACHE_PATH}/zig/bin)
 
 register_repository(
   NAME
@@ -73,14 +77,14 @@ find_command(
     zig
     zig.exe
   PATHS
-    ${ZIG_REPOSITORY_PATH}
+    ${ZIG_PATH}
   VERSION
     ${ZIG_VERSION}
   REQUIRED
     OFF
 )
 
-if(NOT CMAKE_ZIG_COMPILER MATCHES "NOTFOUND")
+if(NOT CMAKE_ZIG_COMPILER)
   return()
 endif()
 
@@ -89,7 +93,7 @@ if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
 elseif(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "amd64|x86_64|x64|AMD64")
   set(ZIG_HOST_ARCH "x86_64")
 else()
-  message(FATAL_ERROR "Unsupported architecture: ${CMAKE_HOST_SYSTEM_PROCESSOR}")
+  unsupported(CMAKE_HOST_SYSTEM_PROCESSOR)
 endif()
 
 if(CMAKE_HOST_APPLE)
@@ -99,7 +103,7 @@ elseif(CMAKE_HOST_WIN32)
 elseif(CMAKE_HOST_UNIX)
   set(ZIG_HOST_OS "linux")
 else()
-  message(FATAL_ERROR "Unsupported operating system: ${CMAKE_HOST_SYSTEM_NAME}")
+  unsupported(CMAKE_HOST_SYSTEM_NAME)
 endif()
 
 set(ZIG_NAME zig-${ZIG_HOST_OS}-${ZIG_HOST_ARCH}-${ZIG_VERSION})
@@ -113,14 +117,27 @@ else()
 endif()
 
 setx(ZIG_DOWNLOAD_URL https://ziglang.org/download/${ZIG_VERSION}/${ZIG_FILENAME})
-file(DOWNLOAD ${ZIG_DOWNLOAD_URL} ${ZIG_REPOSITORY_PATH}/${ZIG_FILENAME})
-file(ARCHIVE_EXTRACT INPUT ${ZIG_REPOSITORY_PATH}/${ZIG_FILENAME} DESTINATION ${ZIG_REPOSITORY_PATH})
-file(REMOVE ${ZIG_REPOSITORY_PATH}/${ZIG_FILENAME})
-file(COPY ${ZIG_REPOSITORY_PATH}/${ZIG_NAME}/${ZIG_EXE} DESTINATION ${ZIG_REPOSITORY_PATH})
-file(REMOVE_RECURSE ${ZIG_REPOSITORY_PATH}/${ZIG_NAME})
-file(CHMOD ${ZIG_REPOSITORY_PATH}/${ZIG_EXE} PERMISSIONS OWNER_EXECUTE OWNER_READ OWNER_WRITE)
-setx(CMAKE_ZIG_COMPILER ${ZIG_REPOSITORY_PATH}/${ZIG_EXE})
+file(DOWNLOAD ${ZIG_DOWNLOAD_URL} ${TMP_PATH}/${ZIG_FILENAME} SHOW_PROGRESS)
+file(ARCHIVE_EXTRACT INPUT ${TMP_PATH}/${ZIG_FILENAME} DESTINATION ${TMP_PATH} TOUCH)
+file(REMOVE ${TMP_PATH}/${ZIG_FILENAME})
+file(COPY ${TMP_PATH}/${ZIG_NAME}/${ZIG_EXE} DESTINATION ${ZIG_PATH})
+file(CHMOD ${ZIG_PATH}/${ZIG_EXE} PERMISSIONS OWNER_EXECUTE OWNER_READ OWNER_WRITE)
+setx(CMAKE_ZIG_COMPILER ${ZIG_PATH}/${ZIG_EXE})
 
 if(NOT WIN32)
-  file(CREATE_LINK ${ZIG_REPOSITORY_PATH}/${ZIG_EXE} ${ZIG_REPOSITORY_PATH}/zig.exe SYMBOLIC)
+  file(CREATE_LINK ${ZIG_PATH}/${ZIG_EXE} ${ZIG_PATH}/zig.exe SYMBOLIC)
 endif()
+
+# Some zig commands need the executable to be in the same directory as the zig repository
+register_command(
+  COMMENT
+    "Creating symlink for zig"
+  COMMAND
+    ${CMAKE_COMMAND} -E copy ${ZIG_PATH}/${ZIG_EXE} ${ZIG_REPOSITORY_PATH}/${ZIG_EXE}
+    && ${CMAKE_COMMAND} -E create_symlink ${ZIG_REPOSITORY_PATH}/${ZIG_EXE} ${ZIG_REPOSITORY_PATH}/zig.exe
+  OUTPUTS
+    ${ZIG_REPOSITORY_PATH}/${ZIG_EXE}
+    ${ZIG_REPOSITORY_PATH}/zig.exe
+  TARGETS
+    clone-zig
+)

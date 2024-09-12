@@ -30,7 +30,7 @@ const buildFlags = [
 
 async function build(args) {
   const startTime = Date.now();
- 
+
   if (process.platform === "win32" && !process.env["VSINSTALLDIR"]) {
     const shellPath = join(import.meta.dirname, "vs-shell.ps1");
     const scriptPath = import.meta.filename;
@@ -138,7 +138,7 @@ async function build(args) {
     );
   }
 
-  printDuration('total', Date.now() - startTime);
+  printDuration("total", Date.now() - startTime);
 }
 
 function cmakePath(path) {
@@ -209,8 +209,9 @@ async function spawn(command, args, options, label) {
 
   label ??= basename(command);
 
+  const pipe = process.env.CI === "true";
   const subprocess = nodeSpawn(command, effectiveArgs, {
-    stdio: "pipe",
+    stdio: pipe ? "pipe" : "inherit",
     ...options,
   });
 
@@ -219,24 +220,29 @@ async function spawn(command, args, options, label) {
     timestamp = Date.now();
   });
 
-  const stdout = new Promise(resolve => {
-    subprocess.stdout.on("end", resolve);
-    subprocess.stdout.on("data", data => process.stdout.write(data));
-  });
+  let done;
+  if (pipe) {
+    const stdout = new Promise(resolve => {
+      subprocess.stdout.on("end", resolve);
+      subprocess.stdout.on("data", data => process.stdout.write(data));
+    });
 
-  const stderr = new Promise(resolve => {
-    subprocess.stderr.on("end", resolve);
-    subprocess.stderr.on("data", data => process.stderr.write(data));
-  });
+    const stderr = new Promise(resolve => {
+      subprocess.stderr.on("end", resolve);
+      subprocess.stderr.on("data", data => process.stderr.write(data));
+    });
 
-  const done = Promise.all([stdout, stderr]);
+    done = Promise.all([stdout, stderr]);
+  }
 
   const { error, exitCode, signalCode } = await new Promise(resolve => {
     subprocess.on("error", error => resolve({ error }));
     subprocess.on("exit", (exitCode, signalCode) => resolve({ exitCode, signalCode }));
   });
 
-  await done;
+  if (done) {
+    await done;
+  }
 
   printDuration(label, Date.now() - timestamp);
 

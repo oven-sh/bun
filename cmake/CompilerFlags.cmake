@@ -41,6 +41,7 @@ if(WIN32)
     DESCRIPTION "Use static MSVC runtime"
     /MTd ${DEBUG}
     /MT ${RELEASE}
+    /U_DLL
   )
 endif()
 

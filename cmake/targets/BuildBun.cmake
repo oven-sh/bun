@@ -779,7 +779,6 @@ if(WIN32)
   )
   if(RELEASE)
     target_link_options(${bun} PUBLIC
-      -flto=full
       /LTCG
       /OPT:REF
       /OPT:NOICF

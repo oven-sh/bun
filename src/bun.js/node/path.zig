@@ -200,13 +200,9 @@ pub fn getCwdWindowsT(comptime T: type, buf: []T) MaybeBuf(T) {
 }
 
 pub fn getCwdU8(buf: []u8) MaybeBuf(u8) {
-    const result = bun.getcwd(buf) catch {
-        return MaybeBuf(u8).errnoSys(
-            @as(c_int, 0),
-            Syscall.Tag.getcwd,
-        ).?;
-    };
-    return MaybeBuf(u8){ .result = result };
+    const cached_cwd = strings.withoutTrailingSlash(bun.fs.FileSystem.instance.top_level_dir);
+    @memcpy(buf[0..cached_cwd.len], cached_cwd);
+    return MaybeBuf(u8){ .result = buf[0..cached_cwd.len] };
 }
 
 pub fn getCwdU16(buf: []u16) MaybeBuf(u16) {
@@ -2536,7 +2532,7 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
                         bun.memmove(buf2[0..bufSize], r);
                     } else {
                         // Reuse buf2 because it's used for path.
-                        bufSize = std.unicode.utf16leToUtf8(buf2, r) catch {
+                        bufSize = std.unicode.wtf16LeToWtf8(buf2, r) catch {
                             return MaybeSlice(T).errnoSys(0, Syscall.Tag.getcwd).?;
                         };
                     }

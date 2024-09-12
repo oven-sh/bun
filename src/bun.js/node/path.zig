@@ -8,7 +8,11 @@ const typeBaseNameT = bun.meta.typeBaseNameT;
 const validators = @import("./util/validators.zig");
 const validateObject = validators.validateObject;
 const validateString = validators.validateString;
-const stack_fallback_size_large = 32 * @sizeOf([]const u8) + ((stack_fallback_size_small * 3) + 64); // up to 32 strings on the stack
+// Allow on the stack:
+// - 8 string slices
+// - 3 path buffers
+// - extra padding
+const stack_fallback_size_large = 8 * @sizeOf([]const u8) + ((stack_fallback_size_small * 3) + 64);
 const Syscall = bun.sys;
 const strings = bun.strings;
 const L = strings.literal;

@@ -30,8 +30,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateInteger, (JSC::JSGlobalObject * glob
     auto max_num = max.asNumber();
     max_num = std::max(min_num, max_num);
 
-    double intpart;
-    if (std::modf(value_num, &intpart) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
+    if (std::fmod(value_num, 1.0) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
     if (value_num < min_num || value_num > max_num) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, max_num, value);
 
     return JSValue::encode(jsUndefined());
@@ -59,8 +58,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateIntRange, (JSC::JSGlobalObject * glo
     auto max_num = max.asNumber();
 
     if (value_num < min_num || value_num > max_num || std::isinf(value_num)) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, max_num, value);
-    double intpart;
-    if (std::modf(value_num, &intpart) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
+    if (std::fmod(value_num, 1.0) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
 
     return JSValue::encode(jsUndefined());
 }
@@ -99,8 +97,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateBounds, (JSC::JSGlobalObject * globa
     max_num = std::max(min_num, max_num);
 
     if (std::isinf(value_num)) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, max_num, value);
-    double intpart;
-    if (std::modf(value_num, &intpart) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
+    if (std::fmod(value_num, 1.0) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
     if (byteOffset_num + value_num > byteLength_num || byteOffset_num + value_num + width_num - 1 > byteLength_num) return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, globalObject);
     if (value_num < min_num || value_num > max_num) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, max_num, value);
 

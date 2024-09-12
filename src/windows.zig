@@ -3421,9 +3421,11 @@ pub fn GetFinalPathNameByHandle(
 
     bun.sys.syslog("GetFinalPathNameByHandleW({*p}) = {}", .{ hFile, bun.fmt.utf16(ret) });
 
-    if (bun.strings.hasPrefixComptimeUTF16(ret, "\\\\?\\")) {
+    if (bun.strings.hasPrefixComptimeUTF16(ret, nt_maxpath_prefix)) {
+        // '\\?\C:\absolute\path' -> 'C:\absolute\path'
         ret = ret[4..];
         if (bun.strings.hasPrefixComptimeUTF16(ret, "UNC\\")) {
+            // '\\?\UNC\absolute\path' -> '\\absolute\path'
             ret[2] = '\\';
             ret = ret[2..];
         }

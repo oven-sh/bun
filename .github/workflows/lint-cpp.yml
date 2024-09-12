@@ -17,7 +17,7 @@ on:
   #   paths:
   #     - ".github/workflows/lint-cpp.yml"
   #     - "**/*.cpp"
-  #     - "src/deps/**/*"
+  #     - "vendor/**/*"
   #     - "CMakeLists.txt"
 
 jobs:

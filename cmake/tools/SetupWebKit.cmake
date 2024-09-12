@@ -6,7 +6,7 @@ optionx(WEBKIT_PREBUILT BOOL "If a pre-built version of WebKit should be used" D
 if(WEBKIT_PREBUILT)
   set(DEFAULT_WEBKIT_PATH ${CACHE_PATH}/webkit)
 else()
-  set(DEFAULT_WEBKIT_PATH ${CWD}/src/bun.js/WebKit)
+  set(DEFAULT_WEBKIT_PATH ${CWD}/src/bun.js/WebKit/WebKitBuild/${CMAKE_BUILD_TYPE})
 endif()
 
 optionx(WEBKIT_PATH FILEPATH "The path to the WebKit directory" DEFAULT ${DEFAULT_WEBKIT_PATH})

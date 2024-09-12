@@ -28,7 +28,7 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
 using namespace JSC;
 
-using PathFunction = JSC::EncodedJSValue (*)(JSGlobalObject*, bool, EncodedJSValue*, uint16_t len);
+using PathFunction = JSC::EncodedJSValue (*)(JSGlobalObject*, bool, EncodedJSValue*, uint16_t len) SYSV_ABI;
 
 template<bool isWindows, PathFunction Function>
 static inline JSC::EncodedJSValue createZigFunction(JSGlobalObject* globalObject, JSC::CallFrame* callFrame)

@@ -2515,9 +2515,7 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
                         break :brk buf2[0..bufSize];
                     } else {
                         var u16Buf: bun.WPathBuffer = undefined;
-                        bufSize = std.unicode.utf8ToUtf16Le(&u16Buf, buf2[0..bufSize]) catch {
-                            return MaybeSlice(T).errnoSys(0, Syscall.Tag.getenv).?;
-                        };
+                        bufSize = std.unicode.wtf16LeToWtf8(&u16Buf, buf2[0..bufSize]);
                         break :brk u16Buf[0..bufSize :0];
                     }
                 };
@@ -2532,9 +2530,7 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
                         bun.memmove(buf2[0..bufSize], r);
                     } else {
                         // Reuse buf2 because it's used for path.
-                        bufSize = std.unicode.wtf16LeToWtf8(buf2, r) catch {
-                            return MaybeSlice(T).errnoSys(0, Syscall.Tag.getcwd).?;
-                        };
+                        bufSize = std.unicode.wtf16LeToWtf8(buf2, r);
                     }
                     envPath = buf2[0..bufSize];
                 }

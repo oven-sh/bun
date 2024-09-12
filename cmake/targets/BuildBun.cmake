@@ -326,6 +326,42 @@ register_command(
     ${BUN_JAVASCRIPT_OUTPUTS}
 )
 
+set(BUN_KIT_RUNTIME_CODEGEN_SCRIPT ${CWD}/src/codegen/kit-codegen.ts)
+
+file(GLOB_RECURSE BUN_KIT_RUNTIME_SOURCES ${CONFIGURE_DEPENDS}
+  ${CWD}/src/kit/*.ts
+  ${CWD}/src/kit/*/*.ts
+)
+
+list(APPEND BUN_KIT_RUNTIME_CODEGEN_SOURCES
+  ${CWD}/src/bun.js/bindings/InternalModuleRegistry.cpp
+)
+
+set(BUN_KIT_RUNTIME_OUTPUTS
+  ${CODEGEN_PATH}/kit_empty_file
+  ${CODEGEN_PATH}/kit.client.js
+  ${CODEGEN_PATH}/kit.server.js
+)
+
+register_command(
+  TARGET
+    bun-kit-codegen
+  COMMENT
+    "Bundling Kit Runtime"
+  COMMAND
+    ${BUN_EXECUTABLE}
+      run
+      ${BUN_KIT_RUNTIME_CODEGEN_SCRIPT}
+        --debug=${DEBUG}
+        --codegen_root=${CODEGEN_PATH}
+  SOURCES
+    ${BUN_KIT_RUNTIME_SOURCES}
+    ${BUN_KIT_RUNTIME_CODEGEN_SOURCES}
+    ${BUN_KIT_RUNTIME_CODEGEN_SCRIPT}
+  OUTPUTS
+    ${BUN_KIT_RUNTIME_OUTPUTS}
+)
+
 set(BUN_JS_SINK_SCRIPT ${CWD}/src/codegen/generate-jssink.ts)
 
 set(BUN_JS_SINK_SOURCES
@@ -460,6 +496,13 @@ list(APPEND BUN_ZIG_SOURCES
   ${BUN_JAVASCRIPT_OUTPUTS}
 )
 
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+  # in a debug build, these are not embedded, but rather referenced at runtime.
+  list(APPEND BUN_ZIG_SOURCES ${CODEGEN_PATH}/kit_empty_file)
+else()
+  list(APPEND BUN_ZIG_SOURCES ${BUN_KIT_RUNTIME_OUTPUTS})
+endif()
+
 set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.o)
 
 register_command(
@@ -506,6 +549,7 @@ file(GLOB BUN_CXX_SOURCES ${CONFIGURE_DEPENDS}
   ${CWD}/src/bun.js/bindings/webcrypto/*.cpp
   ${CWD}/src/bun.js/bindings/webcrypto/*/*.cpp
   ${CWD}/src/bun.js/bindings/v8/*.cpp
+  ${CWD}/src/kit/*.cpp
   ${CWD}/src/deps/*.cpp
   ${BUN_USOCKETS_SOURCE}/src/crypto/*.cpp
 )

@@ -727,26 +727,11 @@ pub const FFI = struct {
             },
         };
 
-        const FFI_HEADER: string = @embedFile("./FFI.h");
-        pub inline fn ffiHeader() string {
-            if (comptime Environment.isDebug) {
-                const dirpath = comptime bun.Environment.base_path ++ (bun.Dirname.dirname(u8, @src().file) orelse "");
-                var buf: bun.PathBuffer = undefined;
-                const user = bun.getUserName(&buf) orelse "";
-                const dir = std.mem.replaceOwned(
-                    u8,
-                    default_allocator,
-                    dirpath,
-                    "jarred",
-                    user,
-                ) catch unreachable;
-                const runtime_path = std.fs.path.join(default_allocator, &[_]string{ dir, "FFI.h" }) catch unreachable;
-                const file = std.fs.openFileAbsolute(runtime_path, .{}) catch @panic("Missing bun/src/bun.js/api/FFI.h.");
-                defer file.close();
-                return file.readToEndAlloc(default_allocator, file.getEndPos() catch unreachable) catch unreachable;
-            } else {
-                return FFI_HEADER;
-            }
+        pub fn ffiHeader() string {
+            return if (Environment.embed_code)
+                @embedFile("./FFI.h")
+            else
+                bun.runtimeEmbedFile(.src, "bun.js/api/FFI.h");
         }
 
         pub fn handleTCCError(ctx: ?*anyopaque, message: [*c]const u8) callconv(.C) void {
@@ -1082,11 +1067,7 @@ pub const FFI = struct {
                 }
             }
 
-            if (comptime Environment.isRelease) {
-                try writer.writeAll(bun.asByteSlice(FFI_HEADER));
-            } else {
-                try writer.writeAll(ffiHeader());
-            }
+            try writer.writeAll(ffiHeader());
 
             // -- Generate the FFI function symbol
             try writer.writeAll("/* --- The Function To Call */\n");
@@ -1252,11 +1233,7 @@ pub const FFI = struct {
                 }
             }
 
-            if (comptime Environment.isRelease) {
-                try writer.writeAll(bun.asByteSlice(FFI_HEADER));
-            } else {
-                try writer.writeAll(ffiHeader());
-            }
+            try writer.writeAll(ffiHeader());
 
             // -- Generate the FFI function symbol
             try writer.writeAll("\n \n/* --- The Callback Function */\n");

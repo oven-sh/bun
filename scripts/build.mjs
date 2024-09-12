@@ -2,7 +2,7 @@
 
 import { spawn as nodeSpawn } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, mkdirSync, cpSync, chmodSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { basename, join, relative, resolve } from "node:path";
 
 // https://cmake.org/cmake/help/latest/manual/cmake.1.html#generate-a-project-buildsystem
 const generateFlags = [
@@ -29,6 +29,8 @@ const buildFlags = [
 ];
 
 async function build(args) {
+  const startTime = Date.now();
+ 
   if (process.platform === "win32" && !process.env["VSINSTALLDIR"]) {
     const shellPath = join(import.meta.dirname, "vs-shell.ps1");
     const scriptPath = import.meta.filename;
@@ -100,7 +102,7 @@ async function build(args) {
   const generateArgs = Object.entries(generateOptions).flatMap(([flag, value]) =>
     flag.startsWith("-D") ? [`${flag}=${value}`] : [flag, value],
   );
-  await spawn("cmake", generateArgs, { env });
+  await spawn("cmake", generateArgs, { env }, "configuration");
 
   const envPath = resolve(buildPath, ".env");
   if (existsSync(envPath)) {
@@ -114,7 +116,7 @@ async function build(args) {
   const buildArgs = Object.entries(buildOptions)
     .sort(([a], [b]) => (a === "--build" ? -1 : a.localeCompare(b)))
     .flatMap(([flag, value]) => [flag, value]);
-  await spawn("cmake", buildArgs, { env });
+  await spawn("cmake", buildArgs, { env }, "compilation");
 
   const buildFiles = ["ccache.log", "compile_commands.json"];
   const buildPaths = [buildPath, ...readdirSync(buildPath).map(path => join(buildPath, path))];
@@ -135,6 +137,8 @@ async function build(args) {
       ),
     );
   }
+
+  printDuration('total', Date.now() - startTime);
 }
 
 function cmakePath(path) {
@@ -198,10 +202,12 @@ function parseOptions(args, flags = []) {
   return options;
 }
 
-async function spawn(command, args, options) {
+async function spawn(command, args, options, label) {
   const effectiveArgs = args.filter(Boolean);
   const description = [command, ...effectiveArgs].map(arg => (arg.includes(" ") ? JSON.stringify(arg) : arg)).join(" ");
   console.log("$", description);
+
+  label ??= basename(command);
 
   const subprocess = nodeSpawn(command, effectiveArgs, {
     stdio: "pipe",
@@ -232,12 +238,7 @@ async function spawn(command, args, options) {
 
   await done;
 
-  const duration = Date.now() - timestamp;
-  if (duration > 60000) {
-    console.log(`Took ${(duration / 60000).toFixed(2)} minutes`);
-  } else {
-    console.log(`Took ${(duration / 1000).toFixed(2)} seconds`);
-  }
+  printDuration(label, Date.now() - timestamp);
 
   if (exitCode === 0) {
     return;
@@ -252,6 +253,14 @@ async function spawn(command, args, options) {
   }
 
   process.exit(exitCode ?? 1);
+}
+
+function printDuration(label, duration) {
+  if (duration > 60000) {
+    console.log(`${label} took ${(duration / 60000).toFixed(2)} minutes`);
+  } else {
+    console.log(`${label} took ${(duration / 1000).toFixed(2)} seconds`);
+  }
 }
 
 build(process.argv.slice(2));

@@ -102,14 +102,16 @@ describe("Bun.Transpiler", () => {
 
   it("doesn't hang indefinitely #2746", () => {
     // this test passes by not hanging
-    expect(() =>
-      transpiler.transformSync(`
-    class Test {
-      test() {
-      
-    }
-    `),
-    ).toThrow();
+    expect(() => {
+      console.log('1');
+      const y = transpiler.transformSync(`
+        class Test {
+          test() {
+          
+        }
+      `);
+      console.error(y);
+    }).toThrow();
   });
 
   describe("property access inlining", () => {
@@ -1667,7 +1669,7 @@ console.log(<div {...obj} key="after" />);`),
     });
 
     it("import with unicode escape", () => {
-      expectPrinted_(`import { name } from 'mod\\u1011';`, `import {name} from "mod\\u1011"`);
+      expectPrinted_(`import { name } from 'mod\\u1011';`, `import { name } from "mod\\u1011"`);
     });
 
     it("fold string addition", () => {
@@ -3137,7 +3139,7 @@ console.log(foo, array);
         import {ɵtest} from 'foo'
       `);
 
-      expect(out).toBe('import {ɵtest} from "foo";\n');
+      expect(out).toBe('import { ɵtest } from "foo";\n');
     });
 
     const importLines = ["import {createElement, bacon} from 'react';", "import {bacon, createElement} from 'react';"];

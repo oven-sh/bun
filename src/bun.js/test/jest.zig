@@ -756,11 +756,11 @@ pub const TestScope = struct {
             // TODO: not easy to coerce JSInternalPromise as JSValue,
             // so simply wait for completion for now.
             switch (promise) {
-                .Internal => vm.waitForPromise(promise),
+                .internal => vm.waitForPromise(promise),
                 else => {},
             }
             switch (promise.status(vm.global.vm())) {
-                .Rejected => {
+                .rejected => {
                     if (!promise.isHandled(vm.global.vm())) {
                         _ = vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue(vm.global));
                     }
@@ -771,10 +771,10 @@ pub const TestScope = struct {
 
                     return .{ .fail = expect.active_test_expectation_counter.actual };
                 },
-                .Pending => {
+                .pending => {
                     task.promise_state = .pending;
                     switch (promise) {
-                        .Normal => |p| {
+                        .normal => |p| {
                             _ = p.asValue(vm.global).then(vm.global, task, jsOnResolve, jsOnReject);
                             return .{ .pending = {} };
                         },
@@ -983,7 +983,7 @@ pub const DescribeScope = struct {
                 },
             };
             if (result.asAnyPromise()) |promise| {
-                if (promise.status(globalObject.vm()) == .Pending) {
+                if (promise.status(globalObject.vm()) == .pending) {
                     result.protect();
                     vm.waitForPromise(promise);
                     result.unprotect();
@@ -1023,7 +1023,7 @@ pub const DescribeScope = struct {
             var result: JSValue = callJSFunctionForTestRunner(vm, globalThis, cb, &.{});
 
             if (result.asAnyPromise()) |promise| {
-                if (promise.status(globalThis.vm()) == .Pending) {
+                if (promise.status(globalThis.vm()) == .pending) {
                     result.protect();
                     vm.waitForPromise(promise);
                     result.unprotect();
@@ -1123,7 +1123,7 @@ pub const DescribeScope = struct {
             if (result.asAnyPromise()) |prom| {
                 globalObject.bunVM().waitForPromise(prom);
                 switch (prom.status(globalObject.ptr().vm())) {
-                    JSPromise.Status.Fulfilled => {},
+                    .fulfilled => {},
                     else => {
                         _ = globalObject.bunVM().unhandledRejection(globalObject, prom.result(globalObject.ptr().vm()), prom.asValue(globalObject));
                         return .undefined;
@@ -2146,15 +2146,10 @@ inline fn createEach(
 
 fn callJSFunctionForTestRunner(vm: *JSC.VirtualMachine, globalObject: *JSGlobalObject, function: JSValue, args: []const JSValue) JSValue {
     vm.eventLoop().enter();
-    defer {
-        vm.eventLoop().exit();
-    }
+    defer vm.eventLoop().exit();
 
     globalObject.clearTerminationException();
-    const result = function.call(globalObject, .undefined, args);
-    result.ensureStillAlive();
-
-    return result;
+    return function.call(globalObject, .undefined, args) catch |err| globalObject.takeException(err);
 }
 
 const assert = bun.assert;

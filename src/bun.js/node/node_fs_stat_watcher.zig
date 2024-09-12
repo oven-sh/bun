@@ -415,19 +415,16 @@ pub const StatWatcher = struct {
         const jsvalue = statToJSStats(this.globalThis, this.last_stat, this.bigint);
         this.last_jsvalue = JSC.Strong.create(jsvalue, this.globalThis);
 
-        const result = StatWatcher.listenerGetCached(this.js_this).?.call(
+        const vm = this.globalThis.bunVM();
+
+        _ = StatWatcher.listenerGetCached(this.js_this).?.call(
             this.globalThis,
             .undefined,
             &[2]JSC.JSValue{
                 jsvalue,
                 jsvalue,
             },
-        );
-
-        const vm = this.globalThis.bunVM();
-        if (result.isAnyError()) {
-            _ = vm.uncaughtException(this.globalThis, result, false);
-        }
+        ) catch |err| this.globalThis.reportActiveExceptionAsUnhandled(err);
 
         vm.rareData().nodeFSStatWatcherScheduler(vm).append(this);
     }
@@ -453,18 +450,14 @@ pub const StatWatcher = struct {
         const current_jsvalue = statToJSStats(this.globalThis, this.last_stat, this.bigint);
         this.last_jsvalue.set(this.globalThis, current_jsvalue);
 
-        const result = StatWatcher.listenerGetCached(this.js_this).?.call(
+        _ = StatWatcher.listenerGetCached(this.js_this).?.call(
             this.globalThis,
             .undefined,
             &[2]JSC.JSValue{
                 current_jsvalue,
                 prev_jsvalue,
             },
-        );
-        if (result.isAnyError()) {
-            const vm = this.globalThis.bunVM();
-            _ = vm.uncaughtException(this.globalThis, result, false);
-        }
+        ) catch |err| this.globalThis.reportActiveExceptionAsUnhandled(err);
     }
 
     pub fn onTimerInterval(timer: *uws.Timer) callconv(.C) void {

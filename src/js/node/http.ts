@@ -1582,7 +1582,10 @@ class ClientRequest extends OutgoingMessage {
     } else {
       url = `${protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}${path}`;
       // support agent proxy url/string for http/https
-      // proxy = this.#agent?.proxy?.toString?.();
+      try {
+        // getters can throw
+        proxy = this.#agent?.proxy?.toString?.();
+      } catch {}
     }
     let keepalive = true;
     const agentKeepalive = this.#agent?.keepalive;

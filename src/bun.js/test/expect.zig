@@ -2336,10 +2336,8 @@ pub const Expect = struct {
             const prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
             vm.unhandled_pending_rejection_to_capture = &return_value;
             vm.onUnhandledRejection = &VirtualMachine.onQuietUnhandledRejectionHandlerCaptureValue;
-            const return_value_from_function: JSValue = value.call(globalThis, .undefined, &.{}) catch |err| {
-                vm.global.handleRejectedPromises();
-                break :brk globalThis.takeException(err);
-            };
+            const return_value_from_function: JSValue = value.call(globalThis, .undefined, &.{}) catch |err|
+                globalThis.takeException(err);
             vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
 
             vm.global.handleRejectedPromises();

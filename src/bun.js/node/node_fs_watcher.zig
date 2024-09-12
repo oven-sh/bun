@@ -540,7 +540,7 @@ pub const FSWatcher = struct {
                 _ = listener.callWithGlobalThis(
                     this.globalThis,
                     &args,
-                ) catch |e| this.globalThis.reportActiveExceptionAsUnhandled(e);
+                ) catch this.globalThis.clearException();
             }
         }
     }

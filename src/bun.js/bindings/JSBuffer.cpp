@@ -454,13 +454,8 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocUnsafeBody(JS
 
     double lengthDouble = lengthValue.toIntegerWithTruncation(lexicalGlobalObject);
 
-    if (UNLIKELY(lengthDouble != lengthDouble)) {
-        throwNodeRangeError(lexicalGlobalObject, throwScope, "Buffer size must be 0...9007199254740991, got NaN"_s);
-        return {};
-    }
-    if (UNLIKELY(lengthDouble < 0 || lengthDouble > UINT_MAX)) {
-        throwNodeRangeError(lexicalGlobalObject, throwScope, "Buffer size must be 0...4294967295"_s);
-        return {};
+    if (UNLIKELY(lengthDouble < 0 || lengthDouble > MAX_ARRAY_BUFFER_SIZE || lengthDouble != lengthDouble)) {
+        return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "size"_s, 0, MAX_ARRAY_BUFFER_SIZE, lengthValue);
     }
 
     size_t length = static_cast<size_t>(lengthDouble);
@@ -579,19 +574,13 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSG
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue lengthValue = callFrame->uncheckedArgument(0);
     if (UNLIKELY(!lengthValue.isNumber())) {
-        throwTypeError(lexicalGlobalObject, scope, "size argument must be a number"_s);
-        return {};
+        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "size"_s, "number"_s, lengthValue);
     }
 
     double lengthDouble = lengthValue.toIntegerWithTruncation(lexicalGlobalObject);
 
-    if (UNLIKELY(lengthDouble != lengthDouble)) {
-        throwNodeRangeError(lexicalGlobalObject, scope, "Buffer size must be 0...9007199254740991, got NaN"_s);
-        return {};
-    }
-    if (UNLIKELY(lengthDouble < 0 || lengthDouble > UINT_MAX)) {
-        throwNodeRangeError(lexicalGlobalObject, scope, "Buffer size must be 0...4294967295"_s);
-        return {};
+    if (UNLIKELY(lengthDouble < 0 || lengthDouble > MAX_ARRAY_BUFFER_SIZE || lengthDouble != lengthDouble)) {
+        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "size"_s, 0, MAX_ARRAY_BUFFER_SIZE, lengthValue);
     }
 
     size_t length = static_cast<size_t>(lengthDouble);
@@ -2305,19 +2294,11 @@ static inline JSC::EncodedJSValue createJSBufferFromJS(JSC::JSGlobalObject* lexi
         throwScope.release();
         return JSBuffer__bufferFromLength(lexicalGlobalObject, distinguishingArg.asAnyInt());
     } else if (distinguishingArg.isNumber()) {
-
         double lengthDouble = distinguishingArg.toIntegerWithTruncation(lexicalGlobalObject);
-        if (UNLIKELY(lengthDouble != lengthDouble)) {
-            throwNodeRangeError(lexicalGlobalObject, throwScope, "Buffer size must be 0...9007199254740991, got NaN"_s);
-            return {};
+        if (UNLIKELY(lengthDouble < 0 || lengthDouble > MAX_ARRAY_BUFFER_SIZE || lengthDouble != lengthDouble)) {
+            return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "size"_s, 0, MAX_ARRAY_BUFFER_SIZE, distinguishingArg);
         }
-        size_t length = static_cast<size_t>(lengthDouble);
-
-        if (UNLIKELY(length < 0 || length > 9007199254740991)) {
-            throwNodeRangeError(lexicalGlobalObject, throwScope, "Buffer size must be 0...9007199254740991"_s);
-            return {};
-        }
-        return JSBuffer__bufferFromLength(lexicalGlobalObject, length);
+        return JSBuffer__bufferFromLength(lexicalGlobalObject, lengthDouble);
     } else if (distinguishingArg.isUndefinedOrNull() || distinguishingArg.isBoolean()) {
         auto arg_string = distinguishingArg.toWTFString(globalObject);
         auto message = makeString("The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object. Received "_s, arg_string);

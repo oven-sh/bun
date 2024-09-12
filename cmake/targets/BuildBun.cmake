@@ -532,7 +532,7 @@ register_command(
       -Dobj_format=${ZIG_OBJECT_FORMAT}
       -Dtarget=${ZIG_TARGET}
       -Doptimize=${ZIG_OPTIMIZE}
-      -Dcpu=${CPU}
+      -Dcpu=${ZIG_CPU}
       -Denable_logs=$<IF:$<BOOL:${ENABLE_LOGS}>,true,false>
       -Dversion=${VERSION}
       -Dsha=${REVISION}

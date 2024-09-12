@@ -1513,7 +1513,7 @@ static inline JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObj
     if (UNLIKELY(length == 0)) {
         RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsEmptyString(vm)));
     }
-    if (length > MAX_STRING_LENGTH) {
+    if (length > WTF::String::MaxLength) {
         Bun::ERR::STRING_TOO_LONG(scope, lexicalGlobalObject);
         return {};
     }

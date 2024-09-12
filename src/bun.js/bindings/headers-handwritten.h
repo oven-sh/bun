@@ -263,8 +263,6 @@ typedef void WebSocketHTTPSClient;
 typedef void WebSocketClient;
 typedef void WebSocketClientTLS;
 
-#define MAX_STRING_LENGTH std::numeric_limits<unsigned>().max()
-
 #ifndef __cplusplus
 typedef struct Bun__ArrayBuffer Bun__ArrayBuffer;
 typedef struct Uint8Array_alias Uint8Array_alias;

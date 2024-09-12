@@ -388,7 +388,7 @@ JSC::JSValue STRING_TOO_LONG(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* g
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto message = makeString("Cannot create a string longer than "_s, MAX_STRING_LENGTH, " characters"_s);
+    auto message = makeString("Cannot create a string longer than "_s, WTF::String::MaxLength, " characters"_s);
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_STRING_TOO_LONG, message));
     return {};
 }

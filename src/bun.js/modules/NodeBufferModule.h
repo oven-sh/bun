@@ -169,7 +169,7 @@ DEFINE_NATIVE_MODULE(NodeBuffer) {
       JSC::jsNumber(MAX_ARRAY_BUFFER_SIZE));
 
   put(JSC::Identifier::fromString(vm, "kStringMaxLength"_s),
-      JSC::jsNumber(MAX_STRING_LENGTH));
+      JSC::jsNumber(WTF::String::MaxLength));
 
   JSC::JSObject *constants = JSC::constructEmptyObject(
       lexicalGlobalObject, globalObject->objectPrototype(), 2);
@@ -177,7 +177,7 @@ DEFINE_NATIVE_MODULE(NodeBuffer) {
                        JSC::jsNumber(MAX_ARRAY_BUFFER_SIZE));
   constants->putDirect(vm,
                        JSC::Identifier::fromString(vm, "MAX_STRING_LENGTH"_s),
-                       JSC::jsNumber(MAX_STRING_LENGTH));
+                       JSC::jsNumber(WTF::String::MaxLength));
 
   put(JSC::Identifier::fromString(vm, "constants"_s), constants);
 

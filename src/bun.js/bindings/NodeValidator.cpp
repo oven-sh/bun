@@ -71,19 +71,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateBounds, (JSC::JSGlobalObject * globa
     auto value = callFrame->argument(0);
     auto name = callFrame->argument(1);
     auto min = callFrame->argument(2);
-    auto buffer = callFrame->argument(3);
-    auto width = callFrame->argument(4);
+    auto byteOffset = callFrame->argument(3);
+    auto byteLength = callFrame->argument(4);
+    auto width = callFrame->argument(5);
 
     if (!value.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
-
-    auto byteLength = buffer.get(globalObject, Identifier::fromString(vm, "byteLength"_s));
-    RETURN_IF_EXCEPTION(scope, {});
     if (!byteLength.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "byteLength"_s, "number"_s, byteLength);
-
-    auto byteOffset = buffer.get(globalObject, Identifier::fromString(vm, "byteOffset"_s));
-    RETURN_IF_EXCEPTION(scope, {});
     if (!byteOffset.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "byteOffset"_s, "number"_s, byteOffset);
-
     if (!min.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "min"_s, "number"_s, min);
     if (!width.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "width"_s, "number"_s, width);
 

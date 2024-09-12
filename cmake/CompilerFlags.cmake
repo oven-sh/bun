@@ -264,7 +264,6 @@ if(ENABLE_LTO)
     register_linker_flags(
       DESCRIPTION "Enable link-time optimization (LTO)"
       -flto=full
-      -emit-llvm
       -fwhole-program-vtables
       -fforce-emit-vtables
     )

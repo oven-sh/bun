@@ -1984,20 +1984,25 @@ pub const Process = struct {
 
     pub fn getCwd(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         var buf: bun.PathBuffer = undefined;
-        return switch (Path.getCwd(&buf)) {
-            .result => |r| JSC.ZigString.init(r).withEncoding().toJS(globalObject),
-            .err => |e| e.toJSC(globalObject),
-        };
+        switch (Path.getCwd(&buf)) {
+            .result => |r| return JSC.ZigString.init(r).withEncoding().toJS(globalObject),
+            .err => |e| {
+                globalObject.throwValue(e.toJSC(globalObject));
+                return .zero;
+            },
+        }
     }
 
     pub fn setCwd(globalObject: *JSC.JSGlobalObject, to: *JSC.ZigString) callconv(.C) JSC.JSValue {
         if (to.len == 0) {
-            return JSC.toInvalidArguments("path is required", .{}, globalObject.ref());
+            globalObject.throwInvalidArguments("Expected path to be a non-empty string", .{});
+            return .zero;
         }
 
         var buf: bun.PathBuffer = undefined;
         const slice = to.sliceZBuf(&buf) catch {
-            return JSC.toInvalidArguments("Invalid path", .{}, globalObject.ref());
+            globalObject.throw("Invalid path", .{});
+            return .zero;
         };
 
         switch (Syscall.chdir(slice)) {
@@ -2006,22 +2011,29 @@ pub const Process = struct {
                 // However, this might be called many times in a row, so we use a pre-allocated buffer
                 // that way we don't have to worry about garbage collector
                 const fs = JSC.VirtualMachine.get().bundler.fs;
-                fs.top_level_dir = switch (Path.getCwd(&fs.top_level_dir_buf)) {
+                const into_cwd_buf = switch (bun.sys.getcwd(&buf)) {
                     .result => |r| r,
-                    .err => {
+                    .err => |err| {
                         _ = Syscall.chdir(@as([:0]const u8, @ptrCast(fs.top_level_dir)));
-                        return JSC.toInvalidArguments("Invalid path", .{}, globalObject.ref());
+                        globalObject.throwValue(err.toJSC(globalObject));
+                        return .zero;
                     },
                 };
+                @memcpy(fs.top_level_dir_buf[0..into_cwd_buf.len], into_cwd_buf);
+                fs.top_level_dir = fs.top_level_dir_buf[0..into_cwd_buf.len];
 
                 const len = fs.top_level_dir.len;
                 fs.top_level_dir_buf[len] = std.fs.path.sep;
                 fs.top_level_dir_buf[len + 1] = 0;
                 fs.top_level_dir = fs.top_level_dir_buf[0 .. len + 1];
 
-                return .undefined;
+                var str = bun.String.createUTF8(strings.withoutTrailingSlash(fs.top_level_dir));
+                return str.transferToJS(globalObject);
             },
-            .err => |e| return e.toJSC(globalObject),
+            .err => |e| {
+                globalObject.throwValue(e.toJSC(globalObject));
+                return .zero;
+            },
         }
     }
 

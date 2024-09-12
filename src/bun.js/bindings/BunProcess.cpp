@@ -4,6 +4,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/NumberPrototype.h>
 #include "CommonJSModuleRecord.h"
+#include "ErrorCode.h"
 #include "JavaScriptCore/CatchScope.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSCast.h"
@@ -447,19 +448,14 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUmask,
     }
 
     if (!numberValue.isAnyInt()) {
-        throwNodeRangeError(globalObject, throwScope, "The \"mask\" argument must be an integer"_s);
-        return JSValue::encode({});
+        return Bun::ERR::OUT_OF_RANGE(throwScope, globalObject, "mask"_s, "an integer"_s, numberValue);
     }
 
     double number = numberValue.toNumber(globalObject);
     int64_t newUmask = isInt52(number) ? tryConvertToInt52(number) : numberValue.toInt32(globalObject);
     RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
     if (newUmask < 0 || newUmask > 4294967295) {
-        StringBuilder messageBuilder;
-        messageBuilder.append("The \"mask\" value must be in range [0, 4294967295]. Received value: "_s);
-        messageBuilder.append(int52ToString(vm, newUmask, 10)->getString(globalObject));
-        throwNodeRangeError(globalObject, throwScope, messageBuilder.toString());
-        return JSValue::encode({});
+        return Bun::ERR::OUT_OF_RANGE(throwScope, globalObject, "mask"_s, 0, 4294967295, numberValue);
     }
 
     return JSC::JSValue::encode(JSC::jsNumber(umask(newUmask)));
@@ -2779,7 +2775,7 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessDebugPort,
     JSValue value = JSValue::decode(encodedValue);
 
     if (!value.isInt32AsAnyInt()) {
-        throwNodeRangeError(globalObject, scope, "debugPort must be 0 or in range 1024 to 65535"_s);
+        Bun::ERR::OUT_OF_RANGE(scope, globalObject, "debugPort"_s, "0 or >= 1024 and <= 65535"_s, value);
         return false;
     }
 
@@ -2787,7 +2783,7 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessDebugPort,
 
     if (port != 0) {
         if (port < 1024 || port > 65535) {
-            throwNodeRangeError(globalObject, scope, "debugPort must be 0 or in range 1024 to 65535"_s);
+            Bun::ERR::OUT_OF_RANGE(scope, globalObject, "debugPort"_s, "0 or >= 1024 and <= 65535"_s, value);
             return false;
         }
     }
@@ -2881,11 +2877,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    int pid = callFrame->argument(0).toInt32(globalObject);
+    auto pid_value = callFrame->argument(0);
+    int pid = pid_value.toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (pid < 0) {
-        throwNodeRangeError(globalObject, scope, "pid must be a positive integer"_s);
-        return JSValue::encode(jsUndefined());
+        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "pid"_s, "a positive integer"_s, pid_value);
     }
     JSC::JSValue signalValue = callFrame->argument(1);
     int signal = SIGTERM;
@@ -2898,8 +2894,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
             signal = num;
             RETURN_IF_EXCEPTION(scope, {});
         } else {
-            throwNodeRangeError(globalObject, scope, "Unknown signal name"_s);
-            return JSValue::encode(jsUndefined());
+            return Bun::ERR::UNKNOWN_SIGNAL(scope, globalObject, signalValue);
         }
         RETURN_IF_EXCEPTION(scope, {});
     } else if (!signalValue.isUndefinedOrNull()) {

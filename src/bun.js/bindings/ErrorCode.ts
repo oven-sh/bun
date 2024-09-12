@@ -45,6 +45,7 @@ export default [
   ["ERR_BUFFER_TOO_LARGE", RangeError, "RangeError"],
   ["ERR_INVALID_STATE", Error, "Error"],
   ["ERR_BUFFER_OUT_OF_BOUNDS", RangeError, "RangeError"],
+  ["ERR_UNKNOWN_SIGNAL", TypeError, "TypeError"],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError, "TypeError"],

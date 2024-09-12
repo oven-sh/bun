@@ -1,5 +1,6 @@
 import type { Socket } from "bun";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
+import { heapStats } from "bun:jsc";
 import { expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, expectMaxObjectTypeCount, isWindows, tls } from "harness";
 it("should coerce '0' to 0", async () => {
@@ -505,95 +506,99 @@ it("upgradeTLS handles errors", async () => {
   let body = "";
   let rawBody = Buffer.alloc(0);
 
-  using socket = await Bun.connect({
-    hostname: "localhost",
-    port: server.port,
-    socket: {
-      data(socket, data) {
-        rawBody = Buffer.concat([rawBody, data]);
+  for (let i = 0; i < 100; i++) {
+    const socket = await Bun.connect({
+      hostname: "localhost",
+      port: server.port,
+      socket: {
+        data(socket, data) {
+          rawBody = Buffer.concat([rawBody, data]);
+        },
+        close() {},
+        error(err) {},
       },
-      close() {},
-      error(err) {},
-    },
-  });
+    });
 
-  const handlers = {
-    data: Buffer.from("GET / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n"),
-    socket: {
-      data: jest.fn(),
-      close: jest.fn(),
-      drain: jest.fn(),
-      error: jest.fn(),
-      open: jest.fn(),
-    },
-  };
-  expect(() =>
-    socket.upgradeTLS({
-      ...handlers,
-      tls: {
-        ca: "invalid certificate!",
+    const handlers = {
+      data: Buffer.from("GET / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n"),
+      socket: {
+        data: jest.fn(),
+        close: jest.fn(),
+        drain: jest.fn(),
+        error: jest.fn(),
+        open: jest.fn(),
       },
-    }),
-  ).toThrow(
-    expect.objectContaining({
-      code: "ERR_BORINGSSL",
-    }),
-  );
+    };
+    expect(() =>
+      socket.upgradeTLS({
+        ...handlers,
+        tls: {
+          ca: "invalid certificate!",
+        },
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        code: "ERR_BORINGSSL",
+      }),
+    );
 
-  expect(() =>
-    socket.upgradeTLS({
-      ...handlers,
-      tls: {
-        cert: "invalid certificate!",
-      },
-    }),
-  ).toThrow(
-    expect.objectContaining({
-      code: "ERR_BORINGSSL",
-    }),
-  );
+    expect(() =>
+      socket.upgradeTLS({
+        ...handlers,
+        tls: {
+          cert: "invalid certificate!",
+        },
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        code: "ERR_BORINGSSL",
+      }),
+    );
 
-  expect(() =>
-    socket.upgradeTLS({
-      ...handlers,
-      tls: {
-        ...tls,
-        key: "invalid key!",
-      },
-    }),
-  ).toThrow(
-    expect.objectContaining({
-      code: "ERR_BORINGSSL",
-    }),
-  );
+    expect(() =>
+      socket.upgradeTLS({
+        ...handlers,
+        tls: {
+          ...tls,
+          key: "invalid key!",
+        },
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        code: "ERR_BORINGSSL",
+      }),
+    );
 
-  expect(() =>
-    socket.upgradeTLS({
-      ...handlers,
-      tls: {
-        ...tls,
-        key: "invalid key!",
-        cert: "invalid cert!",
-      },
-    }),
-  ).toThrow(
-    expect.objectContaining({
-      code: "ERR_BORINGSSL",
-    }),
-  );
+    expect(() =>
+      socket.upgradeTLS({
+        ...handlers,
+        tls: {
+          ...tls,
+          key: "invalid key!",
+          cert: "invalid cert!",
+        },
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        code: "ERR_BORINGSSL",
+      }),
+    );
 
-  expect(() =>
-    socket.upgradeTLS({
-      ...handlers,
-      tls: {},
-    }),
-  ).toThrow();
+    expect(() =>
+      socket.upgradeTLS({
+        ...handlers,
+        tls: {},
+      }),
+    ).toThrow();
 
-  expect(handlers.socket.close).not.toHaveBeenCalled();
-  expect(handlers.socket.error).not.toHaveBeenCalled();
-  expect(handlers.socket.data).not.toHaveBeenCalled();
-  expect(handlers.socket.drain).not.toHaveBeenCalled();
-  expect(handlers.socket.open).not.toHaveBeenCalled();
+    expect(handlers.socket.close).not.toHaveBeenCalled();
+    expect(handlers.socket.error).not.toHaveBeenCalled();
+    expect(handlers.socket.data).not.toHaveBeenCalled();
+    expect(handlers.socket.drain).not.toHaveBeenCalled();
+    expect(handlers.socket.open).not.toHaveBeenCalled();
+    socket.end();
+  }
+  Bun.gc(true);
 });
 it("should be able to upgrade to TLS", async () => {
   using server = Bun.serve({
@@ -602,64 +607,66 @@ it("should be able to upgrade to TLS", async () => {
       return new Response("Hello World");
     },
   });
-  const { promise: tlsSocketPromise, resolve, reject } = Promise.withResolvers();
-  const { promise: rawSocketPromise, resolve: rawSocketResolve, reject: rawSocketReject } = Promise.withResolvers();
-  {
-    let body = "";
-    let rawBody = Buffer.alloc(0);
-    const socket = await Bun.connect({
-      hostname: "localhost",
-      port: server.port,
-      socket: {
-        data(socket, data) {
-          rawBody = Buffer.concat([rawBody, data]);
+  for (let i = 0; i < 50; i++) {
+    const { promise: tlsSocketPromise, resolve, reject } = Promise.withResolvers();
+    const { promise: rawSocketPromise, resolve: rawSocketResolve, reject: rawSocketReject } = Promise.withResolvers();
+    {
+      let body = "";
+      let rawBody = Buffer.alloc(0);
+      const socket = await Bun.connect({
+        hostname: "localhost",
+        port: server.port,
+        socket: {
+          data(socket, data) {
+            rawBody = Buffer.concat([rawBody, data]);
+          },
+          close() {
+            rawSocketResolve(rawBody);
+          },
+          error(err) {
+            rawSocketReject(err);
+          },
         },
-        close() {
-          rawSocketResolve(rawBody);
-        },
-        error(err) {
-          rawSocketReject(err);
-        },
-      },
-    });
-    const result = socket.upgradeTLS({
-      data: Buffer.from("GET / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n"),
-      tls,
-      socket: {
-        data(socket, data) {
-          body += data.toString("utf8");
-          if (body.includes("\r\n\r\n")) {
-            socket.end();
-          }
-        },
-        close() {
-          resolve(body);
-        },
-        drain(socket) {
-          while (socket.data.byteLength > 0) {
-            const written = socket.write(socket.data);
-            if (written === 0) {
-              break;
+      });
+      const result = socket.upgradeTLS({
+        data: Buffer.from("GET / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n"),
+        tls,
+        socket: {
+          data(socket, data) {
+            body += data.toString("utf8");
+            if (body.includes("\r\n\r\n")) {
+              socket.end();
             }
-            socket.data = socket.data.slice(written);
-          }
-          socket.flush();
+          },
+          close() {
+            resolve(body);
+          },
+          drain(socket) {
+            while (socket.data.byteLength > 0) {
+              const written = socket.write(socket.data);
+              if (written === 0) {
+                break;
+              }
+              socket.data = socket.data.slice(written);
+            }
+            socket.flush();
+          },
+          error(err) {
+            reject(err);
+          },
         },
-        error(err) {
-          reject(err);
-        },
-      },
-    });
+      });
 
-    const [raw, tls_socket] = result;
-    expect(raw).toBeDefined();
-    expect(tls_socket).toBeDefined();
+      const [raw, tls_socket] = result;
+      expect(raw).toBeDefined();
+      expect(tls_socket).toBeDefined();
+    }
+    const [tlsData, rawData] = await Promise.all([tlsSocketPromise, rawSocketPromise]);
+    expect(tlsData).toContain("HTTP/1.1 200 OK");
+    expect(tlsData).toContain("Content-Length: 11");
+    expect(tlsData).toContain("\r\nHello World");
+    expect(rawData.byteLength).toBeGreaterThanOrEqual(1980);
   }
-  const [tlsData, rawData] = await Promise.all([tlsSocketPromise, rawSocketPromise]);
-  expect(tlsData).toContain("HTTP/1.1 200 OK");
-  expect(tlsData).toContain("Content-Length: 11");
-  expect(tlsData).toContain("\r\nHello World");
-  expect(rawData.byteLength).toBeGreaterThanOrEqual(1980);
 });
 
 it("should not leak memory", async () => {

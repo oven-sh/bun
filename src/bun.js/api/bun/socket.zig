@@ -2888,6 +2888,8 @@ fn NewSocket(comptime ssl: bool) type {
             callframe: *JSC.CallFrame,
         ) JSValue {
             JSC.markBinding(@src());
+            const this_js = callframe.this();
+
             if (comptime ssl) {
                 return JSValue.jsUndefined();
             }
@@ -2920,7 +2922,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
 
-            var handlers = Handlers.fromJS(globalObject, socket_obj, &exception) orelse {
+            const handlers = Handlers.fromJS(globalObject, socket_obj, &exception) orelse {
                 if (!globalObject.hasException() and exception != null) {
                     globalObject.throwValue(exception.?.value());
                 }
@@ -2993,7 +2995,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             const is_server = this.handlers.is_server;
 
-            var handlers_ptr = handlers.vm.allocator.create(Handlers) catch bun.outOfMemory();
+            var handlers_ptr = bun.default_allocator.create(Handlers) catch bun.outOfMemory();
             handlers_ptr.* = handlers;
             handlers_ptr.is_server = is_server;
             handlers_ptr.protect();
@@ -3050,6 +3052,9 @@ fn NewSocket(comptime ssl: bool) type {
 
                 tls.deref();
 
+                handlers_ptr.unprotect();
+                bun.default_allocator.destroy(handlers_ptr);
+
                 // If BoringSSL gave us an error code, let's use it.
                 if (err != 0 and !globalObject.hasException()) {
                     globalObject.throwValue(BoringSSL.ERR_toJS(globalObject, err));
@@ -3073,7 +3078,7 @@ fn NewSocket(comptime ssl: bool) type {
             tls.ref();
             const vm = handlers.vm;
 
-            var raw_handlers_ptr = vm.allocator.create(Handlers) catch bun.outOfMemory();
+            var raw_handlers_ptr = bun.default_allocator.create(Handlers) catch bun.outOfMemory();
             raw_handlers_ptr.* = .{
                 .vm = vm,
                 .globalObject = globalObject,
@@ -3104,10 +3109,11 @@ fn NewSocket(comptime ssl: bool) type {
             raw.ref();
 
             const raw_js_value = raw.getThisValue(globalObject);
-            if (JSSocketType(ssl).dataGetCached(this.getThisValue(globalObject))) |raw_default_data| {
+            if (JSSocketType(ssl).dataGetCached(this_js)) |raw_default_data| {
                 raw_default_data.ensureStillAlive();
                 TLSSocket.dataSetCached(raw_js_value, globalObject, raw_default_data);
             }
+
             // marks both as active
             raw.markActive();
             // this will keep tls alive until socket.open() is called to start TLS certificate and the handshake process
@@ -3122,19 +3128,6 @@ fn NewSocket(comptime ssl: bool) type {
                 ctx.* = .{ .tcp = raw, .tls = tls };
             }
 
-            const array = JSC.JSValue.createEmptyArray(globalObject, 2);
-            array.putIndex(globalObject, 0, raw_js_value);
-            array.putIndex(globalObject, 1, tls_js_value);
-
-            // Ensure we keep the JS values alive until the end of this function call.
-            var strong_array = JSC.Strong.create(array, globalObject);
-            defer strong_array.deinit();
-
-            defer this.deref();
-
-            // detach and invalidate the old instance
-            this.socket.detach();
-
             if (this.flags.is_active) {
                 this.poll_ref.disable();
                 this.flags.is_active = false;
@@ -3145,8 +3138,16 @@ fn NewSocket(comptime ssl: bool) type {
                 this.has_pending_activity.store(false, .release);
             }
 
-            // start TLS handshake after we set extension on the socket
+            const array = JSC.JSValue.createEmptyArray(globalObject, 2);
+            array.putIndex(globalObject, 0, raw_js_value);
+            array.putIndex(globalObject, 1, tls_js_value);
 
+            defer this.deref();
+
+            // detach and invalidate the old instance
+            this.socket.detach();
+
+            // start TLS handshake after we set extension on the socket
             new_socket.startTLS(!is_server);
 
             success = true;

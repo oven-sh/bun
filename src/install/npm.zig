@@ -1308,19 +1308,19 @@ pub const PackageManifest = struct {
             .string_pool = string_pool,
         };
 
-        if (json.asProperty("name")) |name_q| {
-            const received_name = name_q.expr.asString(allocator) orelse return null;
-
-            // If this manifest is coming from the default registry, make sure it's the expected one. If it's not
-            // from the default registry we don't check because the registry might have a different name in the manifest.
-            // https://githun.com/oven-sh/bun/issues/4925
-            if (scope.url_hash == Registry.default_url_hash and !strings.eqlLong(expected_name, received_name, true)) {
-                Output.panic("<r>internal: <red>Package name mismatch.<r> Expected <b>\"{s}\"<r> but received <red>\"{s}\"<r>", .{ expected_name, received_name });
-                return null;
+        if (PackageManager.verbose_install) {
+            if (json.asProperty("name")) |name_q| {
+                const received_name = name_q.expr.asString(allocator) orelse return null;
+                // If this manifest is coming from the default registry, make sure it's the expected one. If it's not
+                // from the default registry we don't check because the registry might have a different name in the manifest.
+                // https://github.com/oven-sh/bun/issues/4925
+                if (scope.url_hash == Registry.default_url_hash and !strings.eqlLong(expected_name, received_name, true)) {
+                    Output.warn("Package name mismatch. Expected <b>\"{s}\"<r> but received <red>\"{s}\"<r>", .{ expected_name, received_name });
+                }
             }
-
-            string_builder.count(expected_name);
         }
+
+        string_builder.count(expected_name);
 
         if (json.asProperty("modified")) |name_q| {
             const field = name_q.expr.asString(allocator) orelse return null;

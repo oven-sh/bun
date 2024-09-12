@@ -213,4 +213,6 @@
     __ZNK2v86String19ContainsOnlyOneByteEv;
     __ZN2v812api_internal18GlobalizeReferenceEPNS_8internal7IsolateEm;
     __ZN2v812api_internal13DisposeGlobalEPm;
+    _uv_os_getpid;
+    _uv_os_getppid;
 };

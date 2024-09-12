@@ -76,6 +76,321 @@ fn writeTestStatusLine(comptime status: @Type(.EnumLiteral), writer: anytype) vo
         writer.print(fmtStatusTextLine(status, false), .{}) catch unreachable;
 }
 
+pub const SocketReporter = struct {
+    socket: uws.SocketTCP,
+    command_line: *CommandLineReporter,
+    private_buffer_struct_do_not_use: std.ArrayListUnmanaged(u8) = .{},
+    sent_offset: u32 = 0,
+    connection_status: ConnectionStatus = .pending,
+    socket_context: ?*uws.SocketContext = null,
+    buffer: *std.ArrayListUnmanaged(u8) = undefined,
+
+    const ConnectionStatus = enum {
+        pending,
+        connected,
+        disconnected,
+        last_write_failed,
+    };
+
+    pub usingnamespace bun.New(@This());
+
+    pub fn connect(reporter: *CommandLineReporter, address: *const uws.UnixOrHost) ?*SocketReporter {
+        const context_options = uws.us_bun_socket_context_options_t{};
+
+        const socket_context: *uws.SocketContext = uws.us_create_bun_socket_context(0, uws.Loop.get(), @sizeOf(usize), context_options) orelse @panic("Failed to create socket context");
+        var socket_reporter = SocketReporter.new(.{
+            .command_line = reporter,
+            .socket = undefined,
+            .socket_context = socket_context,
+        });
+        socket_reporter.buffer = &socket_reporter.private_buffer_struct_do_not_use;
+
+        uws.SocketTCP.configure(socket_context, true, *SocketReporter, struct {
+            pub const onOpen = SocketReporter.onOpen;
+            pub const onClose = SocketReporter.onClose;
+            pub const onData = SocketReporter.onData;
+            pub const onWritable = SocketReporter.onWritable;
+            pub const onTimeout = SocketReporter.onTimeout;
+            pub const onLongTimeout = SocketReporter.onLongTimeout;
+            pub const onConnectError = SocketReporter.onConnectError;
+            pub const onEnd = SocketReporter.onEnd;
+            pub const onHandshake = SocketReporter.onHandshake;
+        });
+        debug("connect({})", .{address.*});
+        socket_reporter.socket = uws.SocketTCP.connectToAddress(address, socket_context, SocketReporter, socket_reporter, "socket") catch |err| {
+            Output.err(err, "Failed to connect to test socket reporter", .{});
+            return null;
+        };
+
+        return socket_reporter;
+    }
+
+    pub const Protocol = struct {
+        pub const TestStart = struct {
+            id: Test.ID,
+            parent_id: u32 = std.math.maxInt(u32),
+            module_id: u32,
+            byte_range: logger.Range,
+            label: string,
+
+            pub fn write(this: *const TestStart, writer: WriterContext) !void {
+                try writer.writeInt(this.id);
+                try writer.writeInt(this.parent_id);
+                try writer.writeInt(this.module_id);
+                try writer.writeInt(@intCast(@max(this.byte_range.loc.start, 0)));
+                try writer.writeInt(@intCast(@max(this.byte_range.len, 0)));
+                try writer.writeSlice(u8, this.label);
+            }
+        };
+
+        pub const TestEnd = struct {
+            id: Test.ID,
+            status: TestRunner.Test.Status,
+            duration_ms: u32 = 0,
+            expectation_count: u32 = 0,
+
+            pub fn write(this: *const TestEnd, writer: WriterContext) !void {
+                try writer.writeInt(this.id);
+                try writer.writeInt(@intFromEnum(this.status));
+                try writer.writeInt(this.duration_ms);
+                try writer.writeInt(this.expectation_count);
+            }
+        };
+
+        pub const ModuleStart = struct {
+            id: u32,
+            path: string,
+
+            pub fn write(this: *const ModuleStart, writer: WriterContext) !void {
+                try writer.writeInt(this.id);
+                try writer.writeSlice(u8, this.path);
+            }
+        };
+
+        pub const CoverageReport = struct {
+            files: []CoverageFileReport,
+
+            pub fn write(this: *const CoverageReport, writer: WriterContext) !void {
+                try writer.writeSlice(CoverageFileReport, this.files);
+            }
+        };
+
+        pub const CoverageFileReport = struct {
+            file_path: string,
+            line_ranges: []u32,
+            function_ranges: []u32,
+
+            pub fn write(this: *const CoverageFileReport, writer: WriterContext) !void {
+                try writer.writeSlice(u8, this.file_path);
+                try writer.writeSlice(u32, this.line_ranges);
+                try writer.writeSlice(u32, this.function_ranges);
+            }
+        };
+
+        pub const Message = union(Tag) {
+            TestStart: TestStart,
+            TestEnd: TestEnd,
+            ModuleStart: ModuleStart,
+            CoverageReport: CoverageReport,
+            CoverageFileReport: CoverageFileReport,
+
+            pub fn write(this: *const Message, writer: WriterContext) !void {
+                const byte_length_counter = try writer.byteLengthCounter();
+                try writer.writeInt(@intFromEnum(@as(Tag, this.*)));
+                switch (this.*) {
+                    inline else => |*msg| {
+                        try msg.write(writer);
+                    },
+                }
+                byte_length_counter.commit(writer);
+            }
+
+            pub const Tag = enum(u32) {
+                TestStart,
+                TestEnd,
+                ModuleStart,
+                CoverageReport,
+                CoverageFileReport,
+            };
+        };
+    };
+
+    pub fn hasPendingMessages(this: *const SocketReporter) bool {
+        return this.pendingData().len > 0 and switch (this.connection_status) {
+            .connected => true,
+            .last_write_failed => true,
+            else => false,
+        };
+    }
+
+    pub fn write(this: *SocketReporter, data: []const u8) !usize {
+        try this.buffer.appendSlice(bun.default_allocator, data);
+        return data.len;
+    }
+
+    fn pendingData(this: *const SocketReporter) []u8 {
+        return this.buffer.items[this.sent_offset..];
+    }
+
+    pub fn flush(this: *SocketReporter) void {
+        if (this.connection_status == .disconnected or this.connection_status == .pending or this.pendingData().len == 0) {
+            return;
+        }
+        const wrote = this.socket.write(this.pendingData(), false);
+        debug("flush({d})", .{this.pendingData().len});
+        if (wrote > 0) {
+            this.sent_offset += @intCast(wrote);
+            if (this.pendingData().len == 0) {
+                this.sent_offset = 0;
+                this.buffer.items.len = 0;
+            }
+        }
+    }
+
+    pub fn writeMessage(this: *SocketReporter, message: Protocol.Message) void {
+        debug("writeMessage({s})", .{@tagName(message)});
+        message.write(WriterContext{ .ctx = this }) catch bun.outOfMemory();
+        if (this.connection_status == .connected) {
+            this.flush();
+        }
+    }
+
+    pub const WriterContext = struct {
+        ctx: *SocketReporter,
+
+        const ByteLengthCounter = struct {
+            offset: u32 = 0,
+
+            pub fn get(writer: WriterContext) !ByteLengthCounter {
+                const offset = writer.ctx.buffer.items.len;
+                try writer.writeInt(@as(u32, 0));
+                return .{ .offset = @truncate(offset) };
+            }
+
+            pub fn commit(this: ByteLengthCounter, writer: WriterContext) void {
+                const offset = @as(u32, this.offset);
+                const length: u32 = @truncate(writer.ctx.buffer.items.len -| @as(usize, offset));
+                writer.ctx.buffer.items[offset .. offset + 4][0..4].* = @as([4]u8, @bitCast(length));
+            }
+        };
+
+        pub fn write(this: WriterContext, data: []const u8) !usize {
+            return try this.ctx.write(data);
+        }
+
+        pub fn byteLengthCounter(this: WriterContext) !ByteLengthCounter {
+            return try ByteLengthCounter.get(this);
+        }
+
+        pub fn writeInt(this: WriterContext, value: u32) !void {
+            _ = try this.write(&std.mem.toBytes(value));
+        }
+
+        pub fn writeSlice(this: WriterContext, comptime T: type, value: []const T) !void {
+            try this.writeInt(@truncate(value.len));
+            if (T == u8) {
+                _ = try this.write(value);
+            } else {
+                _ = try this.write(std.mem.sliceAsBytes(value));
+            }
+        }
+    };
+
+    pub fn onOpen(
+        this: *SocketReporter,
+        socket: uws.SocketTCP,
+    ) void {
+        debug("onOpen()", .{});
+        this.connection_status = .connected;
+        this.socket = socket;
+        this.flush();
+    }
+
+    pub fn onEnd(
+        this: *SocketReporter,
+        socket: uws.SocketTCP,
+    ) void {
+        debug("onEnd()", .{});
+        _ = this; // autofix
+        socket.close(.failure);
+    }
+
+    pub fn onHandshake(
+        _: *SocketReporter,
+        _: uws.SocketTCP,
+        _: i32,
+        _: uws.us_bun_verify_error_t,
+    ) void {
+        // not implemented.
+    }
+
+    pub fn onClose(
+        this: *SocketReporter,
+        socket: uws.SocketTCP,
+        err: c_int,
+        data: ?*anyopaque,
+    ) void {
+        debug("onClose()", .{});
+        _ = socket; // autofix
+        _ = err; // autofix
+        _ = data; // autofix
+        this.connection_status = .disconnected;
+        this.buffer.deinit(bun.default_allocator);
+    }
+
+    pub fn onData(
+        this: *SocketReporter,
+        socket: uws.SocketTCP,
+        data: []const u8,
+    ) void {
+        _ = this; // autofix
+        _ = socket; // autofix
+        _ = data; // autofix
+        // do nothing, for now.
+    }
+
+    pub fn onWritable(
+        this: *SocketReporter,
+        socket: uws.SocketTCP,
+    ) void {
+        _ = socket; // autofix
+        this.connection_status = .connected;
+        this.flush();
+    }
+    pub fn onTimeout(
+        this: *SocketReporter,
+        socket: uws.SocketTCP,
+    ) void {
+        _ = this; // autofix
+        _ = socket; // autofix
+        // do nothing
+    }
+
+    pub fn onLongTimeout(
+        this: *SocketReporter,
+        socket: uws.SocketTCP,
+    ) void {
+        _ = this; // autofix
+        _ = socket; // autofix
+        // do nothing
+    }
+
+    pub fn onConnectError(
+        this: *SocketReporter,
+        socket: uws.SocketTCP,
+        errno: c_int,
+    ) void {
+        _ = errno; // autofix
+        _ = socket; // autofix
+        this.connection_status = .disconnected;
+        this.buffer.clearAndFree(bun.default_allocator);
+        this.sent_offset = 0;
+        Output.err(error.TestReporterConnection, "Failed to connect to test socket reporter", .{});
+    }
+};
+
+const debug = Output.scoped(.TestCommand, false);
+
 pub const CommandLineReporter = struct {
     jest: TestRunner,
     callback: TestRunner.Callback,
@@ -87,6 +402,8 @@ pub const CommandLineReporter = struct {
     failures_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
     skips_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
     todos_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
+
+    socket: ?*SocketReporter = null,
 
     pub const Summary = struct {
         pass: u32 = 0,
@@ -108,7 +425,23 @@ pub const CommandLineReporter = struct {
 
     pub fn handleUpdateCount(_: *TestRunner.Callback, _: u32, _: u32) void {}
 
-    pub fn handleTestStart(_: *TestRunner.Callback, _: Test.ID) void {}
+    pub fn handleTestStart(cb: *TestRunner.Callback, test_id: Test.ID, file: string, label: string, byte_range: logger.Range, parent: ?*jest.DescribeScope) void {
+        _ = file; // autofix
+        const this: *CommandLineReporter = @fieldParentPtr("callback", cb);
+        if (this.socket) |socket| {
+            socket.writeMessage(
+                .{
+                    .TestStart = .{
+                        .id = test_id,
+                        .label = label,
+                        .parent_id = if (parent) |p| p.test_id_start else std.math.maxInt(u32),
+                        .module_id = if (parent) |p| p.file_id else std.math.maxInt(u32),
+                        .byte_range = byte_range,
+                    },
+                },
+            );
+        }
+    }
 
     fn printTestLine(label: string, elapsed_ns: u64, parent: ?*jest.DescribeScope, comptime skip: bool, writer: anytype) void {
         var scopes_stack = std.BoundedArray(*jest.DescribeScope, 64).init(0) catch unreachable;
@@ -168,12 +501,24 @@ pub const CommandLineReporter = struct {
     }
 
     pub fn handleTestPass(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
+        var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
+        if (this.socket) |socket| {
+            socket.writeMessage(
+                .{
+                    .TestEnd = .{
+                        .id = id,
+                        .status = TestRunner.Test.Status.pass,
+                        .duration_ms = @truncate(elapsed_ns / std.time.ns_per_ms),
+                        .expectation_count = expectations,
+                    },
+                },
+            );
+        }
+
         const writer_ = Output.errorWriter();
         var buffered_writer = std.io.bufferedWriter(writer_);
         var writer = buffered_writer.writer();
         defer buffered_writer.flush() catch unreachable;
-
-        var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
         writeTestStatusLine(.pass, &writer);
 
@@ -187,6 +532,18 @@ pub const CommandLineReporter = struct {
     pub fn handleTestFail(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
         var writer_ = Output.errorWriter();
         var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
+        if (this.socket) |socket| {
+            socket.writeMessage(
+                .{
+                    .TestEnd = .{
+                        .id = id,
+                        .status = TestRunner.Test.Status.fail,
+                        .duration_ms = @truncate(elapsed_ns / std.time.ns_per_ms),
+                        .expectation_count = expectations,
+                    },
+                },
+            );
+        }
 
         // when the tests fail, we want to repeat the failures at the end
         // so that you can see them better when there are lots of tests that ran
@@ -220,6 +577,18 @@ pub const CommandLineReporter = struct {
     pub fn handleTestSkip(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
         var writer_ = Output.errorWriter();
         var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
+        if (this.socket) |socket| {
+            socket.writeMessage(
+                .{
+                    .TestEnd = .{
+                        .id = id,
+                        .status = TestRunner.Test.Status.skip,
+                        .duration_ms = @truncate(0),
+                        .expectation_count = 0,
+                    },
+                },
+            );
+        }
 
         // If you do it.only, don't report the skipped tests because its pretty noisy
         if (jest.Jest.runner != null and !jest.Jest.runner.?.only) {
@@ -261,6 +630,19 @@ pub const CommandLineReporter = struct {
         this.summary.todo += 1;
         this.summary.expectations += expectations;
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.todo;
+
+        if (this.socket) |socket| {
+            socket.writeMessage(
+                .{
+                    .TestEnd = .{
+                        .id = id,
+                        .status = TestRunner.Test.Status.todo,
+                        .duration_ms = @truncate(0),
+                        .expectation_count = 0,
+                    },
+                },
+            );
+        }
     }
 
     pub fn printSummary(this: *CommandLineReporter) void {
@@ -723,6 +1105,51 @@ pub const TestCommand = struct {
         lcov: bool,
     };
 
+    const TestFilePath = struct {
+        path: []const u8 = "",
+        byte_ranges: std.ArrayListUnmanaged(logger.Range) = .{},
+
+        pub fn slice(this: *const TestFilePath) string {
+            return this.path;
+        }
+
+        pub fn update(this: *TestFilePath, input: []const u8) !void {
+            var remaining = input;
+            while (remaining.len > 0) {
+                const end_index = strings.indexOfChar(remaining, ':') orelse return error.InvalidRange;
+                const start_buffer = remaining[0..end_index];
+                const next_i = strings.indexOf(remaining, "::") orelse remaining.len;
+                const end_buffer = remaining[@min(end_index + 1, remaining.len)..next_i];
+
+                const start = std.fmt.parseInt(i32, start_buffer, 10) catch {
+                    Output.err(error.InvalidByteRange, "Invalid start byte range passed to bun test filter: {s}", .{remaining});
+                    Global.exit(1);
+                };
+
+                const len = std.fmt.parseInt(i32, end_buffer, 10) catch {
+                    Output.err(error.InvalidByteRange, "Invalid end range passed to bun test filter: {s}", .{remaining});
+                    Global.exit(1);
+                };
+                try this.byte_ranges.append(bun.default_allocator, .{
+                    .loc = .{ .start = start },
+                    .len = len,
+                });
+                remaining = remaining[@min(next_i + 2, remaining.len)..];
+            }
+        }
+    };
+    const PathsOrFiles = union(enum) {
+        paths: []const PathString,
+        files: []const TestFilePath,
+
+        pub fn isEmpty(this: *const PathsOrFiles) bool {
+            return switch (this.*) {
+                .paths => |paths| paths.len == 0,
+                .files => |files| files.len == 0,
+            };
+        }
+    };
+
     pub fn exec(ctx: Command.Context) !void {
         if (comptime is_bindgen) unreachable;
 
@@ -843,10 +1270,11 @@ pub const TestCommand = struct {
             _ = vm.global.setTimeZone(&JSC.ZigString.init(TZ_NAME));
         }
 
-        var results = try std.ArrayList(PathString).initCapacity(ctx.allocator, ctx.positionals.len);
+        var results = bun.StringArrayHashMap(TestFilePath).init(ctx.allocator);
+        try results.ensureTotalCapacity(ctx.positionals.len);
         defer results.deinit();
 
-        const test_files, const search_count = scan: {
+        const test_files: PathsOrFiles, const search_count = scan: {
             if (for (ctx.positionals) |arg| {
                 if (std.fs.path.isAbsolute(arg) or
                     strings.startsWith(arg, "./") or
@@ -855,10 +1283,22 @@ pub const TestCommand = struct {
                     strings.startsWith(arg, "..\\")))) break true;
             } else false) {
                 // One of the files is a filepath. Instead of treating the arguments as filters, treat them as filepaths
-                for (ctx.positionals[1..]) |arg| {
-                    results.appendAssumeCapacity(PathString.init(arg));
+                for (ctx.positionals[1..]) |arg_| {
+                    const range_index = strings.indexOf(arg_, "::");
+                    const path = if (range_index) |index| arg_[0..index] else arg_;
+                    var gpe = results.getOrPutAssumeCapacity(path);
+                    if (!gpe.found_existing) {
+                        gpe.value_ptr.* = TestFilePath{
+                            .path = path,
+                            .byte_ranges = .{},
+                        };
+                    }
+
+                    if (range_index != null) {
+                        try gpe.value_ptr.update(arg_[@min(range_index.? + 2, arg_.len)..]);
+                    }
                 }
-                break :scan .{ results.items, 0 };
+                break :scan .{ .{ .files = results.values() }, 0 };
             }
 
             // Treat arguments as filters and scan the codebase
@@ -880,13 +1320,13 @@ pub const TestCommand = struct {
                     ctx.allocator.free(i);
                 ctx.allocator.free(filter_names_normalized);
             };
-
+            var scanner_results = std.ArrayList(PathString).init(bun.default_allocator);
             var scanner = Scanner{
                 .dirs_to_scan = Scanner.Fifo.init(ctx.allocator),
                 .options = &vm.bundler.options,
                 .fs = vm.bundler.fs,
                 .filter_names = filter_names_normalized,
-                .results = &results,
+                .results = &scanner_results,
             };
             const dir_to_scan = brk: {
                 if (ctx.debug.test_directory.len > 0) {
@@ -899,10 +1339,10 @@ pub const TestCommand = struct {
             scanner.scan(dir_to_scan);
             scanner.dirs_to_scan.deinit();
 
-            break :scan .{ scanner.results.items, scanner.search_count };
+            break :scan .{ .{ .paths = scanner.results.items }, scanner.search_count };
         };
 
-        if (test_files.len > 0) {
+        if (!test_files.isEmpty()) {
             vm.hot_reload = ctx.debug.hot_reload;
 
             switch (vm.hot_reload) {
@@ -912,7 +1352,7 @@ pub const TestCommand = struct {
             }
 
             // vm.bundler.fs.fs.readDirectory(_dir: string, _handle: ?std.fs.Dir)
-            runAllTests(reporter, vm, test_files, ctx.allocator);
+            runAllTests(ctx, reporter, vm, test_files);
         }
 
         try jest.Jest.runner.?.snapshots.writeSnapshotFile();
@@ -954,7 +1394,7 @@ pub const TestCommand = struct {
 
         Output.flush();
 
-        if (test_files.len == 0) {
+        if (test_files.isEmpty()) {
             if (ctx.positionals.len == 0) {
                 Output.prettyErrorln(
                     \\<yellow>No tests found!<r>
@@ -1102,6 +1542,30 @@ pub const TestCommand = struct {
             }
         }
 
+        if (reporter.socket) |socket| {
+            // wait for a maximum of 1 second if there are any pending messages
+            if (socket.hasPendingMessages()) {
+                const start = bun.timespec.now();
+                const loop = bun.uws.Loop.get();
+                loop.ref();
+                debug("waiting for socket messages", .{});
+                while (socket.hasPendingMessages()) {
+                    socket.flush();
+                    vm.eventLoop().autoTick();
+
+                    if (bun.timespec.now().duration(&start).ms() > 1000) {
+                        debug("timeout waiting for socket messages", .{});
+                        break;
+                    }
+                }
+                loop.unref();
+            }
+
+            if (socket.connection_status == .connected) {
+                socket.socket.close(.normal);
+            }
+        }
+
         if (reporter.summary.fail > 0 or (coverage.enabled and coverage.fractions.failing and coverage.fail_on_low_coverage)) {
             Global.exit(1);
         } else if (reporter.jest.unhandled_errors_between_tests > 0) {
@@ -1110,32 +1574,33 @@ pub const TestCommand = struct {
     }
 
     pub fn runAllTests(
+        ctx: Command.Context,
         reporter_: *CommandLineReporter,
         vm_: *JSC.VirtualMachine,
-        files_: []const PathString,
-        allocator_: std.mem.Allocator,
+        files_: PathsOrFiles,
     ) void {
         const Context = struct {
             reporter: *CommandLineReporter,
             vm: *JSC.VirtualMachine,
-            files: []const PathString,
-            allocator: std.mem.Allocator,
+            files: PathsOrFiles,
             pub fn begin(this: *@This()) void {
                 const reporter = this.reporter;
                 const vm = this.vm;
-                var files = this.files;
-                const allocator = this.allocator;
-                bun.assert(files.len > 0);
+                const paths_or_files = this.files;
 
-                if (files.len > 1) {
-                    for (files[0 .. files.len - 1]) |file_name| {
-                        TestCommand.run(reporter, vm, file_name.slice(), allocator, false) catch {};
-                        reporter.jest.default_timeout_override = std.math.maxInt(u32);
-                        Global.mimalloc_cleanup(false);
-                    }
+                switch (paths_or_files) {
+                    inline else => |files| {
+                        if (files.len > 1) {
+                            for (files[0 .. files.len - 1]) |file_name| {
+                                TestCommand.run(reporter, vm, file_name.slice(), if (comptime @TypeOf(files) == []const PathString) &.{} else file_name.byte_ranges.items, false) catch {};
+                                reporter.jest.default_timeout_override = std.math.maxInt(u32);
+                                Global.mimalloc_cleanup(false);
+                            }
+                        }
+
+                        TestCommand.run(reporter, vm, files[files.len - 1].slice(), if (comptime @TypeOf(files) == []const PathString) &.{} else files[files.len - 1].byte_ranges.items, true) catch {};
+                    },
                 }
-
-                TestCommand.run(reporter, vm, files[files.len - 1].slice(), allocator, true) catch {};
             }
         };
 
@@ -1143,8 +1608,18 @@ pub const TestCommand = struct {
         vm_.eventLoop().ensureWaker();
         vm_.arena = &arena;
         vm_.allocator = arena.allocator();
-        var ctx = Context{ .reporter = reporter_, .vm = vm_, .files = files_, .allocator = allocator_ };
-        vm_.runWithAPILock(Context, &ctx, Context.begin);
+        vm_.bundler.options.has_byte_range_filter_for_tests = files_ == .files;
+        vm_.bundler.resolver.opts.has_byte_range_filter_for_tests = files_ == .files;
+        jest.Jest.is_byte_range_filter_enabled = files_ == .files;
+
+        if (ctx.test_options.listen_address) |*address| {
+            if (SocketReporter.connect(reporter_, address)) |socket| {
+                reporter_.socket = socket;
+            }
+        }
+
+        var test_runner_ctx = Context{ .reporter = reporter_, .vm = vm_, .files = files_ };
+        vm_.runWithAPILock(Context, &test_runner_ctx, Context.begin);
     }
 
     fn timerNoop(_: *uws.Timer) callconv(.C) void {}
@@ -1153,7 +1628,7 @@ pub const TestCommand = struct {
         reporter: *CommandLineReporter,
         vm: *JSC.VirtualMachine,
         file_name: string,
-        _: std.mem.Allocator,
+        byte_ranges: []const logger.Range,
         is_last: bool,
     ) !void {
         defer {
@@ -1180,6 +1655,7 @@ pub const TestCommand = struct {
         const file_start = reporter.jest.files.len;
         const resolution = try vm.bundler.resolveEntryPoint(file_name);
         vm.clearEntryPoint();
+        reporter.jest.byte_range_filter = byte_ranges;
 
         const file_path = resolution.path_pair.primary.text;
         const file_title = bun.path.relative(FileSystem.instance.top_level_dir, file_path);
@@ -1235,7 +1711,19 @@ pub const TestCommand = struct {
             const file_end = reporter.jest.files.len;
 
             for (file_start..file_end) |module_id| {
+                const initial_ran_count = reporter.summary.pass + reporter.summary.fail;
                 const module: *jest.DescribeScope = reporter.jest.files.items(.module_scope)[module_id];
+
+                if (reporter.socket) |socket| {
+                    socket.writeMessage(
+                        .{
+                            .ModuleStart = .{
+                                .id = @truncate(module_id),
+                                .path = file_path,
+                            },
+                        },
+                    );
+                }
 
                 vm.onUnhandledRejectionCtx = null;
                 vm.onUnhandledRejection = jest.TestRunnerTask.onUnhandledRejection;
@@ -1243,6 +1731,7 @@ pub const TestCommand = struct {
                 vm.eventLoop().tick();
 
                 var prev_unhandled_count = vm.unhandled_error_counter;
+
                 while (vm.active_tasks > 0) : (vm.eventLoop().flushImmediateQueue()) {
                     if (!jest.Jest.runner.?.has_pending_tests) {
                         jest.Jest.runner.?.drain();
@@ -1264,6 +1753,13 @@ pub const TestCommand = struct {
                 }
 
                 vm.eventLoop().flushImmediateQueue();
+
+                const end_ran_count = reporter.summary.pass + reporter.summary.fail;
+                if (end_ran_count != initial_ran_count) {
+                    if (module.runCallback(vm.global, .afterAll)) |err| {
+                        _ = vm.uncaughtException(vm.global, err, true);
+                    }
+                }
 
                 switch (vm.aggressive_garbage_collection) {
                     .none => {},

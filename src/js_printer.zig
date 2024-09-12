@@ -2493,6 +2493,7 @@ fn NewPrinter(
                     }
                     // We only want to generate an unbound eval() in CommonJS
                     p.call_target = e.target.data;
+                    const is_loc_identifier = is_bun_platform and (e.target.data == .e_location_identifier or e.target.data == .e_location_dot);
 
                     const is_unbound_eval = (!e.is_direct_eval and
                         p.isUnboundEvalIdentifier(e.target) and
@@ -2524,6 +2525,24 @@ fn NewPrinter(
                     if (e.close_paren_loc.start > expr.loc.start) {
                         p.addSourceMapping(e.close_paren_loc);
                     }
+
+                    // Append [start, length] to the end of the call
+                    // Used by bun:test.
+                    if (comptime is_bun_platform) {
+                        if (is_loc_identifier) {
+                            if (args.len > 0) {
+                                p.print(",");
+                                p.printSpace();
+                            }
+
+                            p.print(("["));
+                            p.printNumber(@floatFromInt(e.target.loc.start), level);
+                            p.print(",");
+                            p.printNumber(@floatFromInt(e.close_paren_loc.start - e.target.loc.start), level);
+                            p.print("]");
+                        }
+                    }
+
                     p.print(")");
                     if (wrap) {
                         p.print(")");
@@ -2656,7 +2675,7 @@ fn NewPrinter(
                         );
                     }
                 },
-                .e_dot => |e| {
+                .e_location_dot, .e_dot => |e| {
                     const isOptionalChain = e.optional_chain == .start;
 
                     var wrap = false;
@@ -3087,6 +3106,22 @@ fn NewPrinter(
                     if (wrap) {
                         p.print(")");
                     }
+                },
+                .e_location_identifier => |e| {
+                    // Pretend this is an import identifier
+                    p.printExpr(
+                        Expr{
+                            .data = .{
+                                .e_import_identifier = .{
+                                    .ref = e.ref,
+                                    .was_originally_identifier = e.was_originally_identifier,
+                                },
+                            },
+                            .loc = expr.loc,
+                        },
+                        level,
+                        flags,
+                    );
                 },
                 .e_import_identifier => |e| {
                     // Potentially use a property access instead of an identifier

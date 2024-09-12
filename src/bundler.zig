@@ -1267,6 +1267,7 @@ pub const Bundler = struct {
         virtual_source: ?*const logger.Source = null,
         replace_exports: runtime.Runtime.Features.ReplaceableExport.Map = .{},
         inject_jest_globals: bool = false,
+        inline_loc_for_tests: bool = false,
         set_breakpoint_on_first_line: bool = false,
         emit_decorator_metadata: bool = false,
         remove_cjs_module_wrapper: bool = false,
@@ -1415,6 +1416,7 @@ pub const Bundler = struct {
                 opts.warn_about_unbundled_modules = target.isNotBun();
 
                 opts.features.inject_jest_globals = this_parse.inject_jest_globals;
+                opts.features.inline_loc_for_tests = this_parse.inline_loc_for_tests;
                 opts.features.minify_syntax = bundler.options.minify_syntax;
                 opts.features.minify_identifiers = bundler.options.minify_identifiers;
                 opts.features.dead_code_elimination = bundler.options.dead_code_elimination;

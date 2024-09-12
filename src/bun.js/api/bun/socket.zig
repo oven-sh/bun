@@ -447,6 +447,8 @@ pub const SocketConfig = struct {
     }
 };
 
+const UnixOrHost = uws.UnixOrHost;
+
 pub const Listener = struct {
     pub const log = Output.scoped(.Listener, false);
 
@@ -480,46 +482,6 @@ pub const Listener = struct {
         this.strong_data.set(globalObject, value);
         return true;
     }
-
-    const UnixOrHost = union(enum) {
-        unix: []const u8,
-        host: struct {
-            host: []const u8,
-            port: u16,
-        },
-        fd: bun.FileDescriptor,
-
-        pub fn clone(this: UnixOrHost) UnixOrHost {
-            switch (this) {
-                .unix => |u| {
-                    return .{
-                        .unix = (bun.default_allocator.dupe(u8, u) catch bun.outOfMemory()),
-                    };
-                },
-                .host => |h| {
-                    return .{
-                        .host = .{
-                            .host = (bun.default_allocator.dupe(u8, h.host) catch bun.outOfMemory()),
-                            .port = this.host.port,
-                        },
-                    };
-                },
-                .fd => |f| return .{ .fd = f },
-            }
-        }
-
-        pub fn deinit(this: UnixOrHost) void {
-            switch (this) {
-                .unix => |u| {
-                    bun.default_allocator.free(u);
-                },
-                .host => |h| {
-                    bun.default_allocator.free(h.host);
-                },
-                .fd => {}, // this is an integer
-            }
-        }
-    };
 
     pub fn reload(this: *Listener, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         const args = callframe.arguments(1);
@@ -594,7 +556,7 @@ pub const Listener = struct {
 
         const socket_context = uws.us_create_bun_socket_context(
             @intFromBool(ssl_enabled),
-            uws.Loop.get(),
+            vm.uwsLoop(),
             @sizeOf(usize),
             ctx_opts,
         ) orelse {
@@ -656,7 +618,7 @@ pub const Listener = struct {
             );
         }
 
-        var connection: Listener.UnixOrHost = if (port) |port_| .{
+        var connection: UnixOrHost = if (port) |port_| .{
             .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice(), .port = port_ },
         } else .{
             .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice(),
@@ -993,7 +955,7 @@ pub const Listener = struct {
             return .zero;
         };
 
-        const connection: Listener.UnixOrHost = blk: {
+        const connection: UnixOrHost = blk: {
             if (opts.getTruthy(globalObject, "fd")) |fd_| {
                 if (fd_.isNumber()) {
                     const fd = fd_.asFileDescriptor();
@@ -1152,7 +1114,7 @@ fn NewSocket(comptime ssl: bool) type {
         this_value: JSC.JSValue = .zero,
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
         last_4: [4]u8 = .{ 0, 0, 0, 0 },
-        connection: ?Listener.UnixOrHost = null,
+        connection: ?UnixOrHost = null,
         protos: ?[]const u8,
         server_name: ?[]const u8 = null,
 
@@ -1189,7 +1151,7 @@ fn NewSocket(comptime ssl: bool) type {
             return this.has_pending_activity.load(.acquire);
         }
 
-        pub fn doConnect(this: *This, connection: Listener.UnixOrHost) !void {
+        pub fn doConnect(this: *This, connection: UnixOrHost) !void {
             bun.assert(this.socket_context != null);
             switch (connection) {
                 .host => |c| {

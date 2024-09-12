@@ -523,6 +523,7 @@ pub const RuntimeTranspilerStore = struct {
                 .dont_bundle_twice = true,
                 .allow_commonjs = true,
                 .inject_jest_globals = bundler.options.rewrite_jest_for_tests and is_main,
+                .inline_loc_for_tests = bundler.options.has_byte_range_filter_for_tests and is_main,
                 .set_breakpoint_on_first_line = vm.debugger != null and
                     vm.debugger.?.set_breakpoint_on_first_line and
                     is_main and
@@ -1664,6 +1665,7 @@ pub const ModuleLoader = struct {
                     .dont_bundle_twice = true,
                     .allow_commonjs = true,
                     .inject_jest_globals = jsc_vm.bundler.options.rewrite_jest_for_tests and is_main,
+                    .inline_loc_for_tests = jsc_vm.bundler.options.has_byte_range_filter_for_tests and is_main,
                     .keep_json_and_toml_as_one_statement = true,
                     .set_breakpoint_on_first_line = is_main and
                         jsc_vm.debugger != null and

@@ -2498,11 +2498,21 @@ pub const Fetch = struct {
 
         // proxy: string | undefined;
 
+        var agent: JSC.JSValue = .zero;
+        // for now just agent.proxy, but we could use ca, cert etc on a follow up
+        if (options_object) |opts| {
+            if (opts.get(globalThis, "agent")) |js_agent| {
+                if (!js_agent.isEmptyOrUndefinedOrNull() and js_agent.isObject()) {
+                    agent = js_agent;
+                }
+            }
+        }
+
         url_proxy_buffer = extract_proxy: {
             const objects_to_try = [_]JSC.JSValue{
                 options_object orelse .zero,
                 request_init_object orelse .zero,
-                if (options_object) |obj| obj.get(globalThis, "agent") orelse .zero else .zero,
+                agent,
             };
             inline for (0..3) |i| {
                 if (!objects_to_try[i].isEmptyOrUndefinedOrNull()) {

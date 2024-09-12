@@ -1584,7 +1584,8 @@ class ClientRequest extends OutgoingMessage {
       // support agent proxy url/string for http/https
       try {
         // getters can throw
-        proxy = this.#agent?.proxy?.toString?.();
+        const agentProxy = this.#agent?.proxy;
+        proxy = agentProxy?.href || agentProxy;
       } catch {}
     }
     let keepalive = true;

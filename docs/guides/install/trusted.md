@@ -45,4 +45,4 @@ $ bun install
 
 ---
 
-See [Docs > Package manager > Trusted dependencies](/docs/install/lifecycle) for complete documentation of trusted dependencies.
+See [Docs > Package manager > Trusted dependencies](https://bun.sh/docs/install/lifecycle) for complete documentation of trusted dependencies.

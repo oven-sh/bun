@@ -522,6 +522,8 @@ endif()
 register_command(
   TARGET
     bun-zig
+  GROUP
+    console
   COMMENT
     "Building src/*.zig for ${ZIG_TARGET}"
   COMMAND

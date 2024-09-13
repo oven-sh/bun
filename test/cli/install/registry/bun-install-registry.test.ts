@@ -1766,15 +1766,18 @@ describe("binaries", () => {
   }
 
   test("it will skip (without errors) if a folder from `directories.bin` does not exist", async () => {
-    await write(
-      join(packageDir, "package.json"),
-      JSON.stringify({
-        name: "foo",
-        dependencies: {
-          "missing-directory-bin": "file:missing-directory-bin-1.1.1.tgz",
-        },
-      }),
-    );
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "missing-directory-bin": "file:missing-directory-bin-1.1.1.tgz",
+          },
+        }),
+      ),
+      cp(join(import.meta.dir, "missing-directory-bin-1.1.1.tgz"), join(packageDir, "missing-directory-bin-1.1.1.tgz")),
+    ]);
 
     const { stderr, exited } = spawn({
       cmd: [bunExe(), "install"],

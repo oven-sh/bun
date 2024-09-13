@@ -255,11 +255,6 @@ if(ENABLE_LTO)
 
   if(UNIX)
     register_compiler_flags(
-      DESCRIPTION "Enable LLVM's internal representation (IR)"
-      -emit-llvm
-    )
-
-    register_compiler_flags(
       DESCRIPTION "Enable virtual tables"
       LANGUAGES CXX
       -fforce-emit-vtables

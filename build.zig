@@ -197,7 +197,7 @@ pub fn build(b: *Build) !void {
 
     const generated_code_dir = b.pathFromRoot(
         b.option([]const u8, "generated-code", "Set the generated code directory") orelse
-            "build/codegen",
+            "build/debug/codegen",
     );
     const bun_version = b.option([]const u8, "version", "Value of `Bun.version`") orelse "0.0.0";
     const force_embed_js_code = b.option(bool, "force_embed_js_code", "Always embed JavaScript builtins") orelse false;

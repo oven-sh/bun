@@ -3652,17 +3652,19 @@ pub const JSValue = enum(JSValueReprInt) {
         JSMapIterator = 67,
         JSSetIterator = 68,
         JSStringIterator = 69,
-        JSPromise = 70,
-        JSMap = 71,
-        JSSet = 72,
-        JSWeakMap = 73,
-        JSWeakSet = 74,
-        WebAssemblyModule = 75,
-        WebAssemblyInstance = 76,
-        WebAssemblyGCObject = 77,
-        StringObject = 78,
-        DerivedStringObject = 79,
-        InternalFieldTuple = 80,
+        JSWrapForValidIterator = 70,
+        JSRegExpStringIterator = 71,
+        JSPromise = 72,
+        JSMap = 73,
+        JSSet = 74,
+        JSWeakMap = 75,
+        JSWeakSet = 76,
+        WebAssemblyModule = 77,
+        WebAssemblyInstance = 78,
+        WebAssemblyGCObject = 79,
+        StringObject = 80,
+        DerivedStringObject = 81,
+        InternalFieldTuple = 82,
 
         MaxJS = 0b11111111,
         Event = 0b11101111,
@@ -6752,7 +6754,7 @@ pub const ScriptExecutionStatus = enum(i32) {
 };
 
 comptime {
-    // this file is gennerated, but cant be placed in the build/codegen folder
+    // this file is gennerated, but cant be placed in the build/debug/codegen folder
     // because zig will complain about outside-of-module stuff
     _ = @import("./GeneratedJS2Native.zig");
 }

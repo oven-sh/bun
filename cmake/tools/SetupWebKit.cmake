@@ -1,10 +1,10 @@
-optionx(WEBKIT_VERSION STRING "The version of WebKit to use" DEFAULT "147ed53838e21525677492c27099567a6cd19c6b")
+optionx(WEBKIT_VERSION STRING "The version of WebKit to use" DEFAULT "4db913769178d2aaae20413b995bb19e7801d7f7")
 optionx(WEBKIT_PREBUILT BOOL "If a pre-built version of WebKit should be used" DEFAULT ON)
 
 if(WEBKIT_PREBUILT)
   set(DEFAULT_WEBKIT_PATH ${CACHE_PATH}/webkit)
 else()
-  set(DEFAULT_WEBKIT_PATH ${CWD}/src/bun.js/WebKit)
+  set(DEFAULT_WEBKIT_PATH ${CWD}/src/bun.js/WebKit/WebKitBuild/${CMAKE_BUILD_TYPE})
 endif()
 
 optionx(WEBKIT_PATH FILEPATH "The path to the WebKit directory" DEFAULT ${DEFAULT_WEBKIT_PATH})

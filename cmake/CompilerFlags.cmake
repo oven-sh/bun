@@ -50,7 +50,6 @@ endif()
 if(DEBUG)
   register_compiler_flags(
     DESCRIPTION "Disable optimization"
-    /O0 ${WIN32}
     -O0 ${UNIX}
   )
 elseif(ENABLE_SMOL)

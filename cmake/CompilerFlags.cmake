@@ -304,5 +304,3 @@ if(NOT WIN32 AND NOT APPLE)
   set(CMAKE_CXX_EXTENSIONS ON)
   set(CMAKE_POSITION_INDEPENDENT_CODE OFF)
 endif()
-
-print_compiler_flags()

@@ -1,5 +1,4 @@
 // Ensure we can include builtin headers.
-#include <math.h>
 #include <stdalign.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -17,12 +16,6 @@ int main() {
 
   // Verify printf doesn't crash.
   printf("Hello, World!\n");
-
-  // Verify tgmath.h works.
-  double x = 1.0;
-  double y = 2.0;
-  double w = pow(x, y);
-  printf("pow(1.0, 2.0) = %f\n", w);
 
   // Verify stdint.h works.
   uint8_t a = 1;

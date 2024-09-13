@@ -120,9 +120,17 @@ pub const FFI = struct {
             extern "C" fn calloc(nmemb: usize, size: usize) callconv(.C) ?*anyopaque;
             extern "C" fn perror([*:0]const u8) callconv(.C) void;
 
-            var ffi_stdinp: *anyopaque = @extern(*anyopaque, .{ .name = "__stdinp" });
-            var ffi_stdoutp: *anyopaque = @extern(*anyopaque, .{ .name = "__stdoutp" });
-            var ffi_stderrp: *anyopaque = @extern(*anyopaque, .{ .name = "__stderrp" });
+            const mac = if (Environment.isMac) struct {
+                var ffi_stdinp: *anyopaque = @extern(*anyopaque, .{ .name = "__stdinp" });
+                var ffi_stdoutp: *anyopaque = @extern(*anyopaque, .{ .name = "__stdoutp" });
+                var ffi_stderrp: *anyopaque = @extern(*anyopaque, .{ .name = "__stderrp" });
+
+                pub fn inject(state: *TCC.TCCState) void {
+                    _ = TCC.tcc_add_symbol(state, "__stdinp", ffi_stdinp);
+                    _ = TCC.tcc_add_symbol(state, "__stdoutp", ffi_stdoutp);
+                    _ = TCC.tcc_add_symbol(state, "__stderrp", ffi_stderrp);
+                }
+            } else struct {};
 
             pub fn inject(state: *TCC.TCCState) void {
                 _ = TCC.tcc_add_symbol(state, "vfprintf", ffi_vfprintf);
@@ -160,9 +168,7 @@ pub const FFI = struct {
                     _ = TCC.tcc_add_symbol(state, "dlerror", std.c.dlerror);
                 }
 
-                _ = TCC.tcc_add_symbol(state, "__stdinp", ffi_stdinp);
-                _ = TCC.tcc_add_symbol(state, "__stdoutp", ffi_stdoutp);
-                _ = TCC.tcc_add_symbol(state, "__stderrp", ffi_stderrp);
+                mac.inject(state);
             }
         };
 
@@ -181,7 +187,7 @@ pub const FFI = struct {
             this.deferred_errors.append(bun.default_allocator, bun.default_allocator.dupe(u8, msg) catch bun.outOfMemory()) catch bun.outOfMemory();
         }
 
-        const default_tcc_options = "-std=c11 -nostdlib -Wl,--export-all-symbols -g";
+        const default_tcc_options = "-std=c11 -Wl,--export-all-symbols -g";
 
         pub fn compile(this: *CompileC, globalThis: *JSGlobalObject) !struct { *TCC.TCCState, []u8 } {
             const state = TCC.tcc_new() orelse {
@@ -198,6 +204,13 @@ pub const FFI = struct {
             errdefer TCC.tcc_delete(state);
 
             var pathbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+
+            if (CompilerRT.dir()) |compiler_rt_dir| {
+                if (TCC.tcc_add_sysinclude_path(state, compiler_rt_dir) == -1) {
+                    debug("TinyCC failed to add sysinclude path", .{});
+                }
+            }
+
             if (Environment.isMac) {
                 if (bun.getenvZ("SDKROOT")) |sdkroot| {
                     const include_dir = bun.path.joinAbsStringBufZ(sdkroot, &pathbuf, &.{ "usr", "include" }, .auto);
@@ -2054,6 +2067,39 @@ pub const FFI = struct {
 };
 
 const CompilerRT = struct {
+    var compiler_rt_dir: [:0]const u8 = "";
+    const compiler_rt_sources = struct {
+        pub const @"stdbool.h" = @embedFile("./ffi-stdbool.h");
+        pub const @"stdarg.h" = @embedFile("./ffi-stdarg.h");
+        pub const @"stdalign.h" = @embedFile("./ffi-stdalign.h");
+        pub const @"tgmath.h" = @embedFile("./ffi-tgmath.h");
+        pub const @"stddef.h" = @embedFile("./ffi-stddef.h");
+        pub const @"varargs.h" = "// empty";
+    };
+
+    fn createCompilerRTDir() void {
+        const tmpdir = Fs.FileSystem.instance.tmpdir() catch return;
+        var bunCC = tmpdir.makeOpenPath("bun-cc", .{}) catch return;
+        defer bunCC.close();
+
+        inline for (comptime std.meta.declarations(compiler_rt_sources)) |decl| {
+            const source = @field(compiler_rt_sources, decl.name);
+            bunCC.writeFile(.{
+                .sub_path = decl.name,
+                .data = source,
+            }) catch {};
+        }
+        var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        compiler_rt_dir = bun.default_allocator.dupeZ(u8, bun.getFdPath(bunCC, &path_buf) catch return) catch bun.outOfMemory();
+    }
+    var create_compiler_rt_dir_once = std.once(createCompilerRTDir);
+
+    pub fn dir() ?[:0]const u8 {
+        create_compiler_rt_dir_once.call();
+        if (compiler_rt_dir.len == 0) return null;
+        return compiler_rt_dir;
+    }
+
     const MyFunctionSStructWorkAround = struct {
         JSVALUE_TO_INT64: *const fn (JSValue0: JSC.JSValue) callconv(.C) i64,
         JSVALUE_TO_UINT64: *const fn (JSValue0: JSC.JSValue) callconv(.C) u64,

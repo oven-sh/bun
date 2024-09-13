@@ -8,6 +8,7 @@ it("can run a .c file", () => {
     cmd: [bunExe(), path.join(__dirname, "cc-fixture.js")],
     cwd: __dirname,
     env: bunEnv,
+    stdio: ["inherit", "inherit", "inherit"],
   });
 
   expect(result.exitCode).toBe(42);

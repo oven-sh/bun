@@ -176,7 +176,6 @@ pub extern fn JSC__JSInternalPromise__setHandled(arg0: [*c]bindings.JSInternalPr
 pub extern fn JSC__JSInternalPromise__status(arg0: [*c]const JSC__JSInternalPromise, arg1: *bindings.VM) u32;
 pub extern fn JSC__JSFunction__optimizeSoon(JSValue0: JSC__JSValue) void;
 pub extern fn JSC__JSGlobalObject__bunVM(arg0: *bindings.JSGlobalObject) ?*bindings.VirtualMachine;
-pub extern fn JSC__JSGlobalObject__createAggregateError(arg0: *bindings.JSGlobalObject, arg1: [*c]*anyopaque, arg2: u16, arg3: [*c]const ZigString) JSC__JSValue;
 pub extern fn JSC__JSGlobalObject__createSyntheticModule_(arg0: *bindings.JSGlobalObject, arg1: [*c]ZigString, arg2: usize, arg3: [*c]bindings.JSValue, arg4: usize) void;
 pub extern fn JSC__JSGlobalObject__deleteModuleRegistryEntry(arg0: *bindings.JSGlobalObject, arg1: [*c]ZigString) void;
 pub extern fn JSC__JSGlobalObject__generateHeapSnapshot(arg0: *bindings.JSGlobalObject) JSC__JSValue;

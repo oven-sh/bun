@@ -1,8 +1,6 @@
 # IWYU = "Include What You Use"
 # https://include-what-you-use.org/
 
-include(Macros)
-
 setx(IWYU_SOURCE_PATH ${CACHE_PATH}/iwyu-${LLVM_VERSION_MAJOR})
 setx(IWYU_BUILD_PATH ${IWYU_SOURCE_PATH}/build)
 setx(IWYU_PROGRAM ${IWYU_BUILD_PATH}/bin/include-what-you-use)

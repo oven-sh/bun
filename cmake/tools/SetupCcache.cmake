@@ -1,5 +1,3 @@
-include(Macros)
-
 optionx(ENABLE_CCACHE BOOL "If ccache should be enabled" DEFAULT ON)
 
 if(NOT ENABLE_CCACHE OR CACHE_STRATEGY STREQUAL "none")

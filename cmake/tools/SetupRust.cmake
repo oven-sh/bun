@@ -1,5 +1,3 @@
-include(Macros)
-
 find_command(
   VARIABLE
     CARGO_EXECUTABLE

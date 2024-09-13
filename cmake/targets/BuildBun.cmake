@@ -883,13 +883,23 @@ set_target_properties(${bun} PROPERTIES LINK_DEPENDS ${BUN_SYMBOLS_PATH})
 include(SetupWebKit)
 
 if(WIN32)
-  target_link_libraries(${bun} PRIVATE
-    ${WEBKIT_LIB_PATH}/WTF.lib
-    ${WEBKIT_LIB_PATH}/JavaScriptCore.lib
-    ${WEBKIT_LIB_PATH}/sicudt.lib
-    ${WEBKIT_LIB_PATH}/sicuin.lib
-    ${WEBKIT_LIB_PATH}/sicuuc.lib
-  )
+  if(DEBUG)
+    target_link_libraries(${bun} PRIVATE
+      ${WEBKIT_LIB_PATH}/WTF.lib
+      ${WEBKIT_LIB_PATH}/JavaScriptCore.lib
+      ${WEBKIT_LIB_PATH}/sicudtd.lib
+      ${WEBKIT_LIB_PATH}/sicuind.lib
+      ${WEBKIT_LIB_PATH}/sicuucd.lib
+    )
+  else()
+    target_link_libraries(${bun} PRIVATE
+      ${WEBKIT_LIB_PATH}/WTF.lib
+      ${WEBKIT_LIB_PATH}/JavaScriptCore.lib
+      ${WEBKIT_LIB_PATH}/sicudt.lib
+      ${WEBKIT_LIB_PATH}/sicuin.lib
+      ${WEBKIT_LIB_PATH}/sicuuc.lib
+    )
+  endif()
 else()
   target_link_libraries(${bun} PRIVATE
     ${WEBKIT_LIB_PATH}/libWTF.a

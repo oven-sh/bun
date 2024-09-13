@@ -250,28 +250,52 @@ pub const FFI = struct {
                         },
                         .err => {},
                     }
-                } else {
-                    switch (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/local/include")) {
-                        .result => |exists| {
-                            if (exists) {
-                                if (TCC.tcc_add_sysinclude_path(state, "/usr/local/include") == -1) {
-                                    debug("TinyCC failed to add library path", .{});
-                                }
-                            }
-                        },
-                        .err => {},
-                    }
+                }
+            }
 
-                    switch (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/local/lib")) {
-                        .result => |exists| {
-                            if (exists) {
-                                if (TCC.tcc_add_library_path(state, "/usr/local/lib") == -1) {
-                                    debug("TinyCC failed to add library path", .{});
-                                }
+            if (Environment.isPosix) {
+                switch (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/local/include")) {
+                    .result => |exists| {
+                        if (exists) {
+                            if (TCC.tcc_add_sysinclude_path(state, "/usr/local/include") == -1) {
+                                debug("TinyCC failed to add library path", .{});
                             }
-                        },
-                        .err => {},
-                    }
+                        }
+                    },
+                    .err => {},
+                }
+
+                switch (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/include")) {
+                    .result => |exists| {
+                        if (exists) {
+                            if (TCC.tcc_add_sysinclude_path(state, "/usr/include") == -1) {
+                                debug("TinyCC failed to add library path", .{});
+                            }
+                        }
+                    },
+                    .err => {},
+                }
+
+                switch (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/local/lib")) {
+                    .result => |exists| {
+                        if (exists) {
+                            if (TCC.tcc_add_library_path(state, "/usr/local/lib") == -1) {
+                                debug("TinyCC failed to add library path", .{});
+                            }
+                        }
+                    },
+                    .err => {},
+                }
+
+                switch (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/lib")) {
+                    .result => |exists| {
+                        if (exists) {
+                            if (TCC.tcc_add_library_path(state, "/usr/lib") == -1) {
+                                debug("TinyCC failed to add library path", .{});
+                            }
+                        }
+                    },
+                    .err => {},
                 }
             }
 

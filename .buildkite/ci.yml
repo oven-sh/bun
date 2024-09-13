@@ -11,21 +11,25 @@ steps:
   # Linting
   - key: "lint"
     group: ":robot: Lint"
-    agents:
-      queue: "build-linux"
     steps:
       - key: "clang-tidy"
         label: ":robot: clang-tidy"
+        agents:
+          queue: "build-linux"
         command:
           - "bun run clang-tidy"
 
       - key: "clang-format"
         label: ":robot: clang-format"
+        agents:
+          queue: "build-linux"
         command:
           - "bun run clang-format"
 
       - key: "zig-format"
         label: ":robot: zig-format"
+        agents:
+          queue: "build-linux"
         command:
           - "bun run zig-format"
 

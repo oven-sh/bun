@@ -14,12 +14,15 @@ it("spawning a bun package script should inherit the ipc fd", async () => {
     }),
   );
 
+  let testMessage;
+
   const child = spawn([bunExe(), "run", "test"], {
     ipc: message => {
-      expect(message).toBe("hello");
+      testMessage = message;
     },
     stdio: ["inherit", "inherit", "inherit"],
   });
 
   await child.exited;
+  expect(testMessage).toBe("hello");
 });

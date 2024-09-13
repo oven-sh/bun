@@ -360,7 +360,7 @@ pub const RunCommand = struct {
             .stderr = .inherit,
             .stdout = .inherit,
             .stdin = .inherit,
-            .ipc_fd = ipc_fd,
+            .ipc = ipc_fd,
 
             .windows = if (Environment.isWindows) .{
                 .loop = JSC.EventLoopHandle.init(JSC.MiniEventLoop.initGlobal(env)),

@@ -962,6 +962,7 @@ pub const PosixSpawnOptions = struct {
     stdin: Stdio = .ignore,
     stdout: Stdio = .ignore,
     stderr: Stdio = .ignore,
+    ipc: ?bun.FileDescriptor = null,
     extra_fds: []const Stdio = &.{},
     cwd: []const u8 = "",
     detached: bool = false,
@@ -1077,6 +1078,7 @@ pub const PosixSpawnResult = struct {
     stdin: ?bun.FileDescriptor = null,
     stdout: ?bun.FileDescriptor = null,
     stderr: ?bun.FileDescriptor = null,
+    ipc: ?bun.FileDescriptor = null,
     extra_pipes: std.ArrayList(bun.FileDescriptor) = std.ArrayList(bun.FileDescriptor).init(bun.default_allocator),
 
     memfds: [3]bool = .{ false, false, false },
@@ -1259,6 +1261,11 @@ pub fn spawnProcessPosix(
 
     attr.set(@intCast(flags)) catch {};
     attr.resetSignals() catch {};
+
+    if (options.ipc) |ipc| {
+        try actions.inherit(ipc);
+        spawned.ipc = ipc;
+    }
 
     const stdio_options: [3]PosixSpawnOptions.Stdio = .{ options.stdin, options.stdout, options.stderr };
     const stdios: [3]*?bun.FileDescriptor = .{ &spawned.stdin, &spawned.stdout, &spawned.stderr };
@@ -1765,7 +1772,7 @@ pub const sync = struct {
         stdin: Stdio = .ignore,
         stdout: Stdio = .inherit,
         stderr: Stdio = .inherit,
-        ipc_fd: ?bun.FD = null,
+        ipc: ?bun.FileDescriptor = null,
         cwd: []const u8 = "",
         detached: bool = false,
 
@@ -1800,10 +1807,7 @@ pub const sync = struct {
                 .stdin = this.stdin.toStdio(),
                 .stdout = this.stdout.toStdio(),
                 .stderr = this.stderr.toStdio(),
-                .extra_fds = if (this.ipc_fd) |fd|
-                    &[_]SpawnOptions.Stdio{.{ .pipe = fd }}
-                else
-                    &[_]SpawnOptions.Stdio{},
+                .ipc = this.ipc,
 
                 .cwd = this.cwd,
                 .detached = this.detached,

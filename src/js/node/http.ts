@@ -1598,15 +1598,15 @@ class ClientRequest extends OutgoingMessage {
     const tls = protocol === "https:" && this.#tls ? { ...this.#tls, serverName: this.#tls.servername } : undefined;
     try {
       const fetchOptions: any = {
-        // method,
-        // headers: this.getHeaders(),
-        // redirect: "manual",
-        // signal: this[kAbortController].signal,
-        // // Timeouts are handled via this.setTimeout.
-        // timeout: false,
-        // // Disable auto gzip/deflate
-        // decompress: false,
-        // keepalive,
+        method,
+        headers: this.getHeaders(),
+        redirect: "manual",
+        signal: this[kAbortController].signal,
+        // Timeouts are handled via this.setTimeout.
+        timeout: false,
+        // Disable auto gzip/deflate
+        decompress: false,
+        keepalive,
       };
 
       if (body && method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {

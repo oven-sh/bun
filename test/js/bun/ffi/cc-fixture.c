@@ -29,18 +29,19 @@ int main() {
   uint16_t b = 2;
   uint32_t c = 3;
   uint64_t d = 4;
-  printf("uint8_t = %hhu, uint16_t = %hu, uint32_t = %u, uint64_t = %llu\n", a,
-         b, c, d);
+  printf("uint8_t 1 = %hhu, uint16_t 2 = %hu, uint32_t 3 = %u, uint64_t 4 = "
+         "%llu\n",
+         a, b, c, d);
 
   // Verify stddef.h works.
   size_t e = 5;
   ptrdiff_t f = 6;
-  printf("size_t = %zu, ptrdiff_t = %td\n", e, f);
+  printf("size_t 5 = %zu, ptrdiff_t 6 = %td\n", e, f);
 
   // Verify stdbool.h works.
   bool g = true;
   bool h = false;
-  printf("bool = %i, bool = %i\n", (int)g, (int)h);
+  printf("bool true = %d, bool false = %d\n", (int)g, (int)h);
 
   return 42;
 }

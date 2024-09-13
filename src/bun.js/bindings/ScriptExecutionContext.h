@@ -14,6 +14,10 @@
 #include "CachedScript.h"
 #include <wtf/URL.h>
 
+namespace PAL {
+class ICUConverterWrapper;
+}
+
 namespace uWS {
 template<bool isServer, bool isClient, typename UserData>
 struct WebSocketContext;
@@ -37,24 +41,8 @@ class ScriptExecutionContext : public CanMakeWeakPtr<ScriptExecutionContext> {
     WTF_MAKE_ISO_ALLOCATED(ScriptExecutionContext);
 
 public:
-    ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject)
-        : m_vm(vm)
-        , m_globalObject(globalObject)
-        , m_identifier(0)
-        , m_broadcastChannelRegistry(BunBroadcastChannelRegistry::create())
-    {
-        regenerateIdentifier();
-    }
-
-    ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject, ScriptExecutionContextIdentifier identifier)
-        : m_vm(vm)
-        , m_globalObject(globalObject)
-        , m_identifier(identifier)
-        , m_broadcastChannelRegistry(BunBroadcastChannelRegistry::create())
-    {
-        addToContextsMap();
-    }
-
+    ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject);
+    ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject, ScriptExecutionContextIdentifier identifier);
     ~ScriptExecutionContext();
 
     static ScriptExecutionContextIdentifier generateIdentifier();
@@ -160,6 +148,8 @@ public:
 
     static ScriptExecutionContext* getMainThreadScriptExecutionContext();
 
+    PAL::ICUConverterWrapper& cachedConverterICU();
+
 private:
     JSC::VM* m_vm = nullptr;
     JSC::JSGlobalObject* m_globalObject = nullptr;
@@ -183,6 +173,8 @@ private:
 
     us_socket_context_t* m_connected_ssl_client_websockets_ctx = nullptr;
     us_socket_context_t* m_connected_client_websockets_ctx = nullptr;
+
+    std::unique_ptr<PAL::ICUConverterWrapper> m_cachedConverterICU = { nullptr };
 
 public:
     template<bool isSSL, bool isServer>

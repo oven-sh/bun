@@ -73,6 +73,11 @@
 #define WEBCORE_EXPORT JS_EXPORT_PRIVATE
 #endif
 
+#if OS(DARWIN)
+// Prevent symbol names from causing issues
+#define U_DISABLE_RENAMING 1
+#endif
+
 #include <wtf/PlatformCallingConventions.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <wtf/text/MakeString.h>

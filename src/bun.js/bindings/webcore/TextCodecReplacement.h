@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013, 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2020 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,36 +25,23 @@
 
 #pragma once
 
-#include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
-#include <wtf/text/WTFString.h>
+#include "TextCodec.h"
+#include <wtf/TZoneMalloc.h>
 
 namespace PAL {
 
-struct CryptoDigestContext;
-
-class CryptoDigest {
-    WTF_MAKE_NONCOPYABLE(CryptoDigest);
+class TextCodecReplacement final : public TextCodec {
+    WTF_MAKE_TZONE_ALLOCATED(TextCodecReplacement);
 
 public:
-    enum class Algorithm {
-        SHA_1,
-        SHA_224,
-        SHA_256,
-        SHA_384,
-        SHA_512,
-    };
-    static std::unique_ptr<CryptoDigest> create(Algorithm);
-    ~CryptoDigest();
-
-    void addBytes(const void* input, size_t length);
-    Vector<uint8_t> computeHash();
-    String toHexString();
+    static void registerEncodingNames(EncodingNameRegistrar);
+    static void registerCodecs(TextCodecRegistrar);
 
 private:
-    CryptoDigest();
+    String decode(std::span<const uint8_t>, bool flush, bool stopOnError, bool& sawError) final;
+    Vector<uint8_t> encode(StringView, UnencodableHandling) const final;
 
-    std::unique_ptr<CryptoDigestContext> m_context;
+    bool m_sentEOF { false };
 };
 
 } // namespace PAL

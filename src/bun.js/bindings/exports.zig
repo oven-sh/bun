@@ -1058,3 +1058,21 @@ fn findPathInner(
     );
     return errorable.unwrap() catch null;
 }
+
+pub const WebKitTextCodec = opaque {
+    extern fn WebKitTextCodec__create(encoding_label: [*]const u8, len: usize) *WebKitTextCodec;
+    extern fn WebKitTextCodec__deinit(this: *WebKitTextCodec) void;
+    extern fn WebKitTextCodec__decode(this: *WebKitTextCodec, ptr: [*]const u8, len: usize, flush: bool, stopOnError: *bool) bun.String;
+    extern fn WebKitTextCodec__stripByteOrderMark(this: *WebKitTextCodec) void;
+    pub fn init(encoding_label: JSC.WebCore.EncodingLabel) *WebKitTextCodec {
+        return WebKitTextCodec__create(@tagName(encoding_label).ptr, @tagName(encoding_label).len);
+    }
+
+    pub const deinit = WebKitTextCodec__deinit;
+
+    pub fn decode(this: *WebKitTextCodec, input: []const u8, flush: bool, stop_on_error: *bool) bun.String {
+        return WebKitTextCodec__decode(this, input.ptr, input.len, flush, stop_on_error);
+    }
+
+    pub const stripByteOrderMark = WebKitTextCodec__stripByteOrderMark;
+};

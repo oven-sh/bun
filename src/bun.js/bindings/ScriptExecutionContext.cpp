@@ -7,6 +7,7 @@
 #include "_libusockets.h"
 #include "BunClientData.h"
 #include "EventLoopTask.h"
+#include "TextCodecICU.h"
 
 extern "C" void Bun__startLoop(us_loop_t* loop);
 
@@ -16,6 +17,24 @@ static std::atomic<unsigned> lastUniqueIdentifier = 0;
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(EventLoopTask);
 WTF_MAKE_ISO_ALLOCATED_IMPL(ScriptExecutionContext);
+
+ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject)
+    : m_vm(vm)
+    , m_globalObject(globalObject)
+    , m_identifier(0)
+    , m_broadcastChannelRegistry(BunBroadcastChannelRegistry::create())
+{
+    regenerateIdentifier();
+}
+
+ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject, ScriptExecutionContextIdentifier identifier)
+    : m_vm(vm)
+    , m_globalObject(globalObject)
+    , m_identifier(identifier)
+    , m_broadcastChannelRegistry(BunBroadcastChannelRegistry::create())
+{
+    addToContextsMap();
+}
 
 static Lock allScriptExecutionContextsMapLock;
 static HashMap<ScriptExecutionContextIdentifier, ScriptExecutionContext*>& allScriptExecutionContextsMap() WTF_REQUIRES_LOCK(allScriptExecutionContextsMapLock)
@@ -29,6 +48,15 @@ ScriptExecutionContext* ScriptExecutionContext::getScriptExecutionContext(Script
 {
     Locker locker { allScriptExecutionContextsMapLock };
     return allScriptExecutionContextsMap().get(identifier);
+}
+
+PAL::ICUConverterWrapper& ScriptExecutionContext::cachedConverterICU()
+{
+    if (!m_cachedConverterICU) {
+        m_cachedConverterICU = makeUnique<PAL::ICUConverterWrapper>();
+    }
+
+    return *m_cachedConverterICU;
 }
 
 template<bool SSL, bool isServer>

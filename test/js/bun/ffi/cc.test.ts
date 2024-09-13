@@ -10,7 +10,7 @@ it("can run a .c file", () => {
     env: bunEnv,
   });
 
-  expect(result.stdout.toString().replaceAll("\r\n", "\n").trim()).toMatchSnapshot("cc-fixture-stdout");
   expect(result.stderr.toString().replaceAll("\r\n", "\n").trim()).toMatchSnapshot("cc-fixture-stderr");
+  expect(result.stdout.toString().replaceAll("\r\n", "\n").trim()).toMatchSnapshot("cc-fixture-stdout");
   expect(result.exitCode).toBe(0);
 });

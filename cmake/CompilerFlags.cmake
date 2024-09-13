@@ -256,7 +256,7 @@ if(ENABLE_LTO)
   if(UNIX)
     register_compiler_flags(
       DESCRIPTION "Enable LLVM's internal representation (IR)"
-      -femit-llvm
+      -emit-llvm
     )
 
     register_compiler_flags(

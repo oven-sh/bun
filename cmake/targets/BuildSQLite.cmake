@@ -1,5 +1,3 @@
-include(Macros)
-
 register_cmake_command(
   TARGET
     sqlite

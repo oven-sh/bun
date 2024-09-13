@@ -791,7 +791,7 @@ pub const VirtualMachine = struct {
     ///          ["baz", "--bar"]
     ///     "bun foo
     ///          []
-    argv: []const []const u8 = &[_][]const u8{"bun"},
+    argv: []const []const u8 = &[_][]const u8{},
 
     origin_timer: std.time.Timer = undefined,
     origin_timestamp: u64 = 0,
@@ -895,7 +895,7 @@ pub const VirtualMachine = struct {
         };
     }
 
-    const VMHolder = struct {
+    pub const VMHolder = struct {
         pub threadlocal var vm: ?*VirtualMachine = null;
         pub threadlocal var cached_global_object: ?*JSGlobalObject = null;
         pub export fn Bun__setDefaultGlobalObject(global: *JSGlobalObject) void {
@@ -1893,6 +1893,93 @@ pub const VirtualMachine = struct {
         return vm;
     }
 
+    pub fn initKit(opts: Options) anyerror!*VirtualMachine {
+        JSC.markBinding(@src());
+        const allocator = opts.allocator;
+        var log: *logger.Log = undefined;
+        if (opts.log) |__log| {
+            log = __log;
+        } else {
+            log = try allocator.create(logger.Log);
+            log.* = logger.Log.init(allocator);
+        }
+
+        VMHolder.vm = try allocator.create(VirtualMachine);
+        const console = try allocator.create(ConsoleObject);
+        console.* = ConsoleObject.init(Output.errorWriter(), Output.writer());
+        const bundler = try Bundler.init(
+            allocator,
+            log,
+            try Config.configureTransformOptionsForBunVM(allocator, opts.args),
+            opts.env_loader,
+        );
+        var vm = VMHolder.vm.?;
+
+        vm.* = VirtualMachine{
+            .global = undefined,
+            .transpiler_store = RuntimeTranspilerStore.init(),
+            .allocator = allocator,
+            .entry_point = ServerEntryPoint{},
+            .bundler = bundler,
+            .console = console,
+            .log = log,
+            .flush_list = std.ArrayList(string).init(allocator),
+            .origin = bundler.options.origin,
+            .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
+            .source_mappings = undefined,
+            .macros = MacroMap.init(allocator),
+            .macro_entry_points = @TypeOf(vm.macro_entry_points).init(allocator),
+            .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
+            .origin_timestamp = getOriginTimestamp(),
+            .ref_strings = JSC.RefString.Map.init(allocator),
+            .ref_strings_mutex = .{},
+            .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
+        };
+        vm.source_mappings.init(&vm.saved_source_map_table);
+        vm.regular_event_loop.tasks = EventLoop.Queue.init(
+            default_allocator,
+        );
+        vm.regular_event_loop.immediate_tasks = EventLoop.Queue.init(
+            default_allocator,
+        );
+        vm.regular_event_loop.next_immediate_tasks = EventLoop.Queue.init(
+            default_allocator,
+        );
+        vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
+        vm.regular_event_loop.concurrent_tasks = .{};
+        vm.event_loop = &vm.regular_event_loop;
+
+        vm.bundler.macro_context = null;
+        vm.bundler.resolver.store_fd = opts.store_fd;
+        vm.bundler.resolver.prefer_module_field = false;
+
+        vm.bundler.resolver.onWakePackageManager = .{
+            .context = &vm.modules,
+            .handler = ModuleLoader.AsyncModule.Queue.onWakeHandler,
+            .onDependencyError = JSC.ModuleLoader.AsyncModule.Queue.onDependencyError,
+        };
+
+        vm.bundler.configureLinker();
+        try vm.bundler.configureFramework(false);
+
+        vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
+
+        if (opts.args.serve orelse false) {
+            vm.bundler.linker.onImportCSS = Bun.onImportCSS;
+        }
+
+        vm.regular_event_loop.virtual_machine = vm;
+        vm.smol = opts.smol;
+
+        if (opts.smol)
+            is_smol_mode = opts.smol;
+
+        vm.configureDebugger(opts.debugger);
+        vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
+
+        return vm;
+    }
+
     pub threadlocal var source_code_printer: ?*js_printer.BufferPrinter = null;
 
     pub fn clearRefString(_: *anyopaque, ref_string: *JSC.RefString) void {
@@ -2450,7 +2537,7 @@ pub const VirtualMachine = struct {
                 return;
             },
             else => {
-                var errors_stack: [256]*anyopaque = undefined;
+                var errors_stack: [256]JSValue = undefined;
 
                 const len = @min(log.msgs.items.len, errors_stack.len);
                 const errors = errors_stack[0..len];
@@ -2458,21 +2545,20 @@ pub const VirtualMachine = struct {
 
                 for (logs, errors) |msg, *current| {
                     current.* = switch (msg.metadata) {
-                        .build => BuildMessage.create(globalThis, globalThis.allocator(), msg).asVoid(),
+                        .build => BuildMessage.create(globalThis, globalThis.allocator(), msg),
                         .resolve => ResolveMessage.create(
                             globalThis,
                             globalThis.allocator(),
                             msg,
                             referrer.toUTF8(bun.default_allocator).slice(),
-                        ).asVoid(),
+                        ),
                     };
                 }
 
                 ret.* = ErrorableResolvedSource.err(
                     err,
                     globalThis.createAggregateError(
-                        errors.ptr,
-                        @as(u16, @intCast(errors.len)),
+                        errors,
                         &ZigString.init(
                             std.fmt.allocPrint(globalThis.allocator(), "{d} errors building \"{}\"", .{
                                 errors.len,
@@ -2619,11 +2705,11 @@ pub const VirtualMachine = struct {
             if (this.isWatcherEnabled()) {
                 this.eventLoop().performGC();
                 switch (this.pending_internal_promise.status(this.global.vm())) {
-                    JSC.JSPromise.Status.Pending => {
-                        while (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                    .pending => {
+                        while (this.pending_internal_promise.status(this.global.vm()) == .pending) {
                             this.eventLoop().tick();
 
-                            if (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                            if (this.pending_internal_promise.status(this.global.vm()) == .pending) {
                                 this.eventLoop().autoTick();
                             }
                         }
@@ -2633,11 +2719,11 @@ pub const VirtualMachine = struct {
             } else {
                 this.eventLoop().performGC();
                 this.waitForPromise(JSC.AnyPromise{
-                    .Internal = promise,
+                    .internal = promise,
                 });
             }
 
-            if (promise.status(this.global.vm()) == .Rejected)
+            if (promise.status(this.global.vm()) == .rejected)
                 return promise;
         }
 
@@ -2718,7 +2804,7 @@ pub const VirtualMachine = struct {
         const promise = try this.reloadEntryPoint(entry_path);
         this.eventLoop().performGC();
         this.eventLoop().waitForPromiseWithTermination(JSC.AnyPromise{
-            .Internal = promise,
+            .internal = promise,
         });
         if (this.worker) |worker| {
             if (worker.hasRequestedTerminate()) {
@@ -2735,11 +2821,11 @@ pub const VirtualMachine = struct {
         if (this.isWatcherEnabled()) {
             this.eventLoop().performGC();
             switch (this.pending_internal_promise.status(this.global.vm())) {
-                JSC.JSPromise.Status.Pending => {
-                    while (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                .pending => {
+                    while (this.pending_internal_promise.status(this.global.vm()) == .pending) {
                         this.eventLoop().tick();
 
-                        if (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                        if (this.pending_internal_promise.status(this.global.vm()) == .pending) {
                             this.eventLoop().autoTick();
                         }
                     }
@@ -2747,14 +2833,12 @@ pub const VirtualMachine = struct {
                 else => {},
             }
         } else {
-            if (promise.status(this.global.vm()) == .Rejected) {
+            if (promise.status(this.global.vm()) == .rejected) {
                 return promise;
             }
 
             this.eventLoop().performGC();
-            this.waitForPromise(JSC.AnyPromise{
-                .Internal = promise,
-            });
+            this.waitForPromise(.{ .internal = promise });
         }
 
         this.eventLoop().autoTick();
@@ -2769,11 +2853,11 @@ pub const VirtualMachine = struct {
         if (this.isWatcherEnabled()) {
             this.eventLoop().performGC();
             switch (this.pending_internal_promise.status(this.global.vm())) {
-                JSC.JSPromise.Status.Pending => {
-                    while (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                .pending => {
+                    while (this.pending_internal_promise.status(this.global.vm()) == .pending) {
                         this.eventLoop().tick();
 
-                        if (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                        if (this.pending_internal_promise.status(this.global.vm()) == .pending) {
                             this.eventLoop().autoTick();
                         }
                     }
@@ -2781,14 +2865,12 @@ pub const VirtualMachine = struct {
                 else => {},
             }
         } else {
-            if (promise.status(this.global.vm()) == .Rejected) {
+            if (promise.status(this.global.vm()) == .rejected) {
                 return promise;
             }
 
             this.eventLoop().performGC();
-            this.waitForPromise(JSC.AnyPromise{
-                .Internal = promise,
-            });
+            this.waitForPromise(.{ .internal = promise });
         }
 
         return this.pending_internal_promise;
@@ -2849,10 +2931,20 @@ pub const VirtualMachine = struct {
 
         promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(entry_path)) orelse return null;
         this.waitForPromise(JSC.AnyPromise{
-            .Internal = promise,
+            .internal = promise,
         });
 
         return promise;
+    }
+
+    pub fn printErrorLikeObjectSimple(this: *VirtualMachine, value: JSValue, writer: anytype, comptime escape_codes: bool) void {
+        this.printErrorlikeObject(value, null, null, @TypeOf(writer), writer, escape_codes, false);
+    }
+
+    pub fn printErrorLikeObjectToConsole(this: *VirtualMachine, value: JSValue) void {
+        switch (Output.enable_ansi_colors_stderr) {
+            inline else => |colors| this.printErrorLikeObjectSimple(value, Output.errorWriter(), colors),
+        }
     }
 
     // When the Error-like object is one of our own, it's best to rely on the object directly instead of serializing it to a ZigException.
@@ -3945,12 +4037,38 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
         pub const Watcher = GenericWatcher.NewWatcher(*@This());
         const Reloader = @This();
 
-        onAccept: std.ArrayHashMapUnmanaged(GenericWatcher.HashType, bun.BabyList(OnAcceptCallback), bun.ArrayIdentityContext, false) = .{},
         ctx: *Ctx,
         verbose: bool = false,
         pending_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
         tombstones: bun.StringHashMapUnmanaged(*bun.fs.FileSystem.RealFS.EntriesOption) = .{},
+
+        pub fn init(ctx: *Ctx, fs: *bun.fs.FileSystem, verbose: bool, clear_screen_flag: bool) *@This().Watcher {
+            const reloader = bun.default_allocator.create(Reloader) catch bun.outOfMemory();
+            reloader.* = .{
+                .ctx = ctx,
+                .verbose = Environment.enable_logs or verbose,
+            };
+
+            clear_screen = clear_screen_flag;
+            const watcher = @This().Watcher.init(reloader, fs, bun.default_allocator) catch |err| {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
+            };
+            watcher.start() catch |err| {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                Output.panic("Failed to start File Watcher: {s}", .{@errorName(err)});
+            };
+            return watcher;
+        }
+
+        fn debug(comptime fmt: string, args: anytype) void {
+            if (Environment.enable_logs) {
+                Output.scoped(.hot_reloader, false)(fmt, args);
+            } else {
+                Output.prettyErrorln("<cyan>watcher<r><d>:<r> " ++ fmt, args);
+            }
+        }
 
         pub fn eventLoop(this: @This()) *EventLoopType {
             return this.ctx.eventLoop();
@@ -4008,7 +4126,8 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 if (comptime reload_immediately) {
                     Output.flush();
                     if (comptime Ctx == ImportWatcher) {
-                        this.reloader.ctx.rareData().closeAllListenSocketsForWatchMode();
+                        if (this.reloader.ctx.rare_data) |rare|
+                            rare.closeAllListenSocketsForWatchMode();
                     }
                     bun.reloadProcess(bun.default_allocator, clear_screen, false);
                     unreachable;
@@ -4030,21 +4149,6 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             }
         };
 
-        fn NewCallback(comptime FunctionSignature: type) type {
-            return union(enum) {
-                javascript_callback: JSC.Strong,
-                zig_callback: struct {
-                    ptr: *anyopaque,
-                    function: *const FunctionSignature,
-                },
-            };
-        }
-
-        pub const OnAcceptCallback = NewCallback(fn (
-            vm: *JSC.VirtualMachine,
-            specifier: []const u8,
-        ) void);
-
         pub fn enableHotModuleReloading(this: *Ctx) void {
             if (comptime @TypeOf(this.bun_watcher) == ImportWatcher) {
                 if (this.bun_watcher != .none)
@@ -4057,7 +4161,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             var reloader = bun.default_allocator.create(Reloader) catch bun.outOfMemory();
             reloader.* = .{
                 .ctx = this,
-                .verbose = if (@hasField(Ctx, "log")) this.log.level.atLeast(.info) else false,
+                .verbose = Environment.enable_logs or if (@hasField(Ctx, "log")) this.log.level.atLeast(.info) else false,
             };
 
             if (comptime @TypeOf(this.bun_watcher) == ImportWatcher) {
@@ -4136,8 +4240,10 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 } else {
                     return this.ctx.bun_watcher.hot;
                 }
-            } else {
+            } else if (@typeInfo(@TypeOf(this.ctx.bun_watcher)) == .Optional) {
                 return this.ctx.bun_watcher.?;
+            } else {
+                return this.ctx.bun_watcher;
             }
         }
 
@@ -4147,18 +4253,18 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             changed_files: []?[:0]u8,
             watchlist: GenericWatcher.WatchList,
         ) void {
-            var slice = watchlist.slice();
+            const slice = watchlist.slice();
             const file_paths = slice.items(.file_path);
-            var counts = slice.items(.count);
+            const counts = slice.items(.count);
             const kinds = slice.items(.kind);
             const hashes = slice.items(.hash);
             const parents = slice.items(.parent_hash);
             const file_descriptors = slice.items(.fd);
-            var ctx = this.getContext();
+            const ctx = this.getContext();
             defer ctx.flushEvictions();
             defer Output.flush();
 
-            var bundler = if (@TypeOf(this.ctx.bundler) == *bun.Bundler)
+            const bundler = if (@TypeOf(this.ctx.bundler) == *bun.Bundler)
                 this.ctx.bundler
             else
                 &this.ctx.bundler;
@@ -4184,9 +4290,8 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 // const path = Fs.PathName.init(file_path);
                 const id = hashes[event.index];
 
-                if (comptime Environment.isDebug) {
-                    Output.prettyErrorln("[watch] {s} ({s}, {})", .{ file_path, @tagName(kind), event.op });
-                }
+                if (this.verbose)
+                    debug("onFileUpdate {s} ({s}, {})", .{ file_path, @tagName(kind), event.op });
 
                 switch (kind) {
                     .file => {
@@ -4200,7 +4305,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         }
 
                         if (this.verbose)
-                            Output.prettyErrorln("<r><d>File changed: {s}<r>", .{fs.relativeTo(file_path)});
+                            debug("File changed: {s}", .{fs.relativeTo(file_path)});
 
                         if (event.op.write or event.op.delete or event.op.rename) {
                             current_task.append(id);
@@ -4322,13 +4427,13 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                     last_file_hash = file_hash;
 
                                     if (this.verbose)
-                                        Output.prettyErrorln("<r> <d>File change: {s}<r>", .{fs.relativeTo(abs_path)});
+                                        debug("File change: {s}", .{fs.relativeTo(abs_path)});
                                 }
                             }
                         }
 
                         if (this.verbose) {
-                            Output.prettyErrorln("<r> <d>Dir change: {s}<r>", .{fs.relativeTo(file_path)});
+                            debug("Dir change: {s}", .{fs.relativeTo(file_path)});
                         }
                     },
                 }

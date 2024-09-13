@@ -793,7 +793,8 @@ pub export fn napi_make_callback(env: napi_env, _: *anyopaque, recv_: napi_value
             @as([*]const JSC.JSValue, @ptrCast(args.?))[0..arg_count]
         else
             &.{},
-    );
+    ) catch |err| // TODO: handle errors correctly
+        env.takeException(err);
 
     if (maybe_result) |result| {
         result.set(env, res);
@@ -1561,7 +1562,6 @@ pub const ThreadSafeFunction = struct {
 
     pub fn call(this: *ThreadSafeFunction) void {
         const task = this.channel.tryReadItem() catch null orelse return;
-        const vm = this.event_loop.virtual_machine;
         const globalObject = this.env;
 
         this.tracker.willDispatch(globalObject);
@@ -1572,10 +1572,9 @@ pub const ThreadSafeFunction = struct {
                 if (js_function.isEmptyOrUndefinedOrNull()) {
                     return;
                 }
-                const err = js_function.call(globalObject, .undefined, &.{});
-                if (err.isAnyError()) {
-                    _ = vm.uncaughtException(globalObject, err, false);
-                }
+
+                _ = js_function.call(globalObject, .undefined, &.{}) catch |err|
+                    globalObject.reportActiveExceptionAsUnhandled(err);
             },
             .c => |cb| {
                 if (comptime bun.Environment.isDebug) {

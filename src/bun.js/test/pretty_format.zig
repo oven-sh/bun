@@ -1244,7 +1244,8 @@ pub const JestPrettyFormat = struct {
                             .Object,
                             Writer,
                             writer_,
-                            toJSONFunction.call(this.globalThis, value, &.{}),
+                            toJSONFunction.call(this.globalThis, value, &.{}) catch |err|
+                                this.globalThis.takeException(err),
                             .Object,
                             enable_ansi_colors,
                         );

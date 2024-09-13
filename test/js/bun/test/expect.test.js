@@ -4733,6 +4733,7 @@ describe("expect()", () => {
       expect(() => {
         throw "!";
       }).not.toThrow(/ball/);
+      throw undefined;
     } catch (e) {
       expect(e).toBeUndefined();
     }
@@ -4740,6 +4741,7 @@ describe("expect()", () => {
       expect(() => {
         throw "ball";
       }).not.toThrow(/ball/);
+      expect.unreachable();
     } catch (e) {
       expect(e).toBeDefined();
       expect(e.message).toContain("Received message: ");

@@ -5,7 +5,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 describe("--watch works", async () => {
-  for (const watchedFile of ["tmp.js", "entry.js"]) {
+  for (const watchedFile of ["entry.js", "tmp.js"]) {
     test(`with ${watchedFile}`, async () => {
       const tmpdir_ = tempDirWithFiles("watch-fixture", {
         "tmp.js": "console.log('hello #1')",

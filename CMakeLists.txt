@@ -39,3 +39,9 @@ include(SetupRust)
 # --- Targets ---
 
 include(BuildBun)
+
+# --- Static Analysis ---
+
+include(RunClangFormat)
+include(RunClangTidy)
+include(RunZigFormat)

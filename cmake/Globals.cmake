@@ -382,7 +382,7 @@ function(register_command)
   endforeach()
 
   if(CMD_ALWAYS_RUN)
-    list(APPEND CMD_EFFECTIVE_OUTPUTS ${CMD_CWD}/.always_run)
+    list(APPEND CMD_EFFECTIVE_OUTPUTS ${CMD_CWD}/.always_run_${CMD_TARGET})
   endif()
 
   if(CMD_TARGET_PHASE)

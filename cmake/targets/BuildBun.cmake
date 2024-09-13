@@ -484,6 +484,9 @@ list(APPEND BUN_ZIG_SOURCES
   ${CWD}/build.zig
   ${CWD}/root.zig
   ${CWD}/root_wasm.zig
+)
+
+set(BUN_ZIG_GENERATED_SOURCES
   ${BUN_ZIG_IDENTIFIER_OUTPUTS}
   ${BUN_ERROR_OUTPUTS}
   ${BUN_FALLBACK_DECODER_OUTPUT}
@@ -496,9 +499,9 @@ list(APPEND BUN_ZIG_SOURCES
 
 # In debug builds, these are not embedded, but rather referenced at runtime.
 if (DEBUG)
-  list(APPEND BUN_ZIG_SOURCES ${CODEGEN_PATH}/kit_empty_file)
+  list(APPEND BUN_ZIG_GENERATED_SOURCES ${CODEGEN_PATH}/kit_empty_file)
 else()
-  list(APPEND BUN_ZIG_SOURCES ${BUN_KIT_RUNTIME_OUTPUTS})
+  list(APPEND BUN_ZIG_GENERATED_SOURCES ${BUN_KIT_RUNTIME_OUTPUTS})
 endif()
 
 set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.o)
@@ -545,6 +548,7 @@ register_command(
     ${BUN_ZIG_OUTPUT}
   SOURCES
     ${BUN_ZIG_SOURCES}
+    ${BUN_ZIG_GENERATED_SOURCES}
   TARGETS
     clone-zig
 )

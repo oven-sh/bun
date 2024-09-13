@@ -40,20 +40,22 @@
     "build:release:local": "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -DWEBKIT_LOCAL=ON -B build/release",
     "build:release:with_logs": "cmake . -DCMAKE_BUILD_TYPE=Release -DENABLE_LOGS=true -GNinja -Bbuild-release && ninja -Cbuild-release",
     "build:debug-zig-release": "cmake . -DCMAKE_BUILD_TYPE=Release -DZIG_OPTIMIZE=Debug -GNinja -Bbuild-debug-zig-release && ninja -Cbuild-debug-zig-release",
-    "bump": "bun ./scripts/bump.ts",
     "typecheck": "tsc --noEmit && cd test && bun run typecheck",
     "fmt": "prettier --config=.prettierrc-ci --write --cache './{.vscode,src,test,bench,packages/{bun-types,bun-inspector-*,bun-vscode,bun-debug-adapter-protocol}}/**/*.{mjs,ts,tsx,js,jsx}'",
-    "fmt:cpp": "clang-format -i src/bun.js/bindings/**/*.{cpp,h} --verbose",
-    "fmt:zig": "bun run zig:fmt",
+    "fmt:cpp": "bun run build --target clang-format",
+    "fmt:zig": "bun run build --target zig-format",
     "lint": "eslint './**/*.d.ts' --cache",
     "lint:fix": "eslint './**/*.d.ts' --cache --fix",
     "test": "node scripts/runner.node.mjs ./build/bun-debug",
     "test:release": "node scripts/runner.node.mjs ./build-release/bun",
     "banned": "bun packages/bun-internal-test/src/linter.ts",
     "zig": "vendor/zig/zig.exe",
-    "zig:fmt": "bun run zig fmt src/*.zig src/*/*.zig src/*/*/*.zig src/*/*/*/*.zig",
+    "zig:fmt": "bun run fmt:zig",
     "zig:check": "bun run zig build check --summary new",
     "zig:check-all": "bun run zig build check-all --summary new",
-    "zig:check-windows": "bun run zig build check-windows --summary new"
+    "zig:check-windows": "bun run zig build check-windows --summary new",
+    "clang-format": "bun run build --target clang-format-check",
+    "clang-tidy": "bun run build --target clang-tidy",
+    "zig-format": "bun run build --target zig-format-check"
   }
 }

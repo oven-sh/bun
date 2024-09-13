@@ -48,7 +48,6 @@ optionx(ZIG_LOCAL_CACHE_DIR FILEPATH "The path to local the zig cache directory"
 optionx(ZIG_GLOBAL_CACHE_DIR FILEPATH "The path to the global zig cache directory" DEFAULT ${CACHE_PATH}/zig/global)
 
 setx(ZIG_REPOSITORY_PATH ${VENDOR_PATH}/zig)
-setx(ZIG_PATH ${CACHE_PATH}/zig/bin)
 
 register_repository(
   NAME
@@ -77,7 +76,7 @@ find_command(
     zig
     zig.exe
   PATHS
-    ${ZIG_PATH}
+    ${ZIG_REPOSITORY_PATH}
   VERSION
     ${ZIG_VERSION}
   REQUIRED
@@ -120,24 +119,40 @@ setx(ZIG_DOWNLOAD_URL https://ziglang.org/download/${ZIG_VERSION}/${ZIG_FILENAME
 file(DOWNLOAD ${ZIG_DOWNLOAD_URL} ${TMP_PATH}/${ZIG_FILENAME} SHOW_PROGRESS)
 file(ARCHIVE_EXTRACT INPUT ${TMP_PATH}/${ZIG_FILENAME} DESTINATION ${TMP_PATH} TOUCH)
 file(REMOVE ${TMP_PATH}/${ZIG_FILENAME})
-file(COPY ${TMP_PATH}/${ZIG_NAME}/${ZIG_EXE} DESTINATION ${ZIG_PATH})
-file(CHMOD ${ZIG_PATH}/${ZIG_EXE} PERMISSIONS OWNER_EXECUTE OWNER_READ OWNER_WRITE)
-setx(CMAKE_ZIG_COMPILER ${ZIG_PATH}/${ZIG_EXE})
 
-if(NOT WIN32)
-  file(CREATE_LINK ${ZIG_PATH}/${ZIG_EXE} ${ZIG_PATH}/zig.exe SYMBOLIC)
-endif()
-
-# Some zig commands need the executable to be in the same directory as the zig repository
 register_command(
   COMMENT
-    "Creating symlink for zig"
+    "Copying zig"
   COMMAND
-    ${CMAKE_COMMAND} -E copy ${ZIG_PATH}/${ZIG_EXE} ${ZIG_REPOSITORY_PATH}/${ZIG_EXE}
-    && ${CMAKE_COMMAND} -E create_symlink ${ZIG_REPOSITORY_PATH}/${ZIG_EXE} ${ZIG_REPOSITORY_PATH}/zig.exe
+    ${CMAKE_COMMAND}
+      -E copy
+      ${TMP_PATH}/${ZIG_NAME}/${ZIG_EXE}
+      ${ZIG_REPOSITORY_PATH}/${ZIG_EXE}
   OUTPUTS
     ${ZIG_REPOSITORY_PATH}/${ZIG_EXE}
-    ${ZIG_REPOSITORY_PATH}/zig.exe
   TARGETS
     clone-zig
 )
+
+# Tools like VSCode need a stable path to the zig executable, on both Unix and Windows
+# To workaround this, we create a `bun.exe` symlink on Unix.
+if(NOT WIN32)
+  register_command(
+    COMMENT
+      "Copying zig.exe"
+    COMMAND
+      ${CMAKE_COMMAND}
+        -E create_symlink
+        ${ZIG_REPOSITORY_PATH}/${ZIG_EXE}
+        ${ZIG_REPOSITORY_PATH}/zig.exe
+    SOURCES
+      ${ZIG_REPOSITORY_PATH}/${ZIG_EXE}
+    OUTPUTS
+      ${ZIG_REPOSITORY_PATH}/zig.exe
+    TARGETS
+      clone-zig
+    ALWAYS_RUN
+  )
+endif()
+
+setx(CMAKE_ZIG_COMPILER ${ZIG_REPOSITORY_PATH}/zig.exe)

@@ -8,6 +8,27 @@
 # for a particular commit.
 
 steps:
+  # Linting
+  - key: "lint"
+    group: ":robot: Lint"
+    agents:
+      queue: "build-linux"
+    steps:
+      - key: "clang-tidy"
+        label: ":robot: clang-tidy"
+        command:
+          - "bun run clang-tidy"
+
+      - key: "clang-format"
+        label: ":robot: clang-format"
+        command:
+          - "bun run clang-format"
+
+      - key: "zig-format"
+        label: ":robot: zig-format"
+        command:
+          - "bun run zig-format"
+
   # macOS aarch64
   - key: "darwin-aarch64"
     group: ":darwin: aarch64"

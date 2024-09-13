@@ -1764,6 +1764,29 @@ describe("binaries", () => {
     expect(err).toBeEmpty();
     expect(await result.exited).toBe(0);
   }
+
+  test("it will skip (without errors) if a folder from `directories.bin` does not exist", async () => {
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "missing-directory-bin": "file:missing-directory-bin-1.1.1.tgz",
+        },
+      }),
+    );
+
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+  });
 });
 
 test("it should install with missing bun.lockb, node_modules, and/or cache", async () => {

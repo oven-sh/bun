@@ -1,5 +1,5 @@
 import { cc } from "bun:ffi";
-import fixture from "./cc-fixture.c";
+import fixture from "./cc-fixture.c" with { type: "file" };
 const {
   symbols: { main },
 } = cc({

@@ -598,7 +598,7 @@ declare module "bun:ffi" {
   ): Library<Fns>;
 
   /**
-   * Compile ISO C11 source code using TinyCC, and make {@link symbols} available as functions to JavaScript.
+   * **Experimental:** Compile ISO C11 source code using TinyCC, and make {@link symbols} available as functions to JavaScript.
    *
    * @param options
    * @returns Library<Fns>
@@ -610,7 +610,7 @@ declare module "bun:ffi" {
    * ```js
    * import { cc } from "bun:ffi";
    * import hello from "./hello.c" with {type: "file"};
-   * const lib = cc({
+   * const {symbols: {hello}} = cc({
    *   source: hello,
    *   symbols: {
    *     hello: {
@@ -620,7 +620,7 @@ declare module "bun:ffi" {
    *   },
    * });
    * // "Hello, World!"
-   * console.log(lib.symbols.hello());
+   * console.log(hello());
    * ```
    *
    * `./hello.c`:

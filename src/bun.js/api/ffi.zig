@@ -130,7 +130,9 @@ pub const FFI = struct {
                     _ = TCC.tcc_add_symbol(state, "__stdoutp", ffi_stdoutp);
                     _ = TCC.tcc_add_symbol(state, "__stderrp", ffi_stderrp);
                 }
-            } else struct {};
+            } else struct {
+                pub fn inject(_: *TCC.TCCState) void {}
+            };
 
             pub fn inject(state: *TCC.TCCState) void {
                 _ = TCC.tcc_add_symbol(state, "vfprintf", ffi_vfprintf);

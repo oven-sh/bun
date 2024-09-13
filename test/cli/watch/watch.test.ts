@@ -14,6 +14,7 @@ for (const dir of ["dir", "©️"]) {
 
     const updateFile = async (i: number) => {
       await Bun.write(path, `console.log(${i}, __dirname);`);
+      await Bun.sleep(1000);
     };
 
     let i = 0;

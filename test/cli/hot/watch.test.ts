@@ -12,6 +12,7 @@ describe("--watch works", async () => {
         "entry.js": "import './tmp.js'",
         "package.json": JSON.stringify({ name: "foo", version: "0.0.1" }),
       });
+      await Bun.sleep(1000);
       const tmpfile = join(tmpdir_, "tmp.js");
       const process = spawn({
         cmd: [bunExe(), "--watch", join(tmpdir_, watchedFile)],

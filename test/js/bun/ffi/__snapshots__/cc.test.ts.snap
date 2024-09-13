@@ -3,10 +3,10 @@
 exports[`can run a .c file: cc-fixture-stdout 1`] = `
 "Hello, World!
 Hello, World!
-pow(1.0, 2.0) = 0.000000
-uint8_t = 64, uint16_t = 12288, uint32_t = 1876926016, uint64_t = 2199027368020
-size_t = 6171893328, ptrdiff_t = 2199027368020
-bool = 1876926032, bool = 4112468"
+pow(1.0, 2.0) = 1.000000
+uint8_t 1 = 1, uint16_t 2 = 2, uint32_t 3 = 3, uint64_t 4 = 4
+size_t 5 = 5, ptrdiff_t 6 = 6
+bool true = 1, bool false = 0"
 `;
 
 exports[`can run a .c file: cc-fixture-stderr 1`] = `"Hello, World!"`;

@@ -1765,6 +1765,7 @@ pub const sync = struct {
         stdin: Stdio = .ignore,
         stdout: Stdio = .inherit,
         stderr: Stdio = .inherit,
+        ipc_fd: ?bun.FD = null,
         cwd: []const u8 = "",
         detached: bool = false,
 
@@ -1799,6 +1800,11 @@ pub const sync = struct {
                 .stdin = this.stdin.toStdio(),
                 .stdout = this.stdout.toStdio(),
                 .stderr = this.stderr.toStdio(),
+                .extra_fds = if (this.ipc_fd) |fd|
+                    &[_]SpawnOptions.Stdio{.{ .pipe = fd }}
+                else
+                    &[_]SpawnOptions.Stdio{},
+
                 .cwd = this.cwd,
                 .detached = this.detached,
                 .use_execve_on_macos = this.use_execve_on_macos,

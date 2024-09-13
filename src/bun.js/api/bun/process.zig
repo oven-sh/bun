@@ -1032,6 +1032,7 @@ pub const WindowsSpawnOptions = struct {
     stdin: Stdio = .ignore,
     stdout: Stdio = .ignore,
     stderr: Stdio = .ignore,
+    ipc: ?bun.FileDescriptor = null,
     extra_fds: []const Stdio = &.{},
     cwd: []const u8 = "",
     detached: bool = false,

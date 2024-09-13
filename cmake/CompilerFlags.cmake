@@ -153,7 +153,9 @@ register_compiler_flags(
   /Gw ${WIN32}
 )
 
-if(UNIX)
+# having this enabled in debug mode on macOS >=14 causes libarchive to fail to configure with the error:
+# > pid_t doesn't exist on this platform?
+if((DEBUG AND LINUX) OR ((NOT DEBUG) AND UNIX))
   register_compiler_flags(
     DESCRIPTION "Emit an address-significance table"
     -faddrsig

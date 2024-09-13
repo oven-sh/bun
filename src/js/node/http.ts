@@ -1585,9 +1585,11 @@ class ClientRequest extends OutgoingMessage {
       try {
         // getters can throw
         const agentProxy = this.#agent?.proxy;
+        // this should work for URL like objects and strings
         proxy = agentProxy?.href || agentProxy;
       } catch {}
     }
+
     let keepalive = true;
     const agentKeepalive = this.#agent?.keepalive;
     if (agentKeepalive !== undefined) {
@@ -1596,15 +1598,15 @@ class ClientRequest extends OutgoingMessage {
     const tls = protocol === "https:" && this.#tls ? { ...this.#tls, serverName: this.#tls.servername } : undefined;
     try {
       const fetchOptions: any = {
-        method,
-        headers: this.getHeaders(),
-        redirect: "manual",
-        signal: this[kAbortController].signal,
-        // Timeouts are handled via this.setTimeout.
-        timeout: false,
-        // Disable auto gzip/deflate
-        decompress: false,
-        keepalive,
+        // method,
+        // headers: this.getHeaders(),
+        // redirect: "manual",
+        // signal: this[kAbortController].signal,
+        // // Timeouts are handled via this.setTimeout.
+        // timeout: false,
+        // // Disable auto gzip/deflate
+        // decompress: false,
+        // keepalive,
       };
 
       if (body && method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
@@ -1807,8 +1809,13 @@ class ClientRequest extends OutgoingMessage {
 
     if (options.rejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = options.rejectUnauthorized;
     else {
-      const agentRejectUnauthorized = this.#agent?.rejectUnauthorized;
+      let agentRejectUnauthorized = agent?.options?.rejectUnauthorized;
       if (agentRejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = agentRejectUnauthorized;
+      else {
+        // popular https-proxy-agent uses connectOpts
+        agentRejectUnauthorized = agent?.connectOpts?.rejectUnauthorized;
+        if (agentRejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = agentRejectUnauthorized;
+      }
     }
     if (options.ca) {
       if (!isValidTLSArray(options.ca))

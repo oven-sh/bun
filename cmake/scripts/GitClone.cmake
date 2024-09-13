@@ -1,4 +1,4 @@
-include(cmake/Macros.cmake)
+include(cmake/Globals.cmake)
 
 if(NOT GIT_PATH OR NOT GIT_REPOSITORY OR NOT GIT_REF)
   message(FATAL_ERROR "git_clone: GIT_PATH, GIT_REPOSITORY, and GIT_REF are required")
@@ -33,6 +33,7 @@ foreach(i RANGE 10)
     ${GIT_DOWNLOAD_TMP_PATH}
     TIMEOUT 120
     STATUS GIT_DOWNLOAD_STATUS
+    SHOW_PROGRESS
   )
   if(GIT_DOWNLOAD_STATUS MATCHES "^0")
     file(RENAME ${GIT_DOWNLOAD_TMP_PATH} ${GIT_DOWNLOAD_PATH})

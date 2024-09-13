@@ -8,7 +8,11 @@ const typeBaseNameT = bun.meta.typeBaseNameT;
 const validators = @import("./util/validators.zig");
 const validateObject = validators.validateObject;
 const validateString = validators.validateString;
-const stack_fallback_size_large = 32 * @sizeOf([]const u8); // up to 32 strings on the stack
+// Allow on the stack:
+// - 8 string slices
+// - 3 path buffers
+// - extra padding
+const stack_fallback_size_large = 8 * @sizeOf([]const u8) + ((stack_fallback_size_small * 3) + 64);
 const Syscall = bun.sys;
 const strings = bun.strings;
 const L = strings.literal;
@@ -200,13 +204,9 @@ pub fn getCwdWindowsT(comptime T: type, buf: []T) MaybeBuf(T) {
 }
 
 pub fn getCwdU8(buf: []u8) MaybeBuf(u8) {
-    const result = bun.getcwd(buf) catch {
-        return MaybeBuf(u8).errnoSys(
-            @as(c_int, 0),
-            Syscall.Tag.getcwd,
-        ).?;
-    };
-    return MaybeBuf(u8){ .result = result };
+    const cached_cwd = strings.withoutTrailingSlash(bun.fs.FileSystem.instance.top_level_dir);
+    @memcpy(buf[0..cached_cwd.len], cached_cwd);
+    return MaybeBuf(u8){ .result = buf[0..cached_cwd.len] };
 }
 
 pub fn getCwdU16(buf: []u16) MaybeBuf(u16) {
@@ -2496,6 +2496,7 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
             // Translated from the following JS code:
             //   path = process.env[`=${resolvedDevice}`] || process.cwd();
             if (comptime Environment.isWindows) {
+                var u16Buf: bun.WPathBuffer = undefined;
                 // Windows has the concept of drive-specific current working
                 // directories. If we've resolved a drive letter but not yet an
                 // absolute path, get cwd for that drive, or the process cwd if
@@ -2518,10 +2519,7 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
                     if (T == u16) {
                         break :brk buf2[0..bufSize];
                     } else {
-                        var u16Buf: bun.WPathBuffer = undefined;
-                        bufSize = std.unicode.utf8ToUtf16Le(&u16Buf, buf2[0..bufSize]) catch {
-                            return MaybeSlice(T).errnoSys(0, Syscall.Tag.getenv).?;
-                        };
+                        bufSize = std.unicode.wtf16LeToWtf8(buf2[0..bufSize], &u16Buf);
                         break :brk u16Buf[0..bufSize :0];
                     }
                 };
@@ -2536,9 +2534,7 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
                         bun.memmove(buf2[0..bufSize], r);
                     } else {
                         // Reuse buf2 because it's used for path.
-                        bufSize = std.unicode.utf16leToUtf8(buf2, r) catch {
-                            return MaybeSlice(T).errnoSys(0, Syscall.Tag.getcwd).?;
-                        };
+                        bufSize = std.unicode.wtf16LeToWtf8(buf2, r);
                     }
                     envPath = buf2[0..bufSize];
                 }
@@ -2802,6 +2798,7 @@ pub fn resolve(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]
 
     var paths = allocator.alloc(string, args_len) catch bun.outOfMemory();
     defer allocator.free(paths);
+    var path_count: usize = 0;
 
     for (0..args_len, args_ptr) |i, path_ptr| {
         // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
@@ -2810,9 +2807,12 @@ pub fn resolve(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]
             return .zero;
         };
         const pathZStr = path_ptr.getZigString(globalObject);
-        paths[i] = if (pathZStr.len > 0) pathZStr.toSlice(allocator).slice() else "";
+        if (pathZStr.len > 0) {
+            paths[path_count] = pathZStr.toSlice(allocator).slice();
+            path_count += 1;
+        }
     }
-    return resolveJS_T(u8, globalObject, allocator, isWindows, paths);
+    return resolveJS_T(u8, globalObject, allocator, isWindows, paths[0..path_count]);
 }
 
 /// Based on Node v21.6.1 path.win32.toNamespacedPath:

@@ -25,7 +25,7 @@ import * as stream from "node:stream";
 import { PassThrough } from "node:stream";
 import url from "node:url";
 import * as zlib from "node:zlib";
-const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock } = createTest(import.meta.path);
+const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);
 
 function listen(server: Server, protocol: string = "http"): Promise<URL> {
   return new Promise((resolve, reject) => {
@@ -162,6 +162,7 @@ describe("node:http", () => {
           const server = http.createServer(() => {});
           const random_port = randomPort();
           server.listen(random_port);
+          await once(server, 'listening');
           const { port } = server.address();
           expect(port).toEqual(random_port);
           server.close();

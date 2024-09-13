@@ -168,7 +168,7 @@ pub const Body = struct {
             const promise = this.promise orelse return false;
 
             if (promise.asAnyPromise()) |internal| {
-                if (internal.status(this.global.vm()) != .Pending) {
+                if (internal.status(this.global.vm()) != .pending) {
                     promise.unprotect();
                     this.promise = null;
                     return false;

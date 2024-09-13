@@ -1,5 +1,3 @@
-include(Macros)
-
 register_repository(
   NAME
     libarchive
@@ -40,7 +38,7 @@ register_cmake_command(
     # spawn a processes to compress instead of using the library.
     -DENABLE_ZLIB=OFF
     -DHAVE_ZLIB_H=ON
-    -DCMAKE_C_FLAGS="-I${CWD}/vendor/zlib"
+    -DCMAKE_C_FLAGS="-I${VENDOR_PATH}/zlib"
   LIB_PATH
     libarchive
   LIBRARIES

@@ -1,5 +1,3 @@
-include(Macros)
-
 if(CMAKE_HOST_WIN32 OR CMAKE_HOST_APPLE)
   set(DEFAULT_LLVM_VERSION "18.1.8")
 else()

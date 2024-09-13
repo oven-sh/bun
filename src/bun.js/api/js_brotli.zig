@@ -162,18 +162,14 @@ pub const BrotliEncoder = struct {
         defer _ = this.has_pending_activity.fetchSub(1, .monotonic);
         this.drainFreelist();
 
-        const result = this.callback_value.get().?.call(
+        _ = this.callback_value.get().?.call(
             this.globalThis,
             .undefined,
             if (this.write_failure != null)
                 &.{this.write_failure.?.toError(this.globalThis)}
             else
                 &.{ .null, this.collectOutputValue() },
-        );
-
-        if (result.toError()) |err| {
-            _ = this.globalThis.bunVM().uncaughtException(this.globalThis, err, false);
-        }
+        ) catch |err| this.globalThis.reportActiveExceptionAsUnhandled(err);
     }
 
     // We can only run one encode job at a time
@@ -525,18 +521,14 @@ pub const BrotliDecoder = struct {
         defer _ = this.has_pending_activity.fetchSub(1, .monotonic);
         this.drainFreelist();
 
-        const result = this.callback_value.get().?.call(
+        _ = this.callback_value.get().?.call(
             this.globalThis,
             .undefined,
             if (this.write_failure != null)
                 &.{this.write_failure.?.toError(this.globalThis)}
             else
                 &.{ .null, this.collectOutputValue() },
-        );
-
-        if (result.toError()) |err| {
-            _ = this.globalThis.bunVM().uncaughtException(this.globalThis, err, false);
-        }
+        ) catch |err| this.globalThis.reportActiveExceptionAsUnhandled(err);
     }
 
     fn drainFreelist(this: *BrotliDecoder) void {

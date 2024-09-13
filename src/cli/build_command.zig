@@ -77,10 +77,8 @@ pub const BuildCommand = struct {
         var this_bundler = try bundler.Bundler.init(allocator, log, ctx.args, null);
 
         this_bundler.options.source_map = options.SourceMapOption.fromApi(ctx.args.source_map);
-        this_bundler.resolver.opts.source_map = options.SourceMapOption.fromApi(ctx.args.source_map);
 
         this_bundler.options.compile = ctx.bundler_options.compile;
-        this_bundler.resolver.opts.compile = ctx.bundler_options.compile;
 
         if (this_bundler.options.source_map == .external and ctx.bundler_options.outdir.len == 0 and !ctx.bundler_options.compile) {
             Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use an external source map without --outdir", .{});
@@ -90,38 +88,18 @@ pub const BuildCommand = struct {
         var outfile = ctx.bundler_options.outfile;
 
         this_bundler.options.public_path = ctx.bundler_options.public_path;
-        this_bundler.resolver.opts.public_path = ctx.bundler_options.public_path;
-
         this_bundler.options.entry_naming = ctx.bundler_options.entry_naming;
         this_bundler.options.chunk_naming = ctx.bundler_options.chunk_naming;
         this_bundler.options.asset_naming = ctx.bundler_options.asset_naming;
-        this_bundler.resolver.opts.entry_naming = ctx.bundler_options.entry_naming;
-        this_bundler.resolver.opts.chunk_naming = ctx.bundler_options.chunk_naming;
-        this_bundler.resolver.opts.asset_naming = ctx.bundler_options.asset_naming;
-
         this_bundler.options.react_server_components = ctx.bundler_options.react_server_components;
-        this_bundler.resolver.opts.react_server_components = ctx.bundler_options.react_server_components;
-
+        this_bundler.options.react_fast_refresh = ctx.bundler_options.react_fast_refresh;
         this_bundler.options.inline_entrypoint_import_meta_main = ctx.bundler_options.inline_entrypoint_import_meta_main;
-        this_bundler.resolver.opts.inline_entrypoint_import_meta_main = ctx.bundler_options.inline_entrypoint_import_meta_main;
-
         this_bundler.options.code_splitting = ctx.bundler_options.code_splitting;
-        this_bundler.resolver.opts.code_splitting = ctx.bundler_options.code_splitting;
-
         this_bundler.options.minify_syntax = ctx.bundler_options.minify_syntax;
-        this_bundler.resolver.opts.minify_syntax = ctx.bundler_options.minify_syntax;
-
         this_bundler.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
-        this_bundler.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
-
         this_bundler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
-        this_bundler.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
-
         this_bundler.options.emit_dce_annotations = ctx.bundler_options.emit_dce_annotations;
-        this_bundler.resolver.opts.emit_dce_annotations = ctx.bundler_options.emit_dce_annotations;
-
         this_bundler.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
-        this_bundler.resolver.opts.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
 
         if (ctx.bundler_options.compile) {
             if (ctx.bundler_options.code_splitting) {
@@ -139,7 +117,6 @@ pub const BuildCommand = struct {
             const base_public_path = bun.StandaloneModuleGraph.targetBasePublicPath(compile_target.os, "root/");
 
             this_bundler.options.public_path = base_public_path;
-            this_bundler.resolver.opts.public_path = base_public_path;
 
             if (outfile.len == 0) {
                 outfile = std.fs.path.basename(this_bundler.options.entry_points[0]);
@@ -185,7 +162,7 @@ pub const BuildCommand = struct {
         }
 
         this_bundler.options.output_dir = ctx.bundler_options.outdir;
-        this_bundler.resolver.opts.output_dir = ctx.bundler_options.outdir;
+        this_bundler.options.output_format = ctx.bundler_options.output_format;
 
         var src_root_dir_buf: bun.PathBuffer = undefined;
         const src_root_dir: string = brk1: {
@@ -214,16 +191,14 @@ pub const BuildCommand = struct {
         };
 
         this_bundler.options.root_dir = src_root_dir;
-        this_bundler.resolver.opts.root_dir = src_root_dir;
-
-        this_bundler.options.react_server_components = ctx.bundler_options.react_server_components;
-        this_bundler.resolver.opts.react_server_components = ctx.bundler_options.react_server_components;
         this_bundler.options.code_splitting = ctx.bundler_options.code_splitting;
-        this_bundler.resolver.opts.code_splitting = ctx.bundler_options.code_splitting;
         this_bundler.options.transform_only = ctx.bundler_options.transform_only;
+
         if (this_bundler.options.transform_only) {
             this_bundler.options.resolve_mode = .disable;
         }
+
+        this_bundler.resolver.opts = this_bundler.options;
 
         this_bundler.configureLinker();
 
@@ -352,7 +327,7 @@ pub const BuildCommand = struct {
                         std.fs.cwd()
                     else
                         std.fs.cwd().makeOpenPath(root_path, .{}) catch |err| {
-                            Output.prettyErrorln("<r><red>{s}<r> while attemping to open output directory {}", .{ @errorName(err), bun.fmt.quote(root_path) });
+                            Output.prettyErrorln("<r><red>{s}<r> while attempting to open output directory {}", .{ @errorName(err), bun.fmt.quote(root_path) });
                             exitOrWatch(1, ctx.debug.hot_reload == .watch);
                             unreachable;
                         };

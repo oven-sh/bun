@@ -598,6 +598,66 @@ declare module "bun:ffi" {
   ): Library<Fns>;
 
   /**
+   * Compile ISO C11 source code using TinyCC, and make {@link symbols} available as functions to JavaScript.
+   *
+   * @param options
+   * @returns Library<Fns>
+   *
+   * @example
+   * ## Hello, World!
+   *
+   * JavaScript:
+   * ```js
+   * import { cc } from "bun:ffi";
+   * import hello from "./hello.c" with {type: "file"};
+   * const lib = cc({
+   *   source: hello,
+   *   symbols: {
+   *     hello: {
+   *       returns: "cstring",
+   *       args: [],
+   *     },
+   *   },
+   * });
+   * // "Hello, World!"
+   * console.log(lib.symbols.hello());
+   * ```
+   *
+   * `./hello.c`:
+   * ```c
+   * #include <stdio.h>
+   * const char* hello() {
+   *   return "Hello, World!";
+   * }
+   * ```
+   */
+  function cc<Fns extends Record<string, FFIFunction>>(options: {
+    /**
+     * File path to an ISO C11 source file to compile and link
+     */
+    source: string | import("bun").BunFile | URL;
+
+    /**
+     * Library names to link against
+     *
+     * Equivalent to `-l` option in gcc/clang.
+     */
+    library?: string[] | string;
+
+    /**
+     * Include directories to pass to the compiler
+     *
+     * Equivalent to `-I` option in gcc/clang.
+     */
+    include?: string[] | string;
+
+    /**
+     * Map of symbols to load where the key is the symbol name and the value is the {@link FFIFunction}
+     */
+    symbols: Fns;
+  }): Library<Fns>;
+
+  /**
    * Turn a native library's function pointer into a JavaScript function
    *
    * Libraries using Node-API & bun:ffi in the same module could use this to skip an extra dlopen() step.

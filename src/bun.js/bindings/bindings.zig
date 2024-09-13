@@ -6752,7 +6752,7 @@ pub const ScriptExecutionStatus = enum(i32) {
 };
 
 comptime {
-    // this file is gennerated, but cant be placed in the build/codegen folder
+    // this file is gennerated, but cant be placed in the build/debug/codegen folder
     // because zig will complain about outside-of-module stuff
     _ = @import("./GeneratedJS2Native.zig");
 }

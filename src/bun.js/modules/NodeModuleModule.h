@@ -120,7 +120,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor, (JSC::JSGlobalOb
   auto scope = DECLARE_THROW_SCOPE(vm);
   if (idValue.isString()) {
     idString = idValue.toString(globalObject);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+    RETURN_IF_EXCEPTION(scope, {});
 
     auto index = idString->tryGetValue()->reverseFind('/', idString->length());
 
@@ -165,7 +165,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionWrap, (JSC::JSGlobalObject * globalObject,
   auto &vm = globalObject->vm();
   auto scope = DECLARE_THROW_SCOPE(vm);
   JSString *code = callFrame->argument(0).toStringOrNull(globalObject);
-  RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+  RETURN_IF_EXCEPTION(scope, {});
   if (!code) {
     return JSC::JSValue::encode(JSC::jsUndefined());
   }
@@ -205,7 +205,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
     val = url.fileSystemPath();
   }
 
-  RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+  RETURN_IF_EXCEPTION(scope, {});
   RELEASE_AND_RETURN(
       scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(
                  vm, globalObject, val)));
@@ -216,7 +216,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFindSourceMap, (JSGlobalObject * globalObject
   auto &vm = globalObject->vm();
   auto scope = DECLARE_THROW_SCOPE(vm);
   throwException(globalObject, scope, createError(globalObject, "module.SourceMap is not yet implemented in Bun"_s));
-  return JSValue::encode(jsUndefined());
+  return {};
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSyncBuiltinExports,
@@ -230,7 +230,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSourceMap, (JSGlobalObject * globalObject, Ca
   auto scope = DECLARE_THROW_SCOPE(vm);
   throwException(globalObject, scope,
                  createError(globalObject, "Not implemented"_s));
-  return JSValue::encode(jsUndefined());
+  return {};
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName, (JSC::JSGlobalObject * globalObject, JSC::CallFrame *callFrame)) {

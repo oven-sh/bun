@@ -270,7 +270,7 @@ JSC_DEFINE_JIT_OPERATION(jsTextEncoderEncodeWithoutTypeCheck, JSC::EncodedJSValu
 
     if (UNLIKELY(JSC::JSValue::decode(res).isObject() && JSC::JSValue::decode(res).getObject()->isErrorInstance())) {
         throwScope.throwException(lexicalGlobalObject, JSC::JSValue::decode(res));
-        return { encodedJSValue() };
+        return {};
     }
 
     RELEASE_AND_RETURN(throwScope, { res });
@@ -397,7 +397,7 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeBody(JSC:
 
     if (UNLIKELY(JSC::JSValue::decode(res).isObject() && JSC::JSValue::decode(res).getObject()->isErrorInstance())) {
         throwScope.throwException(lexicalGlobalObject, JSC::JSValue::decode(res));
-        return encodedJSValue();
+        return {};
     }
 
     RELEASE_AND_RETURN(throwScope, res);
@@ -416,12 +416,12 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeIntoBody(
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto source = argument0.value().toWTFString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto* destination = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(argument1.value());
     if (!destination) {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
-        return encodedJSValue();
+        return {};
     }
 
     size_t res = 0;

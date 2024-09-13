@@ -494,8 +494,8 @@ list(APPEND BUN_ZIG_SOURCES
   ${BUN_JAVASCRIPT_OUTPUTS}
 )
 
-if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-  # in a debug build, these are not embedded, but rather referenced at runtime.
+# In debug builds, these are not embedded, but rather referenced at runtime.
+if (DEBUG)
   list(APPEND BUN_ZIG_SOURCES ${CODEGEN_PATH}/kit_empty_file)
 else()
   list(APPEND BUN_ZIG_SOURCES ${BUN_KIT_RUNTIME_OUTPUTS})

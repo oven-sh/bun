@@ -8,7 +8,6 @@
 #include <stdlib.h>
 #include <stdnoreturn.h>
 #include <string.h>
-#include <tgmath.h>
 
 int main() {
   // Check fprint stdout and stderr.

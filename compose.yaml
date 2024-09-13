@@ -1,0 +1,84 @@
+services:
+  rebuild:
+    build:
+      dockerfile: builder.Dockerfile
+    command: bash
+    stdin_open: true # docker run -i
+    tty: true # docker run -t
+    volumes:
+      - ./src/ini.zig:/bun/src/ini.zig
+      - ./src/install/install.zig:/bun/src/install/install.zig
+      - ./test/cli/install/registry/bun-install-registry.test.ts:/bun/test/cli/install/registry/bun-install-registry.test.ts
+      - ./scripts/runner.node.mjs:/bun/scripts/runner.node.mjs
+      # - ./npmrc_usr:/root/.npmrc
+      # - ./npmrc_prj:/bun/.npmrc
+
+  baseline:
+    build:
+      dockerfile: builder.Dockerfile
+    command: bash
+    stdin_open: true # docker run -i
+    tty: true # docker run -t
+
+
+  # test:
+  #   image: bun-rebuild:latest
+  #   command: ./build/bun-debug --version
+  #   depends_on:
+  #     rebuild:
+  #       condition: service_completed_successfully
+#     1  apt install curl wget lsb-release software-properties-common cargo ccache cmake git golang libtool ninja-build pkg-config rustc ruby-full xz-utils
+#     2  apt update
+#     3  mkdir code
+#     4  cd code
+#     5  apt install git
+#     6  git clone https://github.com/oven-sh/bun.git
+#     7  cd bun
+#     8  ls
+#     9  apt install curl wget lsb-release software-properties-common cargo ccache cmake git golang libtool ninja-build pkg-config rustc ruby-full xz-utils
+#    10  which clang-16
+#    11  wget https://apt.llvm.org/llvm.sh -O - | bash -s -- 16 all
+#    12  which clang-16
+#    13  bun setup
+#    14  curl -fsSL https://bun.sh/install | bash
+#    15  bun setup
+#    16  source /root/.bashrc
+#    17  bun setup
+#    18  hash
+#    19  bun
+#    20  bun setup
+#    21  build/bun-debug --version
+#    22  apt install vim
+#    23  vim src/ini.zig
+#    24  vim src/ini.zig
+#    25  bun run build
+#    26  bun run build
+#    27  bun setup
+#    28  cat src/ini.zig | grep "cwd"
+#    29  vim src/ini.zig
+#    30  bun run build
+#    31  ls
+#    32  ./build/bun-debug --version
+#    33  bun setup
+#    34  bun run build
+#    35  touch /root/.npmrc
+#    36  echo "registry=https://nexus.ssvc.uncd.io/repository/npmjs/" > /root/.npmrc
+#    37  bun install lodash
+#    38  ./build/bun-debug install lodash
+#    39  cp /root/.npmrc ./.npmrc
+#    40  ./build/bun-debug install lodash
+#    41  ./build/bun-debug install lodash
+#    42  ls
+#    43  rm -rf node_modules
+#    44  ./build/bun-debug install lodash
+#    45  ./build/bun-debug uninstall lodash
+#    46  ./build/bun-debug install lodash
+#    47  ls
+#    48  cat .npmrc
+#    49  mv .npmrc /root/
+#    50  ./build/bun-debug install lodash
+#    51  ./build/bun-debug uninstall lodash
+#    52  bun run build
+#    53  bun run build
+#    54  bun run build
+#    55  history

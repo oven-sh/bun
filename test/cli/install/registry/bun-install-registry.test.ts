@@ -189,6 +189,38 @@ registry = http://localhost:${port}/
     await Bun.$`${bunExe()} install`.cwd(packageDir).throws(true);
   });
 
+  it("works with two configs", async () => {
+    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+    console.log("package dir", packageDir);
+    const packageIni = /* ini */ `
+  @types:registry=http://localhost:${port}/
+  `;
+    await Bun.$`echo ${packageIni} > ${packageDir}/.npmrc`;
+
+    const userDir = tmpdirSync();
+    console.log("user dir", packageDir);
+    const userIni = /* ini */ `
+    registry = http://localhost:${port}/
+    `;
+    await Bun.$`echo ${userIni} > ${userDir}/.npmrc`;
+
+    await Bun.$`echo ${JSON.stringify({
+      name: "foo",
+      dependencies: {
+        "no-deps": "1.0.0",
+        "@types/no-deps": "1.0.0",
+      },
+    })} > package.json`.cwd(packageDir);
+    await Bun.$`${bunExe()} install`
+      .env({
+        ...process.env,
+        XDG_CONFIG_HOME: `${userDir}`,
+      })
+      .cwd(packageDir)
+      .throws(true);
+  });
+
   it("default registry from env variable", async () => {
     const ini = /* ini */ `
 registry=\${LOL}

@@ -40,6 +40,7 @@ register_command(
     ${BUILD_PATH}
   TARGETS
     ${bun}
+  ALWAYS_RUN
 )
 
 register_command(
@@ -53,4 +54,5 @@ register_command(
     ${BUILD_PATH}
   TARGETS
     ${bun}
+  ALWAYS_RUN
 )

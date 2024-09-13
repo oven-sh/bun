@@ -4,6 +4,8 @@ import { tls as tlsCert } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 import tls from "node:tls";
+import axios from "axios";
+import { HttpsProxyAgent } from "https-proxy-agent";
 async function createProxyServer(is_tls: boolean) {
   const serverArgs = [];
   if (is_tls) {
@@ -245,14 +247,12 @@ test("unsupported protocol", async () => {
 });
 
 test("axios with https-proxy-agent", async () => {
-  const axios = require("axios");
-  const { HttpsProxyAgent } = require("https-proxy-agent");
   httpProxyServer.log.length = 0;
   const httpsAgent = new HttpsProxyAgent(httpProxyServer.url, {
     rejectUnauthorized: false, // this should work with self-signed certs
   });
 
-  const result = await axios.get(httpsServer.url, {
+  const result = await axios.get(httpsServer.url.href, {
     httpsAgent,
   });
   expect(result.data).toBe("");

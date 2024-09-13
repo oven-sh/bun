@@ -1,7 +1,5 @@
 # https://cppcheck.sourceforge.io/
 
-include(Macros)
-
 find_command(
   VARIABLE
     CPPCHECK_EXECUTABLE

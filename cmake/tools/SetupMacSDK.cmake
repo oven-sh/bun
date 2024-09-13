@@ -1,5 +1,3 @@
-include(Macros)
-
 set(MIN_OSX_DEPLOYMENT_TARGET "13.0")
 
 if(DEFINED ENV{CI})

@@ -3584,7 +3584,7 @@ pub const JSValue = enum(JSValueReprInt) {
         WebAssemblyModule = 77,
         WebAssemblyInstance = 78,
         WebAssemblyGCObject = 79,
-        StringObject = 90,
+        StringObject = 80,
         DerivedStringObject = 81,
         InternalFieldTuple = 82,
 

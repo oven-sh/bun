@@ -626,6 +626,23 @@ extern "C" void Bun__disableSOLinger(SOCKET fd)
 
 #endif
 
+extern "C" int ffi_vprintf(const char* fmt, va_list ap);
+extern "C" int ffi_vfprintf(FILE* stream, const char* fmt, va_list ap);
+extern "C" int ffi_printf(const char* __restrict fmt, ...) __printflike(1, 2);
+extern "C" int ffi_fprintf(FILE* stream, const char* fmt, ...) __printflike(2, 3);
+extern "C" int ffi_scanf(const char* fmt, ...) __scanflike(1, 2);
+extern "C" int ffi_fscanf(FILE* stream, const char* fmt, ...) __scanflike(2, 3);
+extern "C" int ffi_vsscanf(const char* str, const char* fmt, va_list ap);
+extern "C" int ffi_sscanf(const char* str, const char* fmt, ...) __scanflike(2, 3);
+extern "C" int ffi_fclose(FILE* file);
+extern "C" int ffi_fgetc(FILE* file);
+extern "C" int ffi_fputc(int c, FILE* file);
+extern "C" int ffi_ungetc(int c, FILE* file);
+extern "C" int ffi_feof(FILE* file);
+extern "C" int ffi_fseek(FILE* file, long offset, int whence);
+extern "C" int ffi_fflush(FILE* file);
+extern "C" int ffi_fileno(FILE* file);
+
 extern "C" int ffi_vprintf(const char* fmt, va_list ap)
 {
     int ret = vfprintf(stderr, fmt, ap);
@@ -640,7 +657,7 @@ extern "C" int ffi_vfprintf(FILE* stream, const char* fmt, va_list ap)
     return ret;
 }
 
-extern "C" int ffi_printf(const char* fmt, ...)
+extern "C" int ffi_printf(const char* __restrict fmt, ...)
 {
     va_list ap;
     va_start(ap, fmt);
@@ -741,7 +758,6 @@ extern "C" int ffi_fileno(FILE* file)
 {
     return fileno(file);
 }
-
 
 // Handle signals in bun.spawnSync.
 // If we receive a signal, we want to forward the signal to the child process.

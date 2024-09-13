@@ -2073,6 +2073,7 @@ const CompilerRT = struct {
     const compiler_rt_sources = struct {
         pub const @"stdbool.h" = @embedFile("./ffi-stdbool.h");
         pub const @"stdarg.h" = @embedFile("./ffi-stdarg.h");
+        pub const @"stdnoreturn.h" = @embedFile("./ffi-stdnoreturn.h");
         pub const @"stdalign.h" = @embedFile("./ffi-stdalign.h");
         pub const @"tgmath.h" = @embedFile("./ffi-tgmath.h");
         pub const @"stddef.h" = @embedFile("./ffi-stddef.h");

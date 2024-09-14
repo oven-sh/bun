@@ -1206,7 +1206,7 @@ pub const TestCommand = struct {
             reporter.summary.files += 1;
 
             switch (promise.status(vm.global.vm())) {
-                .Rejected => {
+                .rejected => {
                     _ = vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue());
                     reporter.summary.fail += 1;
 

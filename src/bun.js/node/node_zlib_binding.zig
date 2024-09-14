@@ -17,7 +17,7 @@ pub const createZlibDecoder = bun.JSC.API.ZlibDecoder.create;
 pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
     const arguments = callframe.arguments(2).ptr;
 
-    const data: []const u8 = blk: {
+    const data: ZigString.Slice = blk: {
         const data: JSC.JSValue = arguments[0];
         var exceptionref: JSC.C.JSValueRef = null;
 
@@ -25,9 +25,9 @@ pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callcon
             return globalThis.throwInvalidArgumentTypeValue("data", "string or an instance of Buffer, TypedArray, or DataView", .undefined);
         }
         if (data.isString()) {
-            break :blk data.asString().toSlice(globalThis, bun.default_allocator).slice();
+            break :blk data.asString().toSlice(globalThis, bun.default_allocator);
         }
-        const buffer = JSC.Buffer.fromJS(globalThis, data, &exceptionref) orelse {
+        const buffer: JSC.Buffer = JSC.Buffer.fromJS(globalThis, data, &exceptionref) orelse {
             const ty_str = data.jsTypeString(globalThis).toSlice(globalThis, bun.default_allocator);
             defer ty_str.deinit();
             globalThis.ERR_INVALID_ARG_TYPE("The \"data\" property must be an instance of Buffer, TypedArray, DataView, or ArrayBuffer. Received {s}", .{ty_str.slice()}).throw();
@@ -37,8 +37,9 @@ pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callcon
             globalThis.throwValue(JSC.JSValue.c(ptr));
             return .zero;
         }
-        break :blk buffer.slice();
+        break :blk ZigString.Slice.fromUTF8NeverFree(buffer.slice());
     };
+    defer data.deinit();
 
     const value: u32 = blk: {
         const value: JSC.JSValue = arguments[1];
@@ -64,5 +65,6 @@ pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callcon
     };
 
     // crc32 returns a u64 but the data will always be within a u32 range so the outer @intCast is always safe.
-    return JSC.JSValue.jsNumber(@as(u32, @intCast(bun.zlib.crc32(value, data.ptr, @intCast(data.len)))));
+    const slice_u8 = data.slice();
+    return JSC.JSValue.jsNumber(@as(u32, @intCast(bun.zlib.crc32(value, slice_u8.ptr, @intCast(slice_u8.len)))));
 }

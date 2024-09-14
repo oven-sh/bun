@@ -1,5 +1,3 @@
-include(Macros)
-
 find_command(
   VARIABLE
     BUN_EXECUTABLE

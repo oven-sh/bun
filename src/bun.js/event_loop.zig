@@ -485,6 +485,9 @@ pub const Task = TaggedPointerUnion(.{
     TimerObject,
     bun.shell.Interpreter.Builtin.Yes.YesTask,
 
+    bun.kit.DevServer.BundleTask,
+    bun.kit.DevServer.HotReloadTask,
+
     ProcessWaiterThreadTask,
     RuntimeTranspilerStore,
     ServerAllConnectionsClosedTask,
@@ -878,11 +881,8 @@ pub const EventLoop = struct {
         this.enter();
         defer this.exit();
 
-        const result = callback.call(globalObject, thisValue, arguments);
-
-        if (result.toError()) |err| {
-            _ = this.virtual_machine.uncaughtException(globalObject, err, false);
-        }
+        _ = callback.call(globalObject, thisValue, arguments) catch |err|
+            globalObject.reportActiveExceptionAsUnhandled(err);
     }
 
     fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, comptime queue_name: []const u8) u32 {
@@ -1025,6 +1025,13 @@ pub const EventLoop = struct {
                 },
                 @field(Task.Tag, @typeName(HotReloadTask)) => {
                     var transform_task: *HotReloadTask = task.get(HotReloadTask).?;
+                    transform_task.*.run();
+                    transform_task.deinit();
+                    // special case: we return
+                    return 0;
+                },
+                @field(Task.Tag, @typeName(bun.kit.DevServer.HotReloadTask)) => {
+                    const transform_task = task.get(bun.kit.DevServer.HotReloadTask).?;
                     transform_task.*.run();
                     transform_task.deinit();
                     // special case: we return
@@ -1249,6 +1256,9 @@ pub const EventLoop = struct {
                 @field(Task.Tag, typeBaseName(@typeName(ServerAllConnectionsClosedTask))) => {
                     var any: *ServerAllConnectionsClosedTask = task.get(ServerAllConnectionsClosedTask).?;
                     any.runFromJSThread(virtual_machine);
+                },
+                @field(Task.Tag, typeBaseName(@typeName(bun.kit.DevServer.BundleTask))) => {
+                    task.get(bun.kit.DevServer.BundleTask).?.completeOnMainThread();
                 },
 
                 else => if (Environment.allow_assert) {
@@ -1514,11 +1524,11 @@ pub const EventLoop = struct {
 
     pub fn waitForPromise(this: *EventLoop, promise: JSC.AnyPromise) void {
         switch (promise.status(this.virtual_machine.jsc)) {
-            JSC.JSPromise.Status.Pending => {
-                while (promise.status(this.virtual_machine.jsc) == .Pending) {
+            .pending => {
+                while (promise.status(this.virtual_machine.jsc) == .pending) {
                     this.tick();
 
-                    if (promise.status(this.virtual_machine.jsc) == .Pending) {
+                    if (promise.status(this.virtual_machine.jsc) == .pending) {
                         this.autoTick();
                     }
                 }
@@ -1530,11 +1540,11 @@ pub const EventLoop = struct {
     pub fn waitForPromiseWithTermination(this: *EventLoop, promise: JSC.AnyPromise) void {
         const worker = this.virtual_machine.worker orelse @panic("EventLoop.waitForPromiseWithTermination: worker is not initialized");
         switch (promise.status(this.virtual_machine.jsc)) {
-            JSC.JSPromise.Status.Pending => {
-                while (!worker.hasRequestedTerminate() and promise.status(this.virtual_machine.jsc) == .Pending) {
+            .pending => {
+                while (!worker.hasRequestedTerminate() and promise.status(this.virtual_machine.jsc) == .pending) {
                     this.tick();
 
-                    if (!worker.hasRequestedTerminate() and promise.status(this.virtual_machine.jsc) == .Pending) {
+                    if (!worker.hasRequestedTerminate() and promise.status(this.virtual_machine.jsc) == .pending) {
                         this.autoTick();
                     }
                 }

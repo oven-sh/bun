@@ -340,7 +340,7 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
    * two filters */
   int num_entries_possibly_remaining =
       2; //((old_events & LIBUS_SOCKET_READABLE) ? 1 : 0) + ((old_events &
-         //LIBUS_SOCKET_WRITABLE) ? 1 : 0);
+         // LIBUS_SOCKET_WRITABLE) ? 1 : 0);
 #endif
 
   /* Todo: for kqueue if we track things in us_change_poll it is possible to

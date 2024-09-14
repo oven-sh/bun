@@ -4,7 +4,7 @@ register_command(
   COMMENT
     "Checking zig fmt"
   COMMAND
-    ${CMAKE_ZIG_COMPILER}
+    ${ZIG_EXECUTABLE}
       fmt
       --check
       ${BUN_ZIG_SOURCES}
@@ -17,7 +17,7 @@ register_command(
   COMMENT
     "Running zig fmt"
   COMMAND
-    ${CMAKE_ZIG_COMPILER}
+    ${ZIG_EXECUTABLE}
       fmt
       ${BUN_ZIG_SOURCES}
   ALWAYS_RUN

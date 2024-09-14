@@ -54,7 +54,7 @@ register_command(
   COMMENT
     "Generating src/js_lexer/*.blob"
   COMMAND
-    ${CMAKE_ZIG_COMPILER}
+    ${ZIG_EXECUTABLE}
       run
       ${CMAKE_ZIG_FLAGS}
       ${BUN_ZIG_IDENTIFIER_SCRIPT}
@@ -530,7 +530,7 @@ register_command(
   COMMENT
     "Building src/*.zig for ${ZIG_TARGET}"
   COMMAND
-    ${CMAKE_ZIG_COMPILER}
+    ${ZIG_EXECUTABLE}
       build obj
       ${CMAKE_ZIG_FLAGS}
       --prefix ${BUILD_PATH}

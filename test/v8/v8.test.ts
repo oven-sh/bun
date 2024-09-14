@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tmpdirSync, isWindows } from "harness";
 import assert from "node:assert";
 import fs from "node:fs/promises";
 import { join, basename } from "path";
@@ -232,16 +232,14 @@ describe("EscapableHandleScope", () => {
   });
 });
 
-const itIfNotWindows = process.platform == "win32" ? it.skip : it;
-
 describe("uv_os_getpid", () => {
-  itIfNotWindows("returns the same result as getpid on POSIX", () => {
+  it.skipIf(isWindows)("returns the same result as getpid on POSIX", () => {
     checkSameOutput("test_uv_os_getpid", []);
   });
 });
 
 describe("uv_os_getppid", () => {
-  itIfNotWindows("returns the same result as getppid on POSIX", () => {
+  it.skipIf(isWindows)("returns the same result as getppid on POSIX", () => {
     checkSameOutput("test_uv_os_getppid", []);
   });
 });

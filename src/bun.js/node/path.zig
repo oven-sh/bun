@@ -2789,6 +2789,8 @@ pub fn resolveJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocato
     return if (isWindows) resolveWindowsJS_T(T, globalObject, paths, buf, buf2) else resolvePosixJS_T(T, globalObject, paths, buf, buf2);
 }
 
+extern "C" fn Process__getCachedCwd(*JSC.JSGlobalObject) JSC.JSValue;
+
 pub fn resolve(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(JSC.conv) JSC.JSValue {
     var arena = bun.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
@@ -2812,6 +2814,21 @@ pub fn resolve(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]
             path_count += 1;
         }
     }
+
+    if (comptime Environment.isPosix) {
+        if (!isWindows) {
+            // Micro-optimization #1: avoid creating a new string when passing no arguments or only empty strings.
+            if (path_count == 0) {
+                return Process__getCachedCwd(globalObject);
+            }
+
+            // Micro-optimization #2: path.resolve(".") and path.resolve("./") === process.cwd()
+            else if (path_count == 1 and (strings.eqlComptime(paths[0], ".") or strings.eqlComptime(paths[0], "./"))) {
+                return Process__getCachedCwd(globalObject);
+            }
+        }
+    }
+
     return resolveJS_T(u8, globalObject, allocator, isWindows, paths[0..path_count]);
 }
 

@@ -54,11 +54,11 @@
     "zig:check": "bun run zig build check --summary new",
     "zig:check-all": "bun run zig build check-all --summary new",
     "zig:check-windows": "bun run zig build check-windows --summary new",
-    "clang-format": "bun run build --target clang-format",
-    "clang-format:check": "bun run build --target clang-format-check",
-    "clang-tidy": "bun run build --target clang-tidy",
-    "clang-tidy:check": "bun run build --target clang-tidy",
-    "zig-format": "bun run build --target zig-format",
-    "zig-format:check": "bun run build --target zig-format-check"
+    "clang-format": "bun run build --target clang-format --fresh",
+    "clang-format:check": "bun run build --target clang-format-check --fresh",
+    "clang-tidy": "bun run build --target clang-tidy --fresh",
+    "clang-tidy:check": "bun run build --target clang-tidy --fresh",
+    "zig-format": "bun run build --target zig-format --fresh",
+    "zig-format:check": "bun run build --target zig-format-check --fresh"
   }
 }

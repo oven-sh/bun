@@ -38,8 +38,6 @@ register_command(
     ${CLANG_TIDY_COMMAND} 
   CWD
     ${BUILD_PATH}
-  TARGETS
-    ${bun}
   ALWAYS_RUN
 )
 
@@ -52,7 +50,5 @@ register_command(
     ${CLANG_TIDY_EXTRA_COMMAND} 
   CWD
     ${BUILD_PATH}
-  TARGETS
-    ${bun}
   ALWAYS_RUN
 )

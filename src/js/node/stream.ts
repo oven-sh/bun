@@ -29,6 +29,7 @@ const kPaused = Symbol("kPaused");
 const StringDecoder = require("node:string_decoder").StringDecoder;
 const transferToNativeReadable = $newCppFunction("ReadableStream.cpp", "jsFunctionTransferToNativeReadableStream", 1);
 const { kAutoDestroyed } = require("internal/shared");
+const { validateInteger } = require("internal/validators");
 
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
@@ -678,11 +679,6 @@ var require_validators = __commonJS({
       validateInt32(value, name, 0, 2 ** 32 - 1);
       return value;
     }
-    var validateInteger = hideStackFrames((value, name, min = NumberMIN_SAFE_INTEGER, max = NumberMAX_SAFE_INTEGER) => {
-      if (typeof value !== "number") throw new ERR_INVALID_ARG_TYPE(name, "number", value);
-      if (!NumberIsInteger(value)) throw new ERR_OUT_OF_RANGE(name, "an integer", value);
-      if (value < min || value > max) throw new ERR_OUT_OF_RANGE(name, `>= ${min} && <= ${max}`, value);
-    });
     var validateInt32 = hideStackFrames((value, name, min = -2147483648, max = 2147483647) => {
       if (typeof value !== "number") {
         throw new ERR_INVALID_ARG_TYPE(name, "number", value);

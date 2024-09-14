@@ -14,11 +14,11 @@ for (const dir of ["dir", "©️"]) {
 
     const updateFile = async (i: number) => {
       await Bun.write(path, `console.log(${i}, __dirname);`);
-      await Bun.sleep(1000);
     };
 
     let i = 0;
     await updateFile(i);
+    await Bun.sleep(1000);
     watchee = spawn({
       cwd,
       cmd: [bunExe(), "--watch", "watchee.js"],

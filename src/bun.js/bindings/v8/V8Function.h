@@ -11,17 +11,7 @@ namespace v8 {
 class Function : public Object {
 public:
     BUN_EXPORT void SetName(Local<String> name);
-
-private:
-    shim::Function* localToObjectPointer()
-    {
-        return Data::localToObjectPointer<shim::Function>();
-    }
-
-    const shim::Function* localToObjectPointer() const
-    {
-        return Data::localToObjectPointer<shim::Function>();
-    }
+    BUN_EXPORT Local<Value> GetName() const;
 };
 
 } // namespace v8

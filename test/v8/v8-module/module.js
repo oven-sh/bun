@@ -26,5 +26,24 @@ module.exports = debugMode => {
       }
       console.log(f());
     },
+
+    print_native_function() {
+      nativeModule.print_values_from_js(nativeModule.create_function_with_data());
+    },
+
+    call_function_with_weird_this_values() {
+      for (const thisValue of [null, undefined, 5, "abc"]) {
+        const ret = nativeModule.return_this.call(thisValue);
+        console.log("typeof =", typeof ret);
+        if (ret == globalThis) {
+          console.log("returned globalThis");
+        } else if (ret instanceof String) {
+          console.log("returned boxed String:", ret.toString());
+        } else {
+          console.log("returned", ret);
+        }
+        console.log("constructor is", ret.constructor.name);
+      }
+    },
   };
 };

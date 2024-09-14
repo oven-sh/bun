@@ -188,7 +188,12 @@ describe("FunctionTemplate", () => {
 
 describe("Function", () => {
   it("correctly receives all its arguments from JS", () => {
-    checkSameOutput("print_values_from_js", [5.0, true, null, false, "meow", {}], {});
+    checkSameOutput("print_values_from_js", [5.0, true, null, false, "meow", {}]);
+    checkSameOutput("print_native_function", []);
+  });
+
+  it("correctly receives the this value from JS", () => {
+    checkSameOutput("call_function_with_weird_this_values", []);
   });
 });
 

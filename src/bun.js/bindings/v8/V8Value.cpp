@@ -53,6 +53,11 @@ bool Value::IsString() const
     return localToJSValue().isString();
 }
 
+bool Value::IsFunction() const
+{
+    return JSC::jsTypeofIsFunction(defaultGlobalObject(), localToJSValue());
+}
+
 Maybe<uint32_t> Value::Uint32Value(Local<Context> context) const
 {
     auto js_value = localToJSValue();

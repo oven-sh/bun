@@ -24,6 +24,12 @@ using namespace v8;
 
 namespace v8tests {
 
+static void run_gc(const FunctionCallbackInfo<Value> &info) {
+  auto *isolate = info.GetIsolate();
+  auto context = isolate->GetCurrentContext();
+  (void)info[0].As<Function>()->Call(context, Null(isolate), 0, nullptr);
+}
+
 static void log_buffer(const char *buf, int len) {
   for (int i = 0; i < len; i++) {
     printf("buf[%d] = 0x%02x\n", i, buf[i]);
@@ -45,6 +51,14 @@ static std::string describe(Isolate *isolate, Local<Value> value) {
     std::string result = "\"";
     result += buf;
     result += "\"";
+    return result;
+  } else if (value->IsFunction()) {
+    char buf[1024] = {0};
+    value.As<Function>()->GetName().As<String>()->WriteUtf8(isolate, buf,
+                                                            sizeof(buf) - 1);
+    std::string result = "function ";
+    result += buf;
+    result += "()";
     return result;
   } else if (value->IsObject()) {
     return "[object Object]";
@@ -324,6 +338,9 @@ void create_function_with_data(const FunctionCallbackInfo<Value> &info) {
   Local<FunctionTemplate> tmp =
       FunctionTemplate::New(isolate, return_data_callback, s);
   Local<Function> f = tmp->GetFunction(context).ToLocalChecked();
+  Local<String> name =
+      String::NewFromUtf8(isolate, "function_with_data").ToLocalChecked();
+  f->SetName(name);
   info.GetReturnValue().Set(f);
 }
 
@@ -335,6 +352,10 @@ void print_values_from_js(const FunctionCallbackInfo<Value> &info) {
     printf("argument %d = %s\n", i, describe(isolate, info[i]).c_str());
   }
   return ok(info);
+}
+
+void return_this(const FunctionCallbackInfo<Value> &info) {
+  info.GetReturnValue().Set(info.This());
 }
 
 class GlobalTestWrapper {
@@ -356,7 +377,8 @@ void GlobalTestWrapper::set(const FunctionCallbackInfo<Value> &info) {
   } else {
     info.GetReturnValue().Set(value.Get(isolate));
   }
-  value.Reset(isolate, info[0]);
+  const auto new_value = info[0];
+  value.Reset(isolate, new_value);
 }
 
 void GlobalTestWrapper::get(const FunctionCallbackInfo<Value> &info) {
@@ -580,6 +602,7 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "create_function_with_data",
                   create_function_with_data);
   NODE_SET_METHOD(exports, "print_values_from_js", print_values_from_js);
+  NODE_SET_METHOD(exports, "return_this", return_this);
   NODE_SET_METHOD(exports, "global_get", GlobalTestWrapper::get);
   NODE_SET_METHOD(exports, "global_set", GlobalTestWrapper::set);
   NODE_SET_METHOD(exports, "test_many_v8_locals", test_many_v8_locals);

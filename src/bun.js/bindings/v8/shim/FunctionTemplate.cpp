@@ -9,6 +9,9 @@ using JSC::JSValue;
 using JSC::Structure;
 
 namespace v8 {
+
+class Object;
+
 namespace shim {
 
 // for CREATE_METHOD_TABLE
@@ -62,8 +65,16 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
     WTF::Vector<TaggedPointer, 8> args(callFrame->argumentCount() + 1);
 
     HandleScope hs(isolate);
-    Local<Value> thisValue = hs.createLocal<Value>(vm, callFrame->thisValue());
-    args[0] = thisValue.tagged();
+
+    // V8 function calls always run in "sloppy mode," even if the JS side is in strict mode. So if
+    // `this` is null or undefined, we use globalThis instead; otherwise, we convert `this` to an
+    // object.
+    JSC::JSObject* jscThis = globalObject->globalThis();
+    if (!callFrame->thisValue().isUndefinedOrNull()) {
+        jscThis = callFrame->thisValue().toObject(globalObject);
+    }
+    Local<Object> thisObject = hs.createLocal<Object>(vm, jscThis);
+    args[0] = thisObject.tagged();
 
     for (size_t i = 0; i < callFrame->argumentCount(); i++) {
         Local<Value> argValue = hs.createLocal<Value>(vm, callFrame->argument(i));

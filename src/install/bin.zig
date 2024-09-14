@@ -660,6 +660,11 @@ pub const Bin = extern struct {
                     const abs_target_dir = path.joinAbsStringZ(package_dir, &.{target}, .auto);
 
                     var target_dir = bun.openDirAbsolute(abs_target_dir) catch |err| {
+                        if (err == error.ENOENT) {
+                            // https://github.com/npm/cli/blob/366c07e2f3cb9d1c6ddbd03e624a4d73fbd2676e/node_modules/bin-links/lib/link-gently.js#L43
+                            // avoid erroring when the directory does not exist
+                            return;
+                        }
                         this.err = err;
                         return;
                     };

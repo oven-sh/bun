@@ -153,12 +153,14 @@ const constants = {
   BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2: -27,
   BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES: -30,
   BROTLI_DECODER_ERROR_UNREACHABLE: -31,
-};
+} as const;
 const { DEFLATE, INFLATE, GZIP, GUNZIP, DEFLATERAW, INFLATERAW, UNZIP, BROTLI_DECODE, BROTLI_ENCODE } = constants;
+const modes = { DEFLATE, INFLATE, GZIP, GUNZIP, DEFLATERAW, INFLATERAW, UNZIP, BROTLI_DECODE, BROTLI_ENCODE } as const;
+type Mode = (typeof modes)[keyof typeof modes];
 
 //
 
-function ZlibBase(options, method) {
+function ZlibBase(options, method: Mode) {
   if (options == null) options = {};
   if ($isObject(options)) {
     options.maxOutputLength ??= maxOutputLengthDefault;
@@ -246,7 +248,7 @@ function processChunk(self, chunk, flushFlag, cb) {
 
 //
 
-function Zlib(options, method) {
+function Zlib(options, method: Mode) {
   ZlibBase.$call(this, options, method);
 }
 Zlib.prototype = Object.create(ZlibBase.prototype);

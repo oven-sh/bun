@@ -29,7 +29,7 @@ const kFlushBuffers: Buffer[] = [];
 
 //
 
-function ZlibBase(method, options) {
+function ZlibBase(options, method) {
   if (options == null) options = {};
   if ($isObject(options)) {
     options.maxOutputLength ??= maxOutputLengthDefault;
@@ -149,8 +149,8 @@ function processChunk(self, chunk, flushFlag, cb) {
 
 //
 
-function Zlib(method, options) {
-  ZlibBase.$call(this, method, options);
+function Zlib(options, method) {
+  ZlibBase.$call(this, options, method);
 }
 Zlib.prototype = Object.create(ZlibBase.prototype);
 ObjectDefineProperty(Zlib.prototype, "_level", {
@@ -179,7 +179,7 @@ Zlib.prototype._transform = function _transform(chunk, encoding, callback) {
 
 function BrotliCompress(opts) {
   if (!(this instanceof BrotliCompress)) return new BrotliCompress(opts);
-  ZlibBase.$call(this, BROTLI_ENCODE, opts);
+  ZlibBase.$call(this, opts, BROTLI_ENCODE);
 }
 BrotliCompress.prototype = Object.create(ZlibBase.prototype);
 
@@ -187,7 +187,7 @@ BrotliCompress.prototype = Object.create(ZlibBase.prototype);
 
 function BrotliDecompress(opts) {
   if (!(this instanceof BrotliDecompress)) return new BrotliDecompress(opts);
-  ZlibBase.$call(this, BROTLI_DECODE, opts);
+  ZlibBase.$call(this, opts, BROTLI_DECODE);
 }
 BrotliDecompress.prototype = Object.create(ZlibBase.prototype);
 
@@ -195,7 +195,7 @@ BrotliDecompress.prototype = Object.create(ZlibBase.prototype);
 
 function Deflate(opts) {
   if (!(this instanceof Deflate)) return new Deflate(opts);
-  Zlib.$call(this, DEFLATE, opts);
+  Zlib.$call(this, opts, DEFLATE);
 }
 Deflate.prototype = Object.create(Zlib.prototype);
 
@@ -203,7 +203,7 @@ Deflate.prototype = Object.create(Zlib.prototype);
 
 function Inflate(opts) {
   if (!(this instanceof Inflate)) return new Inflate(opts);
-  Zlib.$call(this, INFLATE, opts);
+  Zlib.$call(this, opts, INFLATE);
 }
 Inflate.prototype = Object.create(Zlib.prototype);
 
@@ -211,7 +211,7 @@ Inflate.prototype = Object.create(Zlib.prototype);
 
 function DeflateRaw(opts) {
   if (!(this instanceof DeflateRaw)) return new DeflateRaw(opts);
-  Zlib.$call(this, DEFLATERAW, opts);
+  Zlib.$call(this, opts, DEFLATERAW);
 }
 DeflateRaw.prototype = Object.create(Zlib.prototype);
 
@@ -219,7 +219,7 @@ DeflateRaw.prototype = Object.create(Zlib.prototype);
 
 function InflateRaw(opts) {
   if (!(this instanceof InflateRaw)) return new InflateRaw(opts);
-  Zlib.$call(this, INFLATERAW, opts);
+  Zlib.$call(this, opts, INFLATERAW);
 }
 InflateRaw.prototype = Object.create(Zlib.prototype);
 
@@ -227,7 +227,7 @@ InflateRaw.prototype = Object.create(Zlib.prototype);
 
 function Gzip(opts) {
   if (!(this instanceof Gzip)) return new Gzip(opts);
-  Zlib.$call(this, GZIP, opts);
+  Zlib.$call(this, opts, GZIP);
 }
 Gzip.prototype = Object.create(Zlib.prototype);
 
@@ -235,7 +235,7 @@ Gzip.prototype = Object.create(Zlib.prototype);
 
 function Gunzip(opts) {
   if (!(this instanceof Gunzip)) return new Gunzip(opts);
-  Zlib.$call(this, GUNZIP, opts);
+  Zlib.$call(this, opts, GUNZIP);
 }
 Gunzip.prototype = Object.create(Zlib.prototype);
 
@@ -243,7 +243,7 @@ Gunzip.prototype = Object.create(Zlib.prototype);
 
 function Unzip(opts) {
   if (!(this instanceof Unzip)) return new Unzip(opts);
-  Zlib.$call(this, UNZIP, opts);
+  Zlib.$call(this, opts, UNZIP);
 }
 Unzip.prototype = Object.create(Zlib.prototype);
 

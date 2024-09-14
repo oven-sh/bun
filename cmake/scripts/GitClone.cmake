@@ -43,7 +43,6 @@ file(GLOB_RECURSE GIT_PATCH_PATHS ${CMAKE_SOURCE_DIR}/patches/${GIT_NAME}/*)
 list(LENGTH GIT_PATCH_PATHS GIT_PATCH_COUNT)
 
 if(GIT_PATCH_COUNT GREATER 0)
-  message(STATUS "Found ${GIT_PATCH_COUNT} patches")
   find_program(GIT_PROGRAM git REQUIRED)
 
   foreach(GIT_PATCH ${GIT_PATCH_PATHS})
@@ -67,7 +66,7 @@ if(GIT_PATCH_COUNT GREATER 0)
           GIT_PATCH_ERROR
       )
 
-      if(GIT_PATCH_ERROR)
+      if(GIT_PATCH_ERROR AND NOT GIT_PATCH_ERROR MATCHES "cleanly")
         file(REMOVE_RECURSE ${GIT_PATH})
         message(FATAL_ERROR "Failed to apply patch: ${GIT_PATCH_ERROR}")
       endif()

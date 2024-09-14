@@ -62,8 +62,6 @@ register_command(
     ${BUN_ZIG_IDENTIFIER_SOURCES}
   OUTPUTS
     ${BUN_ZIG_IDENTIFIER_OUTPUTS}
-  TARGETS
-    clone-zig
 )
 
 set(BUN_ERROR_SOURCE ${CWD}/packages/bun-error)
@@ -549,8 +547,6 @@ register_command(
   SOURCES
     ${BUN_ZIG_SOURCES}
     ${BUN_ZIG_GENERATED_SOURCES}
-  TARGETS
-    clone-zig
 )
 
 set_property(TARGET bun-zig PROPERTY JOB_POOL compile_pool)

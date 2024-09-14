@@ -45,6 +45,14 @@ afterEach(() => {
 
 ---
 
+Next, add these preload scripts to your `bunfig.toml` (you can also have everything in a single `preload.ts` script if you prefer).
+
+```toml#bunfig.toml
+[test]
+preload = ["happydom.ts", "testing-library.ts"]
+```
+---
+
 If you are using TypeScript you will also need to make use of declaration merging in order to get the new matcher types to show up in your editor. To do this, create a type declaration file that extends `Matchers` like this.
 
 ```ts#matchers.d.ts

@@ -409,3 +409,30 @@ it.each([
     expect(result).toBe(expected);
   }
 });
+
+for (const C of [zlib.Deflate, zlib.Inflate, zlib.DeflateRaw, zlib.InflateRaw, zlib.Gzip, zlib.Gunzip, zlib.Unzip]) {
+  for (const op of [
+    "flush",
+    "finishFlush",
+    "chunkSize",
+    "windowBits",
+    "level",
+    "memLevel",
+    "strategy",
+    "dictionary",
+    "info",
+    "maxOutputLength",
+  ]) {
+    it(`new ${C.name}({ ${op}: undefined }) doesn't throw`, () => {
+      expect(() => new C({ [op]: undefined })).not.toThrow();
+    });
+  }
+}
+
+for (const C of [zlib.BrotliCompress, zlib.BrotliDecompress]) {
+  for (const op of ["flush", "finishFlush", "chunkSize", "params", "maxOutputLength"]) {
+    it(`new ${C.name}({ ${op}: undefined }) doesn't throw`, () => {
+      expect(() => new C({ [op]: undefined })).not.toThrow();
+    });
+  }
+}

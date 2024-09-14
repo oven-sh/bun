@@ -969,7 +969,7 @@ export async function runBunInstall(
   });
   expect(stdout).toBeDefined();
   expect(stderr).toBeDefined();
-  let err = (await new Response(stderr).text()).replace(/warn: Slow filesystem/g, "");
+  let err = (await new Response(stderr).text()).replace(/warn: Slow filesystem.*/g, "");
   expect(err).not.toContain("panic:");
   if (!options?.allowErrors) {
     expect(err).not.toContain("error:");

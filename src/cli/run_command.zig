@@ -341,6 +341,12 @@ pub const RunCommand = struct {
             combined_script,
         };
 
+        const ipc_fd = if (!Environment.isWindows) blk: {
+            const node_ipc_fd = bun.getenvZ("NODE_CHANNEL_FD") orelse break :blk null;
+            const fd = std.fmt.parseInt(u32, node_ipc_fd, 10) catch break :blk null;
+            break :blk bun.toFD(@as(i32, @intCast(fd)));
+        } else null; // TODO: implement on Windows
+
         const spawn_result = switch ((bun.spawnSync(&.{
             .argv = &argv,
             .argv0 = shell_bin.ptr,
@@ -353,6 +359,7 @@ pub const RunCommand = struct {
             .stderr = .inherit,
             .stdout = .inherit,
             .stdin = .inherit,
+            .ipc = ipc_fd,
 
             .windows = if (Environment.isWindows) .{
                 .loop = JSC.EventLoopHandle.init(JSC.MiniEventLoop.initGlobal(env)),

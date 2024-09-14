@@ -3,9 +3,16 @@
 const assert = require("node:assert");
 const stream = require("node:stream");
 const BufferModule = require("node:buffer");
-const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
+const { ERR_INVALID_ARG_TYPE, ERR_BROTLI_INVALID_PARAM } = require("internal/errors");
 
 const ObjectDefineProperty = Object.defineProperty;
+const TypedArrayPrototypeFill = Uint8Array.prototype.fill;
+const MathMax = Math.max;
+const ArrayPrototypeMap = Array.prototype.map;
+const ObjectKeys = Object.keys;
+const StringPrototypeStartsWith = String.prototype.startsWith;
+const ArrayPrototypeForEach = Array.prototype.forEach;
+const NumberIsNaN = Number.isNaN;
 
 const createBrotliEncoder = $newZigFunction("node_zlib_binding.zig", "createBrotliEncoder", 3);
 const createBrotliDecoder = $newZigFunction("node_zlib_binding.zig", "createBrotliDecoder", 3);
@@ -269,19 +276,57 @@ Zlib.prototype._transform = function _transform(chunk, encoding, callback) {
 
 //
 
+const kMaxBrotliParam = MathMax(
+  ...(ArrayPrototypeMap<number>).$call(ObjectKeys(constants), key =>
+    StringPrototypeStartsWith.$call(key, "BROTLI_PARAM_") ? constants[key] : 0,
+  ),
+);
+
+const brotliInitParamsArray = new Uint32Array(kMaxBrotliParam + 1);
+
+const brotliDefaultOpts = {
+  flush: constants.BROTLI_OPERATION_PROCESS,
+  finishFlush: constants.BROTLI_OPERATION_FINISH,
+  fullFlush: constants.BROTLI_OPERATION_FLUSH,
+};
+
+function Brotli(this: typeof Brotli, opts, mode: Mode) {
+  assert(mode === BROTLI_DECODE || mode === BROTLI_ENCODE);
+  TypedArrayPrototypeFill.$call(brotliInitParamsArray, -1);
+
+  if (opts?.params) {
+    ArrayPrototypeForEach.$call(ObjectKeys(opts.params), origKey => {
+      const key = +origKey;
+      if (NumberIsNaN(key) || key < 0 || key > kMaxBrotliParam || (brotliInitParamsArray[key] | 0) !== -1) {
+        throw ERR_BROTLI_INVALID_PARAM(origKey);
+      }
+      let value = opts.params[origKey];
+      if (typeof value !== "number" && typeof value !== "boolean") {
+        throw ERR_INVALID_ARG_TYPE("options.params[key]", "number", opts.params[origKey]);
+      }
+      if (typeof value === "boolean") value = value ? 1 : 0;
+      brotliInitParamsArray[key] = value;
+    });
+  }
+  ZlibBase.$call(this, opts, mode);
+}
+Brotli.prototype = Object.create(ZlibBase.prototype);
+
+//
+
 function BrotliCompress(opts) {
   if (!(this instanceof BrotliCompress)) return new BrotliCompress(opts);
-  ZlibBase.$call(this, opts, BROTLI_ENCODE);
+  Brotli.$call(this, opts, BROTLI_ENCODE);
 }
-BrotliCompress.prototype = Object.create(ZlibBase.prototype);
+BrotliCompress.prototype = Object.create(Brotli.prototype);
 
 //
 
 function BrotliDecompress(opts) {
   if (!(this instanceof BrotliDecompress)) return new BrotliDecompress(opts);
-  ZlibBase.$call(this, opts, BROTLI_DECODE);
+  Brotli.$call(this, opts, BROTLI_DECODE);
 }
-BrotliDecompress.prototype = Object.create(ZlibBase.prototype);
+BrotliDecompress.prototype = Object.create(Brotli.prototype);
 
 //
 

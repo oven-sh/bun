@@ -42,6 +42,7 @@ export default [
   ["ERR_ILLEGAL_CONSTRUCTOR", TypeError, "TypeError"],
   ["ERR_INVALID_URL", TypeError, "TypeError"],
   ["ERR_BUFFER_TOO_LARGE", RangeError, "RangeError"],
+  ["ERR_BROTLI_INVALID_PARAM", RangeError, "RangeError"],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError, "TypeError"],

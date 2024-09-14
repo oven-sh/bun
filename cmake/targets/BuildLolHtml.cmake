@@ -1,6 +1,3 @@
-include(Macros)
-include(SetupRust)
-
 register_repository(
   NAME
     lolhtml
@@ -10,7 +7,7 @@ register_repository(
     8d4c273ded322193d017042d1f48df2766b0f88b
 )
 
-set(LOLHTML_CWD ${CWD}/src/deps/lolhtml/c-api)
+set(LOLHTML_CWD ${VENDOR_PATH}/lolhtml/c-api)
 set(LOLHTML_BUILD_PATH ${BUILD_PATH}/lolhtml)
 
 if(DEBUG)

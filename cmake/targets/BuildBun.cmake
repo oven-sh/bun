@@ -1,5 +1,3 @@
-include(Macros)
-
 if(DEBUG)
   set(bun bun-debug)
 elseif(ENABLE_SMOL)
@@ -27,10 +25,10 @@ endif()
 # In the future, change those commands so that generated files are written to this path.
 optionx(CODEGEN_PATH FILEPATH "Path to the codegen directory" DEFAULT ${BUILD_PATH}/codegen)
 
-if(NOT CONFIGURE_DEPENDS)
-  set(CONFIGURE_DEPENDS "")
-else()
+if((NOT DEFINED CONFIGURE_DEPENDS AND NOT CI) OR CONFIGURE_DEPENDS)
   set(CONFIGURE_DEPENDS "CONFIGURE_DEPENDS")
+else()
+  set(CONFIGURE_DEPENDS "")
 endif()
 
 # --- Codegen ---
@@ -326,6 +324,42 @@ register_command(
     ${BUN_JAVASCRIPT_OUTPUTS}
 )
 
+set(BUN_KIT_RUNTIME_CODEGEN_SCRIPT ${CWD}/src/codegen/kit-codegen.ts)
+
+file(GLOB_RECURSE BUN_KIT_RUNTIME_SOURCES ${CONFIGURE_DEPENDS}
+  ${CWD}/src/kit/*.ts
+  ${CWD}/src/kit/*/*.ts
+)
+
+list(APPEND BUN_KIT_RUNTIME_CODEGEN_SOURCES
+  ${CWD}/src/bun.js/bindings/InternalModuleRegistry.cpp
+)
+
+set(BUN_KIT_RUNTIME_OUTPUTS
+  ${CODEGEN_PATH}/kit_empty_file
+  ${CODEGEN_PATH}/kit.client.js
+  ${CODEGEN_PATH}/kit.server.js
+)
+
+register_command(
+  TARGET
+    bun-kit-codegen
+  COMMENT
+    "Bundling Kit Runtime"
+  COMMAND
+    ${BUN_EXECUTABLE}
+      run
+      ${BUN_KIT_RUNTIME_CODEGEN_SCRIPT}
+        --debug=${DEBUG}
+        --codegen_root=${CODEGEN_PATH}
+  SOURCES
+    ${BUN_KIT_RUNTIME_SOURCES}
+    ${BUN_KIT_RUNTIME_CODEGEN_SOURCES}
+    ${BUN_KIT_RUNTIME_CODEGEN_SCRIPT}
+  OUTPUTS
+    ${BUN_KIT_RUNTIME_OUTPUTS}
+)
+
 set(BUN_JS_SINK_SCRIPT ${CWD}/src/codegen/generate-jssink.ts)
 
 set(BUN_JS_SINK_SOURCES
@@ -442,17 +476,14 @@ WEBKIT_ADD_SOURCE_DEPENDENCIES(
 
 # --- Zig ---
 
-# Does not use GLOB_RECURSE because it makes configure really slow with WebKit
-# We might want to consider moving our dependencies out of src/ because of this.
-file(GLOB BUN_ZIG_SOURCES ${CONFIGURE_DEPENDS}
-  ${CWD}/*.zig
-  ${CWD}/src/*/*.zig
-  ${CWD}/src/*/*/*.zig
-  ${CWD}/src/*/*/*/*.zig
-  ${CWD}/src/*/*/*/*/*.zig
+file(GLOB_RECURSE BUN_ZIG_SOURCES ${CONFIGURE_DEPENDS}
+  ${CWD}/src/*.zig
 )
 
 list(APPEND BUN_ZIG_SOURCES
+  ${CWD}/build.zig
+  ${CWD}/root.zig
+  ${CWD}/root_wasm.zig
   ${BUN_ZIG_IDENTIFIER_OUTPUTS}
   ${BUN_ERROR_OUTPUTS}
   ${BUN_FALLBACK_DECODER_OUTPUT}
@@ -463,11 +494,36 @@ list(APPEND BUN_ZIG_SOURCES
   ${BUN_JAVASCRIPT_OUTPUTS}
 )
 
+# In debug builds, these are not embedded, but rather referenced at runtime.
+if (DEBUG)
+  list(APPEND BUN_ZIG_SOURCES ${CODEGEN_PATH}/kit_empty_file)
+else()
+  list(APPEND BUN_ZIG_SOURCES ${BUN_KIT_RUNTIME_OUTPUTS})
+endif()
+
 set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.o)
+
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
+  if(APPLE)
+    set(ZIG_CPU "apple_m1")
+  else()
+    set(ZIG_CPU "native")
+  endif()
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|X86_64|x64|X64|amd64|AMD64")
+  if(ENABLE_BASELINE)
+    set(ZIG_CPU "nehalem")
+  else()
+    set(ZIG_CPU "haswell")
+  endif()
+else()
+  unsupported(CMAKE_SYSTEM_PROCESSOR)
+endif()
 
 register_command(
   TARGET
     bun-zig
+  GROUP
+    console
   COMMENT
     "Building src/*.zig for ${ZIG_TARGET}"
   COMMAND
@@ -478,7 +534,7 @@ register_command(
       -Dobj_format=${ZIG_OBJECT_FORMAT}
       -Dtarget=${ZIG_TARGET}
       -Doptimize=${ZIG_OPTIMIZE}
-      -Dcpu=${CPU}
+      -Dcpu=${ZIG_CPU}
       -Denable_logs=$<IF:$<BOOL:${ENABLE_LOGS}>,true,false>
       -Dversion=${VERSION}
       -Dsha=${REVISION}
@@ -498,7 +554,6 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
 
 # --- C/C++ Sources ---
 
-set(BUN_DEPS_SOURCE ${CWD}/src/deps)
 set(BUN_USOCKETS_SOURCE ${CWD}/packages/bun-usockets)
 
 file(GLOB BUN_CXX_SOURCES ${CONFIGURE_DEPENDS}
@@ -511,8 +566,9 @@ file(GLOB BUN_CXX_SOURCES ${CONFIGURE_DEPENDS}
   ${CWD}/src/bun.js/bindings/webcrypto/*/*.cpp
   ${CWD}/src/bun.js/bindings/v8/*.cpp
   ${CWD}/src/bun.js/bindings/v8/shim/*.cpp
+  ${CWD}/src/kit/*.cpp
+  ${CWD}/src/deps/*.cpp
   ${BUN_USOCKETS_SOURCE}/src/crypto/*.cpp
-  ${BUN_DEPS_SOURCE}/*.cpp
 )
 
 file(GLOB BUN_C_SOURCES ${CONFIGURE_DEPENDS}
@@ -533,7 +589,7 @@ register_repository(
     picohttpparser.c
 )
 
-list(APPEND BUN_C_SOURCES ${BUN_DEPS_SOURCE}/picohttpparser/picohttpparser.c)
+list(APPEND BUN_C_SOURCES ${VENDOR_PATH}/picohttpparser/picohttpparser.c)
 
 if(WIN32)
   list(APPEND BUN_C_SOURCES ${CWD}/src/bun.js/bindings/windows/musl-memmem.c)
@@ -623,11 +679,16 @@ target_include_directories(${bun} PRIVATE
   ${CWD}/src/js/builtins
   ${CWD}/src/napi
   ${CWD}/src/deps
-  ${CWD}/src/deps/picohttpparser
   ${CODEGEN_PATH}
+  ${VENDOR_PATH}
+  ${VENDOR_PATH}/picohttpparser
 )
 
 # --- C/C++ Definitions ---
+
+if(ENABLE_ASSERTIONS)
+  target_compile_definitions(${bun} PRIVATE ASSERT_ENABLED=1)
+endif()
 
 if(DEBUG)
   target_compile_definitions(${bun} PRIVATE BUN_DEBUG=1)
@@ -674,31 +735,10 @@ endif()
 
 # --- Compiler options ---
 
-if(WIN32)
-  target_compile_options(${bun} PUBLIC
-    /EHsc
-    -Xclang -fno-c++-static-destructors
-  )
-  if(RELEASE)
-    target_compile_options(${bun} PUBLIC
-      /Gy
-      /Gw
-      /GF
-      /GA
-    )
-  endif()
-else()
+if(NOT WIN32)
   target_compile_options(${bun} PUBLIC
     -fconstexpr-steps=2542484
     -fconstexpr-depth=54
-    -fno-exceptions
-    -fno-asynchronous-unwind-tables
-    -fno-unwind-tables
-    -fno-c++-static-destructors
-    -fvisibility=hidden
-    -fvisibility-inlines-hidden
-    -fno-omit-frame-pointer
-    -mno-omit-leaf-frame-pointer
     -fno-pic
     -fno-pie
     -faddrsig
@@ -758,7 +798,6 @@ if(WIN32)
   )
   if(RELEASE)
     target_link_options(${bun} PUBLIC
-      -flto=full
       /LTCG
       /OPT:REF
       /OPT:NOICF
@@ -818,22 +857,6 @@ else()
   )
 endif()
 
-# --- LTO options ---
-
-if(ENABLE_LTO)
-  if(WIN32)
-    target_link_options(${bun} PUBLIC -flto)
-    target_compile_options(${bun} PUBLIC -flto -Xclang -emit-llvm-bc)
-  else()
-    target_compile_options(${bun} PUBLIC
-      -flto=full
-      -emit-llvm
-      -fwhole-program-vtables
-      -fforce-emit-vtables
-    )
-  endif()
-endif()
-
 # --- Symbols list ---
 
 if(WIN32)
@@ -861,13 +884,23 @@ set_target_properties(${bun} PROPERTIES LINK_DEPENDS ${BUN_SYMBOLS_PATH})
 include(SetupWebKit)
 
 if(WIN32)
-  target_link_libraries(${bun} PRIVATE
-    ${WEBKIT_LIB_PATH}/WTF.lib
-    ${WEBKIT_LIB_PATH}/JavaScriptCore.lib
-    ${WEBKIT_LIB_PATH}/sicudt.lib
-    ${WEBKIT_LIB_PATH}/sicuin.lib
-    ${WEBKIT_LIB_PATH}/sicuuc.lib
-  )
+  if(DEBUG)
+    target_link_libraries(${bun} PRIVATE
+      ${WEBKIT_LIB_PATH}/WTF.lib
+      ${WEBKIT_LIB_PATH}/JavaScriptCore.lib
+      ${WEBKIT_LIB_PATH}/sicudtd.lib
+      ${WEBKIT_LIB_PATH}/sicuind.lib
+      ${WEBKIT_LIB_PATH}/sicuucd.lib
+    )
+  else()
+    target_link_libraries(${bun} PRIVATE
+      ${WEBKIT_LIB_PATH}/WTF.lib
+      ${WEBKIT_LIB_PATH}/JavaScriptCore.lib
+      ${WEBKIT_LIB_PATH}/sicudt.lib
+      ${WEBKIT_LIB_PATH}/sicuin.lib
+      ${WEBKIT_LIB_PATH}/sicuuc.lib
+    )
+  endif()
 else()
   target_link_libraries(${bun} PRIVATE
     ${WEBKIT_LIB_PATH}/libWTF.a

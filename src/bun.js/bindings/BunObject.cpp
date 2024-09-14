@@ -318,6 +318,12 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
     return bunShell;
 }
 
+// This value currently depends on a zig feature flag
+extern "C" JSC::EncodedJSValue Bun__getTemporaryDevServer(JSC::JSGlobalObject* bunObject);
+static JSValue constructBunKit(VM& vm, JSObject* bunObject) {
+    return JSC::JSValue::decode(Bun__getTemporaryDevServer(bunObject->globalObject()));
+}
+
 static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
 {
     JSGlobalObject* globalObject = bunObject->globalObject();
@@ -631,6 +637,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
     which                                          BunObject_callback_which                                            DontDelete|Function 1
     write                                          BunObject_callback_write                                            DontDelete|Function 1
+    wipDevServerDoNotUseYet                        constructBunKit                                                     DontEnum|ReadOnly|DontDelete|PropertyCallback
 @end
 */
 

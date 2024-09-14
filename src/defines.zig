@@ -57,6 +57,13 @@ pub const DefineData = struct {
         return self.valueless;
     }
 
+    pub fn initBoolean(value: bool) DefineData {
+        return .{
+            .value = .{ .e_boolean = .{ .value = value } },
+            .can_be_removed_if_unused = true,
+        };
+    }
+
     pub fn merge(a: DefineData, b: DefineData) DefineData {
         return DefineData{
             .value = b.value,
@@ -165,6 +172,8 @@ pub const Define = struct {
     dots: bun.StringHashMap([]DotDefine),
     allocator: std.mem.Allocator,
 
+    pub const Data = DefineData;
+
     pub fn forIdentifier(this: *const Define, name: []const u8) ?IdentifierDefine {
         if (this.identifiers.get(name)) |data| {
             return data;
@@ -174,58 +183,60 @@ pub const Define = struct {
     }
 
     pub fn insertFromIterator(define: *Define, allocator: std.mem.Allocator, comptime Iterator: type, iter: Iterator) !void {
-        outer: while (iter.next()) |user_define| {
-            const user_define_key = user_define.key_ptr.*;
-            // If it has a dot, then it's a DotDefine.
-            // e.g. process.env.NODE_ENV
-            if (strings.lastIndexOfChar(user_define_key, '.')) |last_dot| {
-                const tail = user_define_key[last_dot + 1 .. user_define_key.len];
-                const remainder = user_define_key[0..last_dot];
-                const count = std.mem.count(u8, remainder, ".") + 1;
-                var parts = try allocator.alloc(string, count + 1);
-                var splitter = std.mem.split(u8, remainder, ".");
-                var i: usize = 0;
-                while (splitter.next()) |split| : (i += 1) {
-                    parts[i] = split;
-                }
-                parts[i] = tail;
-                var initial_values: []DotDefine = &([_]DotDefine{});
-
-                // "NODE_ENV"
-                const gpe_entry = try define.dots.getOrPut(tail);
-
-                if (gpe_entry.found_existing) {
-                    for (gpe_entry.value_ptr.*) |*part| {
-                        // ["process", "env"] === ["process", "env"] (if that actually worked)
-                        if (arePartsEqual(part.parts, parts)) {
-                            part.data = part.data.merge(user_define.value_ptr.*);
-                            continue :outer;
-                        }
-                    }
-
-                    initial_values = gpe_entry.value_ptr.*;
-                }
-
-                var list = try std.ArrayList(DotDefine).initCapacity(allocator, initial_values.len + 1);
-                if (initial_values.len > 0) {
-                    list.appendSliceAssumeCapacity(initial_values);
-                }
-
-                list.appendAssumeCapacity(DotDefine{
-                    .data = user_define.value_ptr.*,
-                    // TODO: do we need to allocate this?
-                    .parts = parts,
-                });
-                gpe_entry.value_ptr.* = try list.toOwnedSlice();
-            } else {
-
-                // e.g. IS_BROWSER
-                try define.identifiers.put(user_define_key, user_define.value_ptr.*);
-            }
+        while (iter.next()) |user_define| {
+            try define.insert(allocator, user_define.key_ptr.*, user_define.value_ptr.*);
         }
     }
 
-    pub fn init(allocator: std.mem.Allocator, _user_defines: ?UserDefines, string_defines: ?UserDefinesArray) !*@This() {
+    pub fn insert(define: *Define, allocator: std.mem.Allocator, key: []const u8, value: DefineData) !void {
+        // If it has a dot, then it's a DotDefine.
+        // e.g. process.env.NODE_ENV
+        if (strings.lastIndexOfChar(key, '.')) |last_dot| {
+            const tail = key[last_dot + 1 .. key.len];
+            const remainder = key[0..last_dot];
+            const count = std.mem.count(u8, remainder, ".") + 1;
+            var parts = try allocator.alloc(string, count + 1);
+            var splitter = std.mem.split(u8, remainder, ".");
+            var i: usize = 0;
+            while (splitter.next()) |split| : (i += 1) {
+                parts[i] = split;
+            }
+            parts[i] = tail;
+            var initial_values: []DotDefine = &([_]DotDefine{});
+
+            // "NODE_ENV"
+            const gpe_entry = try define.dots.getOrPut(tail);
+
+            if (gpe_entry.found_existing) {
+                for (gpe_entry.value_ptr.*) |*part| {
+                    // ["process", "env"] === ["process", "env"] (if that actually worked)
+                    if (arePartsEqual(part.parts, parts)) {
+                        part.data = part.data.merge(value);
+                        return;
+                    }
+                }
+
+                initial_values = gpe_entry.value_ptr.*;
+            }
+
+            var list = try std.ArrayList(DotDefine).initCapacity(allocator, initial_values.len + 1);
+            if (initial_values.len > 0) {
+                list.appendSliceAssumeCapacity(initial_values);
+            }
+
+            list.appendAssumeCapacity(DotDefine{
+                .data = value,
+                // TODO: do we need to allocate this?
+                .parts = parts,
+            });
+            gpe_entry.value_ptr.* = try list.toOwnedSlice();
+        } else {
+            // e.g. IS_BROWSER
+            try define.identifiers.put(key, value);
+        }
+    }
+
+    pub fn init(allocator: std.mem.Allocator, _user_defines: ?UserDefines, string_defines: ?UserDefinesArray) std.mem.Allocator.Error!*@This() {
         var define = try allocator.create(Define);
         define.allocator = allocator;
         define.identifiers = bun.StringHashMap(IdentifierDefine).init(allocator);

@@ -1,5 +1,3 @@
-include(Macros)
-
 if(NOT CMAKE_SYSTEM_NAME OR NOT CMAKE_SYSTEM_PROCESSOR)
   message(FATAL_ERROR "CMake included this file before project() was called")
 endif()
@@ -7,7 +5,6 @@ endif()
 optionx(BUN_LINK_ONLY BOOL "If only the linking step should be built" DEFAULT OFF)
 optionx(BUN_CPP_ONLY BOOL "If only the C++ part of Bun should be built" DEFAULT OFF)
 
-optionx(CI BOOL "If CI is enabled" DEFAULT OFF)
 optionx(BUILDKITE BOOL "If Buildkite is enabled" DEFAULT OFF)
 optionx(GITHUB_ACTIONS BOOL "If GitHub Actions is enabled" DEFAULT OFF)
 
@@ -34,10 +31,6 @@ if(CMAKE_BUILD_TYPE MATCHES "MinSizeRel")
   setx(ENABLE_SMOL ON)
 endif()
 
-cmake_host_system_information(RESULT CORE_COUNT QUERY NUMBER_OF_LOGICAL_CORES)
-
-optionx(CMAKE_BUILD_PARALLEL_LEVEL STRING "The number of parallel build jobs" DEFAULT ${CORE_COUNT})
-
 if(APPLE)
   setx(OS "darwin")
 elseif(WIN32)
@@ -59,16 +52,6 @@ endif()
 if(ARCH STREQUAL "x64")
   optionx(ENABLE_BASELINE BOOL "If baseline features should be used for older CPUs (e.g. disables AVX, AVX2)" DEFAULT OFF)
 endif()
-
-if(ARCH STREQUAL "aarch64")
-  set(DEFAULT_CPU "native")
-elseif(ENABLE_BASELINE)
-  set(DEFAULT_CPU "nehalem")
-else()
-  set(DEFAULT_CPU "haswell")
-endif()
-
-optionx(CPU STRING "The CPU to use for the compiler" DEFAULT ${DEFAULT_CPU})
 
 optionx(ENABLE_LOGS BOOL "If debug logs should be enabled" DEFAULT ${DEBUG})
 optionx(ENABLE_ASSERTIONS BOOL "If debug assertions should be enabled" DEFAULT ${DEBUG})
@@ -170,51 +153,5 @@ optionx(USE_WEBKIT_ICU BOOL "Use the ICU libraries from WebKit" DEFAULT ${DEFAUL
 
 optionx(ERROR_LIMIT STRING "Maximum number of errors to show when compiling C++ code" DEFAULT "100")
 
-# Set the CMAKE_C_FLAGS and CMAKE_CXX_FLAGS for building dependencies.
-# This is a mess, since it doesn't use the CMake add_compile_options or target_compile_options commands.
-# In the future, make some macros so we can set this automatically.
-# e.g.
-#       add_c_flags(-mtune=native) - applies to all dependencies
-#       add_c_flags({target} -fno-rtti) - applies to a specific target
-
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|arm|ARM64")
-  if(APPLE)
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mcpu=apple-m1")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mcpu=apple-m1")
-  else()
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=armv8-a+crc -mtune=ampere1")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=armv8-a+crc -mtune=ampere1")
-  endif()
-else()
-  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mtune=${CPU}")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mtune=${CPU}")
-endif()
-
 list(APPEND CMAKE_ARGS -DCMAKE_EXPORT_COMPILE_COMMANDS=ON)
-
-if(WIN32)
-  list(APPEND CMAKE_ARGS -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded)
-  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /Z7 /MT /Ob2 /DNDEBUG /U_DLL")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /Z7 /MT /Ob2 /DNDEBUG /U_DLL -Xclang -fno-c++-static-destructors")
-  if(ENABLE_LTO)
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fuse-ld=lld -flto -Xclang -emit-llvm-bc")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fuse-ld=lld -flto -Xclang -emit-llvm-bc")
-  endif()
-else()
-  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -fno-asynchronous-unwind-tables -fno-unwind-tables")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-exceptions -fno-rtti -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-c++-static-destructors")
-  if(ENABLE_LTO)
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -flto=full")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -flto=full -fwhole-program-vtables -fforce-emit-vtables")
-    set(CMAKE_LINKER_FLAGS "${CMAKE_LINKER_FLAGS} -flto=full -fwhole-program-vtables -fforce-emit-vtables")
-  endif()
-  if(LINUX)
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -ffunction-sections -fdata-sections -faddrsig")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -ffunction-sections -fdata-sections -faddrsig")
-    set(CMAKE_LINKER_FLAGS "${CMAKE_LINKER_FLAGS} -Wl,-z,norelro")
-  endif()
-  if(APPLE)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D_LIBCXX_ENABLE_ASSERTIONS=0 -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_NONE")
-  endif()
-endif()
 

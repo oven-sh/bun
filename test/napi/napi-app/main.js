@@ -11,7 +11,18 @@ const fn = tests[process.argv[2]];
 if (typeof fn !== "function") {
   throw new Error("Unknown test:", process.argv[2]);
 }
-const result = fn.apply(null, eval(process.argv[3] ?? "[]"));
+
+// pass GC runner as first argument
+const result = fn.apply(null, [
+  () => {
+    if (process.isBun) {
+      Bun.gc(true);
+    } else if (global.gc) {
+      global.gc();
+    }
+  },
+  ...eval(process.argv[3] ?? "[]"),
+]);
 if (result instanceof Promise) {
   result.then(x => console.log("resolved to", x));
 } else if (result) {

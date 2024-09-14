@@ -39,7 +39,9 @@ static inline Zig::GlobalObject* toJS(napi_env val)
 static inline napi_value toNapi(JSC::JSValue val, Zig::GlobalObject* globalObject)
 {
     if (val.isCell()) {
-        globalObject->m_currentNapiHandleScopeImpl.get()->append(val);
+        if (auto* scope = globalObject->m_currentNapiHandleScopeImpl.get()) {
+            scope->append(val);
+        }
     }
     return reinterpret_cast<napi_value>(JSC::JSValue::encode(val));
 }

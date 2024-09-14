@@ -1705,7 +1705,11 @@ pub const Interpreter = struct {
                     const loop = this.event_loop.js;
                     this.keep_alive.disable();
                     loop.enter();
-                    _ = resolve.call(globalThis, .undefined, &.{ JSValue.jsNumberFromU16(exit_code), this.getBufferedStdout(globalThis), this.getBufferedStderr(globalThis) });
+                    _ = resolve.call(globalThis, .undefined, &.{
+                        JSValue.jsNumberFromU16(exit_code),
+                        this.getBufferedStdout(globalThis),
+                        this.getBufferedStderr(globalThis),
+                    }) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
                     JSC.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .undefined);
                     JSC.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .undefined);
                     loop.exit();
@@ -1731,7 +1735,11 @@ pub const Interpreter = struct {
                     this.keep_alive.disable();
 
                     loop.enter();
-                    reject.call(globalThis, &[_]JSValue{ JSValue.jsNumberFromChar(1), this.getBufferedStdout(globalThis), this.getBufferedStderr(globalThis) });
+                    _ = reject.call(globalThis, &[_]JSValue{
+                        JSValue.jsNumberFromChar(1),
+                        this.getBufferedStdout(globalThis),
+                        this.getBufferedStderr(globalThis),
+                    }) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
                     JSC.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .undefined);
                     JSC.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .undefined);
 

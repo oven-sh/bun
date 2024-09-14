@@ -179,7 +179,7 @@ pub const ZlibEncoder = struct {
         const thisctx = arguments.ptr[2];
         const is_last = callframe.argument(3).toBoolean();
 
-        const push_fn = thisctx.get(globalThis, "push") orelse {
+        const push_fn: JSC.JSValue = thisctx.get(globalThis, "push") orelse {
             globalThis.throw("are you sure this is a stream.Transform?", .{});
             return .zero;
         };
@@ -207,7 +207,8 @@ pub const ZlibEncoder = struct {
                     err_buffer_too_large.throw();
                     return .zero;
                 }
-                if (this.output.items.len > 0) runCallback(push_fn, globalThis, thisctx, &.{this.collectOutputValue()}) orelse return .zero;
+                if (this.output.items.len > 0) _ = push_fn.call(globalThis, thisctx, &.{this.collectOutputValue()}) catch
+                    return .zero;
                 if (done) break;
             }
         }
@@ -217,7 +218,8 @@ pub const ZlibEncoder = struct {
                 globalThis.ERR_BUFFER_TOO_LARGE("Cannot create a Buffer larger than {d} bytes", .{this.maxOutputLength}).throw();
                 return .zero;
             }
-            if (this.output.items.len > 0) runCallback(push_fn, globalThis, thisctx, &.{this.collectOutputValue()}) orelse return .zero;
+            if (this.output.items.len > 0) _ = push_fn.call(globalThis, thisctx, &.{this.collectOutputValue()}) catch
+                return .zero;
         }
         return .undefined;
     }
@@ -270,18 +272,14 @@ pub const ZlibEncoder = struct {
         defer _ = this.has_pending_activity.fetchSub(1, .monotonic);
         this.drainFreelist();
 
-        const result = this.callback_value.get().?.call(
+        _ = this.callback_value.get().?.call(
             this.globalThis,
             .undefined,
             if (this.write_failure != null)
                 &.{this.write_failure.?.toError(this.globalThis)}
             else
                 &.{ .null, this.collectOutputValue() },
-        );
-
-        if (result.toError()) |err| {
-            _ = this.globalThis.bunVM().uncaughtException(this.globalThis, err, false);
-        }
+        ) catch |err| this.globalThis.reportActiveExceptionAsUnhandled(err);
     }
 
     pub fn hasPendingActivity(this: *@This()) callconv(.C) bool {
@@ -346,7 +344,7 @@ pub const ZlibEncoder = struct {
                         this.encoder.stream.write(input.slice(), output, true) catch |e| {
                             any = true;
                             _ = this.encoder.pending_encode_job_count.fetchSub(1, .monotonic);
-                            this.encoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "ZlibError: {s}", .{@errorName(e)}); // TODO propogate better error
+                            this.encoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "ZlibError: {s}", .{@errorName(e)}); // TODO propagate better error
                             break :outer;
                         };
                         if (this.encoder.output.items.len > this.encoder.maxOutputLength) {
@@ -607,7 +605,7 @@ pub const ZlibDecoder = struct {
         const thisctx = arguments.ptr[2];
         const is_last = callframe.argument(3).toBoolean();
 
-        const push_fn = thisctx.get(globalThis, "push") orelse {
+        const push_fn: JSC.JSValue = thisctx.get(globalThis, "push") orelse {
             globalThis.throw("are you sure this is a stream.Transform?", .{});
             return .zero;
         };
@@ -635,7 +633,8 @@ pub const ZlibDecoder = struct {
                     err_buffer_too_large.throw();
                     return .zero;
                 }
-                if (this.output.items.len > 0) runCallback(push_fn, globalThis, thisctx, &.{this.collectOutputValue()}) orelse return .zero;
+                if (this.output.items.len > 0) _ = push_fn.call(globalThis, thisctx, &.{this.collectOutputValue()}) catch
+                    return .zero;
                 if (done) break;
             }
         }
@@ -645,7 +644,8 @@ pub const ZlibDecoder = struct {
                 globalThis.ERR_BUFFER_TOO_LARGE("Cannot create a Buffer larger than {d} bytes", .{this.maxOutputLength}).throw();
                 return .zero;
             }
-            if (this.output.items.len > 0) runCallback(push_fn, globalThis, thisctx, &.{this.collectOutputValue()}) orelse return .zero;
+            if (this.output.items.len > 0) _ = push_fn.call(globalThis, thisctx, &.{this.collectOutputValue()}) catch
+                return .zero;
         }
         return .undefined;
     }
@@ -698,18 +698,14 @@ pub const ZlibDecoder = struct {
         defer _ = this.has_pending_activity.fetchSub(1, .monotonic);
         this.drainFreelist();
 
-        const result = this.callback_value.get().?.call(
+        _ = this.callback_value.get().?.call(
             this.globalThis,
             .undefined,
             if (this.write_failure != null)
                 &.{this.write_failure.?.toError(this.globalThis)}
             else
                 &.{ .null, this.collectOutputValue() },
-        );
-
-        if (result.toError()) |err| {
-            _ = this.globalThis.bunVM().uncaughtException(this.globalThis, err, false);
-        }
+        ) catch |err| this.globalThis.reportActiveExceptionAsUnhandled(err);
     }
 
     pub fn hasPendingActivity(this: *@This()) callconv(.C) bool {
@@ -966,10 +962,4 @@ fn handleTransformSyncStreamError(err: anyerror, globalThis: *JSC.JSGlobalObject
     }
     closed.* = true;
     return .zero;
-}
-
-fn runCallback(callback: JSC.JSValue, globalObject: *JSC.JSGlobalObject, thisValue: JSC.JSValue, arguments: []const JSC.JSValue) ?void {
-    _ = callback.call(globalObject, thisValue, arguments);
-    if (globalObject.hasException()) return null;
-    return;
 }

@@ -627,7 +627,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHRTimeBigInt,
 JSC_DEFINE_HOST_FUNCTION(Process_functionChdir,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     ZigString str = ZigString { nullptr, 0 };
     if (callFrame->argumentCount() > 0) {
@@ -635,15 +636,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionChdir,
     }
 
     JSC::JSValue result = JSC::JSValue::decode(Bun__Process__setCwd(globalObject, &str));
-    JSC::JSObject* obj = result.getObject();
-    if (UNLIKELY(obj != nullptr && obj->isErrorInstance())) {
-        scope.throwException(globalObject, obj);
-        return JSValue::encode(JSC::jsUndefined());
-    }
+    RETURN_IF_EXCEPTION(scope, {});
 
-    scope.release();
-
-    return JSC::JSValue::encode(result);
+    auto* processObject = jsCast<Process*>(defaultGlobalObject(globalObject)->processObject());
+    processObject->setCachedCwd(vm, result.toStringOrNull(globalObject));
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(result));
 }
 
 static HashMap<String, int>* signalNameToNumberMap = nullptr;
@@ -2243,6 +2240,8 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_uncaughtExceptionCaptureCallback);
     visitor.append(thisObject->m_nextTickFunction);
+    visitor.append(thisObject->m_cachedCwd);
+
     thisObject->m_cpuUsageStructure.visit(visitor);
     thisObject->m_memoryUsageStructure.visit(visitor);
     thisObject->m_bindingUV.visit(visitor);
@@ -2839,15 +2838,19 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessTitle,
 JSC_DEFINE_HOST_FUNCTION(Process_functionCwd,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    JSC::JSValue result = JSC::JSValue::decode(Bun__Process__getCwd(globalObject));
-    JSC::JSObject* obj = result.getObject();
-    if (UNLIKELY(obj != nullptr && obj->isErrorInstance())) {
-        scope.throwException(globalObject, obj);
-        return JSValue::encode(JSC::jsUndefined());
+    auto& vm = globalObject->vm();
+    auto* processObject = jsCast<Process*>(defaultGlobalObject(globalObject)->processObject());
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L142-L146
+    if (auto* cached = processObject->cachedCwd()) {
+        return JSValue::encode(cached);
     }
 
-    return JSC::JSValue::encode(result);
+    auto cwd = Bun__Process__getCwd(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSString* cwdStr = jsCast<JSString*>(JSValue::decode(cwd));
+    processObject->setCachedCwd(vm, cwdStr);
+    return JSValue::encode(cwdStr);
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill,

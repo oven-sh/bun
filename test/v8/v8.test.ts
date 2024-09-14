@@ -232,6 +232,20 @@ describe("EscapableHandleScope", () => {
   });
 });
 
+const itIfNotWindows = process.platform == "win32" ? it.skip : it;
+
+describe("uv_os_getpid", () => {
+  itIfNotWindows("returns the same result as getpid on POSIX", () => {
+    checkSameOutput("test_uv_os_getpid", []);
+  });
+});
+
+describe("uv_os_getppid", () => {
+  itIfNotWindows("returns the same result as getppid on POSIX", () => {
+    checkSameOutput("test_uv_os_getppid", []);
+  });
+});
+
 function checkSameOutput(testName: string, args: any[], thisValue?: any) {
   const nodeResult = runOn(Runtime.node, BuildMode.release, testName, args, thisValue).trim();
   let bunReleaseResult = runOn(Runtime.bun, BuildMode.release, testName, args, thisValue);

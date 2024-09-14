@@ -1,5 +1,142 @@
 include(CMakeParseArguments)
 
+# --- Global macros ---
+
+# setx()
+# Description:
+#   Sets a variable, similar to `set()`, but also prints the value.
+# Arguments:
+#   variable string - The variable to set
+#   value    string - The value to set the variable to
+macro(setx)
+  set(${ARGV})
+  message(STATUS "Set ${ARGV0}: ${${ARGV0}}")
+endmacro()
+
+# optionx()
+# Description:
+#   Defines an option, similar to `option()`, but allows for bool, string, and regex types.
+# Arguments:
+#   variable    string - The variable to set
+#   type        string - The type of the variable
+#   description string - The description of the variable
+#   DEFAULT     string - The default value of the variable
+#   PREVIEW     string - The preview value of the variable
+#   REGEX       string - The regex to match the value
+#   REQUIRED    bool   - Whether the variable is required
+macro(optionx variable type description)
+  set(options REQUIRED)
+  set(oneValueArgs DEFAULT PREVIEW REGEX)
+  set(multiValueArgs)
+  cmake_parse_arguments(${variable} "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+  if(NOT ${type} MATCHES "^(BOOL|STRING|FILEPATH|PATH|INTERNAL)$")
+    set(${variable}_REGEX ${type})
+    set(${variable}_TYPE STRING)
+  else()
+    set(${variable}_TYPE ${type})
+  endif()
+
+  set(${variable} ${${variable}_DEFAULT} CACHE ${${variable}_TYPE} ${description})
+  set(${variable}_SOURCE "argument")
+  set(${variable}_PREVIEW -D${variable})
+
+  if(DEFINED ENV{${variable}})
+    set(${variable} $ENV{${variable}} CACHE ${${variable}_TYPE} ${description} FORCE)
+    set(${variable}_SOURCE "environment variable")
+    set(${variable}_PREVIEW ${variable})
+  endif()
+
+  if(NOT ${variable} AND ${${variable}_REQUIRED})
+    message(FATAL_ERROR "Required ${${variable}_SOURCE} is missing: please set, ${${variable}_PREVIEW}=<${${variable}_REGEX}>")
+  endif()
+
+  if(${type} STREQUAL "BOOL")
+    if("${${variable}}" MATCHES "^(TRUE|true|ON|on|YES|yes|1)$")
+      set(${variable} ON)
+    elseif("${${variable}}" MATCHES "^(FALSE|false|OFF|off|NO|no|0)$")
+      set(${variable} OFF)
+    else()
+      message(FATAL_ERROR "Invalid ${${variable}_SOURCE}: ${${variable}_PREVIEW}=\"${${variable}}\", please use ${${variable}_PREVIEW}=<ON|OFF>")
+    endif()
+  endif()
+
+  if(DEFINED ${variable}_REGEX AND NOT "^(${${variable}_REGEX})$" MATCHES "${${variable}}")
+    message(FATAL_ERROR "Invalid ${${variable}_SOURCE}: ${${variable}_PREVIEW}=\"${${variable}}\", please use ${${variable}_PREVIEW}=<${${variable}_REGEX}>")
+  endif()
+
+  message(STATUS "Set ${variable}: ${${variable}}")
+endmacro()
+
+# unsupported()
+# Description:
+#   Prints a message that the feature is not supported.
+# Arguments:
+#   variable string - The variable that is not supported
+macro(unsupported variable)
+  message(FATAL_ERROR "Unsupported ${variable}: \"${${variable}}\"")
+endmacro()
+
+# --- CMake variables ---
+
+setx(CMAKE_VERSION ${CMAKE_VERSION})
+setx(CMAKE_COMMAND ${CMAKE_COMMAND})
+setx(CMAKE_HOST_SYSTEM_NAME ${CMAKE_HOST_SYSTEM_NAME})
+
+# In script mode, using -P, this variable is not set
+if(NOT DEFINED CMAKE_HOST_SYSTEM_PROCESSOR)
+  cmake_host_system_information(RESULT CMAKE_HOST_SYSTEM_PROCESSOR QUERY OS_PLATFORM)
+endif()
+setx(CMAKE_HOST_SYSTEM_PROCESSOR ${CMAKE_HOST_SYSTEM_PROCESSOR})
+
+if(CMAKE_HOST_APPLE)
+  set(HOST_OS "darwin")
+elseif(CMAKE_HOST_WIN32)
+  set(HOST_OS "windows")
+elseif(CMAKE_HOST_LINUX)
+  set(HOST_OS "linux")
+else()
+  unsupported(CMAKE_HOST_SYSTEM_NAME)
+endif()
+
+if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "arm64|ARM64|aarch64|AARCH64")
+  set(HOST_OS "aarch64")
+elseif(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "x86_64|X86_64|x64|X64|amd64|AMD64")
+  set(HOST_OS "x64")
+else()
+  unsupported(CMAKE_HOST_SYSTEM_PROCESSOR)
+endif()
+
+setx(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+setx(CMAKE_COLOR_DIAGNOSTICS ON)
+
+cmake_host_system_information(RESULT CORE_COUNT QUERY NUMBER_OF_LOGICAL_CORES)
+optionx(CMAKE_BUILD_PARALLEL_LEVEL STRING "The number of parallel build jobs" DEFAULT ${CORE_COUNT})
+
+# --- Global variables ---
+
+setx(CWD ${CMAKE_SOURCE_DIR})
+setx(BUILD_PATH ${CMAKE_BINARY_DIR})
+
+optionx(CACHE_PATH FILEPATH "The path to the cache directory" DEFAULT ${BUILD_PATH}/cache)
+optionx(CACHE_STRATEGY "read-write|read-only|write-only|none" "The strategy to use for caching" DEFAULT "read-write")
+
+optionx(CI BOOL "If CI is enabled" DEFAULT OFF)
+
+if(CI)
+  set(DEFAULT_VENDOR_PATH ${CACHE_PATH}/vendor)
+else()
+  set(DEFAULT_VENDOR_PATH ${CWD}/vendor)
+endif()
+
+optionx(VENDOR_PATH FILEPATH "The path to the vendor directory" DEFAULT ${DEFAULT_VENDOR_PATH})
+optionx(TMP_PATH FILEPATH "The path to the temporary directory" DEFAULT ${BUILD_PATH}/tmp)
+
+optionx(FRESH BOOL "Set when --fresh is used" DEFAULT OFF)
+optionx(CLEAN BOOL "Set when --clean is used" DEFAULT OFF)
+
+# --- Helper functions ---
+
 function(parse_semver value variable)
   string(REGEX MATCH "([0-9]+)\\.([0-9]+)\\.([0-9]+)" match "${value}")
   
@@ -12,17 +149,6 @@ function(parse_semver value variable)
   set(${variable}_VERSION_MINOR "${CMAKE_MATCH_2}" PARENT_SCOPE)
   set(${variable}_VERSION_PATCH "${CMAKE_MATCH_3}" PARENT_SCOPE)
 endfunction()
-
-# setx()
-# Description:
-#   Sets a variable, similar to `set()`, but also prints the value.
-# Arguments:
-#   variable string - The variable to set
-#   value    string - The value to set the variable to
-macro(setx)
-  set(${ARGV})
-  message(STATUS "Set ${ARGV0}: ${${ARGV0}}")
-endmacro()
 
 # setenv()
 # Description:
@@ -61,65 +187,6 @@ function(setenv variable value)
   message(STATUS "Set ENV ${variable}: ${value}")
 endfunction()
 
-# optionx()
-# Description:
-#   Defines an option, similar to `option()`, but allows for bool, string, and regex types.
-# Arguments:
-#   variable    string - The variable to set
-#   type        string - The type of the variable
-#   description string - The description of the variable
-#   DEFAULT     string - The default value of the variable
-#   PREVIEW     string - The preview value of the variable
-#   REGEX       string - The regex to match the value
-#   REQUIRED    bool   - Whether the variable is required
-macro(optionx variable type description)
-  set(options REQUIRED)
-  set(oneValueArgs DEFAULT PREVIEW REGEX)
-  set(multiValueArgs)
-  cmake_parse_arguments(${variable} "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
-
-  if(NOT ${type} MATCHES "^(BOOL|STRING|FILEPATH|PATH|INTERNAL)$")
-    set(${variable}_REGEX ${type})
-    set(${variable}_TYPE STRING)
-  else()
-    set(${variable}_TYPE ${type})
-  endif()
-
-  set(${variable} ${${variable}_DEFAULT} CACHE ${${variable}_TYPE} ${description})
-  set(${variable}_SOURCE "argument")
-  set(${variable}_PREVIEW -D${variable})
-
-  if(DEFINED ENV{${variable}})
-    # if(DEFINED ${variable} AND NOT ${variable} STREQUAL $ENV{${variable}})
-    #   message(FATAL_ERROR "Invalid ${${variable}_SOURCE}: ${${variable}_PREVIEW}=\"${${variable}}\" conflicts with environment variable ${variable}=\"$ENV{${variable}}\"")
-    # endif()
-
-    set(${variable} $ENV{${variable}} CACHE ${${variable}_TYPE} ${description} FORCE)
-    set(${variable}_SOURCE "environment variable")
-    set(${variable}_PREVIEW ${variable})
-  endif()
-
-  if(NOT ${variable} AND ${${variable}_REQUIRED})
-    message(FATAL_ERROR "Required ${${variable}_SOURCE} is missing: please set, ${${variable}_PREVIEW}=<${${variable}_REGEX}>")
-  endif()
-
-  if(${type} STREQUAL "BOOL")
-    if("${${variable}}" MATCHES "^(TRUE|true|ON|on|YES|yes|1)$")
-      set(${variable} ON)
-    elseif("${${variable}}" MATCHES "^(FALSE|false|OFF|off|NO|no|0)$")
-      set(${variable} OFF)
-    else()
-      message(FATAL_ERROR "Invalid ${${variable}_SOURCE}: ${${variable}_PREVIEW}=\"${${variable}}\", please use ${${variable}_PREVIEW}=<ON|OFF>")
-    endif()
-  endif()
-
-  if(DEFINED ${variable}_REGEX AND NOT "^(${${variable}_REGEX})$" MATCHES "${${variable}}")
-    message(FATAL_ERROR "Invalid ${${variable}_SOURCE}: ${${variable}_PREVIEW}=\"${${variable}}\", please use ${${variable}_PREVIEW}=<${${variable}_REGEX}>")
-  endif()
-
-  message(STATUS "Set ${variable}: ${${variable}}")
-endmacro()
-
 # check_command()
 # Description:
 #   Checks if a command is available, used by `find_command()` as a validator.
@@ -142,7 +209,7 @@ function(check_command FOUND CMD)
     OUTPUT_STRIP_TRAILING_WHITESPACE
   )
 
-  if(NOT RESULT EQUAL 0)
+  if(NOT RESULT EQUAL 0 OR NOT OUTPUT)
     message(DEBUG "${CHECK_COMMAND}, exited with code ${RESULT}")
     return()
   endif()
@@ -212,7 +279,11 @@ function(find_command)
     message(FATAL_ERROR "Command not found: \"${CMD_COMMAND}\"")
   endif()
 
-  setx(${CMD_VARIABLE} ${${CMD_VARIABLE}})
+  if(${CMD_VARIABLE} MATCHES "NOTFOUND")
+    unset(${CMD_VARIABLE} PARENT_SCOPE)
+  else()
+    setx(${CMD_VARIABLE} ${${CMD_VARIABLE}} PARENT_SCOPE)
+  endif()
 endfunction()
 
 # register_command()
@@ -272,7 +343,7 @@ function(register_command)
   endforeach()
 
   foreach(source ${CMD_SOURCES})
-    if(NOT source MATCHES "^(${CWD}|${BUILD_PATH})")
+    if(NOT source MATCHES "^(${CWD}|${BUILD_PATH}|${CACHE_PATH}|${VENDOR_PATH})")
       message(FATAL_ERROR "register_command: SOURCES contains \"${source}\", if it's a path, make it absolute, otherwise add it to TARGETS instead")
     endif()
     list(APPEND CMD_EFFECTIVE_DEPENDS ${source})
@@ -285,14 +356,14 @@ function(register_command)
   set(CMD_EFFECTIVE_OUTPUTS)
 
   foreach(output ${CMD_OUTPUTS})
-    if(NOT output MATCHES "^(${CWD}|${BUILD_PATH})")
+    if(NOT output MATCHES "^(${CWD}|${BUILD_PATH}|${CACHE_PATH}|${VENDOR_PATH})")
       message(FATAL_ERROR "register_command: OUTPUTS contains \"${output}\", if it's a path, make it absolute")
     endif()
     list(APPEND CMD_EFFECTIVE_OUTPUTS ${output})
   endforeach()
 
   foreach(artifact ${CMD_ARTIFACTS})
-    if(NOT artifact MATCHES "^(${CWD}|${BUILD_PATH})")
+    if(NOT artifact MATCHES "^(${CWD}|${BUILD_PATH}|${CACHE_PATH}|${VENDOR_PATH})")
       message(FATAL_ERROR "register_command: ARTIFACTS contains \"${artifact}\", if it's a path, make it absolute")
     endif()
     list(APPEND CMD_EFFECTIVE_OUTPUTS ${artifact})
@@ -501,7 +572,7 @@ function(register_repository)
   endif()
 
   if(NOT GIT_PATH)
-    set(GIT_PATH ${CWD}/src/deps/${GIT_NAME})
+    set(GIT_PATH ${VENDOR_PATH}/${GIT_NAME})
   endif()
 
   if(GIT_COMMIT)
@@ -562,7 +633,7 @@ function(register_cmake_command)
   endif()
 
   if(NOT MAKE_CWD)
-    set(MAKE_CWD ${CWD}/src/deps/${MAKE_TARGET})
+    set(MAKE_CWD ${VENDOR_PATH}/${MAKE_TARGET})
   endif()
 
   if(NOT MAKE_BUILD_PATH)
@@ -621,8 +692,12 @@ function(register_cmake_command)
 
   set(effectiveFlags ${setFlags} ${appendFlags})
   foreach(flag ${effectiveFlags})
-    list(APPEND MAKE_EFFECTIVE_ARGS -DCMAKE_${flag}=${MAKE_${flag}})
+    list(APPEND MAKE_EFFECTIVE_ARGS "-DCMAKE_${flag}=${MAKE_${flag}}")
   endforeach()
+
+  if(DEFINED FRESH)
+    list(APPEND MAKE_EFFECTIVE_ARGS --fresh)
+  endif()
 
   register_command(
     COMMENT "Configuring ${MAKE_TARGET}"
@@ -701,4 +776,117 @@ function(register_cmake_command)
   if(BUN_LINK_ONLY)
     target_sources(${bun} PRIVATE ${MAKE_ARTIFACTS})
   endif()
+endfunction()
+
+# register_compiler_flag()
+# Description:
+#   Registers a compiler flag, similar to `add_compile_options()`, but has more validation and features.
+# Arguments:
+#   flags string[]     - The flags to register
+#   DESCRIPTION string - The description of the flag
+#   LANGUAGES string[] - The languages to register the flag (default: C, CXX)
+#   TARGETS string[]   - The targets to register the flag (default: all)
+function(register_compiler_flags)
+  set(args DESCRIPTION)
+  set(multiArgs LANGUAGES TARGETS)
+  cmake_parse_arguments(COMPILER "" "${args}" "${multiArgs}" ${ARGN})
+
+  if(NOT COMPILER_LANGUAGES)
+    set(COMPILER_LANGUAGES C CXX)
+  endif()
+
+  set(COMPILER_FLAGS)
+  foreach(flag ${COMPILER_UNPARSED_ARGUMENTS})
+    if(flag STREQUAL "ON")
+      continue()
+    elseif(flag STREQUAL "OFF")
+      list(POP_BACK COMPILER_FLAGS)
+    elseif(flag MATCHES "^(-|/)")
+      list(APPEND COMPILER_FLAGS ${flag})
+    else()
+      message(FATAL_ERROR "register_compiler_flags: Invalid flag: \"${flag}\"")
+    endif()
+  endforeach()
+
+  foreach(target ${COMPILER_TARGETS})
+    if(NOT TARGET ${target})
+      message(FATAL_ERROR "register_compiler_flags: \"${target}\" is not a target")
+    endif()
+  endforeach()
+
+  foreach(lang ${COMPILER_LANGUAGES})
+    list(JOIN COMPILER_FLAGS " " COMPILER_FLAGS_STRING)
+
+    if(NOT COMPILER_TARGETS)
+      set(CMAKE_${lang}_FLAGS "${CMAKE_${lang}_FLAGS} ${COMPILER_FLAGS_STRING}" PARENT_SCOPE)
+    endif()
+
+    foreach(target ${COMPILER_TARGETS})
+      set(${target}_CMAKE_${lang}_FLAGS "${${target}_CMAKE_${lang}_FLAGS} ${COMPILER_FLAGS_STRING}" PARENT_SCOPE)
+    endforeach()
+  endforeach()
+
+  foreach(lang ${COMPILER_LANGUAGES})
+    foreach(flag ${COMPILER_FLAGS})
+      if(NOT COMPILER_TARGETS)
+        add_compile_options($<$<COMPILE_LANGUAGE:${lang}>:${flag}>)
+      endif()
+      
+      foreach(target ${COMPILER_TARGETS})
+        get_target_property(type ${target} TYPE)
+        if(type MATCHES "EXECUTABLE|LIBRARY")
+          target_compile_options(${target} PRIVATE $<$<COMPILE_LANGUAGE:${lang}>:${flag}>)
+        endif()
+      endforeach()
+    endforeach()
+  endforeach()
+endfunction()
+
+function(register_compiler_definitions)
+  
+endfunction()
+
+# register_linker_flags()
+# Description:
+#   Registers a linker flag, similar to `add_link_options()`.
+# Arguments:
+#   flags string[]     - The flags to register
+#   DESCRIPTION string - The description of the flag
+function(register_linker_flags)
+  set(args DESCRIPTION)
+  cmake_parse_arguments(LINKER "" "${args}" "" ${ARGN})
+
+  foreach(flag ${LINKER_UNPARSED_ARGUMENTS})
+    if(flag STREQUAL "ON")
+      continue()
+    elseif(flag STREQUAL "OFF")
+      list(POP_FRONT LINKER_FLAGS)
+    elseif(flag MATCHES "^(-|/)")
+      list(APPEND LINKER_FLAGS ${flag})
+    else()
+      message(FATAL_ERROR "register_linker_flags: Invalid flag: \"${flag}\"")
+    endif()
+  endforeach()
+
+  add_link_options(${LINKER_FLAGS})
+endfunction()
+
+function(print_compiler_flags)
+  get_property(targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+  set(languages C CXX)
+  foreach(target ${targets})
+    get_target_property(type ${target} TYPE)
+    message(STATUS "Target: ${target}")
+    foreach(lang ${languages})
+      if(${target}_CMAKE_${lang}_FLAGS)
+        message(STATUS "  ${lang} Flags: ${${target}_CMAKE_${lang}_FLAGS}")
+      endif()
+    endforeach()
+  endforeach()
+  foreach(lang ${languages})
+    message(STATUS "Language: ${lang}")
+    if(CMAKE_${lang}_FLAGS)
+      message(STATUS "  Flags: ${CMAKE_${lang}_FLAGS}")
+    endif()
+  endforeach()
 endfunction()

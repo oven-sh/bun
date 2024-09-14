@@ -78,10 +78,11 @@ using DOMGuardedObjectSet = HashSet<WebCore::DOMGuardedObject*>;
 
 class GlobalObject : public Bun::GlobalScope {
     using Base = Bun::GlobalScope;
+
+public:
     // Move this to the front for better cache locality.
     void* m_bunVM;
 
-public:
     static const JSC::ClassInfo s_info;
     static const JSC::GlobalObjectMethodTable s_globalObjectMethodTable;
 
@@ -416,7 +417,7 @@ public:
 
     // The original, unmodified Error.prepareStackTrace.
     //
-    // We set a default value for this to mimick Node.js behavior It is a
+    // We set a default value for this to mimic Node.js behavior It is a
     // separate from the user-facing value so that we can tell if the user
     // really set it or if it's just the default value.
     //
@@ -486,10 +487,11 @@ public:
 
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 
+    void finishCreation(JSC::VM&);
+
 private:
     void addBuiltinGlobals(JSC::VM&);
 
-    void finishCreation(JSC::VM&);
     friend void WebCore::JSBuiltinInternalFunctions::initialize(Zig::GlobalObject&);
     WebCore::JSBuiltinInternalFunctions m_builtinInternalFunctions;
     std::unique_ptr<WebCore::DOMConstructors> m_constructors;

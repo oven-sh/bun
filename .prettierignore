@@ -1,5 +1,5 @@
 src/bun.js/WebKit
-src/deps
+vendor
 test/snapshots
 test/js/deno
 test/node.js

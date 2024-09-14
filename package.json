@@ -57,7 +57,7 @@
     "clang-format": "bun run build --target clang-format",
     "clang-format:check": "bun run build --target clang-format-check",
     "clang-tidy": "bun run build --target clang-tidy",
-    "clang-tidy:check": "bun run build --target clang-tidy-check",
+    "clang-tidy:check": "bun run build --target clang-tidy",
     "zig-format": "bun run build --target zig-format",
     "zig-format:check": "bun run build --target zig-format-check"
   }

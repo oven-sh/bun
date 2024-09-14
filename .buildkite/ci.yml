@@ -8,6 +8,33 @@
 # for a particular commit.
 
 steps:
+  # Lint
+  - key: "lint"
+    group: ":broom: Lint"
+    if: "build.branch != 'main'"
+    steps:
+      - key: "zig-format"
+        label: ":broom: zig-format"
+        agents:
+          queue: "build-linux"
+        soft_fail: true
+        command:
+          - "bun run zig-format:check"
+      - key: "clang-format"
+        label: ":broom: clang-format"
+        agents:
+          queue: "build-linux"
+        soft_fail: true
+        command:
+          - "bun run clang-format:check"
+      - key: "clang-tidy"
+        label: ":broom: clang-tidy"
+        agents:
+          queue: "build-linux"
+        soft_fail: true
+        command:
+          - "bun run clang-tidy:check"
+
   # macOS aarch64
   - key: "darwin-aarch64"
     group: ":darwin: aarch64"

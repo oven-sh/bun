@@ -17,7 +17,8 @@ register_command(
       -Werror
       --dry-run
       --verbose
-      ${BUN_CPP_SOURCES}
+      ${BUN_C_SOURCES}
+      ${BUN_CXX_SOURCES}
   ALWAYS_RUN
 )
 
@@ -30,6 +31,7 @@ register_command(
     ${CLANG_FORMAT_PROGRAM}
       -i # edits files in-place
       --verbose
-      ${BUN_CPP_SOURCES}
+      ${BUN_C_SOURCES}
+      ${BUN_CXX_SOURCES}
   ALWAYS_RUN
 )

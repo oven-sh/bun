@@ -11,12 +11,14 @@ find_command(
     OFF
 )
 
-set(CLANG_TIDY_COMMAND ${CLANG_TIDY_PROGRAM} ${BUN_CPP_SOURCES}
+set(CLANG_TIDY_COMMAND ${CLANG_TIDY_PROGRAM}
   -p ${BUILD_PATH}  
   --config-file=${CWD}/.clang-tidy
   --fix
   --fix-errors
   --fix-notes
+  ${BUN_C_SOURCES}
+  ${BUN_CXX_SOURCES}
 )
 
 if(CMAKE_COLOR_DIAGNOSTICS)

@@ -37,6 +37,7 @@ pub const BrotliEncoder = struct {
     pub usingnamespace JSC.Codegen.JSBrotliEncoder;
 
     stream: brotli.BrotliCompressionStream,
+    chunkSize: c_uint,
     maxOutputLength: usize,
 
     freelist: FreeList = .{},
@@ -81,11 +82,7 @@ pub const BrotliEncoder = struct {
         const callback = arguments[2];
         const mode = arguments[3].to(u8);
 
-        const chunk_size = globalThis.getInteger(opts, u32, 1024 * 48, .{
-            .min = 64,
-            .field_name = "chunkSize",
-        }) orelse return .zero;
-        _ = chunk_size; // autofix
+        const chunkSize = globalThis.getInteger(opts, u32, 1024 * 48, .{ .min = 64, .field_name = "chunkSize" }) orelse return .zero;
         const maxOutputLength = globalThis.getInteger(opts, usize, 0, .{ .max = std.math.maxInt(u52), .field_name = "maxOutputLength" }) orelse return .zero;
         const flush = globalThis.getInteger(opts, u8, 0, .{ .max = 3, .field_name = "flush" }) orelse return .zero;
         const finishFlush = globalThis.getInteger(opts, u8, 2, .{ .max = 3, .field_name = "finishFlush" }) orelse return .zero;
@@ -97,6 +94,7 @@ pub const BrotliEncoder = struct {
                 globalThis.throw("Failed to create BrotliEncoder", .{});
                 return .zero;
             },
+            .chunkSize = chunkSize,
             .maxOutputLength = maxOutputLength,
             .mode = mode,
         });
@@ -406,6 +404,31 @@ pub const BrotliEncoder = struct {
         _ = callframe;
         return .undefined;
     }
+
+    pub fn getChunkSize(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        _ = globalObject;
+        return JSC.JSValue.jsNumber(this.chunkSize);
+    }
+
+    pub fn getFlush(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        _ = globalObject;
+        return JSC.JSValue.jsNumber(this.stream.flushOp);
+    }
+
+    pub fn getFinishFlush(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        _ = globalObject;
+        return JSC.JSValue.jsNumber(this.stream.finishFlushOp);
+    }
+
+    pub fn getFullFlush(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        _ = globalObject;
+        return JSC.JSValue.jsNumber(this.stream.fullFlushOp);
+    }
+
+    pub fn getMaxOutputLength(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        _ = globalObject;
+        return JSC.JSValue.jsNumber(this.maxOutputLength);
+    }
 };
 
 pub const BrotliDecoder = struct {
@@ -414,6 +437,7 @@ pub const BrotliDecoder = struct {
 
     globalThis: *JSC.JSGlobalObject,
     stream: brotli.BrotliReaderArrayList,
+    chunkSize: c_uint,
     maxOutputLength: usize,
     mode: u8,
 
@@ -464,6 +488,7 @@ pub const BrotliDecoder = struct {
         const callback = arguments[2];
         const mode = arguments[3].to(u8);
 
+        const chunkSize = globalThis.getInteger(opts, u32, 1024 * 48, .{ .min = 64, .field_name = "chunkSize" }) orelse return .zero;
         const maxOutputLength = globalThis.getInteger(opts, usize, 0, .{ .max = std.math.maxInt(u52), .field_name = "maxOutputLength" }) orelse return .zero;
         const flush = globalThis.getInteger(opts, u8, 0, .{ .max = 6, .field_name = "flush" }) orelse return .zero;
         const finishFlush = globalThis.getInteger(opts, u8, 2, .{ .max = 6, .field_name = "finishFlush" }) orelse return .zero;
@@ -472,16 +497,14 @@ pub const BrotliDecoder = struct {
         var this: *BrotliDecoder = BrotliDecoder.new(.{
             .globalThis = globalThis,
             .stream = undefined, // &this.output needs to be a stable pointer
+            .chunkSize = chunkSize,
             .maxOutputLength = maxOutputLength,
             .mode = mode,
         });
-        this.stream = brotli.BrotliReaderArrayList.initWithOptions("", &this.output, bun.default_allocator, .{}) catch {
+        this.stream = brotli.BrotliReaderArrayList.initWithOptions("", &this.output, bun.default_allocator, .{}, @enumFromInt(flush), @enumFromInt(finishFlush), @enumFromInt(fullFlush)) catch {
             globalThis.throw("Failed to create BrotliDecoder", .{});
             return .zero;
         };
-        _ = flush;
-        _ = finishFlush;
-        _ = fullFlush;
 
         if (opts.get(globalThis, "params")) |params| {
             inline for (std.meta.fields(bun.brotli.c.BrotliDecoderParameter)) |f| {
@@ -757,5 +780,30 @@ pub const BrotliDecoder = struct {
         _ = globalThis;
         _ = callframe;
         return .undefined;
+    }
+
+    pub fn getChunkSize(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        _ = globalObject;
+        return JSC.JSValue.jsNumber(this.chunkSize);
+    }
+
+    pub fn getFlush(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        _ = globalObject;
+        return JSC.JSValue.jsNumber(this.stream.flushOp);
+    }
+
+    pub fn getFinishFlush(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        _ = globalObject;
+        return JSC.JSValue.jsNumber(this.stream.finishFlushOp);
+    }
+
+    pub fn getFullFlush(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        _ = globalObject;
+        return JSC.JSValue.jsNumber(this.stream.fullFlushOp);
+    }
+
+    pub fn getMaxOutputLength(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        _ = globalObject;
+        return JSC.JSValue.jsNumber(this.maxOutputLength);
     }
 };

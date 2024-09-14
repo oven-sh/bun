@@ -439,6 +439,31 @@ pub const ZlibEncoder = struct {
 
         return .undefined;
     }
+
+    pub fn getChunkSize(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        _ = globalObject;
+        return JSC.JSValue.jsNumber(this.stream.chunkSize);
+    }
+
+    pub fn getFlush(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        _ = globalObject;
+        return JSC.JSValue.jsNumber(this.stream.flush);
+    }
+
+    pub fn getFinishFlush(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        _ = globalObject;
+        return JSC.JSValue.jsNumber(this.stream.finishFlush);
+    }
+
+    pub fn getFullFlush(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        _ = globalObject;
+        return JSC.JSValue.jsNumber(this.stream.fullFlush);
+    }
+
+    pub fn getMaxOutputLength(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        _ = globalObject;
+        return JSC.JSValue.jsNumber(this.maxOutputLength);
+    }
 };
 
 pub const ZlibDecoder = struct {
@@ -868,6 +893,31 @@ pub const ZlibDecoder = struct {
         _ = globalThis;
         _ = callframe;
         return .undefined;
+    }
+
+    pub fn getChunkSize(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        _ = globalObject;
+        return JSC.JSValue.jsNumber(this.stream.chunkSize);
+    }
+
+    pub fn getFlush(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        _ = globalObject;
+        return JSC.JSValue.jsNumber(this.stream.flush);
+    }
+
+    pub fn getFinishFlush(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        _ = globalObject;
+        return JSC.JSValue.jsNumber(this.stream.finishFlush);
+    }
+
+    pub fn getFullFlush(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        _ = globalObject;
+        return JSC.JSValue.jsNumber(this.stream.fullFlush);
+    }
+
+    pub fn getMaxOutputLength(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        _ = globalObject;
+        return JSC.JSValue.jsNumber(this.maxOutputLength);
     }
 };
 

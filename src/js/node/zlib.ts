@@ -69,6 +69,31 @@ ObjectDefineProperty(ZlibBase.prototype, "_closed", {
     return this[kHandle].closed;
   },
 });
+ObjectDefineProperty(ZlibBase.prototype, "_chunkSize", {
+  get: function () {
+    return this[kHandle].chunkSize;
+  },
+});
+ObjectDefineProperty(ZlibBase.prototype, "_defaultFlushFlag", {
+  get: function () {
+    return this[kHandle].flush;
+  },
+});
+ObjectDefineProperty(ZlibBase.prototype, "_finishFlushFlag", {
+  get: function () {
+    return this[kHandle].finishFlush;
+  },
+});
+ObjectDefineProperty(ZlibBase.prototype, "_defaultFullFlushFlag", {
+  get: function () {
+    return this[kHandle].fullFlush;
+  },
+});
+ObjectDefineProperty(ZlibBase.prototype, "_maxOutputLength", {
+  get: function () {
+    return this[kHandle].maxOutputLength;
+  },
+});
 ZlibBase.prototype.flush = function (kind, callback) {
   if (typeof kind === "function" || (kind === undefined && !callback)) {
     callback = kind;

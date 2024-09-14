@@ -320,7 +320,8 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
 
 // This value currently depends on a zig feature flag
 extern "C" JSC::EncodedJSValue Bun__getTemporaryDevServer(JSC::JSGlobalObject* bunObject);
-static JSValue constructBunKit(VM& vm, JSObject* bunObject) {
+static JSValue constructBunKit(VM& vm, JSObject* bunObject)
+{
     return JSC::JSValue::decode(Bun__getTemporaryDevServer(bunObject->globalObject()));
 }
 

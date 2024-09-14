@@ -3030,10 +3030,10 @@ static EncodedJSValue doAsymmetricCipher(JSGlobalObject* globalObject, CallFrame
 
         if (isTypedArrayTypeIncludingDataView(jsOaepLabelType)) {
             auto* jsBufferView = jsCast<JSArrayBufferView*>(jsOaepLabelCell);
-            oaepLabel = std::optional<BufferSource::VariantType>{jsBufferView->unsharedImpl()};
+            oaepLabel = std::optional<BufferSource::VariantType> { jsBufferView->unsharedImpl() };
         } else if (jsOaepLabelType == ArrayBufferType) {
             auto* jsBuffer = jsDynamicCast<JSArrayBuffer*>(jsOaepLabelCell);
-            oaepLabel = std::optional<BufferSource::VariantType>{jsBuffer->impl()};
+            oaepLabel = std::optional<BufferSource::VariantType> { jsBuffer->impl() };
         } else {
             return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
                 "expected Buffer or array-like object for oaepLabel"_s);
@@ -3066,7 +3066,7 @@ static EncodedJSValue doAsymmetricCipher(JSGlobalObject* globalObject, CallFrame
     }
     auto buffer = jsBuffer.releaseReturnValue();
 
-    auto params = CryptoAlgorithmRsaOaepParams{};
+    auto params = CryptoAlgorithmRsaOaepParams {};
     params.label = oaepLabel;
     params.padding = padding;
     const auto& rsaKey = downcast<CryptoKeyRSA>(cryptoKey);
@@ -3080,12 +3080,12 @@ static EncodedJSValue doAsymmetricCipher(JSGlobalObject* globalObject, CallFrame
     return JSValue::encode(WebCore::createBuffer(globalObject, outBuffer));
 }
 
-JSC_DEFINE_HOST_FUNCTION(KeyObject__publicEncrypt, (JSGlobalObject* globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(KeyObject__publicEncrypt, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     return doAsymmetricCipher(globalObject, callFrame, true);
 }
 
-JSC_DEFINE_HOST_FUNCTION(KeyObject__privateDecrypt, (JSGlobalObject* globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(KeyObject__privateDecrypt, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     return doAsymmetricCipher(globalObject, callFrame, false);
 }

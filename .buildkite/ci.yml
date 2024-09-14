@@ -10,7 +10,7 @@
 steps:
   # Lint
   - key: "lint"
-    group: ":broom: Lint"
+    group: ":broom:"
     if: "build.branch != 'main'"
     steps:
       - key: "zig-format"

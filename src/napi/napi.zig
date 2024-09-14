@@ -825,7 +825,7 @@ fn notImplementedYet(comptime name: []const u8) void {
     );
 }
 
-pub export fn napi_open_escapable_handle_scope(env: napi_env, result_: ?*?napi_escapable_handle_scope) napi_status {
+pub export fn napi_open_escapable_handle_scope(env: napi_env, result_: ?*napi_escapable_handle_scope) napi_status {
     log("napi_open_escapable_handle_scope", .{});
     const result = result_ orelse {
         return invalidArg();

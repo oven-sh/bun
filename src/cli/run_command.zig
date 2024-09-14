@@ -342,7 +342,7 @@ pub const RunCommand = struct {
         };
 
         const ipc_fd = if (!Environment.isWindows) blk: {
-            const node_ipc_fd = bun.getEnvZ("NODE_CHANNEL_FD") orelse break :blk null;
+            const node_ipc_fd = bun.getenvZ("NODE_CHANNEL_FD") orelse break :blk null;
             const fd = std.fmt.parseInt(u32, node_ipc_fd, 10) catch break :blk null;
             break :blk bun.toFD(@as(i32, @intCast(fd)));
         } else null; // TODO: implement on Windows

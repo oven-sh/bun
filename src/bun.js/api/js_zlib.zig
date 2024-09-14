@@ -207,8 +207,7 @@ pub const ZlibEncoder = struct {
                     err_buffer_too_large.throw();
                     return .zero;
                 }
-                if (this.output.items.len > 0) _ = push_fn.call(globalThis, thisctx, &.{this.collectOutputValue()}) catch
-                    return .zero;
+                if (this.output.items.len > 0) _ = push_fn.call(globalThis, thisctx, &.{this.collectOutputValue()}) catch return .zero;
                 if (done) break;
             }
         }
@@ -218,8 +217,7 @@ pub const ZlibEncoder = struct {
                 globalThis.ERR_BUFFER_TOO_LARGE("Cannot create a Buffer larger than {d} bytes", .{this.maxOutputLength}).throw();
                 return .zero;
             }
-            if (this.output.items.len > 0) _ = push_fn.call(globalThis, thisctx, &.{this.collectOutputValue()}) catch
-                return .zero;
+            if (this.output.items.len > 0) _ = push_fn.call(globalThis, thisctx, &.{this.collectOutputValue()}) catch return .zero;
         }
         return .undefined;
     }
@@ -658,8 +656,7 @@ pub const ZlibDecoder = struct {
                     err_buffer_too_large.throw();
                     return .zero;
                 }
-                if (this.output.items.len > 0) _ = push_fn.call(globalThis, thisctx, &.{this.collectOutputValue()}) catch
-                    return .zero;
+                if (this.output.items.len > 0) _ = push_fn.call(globalThis, thisctx, &.{this.collectOutputValue()}) catch return .zero;
                 if (done) break;
             }
         }
@@ -669,8 +666,7 @@ pub const ZlibDecoder = struct {
                 globalThis.ERR_BUFFER_TOO_LARGE("Cannot create a Buffer larger than {d} bytes", .{this.maxOutputLength}).throw();
                 return .zero;
             }
-            if (this.output.items.len > 0) _ = push_fn.call(globalThis, thisctx, &.{this.collectOutputValue()}) catch
-                return .zero;
+            if (this.output.items.len > 0) _ = push_fn.call(globalThis, thisctx, &.{this.collectOutputValue()}) catch return .zero;
         }
         return .undefined;
     }

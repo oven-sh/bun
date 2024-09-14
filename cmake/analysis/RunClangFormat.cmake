@@ -11,7 +11,7 @@ register_command(
   TARGET
     clang-format-check
   COMMENT
-    "Checking clang-format"
+    "Running clang-format"
   COMMAND
     ${CLANG_FORMAT_PROGRAM}
       -Werror
@@ -26,7 +26,7 @@ register_command(
   TARGET
     clang-format
   COMMENT
-    "Running clang-format"
+    "Fixing clang-format"
   COMMAND
     ${CLANG_FORMAT_PROGRAM}
       -i # edits files in-place

@@ -37,14 +37,6 @@ if(WEBKIT_LOCAL)
   return()
 endif()
 
-if(EXISTS ${WEBKIT_PATH}/package.json)
-  file(READ ${WEBKIT_PATH}/package.json WEBKIT_PACKAGE_JSON)
-
-  if(WEBKIT_PACKAGE_JSON MATCHES ${WEBKIT_VERSION})
-    return()
-  endif()
-endif()
-
 if(WIN32)
   set(WEBKIT_OS "windows")
 elseif(APPLE)
@@ -75,12 +67,31 @@ set(WEBKIT_NAME bun-webkit-${WEBKIT_OS}-${WEBKIT_ARCH}${WEBKIT_SUFFIX})
 set(WEBKIT_FILENAME ${WEBKIT_NAME}.tar.gz)
 setx(WEBKIT_DOWNLOAD_URL https://github.com/oven-sh/WebKit/releases/download/autobuild-${WEBKIT_VERSION}/${WEBKIT_FILENAME})
 
-file(DOWNLOAD ${WEBKIT_DOWNLOAD_URL} ${CACHE_PATH}/${WEBKIT_FILENAME} SHOW_PROGRESS)
-file(ARCHIVE_EXTRACT INPUT ${CACHE_PATH}/${WEBKIT_FILENAME} DESTINATION ${CACHE_PATH} TOUCH)
-file(REMOVE ${CACHE_PATH}/${WEBKIT_FILENAME})
-file(REMOVE_RECURSE ${WEBKIT_PATH})
-file(RENAME ${CACHE_PATH}/bun-webkit ${WEBKIT_PATH})
+register_command(
+  TARGET
+    clone-webkit
+  COMMENT
+    "Cloning WebKit"
+  COMMAND
+    ${CMAKE_COMMAND}
+      -DDOWNLOAD_URL=${WEBKIT_DOWNLOAD_URL}
+      -DDOWNLOAD_PATH=${WEBKIT_PATH}
+      -P ${CWD}/cmake/scripts/DownloadUrl.cmake
+  OUTPUTS
+    ${WEBKIT_PATH}/package.json
+)
 
 if(APPLE)
-  file(REMOVE_RECURSE ${WEBKIT_INCLUDE_PATH}/unicode)
+  register_command(
+    TARGET
+      clone-webkit
+    TARGET_PHASE
+      POST_BUILD
+    COMMENT
+      "Removing unicode"
+    COMMAND
+      ${CMAKE_COMMAND} -E rm -rf ${WEBKIT_INCLUDE_PATH}/unicode
+  )
 endif()
+
+add_dependencies(${bun} clone-webkit)

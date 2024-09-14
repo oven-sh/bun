@@ -32,7 +32,7 @@ endif()
 if(EXISTS ${WEBKIT_PATH}/package.json)
   file(READ ${WEBKIT_PATH}/package.json WEBKIT_PACKAGE_JSON)
 
-  if(WEBKIT_PACKAGE_JSON MATCHES ${WEBKIT_VERSION})
+  if(WEBKIT_PACKAGE_JSON MATCHES WEBKIT_VERSION)
     return()
   endif()
 endif()

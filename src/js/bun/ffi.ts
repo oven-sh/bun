@@ -399,6 +399,8 @@ const native = {
   },
 };
 
+const ccFn = $newZigFunction("ffi.zig", "Bun__FFI__cc", 1);
+
 function dlopen(path, options) {
   if (typeof path === "string" && path?.startsWith?.("file:")) {
     // import.meta.url returns a file: URL
@@ -417,6 +419,64 @@ function dlopen(path, options) {
   }
 
   const result = nativeDLOpen(path, options);
+  if (result instanceof Error) throw result;
+
+  for (let key in result.symbols) {
+    var symbol = result.symbols[key];
+    if (options[key]?.args?.length || FFIType[options[key]?.returns as string] === FFIType.cstring) {
+      result.symbols[key] = FFIBuilder(
+        options[key].args ?? [],
+        options[key].returns ?? FFIType.void,
+        symbol,
+        // in stacktraces:
+        // instead of
+        //    "/usr/lib/sqlite3.so"
+        // we want
+        //    "sqlite3_get_version() - sqlit3.so"
+        path.includes("/") ? `${key} (${path.split("/").pop()})` : `${key} (${path})`,
+      );
+    } else {
+      // consistentcy
+      result.symbols[key].native = result.symbols[key];
+    }
+  }
+
+  // Bind it because it's a breaking change to not do so
+  // Previously, it didn't need to be bound
+  result.close = result.close.bind(result);
+
+  return result;
+}
+
+function cc(options) {
+  if (!$isObject(options)) {
+    throw new Error("Expected options to be an object");
+  }
+
+  let path = options?.source;
+
+  if (!path) {
+    throw new Error("Expected source to be a string to a file path");
+  }
+
+  if (typeof path === "string" && path?.startsWith?.("file:")) {
+    // import.meta.url returns a file: URL
+    // https://github.com/oven-sh/bun/issues/10304
+    path = Bun.fileURLToPath(path);
+  } else if (typeof path === "object" && path) {
+    if (path instanceof URL) {
+      // This is mostly for import.meta.resolve()
+      // https://github.com/oven-sh/bun/issues/10304
+      path = Bun.fileURLToPath(path as URL);
+    } else if (path instanceof Blob) {
+      // must be a Bun.file() blob
+      // https://discord.com/channels/876711213126520882/1230114905898614794/1230114905898614794
+      path = path.name;
+    }
+  }
+  options.source = path;
+
+  const result = ccFn(options);
   if (result instanceof Error) throw result;
 
   for (let key in result.symbols) {
@@ -503,4 +563,5 @@ export default {
   toArrayBuffer,
   toBuffer,
   viewSource,
+  cc,
 };

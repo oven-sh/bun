@@ -904,6 +904,8 @@ include_directories(${WEBKIT_INCLUDE_PATH})
 
 if(WEBKIT_PREBUILT AND NOT APPLE)
   include_directories(${WEBKIT_INCLUDE_PATH}/wtf/unicode)
+elseif(WEBKIT_PREBUILT AND APPLE)
+  include_directories(${HOMEBREW_PREFIX}/opt/icu4c/include)
 endif()
 
 # --- Dependencies ---

@@ -252,153 +252,44 @@ comptime {
 
 /// https://encoding.spec.whatwg.org/encodings.json
 pub const EncodingLabel = enum {
-    @"UTF-8",
-    IBM866,
-    @"ISO-8859-2",
-    @"ISO-8859-3",
-    @"ISO-8859-4",
-    @"ISO-8859-5",
-    @"ISO-8859-6",
-    @"ISO-8859-7",
-    @"ISO-8859-8",
-    @"ISO-8859-8-I",
-    @"ISO-8859-10",
-    @"ISO-8859-13",
-    @"ISO-8859-14",
-    @"ISO-8859-15",
-    @"ISO-8859-16",
-    @"KOI8-R",
-    @"KOI8-U",
-    macintosh,
-    @"windows-874",
-    @"windows-1250",
-    @"windows-1251",
+    @"utf-8",
     @"windows-1252",
-    @"windows-1253",
-    @"windows-1254",
-    @"windows-1255",
-    @"windows-1256",
-    @"windows-1257",
-    @"windows-1258",
-    @"x-mac-cyrillic",
-    Big5,
-    @"EUC-JP",
-    @"ISO-2022-JP",
-    Shift_JIS,
-    @"EUC-KR",
-    @"UTF-16BE",
-    @"UTF-16LE",
-    @"x-user-defined",
+    @"utf-16be",
+    @"utf-16le",
 
     pub const Map = std.enums.EnumMap(EncodingLabel, string);
-
-    const utf16_names = [_]string{
-        "ucs-2",
-        "utf-16",
-        "unicode",
-        "utf-16le",
-        "csunicode",
-        "unicodefeff",
-        "iso-10646-ucs-2",
-    };
-
-    const utf8_names = [_]string{
-        "utf8",
-        "utf-8",
-        "unicode11utf8",
-        "unicode20utf8",
-        "x-unicode20utf8",
-        "unicode-1-1-utf-8",
-    };
-
-    const latin1_names = [_]string{
-        "l1",
-        "ascii",
-        "cp819",
-        "cp1252",
-        "ibm819",
-        "latin1",
-        "iso88591",
-        "us-ascii",
-        "x-cp1252",
-        "iso8859-1",
-        "iso_8859-1",
-        "iso-8859-1",
-        "iso-ir-100",
-        "csisolatin1",
-        "windows-1252",
-        "ansi_x3.4-1968",
-        "iso_8859-1:1987",
-    };
 
     pub const latin1 = EncodingLabel.@"windows-1252";
 
     const map = bun.ComptimeStringMap(EncodingLabel, .{
         .{ "ansi_x3.4-1968", latin1 },
         .{ "ascii", latin1 },
-        .{ "big5", EncodingLabel.Big5 },
         .{ "cp1252", latin1 },
         .{ "cp819", latin1 },
         .{ "csisolatin1", latin1 },
-        .{ "csunicode", EncodingLabel.@"UTF-16LE" },
-        .{ "euc-jp", EncodingLabel.@"EUC-JP" },
-        .{ "euc-kr", EncodingLabel.@"EUC-KR" },
+        .{ "csunicode", EncodingLabel.@"utf-16le" },
         .{ "ibm819", latin1 },
-        .{ "ibm866", EncodingLabel.IBM866 },
         .{ "iso_8859-1:1987", latin1 },
         .{ "iso_8859-1", latin1 },
-        .{ "iso-10646-ucs-2", EncodingLabel.@"UTF-16LE" },
-        .{ "iso-2022-jp", EncodingLabel.@"ISO-2022-JP" },
+        .{ "iso-10646-ucs-2", EncodingLabel.@"utf-16le" },
         .{ "iso-8859-1", latin1 },
-        .{ "iso-8859-10", EncodingLabel.@"ISO-8859-10" },
-        .{ "iso-8859-13", EncodingLabel.@"ISO-8859-13" },
-        .{ "iso-8859-14", EncodingLabel.@"ISO-8859-14" },
-        .{ "iso-8859-15", EncodingLabel.@"ISO-8859-15" },
-        .{ "iso-8859-16", EncodingLabel.@"ISO-8859-16" },
-        .{ "iso-8859-2", EncodingLabel.@"ISO-8859-2" },
-        .{ "iso-8859-3", EncodingLabel.@"ISO-8859-3" },
-        .{ "iso-8859-4", EncodingLabel.@"ISO-8859-4" },
-        .{ "iso-8859-5", EncodingLabel.@"ISO-8859-5" },
-        .{ "iso-8859-6", EncodingLabel.@"ISO-8859-6" },
-        .{ "iso-8859-7", EncodingLabel.@"ISO-8859-7" },
-        .{ "iso-8859-8-i", EncodingLabel.@"ISO-8859-8-I" },
-        .{ "iso-8859-8", EncodingLabel.@"ISO-8859-8" },
         .{ "iso-ir-100", latin1 },
         .{ "iso8859-1", latin1 },
         .{ "iso88591", latin1 },
-        .{ "koi8-r", EncodingLabel.@"KOI8-R" },
-        .{ "koi8-u", EncodingLabel.@"KOI8-U" },
         .{ "l1", latin1 },
         .{ "latin1", latin1 },
-        .{ "macintosh", EncodingLabel.macintosh },
-        .{ "shift_jis", EncodingLabel.Shift_JIS },
-        .{ "ucs-2", EncodingLabel.@"UTF-16LE" },
-        .{ "unicode-1-1-utf-8", EncodingLabel.@"UTF-8" },
-        .{ "unicode", EncodingLabel.@"UTF-16LE" },
-        .{ "unicode11utf8", EncodingLabel.@"UTF-8" },
-        .{ "unicode20utf8", EncodingLabel.@"UTF-8" },
-        .{ "unicodefeff", EncodingLabel.@"UTF-16LE" },
+        .{ "ucs-2", EncodingLabel.@"utf-16le" },
+        .{ "unicode-1-1-utf-8", EncodingLabel.@"utf-8" },
+        .{ "unicode", EncodingLabel.@"utf-16le" },
+        .{ "unicode11utf8", EncodingLabel.@"utf-8" },
+        .{ "unicode20utf8", EncodingLabel.@"utf-8" },
+        .{ "unicodefeff", EncodingLabel.@"utf-16le" },
         .{ "us-ascii", latin1 },
-        .{ "utf-16", EncodingLabel.@"UTF-16LE" },
-        .{ "utf-16be", EncodingLabel.@"UTF-16BE" },
-        .{ "utf-16le", EncodingLabel.@"UTF-16LE" },
-        .{ "utf-8", EncodingLabel.@"UTF-8" },
-        .{ "utf8", EncodingLabel.@"UTF-8" },
-        .{ "windows-1250", EncodingLabel.@"windows-1250" },
-        .{ "windows-1251", EncodingLabel.@"windows-1251" },
-        .{ "windows-1252", EncodingLabel.@"windows-1252" },
-        .{ "windows-1252", latin1 },
-        .{ "windows-1253", EncodingLabel.@"windows-1253" },
-        .{ "windows-1254", EncodingLabel.@"windows-1254" },
-        .{ "windows-1255", EncodingLabel.@"windows-1255" },
-        .{ "windows-1256", EncodingLabel.@"windows-1256" },
-        .{ "windows-1257", EncodingLabel.@"windows-1257" },
-        .{ "windows-1258", EncodingLabel.@"windows-1258" },
-        .{ "windows-874", EncodingLabel.@"windows-874" },
-        .{ "x-cp1252", latin1 },
-        .{ "x-mac-cyrillic", EncodingLabel.@"x-mac-cyrillic" },
-        .{ "x-unicode20utf8", EncodingLabel.@"UTF-8" },
-        .{ "x-user-defined", EncodingLabel.@"x-user-defined" },
+        .{ "utf-16", EncodingLabel.@"utf-16le" },
+        .{ "utf-16be", EncodingLabel.@"utf-16be" },
+        .{ "utf-16le", EncodingLabel.@"utf-16le" },
+        .{ "utf-8", EncodingLabel.@"utf-8" },
+        .{ "utf8", EncodingLabel.@"utf-8" },
     });
 
     pub fn which(input_: string) ?EncodingLabel {
@@ -628,15 +519,47 @@ pub const TextDecoder = struct {
 
     ignore_bom: bool = false,
     fatal: bool = false,
-    encoding: EncodingLabel = EncodingLabel.@"UTF-8",
-    webkit_text_codec: ?*JSC.WebKitTextCodec = null,
+    encoding: Encoding = .{ .@"utf-8" = {} },
+
+    const Encoding = union(Tag) {
+        @"utf-8": void,
+        @"windows-1252": void,
+        @"utf-16be": void,
+        @"utf-16le": void,
+        other: *JSC.WebKitTextCodec,
+
+        pub const Tag = enum {
+            @"utf-8",
+            @"windows-1252",
+            @"utf-16be",
+            @"utf-16le",
+            other,
+        };
+
+        pub fn from(input: []const u8) ?Encoding {
+            if (EncodingLabel.which(input)) |label| {
+                return switch (label) {
+                    .@"utf-8" => .{ .@"utf-8" = {} },
+                    .@"utf-16le" => .{ .@"utf-16le" = {} },
+                    .@"utf-16be" => .{ .@"utf-16be" = {} },
+                    .@"windows-1252" => .{ .@"windows-1252" = {} },
+                };
+            }
+
+            return .{ .other = JSC.WebKitTextCodec.init(input) orelse return null };
+        }
+
+        pub fn deinit(this: *@This()) void {
+            if (this.* == .other) {
+                this.other.deinit();
+            }
+        }
+    };
 
     pub usingnamespace bun.New(TextDecoder);
 
     pub fn finalize(this: *TextDecoder) void {
-        if (this.webkit_text_codec) |codec| {
-            codec.deinit();
-        }
+        this.encoding.deinit();
         this.destroy();
     }
 
@@ -678,7 +601,15 @@ pub const TextDecoder = struct {
         this: *TextDecoder,
         globalThis: *JSC.JSGlobalObject,
     ) JSC.JSValue {
-        return ZigString.init(@tagName(this.encoding)).toJS(globalThis);
+        switch (this.encoding) {
+            .other => |codec| {
+                var name = codec.name();
+                return name.transferToJS(globalThis);
+            },
+            else => {
+                return ZigString.init(@tagName(this.encoding)).toJS(globalThis);
+            },
+        }
     }
     const Vector16 = std.meta.Vector(16, u16);
     const max_16_ascii: Vector16 = @splat(@as(u16, 127));
@@ -826,8 +757,8 @@ pub const TextDecoder = struct {
     }
 
     fn decodeSlice(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, buffer_slice: []const u8, comptime flush: bool) JSValue {
-        switch (this.encoding) {
-            EncodingLabel.latin1 => {
+        switch (@as(Encoding.Tag, this.encoding)) {
+            .@"windows-1252" => {
                 if (strings.isAllASCII(buffer_slice)) {
                     return ZigString.init(buffer_slice).toJS(globalThis);
                 }
@@ -845,7 +776,7 @@ pub const TextDecoder = struct {
                 const out = strings.copyLatin1IntoUTF16([]u16, bytes, []const u8, buffer_slice);
                 return ZigString.toExternalU16(bytes.ptr, out.written, globalThis);
             },
-            EncodingLabel.@"UTF-8" => {
+            .@"utf-8" => {
                 const input, const deinit = input: {
                     const maybe_without_bom = if (!this.ignore_bom and strings.hasPrefixComptime(buffer_slice, "\xef\xbb\xbf"))
                         buffer_slice[3..]
@@ -901,38 +832,36 @@ pub const TextDecoder = struct {
                 return ZigString.init(input).toJS(globalThis);
             },
 
-            inline .@"UTF-16LE", .@"UTF-16BE" => |utf16_encoding| {
-                const bom = if (comptime utf16_encoding == .@"UTF-16LE") "\xff\xfe" else "\xfe\xff";
+            inline .@"utf-16le", .@"utf-16be" => |encoding| {
+                const bom = comptime if (encoding == .@"utf-16le") "\xff\xfe" else "\xfe\xff";
                 const input = if (!this.ignore_bom and strings.hasPrefixComptime(buffer_slice, bom))
                     buffer_slice[2..]
                 else
                     buffer_slice;
 
-                var decoded, const saw_error = this.decodeUTF16(input, utf16_encoding == .@"UTF-16BE", flush) catch {
+                var decoded, const saw_error = this.decodeUTF16(input, encoding == .@"utf-16be", flush) catch {
                     globalThis.throwOutOfMemory();
                     return .zero;
                 };
 
                 if (saw_error and this.fatal) {
                     decoded.deinit(bun.default_allocator);
-                    globalThis.ERR_ENCODING_INVALID_ENCODED_DATA("The encoded data was not valid {s} data", .{@tagName(utf16_encoding)}).throw();
+                    globalThis.ERR_ENCODING_INVALID_ENCODED_DATA("The encoded data was not valid {s} data", .{@tagName(encoding)}).throw();
                     return .zero;
                 }
 
                 var output = bun.String.fromUTF16(decoded.items);
                 return output.toJS(globalThis);
             },
-            else => {
-                if (this.webkit_text_codec == null) {
-                    this.webkit_text_codec = JSC.WebKitTextCodec.init(this.encoding);
-                }
-
-                const codec = this.webkit_text_codec.?;
+            .other => {
+                const codec = this.encoding.other;
                 var did_stop_on_error = this.fatal;
                 var str = codec.decode(buffer_slice, flush, &did_stop_on_error);
                 defer str.deref();
                 if (did_stop_on_error and this.fatal) {
-                    globalThis.ERR_ENCODING_INVALID_ENCODED_DATA("The encoded data was not valid {s} data", .{@tagName(this.encoding)}).throw();
+                    var name = codec.name();
+                    defer name.deref();
+                    globalThis.ERR_ENCODING_INVALID_ENCODED_DATA("The encoded data was not valid {} data", .{name}).throw();
                     return .zero;
                 }
 
@@ -956,7 +885,7 @@ pub const TextDecoder = struct {
                 var str = arguments[0].toSlice(globalThis, bun.default_allocator);
                 defer if (str.isAllocated()) str.deinit();
 
-                if (EncodingLabel.which(str.slice())) |label| {
+                if (Encoding.from(str.slice())) |label| {
                     decoder.encoding = label;
                 } else {
                     globalThis.throwInvalidArguments("Unsupported encoding label \"{s}\"", .{str.slice()});
@@ -964,7 +893,7 @@ pub const TextDecoder = struct {
                 }
             } else if (arguments[0].isUndefined()) {
                 // default to utf-8
-                decoder.encoding = EncodingLabel.@"UTF-8";
+                decoder.encoding = .@"utf-8";
             } else {
                 globalThis.throwInvalidArguments("TextDecoder(encoding) label is invalid", .{});
                 return null;

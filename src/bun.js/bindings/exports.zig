@@ -1060,13 +1060,16 @@ fn findPathInner(
 }
 
 pub const WebKitTextCodec = opaque {
-    extern fn WebKitTextCodec__create(encoding_label: [*]const u8, len: usize) *WebKitTextCodec;
+    extern fn WebKitTextCodec__create(encoding_label: [*]const u8, len: usize) ?*WebKitTextCodec;
     extern fn WebKitTextCodec__deinit(this: *WebKitTextCodec) void;
     extern fn WebKitTextCodec__decode(this: *WebKitTextCodec, ptr: [*]const u8, len: usize, flush: bool, stopOnError: *bool) bun.String;
     extern fn WebKitTextCodec__stripByteOrderMark(this: *WebKitTextCodec) void;
-    pub fn init(encoding_label: JSC.WebCore.EncodingLabel) *WebKitTextCodec {
-        return WebKitTextCodec__create(@tagName(encoding_label).ptr, @tagName(encoding_label).len);
+    extern fn WebKitTextCodec__name(this: *WebKitTextCodec) bun.String;
+    pub fn init(encoding_label: []const u8) ?*WebKitTextCodec {
+        return WebKitTextCodec__create(encoding_label.ptr, encoding_label.len);
     }
+
+    pub const name = WebKitTextCodec__name;
 
     pub const deinit = WebKitTextCodec__deinit;
 

@@ -253,24 +253,24 @@ static void extendTextCodecMaps() WTF_REQUIRES_LOCK(encodingRegistryLock)
     buildQuirksSets();
 }
 
-std::unique_ptr<TextCodec> newTextCodec(const TextEncoding& encoding)
+std::optional<std::unique_ptr<TextCodec>> newTextCodec(const TextEncoding& encoding)
 {
     Locker locker { encodingRegistryLock };
 
     ASSERT(textCodecMap);
     if (!encoding.isValid()) {
-        RELEASE_ASSERT_NOT_REACHED();
+        return std::nullopt;
     }
     auto result = textCodecMap->find(encoding.name());
     if (result == textCodecMap->end()) {
-        RELEASE_ASSERT_NOT_REACHED();
+        return std::nullopt;
     }
     if (!result->value) {
         RELEASE_LOG_ERROR(TextEncoding, "Codec for encoding %" PUBLIC_LOG_STRING " is null. Will default to UTF-8", encoding.name().characters());
-        RELEASE_ASSERT_NOT_REACHED();
+        return std::nullopt;
     }
 
-    return result->value();
+    return { result->value() };
 }
 
 ASCIILiteral atomCanonicalTextEncodingName(const char* name)

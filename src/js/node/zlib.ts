@@ -27,6 +27,17 @@ const kFlushBuffers: Buffer[] = [];
   }
 }
 
+// TODO: this doesn't match node exactly so improve this more later
+const alias = function (proto, to, from) {
+  ObjectDefineProperty(proto, to, {
+    get: function () {
+      return this[kHandle][from];
+    },
+    set: function (v) {}, // changing these would be a bug
+    enumerable: true,
+  });
+};
+
 //
 
 function ZlibBase(options, method) {
@@ -54,46 +65,14 @@ ObjectDefineProperty(ZlibBase.prototype, "_handle", {
     //noop
   },
 });
-ObjectDefineProperty(ZlibBase.prototype, "bytesWritten", {
-  get: function () {
-    return this[kHandle].bytesWritten;
-  },
-});
-ObjectDefineProperty(ZlibBase.prototype, "bytesRead", {
-  get: function () {
-    return this[kHandle].bytesRead;
-  },
-});
-ObjectDefineProperty(ZlibBase.prototype, "_closed", {
-  get: function () {
-    return this[kHandle].closed;
-  },
-});
-ObjectDefineProperty(ZlibBase.prototype, "_chunkSize", {
-  get: function () {
-    return this[kHandle].chunkSize;
-  },
-});
-ObjectDefineProperty(ZlibBase.prototype, "_defaultFlushFlag", {
-  get: function () {
-    return this[kHandle].flush;
-  },
-});
-ObjectDefineProperty(ZlibBase.prototype, "_finishFlushFlag", {
-  get: function () {
-    return this[kHandle].finishFlush;
-  },
-});
-ObjectDefineProperty(ZlibBase.prototype, "_defaultFullFlushFlag", {
-  get: function () {
-    return this[kHandle].fullFlush;
-  },
-});
-ObjectDefineProperty(ZlibBase.prototype, "_maxOutputLength", {
-  get: function () {
-    return this[kHandle].maxOutputLength;
-  },
-});
+alias(ZlibBase.prototype, "bytesWritten", "bytesWritten");
+alias(ZlibBase.prototype, "bytesRead", "bytesRead");
+alias(ZlibBase.prototype, "_closed", "closed");
+alias(ZlibBase.prototype, "_chunkSize", "chunkSize");
+alias(ZlibBase.prototype, "_defaultFlushFlag", "flush");
+alias(ZlibBase.prototype, "_finishFlushFlag", "finishFlush");
+alias(ZlibBase.prototype, "_defaultFullFlushFlag", "fullFlush");
+alias(ZlibBase.prototype, "_maxOutputLength", "maxOutputLength");
 ZlibBase.prototype.flush = function (kind, callback) {
   if (typeof kind === "function" || (kind === undefined && !callback)) {
     callback = kind;
@@ -153,16 +132,8 @@ function Zlib(options, method) {
   ZlibBase.$call(this, options, method);
 }
 Zlib.prototype = Object.create(ZlibBase.prototype);
-ObjectDefineProperty(Zlib.prototype, "_level", {
-  get: function () {
-    return this[kHandle].level;
-  },
-});
-ObjectDefineProperty(Zlib.prototype, "_strategy", {
-  get: function () {
-    return this[kHandle].strategy;
-  },
-});
+alias(Zlib.prototype, "_level", "level");
+alias(Zlib.prototype, "_strategy", "strategy");
 Zlib.prototype.params = function (level, strategy, callback) {
   return this[kHandle].params(level, strategy, callback);
 };

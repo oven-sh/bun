@@ -4679,10 +4679,10 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub inline fn isUndefined(this: JSValue) bool {
-        return @intFromEnum(this) == 0xa;
+        return this == .undefined;
     }
     pub inline fn isNull(this: JSValue) bool {
-        return @intFromEnum(this) == 0x2;
+        return this == .null;
     }
     pub inline fn isEmptyOrUndefinedOrNull(this: JSValue) bool {
         return switch (@intFromEnum(this)) {

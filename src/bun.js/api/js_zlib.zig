@@ -959,6 +959,9 @@ const Options = struct {
                 if (globalThis.hasException()) return null;
                 break :blk JSC.Buffer.fromBytes(&.{}, bun.default_allocator, .Uint8Array);
             };
+            if (value.isUndefined()) {
+                break :blk JSC.Buffer.fromBytes(&.{}, bun.default_allocator, .Uint8Array);
+            }
             const buffer = JSC.Buffer.fromJS(globalThis, value, &exceptionref) orelse {
                 const ty_str = value.jsTypeString(globalThis).toSlice(globalThis, bun.default_allocator);
                 defer ty_str.deinit();

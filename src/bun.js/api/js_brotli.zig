@@ -101,6 +101,7 @@ pub const BrotliEncoder = struct {
 
         if (opts.get(globalThis, "params")) |params| {
             inline for (std.meta.fields(bun.brotli.c.BrotliEncoderParameter)) |f| {
+                if (!params.isObject()) break;
                 if (params.hasOwnPropertyValue(globalThis, JSC.ZigString.static(std.fmt.comptimePrint("{d}", .{f.value})).toJS(globalThis))) {
                     const idx = params.getIndex(globalThis, f.value);
                     if (!idx.isNumber()) {
@@ -508,6 +509,7 @@ pub const BrotliDecoder = struct {
 
         if (opts.get(globalThis, "params")) |params| {
             inline for (std.meta.fields(bun.brotli.c.BrotliDecoderParameter)) |f| {
+                if (!params.isObject()) break;
                 const idx = params.getIndex(globalThis, f.value);
                 if (!idx.isNumber()) break;
                 const was_set = this.stream.brotli.setParameter(@enumFromInt(f.value), idx.toU32());

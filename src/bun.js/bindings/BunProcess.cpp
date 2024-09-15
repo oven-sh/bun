@@ -174,7 +174,7 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
     object->putDirect(vm, JSC::Identifier::fromString(vm, "uwebsockets"_s),
         JSC::JSValue(JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(Bun__versions_uws)))), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "webkit"_s),
-        JSC::JSValue(JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(Bun__versions_webkit)))), 0);
+        JSC::JSValue(JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(BUN_WEBKIT_VERSION)))), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "zig"_s),
         JSC::JSValue(JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(Bun__versions_zig)))), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "zlib"_s),

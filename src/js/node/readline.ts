@@ -27,10 +27,7 @@
 // ----------------------------------------------------------------------------
 const EventEmitter = require("node:events");
 const { StringDecoder } = require("node:string_decoder");
-const { validateInteger } = require("internal/validators");
-
 const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
-
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 const ObjectValues = Object.values;
@@ -384,6 +381,20 @@ function validateObject(value, name, options = null) {
   ) {
     throw $ERR_INVALID_ARG_TYPE(name, "object", value);
   }
+}
+
+/**
+ * @callback validateInteger
+ * @param {*} value
+ * @param {string} name
+ * @param {number} [min]
+ * @param {number} [max]
+ * @returns {asserts value is number}
+ */
+function validateInteger(value, name, min = NumberMIN_SAFE_INTEGER, max = NumberMAX_SAFE_INTEGER) {
+  if (typeof value !== "number") throw $ERR_INVALID_ARG_TYPE(name, "number", value);
+  if (!NumberIsInteger(value)) throw new ERR_OUT_OF_RANGE(name, "an integer", value);
+  if (value < min || value > max) throw new ERR_OUT_OF_RANGE(name, `>= ${min} && <= ${max}`, value);
 }
 
 /**

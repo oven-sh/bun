@@ -6,5 +6,4 @@ export default {
   ERR_IPC_CHANNEL_CLOSED: $newCppFunction("ErrorCode.cpp", "jsFunction_ERR_IPC_CHANNEL_CLOSED", 0),
   ERR_SOCKET_BAD_TYPE: $newCppFunction("ErrorCode.cpp", "jsFunction_ERR_SOCKET_BAD_TYPE", 0),
   ERR_INVALID_PROTOCOL: $newCppFunction("ErrorCode.cpp", "jsFunction_ERR_INVALID_PROTOCOL", 0),
-  ERR_BUFFER_OUT_OF_BOUNDS: $newCppFunction("ErrorCode.cpp", "jsFunction_ERR_BUFFER_OUT_OF_BOUNDS", 0),
 };

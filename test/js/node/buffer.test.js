@@ -2003,9 +2003,9 @@ for (let withOverridenBufferWrite of [false, true]) {
 
       it("constants", () => {
         expect(BufferModule.constants.MAX_LENGTH).toBe(4294967296);
-        expect(BufferModule.constants.MAX_STRING_LENGTH).toBe(2147483647);
+        expect(BufferModule.constants.MAX_STRING_LENGTH).toBe(4294967295);
         expect(BufferModule.default.constants.MAX_LENGTH).toBe(4294967296);
-        expect(BufferModule.default.constants.MAX_STRING_LENGTH).toBe(2147483647);
+        expect(BufferModule.default.constants.MAX_STRING_LENGTH).toBe(4294967295);
       });
 
       it("File", () => {

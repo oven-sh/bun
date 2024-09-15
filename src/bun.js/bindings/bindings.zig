@@ -5023,6 +5023,15 @@ pub const JSValue = enum(JSValueReprInt) {
         return this.toSliceCloneWithAllocator(globalThis, bun.default_allocator);
     }
 
+    /// Call `toString()` on the JSValue and clone the result.
+    /// On exception or out of memory, this returns null.
+    ///
+    /// Remember that `Symbol` throws an exception when you call `toString()`.
+    pub fn toSliceCloneZ(this: JSValue, globalThis: *JSGlobalObject) ?[:0]u8 {
+        var str = bun.String.tryFromJS(this, globalThis) orelse return null;
+        return str.toOwnedSliceZ(bun.default_allocator) catch return null;
+    }
+
     /// On exception or out of memory, this returns null, to make exception checks clearer.
     pub fn toSliceCloneWithAllocator(
         this: JSValue,

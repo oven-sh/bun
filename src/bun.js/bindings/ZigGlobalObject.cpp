@@ -3975,6 +3975,7 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
         return JSC::JSInternalPromise::rejectedPromiseWithCaughtException(globalObject, scope);
     }
 
+    ASSERT(result);
     return result;
 }
 

@@ -9,6 +9,8 @@ const Error = css.Error;
 const ArrayList = std.ArrayListUnmanaged;
 const SmallList = css.SmallList;
 
+pub const CustomPropertyName = @import("./custom.zig").CustomPropertyName;
+
 pub const @"align" = @import("./align.zig");
 pub const animation = @import("./animation.zig");
 pub const background = @import("./background.zig");
@@ -41,6 +43,22 @@ const generated = @import("./properties_generated.zig");
 pub const PropertyId = generated.PropertyId;
 pub const Property = generated.Property;
 pub const PropertyIdTag = generated.PropertyIdTag;
+
+/// A [CSS-wide keyword](https://drafts.csswg.org/css-cascade-5/#defaulting-keywords).
+pub const CSSWideKeyword = enum {
+    /// The property's initial value.
+    initial,
+    /// The property's computed value on the parent element.
+    inherit,
+    /// Either inherit or initial depending on whether the property is inherited.
+    unset,
+    /// Rolls back the cascade to the cascaded value of the earlier origin.
+    revert,
+    /// Rolls back the cascade to the value of the previous cascade layer.
+    @"revert-layer",
+
+    pub usingnamespace css.DefineEnumProperty(@This());
+};
 
 // pub fn DefineProperties(comptime properties: anytype) type {
 //     const input_fields: []const std.builtin.Type.StructField = std.meta.fields(@TypeOf(properties));

@@ -30,47 +30,251 @@ const Angle = css.css_values.angle.Angle;
 const Url = css.css_values.url.Url;
 
 /// A value for the [inset](https://drafts.csswg.org/css-logical/#propdef-inset) shorthand property.
-pub const Inset = @compileError(css.todo_stuff.depth);
+pub const Inset = struct {
+    top: LengthPercentageOrAuto,
+    right: LengthPercentageOrAuto,
+    bottom: LengthPercentageOrAuto,
+    left: LengthPercentageOrAuto,
+
+    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.inset);
+    pub usingnamespace css.DefineRectShorthand(@This(), LengthPercentageOrAuto);
+
+    pub const PropertyFieldMap = .{
+        .top = css.PropertyIdTag.top,
+        .right = css.PropertyIdTag.right,
+        .bottom = css.PropertyIdTag.bottom,
+        .left = css.PropertyIdTag.left,
+    };
+};
 
 /// A value for the [inset-block](https://drafts.csswg.org/css-logical/#propdef-inset-block) shorthand property.
-pub const InsetBlock = @compileError(css.todo_stuff.depth);
+pub const InsetBlock = struct {
+    /// The block start value.
+    block_start: LengthPercentageOrAuto,
+    /// The block end value.
+    block_end: LengthPercentageOrAuto,
+
+    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"inset-block");
+    pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+
+    pub const PropertyFieldMap = .{
+        .block_start = css.PropertyIdTag.@"inset-block-start",
+        .block_end = css.PropertyIdTag.@"inset-block-end",
+    };
+};
+
 /// A value for the [inset-inline](https://drafts.csswg.org/css-logical/#propdef-inset-inline) shorthand property.
-pub const InsetInline = @compileError(css.todo_stuff.depth);
-/// A value for the [inset](https://drafts.csswg.org/css-logical/#propdef-inset) shorthand property.
-pub const Inline = @compileError(css.todo_stuff.depth);
+pub const InsetInline = struct {
+    /// The inline start value.
+    inline_start: LengthPercentageOrAuto,
+    /// The inline end value.
+    inline_end: LengthPercentageOrAuto,
+
+    pub const PropertyFieldMap = .{
+        .inline_start = css.PropertyIdTag.@"inset-inline-start",
+        .inline_end = css.PropertyIdTag.@"inset-inline-end",
+    };
+
+    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"inset-inline");
+    pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+};
 
 /// A value for the [margin-block](https://drafts.csswg.org/css-logical/#propdef-margin-block) shorthand property.
-pub const MarginBlock = @compileError(css.todo_stuff.depth);
+pub const MarginBlock = struct {
+    /// The block start value.
+    block_start: LengthPercentageOrAuto,
+    /// The block end value.
+    block_end: LengthPercentageOrAuto,
+
+    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"margin-block");
+    pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+
+    pub const PropertyFieldMap = .{
+        .block_start = css.PropertyIdTag.@"margin-block-start",
+        .block_end = css.PropertyIdTag.@"margin-block-end",
+    };
+};
 
 /// A value for the [margin-inline](https://drafts.csswg.org/css-logical/#propdef-margin-inline) shorthand property.
-pub const MarginInline = @compileError(css.todo_stuff.depth);
+pub const MarginInline = struct {
+    /// The inline start value.
+    inline_start: LengthPercentageOrAuto,
+    /// The inline end value.
+    inline_end: LengthPercentageOrAuto,
+
+    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"margin-inline");
+    pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+
+    pub const PropertyFieldMap = .{
+        .inline_start = css.PropertyIdTag.@"margin-inline-start",
+        .inline_end = css.PropertyIdTag.@"margin-inline-end",
+    };
+};
 
 /// A value for the [margin](https://drafts.csswg.org/css-box-4/#propdef-margin) shorthand property.
-pub const Margin = @compileError(css.todo_stuff.depth);
+pub const Margin = struct {
+    top: LengthPercentageOrAuto,
+    right: LengthPercentageOrAuto,
+    bottom: LengthPercentageOrAuto,
+    left: LengthPercentageOrAuto,
+
+    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.margin);
+    pub usingnamespace css.DefineRectShorthand(@This(), LengthPercentageOrAuto);
+
+    pub const PropertyFieldMap = .{
+        .top = css.PropertyIdTag.@"margin-top",
+        .right = css.PropertyIdTag.@"margin-right",
+        .bottom = css.PropertyIdTag.@"margin-bottom",
+        .left = css.PropertyIdTag.@"margin-left",
+    };
+};
 
 /// A value for the [padding-block](https://drafts.csswg.org/css-logical/#propdef-padding-block) shorthand property.
-pub const PaddingBlock = @compileError(css.todo_stuff.depth);
+pub const PaddingBlock = struct {
+    /// The block start value.
+    block_start: LengthPercentageOrAuto,
+    /// The block end value.
+    block_end: LengthPercentageOrAuto,
+
+    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"padding-block");
+    pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+
+    pub const PropertyFieldMap = .{
+        .block_start = css.PropertyIdTag.@"padding-block-start",
+        .block_end = css.PropertyIdTag.@"padding-block-end",
+    };
+};
 
 /// A value for the [padding-inline](https://drafts.csswg.org/css-logical/#propdef-padding-inline) shorthand property.
-pub const PaddingInline = @compileError(css.todo_stuff.depth);
+pub const PaddingInline = struct {
+    /// The inline start value.
+    inline_start: LengthPercentageOrAuto,
+    /// The inline end value.
+    inline_end: LengthPercentageOrAuto,
+
+    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"padding-inline");
+    pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+
+    pub const PropertyFieldMap = .{
+        .inline_start = css.PropertyIdTag.@"padding-inline-start",
+        .inline_end = css.PropertyIdTag.@"padding-inline-end",
+    };
+};
 
 /// A value for the [padding](https://drafts.csswg.org/css-box-4/#propdef-padding) shorthand property.
-pub const Padding = @compileError(css.todo_stuff.depth);
+pub const Padding = struct {
+    top: LengthPercentageOrAuto,
+    right: LengthPercentageOrAuto,
+    bottom: LengthPercentageOrAuto,
+    left: LengthPercentageOrAuto,
+
+    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.padding);
+    pub usingnamespace css.DefineRectShorthand(@This(), LengthPercentageOrAuto);
+
+    pub const PropertyFieldMap = .{
+        .top = css.PropertyIdTag.@"padding-top",
+        .right = css.PropertyIdTag.@"padding-right",
+        .bottom = css.PropertyIdTag.@"padding-bottom",
+        .left = css.PropertyIdTag.@"padding-left",
+    };
+};
 
 /// A value for the [scroll-margin-block](https://drafts.csswg.org/css-scroll-snap/#propdef-scroll-margin-block) shorthand property.
-pub const ScrollMarginBlock = @compileError(css.todo_stuff.depth);
+pub const ScrollMarginBlock = struct {
+    /// The block start value.
+    block_start: LengthPercentageOrAuto,
+    /// The block end value.
+    block_end: LengthPercentageOrAuto,
+
+    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-margin-block");
+    pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+
+    pub const PropertyFieldMap = .{
+        .block_start = css.PropertyIdTag.@"scroll-margin-block-start",
+        .block_end = css.PropertyIdTag.@"scroll-margin-block-end",
+    };
+};
 
 /// A value for the [scroll-margin-inline](https://drafts.csswg.org/css-scroll-snap/#propdef-scroll-margin-inline) shorthand property.
-pub const ScrollMarginInline = @compileError(css.todo_stuff.depth);
+pub const ScrollMarginInline = struct {
+    /// The inline start value.
+    inline_start: LengthPercentageOrAuto,
+    /// The inline end value.
+    inline_end: LengthPercentageOrAuto,
+
+    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-margin-inline");
+    pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+
+    pub const PropertyFieldMap = .{
+        .inline_start = css.PropertyIdTag.@"scroll-margin-inline-start",
+        .inline_end = css.PropertyIdTag.@"scroll-margin-inline-end",
+    };
+};
 
 /// A value for the [scroll-margin](https://drafts.csswg.org/css-scroll-snap/#scroll-margin) shorthand property.
-pub const ScrollMargin = @compileError(css.todo_stuff.depth);
+pub const ScrollMargin = struct {
+    top: LengthPercentageOrAuto,
+    right: LengthPercentageOrAuto,
+    bottom: LengthPercentageOrAuto,
+    left: LengthPercentageOrAuto,
+
+    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-margin");
+    pub usingnamespace css.DefineRectShorthand(@This(), LengthPercentageOrAuto);
+
+    pub const PropertyFieldMap = .{
+        .top = css.PropertyIdTag.@"scroll-margin-top",
+        .right = css.PropertyIdTag.@"scroll-margin-right",
+        .bottom = css.PropertyIdTag.@"scroll-margin-bottom",
+        .left = css.PropertyIdTag.@"scroll-margin-left",
+    };
+};
 
 /// A value for the [scroll-padding-block](https://drafts.csswg.org/css-scroll-snap/#propdef-scroll-padding-block) shorthand property.
-pub const ScrollPaddingBlock = @compileError(css.todo_stuff.depth);
+pub const ScrollPaddingBlock = struct {
+    /// The block start value.
+    block_start: LengthPercentageOrAuto,
+    /// The block end value.
+    block_end: LengthPercentageOrAuto,
+
+    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-padding-block");
+    pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+
+    pub const PropertyFieldMap = .{
+        .block_start = css.PropertyIdTag.@"scroll-padding-block-start",
+        .block_end = css.PropertyIdTag.@"scroll-padding-block-end",
+    };
+};
 
 /// A value for the [scroll-padding-inline](https://drafts.csswg.org/css-scroll-snap/#propdef-scroll-padding-inline) shorthand property.
-pub const ScrollPaddingInline = @compileError(css.todo_stuff.depth);
+pub const ScrollPaddingInline = struct {
+    /// The inline start value.
+    inline_start: LengthPercentageOrAuto,
+    /// The inline end value.
+    inline_end: LengthPercentageOrAuto,
+
+    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-padding-inline");
+    pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+
+    pub const PropertyFieldMap = .{
+        .inline_start = css.PropertyIdTag.@"scroll-padding-inline-start",
+        .inline_end = css.PropertyIdTag.@"scroll-padding-inline-end",
+    };
+};
 
 /// A value for the [scroll-padding](https://drafts.csswg.org/css-scroll-snap/#scroll-padding) shorthand property.
-pub const ScrollPadding = @compileError(css.todo_stuff.depth);
+pub const ScrollPadding = struct {
+    top: LengthPercentageOrAuto,
+    right: LengthPercentageOrAuto,
+    bottom: LengthPercentageOrAuto,
+    left: LengthPercentageOrAuto,
+
+    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-padding");
+    pub usingnamespace css.DefineRectShorthand(@This(), LengthPercentageOrAuto);
+
+    pub const PropertyFieldMap = .{
+        .top = css.PropertyIdTag.@"scroll-padding-top",
+        .right = css.PropertyIdTag.@"scroll-padding-right",
+        .bottom = css.PropertyIdTag.@"scroll-padding-bottom",
+        .left = css.PropertyIdTag.@"scroll-padding-left",
+    };
+};

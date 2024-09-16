@@ -59,8 +59,8 @@ pub const Flavor = enum {
 /// - "path"
 /// - "errno"
 pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
-    const hasRetry = @hasDecl(ErrorTypeT, "retry");
-    const hasTodo = @hasDecl(ErrorTypeT, "todo");
+    const hasRetry = ErrorTypeT != void and @hasDecl(ErrorTypeT, "retry");
+    const hasTodo = ErrorTypeT != void and @hasDecl(ErrorTypeT, "todo");
 
     return union(Tag) {
         pub const ErrorType = ErrorTypeT;
@@ -161,6 +161,25 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
 
         pub inline fn initResult(result: ReturnType) Maybe(ReturnType, ErrorType) {
             return .{ .result = result };
+        }
+
+        pub inline fn mapErr(this: @This(), comptime E: type, err_fn: *const fn (ErrorTypeT) E) Maybe(ReturnType, E) {
+            return switch (this) {
+                .result => |v| .{ .result = v },
+                .err => |e| .{ .err = err_fn(e) },
+            };
+        }
+
+        pub inline fn toCssResult(this: @This()) Maybe(ReturnType, bun.css.ParseError(bun.css.ParserError)) {
+            return switch (this) {
+                bun.css.BasicParseError => {
+                    return switch (this) {
+                        .result => |v| return .{ .result = v },
+                        .err => |e| return .{ .err = e.intoDefaultParseError() },
+                    };
+                },
+                else => @compileError("Bad!"),
+            };
         }
 
         pub fn toJS(this: @This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {

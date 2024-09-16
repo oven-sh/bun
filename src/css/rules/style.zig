@@ -37,20 +37,20 @@ pub fn StyleRule(comptime R: type) type {
             } else {
                 var first_rule = true;
                 inline for (std.meta.fields(css.VendorPrefix)) |field| {
-                    if (!@field(this.vendor_prefix, field.name)) continue;
-
-                    if (first_rule) {
-                        first_rule = false;
-                    } else {
-                        if (!dest.minify) {
-                            try dest.writeChar('\n'); // no indent
+                    if (@field(this.vendor_prefix, field.name)) {
+                        if (first_rule) {
+                            first_rule = false;
+                        } else {
+                            if (!dest.minify) {
+                                try dest.writeChar('\n'); // no indent
+                            }
+                            try dest.newline();
                         }
-                        try dest.newline();
-                    }
 
-                    const prefix = css.VendorPrefix.fromName(field.name);
-                    dest.vendor_prefix = prefix;
-                    this.toCssBase(W, dest);
+                        const prefix = css.VendorPrefix.fromName(field.name);
+                        dest.vendor_prefix = prefix;
+                        this.toCssBase(W, dest);
+                    }
                 }
 
                 dest.vendor_prefix = css.VendorPrefix.empty();

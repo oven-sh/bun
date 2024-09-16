@@ -100,6 +100,28 @@ pub const BasicParseErrorKind = union(enum) {
     at_rule_body_invalid,
     /// A qualified rule was encountered that was invalid.
     qualified_rule_invalid,
+
+    pub fn format(this: *const BasicParseErrorKind, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt; // autofix
+        _ = opts; // autofix
+        return switch (this.*) {
+            .unexpected_token => |token| {
+                try writer.print("unexpected token: {any}", .{token});
+            },
+            .end_of_input => {
+                try writer.print("unexpected end of input", .{});
+            },
+            .at_rule_invalid => |rule| {
+                try writer.print("invalid @ rule encountered: '@{s}'", .{rule});
+            },
+            .at_rule_body_invalid => {
+                try writer.print("invalid @ body rule encountered: '@{s}'", .{});
+            },
+            .qualified_rule_invalid => {
+                try writer.print("invalid qualified rule encountered", .{});
+            },
+        };
+    }
 };
 
 /// A line and column location within a source file.
@@ -177,6 +199,15 @@ pub const BasicParseError = struct {
         comptime T: type,
     ) ParseError(T) {
         return ParseError(T){
+            .kind = .{ .basic = this.kind },
+            .location = this.location,
+        };
+    }
+
+    pub inline fn intoDefaultParseError(
+        this: @This(),
+    ) ParseError(ParserError) {
+        return ParseError(ParserError){
             .kind = .{ .basic = this.kind },
             .location = this.location,
         };

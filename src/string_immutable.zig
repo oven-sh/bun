@@ -610,7 +610,7 @@ pub fn isUtf8CharBoundary(c: u8) bool {
 }
 
 pub fn startsWithCaseInsensitiveAscii(self: string, prefix: string) bool {
-    return string.len >= prefix.len and eqlCaseInsensitiveASCII(self[0..prefix.len], prefix, false);
+    return self.len >= prefix.len and eqlCaseInsensitiveASCII(self[0..prefix.len], prefix, false);
 }
 
 pub fn startsWithGeneric(comptime T: type, self: []const T, str: []const T) bool {
@@ -4276,10 +4276,10 @@ pub fn trimLeadingChar(slice: []const u8, char: u8) []const u8 {
 /// e.g.
 /// `trimLeadingPattern2("abcdef", 'a', 'b') == "cdef"`
 pub fn trimLeadingPattern2(slice_: []const u8, comptime byte1: u8, comptime byte2: u8) []const u8 {
-    const pattern: u16 = comptime @as(byte1, u16) << 8 | @as(u16, byte2);
+    const pattern: u16 = comptime @as(u16, byte1) << 8 | @as(u16, byte2);
     var slice = slice_;
     while (slice.len >= 2) {
-        const sliceu16: [*]const u16 = @ptrCast(slice.ptr);
+        const sliceu16: [*]const u16 = @ptrCast(@alignCast(slice.ptr));
         if (sliceu16[0] == pattern) {
             slice = slice[2..];
         } else {

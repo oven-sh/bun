@@ -42,7 +42,7 @@ pub fn MediaRule(comptime R: type) type {
             try this.rules.toCss(W, dest);
             dest.dedent();
             try dest.newline();
-            dest.writeChar('}');
+            return dest.writeChar('}');
         }
     };
 }

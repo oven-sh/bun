@@ -18,7 +18,10 @@ pub const LayerName = struct {
 
     pub fn parse(input: *css.Parser) Result(LayerName) {
         var parts: css.SmallList([]const u8, 1) = .{};
-        const ident = try input.expectIdent();
+        const ident = switch (input.expectIdent()) {
+            .result => |v| v,
+            .err => |e| return .{ .err = e.intoDefaultParseError() },
+        };
         parts.append(
             input.allocator(),
             ident,
@@ -33,7 +36,7 @@ pub const LayerName = struct {
                         out: {
                             const start_location = i.currentSourceLocation();
                             const tok = switch (i.nextIncludingWhitespace()) {
-                                .err => |e| return .{ .err = e },
+                                .err => |e| return .{ .err = e.intoDefaultParseError() },
                                 .result => |vvv| vvv,
                             };
                             if (tok.* == .delim or tok.* == '.') {
@@ -67,20 +70,20 @@ pub const LayerName = struct {
                 ) catch bun.outOfMemory();
             }
 
-            return LayerName{ .v = parts };
+            return .{ .result = LayerName{ .v = parts } };
         }
     }
 
     pub fn toCss(this: *const LayerName, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
         var first = true;
-        for (this.v.items) |*name| {
+        for (this.v.items) |name| {
             if (first) {
                 first = false;
             } else {
                 try dest.writeChar('.');
             }
 
-            try css.serializer.serializeIdentifier(name, W, dest);
+            css.serializer.serializeIdentifier(name, dest) catch return dest.addFmtError();
         }
     }
 };
@@ -135,7 +138,7 @@ pub const LayerStatementRule = struct {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
         try dest.writeStr("@layer ");
-        css.to_css.fromList(LayerName, &this.names, W, dest);
+        try css.to_css.fromList(LayerName, &this.names, W, dest);
         try dest.writeChar(';');
     }
 };

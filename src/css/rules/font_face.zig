@@ -595,7 +595,7 @@ pub const FontFaceRule = struct {
         const len = this.proeprties.items.len;
         for (this.proeprties.items, 0..) |*prop, i| {
             try dest.newline();
-            prop.toCss(dest);
+            prop.toCss(W, dest);
             if (i != len - 1 or !dest.minify) {
                 try dest.writeChar(';');
             }
@@ -609,10 +609,42 @@ pub const FontFaceRule = struct {
 pub const FontFaceDeclarationParser = struct {
     const This = @This();
 
+    pub const AtRuleParser = struct {
+        pub const Prelude = void;
+        pub const AtRule = FontFaceProperty;
+
+        pub fn parsePrelude(_: *This, name: []const u8, input: *css.Parser) Result(Prelude) {
+            return .{
+                .err = input.newError(css.BasicParseErrorKind{ .at_rule_invalid = name }),
+            };
+        }
+
+        pub fn parseBlock(_: *This, _: Prelude, _: *const css.ParserState, input: *css.Parser) Result(AtRule) {
+            return .{ .err = input.newError(css.BasicParseErrorKind.at_rule_invalid) };
+        }
+
+        pub fn ruleWithoutBlock(_: *This, _: Prelude, _: *const css.ParserState) css.Maybe(AtRule, void) {
+            return .{ .err = {} };
+        }
+    };
+
+    pub const QualifiedRuleParser = struct {
+        pub const Prelude = void;
+        pub const QualifiedRule = FontFaceProperty;
+
+        pub fn parsePrelude(_: *This, input: *css.Parser) Result(Prelude) {
+            return input.newError(css.BasicParseErrorKind.qualified_rule_invalid);
+        }
+
+        pub fn parseBlock(_: *This, _: Prelude, _: *const css.ParserState, input: *css.Parser) Result(QualifiedRule) {
+            return input.newError(css.BasicParseErrorKind.qualified_rule_invalid);
+        }
+    };
+
     pub const DeclarationParser = struct {
         pub const Declaration = FontFaceProperty;
 
-        fn parseValue(this: *This, name: []const u8, input: *css.Parser) Result(Declaration) {
+        pub fn parseValue(this: *This, name: []const u8, input: *css.Parser) Result(Declaration) {
             _ = this; // autofix
             const state = input.state();
             // todo_stuff.match_ignore_ascii_case

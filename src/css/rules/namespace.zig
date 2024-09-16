@@ -31,7 +31,7 @@ pub const NamespaceRule = struct {
             try dest.writeChar(' ');
         }
 
-        try css.css_values.string.CSSStringFns.toCss(this, W, dest);
+        try css.css_values.string.CSSStringFns.toCss(&this.url, W, dest);
         try dest.writeChar(':');
     }
 };

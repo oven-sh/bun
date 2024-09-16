@@ -4,7 +4,7 @@ pub fn Bitflags(comptime T: type) type {
 
     return struct {
         pub inline fn empty() T {
-            return @bitCast(0);
+            return @bitCast(@as(IntType, 0));
         }
 
         pub inline fn intersects(lhs: T, rhs: T) bool {

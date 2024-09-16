@@ -450,7 +450,7 @@ pub const WebKitGradient = union(enum) {
                 .err => |e| return .{ .err = e },
             };
             if (input.expectComma().asErr()) |e| return .{ .err = e };
-            const stops = switch (input.parseCommaSeparated(WebKitColorStop.parse)) {
+            const stops = switch (input.parseCommaSeparated(WebKitColorStop, WebKitColorStop.parse)) {
                 .result => |vv| vv,
                 .err => |e| return .{ .err = e },
             };
@@ -481,7 +481,7 @@ pub const WebKitGradient = union(enum) {
             };
             if (input.expectComma().asErr()) |e| return .{ .err = e };
             // todo_stuff.depth
-            const stops = switch (input.parseCommaSeparated(WebKitColorStop.parse)) {
+            const stops = switch (input.parseCommaSeparated(WebKitColorStop, WebKitColorStop.parse)) {
                 .result => |vv| vv,
                 .err => |e| return .{ .err = e },
             };

@@ -179,12 +179,26 @@ pub const LengthValue = union(enum) {
         return css.serializer.serializeDimension(value, unit, W, dest);
     }
 
+    pub fn trySign(this: *const @This()) ?f32 {
+        return sign(this);
+    }
+
+    pub fn sign(this: *const @This()) f32 {
+        const enum_fields = @typeInfo(@typeInfo(@This()).Union.tag_type.?).Enum.fields;
+        inline for (std.meta.fields(@This()), 0..) |field, i| {
+            if (enum_fields[i].value == @intFromEnum(this.*)) {
+                return css.signfns.signF32(@field(this, field.name));
+            }
+        }
+        unreachable;
+    }
+
     pub fn tryFromToken(token: *const css.Token) css.Maybe(@This(), void) {
         switch (token.*) {
             .dimension => |*dim| {
                 inline for (std.meta.fields(@This())) |field| {
                     if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(field.name, dim.unit)) {
-                        return @unionInit(LengthValue, field.name, dim.num.value);
+                        return .{ .result = @unionInit(LengthValue, field.name, dim.num.value) };
                     }
                 }
             },
@@ -194,17 +208,19 @@ pub const LengthValue = union(enum) {
     }
 
     pub fn toUnitValue(this: *const @This()) struct { CSSNumber, []const u8 } {
-        inline for (std.meta.fields(@This())) |field| {
-            if (@field(this, field.value) == @intFromEnum(this.*)) {
+        const enum_fields = @typeInfo(@typeInfo(@This()).Union.tag_type.?).Enum.fields;
+        inline for (std.meta.fields(@This()), 0..) |field, i| {
+            if (enum_fields[i].value == @intFromEnum(this.*)) {
                 return .{ @field(this, field.name), field.name };
             }
         }
+        unreachable;
     }
 
-    pub fn mulF32(this: *const @This(), other: f32) Length {
+    pub fn mulF32(this: *const @This(), _: Allocator, other: f32) Length {
         const val = val: {
             inline for (std.meta.fields(@This())) |field| {
-                if (@field(this, field.value) == @intFromEnum(this.*)) {
+                if (field.value == @intFromEnum(this.*)) {
                     break :val @field(this, field.name);
                 }
             }
@@ -230,6 +246,13 @@ pub const Length = union(enum) {
                     this.calc.* * other,
                 ),
             },
+        };
+    }
+
+    pub fn trySign(this: *const Length) ?f32 {
+        return switch (this.*) {
+            .value => |v| v.sign(),
+            .calc => |v| v.trySign(),
         };
     }
 

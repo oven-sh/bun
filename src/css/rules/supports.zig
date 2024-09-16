@@ -115,13 +115,12 @@ pub const SupportsCondition = union(enum) {
 
         while (true) {
             const Closure = struct {
-                expected_type: *?i32 = null,
+                expected_type: *?i32,
                 pub fn tryParseFn(i: *css.Parser, this: *@This()) Result(SupportsCondition) {
-                    _ = i; // autofix
-                    const location = input.currentSourceLocation();
-                    const s = switch (input.expectIdent()) {
+                    const location = i.currentSourceLocation();
+                    const s = switch (i.expectIdent()) {
                         .result => |vv| vv,
-                        .err => |e| return .{ .err = e },
+                        .err => |e| return .{ .err = e.intoDefaultParseError() },
                     };
                     const found_type: i32 = found_type: {
                         // todo_stuff.match_ignore_ascii_case
@@ -138,7 +137,7 @@ pub const SupportsCondition = union(enum) {
                         this.expected_type.* = found_type;
                     }
 
-                    return SupportsCondition.parseInParens(input);
+                    return SupportsCondition.parseInParens(i);
                 }
             };
             var closure = Closure{
@@ -149,7 +148,7 @@ pub const SupportsCondition = union(enum) {
             switch (_condition) {
                 .result => |condition| {
                     if (conditions.items.len == 0) {
-                        conditions.append(input.allocator(), in_parens.clone());
+                        conditions.append(input.allocator(), in_parens.clone()) catch bun.outOfMemory();
                         if (in_parens == .declaration) {
                             const property_id = in_parens.declaration.property_id;
                             const value = in_parens.declaration.value;
@@ -204,10 +203,10 @@ pub const SupportsCondition = union(enum) {
 
     pub fn parseDeclaration(input: *css.Parser) Result(SupportsCondition) {
         const property_id = try css.PropertyId.parse(input);
-        if (input.expectColon().asErr()) |e| return .{ .err = e };
-        if (input.skipWhitespace().asErr()) |e| return .{ .err = e };
+        if (input.expectColon().asErr()) |e| return .{ .err = e.intoDefaultParseError() };
+        if (input.skipWhitespace().asErr()) |e| return .{ .err = e.intoDefaultParseError() };
         const pos = input.position();
-        if (input.expectNoErrorToken().asErr()) |e| return .{ .err = e };
+        if (input.expectNoErrorToken().asErr()) |e| return .{ .err = e.intoDefaultParseError() };
         return .{ .result = SupportsCondition{
             .declaration = .{
                 .property_id = property_id,
@@ -222,18 +221,18 @@ pub const SupportsCondition = union(enum) {
         const pos = input.position();
         const tok = switch (input.next()) {
             .result => |vv| vv,
-            .err => |e| return .{ .err = e },
+            .err => |e| return .{ .err = e.intoDefaultParseError() },
         };
         switch (tok.*) {
             .function => |f| {
                 if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("selector", f)) {
                     const Fn = struct {
                         pub fn tryParseFn(i: *css.Parser) Result(SupportsCondition) {
-                            return i.parseNestedBlock(SupportsCondition, void, @This().parseNestedBlockFn);
+                            return i.parseNestedBlock(SupportsCondition, {}, @This().parseNestedBlockFn);
                         }
                         pub fn parseNestedBlockFn(_: void, i: *css.Parser) Result(SupportsCondition) {
                             const p = i.position();
-                            if (i.expectNoErrorToken().asErr()) |e| return .{ .err = e };
+                            if (i.expectNoErrorToken().asErr()) |e| return .{ .err = e.intoDefaultParseError() };
                             return .{ .result = SupportsCondition{ .selector = i.sliceFrom(p) } };
                         }
                     };
@@ -242,10 +241,14 @@ pub const SupportsCondition = union(enum) {
                 }
             },
             .open_curly => {},
-            else => return location.newUnexpectedTokenError(tok.*),
+            else => return .{ .err = location.newUnexpectedTokenError(tok.*) },
         }
 
-        if (input.parseNestedBlock(void, {}, css.voidWrap(void, css.Parser.expectNoErrorToken)).asErr()) |err| {
+        if (input.parseNestedBlock(void, {}, struct {
+            pub fn parseFn(_: void, i: *css.Parser) Result(void) {
+                return i.expectNoErrorToken().toCssResult();
+            }
+        }).asErr()) |err| {
             return err;
         }
 
@@ -256,7 +259,7 @@ pub const SupportsCondition = union(enum) {
         switch (this.*) {
             .not => |condition| {
                 try dest.writeStr(" not ");
-                condition.toCssWithParensIfNeeded(dest, condition.needsParens(this));
+                condition.toCssWithParensIfNeeded(W, dest, condition.needsParens(this));
             },
             .@"and" => |conditions| {
                 var first = true;
@@ -266,7 +269,7 @@ pub const SupportsCondition = union(enum) {
                     } else {
                         try dest.writeStr(" and ");
                     }
-                    try cond.toCssWithParensIfNeeded(dest, cond.needsParens(this));
+                    try cond.toCssWithParensIfNeeded(W, dest, cond.needsParens(this));
                 }
             },
             .@"or" => |conditions| {
@@ -277,7 +280,7 @@ pub const SupportsCondition = union(enum) {
                     } else {
                         try dest.writeStr(" or ");
                     }
-                    try cond.toCssWithParensIfNeeded(dest, cond.needsParens(this));
+                    try cond.toCssWithParensIfNeeded(W, dest, cond.needsParens(this));
                 }
             },
             .declaration => |decl| {
@@ -362,7 +365,7 @@ pub fn SupportsRule(comptime R: type) type {
             try dest.writeChar('{');
             dest.indent();
             try dest.newline();
-            this.rules.toCss(W, dest);
+            try this.rules.toCss(W, dest);
             dest.dedent();
             try dest.newline();
             try dest.writeChar('}');

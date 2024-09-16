@@ -24,7 +24,7 @@ pub const KeyframesListParser = struct {
     pub const DeclarationParser = struct {
         pub const Declaration = Keyframe;
 
-        fn parseValue(_: *This, name: []const u8, input: *css.Parser) Result(Declaration) {
+        pub fn parseValue(_: *This, name: []const u8, input: *css.Parser) Result(Declaration) {
             return input.newError(css.BasicParseErrorKind{ .unexpected_token = .{ .ident = name } });
         }
     };
@@ -92,7 +92,7 @@ pub const KeyframesName = union(enum) {
     pub fn parse(input: *css.Parser) Result(KeyframesName) {
         switch (switch (input.next()) {
             .result => |v| v,
-            .err => |e| return .{ .err = e },
+            .err => |e| return .{ .err = e.intoDefaultParseError() },
         }) {
             .ident => |s| {
                 // todo_stuff.match_ignore_ascii_case
@@ -135,7 +135,7 @@ pub const KeyframesName = union(enum) {
                     bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "revert") or
                     bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "revert-layer"))
                 {
-                    try css.serializer.serializeString(s, W, dest);
+                    css.serializer.serializeString(s, dest) catch return dest.addFmtError();
                 } else {
                     try dest.writeIdent(s, css_module_aimation_enabled);
                 }
@@ -196,7 +196,7 @@ pub const Keyframe = struct {
 
     pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
         var first = true;
-        if (this.selectors.items) |sel| {
+        for (this.selectors.items) |sel| {
             if (!first) {
                 try dest.delim(',', false);
             }

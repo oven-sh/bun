@@ -105,9 +105,9 @@ pub const CssColor = union(enum) {
 
                     const compact = compactHex(hex);
                     if (hex == expandHex(compact)) {
-                        try dest.writeFmt("{x:0>3}", compact);
+                        try dest.writeFmt("{x:0>3}", .{compact});
                     } else {
-                        try dest.writeFmt("{x:0>6}", compact);
+                        try dest.writeFmt("{x:0>6}", .{compact});
                     }
                 } else {
                     // If the #rrggbbaa syntax is not supported by the browser targets, output rgba()
@@ -117,11 +117,11 @@ pub const CssColor = union(enum) {
                         if (dest.minify and color.red == 0 and color.green == 0 and color.blue == 0 and color.alpha == 0) {
                             return dest.writeStr("transparent");
                         } else {
-                            try dest.writeFmt("rgba({d}", color.red);
+                            try dest.writeFmt("rgba({d}", .{color.red});
                             try dest.delim(',', false);
-                            try dest.writeFmt("{d}", color.green);
+                            try dest.writeFmt("{d}", .{color.green});
                             try dest.delim(',', false);
-                            try dest.writeFmt("{d}", color.blue);
+                            try dest.writeFmt("{d}", .{color.blue});
                             try dest.delim(',', false);
 
                             // Try first with two decimal places, then with three.
@@ -2789,7 +2789,7 @@ pub fn shortColorName(v: u32) ?[]const u8 {
         0xffe4c4 => "bisque",
         0xfffafa => "snow",
         0xfffff0 => "ivory",
-        _ => return null,
+        else => return null,
     };
 }
 

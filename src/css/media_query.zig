@@ -47,7 +47,7 @@ pub const MediaList = struct {
 
     /// Parse a media query list from CSS.
     pub fn parse(input: *css.Parser) Result(MediaList) {
-        var media_queries = ArrayList(MediaList){};
+        var media_queries = ArrayList(MediaQuery){};
         while (true) {
             const mq = switch (input.parseUntilBefore(css.Delimiters{ .comma = true }, MediaQuery, {}, css.voidWrap(MediaQuery, MediaQuery.parse))) {
                 .result => |v| v,
@@ -58,14 +58,14 @@ pub const MediaList = struct {
             };
             media_queries.append(input.allocator(), mq) catch bun.outOfMemory();
 
-            if (input.next()) |tok| {
+            if (input.next().asValue()) |tok| {
                 if (tok.* != .comma) {
                     bun.Output.panic("Unreachable code: expected a comma after parsing a MediaQuery.\n\nThis is a bug in Bun's CSS parser. Please file a bug report at https://github.com/oven-sh/bun/issues/new/choose", .{});
                 }
             } else break;
         }
 
-        return MediaList{ .media_queries = media_queries };
+        return .{ .result = MediaList{ .media_queries = media_queries } };
     }
 
     pub fn toCss(this: *const MediaList, comptime W: type, dest: *css.Printer(W)) PrintErr!void {
@@ -133,17 +133,17 @@ pub const MediaQuery = struct {
                     .result => |vv| vv,
                     .err => |e| return .{ .err = e },
                 };
-                return .{ qualifier, media_type };
+                return .{ .result = .{ qualifier, media_type } };
             }
         };
         const qualifier, const explicit_media_type = switch (input.tryParse(Fn.tryParseFn, .{})) {
             .result => |v| v,
-            .err => return .{ null, null },
+            .err => .{ null, null },
         };
 
         const condition_result = if (explicit_media_type == null)
             MediaCondition.parseWithFlags(input, QueryConditionFlags{ .allow_or = true })
-        else if (input.tryParse(css.Parser.expectIdentMatching, .{"and"}))
+        else if (input.tryParse(css.Parser.expectIdentMatching, .{"and"}).isOk())
             MediaCondition.parseWithFlags(input, QueryConditionFlags.empty())
         else
             null;
@@ -155,10 +155,12 @@ pub const MediaQuery = struct {
 
         const media_type = explicit_media_type orelse MediaType.all;
 
-        return MediaQuery{
-            .qualifier = qualifier,
-            .media_type = media_type,
-            .condition = condition,
+        return .{
+            .result = MediaQuery{
+                .qualifier = qualifier,
+                .media_type = media_type,
+                .condition = condition,
+            },
         };
     }
 
@@ -196,7 +198,7 @@ pub const MediaQuery = struct {
             break :needs_parens condition.* == .operation and condition.operation.operator != .@"and";
         } else false;
 
-        return toCssWithParensIfNeeded(W, condition, dest, needs_parens);
+        return toCssWithParensIfNeeded(condition, W, dest, needs_parens);
     }
 };
 
@@ -252,8 +254,11 @@ pub const MediaType = union(enum) {
     custom: []const u8,
 
     pub fn parse(input: *css.Parser) Result(MediaType) {
-        const name = if (input.expectIdent().asErr()) |e| return .{ .err = e };
-        return MediaType.fromStr(name);
+        const name = switch (input.expectIdent()) {
+            .result => |v| v,
+            .err => |e| return .{ .err = e.intoDefaultParseError() },
+        };
+        return .{ .result = MediaType.fromStr(name) };
     }
 
     pub fn fromStr(name: []const u8) MediaType {
@@ -282,7 +287,7 @@ pub fn operationToCss(comptime QueryCondition: type, operator: Operator, conditi
 /// Represents a media condition.
 ///
 /// Implements QueryCondition interface.
-pub const MediaCondition = struct {
+pub const MediaCondition = union(enum) {
     feature: MediaFeature,
     not: *MediaCondition,
     operation: struct {
@@ -297,7 +302,7 @@ pub const MediaCondition = struct {
             .feature => |*f| {
                 try f.toCss(W, dest);
             },
-            .not => |*c| {
+            .not => |c| {
                 try dest.writeStr("not ");
                 try toCssWithParensIfNeeded(c, W, dest, c.needsParens(null, &dest.targets));
             },
@@ -1158,7 +1163,7 @@ pub fn MediaFeatureName(comptime FeatureId: type) type {
         /// Parses a media feature name.
         pub fn parse(input: *css.Parser) Result(struct { This, ?MediaFeatureComparison }) {
             const ident = switch (input.expectIdent()) {
-                .err => |e| return .{ .err = e },
+                .err => |e| return .{ .err = e.intoDefaultParseError() },
                 .result => |v| v,
             };
 

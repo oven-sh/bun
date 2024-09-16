@@ -169,7 +169,7 @@ pub const TokenList = struct {
         } else return false;
     }
 
-    pub fn parse(input: *css.Parser, options: *css.ParserOptions, depth: usize) Result(TokenList) {
+    pub fn parse(input: *css.Parser, options: *const css.ParserOptions, depth: usize) Result(TokenList) {
         var tokens = ArrayList(TokenOrValue){};
         if (TokenListFns.parseInto(input, &tokens, options, depth).asErr()) |e| return .{ .err = e };
 
@@ -193,7 +193,7 @@ pub const TokenList = struct {
         return .{ .result = .{ .v = tokens } };
     }
 
-    pub fn parseWithOptions(input: *css.Parser, options: *css.ParserOptions) Result(TokenList) {
+    pub fn parseWithOptions(input: *css.Parser, options: *const css.ParserOptions) Result(TokenList) {
         return parse(input, options, 0);
     }
 
@@ -831,7 +831,7 @@ pub const Variable = struct {
 
     pub fn parse(
         input: *css.Parser,
-        options: *css.ParserOptions,
+        options: *const css.ParserOptions,
         depth: usize,
     ) Result(This) {
         const name = switch (DashedIdentReference.parseWithOptions(input, options)) {
@@ -963,6 +963,7 @@ pub const EnvironmentVariableName = union(enum) {
         if (input.tryParse(DashedIdentReference.parseWithOptions, .{
             css.ParserOptions.default(
                 input.allocator(),
+                null,
             ),
         }).asValue()) |dashed| {
             return .{ .result = .{ .custom = dashed } };

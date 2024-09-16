@@ -25,20 +25,24 @@ pub const CSSNumberFns = struct {
     pub fn toCss(this: *const CSSNumber, comptime W: type, dest: *Printer(W)) PrintErr!void {
         const number: f32 = this.*;
         if (number != 0.0 and @abs(number) < 1.0) {
-            // PERF(alloc): Use temp allocation here?
+            // PERF(alloc): Use stack fallback here?
             // why the extra allocation anyway? isn't max amount of digits to stringify an f32 small?
             var s = ArrayList(u8){};
+            defer s.deinit(dest.allocator);
             const writer = s.writer(dest.allocator);
-            const W2 = @TypeOf(writer);
-            try css.to_css.float32(number, W2, writer);
+            css.to_css.float32(number, writer) catch {
+                return dest.addFmtError();
+            };
             if (number < 0.0) {
                 try dest.writeChar('-');
-                dest.writeStr(bun.strings.trimLeadingPattern2(s, '-', '0'));
+                dest.writeStr(bun.strings.trimLeadingPattern2(s.items, '-', '0'));
             } else {
                 try dest.writeStr(bun.strings.trimLeadingChar(s, '0'));
             }
         } else {
-            return css.to_css.float32(number, W, dest);
+            return css.to_css.float32(number, W, dest) catch {
+                return dest.addFmtError();
+            };
         }
     }
 };
@@ -50,7 +54,7 @@ pub const CSSIntegerFns = struct {
         // TODO: calc??
         return input.expectInteger();
     }
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub inline fn toCss(this: *const CSSInteger, comptime W: type, dest: *Printer(W)) PrintErr!void {
         try css.to_css.integer(i32, this.*, W, dest);
     }
 };

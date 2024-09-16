@@ -143,7 +143,7 @@ pub const PropertyRuleDeclarationParser = struct {
     pub const DeclarationParser = struct {
         pub const Declaration = void;
 
-        fn parseValue(this: *This, name: []const u8, input: *css.Parser) Result(Declaration) {
+        pub fn parseValue(this: *This, name: []const u8, input: *css.Parser) Result(Declaration) {
             // todo_stuff.match_ignore_ascii_case
             if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("syntax", name)) {
                 const syntax = switch (SyntaxString.parse(input)) {

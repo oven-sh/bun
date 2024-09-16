@@ -30,7 +30,7 @@ pub const UnknownAtRule = struct {
         try dest.writeChar('@');
         try dest.writeStr(this.name);
 
-        if (this.prelude.items.len > 0) {
+        if (this.prelude.v.items.len > 0) {
             try dest.writeChar(' ');
             try this.prelude.toCss(W, dest, false);
         }

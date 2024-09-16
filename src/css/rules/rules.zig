@@ -95,6 +95,7 @@ pub fn CssRule(comptime Rule: type) type {
                 .font_face => |x| x.toCss(W, dest),
                 .font_palette_values => |x| x.toCss(W, dest),
                 .page => |x| x.toCss(W, dest),
+                .supports => |x| x.toCss(W, dest),
                 .counter_style => |x| x.toCss(W, dest),
                 .namespace => |x| x.toCss(W, dest),
                 .moz_document => |x| x.toCss(W, dest),
@@ -124,7 +125,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
 
         const This = @This();
 
-        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) Maybe(void, PrinterError) {
+        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
             var first = true;
             var last_without_block = false;
 
@@ -132,10 +133,10 @@ pub fn CssRuleList(comptime AtRule: type) type {
                 if (rule.* == .ignored) continue;
 
                 // Skip @import rules if collecting dependencies.
-                if (rule == .import) {
+                if (rule.* == .import) {
                     if (dest.remove_imports) {
                         const dep = if (dest.dependencies != null) Dependency{
-                            .import = dependencies.ImportDependency.new(&rule.import, dest.filename()),
+                            .import = dependencies.ImportDependency.new(dest.allocator, &rule.import, dest.filename()),
                         } else null;
 
                         if (dest.dependencies) |*deps| {
@@ -156,7 +157,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
                     }
                     try dest.newline();
                 }
-                try rule.toCss(dest);
+                try rule.toCss(W, dest);
                 last_without_block = rule.* == .import or rule.* == .namespace or rule.* == .layer_statement;
             }
         }

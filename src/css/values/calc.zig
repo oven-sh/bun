@@ -52,15 +52,22 @@ pub fn Calc(comptime V: type) type {
 
         const This = @This();
 
-        fn mulValueF32(lhs: V, rhs: f32) V {
+        fn clone(this: *const This, allocator: Allocator) This {
+            _ = this; // autofix
+            _ = allocator; // autofix
+            @panic("TODO!");
+        }
+
+        fn deinit(this: *This, allocator: Allocator) void {
+            _ = this; // autofix
+            _ = allocator; // autofix
+            @panic("TODO!");
+        }
+
+        fn mulValueF32(lhs: V, allocator: Allocator, rhs: f32) V {
             return switch (V) {
                 f32 => lhs * rhs,
-                Angle => lhs.mulF32(rhs),
-                CSSNumber => lhs * rhs,
-                Length => lhs.mulF32(rhs),
-                Percentage => lhs.mulF32(rhs),
-                Time => lhs.mulF32(rhs),
-                else => lhs.mulF32(rhs),
+                else => lhs.mulF32(allocator, rhs),
             };
         }
 
@@ -68,7 +75,7 @@ pub fn Calc(comptime V: type) type {
             switch (V) {
                 f32 => return lhs + rhs,
                 Angle => return lhs.add(rhs),
-                CSSNumber => return lhs.add(rhs),
+                // CSSNumber => return lhs.add(rhs),
                 Length => return lhs.add(rhs),
                 Percentage => return lhs.add(rhs),
                 Time => return lhs.add(rhs),
@@ -456,7 +463,7 @@ pub fn Calc(comptime V: type) type {
                             };
                         }
 
-                        return i.newCustomError(css.ParserError.invalid_value);
+                        return i.newCustomError(css.ParserError{ .invalid_value = {} });
                     }
                 };
                 var closure = Closure{ .ctx = ctx };
@@ -665,7 +672,7 @@ pub fn Calc(comptime V: type) type {
                         rhs = rhs.mul_f32(-1.0);
                         cur = cur.add(input.allocator(), rhs);
                     } else {
-                        return input.newCustomError(next_tok.*);
+                        return input.newUnexpectedTokenError(next_tok.*);
                     }
                     continue;
                 }
@@ -720,7 +727,7 @@ pub fn Calc(comptime V: type) type {
                         node = node.mul_f32(1.0 / val);
                         continue;
                     }
-                    return input.newCustomError(css.ParserError.invalid_value);
+                    return input.newCustomError(css.ParserError{ .invalid_value = {} });
                 } else {
                     input.reset(&start);
                     break;
@@ -837,7 +844,7 @@ pub fn Calc(comptime V: type) type {
                             .number => break :rad trig_fn.run(v.number),
                             else => {},
                         }
-                        return i.newCustomError(css.ParserError.invalid_value);
+                        return i.newCustomError(css.ParserError{ .invalid_value = {} });
                     };
 
                     if (to_angle and !std.math.isNan(rad)) {
@@ -850,7 +857,7 @@ pub fn Calc(comptime V: type) type {
                                 ),
                             };
                         }
-                        return i.newCustomError(css.ParserError.invalid_value);
+                        return i.newCustomError(css.ParserError{ .invalid_value = {} });
                     } else {
                         return .{ .number = rad };
                     }
@@ -957,7 +964,7 @@ pub fn Calc(comptime V: type) type {
 
             // We don't have a way to represent arguments that aren't angles, so just error.
             // This will fall back to an unparsed property, leaving the atan2() function intact.
-            return input.newCustomError(css.ParserError.invalid_value);
+            return input.newCustomError(css.ParserError{ .invalid_value = {} });
         }
 
         pub fn parseNumeric(
@@ -1085,15 +1092,16 @@ pub fn Calc(comptime V: type) type {
         pub fn toCssImpl(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
             return switch (this.*) {
                 .value => |v| v.toCss(W, dest),
-                .number => |n| n.toCss(W, dest),
+                .number => |n| CSSNumberFns.toCss(&n, W, dest),
                 .sum => |sum| {
                     const a = sum.left;
-                    const b = sum.left;
+                    const b = sum.right;
                     try a.toCss(W, dest);
                     // White space is always required.
                     if (b.isSignNegative()) {
                         try dest.writeStr(" - ");
-                        const b2 = b.mulf32(-1.0);
+                        var b2 = b.mulF32(dest.allocator, -1.0);
+                        defer b2.deinit(dest.allocator);
                         try b2.toCss(W, dest);
                     } else {
                         try dest.writeStr(" + ");
@@ -1131,7 +1139,7 @@ pub fn Calc(comptime V: type) type {
         }
 
         pub fn isSignNegative(this: *const @This()) bool {
-            return css.signfns.isSignNegative(this.trySign()) orelse return false;
+            return css.signfns.isSignNegative(this.trySign() orelse return false);
         }
 
         pub fn mulF32(this: *const @This(), allocator: Allocator, other: f32) This {
@@ -1140,7 +1148,7 @@ pub fn Calc(comptime V: type) type {
             }
 
             return switch (this.*) {
-                .value => This{ .value = mulValueF32(this.value, other) },
+                .value => This{ .value = bun.create(allocator, V, mulValueF32(this.value.*, allocator, other)) },
                 .number => This{ .number = this.number * other },
                 .sum => This{ .sum = .{
                     .left = bun.create(
@@ -1166,7 +1174,7 @@ pub fn Calc(comptime V: type) type {
                         },
                     };
                 },
-                .function => switch (this.function) {
+                .function => switch (this.function.*) {
                     .calc => This{
                         .function = bun.create(
                             allocator,

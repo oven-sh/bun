@@ -4,7 +4,7 @@ const Allocator = std.mem.Allocator;
 
 pub const css = @import("../css_parser.zig");
 
-const CustomPropertyName = css.css_values.ident.CustomIdent;
+const CustomPropertyName = css.css_properties.CustomPropertyName;
 
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -36,8 +36,15 @@ pub fn PropertyIdImpl() type {
             }
         }
 
-        pub fn parse(input: *css.Parser) Error!PropertyId {
-            const name = try input.expectIdent();
+        pub fn parse(input: *css.Parser) css.Result(PropertyId) {
+            const name = switch (input.expectIdent()) {
+                .result => |v| v,
+                .err => |e| .{ .err = e.intoDefaultParseError() },
+            };
+            return .{ .result = fromString(name) };
+        }
+
+        pub fn fromStr(name: []const u8) PropertyId {
             return fromString(name);
         }
 
@@ -64,7 +71,7 @@ pub fn PropertyIdImpl() type {
                 trimmed_name = name_ref;
             }
 
-            return PropertyId.fromNameAndPrefix(trimmed_name, prefix) orelse .{ .custom = name_ };
+            return PropertyId.fromNameAndPrefix(trimmed_name, prefix) orelse .{ .custom = CustomPropertyName.fromStr(name_) };
         }
     };
 }

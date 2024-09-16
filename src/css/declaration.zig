@@ -30,7 +30,7 @@ pub const DeclarationBlock = struct {
 
     const This = @This();
 
-    pub fn parse(input: *css.Parser, options: *css.ParserOptions) Result(DeclarationBlock) {
+    pub fn parse(input: *css.Parser, options: *const css.ParserOptions) Result(DeclarationBlock) {
         var important_declarations = DeclarationList{};
         var declarations = DeclarationList{};
         var decl_parser = PropertyDeclarationParser{
@@ -94,7 +94,7 @@ pub const DeclarationBlock = struct {
 pub const PropertyDeclarationParser = struct {
     important_declarations: *ArrayList(css.Property),
     declarations: *ArrayList(css.Property),
-    options: *css.ParserOptions,
+    options: *const css.ParserOptions,
 
     const This = @This();
 
@@ -133,7 +133,7 @@ pub const PropertyDeclarationParser = struct {
     pub const DeclarationParser = struct {
         pub const Declaration = void;
 
-        fn parseValue(this: *This, name: []const u8, input: *css.Parser) Result(Declaration) {
+        pub fn parseValue(this: *This, name: []const u8, input: *css.Parser) Result(Declaration) {
             parse_declaration(
                 name,
                 input,
@@ -162,7 +162,7 @@ pub fn parse_declaration(
     input: *css.Parser,
     declarations: *DeclarationList,
     important_declarations: *DeclarationList,
-    options: *css.ParserOptions,
+    options: *const css.ParserOptions,
 ) Result(void) {
     const property_id = css.PropertyId.fromStr(name);
     var delimiters = css.Delimiters{ .bang = true };
@@ -171,7 +171,7 @@ pub fn parse_declaration(
     }
     const Closure = struct {
         property_id: css.PropertyId,
-        options: *css.ParserOptions,
+        options: *const css.ParserOptions,
 
         pub fn parsefn(this: *@This(), input2: *css.Parser) Result(css.Property) {
             return css.Property.parse(this.property_id, input2, this.options);
@@ -181,14 +181,14 @@ pub fn parse_declaration(
         .property_id = property_id,
         .options = options,
     };
-    const property = switch (input.parseUntilBefore(delimiters, css.Property, &closure, closure.parsefn)) {
+    const property = switch (input.parseUntilBefore(delimiters, css.Property, &closure, Closure.parsefn)) {
         .err => |e| return .{ .err = e },
         .result => |v| v,
     };
     const Fn = struct {
         pub fn parsefn(input2: *css.Parser) Result(void) {
-            if (input2.expectDelim('?').asErr()) |e| return .{ .err = e };
-            return input2.expectIdentMatching("important");
+            if (input2.expectDelim('?').toCssResult().asErr()) |e| return .{ .err = e };
+            return input2.expectIdentMatching("important").toCssResult();
         }
     };
     const important = if (input.tryParse(Fn.parsefn, .{}).isOk()) true else false;

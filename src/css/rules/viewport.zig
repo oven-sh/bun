@@ -26,7 +26,7 @@ pub const ViewportRule = struct {
     pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
-        try dest.write_char('@');
+        try dest.writeChar('@');
         try this.vendor_prefix.toCss(W, dest);
         try dest.write_str("viewport");
         try this.declarations.toCssBlock(W, dest);

@@ -39,7 +39,8 @@ pub fn ScopeRule(comptime R: type) type {
             try dest.whitespace();
             if (this.scope_start) |*scope_start| {
                 try dest.writeChar('(');
-                try scope_start.toCss(W, dest);
+                // try scope_start.toCss(W, dest);
+                try css.selector.serialize.serializeSelectorList(scope_start.v.items, W, dest, dest.context(), false);
                 try dest.writeChar(')');
                 try dest.whitespace();
             }

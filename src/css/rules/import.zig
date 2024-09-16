@@ -42,6 +42,7 @@ pub const ImportRule = struct {
     pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
         const dep = if (dest.dependencies != null) dependencies.ImportDependency.new(
             dest.allocator,
+            this,
             dest.filename(),
         ) else null;
 

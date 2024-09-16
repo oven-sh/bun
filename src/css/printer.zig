@@ -76,22 +76,27 @@ pub fn Printer(comptime Writer: type) type {
         // #[cfg(feature = "sourcemap")]
         sources: ?*ArrayList([]const u8),
         dest: Writer,
-        loc: Location,
-        indent_amt: u8,
+        loc: Location = Location{
+            .source_index = 0,
+            .line = 0,
+            .column = 1,
+        },
+        indent_amt: u8 = 0,
         line: u32 = 0,
         col: u32 = 0,
         minify: bool,
         targets: Targets,
-        vendor_prefix: css.VendorPrefix,
+        vendor_prefix: css.VendorPrefix = css.VendorPrefix.empty(),
         in_calc: bool = false,
-        css_module: ?css.CssModule,
-        dependencies: ?ArrayList(css.Dependency),
+        css_module: ?css.CssModule = null,
+        dependencies: ?ArrayList(css.Dependency) = null,
         remove_imports: bool,
-        pseudo_classes: ?PseudoClasses,
+        pseudo_classes: ?PseudoClasses = null,
         indentation_buf: std.ArrayList(u8),
-        ctx: ?*const css.StyleContext,
+        ctx: ?*const css.StyleContext = null,
         scratchbuf: std.ArrayList(u8),
-        err: ?css.PrinterError,
+        error_kind: ?css.PrinterError = null,
+        /// NOTE This should be the same mimalloc heap arena allocator
         allocator: Allocator,
         // TODO: finish the fields
 
@@ -153,11 +158,24 @@ pub fn Printer(comptime Writer: type) type {
                 .indentation_buf = std.ArrayList(u8).init(allocator),
                 .scratchbuf = scratchbuf,
                 .allocator = allocator,
+                .loc = Location{
+                    .source_index = 0,
+                    .line = 0,
+                    .column = 1,
+                },
             };
         }
 
-        pub fn context(this: *const Printer) ?*const css.StyleContext {
+        pub fn context(this: *const Printer(Writer)) ?*const css.StyleContext {
             return this.ctx;
+        }
+
+        /// To satisfy io.Writer interface
+        ///
+        /// NOTE: Same constraints as `writeStr`, the `str` param is assumted to not
+        /// contain any newline characters
+        pub fn writeAll(this: *This, str: []const u8) !void {
+            return this.writeStr(str) catch std.mem.Allocator.Error.OutOfMemory;
         }
 
         /// Writes a raw string to the underlying destination.
@@ -165,8 +183,10 @@ pub fn Printer(comptime Writer: type) type {
         /// NOTE: Is is assumed that the string does not contain any newline characters.
         /// If such a string is written, it will break source maps.
         pub fn writeStr(this: *This, s: []const u8) PrintErr!void {
-            this.col += s.len;
-            this.dest.writeStr(s) catch bun.outOfMemory();
+            this.col += @intCast(s.len);
+            this.dest.writeAll(s) catch {
+                return this.addFmtError();
+            };
             return;
         }
 
@@ -179,7 +199,7 @@ pub fn Printer(comptime Writer: type) type {
             const start: usize = this.dest.context.self.items.len;
             this.dest.print(fmt, args) catch bun.outOfMemory();
             const written = this.dest.context.self.items.len - start;
-            this.col += written;
+            this.col += @intCast(written);
         }
 
         /// Writes a CSS identifier to the underlying destination, escaping it
@@ -190,10 +210,9 @@ pub fn Printer(comptime Writer: type) type {
                 if (this.css_module) |*css_module| {
                     const Closure = struct { first: bool, printer: *This };
                     if (css_module.config.pattern.write(
-                        &css_module.hashes.items[this.loc.source_index],
-                        &css_module.sources.items[this.loc.source_index],
+                        css_module.hashes.items[this.loc.source_index],
+                        css_module.sources.items[this.loc.source_index],
                         ident,
-                        this,
                         Closure{ .first = true, .printer = this },
                         struct {
                             pub fn writeFn(self: *Closure, s: []const u8) PrintErr!void {
@@ -364,9 +383,9 @@ pub fn Printer(comptime Writer: type) type {
 
         fn writeIndent(this: *This) PrintErr!void {
             bun.debugAssert(!this.minify);
-            if (this.ident > 0) {
+            if (this.indent_amt > 0) {
                 // try this.writeStr(this.getIndent(this.ident));
-                this.dest.writeByteNTimes(' ', this.ident) catch return this.addFmtError();
+                this.dest.writeByteNTimes(' ', this.indent_amt) catch return this.addFmtError();
             }
         }
     };

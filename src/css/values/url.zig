@@ -29,7 +29,7 @@ pub const Url = struct {
     /// The url string.
     url: []const u8,
     /// The location where the `url()` was seen in the CSS source file.
-    loc: css.Location,
+    loc: css.dependencies.Location,
 
     const This = @This();
 
@@ -95,7 +95,7 @@ pub const Url = struct {
         // be replaced without escaping more easily. Quotes may be removed later during minification.
         if (dep) |d| {
             try dest.writeStr("url(");
-            try css.serializer.serializeString(d.placeholder, W, dest);
+            try css.serializer.serializeString(d.placeholder, dest);
             try dest.writeChar(')');
 
             if (dest.dependencies) |*dependencies| {

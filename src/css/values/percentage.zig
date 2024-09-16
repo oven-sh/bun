@@ -45,7 +45,8 @@ pub const Percentage = struct {
             var buf: [32]u8 = undefined;
             var fba = std.heap.FixedBufferAllocator.init(&buf);
             var string = std.ArrayList(u8).init(fba.allocator());
-            try percent.toCss(W, &string);
+            const writer = string.writer();
+            try percent.toCssGeneric(writer);
             if (this.v < 0.0) {
                 try dest.writeChar('-');
                 try dest.writeStr(bun.strings.trimLeadingPattern2(string.items, '-', '0'));
@@ -57,12 +58,20 @@ pub const Percentage = struct {
         }
     }
 
-    pub fn mulF32(this: Percentage, other: f32) Percentage {
+    pub fn mulF32(this: Percentage, _: std.mem.Allocator, other: f32) Percentage {
         return Percentage{ .v = this.v * other };
     }
 
     pub fn isZero(this: *const Percentage) bool {
         return this.v == 0.0;
+    }
+
+    pub fn sign(this: *const Percentage) f32 {
+        return css.signfns.signF32(this.v);
+    }
+
+    pub fn trySign(this: *const Percentage) ?f32 {
+        return this.sign();
     }
 };
 
@@ -73,6 +82,21 @@ pub fn DimensionPercentage(comptime D: type) type {
         calc: *Calc(DimensionPercentage(D)),
 
         const This = @This();
+
+        fn mulValueF32(lhs: D, allocator: std.mem.Allocator, rhs: f32) D {
+            return switch (D) {
+                f32 => lhs * rhs,
+                else => lhs.mulF32(allocator, rhs),
+            };
+        }
+
+        pub fn mulF32(this: This, allocator: std.mem.Allocator, other: f32) This {
+            return switch (this) {
+                .dimension => |d| .{ .dimension = mulValueF32(d, allocator, other) },
+                .percentage => |p| .{ .percentage = p.mulF32(allocator, other) },
+                .calc => |c| .{ .calc = bun.create(allocator, Calc(DimensionPercentage(D)), c.mulF32(allocator, other)) },
+            };
+        }
 
         pub fn parse(input: *css.Parser) Result(@This()) {
             if (input.tryParse(Calc(This, .{})).asValue()) |calc_value| {
@@ -94,11 +118,11 @@ pub fn DimensionPercentage(comptime D: type) type {
         }
 
         pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
-            switch (this.*) {
-                .dimension => |*length| return length.toCss(W, dest),
-                .percentage => |*per| return per.toCss(W, dest),
+            return switch (this.*) {
+                .dimension => |*length| length.toCss(W, dest),
+                .percentage => |*per| per.toCss(W, dest),
                 .calc => |calc| calc.toCss(W, dest),
-            }
+            };
         }
 
         pub fn zero() This {
@@ -120,6 +144,14 @@ pub fn DimensionPercentage(comptime D: type) type {
                 },
                 .percentage => |*p| p.isZero(),
                 else => false,
+            };
+        }
+
+        pub fn trySign(this: *const This) ?f32 {
+            return switch (this.*) {
+                .dimension => |d| d.trySign(),
+                .percentage => |p| p.trySign(),
+                .calc => |c| c.trySign(),
             };
         }
     };

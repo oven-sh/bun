@@ -53,17 +53,17 @@ pub const DashedIdentFns = struct {
         const location = input.currentSourceLocation();
         const ident = switch (input.expectIdent()) {
             .result => |vv| vv,
-            .err => |e| return .{ .err = e },
+            .err => |e| return .{ .err = e.intoDefaultParseError() },
         };
-        if (bun.strings.startsWith(ident, "--")) return location.newUnexpectedTokenError(.{ .ident = ident });
+        if (bun.strings.startsWith(ident, "--")) return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
 
-        return ident;
+        return .{ .result = ident };
     }
 
     const This = @This();
 
     pub fn toCss(this: *const DashedIdent, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        return dest.writeDashedIdent(this, true);
+        return dest.writeDashedIdent(this.*, true);
     }
 };
 
@@ -74,13 +74,13 @@ pub const IdentFns = struct {
     pub fn parse(input: *css.Parser) Result([]const u8) {
         const ident = switch (input.expectIdent()) {
             .result => |vv| vv,
-            .err => |e| return .{ .err = e },
+            .err => |e| return .{ .err = e.intoDefaultParseError() },
         };
         return ident;
     }
 
     pub fn toCss(this: *const Ident, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        return css.serializer.serializeIdentifier(this.*, W, dest);
+        return css.serializer.serializeIdentifier(this.*, dest) catch return dest.addFmtError();
     }
 };
 
@@ -90,7 +90,7 @@ pub const CustomIdentFns = struct {
         const location = input.currentSourceLocation();
         const ident = switch (input.expectIdent()) {
             .result => |vv| vv,
-            .err => |e| return .{ .err = e },
+            .err => |e| return .{ .err = e.intoDefaultParseError() },
         };
         // css.todo_stuff.match_ignore_ascii_case
         const valid = !(bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "initial") or
@@ -100,7 +100,7 @@ pub const CustomIdentFns = struct {
             bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "revert") or
             bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "revert-layer"));
 
-        if (!valid) return location.newUnexpectedTokenError(.{ .ident = ident });
+        if (!valid) return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
         return .{ .result = ident };
     }
 

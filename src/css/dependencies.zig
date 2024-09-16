@@ -58,6 +58,7 @@ pub const ImportDependency = struct {
                 css.PrinterOptions{},
             ) catch bun.Output.panic(
                 "Unreachable code: failed to stringify SupportsCondition.\n\nThis is a bug in Bun's CSS printer. Please file a bug report at https://github.com/oven-sh/bun/issues/new/choose",
+                .{},
             );
             break :brk s;
         } else null;
@@ -65,6 +66,7 @@ pub const ImportDependency = struct {
         const media = if (rule.media.media_queries.items.len > 0) media: {
             const s = css.to_css.string(allocator, css.MediaList, &rule.media, css.PrinterOptions{}) catch bun.Output.panic(
                 "Unreachable code: failed to stringify MediaList.\n\nThis is a bug in Bun's CSS printer. Please file a bug report at https://github.com/oven-sh/bun/issues/new/choose",
+                .{},
             );
             break :media s;
         } else null;
@@ -97,13 +99,17 @@ pub const UrlDependency = struct {
     loc: SourceRange,
 
     pub fn new(allocator: Allocator, url: *const Url, filename: []const u8) UrlDependency {
-        _ = allocator; // autofix
         const placeholder = css.css_modules.hash(
+            allocator,
             "{s}_{s}",
             .{ filename, url.url },
             false,
         );
-        _ = placeholder; // autofix
+        return UrlDependency{
+            .url = url.url,
+            .placeholder = placeholder,
+            .loc = SourceRange.new(filename, url.loc, 4, url.url.len),
+        };
     }
 };
 
@@ -119,11 +125,11 @@ pub const SourceRange = struct {
     pub fn new(filename: []const u8, loc: Location, offset: u32, len: usize) SourceRange {
         return SourceRange{
             .file_path = filename,
-            .start = css.Location{
+            .start = Location{
                 .line = loc.line,
                 .column = loc.column + offset,
             },
-            .end = css.Location{
+            .end = Location{
                 .line = loc.line,
                 .column = loc.column + offset + @as(u32, @intCast(len)) - 1,
             },

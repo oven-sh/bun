@@ -294,7 +294,7 @@ pub fn ContainerRule(comptime R: type) type {
 
             // Don't downlevel range syntax in container queries.
             const exclude = dest.targets.exclude;
-            dest.targets.exclude.insert(css.Features{ .media_queries = true });
+            dest.targets.exclude.insert(css.Features.media_queries);
             try this.condition.toCss(W, dest);
             dest.targets.exclude = exclude;
 

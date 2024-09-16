@@ -59,7 +59,7 @@ pub const FontPaletteValuesRule = struct {
         // dest.add_mapping(self.loc);
 
         try dest.writeStr("@font-palette-values ");
-        try css.css_values.ident.DashedIdentFns.toCss(&this.name, dest);
+        try css.css_values.ident.DashedIdentFns.toCss(&this.name, W, dest);
         try dest.whitespace();
         try dest.writeChar('{');
         dest.indent();
@@ -203,7 +203,7 @@ pub const FontPaletteValuesDeclarationParser = struct {
     pub const DeclarationParser = struct {
         pub const Declaration = FontPaletteValuesProperty;
 
-        fn parseValue(this: *This, name: []const u8, input: *css.Parser) Result(Declaration) {
+        pub fn parseValue(this: *This, name: []const u8, input: *css.Parser) Result(Declaration) {
             _ = this; // autofix
             const state = input.state();
             // todo_stuff.match_ignore_ascii_case

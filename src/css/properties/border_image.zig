@@ -27,7 +27,7 @@ const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
 pub const BorderImage = @compileError(css.todo_stuff.depth);
 
 /// A value for the [border-image-repeat](https://www.w3.org/TR/css-backgrounds-3/#border-image-repeat) property.
-const BorderImageRepeat = struct {
+pub const BorderImageRepeat = struct {
     /// The horizontal repeat value.
     horizontal: BorderImageRepeatKeyword,
     /// The vertical repeat value.
@@ -44,10 +44,10 @@ pub const BorderImageSideWidth = union(enum) {
     auto: void,
 };
 
-const BorderImageRepeatKeyword = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
+pub const BorderImageRepeatKeyword = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
 
 /// A value for the [border-image-slice](https://www.w3.org/TR/css-backgrounds-3/#border-image-slice) property.
-const BorderImageSlice = struct {
+pub const BorderImageSlice = struct {
     /// The offsets from the edges of the image.
     offsets: Rect(NumberOrPercentage),
     /// Whether the middle of the border image should be preserved.

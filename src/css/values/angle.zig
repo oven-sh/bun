@@ -175,7 +175,7 @@ pub const Angle = union(Tag) {
         return Angle.op(this, rhs, addfn.add);
     }
 
-    pub fn mulF32(this: *const Angle, other: f32) Angle {
+    pub fn mulF32(this: *const Angle, _: std.mem.Allocator, other: f32) Angle {
         return Angle.op(this, &other, Angle.mulF32);
     }
 

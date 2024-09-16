@@ -13,21 +13,20 @@ const PrintErr = css.PrintErr;
 
 const ArrayList = std.ArrayListUnmanaged;
 
-const CssModule = struct {
+pub const CssModule = struct {
     config: *const Config,
     sources: *const ArrayList([]const u8),
     hashes: ArrayList([]const u8),
     exports_by_source_index: ArrayList(CssModuleExports),
-    references: *std.HashMap([]const u8, CssModuleReference),
+    references: *CssModuleReferences,
 
     pub fn new(
         allocator: Allocator,
         config: *const Config,
         sources: *const ArrayList([]const u8),
-        _project_root: ?[]const u8,
-        references: *std.StringArrayHashMap(CssModuleReference),
+        project_root: ?[]const u8,
+        references: *CssModuleReferences,
     ) CssModule {
-        const project_root = if (_project_root) |pr| pr else "";
         const hashes = hashes: {
             var hashes = ArrayList([]const u8).initCapacity(allocator, sources.items.len) catch bun.outOfMemory();
             for (sources.items) |path| {
@@ -49,12 +48,12 @@ const CssModule = struct {
                     .{source},
                     config.pattern.segments.items[0] == .hash,
                 ));
-                break :hashes hashes;
             }
+            break :hashes hashes;
         };
         const exports_by_source_index = exports_by_source_index: {
             var exports_by_source_index = ArrayList(CssModuleExports).initCapacity(allocator, sources.items.len) catch bun.outOfMemory();
-            exports_by_source_index.appendNTimesAssumeCapacity(ArrayList(CssModuleExports){}, sources.items.len);
+            exports_by_source_index.appendNTimesAssumeCapacity(CssModuleExports{}, sources.items.len);
             break :exports_by_source_index exports_by_source_index;
         };
         return CssModule{
@@ -384,5 +383,6 @@ pub fn hash(allocator: Allocator, comptime fmt: []const u8, args: anytype, at_st
     _ = args; // autofix
     _ = allocator; // autofix
     _ = at_start; // autofix
-    @compileError(css.todo_stuff.depth);
+    // @compileError(css.todo_stuff.depth);
+    @panic(css.todo_stuff.depth);
 }

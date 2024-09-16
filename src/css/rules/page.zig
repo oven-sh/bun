@@ -34,7 +34,7 @@ pub const PageSelector = struct {
     /// An optional named page type.
     name: ?[]const u8,
     /// A list of page pseudo classes.
-    psuedo_classes: ArrayList(PagePseudoClass),
+    pseudo_classes: ArrayList(PagePseudoClass),
 
     pub fn parse(input: *css.Parser) Result(PageSelector) {
         const name = if (input.tryParse(css.Parser.expectIdent, .{}).asValue()) |name| name else null;
@@ -45,7 +45,7 @@ pub const PageSelector = struct {
             const state = input.state();
             if (switch (input.nextIncludingWhitespace()) {
                 .result => |tok| tok.* == .colon,
-                .err => |e| return .{ .err = e },
+                .err => |e| return .{ .err = e.intoDefaultParseError() },
             }) {
                 pseudo_classes.append(
                     input.allocator(),
@@ -61,7 +61,7 @@ pub const PageSelector = struct {
         }
 
         if (name == null and pseudo_classes.items.len == 0) {
-            return input.newCustomError(css.ParserError.invalid_page_selector);
+            return .{ .err = input.newCustomError(css.ParserError.invalid_page_selector) };
         }
 
         return .{
@@ -79,7 +79,7 @@ pub const PageSelector = struct {
             try dest.writeStr(name);
         }
 
-        for (this.psuedo_classes.items) |*pseudo| {
+        for (this.pseudo_classes.items) |*pseudo| {
             try dest.writeChar(':');
             try pseudo.toCss(W, dest);
         }
@@ -117,7 +117,7 @@ pub const PageRule = struct {
     /// The location of the rule in the source file.
     loc: Location,
 
-    pub fn parse(selectors: ArrayList(PageSelector), input: *css.Parser, loc: Location, options: *css.ParserOptions) Result(PageRule) {
+    pub fn parse(selectors: ArrayList(PageSelector), input: *css.Parser, loc: Location, options: *const css.ParserOptions) Result(PageRule) {
         var declarations = css.DeclarationBlock{};
         var rules = ArrayList(PageMarginRule){};
         var rule_parser = PageRuleParser{
@@ -174,7 +174,7 @@ pub const PageRule = struct {
         try dest.writeChar('{');
         dest.indent();
 
-        var i = 0;
+        var i: usize = 0;
         const len = this.declarations.len() + this.rules.len();
 
         const DECLS = .{ "declarations", "important_declarations" };
@@ -280,14 +280,14 @@ pub const PageMarginBox = enum {
 pub const PageRuleParser = struct {
     declarations: *css.DeclarationBlock,
     rules: *ArrayList(PageMarginRule),
-    options: *css.ParserOptions,
+    options: *const css.ParserOptions,
 
     const This = @This();
 
     pub const DeclarationParser = struct {
         pub const Declaration = void;
 
-        fn parseValue(this: *This, name: []const u8, input: *css.Parser) Result(Declaration) {
+        pub fn parseValue(this: *This, name: []const u8, input: *css.Parser) Result(Declaration) {
             return css.declaration.parse_declaration(
                 name,
                 input,

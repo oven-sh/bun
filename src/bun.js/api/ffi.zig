@@ -475,7 +475,7 @@ pub const FFI = struct {
             this.deferred_errors.clearAndFree(bun.default_allocator);
 
             for (this.define.items) |define| {
-                if (define[0].len > 0) bun.default_allocator.free(define[0]);
+                bun.default_allocator.free(define[0]);
                 if (define[1].len > 0) bun.default_allocator.free(define[1]);
             }
             this.define.clearAndFree(bun.default_allocator);

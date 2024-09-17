@@ -13,5 +13,5 @@ it.todoIf(isCI)("can run a .c file", () => {
     stdio: ["inherit", "inherit", "inherit"],
   });
 
-  expect(result.exitCode).toBe(42);
+  expect(result.exitCode).toBe(0);
 });

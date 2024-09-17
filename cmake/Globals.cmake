@@ -298,15 +298,13 @@ endfunction()
 #   SOURCES      string[] - The files that this command depends on
 #   OUTPUTS      string[] - The files that this command produces
 #   ARTIFACTS    string[] - The files that this command produces, and uploads as an artifact in CI
-#   ALWAYS_RUN   bool     - If true, the command will always run
 #   TARGET       string   - The target to register the command with
 #   TARGET_PHASE string   - The target phase to register the command with (e.g. PRE_BUILD, PRE_LINK, POST_BUILD)
 #   GROUP        string   - The group to register the command with (e.g. similar to JOB_POOL)
 function(register_command)
-  set(options ALWAYS_RUN)
   set(args COMMENT CWD TARGET TARGET_PHASE GROUP)
   set(multiArgs COMMAND ENVIRONMENT TARGETS SOURCES OUTPUTS ARTIFACTS)
-  cmake_parse_arguments(CMD "${options}" "${args}" "${multiArgs}" ${ARGN})
+  cmake_parse_arguments(CMD "" "${args}" "${multiArgs}" ${ARGN})
 
   if(NOT CMD_COMMAND)
     message(FATAL_ERROR "register_command: COMMAND is required")
@@ -349,9 +347,7 @@ function(register_command)
     list(APPEND CMD_EFFECTIVE_DEPENDS ${source})
   endforeach()
 
-  if(NOT CMD_EFFECTIVE_DEPENDS AND NOT CMD_ALWAYS_RUN)
-    message(FATAL_ERROR "register_command: TARGETS or SOURCES is required")
-  endif()
+  list(APPEND CMD_EFFECTIVE_DEPENDS ${CMD_CWD})
 
   set(CMD_EFFECTIVE_OUTPUTS)
 
@@ -381,7 +377,7 @@ function(register_command)
     endif()
   endforeach()
 
-  if(CMD_ALWAYS_RUN)
+  if(NOT CMD_EFFECTIVE_OUTPUTS)
     list(APPEND CMD_EFFECTIVE_OUTPUTS ${CMD_CWD}/.always_run_${CMD_TARGET})
   endif()
 
@@ -403,10 +399,6 @@ function(register_command)
     return()
   endif()
 
-  if(NOT CMD_EFFECTIVE_OUTPUTS)
-    message(FATAL_ERROR "register_command: OUTPUTS or ARTIFACTS is required, or set ALWAYS_RUN")
-  endif()
-
   if(CMD_TARGET)
     if(TARGET ${CMD_TARGET})
       message(FATAL_ERROR "register_command: TARGET is already registered: ${CMD_TARGET}")
@@ -416,9 +408,11 @@ function(register_command)
       DEPENDS ${CMD_EFFECTIVE_OUTPUTS}
       JOB_POOL ${CMD_GROUP}
     )
-    if(TARGET clone-${CMD_TARGET})
-      add_dependencies(${CMD_TARGET} clone-${CMD_TARGET})
-    endif()
+    # if(TARGET clone-${CMD_TARGET})
+    #   add_dependencies(${CMD_TARGET} clone-${CMD_TARGET})
+    # endif()
+    set_property(TARGET ${CMD_TARGET} PROPERTY OUTPUT ${CMD_EFFECTIVE_OUTPUTS} APPEND)
+    set_property(TARGET ${CMD_TARGET} PROPERTY DEPENDS ${CMD_EFFECTIVE_DEPENDS} APPEND)
   endif()
 
   add_custom_command(
@@ -611,10 +605,9 @@ endfunction()
 #   LIB_PATH                  string   - The path to the libraries
 #   TARGETS                   string[] - The targets to build from CMake
 #   LIBRARIES                 string[] - The libraries that are built
-#   INCLUDES                  string[] - The include paths
 function(register_cmake_command)
   set(args TARGET CWD BUILD_PATH LIB_PATH)
-  set(multiArgs ARGS TARGETS LIBRARIES INCLUDES)
+  set(multiArgs ARGS TARGETS LIBRARIES)
   # Use "MAKE" instead of "CMAKE" to prevent conflicts with CMake's own CMAKE_* variables
   cmake_parse_arguments(MAKE "" "${args}" "${multiArgs}" ${ARGN})
 
@@ -701,9 +694,9 @@ function(register_cmake_command)
     OUTPUTS ${MAKE_BUILD_PATH}/CMakeCache.txt
   )
 
-  if(TARGET clone-${MAKE_TARGET})
-    add_dependencies(configure-${MAKE_TARGET} clone-${MAKE_TARGET})
-  endif()
+  # if(TARGET clone-${MAKE_TARGET})
+  #   add_dependencies(configure-${MAKE_TARGET} clone-${MAKE_TARGET})
+  # endif()
 
   set(MAKE_BUILD_ARGS --build ${MAKE_BUILD_PATH} --config ${MAKE_BUILD_TYPE})
 
@@ -734,15 +727,6 @@ function(register_cmake_command)
     list(APPEND MAKE_BUILD_ARGS --target ${target})
   endforeach()
 
-  set(MAKE_EFFECTIVE_INCLUDES)
-  foreach(include ${MAKE_INCLUDES})
-    if(include STREQUAL ".")
-      list(APPEND MAKE_EFFECTIVE_INCLUDES ${MAKE_CWD})
-    else()
-      list(APPEND MAKE_EFFECTIVE_INCLUDES ${MAKE_CWD}/${include})
-    endif()
-  endforeach()
-
   register_command(
     COMMENT "Building ${MAKE_TARGET}"
     TARGET ${MAKE_TARGET}
@@ -751,13 +735,6 @@ function(register_cmake_command)
     CWD ${MAKE_CWD}
     ARTIFACTS ${MAKE_ARTIFACTS}
   )
-
-  if(MAKE_EFFECTIVE_INCLUDES)
-    target_include_directories(${bun} PRIVATE ${MAKE_EFFECTIVE_INCLUDES})
-    if(TARGET clone-${MAKE_TARGET} AND NOT BUN_LINK_ONLY)
-      add_dependencies(${bun} clone-${MAKE_TARGET})
-    endif()
-  endif()
 
   # HACK: Workaround for duplicate symbols when linking mimalloc.o
   # >| duplicate symbol '_mi_page_queue_append(mi_heap_s*, mi_page_queue_s*, mi_page_queue_s*)' in:
@@ -772,61 +749,91 @@ function(register_cmake_command)
   endif()
 endfunction()
 
-# register_compiler_flag()
+macro(parse_language variable)
+  if(NOT ${variable})
+    set(${variable} C CXX)
+  endif()
+  foreach(value ${${variable}})
+    if(NOT value MATCHES "^(C|CXX)$")
+      message(FATAL_ERROR "${CMAKE_CURRENT_FUNCTION}: Invalid language: \"${value}\"")
+    endif()
+  endforeach()
+endmacro()
+
+macro(parse_target variable)
+  foreach(value ${${variable}})
+    if(NOT TARGET ${value})
+      message(FATAL_ERROR "${CMAKE_CURRENT_FUNCTION}: Invalid target: \"${value}\"")
+    endif()
+  endforeach()
+endmacro()
+
+macro(parse_list list variable)
+  set(${variable})
+  foreach(item ${${list}})
+    if(item STREQUAL "ON")
+      continue()
+    elseif(item STREQUAL "OFF")
+      list(POP_BACK ${variable})
+    else()
+      list(APPEND ${variable} ${item})
+    endif()
+  endforeach()
+endmacro()
+
+macro(parse_path variable)
+  foreach(value ${${variable}})
+    if(NOT IS_ABSOLUTE ${value})
+      message(FATAL_ERROR "${CMAKE_CURRENT_FUNCTION}: Path is not absolute: \"${value}\"")
+    endif()
+    if(NOT ${value} MATCHES "^(${CWD}|${BUILD_PATH}|${CACHE_PATH}|${VENDOR_PATH})")
+      message(FATAL_ERROR "${CMAKE_CURRENT_FUNCTION}: Path is not in the source, build, cache, or vendor directory: \"${value}\"")
+    endif()
+  endforeach()
+endmacro()
+
+# register_compiler_flags()
 # Description:
 #   Registers a compiler flag, similar to `add_compile_options()`, but has more validation and features.
 # Arguments:
 #   flags string[]     - The flags to register
 #   DESCRIPTION string - The description of the flag
-#   LANGUAGES string[] - The languages to register the flag (default: C, CXX)
-#   TARGETS string[]   - The targets to register the flag (default: all)
+#   LANGUAGE string[]  - The languages to register the flag (default: C, CXX)
+#   TARGET string[]    - The targets to register the flag (default: all)
 function(register_compiler_flags)
   set(args DESCRIPTION)
-  set(multiArgs LANGUAGES TARGETS)
+  set(multiArgs LANGUAGE TARGET)
   cmake_parse_arguments(COMPILER "" "${args}" "${multiArgs}" ${ARGN})
 
-  if(NOT COMPILER_LANGUAGES)
-    set(COMPILER_LANGUAGES C CXX)
-  endif()
+  parse_language(COMPILER_LANGUAGE)
+  parse_target(COMPILER_TARGET)
+  parse_list(COMPILER_UNPARSED_ARGUMENTS COMPILER_FLAGS)
 
-  set(COMPILER_FLAGS)
-  foreach(flag ${COMPILER_UNPARSED_ARGUMENTS})
-    if(flag STREQUAL "ON")
-      continue()
-    elseif(flag STREQUAL "OFF")
-      list(POP_BACK COMPILER_FLAGS)
-    elseif(flag MATCHES "^(-|/)")
-      list(APPEND COMPILER_FLAGS ${flag})
-    else()
-      message(FATAL_ERROR "register_compiler_flags: Invalid flag: \"${flag}\"")
+  foreach(flag ${COMPILER_FLAGS})
+    if(NOT flag MATCHES "^(-|/)")
+      message(FATAL_ERROR "${CMAKE_CURRENT_FUNCTION}: Invalid flag: \"${flag}\"")
     endif()
   endforeach()
 
-  foreach(target ${COMPILER_TARGETS})
-    if(NOT TARGET ${target})
-      message(FATAL_ERROR "register_compiler_flags: \"${target}\" is not a target")
-    endif()
-  endforeach()
-
-  foreach(lang ${COMPILER_LANGUAGES})
+  foreach(lang ${COMPILER_LANGUAGE})
     list(JOIN COMPILER_FLAGS " " COMPILER_FLAGS_STRING)
 
-    if(NOT COMPILER_TARGETS)
+    if(NOT COMPILER_TARGET)
       set(CMAKE_${lang}_FLAGS "${CMAKE_${lang}_FLAGS} ${COMPILER_FLAGS_STRING}" PARENT_SCOPE)
     endif()
 
-    foreach(target ${COMPILER_TARGETS})
+    foreach(target ${COMPILER_TARGET})
       set(${target}_CMAKE_${lang}_FLAGS "${${target}_CMAKE_${lang}_FLAGS} ${COMPILER_FLAGS_STRING}" PARENT_SCOPE)
     endforeach()
   endforeach()
 
-  foreach(lang ${COMPILER_LANGUAGES})
+  foreach(lang ${COMPILER_LANGUAGE})
     foreach(flag ${COMPILER_FLAGS})
-      if(NOT COMPILER_TARGETS)
+      if(NOT COMPILER_TARGET)
         add_compile_options($<$<COMPILE_LANGUAGE:${lang}>:${flag}>)
       endif()
       
-      foreach(target ${COMPILER_TARGETS})
+      foreach(target ${COMPILER_TARGET})
         get_target_property(type ${target} TYPE)
         if(type MATCHES "EXECUTABLE|LIBRARY")
           target_compile_options(${target} PRIVATE $<$<COMPILE_LANGUAGE:${lang}>:${flag}>)
@@ -836,8 +843,61 @@ function(register_compiler_flags)
   endforeach()
 endfunction()
 
+# register_compiler_definitions()
+# Description:
+#   Registers a compiler definition, similar to `add_compile_definitions()`.
+# Arguments:
+#   definitions string[] - The definitions to register
+#   DESCRIPTION string   - The description of the definition
+#   LANGUAGE string[]    - The languages to register the definition (default: C, CXX)
+#   TARGET string[]      - The targets to register the definition (default: all)
 function(register_compiler_definitions)
-  
+  set(args DESCRIPTION)
+  set(multiArgs LANGUAGE TARGET)
+  cmake_parse_arguments(COMPILER "" "${args}" "${multiArgs}" ${ARGN})
+
+  parse_language(COMPILER_LANGUAGE)
+  parse_target(COMPILER_TARGET)
+  parse_list(COMPILER_UNPARSED_ARGUMENTS COMPILER_DEFINITIONS)
+
+  foreach(definition ${COMPILER_DEFINITIONS})
+    if(NOT definition MATCHES "^([A-Z_][A-Z0-9_]*)")
+      message(FATAL_ERROR "${CMAKE_CURRENT_FUNCTION}: Invalid definition: \"${definition}\"")
+    endif()
+  endforeach()
+
+  if(WIN32)
+    list(TRANSFORM COMPILER_DEFINITIONS PREPEND "/D" OUTPUT_VARIABLE COMPILER_FLAGS)
+  else()
+    list(TRANSFORM COMPILER_DEFINITIONS PREPEND "-D" OUTPUT_VARIABLE COMPILER_FLAGS)
+  endif()
+
+  foreach(lang ${COMPILER_LANGUAGE})
+    list(JOIN COMPILER_FLAGS " " COMPILER_FLAGS_STRING)
+
+    if(NOT COMPILER_TARGET)
+      set(CMAKE_${lang}_FLAGS "${CMAKE_${lang}_FLAGS} ${COMPILER_FLAGS_STRING}" PARENT_SCOPE)
+    endif()
+
+    foreach(target ${COMPILER_TARGET})
+      set(${target}_CMAKE_${lang}_FLAGS "${${target}_CMAKE_${lang}_FLAGS} ${COMPILER_FLAGS_STRING}" PARENT_SCOPE)
+    endforeach()
+  endforeach()
+
+  foreach(definition ${COMPILER_DEFINITIONS})
+    foreach(language ${COMPILER_LANGUAGE})
+      if(NOT COMPILER_TARGET)
+        add_compile_definitions($<$<COMPILE_LANGUAGE:${language}>:${definition}>)
+      endif()
+
+      foreach(target ${COMPILER_TARGET})
+        get_target_property(type ${target} TYPE)
+        if(type MATCHES "EXECUTABLE|LIBRARY")
+          target_compile_definitions(${target} PRIVATE $<$<COMPILE_LANGUAGE:${language}>:${definition}>)
+        endif()
+      endforeach()
+    endforeach()
+  endforeach()
 endfunction()
 
 # register_linker_flags()
@@ -846,41 +906,140 @@ endfunction()
 # Arguments:
 #   flags string[]     - The flags to register
 #   DESCRIPTION string - The description of the flag
+#   TARGET string[]    - The targets to register the definition (default: all)
 function(register_linker_flags)
   set(args DESCRIPTION)
-  cmake_parse_arguments(LINKER "" "${args}" "" ${ARGN})
+  set(multiArgs LANGUAGE TARGET)
+  cmake_parse_arguments(LINKER "" "${args}" "${multiArgs}" ${ARGN})
 
-  foreach(flag ${LINKER_UNPARSED_ARGUMENTS})
-    if(flag STREQUAL "ON")
-      continue()
-    elseif(flag STREQUAL "OFF")
-      list(POP_FRONT LINKER_FLAGS)
-    elseif(flag MATCHES "^(-|/)")
-      list(APPEND LINKER_FLAGS ${flag})
-    else()
-      message(FATAL_ERROR "register_linker_flags: Invalid flag: \"${flag}\"")
+  parse_target(LINKER_TARGET)
+  parse_list(LINKER_UNPARSED_ARGUMENTS LINKER_FLAGS)
+
+  foreach(flag ${LINKER_FLAGS})
+    if(NOT flag MATCHES "^(-|/)")
+      message(FATAL_ERROR "${CMAKE_CURRENT_FUNCTION}: Invalid flag: \"${flag}\"")
     endif()
   endforeach()
 
-  add_link_options(${LINKER_FLAGS})
+  list(JOIN LINKER_FLAGS " " LINKER_FLAGS_STRING)
+
+  if(NOT LINKER_TARGET)
+    set(CMAKE_LINKER_FLAGS "${CMAKE_LINKER_FLAGS} ${LINKER_FLAGS_STRING}" PARENT_SCOPE)
+  endif()
+
+  foreach(target ${LINKER_TARGET})
+    set(${target}_CMAKE_LINKER_FLAGS "${${target}_CMAKE_LINKER_FLAGS} ${LINKER_FLAGS_STRING}" PARENT_SCOPE)
+  endforeach()
+
+  if(NOT LINKER_TARGET)
+    add_link_options(${LINKER_FLAGS})
+  endif()
+
+  foreach(target ${LINKER_TARGET})
+    get_target_property(type ${target} TYPE)
+    if(type MATCHES "EXECUTABLE|LIBRARY")
+      target_link_options(${target} PRIVATE ${LINKER_FLAGS})
+    endif()
+  endforeach()
+endfunction()
+
+# register_includes()
+# Description:
+#   Registers a include directory, similar to `target_include_directories()`.
+# Arguments:
+#   includes string[]  - The includes to register
+#   DESCRIPTION string - The description of the include
+#   LANGUAGE string[]  - The languages to register the include (default: C, CXX)
+#   TARGET string[]    - The targets to register the include (default: all)
+function(register_includes)
+  set(args DESCRIPTION)
+  set(multiArgs LANGUAGE TARGET)
+  cmake_parse_arguments(INCLUDE "" "${args}" "${multiArgs}" ${ARGN})
+
+  parse_language(INCLUDE_LANGUAGE)
+  parse_target(INCLUDE_TARGET)
+  parse_list(INCLUDE_UNPARSED_ARGUMENTS INCLUDE_PATHS)
+  parse_path(INCLUDE_PATHS)
+
+  list(TRANSFORM INCLUDE_PATHS PREPEND "-I" OUTPUT_VARIABLE INCLUDE_FLAGS)
+  list(JOIN INCLUDE_FLAGS " " INCLUDE_FLAGS_STRING)
+
+  foreach(language ${INCLUDE_LANGUAGE})
+    if(NOT INCLUDE_TARGET)
+      set(CMAKE_${language}_FLAGS "${CMAKE_${language}_FLAGS} ${INCLUDE_FLAGS_STRING}" PARENT_SCOPE)
+    endif()
+
+    foreach(target ${INCLUDE_TARGET})
+      get_target_property(type ${target} TYPE)
+      if(type MATCHES "EXECUTABLE|LIBRARY")
+        target_include_directories(${target} PRIVATE ${INCLUDE_PATHS})
+      endif()
+    endforeach()
+  endforeach()
 endfunction()
 
 function(print_compiler_flags)
   get_property(targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
-  set(languages C CXX)
+  set(languages C CXX LINKER)
   foreach(target ${targets})
     get_target_property(type ${target} TYPE)
     message(STATUS "Target: ${target}")
     foreach(lang ${languages})
-      if(${target}_CMAKE_${lang}_FLAGS)
-        message(STATUS "  ${lang} Flags: ${${target}_CMAKE_${lang}_FLAGS}")
-      endif()
+      message(STATUS "  ${lang} Flags: ${${target}_CMAKE_${lang}_FLAGS} ${CMAKE_${lang}_FLAGS}")
     endforeach()
   endforeach()
-  foreach(lang ${languages})
-    message(STATUS "Language: ${lang}")
-    if(CMAKE_${lang}_FLAGS)
-      message(STATUS "  Flags: ${CMAKE_${lang}_FLAGS}")
-    endif()
+endfunction()
+
+# resolve_dependencies()
+# Description:
+#   Resolves dependencies of a target.
+function(resolve_dependencies)
+  get_property(targetz DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+
+  set(input_files)
+  set(input_targets)
+  set(output_files)
+  set(output_targets)
+  foreach(target ${targetz})
+    set(input_properties SOURCES DEPENDS INCLUDE_DIRECTORIES LINK_LIBRARIES LINK_DIRECTORIES)
+    set(output_properties OUTPUT)
+
+    foreach(property ${input_properties})
+      get_target_property(values ${target} ${property})
+      foreach(value ${values})
+        if(value MATCHES "NOTFOUND")
+          continue()
+        endif()
+        list(APPEND input_files ${value})
+        list(APPEND input_targets ${target})
+      endforeach()
+    endforeach()
+
+    foreach(property ${output_properties})
+      get_target_property(values ${target} ${property})
+      foreach(value ${values})
+        if(value MATCHES "NOTFOUND")
+          continue()
+        endif()
+        list(APPEND output_files ${value})
+        list(APPEND output_targets ${target})
+      endforeach()
+    endforeach()
+  endforeach()
+
+  list(LENGTH input_files input_length)
+  math(EXPR max_input_index "${input_length} - 1")
+  foreach(i RANGE 0 ${max_input_index})
+    list(GET input_files ${i} file0)
+    list(GET input_targets ${i} target0)
+    message(STATUS "${file0} -> ${target0}")
+  endforeach()
+
+  list(LENGTH output_files output_length)
+  math(EXPR max_output_index "${output_length} - 1")
+  foreach(i RANGE 0 ${max_output_index})
+    list(GET output_files ${i} file0)
+    list(GET output_targets ${i} target0)
+    message(STATUS "${file0} -> ${target0}")
   endforeach()
 endfunction()

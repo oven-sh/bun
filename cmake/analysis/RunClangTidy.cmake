@@ -76,5 +76,4 @@ register_command(
     ${CLANG_TIDY_COMMAND} 
   CWD
     ${BUILD_PATH}
-  ALWAYS_RUN
 )

@@ -19,7 +19,6 @@ register_command(
       --verbose
       ${BUN_C_SOURCES}
       ${BUN_CXX_SOURCES}
-  ALWAYS_RUN
 )
 
 register_command(
@@ -33,5 +32,4 @@ register_command(
       --verbose
       ${BUN_C_SOURCES}
       ${BUN_CXX_SOURCES}
-  ALWAYS_RUN
 )

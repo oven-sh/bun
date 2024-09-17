@@ -5,6 +5,4 @@ register_cmake_command(
     ${CWD}/src/bun.js/bindings/sqlite
   LIBRARIES
     sqlite3
-  INCLUDES
-    .
 )

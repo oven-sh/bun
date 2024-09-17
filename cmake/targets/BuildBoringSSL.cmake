@@ -16,6 +16,4 @@ register_cmake_command(
     decrepit
   ARGS
     -DBUILD_SHARED_LIBS=OFF
-  INCLUDES
-    include
 )

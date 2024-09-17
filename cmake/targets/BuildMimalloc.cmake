@@ -55,6 +55,4 @@ register_cmake_command(
     ${MIMALLOC_CMAKE_ARGS}
   LIBRARIES
     ${MIMALLOC_LIBRARY}
-  INCLUDES
-    include
 )

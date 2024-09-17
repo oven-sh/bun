@@ -34,20 +34,22 @@ register_cmake_command(
     -DENABLE_PCRE2POSIX=OFF
     -DENABLE_PCREPOSIX=OFF
     -DENABLE_ZSTD=OFF
-    # libarchive depends on zlib headers, otherwise it will
-    # spawn a processes to compress instead of using the library.
     -DENABLE_ZLIB=OFF
     -DHAVE_ZLIB_H=ON
-    -DCMAKE_C_FLAGS="-I${VENDOR_PATH}/zlib"
   LIB_PATH
     libarchive
   LIBRARIES
     archive
-  INCLUDES
-    include
 )
 
-# Must be loaded after zlib is defined
-if(TARGET clone-zlib)
-  add_dependencies(libarchive clone-zlib)
-endif()
+# libarchive depends on zlib headers, otherwise it will
+# spawn a processes to compress instead of using the library.
+register_includes(
+  TARGET libarchive
+  DESCRIPTION "Include zlib headers for libarchive"
+  ${VENDOR_PATH}/zlib
+)
+
+# if(TARGET clone-zlib)
+#   add_dependencies(libarchive clone-zlib)
+# endif()

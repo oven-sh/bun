@@ -19,6 +19,4 @@ register_cmake_command(
   LIBRARIES
     deflatestatic WIN32
     deflate UNIX
-  INCLUDES
-    .
 )

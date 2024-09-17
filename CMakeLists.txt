@@ -39,8 +39,9 @@ include(SetupRust)
 # --- Targets ---
 
 include(BuildBun)
+print_compiler_flags()
 
-# --- Static Analysis ---
+# --- Analysis ---
 
 include(RunClangFormat)
 include(RunClangTidy)

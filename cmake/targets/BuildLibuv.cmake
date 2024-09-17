@@ -1,3 +1,7 @@
+if(NOT WIN32)
+  message(FATAL_ERROR "libuv is only supported on Windows")
+endif()
+
 register_repository(
   NAME
     libuv
@@ -6,10 +10,6 @@ register_repository(
   COMMIT
     da527d8d2a908b824def74382761566371439003
 )
-
-if(WIN32)
-  set(LIBUV_CMAKE_C_FLAGS "/DWIN32 /D_WINDOWS -Wno-int-conversion")
-endif()
 
 register_cmake_command(
   TARGET
@@ -20,10 +20,14 @@ register_cmake_command(
     -DLIBUV_BUILD_SHARED=OFF
     -DLIBUV_BUILD_TESTS=OFF
     -DLIBUV_BUILD_BENCH=OFF
-    -DCMAKE_C_FLAGS=${LIBUV_CMAKE_C_FLAGS}
   LIBRARIES
     libuv WIN32
     uv UNIX
-  INCLUDES
-    include
+)
+
+register_compiler_flags(
+  TARGET libuv
+  /DWIN32
+  /D_WINDOWS
+  -Wno-int-conversion
 )

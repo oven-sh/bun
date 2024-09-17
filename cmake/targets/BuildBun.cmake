@@ -662,11 +662,7 @@ set_target_properties(${bun} PROPERTIES
 
 # --- C/C++ Includes ---
 
-if(WIN32)
-  target_include_directories(${bun} PRIVATE ${CWD}/src/bun.js/bindings/windows)
-endif()
-
-target_include_directories(${bun} PRIVATE
+register_includes(
   ${CWD}/packages
   ${CWD}/packages/bun-usockets
   ${CWD}/packages/bun-usockets/src
@@ -678,36 +674,59 @@ target_include_directories(${bun} PRIVATE
   ${CWD}/src/js/builtins
   ${CWD}/src/napi
   ${CWD}/src/deps
+  ${CWD}/src/bun.js/bindings/windows ${WIN32}
   ${CODEGEN_PATH}
   ${VENDOR_PATH}
   ${VENDOR_PATH}/picohttpparser
+  ${VENDOR_PATH}/boringssl/include
+  ${VENDOR_PATH}/brotli/c/include
+  ${VENDOR_PATH}/cares/include
+  ${VENDOR_PATH}/libarchive/include
+  ${VENDOR_PATH}/libdeflate
+  ${VENDOR_PATH}/libuv/include ${WIN32}
+  ${VENDOR_PATH}/lshpack
+  ${VENDOR_PATH}/lshpack/compact/queue ${WIN32}
+  ${VENDOR_PATH}/mimalloc/include
+  ${VENDOR_PATH}/zlib
+  TARGET ${bun}
 )
 
 # --- C/C++ Definitions ---
 
 if(ENABLE_ASSERTIONS)
-  target_compile_definitions(${bun} PRIVATE ASSERT_ENABLED=1)
+  register_compiler_definitions(
+    TARGET ${bun}
+    DESCRIPTION "Enable bun assertions"
+    ASSERT_ENABLED=1
+  )
 endif()
 
 if(DEBUG)
-  target_compile_definitions(${bun} PRIVATE BUN_DEBUG=1)
+  register_compiler_definitions(
+    TARGET ${bun}
+    DESCRIPTION "Enable bun assertions in debug builds"
+    BUN_DEBUG=1
+  )
 endif()
 
 if(APPLE)
-  target_compile_definitions(${bun} PRIVATE _DARWIN_NON_CANCELABLE=1)
+  # The $NOCANCEL variants of various system calls are activated by compiling
+  # with __DARWIN_NON_CANCELABLE, which prevents them from being pthread cancellation points.
+  register_compiler_definitions(__DARWIN_NON_CANCELABLE=1)
 endif()
 
 if(WIN32)
-  target_compile_definitions(${bun} PRIVATE
+  register_compiler_definitions(
     WIN32
     _WINDOWS
     WIN32_LEAN_AND_MEAN=1
     _CRT_SECURE_NO_WARNINGS
     BORINGSSL_NO_CXX=1 # lol
+    TARGET ${bun}
   )
 endif()
 
-target_compile_definitions(${bun} PRIVATE
+register_compiler_definitions(
   _HAS_EXCEPTIONS=0
   LIBUS_USE_OPENSSL=1
   LIBUS_USE_BORINGSSL=1
@@ -723,11 +742,13 @@ target_compile_definitions(${bun} PRIVATE
   BUILDING_JSCONLY__
   REPORTED_NODEJS_VERSION=\"${NODEJS_VERSION}\"
   REPORTED_NODEJS_ABI_VERSION=${NODEJS_ABI_VERSION}
+  TARGET ${bun}
 )
 
 if(DEBUG AND NOT CI)
-  target_compile_definitions(${bun} PRIVATE
+  register_compiler_definitions(
     BUN_DYNAMIC_JS_LOAD_PATH=\"${BUILD_PATH}/js\"
+    TARGET ${bun}
   )
 endif()
 
@@ -735,15 +756,16 @@ endif()
 # --- Compiler options ---
 
 if(NOT WIN32)
-  target_compile_options(${bun} PUBLIC
+  register_compiler_flags(
     -fconstexpr-steps=2542484
     -fconstexpr-depth=54
     -fno-pic
     -fno-pie
     -faddrsig
+    TARGET ${bun}
   )
   if(DEBUG)
-    target_compile_options(${bun} PUBLIC
+    register_compiler_flags(
       -Werror=return-type
       -Werror=return-stack-address
       -Werror=implicit-function-declaration
@@ -767,11 +789,12 @@ if(NOT WIN32)
       -fsanitize=nullability-return
       -fsanitize=returns-nonnull-attribute
       -fsanitize=unreachable
+      TARGET ${bun}
     )
     target_link_libraries(${bun} PRIVATE -fsanitize=null)
   else()
     # Leave -Werror=unused off in release builds so we avoid errors from being used in ASSERT
-    target_compile_options(${bun} PUBLIC ${LTO_FLAG}
+    register_compiler_flags(
       -Werror=return-type
       -Werror=return-stack-address
       -Werror=implicit-function-declaration
@@ -784,6 +807,7 @@ if(NOT WIN32)
       -Werror=sometimes-uninitialized
       -Wno-nullability-completeness
       -Werror
+      TARGET ${bun}
     )
   endif()
 endif()
@@ -791,12 +815,13 @@ endif()
 # --- Linker options ---
 
 if(WIN32)
-  target_link_options(${bun} PUBLIC
+  register_linker_flags(
     /STACK:0x1200000,0x100000
     /errorlimit:0
+    TARGET ${bun}
   )
   if(RELEASE)
-    target_link_options(${bun} PUBLIC
+    register_linker_flags(
       /LTCG
       /OPT:REF
       /OPT:NOICF
@@ -810,17 +835,19 @@ if(WIN32)
       /delayload:WSOCK32.dll
       /delayload:ADVAPI32.dll
       /delayload:IPHLPAPI.dll
+      TARGET ${bun}
     )
   endif()
 elseif(APPLE)
-  target_link_options(${bun} PUBLIC 
+  register_linker_flags(
     -dead_strip
     -dead_strip_dylibs
     -Wl,-stack_size,0x1200000
     -fno-keep-static-consts
+    TARGET ${bun}
   )
 else()
-  target_link_options(${bun} PUBLIC
+  register_linker_flags(
     -fuse-ld=lld-${LLVM_VERSION_MAJOR}
     -fno-pic
     -static-libstdc++
@@ -853,6 +880,7 @@ else()
     -Wl,--compress-debug-sections=zlib
     -Wl,-z,lazy
     -Wl,-z,norelro
+    TARGET ${bun}
   )
 endif()
 
@@ -910,10 +938,10 @@ else()
   endif()
 endif()
 
-include_directories(${WEBKIT_INCLUDE_PATH})
+register_includes(${WEBKIT_INCLUDE_PATH} TARGET ${bun})
 
 if(NOT WEBKIT_LOCAL AND NOT APPLE)
-  include_directories(${WEBKIT_INCLUDE_PATH}/wtf/unicode)
+  register_includes(${WEBKIT_INCLUDE_PATH}/wtf/unicode TARGET ${bun})
 endif()
 
 # --- Dependencies ---

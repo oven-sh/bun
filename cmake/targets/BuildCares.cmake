@@ -14,14 +14,12 @@ register_cmake_command(
     c-ares
   ARGS
     -DCARES_STATIC=ON
-    -DCARES_STATIC_PIC=ON # FORCE_PIC was set to 1, but CARES_STATIC_PIC was set to OFF??
+    -DCARES_STATIC_PIC=ON
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON
     -DCARES_SHARED=OFF
-    -DCARES_BUILD_TOOLS=OFF # this was set to ON?
+    -DCARES_BUILD_TOOLS=OFF
   LIB_PATH
     lib
   LIBRARIES
     cares
-  INCLUDES
-    include
 )

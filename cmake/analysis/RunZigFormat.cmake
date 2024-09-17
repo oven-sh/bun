@@ -8,7 +8,6 @@ register_command(
       fmt
       --check
       ${BUN_ZIG_SOURCES}
-  ALWAYS_RUN
 )
 
 register_command(
@@ -20,5 +19,4 @@ register_command(
     ${ZIG_EXECUTABLE}
       fmt
       ${BUN_ZIG_SOURCES}
-  ALWAYS_RUN
 )

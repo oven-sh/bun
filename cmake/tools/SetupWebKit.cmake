@@ -16,12 +16,13 @@ if(WEBKIT_LOCAL)
   if(EXISTS ${WEBKIT_PATH}/cmakeconfig.h)
     # You may need to run:
     # make jsc-compile-debug jsc-copy-headers
-    include_directories(
+    register_includes(
       ${WEBKIT_PATH}
       ${WEBKIT_PATH}/JavaScriptCore/Headers/JavaScriptCore
       ${WEBKIT_PATH}/JavaScriptCore/PrivateHeaders
       ${WEBKIT_PATH}/bmalloc/Headers
       ${WEBKIT_PATH}/WTF/Headers
+      TARGET ${bun}
     )
   endif()
 
@@ -32,7 +33,7 @@ endif()
 if(EXISTS ${WEBKIT_PATH}/package.json)
   file(READ ${WEBKIT_PATH}/package.json WEBKIT_PACKAGE_JSON)
 
-  if(WEBKIT_PACKAGE_JSON MATCHES WEBKIT_VERSION)
+  if(WEBKIT_PACKAGE_JSON MATCHES ${WEBKIT_VERSION})
     return()
   endif()
 endif()

@@ -477,11 +477,7 @@ pub export fn Bun__Process__send(
         return globalObject.throwValueRet(globalObject.ERR_MISSING_ARGS_static(ZigString.static("message"), null, null));
     }
     if (!message.isString() and !message.isObject() and !message.isNumber() and !message.isBoolean()) {
-        return globalObject.throwValueRet(globalObject.ERR_INVALID_ARG_TYPE_static(
-            ZigString.static("message"),
-            ZigString.static("string, object, number, or boolean"),
-            message,
-        ));
+        return globalObject.throwInvalidArgumentTypeValue("message", "string, object, number, or boolean", message);
     }
 
     const good = ipc_instance.data.serializeAndSend(globalObject, message);

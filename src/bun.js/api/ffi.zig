@@ -590,9 +590,6 @@ pub const FFI = struct {
 
         if (object.get(globalThis, "library")) |library_value| {
             compile_c.libraries = StringArray.fromJS(globalThis, library_value, "library");
-            if (globalThis.hasException()) {
-                return .zero;
-            }
         }
 
         if (globalThis.hasException()) {

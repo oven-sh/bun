@@ -530,7 +530,12 @@ pub const FFI = struct {
             return .{ .items = items.items };
         }
 
-        pub fn fromJSString(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) StringArray {
+        pub fn fromJSString(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue, comptime property: []const u8) StringArray {
+            if (value == .undefined) return .{};
+            if (!value.isString()) {
+                _ = globalThis.throwInvalidArgumentTypeValue(property, "array of strings", value);
+                return .{};
+            }
             const str = value.getZigString(globalThis);
             if (str.isEmpty()) return .{};
             var items = std.ArrayList([:0]const u8).init(bun.default_allocator);
@@ -542,7 +547,7 @@ pub const FFI = struct {
             if (value.isArray()) {
                 return fromJSArray(globalThis, value, property);
             }
-            return fromJSString(globalThis, value);
+            return fromJSString(globalThis, value, property);
         }
     };
 

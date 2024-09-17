@@ -1,15 +1,15 @@
 register_repository(
   NAME
-  tinycc
+    tinycc
   REPOSITORY
-  oven-sh/tinycc
+    oven-sh/tinycc
   COMMIT
-  75b71c95c7566a9b4c0c13a4eab770903d5f294a
+    29985a3b59898861442fa3b43f663fc1af2591d7
 )
 
 register_cmake_command(
   TARGET
-  tinycc
+    tinycc
   LIBRARIES
-  tcc
+    tcc
 )

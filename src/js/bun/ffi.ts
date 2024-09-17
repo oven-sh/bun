@@ -255,15 +255,15 @@ ffiWrappers[FFIType.uint16_t] = `{
 ffiWrappers[FFIType.double] = `{
   if (typeof val === "bigint") {
     if (val.valueOf() < BigInt(Number.MAX_VALUE)) {
-      return Math.abs(Number(val).valueOf()) + 0.00000000000001 - 0.00000000000001;
+      return Math.abs(Number(val).valueOf()) + (0.00 - 0.00);
     }
   }
 
   if (!val) {
-    return 0 + 0.00000000000001 - 0.00000000000001;
+    return 0 + (0.00 - 0.00);
   }
 
-  return val + 0.00000000000001 - 0.00000000000001;
+  return val + (0.00 - 0.00);
 }`;
 
 ffiWrappers[FFIType.float] = ffiWrappers[10] = `{
@@ -401,7 +401,7 @@ const native = {
 
 const ccFn = $newZigFunction("ffi.zig", "Bun__FFI__cc", 1);
 
-function dlopen(path, options) {
+function normalizePath(path) {
   if (typeof path === "string" && path?.startsWith?.("file:")) {
     // import.meta.url returns a file: URL
     // https://github.com/oven-sh/bun/issues/10304
@@ -417,6 +417,12 @@ function dlopen(path, options) {
       path = path.name;
     }
   }
+
+  return path;
+}
+
+function dlopen(path, options) {
+  path = normalizePath(path);
 
   const result = nativeDLOpen(path, options);
   if (result instanceof Error) throw result;
@@ -454,25 +460,15 @@ function cc(options) {
   }
 
   let path = options?.source;
-
   if (!path) {
     throw new Error("Expected source to be a string to a file path");
   }
-
-  if (typeof path === "string" && path?.startsWith?.("file:")) {
-    // import.meta.url returns a file: URL
-    // https://github.com/oven-sh/bun/issues/10304
-    path = Bun.fileURLToPath(path);
-  } else if (typeof path === "object" && path) {
-    if (path instanceof URL) {
-      // This is mostly for import.meta.resolve()
-      // https://github.com/oven-sh/bun/issues/10304
-      path = Bun.fileURLToPath(path as URL);
-    } else if (path instanceof Blob) {
-      // must be a Bun.file() blob
-      // https://discord.com/channels/876711213126520882/1230114905898614794/1230114905898614794
-      path = path.name;
+  if ($isJSArray(path)) {
+    for (let i = 0; i < path.length; i++) {
+      path[i] = normalizePath(path[i]);
     }
+  } else {
+    path = normalizePath(path);
   }
   options.source = path;
 

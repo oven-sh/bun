@@ -64,4 +64,8 @@ pub const Ratio = struct {
             try CSSNumberFns.toCss(&this.denominator, W, dest);
         }
     }
+
+    pub fn addF32(this: Ratio, _: std.mem.Allocator, other: f32) Ratio {
+        return .{ .numerator = this.numerator + other, .denominator = this.denominator };
+    }
 };

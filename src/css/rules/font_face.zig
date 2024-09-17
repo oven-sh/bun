@@ -61,7 +61,7 @@ pub const FontFaceProperty = union(enum) {
                 comptime multi: bool,
             ) PrintErr!void {
                 try d.writeStr(prop);
-                try d.delm(':', false);
+                try d.delim(':', false);
                 if (comptime multi) {
                     const len = value.items.len;
                     for (value.items, 0..) |*val, idx| {
@@ -81,7 +81,7 @@ pub const FontFaceProperty = union(enum) {
             .font_style => |value| Helpers.writeProperty(dest, "font-style", value, false),
             .font_weight => |value| Helpers.writeProperty(dest, "font-weight", value, false),
             .font_stretch => |value| Helpers.writeProperty(dest, "font-stretch", value, false),
-            .unicode_range => |value| Helpers.writeProperty(dest, "unicode-range", value, false),
+            .unicode_range => |value| Helpers.writeProperty(dest, "unicode-range", value, true),
             .custom => |custom| {
                 try dest.writeStr(this.custom.name.asStr());
                 try dest.delim(':', false);
@@ -328,7 +328,7 @@ pub const FontStyle = union(enum) {
     }
 
     pub fn toCss(this: *const FontStyle, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        switch (this) {
+        switch (this.*) {
             .normal => try dest.writeStr("normal"),
             .italic => try dest.writeStr("italic"),
             .oblique => |angle| {
@@ -343,8 +343,8 @@ pub const FontStyle = union(enum) {
 
     fn defaultObliqueAngle() Size2D(Angle) {
         return Size2D(Angle){
-            FontStyleProperty.defaultObliqueAngle(),
-            FontStyleProperty.defaultObliqueAngle(),
+            .a = FontStyleProperty.defaultObliqueAngle(),
+            .b = FontStyleProperty.defaultObliqueAngle(),
         };
     }
 };
@@ -429,7 +429,7 @@ pub const Source = union(enum) {
 
     pub fn parse(input: *css.Parser) Result(Source) {
         switch (input.tryParse(UrlSource.parse, .{})) {
-            .result => |url| .{ .result = return .{ .url = url } },
+            .result => |url| .{ .result = return .{ .result = .{ .url = url } } },
             .err => |e| {
                 if (e.kind == .basic and e.kind.basic == .at_rule_body_invalid) {
                     return .{ .err = e };
@@ -452,7 +452,7 @@ pub const Source = union(enum) {
     }
 
     pub fn toCss(this: *const Source, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        switch (this) {
+        switch (this.*) {
             .url => try this.url.toCss(dest),
             .local => {
                 try dest.writeStr("local(");
@@ -543,14 +543,14 @@ pub const UrlSource = struct {
         const tech = if (input.tryParse(css.Parser.expectFunctionMatching, .{"tech"}).isOk()) tech: {
             const Fn = struct {
                 pub fn parseNestedBlockFn(_: void, i: *css.Parser) Result(ArrayList(FontTechnology)) {
-                    return .{ .result = i.parseList(FontTechnology, FontTechnology.parse) };
+                    return i.parseList(FontTechnology, FontTechnology.parse);
                 }
             };
             break :tech switch (input.parseNestedBlock(ArrayList(FontTechnology), {}, Fn.parseNestedBlockFn)) {
                 .result => |vv| vv,
                 .err => |e| return .{ .err = e },
             };
-        } else null;
+        } else ArrayList(FontTechnology){};
 
         return .{
             .result = UrlSource{ .url = url, .format = format, .tech = tech },
@@ -620,7 +620,7 @@ pub const FontFaceDeclarationParser = struct {
         }
 
         pub fn parseBlock(_: *This, _: Prelude, _: *const css.ParserState, input: *css.Parser) Result(AtRule) {
-            return .{ .err = input.newError(css.BasicParseErrorKind.at_rule_invalid) };
+            return .{ .err = input.newError(css.BasicParseErrorKind{ .at_rule_body_invalid = {} }) };
         }
 
         pub fn ruleWithoutBlock(_: *This, _: Prelude, _: *const css.ParserState) css.Maybe(AtRule, void) {
@@ -633,11 +633,11 @@ pub const FontFaceDeclarationParser = struct {
         pub const QualifiedRule = FontFaceProperty;
 
         pub fn parsePrelude(_: *This, input: *css.Parser) Result(Prelude) {
-            return input.newError(css.BasicParseErrorKind.qualified_rule_invalid);
+            return .{ .err = input.newError(css.BasicParseErrorKind{ .qualified_rule_invalid = {} }) };
         }
 
         pub fn parseBlock(_: *This, _: Prelude, _: *const css.ParserState, input: *css.Parser) Result(QualifiedRule) {
-            return input.newError(css.BasicParseErrorKind.qualified_rule_invalid);
+            return .{ .err = input.newError(css.BasicParseErrorKind.qualified_rule_invalid) };
         }
     };
 
@@ -650,7 +650,7 @@ pub const FontFaceDeclarationParser = struct {
             // todo_stuff.match_ignore_ascii_case
             if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "src")) {
                 if (input.parseCommaSeparated(Source, Source.parse).asValue()) |sources| {
-                    return .{ .result = .{ .sources = sources } };
+                    return .{ .result = .{ .source = sources } };
                 }
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "font-family")) {
                 if (FontFamily.parse(input).asValue()) |c| {
@@ -693,6 +693,18 @@ pub const FontFaceDeclarationParser = struct {
                     .custom = try CustomProperty.parse(CustomPropertyName.fromStr(name), input, &opts),
                 },
             };
+        }
+    };
+
+    pub const RuleBodyItemParser = struct {
+        pub fn parseQualified(this: *This) bool {
+            _ = this; // autofix
+            return false;
+        }
+
+        pub fn parseDeclarations(this: *This) bool {
+            _ = this; // autofix
+            return true;
         }
     };
 };

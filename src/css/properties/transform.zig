@@ -92,6 +92,12 @@ pub const Transform = union(enum) {
         _ = input; // autofix
         @compileError(css.todo_stuff.depth);
     }
+
+    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+        _ = this; // autofix
+        _ = dest; // autofix
+        @panic(css.todo_stuff.depth);
+    }
 };
 
 /// A 2D matrix.

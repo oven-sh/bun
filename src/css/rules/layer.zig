@@ -36,10 +36,10 @@ pub const LayerName = struct {
                         out: {
                             const start_location = i.currentSourceLocation();
                             const tok = switch (i.nextIncludingWhitespace()) {
-                                .err => |e| return .{ .err = e.intoDefaultParseError() },
+                                .err => |e| return .{ .err = e },
                                 .result => |vvv| vvv,
                             };
-                            if (tok.* == .delim or tok.* == '.') {
+                            if (tok.* == .delim or tok.delim == '.') {
                                 break :out;
                             }
                             return start_location.newBasicUnexpectedTokenError(tok.*);

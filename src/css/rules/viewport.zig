@@ -28,7 +28,7 @@ pub const ViewportRule = struct {
         // dest.add_mapping(self.loc);
         try dest.writeChar('@');
         try this.vendor_prefix.toCss(W, dest);
-        try dest.write_str("viewport");
+        try dest.writeStr("viewport");
         try this.declarations.toCssBlock(W, dest);
     }
 };

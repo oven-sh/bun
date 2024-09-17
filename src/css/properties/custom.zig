@@ -93,6 +93,10 @@ pub const TokenList = struct {
                     try v.toCss(W, dest);
                     has_whitespace = false;
                 },
+                .time => |v| {
+                    try v.toCss(W, dest);
+                    has_whitespace = false;
+                },
                 .resolution => |v| {
                     try v.toCss(W, dest);
                     has_whitespace = false;
@@ -623,13 +627,13 @@ pub const UnresolvedColor = union(enum) {
     ) PrintErr!void {
         const Helper = struct {
             pub fn conv(c: f32) i32 {
-                return std.math.clamp(@as(i32, @round(c * 255.0)), 0.0, 255.0);
+                return @intFromFloat(std.math.clamp(@round(c * 255.0), 0.0, 255.0));
             }
         };
 
         switch (this.*) {
             .RGB => |rgb| {
-                if (dest.targets.shouldCompile(.space_separated_color_notation, .space_separated_color_notation)) {
+                if (dest.targets.shouldCompileSame(.space_separated_color_notation)) {
                     try dest.writeStr("rgba(");
                     try css.to_css.integer(i32, Helper.conv(rgb.r), W, dest);
                     try dest.delim(',', false);
@@ -939,7 +943,7 @@ pub const EnvironmentVariable = struct {
 
         if (this.fallback) |*fallback| {
             try dest.delim(',', false);
-            fallback.toCss(W, dest, is_custom_property);
+            try fallback.toCss(W, dest, is_custom_property);
         }
 
         return try dest.writeChar(')');
@@ -979,7 +983,7 @@ pub const EnvironmentVariableName = union(enum) {
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
         return switch (this.*) {
             .ua => |ua| ua.toCss(W, dest),
-            .custom => |custom| DashedIdentFns.toCss(&custom, W, dest),
+            .custom => |custom| custom.toCss(W, dest),
             .unknown => |unknown| CustomIdentFns.toCss(&unknown, W, dest),
         };
     }

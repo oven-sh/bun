@@ -29,7 +29,7 @@ pub const ContainerName = struct {
             bun.strings.eqlCaseInsensitiveASCIIICheckLength("and", ident) or
             bun.strings.eqlCaseInsensitiveASCIIICheckLength("not", ident) or
             bun.strings.eqlCaseInsensitiveASCIIICheckLength("or", ident))
-            return input.newUnexpectedtokenError(.{ .ident = ident });
+            return .{ .err = input.newUnexpectedtokenError(.{ .ident = ident }) };
 
         return .{ .result = ContainerName{ .v = ident } };
     }
@@ -229,8 +229,8 @@ pub const ContainerCondition = union(enum) {
 
     pub fn parseStyleQuery(input: *css.Parser) Result(ContainerCondition) {
         const Fns = struct {
-            pub inline fn adaptedParseQueryCondition(i: *css.Parser, flags: QueryConditionFlags) Result(ContainerCondition) {
-                return css.media_query.parseParensOrFunction(ContainerCondition, i, flags);
+            pub inline fn adaptedParseQueryCondition(i: *css.Parser, flags: QueryConditionFlags) Result(StyleQuery) {
+                return css.media_query.parseQueryCondition(StyleQuery, i, flags);
             }
 
             pub fn parseNestedBlockFn(_: void, i: *css.Parser) Result(ContainerCondition) {
@@ -294,7 +294,7 @@ pub fn ContainerRule(comptime R: type) type {
 
             // Don't downlevel range syntax in container queries.
             const exclude = dest.targets.exclude;
-            dest.targets.exclude.insert(css.Features.media_queries);
+            dest.targets.exclude.insert(css.targets.Features.media_queries);
             try this.condition.toCss(W, dest);
             dest.targets.exclude = exclude;
 

@@ -34,6 +34,13 @@ pub const Location = struct {
     line: u32,
     /// The column number, starting from 1.
     column: u32,
+
+    pub fn fromSourceLocation(loc: css.SourceLocation) Location {
+        return Location{
+            .line = loc.line + 1,
+            .column = loc.column,
+        };
+    }
 };
 
 /// An `@import` dependency.

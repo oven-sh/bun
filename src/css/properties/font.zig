@@ -54,7 +54,7 @@ pub const FontWeight = union(enum) {
         return .{ .absolute = AbsoluteFontWeight.default() };
     }
 
-    pub fn parse(input: *css.Parser) Error!FontWeight {
+    pub fn parse(input: *css.Parser) css.Result(FontWeight) {
         _ = input; // autofix
         @panic(css.todo_stuff.depth);
     }
@@ -96,7 +96,7 @@ pub const FontSize = union(enum) {
     // pub usingnamespace css.DeriveParse(@This());
     // pub usingnamespace css.DeriveToCss(@This());
 
-    pub fn parse(input: *css.Parser) Error!FontSize {
+    pub fn parse(input: *css.Parser) css.Result(FontSize) {
         _ = input; // autofix
         @panic(css.todo_stuff.depth);
     }
@@ -154,7 +154,7 @@ pub const FontStretch = union(enum) {
     // TODO: implement this
     // pub usingnamespace css.DeriveParse(@This());
 
-    pub fn parse(input: *css.Parser) Error!FontStretch {
+    pub fn parse(input: *css.Parser) css.Result(FontStretch) {
         _ = input; // autofix
         @panic(css.todo_stuff.depth);
     }
@@ -163,6 +163,10 @@ pub const FontStretch = union(enum) {
         _ = this; // autofix
         _ = dest; // autofix
         @panic(css.todo_stuff.depth);
+    }
+
+    pub fn eq(lhs: FontStretch, rhs: FontStretch) bool {
+        return lhs.keyword == rhs.keyword and lhs.percentage.v == rhs.percentage.v;
     }
 
     pub inline fn default() FontStretch {
@@ -208,7 +212,7 @@ pub const FontFamily = union(enum) {
     /// A custom family name.
     family_name: []const u8,
 
-    pub fn parse(input: *css.Parser) Error!@This() {
+    pub fn parse(input: *css.Parser) css.Result(@This()) {
         if (input.tryParse(css.Parser.expectString, .{})) |value| {
             return .{ .family_name = value };
         }
@@ -251,6 +255,7 @@ pub const FontFamily = union(enum) {
                     !css.parse_utility.parseString(
                     dest.allocator,
                     GenericFontFamily,
+                    val,
                     GenericFontFamily.parse,
                 ).isOk()) {
                     var id = ArrayList(u8){};
@@ -325,7 +330,7 @@ pub const FontStyle = union(enum) {
         return .normal;
     }
 
-    pub fn parse(input: *css.Parser) Error!FontStyle {
+    pub fn parse(input: *css.Parser) css.Result(FontStyle) {
         const location = input.currentSourceLocation();
         const ident = try input.expectIdent();
         // todo_stuff.match_ignore_ascii_case
@@ -391,7 +396,7 @@ pub const FontVariantCaps = enum {
         };
     }
 
-    pub fn parseCss2(input: *css.Parser) Error!FontVariantCaps {
+    pub fn parseCss2(input: *css.Parser) css.Result(FontVariantCaps) {
         const value = try FontVariantCaps.parse(input);
         if (!value.isCss2()) {
             return input.newCustomError(css.ParserError.invalid_value);
@@ -412,7 +417,7 @@ pub const LineHeight = union(enum) {
     // pub usingnamespace css.DeriveParse(@This());
     // pub usingnamespace css.DeriveToCss(@This());
 
-    pub fn parse(input: *css.Parser) Error!LineHeight {
+    pub fn parse(input: *css.Parser) css.Result(LineHeight) {
         _ = input; // autofix
         @panic(css.todo_stuff.depth);
     }
@@ -447,7 +452,7 @@ pub const Font = struct {
 
     pub usingnamespace css.DefineShorthand(@This());
 
-    pub fn parse(input: *css.Parser) Error!Font {
+    pub fn parse(input: *css.Parser) css.Result(Font) {
         var style: ?FontStyle = null;
         var weight: ?FontWeight = null;
         var stretch: ?FontStretch = null;

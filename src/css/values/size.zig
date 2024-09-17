@@ -54,7 +54,7 @@ pub fn Size2D(comptime T: type) type {
 
         pub fn toCss(this: *const Size2D(T), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
             try valToCss(&this.a, W, dest);
-            if (this.b != this.a) {
+            if (!this.b.eq(this.a)) {
                 try dest.writeStr(" ");
                 try valToCss(&this.b, W, dest);
             }
@@ -63,7 +63,7 @@ pub fn Size2D(comptime T: type) type {
         pub fn valToCss(val: *const T, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
             return switch (T) {
                 f32 => CSSNumberFns.toCss(val, W, dest),
-                else => @compileError("TODO implement valToCss() for " + @typeName(T)),
+                else => val.toCss(W, dest),
             };
         }
     };

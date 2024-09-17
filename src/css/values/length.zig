@@ -217,15 +217,14 @@ pub const LengthValue = union(enum) {
         unreachable;
     }
 
-    pub fn mulF32(this: *const @This(), _: Allocator, other: f32) Length {
-        const val = val: {
-            inline for (std.meta.fields(@This())) |field| {
-                if (field.value == @intFromEnum(this.*)) {
-                    break :val @field(this, field.name);
-                }
+    pub fn mulF32(this: @This(), _: Allocator, other: f32) LengthValue {
+        const fields = comptime bun.meta.EnumFields(@This());
+        inline for (fields) |field| {
+            if (field.value == @intFromEnum(this)) {
+                return @unionInit(LengthValue, field.name, @field(this, field.name) * other);
             }
-        };
-        return val * other;
+        }
+        unreachable;
     }
 };
 
@@ -236,16 +235,43 @@ pub const Length = union(enum) {
     /// A computed length value using `calc()`.
     calc: *Calc(Length),
 
-    pub fn mulF32(this: *const Length, allocator: Allocator, other: f32) Length {
-        return switch (this.*) {
-            .value => Length{ .value = this.value * other },
+    pub fn mulF32(this: Length, allocator: Allocator, other: f32) Length {
+        return switch (this) {
+            .value => Length{ .value = this.value.mulF32(allocator, other) },
             .calc => Length{
                 .calc = bun.create(
                     allocator,
                     Calc(Length),
-                    this.calc.* * other,
+                    this.calc.mulF32(allocator, other),
                 ),
             },
+        };
+    }
+
+    pub fn add(this: Length, allocator: Allocator, other: Length) Length {
+        // Unwrap calc(...) functions so we can add inside.
+        // Then wrap the result in a calc(...) again if necessary.
+        const a = unwrapCalc(allocator, this);
+        _ = a; // autofix
+        const b = unwrapCalc(allocator, other);
+        _ = b; // autofix
+        @panic(css.todo_stuff.depth);
+    }
+
+    fn unwrapCalc(allocator: Allocator, length: Length) Length {
+        return switch (length) {
+            .calc => |c| switch (c.*) {
+                .function => |f| switch (f.*) {
+                    .calc => |c2| .{ .calc = bun.create(allocator, Calc(Length), c2) },
+                    else => |c2| .{ .calc = bun.create(
+                        allocator,
+                        Calc(Length),
+                        Calc(Length){ .function = bun.create(allocator, css.css_values.calc.MathFunction(Length), c2) },
+                    ) },
+                },
+                else => .{ .calc = c },
+            },
+            else => length,
         };
     }
 

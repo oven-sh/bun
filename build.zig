@@ -287,6 +287,18 @@ pub fn build(b: *Build) !void {
         });
     }
 
+    // zig build check-css
+    {
+        const step = b.step("check-css", "Check for semantic analysis errors on css");
+        addMultiCheck(b, step, build_options, &.{
+            .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .mac, .arch = .x86_64 },
+            .{ .os = .mac, .arch = .aarch64 },
+            .{ .os = .linux, .arch = .x86_64 },
+            .{ .os = .linux, .arch = .aarch64 },
+        });
+    }
+
     // zig build check-windows
     {
         const step = b.step("check-windows", "Check for semantic analysis errors on Windows");
@@ -339,7 +351,8 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
         .name = if (opts.optimize == .Debug) "bun-debug" else "bun",
         .root_source_file = switch (opts.os) {
             .wasm => b.path("root_wasm.zig"),
-            else => b.path("root.zig"),
+            // else => b.path("root.zig"),
+            else => b.path("root_css.zig"),
         },
         .target = opts.target,
         .optimize = opts.optimize,

@@ -35,9 +35,9 @@ pub const CSSNumberFns = struct {
             };
             if (number < 0.0) {
                 try dest.writeChar('-');
-                dest.writeStr(bun.strings.trimLeadingPattern2(s.items, '-', '0'));
+                try dest.writeStr(bun.strings.trimLeadingPattern2(s.items, '-', '0'));
             } else {
-                try dest.writeStr(bun.strings.trimLeadingChar(s, '0'));
+                try dest.writeStr(bun.strings.trimLeadingChar(s.items, '0'));
             }
         } else {
             return css.to_css.float32(number, W, dest) catch {

@@ -41,6 +41,20 @@ pub const DashedIdentReference = struct {
 
         return .{ .result = DashedIdentReference{ .ident = ident, .from = from } };
     }
+
+    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+        if (dest.css_module) |*css_module| {
+            if (css_module.config.dashed_idents) {
+                if (css_module.referenceDashed(this.ident, &this.from, dest.loc.source_index)) |name| {
+                    try dest.writeStr("--");
+                    css.serializer.serializeName(name, dest) catch return dest.addFmtError();
+                    return;
+                }
+            }
+        }
+
+        return dest.writeDashedIdent(this.ident, false);
+    }
 };
 
 /// A CSS [`<dashed-ident>`](https://www.w3.org/TR/css-values-4/#dashed-idents) declaration.
@@ -53,7 +67,7 @@ pub const DashedIdentFns = struct {
         const location = input.currentSourceLocation();
         const ident = switch (input.expectIdent()) {
             .result => |vv| vv,
-            .err => |e| return .{ .err = e.intoDefaultParseError() },
+            .err => |e| return .{ .err = e },
         };
         if (bun.strings.startsWith(ident, "--")) return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
 
@@ -74,7 +88,7 @@ pub const IdentFns = struct {
     pub fn parse(input: *css.Parser) Result([]const u8) {
         const ident = switch (input.expectIdent()) {
             .result => |vv| vv,
-            .err => |e| return .{ .err = e.intoDefaultParseError() },
+            .err => |e| return .{ .err = e },
         };
         return ident;
     }
@@ -90,7 +104,7 @@ pub const CustomIdentFns = struct {
         const location = input.currentSourceLocation();
         const ident = switch (input.expectIdent()) {
             .result => |vv| vv,
-            .err => |e| return .{ .err = e.intoDefaultParseError() },
+            .err => |e| return .{ .err = e },
         };
         // css.todo_stuff.match_ignore_ascii_case
         const valid = !(bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "initial") or

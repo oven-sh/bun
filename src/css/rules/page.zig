@@ -45,7 +45,7 @@ pub const PageSelector = struct {
             const state = input.state();
             if (switch (input.nextIncludingWhitespace()) {
                 .result => |tok| tok.* == .colon,
-                .err => |e| return .{ .err = e.intoDefaultParseError() },
+                .err => |e| return .{ .err = e },
             }) {
                 pseudo_classes.append(
                     input.allocator(),

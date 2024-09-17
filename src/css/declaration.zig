@@ -58,7 +58,7 @@ pub const DeclarationBlock = struct {
     }
 
     pub fn len(this: *const DeclarationBlock) usize {
-        return this.declarations.len + this.important_declarations.len;
+        return this.declarations.items.len + this.important_declarations.items.len;
     }
 
     /// Writes the declarations to a CSS block, including starting and ending braces.
@@ -70,7 +70,7 @@ pub const DeclarationBlock = struct {
         var i: usize = 0;
         const length = this.len();
 
-        const DECLS = .{ "declarations", "important_declarations" };
+        const DECLS: []const []const u8 = .{ "declarations", "important_declarations" };
 
         for (DECLS) |decl_field_name| {
             const decls = &@field(this, decl_field_name);
@@ -187,7 +187,7 @@ pub fn parse_declaration(
     };
     const Fn = struct {
         pub fn parsefn(input2: *css.Parser) Result(void) {
-            if (input2.expectDelim('?').toCssResult().asErr()) |e| return .{ .err = e };
+            if (input2.expectDelim('?').asErr()) |e| return .{ .err = e };
             return input2.expectIdentMatching("important").toCssResult();
         }
     };
@@ -196,7 +196,8 @@ pub fn parse_declaration(
     if (important) {
         important_declarations.append(input.allocator(), property) catch bun.outOfMemory();
     } else {
-        declarations.append(input.allocator(), property);
+        declarations.append(input.allocator(), property) catch bun.outOfMemory();
     }
-    return;
+
+    return .{ .result = {} };
 }

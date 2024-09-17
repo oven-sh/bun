@@ -246,7 +246,7 @@ pub const Property = union(PropertyIdTag) {
     custom: CustomProperty,
 
     /// Parses a CSS property by name.
-    pub fn parse(property_id: PropertyId, input: *css.Parser, options: *css.ParserOptions) Result(Property) {
+    pub fn parse(property_id: PropertyId, input: *css.Parser, options: *const css.ParserOptions) Result(Property) {
         const state = input.state();
 
         switch (property_id) {
@@ -321,7 +321,7 @@ pub const PropertyId = union(PropertyIdTag) {
     pub fn prefix(this: *const PropertyId) VendorPrefix {
         return switch (this.*) {
             .@"background-color" => VendorPrefix.empty(),
-            .all, .custom => VendorPrefix.empty(),
+            .all, .custom, .unparsed => VendorPrefix.empty(),
         };
     }
 
@@ -335,6 +335,14 @@ pub const PropertyId = union(PropertyIdTag) {
         }
 
         return null;
+    }
+
+    pub fn withPrefix(this: *const PropertyId, pre: VendorPrefix) PropertyId {
+        _ = pre; // autofix
+        return switch (this.*) {
+            .@"background-color" => .@"background-color",
+            else => this.*,
+        };
     }
 };
 pub const PropertyIdTag = enum(u16) {

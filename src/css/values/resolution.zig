@@ -31,6 +31,9 @@ pub const Resolution = union(enum) {
     /// A resolution in dots per px.
     dppx: CSSNumber,
 
+    // ~toCssImpl
+    const This = @This();
+
     pub fn parse(input: *css.Parser) Result(Resolution) {
         // TODO: calc?
         const location = input.currentSourceLocation();
@@ -72,19 +75,24 @@ pub const Resolution = union(enum) {
         }
     }
 
-    // ~toCssImpl
-    const This = @This();
-
     pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
         const value, const unit = switch (this.*) {
             .dpi => |dpi| .{ dpi, "dpi" },
             .dpcm => |dpcm| .{ dpcm, "dpcm" },
-            .dppx => |dppx| if (dest.targets.isCompatible(.XResolutionUnit))
+            .dppx => |dppx| if (dest.targets.isCompatible(.x_resolution_unit))
                 .{ dppx, "x" }
             else
                 .{ dppx, "dppx" },
         };
 
         return try css.serializer.serializeDimension(value, unit, W, dest);
+    }
+
+    pub fn addF32(this: This, _: std.mem.Allocator, other: f32) Resolution {
+        return switch (this) {
+            .dpi => |dpi| .{ .dpi = dpi + other },
+            .dpcm => |dpcm| .{ .dpcm = dpcm + other },
+            .dppx => |dppx| .{ .dppx = dppx + other },
+        };
     }
 };

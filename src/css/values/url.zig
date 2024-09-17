@@ -39,7 +39,7 @@ pub const Url = struct {
             .result => |vv| vv,
             .err => |e| return .{ .err = e },
         };
-        return .{ .result = Url{ .url = url, .loc = loc } };
+        return .{ .result = Url{ .url = url, .loc = css.dependencies.Location.fromSourceLocation(loc) } };
     }
 
     /// Returns whether the URL is absolute, and not relative.
@@ -47,19 +47,19 @@ pub const Url = struct {
         const url = this.url;
 
         // Quick checks. If the url starts with '.', it is relative.
-        if (bun.strings.startsWithChar('.')) {
+        if (bun.strings.startsWithChar(url, '.')) {
             return false;
         }
 
         // If the url starts with '/' it is absolute.
-        if (bun.strings.startsWithChar('/')) {
+        if (bun.strings.startsWithChar(url, '/')) {
             return true;
         }
 
         // If the url starts with '#' we have a fragment URL.
         // These are resolved relative to the document rather than the CSS file.
         // https://drafts.csswg.org/css-values-4/#local-urls
-        if (bun.strings.startsWithChar('#')) {
+        if (bun.strings.startsWithChar(url, '#')) {
             return true;
         }
 

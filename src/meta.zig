@@ -3,6 +3,17 @@ const bun = @import("root").bun;
 
 pub usingnamespace std.meta;
 
+pub fn EnumFields(comptime T: type) []const std.builtin.Type.EnumField {
+    const tyinfo = @typeInfo(T);
+    return switch (tyinfo) {
+        .Union => std.meta.fields(tyinfo.Union.tag_type.?),
+        .Enum => std.meta.fields(tyinfo.Enum.fields),
+        else => {
+            @compileError("Used `EnumFields(T)` on a type that is not an `enum` or a `union(enum)`");
+        },
+    };
+}
+
 pub fn ReturnOfMaybe(comptime function: anytype) type {
     const Func = @TypeOf(function);
     const typeinfo: std.builtin.Type.Fn = @typeInfo(Func).Fn;

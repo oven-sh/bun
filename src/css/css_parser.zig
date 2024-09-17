@@ -72,7 +72,7 @@ pub const Printer = css_printer.Printer;
 pub const PrinterOptions = css_printer.PrinterOptions;
 pub const targets = @import("./targets.zig");
 pub const Targets = css_printer.Targets;
-pub const Features = css_printer.Features;
+// pub const Features = css_printer.Features;
 
 pub const Maybe = bun.JSC.Node.Maybe;
 // TODO: Remove existing Error defined here and replace it with these
@@ -167,12 +167,12 @@ pub const SourceLocation = struct {
     column: u32,
 
     /// Create a new BasicParseError at this location for an unexpected token
-    pub fn newBasicUnexpectedTokenError(this: SourceLocation, token: Token) BasicParseError {
-        return BasicParseError{
-            .kind = .{ .unexpected_token = token },
-            .location = this,
-        };
-    }
+    // pub fn newBasicUnexpectedTokenError(this: SourceLocation, token: Token) BasicParseError {
+    //     return BasicParseError{
+    //         .kind = .{ .unexpected_token = token },
+    //         .location = this,
+    //     };
+    // }
 
     /// Create a new ParseError at this location for an unexpected token
     pub fn newUnexpectedTokenError(this: SourceLocation, token: Token) ParseError(ParserError) {
@@ -200,10 +200,6 @@ pub const Error = Err(ParserError);
 
 pub fn Result(comptime T: type) type {
     return Maybe(T, ParseError(ParserError));
-}
-
-pub fn BasicResult(comptime T: type) type {
-    return Maybe(T, BasicParseError);
 }
 
 pub fn PrintResult(comptime T: type) type {
@@ -501,9 +497,9 @@ pub fn DeriveToCss(comptime T: type) type {
 
 pub const enum_property_util = struct {
     pub fn asStr(comptime T: type, this: *const T) []const u8 {
-        const tag = @intFromEnum(this);
-        inline for (std.meta.fields(T)) |field| {
-            if (tag == field.tag) return field.name;
+        const tag = @intFromEnum(this.*);
+        inline for (bun.meta.EnumFields(T)) |field| {
+            if (tag == field.value) return field.name;
         }
         unreachable;
     }
@@ -511,7 +507,7 @@ pub const enum_property_util = struct {
     pub fn parse(comptime T: type, input: *Parser) Result(T) {
         const location = input.currentSourceLocation();
         const ident = switch (input.expectIdent()) {
-            .err => |e| return .{ .err = e.intoDefaultParseError() },
+            .err => |e| return .{ .err = e },
             .result => |v| v,
         };
 
@@ -709,7 +705,10 @@ fn parse_custom_at_rule_without_block(
     at_rule_parser: *T,
     is_nested: bool,
 ) Maybe(CssRule(T.CustomAtRuleParser.AtRule), void) {
-    return T.CustomAtRuleParser.ruleWithoutBlock(at_rule_parser, prelude, start, options, is_nested);
+    return switch (T.CustomAtRuleParser.ruleWithoutBlock(at_rule_parser, prelude, start, options, is_nested)) {
+        .result => |v| .{ .result = CssRule(T.CustomAtRuleParser.AtRule){ .custom = v } },
+        .err => |e| .{ .err = e },
+    };
 }
 
 fn parse_custom_at_rule_body(
@@ -750,7 +749,7 @@ fn parse_qualified_rule(
         const prelude = input.parseUntilBefore(delimiters, P.QualifiedRuleParser.Prelude, parser, P.QualifiedRuleParser.parsePrelude);
         break :brk prelude;
     };
-    if (input.expectCurlyBracketBlock().asErr()) |e| return .{ .err = e.intoDefaultParseError() };
+    if (input.expectCurlyBracketBlock().asErr()) |e| return .{ .err = e };
     const prelude = switch (prelude_result) {
         .err => |e| return .{ .err = e },
         .result => |v| v,
@@ -1153,7 +1152,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                         return .{ .err = input.newCustomError(@as(ParserError, ParserError.unexpected_import_rule)) };
                     }
                     const url_str = switch (input.expectUrlOrString()) {
-                        .err => |e| return .{ .err = e.intoDefaultParseError() },
+                        .err => |e| return .{ .err = e },
                         .result => |v| v,
                     };
 
@@ -1208,7 +1207,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                         .err => null,
                     };
                     const namespace = switch (input.expectUrlOrString()) {
-                        .err => |e| return .{ .err = e.intoDefaultParseError() },
+                        .err => |e| return .{ .err = e },
                         .result => |v| v,
                     };
                     return .{ .result = .{ .namespace = .{ prefix, namespace } } };
@@ -1216,7 +1215,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                     // @charset is removed by rust-cssparser if it’s the first rule in the stylesheet.
                     // Anything left is technically invalid, however, users often concatenate CSS files
                     // together, so we are more lenient and simply ignore @charset rules in the middle of a file.
-                    if (input.expectString().asErr()) |e| return .{ .err = e.intoDefaultParseError() };
+                    if (input.expectString().asErr()) |e| return .{ .err = e };
                     return .{ .result = .charset };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "custom-media")) {
                     const custom_media_name = switch (DashedIdentFns.parse(input)) {
@@ -1288,7 +1287,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                                 .url = url,
                                 .loc = loc,
                             },
-                        });
+                        }) catch bun.outOfMemory();
 
                         return .{ .result = {} };
                     },
@@ -1475,18 +1474,18 @@ pub fn NestedRuleParser(comptime T: type) type {
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-moz-document")) {
                         // Firefox only supports the url-prefix() function with no arguments as a legacy CSS hack.
                         // See https://css-tricks.com/snippets/css/css-hacks-targeting-firefox/
-                        if (input.expectFunctionMatching("url-prefix").asErr()) |e| return .{ .err = e.intoDefaultParseError() };
+                        if (input.expectFunctionMatching("url-prefix").asErr()) |e| return .{ .err = e };
                         const Fn = struct {
                             pub fn parsefn(_: void, input2: *Parser) Result(void) {
                                 // Firefox also allows an empty string as an argument...
                                 // https://github.com/mozilla/gecko-dev/blob/0077f2248712a1b45bf02f0f866449f663538164/servo/components/style/stylesheets/document_rule.rs#L303
                                 _ = input2.tryParse(parseInner, .{});
-                                if (input2.expectExhausted().asErr()) |e| return .{ .err = e.intoDefaultParseError() };
+                                if (input2.expectExhausted().asErr()) |e| return .{ .err = e };
                                 return .{ .result = {} };
                             }
                             fn parseInner(input2: *Parser) Result(void) {
                                 const s = switch (input2.expectString()) {
-                                    .err => |e| return .{ .err = e.intoDefaultParseError() },
+                                    .err => |e| return .{ .err = e },
                                     .result => |v| v,
                                 };
                                 if (s.len > 0) {
@@ -1525,6 +1524,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                         var selector_parser = selector.api.SelectorParser{
                             .is_nesting_allowed = true,
                             .options = this.options,
+                            .allocator = input.allocator(),
                         };
                         const Closure = struct {
                             selector_parser: *selector.api.SelectorParser,
@@ -1544,7 +1544,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                         } else null;
 
                         const scope_end = if (input.tryParse(Parser.expectIdentMatching, .{"to"}).isOk()) scope_end: {
-                            if (input.expectParenthesisBlock().asErr()) |e| return .{ .err = e.intoDefaultParseError() };
+                            if (input.expectParenthesisBlock().asErr()) |e| return .{ .err = e };
                             break :scope_end switch (input.parseNestedBlock(selector.api.SelectorList, &closure, Closure.parsefn)) {
                                 .result => |v| v,
                                 .err => |e| return .{ .err = e },
@@ -1562,6 +1562,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                         var selector_parser = selector.api.SelectorParser{
                             .is_nesting_allowed = true,
                             .options = this.options,
+                            .allocator = input.allocator(),
                         };
                         const selectors = switch (selector.api.SelectorList.parse(&selector_parser, input, .discard_list, .contained)) {
                             .err => |e| return .{ .err = e },
@@ -1597,7 +1598,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                         var properties: ArrayList(css_rules.font_face.FontFaceProperty) = .{};
 
                         while (parser.next()) |result| {
-                            if (result) |decl| {
+                            if (result.asValue()) |decl| {
                                 properties.append(
                                     input.allocator(),
                                     decl,
@@ -1897,22 +1898,17 @@ pub fn NestedRuleParser(comptime T: type) type {
                         return Maybe(AtRuleParser.AtRule, void).success;
                     },
                     .custom => {
-                        this.rules.v.append(
-                            this.allocator,
-                            .{
-                                .custom = switch (parse_custom_at_rule_without_block(
-                                    T,
-                                    prelude.custom,
-                                    start,
-                                    this.options,
-                                    this.at_rule_parser,
-                                    this.is_in_style_rule,
-                                )) {
-                                    .err => |e| return .{ .err = e },
-                                    .result => |v| v,
-                                },
-                            },
-                        ) catch bun.outOfMemory();
+                        this.rules.v.append(this.allocator, switch (parse_custom_at_rule_without_block(
+                            T,
+                            prelude.custom,
+                            start,
+                            this.options,
+                            this.at_rule_parser,
+                            this.is_in_style_rule,
+                        )) {
+                            .err => |e| return .{ .err = e },
+                            .result => |v| v,
+                        }) catch bun.outOfMemory();
                         return Maybe(AtRuleParser.AtRule, void).success;
                     },
                     else => return .{ .err = {} },
@@ -2409,7 +2405,7 @@ pub fn RuleBodyParser(comptime P: type) type {
                                     parser: *P,
                                     name: []const u8,
                                     pub fn parsefn(self: *@This(), input: *Parser) Result(I) {
-                                        if (input.expectColon().asErr()) |e| return .{ .err = e.intoDefaultParseError() };
+                                        if (input.expectColon().asErr()) |e| return .{ .err = e };
                                         return P.DeclarationParser.parseValue(self.parser, self.name, input);
                                     }
                                 };
@@ -2623,11 +2619,15 @@ pub const Parser = struct {
 
         while (true) {
             this.skipWhitespace(); // Unnecessary for correctness, but may help try() in parse_one rewind less.
-            if (this.parseUntilBefore(Delimiters{ .comma = true }, T, closure, parse_one)) |v| {
-                values.append(alloc, v) catch unreachable;
-            } else |e| {
-                if (!ignore_errors) return e;
+            switch (this.parseUntilBefore(Delimiters{ .comma = true }, T, closure, parse_one)) {
+                .result => |v| {
+                    values.append(alloc, v) catch unreachable;
+                },
+                .err => |e| {
+                    if (!ignore_errors) return .{ .err = e };
+                },
             }
+
             const tok = switch (this.next()) {
                 .result => |v| v,
                 .err => {
@@ -2636,7 +2636,7 @@ pub const Parser = struct {
                     return .{ .result = values };
                 },
             };
-            if (tok != .comma) bun.unreachablePanic("", .{});
+            if (tok.* != .comma) bun.unreachablePanic("", .{});
         }
     }
 
@@ -2679,7 +2679,7 @@ pub const Parser = struct {
     /// Parse the input until exhaustion and check that it contains no “error” token.
     ///
     /// See `Token::is_parse_error`. This also checks nested blocks and functions recursively.
-    pub fn expectNoErrorToken(this: *Parser) BasicResult(void) {
+    pub fn expectNoErrorToken(this: *Parser) Result(void) {
         while (true) {
             const tok = switch (this.nextIncludingWhitespaceAndComments()) {
                 .err => return .{ .result = {} },
@@ -2690,35 +2690,35 @@ pub const Parser = struct {
                     if (this.parseNestedBlock(void, {}, struct {
                         pub fn parse(_: void, i: *Parser) Result(void) {
                             if (i.expectNoErrorToken().asErr()) |e| {
-                                return .{ .err = e.intoDefaultParseError() };
+                                return .{ .err = e };
                             }
                             return .{ .result = {} };
                         }
                     }.parse).asErr()) |err| {
-                        return .{ .err = ParseError(ParserError).basic(err) };
+                        return .{ .err = err };
                     }
                     return .{ .result = {} };
                 },
                 else => {
                     if (tok.isParseError()) {
-                        return .{ .err = this.newBasicUnexpectedTokenError(tok.*) };
+                        return .{ .err = this.newUnexpectedTokenError(tok.*) };
                     }
                 },
             }
         }
     }
 
-    pub fn expectPercentage(this: *Parser) BasicResult(f32) {
+    pub fn expectPercentage(this: *Parser) Result(f32) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
             .result => |v| v,
         };
         if (tok.* == .percentage) return .{ .result = tok.percentage.unit_value };
-        return .{ .err = start_location.newBasicUnexpectedTokenError(tok.*) };
+        return .{ .err = start_location.newUnexpectedTokenError(tok.*) };
     }
 
-    pub fn expectComma(this: *Parser) BasicResult(void) {
+    pub fn expectComma(this: *Parser) Result(void) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
@@ -2728,83 +2728,83 @@ pub const Parser = struct {
             .semicolon => return .{ .result = {} },
             else => {},
         }
-        return .{ .err = start_location.newBasicUnexpectedTokenError(tok.*) };
+        return .{ .err = start_location.newUnexpectedTokenError(tok.*) };
     }
 
     /// Parse a <number-token> that does not have a fractional part, and return the integer value.
-    pub fn expectInteger(this: *Parser) BasicResult(i32) {
+    pub fn expectInteger(this: *Parser) Result(i32) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
             .result => |v| v,
         };
         if (tok.* == .number and tok.number.int_value != null) return .{ .result = tok.number.int_value.? };
-        return .{ .err = start_location.newBasicUnexpectedTokenError(tok.*) };
+        return .{ .err = start_location.newUnexpectedTokenError(tok.*) };
     }
 
     /// Parse a <number-token> and return the integer value.
-    pub fn expectNumber(this: *Parser) BasicResult(f32) {
+    pub fn expectNumber(this: *Parser) Result(f32) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
             .result => |v| v,
         };
         if (tok.* == .number) return .{ .result = tok.number.value };
-        return .{ .err = start_location.newBasicUnexpectedTokenError(tok.*) };
+        return .{ .err = start_location.newUnexpectedTokenError(tok.*) };
     }
 
-    pub fn expectDelim(this: *Parser, delim: u8) BasicResult(void) {
+    pub fn expectDelim(this: *Parser, delim: u8) Result(void) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
             .result => |v| v,
         };
         if (tok.* == .delim and tok.delim == delim) return .{ .result = {} };
-        return .{ .err = start_location.newBasicUnexpectedTokenError(tok.*) };
+        return .{ .err = start_location.newUnexpectedTokenError(tok.*) };
     }
 
-    pub fn expectParenthesisBlock(this: *Parser) BasicResult(void) {
+    pub fn expectParenthesisBlock(this: *Parser) Result(void) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
             .result => |v| v,
         };
         if (tok.* == .open_paren) return .{ .result = {} };
-        return .{ .err = start_location.newBasicUnexpectedTokenError(tok.*) };
+        return .{ .err = start_location.newUnexpectedTokenError(tok.*) };
     }
 
-    pub fn expectColon(this: *Parser) BasicResult(void) {
+    pub fn expectColon(this: *Parser) Result(void) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
             .result => |v| v,
         };
         if (tok.* == .colon) return .{ .result = {} };
-        return .{ .err = start_location.newBasicUnexpectedTokenError(tok.*) };
+        return .{ .err = start_location.newUnexpectedTokenError(tok.*) };
     }
 
-    pub fn expectString(this: *Parser) BasicResult([]const u8) {
+    pub fn expectString(this: *Parser) Result([]const u8) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
             .result => |v| v,
         };
         if (tok.* == .quoted_string) return .{ .result = tok.quoted_string };
-        return .{ .err = start_location.newBasicUnexpectedTokenError(tok.*) };
+        return .{ .err = start_location.newUnexpectedTokenError(tok.*) };
     }
 
-    pub fn expectIdent(this: *Parser) Maybe([]const u8, BasicParseError) {
+    pub fn expectIdent(this: *Parser) Result([]const u8) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
             .result => |v| v,
         };
         if (tok.* == .ident) return .{ .result = tok.ident };
-        return .{ .err = start_location.newBasicUnexpectedTokenError(tok.*) };
+        return .{ .err = start_location.newUnexpectedTokenError(tok.*) };
     }
 
     /// Parse either a <ident-token> or a <string-token>, and return the unescaped value.
-    pub fn expectIdentOrString(this: *Parser) BasicResult([]const u8) {
+    pub fn expectIdentOrString(this: *Parser) Result([]const u8) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
@@ -2815,10 +2815,10 @@ pub const Parser = struct {
             .quoted_string => |s| return .{ .result = s },
             else => {},
         }
-        return .{ .err = start_location.newBasicUnexpectedTokenError(tok.*) };
+        return .{ .err = start_location.newUnexpectedTokenError(tok.*) };
     }
 
-    pub fn expectIdentMatching(this: *Parser, name: []const u8) BasicResult(void) {
+    pub fn expectIdentMatching(this: *Parser, name: []const u8) Result(void) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
@@ -2828,10 +2828,10 @@ pub const Parser = struct {
             .ident => |i| if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, i)) return .{ .result = {} },
             else => {},
         }
-        return .{ .err = start_location.newBasicUnexpectedTokenError(tok.*) };
+        return .{ .err = start_location.newUnexpectedTokenError(tok.*) };
     }
 
-    pub fn expectFunction(this: *Parser) BasicResult([]const u8) {
+    pub fn expectFunction(this: *Parser) Result([]const u8) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
@@ -2841,10 +2841,10 @@ pub const Parser = struct {
             .function => |fn_name| return .{ .result = fn_name },
             else => {},
         }
-        return .{ .err = start_location.newBasicUnexpectedTokenError(tok.*) };
+        return .{ .err = start_location.newUnexpectedTokenError(tok.*) };
     }
 
-    pub fn expectFunctionMatching(this: *Parser, name: []const u8) BasicResult(void) {
+    pub fn expectFunctionMatching(this: *Parser, name: []const u8) Result(void) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
@@ -2854,10 +2854,10 @@ pub const Parser = struct {
             .function => |fn_name| if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, fn_name)) return .{ .result = {} },
             else => {},
         }
-        return .{ .err = start_location.newBasicUnexpectedTokenError(tok.*) };
+        return .{ .err = start_location.newUnexpectedTokenError(tok.*) };
     }
 
-    pub fn expectCurlyBracketBlock(this: *Parser) BasicResult(void) {
+    pub fn expectCurlyBracketBlock(this: *Parser) Result(void) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
@@ -2865,12 +2865,12 @@ pub const Parser = struct {
         };
         switch (tok.*) {
             .open_curly => return .{ .result = {} },
-            else => return .{ .err = start_location.newBasicUnexpectedTokenError(tok.*) },
+            else => return .{ .err = start_location.newUnexpectedTokenError(tok.*) },
         }
     }
 
     /// Parse a <url-token> and return the unescaped value.
-    pub fn expectUrl(this: *Parser) BasicResult([]const u8) {
+    pub fn expectUrl(this: *Parser) Result([]const u8) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
@@ -2881,26 +2881,26 @@ pub const Parser = struct {
             .function => |name| {
                 if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("url", name)) {
                     const result = this.parseNestedBlock([]const u8, {}, struct {
-                        fn parse(parser: *Parser) Result([]const u8) {
+                        fn parse(_: void, parser: *Parser) Result([]const u8) {
                             return switch (parser.expectString()) {
                                 .result => |v| .{ .result = v },
-                                .err => |e| .{ .err = e.intoParseError(ParseError(ParserError)) },
+                                .err => |e| .{ .err = e },
                             };
                         }
                     }.parse);
                     return switch (result) {
                         .result => |v| .{ .result = v },
-                        .err => |e| .{ .err = e.basic() },
+                        .err => |e| .{ .err = e },
                     };
                 }
             },
             else => {},
         }
-        return .{ .err = start_location.newBasicUnexpectedTokenError(tok.*) };
+        return .{ .err = start_location.newUnexpectedTokenError(tok.*) };
     }
 
     /// Parse either a <url-token> or a <string-token>, and return the unescaped value.
-    pub fn expectUrlOrString(this: *Parser) BasicResult([]const u8) {
+    pub fn expectUrlOrString(this: *Parser) Result([]const u8) {
         const start_location = this.currentSourceLocation();
         const tok = switch (this.next()) {
             .err => |e| return .{ .err = e },
@@ -2915,19 +2915,19 @@ pub const Parser = struct {
                         fn parse(_: void, parser: *Parser) Result([]const u8) {
                             return switch (parser.expectString()) {
                                 .result => |v| .{ .result = v },
-                                .err => |e| .{ .err = e.intoDefaultParseError() },
+                                .err => |e| .{ .err = e },
                             };
                         }
                     }.parse);
                     return switch (result) {
                         .result => |v| .{ .result = v },
-                        .err => |e| .{ .err = e.basic() },
+                        .err => |e| .{ .err = e },
                     };
                 }
             },
             else => {},
         }
-        return .{ .err = start_location.newBasicUnexpectedTokenError(tok.*) };
+        return .{ .err = start_location.newUnexpectedTokenError(tok.*) };
     }
 
     pub fn position(this: *Parser) usize {
@@ -2970,7 +2970,7 @@ pub const Parser = struct {
             .err => |e| return .{ .err = e },
             .result => |v| v,
         };
-        if (this.expectExhausted().asErr()) |e| return .{ .err = e.intoDefaultParseError() };
+        if (this.expectExhausted().asErr()) |e| return .{ .err = e };
         return .{ .result = result };
     }
 
@@ -2978,12 +2978,12 @@ pub const Parser = struct {
     /// Return a `Result` so that the `?` operator can be used: `input.expect_exhausted()?`
     ///
     /// This ignores whitespace and comments.
-    pub fn expectExhausted(this: *Parser) BasicResult(void) {
+    pub fn expectExhausted(this: *Parser) Result(void) {
         const start = this.state();
         const result = switch (this.next()) {
-            .result => |t| return .{ .err = start.sourceLocation().newBasicUnexpectedTokenError(t.*) },
+            .result => |t| return .{ .err = start.sourceLocation().newUnexpectedTokenError(t.*) },
             .err => |e| {
-                if (e.kind == .end_of_input) return .{ .result = {} };
+                if (e.kind == .basic and e.kind.basic == .end_of_input) return .{ .result = {} };
                 bun.unreachablePanic("Unexpected error encountered: {}", .{e.kind});
             },
         };
@@ -3009,20 +3009,20 @@ pub const Parser = struct {
         this.input.tokenizer.skipWhitespace();
     }
 
-    pub fn next(this: *@This()) BasicResult(*Token) {
+    pub fn next(this: *@This()) Result(*Token) {
         this.skipWhitespace();
         return this.nextIncludingWhitespaceAndComments();
     }
 
     /// Same as `Parser::next`, but does not skip whitespace tokens.
-    pub fn nextIncludingWhitespace(this: *@This()) BasicResult(*Token) {
+    pub fn nextIncludingWhitespace(this: *@This()) Result(*Token) {
         while (true) {
             switch (this.nextIncludingWhitespaceAndComments()) {
                 .result => |tok| if (tok.* == .comment) {} else break,
                 .err => |e| return .{ .err = e },
             }
         }
-        return &this.input.cached_token.?.token;
+        return .{ .result = &this.input.cached_token.?.token };
     }
 
     pub fn nextByte(this: *@This()) ?u8 {
@@ -3053,7 +3053,7 @@ pub const Parser = struct {
     /// where comments are preserved.
     /// When parsing higher-level values, per the CSS Syntax specification,
     /// comments should always be ignored between tokens.
-    pub fn nextIncludingWhitespaceAndComments(this: *Parser) Maybe(*Token, BasicParseError) {
+    pub fn nextIncludingWhitespaceAndComments(this: *Parser) Result(*Token) {
         if (this.at_start_of) |block_type| {
             this.at_start_of = null;
             consume_until_end_of_block(block_type, &this.input.tokenizer);
@@ -3098,7 +3098,7 @@ pub const Parser = struct {
     pub fn newErrorForNextToken(this: *Parser) ParseError(ParserError) {
         const token = switch (this.next()) {
             .result => |t| t.*,
-            .err => |e| return .{ .err = e.intoParseError(ParseError(ParserError)) },
+            .err => |e| return .{ .err = e },
         };
         return this.newError(BasicParseErrorKind{ .unexpected_token = token });
     }
@@ -3241,7 +3241,7 @@ pub const nth = struct {
                         if (parse_n_dash_digits(input.allocator, unit)) |b| {
                             return .{ a, b };
                         } else {
-                            return input.newBasicUnexpectedTokenError(.{ .ident = unit });
+                            return input.newUnexpectedTokenError(.{ .ident = unit });
                         }
                     }
                 }
@@ -3264,7 +3264,7 @@ pub const nth = struct {
                 } else {
                     const slice, const a = if (bun.strings.startsWithChar(value, '-')) .{ value[1..], -1 } else .{ value, 1 };
                     if (parse_n_dash_digits(input.allocator, slice)) |b| return .{ a, b };
-                    return input.newBasicUnexpectedTokenError(.{ .ident = value });
+                    return input.newUnexpectedTokenError(.{ .ident = value });
                 }
             },
             .delim => {
@@ -3282,16 +3282,16 @@ pub const nth = struct {
                         if (parse_n_dash_digits(input.allocator, value)) |b| {
                             return .{ 1, b };
                         } else {
-                            return input.newBasicUnexpectedTokenError(.{ .ident = value });
+                            return input.newUnexpectedTokenError(.{ .ident = value });
                         }
                     }
                 } else {
-                    return input.newBasicUnexpectedTokenError(next_tok.*);
+                    return input.newUnexpectedTokenError(next_tok.*);
                 }
             },
             else => {},
         }
-        return input.newBasicUnexpectedTokenError(tok.*);
+        return input.newUnexpectedTokenError(tok.*);
     }
 
     fn parse_b(input: *Parser, a: i23) Result(struct { i32, i32 }) {
@@ -3320,7 +3320,7 @@ pub const nth = struct {
             const b = tok.number.int_value.?;
             return .{ a, b_sign * b };
         }
-        return input.newBasicUnexpectedTokenError(tok.*);
+        return input.newUnexpectedTokenError(tok.*);
     }
 
     fn parse_n_dash_digits(allocator: Allocator, str: []const u8) Maybe(i32, void) {
@@ -4542,10 +4542,6 @@ const TokenKind = enum {
 
     dimension,
 
-    /// [<unicode-range-token>](https://drafts.csswg.org/css-syntax/#typedef-unicode-range-token)
-    /// FIXME: this is not complete
-    unicode_range,
-
     whitespace,
 
     /// `<!---`
@@ -4679,10 +4675,10 @@ pub const Token = union(TokenKind) {
 
     /// [<unicode-range-token>](https://drafts.csswg.org/css-syntax/#typedef-unicode-range-token)
     /// FIXME: this is not complete
-    unicode_range: struct {
-        start: u32,
-        end: ?u32,
-    },
+    // unicode_range: struct {
+    //     start: u32,
+    //     end: ?u32,
+    // },
 
     whitespace: []const u8,
 
@@ -4760,42 +4756,42 @@ pub const Token = union(TokenKind) {
     pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
         // zack is here: verify this is correct
         return switch (this.*) {
-            .ident => |value| serializer.serializeIdentifier(value, dest),
+            .ident => |value| serializer.serializeIdentifier(value, dest) catch return dest.addFmtError(),
             .at_keyword => |value| {
                 try dest.writeStr("@");
-                return serializer.serializeIdentifier(value, dest);
+                return serializer.serializeIdentifier(value, dest) catch return dest.addFmtError();
             },
             .hash => |value| {
                 try dest.writeStr("#");
-                return serializer.serializeName(value, dest);
+                return serializer.serializeName(value, dest) catch return dest.addFmtError();
             },
             .idhash => |value| {
                 try dest.writeStr("#");
-                return serializer.serializeIdentifier(value, dest);
+                return serializer.serializeIdentifier(value, dest) catch return dest.addFmtError();
             },
-            .quoted_string => |value| serializer.serializeString(value, dest),
+            .quoted_string => |value| serializer.serializeString(value, dest) catch return dest.addFmtError(),
             .unquoted_url => |value| {
                 try dest.writeStr("url(");
-                try serializer.serializeUnquotedUrl(value, dest);
+                serializer.serializeUnquotedUrl(value, dest) catch return dest.addFmtError();
                 return dest.writeStr(")");
             },
             .delim => |value| dest.writeChar(value),
-            .number => |num| serializer.writeNumeric(num.value, num.int_value, num.has_sign, dest),
+            .number => |num| serializer.writeNumeric(num.value, num.int_value, num.has_sign, dest) catch return dest.addFmtError(),
             .percentage => |num| {
-                try serializer.writeNumeric(num.value * 100, num.int_value, num.has_sign, dest);
+                serializer.writeNumeric(num.value * 100, num.int_value, num.has_sign, dest) catch return dest.addFmtError();
                 return dest.writeStr("%");
             },
             .dimension => |dim| {
-                try serializer.writeNumeric(dim.num.value, dim.num.int_value, dim.num.has_sign, dest);
+                serializer.writeNumeric(dim.num.value, dim.num.int_value, dim.num.has_sign, dest) catch return dest.addFmtError();
                 // Disambiguate with scientific notation.
                 const unit = dim.unit;
                 if (std.mem.eql(u8, unit, "e") or std.mem.eql(u8, unit, "E") or
                     std.mem.startsWith(u8, unit, "e-") or std.mem.startsWith(u8, unit, "E-"))
                 {
                     try dest.writeStr("\\65 ");
-                    try serializer.serializeName(unit[1..], dest);
+                    serializer.serializeName(unit[1..], dest) catch return dest.addFmtError();
                 } else {
-                    try serializer.serializeIdentifier(unit, dest);
+                    serializer.serializeIdentifier(unit, dest) catch return dest.addFmtError();
                 }
                 return;
             },
@@ -4816,7 +4812,7 @@ pub const Token = union(TokenKind) {
             .cdo => dest.writeStr("<!--"),
             .cdc => dest.writeStr("-->"),
             .function => |name| {
-                try serializer.serializeIdentifier(name, dest);
+                serializer.serializeIdentifier(name, dest) catch return dest.addFmtError();
                 return dest.writeStr("(");
             },
             .open_paren => dest.writeStr("("),
@@ -5350,7 +5346,7 @@ pub const serializer = struct {
 };
 
 pub const generic = struct {
-    pub inline fn parseWithOptions(comptime T: type, input: *Parser, options: *ParserOptions) Result(T) {
+    pub inline fn parseWithOptions(comptime T: type, input: *Parser, options: *const ParserOptions) Result(T) {
         if (@hasDecl(T, "parseWithOptions")) return T.parseWithOptions(input, options);
         return switch (T) {
             f32 => CSSNumberFns.parse(input),
@@ -5422,7 +5418,7 @@ pub const parse_utility = struct {
             .result => |v| v,
         };
         if (parser.expectExhausted().asErr()) |e| return .{ .err = e };
-        return result;
+        return .{ .result = result };
     }
 };
 
@@ -5484,10 +5480,10 @@ pub const to_css = struct {
 /// Typical usage is `input.try_parse(parse_important).is_ok()`
 /// at the end of a `DeclarationParser::parse_value` implementation.
 pub fn parseImportant(input: *Parser) Result(void) {
-    if (input.expectDelim('!').asErr()) |e| return .{ .err = e.intoDefaultParseError() };
+    if (input.expectDelim('!').asErr()) |e| return .{ .err = e };
     return switch (input.expectIdentMatching("important")) {
         .result => |v| .{ .result = v },
-        .err => |e| .{ .err = e.intoDefaultParseError() },
+        .err => |e| .{ .err = e },
     };
 }
 

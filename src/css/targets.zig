@@ -21,6 +21,17 @@ pub const Targets = struct {
         return this.include.contains(flag) or (!this.exclude.contains(flag) and !this.isCompatible(feature));
     }
 
+    pub fn shouldCompileSame(this: *const Targets, comptime prop: @Type(.EnumLiteral)) bool {
+        const compat_feature: css.compat.Feature = prop;
+        const target_feature: css.targets.Features = target_feature: {
+            var feature: css.targets.Features = .{};
+            @field(feature, @tagName(prop)) = true;
+            break :target_feature feature;
+        };
+
+        return shouldCompile(this, compat_feature, target_feature);
+    }
+
     pub fn isCompatible(this: *const Targets, feature: css.compat.Feature) bool {
         if (this.browsers) |*targets| {
             return feature.isCompatible(targets.*);

@@ -91,8 +91,8 @@ pub const KeyframesName = union(enum) {
 
     pub fn parse(input: *css.Parser) Result(KeyframesName) {
         switch (switch (input.next()) {
-            .result => |v| v,
-            .err => |e| return .{ .err = e.intoDefaultParseError() },
+            .result => |v| v.*,
+            .err => |e| return .{ .err = e },
         }) {
             .ident => |s| {
                 // todo_stuff.match_ignore_ascii_case
@@ -171,7 +171,7 @@ pub const KeyframeSelector = union(enum) {
             },
             .from => {
                 if (dest.minify) {
-                    dest.writeStr("0%");
+                    try dest.writeStr("0%");
                 } else {
                     try dest.writeStr("from");
                 }

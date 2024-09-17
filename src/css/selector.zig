@@ -510,7 +510,7 @@ pub const api = struct {
                 else
                     .empty_selector;
 
-                return .{ .err = input.newCustomError(kind) };
+                return .{ .err = input.newCustomError(kind.intoDefaultParserError()) };
             }
 
             if (state.intersects(SelectorParsingState.AFTER_PSEUDO)) {
@@ -547,6 +547,7 @@ pub const api = struct {
                                     continue;
                                 }
                             },
+                            else => {},
                         }
                     },
                     else => {},
@@ -562,7 +563,7 @@ pub const api = struct {
             }
 
             if (!state.allowsCombinators()) {
-                return .{ .err = input.newCustomError(@as(SelectorParseErrorKind, SelectorParseErrorKind.invalid_state)) };
+                return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_state)) };
             }
 
             builder.pushCombinator(combinator);
@@ -620,7 +621,12 @@ pub const api = struct {
         }
 
         while (true) {
-            const result: SimpleSelectorParseResult(Impl) = if (parse_one_simple_selector(Impl, parser, input, state).asValue()) |result| result else break;
+            const result: SimpleSelectorParseResult(Impl) = result: {
+                if (parse_one_simple_selector(Impl, parser, input, state).asValue()) |result| {
+                    if (result) |r| break :result r;
+                }
+                break;
+            };
 
             if (empty) {
                 if (parser.defaultNamespace()) |url| {
@@ -669,7 +675,7 @@ pub const api = struct {
                     const selector = result.part_pseudo;
                     state.insert(SelectorParsingState{ .after_part = true });
                     builder.pushCombinator(.part);
-                    builder.pushSimpleSelector(.{ .slotted = selector });
+                    builder.pushSimpleSelector(.{ .part = selector });
                 },
                 .slotted_pseudo => |selector| {
                     state.insert(.{ .after_slotted = true });
@@ -717,7 +723,7 @@ pub const api = struct {
 
         const combinator: ?Combinator = combinator: {
             const tok = switch (input.next()) {
-                .err => |e| return .{ .err = e.intoDefaultParseError() },
+                .err => |e| return .{ .err = e },
                 .result => |v| v,
             };
             switch (tok.*) {
@@ -1019,6 +1025,13 @@ pub const api = struct {
         pub fn namespaceForPrefix(this: *SelectorParser, prefix: css.css_values.ident.Ident) ?[]const u8 {
             _ = this; // autofix
             return prefix;
+        }
+
+        pub fn parseFunctionalPseudoElement(this: *SelectorParser, name: []const u8, input: *css.Parser) Impl.SelectorImpl.PseudoElement {
+            _ = this; // autofix
+            _ = name; // autofix
+            _ = input; // autofix
+            @panic(css.todo_stuff.depth);
         }
 
         pub fn parseNonTsPseudoClass(
@@ -1784,7 +1797,7 @@ pub const api = struct {
             }
 
             /// Returns true if this is a combinator.
-            pub fn isCombinator(this: *This) bool {
+            pub fn isCombinator(this: *const This) bool {
                 return this.* == .combinator;
             }
 
@@ -1892,11 +1905,7 @@ pub const api = struct {
         __unused: u5 = 0,
 
         /// Whether we are after any of the pseudo-like things.
-        pub const AFTER_PSEUDO = css.Bitflags.bitwiseOr(.{
-            SelectorParsingState{ .after_part = true },
-            SelectorParsingState{ .after_slotted = true },
-            SelectorParsingState{ .after_pseudo_element = true },
-        });
+        pub const AFTER_PSEUDO = SelectorParsingState{ .after_part = true, .after_slotted = true, .after_pseudo_element = true };
 
         pub inline fn empty() SelectorParsingState {
             return .{};
@@ -1935,6 +1944,10 @@ pub const api = struct {
 
         pub fn allowsNonFunctionalPseudoClasses(this: SelectorParsingState) bool {
             return !this.intersects(SelectorParsingState{ .after_slotted = true, .after_non_stateful_pseudo_element = true });
+        }
+
+        pub fn allowsCombinators(this: SelectorParsingState) bool {
+            return this.intersects(SelectorParsingState{ .disallow_combinators = true });
         }
     };
 
@@ -2063,10 +2076,10 @@ pub const api = struct {
 
         return union(enum) {
             simple_selector: GenericComponent(Impl),
-            pseudo_element: Impl.PseudoElement,
+            pseudo_element: Impl.SelectorImpl.PseudoElement,
             slotted_pseudo: GenericSelector(Impl),
             // todo_stuff.think_mem_mgmt
-            part_pseudo: []Impl.Identifier,
+            part_pseudo: []Impl.SelectorImpl.Identifier,
         };
     }
 
@@ -2141,10 +2154,21 @@ pub const api = struct {
             arguments: css.TokenList,
         },
 
+        pub fn isUnknown(this: *const PseudoElement) bool {
+            return switch (this.*) {
+                .custom, .custom_function => true,
+                else => false,
+            };
+        }
+
         pub fn acceptsStatePseudoClasses(this: *const PseudoElement) bool {
             _ = this; // autofix
             // Be lienient.
             return true;
+        }
+
+        pub fn isWebkitScrollabr(this: *const PseudoElement) bool {
+            return this.* == .webkit_scrollbar;
         }
 
         pub fn toCss(this: *const PseudoElement, comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -2205,19 +2229,19 @@ pub const api = struct {
             .result => |v| v,
             .err => |e| {
                 if (e.kind == .basic and e.kind.basic == .end_of_input) {
-                    return false;
+                    return .{ .result = false };
                 }
 
                 return .{ .err = e };
             },
         };
 
-        if (result == .none) return false;
+        if (result == .none) return .{ .result = false };
 
         const namespace: QNamePrefix(Impl) = result.some[0];
         const local_name: ?[]const u8 = result.some[1];
         if (state.intersects(SelectorParsingState.AFTER_PSEUDO)) {
-            return .{ .err = input.newCustomError(SelectorParseErrorKind{ .invalid_state = {} }) };
+            return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_state)) };
         }
 
         switch (namespace) {
@@ -2228,7 +2252,7 @@ pub const api = struct {
             .explicit_namespace => {
                 const prefix = namespace.explicit_namespace[0];
                 const url = namespace.explicit_namespace[1];
-                const component = component: {
+                const component: GenericComponent(Impl) = component: {
                     if (parser.defaultNamespace()) |default_url| {
                         if (bun.strings.eql(url, default_url)) {
                             break :component .{ .default_namespace = url };
@@ -2281,7 +2305,7 @@ pub const api = struct {
             sink.pushSimpleSelector(.explicit_universal_type);
         }
 
-        return true;
+        return .{ .result = true };
     }
 
     /// Parse a simple selector other than a type selector.
@@ -2301,24 +2325,24 @@ pub const api = struct {
         const token = switch (input.nextIncludingWhitespace()) {
             .result => |v| v.*,
             .err => {
-                input.reset(start);
-                return null;
+                input.reset(&start);
+                return .{ .result = null };
             },
         };
 
         switch (token) {
             .idhash => |id| {
                 if (state.intersects(SelectorParsingState.AFTER_PSEUDO)) {
-                    return .{ .err = input.newCustomError(SelectorParseErrorKind{ .invalid_state = {} }) };
+                    return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_state)) };
                 }
                 const component: GenericComponent(Impl) = .{ .id = id };
-                return S{
+                return .{ .result = S{
                     .simple_selector = component,
-                };
+                } };
             },
             .open_square => {
                 if (state.intersects(SelectorParsingState.AFTER_PSEUDO)) {
-                    return .{ .err = input.newCustomError(SelectorParseErrorKind{ .invalid_state = {} }) };
+                    return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_state)) };
                 }
                 const Closure = struct {
                     parser: *SelectorParser,
@@ -2333,7 +2357,7 @@ pub const api = struct {
                     .err => |e| return .{ .err = e },
                     .result => |v| v,
                 };
-                return .{ .simple_selector = attr };
+                return .{ .result = .{ .simple_selector = attr } };
             },
             .colon => {
                 const location = input.currentSourceLocation();
@@ -2352,25 +2376,27 @@ pub const api = struct {
                     .function => |name| .{ name, true },
                     else => |t| {
                         const e = SelectorParseErrorKind{ .pseudo_element_expected_ident = t };
-                        return .{ .err = input.newCustomError(e) };
+                        return .{ .err = input.newCustomError(e.intoDefaultParserError()) };
                     },
                 };
                 const is_pseudo_element = !is_single_colon or is_css2_pseudo_element(name);
                 if (is_pseudo_element) {
                     if (!state.allowsPseudos()) {
-                        return .{ .err = input.newCustomError(SelectorParseErrorKind{ .invalid_state = {} }) };
+                        return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_state)) };
                     }
                     const pseudo_element: Impl.SelectorImpl.PseudoElement = if (is_functional) pseudo_element: {
                         if (parser.parsePart() and bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "part")) {
                             if (!state.allowsPart()) {
-                                return .{ .err = input.newCustomError(SelectorParseErrorKind{ .invalid_state = {} }) };
+                                return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_state)) };
                             }
 
-                            const Fn = struct {
-                                pub fn parsefn(_: void, input2: *css.Parser) Result([]Impl.SelectorImpl.Identifier) {
+                            const Closure = struct {
+                                parser: *SelectorParser,
+
+                                pub fn parsefn(self: *const @This(), input2: *css.Parser) Result([]Impl.SelectorImpl.Identifier) {
                                     // todo_stuff.think_about_mem_mgmt
                                     var result = ArrayList(Impl.SelectorImpl.Identifier).initCapacity(
-                                        parser.allocator,
+                                        self.parser.allocator,
                                         // TODO: source does this, should see if initializing to 1 is actually better
                                         // when appending empty std.ArrayList(T), it will usually initially reserve 8 elements,
                                         // maybe that's unnecessary, or maybe smallvec is gud here
@@ -2378,38 +2404,38 @@ pub const api = struct {
                                     ) catch unreachable;
 
                                     result.append(
-                                        parser.allocator,
+                                        self.parser.allocator,
                                         switch (input2.expectIdent()) {
                                             .err => |e| return .{ .err = e },
                                             .result => |v| v,
                                         },
                                     ) catch unreachable;
 
-                                    while (!input.isExhausted()) {
+                                    while (!input2.isExhausted()) {
                                         result.append(
-                                            parser.allocator,
-                                            switch (input.expectIdent()) {
-                                                .err => |e| return .{ .err = e.intoDefaultParseError() },
+                                            self.parser.allocator,
+                                            switch (input2.expectIdent()) {
+                                                .err => |e| return .{ .err = e },
                                                 .result => |v| v,
                                             },
                                         ) catch unreachable;
                                     }
 
-                                    return result.items;
+                                    return .{ .result = result.items };
                                 }
                             };
 
-                            const names = switch (input.parseNestedBlock([]Impl.SelectorImpl.Identifier, {}, Fn.parsefn)) {
+                            const names = switch (input.parseNestedBlock([]Impl.SelectorImpl.Identifier, &Closure{ .parser = parser }, Closure.parsefn)) {
                                 .err => |e| return .{ .err = e },
                                 .result => |v| v,
                             };
 
-                            break :pseudo_element .{ .part_pseudo = names };
+                            return .{ .result = .{ .part_pseudo = names } };
                         }
 
                         if (parser.parseSlotted() and bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "slotted")) {
                             if (!state.allowsSlotted()) {
-                                return .{ .err = input.newCustomError(SelectorParseErrorKind{ .invalid_state = {} }) };
+                                return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_state)) };
                             }
                             const Closure = struct {
                                 parser: *SelectorParser,
@@ -2426,8 +2452,19 @@ pub const api = struct {
                                 .err => |e| return .{ .err = e },
                                 .result => |v| v,
                             };
-                            return .{ .slotted_pseudo = selector };
+                            return .{ .result = .{ .slotted_pseudo = selector } };
                         }
+
+                        const Closure = struct {
+                            parser: *SelectorParser,
+                            state: *SelectorParsingState,
+                            name: []const u8,
+                        };
+                        break :pseudo_element input.parseNestedBlock(Impl.SelectorImpl.PseudoElement, &Closure{ .parser = parser, .state = state, .name = name }, struct {
+                            pub fn parseFn(closure: *const Closure, i: css.Parser) Result(Impl.SelectorImpl.PseudoElement) {
+                                return closure.parser.parseFunctionalPseudoElement(closure.name, i);
+                            }
+                        }.parseFn);
                     } else pseudo_element: {
                         break :pseudo_element switch (parser.parsePseudoElement(location, name)) {
                             .err => |e| return .{ .err = e },
@@ -2436,7 +2473,7 @@ pub const api = struct {
                     };
 
                     if (state.intersects(.{ .after_slotted = true }) and pseudo_element.validAfterSlotted()) {
-                        return .{ .pseudo_element = pseudo_element };
+                        return .{ .result = .{ .pseudo_element = pseudo_element } };
                     }
                 } else {
                     const pseudo_class: GenericComponent(Impl) = if (is_functional) pseudo_class: {
@@ -2462,14 +2499,14 @@ pub const api = struct {
                         .err => |e| return .{ .err = e },
                         .result => |v| v,
                     };
-                    return .{ .simple_selector = pseudo_class };
+                    return .{ .result = .{ .simple_selector = pseudo_class } };
                 }
             },
             .delim => |d| {
                 switch (d) {
                     '.' => {
                         if (state.intersects(SelectorParsingState.AFTER_PSEUDO)) {
-                            return .{ .err = input.newCustomError(SelectorParseErrorKind{ .invalid_state = {} }) };
+                            return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_state)) };
                         }
                         const location = input.currentSourceLocation();
                         const class = switch ((switch (input.nextIncludingWhitespace()) {
@@ -2479,18 +2516,18 @@ pub const api = struct {
                             .ident => |class| class,
                             else => |t| {
                                 const e = SelectorParseErrorKind{ .class_needs_ident = t };
-                                return location.newCustomError(e);
+                                return .{ .err = location.newCustomError(e.intoDefaultParserError()) };
                             },
                         };
                         const component_class = .{ .class = class };
-                        return .{ .simple_selector = component_class };
+                        return .{ .result = .{ .simple_selector = component_class } };
                     },
                     '&' => {
                         if (parser.isNestingAllowed()) {
                             state.insert(SelectorParsingState{ .after_nesting = true });
-                            return S{
+                            return .{ .result = S{
                                 .simple_selector = .nesting,
-                            };
+                            } };
                         }
                     },
                 }
@@ -2499,7 +2536,7 @@ pub const api = struct {
         }
 
         input.reset(&start);
-        return null;
+        return .{ .result = null };
     }
 
     pub fn parse_attribute_selector(comptime Impl: type, parser: *SelectorParser, input: *css.Parser) Result(GenericComponent(Impl)) {
@@ -2516,7 +2553,7 @@ pub const api = struct {
                 .result => |v| v,
             };
             switch (_qname) {
-                .none => |t| return .{ .err = input.newCustomError(SelectorParseErrorKind{ .no_qualified_name_in_attribute_selector = t }) },
+                .none => |t| return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .no_qualified_name_in_attribute_selector = t })) },
                 .some => |qname| {
                     if (qname[1] == null) {
                         bun.unreachablePanic("", .{});
@@ -2587,14 +2624,14 @@ pub const api = struct {
                 .suffix_match => break :operator .suffix,
                 else => {},
             }
-            return location.newCustomError(SelectorParseErrorKind{ .unexpected_token_in_attribute_selector = tok.* });
+            return location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .unexpected_token_in_attribute_selector = tok.* }));
         };
 
         const value_str: []const u8 = switch (input.expectIdentOrString()) {
             .result => |v| v,
             .err => |e| {
                 if (e.kind == .unexpected_token) {
-                    return .{ .err = e.location.newCustomError(SelectorParseErrorKind{ .bad_value_in_attr = e.kind.unexpected_token }) };
+                    return .{ .err = e.location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .bad_value_in_attr = e.kind.unexpected_token })) };
                 }
                 return .{
                     .err = .{
@@ -2726,7 +2763,7 @@ pub const api = struct {
             return parse_has(Impl, parser, input, state);
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "host")) {
             if (!state.allowsTreeStructuralPseudoClasses()) {
-                return .{ .err = input.newCustomError(SelectorParseErrorKind.invalid_state) };
+                return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_state)) };
             }
             return .{
                 .host = switch (parse_inner_compound_selector(Impl, parser, input, state)) {
@@ -2745,7 +2782,7 @@ pub const api = struct {
         }
 
         if (!state.allowsCustomFunctionalPseudoClasses()) {
-            return .{ .err = input.newCustomError(SelectorParseErrorKind.invalid_state) };
+            return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_state)) };
         }
 
         const result = switch (parser.parseNonTsFunctionalPseudoClass(Impl, name, input)) {
@@ -2763,7 +2800,7 @@ pub const api = struct {
         state: SelectorParsingState,
     ) Result(GenericComponent(Impl)) {
         if (state.allowsNonFunctionalPseudoClasses()) {
-            return location.newCustomError(SelectorParseErrorKind.invalid_state);
+            return location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_state));
         }
 
         if (state.allowsTreeStructuralPseudoClasses()) {
@@ -2805,14 +2842,14 @@ pub const api = struct {
         };
         if (state.intersects(SelectorParsingState{ .after_webkit_scrollbar = true })) {
             if (!pseudo_class.isValidAterWebkitScrollbar()) {
-                return location.newCustomError(SelectorParseErrorKind{ .invalid_pseudo_class_after_webkit_scrollbar = true });
+                return location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .invalid_pseudo_class_after_webkit_scrollbar = true }));
             }
         } else if (state.intersects(SelectorParsingState{ .after_pseudo_element = true })) {
             if (!pseudo_class.isUserActionState()) {
-                return location.newCustomError(SelectorParseErrorKind{ .invalid_pseudo_class_after_pseudo_element = true });
+                return location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .invalid_pseudo_class_after_pseudo_element = true }));
             }
         } else if (!pseudo_class.isValidBeforeWebkitScrollbar()) {
-            return location.newCustomError(SelectorParseErrorKind{ .invalid_pseudo_class_before_webkit_scrollbar = true });
+            return location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .invalid_pseudo_class_before_webkit_scrollbar = true }));
         }
 
         return .{ .non_ts_pseudo_class = pseudo_class };
@@ -2826,7 +2863,7 @@ pub const api = struct {
         ty: NthType,
     ) Result(GenericComponent(Impl)) {
         if (!state.allowsTreeStructuralPseudoClasses()) {
-            return .{ .err = input.newCustomError(SelectorParseErrorKind.invalid_state) };
+            return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_state)) };
         }
 
         const a, const b = switch (css.nth.parse_nth(input)) {
@@ -2976,7 +3013,7 @@ pub const api = struct {
     }
 
     pub fn OptionalQName(comptime Impl: type) type {
-        return struct {
+        return union(enum) {
             some: struct { QNamePrefix(Impl), ?[]const u8 },
             none: css.Token,
         };
@@ -3009,19 +3046,19 @@ pub const api = struct {
             .result => |v| v,
             .err => |e| {
                 input.reset(&start);
-                return e;
+                return .{ .err = e };
             },
         };
         switch (tok.*) {
             .ident => |value| {
                 const after_ident = input.state();
-                const n = if (input.nextIncludingWhitespace()) |t| t == .delim and t.delim == '|' else false;
+                const n = if (input.nextIncludingWhitespace().asValue()) |t| t.* == .delim and t.delim == '|' else false;
                 if (n) {
                     const prefix: Impl.SelectorImpl.NamespacePrefix = value;
                     const result: ?Impl.SelectorImpl.NamespaceUrl = parser.namespaceForPrefix(prefix);
                     const url: Impl.SelectorImpl.NamespaceUrl = brk: {
-                        if (result) break :brk result.*;
-                        return .{ .err = input.newCustomError(SelectorParseErrorKind{ .unsupported_pseudo_class_or_element = value }) };
+                        if (result) |url| break :brk url;
+                        return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .unsupported_pseudo_class_or_element = value })) };
                     };
                     return parse_qualified_name_eplicit_namespace_helper(
                         Impl,
@@ -3271,7 +3308,7 @@ pub const serialize = struct {
         // sequence and then reverse.
         var combinators = CombinatorIter{ .sel = selector };
         const compound_selectors = CompoundSelectorIter{ .sel = selector };
-        const should_compile_nesting = dest.targets.shouldCompile(css.compat.Feature.nesting, .nesting);
+        const should_compile_nesting = dest.targets.shouldCompileSame(.nesting);
 
         var first = true;
         var combinators_exhausted = false;

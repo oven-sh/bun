@@ -171,13 +171,14 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
         }
 
         pub inline fn toCssResult(this: @This()) Maybe(ReturnType, bun.css.ParseError(bun.css.ParserError)) {
-            return switch (this) {
+            return switch (ErrorTypeT) {
                 bun.css.BasicParseError => {
                     return switch (this) {
                         .result => |v| return .{ .result = v },
                         .err => |e| return .{ .err = e.intoDefaultParseError() },
                     };
                 },
+                bun.css.ParseError(bun.css.ParserError) => @compileError("Already a ParseError(ParserError)"),
                 else => @compileError("Bad!"),
             };
         }

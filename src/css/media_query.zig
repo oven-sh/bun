@@ -141,17 +141,18 @@ pub const MediaQuery = struct {
             .err => .{ null, null },
         };
 
-        const condition_result = if (explicit_media_type == null)
-            MediaCondition.parseWithFlags(input, QueryConditionFlags{ .allow_or = true })
+        const condition = if (explicit_media_type == null)
+            switch (MediaCondition.parseWithFlags(input, QueryConditionFlags{ .allow_or = true })) {
+                .result => |v| v,
+                .err => |e| return .{ .err = e },
+            }
         else if (input.tryParse(css.Parser.expectIdentMatching, .{"and"}).isOk())
-            MediaCondition.parseWithFlags(input, QueryConditionFlags.empty())
+            switch (MediaCondition.parseWithFlags(input, QueryConditionFlags.empty())) {
+                .result => |v| v,
+                .err => |e| return .{ .err = e },
+            }
         else
             null;
-
-        const condition = switch (condition_result) {
-            .err => |e| return .{ .err = e },
-            .result => |v| v,
-        };
 
         const media_type = explicit_media_type orelse MediaType.all;
 
@@ -208,6 +209,7 @@ pub const QueryConditionFlags = packed struct(u8) {
     allow_or: bool = false,
     /// Whether to allow style container queries.
     allow_style: bool = false,
+    __unused: u6 = 0,
 
     pub usingnamespace css.Bitflags(@This());
 };
@@ -256,7 +258,7 @@ pub const MediaType = union(enum) {
     pub fn parse(input: *css.Parser) Result(MediaType) {
         const name = switch (input.expectIdent()) {
             .result => |v| v,
-            .err => |e| return .{ .err = e.intoDefaultParseError() },
+            .err => |e| return .{ .err = e },
         };
         return .{ .result = MediaType.fromStr(name) };
     }
@@ -307,7 +309,7 @@ pub const MediaCondition = union(enum) {
                 try toCssWithParensIfNeeded(c, W, dest, c.needsParens(null, &dest.targets));
             },
             .operation => |operation| {
-                operationToCss(operation.operator, &operation.conditions, W, dest);
+                try operationToCss(MediaCondition, operation.operator, &operation.conditions, W, dest);
             },
         }
 
@@ -340,11 +342,11 @@ pub const MediaCondition = union(enum) {
 
     /// QueryCondition.parseStyleQuery
     pub fn parseStyleQuery(input: *css.Parser) Result(MediaCondition) {
-        return input.newErrorForNextToken();
+        return .{ .err = input.newErrorForNextToken() };
     }
 
     /// QueryCondition.needsParens
-    pub fn needsParens(this: *const MediaCondition, parent_operator: ?Operator, targets: *const css.Targets) bool {
+    pub fn needsParens(this: *const MediaCondition, parent_operator: ?Operator, targets: *const css.targets.Targets) bool {
         return switch (this.*) {
             .not => true,
             .operation => |operation| operation.operator != parent_operator,
@@ -383,7 +385,7 @@ pub fn parseQueryCondition(
             },
             else => {},
         }
-        return location.newUnexpectedTokenError(tok.*);
+        return .{ .err = location.newUnexpectedTokenError(tok.*) };
     };
 
     const first_condition: QueryCondition = first_condition: {
@@ -396,7 +398,7 @@ pub fn parseQueryCondition(
                     .err => |e| return .{ .err = e },
                     .result => |v| v,
                 };
-                return QueryCondition.createNegation(bun.create(input.allocator(), QueryCondition, inner_condition));
+                return .{ .result = QueryCondition.createNegation(bun.create(input.allocator(), QueryCondition, inner_condition)) };
             },
             // (true, true)
             0b11 => {
@@ -404,7 +406,7 @@ pub fn parseQueryCondition(
                     .err => |e| return .{ .err = e },
                     .result => |v| v,
                 };
-                return QueryCondition.createNegation(bun.create(input.allocator(), QueryCondition, inner_condition));
+                return .{ .result = QueryCondition.createNegation(bun.create(input.allocator(), QueryCondition, inner_condition)) };
             },
             0b00 => break :first_condition switch (parseParenBlock(QueryCondition, input, flags)) {
                 .err => |e| return .{ .err = e },
@@ -424,7 +426,7 @@ pub fn parseQueryCondition(
         return first_condition;
 
     if (!flags.contains(QueryConditionFlags{ .allow_or = true }) and operator == .@"or") {
-        return location.newUnexpectedTokenError(css.Token{ .ident = "or" });
+        return .{ .err = location.newUnexpectedTokenError(css.Token{ .ident = "or" }) };
     }
 
     var conditions = ArrayList(QueryCondition){};
@@ -482,7 +484,7 @@ pub fn parseParensOrFunction(
         },
         else => {},
     }
-    return location.newUnexpectedTokenError(t.*);
+    return .{ .err = location.newUnexpectedTokenError(t.*) };
 }
 
 fn parseParenBlock(
@@ -493,8 +495,8 @@ fn parseParenBlock(
     const Closure = struct {
         flags: QueryConditionFlags,
         pub fn parseNestedBlockFn(this: *@This(), i: *css.Parser) Result(QueryCondition) {
-            if (i.tryParse(@This().tryParseFn, .{this})) |inner| {
-                return inner;
+            if (i.tryParse(@This().tryParseFn, .{this}).asValue()) |inner| {
+                return .{ .result = inner };
             }
 
             return QueryCondition.parseFeature(i);
@@ -714,7 +716,7 @@ pub fn QueryFeature(comptime FeatureId: type) type {
         pub fn needsParens(this: *const This, parent_operator: ?Operator, targets: *const css.Targets) bool {
             return parent_operator != .@"and" and
                 this.* == .interval and
-                targets.shouldCompile(css.Features{ .media_interval_syntax = true });
+                targets.shouldCompileSame(.media_interval_syntax);
         }
 
         pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -731,7 +733,7 @@ pub fn QueryFeature(comptime FeatureId: type) type {
                 },
                 .range => {
                     // If range syntax is unsupported, use min/max prefix if possible.
-                    if (dest.targets.shouldCompile(.media_range_syntax, .media_range_syntax)) {
+                    if (dest.targets.shouldCompileSame(.media_range_syntax)) {
                         return writeMinMax(
                             &this.range.operator,
                             FeatureId,
@@ -746,7 +748,7 @@ pub fn QueryFeature(comptime FeatureId: type) type {
                     try this.range.value.toCss(W, dest);
                 },
                 .interval => |interval| {
-                    if (dest.targets.shouldCompile(.media_interval_syntax, .media_interval_syntax)) {
+                    if (dest.targets.shouldCompileSame(.media_interval_syntax)) {
                         try writeMinMax(
                             &interval.start_operator.opposite(),
                             FeatureId,
@@ -942,28 +944,28 @@ fn consumeOperationOrColon(input: *css.Parser, allow_colon: bool) Result(?MediaF
             .result => |v| v,
         };
         switch (next_token.*) {
-            .colon => if (allow_colon) return null,
+            .colon => if (allow_colon) return .{ .result = null },
             .delim => |oper| break :first_delim oper,
             else => {},
         }
-        return loc.newUnexpectedTokenError(next_token.*);
+        return .{ .err = loc.newUnexpectedTokenError(next_token.*) };
     };
 
     switch (first_delim) {
-        '=' => return .equal,
+        '=' => return .{ .result = .equal },
         '>' => {
             if (input.tryParse(css.Parser.expectDelim, .{'='}).isOk()) {
-                return .@"greater-than-equal";
+                return .{ .result = .@"greater-than-equal" };
             }
-            return .@"greater-than";
+            return .{ .result = .@"greater-than" };
         },
         '<' => {
             if (input.tryParse(css.Parser.expectDelim, .{'='}).isOk()) {
-                return .@"less-than-equal";
+                return .{ .result = .@"less-than-equal" };
             }
-            return .@"less-than";
+            return .{ .result = .@"less-than" };
         },
-        else => return location.newUnexpectedTokenError(.{ .delim = first_delim }),
+        else => return .{ .err = location.newUnexpectedTokenError(.{ .delim = first_delim }) },
     }
 }
 
@@ -1013,6 +1015,18 @@ pub const MediaFeatureValue = union(enum) {
     /// An environment variable reference.
     env: EnvironmentVariable,
 
+    pub fn clone(this: *const MediaFeatureValue, allocator: std.mem.Allocator) MediaFeatureValue {
+        _ = this; // autofix
+        _ = allocator; // autofix
+        @panic(css.todo_stuff.depth);
+    }
+
+    pub fn deinit(this: *const MediaFeatureValue, allocator: std.mem.Allocator) void {
+        _ = this; // autofix
+        _ = allocator; // autofix
+        @panic(css.todo_stuff.depth);
+    }
+
     pub fn toCss(
         this: *const MediaFeatureValue,
         comptime W: type,
@@ -1023,7 +1037,7 @@ pub const MediaFeatureValue = union(enum) {
             .number => |num| return CSSNumberFns.toCss(&num, W, dest),
             .integer => |int| return CSSIntegerFns.toCss(&int, W, dest),
             .boolean => |b| {
-                if (b.*) {
+                if (b) {
                     return dest.writeChar('1');
                 } else {
                     return dest.writeChar('0');
@@ -1032,7 +1046,7 @@ pub const MediaFeatureValue = union(enum) {
             .resolution => |res| return res.toCss(W, dest),
             .ratio => |ratio| return ratio.toCss(W, dest),
             .ident => |id| return IdentFns.toCss(&id, W, dest),
-            .env => |env| return EnvironmentVariable.toCss(env, W, dest, false),
+            .env => |*env| return EnvironmentVariable.toCss(env, W, dest, false),
         }
     }
 
@@ -1088,6 +1102,19 @@ pub const MediaFeatureValue = union(enum) {
             .result => |v| v,
         };
         return .{ .ident = ident };
+    }
+
+    pub fn addF32(this: MediaFeatureValue, allocator: Allocator, other: f32) MediaFeatureValue {
+        return switch (this) {
+            .length => |len| .{ .len = len.add(allocator, .{ .px = other }) },
+            .number => |num| .{ .number = num + other },
+            .integer => |num| .{ .integer = num + if (css.signfns.isSignPositive(other)) 1 else -1 },
+            .boolean => |v| .{ .boolean = v },
+            .resolution => |res| .{ .resolution = res.addF32(allocator, other) },
+            .ratio => |ratio| .{ .ratio = ratio.addF32(allocator, other) },
+            .ident => |id| .{ .ident = id },
+            .env => |env| .{ .env = env }, // TODO: calc support
+        };
     }
 };
 
@@ -1150,11 +1177,11 @@ pub fn MediaFeatureName(comptime FeatureId: type) type {
             return switch (this.*) {
                 .standard => |v| v.toCssWithPrefix(prefix, W, dest),
                 .custom => |d| {
-                    if (dest.writeStr(prefix).asErr()) |e| return .{ .err = e };
+                    try dest.writeStr(prefix);
                     return DashedIdentFns.toCss(&d, W, dest);
                 },
                 .unknown => |v| {
-                    if (dest.writeStr(prefix).asErr()) |e| return .{ .err = e };
+                    try dest.writeStr(prefix);
                     return IdentFns.toCss(&v, W, dest);
                 },
             };
@@ -1163,7 +1190,7 @@ pub fn MediaFeatureName(comptime FeatureId: type) type {
         /// Parses a media feature name.
         pub fn parse(input: *css.Parser) Result(struct { This, ?MediaFeatureComparison }) {
             const ident = switch (input.expectIdent()) {
-                .err => |e| return .{ .err = e.intoDefaultParseError() },
+                .err => |e| return .{ .err = e },
                 .result => |v| v,
             };
 
@@ -1239,13 +1266,14 @@ fn writeMinMax(
 
     try dest.delim(':', false);
 
-    const adjusted = switch (operator.*) {
-        .@"greater-than" => value.add(0.001),
-        .@"less-than" => value.add(-0.001),
+    const adjusted: ?MediaFeatureValue = switch (operator.*) {
+        .@"greater-than" => value.clone(dest.allocator).add(0.001),
+        .@"less-than" => value.clone(dest.allocator).add(-0.001),
         else => null,
     };
 
     if (adjusted) |val| {
+        defer val.deinit(dest.allocator);
         try val.toCss(W, dest);
     } else {
         try value.toCss(W, dest);

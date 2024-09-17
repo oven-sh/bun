@@ -127,23 +127,23 @@ pub fn Printer(comptime Writer: type) type {
         pub fn newError(
             this: *const This,
             kind: css.PrinterErrorKind,
-            loc: css.dependencies.Location,
+            maybe_loc: ?css.dependencies.Location,
         ) PrintErr!void {
             bun.debugAssert(this.error_kind == null);
             this.error_kind = css.PrinterError{
                 .kind = kind,
-                .loc = css.ErrorLocation{
+                .loc = if (maybe_loc) |loc| css.ErrorLocation{
                     .filename = this.filename(),
                     .line = loc.line - 1,
                     .column = loc.column,
-                },
+                } else null,
             };
             return PrintErr.lol;
         }
 
         pub fn deinit(this: *This) void {
             _ = this; // autofix
-            @compileError(css.todo_stuff.depth);
+            @panic(css.todo_stuff.depth);
         }
 
         pub fn new(allocator: Allocator, scratchbuf: std.ArrayList(u8), dest: Writer, options: PrinterOptions) This {
@@ -215,8 +215,16 @@ pub fn Printer(comptime Writer: type) type {
                         ident,
                         Closure{ .first = true, .printer = this },
                         struct {
-                            pub fn writeFn(self: *Closure, s: []const u8) PrintErr!void {
-                                self.printer.col += s.len;
+                            pub fn writeFn(self: *Closure, s1: []const u8, replace_dots: bool) PrintErr!void {
+                                // PERF: stack fallback?
+                                const s = s: {
+                                    if (!replace_dots) break :s s1;
+                                    var s = self.printer.allocator.dupe(u8, s1) catch bun.outOfMemory();
+                                    std.mem.replaceScalar(u8, s[0..], '.', '-');
+                                    break :s s;
+                                };
+                                defer if (replace_dots) self.printer.allocator.free(s);
+                                self.printer.col += @intCast(s.len);
                                 if (self.first) {
                                     self.first = false;
                                     return css.serializer.serializeIdentifier(s, Writer, self.printer);
@@ -224,7 +232,7 @@ pub fn Printer(comptime Writer: type) type {
                                     return css.serializer.serializeName(s, Writer, self.printer);
                                 }
                             }
-                        },
+                        }.writeFn,
                     ).asErr()) |e| return .{ .err = e };
 
                     css_module.addLocal(ident, ident, this.loc.source_index);
@@ -236,13 +244,13 @@ pub fn Printer(comptime Writer: type) type {
         }
 
         pub fn writeDashedIdent(this: *This, ident: []const u8, is_declaration: bool) !void {
-            if (this.writeStr("--").asErr()) |e| return .{ .err = e };
+            try this.writeStr("--");
 
             if (this.css_module) |*css_module| {
                 if (css_module.config.dashed_idents) {
                     const Fn = struct {
                         pub fn writeFn(self: *This, s: []const u8) PrintErr!void {
-                            self.col += s.len;
+                            self.col += @intCast(s.len);
                             return css.serializer.serializeName(s, Writer, self);
                         }
                     };
@@ -308,7 +316,7 @@ pub fn Printer(comptime Writer: type) type {
 
         pub fn withContext(
             this: *This,
-            selectors: *css.SelectorList,
+            selectors: *const css.SelectorList,
             comptime func: anytype,
             args: anytype,
         ) bun.meta.ReturnOfType(@TypeOf(func)) {

@@ -208,7 +208,7 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
   pub fn prefix(this: *const PropertyId) VendorPrefix {
     return switch (this.*) {
       ${generatePropertyIdImplPrefix(property_defs)}
-      .all, .custom => VendorPrefix.empty(),
+      .all, .custom, .unparsed => VendorPrefix.empty(),
     };
   }
 
@@ -221,6 +221,17 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
     }
 
     return null;
+  }
+
+
+  pub fn withPrefix(this: *const PropertyId, pre: VendorPrefix) PropertyId {
+    return switch (this.*) {
+      ${Object.entries(property_defs).map(([prop_name, def]) => {
+        if (def.valid_prefixes === undefined) return `.${escapeIdent(prop_name)} => .${escapeIdent(prop_name)},`;
+        return `.${escapeIdent(prop_name)} => .{ .${escapeIdent(prop_name)} = pre },`;
+      })}
+      else => this.*,
+    };
   }
 `;
 }

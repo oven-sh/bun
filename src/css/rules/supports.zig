@@ -53,7 +53,7 @@ pub const SupportsCondition = union(enum) {
 
     fn clone(this: *const SupportsCondition) SupportsCondition {
         _ = this; // autofix
-        @compileError(css.todo_stuff.depth);
+        @panic(css.todo_stuff.depth);
     }
 
     fn needsParens(this: *const SupportsCondition, parent: *const SupportsCondition) bool {
@@ -61,7 +61,7 @@ pub const SupportsCondition = union(enum) {
             .not => true,
             .@"and" => parent.* != .@"and",
             .@"or" => parent.* != .@"or",
-            _ => false,
+            else => false,
         };
     }
 
@@ -98,15 +98,20 @@ pub const SupportsCondition = union(enum) {
             SeenDeclKey,
             usize,
             struct {
-                pub fn hash(self: @This(), s: SeenDeclKey) u32 {
+                pub fn hash(self: @This(), s: SeenDeclKey) u64 {
                     _ = self;
-                    return std.hash_map.hashString(s[1]) +% @as(u32, @intFromEnum(s[0]));
+                    // return std.hash_map.hashString(s[1]) +% @as(u32, @intFromEnum(s[0]));
+                    return std.hash_map.hashString(s[1]) +% @intFromEnum(s[0]);
                 }
                 pub fn eql(self: @This(), a: SeenDeclKey, b: SeenDeclKey, b_index: usize) bool {
                     _ = self; // autofix
                     _ = b_index; // autofix
-                    if (a[0].eq(b[0])) return false;
+                    if (seenDeclKeyEql(a[0], b[0])) return false;
                     return bun.strings.eqlCaseInsensitiveASCIIICheckLength(a[1], b[1]);
+                }
+
+                pub fn seenDeclKeyEql(this: SeenDeclKey, that: SeenDeclKey) bool {
+                    return this[0] == that[0] and std.mem.eql(u8, this[1], that[1]);
                 }
             },
             false,
@@ -120,13 +125,13 @@ pub const SupportsCondition = union(enum) {
                     const location = i.currentSourceLocation();
                     const s = switch (i.expectIdent()) {
                         .result => |vv| vv,
-                        .err => |e| return .{ .err = e.intoDefaultParseError() },
+                        .err => |e| return .{ .err = e },
                     };
                     const found_type: i32 = found_type: {
                         // todo_stuff.match_ignore_ascii_case
                         if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("and", s)) break :found_type 1;
                         if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("or", s)) break :found_type 2;
-                        return location.newUnexpectedTokenError(.{ .ident = s });
+                        return .{ .result = location.newUnexpectedTokenError(.{ .ident = s }) };
                     };
 
                     if (this.expected_type) |expected| {
@@ -153,8 +158,7 @@ pub const SupportsCondition = union(enum) {
                             const property_id = in_parens.declaration.property_id;
                             const value = in_parens.declaration.value;
                             seen_declarations.put(
-                                property_id.withPrefix(css.VendorPrefix{ .none = true }),
-                                value,
+                                .{ property_id.withPrefix(css.VendorPrefix{ .none = true }), value },
                                 0,
                             ) catch bun.outOfMemory();
                         }
@@ -221,7 +225,7 @@ pub const SupportsCondition = union(enum) {
         const pos = input.position();
         const tok = switch (input.next()) {
             .result => |vv| vv,
-            .err => |e| return .{ .err = e.intoDefaultParseError() },
+            .err => |e| return .{ .err = e },
         };
         switch (tok.*) {
             .function => |f| {
@@ -232,7 +236,7 @@ pub const SupportsCondition = union(enum) {
                         }
                         pub fn parseNestedBlockFn(_: void, i: *css.Parser) Result(SupportsCondition) {
                             const p = i.position();
-                            if (i.expectNoErrorToken().asErr()) |e| return .{ .err = e.intoDefaultParseError() };
+                            if (i.expectNoErrorToken().asErr()) |e| return .{ .err = e };
                             return .{ .result = SupportsCondition{ .selector = i.sliceFrom(p) } };
                         }
                     };
@@ -248,7 +252,7 @@ pub const SupportsCondition = union(enum) {
             pub fn parseFn(_: void, i: *css.Parser) Result(void) {
                 return i.expectNoErrorToken().toCssResult();
             }
-        }).asErr()) |err| {
+        }.parseFn).asErr()) |err| {
             return err;
         }
 
@@ -259,7 +263,7 @@ pub const SupportsCondition = union(enum) {
         switch (this.*) {
             .not => |condition| {
                 try dest.writeStr(" not ");
-                condition.toCssWithParensIfNeeded(W, dest, condition.needsParens(this));
+                try condition.toCssWithParensIfNeeded(W, dest, condition.needsParens(this));
             },
             .@"and" => |conditions| {
                 var first = true;

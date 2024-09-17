@@ -40,7 +40,7 @@ pub const UnknownAtRule = struct {
             try dest.writeChar('{');
             dest.indent();
             try dest.newline();
-            block.toCss(W, dest, false);
+            try block.toCss(W, dest, false);
             dest.dedent();
             try dest.newline();
             dest.writeChar('}');

@@ -111,7 +111,7 @@ pub const CssColor = union(enum) {
                     }
                 } else {
                     // If the #rrggbbaa syntax is not supported by the browser targets, output rgba()
-                    if (dest.targets.shouldCompile(.hex_alpha_colors, .hex_alpha_colors)) {
+                    if (dest.targets.shouldCompileSame(.hex_alpha_colors)) {
                         // If the browser doesn't support `#rrggbbaa` color syntax, it is converted to `transparent` when compressed(minify = true).
                         // https://www.w3.org/TR/css-color-4/#transparent-black
                         if (dest.minify and color.red == 0 and color.green == 0 and color.blue == 0 and color.alpha == 0) {
@@ -196,7 +196,7 @@ pub const CssColor = union(enum) {
                     ),
                 };
             },
-            .predefined => |*predefined| return writePredefined(predefined, W, dest),
+            .predefined => |predefined| return writePredefined(predefined, W, dest),
             .float => |*float| {
                 // Serialize as hex.
                 const srgb = SRGB.fromFloatColor(float.*);
@@ -435,26 +435,26 @@ pub fn mapGamut(comptime T: type, color: T) T {
 
     // If lightness is >= 100%, return pure white.
     if (@abs(current.l - 1.0) < EPSILON or current.l > 1.0) {
-        return T.fromOKLCH(
-            OKLCH{
-                .l = 1.0,
-                .c = 0.0,
-                .h = 0.0,
-                .alpha = current.alpha,
-            },
-        );
+        const oklch = OKLCH{
+            .l = 1.0,
+            .c = 0.0,
+            .h = 0.0,
+            .alpha = current.alpha,
+        };
+        const conversion_function_name = "into" ++ @typeName(T);
+        return @call(.auto, @field(OKLCH, conversion_function_name), .{oklch});
     }
 
     // If lightness <= 0%, return pure black.
     if (current.l < EPSILON) {
-        return T.fromOKLCH(
-            OKLCH{
-                .l = 0.0,
-                .c = 0.0,
-                .h = 0.0,
-                .alpha = current.alpha,
-            },
-        );
+        const oklch = OKLCH{
+            .l = 0.0,
+            .c = 0.0,
+            .h = 0.0,
+            .alpha = current.alpha,
+        };
+        const conversion_function_name = "into" ++ @typeName(T);
+        return @call(.auto, @field(OKLCH, conversion_function_name), .{oklch});
     }
 
     var min = 0.0;
@@ -1119,7 +1119,7 @@ fn clamp_unit_f32(val: f32) u8 {
 }
 
 fn clamp_floor_256_f32(val: f32) u8 {
-    return @intCast(@min(255.0, @max(0.0, @round(val))));
+    return @intFromFloat(@min(255.0, @max(0.0, @round(val))));
     //   val.round().max(0.).min(255.) as u8
 }
 
@@ -1432,11 +1432,11 @@ pub const HWB = struct {
 /// A color in the [`sRGB-linear`](https://www.w3.org/TR/css-color-4/#predefined-sRGB-linear) color space.
 pub const SRGBLinear = struct {
     /// The red component.
-    r: Percentage,
+    r: f32,
     /// The green component.
-    g: Percentage,
+    g: f32,
     /// The blue component.
-    b: Percentage,
+    b: f32,
     /// The alpha component.
     alpha: f32,
 
@@ -1550,11 +1550,11 @@ pub const Rec2020 = struct {
 /// A color in the [`xyz-d50`](https://www.w3.org/TR/css-color-4/#predefined-xyz) color space.
 pub const XYZd50 = struct {
     /// The x component.
-    x: Percentage,
+    x: f32,
     /// The y component.
-    y: Percentage,
+    y: f32,
     /// The z component.
-    z: Percentage,
+    z: f32,
     /// The alpha component.
     alpha: f32,
 
@@ -1576,11 +1576,11 @@ pub const XYZd50 = struct {
 /// A color in the [`xyz-d65`](https://www.w3.org/TR/css-color-4/#predefined-xyz) color space.
 pub const XYZd65 = struct {
     /// The x component.
-    x: Percentage,
+    x: f32,
     /// The y component.
-    y: Percentage,
+    y: f32,
     /// The z component.
-    z: Percentage,
+    z: f32,
     /// The alpha component.
     alpha: f32,
 
@@ -2481,8 +2481,12 @@ fn rectangularToPolar(l: f32, a: f32, b: f32) struct { f32, f32, f32 } {
         h += 360.0;
     }
 
-    const c = @sqrt(std.math.powi(f32, a, 2) + std.math.powi(f32, b, 2));
-    h = h % 360.0;
+    // const c = @sqrt(std.math.powi(f32, a, 2) + std.math.powi(f32, b, 2));
+    // PERF: Zig does not have Rust's f32::powi
+    const c = @sqrt(std.math.pow(f32, a, 2) + std.math.pow(f32, b, 2));
+
+    // h = h % 360.0;
+    h = @mod(h, 360.0);
     return .{ l, c, h };
 }
 
@@ -2555,37 +2559,37 @@ pub fn DefineColorspace(comptime T: type) type {
 
         pub fn fromLABColor(color: *const LABColor) T {
             return switch (color.*) {
-                .lab => |*v| @call(.auto, v, into_this_function_name),
-                .lch => |*v| @call(.auto, v, into_this_function_name),
-                .oklab => |*v| @call(.auto, v, into_this_function_name),
-                .oklch => |*v| @call(.auto, v, into_this_function_name),
+                .lab => |*v| @call(.auto, @field(v, into_this_function_name), .{v}),
+                .lch => |*v| @call(.auto, @field(v, into_this_function_name), .{v}),
+                .oklab => |*v| @call(.auto, @field(v, into_this_function_name), .{v}),
+                .oklch => |*v| @call(.auto, @field(v, into_this_function_name), .{v}),
             };
         }
 
         pub fn fromPredefinedColor(color: *const PredefinedColor) T {
             return switch (color.*) {
-                .srgb => |*v| @call(.auto, v, into_this_function_name),
-                .srgb_linear => |*v| @call(.auto, v, into_this_function_name),
-                .display_p3 => |*v| @call(.auto, v, into_this_function_name),
-                .a98 => |*v| @call(.auto, v, into_this_function_name),
-                .prophoto => |*v| @call(.auto, v, into_this_function_name),
-                .rec2020 => |*v| @call(.auto, v, into_this_function_name),
-                .xyz_d50 => |*v| @call(.auto, v, into_this_function_name),
-                .xyz_d65 => |*v| @call(.auto, v, into_this_function_name),
+                .srgb => |*v| @call(.auto, @field(v, into_this_function_name), .{v}),
+                .srgb_linear => |*v| @call(.auto, @field(v, into_this_function_name), .{v}),
+                .display_p3 => |*v| @call(.auto, @field(v, into_this_function_name), .{v}),
+                .a98 => |*v| @call(.auto, @field(v, into_this_function_name), .{v}),
+                .prophoto => |*v| @call(.auto, @field(v, into_this_function_name), .{v}),
+                .rec2020 => |*v| @call(.auto, @field(v, into_this_function_name), .{v}),
+                .xyz_d50 => |*v| @call(.auto, @field(v, into_this_function_name), .{v}),
+                .xyz_d65 => |*v| @call(.auto, @field(v, into_this_function_name), .{v}),
             };
         }
 
         pub fn fromFloatColor(color: *const FloatColor) T {
             return switch (color.*) {
-                .rgb => |*v| @call(.auto, v, into_this_function_name),
-                .hsl => |*v| @call(.auto, v, into_this_function_name),
-                .hwb => |*v| @call(.auto, v, into_this_function_name),
+                .rgb => |*v| @call(.auto, @field(@TypeOf(v), into_this_function_name), .{v}),
+                .hsl => |*v| @call(.auto, @field(@TypeOf(v), into_this_function_name), .{v}),
+                .hwb => |*v| @call(.auto, @field(@TypeOf(v), into_this_function_name), .{v}),
             };
         }
 
         pub fn tryFromCssColor(color: *const CssColor) ?T {
             return switch (color.*) {
-                .rgba => |*rgba| @call(.auto, rgba, into_this_function_name),
+                .rgba => |*rgba| @call(.auto, @field(@TypeOf(rgba), into_this_function_name), .{rgba}),
                 .lab => |*lab| fromLABColor(lab),
                 .predefined => |*predefined| fromPredefinedColor(*predefined),
                 .float => |float| fromFloatColor(&float),
@@ -2855,8 +2859,8 @@ pub fn writePredefined(
         .a98 => |*rgb| .{ "a98-rgb", rgb.r, rgb.g, rgb.b, rgb.alpha },
         .prophoto => |*rgb| .{ "prophoto-rgb", rgb.r, rgb.g, rgb.b, rgb.alpha },
         .rec2020 => |*rgb| .{ "rec2020", rgb.r, rgb.g, rgb.b, rgb.alpha },
-        .xyzd50 => |*xyz| .{ "xyz-d50", xyz.x, xyz.y, xyz.z, xyz.alpha },
-        .xyzd65 => |*xyz| .{ "xyz", xyz.x, xyz.y, xyz.z, xyz.alpha },
+        .xyz_d50 => |*xyz| .{ "xyz-d50", xyz.x, xyz.y, xyz.z, xyz.alpha },
+        .xyz_d65 => |*xyz| .{ "xyz", xyz.x, xyz.y, xyz.z, xyz.alpha },
     };
 
     try dest.writeStr("color(");
@@ -2921,7 +2925,7 @@ pub fn linSrgb(r: f32, g: f32, b: f32) struct { f32, f32, f32 } {
                 return c / 12.92;
             }
 
-            const sign = if (c < 0.0) -1.0 else 1.0;
+            const sign: f32 = if (c < 0.0) -1.0 else 1.0;
             return sign * std.math.pow(
                 f32,
                 ((abs + 0.055) / 1.055),
@@ -3184,7 +3188,7 @@ const color_conversions = struct {
             // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L50
             // convert an array of linear-light sRGB values to CIE XYZ
             // using sRGB's own white, D65 (no chromatic adaptation)
-            const MATRIX: []const f32 = &.{
+            const MATRIX: [9]f32 = &.{
                 0.41239079926595934,
                 0.357584339383878,
                 0.1804807884018343,
@@ -3729,7 +3733,7 @@ const color_conversions = struct {
 
         pub fn intoOKLAB(_xyz: *const XYZd65) OKLAB {
             // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L400
-            const XYZ_TO_LMS: []const f32 = &.{
+            const XYZ_TO_LMS: [9]f32 = .{
                 0.8190224432164319,
                 0.3619062562801221,
                 -0.12887378261216414,
@@ -3741,7 +3745,7 @@ const color_conversions = struct {
                 0.6335478258136937,
             };
 
-            const LMS_TO_OKLAB: []const f32 = &.{
+            const LMS_TO_OKLAB: [9]f32 = .{
                 0.2104542553,
                 0.7936177850,
                 -0.0040720468,

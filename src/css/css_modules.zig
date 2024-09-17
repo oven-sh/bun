@@ -70,6 +70,19 @@ pub const CssModule = struct {
         @panic(css.todo_stuff.depth);
     }
 
+    pub fn referenceDashed(
+        this: *CssModule,
+        name: []const u8,
+        from: *const ?css.css_properties.css_modules.Specifier,
+        source_index: u32,
+    ) ?[]const u8 {
+        _ = this; // autofix
+        _ = name; // autofix
+        _ = from; // autofix
+        _ = source_index; // autofix
+        @panic(css.todo_stuff.depth);
+    }
+
     pub fn handleComposes(
         this: *CssModule,
         allocator: Allocator,

@@ -160,7 +160,10 @@ pub fn Calc(comptime V: type) type {
             comptime parseIdent: *const fn (@TypeOf(ctx), []const u8) ?This,
         ) Result(This) {
             const location = input.currentSourceLocation();
-            const f = if (input.expectFunction().asErr()) |e| return .{ .err = e };
+            const f = switch (input.expectFunction()) {
+                .result => |v| v,
+                .err => |e| return .{ .err = e },
+            };
             // todo_stuff.match_ignore_ascii_case
             if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("calc", f)) {
                 const Closure = struct {
@@ -1111,14 +1114,14 @@ pub fn Calc(comptime V: type) type {
                 },
                 .product => {
                     const num = this.product.number;
-                    const calc = &this.product.expression;
+                    const calc = this.product.expression;
                     if (@abs(num) < 1.0) {
                         const div = 1.0 / num;
                         try calc.toCss(W, dest);
                         try dest.delim('/', true);
                         try CSSNumberFns.toCss(&div, W, dest);
                     } else {
-                        try CSSNumberFns.toCss(num, W, dest);
+                        try CSSNumberFns.toCss(&num, W, dest);
                         try dest.delim('*', true);
                         try calc.toCss(W, dest);
                     }
@@ -1142,12 +1145,12 @@ pub fn Calc(comptime V: type) type {
             return css.signfns.isSignNegative(this.trySign() orelse return false);
         }
 
-        pub fn mulF32(this: *const @This(), allocator: Allocator, other: f32) This {
+        pub fn mulF32(this: @This(), allocator: Allocator, other: f32) This {
             if (other == 1.0) {
-                return this.*;
+                return this;
             }
 
-            return switch (this.*) {
+            return switch (this) {
                 .value => This{ .value = bun.create(allocator, V, mulValueF32(this.value.*, allocator, other)) },
                 .number => This{ .number = this.number * other },
                 .sum => This{ .sum = .{
@@ -1187,7 +1190,7 @@ pub fn Calc(comptime V: type) type {
                     else => This{
                         .product = .{
                             .number = other,
-                            .expression = this,
+                            .expression = bun.create(allocator, This, this),
                         },
                     },
                 },
@@ -1241,7 +1244,7 @@ pub fn MathFunction(comptime V: type) type {
             return switch (this.*) {
                 .calc => |*calc| {
                     try dest.writeStr("calc(");
-                    try calc.toCss(dest);
+                    try calc.toCss(W, dest);
                     try dest.writeChar(')');
                 },
                 .min => |*args| {
@@ -1253,7 +1256,7 @@ pub fn MathFunction(comptime V: type) type {
                         } else {
                             try dest.delim(',', false);
                         }
-                        try arg.toCss(dest);
+                        try arg.toCss(W, dest);
                     }
                     try dest.writeChar(')');
                 },
@@ -1266,52 +1269,52 @@ pub fn MathFunction(comptime V: type) type {
                         } else {
                             try dest.delim(',', false);
                         }
-                        try arg.toCss(dest);
+                        try arg.toCss(W, dest);
                     }
                     try dest.writeChar(')');
                 },
                 .clamp => |*clamp| {
                     try dest.writeStr("clamp(");
-                    try clamp.min.toCss(dest);
+                    try clamp.min.toCss(W, dest);
                     try dest.delim(',', false);
-                    try clamp.center.toCss(dest);
+                    try clamp.center.toCss(W, dest);
                     try dest.delim(',', false);
-                    try clamp.max.toCss(dest);
+                    try clamp.max.toCss(W, dest);
                     try dest.writeChar(')');
                 },
                 .round => |*rnd| {
                     try dest.writeStr("round(");
                     if (rnd.strategy != RoundingStrategy.default()) {
-                        try rnd.strategy.toCss(dest);
+                        try rnd.strategy.toCss(W, dest);
                         try dest.delim(',', false);
                     }
-                    try rnd.value.toCss(dest);
+                    try rnd.value.toCss(W, dest);
                     try dest.delim(',', false);
-                    try rnd.interval.toCss(dest);
+                    try rnd.interval.toCss(W, dest);
                     try dest.writeChar(')');
                 },
                 .rem => |*rem| {
                     try dest.writeStr("rem(");
-                    try rem.dividend.toCss(dest);
+                    try rem.dividend.toCss(W, dest);
                     try dest.delim(',', false);
-                    try rem.divisor.toCss(dest);
+                    try rem.divisor.toCss(W, dest);
                     try dest.writeChar(')');
                 },
                 .mod_ => |*mod_| {
                     try dest.writeStr("mod(");
-                    try mod_.dividend.toCss(dest);
+                    try mod_.dividend.toCss(W, dest);
                     try dest.delim(',', false);
-                    try mod_.divisor.toCss(dest);
+                    try mod_.divisor.toCss(W, dest);
                     try dest.writeChar(')');
                 },
                 .abs => |*v| {
                     try dest.writeStr("abs(");
-                    try v.toCss(dest);
+                    try v.toCss(W, dest);
                     try dest.writeChar(')');
                 },
                 .sign => |*v| {
                     try dest.writeStr("sign(");
-                    try v.toCss(dest);
+                    try v.toCss(W, dest);
                     try dest.writeChar(')');
                 },
                 .hypot => |*args| {
@@ -1323,7 +1326,7 @@ pub fn MathFunction(comptime V: type) type {
                         } else {
                             try dest.delim(',', false);
                         }
-                        try arg.toCss(dest);
+                        try arg.toCss(W, dest);
                     }
                     try dest.writeChar(')');
                 },

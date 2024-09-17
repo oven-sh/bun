@@ -474,7 +474,7 @@ pub export fn Bun__Process__send(
     };
 
     if (message.isUndefined()) {
-        return globalObject.throwValueRet(globalObject.ERR_MISSING_ARGS_static(ZigString.static("message"), null, null));
+        return globalObject.throwMissingArgumentsValue(&.{"message"});
     }
     if (!message.isString() and !message.isObject() and !message.isNumber() and !message.isBoolean()) {
         return globalObject.throwInvalidArgumentTypeValue("message", "string, object, number, or boolean", message);

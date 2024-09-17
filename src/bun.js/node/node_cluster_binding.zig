@@ -26,7 +26,7 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
         return .false;
     }
     if (message.isUndefined()) {
-        return globalThis.throwValueRet(globalThis.ERR_MISSING_ARGS_static(ZigString.static("message"), null, null));
+        return globalThis.throwMissingArgumentsValue(&.{"message"});
     }
     if (!handle.isNull()) {
         globalThis.throw("passing 'handle' not implemented yet", .{});
@@ -184,7 +184,7 @@ pub fn sendHelperPrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
     const ipc_data = subprocess.ipc() orelse return .false;
 
     if (message.isUndefined()) {
-        return globalThis.throwValueRet(globalThis.ERR_MISSING_ARGS_static(ZigString.static("message"), null, null));
+        return globalThis.throwMissingArgumentsValue(&.{"message"});
     }
     if (!message.isObject()) {
         return globalThis.throwInvalidArgumentTypeValue("message", "object", message);

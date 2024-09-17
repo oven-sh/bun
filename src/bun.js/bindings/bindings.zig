@@ -2924,6 +2924,17 @@ pub const JSGlobalObject = opaque {
         this.vm().throwError(this, err);
     }
 
+    pub fn throwMissingArgumentsValue(this: *JSGlobalObject, arg_names: []const []const u8) JSValue {
+        switch (arg_names.len) {
+            0 => @panic("requires at least one argument"),
+            1 => this.ERR_MISSING_ARGS("The \"{s}\" argument must be specified", .{arg_names[0]}).throw(),
+            2 => this.ERR_MISSING_ARGS("The \"{s}\" and \"{s}\" arguments must be specified", .{ arg_names[0], arg_names[1] }).throw(),
+            3 => this.ERR_MISSING_ARGS("The \"{s}\", \"{s}\", and \"{s}\" arguments must be specified", .{ arg_names[0], arg_names[1], arg_names[2] }).throw(),
+            else => @panic("implement this message"),
+        }
+        return .zero;
+    }
+
     pub fn createInvalidArgumentType(
         this: *JSGlobalObject,
         comptime name_: []const u8,
@@ -3451,11 +3462,6 @@ pub const JSGlobalObject = opaque {
         }
         if (this.hasException()) return null;
         return default;
-    }
-
-    extern fn Bun__ERR_MISSING_ARGS_static(*JSGlobalObject, *const ZigString, ?*const ZigString, ?*const ZigString) JSValue;
-    pub fn ERR_MISSING_ARGS_static(this: *JSGlobalObject, arg1: *const ZigString, arg2: ?*const ZigString, arg3: ?*const ZigString) JSValue {
-        return Bun__ERR_MISSING_ARGS_static(this, arg1, arg2, arg3);
     }
 
     pub usingnamespace @import("ErrorCode").JSGlobalObjectExtensions;

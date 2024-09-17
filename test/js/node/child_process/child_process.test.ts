@@ -1,10 +1,10 @@
-import { describe, it, expect, afterAll, beforeEach } from "bun:test";
-import { ChildProcess, spawn, execFile, exec, spawnSync, execFileSync, execSync } from "node:child_process";
-import { promisify } from "node:util";
-import { bunExe, bunEnv, isWindows, tmpdirSync, nodeExe, shellExe } from "harness";
-import path from "path";
-import { semver } from "bun";
+import { semver, write } from "bun";
+import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import fs from "fs";
+import { bunEnv, bunExe, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
+import { ChildProcess, exec, execFile, execFileSync, execSync, spawn, spawnSync } from "node:child_process";
+import { promisify } from "node:util";
+import path from "path";
 const debug = process.env.DEBUG ? console.log : () => {};
 
 const originalProcessEnv = process.env;
@@ -66,10 +66,37 @@ describe("spawn()", () => {
     expect(!!child).toBe(true);
   });
 
+  it("should use cwd from options to search for executables", async () => {
+    const tmpdir = tmpdirSync();
+    await Promise.all([
+      write(
+        path.join(tmpdir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            foo: "file:foo-1.2.3.tgz",
+          },
+        }),
+      ),
+      fs.promises.cp(path.join(import.meta.dir, "fixtures", "foo-1.2.3.tgz"), path.join(tmpdir, "foo-1.2.3.tgz")),
+    ]);
+    await runBunInstall(bunEnv, tmpdir);
+
+    const { exitCode, out } = await new Promise<any>(resolve => {
+      const child = spawn("./node_modules/.bin/foo", { cwd: tmpdir, env: bunEnv });
+      child.on("exit", async exitCode => {
+        const out = await new Response(child.stdout).text();
+        resolve({ exitCode, out });
+      });
+    });
+    expect(out).toBe("hello bun!\n");
+    expect(exitCode).toBe(0);
+  });
+
   it("should disallow invalid filename", () => {
     // @ts-ignore
     expect(() => spawn(123)).toThrow({
-      message: 'The "file" argument must be of type string. Received 123',
+      message: 'The "file" argument must be of type string. Received: 123',
       code: "ERR_INVALID_ARG_TYPE",
     });
   });

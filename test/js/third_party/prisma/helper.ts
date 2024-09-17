@@ -1,6 +1,6 @@
-import path from "path";
-import { bunExe, bunEnv, isLinux } from "harness";
 import fs from "fs";
+import { bunEnv, bunExe, isLinux } from "harness";
+import path from "path";
 const cwd = import.meta.dir;
 
 export async function generateClient(type: string) {

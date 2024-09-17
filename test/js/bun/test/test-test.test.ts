@@ -1,11 +1,11 @@
 // @ts-nocheck
 import { spawn, spawnSync } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
-import { mkdirSync, realpathSync, rmSync, writeFileSync, copyFileSync } from "fs";
+import { copyFileSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, tempDirWithFiles, tmpdirSync } from "harness";
 import { tmpdir } from "os";
-import { join, dirname } from "path";
+import { dirname, join } from "path";
 
 const tmp = realpathSync(tmpdir());
 

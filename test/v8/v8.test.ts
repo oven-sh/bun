@@ -1,9 +1,9 @@
-import { it, expect, test, beforeAll, describe, afterAll } from "bun:test";
-import { bunExe, bunEnv, tmpdirSync } from "harness";
 import { spawn, spawnSync } from "bun";
-import { join } from "path";
-import fs from "node:fs/promises";
+import { beforeAll, describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import assert from "node:assert";
+import fs from "node:fs/promises";
+import { join } from "path";
 
 // clang-cl does not work on Windows with node-gyp 10.2.0, so we should not let that affect the
 // test environment
@@ -68,19 +68,15 @@ beforeAll(async () => {
   directories.node = tmpdirSync();
   directories.badModules = tmpdirSync();
 
-  // run installs sequentially and builds in parallel due to bug with simultaneous
-  // bun install invocations
   await install(srcDir, directories.bunRelease, Runtime.bun);
   await install(srcDir, directories.bunDebug, Runtime.bun);
   await install(srcDir, directories.node, Runtime.node);
   await install(join(__dirname, "bad-modules"), directories.badModules, Runtime.node);
 
-  await Promise.all([
-    build(srcDir, directories.bunRelease, Runtime.bun, BuildMode.release),
-    build(srcDir, directories.bunDebug, Runtime.bun, BuildMode.debug),
-    build(srcDir, directories.node, Runtime.node, BuildMode.release),
-    build(join(__dirname, "bad-modules"), directories.badModules, Runtime.node, BuildMode.release),
-  ]);
+  await build(srcDir, directories.bunRelease, Runtime.bun, BuildMode.release);
+  await build(srcDir, directories.bunDebug, Runtime.bun, BuildMode.debug);
+  await build(srcDir, directories.node, Runtime.node, BuildMode.release);
+  await build(join(__dirname, "bad-modules"), directories.badModules, Runtime.node, BuildMode.release);
 });
 
 describe("module lifecycle", () => {
@@ -194,13 +190,16 @@ describe("HandleScope", () => {
   }, 10000);
 });
 
-afterAll(async () => {
-  await Promise.all([
-    fs.rm(directories.bunRelease, { recursive: true, force: true }),
-    fs.rm(directories.bunDebug, { recursive: true, force: true }),
-    fs.rm(directories.node, { recursive: true, force: true }),
-    fs.rm(directories.badModules, { recursive: true, force: true }),
-  ]);
+const itIfNotWindows = process.platform == "win32" ? it.skip : it;
+describe("uv_os_getpid", () => {
+  itIfNotWindows("returns the same result as getpid on POSIX", () => {
+    checkSameOutput("test_uv_os_getpid", []);
+  });
+});
+describe("uv_os_getppid", () => {
+  itIfNotWindows("returns the same result as getppid on POSIX", () => {
+    checkSameOutput("test_uv_os_getppid", []);
+  });
 });
 
 enum Runtime {

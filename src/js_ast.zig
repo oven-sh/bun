@@ -239,12 +239,11 @@ pub const BindingNodeList = []Binding;
 
 pub const ImportItemStatus = enum(u2) {
     none,
-
-    // The linker doesn't report import/export mismatch errors
+    /// The linker doesn't report import/export mismatch errors
     generated,
-    // The printer will replace this import with "undefined"
-
+    /// The printer will replace this import with "undefined"
     missing,
+
     pub fn jsonStringify(self: @This(), writer: anytype) !void {
         return try writer.write(@tagName(self));
     }
@@ -271,8 +270,6 @@ pub const Flags = struct {
     pub const JSXElement = enum {
         is_key_after_spread,
         has_any_dynamic,
-        can_be_inlined,
-        can_be_hoisted,
         pub const Bitset = std.enums.EnumSet(JSXElement);
     };
 
@@ -305,10 +302,6 @@ pub const Flags = struct {
 
         /// Only applicable to function statements.
         is_export,
-
-        /// Used for Hot Module Reloading's wrapper function
-        /// "iife" stands for "immediately invoked function expression"
-        print_as_iife,
 
         pub inline fn init(fields: Fields) Set {
             return Set.init(fields);
@@ -359,7 +352,6 @@ pub const Binding = struct {
             .b_missing => {
                 return Expr{ .data = .{ .e_missing = E.Missing{} }, .loc = loc };
             },
-
             .b_identifier => |b| {
                 return wrapper.wrapIdentifier(loc, b.ref);
             },
@@ -407,14 +399,12 @@ pub const Binding = struct {
                     loc,
                 );
             },
-            else => |tag| Output.panic("Unexpected binding .{s}", .{@tagName(tag)}),
         }
     }
 
     pub const Tag = enum(u5) {
         b_identifier,
         b_array,
-        b_property,
         b_object,
         b_missing,
 
@@ -433,9 +423,6 @@ pub const Binding = struct {
             },
             *B.Array => {
                 return Binding{ .loc = loc, .data = B{ .b_array = t } };
-            },
-            *B.Property => {
-                return Binding{ .loc = loc, .data = B{ .b_property = t } };
             },
             *B.Object => {
                 return Binding{ .loc = loc, .data = B{ .b_object = t } };
@@ -462,11 +449,6 @@ pub const Binding = struct {
                 data.* = t;
                 return Binding{ .loc = loc, .data = B{ .b_array = data } };
             },
-            B.Property => {
-                const data = allocator.create(B.Property) catch unreachable;
-                data.* = t;
-                return Binding{ .loc = loc, .data = B{ .b_property = data } };
-            },
             B.Object => {
                 const data = allocator.create(B.Object) catch unreachable;
                 data.* = t;
@@ -482,13 +464,31 @@ pub const Binding = struct {
     }
 };
 
-/// B is for Binding!
-/// These are the types of bindings that can be used in the AST.
+/// B is for Binding! Bindings are on the left side of variable
+/// declarations (s_local), which is how destructuring assignments
+/// are represented in memory. Consider a basic example.
+///
+///     let hello = world;
+///         ^       ^
+///         |       E.Identifier
+///         B.Identifier
+///
+/// Bindings can be nested
+///
+///                B.Array
+///                | B.Identifier
+///                | |
+///     let { foo: [ bar ] } = ...
+///         ----------------
+///         B.Object
 pub const B = union(Binding.Tag) {
+    // let x = ...
     b_identifier: *B.Identifier,
+    // let [a, b] = ...
     b_array: *B.Array,
-    b_property: *B.Property,
+    // let { a, b: c } = ...
     b_object: *B.Object,
+    // this is used to represent array holes
     b_missing: B.Missing,
 
     pub const Identifier = struct {
@@ -498,11 +498,16 @@ pub const B = union(Binding.Tag) {
     pub const Property = struct {
         flags: Flags.Property.Set = Flags.Property.None,
         key: ExprNodeIndex,
-        value: BindingNodeIndex,
-        default_value: ?ExprNodeIndex = null,
+        value: Binding,
+        default_value: ?Expr = null,
     };
 
-    pub const Object = struct { properties: []Property, is_single_line: bool = false };
+    pub const Object = struct {
+        properties: []B.Property,
+        is_single_line: bool = false,
+
+        pub const Property = B.Property;
+    };
 
     pub const Array = struct {
         items: []ArrayBinding,
@@ -511,6 +516,39 @@ pub const B = union(Binding.Tag) {
     };
 
     pub const Missing = struct {};
+
+    /// This hash function is currently only used for React Fast Refresh transform.
+    /// This doesn't include the `is_single_line` properties, as they only affect whitespace.
+    pub fn writeToHasher(b: B, hasher: anytype, symbol_table: anytype) void {
+        switch (b) {
+            .b_identifier => |id| {
+                const original_name = id.ref.getSymbol(symbol_table).original_name;
+                writeAnyToHasher(hasher, .{ std.meta.activeTag(b), original_name.len });
+            },
+            .b_array => |array| {
+                writeAnyToHasher(hasher, .{ std.meta.activeTag(b), array.has_spread, array.items.len });
+                for (array.items) |item| {
+                    writeAnyToHasher(hasher, .{item.default_value != null});
+                    if (item.default_value) |default| {
+                        default.data.writeToHasher(hasher, symbol_table);
+                    }
+                    item.binding.data.writeToHasher(hasher, symbol_table);
+                }
+            },
+            .b_object => |object| {
+                writeAnyToHasher(hasher, .{ std.meta.activeTag(b), object.properties.len });
+                for (object.properties) |property| {
+                    writeAnyToHasher(hasher, .{ property.default_value != null, property.flags });
+                    if (property.default_value) |default| {
+                        default.data.writeToHasher(hasher, symbol_table);
+                    }
+                    property.key.data.writeToHasher(hasher, symbol_table);
+                    property.value.data.writeToHasher(hasher, symbol_table);
+                }
+            },
+            .b_missing => {},
+        }
+    }
 };
 
 pub const ClauseItem = struct {
@@ -815,7 +853,7 @@ pub const G = struct {
         flags: Flags.Property.Set = Flags.Property.None,
 
         class_static_block: ?*ClassStaticBlock = null,
-        ts_decorators: ExprNodeList = ExprNodeList{},
+        ts_decorators: ExprNodeList = .{},
         // Key is optional for spread
         key: ?ExprNodeIndex = null,
 
@@ -869,10 +907,10 @@ pub const G = struct {
     pub const Fn = struct {
         name: ?LocRef = null,
         open_parens_loc: logger.Loc = logger.Loc.Empty,
-        args: []Arg = &([_]Arg{}),
+        args: []Arg = &.{},
         // This was originally nullable, but doing so I believe caused a miscompilation
         // Specifically, the body was always null.
-        body: FnBody = FnBody{ .loc = logger.Loc.Empty, .stmts = &([_]StmtNodeIndex{}) },
+        body: FnBody = .{ .loc = logger.Loc.Empty, .stmts = &.{} },
         arguments_ref: ?Ref = null,
 
         flags: Flags.Function.Set = Flags.Function.None,
@@ -3226,7 +3264,7 @@ pub const Stmt = struct {
             },
 
             .s_local => |local| {
-                return local.kind != S.Kind.k_var;
+                return local.kind != .k_var;
             },
             else => {
                 return true;
@@ -5142,9 +5180,6 @@ pub const Expr = struct {
             else
                 .mixed;
         }
-
-        //  This can be used when the returned type is either one or the other
-
     };
 
     pub const Data = union(Tag) {
@@ -5547,6 +5582,138 @@ pub const Expr = struct {
             };
         }
 
+        /// `hasher` should be something with 'pub fn update([]const u8) void';
+        /// symbol table is passed to serialize `Ref` as an identifier names instead of a nondeterministic numbers
+        pub fn writeToHasher(this: Expr.Data, hasher: anytype, symbol_table: anytype) void {
+            writeAnyToHasher(hasher, std.meta.activeTag(this));
+            switch (this) {
+                .e_array => |e| {
+                    writeAnyToHasher(hasher, .{
+                        e.is_single_line,
+                        e.is_parenthesized,
+                        e.was_originally_macro,
+                        e.items.len,
+                    });
+                    for (e.items.slice()) |item| {
+                        item.data.writeToHasher(hasher, symbol_table);
+                    }
+                },
+                .e_unary => |e| {
+                    writeAnyToHasher(hasher, .{e.op});
+                    e.value.data.writeToHasher(hasher, symbol_table);
+                },
+                .e_binary => |e| {
+                    writeAnyToHasher(hasher, .{e.op});
+                    e.left.data.writeToHasher(hasher, symbol_table);
+                    e.right.data.writeToHasher(hasher, symbol_table);
+                },
+                .e_class => |e| {
+                    _ = e; // autofix
+                },
+                inline .e_new, .e_call => |e| {
+                    _ = e; // autofix
+                },
+                .e_function => |e| {
+                    _ = e; // autofix
+                },
+                .e_dot => |e| {
+                    writeAnyToHasher(hasher, .{ e.optional_chain, e.name.len });
+                    e.target.data.writeToHasher(hasher, symbol_table);
+                    hasher.update(e.name);
+                },
+                .e_index => |e| {
+                    writeAnyToHasher(hasher, .{e.optional_chain});
+                    e.target.data.writeToHasher(hasher, symbol_table);
+                    e.index.data.writeToHasher(hasher, symbol_table);
+                },
+                .e_arrow => |e| {
+                    _ = e; // autofix
+                },
+                .e_jsx_element => |e| {
+                    _ = e; // autofix
+                },
+                .e_object => |e| {
+                    _ = e; // autofix
+                },
+                inline .e_spread, .e_await => |e| {
+                    e.value.data.writeToHasher(hasher, symbol_table);
+                },
+                inline .e_yield => |e| {
+                    writeAnyToHasher(hasher, .{ e.is_star, e.value });
+                    if (e.value) |value|
+                        value.data.writeToHasher(hasher, symbol_table);
+                },
+                .e_template_part => {
+                    // TODO: delete e_template_part as hit has zero usages
+                },
+                .e_template => |e| {
+                    _ = e; // autofix
+                },
+                .e_if => |e| {
+                    _ = e; // autofix
+                },
+                .e_import => |e| {
+                    _ = e; // autofix
+
+                },
+                inline .e_identifier,
+                .e_import_identifier,
+                .e_private_identifier,
+                .e_commonjs_export_identifier,
+                => |e| {
+                    const symbol = e.ref.getSymbol(symbol_table);
+                    hasher.update(symbol.original_name);
+                },
+                inline .e_boolean, .e_number => |e| {
+                    writeAnyToHasher(hasher, e.value);
+                },
+                inline .e_big_int, .e_reg_exp => |e| {
+                    hasher.update(e.value);
+                },
+
+                .e_string => |e| {
+                    var next: ?*E.String = e;
+                    if (next) |current| {
+                        if (current.isUTF8()) {
+                            hasher.update(current.data);
+                        } else {
+                            hasher.update(bun.reinterpretSlice(u8, current.slice16()));
+                        }
+                        next = current.next;
+                        hasher.update("\x00");
+                    }
+                },
+                inline .e_require_string, .e_require_resolve_string => |e| {
+                    writeAnyToHasher(hasher, e.import_record_index); // preferably, i'd like to write the filepath
+                },
+
+                .e_import_meta_main => |e| {
+                    writeAnyToHasher(hasher, e.inverted);
+                },
+                .e_inlined_enum => |e| {
+                    // pretend there is no comment
+                    e.value.data.writeToHasher(hasher, symbol_table);
+                },
+                .e_utf8_string => |e| {
+                    hasher.update(e.data);
+                },
+
+                // no data
+                .e_require_call_target,
+                .e_require_resolve_call_target,
+                .e_missing,
+                .e_this,
+                .e_super,
+                .e_null,
+                .e_undefined,
+                .e_new_target,
+                .e_require_main,
+                .e_import_meta,
+                .e_module_dot_exports,
+                => {},
+            }
+        }
+
         /// "const values" here refers to expressions that can participate in constant
         /// inlining, as they have no side effects on instantiation, and there would be
         /// no observable difference if duplicated. This is a subset of canBeMoved()
@@ -5570,6 +5737,8 @@ pub const Expr = struct {
         /// outside of a module wrapper (__esm/__commonJS).
         pub fn canBeMoved(data: Expr.Data) bool {
             return switch (data) {
+                .e_identifier => |id| id.can_be_removed_if_unused,
+
                 .e_class => |class| class.canBeMoved(),
 
                 .e_arrow,
@@ -6303,6 +6472,10 @@ pub const S = struct {
             pub fn isUsing(self: Kind) bool {
                 return self == .k_using or self == .k_await_using;
             }
+
+            pub fn isReassignable(kind: Kind) bool {
+                return kind == .k_var or kind == .k_let;
+            }
         };
     };
 
@@ -6815,13 +6988,6 @@ pub const BundledAst = struct {
     };
 
     pub const empty = BundledAst.init(Ast.empty);
-
-    pub inline fn uses_exports_ref(this: *const BundledAst) bool {
-        return this.flags.uses_exports_ref;
-    }
-    pub inline fn uses_module_ref(this: *const BundledAst) bool {
-        return this.flags.uses_module_ref;
-    }
 
     pub fn toAST(this: *const BundledAst) Ast {
         return .{
@@ -7348,8 +7514,19 @@ pub const Result = union(enum) {
 };
 
 pub const StmtOrExpr = union(enum) {
-    stmt: StmtNodeIndex,
-    expr: ExprNodeIndex,
+    stmt: Stmt,
+    expr: Expr,
+
+    pub fn toExpr(stmt_or_expr: StmtOrExpr) Expr {
+        return switch (stmt_or_expr) {
+            .expr => |expr| expr,
+            .stmt => |stmt| switch (stmt.data) {
+                .s_function => |s| Expr.init(E.Function, .{ .func = s.func }, stmt.loc),
+                .s_class => |s| Expr.init(E.Class, s.class, stmt.loc),
+                else => Output.panic("Unexpected statement type in default export: .{s}", .{@tagName(stmt.data)}),
+            },
+        };
+    }
 };
 
 pub const NamedImport = struct {
@@ -7813,17 +7990,16 @@ pub const Macro = struct {
 
         vm.enableMacroMode();
 
-        var loaded_result = try vm.loadMacroEntryPoint(input_specifier, function_name, specifier, hash);
+        const loaded_result = try vm.loadMacroEntryPoint(input_specifier, function_name, specifier, hash);
 
-        if (loaded_result.status(vm.global.vm()) == JSC.JSPromise.Status.Rejected) {
-            _ = vm.unhandledRejection(vm.global, loaded_result.result(vm.global.vm()), loaded_result.asValue());
-            vm.disableMacroMode();
-            return error.MacroLoadError;
+        switch (loaded_result.unwrap(vm.jsc, .leave_unhandled)) {
+            .rejected => |result| {
+                _ = vm.unhandledRejection(vm.global, result, loaded_result.asValue());
+                vm.disableMacroMode();
+                return error.MacroLoadError;
+            },
+            else => {},
         }
-
-        // We don't need to do anything with the result.
-        // We just want to make sure the promise is finished.
-        _ = loaded_result.result(vm.global.vm());
 
         return Macro{
             .vm = vm,
@@ -8120,8 +8296,9 @@ pub const Macro = struct {
                         const promise = value.asAnyPromise() orelse @panic("Unexpected promise type");
 
                         this.macro.vm.waitForPromise(promise);
-                        const promise_result = promise.result(this.global.vm());
-                        const rejected = promise.status(this.global.vm()) == .Rejected;
+
+                        const promise_result = promise.result(this.macro.vm.jsc);
+                        const rejected = promise.status(this.macro.vm.jsc) == .rejected;
 
                         if (promise_result.isUndefined() and this.is_top_level) {
                             this.is_top_level = false;
@@ -8592,3 +8769,19 @@ const ToJSError = error{
     MacroError,
     OutOfMemory,
 };
+
+fn assertNoPointers(T: type) void {
+    switch (@typeInfo(T)) {
+        .Pointer => @compileError("no pointers!"),
+        .Struct => |s| for (s.fields) |field| {
+            assertNoPointers(field.type);
+        },
+        .Array => |a| assertNoPointers(a.child),
+        else => {},
+    }
+}
+
+inline fn writeAnyToHasher(hasher: anytype, thing: anytype) void {
+    comptime assertNoPointers(@TypeOf(thing)); // catch silly mistakes
+    hasher.update(std.mem.asBytes(&thing));
+}

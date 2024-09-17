@@ -2,14 +2,18 @@
 const EventEmitter = require("node:events");
 const { isTypedArray } = require("node:util/types");
 const { Duplex, Readable, Writable } = require("node:stream");
-const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
+const { ERR_INVALID_ARG_TYPE, ERR_INVALID_PROTOCOL } = require("internal/errors");
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { kAutoDestroyed } = require("internal/shared");
+const { urlToHttpOptions } = require("internal/url");
 
 const {
   getHeader,
   setHeader,
   assignHeaders: assignHeadersFast,
+  assignEventCallback,
+  setRequestTimeout,
+  setServerIdleTimeout,
   Response,
   Request,
   Headers,
@@ -19,6 +23,9 @@ const {
   getHeader: (headers: Headers, name: string) => string | undefined;
   setHeader: (headers: Headers, name: string, value: string) => void;
   assignHeaders: (object: any, req: Request, headersTuple: any) => boolean;
+  assignEventCallback: (req: Request, callback: (event: number) => void) => void;
+  setRequestTimeout: (req: Request, timeout: number) => void;
+  setServerIdleTimeout: (server: any, timeout: number) => void;
   Response: (typeof globalThis)["Response"];
   Request: (typeof globalThis)["Request"];
   Headers: (typeof globalThis)["Headers"];
@@ -97,7 +104,6 @@ const INVALID_PATH_REGEX = /[^\u0021-\u00ff]/;
 const NODE_HTTP_WARNING =
   "WARN: Agent is mostly unused in Bun's implementation of http. If you see strange behavior, this is probably the cause.";
 
-var _defaultHTTPSAgent;
 var kInternalRequest = Symbol("kInternalRequest");
 const kInternalSocketData = Symbol.for("::bunternal::");
 const serverSymbol = Symbol.for("::bunternal::");
@@ -233,6 +239,11 @@ var FakeSocket = class Socket extends Duplex {
   }
 
   setTimeout(timeout, callback) {
+    const socketData = this[kInternalSocketData];
+    if (!socketData) return; // sometimes 'this' is Socket not FakeSocket
+
+    const [server, http_res, req] = socketData;
+    http_res?.req?.setTimeout(timeout, callback);
     return this;
   }
 
@@ -273,8 +284,7 @@ function Agent(options = kEmptyObject) {
   this.defaultPort = options.defaultPort || 80;
   this.protocol = options.protocol || "http:";
 }
-Agent.prototype = {};
-$setPrototypeDirect.$call(Agent.prototype, EventEmitter.prototype);
+Agent.prototype = Object.create(EventEmitter.prototype);
 
 ObjectDefineProperty(Agent, "globalAgent", {
   get: function () {
@@ -420,6 +430,23 @@ function Server(options, callback) {
 
   if (callback) this.on("request", callback);
   return this;
+}
+
+function onRequestEvent(event) {
+  const [server, http_res, req] = this.socket[kInternalSocketData];
+  if (!http_res[finishedSymbol]) {
+    switch (event) {
+      case 0: // timeout
+        this.emit("timeout");
+        server.emit("timeout", req.socket);
+        break;
+      case 1: // abort
+        this.complete = true;
+        this.emit("close");
+        http_res[finishedSymbol] = true;
+        break;
+    }
+  }
 }
 
 Server.prototype = {
@@ -585,6 +612,7 @@ Server.prototype = {
         this.serverName = tls.serverName || host || "localhost";
       }
       this[serverSymbol] = Bun.serve<any>({
+        idleTimeout: 0, // nodejs dont have a idleTimeout by default
         tls,
         port,
         hostname: host,
@@ -637,6 +665,7 @@ Server.prototype = {
           const prevIsNextIncomingMessageHTTPS = isNextIncomingMessageHTTPS;
           isNextIncomingMessageHTTPS = isHTTPS;
           const http_req = new RequestClass(req);
+          assignEventCallback(req, onRequestEvent.bind(http_req));
           isNextIncomingMessageHTTPS = prevIsNextIncomingMessageHTTPS;
 
           const upgrade = http_req.headers.upgrade;
@@ -684,7 +713,11 @@ Server.prototype = {
   },
 
   setTimeout(msecs, callback) {
-    // TODO:
+    const server = this[serverSymbol];
+    if (server) {
+      setServerIdleTimeout(server, Math.ceil(msecs / 1000));
+      typeof callback === "function" && this.once("timeout", callback);
+    }
     return this;
   },
 
@@ -747,10 +780,6 @@ function assignHeaders(object, req) {
 
 var defaultIncomingOpts = { type: "request" };
 
-function getDefaultHTTPSAgent() {
-  return (_defaultHTTPSAgent ??= new Agent({ defaultPort: 443, protocol: "https:" }));
-}
-
 function requestHasNoBody(method, req) {
   if ("GET" === method || "HEAD" === method || "TRACE" === method || "CONNECT" === method || "OPTIONS" === method)
     return true;
@@ -775,6 +804,7 @@ function IncomingMessage(req, defaultIncomingOpts) {
   this._dumped = false;
   this[noBodySymbol] = false;
   this[abortedSymbol] = false;
+  this.complete = false;
   Readable.$call(this);
   var { type = "request", [kInternalRequest]: nodeReq } = defaultIncomingOpts || {};
 
@@ -804,8 +834,6 @@ function IncomingMessage(req, defaultIncomingOpts) {
     type === "request" // TODO: Add logic for checking for body on response
       ? requestHasNoBody(this.method, this)
       : false;
-
-  this.complete = !!this[noBodySymbol];
 }
 
 IncomingMessage.prototype = {
@@ -925,7 +953,11 @@ IncomingMessage.prototype = {
     // noop
   },
   setTimeout(msecs, callback) {
-    // noop
+    const req = this[reqSymbol];
+    if (req) {
+      setRequestTimeout(req, Math.ceil(msecs / 1000));
+      typeof callback === "function" && this.once("timeout", callback);
+    }
     return this;
   },
   get socket() {
@@ -1150,6 +1182,10 @@ function emitCloseNT(self) {
   }
 }
 
+function emitRequestCloseNT(self) {
+  self.emit("close");
+}
+
 function onServerResponseClose() {
   // EventEmitter.emit makes a copy of the 'close' listeners array before
   // calling the listeners. detachSocket() unregisters onServerResponseClose
@@ -1281,10 +1317,14 @@ function drainHeadersIfObservable() {
 }
 
 ServerResponse.prototype._final = function (callback) {
+  const req = this.req;
+  const shouldEmitClose = req && req.emit && !this[finishedSymbol];
+
   if (!this.headersSent) {
     var data = this[firstWriteSymbol] || "";
     this[firstWriteSymbol] = undefined;
     this[finishedSymbol] = true;
+    this.headersSent = true; // https://github.com/oven-sh/bun/issues/3458
     drainHeadersIfObservable.$call(this);
     this._reply(
       new Response(data, {
@@ -1293,6 +1333,10 @@ ServerResponse.prototype._final = function (callback) {
         statusText: this.statusMessage ?? STATUS_CODES[this.statusCode],
       }),
     );
+    if (shouldEmitClose) {
+      req.complete = true;
+      process.nextTick(emitRequestCloseNT, req);
+    }
     callback && callback();
     return;
   }
@@ -1300,7 +1344,10 @@ ServerResponse.prototype._final = function (callback) {
   this[finishedSymbol] = true;
   ensureReadableStreamController.$call(this, controller => {
     controller.end();
-
+    if (shouldEmitClose) {
+      req.complete = true;
+      process.nextTick(emitRequestCloseNT, req);
+    }
     callback();
     const deferred = this[deferredSymbol];
     if (deferred) {
@@ -1654,38 +1701,26 @@ class ClientRequest extends OutgoingMessage {
       options = ObjectAssign(input || {}, options);
     }
 
-    var defaultAgent = options._defaultAgent || Agent.globalAgent;
+    let agent = options.agent;
+    const defaultAgent = options._defaultAgent || Agent.globalAgent;
+    if (agent === false) {
+      agent = new defaultAgent.constructor();
+    } else if (agent == null) {
+      agent = defaultAgent;
+    } else if (typeof agent.addRequest !== "function") {
+      throw ERR_INVALID_ARG_TYPE("options.agent", "Agent-like Object, undefined, or false", agent);
+    }
+    this.#agent = agent;
 
-    let protocol = options.protocol;
-    if (!protocol) {
-      if (options.port === 443) {
-        protocol = "https:";
-      } else {
-        protocol = defaultAgent.protocol || "http:";
-      }
+    const protocol = options.protocol || defaultAgent.protocol;
+    let expectedProtocol = defaultAgent.protocol;
+    if (this.agent.protocol) {
+      expectedProtocol = this.agent.protocol;
+    }
+    if (protocol !== expectedProtocol) {
+      throw ERR_INVALID_PROTOCOL(protocol, expectedProtocol);
     }
     this.#protocol = protocol;
-
-    switch (this.#agent?.protocol) {
-      case undefined: {
-        break;
-      }
-      case "http:": {
-        if (protocol === "https:") {
-          defaultAgent = this.#agent = getDefaultHTTPSAgent();
-          break;
-        }
-      }
-      case "https:": {
-        if (protocol === "https") {
-          defaultAgent = this.#agent = Agent.globalAgent;
-          break;
-        }
-      }
-      default: {
-        break;
-      }
-    }
 
     if (options.path) {
       const path = String(options.path);
@@ -1696,16 +1731,8 @@ class ClientRequest extends OutgoingMessage {
       }
     }
 
-    // Since we don't implement Agent, we don't need this
-    if (protocol !== "http:" && protocol !== "https:" && protocol) {
-      const expectedProtocol = defaultAgent?.protocol ?? "http:";
-      throw new Error(`Protocol mismatch. Expected: ${expectedProtocol}. Got: ${protocol}`);
-      // throw new ERR_INVALID_PROTOCOL(protocol, expectedProtocol);
-    }
-
-    const defaultPort = protocol === "https:" ? 443 : 80;
-
-    this.#port = options.port || options.defaultPort || this.#agent?.defaultPort || defaultPort;
+    const defaultPort = options.defaultPort || this.#agent.defaultPort;
+    this.#port = options.port || defaultPort || 80;
     this.#useDefaultPort = this.#port === defaultPort;
     const host =
       (this.#host =
@@ -1952,24 +1979,6 @@ class ClientRequest extends OutgoingMessage {
   }
 }
 
-function urlToHttpOptions(url) {
-  var { protocol, hostname, hash, search, pathname, href, port, username, password } = url;
-  return {
-    protocol,
-    hostname:
-      typeof hostname === "string" && StringPrototypeStartsWith.$call(hostname, "[")
-        ? StringPrototypeSlice.$call(hostname, 1, -1)
-        : hostname,
-    hash,
-    search,
-    pathname,
-    path: `${pathname || ""}${search || ""}`,
-    href,
-    port: port ? Number(port) : protocol === "https:" ? 443 : protocol === "http:" ? 80 : undefined,
-    auth: username || password ? `${decodeURIComponent(username)}:${decodeURIComponent(password)}` : undefined,
-  };
-}
-
 function validateHost(host, name) {
   if (host !== null && host !== undefined && typeof host !== "string") {
     // throw ERR_INVALID_ARG_TYPE(
@@ -2200,6 +2209,10 @@ function _writeHead(statusCode, reason, obj, response) {
     // consisting only of the Status-Line and optional headers, and is
     // terminated by an empty line.
     response._hasBody = false;
+    const req = response.req;
+    if (req) {
+      req.complete = true;
+    }
   }
 }
 

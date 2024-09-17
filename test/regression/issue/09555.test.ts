@@ -1,7 +1,7 @@
-import { Readable } from "stream";
-import { test, describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { tempDirWithFiles } from "harness";
 import { join } from "path";
+import { Readable } from "stream";
 describe("#09555", () => {
   test("fetch() Response body", async () => {
     const full = crypto.getRandomValues(new Uint8Array(1024 * 3));

@@ -1,8 +1,7 @@
-import { memfd_create } from "bun:internal-for-testing";
+import { memfd_create, setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
 import { closeSync, readFileSync, writeSync } from "fs";
 import { isLinux, isPosix } from "harness";
-import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 setSyntheticAllocationLimitForTesting(128 * 1024 * 1024);
 
 // /dev/zero reports a size of 0. So we need a separate test for reDgular files that are huge.

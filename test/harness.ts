@@ -1,10 +1,10 @@
-import { gc as bunGC, spawnSync, unsafe, which } from "bun";
-import { describe, test, expect, afterAll, beforeAll } from "bun:test";
-import { readlink, readFile, writeFile } from "fs/promises";
-import { isAbsolute, join, dirname } from "path";
-import fs, { openSync, closeSync } from "node:fs";
-import os from "node:os";
+import { gc as bunGC, sleepSync, spawnSync, unsafe, which } from "bun";
 import { heapStats } from "bun:jsc";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { readFile, readlink, writeFile } from "fs/promises";
+import fs, { closeSync, openSync } from "node:fs";
+import os from "node:os";
+import { dirname, isAbsolute, join } from "path";
 
 type Awaitable<T> = T | Promise<T>;
 
@@ -969,7 +969,7 @@ export async function runBunInstall(
   });
   expect(stdout).toBeDefined();
   expect(stderr).toBeDefined();
-  let err = (await new Response(stderr).text()).replace(/warn: Slow filesystem/g, "");
+  let err = (await new Response(stderr).text()).replace(/warn: Slow filesystem.*/g, "");
   expect(err).not.toContain("panic:");
   if (!options?.allowErrors) {
     expect(err).not.toContain("error:");
@@ -1284,3 +1284,9 @@ Object.defineProperty(globalThis, "gc", {
   enumerable: false,
   configurable: true,
 });
+
+export function waitForFileToExist(path: string, interval: number) {
+  while (!fs.existsSync(path)) {
+    sleepSync(interval);
+  }
+}

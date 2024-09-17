@@ -662,9 +662,8 @@ pub const Resolver = struct {
         comptime preference: PackageJSON.LoadFramework,
         comptime load_defines: bool,
     ) !void {
-
         // We want to enable developers to integrate frameworks without waiting on official support.
-        // But, we still want the command to do the actual framework integration to be succint
+        // But, we still want the command to do the actual framework integration to be succinct
         // This lets users type "--use next" instead of "--use bun-framework-next"
         // If they're using a local file path, we skip this.
         if (isPackagePath(package)) {

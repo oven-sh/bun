@@ -8,6 +8,7 @@ const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
 const Output = bun.Output;
+const debug = Output.scoped(.TCC, false);
 const MutableString = bun.MutableString;
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -73,15 +74,544 @@ const VirtualMachine = JSC.VirtualMachine;
 const IOTask = JSC.IOTask;
 
 const TCC = @import("../../tcc.zig");
+extern fn pthread_jit_write_protect_np(enable: bool) callconv(.C) void;
 
 pub const FFI = struct {
     dylib: ?std.DynLib = null,
+    relocated_bytes_to_free: ?[]u8 = null,
     functions: bun.StringArrayHashMapUnmanaged(Function) = .{},
     closed: bool = false,
+    shared_state: ?*TCC.TCCState = null,
 
     pub usingnamespace JSC.Codegen.JSFFI;
 
     pub fn finalize(_: *FFI) callconv(.C) void {}
+
+    const CompileC = struct {
+        source_file: [:0]const u8 = "",
+
+        libraries: std.ArrayListUnmanaged([:0]const u8) = .{},
+        library_dirs: std.ArrayListUnmanaged([:0]const u8) = .{},
+        include_dirs: std.ArrayListUnmanaged([:0]const u8) = .{},
+        symbols: SymbolsMap = .{},
+
+        deferred_errors: std.ArrayListUnmanaged([]const u8) = .{},
+
+        const stdarg = struct {
+            extern "C" fn ffi_vfprintf(*anyopaque, [*:0]const u8, ...) callconv(.C) c_int;
+            extern "C" fn ffi_vprintf([*:0]const u8, ...) callconv(.C) c_int;
+            extern "C" fn ffi_fprintf(*anyopaque, [*:0]const u8, ...) callconv(.C) c_int;
+            extern "C" fn ffi_printf([*:0]const u8, ...) callconv(.C) c_int;
+            extern "C" fn ffi_fscanf(*anyopaque, [*:0]const u8, ...) callconv(.C) c_int;
+            extern "C" fn ffi_scanf([*:0]const u8, ...) callconv(.C) c_int;
+            extern "C" fn ffi_sscanf([*:0]const u8, [*:0]const u8, ...) callconv(.C) c_int;
+            extern "C" fn ffi_vsscanf([*:0]const u8, [*:0]const u8, ...) callconv(.C) c_int;
+            extern "C" fn ffi_fopen([*:0]const u8, [*:0]const u8) callconv(.C) *anyopaque;
+            extern "C" fn ffi_fclose(*anyopaque) callconv(.C) c_int;
+            extern "C" fn ffi_fgetc(*anyopaque) callconv(.C) c_int;
+            extern "C" fn ffi_fputc(c: c_int, *anyopaque) callconv(.C) c_int;
+            extern "C" fn ffi_feof(*anyopaque) callconv(.C) c_int;
+            extern "C" fn ffi_fileno(*anyopaque) callconv(.C) c_int;
+            extern "C" fn ffi_ungetc(c: c_int, *anyopaque) callconv(.C) c_int;
+            extern "C" fn ffi_ftell(*anyopaque) callconv(.C) c_long;
+            extern "C" fn ffi_fseek(*anyopaque, c_long, c_int) callconv(.C) c_int;
+            extern "C" fn ffi_fflush(*anyopaque) callconv(.C) c_int;
+
+            extern "C" fn calloc(nmemb: usize, size: usize) callconv(.C) ?*anyopaque;
+            extern "C" fn perror([*:0]const u8) callconv(.C) void;
+
+            const mac = if (Environment.isMac) struct {
+                var ffi_stdinp: *anyopaque = @extern(*anyopaque, .{ .name = "__stdinp" });
+                var ffi_stdoutp: *anyopaque = @extern(*anyopaque, .{ .name = "__stdoutp" });
+                var ffi_stderrp: *anyopaque = @extern(*anyopaque, .{ .name = "__stderrp" });
+
+                pub fn inject(state: *TCC.TCCState) void {
+                    _ = TCC.tcc_add_symbol(state, "__stdinp", ffi_stdinp);
+                    _ = TCC.tcc_add_symbol(state, "__stdoutp", ffi_stdoutp);
+                    _ = TCC.tcc_add_symbol(state, "__stderrp", ffi_stderrp);
+                }
+            } else struct {
+                pub fn inject(_: *TCC.TCCState) void {}
+            };
+
+            pub fn inject(state: *TCC.TCCState) void {
+                _ = TCC.tcc_add_symbol(state, "vfprintf", ffi_vfprintf);
+                _ = TCC.tcc_add_symbol(state, "vprintf", ffi_vprintf);
+                _ = TCC.tcc_add_symbol(state, "fprintf", ffi_fprintf);
+                _ = TCC.tcc_add_symbol(state, "printf", ffi_printf);
+                _ = TCC.tcc_add_symbol(state, "fscanf", ffi_fscanf);
+                _ = TCC.tcc_add_symbol(state, "scanf", ffi_scanf);
+                _ = TCC.tcc_add_symbol(state, "sscanf", ffi_sscanf);
+                _ = TCC.tcc_add_symbol(state, "vsscanf", ffi_vsscanf);
+
+                _ = TCC.tcc_add_symbol(state, "fopen", ffi_fopen);
+                _ = TCC.tcc_add_symbol(state, "fclose", ffi_fclose);
+                _ = TCC.tcc_add_symbol(state, "fgetc", ffi_fgetc);
+                _ = TCC.tcc_add_symbol(state, "fputc", ffi_fputc);
+                _ = TCC.tcc_add_symbol(state, "feof", ffi_feof);
+                _ = TCC.tcc_add_symbol(state, "fileno", ffi_fileno);
+                _ = TCC.tcc_add_symbol(state, "fwrite", std.c.fwrite);
+                _ = TCC.tcc_add_symbol(state, "ungetc", ffi_ungetc);
+                _ = TCC.tcc_add_symbol(state, "ftell", ffi_ftell);
+                _ = TCC.tcc_add_symbol(state, "fseek", ffi_fseek);
+                _ = TCC.tcc_add_symbol(state, "fflush", ffi_fflush);
+                _ = TCC.tcc_add_symbol(state, "malloc", std.c.malloc);
+                _ = TCC.tcc_add_symbol(state, "free", std.c.free);
+                _ = TCC.tcc_add_symbol(state, "fread", std.c.fread);
+                _ = TCC.tcc_add_symbol(state, "realloc", std.c.realloc);
+                _ = TCC.tcc_add_symbol(state, "calloc", calloc);
+                _ = TCC.tcc_add_symbol(state, "perror", perror);
+
+                if (Environment.isPosix) {
+                    _ = TCC.tcc_add_symbol(state, "posix_memalign", std.c.posix_memalign);
+                    _ = TCC.tcc_add_symbol(state, "dlopen", std.c.dlopen);
+                    _ = TCC.tcc_add_symbol(state, "dlclose", std.c.dlclose);
+                    _ = TCC.tcc_add_symbol(state, "dlsym", std.c.dlsym);
+                    _ = TCC.tcc_add_symbol(state, "dlerror", std.c.dlerror);
+                }
+
+                mac.inject(state);
+            }
+        };
+
+        pub fn handleCompilationError(this: *CompileC, message: ?[*:0]const u8) callconv(.C) void {
+            var msg = std.mem.span(message orelse "");
+            if (msg.len == 0) return;
+
+            var offset: usize = 0;
+            // the message we get from TCC sometimes has garbage in it
+            // i think because we're doing in-memory compilation
+            while (offset < msg.len) : (offset += 1) {
+                if (msg[offset] > 0x20 and msg[offset] < 0x7f) break;
+            }
+            msg = msg[offset..];
+
+            this.deferred_errors.append(bun.default_allocator, bun.default_allocator.dupe(u8, msg) catch bun.outOfMemory()) catch bun.outOfMemory();
+        }
+
+        const default_tcc_options = "-std=c11 -Wl,--export-all-symbols -g";
+
+        pub fn compile(this: *CompileC, globalThis: *JSGlobalObject) !struct { *TCC.TCCState, []u8 } {
+            const state = TCC.tcc_new() orelse {
+                globalThis.throw("TinyCC failed to initialize", .{});
+                return error.JSException;
+            };
+            TCC.tcc_set_error_func(state, this, @ptrCast(&handleCompilationError));
+            if (bun.getenvZ("BUN_TCC_OPTIONS")) |tcc_options| {
+                TCC.tcc_set_options(state, @ptrCast(tcc_options));
+            } else {
+                TCC.tcc_set_options(state, default_tcc_options);
+            }
+            _ = TCC.tcc_set_output_type(state, TCC.TCC_OUTPUT_MEMORY);
+            errdefer TCC.tcc_delete(state);
+
+            var pathbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+
+            if (CompilerRT.dir()) |compiler_rt_dir| {
+                if (TCC.tcc_add_sysinclude_path(state, compiler_rt_dir) == -1) {
+                    debug("TinyCC failed to add sysinclude path", .{});
+                }
+            }
+
+            if (Environment.isMac) {
+                if (bun.getenvZ("SDKROOT")) |sdkroot| {
+                    const include_dir = bun.path.joinAbsStringBufZ(sdkroot, &pathbuf, &.{ "usr", "include" }, .auto);
+                    if (TCC.tcc_add_sysinclude_path(state, include_dir.ptr) == -1) {
+                        globalThis.throw("TinyCC failed to add sysinclude path", .{});
+                        return error.JSException;
+                    }
+
+                    const lib_dir = bun.path.joinAbsStringBufZ(sdkroot, &pathbuf, &.{ "usr", "lib" }, .auto);
+                    if (TCC.tcc_add_library_path(state, lib_dir.ptr) == -1) {
+                        globalThis.throw("TinyCC failed to add library path", .{});
+                        return error.JSException;
+                    }
+                }
+
+                if (Environment.isAarch64) {
+                    switch (bun.sys.directoryExistsAt(std.fs.cwd(), "/opt/homebrew/include")) {
+                        .result => |exists| {
+                            if (exists) {
+                                if (TCC.tcc_add_include_path(state, "/opt/homebrew/include") == -1) {
+                                    debug("TinyCC failed to add library path", .{});
+                                }
+                            }
+                        },
+                        .err => {},
+                    }
+
+                    switch (bun.sys.directoryExistsAt(std.fs.cwd(), "/opt/homebrew/lib")) {
+                        .result => |exists| {
+                            if (exists) {
+                                if (TCC.tcc_add_library_path(state, "/opt/homebrew/lib") == -1) {
+                                    debug("TinyCC failed to add library path", .{});
+                                }
+                            }
+                        },
+                        .err => {},
+                    }
+                }
+            }
+
+            if (Environment.isPosix) {
+                switch (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/local/include")) {
+                    .result => |exists| {
+                        if (exists) {
+                            if (TCC.tcc_add_sysinclude_path(state, "/usr/local/include") == -1) {
+                                debug("TinyCC failed to add library path", .{});
+                            }
+                        }
+                    },
+                    .err => {},
+                }
+
+                switch (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/include")) {
+                    .result => |exists| {
+                        if (exists) {
+                            if (TCC.tcc_add_sysinclude_path(state, "/usr/include") == -1) {
+                                debug("TinyCC failed to add library path", .{});
+                            }
+                        }
+                    },
+                    .err => {},
+                }
+
+                switch (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/local/lib")) {
+                    .result => |exists| {
+                        if (exists) {
+                            if (TCC.tcc_add_library_path(state, "/usr/local/lib") == -1) {
+                                debug("TinyCC failed to add library path", .{});
+                            }
+                        }
+                    },
+                    .err => {},
+                }
+
+                switch (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/lib")) {
+                    .result => |exists| {
+                        if (exists) {
+                            if (TCC.tcc_add_library_path(state, "/usr/lib") == -1) {
+                                debug("TinyCC failed to add library path", .{});
+                            }
+                        }
+                    },
+                    .err => {},
+                }
+            }
+
+            if (this.deferred_errors.items.len > 0) {
+                return error.DeferredErrors;
+            }
+
+            for (this.include_dirs.items) |include_dir| {
+                if (TCC.tcc_add_include_path(state, include_dir) == -1) {}
+
+                if (this.deferred_errors.items.len > 0) {
+                    return error.DeferredErrors;
+                }
+            }
+
+            if (this.deferred_errors.items.len > 0) {
+                return error.DeferredErrors;
+            }
+
+            CompilerRT.define(state);
+
+            if (this.deferred_errors.items.len > 0) {
+                return error.DeferredErrors;
+            }
+
+            if (TCC.tcc_add_file(state, this.source_file) != 0) {
+                if (this.deferred_errors.items.len > 0) {
+                    return error.DeferredErrors;
+                } else {
+                    globalThis.throw("TinyCC failed to compile", .{});
+                    return error.JSException;
+                }
+            }
+
+            CompilerRT.inject(state);
+            stdarg.inject(state);
+
+            if (this.deferred_errors.items.len > 0) {
+                return error.DeferredErrors;
+            }
+
+            for (this.library_dirs.items) |library_dir| {
+                if (TCC.tcc_add_library_path(state, library_dir) == -1) {}
+            }
+
+            if (this.deferred_errors.items.len > 0) {
+                return error.DeferredErrors;
+            }
+
+            for (this.libraries.items) |library| {
+                _ = TCC.tcc_add_library(state, library);
+
+                if (this.deferred_errors.items.len > 0) {
+                    break;
+                }
+            }
+
+            if (this.deferred_errors.items.len > 0) {
+                return error.DeferredErrors;
+            }
+
+            const relocation_size = TCC.tcc_relocate(state, null);
+            if (this.deferred_errors.items.len > 0) {
+                return error.DeferredErrors;
+            }
+
+            if (relocation_size < 0) {
+                globalThis.throw("Unexpected: tcc_relocate returned a negative value", .{});
+                return error.JSException;
+            }
+
+            const bytes: []u8 = try bun.default_allocator.alloc(u8, @as(usize, @intCast(relocation_size)));
+            // We cannot free these bytes, evidently.
+
+            if (comptime Environment.isAarch64 and Environment.isMac) {
+                pthread_jit_write_protect_np(false);
+            }
+            _ = TCC.tcc_relocate(state, bytes.ptr);
+            if (comptime Environment.isAarch64 and Environment.isMac) {
+                pthread_jit_write_protect_np(true);
+            }
+
+            if (this.deferred_errors.items.len > 0) {
+                return error.DeferredErrors;
+            }
+
+            for (this.symbols.map.keys(), this.symbols.map.values()) |symbol, *function| {
+                const duped = bun.default_allocator.dupeZ(u8, symbol) catch bun.outOfMemory();
+                defer bun.default_allocator.free(duped);
+                if (TCC.tcc_get_symbol(state, duped)) |function_ptr| {
+                    function.symbol_from_dynamic_library = function_ptr;
+                } else {
+                    globalThis.throw("{} is missing from {s}. Was it included in the source code?", .{ bun.fmt.quote(symbol), this.source_file });
+                    return error.JSException;
+                }
+            }
+
+            if (this.deferred_errors.items.len > 0) {
+                return error.DeferredErrors;
+            }
+
+            return .{ state, bytes };
+        }
+
+        pub fn deinit(this: *CompileC) void {
+            this.symbols.deinit();
+
+            for (this.libraries.items) |library| {
+                bun.default_allocator.free(library);
+            }
+            this.libraries.clearAndFree(bun.default_allocator);
+
+            for (this.include_dirs.items) |include_dir| {
+                bun.default_allocator.free(include_dir);
+            }
+            this.include_dirs.clearAndFree(bun.default_allocator);
+
+            for (this.deferred_errors.items) |deferred_error| {
+                bun.default_allocator.free(deferred_error);
+            }
+            this.deferred_errors.clearAndFree(bun.default_allocator);
+
+            if (this.source_file.len > 0)
+                bun.default_allocator.free(this.source_file);
+        }
+    };
+    const SymbolsMap = struct {
+        map: bun.StringArrayHashMapUnmanaged(Function) = .{},
+        pub fn deinit(this: *SymbolsMap) void {
+            for (this.map.keys()) |key| {
+                bun.default_allocator.free(@constCast(key));
+            }
+            this.map.clearAndFree(bun.default_allocator);
+        }
+    };
+
+    pub fn Bun__FFI__cc(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+        const arguments = callframe.arguments(1).slice();
+        if (arguments.len == 0 or !arguments[0].isObject()) {
+            return JSC.toInvalidArguments("Expected object", .{}, globalThis);
+        }
+
+        // Step 1. compile the user's code
+
+        const object = arguments[0];
+
+        var compile_c = CompileC{};
+        defer {
+            if (globalThis.hasException()) {
+                compile_c.deinit();
+            }
+        }
+
+        const symbols_object = object.get(globalThis, "symbols") orelse .zero;
+        if (!globalThis.hasException() and (symbols_object == .zero or !symbols_object.isObject())) {
+            _ = globalThis.throwInvalidArgumentTypeValue("symbols", "object", symbols_object);
+        }
+
+        if (globalThis.hasException()) {
+            return .zero;
+        }
+
+        if (generateSymbols(globalThis, &compile_c.symbols.map, symbols_object) catch JSC.JSValue.zero) |val| {
+            if (val != .zero and !globalThis.hasException())
+                globalThis.throwValue(val);
+            return .zero;
+        }
+
+        if (compile_c.symbols.map.count() == 0) {
+            globalThis.throw("Expected at least one exported symbol", .{});
+            return .zero;
+        }
+
+        if (object.get(globalThis, "library")) |library_value| {
+            if (library_value.isArray()) {
+                var iter = library_value.arrayIterator(globalThis);
+                compile_c.libraries.ensureTotalCapacityPrecise(bun.default_allocator, iter.len) catch bun.outOfMemory();
+                while (iter.next()) |value| {
+                    if (!value.isString()) {
+                        return globalThis.throwInvalidArgumentTypeValue("library", "array of strings", value);
+                    }
+                    compile_c.libraries.appendAssumeCapacity(value.getZigString(globalThis).toOwnedSliceZ(bun.default_allocator) catch bun.outOfMemory());
+                }
+            } else if (library_value.isString()) {
+                compile_c.libraries.append(bun.default_allocator, library_value.getZigString(globalThis).toOwnedSliceZ(bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
+            } else {
+                return globalThis.throwInvalidArgumentTypeValue("library", "array of strings", library_value);
+            }
+        }
+
+        if (globalThis.hasException()) {
+            return .zero;
+        }
+
+        if (object.get(globalThis, "include")) |include_value| {
+            if (include_value.isArray()) {
+                var iter = include_value.arrayIterator(globalThis);
+                compile_c.include_dirs.ensureTotalCapacityPrecise(bun.default_allocator, iter.len) catch bun.outOfMemory();
+                while (iter.next()) |value| {
+                    if (!value.isString()) {
+                        return globalThis.throwInvalidArgumentTypeValue("include", "array of strings", value);
+                    }
+                    compile_c.include_dirs.appendAssumeCapacity(value.getZigString(globalThis).toOwnedSliceZ(bun.default_allocator) catch bun.outOfMemory());
+                }
+            } else if (include_value.isString()) {
+                compile_c.include_dirs.append(bun.default_allocator, include_value.getZigString(globalThis).toOwnedSliceZ(bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
+            } else {
+                return globalThis.throwInvalidArgumentTypeValue("include", "array of strings", include_value);
+            }
+        }
+
+        if (globalThis.hasException()) {
+            return .zero;
+        }
+
+        if (object.get(globalThis, "source")) |source_value| {
+            if (!source_value.isString()) {
+                return globalThis.throwInvalidArgumentTypeValue("source", "string", source_value);
+            }
+
+            const source_path = source_value.getZigString(globalThis).toOwnedSliceZ(bun.default_allocator) catch bun.outOfMemory();
+            compile_c.source_file = source_path;
+        }
+
+        if (globalThis.hasException()) {
+            return .zero;
+        }
+
+        // Now we compile the code with tinycc.
+        var tcc_state: ?*TCC.TCCState, var bytes_to_free_on_error = compile_c.compile(globalThis) catch |err| {
+            switch (err) {
+                error.DeferredErrors => {
+                    var combined = std.ArrayList(u8).init(bun.default_allocator);
+                    defer combined.deinit();
+                    var writer = combined.writer();
+                    writer.print("{d} errors while compiling {s}\n", .{ compile_c.deferred_errors.items.len, compile_c.source_file }) catch bun.outOfMemory();
+
+                    for (compile_c.deferred_errors.items) |deferred_error| {
+                        writer.print("{s}\n", .{deferred_error}) catch bun.outOfMemory();
+                    }
+
+                    globalThis.throw("{s}", .{combined.items});
+                    return .zero;
+                },
+                error.JSException => {
+                    return .zero;
+                },
+                error.OutOfMemory => {
+                    globalThis.throwOutOfMemory();
+                    return .zero;
+                },
+            }
+        };
+        defer {
+            if (tcc_state) |state| {
+                TCC.tcc_delete(state);
+            }
+            if (bytes_to_free_on_error.len > 0) {
+                bun.default_allocator.destroy(@as(*u8, @ptrCast(bytes_to_free_on_error)));
+            }
+        }
+
+        var obj = JSC.JSValue.createEmptyObject(globalThis, compile_c.symbols.map.count());
+        for (compile_c.symbols.map.values()) |*function| {
+            const function_name = function.base_name.?;
+            const allocator = bun.default_allocator;
+
+            function.compile(allocator) catch |err| {
+                const ret = JSC.toInvalidArguments("{s} when translating symbol \"{s}\"", .{
+                    @errorName(err),
+                    function_name,
+                }, globalThis);
+                globalThis.throwValue(ret);
+                return .zero;
+            };
+            switch (function.step) {
+                .failed => |err| {
+                    const res = ZigString.init(err.msg).toErrorInstance(globalThis);
+                    globalThis.throwValue(res);
+                    return .zero;
+                },
+                .pending => {
+                    globalThis.throw("Failed to compile (nothing happend!)", .{});
+                    return .zero;
+                },
+                .compiled => |*compiled| {
+                    const str = ZigString.init(bun.asByteSlice(function_name));
+                    const cb = JSC.NewRuntimeFunction(
+                        globalThis,
+                        &str,
+                        @as(u32, @intCast(function.arg_types.items.len)),
+                        bun.cast(JSC.JSHostFunctionPtr, compiled.ptr),
+                        false,
+                        true,
+                    );
+                    compiled.js_function = cb;
+                    obj.put(globalThis, &str, cb);
+                },
+            }
+        }
+
+        var lib = bun.default_allocator.create(FFI) catch bun.outOfMemory();
+        lib.* = .{
+            .dylib = null,
+            .shared_state = tcc_state,
+            .functions = compile_c.symbols.map,
+            .relocated_bytes_to_free = bytes_to_free_on_error,
+        };
+        tcc_state = null;
+        bytes_to_free_on_error = "";
+        compile_c.symbols = .{};
+
+        const js_object = lib.toJS(globalThis);
+        JSC.Codegen.JSFFI.symbolsValueSetCached(js_object, globalThis, obj);
+        return js_object;
+    }
 
     pub fn closeCallback(globalThis: *JSGlobalObject, ctx: JSValue) JSValue {
         var function = ctx.asPtr(Function);
@@ -153,12 +683,21 @@ pub const FFI = struct {
             this.dylib = null;
         }
 
+        if (this.shared_state) |state| {
+            this.shared_state = null;
+            TCC.tcc_delete(state);
+        }
+
         const allocator = VirtualMachine.get().allocator;
 
         for (this.functions.values()) |*val| {
             val.deinit(globalThis, allocator);
         }
         this.functions.deinit(allocator);
+        if (this.relocated_bytes_to_free) |relocated_bytes_to_free| {
+            this.relocated_bytes_to_free = null;
+            bun.default_allocator.free(relocated_bytes_to_free);
+        }
 
         return .undefined;
     }
@@ -727,26 +1266,11 @@ pub const FFI = struct {
             },
         };
 
-        const FFI_HEADER: string = @embedFile("./FFI.h");
-        pub inline fn ffiHeader() string {
-            if (comptime Environment.isDebug) {
-                const dirpath = comptime bun.Environment.base_path ++ (bun.Dirname.dirname(u8, @src().file) orelse "");
-                var buf: bun.PathBuffer = undefined;
-                const user = bun.getUserName(&buf) orelse "";
-                const dir = std.mem.replaceOwned(
-                    u8,
-                    default_allocator,
-                    dirpath,
-                    "jarred",
-                    user,
-                ) catch unreachable;
-                const runtime_path = std.fs.path.join(default_allocator, &[_]string{ dir, "FFI.h" }) catch unreachable;
-                const file = std.fs.openFileAbsolute(runtime_path, .{}) catch @panic("Missing bun/src/bun.js/api/FFI.h.");
-                defer file.close();
-                return file.readToEndAlloc(default_allocator, file.getEndPos() catch unreachable) catch unreachable;
-            } else {
-                return FFI_HEADER;
-            }
+        pub fn ffiHeader() string {
+            return if (Environment.embed_code)
+                @embedFile("./FFI.h")
+            else
+                bun.runtimeEmbedFile(.src, "bun.js/api/FFI.h");
         }
 
         pub fn handleTCCError(ctx: ?*anyopaque, message: [*c]const u8) callconv(.C) void {
@@ -764,24 +1288,6 @@ pub const FFI = struct {
 
             this.step = .{ .failed = .{ .msg = VirtualMachine.get().allocator.dupe(u8, msg) catch unreachable, .allocated = true } };
         }
-
-        extern fn pthread_jit_write_protect_np(enable: bool) callconv(.C) void;
-
-        const MyFunctionSStructWorkAround = struct {
-            JSVALUE_TO_INT64: *const fn (JSValue0: JSC.JSValue) callconv(.C) i64,
-            JSVALUE_TO_UINT64: *const fn (JSValue0: JSC.JSValue) callconv(.C) u64,
-            INT64_TO_JSVALUE: *const fn (arg0: *JSC.JSGlobalObject, arg1: i64) callconv(.C) JSC.JSValue,
-            UINT64_TO_JSVALUE: *const fn (arg0: *JSC.JSGlobalObject, arg1: u64) callconv(.C) JSC.JSValue,
-            bun_call: *const @TypeOf(JSC.C.JSObjectCallAsFunction),
-        };
-        const headers = @import("../bindings/headers.zig");
-        var workaround: MyFunctionSStructWorkAround = if (!JSC.is_bindgen) .{
-            .JSVALUE_TO_INT64 = headers.JSC__JSValue__toInt64,
-            .JSVALUE_TO_UINT64 = headers.JSC__JSValue__toUInt64NoTruncate,
-            .INT64_TO_JSVALUE = headers.JSC__JSValue__fromInt64NoTruncate,
-            .UINT64_TO_JSVALUE = headers.JSC__JSValue__fromUInt64NoTruncate,
-            .bun_call = &JSC.C.JSObjectCallAsFunction,
-        } else undefined;
 
         const tcc_options = "-std=c11 -nostdlib -Wl,--export-all-symbols" ++ if (Environment.isDebug) " -g" else "";
 
@@ -827,7 +1333,7 @@ pub const FFI = struct {
 
             const compilation_result = TCC.tcc_compile_string(
                 state,
-                source_code.items.ptr,
+                @ptrCast(source_code.items.ptr),
             );
             // did tcc report an error?
             if (this.step == .failed) {
@@ -886,64 +1392,6 @@ pub const FFI = struct {
             };
             return;
         }
-        const CompilerRT = struct {
-            noinline fn memset(
-                dest: [*]u8,
-                c: u8,
-                byte_count: usize,
-            ) callconv(.C) void {
-                @memset(dest[0..byte_count], c);
-            }
-
-            noinline fn memcpy(
-                noalias dest: [*]u8,
-                noalias source: [*]const u8,
-                byte_count: usize,
-            ) callconv(.C) void {
-                @memcpy(dest[0..byte_count], source[0..byte_count]);
-            }
-
-            pub fn define(state: *TCC.TCCState) void {
-                if (comptime Environment.isX64) {
-                    _ = TCC.tcc_define_symbol(state, "NEEDS_COMPILER_RT_FUNCTIONS", "1");
-                    // there
-                    _ = TCC.tcc_compile_string(state, @embedFile(("libtcc1.c")));
-                }
-            }
-
-            pub fn inject(state: *TCC.TCCState) void {
-                JSC.markBinding(@src());
-                _ = TCC.tcc_add_symbol(state, "memset", &memset);
-                _ = TCC.tcc_add_symbol(state, "memcpy", &memcpy);
-
-                _ = TCC.tcc_add_symbol(
-                    state,
-                    "JSVALUE_TO_INT64_SLOW",
-                    workaround.JSVALUE_TO_INT64,
-                );
-                _ = TCC.tcc_add_symbol(
-                    state,
-                    "JSVALUE_TO_UINT64_SLOW",
-                    workaround.JSVALUE_TO_UINT64,
-                );
-                if (!comptime JSC.is_bindgen) {
-                    std.mem.doNotOptimizeAway(headers.JSC__JSValue__toUInt64NoTruncate);
-                    std.mem.doNotOptimizeAway(headers.JSC__JSValue__toInt64);
-                    std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromInt64NoTruncate);
-                    std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromUInt64NoTruncate);
-                }
-                _ = TCC.tcc_add_symbol(
-                    state,
-                    "INT64_TO_JSVALUE_SLOW",
-                    workaround.INT64_TO_JSVALUE,
-                );
-                _ = TCC.tcc_add_symbol(
-                    state,
-                    "UINT64_TO_JSVALUE_SLOW",
-                    workaround.UINT64_TO_JSVALUE,
-                );
-            }
-        };
 
         pub fn compileCallback(
             this: *Function,
@@ -986,7 +1434,7 @@ pub const FFI = struct {
 
             const compilation_result = TCC.tcc_compile_string(
                 state,
-                source_code.items.ptr,
+                @ptrCast(source_code.items.ptr),
             );
             // did tcc report an error?
             if (this.step == .failed) {
@@ -1082,11 +1530,7 @@ pub const FFI = struct {
                 }
             }
 
-            if (comptime Environment.isRelease) {
-                try writer.writeAll(bun.asByteSlice(FFI_HEADER));
-            } else {
-                try writer.writeAll(ffiHeader());
-            }
+            try writer.writeAll(ffiHeader());
 
             // -- Generate the FFI function symbol
             try writer.writeAll("/* --- The Function To Call */\n");
@@ -1252,11 +1696,7 @@ pub const FFI = struct {
                 }
             }
 
-            if (comptime Environment.isRelease) {
-                try writer.writeAll(bun.asByteSlice(FFI_HEADER));
-            } else {
-                try writer.writeAll(ffiHeader());
-            }
+            try writer.writeAll(ffiHeader());
 
             // -- Generate the FFI function symbol
             try writer.writeAll("\n \n/* --- The Callback Function */\n");
@@ -1628,3 +2068,113 @@ pub const FFI = struct {
         }
     };
 };
+
+const CompilerRT = struct {
+    var compiler_rt_dir: [:0]const u8 = "";
+    const compiler_rt_sources = struct {
+        pub const @"stdbool.h" = @embedFile("./ffi-stdbool.h");
+        pub const @"stdarg.h" = @embedFile("./ffi-stdarg.h");
+        pub const @"stdnoreturn.h" = @embedFile("./ffi-stdnoreturn.h");
+        pub const @"stdalign.h" = @embedFile("./ffi-stdalign.h");
+        pub const @"tgmath.h" = @embedFile("./ffi-tgmath.h");
+        pub const @"stddef.h" = @embedFile("./ffi-stddef.h");
+        pub const @"varargs.h" = "// empty";
+    };
+
+    fn createCompilerRTDir() void {
+        const tmpdir = Fs.FileSystem.instance.tmpdir() catch return;
+        var bunCC = tmpdir.makeOpenPath("bun-cc", .{}) catch return;
+        defer bunCC.close();
+
+        inline for (comptime std.meta.declarations(compiler_rt_sources)) |decl| {
+            const source = @field(compiler_rt_sources, decl.name);
+            bunCC.writeFile(.{
+                .sub_path = decl.name,
+                .data = source,
+            }) catch {};
+        }
+        var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        compiler_rt_dir = bun.default_allocator.dupeZ(u8, bun.getFdPath(bunCC, &path_buf) catch return) catch bun.outOfMemory();
+    }
+    var create_compiler_rt_dir_once = std.once(createCompilerRTDir);
+
+    pub fn dir() ?[:0]const u8 {
+        create_compiler_rt_dir_once.call();
+        if (compiler_rt_dir.len == 0) return null;
+        return compiler_rt_dir;
+    }
+
+    const MyFunctionSStructWorkAround = struct {
+        JSVALUE_TO_INT64: *const fn (JSValue0: JSC.JSValue) callconv(.C) i64,
+        JSVALUE_TO_UINT64: *const fn (JSValue0: JSC.JSValue) callconv(.C) u64,
+        INT64_TO_JSVALUE: *const fn (arg0: *JSC.JSGlobalObject, arg1: i64) callconv(.C) JSC.JSValue,
+        UINT64_TO_JSVALUE: *const fn (arg0: *JSC.JSGlobalObject, arg1: u64) callconv(.C) JSC.JSValue,
+        bun_call: *const @TypeOf(JSC.C.JSObjectCallAsFunction),
+    };
+    const headers = @import("../bindings/headers.zig");
+    var workaround: MyFunctionSStructWorkAround = if (!JSC.is_bindgen) .{
+        .JSVALUE_TO_INT64 = headers.JSC__JSValue__toInt64,
+        .JSVALUE_TO_UINT64 = headers.JSC__JSValue__toUInt64NoTruncate,
+        .INT64_TO_JSVALUE = headers.JSC__JSValue__fromInt64NoTruncate,
+        .UINT64_TO_JSVALUE = headers.JSC__JSValue__fromUInt64NoTruncate,
+        .bun_call = &JSC.C.JSObjectCallAsFunction,
+    } else undefined;
+
+    noinline fn memset(
+        dest: [*]u8,
+        c: u8,
+        byte_count: usize,
+    ) callconv(.C) void {
+        @memset(dest[0..byte_count], c);
+    }
+
+    noinline fn memcpy(
+        noalias dest: [*]u8,
+        noalias source: [*]const u8,
+        byte_count: usize,
+    ) callconv(.C) void {
+        @memcpy(dest[0..byte_count], source[0..byte_count]);
+    }
+
+    pub fn define(state: *TCC.TCCState) void {
+        if (comptime Environment.isX64) {
+            _ = TCC.tcc_define_symbol(state, "NEEDS_COMPILER_RT_FUNCTIONS", "1");
+            // there
+            _ = TCC.tcc_compile_string(state, @embedFile(("libtcc1.c")));
+        }
+    }
+
+    pub fn inject(state: *TCC.TCCState) void {
+        _ = TCC.tcc_add_symbol(state, "memset", &memset);
+        _ = TCC.tcc_add_symbol(state, "memcpy", &memcpy);
+
+        _ = TCC.tcc_add_symbol(
+            state,
+            "JSVALUE_TO_INT64_SLOW",
+            workaround.JSVALUE_TO_INT64,
+        );
+        _ = TCC.tcc_add_symbol(
+            state,
+            "JSVALUE_TO_UINT64_SLOW",
+            workaround.JSVALUE_TO_UINT64,
+        );
+        if (!comptime JSC.is_bindgen) {
+            std.mem.doNotOptimizeAway(headers.JSC__JSValue__toUInt64NoTruncate);
+            std.mem.doNotOptimizeAway(headers.JSC__JSValue__toInt64);
+            std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromInt64NoTruncate);
+            std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromUInt64NoTruncate);
+        }
+        _ = TCC.tcc_add_symbol(
+            state,
+            "INT64_TO_JSVALUE_SLOW",
+            workaround.INT64_TO_JSVALUE,
+        );
+        _ = TCC.tcc_add_symbol(
+            state,
+            "UINT64_TO_JSVALUE_SLOW",
+            workaround.UINT64_TO_JSVALUE,
+        );
+    }
+};
+
+pub const Bun__FFI__cc = FFI.Bun__FFI__cc;

@@ -1,7 +1,7 @@
-import { test, expect } from "bun:test";
-import { writeFileSync, mkdirSync } from "node:fs";
-import { join } from "path";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "path";
 
 test("long chain of expressions does not cause stack overflow", () => {
   const chain = `globalThis.a = {};` + "\n" + `globalThis.a + globalThis.a +`.repeat(1000000) + `globalThis.a` + "\n";

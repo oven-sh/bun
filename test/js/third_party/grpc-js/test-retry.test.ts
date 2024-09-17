@@ -15,10 +15,10 @@
  *
  */
 
-import assert from "assert";
 import * as grpc from "@grpc/grpc-js";
+import assert from "assert";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, it } from "bun:test";
 import { TestClient, TestServer } from "./common";
-import { describe, it, afterAll, afterEach, beforeAll, beforeEach } from "bun:test";
 
 ["h2", "h2c"].forEach(protocol => {
   describe(`Retries ${protocol}`, () => {

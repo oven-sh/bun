@@ -1,55 +1,55 @@
 import { describe, expect, it, spyOn } from "bun:test";
-import { dirname, resolve, relative } from "node:path";
-import { promisify } from "node:util";
 import { bunEnv, bunExe, gc, getMaxFD, isIntelMacOS, isWindows, tempDirWithFiles, tmpdirSync } from "harness";
 import { isAscii } from "node:buffer";
 import fs, {
   closeSync,
+  constants,
+  copyFileSync,
+  createReadStream,
+  createWriteStream,
+  Dir,
+  Dirent,
   existsSync,
+  fdatasync,
+  fdatasyncSync,
+  fstatSync,
+  lstatSync,
   mkdirSync,
+  mkdtemp,
+  mkdtempSync,
+  openAsBlob,
   openSync,
+  promises,
   readdirSync,
   readFile,
   readFileSync,
+  readlinkSync,
   readSync,
-  writeFileSync,
-  writeSync,
-  statSync,
-  lstatSync,
-  copyFileSync,
-  rmSync,
+  readvSync,
+  realpathSync,
+  renameSync,
   rmdir,
   rmdirSync,
-  renameSync,
-  createReadStream,
-  createWriteStream,
-  promises,
-  unlinkSync,
-  mkdtempSync,
-  mkdtemp,
-  constants,
-  Dir,
-  Dirent,
+  rmSync,
   Stats,
-  realpathSync,
-  readlinkSync,
+  statSync,
   symlinkSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
   writevSync,
-  readvSync,
-  fstatSync,
-  fdatasync,
-  fdatasyncSync,
-  openAsBlob,
 } from "node:fs";
+import { dirname, relative, resolve } from "node:path";
+import { promisify } from "node:util";
 
 import _promises, { type FileHandle } from "node:fs/promises";
 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { spawnSync } from "bun";
 import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "./export-from.js";
 import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_ } from "./export-star-from.js";
-import { spawnSync } from "bun";
 
 const Buffer = globalThis.Buffer || Uint8Array;
 
@@ -1883,8 +1883,10 @@ describe("fs.WriteStream", () => {
     });
 
     stream.on("finish", () => {
-      expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
-      done();
+      Bun.sleep(1000).then(() => {
+        expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
+        done();
+      });
     });
   });
 
@@ -2561,6 +2563,27 @@ describe("fs/promises", () => {
 
     expect((await promise).path).toBe(".");
   });
+});
+
+it("fstatSync(decimal)", () => {
+  expect(() => fstatSync(eval("1.0"))).not.toThrow();
+  expect(() => fstatSync(eval("0.0"))).not.toThrow();
+  expect(() => fstatSync(eval("2.0"))).not.toThrow();
+  expect(() => fstatSync(eval("-1.0"))).toThrow();
+  expect(() => fstatSync(eval("Infinity"))).toThrow();
+  expect(() => fstatSync(eval("-Infinity"))).toThrow();
+  expect(() =>
+    fstatSync(
+      // > max int32 is not valid in most C APIs still.
+      2147483647 + 1,
+    ),
+  ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+  expect(() =>
+    fstatSync(
+      // max int32 is a valid fd
+      2147483647,
+    ),
+  ).toThrow(expect.objectContaining({ code: "EBADF" }));
 });
 
 it("fstat on a large file", () => {

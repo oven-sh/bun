@@ -1,5 +1,5 @@
 // bun:test automatically rewrites this import to bun:test when run in bun
-import { test, expect } from "@jest/globals";
+import { expect, test } from "@jest/globals";
 
 const N = parseInt(process.env.RUN_COUNT || "10000", 10);
 if (!Number.isSafeInteger(N)) {

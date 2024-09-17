@@ -1,25 +1,14 @@
 import { file, gc, Serve, serve, Server } from "bun";
-import { afterEach, describe, it, expect, afterAll, mock } from "bun:test";
+import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, dumpStats, isIPv4, isIPv6, isPosix, tls, tmpdirSync } from "harness";
 import { join, resolve } from "path";
-import {
-  bunExe,
-  bunEnv,
-  dumpStats,
-  isPosix,
-  isIPv6,
-  tmpdirSync,
-  isIPv4,
-  rejectUnauthorizedScope,
-  tls,
-  isWindows,
-} from "harness";
 // import { renderToReadableStream } from "react-dom/server";
 // import app_jsx from "./app.jsx";
-import { spawn } from "child_process";
-import { tmpdir } from "os";
 import { heapStats } from "bun:jsc";
+import { spawn } from "child_process";
 import net from "node:net";
+import { tmpdir } from "os";
 
 let renderToReadableStream: any = null;
 let app_jsx: any = null;
@@ -135,6 +124,95 @@ it("should be able to abruptly stop the server", async () => {
   }
 });
 
+// https://github.com/oven-sh/bun/issues/6758
+// https://github.com/oven-sh/bun/issues/4517
+it("should call cancel() on ReadableStream when the Request is aborted", async () => {
+  let waitForCancel = Promise.withResolvers();
+  const abortedFn = mock(() => {
+    console.log("'abort' event fired", new Date());
+  });
+  const cancelledFn = mock(() => {
+    console.log("'cancel' function called", new Date());
+    waitForCancel.resolve();
+  });
+  let onIncomingRequest = Promise.withResolvers();
+  await runTest(
+    {
+      async fetch(req) {
+        req.signal.addEventListener("abort", abortedFn);
+        // Give it a chance to start the stream so that the cancel function can be called.
+        setTimeout(() => {
+          console.log("'onIncomingRequest' function called", new Date());
+          onIncomingRequest.resolve();
+        }, 0);
+        return new Response(
+          new ReadableStream({
+            async pull(controller) {
+              await waitForCancel.promise;
+            },
+            cancel: cancelledFn,
+          }),
+        );
+      },
+    },
+    async server => {
+      const controller = new AbortController();
+      const signal = controller.signal;
+      const request = fetch(server.url, { signal });
+      await onIncomingRequest.promise;
+      controller.abort();
+      expect(async () => await request).toThrow();
+      // Delay for one run of the event loop.
+      await Bun.sleep(1);
+
+      expect(abortedFn).toHaveBeenCalled();
+      expect(cancelledFn).toHaveBeenCalled();
+    },
+  );
+});
+for (let withDelay of [true, false]) {
+  for (let connectionHeader of ["keepalive", "not keepalive"] as const) {
+    it(`should NOT call cancel() on ReadableStream that finished normally for ${connectionHeader} request and ${withDelay ? "with" : "without"} delay`, async () => {
+      const cancelledFn = mock(() => {
+        console.log("'cancel' function called", new Date());
+      });
+      let onIncomingRequest = Promise.withResolvers();
+      await runTest(
+        {
+          async fetch(req) {
+            return new Response(
+              new ReadableStream({
+                async pull(controller) {
+                  controller.enqueue(new Uint8Array([1, 2, 3]));
+                  if (withDelay) await Bun.sleep(1);
+                  controller.close();
+                },
+                cancel: cancelledFn,
+              }),
+            );
+          },
+        },
+        async server => {
+          const resp = await fetch(
+            server.url,
+            connectionHeader === "keepalive"
+              ? {}
+              : {
+                  headers: {
+                    "Connection": "close",
+                  },
+                  keepalive: false,
+                },
+          );
+          await resp.blob();
+          // Delay for one run of the event loop.
+          await Bun.sleep(1);
+          expect(cancelledFn).not.toHaveBeenCalled();
+        },
+      );
+    });
+  }
+}
 describe("1000 uploads & downloads in batches of 64 do not leak ReadableStream", () => {
   for (let isDirect of [true, false] as const) {
     it(
@@ -1960,3 +2038,20 @@ it("allow requestIP after async operation", async () => {
   expect(ip.address).toBeString();
   expect(ip.family).toBeString();
 });
+
+it("allow custom timeout per request", async () => {
+  using server = Bun.serve({
+    idleTimeout: 1,
+    port: 0,
+    async fetch(req, server) {
+      server.timeout(req, 60);
+      await Bun.sleep(10000); //uWS precision is not great
+
+      return new Response("Hello, World!");
+    },
+  });
+  expect(server.timeout).toBeFunction();
+  const res = await fetch(new URL("/long-timeout", server.url.origin));
+  expect(res.status).toBe(200);
+  expect(res.text()).resolves.toBe("Hello, World!");
+}, 20_000);

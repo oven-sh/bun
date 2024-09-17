@@ -1,4 +1,5 @@
 import { LoaderKeys } from "../api/schema";
+import NodeErrors from "../bun.js/bindings/ErrorCode.ts";
 import { sliceSourceCode } from "./builtin-parser";
 import { registerNativeCall } from "./generate-js2native";
 
@@ -11,6 +12,14 @@ export const replacements: ReplacementRule[] = [
   { from: /\bnew TypeError\b/g, to: "$makeTypeError" },
   { from: /\bexport\s*default/g, to: "$exports =" },
 ];
+
+for (let i = 0; i < NodeErrors.length; i++) {
+  const [code] = NodeErrors[i];
+  replacements.push({
+    from: new RegExp(`\\b\\__intrinsic__${code}\\(`, "g"),
+    to: `$makeErrorWithCode(${i}, `,
+  });
+}
 
 // These rules are run on the entire file, including within strings.
 export const globalReplacements: ReplacementRule[] = [

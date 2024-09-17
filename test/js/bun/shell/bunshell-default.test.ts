@@ -1,6 +1,5 @@
-import { $ } from "bun";
-import { bunExe, createTestBuilder } from "./test_builder";
 import { bunEnv } from "harness";
+import { bunExe, createTestBuilder } from "./test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
 
 test("default throw on command failure", async () => {

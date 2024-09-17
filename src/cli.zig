@@ -242,7 +242,7 @@ pub const Arguments = struct {
         clap.parseParam("--target <STR>                   The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\"") catch unreachable,
         clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
         clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
-        clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'inline', 'external', or 'none'") catch unreachable,
+        clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'linked', 'inline', 'external', or 'none'") catch unreachable,
         clap.parseParam("--format <STR>                   Specifies the module format to build to. Only \"esm\" is supported.") catch unreachable,
         clap.parseParam("--root <STR>                     Root directory used for multiple entry points") catch unreachable,
         clap.parseParam("--splitting                      Enable code splitting") catch unreachable,
@@ -252,6 +252,7 @@ pub const Arguments = struct {
         clap.parseParam("--entry-naming <STR>             Customize entry point filenames. Defaults to \"[dir]/[name].[ext]\"") catch unreachable,
         clap.parseParam("--chunk-naming <STR>             Customize chunk filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
         clap.parseParam("--asset-naming <STR>             Customize asset filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
+        clap.parseParam("--react-fast-refresh             Enable React Fast Refresh transform (does not emit hot-module code, use this for testing)") catch unreachable,
         clap.parseParam("--server-components              Enable React Server Components (experimental)") catch unreachable,
         clap.parseParam("--no-bundle                      Transpile file only, do not bundle") catch unreachable,
         clap.parseParam("--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed.") catch unreachable,
@@ -567,7 +568,7 @@ pub const Arguments = struct {
 
         ctx.passthrough = args.remaining();
 
-        if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .BuildCommand) {
+        if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .BuildCommand or cmd == .TestCommand) {
             if (args.options("--conditions").len > 0) {
                 opts.conditions = args.options("--conditions");
             }
@@ -606,7 +607,13 @@ pub const Arguments = struct {
                     ctx.runtime_options.eval.eval_and_print = true;
                 } else {
                     opts.port = std.fmt.parseInt(u16, port_str, 10) catch {
-                        Output.errGeneric("Invalid value for --port: \"{s}\". Must be a number\n", .{port_str});
+                        Output.errFmt(
+                            bun.fmt.outOfRange(port_str, .{
+                                .field_name = "--port",
+                                .min = 0,
+                                .max = std.math.maxInt(u16),
+                            }),
+                        );
                         Output.note("To evaluate TypeScript here, use 'bun --print'", .{});
                         Global.exit(1);
                     };
@@ -731,9 +738,9 @@ pub const Arguments = struct {
                 !ctx.bundler_options.minify_whitespace;
 
             if (args.options("--external").len > 0) {
-                var externals = try allocator.alloc([]u8, args.options("--external").len);
+                var externals = try allocator.alloc([]const u8, args.options("--external").len);
                 for (args.options("--external"), 0..) |external, i| {
-                    externals[i] = @constCast(external);
+                    externals[i] = external;
                 }
                 opts.external = externals;
             }
@@ -809,16 +816,27 @@ pub const Arguments = struct {
 
             if (args.option("--format")) |format_str| {
                 const format = options.Format.fromString(format_str) orelse {
-                    Output.prettyErrorln("<r><red>error<r>: Invalid format - must be esm, cjs, or iife", .{});
+                    Output.errGeneric("Invalid format - must be esm, cjs, or iife", .{});
                     Global.crash();
                 };
+
                 switch (format) {
-                    .esm => {},
-                    else => {
-                        Output.prettyErrorln("<r><red>error<r>: Formats besides 'esm' are not implemented", .{});
-                        Global.crash();
+                    .internal_kit_dev => {
+                        bun.Output.warn("--format={s} is for debugging only, and may experience breaking changes at any moment", .{format_str});
+                        bun.Output.flush();
                     },
+                    .cjs => {
+                        // Make this a soft error in debug to allow experimenting with these flags.
+                        const function = if (Environment.isDebug) Output.debugWarn else Output.errGeneric;
+                        function("Format '{s}' are not implemented", .{@tagName(format)});
+                        if (!Environment.isDebug) {
+                            Global.crash();
+                        }
+                    },
+                    else => {},
                 }
+
+                ctx.bundler_options.output_format = format;
             }
 
             if (args.flag("--splitting")) {
@@ -837,10 +855,12 @@ pub const Arguments = struct {
                 ctx.bundler_options.asset_naming = try strings.concat(allocator, &.{ "./", bun.strings.removeLeadingDotSlash(asset_naming) });
             }
 
-            if (comptime FeatureFlags.react_server_components) {
-                if (args.flag("--server-components")) {
-                    ctx.bundler_options.react_server_components = true;
-                }
+            if (args.flag("--server-components")) {
+                ctx.bundler_options.react_server_components = true;
+            }
+
+            if (args.flag("--react-fast-refresh")) {
+                ctx.bundler_options.react_fast_refresh = true;
             }
 
             if (args.option("--sourcemap")) |setting| {
@@ -1097,6 +1117,7 @@ pub const HelpCommand = struct {
         \\  <b><blue>remove<r>    <d>{s:<16}<r>     Remove a dependency from package.json <d>(bun rm)<r>
         \\  <b><blue>update<r>    <d>{s:<16}<r>     Update outdated dependencies
         \\  <b><blue>outdated<r>                       Display latest versions of outdated dependencies
+        \\  <b><blue>pack<r>                           Archive the current workspace package
         \\  <b><blue>link<r>      <d>[\<package\>]<r>          Register or link a local npm package
         \\  <b><blue>unlink<r>                         Unregister a local npm package
         \\  <b><blue>patch <d>\<pkg\><r>                    Prepare a package for patching
@@ -1300,6 +1321,7 @@ pub const Command = struct {
             chunk_naming: []const u8 = "./[name]-[hash].[ext]",
             asset_naming: []const u8 = "./[name]-[hash].[ext]",
             react_server_components: bool = false,
+            react_fast_refresh: bool = false,
             code_splitting: bool = false,
             transform_only: bool = false,
             inline_entrypoint_import_meta_main: bool = false,
@@ -1308,6 +1330,7 @@ pub const Command = struct {
             minify_identifiers: bool = false,
             ignore_dce_annotations: bool = false,
             emit_dce_annotations: bool = true,
+            output_format: options.Format = .esm,
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
@@ -2421,7 +2444,9 @@ pub const Command = struct {
                     Output.flush();
                 },
                 .OutdatedCommand => {
-                    Install.PackageManager.CommandLineArguments.printHelp(.outdated);
+                    Install.PackageManager.CommandLineArguments.printHelp(switch (cmd) {
+                        .OutdatedCommand => .outdated,
+                    });
                 },
                 else => {
                     HelpCommand.printWithReason(.explicit);

@@ -1,8 +1,6 @@
 # clang: https://clang.llvm.org/docs/CommandGuide/clang.html
 # clang-cl: https://clang.llvm.org/docs/UsersManual.html#id11
 
-# --- Macros ---
-
 macro(setb variable)
   if(${variable})
     set(${variable} ON)
@@ -11,10 +9,9 @@ macro(setb variable)
   endif()
 endmacro()
 
-set(targets WIN32 APPLE UNIX LINUX)
-
-foreach(target ${targets})
-  setb(${target})
+set(bvariables WIN32 APPLE UNIX LINUX)
+foreach(bvariable ${bvariables})
+  setb(${bvariable})
 endforeach()
 
 # --- CPU target ---

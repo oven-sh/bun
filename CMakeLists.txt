@@ -40,6 +40,9 @@ include(SetupRust)
 
 include(BuildBun)
 print_compiler_flags()
+# resolve_dependencies()
+
+# message(FATAL_ERROR "DONE")
 
 # --- Analysis ---
 

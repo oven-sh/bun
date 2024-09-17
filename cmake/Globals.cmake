@@ -347,8 +347,6 @@ function(register_command)
     list(APPEND CMD_EFFECTIVE_DEPENDS ${source})
   endforeach()
 
-  list(APPEND CMD_EFFECTIVE_DEPENDS ${CMD_CWD})
-
   set(CMD_EFFECTIVE_OUTPUTS)
 
   foreach(output ${CMD_OUTPUTS})
@@ -1029,17 +1027,21 @@ function(resolve_dependencies)
 
   list(LENGTH input_files input_length)
   math(EXPR max_input_index "${input_length} - 1")
-  foreach(i RANGE 0 ${max_input_index})
-    list(GET input_files ${i} file0)
-    list(GET input_targets ${i} target0)
-    message(STATUS "${file0} -> ${target0}")
-  endforeach()
-
   list(LENGTH output_files output_length)
   math(EXPR max_output_index "${output_length} - 1")
-  foreach(i RANGE 0 ${max_output_index})
-    list(GET output_files ${i} file0)
-    list(GET output_targets ${i} target0)
-    message(STATUS "${file0} -> ${target0}")
+
+  foreach(i RANGE 0 ${max_input_index})
+    list(GET input_files ${i} input_file)
+    list(GET input_targets ${i} input_target)
+
+    foreach(j RANGE 0 ${max_output_index})
+      list(GET output_files ${j} output_file)
+      list(GET output_targets ${j} output_target)
+
+      if(input_file MATCHES "^${output_file}")
+        message(STATUS "${input_target} depends on ${output_target} because ${input_file} -> ${output_file}")
+        add_dependencies(${input_target} ${output_target} ${output_file})
+      endif()
+    endforeach()
   endforeach()
 endfunction()

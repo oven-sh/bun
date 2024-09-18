@@ -48,8 +48,18 @@ const alias = function (proto, to, from) {
 //
 
 const constants = $cpp("Constants.cpp", "ZlibConstants");
-const { DEFLATE, INFLATE, GZIP, GUNZIP, DEFLATERAW, INFLATERAW, UNZIP, BROTLI_DECODE, BROTLI_ENCODE } = constants;
-const modes = { DEFLATE, INFLATE, GZIP, GUNZIP, DEFLATERAW, INFLATERAW, UNZIP, BROTLI_DECODE, BROTLI_ENCODE } as const;
+const modes = {
+  DEFLATE: 1,
+  INFLATE: 2,
+  GZIP: 3,
+  GUNZIP: 4,
+  DEFLATERAW: 5,
+  INFLATERAW: 6,
+  UNZIP: 7,
+  BROTLI_DECODE: 8,
+  BROTLI_ENCODE: 9,
+} as const;
+const { DEFLATE, INFLATE, GZIP, GUNZIP, DEFLATERAW, INFLATERAW, UNZIP, BROTLI_DECODE, BROTLI_ENCODE } = modes;
 type Mode = (typeof modes)[keyof typeof modes];
 
 //

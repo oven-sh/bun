@@ -2,12 +2,19 @@ import type { InspectorEventMap } from "../../../bun-inspector-protocol/src/insp
 import type { JSC } from "../../../bun-inspector-protocol/src/protocol";
 import type { DAP } from "../protocol";
 // @ts-ignore
-import type { ChildProcess } from "node:child_process";
-import { spawn } from "node:child_process";
+import { spawn, ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { WebSocketInspector, remoteObjectToString } from "../../../bun-inspector-protocol/index";
-import { UnixSignal, randomUnixPath } from "./signal";
+import { WebSocketSignal } from "./signal";
 import { Location, SourceMap } from "./sourcemap";
+import { createServer, AddressInfo } from "node:net";
+
+export function getAvailablePort(): number {
+  const server = createServer().listen(0);
+  const port = (server.address() as AddressInfo).port;
+  server.close();
+  return port;
+}
 
 const capabilities: DAP.Capabilities = {
   supportsConfigurationDoneRequest: true,
@@ -215,6 +222,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   #variables: Map<number, Variable>;
   #initialized?: InitializeRequest;
   #options?: DebuggerOptions;
+  #signal?: WebSocketSignal;
 
   constructor(url?: string | URL) {
     super();
@@ -466,10 +474,6 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       throw new Error("No program specified. Did you set the 'program' property in your launch.json?");
     }
 
-    if (!isJavaScript(program)) {
-      throw new Error("Program must be a JavaScript or TypeScript file.");
-    }
-
     const processArgs = [...runtimeArgs, program, ...args];
 
     if (isTestJavaScript(program) && !runtimeArgs.includes("test")) {
@@ -480,108 +484,59 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       processArgs.unshift(watchMode === "hot" ? "--hot" : "--watch");
     }
 
-    const processEnv = strictEnv
-      ? {
-          ...env,
-        }
-      : {
-          ...process.env,
-          ...env,
-        };
+    const processEnv: Record<string, string> = strictEnv ? { ...env } : { ...process.env, ...env };
 
-    const url = `ws+unix://${randomUnixPath()}`;
-    const signal = new UnixSignal();
+    // Create WebSocketSignal
+    const signalUrl = `ws://localhost:${getAvailablePort()}`;
+    this.#signal = new WebSocketSignal(signalUrl);
 
-    signal.on("Signal.received", () => {
-      this.#attach({ url });
-    });
+    // Set BUN_INSPECT_NOTIFY to signal's URL
+    processEnv["BUN_INSPECT_NOTIFY"] = this.#signal.url;
 
-    this.once("Adapter.terminated", () => {
-      signal.close();
-    });
+    // Set BUN_INSPECT to the debugger's inspector URL with ?wait=1
+    processEnv["BUN_INSPECT"] = `${this.#inspector.url}?wait=1`;
 
-    const query = stopOnEntry ? "break=1" : "wait=1";
-    processEnv["BUN_INSPECT"] = `${url}?${query}`;
-    processEnv["BUN_INSPECT_NOTIFY"] = signal.url;
-
-    // This is probably not correct, but it's the best we can do for now.
-    processEnv["FORCE_COLOR"] = "1";
-    processEnv["BUN_QUIET_DEBUG_LOGS"] = "1";
-    processEnv["BUN_DEBUG_QUIET_LOGS"] = "1";
-
-    const started = await this.#spawn({
-      command: runtime,
-      args: processArgs,
-      env: processEnv,
+    // Spawn the process
+    const child = spawn(runtime, processArgs, {
       cwd,
-      isDebugee: true,
+      env: processEnv,
+      stdio: ["ignore", "pipe", "pipe"],
     });
 
-    if (!started) {
-      throw new Error("Program could not be started.");
-    }
-  }
+    this.#process = child;
 
-  async #spawn(options: {
-    command: string;
-    args?: string[];
-    cwd?: string;
-    env?: Record<string, string | undefined>;
-    isDebugee?: boolean;
-  }): Promise<boolean> {
-    const { command, args = [], cwd, env, isDebugee } = options;
-    const request = { command, args, cwd, env };
-    this.emit("Process.requested", request);
+    // Attach event listeners for the process
+    child.stderr?.setEncoding("utf-8");
+    child.stderr?.on("data", data => this.emit("Process.stderr", data));
+    child.on("exit", (code, signal) => {
+      this.emit("Process.exited", code ?? signal ?? null, signal ?? null);
+    });
 
-    let subprocess: ChildProcess;
-    try {
-      subprocess = spawn(command, args, {
-        ...request,
-        stdio: ["ignore", "pipe", "pipe"],
+    this.emit("Process.spawned", child);
+
+    // Wait for the signal from the debuggee
+    await this.#signal.ready;
+    await new Promise<void>((resolve, reject) => {
+      this.#signal!.once("Signal.received", () => {
+        resolve();
       });
-    } catch (cause) {
-      this.emit("Process.exited", new Error("Failed to spawn process", { cause }), null);
-      return false;
+      this.#signal!.once("Signal.error", error => {
+        reject(error);
+      });
+    });
+
+    // Connect the debugger to the debuggee
+    const connected = await this.#inspector.start();
+    if (!connected) {
+      this.terminate();
     }
 
-    subprocess.on("spawn", () => {
-      this.emit("Process.spawned", subprocess);
-
-      if (isDebugee) {
-        this.#process = subprocess;
-        this.#emit("process", {
-          name: `${command} ${args.join(" ")}`,
-          systemProcessId: subprocess.pid,
-          isLocalProcess: true,
-          startMethod: "launch",
-        });
-      }
-    });
-
-    subprocess.on("exit", (code, signal) => {
-      this.emit("Process.exited", code, signal);
-
-      if (isDebugee) {
-        this.#process = undefined;
-        this.#emit("exited", {
-          exitCode: code ?? -1,
-        });
-        this.#emit("terminated");
-      }
-    });
-
-    subprocess.stdout?.on("data", data => {
-      this.emit("Process.stdout", data.toString());
-    });
-
-    subprocess.stderr?.on("data", data => {
-      this.emit("Process.stderr", data.toString());
-    });
-
-    return new Promise(resolve => {
-      subprocess.on("spawn", () => resolve(true));
-      subprocess.on("exit", () => resolve(false));
-      subprocess.on("error", () => resolve(false));
+    // Additional setup if needed
+    this.emit("Adapter.process", {
+      name: `${runtime} ${processArgs.join(" ")}`,
+      systemProcessId: child.pid,
+      isLocalProcess: true,
+      startMethod: "launch",
     });
   }
 
@@ -2107,7 +2062,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
   close(): void {
     this.#process?.kill();
-    // this.#signal?.close();
+    this.#signal?.close();
     this.#inspector.close();
     this.#reset();
   }

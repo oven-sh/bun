@@ -28,11 +28,11 @@ export default function (
     Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
   }
 
-  const unix = process.env["BUN_INSPECT_NOTIFY"];
-  if (unix) {
-    const { protocol, pathname } = parseUrl(unix);
-    if (protocol === "unix:") {
-      notify(pathname);
+  const notifyUrl = process.env["BUN_INSPECT_NOTIFY"];
+  if (notifyUrl) {
+    const { protocol } = new URL(notifyUrl);
+    if (protocol === "ws:" || protocol === "wss:") {
+      notifyWebSocket(notifyUrl);
     }
   }
 }
@@ -73,7 +73,7 @@ class Debugger {
   #listen(): void {
     const { protocol, hostname, port, pathname } = this.#url;
 
-    if (protocol === "ws:" || protocol === "ws+tcp:") {
+    if (protocol === "ws:" || protocol === "wss:") {
       const server = Bun.serve({
         hostname,
         port,
@@ -85,16 +85,7 @@ class Debugger {
       return;
     }
 
-    if (protocol === "ws+unix:") {
-      Bun.serve({
-        unix: pathname,
-        fetch: this.#fetch.bind(this),
-        websocket: this.#websocket,
-      });
-      return;
-    }
-
-    throw new TypeError(`Unsupported protocol: '${protocol}' (expected 'ws:', 'ws+unix:', or 'unix:')`);
+    throw new TypeError(`Unsupported protocol: '${protocol}' (expected 'ws:' or 'wss:')`);
   }
 
   get #websocket(): WebSocketHandler<Connection> {
@@ -264,34 +255,11 @@ const defaultHostname = "localhost";
 const defaultPort = 6499;
 
 function parseUrl(input: string): URL {
-  if (input.startsWith("ws://") || input.startsWith("ws+unix://") || input.startsWith("unix://")) {
+  try {
     return new URL(input);
+  } catch {
+    throw new Error(`Invalid URL: ${input}`);
   }
-  const url = new URL(`ws://${defaultHostname}:${defaultPort}/${randomId()}`);
-  for (const part of input.split(/(\[[a-z0-9:]+\])|:/).filter(Boolean)) {
-    if (/^\d+$/.test(part)) {
-      url.port = part;
-      continue;
-    }
-    if (part.startsWith("[")) {
-      url.hostname = part;
-      continue;
-    }
-    if (part.startsWith("/")) {
-      url.pathname = part;
-      continue;
-    }
-    const [hostname, ...pathnames] = part.split("/");
-    if (/^\d+$/.test(hostname)) {
-      url.port = hostname;
-    } else {
-      url.hostname = hostname;
-    }
-    if (pathnames.length) {
-      url.pathname = `/${pathnames.join("/")}`;
-    }
-  }
-  return url;
 }
 
 function randomId() {
@@ -321,18 +289,16 @@ function reset(): string {
   return "";
 }
 
-function notify(unix: string): void {
-  Bun.connect({
-    unix,
-    socket: {
-      open: socket => {
-        socket.end("1");
-      },
-      data: () => {}, // required or it errors
-    },
-  }).finally(() => {
-    // Best-effort
-  });
+function notifyWebSocket(url: string): void {
+  const ws = new WebSocket(url);
+  ws.onopen = () => {
+    ws.send("1");
+    ws.close();
+  };
+  ws.onerror = error => {
+    // Handle error if needed
+    console.error("WebSocket error:", error);
+  };
 }
 
 function exit(...args: unknown[]): never {

@@ -1,8 +1,7 @@
 import { DebugSession } from "@vscode/debugadapter";
-import { tmpdir } from "node:os";
 import * as vscode from "vscode";
 import type { DAP } from "../../../bun-debug-adapter-protocol";
-import { DebugAdapter, UnixSignal } from "../../../bun-debug-adapter-protocol";
+import { DebugAdapter, getAvailablePort, WebSocketSignal } from "../../../bun-debug-adapter-protocol";
 
 export const DEBUG_CONFIGURATION: vscode.DebugConfiguration = {
   type: "bun",
@@ -176,7 +175,7 @@ class FileDebugSession extends DebugSession {
   constructor(sessionId?: string) {
     super();
     const uniqueId = sessionId ?? Math.random().toString(36).slice(2);
-    const url = `ws+unix://${tmpdir()}/${uniqueId}.sock`;
+    const url = `ws://localhost:${getAvailablePort()}`;
 
     this.adapter = new DebugAdapter(url);
     this.adapter.on("Adapter.response", response => this.sendResponse(response));
@@ -204,11 +203,12 @@ class FileDebugSession extends DebugSession {
 }
 
 class TerminalDebugSession extends FileDebugSession {
-  readonly signal: UnixSignal;
+  readonly signal: WebSocketSignal;
 
   constructor() {
     super();
-    this.signal = new UnixSignal();
+    const signalUrl = `ws://localhost:${getAvailablePort()}`;
+    this.signal = new WebSocketSignal(signalUrl);
     this.signal.on("Signal.received", () => {
       vscode.debug.startDebugging(undefined, {
         ...ATTACH_CONFIGURATION,

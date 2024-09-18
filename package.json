@@ -50,10 +50,9 @@
     "test": "node scripts/runner.node.mjs ./build/bun-debug",
     "test:release": "node scripts/runner.node.mjs ./build-release/bun",
     "banned": "bun packages/bun-internal-test/src/linter.ts",
-    "zig": "vendor/zig/zig.exe",
-    "zig:fmt": "bun run zig fmt src/*.zig src/*/*.zig src/*/*/*.zig src/*/*/*/*.zig",
-    "zig:check": "bun run zig build check --summary new",
-    "zig:check-all": "bun run zig build check-all --summary new",
-    "zig:check-windows": "bun run zig build check-windows --summary new"
+    "zig:fmt": "zig fmt src/*.zig src/*/*.zig src/*/*/*.zig src/*/*/*/*.zig",
+    "zig:check": "zig build check --summary new",
+    "zig:check-all": "zig build check-all --summary new",
+    "zig:check-windows": "zig build check-windows --summary new"
   }
 }

@@ -2774,7 +2774,7 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessDebugPort,
     JSValue value = JSValue::decode(encodedValue);
 
     if (!value.isInt32AsAnyInt()) {
-        Bun::ERR::OUT_OF_RANGE(scope, globalObject, "debugPort"_s, "0 or >= 1024 and <= 65535"_s, value);
+        Bun::ERR::OUT_OF_RANGE(scope, globalObject, "process.debugPort"_s, "0 or >= 1024 and <= 65535"_s, value);
         return false;
     }
 
@@ -2782,7 +2782,7 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessDebugPort,
 
     if (port != 0) {
         if (port < 1024 || port > 65535) {
-            Bun::ERR::OUT_OF_RANGE(scope, globalObject, "debugPort"_s, "0 or >= 1024 and <= 65535"_s, value);
+            Bun::ERR::OUT_OF_RANGE(scope, globalObject, "process.debugPort"_s, "0 or >= 1024 and <= 65535"_s, value);
             return false;
         }
     }

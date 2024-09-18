@@ -655,6 +655,54 @@ declare module "bun:ffi" {
      * Map of symbols to load where the key is the symbol name and the value is the {@link FFIFunction}
      */
     symbols: Fns;
+
+    /**
+     * Map of symbols to define where the key is the symbol name and the value is the symbol value
+     *
+     * Equivalent to `-D` option in gcc/clang.
+     *
+     * @example
+     * ```js
+     * import { cc } from "bun:ffi";
+     * const {symbols: {hello}} = cc({
+     *   source: hello,
+     *   define: {
+     *     "NDEBUG": "1",
+     *   },
+     *   symbols: {
+     *     hello: {
+     *       returns: "cstring",
+     *       args: [],
+     *     },
+     *   },
+     * });
+     * ```
+     */
+    define?: Record<string, string>;
+
+    /**
+     * Flags to pass to the compiler. Note: we do not make gurantees about which specific version of the compiler is used.
+     *
+     * @default "-std=c11 -Wl,--export-all-symbols -g -O2"
+     *
+     * This is useful for passing macOS frameworks to link against. Or if there are other options you want to pass to the compiler.
+     *
+     * @example
+     * ```js
+     * import { cc } from "bun:ffi";
+     * const {symbols: {hello}} = cc({
+     *   source: hello,
+     *   flags: ["-framework CoreFoundation", "-framework Security"],
+     *   symbols: {
+     *     hello: {
+     *       returns: "cstring",
+     *       args: [],
+     *     },
+     *   },
+     * });
+     * ```
+     */
+    flags?: string | string[];
   }): Library<Fns>;
 
   /**

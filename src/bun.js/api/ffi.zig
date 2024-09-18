@@ -88,14 +88,64 @@ pub const FFI = struct {
     pub fn finalize(_: *FFI) callconv(.C) void {}
 
     const CompileC = struct {
-        source_file: [:0]const u8 = "",
+        source: Source = .{ .file = "" },
+        current_file_for_errors: [:0]const u8 = "",
 
-        libraries: std.ArrayListUnmanaged([:0]const u8) = .{},
-        library_dirs: std.ArrayListUnmanaged([:0]const u8) = .{},
-        include_dirs: std.ArrayListUnmanaged([:0]const u8) = .{},
+        libraries: StringArray = .{},
+        library_dirs: StringArray = .{},
+        include_dirs: StringArray = .{},
         symbols: SymbolsMap = .{},
-
+        define: std.ArrayListUnmanaged([2][:0]const u8) = .{},
+        // Flags to replace the default flags
+        flags: [:0]const u8 = "",
         deferred_errors: std.ArrayListUnmanaged([]const u8) = .{},
+
+        const Source = union(enum) {
+            file: [:0]const u8,
+            files: std.ArrayListUnmanaged([:0]const u8),
+
+            pub fn first(this: *const Source) [:0]const u8 {
+                return switch (this.*) {
+                    .file => this.file,
+                    .files => this.files.items[0],
+                };
+            }
+
+            pub fn deinit(this: *Source, allocator: Allocator) void {
+                switch (this.*) {
+                    .file => if (this.file.len > 0) allocator.free(this.file),
+                    .files => {
+                        for (this.files.items) |file| {
+                            allocator.free(file);
+                        }
+                        this.files.deinit(allocator);
+                    },
+                }
+
+                this.* = .{ .file = "" };
+            }
+
+            pub fn add(this: *Source, state: *TCC.TCCState, current_file_for_errors: *[:0]const u8) !void {
+                switch (this.*) {
+                    .file => {
+                        current_file_for_errors.* = this.file;
+                        if (TCC.tcc_add_file(state, this.file) != 0) {
+                            return error.CompilationError;
+                        }
+                        current_file_for_errors.* = "";
+                    },
+                    .files => {
+                        for (this.files.items) |file| {
+                            current_file_for_errors.* = file;
+                            if (TCC.tcc_add_file(state, file) != 0) {
+                                return error.CompilationError;
+                            }
+                            current_file_for_errors.* = "";
+                        }
+                    },
+                }
+            }
+        };
 
         const stdarg = struct {
             extern "C" fn ffi_vfprintf(*anyopaque, [*:0]const u8, ...) callconv(.C) c_int;
@@ -189,7 +239,7 @@ pub const FFI = struct {
             this.deferred_errors.append(bun.default_allocator, bun.default_allocator.dupe(u8, msg) catch bun.outOfMemory()) catch bun.outOfMemory();
         }
 
-        const default_tcc_options = "-std=c11 -Wl,--export-all-symbols -g";
+        pub const default_tcc_options: [:0]const u8 = "-std=c11 -Wl,--export-all-symbols -g -O2";
 
         pub fn compile(this: *CompileC, globalThis: *JSGlobalObject) !struct { *TCC.TCCState, []u8 } {
             const state = TCC.tcc_new() orelse {
@@ -197,7 +247,9 @@ pub const FFI = struct {
                 return error.JSException;
             };
             TCC.tcc_set_error_func(state, this, @ptrCast(&handleCompilationError));
-            if (bun.getenvZ("BUN_TCC_OPTIONS")) |tcc_options| {
+            if (this.flags.len > 0) {
+                TCC.tcc_set_options(state, this.flags.ptr);
+            } else if (bun.getenvZ("BUN_TCC_OPTIONS")) |tcc_options| {
                 TCC.tcc_set_options(state, @ptrCast(tcc_options));
             } else {
                 TCC.tcc_set_options(state, default_tcc_options);
@@ -321,14 +373,24 @@ pub const FFI = struct {
                 return error.DeferredErrors;
             }
 
-            if (TCC.tcc_add_file(state, this.source_file) != 0) {
+            for (this.define.items) |define| {
+                TCC.tcc_define_symbol(state, define[0], define[1]);
+
+                if (this.deferred_errors.items.len > 0) {
+                    return error.DeferredErrors;
+                }
+            }
+
+            this.source.add(state, &this.current_file_for_errors) catch {
                 if (this.deferred_errors.items.len > 0) {
                     return error.DeferredErrors;
                 } else {
-                    globalThis.throw("TinyCC failed to compile", .{});
+                    if (!globalThis.hasException()) {
+                        globalThis.throw("TinyCC failed to compile", .{});
+                    }
                     return error.JSException;
                 }
-            }
+            };
 
             CompilerRT.inject(state);
             stdarg.inject(state);
@@ -388,7 +450,7 @@ pub const FFI = struct {
                 if (TCC.tcc_get_symbol(state, duped)) |function_ptr| {
                     function.symbol_from_dynamic_library = function_ptr;
                 } else {
-                    globalThis.throw("{} is missing from {s}. Was it included in the source code?", .{ bun.fmt.quote(symbol), this.source_file });
+                    globalThis.throw("{} is missing from {s}. Was it included in the source code?", .{ bun.fmt.quote(symbol), this.source.first() });
                     return error.JSException;
                 }
             }
@@ -403,23 +465,24 @@ pub const FFI = struct {
         pub fn deinit(this: *CompileC) void {
             this.symbols.deinit();
 
-            for (this.libraries.items) |library| {
-                bun.default_allocator.free(library);
-            }
-            this.libraries.clearAndFree(bun.default_allocator);
-
-            for (this.include_dirs.items) |include_dir| {
-                bun.default_allocator.free(include_dir);
-            }
-            this.include_dirs.clearAndFree(bun.default_allocator);
+            this.libraries.deinit();
+            this.library_dirs.deinit();
+            this.include_dirs.deinit();
 
             for (this.deferred_errors.items) |deferred_error| {
                 bun.default_allocator.free(deferred_error);
             }
             this.deferred_errors.clearAndFree(bun.default_allocator);
 
-            if (this.source_file.len > 0)
-                bun.default_allocator.free(this.source_file);
+            for (this.define.items) |define| {
+                bun.default_allocator.free(define[0]);
+                if (define[1].len > 0) bun.default_allocator.free(define[1]);
+            }
+            this.define.clearAndFree(bun.default_allocator);
+
+            this.source.deinit(bun.default_allocator);
+            if (this.flags.len > 0) bun.default_allocator.free(this.flags);
+            this.flags = "";
         }
     };
     const SymbolsMap = struct {
@@ -429,6 +492,62 @@ pub const FFI = struct {
                 bun.default_allocator.free(@constCast(key));
             }
             this.map.clearAndFree(bun.default_allocator);
+        }
+    };
+
+    const StringArray = struct {
+        items: []const [:0]const u8 = &.{},
+        pub fn deinit(this: *StringArray) void {
+            for (this.items) |item| {
+                // Attempting to free an empty null-terminated slice will crash if it was a default value
+                bun.debugAssert(item.len > 0);
+
+                bun.default_allocator.free(@constCast(item));
+            }
+
+            if (this.items.len > 0)
+                bun.default_allocator.free(this.items);
+        }
+
+        pub fn fromJSArray(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue, comptime property: []const u8) StringArray {
+            var iter = value.arrayIterator(globalThis);
+            var items = std.ArrayList([:0]const u8).init(bun.default_allocator);
+
+            while (iter.next()) |val| {
+                if (!val.isString()) {
+                    for (items.items) |item| {
+                        bun.default_allocator.free(@constCast(item));
+                    }
+                    items.deinit();
+                    _ = globalThis.throwInvalidArgumentTypeValue(property, "array of strings", val);
+                    return .{};
+                }
+                const str = val.getZigString(globalThis);
+                if (str.isEmpty()) continue;
+                items.append(str.toOwnedSliceZ(bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
+            }
+
+            return .{ .items = items.items };
+        }
+
+        pub fn fromJSString(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue, comptime property: []const u8) StringArray {
+            if (value == .undefined) return .{};
+            if (!value.isString()) {
+                _ = globalThis.throwInvalidArgumentTypeValue(property, "array of strings", value);
+                return .{};
+            }
+            const str = value.getZigString(globalThis);
+            if (str.isEmpty()) return .{};
+            var items = std.ArrayList([:0]const u8).init(bun.default_allocator);
+            items.append(str.toOwnedSliceZ(bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
+            return .{ .items = items.items };
+        }
+
+        pub fn fromJS(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue, comptime property: []const u8) StringArray {
+            if (value.isArray()) {
+                return fromJSArray(globalThis, value, property);
+            }
+            return fromJSString(globalThis, value, property);
         }
     };
 
@@ -470,19 +589,43 @@ pub const FFI = struct {
         }
 
         if (object.get(globalThis, "library")) |library_value| {
-            if (library_value.isArray()) {
-                var iter = library_value.arrayIterator(globalThis);
-                compile_c.libraries.ensureTotalCapacityPrecise(bun.default_allocator, iter.len) catch bun.outOfMemory();
+            compile_c.libraries = StringArray.fromJS(globalThis, library_value, "library");
+        }
+
+        if (globalThis.hasException()) {
+            return .zero;
+        }
+
+        if (object.getTruthy(globalThis, "flags")) |flags_value| {
+            if (flags_value.isArray()) {
+                var iter = flags_value.arrayIterator(globalThis);
+
+                var flags = std.ArrayList(u8).init(bun.default_allocator);
+                defer flags.deinit();
+                flags.appendSlice(CompileC.default_tcc_options) catch bun.outOfMemory();
+
                 while (iter.next()) |value| {
                     if (!value.isString()) {
-                        return globalThis.throwInvalidArgumentTypeValue("library", "array of strings", value);
+                        return globalThis.throwInvalidArgumentTypeValue("flags", "array of strings", value);
                     }
-                    compile_c.libraries.appendAssumeCapacity(value.getZigString(globalThis).toOwnedSliceZ(bun.default_allocator) catch bun.outOfMemory());
+                    const slice = value.toSlice(globalThis, bun.default_allocator);
+                    if (slice.len == 0) continue;
+                    defer slice.deinit();
+                    flags.append(' ') catch bun.outOfMemory();
+                    flags.appendSlice(slice.slice()) catch bun.outOfMemory();
                 }
-            } else if (library_value.isString()) {
-                compile_c.libraries.append(bun.default_allocator, library_value.getZigString(globalThis).toOwnedSliceZ(bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
+                flags.append(0) catch bun.outOfMemory();
+                compile_c.flags = flags.items[0 .. flags.items.len - 1 :0];
+                flags = std.ArrayList(u8).init(bun.default_allocator);
             } else {
-                return globalThis.throwInvalidArgumentTypeValue("library", "array of strings", library_value);
+                if (!flags_value.isString()) {
+                    return globalThis.throwInvalidArgumentTypeValue("flags", "string", flags_value);
+                }
+
+                const str = flags_value.getZigString(globalThis);
+                if (!str.isEmpty()) {
+                    compile_c.flags = str.toOwnedSliceZ(bun.default_allocator) catch bun.outOfMemory();
+                }
             }
         }
 
@@ -490,21 +633,38 @@ pub const FFI = struct {
             return .zero;
         }
 
-        if (object.get(globalThis, "include")) |include_value| {
-            if (include_value.isArray()) {
-                var iter = include_value.arrayIterator(globalThis);
-                compile_c.include_dirs.ensureTotalCapacityPrecise(bun.default_allocator, iter.len) catch bun.outOfMemory();
-                while (iter.next()) |value| {
-                    if (!value.isString()) {
-                        return globalThis.throwInvalidArgumentTypeValue("include", "array of strings", value);
+        if (object.getTruthy(globalThis, "define")) |define_value| {
+            if (define_value.isObject()) {
+                const Iter = JSC.JSPropertyIterator(.{ .include_value = true, .skip_empty_name = true });
+                var iter = Iter.init(globalThis, define_value);
+                defer iter.deinit();
+                while (iter.next()) |entry| {
+                    const key = entry.toOwnedSliceZ(bun.default_allocator) catch bun.outOfMemory();
+                    var owned_value: [:0]const u8 = "";
+                    if (iter.value != .zero and iter.value != .undefined) {
+                        if (iter.value.isString()) {
+                            const value = iter.value.getZigString(globalThis);
+                            if (value.len > 0) {
+                                owned_value = value.toOwnedSliceZ(bun.default_allocator) catch bun.outOfMemory();
+                            }
+                        }
                     }
-                    compile_c.include_dirs.appendAssumeCapacity(value.getZigString(globalThis).toOwnedSliceZ(bun.default_allocator) catch bun.outOfMemory());
+                    if (globalThis.hasException()) {
+                        bun.default_allocator.free(key);
+                        return .zero;
+                    }
+
+                    compile_c.define.append(bun.default_allocator, .{ key, owned_value }) catch bun.outOfMemory();
                 }
-            } else if (include_value.isString()) {
-                compile_c.include_dirs.append(bun.default_allocator, include_value.getZigString(globalThis).toOwnedSliceZ(bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
-            } else {
-                return globalThis.throwInvalidArgumentTypeValue("include", "array of strings", include_value);
             }
+        }
+
+        if (globalThis.hasException()) {
+            return .zero;
+        }
+
+        if (object.getTruthy(globalThis, "include")) |include_value| {
+            compile_c.include_dirs = StringArray.fromJS(globalThis, include_value, "include");
         }
 
         if (globalThis.hasException()) {
@@ -512,12 +672,21 @@ pub const FFI = struct {
         }
 
         if (object.get(globalThis, "source")) |source_value| {
-            if (!source_value.isString()) {
+            if (source_value.isArray()) {
+                compile_c.source = .{ .files = .{} };
+                var iter = source_value.arrayIterator(globalThis);
+                while (iter.next()) |value| {
+                    if (!value.isString()) {
+                        return globalThis.throwInvalidArgumentTypeValue("source", "array of strings", value);
+                    }
+                    compile_c.source.files.append(bun.default_allocator, value.getZigString(globalThis).toOwnedSliceZ(bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
+                }
+            } else if (!source_value.isString()) {
                 return globalThis.throwInvalidArgumentTypeValue("source", "string", source_value);
+            } else {
+                const source_path = source_value.getZigString(globalThis).toOwnedSliceZ(bun.default_allocator) catch bun.outOfMemory();
+                compile_c.source.file = source_path;
             }
-
-            const source_path = source_value.getZigString(globalThis).toOwnedSliceZ(bun.default_allocator) catch bun.outOfMemory();
-            compile_c.source_file = source_path;
         }
 
         if (globalThis.hasException()) {
@@ -531,7 +700,7 @@ pub const FFI = struct {
                     var combined = std.ArrayList(u8).init(bun.default_allocator);
                     defer combined.deinit();
                     var writer = combined.writer();
-                    writer.print("{d} errors while compiling {s}\n", .{ compile_c.deferred_errors.items.len, compile_c.source_file }) catch bun.outOfMemory();
+                    writer.print("{d} errors while compiling {s}\n", .{ compile_c.deferred_errors.items.len, if (compile_c.current_file_for_errors.len > 0) compile_c.current_file_for_errors else compile_c.source.first() }) catch bun.outOfMemory();
 
                     for (compile_c.deferred_errors.items) |deferred_error| {
                         writer.print("{s}\n", .{deferred_error}) catch bun.outOfMemory();

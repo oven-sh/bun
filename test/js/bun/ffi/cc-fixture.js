@@ -4,6 +4,10 @@ const {
   symbols: { main },
 } = cc({
   source: fixture,
+  define: {
+    "HAS_MY_DEFINE": '"my value"',
+  },
+  flags: ["-l/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation"],
   symbols: {
     "main": {
       args: [],

@@ -27,5 +27,11 @@ int main() {
   printf("bool true = %d, bool false = %d\n", (int)g, (int)h);
 #endif
 
+#ifdef HAS_MY_DEFINE
+#if (__has_include(<stdio.h>))
+  printf("HAS_MY_DEFINE is defined as %s\n", HAS_MY_DEFINE);
+#endif
+#endif
+
   return 42;
 }

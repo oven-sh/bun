@@ -172,6 +172,10 @@ JSC_DEFINE_JIT_OPERATION(${DOMJITName(
 
 function zigExportName(to: Map<string, string>, symbolName: (name: string) => string, prop) {
   var { defaultValue, getter, setter, accessor, fn, DOMJIT, cache } = prop;
+
+  // TODO: bring DOMJIT back
+  DOMJIT = undefined;
+
   const exportNames = {
     getter: "",
     setter: "",
@@ -226,6 +230,9 @@ function propRow(
     builtin,
     writable = false,
   } = (defaultPropertyAttributes ? Object.assign({}, defaultPropertyAttributes, prop) : prop) as any;
+
+  // TODO: bring DOMJIT back
+  DOMJIT = undefined;
 
   var extraPropertyAttributes = "";
   if (!enumerable) {
@@ -858,6 +865,9 @@ function renderDecls(symbolName, typeName, proto, supportsObjectCreate = false) 
         "\n",
       );
 
+      // TODO: bring DOMJIT back
+      proto[name].DOMJIT = undefined;
+
       if (proto[name].DOMJIT) {
         rows.push(
           DOMJITFunctionDeclaration(
@@ -1139,22 +1149,21 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
     ASSERT_WITH_MESSAGE(!JSValue::decode(result).isEmpty() or DECLARE_CATCH_SCOPE(vm).exception() != 0, \"${typeName}.${proto[name].fn} returned an empty value without an exception\");
 
     ${
-      !proto[name].DOMJIT
-        ? ""
-        : `
-    JSValue decoded = JSValue::decode(result);
-    if (thisObject->m_${fn}_expectedResultType) {
-      if (decoded.isCell() && !decoded.isEmpty()) {
-        ASSERT_WITH_MESSAGE(thisObject->m_${fn}_expectedResultType.value().has_value(), "DOMJIT function return type changed!");
-        ASSERT_WITH_MESSAGE(thisObject->m_${fn}_expectedResultType.value().value() == decoded.asCell()->type(), "DOMJIT function return type changed!");
-      } else {
-        ASSERT_WITH_MESSAGE(!thisObject->m_${fn}_expectedResultType.value().has_value(), "DOMJIT function return type changed!");
-      }
-    } else if (!decoded.isEmpty()) {
-      thisObject->m_${fn}_expectedResultType = decoded.isCell()
-        ? std::optional<JSC::JSType>(decoded.asCell()->type())
-        : std::optional<JSC::JSType>(std::nullopt);
-    }`
+      // TODO: bring DOMJIT back
+      !proto[name].DOMJIT ? "" : ""
+      // JSValue decoded = JSValue::decode(result);
+      // if (thisObject->m_${fn}_expectedResultType) {
+      //   if (decoded.isCell() && !decoded.isEmpty()) {
+      //     ASSERT_WITH_MESSAGE(thisObject->m_${fn}_expectedResultType.value().has_value(), "DOMJIT function return type changed!");
+      //     ASSERT_WITH_MESSAGE(thisObject->m_${fn}_expectedResultType.value().value() == decoded.asCell()->type(), "DOMJIT function return type changed!");
+      //   } else {
+      //     ASSERT_WITH_MESSAGE(!thisObject->m_${fn}_expectedResultType.value().has_value(), "DOMJIT function return type changed!");
+      //   }
+      // } else if (!decoded.isEmpty()) {
+      //   thisObject->m_${fn}_expectedResultType = decoded.isCell()
+      //     ? std::optional<JSC::JSType>(decoded.asCell()->type())
+      //     : std::optional<JSC::JSType>(std::nullopt);
+      // }`
     }
 
     return result;
@@ -1304,7 +1313,11 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
           })
           .join("\n")}
 
-        ${domJITTypeCheckFields(proto, klass)}
+        ${
+          // TODO: bring DOMJIT back
+          // domJITTypeCheckFields(proto, klass)
+          ""
+        }
 
         ${weakOwner}
 
@@ -1741,7 +1754,11 @@ const JavaScriptCoreBindings = struct {
     {
       const exportNames = name => zigExportName(exports, name => protoSymbolName(typeName, name), proto[name]);
       for (const name in proto) {
-        const { getter, setter, accessor, fn, this: thisValue = false, cache, DOMJIT } = proto[name];
+        const { getter, setter, accessor, fn, this: thisValue = false, cache } = proto[name];
+
+        // TODO: bring DOMJIT back
+        const DOMJIT = undefined;
+
         const names = exportNames(name);
         if (names.getter) {
           output += `
@@ -1786,7 +1803,11 @@ const JavaScriptCoreBindings = struct {
     {
       const exportNames = name => zigExportName(exports, name => classSymbolName(typeName, name), klass[name]);
       for (const name in klass) {
-        const { getter, setter, accessor, fn, this: thisValue = true, cache, DOMJIT } = klass[name];
+        const { getter, setter, accessor, fn, this: thisValue = true, cache } = klass[name];
+
+        // TODO: bring DOMJIT back
+        const DOMJIT = undefined;
+
         const names = exportNames(name);
         if (names.getter) {
           output += `

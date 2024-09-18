@@ -246,17 +246,17 @@ static int normalizeCompareVal(int val, size_t a_length, size_t b_length)
     return val;
 }
 
-static inline uint32_t parseIndex(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSValue arg)
+const unsigned U32_MAX = std::numeric_limits<unsigned>().max();
+
+static inline uint32_t parseIndex(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, ASCIILiteral name, JSValue arg, size_t upperBound)
 {
-    if (auto num = arg.tryGetAsUint32Index())
-        return num.value();
-
-    if (arg.isNumber())
-        throwNodeRangeError(lexicalGlobalObject, scope, "Invalid array length"_s);
-    else
-        throwTypeError(lexicalGlobalObject, scope, "Expected number"_s);
-
-    return 0;
+    if (!arg.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, name, "number"_s, arg);
+    auto num = arg.asNumber();
+    if (num < 0 || std::isinf(num)) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, name, 0, upperBound, arg);
+    double intpart;
+    if (std::modf(num, &intpart) != 0) return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, name, "integer"_s, arg);
+    if (intpart < U32_MAX) return intpart;
+    return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, name, 0, upperBound, arg);
 }
 
 static inline WebCore::BufferEncodingType parseEncoding(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSValue arg)

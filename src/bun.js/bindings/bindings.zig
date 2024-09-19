@@ -3676,6 +3676,9 @@ pub const JSValue = enum(JSValueReprInt) {
         JSAsJSONType = 0b11110000 | 1,
         _,
 
+        pub const min_typed_array: JSType = .Int8Array;
+        pub const max_typed_array: JSType = .DataView;
+
         pub fn canGet(this: JSType) bool {
             return switch (this) {
                 .Array,

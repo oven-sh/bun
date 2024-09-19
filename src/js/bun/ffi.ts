@@ -57,6 +57,7 @@ const FFIType = {
   fn: 17,
   napi_env: 18,
   napi_value: 19,
+  buffer: 20,
 };
 
 const suffix = process.platform === "win32" ? "dll" : process.platform === "darwin" ? "dylib" : "so";
@@ -155,7 +156,7 @@ Object.defineProperty(globalThis, "__GlobalBunCString", {
   configurable: false,
 });
 
-const ffiWrappers = new Array(20);
+const ffiWrappers = new Array(21);
 
 var char = "val|0";
 ffiWrappers.fill(char);
@@ -213,6 +214,10 @@ ffiWrappers[FFIType.u64_fast] = `{
     return val;
   }
 
+  if (__GlobalBunFFIPtrArrayBufferViewFn(val)) {
+    return val;
+  }
+
   return !val ? 0 : +val || 0;
 }`;
 
@@ -237,12 +242,20 @@ ffiWrappers[FFIType.uint64_t] = `{
     return val <= 0 ? BigInt(0) : BigInt(val || 0);
   }
 
+  if (__GlobalBunFFIPtrArrayBufferViewFn(val)) {
+    return val;
+  }
+
   return BigInt(+val || 0);
 }`;
 
 ffiWrappers[FFIType.u64_fast] = `{
   if (typeof val === "bigint") {
     if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= BigInt(0)) return Number(val);
+    return val;
+  }
+
+  if (__GlobalBunFFIPtrArrayBufferViewFn(val)) {
     return val;
   }
 
@@ -281,6 +294,11 @@ Object.defineProperty(globalThis, "__GlobalBunFFIPtrFunctionForWrapper", {
   enumerable: false,
   configurable: true,
 });
+Object.defineProperty(ArrayBuffer.$isView, "__GlobalBunFFIPtrArrayBufferViewFn", {
+  value: ArrayBuffer.$isView,
+  enumerable: false,
+  configurable: true,
+});
 
 ffiWrappers[FFIType.cstring] = ffiWrappers[FFIType.pointer] = `{
   if (typeof val === "number") return val;
@@ -288,7 +306,11 @@ ffiWrappers[FFIType.cstring] = ffiWrappers[FFIType.pointer] = `{
     return null;
   }
 
-  if (ArrayBuffer.isView(val) || val instanceof ArrayBuffer) {
+  if (__GlobalBunFFIPtrArrayBufferViewFn(val)) {
+    return val;
+  }
+
+  if (val instanceof ArrayBuffer) {
     return __GlobalBunFFIPtrFunctionForWrapper(val);
   }
 
@@ -297,6 +319,14 @@ ffiWrappers[FFIType.cstring] = ffiWrappers[FFIType.pointer] = `{
   }
 
   throw new TypeError(\`Unable to convert \${ val } to a pointer\`);
+}`;
+
+ffiWrappers[FFIType.buffer] = `{
+  if (!__GlobalBunFFIPtrArrayBufferViewFn(val)) {
+    throw new TypeError("Expected a TypedArray");
+  }
+
+  return val;
 }`;
 
 ffiWrappers[FFIType.function] = `{

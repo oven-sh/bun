@@ -1178,7 +1178,8 @@ fn doResolveWithArgs(
             errorable.result.value,
             query_string,
         }) catch {
-            ctx.throwOutOfMemory();
+            // TODO: binding for createOutOfMemoryError
+            exception.* = JSC.createError(ctx, "Out of memory", .{}).asObjectRef();
             return null;
         };
 

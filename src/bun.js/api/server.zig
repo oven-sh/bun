@@ -5900,14 +5900,14 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             if (topic.len == 0) {
                 httplog("publish() topic invalid", .{});
-                exception.* = JSC.createError(globalThis, "publish requires a topic string", .{}).asRef();
+                exception.* = JSC.createError(globalThis, "publish requires a topic string", .{}).asObjectRef();
                 return .zero;
             }
 
             var topic_slice = topic.toSlice(bun.default_allocator);
             defer topic_slice.deinit();
             if (topic_slice.len == 0) {
-                exception.* = JSC.createError(globalThis, "publish requires a non-empty topic", .{}).asRef();
+                exception.* = JSC.createError(globalThis, "publish requires a non-empty topic", .{}).asObjectRef();
                 return .zero;
             }
 

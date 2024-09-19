@@ -241,6 +241,67 @@ pub const FFI = struct {
 
         pub const default_tcc_options: [:0]const u8 = "-std=c11 -Wl,--export-all-symbols -g -O2";
 
+        var cached_default_system_include_dir: [:0]const u8 = "";
+        var cached_default_system_library_dir: [:0]const u8 = "";
+        var cached_default_system_include_dir_once = std.once(getSystemRootDirOnce);
+        fn getSystemRootDirOnce() void {
+            if (Environment.isMac) {
+                var which_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+
+                var process = bun.spawnSync(&.{
+                    .stdout = .buffer,
+                    .stdin = .ignore,
+                    .stderr = .ignore,
+                    .argv = &.{
+                        bun.which(&which_buf, bun.sliceTo(std.c.getenv("PATH") orelse "", 0), Fs.FileSystem.instance.top_level_dir, "xcrun") orelse "/usr/bin/xcrun",
+                        "-sdk",
+                        "macosx",
+                        "-show-sdk-path",
+                    },
+                    .envp = std.c.environ,
+                }) catch return;
+                if (process == .result) {
+                    defer process.result.deinit();
+                    if (process.result.isOK()) {
+                        const stdout = process.result.stdout.items;
+                        if (stdout.len > 0) {
+                            cached_default_system_include_dir = bun.default_allocator.dupeZ(u8, strings.trim(stdout, "\n\r")) catch return;
+                        }
+                    }
+                }
+            } else if (Environment.isLinux) {
+                if (Environment.isX64) {
+                    if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/include/x86_64-linux-gnu").isTrue()) {
+                        cached_default_system_include_dir = "/usr/include/x86_64-linux-gnu";
+                    }
+
+                    if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/lib/x86_64-linux-gnu").isTrue()) {
+                        cached_default_system_library_dir = "/usr/lib/x86_64-linux-gnu";
+                    }
+                } else if (Environment.isAarch64) {
+                    if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/include/aarch64-linux-gnu").isTrue()) {
+                        cached_default_system_include_dir = "/usr/include/aarch64-linux-gnu";
+                    }
+
+                    if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/lib/aarch64-linux-gnu").isTrue()) {
+                        cached_default_system_library_dir = "/usr/lib/aarch64-linux-gnu";
+                    }
+                }
+            }
+        }
+
+        fn getSystemIncludeDir() ?[:0]const u8 {
+            cached_default_system_include_dir_once.call();
+            if (cached_default_system_include_dir.len == 0) return null;
+            return cached_default_system_include_dir;
+        }
+
+        fn getSystemLibraryDir() ?[:0]const u8 {
+            cached_default_system_include_dir_once.call();
+            if (cached_default_system_library_dir.len == 0) return null;
+            return cached_default_system_library_dir;
+        }
+
         pub fn compile(this: *CompileC, globalThis: *JSGlobalObject) !struct { *TCC.TCCState, []u8 } {
             const state = TCC.tcc_new() orelse {
                 globalThis.throw("TinyCC failed to initialize", .{});
@@ -266,88 +327,68 @@ pub const FFI = struct {
             }
 
             if (Environment.isMac) {
-                if (bun.getenvZ("SDKROOT")) |sdkroot| {
-                    const include_dir = bun.path.joinAbsStringBufZ(sdkroot, &pathbuf, &.{ "usr", "include" }, .auto);
-                    if (TCC.tcc_add_sysinclude_path(state, include_dir.ptr) == -1) {
-                        globalThis.throw("TinyCC failed to add sysinclude path", .{});
-                        return error.JSException;
-                    }
+                add_system_include_dir: {
+                    const dirs_to_try = [_][]const u8{
+                        bun.getenvZ("SDKROOT") orelse "",
+                        getSystemIncludeDir() orelse "",
+                    };
 
-                    const lib_dir = bun.path.joinAbsStringBufZ(sdkroot, &pathbuf, &.{ "usr", "lib" }, .auto);
-                    if (TCC.tcc_add_library_path(state, lib_dir.ptr) == -1) {
-                        globalThis.throw("TinyCC failed to add library path", .{});
-                        return error.JSException;
+                    for (dirs_to_try) |sdkroot| {
+                        if (sdkroot.len > 0) {
+                            const include_dir = bun.path.joinAbsStringBufZ(sdkroot, &pathbuf, &.{ "usr", "include" }, .auto);
+                            if (TCC.tcc_add_sysinclude_path(state, include_dir.ptr) == -1) {
+                                globalThis.throw("TinyCC failed to add sysinclude path", .{});
+                                return error.JSException;
+                            }
+
+                            const lib_dir = bun.path.joinAbsStringBufZ(sdkroot, &pathbuf, &.{ "usr", "lib" }, .auto);
+                            if (TCC.tcc_add_library_path(state, lib_dir.ptr) == -1) {
+                                globalThis.throw("TinyCC failed to add library path", .{});
+                                return error.JSException;
+                            }
+                            break :add_system_include_dir;
+                        }
                     }
                 }
 
                 if (Environment.isAarch64) {
-                    switch (bun.sys.directoryExistsAt(std.fs.cwd(), "/opt/homebrew/include")) {
-                        .result => |exists| {
-                            if (exists) {
-                                if (TCC.tcc_add_include_path(state, "/opt/homebrew/include") == -1) {
-                                    debug("TinyCC failed to add library path", .{});
-                                }
-                            }
-                        },
-                        .err => {},
+                    if (bun.sys.directoryExistsAt(std.fs.cwd(), "/opt/homebrew/include").isTrue()) {
+                        if (TCC.tcc_add_include_path(state, "/opt/homebrew/include") == -1) {
+                            debug("TinyCC failed to add library path", .{});
+                        }
                     }
 
-                    switch (bun.sys.directoryExistsAt(std.fs.cwd(), "/opt/homebrew/lib")) {
-                        .result => |exists| {
-                            if (exists) {
-                                if (TCC.tcc_add_library_path(state, "/opt/homebrew/lib") == -1) {
-                                    debug("TinyCC failed to add library path", .{});
-                                }
-                            }
-                        },
-                        .err => {},
+                    if (bun.sys.directoryExistsAt(std.fs.cwd(), "/opt/homebrew/lib").isTrue()) {
+                        if (TCC.tcc_add_library_path(state, "/opt/homebrew/lib") == -1) {
+                            debug("TinyCC failed to add library path", .{});
+                        }
+                    }
+                }
+            } else if (Environment.isLinux) {
+                if (getSystemIncludeDir()) |include_dir| {
+                    if (TCC.tcc_add_sysinclude_path(state, include_dir) == -1) {
+                        debug("TinyCC failed to add library path", .{});
+                    }
+                }
+
+                if (getSystemLibraryDir()) |library_dir| {
+                    if (TCC.tcc_add_library_path(state, library_dir) == -1) {
+                        debug("TinyCC failed to add library path", .{});
                     }
                 }
             }
 
             if (Environment.isPosix) {
-                switch (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/local/include")) {
-                    .result => |exists| {
-                        if (exists) {
-                            if (TCC.tcc_add_sysinclude_path(state, "/usr/local/include") == -1) {
-                                debug("TinyCC failed to add library path", .{});
-                            }
-                        }
-                    },
-                    .err => {},
+                if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/local/include").isTrue()) {
+                    if (TCC.tcc_add_sysinclude_path(state, "/usr/local/include") == -1) {
+                        debug("TinyCC failed to add library path", .{});
+                    }
                 }
 
-                switch (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/include")) {
-                    .result => |exists| {
-                        if (exists) {
-                            if (TCC.tcc_add_sysinclude_path(state, "/usr/include") == -1) {
-                                debug("TinyCC failed to add library path", .{});
-                            }
-                        }
-                    },
-                    .err => {},
-                }
-
-                switch (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/local/lib")) {
-                    .result => |exists| {
-                        if (exists) {
-                            if (TCC.tcc_add_library_path(state, "/usr/local/lib") == -1) {
-                                debug("TinyCC failed to add library path", .{});
-                            }
-                        }
-                    },
-                    .err => {},
-                }
-
-                switch (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/lib")) {
-                    .result => |exists| {
-                        if (exists) {
-                            if (TCC.tcc_add_library_path(state, "/usr/lib") == -1) {
-                                debug("TinyCC failed to add library path", .{});
-                            }
-                        }
-                    },
-                    .err => {},
+                if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/local/lib").isTrue()) {
+                    if (TCC.tcc_add_library_path(state, "/usr/local/lib") == -1) {
+                        debug("TinyCC failed to add library path", .{});
+                    }
                 }
             }
 
@@ -568,7 +609,7 @@ pub const FFI = struct {
             }
         }
 
-        const symbols_object = object.get(globalThis, "symbols") orelse .zero;
+        const symbols_object = object.get(globalThis, "symbols") orelse .undefined;
         if (!globalThis.hasException() and (symbols_object == .zero or !symbols_object.isObject())) {
             _ = globalThis.throwInvalidArgumentTypeValue("symbols", "object", symbols_object);
         }
@@ -722,9 +763,9 @@ pub const FFI = struct {
             if (tcc_state) |state| {
                 TCC.tcc_delete(state);
             }
-            if (bytes_to_free_on_error.len > 0) {
-                bun.default_allocator.destroy(@as(*u8, @ptrCast(bytes_to_free_on_error)));
-            }
+
+            // TODO: upgrade tinycc because they improved the way memory management works for this
+            // we are unable to free memory safely in certain cases here.
         }
 
         var obj = JSC.JSValue.createEmptyObject(globalThis, compile_c.symbols.map.count());
@@ -733,11 +774,14 @@ pub const FFI = struct {
             const allocator = bun.default_allocator;
 
             function.compile(allocator) catch |err| {
-                const ret = JSC.toInvalidArguments("{s} when translating symbol \"{s}\"", .{
-                    @errorName(err),
-                    function_name,
-                }, globalThis);
-                globalThis.throwValue(ret);
+                if (!globalThis.hasException()) {
+                    const ret = JSC.toInvalidArguments("{s} when translating symbol \"{s}\"", .{
+                        @errorName(err),
+                        function_name,
+                    }, globalThis);
+                    globalThis.throwValue(ret);
+                }
+
                 return .zero;
             };
             switch (function.step) {
@@ -1285,11 +1329,11 @@ pub const FFI = struct {
 
         var threadsafe = false;
 
-        if (value.get(global, "threadsafe")) |threadsafe_value| {
+        if (value.getTruthy(global, "threadsafe")) |threadsafe_value| {
             threadsafe = threadsafe_value.toBoolean();
         }
 
-        if (value.get(global, "returns")) |ret_value| brk: {
+        if (value.getTruthy(global, "returns")) |ret_value| brk: {
             if (ret_value.isAnyInt()) {
                 const int = ret_value.toInt32();
                 switch (int) {
@@ -1310,6 +1354,11 @@ pub const FFI = struct {
                 abi_types.clearAndFree(allocator);
                 return JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "Unknown return type {s}", .{ret_slice.slice()}, global);
             };
+        }
+
+        if (return_type == ABIType.napi_env) {
+            abi_types.clearAndFree(allocator);
+            return ZigString.static("Cannot return napi_env to JavaScript").toErrorInstance(global);
         }
 
         if (function.threadsafe and return_type != ABIType.void) {
@@ -1382,6 +1431,15 @@ pub const FFI = struct {
         threadsafe: bool = false,
 
         pub var lib_dirZ: [*:0]const u8 = "";
+
+        pub fn needsHandleScope(val: *const Function) bool {
+            for (val.arg_types.items) |arg| {
+                if (arg == ABIType.napi_env or arg == ABIType.napi_value) {
+                    return true;
+                }
+            }
+            return val.return_type == ABIType.napi_value;
+        }
 
         extern "C" fn FFICallbackFunctionWrapper_destroy(*anyopaque) void;
 
@@ -1724,21 +1782,45 @@ pub const FFI = struct {
                 \\
             );
 
+            if (this.needsHandleScope()) {
+                try writer.writeAll(
+                    \\  void* handleScope = NapiHandleScope__push(JS_GLOBAL_OBJECT, false);
+                    \\
+                );
+            }
+
             if (this.arg_types.items.len > 0) {
                 try writer.writeAll(
                     \\  LOAD_ARGUMENTS_FROM_CALL_FRAME;
                     \\
                 );
                 for (this.arg_types.items, 0..) |arg, i| {
-                    if (arg.needsACastInC()) {
+                    if (arg == .napi_env) {
+                        try writer.print(
+                            \\  napi_env arg{d} = (napi_env)JS_GLOBAL_OBJECT;
+                            \\  argsPtr++;
+                            \\
+                        ,
+                            .{
+                                i,
+                            },
+                        );
+                    } else if (arg == .napi_value) {
+                        try writer.print(
+                            \\  EncodedJSValue arg{d} = {{ .asInt64 = *argsPtr++ }};
+                            \\
+                        ,
+                            .{
+                                i,
+                            },
+                        );
+                    } else if (arg.needsACastInC()) {
                         if (i < this.arg_types.items.len - 1) {
                             try writer.print(
-                                \\  EncodedJSValue arg{d};
-                                \\  arg{d}.asInt64 = *argsPtr++;
+                                \\  EncodedJSValue arg{d} = {{ .asInt64 = *argsPtr++ }};
                                 \\
                             ,
                                 .{
-                                    i,
                                     i,
                                 },
                             );
@@ -1812,6 +1894,13 @@ pub const FFI = struct {
             if (!first) try writer.writeAll("\n");
 
             try writer.writeAll("    ");
+
+            if (this.needsHandleScope()) {
+                try writer.writeAll(
+                    \\  NapiHandleScope__pop(JS_GLOBAL_OBJECT, handleScope);
+                    \\
+                );
+            }
 
             try writer.writeAll("return ");
 
@@ -1973,8 +2062,10 @@ pub const FFI = struct {
         u64_fast = 16,
 
         function = 17,
+        napi_env = 18,
+        napi_value = 19,
 
-        pub const max = @intFromEnum(ABIType.function);
+        pub const max = @intFromEnum(ABIType.napi_value);
 
         /// Types that we can directly pass through as an `int64_t`
         pub fn needsACastInC(this: ABIType) bool {
@@ -2023,6 +2114,8 @@ pub const FFI = struct {
             .{ "function", ABIType.function },
             .{ "callback", ABIType.function },
             .{ "fn", ABIType.function },
+            .{ "napi_env", ABIType.napi_env },
+            .{ "napi_value", ABIType.napi_value },
         };
         pub const label = bun.ComptimeStringMap(ABIType, map);
         const EnumMapFormatter = struct {
@@ -2117,6 +2210,15 @@ pub const FFI = struct {
                             try writer.writeAll("(float)");
                         try writer.writeAll("JSVALUE_TO_FLOAT(");
                     },
+                    .napi_env => {
+                        try writer.writeAll("(napi_env)JS_GLOBAL_OBJECT");
+                        return;
+                    },
+                    .napi_value => {
+                        try writer.writeAll(self.symbol);
+                        try writer.writeAll(".asNapiValue");
+                        return;
+                    },
                 }
                 // if (self.fromi64) {
                 //     try writer.writeAll("EncodedJSValue{ ");
@@ -2166,6 +2268,12 @@ pub const FFI = struct {
                     .float => {
                         try writer.print("FLOAT_TO_JSVALUE({s})", .{self.symbol});
                     },
+                    .napi_env => {
+                        try writer.writeAll("JS_GLOBAL_OBJECT");
+                    },
+                    .napi_value => {
+                        try writer.print("((EncodedJSValue) {{.asNapiValue = {s} }} )", .{self.symbol});
+                    },
                 }
             }
         };
@@ -2208,6 +2316,8 @@ pub const FFI = struct {
                 .float => "float",
                 .char => "char",
                 .void => "void",
+                .napi_env => "napi_env",
+                .napi_value => "napi_value",
             };
         }
 
@@ -2233,6 +2343,8 @@ pub const FFI = struct {
                 .float => "float",
                 .char => "char",
                 .void => "void",
+                .napi_env => "napi_env",
+                .napi_value => "napi_value",
             };
         }
     };
@@ -2316,6 +2428,8 @@ const CompilerRT = struct {
     pub fn inject(state: *TCC.TCCState) void {
         _ = TCC.tcc_add_symbol(state, "memset", &memset);
         _ = TCC.tcc_add_symbol(state, "memcpy", &memcpy);
+        _ = TCC.tcc_add_symbol(state, "NapiHandleScope__push", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__push);
+        _ = TCC.tcc_add_symbol(state, "NapiHandleScope__pop", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__pop);
 
         _ = TCC.tcc_add_symbol(
             state,

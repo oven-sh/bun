@@ -168,7 +168,7 @@ pub const SourceLocation = struct {
 
     /// Create a new BasicParseError at this location for an unexpected token
     pub fn newBasicUnexpectedTokenError(this: SourceLocation, token: Token) BasicParseError {
-        return BasicParseError.intoDefaultParseError({
+        return BasicParseError.intoDefaultParseError(.{
             .kind = .{ .unexpected_token = token },
             .location = this,
         });
@@ -560,14 +560,27 @@ pub fn DefineEnumProperty(comptime T: type) type {
 }
 
 pub fn DeriveValueType(comptime T: type) type {
+    _ = @typeInfo(T).Enum;
+
     const ValueTypeMap = T.ValueTypeMap;
-    const fields = std.meta.fields(@This());
-    for (fields) |field| {
-        _ = @field(ValueTypeMap, field.name);
-    }
+    const field_values: []const MediaFeatureType = field_values: {
+        const fields = std.meta.fields(@This());
+        var mapping: [fields.len]comptime_int = undefined;
+        for (fields, 0..) |field, i| {
+            // Check that it exists in the type map
+            mapping[i] = @field(ValueTypeMap, field.name);
+        }
+        const mapping_final = mapping[0..];
+        break :field_values mapping_final;
+    };
+
     return struct {
         pub fn valueType(this: *const T) MediaFeatureType {
-            return @field(ValueTypeMap, @tagName(this.*));
+            inline for (std.meta.fields(@This()), 0..) |field, i| {
+                if (field.value == @intFromEnum(this.*)) {
+                    return field_values[i];
+                }
+            }
         }
     };
 }
@@ -668,7 +681,7 @@ fn parse_at_rule(
     }
 }
 
-fn parse_custom_at_rule_prelude(name: []const u8, input: *Parser, options: *const ParserOptions, comptime T: type, at_rule_parser: *T) Result(AtRulePrelude(T.AtRuleParser.AtRule)) {
+fn parse_custom_at_rule_prelude(name: []const u8, input: *Parser, options: *const ParserOptions, comptime T: type, at_rule_parser: *T) Result(AtRulePrelude(T.CustomAtRuleParser.AtRule)) {
     ValidCustomAtRuleParser(T);
     switch (at_rule_parser.CustomAtRuleParser.parsePrelude(at_rule_parser, name, input, options)) {
         .result => |prelude| {
@@ -2551,7 +2564,7 @@ pub const Parser = struct {
         return this.newError(.{ .unexpected_token = token });
     }
 
-    pub fn newBasicUnexpectedTokenError(this: *const Parser, token: Token) BasicParseError {
+    pub fn newBasicUnexpectedTokenError(this: *const Parser, token: Token) ParseError(ParserError) {
         return this.newBasicError(.{ .unexpected_token = token });
     }
 

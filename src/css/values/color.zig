@@ -258,6 +258,9 @@ pub const CssColor = union(enum) {
                 }
             },
             .function => |name| css.color.parseColorFunction(location, name, input),
+            else => return .{
+                .err = location.newUnexpectedTokenError(token.*),
+            },
         }
     }
 
@@ -424,7 +427,45 @@ pub const CssColor = union(enum) {
 
         return result_color.toCssColor();
     }
+
+    pub fn lightDarkOwned(allocator: Allocator, light: CssColor, dark: CssColor) CssColor {
+        return CssColor{
+            .light_dark = .{
+                .light = bun.create(allocator, CssColor, light),
+                .dark = bun.create(allocator, CssColor, dark),
+            },
+        };
+    }
 };
+
+pub fn parseRGBComponents(input: *css.Parser, parser: *ComponentParser) Result(struct { f32, f32, f32, bool }) {
+    const red = switch (parser.parseNumberOrPercentage(input)) {
+        .result => |v| v,
+        .err => |e| return .{ .err = e },
+    };
+
+    const is_legacy_syntax = parser.from == null and
+        !std.math.isNan(red.unitValue()) and
+        input.tryParse(css.Parser.expectComma, .{}).isOk();
+    _ = is_legacy_syntax; // autofix
+
+    // const r, const g, const b = if (is_legacy_syntax) switch (red) {
+    //     .number => |v| brk: {
+    //         const value = v.value;
+    //         const r = std.math.clamp(@round(value), 0.0, 255.0);
+    //         _ = r; // autofix
+    //         const g = std.math.clamp(@round(parser.parseNumber), 0.0, 255.0);
+    //         _ = g; // autofix
+    //     },
+    // } else brk: {};
+    @panic(css.todo_stuff.depth);
+}
+
+pub fn parseHSLHWBComponents(input: *css.Parser, parser: *ComponentParser) Result(struct { f32, f32, f32, bool }) {
+    _ = input; // autofix
+    _ = parser; // autofix
+    @panic(css.todo_stuff.depth);
+}
 
 pub fn mapGamut(comptime T: type, color: T) T {
     const JND: f32 = 0.02;
@@ -441,7 +482,7 @@ pub fn mapGamut(comptime T: type, color: T) T {
             .h = 0.0,
             .alpha = current.alpha,
         };
-        const conversion_function_name = "into" ++ bun.meta.typeName(T);
+        const conversion_function_name = "into" ++ comptime bun.meta.typeName(T);
         return @call(.auto, @field(OKLCH, conversion_function_name), .{oklch});
     }
 
@@ -453,7 +494,7 @@ pub fn mapGamut(comptime T: type, color: T) T {
             .h = 0.0,
             .alpha = current.alpha,
         };
-        const conversion_function_name = "into" ++ bun.meta.typeName(T);
+        const conversion_function_name = "into" ++ comptime bun.meta.typeName(T);
         return @call(.auto, @field(OKLCH, conversion_function_name), .{oklch});
     }
 
@@ -1045,12 +1086,12 @@ pub const RGBA = struct {
     /// The alpha component.
     alpha: u8,
 
-    pub fn new(red: u8, green: u8, blue: u8, alpha: u8) RGBA {
+    pub fn new(red: u8, green: u8, blue: u8, alpha: f32) RGBA {
         return RGBA{
             .red = red,
             .green = green,
             .blue = blue,
-            .alpha = alpha,
+            .alpha = clamp_unit_f32(alpha),
         };
     }
 
@@ -1731,7 +1772,7 @@ pub const ComponentParser = struct {
                 .result => |vv| vv,
                 .err => |e| return .{ .err = e },
             };
-            return .{ .result = C.LightDarkColor.lightDark(light, dark) };
+            return .{ .result = C.lightDarkOwned(input.allocator(), light, dark) };
         }
 
         const new_from = switch (T.tryFromCssColor(from)) {
@@ -1825,6 +1866,12 @@ pub const ComponentParser = struct {
             return input.newCustomError(css.ParserError.invalid_value);
         }
     }
+
+    pub fn parseNumber(this: *const ComponentParser, input: *css.Parser) Result(f32) {
+        _ = this; // autofix
+        _ = input; // autofix
+        @panic(css.todo_stuff.depth);
+    }
 };
 
 /// Either a number or a percentage.
@@ -1840,6 +1887,23 @@ pub const NumberOrPercentage = union(enum) {
         /// 0.0 to 1.0.
         unit_value: f32,
     },
+
+    /// Return the value as a percentage.
+    pub fn unitValue(this: *const NumberOrPercentage) f32 {
+        return switch (this.*) {
+            .number => |v| v.value,
+            .percentage => |v| v.unit_value,
+        };
+    }
+
+    /// Return the value as a number with a percentage adjusted to the
+    /// `percentage_basis`.
+    pub fn value(this: *const NumberOrPercentage, percentage_basis: f32) f32 {
+        return switch (this.*) {
+            .number => |v| v.value,
+            .percentage => |v| v.unit_value * percentage_basis,
+        };
+    }
 };
 
 const RelativeComponentParser = struct {
@@ -2516,7 +2580,7 @@ pub fn DefineColorspace(comptime T: type) type {
     }
 
     // e.g. T = LAB, so then: into_this_function_name = "intoLAB"
-    const into_this_function_name = "into" ++ bun.meta.typeName(T);
+    const into_this_function_name = "into" ++ comptime bun.meta.typeName(T);
 
     return struct {
         pub fn components(this: *const T) struct { f32, f32, f32, f32 } {

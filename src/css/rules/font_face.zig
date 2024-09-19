@@ -223,7 +223,7 @@ pub const UnicodeRange = struct {
             const start = input.state();
             if (input.nextIncludingWhitespace().asValue()) |tok| if (tok.* == .delim and tok.delim == '?') continue;
             input.reset(&start);
-            return;
+            return .{ .result = {} };
         }
     }
 
@@ -240,24 +240,24 @@ pub const UnicodeRange = struct {
         }
 
         if (question_marks > 0) {
-            if (text.len == 0) return UnicodeRange{
+            if (text.len == 0) return .{ .result = UnicodeRange{
                 .start = first_hex_value << @intCast(question_marks * 4),
                 .end = ((first_hex_value + 1) << @intCast(question_marks * 4)) - 1,
-            };
+            } };
         } else if (text.len == 0) {
-            return UnicodeRange{
+            return .{ .result = UnicodeRange{
                 .start = first_hex_value,
                 .end = first_hex_value,
-            };
+            } };
         } else {
             if (text.len > 0 and text[0] == '-') {
                 text = text[1..];
                 const second_hex_value, const hex_digit_count2 = consumeHex(&text);
                 if (hex_digit_count2 > 0 and hex_digit_count2 <= 6 and text.len == 0) {
-                    return UnicodeRange{
+                    return .{ .result = UnicodeRange{
                         .start = first_hex_value,
                         .end = second_hex_value,
-                    };
+                    } };
                 }
             }
         }

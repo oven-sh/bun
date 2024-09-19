@@ -36,7 +36,7 @@ pub const FontPaletteValuesRule = struct {
 
     pub fn parse(name: DashedIdent, input: *css.Parser, loc: Location) Result(FontPaletteValuesRule) {
         var decl_parser = FontPaletteValuesDeclarationParser{};
-        var parser = css.RuleBodyParser(FontPaletteValuesProperty).new(input, &decl_parser);
+        var parser = css.RuleBodyParser(FontPaletteValuesDeclarationParser).new(input, &decl_parser);
         var properties = ArrayList(FontPaletteValuesProperty){};
         while (parser.next()) |result| {
             if (result) |decl| {

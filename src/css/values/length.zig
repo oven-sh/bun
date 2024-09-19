@@ -235,6 +235,10 @@ pub const Length = union(enum) {
     /// A computed length value using `calc()`.
     calc: *Calc(Length),
 
+    pub fn px(p: CSSNumber) Length {
+        return .{ .value = .{ .px = p } };
+    }
+
     pub fn mulF32(this: Length, allocator: Allocator, other: f32) Length {
         return switch (this) {
             .value => Length{ .value = this.value.mulF32(allocator, other) },

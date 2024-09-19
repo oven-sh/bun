@@ -831,12 +831,12 @@ pub fn QueryFeature(comptime FeatureId: type) type {
                     },
                 } };
             } else {
-                return .{
+                return .{ .result = .{
                     .plain = .{
                         .name = name,
                         .value = value,
                     },
-                };
+                } };
             }
         }
 
@@ -885,7 +885,7 @@ pub fn QueryFeature(comptime FeatureId: type) type {
                 return .{ .err = input.newCustomError(css.ParserError.invalid_media_query) };
             }
 
-            if (input.tryParse(consumeOperationOrColon, .{ input, false }).asValue()) |end_operator_| {
+            if (input.tryParse(consumeOperationOrColon, .{false}).asValue()) |end_operator_| {
                 const start_operator = operator.?;
                 const end_operator = end_operator_.?;
                 // Start and end operators must be matching.
@@ -1069,18 +1069,33 @@ pub const MediaFeatureValue = union(enum) {
     }
 
     pub fn parseKnown(input: *css.Parser, expected_type: MediaFeatureType) Result(MediaFeatureValue) {
-        return switch (expected_type) {
-            .boolean => {
-                const value = switch (CSSIntegerFns.parse(input)) {
-                    .err => |e| return .{ .err = e },
+        return .{
+            .result = switch (expected_type) {
+                .boolean => {
+                    const value = switch (CSSIntegerFns.parse(input)) {
+                        .err => |e| return .{ .err = e },
+                        .result => |v| v,
+                    };
+                    if (value != 0 and value != 1) return .{ .err = input.newCustomError(css.ParserError.invalid_value) };
+                    return .{ .boolean = value == 1 };
+                },
+                .number => .{ .number = CSSNumberFns.parse(input) },
+                .integer => .{ .integer = CSSIntegerFns.parse(input) },
+                .length => .{ .integer = Length.parse(input) },
+                .resolution => .{ .resolution = switch (Resolution.parse(input)) {
                     .result => |v| v,
-                };
-                if (value != 0 and value != 1) return .{ .err = input.newCustomError(css.ParserError.invalid_value) };
-                return .{ .boolean = value == 1 };
+                    .err => |e| return .{ .err = e },
+                } },
+                .ratio => .{ .ratio = switch (Ratio.parse(input)) {
+                    .result => |v| v,
+                    .err => |e| return .{ .err = e },
+                } },
+                .ident => .{ .ident = switch (IdentFns.parse(input)) {
+                    .result => |v| v,
+                    .err => |e| return .{ .err = e },
+                } },
+                .unknown => return .{ .err = input.newCustomError(.invalid_value) },
             },
-            .number => .{ .number = CSSNumberFns.parse(input) },
-            .integer => .{ .integer = CSSIntegerFns.parse(input) },
-            .length => .{ .integer = Length.parse(input) },
         };
     }
 
@@ -1088,27 +1103,32 @@ pub const MediaFeatureValue = union(enum) {
         // Ratios are ambiguous with numbers because the second param is optional (e.g. 2/1 == 2).
         // We require the / delimiter when parsing ratios so that 2/1 ends up as a ratio and 2 is
         // parsed as a number.
-        if (input.tryParse(Ratio.parseRequired, .{}).asValue()) |ratio| return .{ .ratio = ratio };
+        if (input.tryParse(Ratio.parseRequired, .{}).asValue()) |ratio| return .{ .result = .{ .ratio = ratio } };
 
         // Parse number next so that unitless values are not parsed as lengths.
-        if (input.tryParse(CSSNumberFns.parse, .{}).asValue()) |num| return .{ .number = num };
+        if (input.tryParse(CSSNumberFns.parse, .{}).asValue()) |num| return .{ .result = .{ .number = num } };
 
-        if (input.tryParse(Length.parse, .{}).asValue()) |res| return .{ .length = res };
+        if (input.tryParse(Length.parse, .{}).asValue()) |res| return .{ .result = .{ .length = res } };
 
-        if (input.tryParse(Resolution.parse, .{}).asValue()) |res| return .{ .resolution = res };
+        if (input.tryParse(Resolution.parse, .{}).asValue()) |res| return .{ .result = .{ .resolution = res } };
 
-        if (input.tryParse(EnvironmentVariable.parse, .{}).asValue()) |env| return .{ .env = env };
+        if (input.tryParse(EnvironmentVariable.parse, .{}).asValue()) |env| return .{ .result = .{ .env = env } };
 
         const ident = switch (IdentFns.parse(input)) {
             .err => |e| return .{ .err = e },
             .result => |v| v,
         };
-        return .{ .ident = ident };
+        return .{ .result = .{ .ident = ident } };
     }
 
     pub fn addF32(this: MediaFeatureValue, allocator: Allocator, other: f32) MediaFeatureValue {
         return switch (this) {
             .length => |len| .{ .length = len.add(allocator, .{ .px = other }) },
+            // .length => |len| .{
+            //     .length = .{
+            //         .value = .{ .px = other },
+            //     },
+            // },
             .number => |num| .{ .number = num + other },
             .integer => |num| .{ .integer = num + if (css.signfns.isSignPositive(other)) 1 else -1 },
             .boolean => |v| .{ .boolean = v },
@@ -1174,7 +1194,7 @@ pub fn MediaFeatureName(comptime FeatureId: type) type {
         const This = @This();
 
         pub fn eql(lhs: *const This, rhs: *const This) bool {
-            if (@intFromEnum(lhs) != @intFromEnum(rhs)) return false;
+            if (@intFromEnum(lhs.*) != @intFromEnum(rhs.*)) return false;
             return switch (lhs.*) {
                 .standard => |fid| fid == rhs.standard,
                 .custom => |ident| bun.strings.eql(ident, rhs.ident),
@@ -1246,12 +1266,29 @@ pub fn MediaFeatureName(comptime FeatureId: type) type {
                 } else break :comparator null;
             };
 
+            var free_str = false;
             const final_name = if (is_webkit) name: {
                 // PERF: stack buffer here?
+                free_str = true;
                 break :name std.fmt.allocPrint(input.allocator(), "-webkit-{s}", .{}) catch bun.outOfMemory();
             } else name;
 
-            if (FeatureId.parseString(final_name)) |standard| {
+            defer if (is_webkit) {
+                // If we made an allocation let's try to free it,
+                // this only works if FeatureId doesn't hold any references to the input string.
+                // i.e. it is an enum
+                comptime {
+                    std.debug.assert(@typeInfo(FeatureId) == .Enum);
+                }
+                input.allocator().free(final_name);
+            };
+
+            if (css.parse_utility.parseString(
+                input.allocator(),
+                FeatureId,
+                final_name,
+                FeatureId.parse,
+            )) |standard| {
                 return .{
                     .{ .standard = standard },
                     comparator,

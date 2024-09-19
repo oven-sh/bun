@@ -192,7 +192,7 @@ pub const TokenList = struct {
             var newlist = ArrayList(TokenOrValue){};
             newlist.insertSlice(input.allocator(), 0, slice) catch unreachable;
             tokens.deinit(input.allocator());
-            return .{ .result = newlist };
+            return .{ .result = TokenList{ .v = newlist } };
         }
 
         return .{ .result = .{ .v = tokens } };
@@ -366,12 +366,12 @@ pub const TokenList = struct {
                             options: *const css.ParserOptions,
                             depth: usize,
                             tokens: *ArrayList(TokenOrValue),
-                            pub fn parsefn(this: *@This(), input2: *css.Parser) Result(TokenList) {
-                                const thevar = switch (TokenListFns.parse(input2, this.options, this.depth + 1)) {
+                            pub fn parsefn(this: *@This(), input2: *css.Parser) Result(TokenOrValue) {
+                                const thevar = switch (Variable.parse(input2, this.options, this.depth + 1)) {
                                     .result => |vv| vv,
                                     .err => |e| return .{ .err = e },
                                 };
-                                return TokenOrValue{ .@"var" = thevar };
+                                return .{ .result = TokenOrValue{ .@"var" = thevar } };
                             }
                         };
                         var closure = Closure{
@@ -802,12 +802,12 @@ pub const UnresolvedColor = union(enum) {
                     };
                     // TODO: fix this
                     errdefer dark.deinit();
-                    return UnresolvedColor{
+                    return .{ .result = UnresolvedColor{
                         .light_dark = .{
                             .light = light,
                             .dark = dark,
                         },
-                    };
+                    } };
                 }
 
                 pub fn parsefn2(this: *@This(), input2: *css.Parser) Result(TokenList) {
@@ -822,6 +822,19 @@ pub const UnresolvedColor = union(enum) {
         } else {
             return .{ .err = input.newCustomError(css.ParserError.invalid_value) };
         }
+    }
+
+    pub fn lightDarkOwned(allocator: Allocator, light: UnresolvedColor, dark: UnresolvedColor) UnresolvedColor {
+        var lightlist = ArrayList(TokenOrValue).initCapacity(allocator, 1) catch bun.outOfMemory();
+        lightlist.append(allocator, TokenOrValue{ .unresolved_color = light }) catch bun.outOfMemory();
+        var darklist = ArrayList(TokenOrValue).initCapacity(allocator, 1) catch bun.outOfMemory();
+        darklist.append(allocator, TokenOrValue{ .unresolved_color = dark }) catch bun.outOfMemory();
+        return UnresolvedColor{
+            .light_dark = .{
+                .light = lightlist,
+                .dark = darklist,
+            },
+        };
     }
 };
 
@@ -1163,7 +1176,7 @@ pub fn tryParseColorToken(f: []const u8, state: *const css.ParserState, input: *
         bun.strings.eqlCaseInsensitiveASCIIICheckLength(f, "light-dark"))
     {
         const s = input.state();
-        input.reset(&state);
+        input.reset(state);
         if (CssColor.parse(input)) |color| {
             return color;
         }

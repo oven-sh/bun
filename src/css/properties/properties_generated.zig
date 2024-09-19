@@ -368,7 +368,7 @@ pub const PropertyId = union(PropertyIdTag) {
         return switch (this.*) {
             .@"background-color" => {},
             .composes => {},
-            else => this.*,
+            else => {},
         };
     }
 };

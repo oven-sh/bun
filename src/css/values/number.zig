@@ -15,7 +15,7 @@ pub const CSSNumberFns = struct {
                 .value => |v| return .{ .result = v.* },
                 .number => |n| return .{ .result = n },
                 // Numbers are always compatible, so they will always compute to a value.
-                else => return input.newCustomError(css.ParserError.invalid_value),
+                else => return .{ .err = input.newCustomError(css.ParserError.invalid_value) },
             }
         }
 

@@ -111,15 +111,19 @@ pub fn Calc(comptime V: type) type {
             }
         }
 
+        // TODO: change to addOwned()
         pub fn add(this: @This(), allocator: std.mem.Allocator, rhs: @This()) @This() {
             if (this == .value and rhs == .value) {
-                return addValue(this.value, rhs.value);
+                // PERF: we can reuse the allocation here
+                return .{ .value = bun.create(allocator, V, addValue(this.value.*, rhs.value.*)) };
             } else if (this == .number and rhs == .number) {
-                return this.number + rhs.number;
+                return .{ .number = this.number + rhs.number };
             } else if (this == .value) {
-                return addValue(this.value, intoValue(rhs));
+                // PERF: we can reuse the allocation here
+                return .{ .value = bun.create(allocator, V, addValue(this.value, intoValue(rhs))) };
             } else if (rhs == .value) {
-                return addValue(intoValue(this), rhs.value);
+                // PERF: we can reuse the allocation here
+                return .{ .value = bun.create(allocator, V, addValue(intoValue(this), rhs.value)) };
             } else if (this == .function) {
                 return This{
                     .sum = .{
@@ -206,15 +210,15 @@ pub fn Calc(comptime V: type) type {
                 // var reduced: ArrayList(This) = This.reduceArgs(&args, std.math.Order.lt);
                 if (reduced.items.len == 1) {
                     defer reduced.deinit(input.allocator());
-                    return reduced.swapRemove(0);
+                    return .{ .result = reduced.swapRemove(0) };
                 }
-                return This{
+                return .{ .result = This{
                     .function = bun.create(
                         input.allocator(),
                         MathFunction(V),
                         MathFunction(V){ .min = reduced },
                     ),
-                };
+                } };
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("max", f)) {
                 const Closure = struct {
                     ctx: @TypeOf(ctx),
@@ -297,7 +301,7 @@ pub fn Calc(comptime V: type) type {
 
                 const switch_val: u8 = (@as(u8, @intFromBool(min != null)) << 1) | (@as(u8, @intFromBool(min != null)));
                 // switch (min, max)
-                return switch (switch_val) {
+                return .{ .result = switch (switch_val) {
                     0b00 => center,
                     0b10 => This{
                         .function = bun.create(
@@ -339,7 +343,7 @@ pub fn Calc(comptime V: type) type {
                         ),
                     },
                     else => unreachable,
-                };
+                } };
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("round", f)) {
                 const Fn = struct {
                     ctx: @TypeOf(ctx),
@@ -695,7 +699,7 @@ pub fn Calc(comptime V: type) type {
         pub fn parseProduct(
             input: *css.Parser,
             ctx: anytype,
-            parse_ident: *const fn (@TypeOf(ctx), []const u8) ?This,
+            comptime parse_ident: *const fn (@TypeOf(ctx), []const u8) ?This,
         ) Result(This) {
             var node = switch (This.parseValue(input, ctx, parse_ident)) {
                 .result => |vv| vv,

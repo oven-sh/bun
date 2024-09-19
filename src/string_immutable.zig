@@ -6272,12 +6272,12 @@ pub fn splitFirst(self: string) ?struct { first: u8, rest: []const u8 } {
     }
 
     const first = self[0];
-    return struct { .first = first, .rest = self[1..] };
+    return .{ .first = first, .rest = self[1..] };
 }
 
 /// Returns the first byte of the string which matches the expected byte and the rest of the string excluding the first byte
 pub fn splitFirstWithExpected(self: string, comptime expected: u8) ?[]const u8 {
-    if (self.len > 0 and self.len[0] == expected) {
+    if (self.len > 0 and self[0] == expected) {
         return self[1..];
     }
     return null;

@@ -222,7 +222,10 @@ pub const FontFamily = union(enum) {
         }
 
         const stralloc = input.allocator();
-        const value = try input.expectIdent();
+        const value = switch (input.expectIdent()) {
+            .result => |v| v,
+            .err => |e| return .{ .err = e },
+        };
         var string: ?ArrayList(u8) = null;
         while (input.tryParse(css.Parser.expectIdent).asValue()) |ident| {
             if (string == null) {
@@ -342,7 +345,7 @@ pub const FontStyle = union(enum) {
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("italic", ident)) {
             return .{ .result = .italic };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("oblique", ident)) {
-            const angle = input.tryParse(Angle.parse, .{}) catch FontStyle.defaultObliqueAngle();
+            const angle = input.tryParse(Angle.parse, .{}).unwrapOr(FontStyle.defaultObliqueAngle());
             return .{ .result = .{ .oblique = angle } };
         } else {
             //

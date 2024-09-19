@@ -1909,31 +1909,19 @@ pub const api = struct {
 
         pub usingnamespace css.Bitflags(@This());
 
-        pub fn intersects(self: SelectorParsingState, other: SelectorParsingState) bool {
-            _ = other; // autofix
-            _ = self; // autofix
-            css.todo("SelectorParsingState.intersects", .{});
-        }
-
-        pub fn insert(self: *SelectorParsingState, other: SelectorParsingState) void {
-            _ = self; // autofix
-            _ = other; // autofix
-            css.todo("SelectorParsingState.insert", .{});
-        }
-
         pub fn allowsPseudos(this: SelectorParsingState) bool {
             _ = this; // autofix
-            css.todo("SelectorParsingState.allowsPseudos", .{});
+            @panic(css.todo_stuff.depth);
         }
 
         pub fn allowsPart(this: SelectorParsingState) bool {
             _ = this; // autofix
-            css.todo("SelectorParsingState.allowsPart", .{});
+            @panic(css.todo_stuff.depth);
         }
 
         pub fn allowsSlotted(this: SelectorParsingState) bool {
             _ = this; // autofix
-            css.todo("SelectorParsingState.allowsSlotted", .{});
+            @panic(css.todo_stuff.depth);
         }
 
         pub fn allowsTreeStructuralPseudoClasses(this: SelectorParsingState) bool {

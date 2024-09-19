@@ -245,7 +245,7 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
           return `.${escapeIdent(prop_name)} => |*p| .{ p.insert(pre); },`;
         })
         .join("\n")}
-      else => this.*,
+      else => {},
     };
   }
 `;

@@ -55,6 +55,8 @@ const FFIType = {
   function: 17,
   callback: 17,
   fn: 17,
+  napi_env: 18,
+  napi_value: 19,
 };
 
 const suffix = process.platform === "win32" ? "dll" : process.platform === "darwin" ? "dylib" : "so";
@@ -153,7 +155,7 @@ Object.defineProperty(globalThis, "__GlobalBunCString", {
   configurable: false,
 });
 
-const ffiWrappers = new Array(18);
+const ffiWrappers = new Array(20);
 
 var char = "val|0";
 ffiWrappers.fill(char);
@@ -255,15 +257,15 @@ ffiWrappers[FFIType.uint16_t] = `{
 ffiWrappers[FFIType.double] = `{
   if (typeof val === "bigint") {
     if (val.valueOf() < BigInt(Number.MAX_VALUE)) {
-      return Math.abs(Number(val).valueOf()) + 0.00000000000001 - 0.00000000000001;
+      return Math.abs(Number(val).valueOf()) + (0.00 - 0.00);
     }
   }
 
   if (!val) {
-    return 0 + 0.00000000000001 - 0.00000000000001;
+    return 0 + (0.00 - 0.00);
   }
 
-  return val + 0.00000000000001 - 0.00000000000001;
+  return val + (0.00 - 0.00);
 }`;
 
 ffiWrappers[FFIType.float] = ffiWrappers[10] = `{
@@ -399,7 +401,9 @@ const native = {
   },
 };
 
-function dlopen(path, options) {
+const ccFn = $newZigFunction("ffi.zig", "Bun__FFI__cc", 1);
+
+function normalizePath(path) {
   if (typeof path === "string" && path?.startsWith?.("file:")) {
     // import.meta.url returns a file: URL
     // https://github.com/oven-sh/bun/issues/10304
@@ -416,7 +420,61 @@ function dlopen(path, options) {
     }
   }
 
+  return path;
+}
+
+function dlopen(path, options) {
+  path = normalizePath(path);
+
   const result = nativeDLOpen(path, options);
+  if (result instanceof Error) throw result;
+
+  for (let key in result.symbols) {
+    var symbol = result.symbols[key];
+    if (options[key]?.args?.length || FFIType[options[key]?.returns as string] === FFIType.cstring) {
+      result.symbols[key] = FFIBuilder(
+        options[key].args ?? [],
+        options[key].returns ?? FFIType.void,
+        symbol,
+        // in stacktraces:
+        // instead of
+        //    "/usr/lib/sqlite3.so"
+        // we want
+        //    "sqlite3_get_version() - sqlit3.so"
+        path.includes("/") ? `${key} (${path.split("/").pop()})` : `${key} (${path})`,
+      );
+    } else {
+      // consistentcy
+      result.symbols[key].native = result.symbols[key];
+    }
+  }
+
+  // Bind it because it's a breaking change to not do so
+  // Previously, it didn't need to be bound
+  result.close = result.close.bind(result);
+
+  return result;
+}
+
+function cc(options) {
+  if (!$isObject(options)) {
+    throw new Error("Expected options to be an object");
+  }
+
+  let path = options?.source;
+  if (!path) {
+    throw new Error("Expected source to be a string to a file path");
+  }
+  if ($isJSArray(path)) {
+    for (let i = 0; i < path.length; i++) {
+      path[i] = normalizePath(path[i]);
+    }
+  } else {
+    path = normalizePath(path);
+  }
+  options.source = path;
+
+  const result = ccFn(options);
   if (result instanceof Error) throw result;
 
   for (let key in result.symbols) {
@@ -503,4 +561,5 @@ export default {
   toArrayBuffer,
   toBuffer,
   viewSource,
+  cc,
 };

@@ -3894,9 +3894,6 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
-    RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
-
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
         auto keyString = moduleNameValue->value(globalObject);
         if (auto resolution = globalObject->onLoadPlugins.resolveVirtualModule(keyString, sourceOrigin.url().protocolIsFile() ? sourceOrigin.url().fileSystemPath() : String())) {
@@ -3904,8 +3901,10 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
 
             auto result = JSC::importModule(globalObject, resolvedIdentifier,
                 JSC::jsUndefined(), parameters, JSC::jsUndefined());
-
-            RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
+            if (scope.exception()) {
+                auto* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
+                return promise->rejectWithCaughtException(globalObject, scope);
+            }
             return result;
         }
     }
@@ -3943,7 +3942,7 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
     ASSERT(startRefCount == moduleName.impl()->refCount());
     if (!resolved.success) {
         throwException(scope, resolved.result.err, globalObject);
-        return promise->rejectWithCaughtException(globalObject, scope);
+        return JSC::JSInternalPromise::rejectedPromiseWithCaughtException(globalObject, scope);
     }
 
     JSC::Identifier resolvedIdentifier;
@@ -3972,8 +3971,11 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
 
     auto result = JSC::importModule(globalObject, resolvedIdentifier,
         JSC::jsUndefined(), parameters, jsUndefined());
-    RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
+    if (scope.exception()) {
+        return JSC::JSInternalPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+    }
 
+    ASSERT(result);
     return result;
 }
 

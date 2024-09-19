@@ -12,12 +12,12 @@ macro(setb variable)
 endmacro()
 
 set(targets WIN32 APPLE UNIX LINUX)
+
 foreach(target ${targets})
   setb(${target})
 endforeach()
 
 # --- CPU target ---
-
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
   if(APPLE)
     register_compiler_flags(-mcpu=apple-m1)
@@ -35,7 +35,6 @@ else()
 endif()
 
 # --- MSVC runtime ---
-
 if(WIN32)
   register_compiler_flags(
     DESCRIPTION "Use static MSVC runtime"
@@ -46,7 +45,6 @@ if(WIN32)
 endif()
 
 # --- Optimization level ---
-
 if(DEBUG)
   register_compiler_flags(
     DESCRIPTION "Disable optimization"
@@ -68,7 +66,6 @@ else()
 endif()
 
 # --- Debug level ---
-
 if(WIN32)
   register_compiler_flags(
     DESCRIPTION "Enable debug symbols (.pdb)"
@@ -100,7 +97,6 @@ endif()
 # -fno-eliminate-unused-debug-types # Don't eliminate unused debug symbols
 
 # --- C/C++ flags ---
-
 register_compiler_flags(
   DESCRIPTION "Disable C/C++ exceptions"
   -fno-exceptions ${UNIX}
@@ -155,7 +151,7 @@ register_compiler_flags(
 
 # having this enabled in debug mode on macOS >=14 causes libarchive to fail to configure with the error:
 # > pid_t doesn't exist on this platform?
-if((DEBUG AND LINUX) OR ((NOT DEBUG) AND UNIX))
+if((DEBUG AND LINUX) OR((NOT DEBUG) AND UNIX))
   register_compiler_flags(
     DESCRIPTION "Emit an address-significance table"
     -faddrsig
@@ -175,7 +171,6 @@ if(WIN32)
 endif()
 
 # --- Linker flags ---
-
 if(LINUX)
   register_linker_flags(
     DESCRIPTION "Disable relocation read-only (RELRO)"
@@ -187,7 +182,6 @@ endif()
 
 # Note: This is a helpful guide about assertions:
 # https://best.openssf.org/Compiler-Hardening-Guides/Compiler-Options-Hardening-Guide-for-C-and-C++
-
 if(ENABLE_ASSERTIONS)
   register_compiler_flags(
     DESCRIPTION "Do not eliminate null-pointer checks"
@@ -233,7 +227,6 @@ else()
 endif()
 
 # --- Diagnostics ---
-
 if(UNIX)
   register_compiler_flags(
     DESCRIPTION "Enable color diagnostics"
@@ -247,7 +240,6 @@ register_compiler_flags(
 )
 
 # --- LTO ---
-
 if(ENABLE_LTO)
   register_compiler_flags(
     DESCRIPTION "Enable link-time optimization (LTO)"
@@ -273,13 +265,11 @@ if(ENABLE_LTO)
 endif()
 
 # --- Remapping ---
-
 if(UNIX)
   register_compiler_flags(
     DESCRIPTION "Remap source files"
     -ffile-prefix-map=${CWD}=.
     -ffile-prefix-map=${VENDOR_PATH}=vendor
-    -ffile-prefix-map=${BUILD_PATH}=build
     -ffile-prefix-map=${CACHE_PATH}=cache
   )
 endif()

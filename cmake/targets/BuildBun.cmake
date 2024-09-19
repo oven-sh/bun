@@ -913,7 +913,7 @@ endif()
 
 include_directories(${WEBKIT_INCLUDE_PATH})
 
-if(WEBKIT_PREBUILT AND NOT APPLE)
+if(NOT WEBKIT_LOCAL AND NOT APPLE)
   include_directories(${WEBKIT_INCLUDE_PATH}/wtf/unicode)
 endif()
 

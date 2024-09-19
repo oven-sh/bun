@@ -8,6 +8,18 @@
 #include <stdio.h>
 #endif
 
+#if __has_include(<node/node_api.h>)
+
+#include <node/node_api.h>
+
+napi_value napi_main(napi_env env) {
+  napi_value result;
+  napi_create_string_utf8(env, "Hello, Napi!", NAPI_AUTO_LENGTH, &result);
+  return result;
+}
+
+#endif
+
 int main() {
 
 #if __has_include(<stdio.h>)

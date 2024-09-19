@@ -65,8 +65,8 @@ pub const Ref = opaque {
     extern fn napi_set_ref(ref: *Ref, value: JSC.JSValue) void;
 };
 pub const NapiHandleScope = opaque {
-    extern fn NapiHandleScope__push(globalObject: *JSC.JSGlobalObject, escapable: bool) ?*NapiHandleScope;
-    extern fn NapiHandleScope__pop(globalObject: *JSC.JSGlobalObject, current: ?*NapiHandleScope) void;
+    pub extern fn NapiHandleScope__push(globalObject: *JSC.JSGlobalObject, escapable: bool) ?*NapiHandleScope;
+    pub extern fn NapiHandleScope__pop(globalObject: *JSC.JSGlobalObject, current: ?*NapiHandleScope) void;
     extern fn NapiHandleScope__append(globalObject: *JSC.JSGlobalObject, value: JSC.JSValueReprInt) void;
     extern fn NapiHandleScope__escape(handleScope: *NapiHandleScope, value: JSC.JSValueReprInt) bool;
 

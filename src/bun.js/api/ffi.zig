@@ -609,7 +609,7 @@ pub const FFI = struct {
             }
         }
 
-        const symbols_object = object.get(globalThis, "symbols") orelse .zero;
+        const symbols_object = object.get(globalThis, "symbols") orelse .undefined;
         if (!globalThis.hasException() and (symbols_object == .zero or !symbols_object.isObject())) {
             _ = globalThis.throwInvalidArgumentTypeValue("symbols", "object", symbols_object);
         }
@@ -763,9 +763,9 @@ pub const FFI = struct {
             if (tcc_state) |state| {
                 TCC.tcc_delete(state);
             }
-            if (bytes_to_free_on_error.len > 0) {
-                bun.default_allocator.destroy(@as(*u8, @ptrCast(bytes_to_free_on_error)));
-            }
+
+            // TODO: upgrade tinycc because they improved the way memory management works for this
+            // we are unable to free memory safely in certain cases here.
         }
 
         var obj = JSC.JSValue.createEmptyObject(globalThis, compile_c.symbols.map.count());
@@ -774,11 +774,14 @@ pub const FFI = struct {
             const allocator = bun.default_allocator;
 
             function.compile(allocator) catch |err| {
-                const ret = JSC.toInvalidArguments("{s} when translating symbol \"{s}\"", .{
-                    @errorName(err),
-                    function_name,
-                }, globalThis);
-                globalThis.throwValue(ret);
+                if (!globalThis.hasException()) {
+                    const ret = JSC.toInvalidArguments("{s} when translating symbol \"{s}\"", .{
+                        @errorName(err),
+                        function_name,
+                    }, globalThis);
+                    globalThis.throwValue(ret);
+                }
+
                 return .zero;
             };
             switch (function.step) {
@@ -1326,11 +1329,11 @@ pub const FFI = struct {
 
         var threadsafe = false;
 
-        if (value.get(global, "threadsafe")) |threadsafe_value| {
+        if (value.getTruthy(global, "threadsafe")) |threadsafe_value| {
             threadsafe = threadsafe_value.toBoolean();
         }
 
-        if (value.get(global, "returns")) |ret_value| brk: {
+        if (value.getTruthy(global, "returns")) |ret_value| brk: {
             if (ret_value.isAnyInt()) {
                 const int = ret_value.toInt32();
                 switch (int) {
@@ -1351,6 +1354,11 @@ pub const FFI = struct {
                 abi_types.clearAndFree(allocator);
                 return JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "Unknown return type {s}", .{ret_slice.slice()}, global);
             };
+        }
+
+        if (return_type == ABIType.napi_env) {
+            abi_types.clearAndFree(allocator);
+            return ZigString.static("Cannot return napi_env to JavaScript").toErrorInstance(global);
         }
 
         if (function.threadsafe and return_type != ABIType.void) {
@@ -1423,6 +1431,15 @@ pub const FFI = struct {
         threadsafe: bool = false,
 
         pub var lib_dirZ: [*:0]const u8 = "";
+
+        pub fn needsHandleScope(val: *const Function) bool {
+            for (val.arg_types.items) |arg| {
+                if (arg == ABIType.napi_env or arg == ABIType.napi_value) {
+                    return true;
+                }
+            }
+            return val.return_type == ABIType.napi_value;
+        }
 
         extern "C" fn FFICallbackFunctionWrapper_destroy(*anyopaque) void;
 
@@ -1765,21 +1782,45 @@ pub const FFI = struct {
                 \\
             );
 
+            if (this.needsHandleScope()) {
+                try writer.writeAll(
+                    \\  void* handleScope = NapiHandleScope__push(JS_GLOBAL_OBJECT, false);
+                    \\
+                );
+            }
+
             if (this.arg_types.items.len > 0) {
                 try writer.writeAll(
                     \\  LOAD_ARGUMENTS_FROM_CALL_FRAME;
                     \\
                 );
                 for (this.arg_types.items, 0..) |arg, i| {
-                    if (arg.needsACastInC()) {
+                    if (arg == .napi_env) {
+                        try writer.print(
+                            \\  napi_env arg{d} = (napi_env)JS_GLOBAL_OBJECT;
+                            \\  argsPtr++;
+                            \\
+                        ,
+                            .{
+                                i,
+                            },
+                        );
+                    } else if (arg == .napi_value) {
+                        try writer.print(
+                            \\  EncodedJSValue arg{d} = {{ .asInt64 = *argsPtr++ }};
+                            \\
+                        ,
+                            .{
+                                i,
+                            },
+                        );
+                    } else if (arg.needsACastInC()) {
                         if (i < this.arg_types.items.len - 1) {
                             try writer.print(
-                                \\  EncodedJSValue arg{d};
-                                \\  arg{d}.asInt64 = *argsPtr++;
+                                \\  EncodedJSValue arg{d} = {{ .asInt64 = *argsPtr++ }};
                                 \\
                             ,
                                 .{
-                                    i,
                                     i,
                                 },
                             );
@@ -1853,6 +1894,13 @@ pub const FFI = struct {
             if (!first) try writer.writeAll("\n");
 
             try writer.writeAll("    ");
+
+            if (this.needsHandleScope()) {
+                try writer.writeAll(
+                    \\  NapiHandleScope__pop(JS_GLOBAL_OBJECT, handleScope);
+                    \\
+                );
+            }
 
             try writer.writeAll("return ");
 
@@ -2014,8 +2062,10 @@ pub const FFI = struct {
         u64_fast = 16,
 
         function = 17,
+        napi_env = 18,
+        napi_value = 19,
 
-        pub const max = @intFromEnum(ABIType.function);
+        pub const max = @intFromEnum(ABIType.napi_value);
 
         /// Types that we can directly pass through as an `int64_t`
         pub fn needsACastInC(this: ABIType) bool {
@@ -2064,6 +2114,8 @@ pub const FFI = struct {
             .{ "function", ABIType.function },
             .{ "callback", ABIType.function },
             .{ "fn", ABIType.function },
+            .{ "napi_env", ABIType.napi_env },
+            .{ "napi_value", ABIType.napi_value },
         };
         pub const label = bun.ComptimeStringMap(ABIType, map);
         const EnumMapFormatter = struct {
@@ -2158,6 +2210,15 @@ pub const FFI = struct {
                             try writer.writeAll("(float)");
                         try writer.writeAll("JSVALUE_TO_FLOAT(");
                     },
+                    .napi_env => {
+                        try writer.writeAll("(napi_env)JS_GLOBAL_OBJECT");
+                        return;
+                    },
+                    .napi_value => {
+                        try writer.writeAll(self.symbol);
+                        try writer.writeAll(".asNapiValue");
+                        return;
+                    },
                 }
                 // if (self.fromi64) {
                 //     try writer.writeAll("EncodedJSValue{ ");
@@ -2207,6 +2268,12 @@ pub const FFI = struct {
                     .float => {
                         try writer.print("FLOAT_TO_JSVALUE({s})", .{self.symbol});
                     },
+                    .napi_env => {
+                        try writer.writeAll("JS_GLOBAL_OBJECT");
+                    },
+                    .napi_value => {
+                        try writer.print("((EncodedJSValue) {{.asNapiValue = {s} }} )", .{self.symbol});
+                    },
                 }
             }
         };
@@ -2249,6 +2316,8 @@ pub const FFI = struct {
                 .float => "float",
                 .char => "char",
                 .void => "void",
+                .napi_env => "napi_env",
+                .napi_value => "napi_value",
             };
         }
 
@@ -2274,6 +2343,8 @@ pub const FFI = struct {
                 .float => "float",
                 .char => "char",
                 .void => "void",
+                .napi_env => "napi_env",
+                .napi_value => "napi_value",
             };
         }
     };
@@ -2357,6 +2428,8 @@ const CompilerRT = struct {
     pub fn inject(state: *TCC.TCCState) void {
         _ = TCC.tcc_add_symbol(state, "memset", &memset);
         _ = TCC.tcc_add_symbol(state, "memcpy", &memcpy);
+        _ = TCC.tcc_add_symbol(state, "NapiHandleScope__push", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__push);
+        _ = TCC.tcc_add_symbol(state, "NapiHandleScope__pop", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__pop);
 
         _ = TCC.tcc_add_symbol(
             state,

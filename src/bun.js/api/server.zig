@@ -44,7 +44,6 @@ const HTTP = bun.http;
 const FetchEvent = WebCore.FetchEvent;
 const js = bun.JSC.C;
 const JSC = bun.JSC;
-const JSError = @import("../base.zig").JSError;
 const MarkedArrayBuffer = @import("../base.zig").MarkedArrayBuffer;
 const getAllocator = @import("../base.zig").getAllocator;
 const JSValue = bun.JSC.JSValue;
@@ -5901,14 +5900,14 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             if (topic.len == 0) {
                 httplog("publish() topic invalid", .{});
-                JSC.JSError(this.vm.allocator, "publish requires a topic string", .{}, globalThis, exception);
+                exception.* = JSC.createError(globalThis, "publish requires a topic string", .{}).asRef();
                 return .zero;
             }
 
             var topic_slice = topic.toSlice(bun.default_allocator);
             defer topic_slice.deinit();
             if (topic_slice.len == 0) {
-                JSC.JSError(this.vm.allocator, "publish requires a non-empty topic", .{}, globalThis, exception);
+                exception.* = JSC.createError(globalThis, "publish requires a non-empty topic", .{}).asRef();
                 return .zero;
             }
 

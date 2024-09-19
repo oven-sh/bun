@@ -1178,7 +1178,7 @@ fn doResolveWithArgs(
             errorable.result.value,
             query_string,
         }) catch {
-            JSC.JSError(allocator, "Failed to allocate memory", .{}, ctx, exception);
+            ctx.throwOutOfMemory();
             return null;
         };
 

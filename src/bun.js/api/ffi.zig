@@ -271,19 +271,19 @@ pub const FFI = struct {
                 }
             } else if (Environment.isLinux) {
                 if (Environment.isX64) {
-                    if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/include/x86_64-linux-gnu")) {
+                    if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/include/x86_64-linux-gnu").isTrue()) {
                         cached_default_system_include_dir = "/usr/include/x86_64-linux-gnu";
                     }
 
-                    if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/lib/x86_64-linux-gnu")) {
+                    if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/lib/x86_64-linux-gnu").isTrue()) {
                         cached_default_system_library_dir = "/usr/lib/x86_64-linux-gnu";
                     }
                 } else if (Environment.isAarch64) {
-                    if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/include/aarch64-linux-gnu")) {
+                    if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/include/aarch64-linux-gnu").isTrue()) {
                         cached_default_system_include_dir = "/usr/include/aarch64-linux-gnu";
                     }
 
-                    if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/lib/aarch64-linux-gnu")) {
+                    if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/lib/aarch64-linux-gnu").isTrue()) {
                         cached_default_system_library_dir = "/usr/lib/aarch64-linux-gnu";
                     }
                 }
@@ -352,26 +352,16 @@ pub const FFI = struct {
                 }
 
                 if (Environment.isAarch64) {
-                    switch (bun.sys.directoryExistsAt(std.fs.cwd(), "/opt/homebrew/include")) {
-                        .result => |exists| {
-                            if (exists) {
-                                if (TCC.tcc_add_include_path(state, "/opt/homebrew/include") == -1) {
-                                    debug("TinyCC failed to add library path", .{});
-                                }
-                            }
-                        },
-                        .err => {},
+                    if (bun.sys.directoryExistsAt(std.fs.cwd(), "/opt/homebrew/include").isTrue()) {
+                        if (TCC.tcc_add_include_path(state, "/opt/homebrew/include") == -1) {
+                            debug("TinyCC failed to add library path", .{});
+                        }
                     }
 
-                    switch (bun.sys.directoryExistsAt(std.fs.cwd(), "/opt/homebrew/lib")) {
-                        .result => |exists| {
-                            if (exists) {
-                                if (TCC.tcc_add_library_path(state, "/opt/homebrew/lib") == -1) {
-                                    debug("TinyCC failed to add library path", .{});
-                                }
-                            }
-                        },
-                        .err => {},
+                    if (bun.sys.directoryExistsAt(std.fs.cwd(), "/opt/homebrew/lib").isTrue()) {
+                        if (TCC.tcc_add_library_path(state, "/opt/homebrew/lib") == -1) {
+                            debug("TinyCC failed to add library path", .{});
+                        }
                     }
                 }
             } else if (Environment.isLinux) {
@@ -389,48 +379,16 @@ pub const FFI = struct {
             }
 
             if (Environment.isPosix) {
-                switch (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/local/include")) {
-                    .result => |exists| {
-                        if (exists) {
-                            if (TCC.tcc_add_sysinclude_path(state, "/usr/local/include") == -1) {
-                                debug("TinyCC failed to add library path", .{});
-                            }
-                        }
-                    },
-                    .err => {},
+                if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/local/include").isTrue()) {
+                    if (TCC.tcc_add_sysinclude_path(state, "/usr/local/include") == -1) {
+                        debug("TinyCC failed to add library path", .{});
+                    }
                 }
 
-                switch (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/include")) {
-                    .result => |exists| {
-                        if (exists) {
-                            if (TCC.tcc_add_sysinclude_path(state, "/usr/include") == -1) {
-                                debug("TinyCC failed to add library path", .{});
-                            }
-                        }
-                    },
-                    .err => {},
-                }
-
-                switch (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/local/lib")) {
-                    .result => |exists| {
-                        if (exists) {
-                            if (TCC.tcc_add_library_path(state, "/usr/local/lib") == -1) {
-                                debug("TinyCC failed to add library path", .{});
-                            }
-                        }
-                    },
-                    .err => {},
-                }
-
-                switch (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/lib")) {
-                    .result => |exists| {
-                        if (exists) {
-                            if (TCC.tcc_add_library_path(state, "/usr/lib") == -1) {
-                                debug("TinyCC failed to add library path", .{});
-                            }
-                        }
-                    },
-                    .err => {},
+                if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/local/lib").isTrue()) {
+                    if (TCC.tcc_add_library_path(state, "/usr/local/lib") == -1) {
+                        debug("TinyCC failed to add library path", .{});
+                    }
                 }
             }
 

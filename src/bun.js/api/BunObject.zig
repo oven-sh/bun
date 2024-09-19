@@ -60,7 +60,6 @@ pub const BunObject = struct {
     pub const Glob = toJSGetter(Bun.getGlobConstructor);
     pub const Transpiler = toJSGetter(Bun.getTranspilerConstructor);
     pub const argv = toJSGetter(Bun.getArgv);
-    pub const assetPrefix = toJSGetter(Bun.getAssetPrefix);
     pub const cwd = toJSGetter(Bun.getCWD);
     pub const enableANSIColors = toJSGetter(Bun.enableANSIColors);
     pub const hash = toJSGetter(Bun.getHashObject);
@@ -120,7 +119,6 @@ pub const BunObject = struct {
         @export(BunObject.Glob, .{ .name = getterName("Glob") });
         @export(BunObject.Transpiler, .{ .name = getterName("Transpiler") });
         @export(BunObject.argv, .{ .name = getterName("argv") });
-        @export(BunObject.assetPrefix, .{ .name = getterName("assetPrefix") });
         @export(BunObject.cwd, .{ .name = getterName("cwd") });
         @export(BunObject.enableANSIColors, .{ .name = getterName("enableANSIColors") });
         @export(BunObject.hash, .{ .name = getterName("hash") });
@@ -252,60 +250,12 @@ const zlib = @import("../../zlib.zig");
 const Which = @import("../../which.zig");
 const ErrorableString = JSC.ErrorableString;
 const is_bindgen = JSC.is_bindgen;
-const max_addressible_memory = std.math.maxInt(u56);
+const max_addressable_memory = std.math.maxInt(u56);
 const glob = @import("../../glob.zig");
 const Async = bun.Async;
 const SemverObject = @import("../../install/semver.zig").SemverObject;
 const Braces = @import("../../shell/braces.zig");
 const Shell = @import("../../shell/shell.zig");
-
-threadlocal var css_imports_list_strings: [512]ZigString = undefined;
-threadlocal var css_imports_list: [512]Api.StringPointer = undefined;
-threadlocal var css_imports_list_tail: u16 = 0;
-threadlocal var css_imports_buf: std.ArrayList(u8) = undefined;
-threadlocal var css_imports_buf_loaded: bool = false;
-
-threadlocal var routes_list_strings: [1024]ZigString = undefined;
-
-pub fn onImportCSS(
-    resolve_result: *const Resolver.Result,
-    import_record: *ImportRecord,
-    origin: URL,
-) void {
-    if (!css_imports_buf_loaded) {
-        css_imports_buf = std.ArrayList(u8).initCapacity(
-            VirtualMachine.get().allocator,
-            import_record.path.text.len,
-        ) catch unreachable;
-        css_imports_buf_loaded = true;
-    }
-
-    const writer = css_imports_buf.writer();
-    const offset = css_imports_buf.items.len;
-    css_imports_list[css_imports_list_tail] = .{
-        .offset = @as(u32, @truncate(offset)),
-        .length = 0,
-    };
-    getPublicPath(resolve_result.path_pair.primary.text, origin, @TypeOf(writer), writer);
-    const length = css_imports_buf.items.len - offset;
-    css_imports_list[css_imports_list_tail].length = @as(u32, @truncate(length));
-    css_imports_list_tail += 1;
-}
-
-pub fn flushCSSImports() void {
-    if (css_imports_buf_loaded) {
-        css_imports_buf.clearRetainingCapacity();
-        css_imports_list_tail = 0;
-    }
-}
-
-pub fn getCSSImports() []ZigString {
-    const tail = css_imports_list_tail;
-    for (0..tail) |i| {
-        ZigString.fromStringPointer(css_imports_list[i], css_imports_buf.items, &css_imports_list_strings[i]);
-    }
-    return css_imports_list_strings[0..tail];
-}
 
 const ShellTask = struct {
     arena: std.heap.Arena,
@@ -319,6 +269,9 @@ pub fn shell(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
 ) JSC.JSValue {
+    {
+        @compileError("unreachable");
+    }
     const Interpreter = @import("../../shell/interpreter.zig").Interpreter;
 
     // var allocator = globalThis.bunVM().allocator;
@@ -898,13 +851,6 @@ pub fn getMain(
     return ZigString.init(vm.main).toJS(globalThis);
 }
 
-pub fn getAssetPrefix(
-    globalThis: *JSC.JSGlobalObject,
-    _: *JSC.JSObject,
-) JSC.JSValue {
-    return ZigString.init(VirtualMachine.get().bundler.options.routes.asset_prefix_path).toJS(globalThis);
-}
-
 pub fn getArgv(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
@@ -990,7 +936,7 @@ pub fn getPublicPath(to: string, origin: URL, comptime Writer: type, writer: Wri
         to,
         VirtualMachine.get().bundler.fs.top_level_dir,
         origin,
-        VirtualMachine.get().bundler.options.routes.asset_prefix_path,
+        "",
         comptime Writer,
         writer,
         .loose,
@@ -1280,22 +1226,6 @@ export fn Bun__resolveSyncWithSource(
     return doResolveWithArgs(global, specifier_str, source.*, exception, is_esm, true) orelse {
         return JSC.JSValue.fromRef(exception[0]);
     };
-}
-
-pub fn getPublicPathJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
-    const arguments = callframe.arguments(1).slice();
-    if (arguments.len < 1) {
-        return bun.String.empty.toJS(globalObject);
-    }
-    var public_path_temp_str: bun.PathBuffer = undefined;
-
-    const to = arguments[0].toSlice(globalObject, bun.default_allocator);
-    defer to.deinit();
-    var stream = std.io.fixedBufferStream(&public_path_temp_str);
-    var writer = stream.writer();
-    getPublicPath(to.slice(), VirtualMachine.get().origin, @TypeOf(&writer), &writer);
-
-    return ZigString.init(stream.buffer[0..stream.pos]).toJS(globalObject);
 }
 
 extern fn dump_zone_malloc_stats() void;
@@ -4373,7 +4303,7 @@ pub const FFIObject = struct {
             }
         }
 
-        if (addr > max_addressible_memory) {
+        if (addr > max_addressable_memory) {
             return JSC.toInvalidArguments("Pointer is outside max addressible memory, which usually means a bug in your program.", .{}, globalThis);
         }
 
@@ -4455,7 +4385,7 @@ pub const FFIObject = struct {
                     return .{ .err = JSC.toInvalidArguments("length must be > 0. This usually means a bug in your code.", .{}, globalThis) };
                 }
 
-                if (length_i > max_addressible_memory) {
+                if (length_i > max_addressable_memory) {
                     return .{ .err = JSC.toInvalidArguments("length exceeds max addressable memory. This usually means a bug in your code.", .{}, globalThis) };
                 }
 

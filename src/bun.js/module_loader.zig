@@ -667,10 +667,10 @@ pub const RuntimeTranspilerStore = struct {
                 // In a benchmarking loading @babel/standalone 100 times:
                 //
                 // After ensureHash:
-                // 354.00 ms    4.2%	354.00 ms	 	  WTF::StringImpl::hashSlowCase() const
+                // 354.00 ms    4.2%    354.00 ms           WTF::StringImpl::hashSlowCase() const
                 //
                 // Before ensureHash:
-                // 506.00 ms    6.1%	506.00 ms	 	  WTF::StringImpl::hashSlowCase() const
+                // 506.00 ms    6.1%    506.00 ms           WTF::StringImpl::hashSlowCase() const
                 //
                 result.ensureHash();
 
@@ -2173,12 +2173,6 @@ pub const ModuleLoader = struct {
             }
         }
 
-        if (jsc_vm.bundler.options.routes.asset_prefix_path.len > 0) {
-            if (strings.hasPrefix(slice, jsc_vm.bundler.options.routes.asset_prefix_path)) {
-                slice = slice[jsc_vm.bundler.options.routes.asset_prefix_path.len..];
-            }
-        }
-
         string_to_use_for_source.* = slice;
 
         if (strings.indexOfChar(slice, '?')) |i| {
@@ -2821,7 +2815,7 @@ pub const HardcodedModule = enum {
 
     pub const Alias = struct {
         path: string,
-        tag: ImportRecord.Tag = ImportRecord.Tag.hardcoded,
+        tag: ImportRecord.Tag = .none,
     };
 
     pub const Aliases = struct {

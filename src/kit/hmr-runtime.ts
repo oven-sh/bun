@@ -1,17 +1,19 @@
 // This file is the entrypoint to the hot-module-reloading runtime
 // In the browser, this uses a WebSocket to communicate with the bundler.
 // On the server, communication is facilitated using a secret global.
-import { loadModule } from './hmr-module';
+import { loadModule, replaceModule } from './hmr-module';
 import { showErrorOverlay } from './client/overlay';
 
 if (typeof IS_BUN_DEVELOPMENT !== 'boolean') { throw new Error('DCE is configured incorrectly') }
 
 // Initialize client-side features.
 if (mode === 'client') {
-  const { refresh } = config;
-  if(refresh) {
-    const runtime = loadModule(refresh).exports;
-    runtime.injectIntoGlobalHook(window);
+  var refresh_runtime: any;
+  // var { refresh } = config;
+  var refresh = "node_modules/react-refresh/cjs/react-refresh-runtime.development.js";
+  if (refresh) {
+    refresh_runtime = loadModule(refresh).exports;
+    refresh_runtime.injectIntoGlobalHook(window);
   }
 }
 
@@ -26,16 +28,30 @@ try {
   if (mode === 'client') {
     const ws = new WebSocket('/_bun/hmr');
     ws.onopen = (ev) => {
-      console.log(ev);
+      console.log('Open!');
     }
     ws.onmessage = (ev) => {
-      console.log(ev);
+      if(typeof ev.data === 'string') {
+        console.log(ev.data);
+        if(ev.data !== 'bun!') {
+          const evaluated = (0, eval)(ev.data);
+          for (const k in evaluated) {
+            input_graph[k] = evaluated[k];
+          }
+          for (const k in evaluated) {
+            replaceModule(k, evaluated[k]);
+          }
+          if (refresh) {
+            refresh_runtime.performReactRefresh();
+          }
+        }
+      }
     }
     ws.onclose = (ev) => {
-      console.log(ev);
+      console.log("Closed");
     }
     ws.onerror = (ev) => {
-      console.log(ev);
+      console.error(ev);
     }
   }
 } catch (e) {

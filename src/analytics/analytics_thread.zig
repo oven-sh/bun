@@ -92,7 +92,6 @@ pub const Features = struct {
     pub var extracted_packages: usize = 0;
     /// Incremented for each call to `fetch`
     pub var fetch: usize = 0;
-    pub var filesystem_router: usize = 0;
     pub var git_dependencies: usize = 0;
     pub var html_rewriter: usize = 0;
     pub var http_server: usize = 0;

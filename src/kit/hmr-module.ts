@@ -60,6 +60,15 @@ export function loadModule(key: Id): HotModule {
   return module;
 }
 
+export function replaceModule(key: Id, load: ModuleLoadFunction) {
+  const module = registry.get(key);
+  if (module) {
+    module.exports = {};
+    load(module);
+    // TODO: repair live bindings
+  }
+}
+
 runtimeHelpers.__name(HotModule.prototype.importSync, '<HMR runtime> importSync')
 runtimeHelpers.__name(HotModule.prototype.require, '<HMR runtime> require')
 runtimeHelpers.__name(loadModule, '<HMR runtime> loadModule')

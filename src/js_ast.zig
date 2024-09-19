@@ -1294,7 +1294,7 @@ pub const Symbol = struct {
         // single inner array, so you can join the maps together by just make a
         // single outer array containing all of the inner arrays. See the comment on
         // "Ref" for more detail.
-        symbols_for_source: NestedList = NestedList{},
+        symbols_for_source: NestedList = .{},
 
         pub fn dump(this: Map) void {
             defer Output.flush();
@@ -3256,6 +3256,14 @@ pub const Stmt = struct {
             }
         };
     };
+
+    pub fn StoredData(tag: Tag) type {
+        const T = std.meta.FieldType(Data, tag);
+        return switch (@typeInfo(T)) {
+            .Pointer => |ptr| ptr.child,
+            else => T,
+        };
+    }
 
     pub fn caresAboutScope(self: *Stmt) bool {
         return switch (self.data) {
@@ -6265,6 +6273,14 @@ pub const Expr = struct {
             return @as(Expr.Tag, self) == .e_string;
         }
     };
+
+    pub fn StoredData(tag: Tag) type {
+        const T = std.meta.FieldType(Data, tag);
+        return switch (@typeInfo(T)) {
+            .Pointer => |ptr| ptr.child,
+            else => T,
+        };
+    }
 };
 
 pub const EnumValue = struct {
@@ -6875,7 +6891,9 @@ pub const Ast = struct {
     };
     pub const CommonJSNamedExports = bun.StringArrayHashMapUnmanaged(CommonJSNamedExport);
 
+    // TODO: make this unmanaged struct
     pub const NamedImports = std.ArrayHashMap(Ref, NamedImport, RefHashCtx, true);
+    // TODO: make this unmanaged struct
     pub const NamedExports = bun.StringArrayHashMap(NamedExport);
     pub const ConstValuesMap = std.ArrayHashMapUnmanaged(Ref, Expr, RefHashCtx, false);
     pub const TsEnumsMap = std.ArrayHashMapUnmanaged(Ref, bun.StringHashMapUnmanaged(InlinedEnumValue), RefHashCtx, false);
@@ -6934,7 +6952,6 @@ pub const BundledAst = struct {
     import_records: ImportRecord.List = .{},
 
     hashbang: string = "",
-    directive: string = "",
     url_for_css: string = "",
     parts: Part.List = Part.List{},
     // This list may be mutated later, so we should store the capacity
@@ -6960,7 +6977,9 @@ pub const BundledAst = struct {
 
     redirect_import_record_index: u32 = std.math.maxInt(u32),
 
-    /// Only populated when bundling
+    /// Only populated when bundling. When --server-components is passed, this
+    /// will be .browser when it is a client component, and the server's target
+    /// on the server.
     target: bun.options.Target = .browser,
 
     // const_values: ConstValuesMap = .{},
@@ -7003,7 +7022,6 @@ pub const BundledAst = struct {
             .import_records = this.import_records,
 
             .hashbang = this.hashbang,
-            .directive = this.directive,
             // .url_for_css = this.url_for_css,
             .parts = this.parts,
             // This list may be mutated later, so we should store the capacity
@@ -7055,7 +7073,6 @@ pub const BundledAst = struct {
             .import_records = ast.import_records,
 
             .hashbang = ast.hashbang,
-            .directive = ast.directive orelse "",
             // .url_for_css = ast.url_for_css orelse "",
             .parts = ast.parts,
             // This list may be mutated later, so we should store the capacity
@@ -7110,27 +7127,27 @@ pub const Span = struct {
 /// block are merged into a single namespace while the non-exported code is
 /// still scoped to just within that block:
 ///
-///	let x = 1;
-///	namespace Foo {
-///	  let x = 2;
-///	  export let y = 3;
-///	}
-///	namespace Foo {
-///	  console.log(x); // 1
-///	  console.log(y); // 3
-///	}
+///    let x = 1;
+///    namespace Foo {
+///      let x = 2;
+///      export let y = 3;
+///    }
+///    namespace Foo {
+///      console.log(x); // 1
+///      console.log(y); // 3
+///    }
 ///
 /// Doing this also works inside an enum:
 ///
-///	enum Foo {
-///	  A = 3,
-///	  B = A + 1,
-///	}
-///	enum Foo {
-///	  C = A + 2,
-///	}
-///	console.log(Foo.B) // 4
-///	console.log(Foo.C) // 5
+///    enum Foo {
+///      A = 3,
+///      B = A + 1,
+///    }
+///    enum Foo {
+///      C = A + 2,
+///    }
+///    console.log(Foo.B) // 4
+///    console.log(Foo.C) // 5
 ///
 /// This is a form of identifier lookup that works differently than the
 /// hierarchical scope-based identifier lookup in JavaScript. Lookup now needs
@@ -8468,14 +8485,22 @@ pub const ASTMemoryAllocator = struct {
     }
 };
 
-pub const UseDirective = enum {
+pub const UseDirective = enum(u2) {
+    // TODO: Remove this, and provide `UseDirective.Optional` instead
     none,
-    @"use client",
-    @"use server",
+    /// "use client"
+    client,
+    /// "use server"
+    server,
+
+    pub const Boundering = enum(u2) {
+        client = @intFromEnum(UseDirective.client),
+        server = @intFromEnum(UseDirective.server),
+    };
 
     pub const Flags = struct {
-        is_client: bool = false,
-        is_server: bool = false,
+        has_any_client: bool = false,
+        has_any_server: bool = false,
     };
 
     pub fn isBoundary(this: UseDirective, other: UseDirective) bool {
@@ -8485,22 +8510,13 @@ pub const UseDirective = enum {
         return true;
     }
 
-    pub fn boundering(this: UseDirective, other: UseDirective) ?UseDirective {
+    pub fn boundering(this: UseDirective, other: UseDirective) ?Boundering {
         if (this == other or other == .none)
             return null;
-
-        return other;
+        return @enumFromInt(@intFromEnum(other));
     }
 
-    pub const EntryPoint = struct {
-        source_index: Index.Int,
-        use_directive: UseDirective,
-    };
-
-    pub const List = std.MultiArrayList(UseDirective.EntryPoint);
-
-    // TODO: remove this, add an onModuleDirective() callback to the parser
-    pub fn parse(contents: []const u8) UseDirective {
+    pub fn parse(contents: []const u8) ?UseDirective {
         const truncated = std.mem.trimLeft(u8, contents, " \t\n\r;");
 
         if (truncated.len < "'use client';".len)
@@ -8515,30 +8531,78 @@ pub const UseDirective = enum {
 
         const unquoted = directive_string[1 .. directive_string.len - 2];
 
-        if (strings.eqlComptime(
-            unquoted,
-            "use client",
-        )) {
-            return .@"use client";
+        if (strings.eqlComptime(unquoted, "use client")) {
+            return .client;
         }
 
-        if (strings.eqlComptime(
-            unquoted,
-            "use server",
-        )) {
-            return .@"use server";
+        if (strings.eqlComptime(unquoted, "use server")) {
+            return .server;
         }
 
-        return .none;
+        return null;
     }
+};
 
-    pub fn target(this: UseDirective, default: bun.options.Target) bun.options.Target {
-        return switch (this) {
-            .none => default,
-            .@"use client" => .browser,
-            .@"use server" => .bun,
-        };
-    }
+/// Represents a boundary between client and server code. Every boundary
+/// gets bundled twice, once for the desired target, and once to generate
+/// a module of "references". See `Framework.ServerComponents` for more
+/// details about this generated file.
+pub const ServerComponentBoundary = struct {
+    use_directive: UseDirective,
+
+    /// The source of the original file.
+    source_index: Index.Int,
+
+    /// Index to the file imported on the opposite platform, which is
+    /// generated by the bundler. For client components, this is the
+    /// server's code. For server actions, this is the client's code.
+    reference_source_index: Index.Int,
+
+    pub const List = struct {
+        list: std.MultiArrayList(ServerComponentBoundary) = .{},
+        /// Used to facilitate fast lookups into `items` by `.source_index`
+        map: std.ArrayHashMapUnmanaged(void, void, struct {}, true) = .{},
+
+        /// Can only be called on the bundler thread.
+        pub fn put(
+            m: *List,
+            allocator: std.mem.Allocator,
+            source_index: Index.Int,
+            use_directive: UseDirective,
+        ) !void {
+            try m.list.append(allocator, .{
+                .source_index = source_index,
+                .use_directive = use_directive,
+                .reference_source_index = Index.invalid.get(),
+            });
+            const gop = try m.map.getOrPutAdapted(
+                allocator,
+                source_index,
+                Adapter{ .list = m.list.slice() },
+            );
+            bun.assert(!gop.found_existing);
+        }
+
+        pub fn get(l: *const List, real_source_index: Index.Int) ?usize {
+            return l.map.getIndexAdapted(
+                real_source_index,
+                Adapter{ .list = l.list.slice() },
+            );
+        }
+    };
+
+    pub const Adapter = struct {
+        list: std.MultiArrayList(ServerComponentBoundary).Slice,
+
+        pub fn hash(_: Adapter, key: Index.Int) u32 {
+            return std.hash.uint32(key);
+        }
+
+        pub fn eql(adapt: Adapter, a: Index.Int, _: void, b_index: usize) bool {
+            bun.unsafeAssert(adapt.list.capacity > 0); // optimize MultiArrayList.items
+            return a == adapt.list.items(.source_index)[b_index];
+        }
+    };
 };
 
 pub const GlobalStoreHandle = struct {

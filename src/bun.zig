@@ -968,13 +968,14 @@ pub const StringArrayHashMapContext = struct {
     pub const Prehashed = struct {
         value: u32,
         input: []const u8,
+
         pub fn hash(this: @This(), s: []const u8) u32 {
             if (s.ptr == this.input.ptr and s.len == this.input.len)
                 return this.value;
             return @as(u32, @truncate(std.hash.Wyhash.hash(0, s)));
         }
 
-        pub fn eql(_: @This(), a: []const u8, b: []const u8) bool {
+        pub fn eql(_: @This(), a: []const u8, b: []const u8, _: usize) bool {
             return strings.eqlLong(a, b, true);
         }
     };

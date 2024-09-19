@@ -1403,7 +1403,7 @@ pub const FileSystem = struct {
             return cache;
         }
 
-        //     	// Stores the file entries for directories we've listed before
+        //         // Stores the file entries for directories we've listed before
         // entries_mutex: std.Mutex
         // entries      map[string]entriesOrErr
 

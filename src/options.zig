@@ -7,7 +7,6 @@ const Fs = @import("fs.zig");
 const resolver = @import("./resolver/resolver.zig");
 const api = @import("./api/schema.zig");
 const Api = api.Api;
-const defines = @import("./defines.zig");
 const resolve_path = @import("./resolver/resolve_path.zig");
 const URL = @import("./url.zig").URL;
 const ConditionsMap = @import("./resolver/package_json.zig").ESModule.ConditionsMap;
@@ -29,6 +28,7 @@ const Analytics = @import("./analytics/analytics_thread.zig");
 const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
 const DotEnv = @import("./env_loader.zig");
 
+pub const defines = @import("./defines.zig");
 pub const Define = defines.Define;
 
 const assert = bun.assert;
@@ -425,13 +425,6 @@ pub const Target = enum {
     }
 
     pub inline fn isNotBun(this: Target) bool {
-        return switch (this) {
-            .bun_macro, .bun => false,
-            else => true,
-        };
-    }
-
-    pub inline fn isClient(this: Target) bool {
         return switch (this) {
             .bun_macro, .bun => false,
             else => true,
@@ -1452,8 +1445,7 @@ pub const BundleOptions = struct {
 
     trim_unused_imports: ?bool = null,
     mark_builtins_as_external: bool = false,
-    react_server_components: bool = false,
-    react_server_components_boundary: string = "",
+    server_components: bool = false,
     hot_module_reloading: bool = false,
     react_fast_refresh: bool = false,
     inject: ?[]string = null,
@@ -1492,8 +1484,6 @@ pub const BundleOptions = struct {
     main_field_extension_order: []const string = &Defaults.MainFieldExtensionOrder,
     out_extensions: bun.StringHashMap(string),
     import_path_format: ImportPathFormat = ImportPathFormat.relative,
-    framework: ?Framework = null,
-    routes: RouteConfig = RouteConfig.zero(),
     defines_loaded: bool = false,
     env: Env = Env{},
     transform_options: Api.TransformOptions,
@@ -1534,6 +1524,10 @@ pub const BundleOptions = struct {
 
     compile: bool = false,
 
+    /// Set when Kit is bundling. This changes the interface of the bundler
+    /// from emitting OutputFile to emitting the lower level []CompileResult
+    kit: ?*bun.kit.DevServer.IncrementalGraph = null,
+
     /// This is a list of packages which even when require() is used, we will
     /// instead convert to ESM import statements.
     ///
@@ -1564,10 +1558,6 @@ pub const BundleOptions = struct {
     pub inline fn cssImportBehavior(this: *const BundleOptions) Api.CssInJsBehavior {
         switch (this.target) {
             .browser => {
-                if (this.framework) |framework| {
-                    return framework.client_css_in_js;
-                }
-
                 return .auto_onimportcss;
             },
             else => return .facade,
@@ -1609,11 +1599,6 @@ pub const BundleOptions = struct {
 
     pub fn loader(this: *const BundleOptions, ext: string) Loader {
         return this.loaders.get(ext) orelse .file;
-    }
-
-    pub fn isFrontendFrameworkEnabled(this: *const BundleOptions) bool {
-        const framework: *const Framework = &(this.framework orelse return false);
-        return framework.resolved and (framework.client.isEnabled() or framework.fallback.isEnabled());
     }
 
     pub const ImportPathFormat = enum {
@@ -1759,14 +1744,6 @@ pub const BundleOptions = struct {
             else => {},
         }
 
-        if (transform.framework) |_framework| {
-            opts.framework = try Framework.fromApi(_framework, allocator);
-        }
-
-        if (transform.router) |routes| {
-            opts.routes = try RouteConfig.fromApi(routes, allocator);
-        }
-
         if (transform.main_fields.len > 0) {
             opts.main_fields = transform.main_fields;
         }
@@ -1794,7 +1771,6 @@ pub const BundleOptions = struct {
 
         opts.polyfill_node_globals = opts.target == .browser;
 
-        Analytics.Features.filesystem_router += @as(usize, @intFromBool(opts.routes.routes_enabled));
         Analytics.Features.macros += @as(usize, @intFromBool(opts.target == .bun_macro));
         Analytics.Features.external += @as(usize, @intFromBool(transform.external.len > 0));
         return opts;
@@ -2389,6 +2365,8 @@ pub const EntryPoint = struct {
     }
 };
 
+// TODO: delete this structure
+// superseded by bun.kit.Framework
 pub const Framework = struct {
     client: EntryPoint = EntryPoint{},
     server: EntryPoint = EntryPoint{},

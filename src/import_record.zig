@@ -103,8 +103,10 @@ pub const ImportKind = enum(u8) {
 pub const ImportRecord = struct {
     range: logger.Range,
     path: fs.Path,
+    kind: ImportKind,
+    tag: Tag = .none,
 
-    /// 0 is invalid
+    // TODO: remove this
     module_id: u32 = 0,
 
     source_index: Index = Index.invalid,
@@ -165,10 +167,6 @@ pub const ImportRecord = struct {
     /// If true, this import can be removed if it's unused
     is_external_without_side_effects: bool = false,
 
-    kind: ImportKind,
-
-    tag: Tag = Tag.none,
-
     /// Tell the printer to print the record as "foo:my-path" instead of "path"
     /// where "foo" is the namespace
     ///
@@ -185,30 +183,21 @@ pub const ImportRecord = struct {
     }
 
     pub const Tag = enum {
+        /// A normal import to a user's source file
         none,
-        /// JSX auto-import for React Fast Refresh
-        react_refresh,
-        /// JSX auto-import for jsxDEV or jsx
-        jsx_import,
-        /// JSX auto-import for Fragment or createElement
-        jsx_classic,
-        /// Uses the `bun` import specifier
-        ///     import {foo} from "bun";
+        /// An import to 'bun'
         bun,
-        /// Uses the `bun:test` import specifier
-        ///     import {expect} from "bun:test";
+        /// An import to 'bun:test'
         bun_test,
+        /// An import to the internal runtime
         runtime,
-        hardcoded,
-        /// A macro: import specifier OR a macro import
+        /// A 'macro:' import namespace or 'with { type: "macro" }'
         macro,
-        internal,
-
-        /// Referenced "use client"; at the start of the file
+        /// The imported file has "use client" at the start. This is
+        /// a boundary from server -> client side.
         react_client_component,
-
-        /// A file starting with "use client"; imported a server entry point
-        /// We don't actually support this right now.
+        /// The imported file has "use server" at the start. This is
+        /// a boundary from client -> server side.
         react_server_component,
 
         with_type_sqlite,
@@ -239,14 +228,18 @@ pub const ImportRecord = struct {
 
         pub fn isSQLite(this: Tag) bool {
             return switch (this) {
-                .with_type_sqlite, .with_type_sqlite_embedded => true,
+                .with_type_sqlite,
+                .with_type_sqlite_embedded,
+                => true,
                 else => false,
             };
         }
 
         pub fn isReactReference(this: Tag) bool {
             return switch (this) {
-                .react_client_component, .react_server_component => true,
+                .react_client_component,
+                .react_server_component,
+                => true,
                 else => false,
             };
         }
@@ -261,8 +254,8 @@ pub const ImportRecord = struct {
 
         pub fn useDirective(this: Tag) bun.JSAst.UseDirective {
             return switch (this) {
-                .react_client_component => .@"use client",
-                .react_server_component => .@"use server",
+                .react_client_component => .client,
+                .react_server_component => .server,
                 else => .none,
             };
         }

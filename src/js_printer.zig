@@ -1092,11 +1092,6 @@ fn NewPrinter(
             printInternalBunImport(p, import, @TypeOf("globalThis.Bun"), "globalThis.Bun");
         }
 
-        fn printHardcodedImportStatement(p: *Printer, import: S.Import) void {
-            if (comptime !is_bun_platform) unreachable;
-            printInternalBunImport(p, import, void, {});
-        }
-
         fn printInternalBunImport(p: *Printer, import: S.Import, comptime Statement: type, statement: Statement) void {
             if (comptime !is_bun_platform) unreachable;
 
@@ -2039,7 +2034,16 @@ fn NewPrinter(
                     p.print(".require(");
                     {
                         const path = input_files[record.source_index.get()].path;
-                        p.printInlinedEnum(.{ .number = @floatFromInt(path.hashForKit()) }, path.pretty, level);
+                        switch (bun.FeatureFlags.kit_dev_module_keys) {
+                            .numbers => {
+                                p.printInlinedEnum(.{ .number = @floatFromInt(path.hashForKit()) }, path.pretty, level);
+                            },
+                            .strings => {
+                                p.print('"');
+                                p.printUTF8StringEscapedQuotes(path.pretty, '"');
+                                p.print('"');
+                            },
+                        }
                     }
                     p.print(")");
                 } else if (!meta.was_unwrapped_require) {
@@ -2105,6 +2109,27 @@ fn NewPrinter(
                         p.printDisabledImport();
                         return;
                     }
+                }
+
+                if (p.options.module_type == .internal_kit_dev) {
+                    p.printSpaceBeforeIdentifier();
+                    p.printSymbol(p.options.commonjs_module_ref);
+                    p.print(".require(");
+                    {
+                        const path = record.path;
+                        switch (bun.FeatureFlags.kit_dev_module_keys) {
+                            .numbers => {
+                                p.printInlinedEnum(.{ .number = @floatFromInt(path.hashForKit()) }, path.pretty, level);
+                            },
+                            .strings => {
+                                p.print('"');
+                                p.printUTF8StringEscapedQuotes(path.pretty, '"');
+                                p.print('"');
+                            },
+                        }
+                    }
+                    p.print(")");
+                    return;
                 }
 
                 if (p.options.module_type == .esm and is_bun_platform) {
@@ -4755,10 +4780,6 @@ fn NewPrinter(
                                 p.printGlobalBunImportStatement(s.*);
                                 return;
                             },
-                            // .hardcoded => {
-                            //     p.printHardcodedImportStatement(s.*);
-                            //     return;
-                            // },
                             else => {},
                         }
                     }
@@ -6433,8 +6454,17 @@ pub fn printWithWriterAndPlatform(
     if (opts.module_type == .internal_kit_dev) {
         printer.indent();
         printer.printIndent();
-        printer.fmt("{d}", .{source.path.hashForKit()}) catch bun.outOfMemory();
-        printer.print(": function");
+        switch (bun.FeatureFlags.kit_dev_module_keys) {
+            .numbers => {
+                printer.fmt("{d}", .{source.path.hashForKit()}) catch bun.outOfMemory();
+                printer.print(": function");
+            },
+            .strings => {
+                printer.print('"');
+                printer.printUTF8StringEscapedQuotes(source.path.pretty, '"');
+                printer.print('"');
+            },
+        }
         printer.printFunc(parts[0].stmts[0].data.s_expr.value.data.e_function.func);
         printer.print(",\n");
     } else {

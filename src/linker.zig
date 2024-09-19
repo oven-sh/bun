@@ -63,8 +63,6 @@ pub const Linker = struct {
 
     plugin_runner: ?*PluginRunner = null,
 
-    onImportCSS: ?OnImportCallback = null,
-
     pub const runtime_source_path = "bun:wrap";
 
     pub const TaggedResolution = struct {
@@ -764,7 +762,7 @@ pub const Linker = struct {
 
                     return Fs.Path.init(try origin.joinAlloc(
                         linker.allocator,
-                        linker.options.routes.asset_prefix_path,
+                        "",
                         dirname,
                         basename,
                         absolute_pathname.ext,
@@ -804,9 +802,6 @@ pub const Linker = struct {
                 if (!linker.options.target.isBun())
                     _ = try linker.enqueueResolveResult(resolve_result);
 
-                if (linker.onImportCSS) |callback| {
-                    callback(resolve_result, import_record, origin);
-                }
                 // This saves us a less reliable string check
                 import_record.print_mode = .css;
             },
@@ -820,7 +815,7 @@ pub const Linker = struct {
                 // if we're building for bun
                 // it's more complicated
                 // loader plugins could be executed between when this is called and the import is evaluated
-                // but we want to preserve the semantics of "file" returning import paths for compatibiltiy with frontend frameworkss
+                // but we want to preserve the semantics of "file" returning import paths for compatibility with frontend frameworkss
                 if (!linker.options.target.isBun()) {
                     import_record.print_mode = .import_path;
                 }

@@ -157,7 +157,7 @@ pub fn build(b: *Build) !void {
 
     // TODO: Upgrade path for 0.14.0
     // b.graph.zig_lib_directory = brk: {
-    //     const sub_path = "src/deps/zig/lib";
+    //     const sub_path = "vendor/zig/lib";
     //     const dir = try b.build_root.handle.openDir(sub_path, .{});
     //     break :brk .{ .handle = dir, .path = try b.build_root.join(b.graph.arena, &.{sub_path}) };
     // };
@@ -295,7 +295,7 @@ pub fn build(b: *Build) !void {
         bun_check_obj.generated_bin = null;
         step.dependOn(&bun_check_obj.step);
 
-        // The default install step will run zig build check This is so ZLS
+        // The default install step will run zig build check. This is so ZLS
         // identifies the codebase, as well as performs checking if build on
         // save is enabled.
 

@@ -249,11 +249,6 @@ pub const WebWorker = struct {
 
         var b = &vm.bundler;
 
-        b.configureRouter(false) catch {
-            this.flushLogs();
-            this.exitAndDeinit();
-            return;
-        };
         b.configureDefines() catch {
             this.flushLogs();
             this.exitAndDeinit();

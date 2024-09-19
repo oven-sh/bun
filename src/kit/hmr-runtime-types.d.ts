@@ -1,9 +1,4 @@
-/*
- * A module id is an unsigned 52-bit numeric hash of the filepath.
- *
- * TODO: how resistant to hash collision is this? if it is not, an alternate approach must be taken.
- */
-type Id = number;
+type Id = string;
 
 interface Config {
   main: Id;

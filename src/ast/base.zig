@@ -229,6 +229,8 @@ pub const Ref = packed struct(u64) {
             *const std.ArrayList(js_ast.Symbol) => symbol_table.items,
             *std.ArrayList(js_ast.Symbol) => symbol_table.items,
             []js_ast.Symbol => symbol_table,
+            *js_ast.Symbol.Map => return symbol_table.get(ref) orelse
+                unreachable, // ref must exist within symbol table
             else => |T| @compileError("Unsupported type to Ref.getSymbol: " ++ @typeName(T)),
         };
         return &resolved_symbol_table[ref.innerIndex()];

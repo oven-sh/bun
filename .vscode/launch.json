@@ -150,14 +150,15 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "bun run [file]",
+      "name": "bun build [file]",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["run", "${fileBasename}"],
-      "cwd": "${fileDirname}",
+      "args": ["build", "entry.tsx", "--server-components"],
+      "cwd": "/Users/dave/kt",
       "env": {
         "FORCE_COLOR": "0",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+        "GOMAXPROCS": "1",
       },
       "console": "internalConsole",
     },

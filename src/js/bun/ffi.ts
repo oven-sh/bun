@@ -55,6 +55,8 @@ const FFIType = {
   function: 17,
   callback: 17,
   fn: 17,
+  napi_env: 18,
+  napi_value: 19,
 };
 
 const suffix = process.platform === "win32" ? "dll" : process.platform === "darwin" ? "dylib" : "so";
@@ -153,7 +155,7 @@ Object.defineProperty(globalThis, "__GlobalBunCString", {
   configurable: false,
 });
 
-const ffiWrappers = new Array(18);
+const ffiWrappers = new Array(20);
 
 var char = "val|0";
 ffiWrappers.fill(char);

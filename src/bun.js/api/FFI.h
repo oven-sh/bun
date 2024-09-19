@@ -33,6 +33,37 @@ typedef _Bool bool;
 #define true 1
 #define false 0
 
+#ifndef SRC_JS_NATIVE_API_TYPES_H_
+typedef struct napi_env__ *napi_env;
+typedef struct napi_value__ *napi_value;
+typedef enum {
+  napi_ok,
+  napi_invalid_arg,
+  napi_object_expected,
+  napi_string_expected,
+  napi_name_expected,
+  napi_function_expected,
+  napi_number_expected,
+  napi_boolean_expected,
+  napi_array_expected,
+  napi_generic_failure,
+  napi_pending_exception,
+  napi_cancelled,
+  napi_escape_called_twice,
+  napi_handle_scope_mismatch,
+  napi_callback_scope_mismatch,
+  napi_queue_full,
+  napi_closing,
+  napi_bigint_expected,
+  napi_date_expected,
+  napi_arraybuffer_expected,
+  napi_detachable_arraybuffer_expected,
+  napi_would_deadlock // unused
+} napi_status;
+void* NapiHandleScope__push(void* jsGlobalObject, bool detached);
+void NapiHandleScope__pop(void* jsGlobalObject, void* handleScope);
+#endif
+
 
 #ifdef INJECT_BEFORE
 // #include <stdint.h>
@@ -67,6 +98,8 @@ typedef union EncodedJSValue {
 #if USE_JSVALUE64
   JSCell *ptr;
 #endif
+
+napi_value asNapiValue;
 
 #if IS_BIG_ENDIAN
   struct {

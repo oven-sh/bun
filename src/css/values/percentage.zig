@@ -58,6 +58,10 @@ pub const Percentage = struct {
         }
     }
 
+    pub fn add(lhs: Percentage, _: std.mem.Allocator, rhs: Percentage) Percentage {
+        return Percentage{ .v = lhs.v + rhs.v };
+    }
+
     pub fn mulF32(this: Percentage, _: std.mem.Allocator, other: f32) Percentage {
         return Percentage{ .v = this.v * other };
     }
@@ -100,21 +104,21 @@ pub fn DimensionPercentage(comptime D: type) type {
 
         pub fn parse(input: *css.Parser) Result(@This()) {
             if (input.tryParse(Calc(This, .{})).asValue()) |calc_value| {
-                if (calc_value == .value) return calc_value.value.*;
-                return .{
+                if (calc_value == .value) return .{ .result = calc_value.value.* };
+                return .{ .result = .{
                     .calc = bun.create(input.allocator(), This, calc_value),
-                };
+                } };
             }
 
             if (input.tryParse(D.parse(), .{}).asValue()) |length| {
-                return .{ .dimension = length };
+                return .{ .result = .{ .dimension = length } };
             }
 
             if (input.tryParse(Percentage.parse, .{}).asValue()) |percentage| {
-                return .{ .percentage = percentage };
+                return .{ .result = .{ .percentage = percentage } };
             }
 
-            return input.newErrorForNextToken();
+            return .{ .err = input.newErrorForNextToken() };
         }
 
         pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {

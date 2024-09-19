@@ -164,7 +164,7 @@ pub const LengthValue = union(enum) {
             },
             .number => |*num| return .{ .result = .{ .px = num.value } },
         }
-        return location.newUnexpectedTokenError(token.*);
+        return .{ .err = location.newUnexpectedTokenError(token.*) };
     }
 
     pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
@@ -289,14 +289,14 @@ pub const Length = union(enum) {
     pub fn parse(input: *css.Parser) Result(Length) {
         if (input.tryParse(Calc(Length).parse, .{}).asValue()) |calc_value| {
             // PERF: I don't like this redundant allocation
-            if (calc_value == .value) return .{ .calc = calc_value.value.* };
-            return .{
+            if (calc_value == .value) return .{ .result = .{ .calc = calc_value.value.* } };
+            return .{ .result = .{
                 .calc = bun.create(
                     input.allocator(),
                     Calc(Length),
                     calc_value,
                 ),
-            };
+            } };
         }
 
         const len = switch (LengthValue.parse(input)) {

@@ -176,10 +176,10 @@ pub const SupportsCondition = union(enum) {
                             }
                         } else {
                             seen_declarations.put(key, conditions.items.len) catch bun.outOfMemory();
-                            conditions.append(input.allocator(), SupportsCondition{
+                            conditions.append(input.allocator(), SupportsCondition{ .declaration = .{
                                 .property_id = property_id,
                                 .value = value,
-                            }) catch bun.outOfMemory();
+                            } }) catch bun.outOfMemory();
                         }
                     } else {
                         conditions.append(
@@ -192,10 +192,10 @@ pub const SupportsCondition = union(enum) {
             }
         }
 
-        if (conditions.items.len() == 1) {
+        if (conditions.items.len == 1) {
             const ret = conditions.pop();
             defer conditions.deinit(input.allocator());
-            return ret;
+            return .{ .result = ret };
         }
 
         if (expected_type == 1) return .{ .@"and" = conditions };
@@ -208,10 +208,10 @@ pub const SupportsCondition = union(enum) {
             .result => |v| v,
             .err => |e| return .{ .err = e },
         };
-        if (input.expectColon().asErr()) |e| return .{ .err = e.intoDefaultParseError() };
-        if (input.skipWhitespace().asErr()) |e| return .{ .err = e.intoDefaultParseError() };
+        if (input.expectColon().asErr()) |e| return .{ .err = e };
+        input.skipWhitespace();
         const pos = input.position();
-        if (input.expectNoErrorToken().asErr()) |e| return .{ .err = e.intoDefaultParseError() };
+        if (input.expectNoErrorToken().asErr()) |e| return .{ .err = e };
         return .{ .result = SupportsCondition{
             .declaration = .{
                 .property_id = property_id,

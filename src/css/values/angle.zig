@@ -175,6 +175,10 @@ pub const Angle = union(Tag) {
         return Angle.op(this, rhs, addfn.add);
     }
 
+    pub fn eql(lhs: *const Angle, rhs: *const Angle) bool {
+        return lhs.toDegrees() == rhs.toDegrees();
+    }
+
     pub fn mulF32(this: Angle, _: std.mem.Allocator, other: f32) Angle {
         // return Angle.op(&this, &other, Angle.mulF32);
         return switch (this) {

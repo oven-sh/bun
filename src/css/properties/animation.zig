@@ -41,7 +41,7 @@ pub const AnimationName = union(enum) {
     pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
         _ = this; // autofix
         _ = dest; // autofix
-        @compileError(css.todo_stuff.depth);
+        @panic(css.todo_stuff.depth);
     }
 };
 

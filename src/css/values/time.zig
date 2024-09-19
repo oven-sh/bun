@@ -39,7 +39,7 @@ pub const Time = union(enum) {
         switch (calc_result) {
             .value => |v| return .{ .result = .{ .seconds = v.* } },
             // Time is always compatible, so they will always compute to a value.
-            else => return input.newErrorForNextToken(),
+            else => return .{ .err = input.newErrorForNextToken() },
         }
 
         const location = input.currentSourceLocation();
@@ -54,10 +54,10 @@ pub const Time = union(enum) {
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("ms", dim.unit)) {
                     return .{ .result = .{ .milliseconds = dim.value } };
                 } else {
-                    return location.newUnexpectedTokenError(css.Token{ .ident = dim.unit });
+                    return .{ .err = location.newUnexpectedTokenError(css.Token{ .ident = dim.unit }) };
                 }
             },
-            else => return location.newUnexpectedTokenError(token),
+            else => return .{ .err = location.newUnexpectedTokenError(token) },
         }
     }
 

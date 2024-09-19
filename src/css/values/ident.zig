@@ -31,7 +31,7 @@ pub const DashedIdentReference = struct {
             .err => |e| return .{ .err = e },
         };
 
-        const from = if (options.css_modules.config != null and options.css_modules.config.dashed_idents) from: {
+        const from = if (options.css_modules != null and options.css_modules.?.dashed_idents) from: {
             if (input.tryParse(css.Parser.expectIdentMatching, .{"from"}).isOk()) break :from switch (Specifier.parse(input)) {
                 .result => |vv| vv,
                 .err => |e| return .{ .err = e },
@@ -90,7 +90,7 @@ pub const IdentFns = struct {
             .result => |vv| vv,
             .err => |e| return .{ .err = e },
         };
-        return ident;
+        return .{ .result = ident };
     }
 
     pub fn toCss(this: *const Ident, comptime W: type, dest: *Printer(W)) PrintErr!void {

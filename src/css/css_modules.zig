@@ -96,7 +96,7 @@ pub const CssModule = struct {
                 switch (component.*) {
                     .class => |id| {
                         for (composes.names.items) |name| {
-                            const reference: CssModuleReference = if (composes.from) |*specifier| {
+                            const reference: CssModuleReference = if (composes.from) |*specifier|
                                 switch (specifier.*) {
                                     .source_index => |dep_source_index| {
                                         if (this.exports_by_source_index.items[dep_source_index].get(name)) |entry| {
@@ -117,17 +117,18 @@ pub const CssModule = struct {
                                         },
                                     },
                                 }
-                            } else CssModuleReference{
-                                .local = .{
-                                    .name = this.config.pattern.writeToString(
-                                        allocator,
-                                        ArrayList(u8){},
-                                        &this.hashes.items[source_index],
-                                        &this.sources.items[source_index],
-                                        name,
-                                    ) catch bun.outOfMemory(),
-                                },
-                            };
+                            else
+                                CssModuleReference{
+                                    .local = .{
+                                        .name = this.config.pattern.writeToString(
+                                            allocator,
+                                            ArrayList(u8){},
+                                            this.hashes.items[source_index],
+                                            this.sources.items[source_index],
+                                            name,
+                                        ),
+                                    },
+                                };
 
                             const export_value = this.exports_by_source_index.items[source_index].getPtr(id) orelse unreachable;
                             export_value.composes.append(allocator, reference) catch bun.outOfMemory();
@@ -135,7 +136,7 @@ pub const CssModule = struct {
                             const contains_reference = brk: {
                                 for (export_value.composes.items) |*compose_| {
                                     const compose: *const CssModuleReference = compose_;
-                                    if (compose.eql(reference)) {
+                                    if (compose.eql(&reference)) {
                                         break :brk true;
                                     }
                                 }
@@ -151,7 +152,7 @@ pub const CssModule = struct {
             }
 
             // The composes property can only be used within a simple class selector.
-            return css.PrinterErrorKind.invalid_composes_selector;
+            return .{ .err = css.PrinterErrorKind.invalid_composes_selector };
         }
 
         return .{ .result = {} };
@@ -165,10 +166,10 @@ pub const CssModule = struct {
                 .name = this.config.pattern.writeToStringWithPrefix(
                     allocator,
                     "--",
-                    &this.hashes.items[source_index],
-                    &this.sources.items[source_index],
+                    this.hashes.items[source_index],
+                    this.sources.items[source_index],
                     local[2..],
-                ) catch bun.outOfMemory(),
+                ),
                 .composes = .{},
                 .is_referenced = false,
             };
@@ -186,7 +187,7 @@ pub const CssModule = struct {
                     this.hashes.items[source_index],
                     this.sources.items[source_index],
                     local,
-                ) catch bun.outOfMemory(),
+                ),
                 .composes = .{},
                 .is_referenced = false,
             };
@@ -263,13 +264,12 @@ pub const Pattern = struct {
     ) []const u8 {
         const Closure = struct { res: ArrayList(u8), allocator: Allocator };
         return this.write(
-            allocator,
             hash_,
             path,
             local,
             &Closure{ .res = .{}, .allocator = allocator },
             struct {
-                pub fn writefn(self: *Closure, slice: []const u8, replace_dots: bool) PrintErr!void {
+                pub fn writefn(self: *Closure, slice: []const u8, replace_dots: bool) void {
                     self.res.appendSlice(self.allocator, prefix) catch bun.outOfMemory();
                     if (replace_dots) {
                         const start = self.res.items.len;
@@ -297,14 +297,14 @@ pub const Pattern = struct {
         local: []const u8,
     ) []const u8 {
         const Closure = struct { res: ArrayList(u8), allocator: Allocator };
+        var closure = &Closure{ .res = res, .allocator = allocator };
         return this.write(
-            allocator,
             hash_,
             path,
             local,
-            &Closure{ .res = res, .allocator = allocator },
+            &closure,
             struct {
-                pub fn writefn(self: *Closure, slice: []const u8, replace_dots: bool) PrintErr!void {
+                pub fn writefn(self: *Closure, slice: []const u8, replace_dots: bool) void {
                     if (replace_dots) {
                         const start = self.res.items.len;
                         self.res.appendSlice(self.allocator, slice) catch bun.outOfMemory();

@@ -68,12 +68,12 @@ pub const Specifier = union(enum) {
     /// The referenced name comes from a source index (used during bundling).
     source_index: u32,
 
-    pub fn parse(input: *css.Parser) Error!Specifier {
-        if (input.tryParse(css.Parser.expectString, .{})) |file| {
-            return .{ .file = file };
+    pub fn parse(input: *css.Parser) css.Result(Specifier) {
+        if (input.tryParse(css.Parser.expectString, .{}).asValue()) |file| {
+            return .{ .result = .{ .file = file } };
         }
-        try input.expectIdentMatching("global");
-        return .global;
+        if (input.expectIdentMatching("global").asErr()) |e| return .{ .err = e };
+        return .{ .result = .global };
     }
 
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {

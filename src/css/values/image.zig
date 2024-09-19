@@ -60,7 +60,7 @@ pub const ImageSet = struct {
                 break :vendor_prefix .none;
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("-webkit-image-set", css.VendorPrefix{.none})) {
                 break :vendor_prefix .webkit;
-            } else return location.newUnexpectedTokenError(.{ .ident = f });
+            } else return .{ .err = location.newUnexpectedTokenError(.{ .ident = f }) };
         };
 
         const Fn = struct {

@@ -84,25 +84,27 @@ pub fn PropertyImpl() type {
             var first = true;
 
             inline for (std.meta.fields(VendorPrefix)) |field| {
-                if (@field(prefix, field.name)) {
-                    var p: VendorPrefix = .{};
-                    @field(p, field.name) = true;
+                if (comptime !std.mem.eql(u8, field.name, "__unused")) {
+                    if (@field(prefix, field.name)) {
+                        var p: VendorPrefix = .{};
+                        @field(p, field.name) = true;
 
-                    if (first) {
-                        first = false;
-                    } else {
-                        try dest.writeChar(';');
-                        try dest.newline();
+                        if (first) {
+                            first = false;
+                        } else {
+                            try dest.writeChar(';');
+                            try dest.newline();
+                        }
+                        try p.toCss(W, dest);
+                        try dest.writeStr(name);
+                        try dest.delim(':', false);
+                        try this.valueToCss(W, dest);
+                        if (important) {
+                            try dest.whitespace();
+                            try dest.writeStr("!important");
+                        }
+                        return;
                     }
-                    try p.toCss(W, dest);
-                    try dest.writeStr(name);
-                    try dest.delim(':', false);
-                    try this.valueToCss(W, dest);
-                    if (important) {
-                        try dest.whitespace();
-                        try dest.writeStr("!important");
-                    }
-                    return;
                 }
             }
         }

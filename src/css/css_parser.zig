@@ -167,7 +167,7 @@ pub const SourceLocation = struct {
     column: u32,
 
     /// Create a new BasicParseError at this location for an unexpected token
-    pub fn newBasicUnexpectedTokenError(this: SourceLocation, token: Token) BasicParseError {
+    pub fn newBasicUnexpectedTokenError(this: SourceLocation, token: Token) ParseError(ParserError) {
         return BasicParseError.intoDefaultParseError(.{
             .kind = .{ .unexpected_token = token },
             .location = this,
@@ -186,8 +186,8 @@ pub const SourceLocation = struct {
         return ParseError(@TypeOf(err)){
             .kind = .{ .custom = switch (@TypeOf(err)) {
                 ParserError => err,
-                BasicParseError => BasicParseError.intoDefaultParseError(err),
-                selector.api.SelectorParseErrorKind => selector.api.SelectorParseErrorKind.intoDefaultParserError(err),
+                BasicParseError => return BasicParseError.intoDefaultParseError(err),
+                selector.api.SelectorParseErrorKind => return selector.api.SelectorParseErrorKind.intoDefaultParserError(err),
                 else => @compileError("TODO implement this for: " ++ @typeName(@TypeOf(err))),
             } },
             .location = this,
@@ -516,7 +516,7 @@ pub const enum_property_util = struct {
             if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, field.name)) return .{ .result = @enumFromInt(field.value) };
         }
 
-        return location.newUnexpectedTokenError(.{ .ident = ident });
+        return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
     }
 
     pub fn toCss(comptime T: type, this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -565,13 +565,13 @@ pub fn DeriveValueType(comptime T: type) type {
     const ValueTypeMap = T.ValueTypeMap;
     const field_values: []const MediaFeatureType = field_values: {
         const fields = std.meta.fields(@This());
-        var mapping: [fields.len]comptime_int = undefined;
+        var mapping: [fields.len]MediaFeatureType = undefined;
         for (fields, 0..) |field, i| {
             // Check that it exists in the type map
             mapping[i] = @field(ValueTypeMap, field.name);
         }
-        const mapping_final = mapping[0..];
-        break :field_values mapping_final;
+        const mapping_final = mapping;
+        break :field_values mapping_final[0..];
     };
 
     return struct {
@@ -581,6 +581,7 @@ pub fn DeriveValueType(comptime T: type) type {
                     return field_values[i];
                 }
             }
+            unreachable;
         }
     };
 }
@@ -681,9 +682,9 @@ fn parse_at_rule(
     }
 }
 
-fn parse_custom_at_rule_prelude(name: []const u8, input: *Parser, options: *const ParserOptions, comptime T: type, at_rule_parser: *T) Result(AtRulePrelude(T.CustomAtRuleParser.AtRule)) {
+fn parse_custom_at_rule_prelude(name: []const u8, input: *Parser, options: *const ParserOptions, comptime T: type, at_rule_parser: *T) Result(AtRulePrelude(T.CustomAtRuleParser.Prelude)) {
     ValidCustomAtRuleParser(T);
-    switch (at_rule_parser.CustomAtRuleParser.parsePrelude(at_rule_parser, name, input, options)) {
+    switch (T.CustomAtRuleParser.parsePrelude(at_rule_parser, name, input, options)) {
         .result => |prelude| {
             return .{ .result = .{ .custom = prelude } };
         },
@@ -1049,7 +1050,6 @@ pub fn ValidAtRuleParser(comptime T: type) void {
 
 pub fn AtRulePrelude(comptime T: type) type {
     return union(enum) {
-        // TODO put the comments here
         font_face,
         font_feature_values,
         font_palette_values: DashedIdent,
@@ -1098,8 +1098,6 @@ pub fn AtRulePrelude(comptime T: type) type {
             tokens: TokenList,
         },
         custom: T,
-        // ZACK YOU ARE IN AT RULE PRELUDE I REPEAT AT RULE PRELUDE
-        // TODO
 
         pub fn allowedInStyleRule(this: *const @This()) bool {
             return switch (this.*) {
@@ -1212,7 +1210,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                     };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "namespace")) {
                     if (@intFromEnum(this.state) > @intFromEnum(State.namespaces)) {
-                        return .{ .err = input.newCustomError(ParserError{ .unexpected_namespce_rule = {} }) };
+                        return .{ .err = input.newCustomError(ParserError{ .unexpected_namespace_rule = {} }) };
                     }
 
                     const prefix = switch (input.tryParse(Parser.expectIdent, .{})) {
@@ -1242,13 +1240,13 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                     return .{
                         .result = .{
                             .custom_media = .{
-                                .name = custom_media_name,
-                                .media = media,
+                                custom_media_name,
+                                media,
                             },
                         },
                     };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "property")) {
-                    const property_name = switch (DashedIdent.parse(input)) {
+                    const property_name = switch (DashedIdentFns.parse(input)) {
                         .err => |e| return .{ .err = e },
                         .result => |v| v,
                     };
@@ -1330,19 +1328,19 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                     },
                     .charset => return .{ .result = {} },
                     .unknown => {
-                        const name = prelude.unknown[0];
-                        const prelude2 = prelude.unknown[1];
+                        const name = prelude.unknown.name;
+                        const prelude2 = prelude.unknown.tokens;
                         this.rules.v.append(this.allocator, .{ .unknown = UnknownAtRule{
                             .name = name,
                             .prelude = prelude2,
                             .block = null,
                             .loc = loc,
-                        } });
+                        } }) catch bun.outOfMemory();
                     },
                     .custom => {
                         this.state = .body;
-                        const nested_parser = this.nested();
-                        return NestedRuleParser(AtRuleParserT).AtRuleParser.parseBlock(nested_parser, prelude, start);
+                        var nested_parser = this.nested();
+                        return NestedRuleParser(AtRuleParserT).AtRuleParser.ruleWithoutBlock(&nested_parser, prelude, start);
                     },
                     else => return .{ .err = {} },
                 }
@@ -1585,13 +1583,16 @@ pub fn NestedRuleParser(comptime T: type) type {
                         };
                         break :brk .{ .nest = selectors };
                     } else {
-                        break :brk if (parse_custom_at_rule_prelude(
+                        break :brk switch (parse_custom_at_rule_prelude(
                             name,
                             input,
                             this.options,
                             T,
                             this.at_rule_parser,
-                        ).asErr()) |e| return .{ .err = e };
+                        )) {
+                            .result => |v| v,
+                            .err => |e| return .{ .err = e },
+                        };
                     }
                 };
 
@@ -1681,7 +1682,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                             .result => |v| v,
                         };
                         this.rules.v.append(input.allocator(), .{
-                            .supports = css_rules.supports.SupportsRule{
+                            .supports = css_rules.supports.SupportsRule(T.CustomAtRuleParser.AtRule){
                                 .condition = condition,
                                 .rules = rules,
                                 .loc = loc,
@@ -1735,8 +1736,8 @@ pub fn NestedRuleParser(comptime T: type) type {
                         }) catch bun.outOfMemory();
                     },
                     .keyframes => {
-                        var parser = css_rules.keyframes.KeyframeListParser;
-                        var iter = RuleBodyParser(css_rules.keyframes.KeyframeListParser).new(input, &parser);
+                        var parser = css_rules.keyframes.KeyframesListParser{};
+                        var iter = RuleBodyParser(css_rules.keyframes.KeyframesListParser).new(input, &parser);
                         // todo_stuff.think_mem_mgmt
                         var keyframes = ArrayList(css_rules.keyframes.Keyframe){};
 
@@ -2565,7 +2566,7 @@ pub const Parser = struct {
     }
 
     pub fn newBasicUnexpectedTokenError(this: *const Parser, token: Token) ParseError(ParserError) {
-        return this.newBasicError(.{ .unexpected_token = token });
+        return this.newBasicError(.{ .unexpected_token = token }).intoDefaultParseError();
     }
 
     pub fn currentSourceLocation(this: *const Parser) SourceLocation {
@@ -3257,7 +3258,7 @@ pub const nth = struct {
                         if (parse_n_dash_digits(input.allocator, unit)) |b| {
                             return .{ a, b };
                         } else {
-                            return input.newUnexpectedTokenError(.{ .ident = unit });
+                            return .{ .err = input.newUnexpectedTokenError(.{ .ident = unit }) };
                         }
                     }
                 }
@@ -3280,7 +3281,7 @@ pub const nth = struct {
                 } else {
                     const slice, const a = if (bun.strings.startsWithChar(value, '-')) .{ value[1..], -1 } else .{ value, 1 };
                     if (parse_n_dash_digits(input.allocator, slice)) |b| return .{ a, b };
-                    return input.newUnexpectedTokenError(.{ .ident = value });
+                    return .{ .err = input.newUnexpectedTokenError(.{ .ident = value }) };
                 }
             },
             .delim => {
@@ -3298,16 +3299,16 @@ pub const nth = struct {
                         if (parse_n_dash_digits(input.allocator, value)) |b| {
                             return .{ 1, b };
                         } else {
-                            return input.newUnexpectedTokenError(.{ .ident = value });
+                            return .{ .err = input.newUnexpectedTokenError(.{ .ident = value }) };
                         }
                     }
                 } else {
-                    return input.newUnexpectedTokenError(next_tok.*);
+                    return .{ .err = input.newUnexpectedTokenError(next_tok.*) };
                 }
             },
             else => {},
         }
-        return input.newUnexpectedTokenError(tok.*);
+        return .{ .err = input.newUnexpectedTokenError(tok.*) };
     }
 
     fn parse_b(input: *Parser, a: i23) Result(struct { i32, i32 }) {
@@ -3336,7 +3337,7 @@ pub const nth = struct {
             const b = tok.number.int_value.?;
             return .{ a, b_sign * b };
         }
-        return input.newUnexpectedTokenError(tok.*);
+        return .{ .err = input.newUnexpectedTokenError(tok.*) };
     }
 
     fn parse_n_dash_digits(allocator: Allocator, str: []const u8) Maybe(i32, void) {
@@ -4803,7 +4804,7 @@ pub const Token = union(TokenKind) {
             },
             .number => |num| serializer.writeNumeric(num.value, num.int_value, num.has_sign, dest) catch return dest.addFmtError(),
             .percentage => |num| {
-                serializer.writeNumeric(num.value * 100, num.int_value, num.has_sign, dest) catch return dest.addFmtError();
+                serializer.writeNumeric(num.unit_value * 100, num.int_value, num.has_sign, dest) catch return dest.addFmtError();
                 return dest.writeStr("%");
             },
             .dimension => |dim| {
@@ -4850,8 +4851,8 @@ pub const Token = union(TokenKind) {
             },
             .bad_string => |value| {
                 try dest.writeChar('"');
-                var writer = serializer.CssStringWriter(Printer(W)).new(dest);
-                return writer.writeStr(value);
+                var writer = serializer.CssStringWriter(*Printer(W)).new(dest);
+                return writer.writeStr(value) catch return dest.addFmtError();
             },
             .close_paren => dest.writeStr(")"),
             .close_square => dest.writeStr("]"),
@@ -4920,8 +4921,9 @@ pub const color = struct {
         },
     };
 
+    const RGB = struct { u8, u8, u8 };
     // PERF: Make this faster?
-    pub const named_colors: std.StaticStringMap(struct { u8, u8, u8 }) = named_colors: {
+    pub const named_colors: std.StaticStringMap(RGB) = named_colors: {
         const defined_colors = .{
             .{ "black", .{ 0, 0, 0 } },
             .{ "silver", .{ 192, 192, 192 } },
@@ -5073,7 +5075,7 @@ pub const color = struct {
             .{ "whitesmoke", .{ 245, 245, 245 } },
             .{ "yellowgreen", .{ 154, 205, 50 } },
         };
-        const map = std.StaticStringMap(struct { u8, u8, u8 }).initComptime(defined_colors);
+        const map = std.StaticStringMap(RGB).initComptime(defined_colors);
         break :named_colors map;
     };
 

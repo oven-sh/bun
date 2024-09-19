@@ -78,7 +78,7 @@ pub const EasingFunction = union(enum) {
             else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "step-end"))
                 EasingFunction{ .steps = .{ .count = 1, .position = .end } }
             else
-                return location.newUnexpectedTokenError(.{ .ident = ident });
+                return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
             return .{ .result = keyword };
         }
 
@@ -251,7 +251,7 @@ pub const StepPosition = enum {
         else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "jump-both"))
             StepPosition.jump_both
         else
-            return location.newUnexpectedTokenError(.{ .ident = ident });
+            return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
         return .{ .result = keyword };
     }
 };

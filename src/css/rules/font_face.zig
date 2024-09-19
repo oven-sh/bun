@@ -121,7 +121,7 @@ pub const UnicodeRange = struct {
             // Get the remainder of the value. This must be 0x0 to 0xf for the rest
             // of the value to use the question mark syntax.
             shift += 4;
-            const remainder_mask = (1 << shift) - 1;
+            const remainder_mask: u32 = (@as(u32, 1) << shift) - @as(u32, 1);
             const start_remainder = this.start & remainder_mask;
             const end_remainder = this.end & remainder_mask;
 
@@ -209,7 +209,7 @@ pub const UnicodeRange = struct {
                     if (!(next.* == .ident or (next.* == .delim and next.delim == '?'))) {
                         return .{ .err = input.newBasicUnexpectedTokenError(next.*) };
                     }
-                    return .{ .result = parseQuestionMarks(input) };
+                    return parseQuestionMarks(input);
                 }
             },
             else => {},
@@ -335,7 +335,7 @@ pub const FontStyle = union(enum) {
                 try dest.writeStr("oblique");
                 if (!angle.eql(&FontStyle.defaultObliqueAngle())) {
                     try dest.writeChar(' ');
-                    try angle.toCss(dest);
+                    try angle.toCss(W, dest);
                 }
             },
         }

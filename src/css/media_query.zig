@@ -662,11 +662,11 @@ const MediaFeatureId = enum {
         return css.enum_property_util.asStr(@This(), this);
     }
 
-    pub inline fn parse(input: *css.Parser) Result(@This()) {
+    pub fn parse(input: *css.Parser) Result(@This()) {
         return css.enum_property_util.parse(@This(), input);
     }
 
-    pub inline fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
         return css.enum_property_util.toCss(@This(), this, W, dest);
     }
 };
@@ -913,7 +913,7 @@ pub fn QueryFeature(comptime FeatureId: type) type {
                     return .{ .err = input.newCustomError(css.ParserError.invalid_media_query) };
                 }
 
-                return .{
+                return .{ .result = .{
                     .interval = .{
                         .name = name,
                         .start = value,
@@ -921,16 +921,16 @@ pub fn QueryFeature(comptime FeatureId: type) type {
                         .end = end_value,
                         .end_operator = end_operator,
                     },
-                };
+                } };
             } else {
                 const final_operator = operator.?.opposite();
-                return .{
+                return .{ .result = .{
                     .range = .{
                         .name = name,
                         .operator = final_operator,
                         .value = value,
                     },
-                };
+                } };
             }
         }
     };
@@ -1077,11 +1077,20 @@ pub const MediaFeatureValue = union(enum) {
                         .result => |v| v,
                     };
                     if (value != 0 and value != 1) return .{ .err = input.newCustomError(css.ParserError.invalid_value) };
-                    return .{ .boolean = value == 1 };
+                    return .{ .result = .{ .boolean = value == 1 } };
                 },
-                .number => .{ .number = CSSNumberFns.parse(input) },
-                .integer => .{ .integer = CSSIntegerFns.parse(input) },
-                .length => .{ .integer = Length.parse(input) },
+                .number => .{ .number = switch (CSSNumberFns.parse(input)) {
+                    .result => |v| v,
+                    .err => |e| return .{ .err = e },
+                } },
+                .integer => .{ .integer = switch (CSSIntegerFns.parse(input)) {
+                    .result => |v| v,
+                    .err => |e| return .{ .err = e },
+                } },
+                .length => .{ .integer = switch (Length.parse(input)) {
+                    .result => |v| v,
+                    .err => |e| return .{ .err = e },
+                } },
                 .resolution => .{ .resolution = switch (Resolution.parse(input)) {
                     .result => |v| v,
                     .err => |e| return .{ .err = e },
@@ -1123,14 +1132,14 @@ pub const MediaFeatureValue = union(enum) {
 
     pub fn addF32(this: MediaFeatureValue, allocator: Allocator, other: f32) MediaFeatureValue {
         return switch (this) {
-            .length => |len| .{ .length = len.add(allocator, .{ .px = other }) },
+            .length => |len| .{ .length = len.add(allocator, Length.px(other)) },
             // .length => |len| .{
             //     .length = .{
             //         .value = .{ .px = other },
             //     },
             // },
             .number => |num| .{ .number = num + other },
-            .integer => |num| .{ .integer = num + if (css.signfns.isSignPositive(other)) 1 else -1 },
+            .integer => |num| .{ .integer = num + if (css.signfns.isSignPositive(other)) @as(i32, 1) else @as(i32, -1) },
             .boolean => |v| .{ .boolean = v },
             .resolution => |res| .{ .resolution = res.addF32(allocator, other) },
             .ratio => |ratio| .{ .ratio = ratio.addF32(allocator, other) },
@@ -1197,8 +1206,8 @@ pub fn MediaFeatureName(comptime FeatureId: type) type {
             if (@intFromEnum(lhs.*) != @intFromEnum(rhs.*)) return false;
             return switch (lhs.*) {
                 .standard => |fid| fid == rhs.standard,
-                .custom => |ident| bun.strings.eql(ident, rhs.ident),
-                .unknown => |ident| bun.strings.eql(ident, rhs.ident),
+                .custom => |ident| bun.strings.eql(ident, rhs.custom),
+                .unknown => |ident| bun.strings.eql(ident, rhs.unknown),
             };
         }
 

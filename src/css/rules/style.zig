@@ -106,7 +106,7 @@ pub fn StyleRule(comptime R: type) type {
                         }
 
                         try dest.newline();
-                        try decl.toCss(dest, important);
+                        try decl.toCss(W, dest, important);
                         if (i != len - 1 or !dest.minify or (supports_nesting and this.rules.v.items.len > 0)) {
                             try dest.writeChar(';');
                         }
@@ -145,9 +145,9 @@ pub fn StyleRule(comptime R: type) type {
             if (supports_nesting) {
                 try Helpers.newline(this, W, dest, supports_nesting, len);
                 try this.rules.toCss(W, dest);
-                Helpers.end(W, dest, has_declarations);
+                try Helpers.end(W, dest, has_declarations);
             } else {
-                Helpers.end(W, dest, has_declarations);
+                try Helpers.end(W, dest, has_declarations);
                 try Helpers.newline(this, W, dest, supports_nesting, len);
                 try dest.withContext(&this.selectors, this, This.toCss);
             }

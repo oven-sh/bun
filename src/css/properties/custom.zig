@@ -102,7 +102,7 @@ pub const TokenList = struct {
                     has_whitespace = false;
                 },
                 .dashed_ident => |v| {
-                    try DashedIdentFns.toCss(v, W, dest);
+                    try DashedIdentFns.toCss(&v, W, dest);
                     has_whitespace = false;
                 },
                 .animation_name => |v| {
@@ -113,11 +113,13 @@ pub const TokenList = struct {
                     .delim => |d| {
                         if (d == '+' or d == '-') {
                             try dest.writeChar(' ');
-                            try dest.writeChar(d);
+                            bun.assert(d <= 0x7F);
+                            try dest.writeChar(@intCast(d));
                             try dest.writeChar(' ');
                         } else {
                             const ws_before = !has_whitespace and (d == '/' or d == '*');
-                            try dest.delim(d, ws_before);
+                            bun.assert(d <= 0x7F);
+                            try dest.delim(@intCast(d), ws_before);
                         }
                         has_whitespace = true;
                     },
@@ -393,12 +395,12 @@ pub const TokenList = struct {
                         const Closure = struct {
                             options: *const css.ParserOptions,
                             depth: usize,
-                            pub fn parsefn(this: *@This(), input2: *css.Parser) Result(EnvironmentVariable) {
-                                const env = switch (EnvironmentVariable.parseNested(input2, this.options, depth + 1)) {
+                            pub fn parsefn(this: *@This(), input2: *css.Parser) Result(TokenOrValue) {
+                                const env = switch (EnvironmentVariable.parseNested(input2, this.options, this.depth + 1)) {
                                     .result => |vv| vv,
                                     .err => |e| return .{ .err = e },
                                 };
-                                return TokenOrValue{ .env = env };
+                                return .{ .result = TokenOrValue{ .env = env } };
                             }
                         };
                         var closure = Closure{
@@ -424,7 +426,7 @@ pub const TokenList = struct {
                                     .result => |vv| vv,
                                     .err => |e| return .{ .err = e },
                                 };
-                                return args;
+                                return .{ .result = args };
                             }
                         };
                         var closure = Closure{
@@ -727,7 +729,7 @@ pub const UnresolvedColor = union(enum) {
                         .err => |e| return .{ .err = e },
                     };
                     if (is_legacy) {
-                        return .{ .err = input.newCustomError(css.ParserError.invalid_value) };
+                        return .{ .err = i.newCustomError(css.ParserError.invalid_value) };
                     }
                     if (i.expectDelim('/').asErr()) |e| return .{ .err = e };
                     const alpha = switch (TokenListFns.parse(i, opts, 0)) {
@@ -857,7 +859,7 @@ pub const Variable = struct {
             .err => |e| return .{ .err = e },
         };
 
-        const fallback = if (input.tryParse(css.Parser.expectComma, .{}).isOk()) |_|
+        const fallback = if (input.tryParse(css.Parser.expectComma, .{}).isOk())
             switch (TokenList.parse(input, options, depth)) {
                 .result => |vv| vv,
                 .err => |e| return .{ .err = e },
@@ -899,7 +901,7 @@ pub const EnvironmentVariable = struct {
         const Closure = struct {
             options: *const css.ParserOptions,
             depth: usize,
-            pub fn parsefn(this: *@This(), i: *css.Parser) Result(EnvironmentVariableName) {
+            pub fn parsefn(this: *@This(), i: *css.Parser) Result(EnvironmentVariable) {
                 return EnvironmentVariable.parseNested(i, this.options, this.depth);
             }
         };
@@ -911,7 +913,7 @@ pub const EnvironmentVariable = struct {
     }
 
     pub fn parseNested(input: *css.Parser, options: *const css.ParserOptions, depth: usize) Result(EnvironmentVariable) {
-        const name = switch (EnvironmentVariableName.parse()) {
+        const name = switch (EnvironmentVariableName.parse(input)) {
             .result => |vv| vv,
             .err => |e| return .{ .err = e },
         };
@@ -1177,7 +1179,7 @@ pub fn tryParseColorToken(f: []const u8, state: *const css.ParserState, input: *
     {
         const s = input.state();
         input.reset(state);
-        if (CssColor.parse(input)) |color| {
+        if (CssColor.parse(input).asValue()) |color| {
             return color;
         }
         input.reset(&s);

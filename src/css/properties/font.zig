@@ -64,6 +64,14 @@ pub const FontWeight = union(enum) {
         _ = dest; // autofix
         @panic(css.todo_stuff.depth);
     }
+
+    pub fn eql(lhs: *const FontWeight, rhs: *const FontWeight) bool {
+        return switch (lhs.*) {
+            .absolute => rhs.* == .absolute and lhs.absolute.eql(&rhs.absolute),
+            .bolder => rhs.* == .bolder,
+            .lighter => rhs.* == .lighter,
+        };
+    }
 };
 
 /// An [absolute font weight](https://www.w3.org/TR/css-fonts-4/#font-weight-absolute-values),
@@ -80,6 +88,14 @@ pub const AbsoluteFontWeight = union(enum) {
 
     pub inline fn default() AbsoluteFontWeight {
         return .normal;
+    }
+
+    pub fn eql(lhs: *const AbsoluteFontWeight, rhs: *const AbsoluteFontWeight) bool {
+        return switch (lhs.*) {
+            .weight => lhs.weight == rhs.weight,
+            .normal => rhs.* == .normal,
+            .bold => rhs.* == .bold,
+        };
     }
 };
 
@@ -165,7 +181,7 @@ pub const FontStretch = union(enum) {
         @panic(css.todo_stuff.depth);
     }
 
-    pub fn eql(lhs: FontStretch, rhs: FontStretch) bool {
+    pub fn eql(lhs: *const FontStretch, rhs: *const FontStretch) bool {
         return lhs.keyword == rhs.keyword and lhs.percentage.v == rhs.percentage.v;
     }
 
@@ -227,10 +243,10 @@ pub const FontFamily = union(enum) {
             .err => |e| return .{ .err = e },
         };
         var string: ?ArrayList(u8) = null;
-        while (input.tryParse(css.Parser.expectIdent).asValue()) |ident| {
+        while (input.tryParse(css.Parser.expectIdent, .{}).asValue()) |ident| {
             if (string == null) {
-                string.* = ArrayList(u8){};
-                string.?.appendSlice(stralloc, value);
+                string = ArrayList(u8){};
+                string.?.appendSlice(stralloc, value) catch bun.outOfMemory();
             }
 
             if (string) |*s| {
@@ -405,7 +421,7 @@ pub const FontVariantCaps = enum {
     pub fn parseCss2(input: *css.Parser) css.Result(FontVariantCaps) {
         const value = try FontVariantCaps.parse(input);
         if (!value.isCss2()) {
-            return input.newCustomError(css.ParserError.invalid_value);
+            return .{ .err = input.newCustomError(css.ParserError.invalid_value) };
         }
         return value;
     }
@@ -468,7 +484,7 @@ pub const Font = struct {
 
         while (true) {
             // Skip "normal" since it is valid for several properties, but we don't know which ones it will be used for yet.
-            if (input.tryParse(css.Parser.expectIdentMatching, .{"normal"})) |_| {
+            if (input.tryParse(css.Parser.expectIdentMatching, .{"normal"}).isOk()) {
                 count += 1;
                 continue;
             }
@@ -509,11 +525,11 @@ pub const Font = struct {
             break;
         }
 
-        if (count > 4) return input.newCustomError(css.ParserError.invalid_declaration);
+        if (count > 4) return .{ .err = input.newCustomError(css.ParserError.invalid_declaration) };
 
-        const final_size = size orelse return input.newCustomError(css.ParserError.invalid_declaration);
+        const final_size = size orelse return .{ .err = input.newCustomError(css.ParserError.invalid_declaration) };
 
-        const line_height = if (input.tryParse(css.Parser.expectDelim, .{'/'})) |_| try LineHeight.parse(input) else null;
+        const line_height = if (input.tryParse(css.Parser.expectDelim, .{'/'}).isOk()) try LineHeight.parse(input) else null;
 
         const family = input.parseCommaSeparated(FontFamily, FontFamily.parse);
 

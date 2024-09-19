@@ -41,7 +41,7 @@ pub const KeyframesListParser = struct {
 
     pub const AtRuleParser = struct {
         pub const Prelude = void;
-        pub const AtRule = void;
+        pub const AtRule = Keyframe;
 
         pub fn parsePrelude(_: *This, name: []const u8, input: *css.Parser) Result(Prelude) {
             return .{ .err = input.newError(css.BasicParseErrorKind{ .at_rule_invalid = name }) };

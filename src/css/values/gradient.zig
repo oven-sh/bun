@@ -495,7 +495,7 @@ pub const WebKitGradient = union(enum) {
                 },
             } };
         } else {
-            return location.newUnexpectedTokenError(.{ .ident = ident });
+            return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
         }
     }
 
@@ -860,7 +860,7 @@ pub const Ellipse = union(enum) {
             // The `ellipse` keyword is optional, but only if the `circle` keyword is not present.
             // If it is, then we'll re-parse as a circle.
             if (input.tryParse(css.Parser.expectIdentMatching, .{"circle"}).isOk()) {
-                return input.newErrorForNextToken();
+                return .{ .err = input.newErrorForNextToken() };
             }
             _ = input.tryParse(css.Parser.expectIdentMatching, .{"ellipse"});
             return .{ .result = Ellipse{ .extent = extent } };
@@ -893,7 +893,7 @@ pub const Ellipse = union(enum) {
             return .{ .result = Ellipse{ .extent = .@"farthest-corner" } };
         }
 
-        return input.newErrorForNextToken();
+        return .{ .err = input.newErrorForNextToken() };
     }
 
     pub fn toCss(this: *const Ellipse, comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -957,7 +957,7 @@ pub const Circle = union(enum) {
             return .{ .result = Circle{ .extent = .@"farthest-corner" } };
         }
 
-        return input.newErrorForNextToken();
+        return .{ .err = input.newErrorForNextToken() };
     }
 
     pub fn toCss(this: *const Circle, comptime W: type, dest: *Printer(W)) PrintErr!void {

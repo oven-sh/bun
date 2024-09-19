@@ -71,18 +71,20 @@ pub fn Calc(comptime V: type) type {
             };
         }
 
-        fn addValue(lhs: V, rhs: V) V {
+        // TODO: addValueOwned
+        fn addValue(allocator: Allocator, lhs: V, rhs: V) V {
             switch (V) {
                 f32 => return lhs + rhs,
                 Angle => return lhs.add(rhs),
                 // CSSNumber => return lhs.add(rhs),
-                Length => return lhs.add(rhs),
-                Percentage => return lhs.add(rhs),
-                Time => return lhs.add(rhs),
+                Length => return lhs.add(allocator, rhs),
+                Percentage => return lhs.add(allocator, rhs),
+                Time => return lhs.add(allocator, rhs),
                 else => lhs.add(rhs),
             }
         }
 
+        // TODO: intoValueOwned
         fn intoValue(this: @This(), allocator: std.mem.Allocator) V {
             switch (V) {
                 Angle => return switch (this.*) {
@@ -120,10 +122,10 @@ pub fn Calc(comptime V: type) type {
                 return .{ .number = this.number + rhs.number };
             } else if (this == .value) {
                 // PERF: we can reuse the allocation here
-                return .{ .value = bun.create(allocator, V, addValue(this.value, intoValue(rhs))) };
+                return .{ .value = bun.create(allocator, V, addValue(this.value.*, intoValue(rhs))) };
             } else if (rhs == .value) {
                 // PERF: we can reuse the allocation here
-                return .{ .value = bun.create(allocator, V, addValue(intoValue(this), rhs.value)) };
+                return .{ .value = bun.create(allocator, V, addValue(intoValue(this), rhs.value.*)) };
             } else if (this == .function) {
                 return This{
                     .sum = .{
@@ -223,19 +225,19 @@ pub fn Calc(comptime V: type) type {
                 const Closure = struct {
                     ctx: @TypeOf(ctx),
                     pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(ArrayList(This)) {
-                        return i.parseCommaSeparatedWithCtx(This, This, self, @This().parseOne);
+                        return i.parseCommaSeparatedWithCtx(This, self, @This().parseOne);
                     }
                     pub fn parseOne(self: *@This(), i: *css.Parser) Result(This) {
                         return This.parseSum(i, self.ctx, parseIdent);
                     }
                 };
                 var closure = Closure{ .ctx = ctx };
-                var args = switch (input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn)) {
+                var args = switch (input.parseNestedBlock(ArrayList(This), &closure, Closure.parseNestedBlockFn)) {
                     .result => |vv| vv,
                     .err => |e| return .{ .err = e },
                 };
                 // PERF: i don't like this additional allocation
-                var reduced: ArrayList(This) = This.reducedArgs(&args, std.math.Order.gt);
+                var reduced: ArrayList(This) = This.reduceArgs(&args, std.math.Order.gt);
                 if (reduced.items.len == 1) {
                     return .{ .result = reduced.orderedRemove(0) };
                 }
@@ -796,7 +798,7 @@ pub fn Calc(comptime V: type) type {
                 return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
             }
 
-            const value = switch (input.tryParse(V.parse, .{})) {
+            const value = switch (input.tryParse(css.generic.parse(V, input), .{})) {
                 .result => |vv| vv,
                 .err => |e| return .{ .err = e },
             };

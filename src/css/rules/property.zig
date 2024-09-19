@@ -66,7 +66,7 @@ pub const PropertyRule = struct {
                 };
             } else null,
             else => brk: {
-                const val = parser.initial_value orelse return input.newCustomError(css.ParserError.at_rule_body_invalid);
+                const val = parser.initial_value orelse return .{ .err = input.newCustomError(css.ParserError.at_rule_body_invalid) };
                 var i = css.ParserInput.new(input.allocator(), val);
                 var p2 = css.Parser.new(&i);
                 break :brk switch (syntax.parseValue(&p2)) {
@@ -162,7 +162,7 @@ pub const PropertyRuleDeclarationParser = struct {
                 else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("false", ident))
                     false
                 else
-                    return location.newUnexpectedTokenError(.{ .ident = ident });
+                    return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
                 this.inherits = inherits;
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("initial-value", name)) {
                 // Buffer the value into a string. We will parse it later.
@@ -171,7 +171,7 @@ pub const PropertyRuleDeclarationParser = struct {
                 const initial_value = input.sliceFrom(start);
                 this.initial_value = initial_value;
             } else {
-                return input.newCustomError(css.ParserError.invalid_declaration);
+                return .{ .err = input.newCustomError(css.ParserError.invalid_declaration) };
             }
         }
     };

@@ -99,7 +99,7 @@ pub const Url = struct {
             try dest.writeChar(')');
 
             if (dest.dependencies) |*dependencies| {
-                dependencies.append(dest.allocator, css.Dependency{ .Url = d }) catch bun.outOfMemory();
+                dependencies.append(dest.allocator, css.Dependency{ .url = d }) catch bun.outOfMemory();
             }
 
             return;
@@ -110,8 +110,8 @@ pub const Url = struct {
             // PERF(alloc) we could use stack fallback here?
             var bufw = buf.writer(dest.allocator);
             const BufW = @TypeOf(bufw);
-            defer buf.deinit();
-            try (css.Token{ .unquoted_url = this.url }).toCss(BufW, &bufw);
+            defer buf.deinit(dest.allocator);
+            try css.Token.toCssGeneric(&css.Token{ .unquoted_url = this.url }, &bufw);
 
             // If the unquoted url is longer than it would be quoted (e.g. `url("...")`)
             // then serialize as a string and choose the shorter version.

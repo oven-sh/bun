@@ -36,6 +36,7 @@ pub const DeclarationBlock = struct {
         var decl_parser = PropertyDeclarationParser{
             .important_declarations = &important_declarations,
             .declarations = &declarations,
+            .options = options,
         };
         errdefer decl_parser.deinit();
 
@@ -51,10 +52,10 @@ pub const DeclarationBlock = struct {
             }
         }
 
-        return DeclarationBlock{
+        return .{ .result = DeclarationBlock{
             .important_declarations = important_declarations,
             .declarations = declarations,
-        };
+        } };
     }
 
     pub fn len(this: *const DeclarationBlock) usize {
@@ -109,7 +110,11 @@ pub const PropertyDeclarationParser = struct {
         }
 
         pub fn parseBlock(_: *This, _: Prelude, _: *const css.ParserState, input: *css.Parser) Result(AtRule) {
-            return input.newError(css.BasicParseErrorKind.at_rule_invalid);
+            return .{ .err = input.newError(css.BasicParseErrorKind.at_rule_body_invalid) };
+        }
+
+        pub fn ruleWithoutBlock(_: *This, _: Prelude, _: *const css.ParserState) css.Maybe(AtRule, void) {
+            return .{ .err = {} };
         }
     };
 
@@ -119,14 +124,14 @@ pub const PropertyDeclarationParser = struct {
 
         pub fn parsePrelude(this: *This, input: *css.Parser) Result(Prelude) {
             _ = this; // autofix
-            return input.newError(css.BasicParseErrorKind.qualified_rule_invalid);
+            return .{ .err = input.newError(css.BasicParseErrorKind.qualified_rule_invalid) };
         }
 
         pub fn parseBlock(this: *This, prelude: Prelude, start: *const css.ParserState, input: *css.Parser) Result(QualifiedRule) {
             _ = this; // autofix
             _ = prelude; // autofix
             _ = start; // autofix
-            return input.newError(css.BasicParseErrorKind.qualified_rule_invalid);
+            return .{ .err = input.newError(css.BasicParseErrorKind.qualified_rule_invalid) };
         }
     };
 
@@ -134,7 +139,7 @@ pub const PropertyDeclarationParser = struct {
         pub const Declaration = void;
 
         pub fn parseValue(this: *This, name: []const u8, input: *css.Parser) Result(Declaration) {
-            parse_declaration(
+            return parse_declaration(
                 name,
                 input,
                 this.declarations,

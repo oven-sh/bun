@@ -55,7 +55,7 @@ pub const LayerName = struct {
                         }
                         return .{ .err = start_location.newBasicUnexpectedTokenError(tok.*) };
                     };
-                    return name;
+                    return .{ .result = name };
                 }
             };
 

@@ -48,9 +48,9 @@ pub const Resolution = union(enum) {
             if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "dpi")) return .{ .result = .{ .dpi = value } };
             if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "dpcm")) return .{ .result = .{ .dpcm = value } };
             if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "dppx") or bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "x")) return .{ .result = .{ .dppx = value } };
-            return location.newUnexpectedTokenError(.{ .ident = unit });
+            return .{ .err = location.newUnexpectedTokenError(.{ .ident = unit }) };
         }
-        return location.newUnexpectedTokenError(tok.*);
+        return .{ .err = location.newUnexpectedTokenError(tok.*) };
     }
 
     pub fn tryFromToken(token: *const css.Token) css.Maybe(Resolution, void) {

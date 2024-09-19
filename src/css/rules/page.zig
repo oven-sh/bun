@@ -213,7 +213,7 @@ pub const PageRule = struct {
 
         dest.dedent();
         try dest.newline();
-        dest.writeChar('}');
+        try dest.writeChar('}');
     }
 };
 

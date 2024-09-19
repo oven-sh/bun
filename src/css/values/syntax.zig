@@ -61,7 +61,7 @@ pub const SyntaxString = union(enum) {
     pub fn parse(input: *css.Parser) Result(SyntaxString) {
         const string = input.expectString();
         const result = SyntaxString.parseString(input.allocator(), string);
-        if (result.isErr()) return input.newCustomError(css.ParserError.invalid_value);
+        if (result.isErr()) return .{ .err = input.newCustomError(css.ParserError.invalid_value) };
         return result;
     }
 
@@ -183,7 +183,7 @@ pub const SyntaxString = union(enum) {
                                         const location = i.currentSourceLocation();
                                         const ident = if (i.expectIdent().asErr()) |e| return .{ .err = e };
                                         if (!bun.strings.eql(ident, value)) {
-                                            return location.newUnexpectedTokenError(.{ .ident = ident });
+                                            return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
                                         }
                                         break :blk ParsedComponent{ .literal = ident };
                                     },
@@ -225,7 +225,7 @@ pub const SyntaxString = union(enum) {
                     input.reset(&state);
                 }
 
-                return input.newErrorForNextToken();
+                return .{ .err = input.newErrorForNextToken() };
             },
         }
     }

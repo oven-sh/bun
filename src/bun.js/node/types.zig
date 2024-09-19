@@ -99,6 +99,14 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             return .{ .err = ErrorType{} };
         }
 
+        pub fn isTrue(this: @This()) bool {
+            if (comptime ReturnType != bool) @compileError("This function can only be called on bool");
+            return switch (this) {
+                .result => |r| r,
+                else => false,
+            };
+        }
+
         pub fn unwrap(this: @This()) !ReturnType {
             return switch (this) {
                 .result => |r| r,

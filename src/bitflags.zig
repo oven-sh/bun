@@ -1,3 +1,5 @@
+const std = @import("std");
+
 pub fn Bitflags(comptime T: type) type {
     const tyinfo = @typeInfo(T);
     const IntType = tyinfo.Struct.backing_integer.?;
@@ -33,8 +35,8 @@ pub fn Bitflags(comptime T: type) type {
             return asBits(lhs) & asBits(rhs);
         }
 
-        pub fn insert(this: T, other: T) T {
-            return bitwiseOr(this, other);
+        pub inline fn insert(this: *T, other: T) void {
+            this.* = bitwiseOr(this.*, other);
         }
 
         pub fn contains(lhs: T, rhs: T) bool {

@@ -65,7 +65,7 @@ pub const TokenList = struct {
                 .url => |url| {
                     if (dest.dependencies != null and is_custom_property and !url.isAbsolute()) {
                         return dest.newError(css.PrinterErrorKind{
-                            .ambiguous_url_in_custom_property = .{ .url = url },
+                            .ambiguous_url_in_custom_property = .{ .url = url.url },
                         }, url.loc);
                     }
                     try url.toCss(W, dest);
@@ -73,7 +73,7 @@ pub const TokenList = struct {
                 },
                 .@"var" => |@"var"| {
                     try @"var".toCss(W, dest, is_custom_property);
-                    has_whitespace = try this.writeWhitespaceIfNeeded(i, dest);
+                    has_whitespace = try this.writeWhitespaceIfNeeded(i, W, dest);
                 },
                 .env => |env| {
                     try env.toCss(W, dest, is_custom_property);
@@ -86,7 +86,7 @@ pub const TokenList = struct {
                 .length => |v| {
                     // Do not serialize unitless zero lengths in custom properties as it may break calc().
                     const value, const unit = v.toUnitValue();
-                    try try css.serializer.serializeDimension(value, unit, W, dest);
+                    try css.serializer.serializeDimension(value, unit, W, dest);
                     has_whitespace = false;
                 },
                 .angle => |v| {
@@ -164,8 +164,9 @@ pub const TokenList = struct {
     ) PrintErr!bool {
         if (!dest.minify and
             i != this.v.items.len - 1 and
-            this.v.items[i + 1] == .token and switch (this.v.items[i + 1]) {
+            this.v.items[i + 1] == .token and switch (this.v.items[i + 1].token) {
             .comma, .close_paren => true,
+            else => false,
         }) {
             // Whitespace is removed during parsing, so add it back if we aren't minifying.
             try dest.writeChar(' ');
@@ -640,7 +641,7 @@ pub const UnresolvedColor = union(enum) {
                     try css.to_css.integer(i32, Helper.conv(rgb.g), W, dest);
                     try dest.delim(',', false);
                     try css.to_css.integer(i32, Helper.conv(rgb.b), W, dest);
-                    rgb.alpha.toCss(W, dest, is_custom_property);
+                    try rgb.alpha.toCss(W, dest, is_custom_property);
                     try dest.writeChar(')');
                     return;
                 }
@@ -656,7 +657,7 @@ pub const UnresolvedColor = union(enum) {
                 try dest.writeChar(')');
             },
             .HSL => |hsl| {
-                if (dest.targets.shouldCompile(.space_separated_color_notation, .space_separated_color_notation)) {
+                if (dest.targets.shouldCompileSame(.space_separated_color_notation)) {
                     try dest.writeStr("hsla(");
                     try CSSNumberFns.toCss(&hsl.h, W, dest);
                     try dest.delim(',', false);

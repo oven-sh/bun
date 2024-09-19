@@ -165,7 +165,7 @@ pub const FontStretch = union(enum) {
         @panic(css.todo_stuff.depth);
     }
 
-    pub fn eq(lhs: FontStretch, rhs: FontStretch) bool {
+    pub fn eql(lhs: FontStretch, rhs: FontStretch) bool {
         return lhs.keyword == rhs.keyword and lhs.percentage.v == rhs.percentage.v;
     }
 
@@ -213,18 +213,18 @@ pub const FontFamily = union(enum) {
     family_name: []const u8,
 
     pub fn parse(input: *css.Parser) css.Result(@This()) {
-        if (input.tryParse(css.Parser.expectString, .{})) |value| {
-            return .{ .family_name = value };
+        if (input.tryParse(css.Parser.expectString, .{}).asValue()) |value| {
+            return .{ .result = .{ .family_name = value } };
         }
 
-        if (input.tryParse(GenericFontFamily.parse, .{})) |value| {
-            return .{ .generic = value };
+        if (input.tryParse(GenericFontFamily.parse, .{}).asValue()) |value| {
+            return .{ .result = .{ .generic = value } };
         }
 
         const stralloc = input.allocator();
         const value = try input.expectIdent();
         var string: ?ArrayList(u8) = null;
-        while (input.tryParse(css.Parser.expectIdent)) |ident| {
+        while (input.tryParse(css.Parser.expectIdent).asValue()) |ident| {
             if (string == null) {
                 string.* = ArrayList(u8){};
                 string.?.appendSlice(stralloc, value);
@@ -238,7 +238,7 @@ pub const FontFamily = union(enum) {
 
         const final_value = if (string) |s| s.items else value;
 
-        return .{ .family_name = final_value };
+        return .{ .result = .{ .family_name = final_value } };
     }
 
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -266,15 +266,15 @@ pub const FontFamily = union(enum) {
                         if (first) {
                             first = false;
                         } else {
-                            try id.append(dest.allocator, ' ');
+                            id.append(dest.allocator, ' ') catch bun.outOfMemory();
                         }
-                        try css.serializer.serializeIdentifier(slice, W, dest);
+                        css.serializer.serializeIdentifier(slice, dest) catch return dest.addFmtError();
                     }
-                    if (id.len < val.len + 2) {
+                    if (id.items.len < val.len + 2) {
                         return dest.writeStr(id.items);
                     }
                 }
-                return css.serializer.serializeString(val, W, dest);
+                return css.serializer.serializeString(val, dest) catch return dest.addFmtError();
             },
         }
     }
@@ -332,18 +332,21 @@ pub const FontStyle = union(enum) {
 
     pub fn parse(input: *css.Parser) css.Result(FontStyle) {
         const location = input.currentSourceLocation();
-        const ident = try input.expectIdent();
+        const ident = switch (input.expectIdent()) {
+            .result => |v| v,
+            .err => |e| return .{ .err = e },
+        };
         // todo_stuff.match_ignore_ascii_case
         if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("normal", ident)) {
-            return .normal;
+            return .{ .result = .normal };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("italic", ident)) {
-            return .italic;
+            return .{ .result = .italic };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("oblique", ident)) {
             const angle = input.tryParse(Angle.parse, .{}) catch FontStyle.defaultObliqueAngle();
-            return .{ .oblique = angle };
+            return .{ .result = .{ .oblique = angle } };
         } else {
             //
-            return location.newUnexpectedTokenError(.{ .ident = ident });
+            return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
         }
     }
 

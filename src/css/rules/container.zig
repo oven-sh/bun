@@ -29,7 +29,7 @@ pub const ContainerName = struct {
             bun.strings.eqlCaseInsensitiveASCIIICheckLength("and", ident) or
             bun.strings.eqlCaseInsensitiveASCIIICheckLength("not", ident) or
             bun.strings.eqlCaseInsensitiveASCIIICheckLength("or", ident))
-            return .{ .err = input.newUnexpectedtokenError(.{ .ident = ident }) };
+            return .{ .err = input.newUnexpectedTokenError(.{ .ident = ident }) };
 
         return .{ .result = ContainerName{ .v = ident } };
     }
@@ -115,8 +115,8 @@ pub const StyleQuery = union(enum) {
             .err => |e| return .{ .err = e },
         };
         if (input.expectColon().asErr()) |e| return .{ .err = e };
-        if (input.skipWhitespace().asErr()) |e| return .{ .err = e };
-        const opts = css.ParserOptions{};
+        input.skipWhitespace();
+        const opts = css.ParserOptions.default(input.allocator(), null);
         const feature = .{
             .feature = switch (css.Property.parse(
                 property_id,
@@ -128,7 +128,7 @@ pub const StyleQuery = union(enum) {
             },
         };
         _ = input.tryParse(css.parseImportant, .{});
-        return feature;
+        return .{ .result = feature };
     }
 
     pub fn createNegation(condition: *StyleQuery) StyleQuery {
@@ -154,6 +154,10 @@ pub const StyleQuery = union(enum) {
             .operation => |op| op.operator == parent_operator,
             .feature => true,
         };
+    }
+
+    pub fn parseStyleQuery(input: *css.Parser) Result(@This()) {
+        return .{ .err = input.newErrorForNextToken() };
     }
 };
 
@@ -197,7 +201,7 @@ pub const ContainerCondition = union(enum) {
                     c.needsParens(null, &dest.targets),
                 );
             },
-            .operation => |op| css.media_query.operationToCss(ContainerCondition, op.operator, &op.conditions, W, dest),
+            .operation => |op| try css.media_query.operationToCss(ContainerCondition, op.operator, &op.conditions, W, dest),
             .style => |query| {
                 try dest.writeStr("style(");
                 try query.toCss(W, dest);
@@ -207,11 +211,11 @@ pub const ContainerCondition = union(enum) {
     }
 
     pub fn parseFeature(input: *css.Parser) Result(ContainerCondition) {
-        const feature = switch (QueryFeature(ContainerSizeFeatureId)) {
+        const feature = switch (QueryFeature(ContainerSizeFeatureId).parse(input)) {
             .result => |vv| vv,
             .err => |e| return .{ .err = e },
-        }.parse(input);
-        return .{ .feature = feature };
+        };
+        return .{ .result = .{ .feature = feature } };
     }
 
     pub fn createNegation(condition: *ContainerCondition) ContainerCondition {
@@ -244,7 +248,7 @@ pub const ContainerCondition = union(enum) {
                 }
 
                 return .{ .result = .{
-                    .style = switch (StyleQuery.parseFeature(input)) {
+                    .style = switch (StyleQuery.parseFeature(i)) {
                         .result => |vv| vv,
                         .err => |e| return .{ .err = e },
                     },

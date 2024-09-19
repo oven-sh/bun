@@ -441,7 +441,7 @@ pub fn mapGamut(comptime T: type, color: T) T {
             .h = 0.0,
             .alpha = current.alpha,
         };
-        const conversion_function_name = "into" ++ @typeName(T);
+        const conversion_function_name = "into" ++ bun.meta.typeName(T);
         return @call(.auto, @field(OKLCH, conversion_function_name), .{oklch});
     }
 
@@ -453,7 +453,7 @@ pub fn mapGamut(comptime T: type, color: T) T {
             .h = 0.0,
             .alpha = current.alpha,
         };
-        const conversion_function_name = "into" ++ @typeName(T);
+        const conversion_function_name = "into" ++ bun.meta.typeName(T);
         return @call(.auto, @field(OKLCH, conversion_function_name), .{oklch});
     }
 
@@ -1045,7 +1045,7 @@ pub const RGBA = struct {
     /// The alpha component.
     alpha: u8,
 
-    pub fn new(red: u8, green: u8, blue: u8, alpha: f32) RGBA {
+    pub fn new(red: u8, green: u8, blue: u8, alpha: u8) RGBA {
         return RGBA{
             .red = red,
             .green = green,
@@ -2516,7 +2516,7 @@ pub fn DefineColorspace(comptime T: type) type {
     }
 
     // e.g. T = LAB, so then: into_this_function_name = "intoLAB"
-    const into_this_function_name = "into" ++ @typeName(T);
+    const into_this_function_name = "into" ++ bun.meta.typeName(T);
 
     return struct {
         pub fn components(this: *const T) struct { f32, f32, f32, f32 } {
@@ -2559,40 +2559,88 @@ pub fn DefineColorspace(comptime T: type) type {
 
         pub fn fromLABColor(color: *const LABColor) T {
             return switch (color.*) {
-                .lab => |*v| @call(.auto, @field(v, into_this_function_name), .{v}),
-                .lch => |*v| @call(.auto, @field(v, into_this_function_name), .{v}),
-                .oklab => |*v| @call(.auto, @field(v, into_this_function_name), .{v}),
-                .oklch => |*v| @call(.auto, @field(v, into_this_function_name), .{v}),
+                .lab => |*v| {
+                    if (comptime @TypeOf(v.*) == T) return v.*;
+                    return @call(.auto, @field(@TypeOf(v.*), into_this_function_name), .{v});
+                },
+                .lch => |*v| {
+                    if (comptime @TypeOf(v.*) == T) return v.*;
+                    return @call(.auto, @field(@TypeOf(v.*), into_this_function_name), .{v});
+                },
+                .oklab => |*v| {
+                    if (comptime @TypeOf(v.*) == T) return v.*;
+                    return @call(.auto, @field(@TypeOf(v.*), into_this_function_name), .{v});
+                },
+                .oklch => |*v| {
+                    if (comptime @TypeOf(v.*) == T) return v.*;
+                    return @call(.auto, @field(@TypeOf(v.*), into_this_function_name), .{v});
+                },
             };
         }
 
         pub fn fromPredefinedColor(color: *const PredefinedColor) T {
             return switch (color.*) {
-                .srgb => |*v| @call(.auto, @field(v, into_this_function_name), .{v}),
-                .srgb_linear => |*v| @call(.auto, @field(v, into_this_function_name), .{v}),
-                .display_p3 => |*v| @call(.auto, @field(v, into_this_function_name), .{v}),
-                .a98 => |*v| @call(.auto, @field(v, into_this_function_name), .{v}),
-                .prophoto => |*v| @call(.auto, @field(v, into_this_function_name), .{v}),
-                .rec2020 => |*v| @call(.auto, @field(v, into_this_function_name), .{v}),
-                .xyz_d50 => |*v| @call(.auto, @field(v, into_this_function_name), .{v}),
-                .xyz_d65 => |*v| @call(.auto, @field(v, into_this_function_name), .{v}),
+                .srgb => |*v| {
+                    if (comptime @TypeOf(v.*) == T) return v.*;
+                    return @call(.auto, @field(@TypeOf(v.*), into_this_function_name), .{v});
+                },
+                .srgb_linear => |*v| {
+                    if (comptime @TypeOf(v.*) == T) return v.*;
+                    return @call(.auto, @field(@TypeOf(v.*), into_this_function_name), .{v});
+                },
+                .display_p3 => |*v| {
+                    if (comptime @TypeOf(v.*) == T) return v.*;
+                    return @call(.auto, @field(@TypeOf(v.*), into_this_function_name), .{v});
+                },
+                .a98 => |*v| {
+                    if (comptime @TypeOf(v.*) == T) return v.*;
+                    return @call(.auto, @field(@TypeOf(v.*), into_this_function_name), .{v});
+                },
+                .prophoto => |*v| {
+                    if (comptime @TypeOf(v.*) == T) return v.*;
+                    return @call(.auto, @field(@TypeOf(v.*), into_this_function_name), .{v});
+                },
+                .rec2020 => |*v| {
+                    if (comptime @TypeOf(v.*) == T) return v.*;
+                    return @call(.auto, @field(@TypeOf(v.*), into_this_function_name), .{v});
+                },
+                .xyz_d50 => |*v| {
+                    if (comptime @TypeOf(v.*) == T) return v.*;
+                    return @call(.auto, @field(@TypeOf(v.*), into_this_function_name), .{v});
+                },
+                .xyz_d65 => |*v| {
+                    if (comptime @TypeOf(v.*) == T) return v.*;
+                    return @call(.auto, @field(@TypeOf(v.*), into_this_function_name), .{v});
+                },
             };
         }
 
         pub fn fromFloatColor(color: *const FloatColor) T {
             return switch (color.*) {
-                .rgb => |*v| @call(.auto, @field(@TypeOf(v), into_this_function_name), .{v}),
-                .hsl => |*v| @call(.auto, @field(@TypeOf(v), into_this_function_name), .{v}),
-                .hwb => |*v| @call(.auto, @field(@TypeOf(v), into_this_function_name), .{v}),
+                .rgb => |*v| {
+                    if (comptime T == SRGB) return v.*;
+                    return @call(.auto, @field(@TypeOf(v.*), into_this_function_name), .{v});
+                },
+                .hsl => |*v| {
+                    if (comptime T == HSL) return v.*;
+                    return @call(.auto, @field(@TypeOf(v.*), into_this_function_name), .{v});
+                },
+                .hwb => |*v| {
+                    if (comptime T == HWB) return v.*;
+                    return @call(.auto, @field(@TypeOf(v.*), into_this_function_name), .{v});
+                },
             };
         }
 
         pub fn tryFromCssColor(color: *const CssColor) ?T {
             return switch (color.*) {
-                .rgba => |*rgba| @call(.auto, @field(@TypeOf(rgba), into_this_function_name), .{rgba}),
-                .lab => |*lab| fromLABColor(lab),
-                .predefined => |*predefined| fromPredefinedColor(*predefined),
-                .float => |float| fromFloatColor(&float),
+                .rgba => |*rgba| {
+                    if (comptime T == RGBA) return rgba.*;
+                    return @call(.auto, @field(@TypeOf(rgba), into_this_function_name), .{rgba});
+                },
+                .lab => |lab| fromLABColor(lab),
+                .predefined => |predefined| fromPredefinedColor(*predefined),
+                .float => |float| fromFloatColor(float),
                 .current_color => null,
                 .light_dark => null,
                 .system => null,
@@ -2942,7 +2990,7 @@ pub fn linSrgb(r: f32, g: f32, b: f32) struct { f32, f32, f32 } {
 }
 
 /// PERF: SIMD?
-pub fn multiplyMatrix(m: *[9]f32, x: f32, y: f32, z: f32) struct { f32, f32, f32 } {
+pub fn multiplyMatrix(m: *const [9]f32, x: f32, y: f32, z: f32) struct { f32, f32, f32 } {
     const a = m[0] * x + m[1] * y + m[2] * z;
     const b = m[3] * x + m[4] * y + m[5] * z;
     const c = m[6] * x + m[7] * y + m[8] * z;
@@ -3188,7 +3236,7 @@ const color_conversions = struct {
             // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L50
             // convert an array of linear-light sRGB values to CIE XYZ
             // using sRGB's own white, D65 (no chromatic adaptation)
-            const MATRIX: [9]f32 = &.{
+            const MATRIX: [9]f32 = .{
                 0.41239079926595934,
                 0.357584339383878,
                 0.1804807884018343,
@@ -3514,7 +3562,7 @@ const color_conversions = struct {
 
         pub fn intoXYZd65(_xyz: *const XYZd50) XYZd65 {
             // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L105
-            const MATRIX = [9]f32{
+            const MATRIX: [9]f32 = .{
                 2.493496911941425,
                 -0.9313836179191239,
                 -0.40271078445071684,

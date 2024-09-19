@@ -39,7 +39,7 @@ pub fn PropertyIdImpl() type {
         pub fn parse(input: *css.Parser) css.Result(PropertyId) {
             const name = switch (input.expectIdent()) {
                 .result => |v| v,
-                .err => |e| .{ .err = e },
+                .err => |e| return .{ .err = e },
             };
             return .{ .result = fromString(name) };
         }

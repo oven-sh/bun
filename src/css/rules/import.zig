@@ -51,7 +51,7 @@ pub const ImportRule = struct {
 
         try dest.writeStr("@import ");
         if (dep) |d| {
-            try css.serializer.serializeString(dep.placeholder, W, dest);
+            css.serializer.serializeString(d.placeholder, dest) catch return dest.addFmtError();
 
             if (dest.dependencies) |*deps| {
                 deps.append(
@@ -60,7 +60,7 @@ pub const ImportRule = struct {
                 ) catch unreachable;
             }
         } else {
-            try css.serializer.serializeString(this.url, W, dest);
+            css.serializer.serializeString(this.url, dest) catch return dest.addFmtError();
         }
 
         if (this.layer) |*lyr| {

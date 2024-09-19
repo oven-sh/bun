@@ -33,11 +33,11 @@ pub fn Size2D(comptime T: type) type {
         b: T,
 
         fn parseVal(input: *css.Parser) Result(T) {
-            switch (T) {
+            return switch (T) {
                 f32 => return CSSNumberFns.parse(input),
                 LengthPercentage => return LengthPercentage.parse(input),
-                else => @compileError("TODO implement parseVal() for " + @typeName(T)),
-            }
+                else => T.parse(input),
+            };
         }
 
         pub fn parse(input: *css.Parser) Result(Size2D(T)) {
@@ -54,7 +54,7 @@ pub fn Size2D(comptime T: type) type {
 
         pub fn toCss(this: *const Size2D(T), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
             try valToCss(&this.a, W, dest);
-            if (!this.b.eq(this.a)) {
+            if (valEql(&this.b, &this.a)) {
                 try dest.writeStr(" ");
                 try valToCss(&this.b, W, dest);
             }
@@ -64,6 +64,20 @@ pub fn Size2D(comptime T: type) type {
             return switch (T) {
                 f32 => CSSNumberFns.toCss(val, W, dest),
                 else => val.toCss(W, dest),
+            };
+        }
+
+        pub inline fn valEql(lhs: *const T, rhs: *const T) bool {
+            return switch (T) {
+                f32 => lhs.* == rhs.*,
+                else => lhs.eql(rhs),
+            };
+        }
+
+        pub inline fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return switch (T) {
+                f32 => lhs.a == rhs.b,
+                else => lhs.a.eql(&rhs.b),
             };
         }
     };

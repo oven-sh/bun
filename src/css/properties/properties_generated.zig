@@ -8,6 +8,7 @@ const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const VendorPrefix = css.VendorPrefix;
 
+const PropertyImpl = @import("./properties_impl.zig").PropertyImpl;
 const PropertyIdImpl = @import("./properties_impl.zig").PropertyIdImpl;
 
 const CSSWideKeyword = css.css_properties.CSSWideKeyword;
@@ -200,7 +201,7 @@ const overflow = css.css_properties.overflow;
 // const ListStylePosition = list.ListStylePosition;
 // const ListStyle = list.ListStyle;
 // const MarkerSide = list.MarkerSide;
-// const Composes = css_modules.Composes;
+const Composes = css_modules.Composes;
 // const SVGPaint = svg.SVGPaint;
 // const FillRule = shape.FillRule;
 // const AlphaValue = shape.AlphaValue;
@@ -241,10 +242,12 @@ const ArrayList = std.ArrayListUnmanaged;
 const SmallList = css.SmallList;
 pub const Property = union(PropertyIdTag) {
     @"background-color": CssColor,
+    composes: Composes,
     all: CSSWideKeyword,
     unparsed: UnparsedProperty,
     custom: CustomProperty,
 
+    pub usingnamespace PropertyImpl();
     /// Parses a CSS property by name.
     pub fn parse(property_id: PropertyId, input: *css.Parser, options: *const css.ParserOptions) Result(Property) {
         const state = input.state();
@@ -254,6 +257,13 @@ pub const Property = union(PropertyIdTag) {
                 if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .@"background-color" = c } };
+                    }
+                }
+            },
+            .composes => {
+                if (css.generic.parseWithOptions(Composes, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .composes = c } };
                     }
                 }
             },
@@ -273,6 +283,7 @@ pub const Property = union(PropertyIdTag) {
     pub inline fn __toCssHelper(this: *const Property) struct { []const u8, VendorPrefix } {
         return switch (this.*) {
             .@"background-color" => .{ "background-color", VendorPrefix{ .none = true } },
+            .composes => .{ "composes", VendorPrefix{ .none = true } },
             .all => .{ "all", VendorPrefix{ .none = true } },
             .unparsed => |*unparsed| brk: {
                 var prefix = unparsed.property_id.prefix();
@@ -289,6 +300,7 @@ pub const Property = union(PropertyIdTag) {
     pub fn valueToCss(this: *const Property, comptime W: type, dest: *css.Printer(W)) PrintErr!void {
         return switch (this.*) {
             .@"background-color" => |*value| value.toCss(W, dest),
+            .composes => |*value| value.toCss(W, dest),
             .all => |*keyword| keyword.toCss(W, dest),
             .unparsed => |*unparsed| unparsed.value.toCss(W, dest, false),
             .custom => |*c| c.value.toCss(W, dest, c.name == .custom),
@@ -306,6 +318,7 @@ pub const Property = union(PropertyIdTag) {
 };
 pub const PropertyId = union(PropertyIdTag) {
     @"background-color",
+    composes,
     all,
     unparsed,
     custom: CustomPropertyName,
@@ -321,6 +334,7 @@ pub const PropertyId = union(PropertyIdTag) {
     pub fn prefix(this: *const PropertyId) VendorPrefix {
         return switch (this.*) {
             .@"background-color" => VendorPrefix.empty(),
+            .composes => VendorPrefix.empty(),
             .all, .custom, .unparsed => VendorPrefix.empty(),
         };
     }
@@ -330,6 +344,9 @@ pub const PropertyId = union(PropertyIdTag) {
         if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "background-color")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"background-color";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "composes")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .composes;
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "all")) {} else {
             return null;
         }
@@ -341,12 +358,23 @@ pub const PropertyId = union(PropertyIdTag) {
         _ = pre; // autofix
         return switch (this.*) {
             .@"background-color" => .@"background-color",
+            .composes => .composes,
+            else => this.*,
+        };
+    }
+
+    pub fn addPrefix(this: *const PropertyId, pre: VendorPrefix) void {
+        _ = pre; // autofix
+        return switch (this.*) {
+            .@"background-color" => {},
+            .composes => {},
             else => this.*,
         };
     }
 };
 pub const PropertyIdTag = enum(u16) {
     @"background-color",
+    composes,
     all,
     unparsed,
     custom,

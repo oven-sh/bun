@@ -70,9 +70,9 @@ pub const DeclarationBlock = struct {
         var i: usize = 0;
         const length = this.len();
 
-        const DECLS: []const []const u8 = .{ "declarations", "important_declarations" };
+        const DECLS: []const []const u8 = &[_][]const u8{ "declarations", "important_declarations" };
 
-        for (DECLS) |decl_field_name| {
+        inline for (DECLS) |decl_field_name| {
             const decls = &@field(this, decl_field_name);
             const is_important = comptime std.mem.eql(u8, decl_field_name, "important_declarations");
             for (decls.items) |*decl| {
@@ -188,7 +188,7 @@ pub fn parse_declaration(
     const Fn = struct {
         pub fn parsefn(input2: *css.Parser) Result(void) {
             if (input2.expectDelim('?').asErr()) |e| return .{ .err = e };
-            return input2.expectIdentMatching("important").toCssResult();
+            return input2.expectIdentMatching("important");
         }
     };
     const important = if (input.tryParse(Fn.parsefn, .{}).isOk()) true else false;

@@ -67,6 +67,7 @@ ${Object.entries(property_defs)
 
 function generatePropertyImpl(property_defs: Record<string, PropertyDef>): string {
   return `
+  pub usingnamespace PropertyImpl();
   /// Parses a CSS property by name.
   pub fn parse(property_id: PropertyId, input: *css.Parser, options: *const css.ParserOptions) Result(Property) {
     const state = input.state();
@@ -226,10 +227,24 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
 
   pub fn withPrefix(this: *const PropertyId, pre: VendorPrefix) PropertyId {
     return switch (this.*) {
-      ${Object.entries(property_defs).map(([prop_name, def]) => {
-        if (def.valid_prefixes === undefined) return `.${escapeIdent(prop_name)} => .${escapeIdent(prop_name)},`;
-        return `.${escapeIdent(prop_name)} => .{ .${escapeIdent(prop_name)} = pre },`;
-      })}
+      ${Object.entries(property_defs)
+        .map(([prop_name, def]) => {
+          if (def.valid_prefixes === undefined) return `.${escapeIdent(prop_name)} => .${escapeIdent(prop_name)},`;
+          return `.${escapeIdent(prop_name)} => .{ .${escapeIdent(prop_name)} = pre },`;
+        })
+        .join("\n")}
+      else => this.*,
+    };
+  }
+
+  pub fn addPrefix(this: *const PropertyId, pre: VendorPrefix) void {
+    return switch (this.*) {
+      ${Object.entries(property_defs)
+        .map(([prop_name, def]) => {
+          if (def.valid_prefixes === undefined) return `.${escapeIdent(prop_name)} => {},`;
+          return `.${escapeIdent(prop_name)} => |*p| .{ p.insert(pre); },`;
+        })
+        .join("\n")}
       else => this.*,
     };
   }
@@ -1322,10 +1337,10 @@ generateCode({
   // "marker-side": {
   //   ty: "MarkerSide",
   // },
-  // composes: {
-  //   ty: "Composes",
-  //   conditional: { css_modules: true },
-  // },
+  composes: {
+    ty: "Composes",
+    conditional: { css_modules: true },
+  },
   // fill: {
   //   ty: "SVGPaint",
   // },
@@ -1541,6 +1556,7 @@ const PrintErr = css.PrintErr;
 const VendorPrefix = css.VendorPrefix;
 
 
+const PropertyImpl = @import("./properties_impl.zig").PropertyImpl;
 const PropertyIdImpl = @import("./properties_impl.zig").PropertyIdImpl;
 
 const CSSWideKeyword = css.css_properties.CSSWideKeyword;
@@ -1733,7 +1749,7 @@ const overflow = css.css_properties.overflow;
 // const ListStylePosition = list.ListStylePosition;
 // const ListStyle = list.ListStyle;
 // const MarkerSide = list.MarkerSide;
-// const Composes = css_modules.Composes;
+const Composes = css_modules.Composes;
 // const SVGPaint = svg.SVGPaint;
 // const FillRule = shape.FillRule;
 // const AlphaValue = shape.AlphaValue;

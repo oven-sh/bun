@@ -105,8 +105,8 @@ pub const UnicodeRange = struct {
         // Attempt to optimize the range to use question mark syntax.
         if (this.start != this.end) {
             // Find the first hex digit that differs between the start and end values.
-            var shift = 24;
-            var mask = 0xf << shift;
+            var shift: u5 = 24;
+            var mask: u32 = @as(u32, 0xf) << shift;
             while (shift > 0) {
                 const c1 = this.start & mask;
                 const c2 = this.end & mask;
@@ -170,10 +170,10 @@ pub const UnicodeRange = struct {
         const range = if (parseConcatenated(concatenated_tokens).asValue()) |range|
             range
         else
-            return input.newBasicUnexpectedTokenError(.{ .ident = concatenated_tokens });
+            return .{ .err = input.newBasicUnexpectedTokenError(.{ .ident = concatenated_tokens }) };
 
         if (range.end > 0x10FFFF or range.start > range.end) {
-            return input.newBasicUnexpectedTokenError(.{ .ident = concatenated_tokens });
+            return .{ .err = input.newBasicUnexpectedTokenError(.{ .ident = concatenated_tokens }) };
         }
 
         return .{ .result = range };
@@ -192,13 +192,13 @@ pub const UnicodeRange = struct {
                     .result => |vv| vv,
                     .err => {
                         input.reset(&after_number);
-                        return;
+                        return .{ .result = {} };
                     },
                 };
 
                 if (token.* == .delim and token.delim == '?') return parseQuestionMarks(input);
-                if (token.* == .delim or token.* == .number) return;
-                return;
+                if (token.* == .delim or token.* == .number) return .{ .result = {} };
+                return .{ .result = {} };
             },
             .delim => |c| {
                 if (c == '+') {
@@ -207,21 +207,21 @@ pub const UnicodeRange = struct {
                         .err => |e| return .{ .err = e },
                     };
                     if (!(next.* == .ident or (next.* == .delim and next.delim == '?'))) {
-                        return input.newBasicUnexpectedTokenError(next.*);
+                        return .{ .err = input.newBasicUnexpectedTokenError(next.*) };
                     }
-                    return parseQuestionMarks(input);
+                    return .{ .result = parseQuestionMarks(input) };
                 }
             },
             else => {},
         }
-        return input.newBasicUnexpectedTokenError(tok.*);
+        return .{ .err = input.newBasicUnexpectedTokenError(tok.*) };
     }
 
     /// Consume as many '?' as possible
     fn parseQuestionMarks(input: *css.Parser) Result(void) {
         while (true) {
             const start = input.state();
-            if (input.nextIncludingWhitespace()) |tok| if (tok.* == .delim and tok.delim == '?') continue;
+            if (input.nextIncludingWhitespace().asValue()) |tok| if (tok.* == .delim and tok.delim == '?') continue;
             input.reset(&start);
             return;
         }
@@ -241,8 +241,8 @@ pub const UnicodeRange = struct {
 
         if (question_marks > 0) {
             if (text.len == 0) return UnicodeRange{
-                .start = first_hex_value << (question_marks * 4),
-                .end = ((first_hex_value + 1) << (question_marks * 4)) - 1,
+                .start = first_hex_value << @intCast(question_marks * 4),
+                .end = ((first_hex_value + 1) << @intCast(question_marks * 4)) - 1,
             };
         } else if (text.len == 0) {
             return UnicodeRange{
@@ -265,7 +265,7 @@ pub const UnicodeRange = struct {
     }
 
     fn consumeQuestionMarks(text: *[]const u8) usize {
-        var question_marks = 0;
+        var question_marks: usize = 0;
         while (bun.strings.splitFirstWithExpected(text.*, '?')) |rest| {
             question_marks += 1;
             text.* = rest;
@@ -274,8 +274,8 @@ pub const UnicodeRange = struct {
     }
 
     fn consumeHex(text: *[]const u8) struct { u32, usize } {
-        var value = 0;
-        var digits = 0;
+        var value: u32 = 0;
+        var digits: usize = 0;
         while (bun.strings.splitFirst(text.*)) |result| {
             if (toHexDigit(result.first)) |digit_value| {
                 value = value * 0x10 + digit_value;
@@ -319,9 +319,9 @@ pub const FontStyle = union(enum) {
                 .italic => .italic,
                 .oblique => |angle| {
                     const second_angle = if (input.tryParse(css.css_values.angle.Angle.parse, .{}).asValue()) |a| a else angle;
-                    return .{
-                        .oblique = .{ angle, second_angle },
-                    };
+                    return .{ .result = .{
+                        .oblique = .{ .a = angle, .b = second_angle },
+                    } };
                 },
             },
         };
@@ -333,7 +333,7 @@ pub const FontStyle = union(enum) {
             .italic => try dest.writeStr("italic"),
             .oblique => |angle| {
                 try dest.writeStr("oblique");
-                if (angle != FontStyle.defaultObliqueAngle()) {
+                if (!angle.eql(&FontStyle.defaultObliqueAngle())) {
                     try dest.writeChar(' ');
                     try angle.toCss(dest);
                 }
@@ -405,7 +405,7 @@ pub const FontFormat = union(enum) {
     pub fn toCss(this: *const FontFormat, comptime W: type, dest: *Printer(W)) PrintErr!void {
         // Browser support for keywords rather than strings is very limited.
         // https://developer.mozilla.org/en-US/docs/Web/CSS/@font-face/src
-        switch (this) {
+        switch (this.*) {
             .woff => try dest.writeStr("woff"),
             .woff2 => try dest.writeStr("woff2"),
             .truetype => try dest.writeStr("truetype"),
@@ -441,7 +441,7 @@ pub const Source = union(enum) {
 
         const Fn = struct {
             pub fn parseNestedBlock(_: void, i: *css.Parser) Result(fontprops.FontFamily) {
-                return .{ .result = fontprops.FontFamily.parse(i) };
+                return fontprops.FontFamily.parse(i);
             }
         };
         const local = switch (input.parseNestedBlock(fontprops.FontFamily, {}, Fn.parseNestedBlock)) {
@@ -453,10 +453,10 @@ pub const Source = union(enum) {
 
     pub fn toCss(this: *const Source, comptime W: type, dest: *Printer(W)) PrintErr!void {
         switch (this.*) {
-            .url => try this.url.toCss(dest),
+            .url => try this.url.toCss(W, dest),
             .local => {
                 try dest.writeStr("local(");
-                try this.local.toCss(dest);
+                try this.local.toCss(W, dest);
                 try dest.writeChar(')');
             },
         }
@@ -569,7 +569,7 @@ pub const UrlSource = struct {
         if (this.tech.items.len != 0) {
             try dest.whitespace();
             try dest.writeStr("tech(");
-            try css.to_css.fromList(FontTechnology, &this.tech.items, W, dest);
+            try css.to_css.fromList(FontTechnology, &this.tech, W, dest);
             try dest.writeChar(')');
         }
     }
@@ -578,7 +578,7 @@ pub const UrlSource = struct {
 /// A [@font-face](https://drafts.csswg.org/css-fonts/#font-face-rule) rule.
 pub const FontFaceRule = struct {
     /// Declarations in the `@font-face` rule.
-    proeprties: ArrayList(FontFaceProperty),
+    properties: ArrayList(FontFaceProperty),
     /// The location of the rule in the source file.
     loc: Location,
 
@@ -592,17 +592,17 @@ pub const FontFaceRule = struct {
         try dest.whitespace();
         try dest.writeChar('{');
         dest.indent();
-        const len = this.proeprties.items.len;
-        for (this.proeprties.items, 0..) |*prop, i| {
+        const len = this.properties.items.len;
+        for (this.properties.items, 0..) |*prop, i| {
             try dest.newline();
-            prop.toCss(W, dest);
+            try prop.toCss(W, dest);
             if (i != len - 1 or !dest.minify) {
                 try dest.writeChar(';');
             }
         }
         dest.dedent();
         try dest.newline();
-        dest.writeChar('}');
+        try dest.writeChar('}');
     }
 };
 
@@ -666,7 +666,7 @@ pub const FontFaceDeclarationParser = struct {
                 }
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "font-style")) {
                 if (FontStyle.parse(input).asValue()) |c| {
-                    if (input.expectExhausted().isOk()) |_| {
+                    if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .font_style = c } };
                     }
                 }
@@ -687,10 +687,13 @@ pub const FontFaceDeclarationParser = struct {
             }
 
             input.reset(&state);
-            const opts = css.ParserOptions{};
+            const opts = css.ParserOptions.default(input.allocator(), null);
             return .{
                 .result = .{
-                    .custom = try CustomProperty.parse(CustomPropertyName.fromStr(name), input, &opts),
+                    .custom = switch (CustomProperty.parse(CustomPropertyName.fromStr(name), input, &opts)) {
+                        .result => |v| v,
+                        .err => |e| return .{ .err = e },
+                    },
                 },
             };
         }

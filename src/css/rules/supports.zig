@@ -98,20 +98,18 @@ pub const SupportsCondition = union(enum) {
             SeenDeclKey,
             usize,
             struct {
-                pub fn hash(self: @This(), s: SeenDeclKey) u64 {
-                    _ = self;
-                    // return std.hash_map.hashString(s[1]) +% @as(u32, @intFromEnum(s[0]));
-                    return std.hash_map.hashString(s[1]) +% @intFromEnum(s[0]);
+                pub fn hash(self: @This(), s: SeenDeclKey) u32 {
+                    _ = self; // autofix
+                    return std.array_hash_map.hashString(s[1]) +% @intFromEnum(s[0]);
                 }
                 pub fn eql(self: @This(), a: SeenDeclKey, b: SeenDeclKey, b_index: usize) bool {
                     _ = self; // autofix
                     _ = b_index; // autofix
-                    if (seenDeclKeyEql(a[0], b[0])) return false;
-                    return bun.strings.eqlCaseInsensitiveASCIIICheckLength(a[1], b[1]);
+                    return seenDeclKeyEql(a, b);
                 }
 
-                pub fn seenDeclKeyEql(this: SeenDeclKey, that: SeenDeclKey) bool {
-                    return this[0] == that[0] and std.mem.eql(u8, this[1], that[1]);
+                pub inline fn seenDeclKeyEql(this: SeenDeclKey, that: SeenDeclKey) bool {
+                    return @intFromEnum(this[0]) == @intFromEnum(that[0]) and bun.strings.eql(this[1], that[1]);
                 }
             },
             false,
@@ -131,12 +129,12 @@ pub const SupportsCondition = union(enum) {
                         // todo_stuff.match_ignore_ascii_case
                         if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("and", s)) break :found_type 1;
                         if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("or", s)) break :found_type 2;
-                        return .{ .result = location.newUnexpectedTokenError(.{ .ident = s }) };
+                        return .{ .err = location.newUnexpectedTokenError(.{ .ident = s }) };
                     };
 
-                    if (this.expected_type) |expected| {
+                    if (this.expected_type.*) |expected| {
                         if (found_type != expected) {
-                            return location.newUnexpectedTokenError(.{ .ident = s });
+                            return .{ .err = location.newUnexpectedTokenError(.{ .ident = s }) };
                         }
                     } else {
                         this.expected_type.* = found_type;
@@ -173,7 +171,7 @@ pub const SupportsCondition = union(enum) {
                         const key = SeenDeclKey{ property_id, value };
                         if (seen_declarations.get(key)) |index| {
                             const cond = &conditions.items[index];
-                            if (cond == .declaration) {
+                            if (cond.* == .declaration) {
                                 cond.declaration.property_id.addPrefix(property_id.prefix());
                             }
                         } else {
@@ -206,7 +204,10 @@ pub const SupportsCondition = union(enum) {
     }
 
     pub fn parseDeclaration(input: *css.Parser) Result(SupportsCondition) {
-        const property_id = try css.PropertyId.parse(input);
+        const property_id = switch (css.PropertyId.parse(input)) {
+            .result => |v| v,
+            .err => |e| return .{ .err = e },
+        };
         if (input.expectColon().asErr()) |e| return .{ .err = e.intoDefaultParseError() };
         if (input.skipWhitespace().asErr()) |e| return .{ .err = e.intoDefaultParseError() };
         const pos = input.position();
@@ -250,10 +251,10 @@ pub const SupportsCondition = union(enum) {
 
         if (input.parseNestedBlock(void, {}, struct {
             pub fn parseFn(_: void, i: *css.Parser) Result(void) {
-                return i.expectNoErrorToken().toCssResult();
+                return i.expectNoErrorToken();
             }
         }.parseFn).asErr()) |err| {
-            return err;
+            return .{ .err = err };
         }
 
         return .{ .result = SupportsCondition{ .unknown = input.sliceFrom(pos) } };
@@ -302,19 +303,21 @@ pub const SupportsCondition = union(enum) {
                 var first = true;
                 inline for (std.meta.fields(css.VendorPrefix)) |field_| {
                     const field: std.builtin.Type.StructField = field_;
-                    if (!@field(prefix, field.name)) continue;
+                    if (!(comptime std.mem.eql(u8, field.name, "__unused"))) {
+                        if (@field(prefix, field.name)) {
+                            if (first) {
+                                first = false;
+                            } else {
+                                try dest.writeStr(") or (");
+                            }
 
-                    if (first) {
-                        first = false;
-                    } else {
-                        try dest.writeStr(") or (");
+                            var p = css.VendorPrefix{};
+                            @field(p, field.name) = true;
+                            css.serializer.serializeName(name, dest) catch return dest.addFmtError();
+                            try dest.delim(':', false);
+                            try dest.writeStr(value);
+                        }
                     }
-
-                    var p = css.VendorPrefix{};
-                    @field(p, field.name) = true;
-                    try css.serializer.serializeName(name, dest);
-                    try dest.delim(':', false);
-                    try dest.writeStr(value);
                 }
 
                 if (!prefix.eq(css.VendorPrefix{ .none = true })) {

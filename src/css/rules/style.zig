@@ -37,7 +37,7 @@ pub fn StyleRule(comptime R: type) type {
             } else {
                 var first_rule = true;
                 inline for (std.meta.fields(css.VendorPrefix)) |field| {
-                    if (@field(this.vendor_prefix, field.name)) {
+                    if (field.type == bool and @field(this.vendor_prefix, field.name)) {
                         if (first_rule) {
                             first_rule = false;
                         } else {
@@ -49,7 +49,7 @@ pub fn StyleRule(comptime R: type) type {
 
                         const prefix = css.VendorPrefix.fromName(field.name);
                         dest.vendor_prefix = prefix;
-                        this.toCssBase(W, dest);
+                        try this.toCssBase(W, dest);
                     }
                 }
 
@@ -60,9 +60,9 @@ pub fn StyleRule(comptime R: type) type {
         fn toCssBase(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
             // If supported, or there are no targets, preserve nesting. Otherwise, write nested rules after parent.
             const supports_nesting = this.rules.v.items.len == 0 or
-                css.Targets.shouldCompile(
-                dest.targets,
-                css.Targets.nestin,
+                css.Targets.shouldCompileSame(
+                &dest.targets,
+                .nesting,
             );
 
             const len = this.declarations.declarations.items.len + this.declarations.important_declarations.items.len;
@@ -75,9 +75,9 @@ pub fn StyleRule(comptime R: type) type {
                 try css.selector.serialize.serializeSelectorList(this.selectors.v.items, W, dest, dest.context(), false);
                 try dest.whitespace();
                 try dest.writeChar('{');
-                try dest.indent();
+                dest.indent();
 
-                var i = 0;
+                var i: usize = 0;
                 const DECLS = .{ "declarations", "important_declarations" };
                 inline for (DECLS) |decl_field_name| {
                     const important = comptime std.mem.eql(u8, decl_field_name, "important_declarations");
@@ -94,6 +94,7 @@ pub fn StyleRule(comptime R: type) type {
 
                             if (dest.css_module) |*css_module| {
                                 if (css_module.handleComposes(
+                                    dest.allocator,
                                     &this.selectors,
                                     composes,
                                     this.loc.source_index,
@@ -148,7 +149,7 @@ pub fn StyleRule(comptime R: type) type {
             } else {
                 Helpers.end(W, dest, has_declarations);
                 try Helpers.newline(this, W, dest, supports_nesting, len);
-                try dest.withContext(&this.selectors, This.toCss, .{this});
+                try dest.withContext(&this.selectors, this, This.toCss);
             }
         }
     };

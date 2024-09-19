@@ -40,7 +40,7 @@ pub const CSSNumberFns = struct {
                 try dest.writeStr(bun.strings.trimLeadingChar(s.items, '0'));
             }
         } else {
-            return css.to_css.float32(number, W, dest) catch {
+            return css.to_css.float32(number, dest) catch {
                 return dest.addFmtError();
             };
         }

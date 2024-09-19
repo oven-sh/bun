@@ -41,7 +41,7 @@ pub const Angle = union(Tag) {
         if (input.tryParse(Calc(Angle).parse, .{}).asValue()) |calc_value| {
             if (calc_value == .value) return .{ .result = calc_value.value.* };
             // Angles are always compatible, so they will always compute to a value.
-            return input.newCustomError(css.ParserError.invalid_value);
+            return .{ .err = input.newCustomError(css.ParserError.invalid_value) };
         }
 
         const location = input.currentSourceLocation();
@@ -63,7 +63,7 @@ pub const Angle = union(Tag) {
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("rad", unit)) {
                     return .{ .result = Angle{ .rad = value } };
                 } else {
-                    return location.newUnexpectedTokenError(token.*);
+                    return .{ .err = location.newUnexpectedTokenError(token.*) };
                 }
             },
             .number => |num| {
@@ -71,7 +71,7 @@ pub const Angle = union(Tag) {
             },
             else => {},
         }
-        return location.newUnexpectedTokenError(token.*);
+        return .{ .err = location.newUnexpectedTokenError(token.*) };
     }
 
     pub fn parseWithUnitlessZero(input: *css.Parser) Result(Angle) {
@@ -95,7 +95,7 @@ pub const Angle = union(Tag) {
             },
             .turn => |val| .{ val, "turn" },
         };
-        try css.serializer.serializeDimension(value, unit, W, dest);
+        css.serializer.serializeDimension(value, unit, W, dest) catch return dest.addFmtError();
     }
 
     pub fn toCssWithUnitlessZero(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -176,7 +176,13 @@ pub const Angle = union(Tag) {
     }
 
     pub fn mulF32(this: Angle, _: std.mem.Allocator, other: f32) Angle {
-        return Angle.op(this, &other, Angle.mulF32);
+        // return Angle.op(&this, &other, Angle.mulF32);
+        return switch (this) {
+            .deg => |v| .{ .deg = v * other },
+            .rad => |v| .{ .rad = v * other },
+            .grad => |v| .{ .grad = v * other },
+            .turn => |v| .{ .turn = v * other },
+        };
     }
 
     pub fn tryOp(

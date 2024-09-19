@@ -52,9 +52,13 @@ pub fn ScopeRule(comptime R: type) type {
                 // <scope-start> is treated as an ancestor of scope end.
                 // https://drafts.csswg.org/css-nesting/#nesting-at-scope
                 if (this.scope_start) |*scope_start| {
-                    try dest.withContext(scope_start, css.SelectorList.toCss, .{scope_start});
+                    try dest.withContext(scope_start, scope_end, struct {
+                        pub fn toCssFn(scope_end_: *const css.selector.api.SelectorList, comptime WW: type, d: *Printer(WW)) PrintErr!void {
+                            return css.selector.serialize.serializeSelectorList(scope_end_.v.items, WW, d, d.context(), false);
+                        }
+                    }.toCssFn);
                 } else {
-                    try scope_end.toCss(W, dest);
+                    return css.selector.serialize.serializeSelectorList(scope_end.v.items, W, dest, dest.context(), false);
                 }
                 try dest.writeChar(')');
                 try dest.whitespace();
@@ -65,7 +69,7 @@ pub fn ScopeRule(comptime R: type) type {
             // Nested style rules within @scope are implicitly relative to the <scope-start>
             // so clear our style context while printing them to avoid replacing & ourselves.
             // https://drafts.csswg.org/css-cascade-6/#scoped-rules
-            try dest.withClearedContext(CssRuleList(R).toCss, .{&this.rules});
+            try dest.withClearedContext(&this.rules, CssRuleList(R).toCss);
             dest.dedent();
             try dest.newline();
             try dest.writeChar('}');

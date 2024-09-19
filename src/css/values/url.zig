@@ -95,11 +95,11 @@ pub const Url = struct {
         // be replaced without escaping more easily. Quotes may be removed later during minification.
         if (dep) |d| {
             try dest.writeStr("url(");
-            try css.serializer.serializeString(d.placeholder, dest);
+            css.serializer.serializeString(d.placeholder, dest) catch return dest.addFmtError();
             try dest.writeChar(')');
 
             if (dest.dependencies) |*dependencies| {
-                try dependencies.append(css.Dependency{ .Url = d });
+                dependencies.append(dest.allocator, css.Dependency{ .Url = d }) catch bun.outOfMemory();
             }
 
             return;

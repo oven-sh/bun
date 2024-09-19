@@ -17,6 +17,6 @@ pub const CSSStringFns = struct {
     }
 
     pub fn toCss(this: *const []const u8, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        return css.serializer.serializeString(this.*, dest);
+        return css.serializer.serializeString(this.*, dest) catch return dest.addFmtError();
     }
 };

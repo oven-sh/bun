@@ -112,7 +112,7 @@ pub fn Printer(comptime Writer: type) type {
 
         /// Returns whether the indent level is greater than one.
         pub fn isNested(this: *const This) bool {
-            return this.ident > 2;
+            return this.indent_amt > 2;
         }
 
         /// Add an error related to std lib fmt errors
@@ -125,7 +125,7 @@ pub fn Printer(comptime Writer: type) type {
 
         /// Returns an error of the given kind at the provided location in the current source file.
         pub fn newError(
-            this: *const This,
+            this: *This,
             kind: css.PrinterErrorKind,
             maybe_loc: ?css.dependencies.Location,
         ) PrintErr!void {
@@ -202,6 +202,12 @@ pub fn Printer(comptime Writer: type) type {
             this.col += @intCast(written);
         }
 
+        fn replaceDots(allocator: Allocator, s: []const u8) []const u8 {
+            var str = allocator.dupe(u8, s) catch bun.outOfMemory();
+            std.mem.replaceScalar(u8, str[0..], '.', '-');
+            return str;
+        }
+
         /// Writes a CSS identifier to the underlying destination, escaping it
         /// as appropriate. If the `css_modules` option was enabled, then a hash
         /// is added, and the mapping is added to the CSS module.
@@ -209,38 +215,34 @@ pub fn Printer(comptime Writer: type) type {
             if (handle_css_module) {
                 if (this.css_module) |*css_module| {
                     const Closure = struct { first: bool, printer: *This };
-                    if (css_module.config.pattern.write(
+                    var closure = Closure{ .first = true, .printer = this };
+                    try css_module.config.pattern.write(
                         css_module.hashes.items[this.loc.source_index],
                         css_module.sources.items[this.loc.source_index],
                         ident,
-                        Closure{ .first = true, .printer = this },
+                        &closure,
                         struct {
                             pub fn writeFn(self: *Closure, s1: []const u8, replace_dots: bool) PrintErr!void {
                                 // PERF: stack fallback?
-                                const s = s: {
-                                    if (!replace_dots) break :s s1;
-                                    var s = self.printer.allocator.dupe(u8, s1) catch bun.outOfMemory();
-                                    std.mem.replaceScalar(u8, s[0..], '.', '-');
-                                    break :s s;
-                                };
+                                const s = if (!replace_dots) s1 else replaceDots(self.printer.allocator, s1);
                                 defer if (replace_dots) self.printer.allocator.free(s);
                                 self.printer.col += @intCast(s.len);
                                 if (self.first) {
                                     self.first = false;
-                                    return css.serializer.serializeIdentifier(s, Writer, self.printer);
+                                    return css.serializer.serializeIdentifier(s, self.printer) catch return self.printer.addFmtError();
                                 } else {
-                                    return css.serializer.serializeName(s, Writer, self.printer);
+                                    return css.serializer.serializeName(s, self.printer) catch return self.printer.addFmtError();
                                 }
                             }
                         }.writeFn,
-                    ).asErr()) |e| return .{ .err = e };
+                    );
 
-                    css_module.addLocal(ident, ident, this.loc.source_index);
+                    css_module.addLocal(this.allocator, ident, ident, this.loc.source_index);
                     return;
                 }
             }
 
-            return css.serializer.serializeIdentifier(ident, Writer, this);
+            return css.serializer.serializeIdentifier(ident, this) catch return this.addFmtError();
         }
 
         pub fn writeDashedIdent(this: *This, ident: []const u8, is_declaration: bool) !void {
@@ -249,9 +251,11 @@ pub fn Printer(comptime Writer: type) type {
             if (this.css_module) |*css_module| {
                 if (css_module.config.dashed_idents) {
                     const Fn = struct {
-                        pub fn writeFn(self: *This, s: []const u8) PrintErr!void {
+                        pub fn writeFn(self: *This, s1: []const u8, replace_dots: bool) PrintErr!void {
+                            const s = if (!replace_dots) s1 else replaceDots(self.allocator, s1);
+                            defer if (replace_dots) self.allocator.free(s);
                             self.col += @intCast(s.len);
-                            return css.serializer.serializeName(s, Writer, self);
+                            return css.serializer.serializeName(s, self) catch return self.addFmtError();
                         }
                     };
                     try css_module.config.pattern.write(
@@ -263,12 +267,12 @@ pub fn Printer(comptime Writer: type) type {
                     );
 
                     if (is_declaration) {
-                        css_module.addDashed(ident, this.loc.source_index);
+                        css_module.addDashed(this.allocator, ident, this.loc.source_index);
                     }
                 }
             }
 
-            return css.serializer.serializeName(ident[2..], Writer, this);
+            return css.serializer.serializeName(ident[2..], this) catch return this.addFmtError();
         }
 
         /// Write a single character to the underlying destination.
@@ -317,9 +321,9 @@ pub fn Printer(comptime Writer: type) type {
         pub fn withContext(
             this: *This,
             selectors: *const css.SelectorList,
+            closure: anytype,
             comptime func: anytype,
-            args: anytype,
-        ) bun.meta.ReturnOfType(@TypeOf(func)) {
+        ) PrintErr!void {
             const parent = if (this.ctx) |ctx| parent: {
                 this.ctx = null;
                 break :parent ctx;
@@ -328,8 +332,7 @@ pub fn Printer(comptime Writer: type) type {
             const ctx = css.StyleContext{ .selectors = selectors, .parent = parent };
 
             this.ctx = &ctx;
-            const actual_args = bun.meta.ConcatArgs1(func, this, args);
-            const res = @call(.auto, func, actual_args);
+            const res = func(closure, Writer, this);
             this.ctx = parent;
 
             return res;
@@ -337,15 +340,14 @@ pub fn Printer(comptime Writer: type) type {
 
         pub fn withClearedContext(
             this: *This,
+            closure: anytype,
             comptime func: anytype,
-            args: anytype,
-        ) bun.meta.ReturnOfType(@TypeOf(func)) {
+        ) PrintErr!void {
             const parent = if (this.ctx) |ctx| parent: {
                 this.ctx = null;
                 break :parent ctx;
             } else null;
-            const actual_args = bun.meta.ConcatArgs1(func, this, args);
-            const res = @call(.auto, func, actual_args);
+            const res = func(closure, Writer, this);
             this.ctx = parent;
             return res;
         }

@@ -111,7 +111,7 @@ pub fn Calc(comptime V: type) type {
             }
         }
 
-        pub fn add(allocator: std.mem.Allocator, this: @This(), rhs: @This()) @This() {
+        pub fn add(this: @This(), allocator: std.mem.Allocator, rhs: @This()) @This() {
             if (this == .value and rhs == .value) {
                 return addValue(this.value, rhs.value);
             } else if (this == .number and rhs == .number) {
@@ -123,15 +123,15 @@ pub fn Calc(comptime V: type) type {
             } else if (this == .function) {
                 return This{
                     .sum = .{
-                        .left = bun.create(allocator, This, this),
-                        .right = bun.create(allocator, This, rhs),
+                        .left = bun.create(This, allocator, this),
+                        .right = bun.create(This, allocator, rhs),
                     },
                 };
             } else if (rhs == .function) {
                 return This{
                     .sum = .{
-                        .left = bun.create(allocator, This, this),
-                        .right = bun.create(allocator, This, rhs),
+                        .left = bun.create(This, allocator, this),
+                        .right = bun.create(This, allocator, rhs),
                     },
                 };
             } else {
@@ -189,21 +189,24 @@ pub fn Calc(comptime V: type) type {
                 const Closure = struct {
                     ctx: @TypeOf(ctx),
                     pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(ArrayList(This)) {
-                        return i.parseCommaSeparatedWithCtx(This, This, self, @This().parseOne);
+                        return i.parseCommaSeparatedWithCtx(This, self, @This().parseOne);
                     }
                     pub fn parseOne(self: *@This(), i: *css.Parser) Result(This) {
                         return This.parseSum(i, self.ctx, parseIdent);
                     }
                 };
                 var closure = Closure{ .ctx = ctx };
-                var args = switch (input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn)) {
+                var reduced = switch (input.parseNestedBlock(ArrayList(This), &closure, Closure.parseNestedBlockFn)) {
                     .result => |vv| vv,
                     .err => |e| return .{ .err = e },
                 };
                 // PERF(alloc): i don't like this additional allocation
-                var reduced: ArrayList(This) = This.reducedArgs(&args, std.math.Order.lt);
+                // can we use stack fallback here if the common case is that there will be 1 argument?
+                This.reduceArgs(&reduced, std.math.Order.lt);
+                // var reduced: ArrayList(This) = This.reduceArgs(&args, std.math.Order.lt);
                 if (reduced.items.len == 1) {
-                    return reduced.orderedRemove(0);
+                    defer reduced.deinit(input.allocator());
+                    return reduced.swapRemove(0);
                 }
                 return This{
                     .function = bun.create(
@@ -604,7 +607,7 @@ pub fn Calc(comptime V: type) type {
                 var closure = Closure{ .ctx = ctx };
                 return input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
             } else {
-                return location.newUnexpectedTokenError(.{ .ident = f });
+                return .{ .err = location.newUnexpectedTokenError(.{ .ident = f }) };
             }
         }
 
@@ -656,7 +659,7 @@ pub fn Calc(comptime V: type) type {
                     },
                 };
 
-                if (tok == .whitespace) {
+                if (tok.* == .whitespace) {
                     if (input.isExhausted()) {
                         break; // allow trailing whitespace
                     }
@@ -665,17 +668,20 @@ pub fn Calc(comptime V: type) type {
                         .err => |e| return .{ .err = e },
                     };
                     if (next_tok.* == .delim and next_tok.delim == '+') {
-                        const next = Calc(V).parseProduct(input, ctx, parse_ident);
+                        const next = switch (Calc(V).parseProduct(input, ctx, parse_ident)) {
+                            .result => |vv| vv,
+                            .err => |e| return .{ .err = e },
+                        };
                         cur = cur.add(input.allocator(), next);
                     } else if (next_tok.* == .delim and next_tok.delim == '-') {
                         var rhs = switch (This.parseProduct(input, ctx, parse_ident)) {
                             .result => |vv| vv,
                             .err => |e| return .{ .err = e },
                         };
-                        rhs = rhs.mul_f32(-1.0);
+                        rhs = rhs.mulF32(input.allocator(), -1.0);
                         cur = cur.add(input.allocator(), rhs);
                     } else {
-                        return input.newUnexpectedTokenError(next_tok.*);
+                        return .{ .err = input.newUnexpectedTokenError(next_tok.*) };
                     }
                     continue;
                 }
@@ -712,13 +718,13 @@ pub fn Calc(comptime V: type) type {
                         .err => |e| return .{ .err = e },
                     };
                     if (rhs == .number) {
-                        node = node.mul_f32(rhs.number);
+                        node = node.mulF32(input.allocator(), rhs.number);
                     } else if (node == .number) {
                         const val = node.number;
                         node = rhs;
-                        node = node.mul_f32(val);
+                        node = node.mulF32(input.allocator(), val);
                     } else {
-                        return input.newUnexpectedTokenError(.{ .delim = '*' });
+                        return .{ .err = input.newUnexpectedTokenError(.{ .delim = '*' }) };
                     }
                 } else if (tok.* == .delim and tok.delim == '/') {
                     const rhs = switch (This.parseValue(input, ctx, parse_ident)) {
@@ -727,10 +733,10 @@ pub fn Calc(comptime V: type) type {
                     };
                     if (rhs == .number) {
                         const val = rhs.number;
-                        node = node.mul_f32(1.0 / val);
+                        node = node.mulF32(input.allocator(), 1.0 / val);
                         continue;
                     }
-                    return input.newCustomError(css.ParserError{ .invalid_value = {} });
+                    return .{ .err = input.newCustomError(css.ParserError{ .invalid_value = {} }) };
                 } else {
                     input.reset(&start);
                     break;
@@ -742,15 +748,15 @@ pub fn Calc(comptime V: type) type {
         pub fn parseValue(
             input: *css.Parser,
             ctx: anytype,
-            parse_ident: *const fn (@TypeOf(ctx), []const u8) ?This,
+            comptime parse_ident: *const fn (@TypeOf(ctx), []const u8) ?This,
         ) Result(This) {
             // Parse nested calc() and other math functions.
             if (input.tryParse(This.parse, .{}).asValue()) |_calc| {
                 const calc: This = _calc;
                 switch (calc) {
                     .function => |f| return switch (f.*) {
-                        .calc => |c| c,
-                        else => .{ .function = f },
+                        .calc => |c| .{ .result = c },
+                        else => .{ .result = .{ .function = f } },
                     },
                     else => return .{ .result = calc },
                 }
@@ -783,7 +789,7 @@ pub fn Calc(comptime V: type) type {
                     return .{ .result = c };
                 }
 
-                return location.newUnexpectedTokenError(.{ .ident = ident });
+                return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
             }
 
             const value = switch (input.tryParse(V.parse, .{})) {
@@ -967,7 +973,7 @@ pub fn Calc(comptime V: type) type {
 
             // We don't have a way to represent arguments that aren't angles, so just error.
             // This will fall back to an unparsed property, leaving the atan2() function intact.
-            return input.newCustomError(css.ParserError{ .invalid_value = {} });
+            return .{ .err = input.newCustomError(css.ParserError{ .invalid_value = {} }) };
         }
 
         pub fn parseNumeric(
@@ -1151,8 +1157,10 @@ pub fn Calc(comptime V: type) type {
             }
 
             return switch (this) {
+                // PERF: why not reuse the allocation here?
                 .value => This{ .value = bun.create(allocator, V, mulValueF32(this.value.*, allocator, other)) },
                 .number => This{ .number = this.number * other },
+                // PERF: why not reuse the allocation here?
                 .sum => This{ .sum = .{
                     .left = bun.create(
                         allocator,
@@ -1178,6 +1186,7 @@ pub fn Calc(comptime V: type) type {
                     };
                 },
                 .function => switch (this.function.*) {
+                    // PERF: why not reuse the allocation here?
                     .calc => This{
                         .function = bun.create(
                             allocator,
@@ -1195,6 +1204,12 @@ pub fn Calc(comptime V: type) type {
                     },
                 },
             };
+        }
+
+        fn reduceArgs(args: *ArrayList(This), order: std.math.Order) void {
+            _ = args; // autofix
+            _ = order; // autofix
+            @panic(css.todo_stuff.depth);
         }
     };
 }

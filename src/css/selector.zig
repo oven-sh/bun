@@ -1907,9 +1907,7 @@ pub const api = struct {
         /// Whether we are after any of the pseudo-like things.
         pub const AFTER_PSEUDO = SelectorParsingState{ .after_part = true, .after_slotted = true, .after_pseudo_element = true };
 
-        pub inline fn empty() SelectorParsingState {
-            return .{};
-        }
+        pub usingnamespace css.Bitflags(@This());
 
         pub fn intersects(self: SelectorParsingState, other: SelectorParsingState) bool {
             _ = other; // autofix
@@ -2167,8 +2165,15 @@ pub const api = struct {
             return true;
         }
 
-        pub fn isWebkitScrollabr(this: *const PseudoElement) bool {
+        pub fn isWebkitScrollbar(this: *const PseudoElement) bool {
             return this.* == .webkit_scrollbar;
+        }
+
+        pub fn isViewTransition(this: *const PseudoElement) bool {
+            return switch (this.*) {
+                .view_transition_group, .view_transition_image_pair, .view_transition_new, .view_transition_old => true,
+                else => false,
+            };
         }
 
         pub fn toCss(this: *const PseudoElement, comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -2292,7 +2297,7 @@ pub const api = struct {
 
         if (local_name) |name| {
             sink.pushSimpleSelector(.{
-                .local_name = LocalName{
+                .local_name = LocalName(Impl){
                     .lower_name = brk: {
                         var lowercase = parser.allocator.alloc(u8, name.len) catch unreachable;
                         bun.strings.copyLowercase(name, lowercase[0..]);
@@ -3130,7 +3135,7 @@ pub const api = struct {
         const location = input.currentSourceLocation();
         const t = switch (input.nextIncludingWhitespace()) {
             .result => |v| v,
-            .err => |e| return e,
+            .err => |e| return .{ .err = e },
         };
         switch (t) {
             .ident => |local_name| return .{ .some = .{ namespace, local_name } },
@@ -3235,8 +3240,9 @@ pub const serialize = struct {
         comptime W: type,
         dest: *css.Printer(W),
         context: ?*const css.StyleContext,
-        is_relative: bool,
+        __is_relative: bool,
     ) PrintErr!void {
+        var is_relative = __is_relative;
         const CombinatorIter = struct {
             sel: *const api.Selector,
             i: usize = 0,
@@ -3307,7 +3313,7 @@ pub const serialize = struct {
         // which we need for |split|. So we split by combinators on a match-order
         // sequence and then reverse.
         var combinators = CombinatorIter{ .sel = selector };
-        const compound_selectors = CompoundSelectorIter{ .sel = selector };
+        var compound_selectors = CompoundSelectorIter{ .sel = selector };
         const should_compile_nesting = dest.targets.shouldCompileSame(.nesting);
 
         var first = true;
@@ -3589,7 +3595,7 @@ pub const serialize = struct {
     }
 
     fn serializeCombinator(
-        combinator: *api.Combinator,
+        combinator: *const api.Combinator,
         comptime W: type,
         dest: *Printer(W),
     ) PrintErr!void {
@@ -3604,7 +3610,7 @@ pub const serialize = struct {
                 try dest.writeStr(">>>");
                 try dest.whitespace();
             },
-            .pseudo_element, .part, .slot_assign => return,
+            .pseudo_element, .part, .slot_assignment => return,
         }
     }
 
@@ -4284,7 +4290,7 @@ const tocss_servo = struct {
             .deep_descendant => {
                 try dest.writeStr(" >>> ");
             },
-            .pseudo_element, .part, .slot_assign => return,
+            .pseudo_element, .part, .slot_assignment => return,
         }
     }
 

@@ -183,8 +183,8 @@ pub const CssModule = struct {
                 .name = this.config.pattern.writeToString(
                     allocator,
                     .{},
-                    &this.hashes.items[source_index],
-                    &this.sources.items[source_index],
+                    this.hashes.items[source_index],
+                    this.sources.items[source_index],
                     local,
                 ) catch bun.outOfMemory(),
                 .composes = .{},
@@ -229,11 +229,11 @@ pub const Pattern = struct {
         local: []const u8,
         closure: anytype,
         comptime writefn: *const fn (@TypeOf(closure), []const u8, replace_dots: bool) PrintErr!void,
-    ) void {
+    ) PrintErr!void {
         for (this.segments.items) |*segment| {
             switch (segment.*) {
                 .literal => |s| {
-                    try writefn(closure, s);
+                    try writefn(closure, s, false);
                 },
                 .name => {
                     const stem = std.fs.path.stem(path);

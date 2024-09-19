@@ -175,7 +175,7 @@ pub const PageRule = struct {
         dest.indent();
 
         var i: usize = 0;
-        const len = this.declarations.len() + this.rules.len();
+        const len = this.declarations.len() + this.rules.items.len;
 
         const DECLS = .{ "declarations", "important_declarations" };
         inline for (DECLS) |decl_field_name| {
@@ -192,7 +192,7 @@ pub const PageRule = struct {
         }
 
         if (this.rules.items.len > 0) {
-            if (!dest.minify and this.declarations.items.len > 0) {
+            if (!dest.minify and this.declarations.len() > 0) {
                 try dest.writeChar('\n');
             }
             try dest.newline();

@@ -167,12 +167,12 @@ pub const SourceLocation = struct {
     column: u32,
 
     /// Create a new BasicParseError at this location for an unexpected token
-    // pub fn newBasicUnexpectedTokenError(this: SourceLocation, token: Token) BasicParseError {
-    //     return BasicParseError{
-    //         .kind = .{ .unexpected_token = token },
-    //         .location = this,
-    //     };
-    // }
+    pub fn newBasicUnexpectedTokenError(this: SourceLocation, token: Token) BasicParseError {
+        return BasicParseError.intoDefaultParseError({
+            .kind = .{ .unexpected_token = token },
+            .location = this,
+        });
+    }
 
     /// Create a new ParseError at this location for an unexpected token
     pub fn newUnexpectedTokenError(this: SourceLocation, token: Token) ParseError(ParserError) {
@@ -668,7 +668,7 @@ fn parse_at_rule(
     }
 }
 
-fn parse_custom_at_rule_prelude(name: []const u8, input: *Parser, options: *ParserOptions, comptime T: type, at_rule_parser: *T) Result(AtRulePrelude(T.AtRuleParser.AtRule)) {
+fn parse_custom_at_rule_prelude(name: []const u8, input: *Parser, options: *const ParserOptions, comptime T: type, at_rule_parser: *T) Result(AtRulePrelude(T.AtRuleParser.AtRule)) {
     ValidCustomAtRuleParser(T);
     switch (at_rule_parser.CustomAtRuleParser.parsePrelude(at_rule_parser, name, input, options)) {
         .result => |prelude| {
@@ -1176,7 +1176,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                                 return result;
                             }
                         };
-                        break :brk switch (input.parseNestedBlock(SupportsCondition, void, {}, Func.do)) {
+                        break :brk switch (input.parseNestedBlock(SupportsCondition, {}, Func.do)) {
                             .result => |v| v,
                             .err => |e| return .{ .err = e },
                         };
@@ -1193,7 +1193,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                                 url_str,
                                 media,
                                 supports,
-                                layer,
+                                if (layer) |l| .{ .value = if (l.value) |ll| ll else null } else null,
                             },
                         },
                     };
@@ -1292,17 +1292,19 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                         return .{ .result = {} };
                     },
                     .custom_media => {
+                        const name = prelude.custom_media[0];
+                        const query = prelude.custom_media[1];
                         this.state = State.body;
                         this.rules.v.append(
                             this.allocator,
                             .{
                                 .custom_media = css_rules.custom_media.CustomMediaRule{
-                                    .name = prelude.custom_media.name,
-                                    .query = prelude.custom_media.query,
-                                    .loc = prelude.custom_media.loc,
+                                    .name = name,
+                                    .query = query,
+                                    .loc = loc,
                                 },
                             },
-                        );
+                        ) catch bun.outOfMemory();
                     },
                     .layer => {
                         if (@intFromEnum(this.state) <= @intFromEnum(State.layers)) {
@@ -1310,10 +1312,10 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                         } else {
                             this.state = .body;
                         }
-                        const nested_parser = this.nested();
-                        return NestedRuleParser(AtRuleParserT).AtRuleParser.parseBlock(nested_parser, prelude, start);
+                        var nested_parser = this.nested();
+                        return NestedRuleParser(AtRuleParserT).AtRuleParser.ruleWithoutBlock(&nested_parser, prelude, start);
                     },
-                    .charset => return Result(AtRuleParser.AtRule).success,
+                    .charset => return .{ .result = {} },
                     .unknown => {
                         const name = prelude.unknown[0];
                         const prelude2 = prelude.unknown[1];
@@ -1528,8 +1530,8 @@ pub fn NestedRuleParser(comptime T: type) type {
                         };
                         const Closure = struct {
                             selector_parser: *selector.api.SelectorParser,
-                            pub fn parsefn(_: void, input2: *Parser) Result(selector.api.SelectorList) {
-                                return selector.api.SelectorList.parseRelative(&this.selector_parser, input2, .ignore_invalid_selector, .none);
+                            pub fn parsefn(self: *@This(), input2: *Parser) Result(selector.api.SelectorList) {
+                                return selector.api.SelectorList.parseRelative(self.selector_parser, input2, .ignore_invalid_selector, .none);
                             }
                         };
                         var closure = Closure{
@@ -1570,7 +1572,13 @@ pub fn NestedRuleParser(comptime T: type) type {
                         };
                         break :brk .{ .nest = selectors };
                     } else {
-                        break :brk if (parse_custom_at_rule_prelude(name, input, this.options, this.at_rule_parser).asErr()) |e| return .{ .err = e };
+                        break :brk if (parse_custom_at_rule_prelude(
+                            name,
+                            input,
+                            this.options,
+                            T,
+                            this.at_rule_parser,
+                        ).asErr()) |e| return .{ .err = e };
                     }
                 };
 
@@ -1582,13 +1590,6 @@ pub fn NestedRuleParser(comptime T: type) type {
             }
 
             pub fn parseBlock(this: *This, prelude: AtRuleParser.Prelude, start: *const ParserState, input: *Parser) Result(AtRuleParser.AtRule) {
-                defer {
-                    // how should we think about deinitializing this?
-                    // do it like this defer thing going on here?
-                    prelude.deinit();
-                    @compileError(todo_stuff.think_mem_mgmt);
-                }
-                // TODO: finish
                 const loc = this.getLoc(start);
                 switch (prelude) {
                     .font_face => {
@@ -1607,11 +1608,13 @@ pub fn NestedRuleParser(comptime T: type) type {
                         }
 
                         this.rules.v.append(
-                            input.allocator,
-                            .{ .font_face = css_rules.font_face.FontFaceRule{
-                                .properties = properties,
-                                .loc = loc,
-                            } },
+                            input.allocator(),
+                            .{
+                                .font_face = css_rules.font_face.FontFaceRule{
+                                    .properties = properties,
+                                    .loc = loc,
+                                },
+                            },
                         ) catch bun.outOfMemory();
                     },
                     .font_palette_values => {
@@ -2222,7 +2225,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
                 try this.rules.toCss(W, &printer);
                 return ToCssResult{
                     .dependencies = printer.dependencies,
-                    .code = dest,
+                    .code = dest.items,
                     .exports = null,
                     .references = null,
                 };
@@ -3061,7 +3064,7 @@ pub const Parser = struct {
 
         const byte = this.input.tokenizer.nextByte();
         if (this.stop_before.contains(Delimiters.fromByte(byte))) {
-            return .{ .err = this.newBasicError(BasicParseErrorKind.end_of_input) };
+            return .{ .err = this.newError(BasicParseErrorKind.end_of_input) };
         }
 
         const token_start_position = this.input.tokenizer.getPosition();
@@ -3077,7 +3080,7 @@ pub const Parser = struct {
         } else token: {
             const new_token = switch (this.input.tokenizer.next()) {
                 .result => |v| v,
-                .err => return .{ .err = this.newBasicError(BasicParseErrorKind.end_of_input) },
+                .err => return .{ .err = this.newError(BasicParseErrorKind.end_of_input) },
             };
             this.input.cached_token = CachedToken{
                 .token = new_token,
@@ -3098,7 +3101,7 @@ pub const Parser = struct {
     pub fn newErrorForNextToken(this: *Parser) ParseError(ParserError) {
         const token = switch (this.next()) {
             .result => |t| t.*,
-            .err => |e| return .{ .err = e },
+            .err => |e| return e,
         };
         return this.newError(BasicParseErrorKind{ .unexpected_token = token });
     }
@@ -4659,7 +4662,11 @@ pub const Token = union(TokenKind) {
 
     bad_url: []const u8,
 
+    /// A `<delim-token>`
     /// Value of a single codepoint
+    ///
+    /// NOTE/PERF: the css spec says this should be the value of a single codepoint, meaning it needs to 4 bytes long
+    /// but in practice, and in this code, we only ever return ascii bytes
     delim: u32,
 
     /// A <number-token> can be fractional or an integer, and can contain an optional + or - sign
@@ -4775,7 +4782,12 @@ pub const Token = union(TokenKind) {
                 serializer.serializeUnquotedUrl(value, dest) catch return dest.addFmtError();
                 return dest.writeStr(")");
             },
-            .delim => |value| dest.writeChar(value),
+            .delim => |value| {
+                // See comment for this variant in declaration of Token
+                // The value of delim is only ever ascii
+                bun.debugAssert(value <= 0x7F);
+                return dest.writeChar(@truncate(value));
+            },
             .number => |num| serializer.writeNumeric(num.value, num.int_value, num.has_sign, dest) catch return dest.addFmtError(),
             .percentage => |num| {
                 serializer.writeNumeric(num.value * 100, num.int_value, num.has_sign, dest) catch return dest.addFmtError();
@@ -5172,7 +5184,8 @@ pub const serializer = struct {
     /// Write a double-quoted CSS string token, escaping content as necessary.
     pub fn serializeString(value: []const u8, writer: anytype) !void {
         try writer.writeAll("\"");
-        try CssStringWriter(@TypeOf(writer)).new(writer).writeStr(value);
+        var string_writer = CssStringWriter(@TypeOf(writer)).new(writer);
+        try string_writer.writeStr(value);
         return writer.writeAll("\"");
     }
 
@@ -5254,7 +5267,7 @@ pub const serializer = struct {
             try writer.writeAll("+");
         }
 
-        const notation = if (value == 0.0 and std.math.signbit(value)) notation: {
+        const notation: struct { decimal_point: bool, scientific: bool } = if (value == 0.0 and std.math.signbit(value)) notation: {
             // Negative zero. Work around #20596.
             try writer.writeAll("-0");
             break :notation .{
@@ -5335,7 +5348,7 @@ pub const serializer = struct {
                     if (escaped) |e| {
                         try this.inner.writeAll(e);
                     } else {
-                        try serializer.hexEscape(b, W, this.inner);
+                        try serializer.hexEscape(b, this.inner);
                     }
                     chunk_start = i + 1;
                 }
@@ -5428,7 +5441,7 @@ pub const to_css = struct {
     /// (This is a convenience wrapper for `to_css` and probably should not be overridden.)
     pub fn string(allocator: Allocator, comptime T: type, this: *const T, options: PrinterOptions) PrintErr![]const u8 {
         var s = ArrayList(u8){};
-        defer s.deinit(allocator);
+        errdefer s.deinit(allocator);
         const writer = s.writer(allocator);
         const W = @TypeOf(writer);
         // PERF: think about how cheap this is to create
@@ -5438,7 +5451,7 @@ pub const to_css = struct {
             CSSString => try CSSStringFns.toCss(W, &printer),
             else => try this.toCss(W, &printer),
         }
-        return s;
+        return s.items;
     }
 
     pub fn fromList(comptime T: type, this: *const ArrayList(T), comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -5459,7 +5472,7 @@ pub const to_css = struct {
         return dest.writeStr(str);
     }
 
-    pub fn float32(this: f32, writer: anytype) @TypeOf(writer).Error!void {
+    pub fn float32(this: f32, writer: anytype) !void {
         var scratch: [26]u8 = undefined;
         // PERF/TODO: Compare this to Rust dtoa-short crate
         const floats = std.fmt.formatFloat(scratch[0..], this, .{

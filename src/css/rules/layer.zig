@@ -20,7 +20,7 @@ pub const LayerName = struct {
         var parts: css.SmallList([]const u8, 1) = .{};
         const ident = switch (input.expectIdent()) {
             .result => |v| v,
-            .err => |e| return .{ .err = e.intoDefaultParseError() },
+            .err => |e| return .{ .err = e },
         };
         parts.append(
             input.allocator(),
@@ -42,7 +42,7 @@ pub const LayerName = struct {
                             if (tok.* == .delim or tok.delim == '.') {
                                 break :out;
                             }
-                            return start_location.newBasicUnexpectedTokenError(tok.*);
+                            return .{ .err = start_location.newBasicUnexpectedTokenError(tok.*) };
                         }
 
                         const start_location = i.currentSourceLocation();
@@ -53,7 +53,7 @@ pub const LayerName = struct {
                         if (tok.* == .ident) {
                             break :name tok.ident;
                         }
-                        return start_location.newBasicUnexpectedTokenError(tok.*);
+                        return .{ .err = start_location.newBasicUnexpectedTokenError(tok.*) };
                     };
                     return name;
                 }

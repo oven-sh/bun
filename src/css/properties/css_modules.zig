@@ -26,6 +26,7 @@ const Length = css.css_values.length.LengthValue;
 const Rect = css.css_values.rect.Rect;
 const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
 const CustomIdentList = css.css_values.ident.CustomIdentList;
+const CustomIdentFns = css.css_values.ident.CustomIdentFns;
 
 const Location = css.dependencies.Location;
 
@@ -37,6 +38,23 @@ pub const Composes = struct {
     from: ?Specifier,
     /// The source location of the `composes` property.
     loc: Location,
+
+    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+        var first = true;
+        for (this.names.items) |name| {
+            if (first) {
+                first = false;
+            } else {
+                try dest.writeChar(' ');
+            }
+            try CustomIdentFns.toCss(&name, W, dest);
+        }
+
+        if (this.from) |*from| {
+            try dest.writeStr(" from ");
+            try from.toCss(W, dest);
+        }
+    }
 };
 
 /// Defines where the class names referenced in the `composes` property are located.
@@ -56,5 +74,13 @@ pub const Specifier = union(enum) {
         }
         try input.expectIdentMatching("global");
         return .global;
+    }
+
+    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+        return switch (this.*) {
+            .global => dest.writeStr("global"),
+            .file => |file| css.serializer.serializeString(file, dest) catch return dest.addFmtError(),
+            .source_index => {},
+        };
     }
 };

@@ -109,10 +109,7 @@ pub fn CssRule(comptime Rule: type) type {
                 .container => |x| x.toCss(W, dest),
                 .scope => |x| x.toCss(W, dest),
                 .unknown => |x| x.toCss(W, dest),
-                .custom => |x| x.toCss(W, dest) catch return PrinterError{
-                    .kind = css.PrinterErrorKind.fmt_error,
-                    .loc = null,
-                },
+                .custom => |x| x.toCss(W, dest) catch return dest.addFmtError(),
                 .ignored => {},
             };
         }

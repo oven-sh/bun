@@ -66,7 +66,7 @@ pub const FontPaletteValuesRule = struct {
         const len = this.properties.items.len;
         for (this.properties.items, 0..) |*prop, i| {
             try dest.newline();
-            try prop.toCss(dest);
+            try prop.toCss(W, dest);
             if (i != len - 1 or !dest.minify) {
                 try dest.writeChar(';');
             }
@@ -77,7 +77,7 @@ pub const FontPaletteValuesRule = struct {
     }
 };
 
-pub const FontPaletteValuesProperty = struct {
+pub const FontPaletteValuesProperty = union(enum) {
     /// The `font-family` property.
     font_family: fontprops.FontFamily,
 
@@ -97,22 +97,22 @@ pub const FontPaletteValuesProperty = struct {
 
     pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
         switch (this.*) {
-            .font_family => |f| {
+            .font_family => |*f| {
                 try dest.writeStr("font-family");
                 try dest.delim(':', false);
                 try f.toCss(W, dest);
             },
-            .base_palette => |b| {
+            .base_palette => |*b| {
                 try dest.writeStr("base-palette");
                 try dest.delim(':', false);
                 try b.toCss(W, dest);
             },
-            .override_colors => |o| {
+            .override_colors => |*o| {
                 try dest.writeStr("override-colors");
                 try dest.delim(':', false);
-                try o.toCss(W, dest);
+                try css.to_css.fromList(OverrideColors, o, W, dest);
             },
-            .custom => |custom| {
+            .custom => |*custom| {
                 try dest.writeStr(custom.name.asStr());
                 try dest.delim(':', false);
                 try custom.value.toCss(W, dest, true);
@@ -152,9 +152,9 @@ pub const OverrideColors = struct {
     }
 
     pub fn toCss(this: *const OverrideColors, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        try css.CSSIntegerFns.toCss(&this.index, dest);
+        try css.CSSIntegerFns.toCss(&this.index, W, dest);
         try dest.writeChar(' ');
-        try this.color.toCss(dest);
+        try this.color.toCss(W, dest);
     }
 };
 
@@ -189,10 +189,10 @@ pub const BasePalette = union(enum) {
     }
 
     pub fn toCss(this: *const BasePalette, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        switch (this) {
+        switch (this.*) {
             .light => try dest.writeStr("light"),
             .dark => try dest.writeStr("dark"),
-            .integer => try css.CSSIntegerFns.toCss(&this.integer, dest),
+            .integer => try css.CSSIntegerFns.toCss(&this.integer, W, dest),
         }
     }
 };

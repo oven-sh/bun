@@ -88,7 +88,7 @@ pub const ImportDependency = struct {
             .media = media,
             .loc = SourceRange.new(
                 filename,
-                css.Location{ .line = rule.loc.line + 1, .column = rule.loc.column },
+                css.dependencies.Location{ .line = rule.loc.line + 1, .column = rule.loc.column },
                 8,
                 rule.url.len + 2,
             ), // TODO: what about @import url(...)?

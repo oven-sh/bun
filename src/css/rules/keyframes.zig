@@ -25,7 +25,7 @@ pub const KeyframesListParser = struct {
         pub const Declaration = Keyframe;
 
         pub fn parseValue(_: *This, name: []const u8, input: *css.Parser) Result(Declaration) {
-            return input.newError(css.BasicParseErrorKind{ .unexpected_token = .{ .ident = name } });
+            return .{ .err = input.newError(css.BasicParseErrorKind{ .unexpected_token = .{ .ident = name } }) };
         }
     };
 
@@ -44,11 +44,11 @@ pub const KeyframesListParser = struct {
         pub const AtRule = void;
 
         pub fn parsePrelude(_: *This, name: []const u8, input: *css.Parser) Result(Prelude) {
-            return input.newError(css.BasicParseErrorKind{ .at_rule_invalid = name });
+            return .{ .err = input.newError(css.BasicParseErrorKind{ .at_rule_invalid = name }) };
         }
 
         pub fn parseBlock(_: *This, _: AtRuleParser.Prelude, _: *const css.ParserState, input: *css.Parser) Result(AtRuleParser.AtRule) {
-            return input.newError(css.BasicParseErrorKind.at_rule_body_invalid);
+            return .{ .err = input.newError(css.BasicParseErrorKind.at_rule_body_invalid) };
         }
 
         pub fn ruleWithoutBlock(_: *This, _: AtRuleParser.Prelude, _: *const css.ParserState) css.Maybe(AtRuleParser.AtRule, void) {
@@ -105,14 +105,14 @@ pub const KeyframesName = union(enum) {
                     bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "revert") or
                     bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "revert-layer"))
                 {
-                    return input.newUnexpectedTokenError(.{ .ident = s });
+                    return .{ .err = input.newUnexpectedTokenError(.{ .ident = s }) };
                 } else {
                     return .{ .result = .{ .ident = s } };
                 }
             },
-            .string => |s| return .{ .result = .{ .custom = s } },
+            .quoted_string => |s| return .{ .result = .{ .custom = s } },
             else => |t| {
-                return input.newUnexpectedTokenError(t);
+                return .{ .err = input.newUnexpectedTokenError(t) };
             },
         }
     }

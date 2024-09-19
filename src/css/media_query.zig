@@ -322,7 +322,7 @@ pub const MediaCondition = union(enum) {
             .err => |e| return .{ .err = e },
             .result => |v| v,
         };
-        return MediaCondition{ .feature = feature };
+        return .{ .result = MediaCondition{ .feature = feature } };
     }
 
     /// QueryCondition.createNegation
@@ -420,10 +420,10 @@ pub fn parseQueryCondition(
         }
     };
 
-    const operator: Operator = if (input.tryParse(Operator.parse, .{})) |op|
+    const operator: Operator = if (input.tryParse(Operator.parse, .{}).asValue()) |op|
         op
     else
-        return first_condition;
+        return .{ .result = first_condition };
 
     if (!flags.contains(QueryConditionFlags{ .allow_or = true }) and operator == .@"or") {
         return .{ .err = location.newUnexpectedTokenError(css.Token{ .ident = "or" }) };
@@ -449,7 +449,7 @@ pub fn parseQueryCondition(
 
     while (true) {
         if (input.tryParse(css.Parser.expectIdentMatching, .{delim}).isErr()) {
-            return QueryCondition.createOperation(operator, conditions);
+            return .{ .result = QueryCondition.createOperation(operator, conditions) };
         }
 
         conditions.append(
@@ -516,7 +516,7 @@ fn parseParenBlock(
 /// A [media feature](https://drafts.csswg.org/mediaqueries/#typedef-media-feature)
 pub const MediaFeature = QueryFeature(MediaFeatureId);
 
-const MediaFeatureId = union(enum) {
+const MediaFeatureId = enum {
     /// The [width](https://w3c.github.io/csswg-drafts/mediaqueries-5/#width) media feature.
     width,
     /// The [height](https://w3c.github.io/csswg-drafts/mediaqueries-5/#height) media feature.
@@ -782,7 +782,7 @@ pub fn QueryFeature(comptime FeatureId: type) type {
         pub fn parse(input: *css.Parser) Result(This) {
             switch (input.tryParse(parseNameFirst, .{})) {
                 .result => |res| {
-                    return res;
+                    return .{ .result = res };
                 },
                 .err => |e| {
                     if (e.kind == .custom and e.kind.custom == .invalid_media_query) {
@@ -801,11 +801,13 @@ pub fn QueryFeature(comptime FeatureId: type) type {
             };
 
             const operator = if (input.tryParse(consumeOperationOrColon, .{true}).asValue()) |operator| operator else return .{
-                .boolean = .{ .name = name },
+                .result = .{
+                    .boolean = .{ .name = name },
+                },
             };
 
             if (operator != null and legacy_op != null) {
-                return input.newCustomError(css.ParserError.invalid_media_query);
+                return .{ .err = input.newCustomError(css.ParserError.invalid_media_query) };
             }
 
             const value = switch (MediaFeatureValue.parse(input, name.valueType())) {
@@ -813,21 +815,21 @@ pub fn QueryFeature(comptime FeatureId: type) type {
                 .result => |v| v,
             };
             if (!value.checkType(name.valueType())) {
-                return input.newCustomError(css.ParserError.invalid_media_query);
+                return .{ .err = input.newCustomError(css.ParserError.invalid_media_query) };
             }
 
             if (operator orelse legacy_op) |op| {
                 if (!name.valueType().allowsRanges()) {
-                    return input.newCustomError(css.ParserError.invalid_media_query);
+                    return .{ .err = input.newCustomError(css.ParserError.invalid_media_query) };
                 }
 
-                return .{
+                return .{ .result = .{
                     .range = .{
                         .name = name,
                         .operator = op,
                         .value = value,
                     },
-                };
+                } };
             } else {
                 return .{
                     .plain = .{
@@ -843,16 +845,16 @@ pub fn QueryFeature(comptime FeatureId: type) type {
             const start = input.state();
             const name = name: {
                 while (true) {
-                    if (MediaFeatureName(FeatureId).parse(input)) |result| {
+                    if (MediaFeatureName(FeatureId).parse(input).asValue()) |result| {
                         const name: MediaFeatureName(FeatureId) = result[0];
                         const legacy_op: ?MediaFeatureComparison = result[1];
                         if (legacy_op != null) {
-                            return input.newCustomError(css.ParserError.invalid_media_query);
+                            return .{ .err = input.newCustomError(css.ParserError.invalid_media_query) };
                         }
                         break :name name;
                     }
                     if (input.isExhausted()) {
-                        return input.newCustomError(css.ParserError.invalid_media_query);
+                        return .{ .err = input.newCustomError(css.ParserError.invalid_media_query) };
                     }
                 }
             };
@@ -876,11 +878,11 @@ pub fn QueryFeature(comptime FeatureId: type) type {
                     .result => |v| v,
                 };
                 _ = blah;
-                bun.debugAssert(bun.strings.eql(feature_name, name));
+                bun.debugAssert(feature_name.eql(&name));
             }
 
             if (!name.valueType().allowsRanges() or !value.checkType(name.valueType())) {
-                return input.newCustomError(css.ParserError.invalid_media_query);
+                return .{ .err = input.newCustomError(css.ParserError.invalid_media_query) };
             }
 
             if (input.tryParse(consumeOperationOrColon, .{ input, false }).asValue()) |end_operator_| {
@@ -900,7 +902,7 @@ pub fn QueryFeature(comptime FeatureId: type) type {
                     LT | LTE,
                     LTE | LTE,
                     => {},
-                    else => return input.newCustomError(css.ParserError.invalid_media_query),
+                    else => return .{ .err = input.newCustomError(css.ParserError.invalid_media_query) },
                 }
 
                 const end_value = switch (MediaFeatureValue.parse(input, name.valueType())) {
@@ -908,7 +910,7 @@ pub fn QueryFeature(comptime FeatureId: type) type {
                     .result => |v| v,
                 };
                 if (!end_value.checkType(name.valueType())) {
-                    return input.newCustomError(css.ParserError.invalid_media_query);
+                    return .{ .err = input.newCustomError(css.ParserError.invalid_media_query) };
                 }
 
                 return .{
@@ -1060,7 +1062,7 @@ pub const MediaFeatureValue = union(enum) {
     /// If the type is unknown, pass MediaFeatureType::Unknown instead.
     pub fn parse(input: *css.Parser, expected_type: MediaFeatureType) Result(MediaFeatureValue) {
         if (input.tryParse(parseKnown, .{expected_type}).asValue()) |value| {
-            return value;
+            return .{ .result = value };
         }
 
         return parseUnknown(input);
@@ -1068,12 +1070,12 @@ pub const MediaFeatureValue = union(enum) {
 
     pub fn parseKnown(input: *css.Parser, expected_type: MediaFeatureType) Result(MediaFeatureValue) {
         return switch (expected_type) {
-            .bool => {
+            .boolean => {
                 const value = switch (CSSIntegerFns.parse(input)) {
                     .err => |e| return .{ .err = e },
                     .result => |v| v,
                 };
-                if (value != 0 and value != 1) return input.newCustomError(css.ParserError.invalid_value);
+                if (value != 0 and value != 1) return .{ .err = input.newCustomError(css.ParserError.invalid_value) };
                 return .{ .boolean = value == 1 };
             },
             .number => .{ .number = CSSNumberFns.parse(input) },
@@ -1106,7 +1108,7 @@ pub const MediaFeatureValue = union(enum) {
 
     pub fn addF32(this: MediaFeatureValue, allocator: Allocator, other: f32) MediaFeatureValue {
         return switch (this) {
-            .length => |len| .{ .len = len.add(allocator, .{ .px = other }) },
+            .length => |len| .{ .length = len.add(allocator, .{ .px = other }) },
             .number => |num| .{ .number = num + other },
             .integer => |num| .{ .integer = num + if (css.signfns.isSignPositive(other)) 1 else -1 },
             .boolean => |v| .{ .boolean = v },
@@ -1114,6 +1116,19 @@ pub const MediaFeatureValue = union(enum) {
             .ratio => |ratio| .{ .ratio = ratio.addF32(allocator, other) },
             .ident => |id| .{ .ident = id },
             .env => |env| .{ .env = env }, // TODO: calc support
+        };
+    }
+
+    pub fn valueType(this: *const MediaFeatureValue) MediaFeatureType {
+        return switch (this.*) {
+            .length => .length,
+            .number => .number,
+            .integer => .integer,
+            .boolean => .boolean,
+            .resolution => .resolution,
+            .ratio => .ratio,
+            .ident => .ident,
+            .env => .unknown,
         };
     }
 };
@@ -1158,8 +1173,17 @@ pub fn MediaFeatureName(comptime FeatureId: type) type {
 
         const This = @This();
 
+        pub fn eql(lhs: *const This, rhs: *const This) bool {
+            if (@intFromEnum(lhs) != @intFromEnum(rhs)) return false;
+            return switch (lhs.*) {
+                .standard => |fid| fid == rhs.standard,
+                .custom => |ident| bun.strings.eql(ident, rhs.ident),
+                .unknown => |ident| bun.strings.eql(ident, rhs.ident),
+            };
+        }
+
         pub fn valueType(this: *const This) MediaFeatureType {
-            return switch (this) {
+            return switch (this.*) {
                 .standard => |standard| standard.valueType(),
                 else => .unknown,
             };
@@ -1195,12 +1219,12 @@ pub fn MediaFeatureName(comptime FeatureId: type) type {
             };
 
             if (bun.strings.startsWith(ident, "--")) {
-                return .{
+                return .{ .result = .{
                     .{
-                        .custom = .ident,
+                        .custom = ident,
                     },
                     null,
-                };
+                } };
             }
 
             var name = ident;
@@ -1212,7 +1236,7 @@ pub fn MediaFeatureName(comptime FeatureId: type) type {
                 name = name[8..];
             }
 
-            const comparator = comparator: {
+            const comparator: ?MediaFeatureComparison = comparator: {
                 if (bun.strings.startsWithCaseInsensitiveAscii(name, "min-")) {
                     name = name[4..];
                     break :comparator .@"greater-than-equal";
@@ -1267,8 +1291,8 @@ fn writeMinMax(
     try dest.delim(':', false);
 
     const adjusted: ?MediaFeatureValue = switch (operator.*) {
-        .@"greater-than" => value.clone(dest.allocator).add(0.001),
-        .@"less-than" => value.clone(dest.allocator).add(-0.001),
+        .@"greater-than" => value.clone(dest.allocator).addF32(dest.allocator, 0.001),
+        .@"less-than" => value.clone(dest.allocator).addF32(dest.allocator, -0.001),
         else => null,
     };
 

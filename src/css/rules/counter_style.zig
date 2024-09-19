@@ -41,7 +41,7 @@ pub const CounterStyleRule = struct {
         // dest.add_mapping(self.loc);
 
         try dest.writeStr("@counter-style");
-        css.css_values.ident.CustomIdentFns.toCss(&this.name, W, dest);
+        try css.css_values.ident.CustomIdentFns.toCss(&this.name, W, dest);
         try this.declarations.toCssBlock(W, dest);
     }
 };

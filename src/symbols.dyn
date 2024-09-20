@@ -220,6 +220,10 @@
     __ZN2v816FunctionTemplate12SetClassNameENS_5LocalINS_6StringEEE;
     __ZN2v816FunctionTemplate16InstanceTemplateEv;
     __ZN2v816FunctionTemplate17PrototypeTemplateEv;
+    __ZN2v86Object3GetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE;
+    __ZN2v86Object3GetENS_5LocalINS_7ContextEEEj;
+    __ZN2v86Object32SetAlignedPointerInInternalFieldEiPv;
+    __ZN2v86Object38SlowGetAlignedPointerFromInternalFieldEi;
     _uv_os_getpid;
     _uv_os_getppid;
 };

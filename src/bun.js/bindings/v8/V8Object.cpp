@@ -90,4 +90,29 @@ Local<Data> Object::SlowGetInternalField(int index)
     return handleScope->createLocal<Data>(globalObject->vm(), JSC::jsUndefined());
 }
 
+MaybeLocal<Value> Object::Get(Local<Context> context, Local<Value> key)
+{
+    V8_UNIMPLEMENTED();
+    return MaybeLocal<Value>();
+}
+
+MaybeLocal<Value> Object::Get(Local<Context> context, uint32_t index)
+{
+    V8_UNIMPLEMENTED();
+    return MaybeLocal<Value>();
+}
+
+void Object::SetAlignedPointerInInternalField(int index, void* value)
+{
+    V8_UNIMPLEMENTED();
+    (void)index;
+    (void)value;
+}
+
+void* Object::SlowGetAlignedPointerFromInternalField(int index)
+{
+    V8_UNIMPLEMENTED();
+    return nullptr;
+}
+
 } // namespace v8

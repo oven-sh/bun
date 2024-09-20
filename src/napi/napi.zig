@@ -1852,6 +1852,10 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn _ZN2v816FunctionTemplate12SetClassNameENS_5LocalINS_6StringEEE() *anyopaque;
     pub extern fn _ZN2v816FunctionTemplate16InstanceTemplateEv() *anyopaque;
     pub extern fn _ZN2v816FunctionTemplate17PrototypeTemplateEv() *anyopaque;
+    pub extern fn _ZN2v86Object3GetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE() *anyopaque;
+    pub extern fn _ZN2v86Object3GetENS_5LocalINS_7ContextEEEj() *anyopaque;
+    pub extern fn _ZN2v86Object38SlowGetAlignedPointerFromInternalFieldEi() *anyopaque;
+    pub extern fn _ZN2v86Object32SetAlignedPointerInInternalFieldEiPv() *anyopaque;
     pub extern fn uv_os_getpid() *anyopaque;
     pub extern fn uv_os_getppid() *anyopaque;
 } else struct {
@@ -1927,6 +1931,10 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"?SetClassName@FunctionTemplate@v8@@QEAAXV?$Local@VString@v8@@@2@@Z"() *anyopaque;
     pub extern fn @"?InstanceTemplate@FunctionTemplate@v8@@QEAA?AV?$Local@VObjectTemplate@v8@@@2@XZ"() *anyopaque;
     pub extern fn @"?PrototypeTemplate@FunctionTemplate@v8@@QEAA?AV?$Local@VObjectTemplate@v8@@@2@XZ"() *anyopaque;
+    pub extern fn @"?SetAlignedPointerInInternalField@Object@v8@@QEAAXHPEAX@Z"() *anyopaque;
+    pub extern fn @"?SlowGetAlignedPointerFromInternalField@Object@v8@@AEAAPEAXH@Z"() *anyopaque;
+    pub extern fn @"?Get@Object@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@@Z"() *anyopaque;
+    pub extern fn @"?Get@Object@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@I@Z"() *anyopaque;
 };
 
 pub fn fixDeadCodeElimination() void {

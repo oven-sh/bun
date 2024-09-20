@@ -9,15 +9,15 @@ namespace v8 {
 
 // An array used by HandleScope to store the items. Must keep pointer stability when resized, since
 // v8::Locals point inside this array.
-class HandleScopeBuffer : public JSC::JSNonFinalObject {
+class HandleScopeBuffer : public JSC::JSCell {
 public:
-    using Base = JSC::JSNonFinalObject;
+    using Base = JSC::JSCell;
 
     static HandleScopeBuffer* create(JSC::VM& vm, JSC::Structure* structure);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
     {
-        return JSC::Structure::create(vm, globalObject, JSC::jsNull(), JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), 0, 0);
+        return JSC::Structure::create(vm, globalObject, JSC::jsNull(), JSC::TypeInfo(JSC::CellType, StructureFlags), info(), 0, 0);
     }
 
     template<typename, JSC::SubspaceAccess mode>
@@ -33,8 +33,11 @@ public:
             [](auto& spaces, auto&& space) { spaces.m_subspaceForHandleScopeBuffer = std::forward<decltype(space)>(space); });
     }
 
-    TaggedPointer* createHandle(void* ptr, const Map* map);
+    TaggedPointer* createHandle(JSC::JSCell* object, const Map* map, JSC::VM& vm);
+    TaggedPointer* createRawHandle(void* ptr);
     TaggedPointer* createSmiHandle(int32_t smi);
+    TaggedPointer* createDoubleHandle(double value);
+    TaggedPointer* createHandleFromExistingHandle(TaggedPointer address);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -42,13 +45,10 @@ public:
     friend class EscapableHandleScopeBase;
 
 private:
-    // TODO make resizable
-    static constexpr int capacity = 64;
+    WTF::Lock gc_lock;
+    WTF::SegmentedVector<Handle, 16> storage;
 
-    Handle storage[capacity];
-    int size = 0;
-
-    Handle& createUninitializedHandle();
+    Handle& createEmptyHandle();
 
     HandleScopeBuffer(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)

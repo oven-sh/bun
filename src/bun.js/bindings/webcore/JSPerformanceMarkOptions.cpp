@@ -25,7 +25,6 @@
 #include "JSDOMConvertNumbers.h"
 #include <JavaScriptCore/JSCInlines.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -37,7 +36,7 @@ template<> PerformanceMarkOptions convertDictionary<PerformanceMarkOptions>(JSGl
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
     if (UNLIKELY(!isNullOrUndefined && !object)) {
         throwTypeError(&lexicalGlobalObject, throwScope);
-        return { };
+        return {};
     }
     PerformanceMarkOptions result;
     JSValue detailValue;
@@ -45,11 +44,11 @@ template<> PerformanceMarkOptions convertDictionary<PerformanceMarkOptions>(JSGl
         detailValue = jsUndefined();
     else {
         detailValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "detail"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!detailValue.isUndefined()) {
         result.detail = convert<IDLAny>(lexicalGlobalObject, detailValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else
         result.detail = jsUndefined();
     JSValue startTimeValue;
@@ -57,11 +56,11 @@ template<> PerformanceMarkOptions convertDictionary<PerformanceMarkOptions>(JSGl
         startTimeValue = jsUndefined();
     else {
         startTimeValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "startTime"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!startTimeValue.isUndefined()) {
         result.startTime = convert<IDLDouble>(lexicalGlobalObject, startTimeValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     return result;
 }

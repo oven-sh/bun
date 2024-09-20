@@ -82,6 +82,7 @@ using namespace JSC;
     macro(encoding) \
     macro(end) \
     macro(errno) \
+    macro(makeErrorWithCode) \
     macro(errorSteps) \
     macro(evaluateCommonJSModule) \
     macro(evaluated) \

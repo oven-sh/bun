@@ -46,11 +46,14 @@ private:
     void finishCreation(VM&);
 };
 
+JSC::EncodedJSValue throwError(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, ErrorCode code, const WTF::String& message);
 JSC::JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, const WTF::String& message);
 JSC::JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, const WTF::String& message);
 JSC::JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, JSC::JSValue message);
 JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options = jsUndefined());
 JSC::JSValue toJS(JSC::JSGlobalObject*, ErrorCode);
+JSObject* createInvalidThisError(JSGlobalObject* globalObject, JSValue thisValue, const ASCIILiteral typeName);
+JSObject* createInvalidThisError(JSGlobalObject* globalObject, const String& message);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_INVALID_ARG_TYPE);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_OUT_OF_RANGE);
@@ -58,5 +61,7 @@ JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_IPC_DISCONNECTED);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_SERVER_NOT_RUNNING);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_IPC_CHANNEL_CLOSED);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_SOCKET_BAD_TYPE);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_INVALID_PROTOCOL);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeErrorWithCode);
 
 }

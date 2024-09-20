@@ -426,37 +426,86 @@ pub export fn Bun__GlobalObject__hasIPC(global: *JSC.JSGlobalObject) bool {
     return global.bunVM().ipc != null;
 }
 
+extern fn Bun__Process__queueNextTick1(*JSC.ZigGlobalObject, JSC.JSValue, JSC.JSValue) void;
+
 pub export fn Bun__Process__send(
     globalObject: *JSGlobalObject,
     callFrame: *JSC.CallFrame,
 ) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    if (callFrame.argumentsCount() < 1) {
-        globalObject.throwInvalidArguments("process.send requires at least one argument", .{});
-        return .zero;
+    var message, var handle, var options_, var callback = callFrame.arguments(4).ptr;
+
+    if (message == .zero) message = .undefined;
+    if (handle == .zero) handle = .undefined;
+    if (options_ == .zero) options_ = .undefined;
+    if (callback == .zero) callback = .undefined;
+
+    if (handle.isFunction()) {
+        callback = handle;
+        handle = .undefined;
+        options_ = .undefined;
+    } else if (options_.isFunction()) {
+        callback = options_;
+        options_ = .undefined;
+    } else if (!options_.isUndefined()) {
+        if (!globalObject.validateObject("options", options_, .{})) return .zero;
     }
+
+    const S = struct {
+        fn impl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+            const arguments_ = callframe.arguments(1).slice();
+            const ex = arguments_[0];
+            VirtualMachine.Process__emitErrorEvent(globalThis, ex);
+            return .undefined;
+        }
+    };
+
     const vm = globalObject.bunVM();
-    if (vm.getIPCInstance()) |ipc_instance| {
-        const success = ipc_instance.data.serializeAndSend(globalObject, callFrame.argument(0));
-        return if (success) .undefined else .zero;
-    } else {
-        globalObject.throw("IPC Socket is no longer open.", .{});
-        return .zero;
+    const zigGlobal: *JSC.ZigGlobalObject = @ptrCast(globalObject);
+    const ipc_instance = vm.getIPCInstance() orelse {
+        const ex = globalObject.ERR_IPC_CHANNEL_CLOSED("Channel closed.", .{}).toJS();
+        if (callback.isFunction()) {
+            Bun__Process__queueNextTick1(zigGlobal, callback, ex);
+        } else {
+            const fnvalue = JSC.JSFunction.create(globalObject, "", S.impl, 1, .{});
+            Bun__Process__queueNextTick1(zigGlobal, fnvalue, ex);
+        }
+        return .false;
+    };
+
+    if (message.isUndefined()) {
+        return globalObject.throwValueRet(globalObject.ERR_MISSING_ARGS_static(ZigString.static("message"), null, null));
     }
+    if (!message.isString() and !message.isObject() and !message.isNumber() and !message.isBoolean()) {
+        return globalObject.throwValueRet(globalObject.ERR_INVALID_ARG_TYPE_static(
+            ZigString.static("message"),
+            ZigString.static("string, object, number, or boolean"),
+            message,
+        ));
+    }
+
+    const good = ipc_instance.data.serializeAndSend(globalObject, message);
+
+    if (good) {
+        if (callback.isFunction()) {
+            Bun__Process__queueNextTick1(zigGlobal, callback, .zero);
+        }
+    } else {
+        const ex = globalObject.createTypeErrorInstance("process.send() failed", .{});
+        ex.put(globalObject, ZigString.static("syscall"), ZigString.static("write").toJS(globalObject));
+        if (callback.isFunction()) {
+            Bun__Process__queueNextTick1(zigGlobal, callback, ex);
+        } else {
+            const fnvalue = JSC.JSFunction.create(globalObject, "", S.impl, 1, .{});
+            Bun__Process__queueNextTick1(zigGlobal, fnvalue, ex);
+        }
+    }
+
+    return .true;
 }
 
 pub export fn Bun__isBunMain(globalObject: *JSGlobalObject, str: *const bun.String) bool {
     return str.eqlUTF8(globalObject.bunVM().main);
-}
-
-pub export fn Bun__Process__disconnect(
-    globalObject: *JSGlobalObject,
-    callFrame: *JSC.CallFrame,
-) callconv(JSC.conv) JSValue {
-    JSC.markBinding(@src());
-    _ = callFrame;
-    _ = globalObject;
-    return .undefined;
 }
 
 /// When IPC environment variables are passed, the socket is not immediately opened,
@@ -742,7 +791,7 @@ pub const VirtualMachine = struct {
     ///          ["baz", "--bar"]
     ///     "bun foo
     ///          []
-    argv: []const []const u8 = &[_][]const u8{"bun"},
+    argv: []const []const u8 = &[_][]const u8{},
 
     origin_timer: std.time.Timer = undefined,
     origin_timestamp: u64 = 0,
@@ -846,7 +895,7 @@ pub const VirtualMachine = struct {
         };
     }
 
-    const VMHolder = struct {
+    pub const VMHolder = struct {
         pub threadlocal var vm: ?*VirtualMachine = null;
         pub threadlocal var cached_global_object: ?*JSGlobalObject = null;
         pub export fn Bun__setDefaultGlobalObject(global: *JSGlobalObject) void {
@@ -886,8 +935,12 @@ pub const VirtualMachine = struct {
 
     pub fn isEventLoopAlive(vm: *const VirtualMachine) bool {
         return vm.unhandled_error_counter == 0 and
-            (vm.event_loop_handle.?.isActive() or
-            vm.active_tasks + vm.event_loop.tasks.count + vm.event_loop.immediate_tasks.count + vm.event_loop.next_immediate_tasks.count > 0);
+            (@intFromBool(vm.event_loop_handle.?.isActive()) +
+            vm.active_tasks +
+            vm.event_loop.tasks.count +
+            vm.event_loop.immediate_tasks.count +
+            vm.event_loop.next_immediate_tasks.count +
+            @intFromBool(vm.event_loop.hasPendingRefs()) > 0);
     }
 
     pub fn wakeup(this: *VirtualMachine) void {
@@ -1255,11 +1308,11 @@ pub const VirtualMachine = struct {
         this.exit_handler.dispatchOnExit();
 
         const rare_data = this.rare_data orelse return;
-        var hook = rare_data.cleanup_hook orelse return;
-        hook.execute();
-        while (hook.next) |next| {
-            next.execute();
-            hook = next;
+        var hooks = rare_data.cleanup_hooks;
+        defer if (!is_main_thread_vm) hooks.clearAndFree(bun.default_allocator);
+        rare_data.cleanup_hooks = .{};
+        for (hooks.items) |hook| {
+            hook.execute();
         }
     }
 
@@ -1812,8 +1865,14 @@ pub const VirtualMachine = struct {
             .handler = ModuleLoader.AsyncModule.Queue.onWakeHandler,
             .onDependencyError = JSC.ModuleLoader.AsyncModule.Queue.onDependencyError,
         };
+        vm.bundler.resolver.standalone_module_graph = opts.graph;
 
-        vm.bundler.configureLinker();
+        if (opts.graph == null) {
+            vm.bundler.configureLinker();
+        } else {
+            vm.bundler.configureLinkerWithAutoJSX(false);
+        }
+
         try vm.bundler.configureFramework(false);
         vm.smol = opts.smol;
         vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
@@ -1833,6 +1892,93 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.virtual_machine = vm;
         vm.jsc = vm.global.vm();
         vm.bundler.setAllocator(allocator);
+        vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
+
+        return vm;
+    }
+
+    pub fn initKit(opts: Options) anyerror!*VirtualMachine {
+        JSC.markBinding(@src());
+        const allocator = opts.allocator;
+        var log: *logger.Log = undefined;
+        if (opts.log) |__log| {
+            log = __log;
+        } else {
+            log = try allocator.create(logger.Log);
+            log.* = logger.Log.init(allocator);
+        }
+
+        VMHolder.vm = try allocator.create(VirtualMachine);
+        const console = try allocator.create(ConsoleObject);
+        console.* = ConsoleObject.init(Output.errorWriter(), Output.writer());
+        const bundler = try Bundler.init(
+            allocator,
+            log,
+            try Config.configureTransformOptionsForBunVM(allocator, opts.args),
+            opts.env_loader,
+        );
+        var vm = VMHolder.vm.?;
+
+        vm.* = VirtualMachine{
+            .global = undefined,
+            .transpiler_store = RuntimeTranspilerStore.init(),
+            .allocator = allocator,
+            .entry_point = ServerEntryPoint{},
+            .bundler = bundler,
+            .console = console,
+            .log = log,
+            .flush_list = std.ArrayList(string).init(allocator),
+            .origin = bundler.options.origin,
+            .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
+            .source_mappings = undefined,
+            .macros = MacroMap.init(allocator),
+            .macro_entry_points = @TypeOf(vm.macro_entry_points).init(allocator),
+            .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
+            .origin_timestamp = getOriginTimestamp(),
+            .ref_strings = JSC.RefString.Map.init(allocator),
+            .ref_strings_mutex = .{},
+            .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
+        };
+        vm.source_mappings.init(&vm.saved_source_map_table);
+        vm.regular_event_loop.tasks = EventLoop.Queue.init(
+            default_allocator,
+        );
+        vm.regular_event_loop.immediate_tasks = EventLoop.Queue.init(
+            default_allocator,
+        );
+        vm.regular_event_loop.next_immediate_tasks = EventLoop.Queue.init(
+            default_allocator,
+        );
+        vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
+        vm.regular_event_loop.concurrent_tasks = .{};
+        vm.event_loop = &vm.regular_event_loop;
+
+        vm.bundler.macro_context = null;
+        vm.bundler.resolver.store_fd = opts.store_fd;
+        vm.bundler.resolver.prefer_module_field = false;
+
+        vm.bundler.resolver.onWakePackageManager = .{
+            .context = &vm.modules,
+            .handler = ModuleLoader.AsyncModule.Queue.onWakeHandler,
+            .onDependencyError = JSC.ModuleLoader.AsyncModule.Queue.onDependencyError,
+        };
+
+        vm.bundler.configureLinker();
+        try vm.bundler.configureFramework(false);
+
+        vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
+
+        if (opts.args.serve orelse false) {
+            vm.bundler.linker.onImportCSS = Bun.onImportCSS;
+        }
+
+        vm.regular_event_loop.virtual_machine = vm;
+        vm.smol = opts.smol;
+
+        if (opts.smol)
+            is_smol_mode = opts.smol;
+
+        vm.configureDebugger(opts.debugger);
         vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 
         return vm;
@@ -2395,7 +2541,7 @@ pub const VirtualMachine = struct {
                 return;
             },
             else => {
-                var errors_stack: [256]*anyopaque = undefined;
+                var errors_stack: [256]JSValue = undefined;
 
                 const len = @min(log.msgs.items.len, errors_stack.len);
                 const errors = errors_stack[0..len];
@@ -2403,21 +2549,20 @@ pub const VirtualMachine = struct {
 
                 for (logs, errors) |msg, *current| {
                     current.* = switch (msg.metadata) {
-                        .build => BuildMessage.create(globalThis, globalThis.allocator(), msg).asVoid(),
+                        .build => BuildMessage.create(globalThis, globalThis.allocator(), msg),
                         .resolve => ResolveMessage.create(
                             globalThis,
                             globalThis.allocator(),
                             msg,
                             referrer.toUTF8(bun.default_allocator).slice(),
-                        ).asVoid(),
+                        ),
                     };
                 }
 
                 ret.* = ErrorableResolvedSource.err(
                     err,
                     globalThis.createAggregateError(
-                        errors.ptr,
-                        @as(u16, @intCast(errors.len)),
+                        errors,
                         &ZigString.init(
                             std.fmt.allocPrint(globalThis.allocator(), "{d} errors building \"{}\"", .{
                                 errors.len,
@@ -2564,11 +2709,11 @@ pub const VirtualMachine = struct {
             if (this.isWatcherEnabled()) {
                 this.eventLoop().performGC();
                 switch (this.pending_internal_promise.status(this.global.vm())) {
-                    JSC.JSPromise.Status.Pending => {
-                        while (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                    .pending => {
+                        while (this.pending_internal_promise.status(this.global.vm()) == .pending) {
                             this.eventLoop().tick();
 
-                            if (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                            if (this.pending_internal_promise.status(this.global.vm()) == .pending) {
                                 this.eventLoop().autoTick();
                             }
                         }
@@ -2578,11 +2723,11 @@ pub const VirtualMachine = struct {
             } else {
                 this.eventLoop().performGC();
                 this.waitForPromise(JSC.AnyPromise{
-                    .Internal = promise,
+                    .internal = promise,
                 });
             }
 
-            if (promise.status(this.global.vm()) == .Rejected)
+            if (promise.status(this.global.vm()) == .rejected)
                 return promise;
         }
 
@@ -2663,7 +2808,7 @@ pub const VirtualMachine = struct {
         const promise = try this.reloadEntryPoint(entry_path);
         this.eventLoop().performGC();
         this.eventLoop().waitForPromiseWithTermination(JSC.AnyPromise{
-            .Internal = promise,
+            .internal = promise,
         });
         if (this.worker) |worker| {
             if (worker.hasRequestedTerminate()) {
@@ -2680,11 +2825,11 @@ pub const VirtualMachine = struct {
         if (this.isWatcherEnabled()) {
             this.eventLoop().performGC();
             switch (this.pending_internal_promise.status(this.global.vm())) {
-                JSC.JSPromise.Status.Pending => {
-                    while (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                .pending => {
+                    while (this.pending_internal_promise.status(this.global.vm()) == .pending) {
                         this.eventLoop().tick();
 
-                        if (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                        if (this.pending_internal_promise.status(this.global.vm()) == .pending) {
                             this.eventLoop().autoTick();
                         }
                     }
@@ -2692,14 +2837,12 @@ pub const VirtualMachine = struct {
                 else => {},
             }
         } else {
-            if (promise.status(this.global.vm()) == .Rejected) {
+            if (promise.status(this.global.vm()) == .rejected) {
                 return promise;
             }
 
             this.eventLoop().performGC();
-            this.waitForPromise(JSC.AnyPromise{
-                .Internal = promise,
-            });
+            this.waitForPromise(.{ .internal = promise });
         }
 
         this.eventLoop().autoTick();
@@ -2714,11 +2857,11 @@ pub const VirtualMachine = struct {
         if (this.isWatcherEnabled()) {
             this.eventLoop().performGC();
             switch (this.pending_internal_promise.status(this.global.vm())) {
-                JSC.JSPromise.Status.Pending => {
-                    while (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                .pending => {
+                    while (this.pending_internal_promise.status(this.global.vm()) == .pending) {
                         this.eventLoop().tick();
 
-                        if (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                        if (this.pending_internal_promise.status(this.global.vm()) == .pending) {
                             this.eventLoop().autoTick();
                         }
                     }
@@ -2726,14 +2869,12 @@ pub const VirtualMachine = struct {
                 else => {},
             }
         } else {
-            if (promise.status(this.global.vm()) == .Rejected) {
+            if (promise.status(this.global.vm()) == .rejected) {
                 return promise;
             }
 
             this.eventLoop().performGC();
-            this.waitForPromise(JSC.AnyPromise{
-                .Internal = promise,
-            });
+            this.waitForPromise(.{ .internal = promise });
         }
 
         return this.pending_internal_promise;
@@ -2794,10 +2935,20 @@ pub const VirtualMachine = struct {
 
         promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(entry_path)) orelse return null;
         this.waitForPromise(JSC.AnyPromise{
-            .Internal = promise,
+            .internal = promise,
         });
 
         return promise;
+    }
+
+    pub fn printErrorLikeObjectSimple(this: *VirtualMachine, value: JSValue, writer: anytype, comptime escape_codes: bool) void {
+        this.printErrorlikeObject(value, null, null, @TypeOf(writer), writer, escape_codes, false);
+    }
+
+    pub fn printErrorLikeObjectToConsole(this: *VirtualMachine, value: JSValue) void {
+        switch (Output.enable_ansi_colors_stderr) {
+            inline else => |colors| this.printErrorLikeObjectSimple(value, Output.errorWriter(), colors),
+        }
     }
 
     // When the Error-like object is one of our own, it's best to rely on the object directly instead of serializing it to a ZigException.
@@ -3726,6 +3877,7 @@ pub const VirtualMachine = struct {
 
     extern fn Process__emitMessageEvent(global: *JSGlobalObject, value: JSValue) void;
     extern fn Process__emitDisconnectEvent(global: *JSGlobalObject) void;
+    extern fn Process__emitErrorEvent(global: *JSGlobalObject, value: JSValue) void;
 
     pub const IPCInstanceUnion = union(enum) {
         /// IPC is put in this "enabled but not started" state when IPC is detected
@@ -3741,15 +3893,21 @@ pub const VirtualMachine = struct {
         globalThis: ?*JSGlobalObject,
         context: if (Environment.isPosix) *uws.SocketContext else void,
         data: IPC.IPCData,
+        has_disconnect_called: bool = false,
 
         pub usingnamespace bun.New(@This());
 
-        pub fn ipc(this: *IPCInstance) *IPC.IPCData {
+        const node_cluster_binding = @import("./node/node_cluster_binding.zig");
+
+        pub fn ipc(this: *IPCInstance) ?*IPC.IPCData {
             return &this.data;
         }
 
         pub fn handleIPCMessage(this: *IPCInstance, message: IPC.DecodedIPCMessage) void {
             JSC.markBinding(@src());
+            const globalThis = this.globalThis orelse return;
+            const event_loop = JSC.VirtualMachine.get().eventLoop();
+
             switch (message) {
                 // In future versions we can read this in order to detect version mismatches,
                 // or disable future optimizations if the subprocess is old.
@@ -3758,23 +3916,45 @@ pub const VirtualMachine = struct {
                 },
                 .data => |data| {
                     IPC.log("Received IPC message from parent", .{});
-                    if (this.globalThis) |global| {
-                        Process__emitMessageEvent(global, data);
-                    }
+                    event_loop.enter();
+                    defer event_loop.exit();
+                    Process__emitMessageEvent(globalThis, data);
+                },
+                .internal => |data| {
+                    IPC.log("Received IPC internal message from parent", .{});
+                    event_loop.enter();
+                    defer event_loop.exit();
+                    node_cluster_binding.handleInternalMessageChild(globalThis, data);
                 },
             }
         }
 
         pub fn handleIPCClose(this: *IPCInstance) void {
-            if (this.globalThis) |global| {
-                var vm = global.bunVM();
-                vm.ipc = null;
-                Process__emitDisconnectEvent(global);
-            }
+            IPC.log("IPCInstance#handleIPCClose", .{});
+            var vm = VirtualMachine.get();
+            vm.ipc = null;
+            const event_loop = vm.eventLoop();
+            node_cluster_binding.child_singleton.deinit();
+            event_loop.enter();
+            Process__emitDisconnectEvent(vm.global);
+            event_loop.exit();
             if (Environment.isPosix) {
                 uws.us_socket_context_free(0, this.context);
             }
             this.destroy();
+        }
+
+        extern fn Bun__setChannelRef(*JSC.JSGlobalObject, bool) void;
+
+        export fn Bun__closeChildIPC(global: *JSGlobalObject) void {
+            if (global.bunVM().ipc) |*current_ipc| {
+                switch (current_ipc.*) {
+                    .initialized => |instance| {
+                        instance.data.close(true);
+                    },
+                    .waiting => {},
+                }
+            }
         }
 
         pub const Handlers = IPC.NewIPCHandler(IPCInstance);
@@ -3806,6 +3986,8 @@ pub const VirtualMachine = struct {
                     .data = undefined,
                 });
 
+                this.ipc = .{ .initialized = instance };
+
                 const socket = IPC.Socket.fromFd(context, opts.info, IPCInstance, instance, null) orelse {
                     instance.destroy();
                     this.ipc = null;
@@ -3825,6 +4007,8 @@ pub const VirtualMachine = struct {
                     .data = .{ .mode = opts.mode },
                 });
 
+                this.ipc = .{ .initialized = instance };
+
                 instance.data.configureClient(IPCInstance, instance, opts.info) catch {
                     instance.destroy();
                     this.ipc = null;
@@ -3835,8 +4019,6 @@ pub const VirtualMachine = struct {
                 break :instance instance;
             },
         };
-
-        this.ipc = .{ .initialized = instance };
 
         instance.data.writeVersionPacket();
 
@@ -3859,12 +4041,38 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
         pub const Watcher = GenericWatcher.NewWatcher(*@This());
         const Reloader = @This();
 
-        onAccept: std.ArrayHashMapUnmanaged(GenericWatcher.HashType, bun.BabyList(OnAcceptCallback), bun.ArrayIdentityContext, false) = .{},
         ctx: *Ctx,
         verbose: bool = false,
         pending_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
         tombstones: bun.StringHashMapUnmanaged(*bun.fs.FileSystem.RealFS.EntriesOption) = .{},
+
+        pub fn init(ctx: *Ctx, fs: *bun.fs.FileSystem, verbose: bool, clear_screen_flag: bool) *@This().Watcher {
+            const reloader = bun.default_allocator.create(Reloader) catch bun.outOfMemory();
+            reloader.* = .{
+                .ctx = ctx,
+                .verbose = Environment.enable_logs or verbose,
+            };
+
+            clear_screen = clear_screen_flag;
+            const watcher = @This().Watcher.init(reloader, fs, bun.default_allocator) catch |err| {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
+            };
+            watcher.start() catch |err| {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                Output.panic("Failed to start File Watcher: {s}", .{@errorName(err)});
+            };
+            return watcher;
+        }
+
+        fn debug(comptime fmt: string, args: anytype) void {
+            if (Environment.enable_logs) {
+                Output.scoped(.hot_reloader, false)(fmt, args);
+            } else {
+                Output.prettyErrorln("<cyan>watcher<r><d>:<r> " ++ fmt, args);
+            }
+        }
 
         pub fn eventLoop(this: @This()) *EventLoopType {
             return this.ctx.eventLoop();
@@ -3922,7 +4130,8 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 if (comptime reload_immediately) {
                     Output.flush();
                     if (comptime Ctx == ImportWatcher) {
-                        this.reloader.ctx.rareData().closeAllListenSocketsForWatchMode();
+                        if (this.reloader.ctx.rare_data) |rare|
+                            rare.closeAllListenSocketsForWatchMode();
                     }
                     bun.reloadProcess(bun.default_allocator, clear_screen, false);
                     unreachable;
@@ -3944,21 +4153,6 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             }
         };
 
-        fn NewCallback(comptime FunctionSignature: type) type {
-            return union(enum) {
-                javascript_callback: JSC.Strong,
-                zig_callback: struct {
-                    ptr: *anyopaque,
-                    function: *const FunctionSignature,
-                },
-            };
-        }
-
-        pub const OnAcceptCallback = NewCallback(fn (
-            vm: *JSC.VirtualMachine,
-            specifier: []const u8,
-        ) void);
-
         pub fn enableHotModuleReloading(this: *Ctx) void {
             if (comptime @TypeOf(this.bun_watcher) == ImportWatcher) {
                 if (this.bun_watcher != .none)
@@ -3971,7 +4165,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             var reloader = bun.default_allocator.create(Reloader) catch bun.outOfMemory();
             reloader.* = .{
                 .ctx = this,
-                .verbose = if (@hasField(Ctx, "log")) this.log.level.atLeast(.info) else false,
+                .verbose = Environment.enable_logs or if (@hasField(Ctx, "log")) this.log.level.atLeast(.info) else false,
             };
 
             if (comptime @TypeOf(this.bun_watcher) == ImportWatcher) {
@@ -4050,8 +4244,10 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 } else {
                     return this.ctx.bun_watcher.hot;
                 }
-            } else {
+            } else if (@typeInfo(@TypeOf(this.ctx.bun_watcher)) == .Optional) {
                 return this.ctx.bun_watcher.?;
+            } else {
+                return this.ctx.bun_watcher;
             }
         }
 
@@ -4061,18 +4257,18 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             changed_files: []?[:0]u8,
             watchlist: GenericWatcher.WatchList,
         ) void {
-            var slice = watchlist.slice();
+            const slice = watchlist.slice();
             const file_paths = slice.items(.file_path);
-            var counts = slice.items(.count);
+            const counts = slice.items(.count);
             const kinds = slice.items(.kind);
             const hashes = slice.items(.hash);
             const parents = slice.items(.parent_hash);
             const file_descriptors = slice.items(.fd);
-            var ctx = this.getContext();
+            const ctx = this.getContext();
             defer ctx.flushEvictions();
             defer Output.flush();
 
-            var bundler = if (@TypeOf(this.ctx.bundler) == *bun.Bundler)
+            const bundler = if (@TypeOf(this.ctx.bundler) == *bun.Bundler)
                 this.ctx.bundler
             else
                 &this.ctx.bundler;
@@ -4098,9 +4294,8 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 // const path = Fs.PathName.init(file_path);
                 const id = hashes[event.index];
 
-                if (comptime Environment.isDebug) {
-                    Output.prettyErrorln("[watch] {s} ({s}, {})", .{ file_path, @tagName(kind), event.op });
-                }
+                if (this.verbose)
+                    debug("onFileUpdate {s} ({s}, {})", .{ file_path, @tagName(kind), event.op });
 
                 switch (kind) {
                     .file => {
@@ -4114,7 +4309,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         }
 
                         if (this.verbose)
-                            Output.prettyErrorln("<r><d>File changed: {s}<r>", .{fs.relativeTo(file_path)});
+                            debug("File changed: {s}", .{fs.relativeTo(file_path)});
 
                         if (event.op.write or event.op.delete or event.op.rename) {
                             current_task.append(id);
@@ -4236,13 +4431,13 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                     last_file_hash = file_hash;
 
                                     if (this.verbose)
-                                        Output.prettyErrorln("<r> <d>File change: {s}<r>", .{fs.relativeTo(abs_path)});
+                                        debug("File change: {s}", .{fs.relativeTo(abs_path)});
                                 }
                             }
                         }
 
                         if (this.verbose) {
-                            Output.prettyErrorln("<r> <d>Dir change: {s}<r>", .{fs.relativeTo(file_path)});
+                            debug("Dir change: {s}", .{fs.relativeTo(file_path)});
                         }
                     },
                 }

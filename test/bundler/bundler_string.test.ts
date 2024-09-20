@@ -1,5 +1,5 @@
-import { itBundled, dedent } from "./expectBundled";
 import { describe } from "bun:test";
+import { dedent, itBundled } from "./expectBundled";
 
 interface TemplateStringTest {
   expr: string;

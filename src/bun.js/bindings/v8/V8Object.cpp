@@ -32,7 +32,7 @@ static FieldContainer* getInternalFieldsContainer(Object* object)
 Local<Object> Object::New(Isolate* isolate)
 {
     JSFinalObject* object = JSC::constructEmptyObject(isolate->globalObject());
-    return isolate->currentHandleScope()->createLocal<Object>(object);
+    return isolate->currentHandleScope()->createLocal<Object>(isolate->vm(), object);
 }
 
 Maybe<bool> Object::Set(Local<Context> context, Local<Value> key, Local<Value> value)
@@ -62,10 +62,12 @@ Maybe<bool> Object::Set(Local<Context> context, Local<Value> key, Local<Value> v
 
 void Object::SetInternalField(int index, Local<Data> data)
 {
-    auto fields = getInternalFieldsContainer(this);
-    if (fields && index >= 0 && index < fields->size()) {
-        fields->at(index) = InternalFieldObject::InternalField(data->localToJSValue(Isolate::GetCurrent()->globalInternals()));
-    }
+    auto* fields = getInternalFieldsContainer(this);
+    RELEASE_ASSERT(fields, "object has no internal fields");
+    RELEASE_ASSERT(index >= 0 && index < fields->size(), "internal field index is out of bounds");
+    JSObject* js_object = localToObjectPointer<JSObject>();
+    auto* globalObject = JSC::jsDynamicCast<Zig::GlobalObject*>(js_object->globalObject());
+    fields->at(index).set(globalObject->vm(), localToCell(), data->localToJSValue(globalObject->V8GlobalInternals()));
 }
 
 Local<Data> Object::GetInternalField(int index)
@@ -77,17 +79,13 @@ Local<Data> Object::SlowGetInternalField(int index)
 {
     auto* fields = getInternalFieldsContainer(this);
     JSObject* js_object = localToObjectPointer<JSObject>();
-    HandleScope* handleScope = Isolate::fromGlobalObject(JSC::jsDynamicCast<Zig::GlobalObject*>(js_object->globalObject()))->currentHandleScope();
+    auto* globalObject = JSC::jsDynamicCast<Zig::GlobalObject*>(js_object->globalObject());
+    HandleScope* handleScope = Isolate::fromGlobalObject(globalObject)->currentHandleScope();
     if (fields && index >= 0 && index < fields->size()) {
         auto& field = fields->at(index);
-        if (field.is_js_value) {
-            return handleScope->createLocal<Data>(field.data.js_value);
-        } else {
-            V8_UNIMPLEMENTED();
-        }
+        return handleScope->createLocal<Data>(globalObject->vm(), field.get());
     }
-    // TODO handle undefined/null the way v8 does
-    return Local<Data>();
+    return handleScope->createLocal<Data>(globalObject->vm(), JSC::jsUndefined());
 }
 
 }

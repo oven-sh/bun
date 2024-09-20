@@ -1,7 +1,7 @@
+import { describe, expect, jest, test } from "bun:test";
 import fs from "fs";
-import { join } from "path";
-import { describe, test, expect, jest } from "bun:test";
 import { tempDirWithFiles } from "harness";
+import { join } from "path";
 
 const impls = [
   ["cpSync", fs.cpSync],

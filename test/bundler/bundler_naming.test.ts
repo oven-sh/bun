@@ -1,5 +1,5 @@
-import { ESBUILD, itBundled } from "./expectBundled";
 import { describe } from "bun:test";
+import { ESBUILD, itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   itBundled("naming/EntryNamingCollission", {

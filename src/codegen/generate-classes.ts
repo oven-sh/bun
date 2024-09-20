@@ -1,7 +1,7 @@
 // @ts-nocheck
 import path from "path";
-import type { Field, ClassDefinition } from "./class-definitions";
-import { writeIfNotChanged, camelCase, pascalCase } from "./helpers";
+import type { ClassDefinition, Field } from "./class-definitions";
+import { camelCase, pascalCase, writeIfNotChanged } from "./helpers";
 
 if (process.env.BUN_SILENT === "1") {
   console.log = () => {};
@@ -147,7 +147,7 @@ JSC_DEFINE_JIT_OPERATION(${DOMJITName(
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     IGNORE_WARNINGS_END
     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-#ifdef BUN_DEBUG
+#if BUN_DEBUG
     ${jsClassName}* wrapper = reinterpret_cast<${jsClassName}*>(thisValue);
     JSC::EncodedJSValue result = ${DOMJITName(symName)}(wrapper->wrapped(), lexicalGlobalObject${retArgs});
     JSValue decoded = JSValue::decode(result);
@@ -618,7 +618,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
     auto* constructor = globalObject->${className(typeName)}Constructor();
     Structure* structure = globalObject->${className(typeName)}Structure();
     if (UNLIKELY(constructor != newTarget)) {
-      auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(
+      auto* functionGlobalObject = defaultGlobalObject(
         // ShadowRealm functions belong to a different global object.
         getFunctionRealm(globalObject, newTarget)
       );
@@ -1113,18 +1113,18 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObjec
 JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
   auto& vm = lexicalGlobalObject->vm();
+  auto scope = DECLARE_THROW_SCOPE(vm);
 
   ${className(typeName)}* thisObject = jsDynamicCast<${className(typeName)}*>(callFrame->thisValue());
 
   if (UNLIKELY(!thisObject)) {
-      auto throwScope = DECLARE_THROW_SCOPE(vm);
-      throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof ${typeName}"_s);
-      return JSValue::encode({});
+      scope.throwException(lexicalGlobalObject, Bun::createInvalidThisError(lexicalGlobalObject, callFrame->thisValue(), "${typeName}"_s));
+      return {};
   }
 
   JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
 
-#if defined(BUN_DEBUG) && BUN_DEBUG
+#if BUN_DEBUG
     /** View the file name of the JS file that called this function
      * from a debugger */
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
@@ -1134,7 +1134,7 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
       lastFileName = fileName;
     }
 
-    JSC::EncodedJSValue result = ${symbolName(typeName, fn)}(thisObject->wrapped(), lexicalGlobalObject, callFrame, callFrame${proto[name].passThis ? ", JSValue::encode(thisObject)" : ""});
+    JSC::EncodedJSValue result = ${symbolName(typeName, fn)}(thisObject->wrapped(), lexicalGlobalObject, callFrame${proto[name].passThis ? ", JSValue::encode(thisObject)" : ""});
 
     ASSERT_WITH_MESSAGE(!JSValue::decode(result).isEmpty() or DECLARE_CATCH_SCOPE(vm).exception() != 0, \"${typeName}.${proto[name].fn} returned an empty value without an exception\");
 
@@ -1318,7 +1318,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
 }
 
 function domJITTypeCheckFields(proto, klass) {
-  var output = "#ifdef BUN_DEBUG\n";
+  var output = "#if BUN_DEBUG\n";
   for (const name in proto) {
     const { DOMJIT, fn } = proto[name];
     if (!DOMJIT) continue;
@@ -2042,6 +2042,8 @@ const GENERATED_CLASSES_IMPL_HEADER_PRE = `
 
 #include "JSDOMConvertBufferSource.h"
 #include "ZigGeneratedClasses.h"
+#include "ErrorCode+List.h"
+#include "ErrorCode.h"
 
 #if !OS(WINDOWS)
 #define JSC_CALLCONV "C"
@@ -2057,6 +2059,7 @@ namespace WebCore {
 
 using namespace JSC;
 using namespace Zig;
+
 `;
 
 const GENERATED_CLASSES_IMPL_FOOTER = `

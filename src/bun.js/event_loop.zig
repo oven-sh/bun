@@ -382,6 +382,8 @@ const Lchown = JSC.Node.Async.lchown;
 const Unlink = JSC.Node.Async.unlink;
 const BrotliDecoder = JSC.API.BrotliDecoder;
 const BrotliEncoder = JSC.API.BrotliEncoder;
+const ZlibDecoder = JSC.API.ZlibDecoder;
+const ZlibEncoder = JSC.API.ZlibEncoder;
 
 const ShellGlobTask = bun.shell.interpret.Interpreter.Expansion.ShellGlobTask;
 const ShellRmTask = bun.shell.Interpreter.Builtin.Rm.ShellRmTask;
@@ -402,6 +404,8 @@ const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.
 const ProcessMiniEventLoopWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessMiniEventLoopQueue.ResultTask else opaque {};
 const ShellAsyncSubprocessDone = bun.shell.Interpreter.Cmd.ShellAsyncSubprocessDone;
 const RuntimeTranspilerStore = JSC.RuntimeTranspilerStore;
+const ServerAllConnectionsClosedTask = @import("./api/server.zig").ServerAllConnectionsClosedTask;
+
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
@@ -464,6 +468,8 @@ pub const Task = TaggedPointerUnion(.{
     Unlink,
     BrotliEncoder,
     BrotliDecoder,
+    ZlibEncoder,
+    ZlibDecoder,
     ShellGlobTask,
     ShellRmTask,
     ShellRmDirTask,
@@ -479,8 +485,12 @@ pub const Task = TaggedPointerUnion(.{
     TimerObject,
     bun.shell.Interpreter.Builtin.Yes.YesTask,
 
+    bun.kit.DevServer.BundleTask,
+    bun.kit.DevServer.HotReloadTask,
+
     ProcessWaiterThreadTask,
     RuntimeTranspilerStore,
+    ServerAllConnectionsClosedTask,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
@@ -871,14 +881,11 @@ pub const EventLoop = struct {
         this.enter();
         defer this.exit();
 
-        const result = callback.call(globalObject, thisValue, arguments);
-
-        if (result.toError()) |err| {
-            _ = this.virtual_machine.uncaughtException(globalObject, err, false);
-        }
+        _ = callback.call(globalObject, thisValue, arguments) catch |err|
+            globalObject.reportActiveExceptionAsUnhandled(err);
     }
 
-    pub fn tickQueueWithCount(this: *EventLoop, comptime queue_name: []const u8) u32 {
+    fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, comptime queue_name: []const u8) u32 {
         var global = this.global;
         const global_vm = global.vm();
         var counter: usize = 0;
@@ -1023,6 +1030,13 @@ pub const EventLoop = struct {
                     // special case: we return
                     return 0;
                 },
+                @field(Task.Tag, @typeName(bun.kit.DevServer.HotReloadTask)) => {
+                    const transform_task = task.get(bun.kit.DevServer.HotReloadTask).?;
+                    transform_task.*.run();
+                    transform_task.deinit();
+                    // special case: we return
+                    return 0;
+                },
                 @field(Task.Tag, typeBaseName(@typeName(FSWatchTask))) => {
                     var transform_task: *FSWatchTask = task.get(FSWatchTask).?;
                     transform_task.*.run();
@@ -1041,7 +1055,7 @@ pub const EventLoop = struct {
                     any.run(global);
                 },
                 @field(Task.Tag, typeBaseName(@typeName(PollPendingModulesTask))) => {
-                    this.virtual_machine.modules.onPoll();
+                    virtual_machine.modules.onPoll();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(GetAddrInfoRequestTask))) => {
                     if (Environment.os == .windows) @panic("This should not be reachable on Windows");
@@ -1218,6 +1232,14 @@ pub const EventLoop = struct {
                     var any: *BrotliDecoder = task.get(BrotliDecoder).?;
                     any.runFromJSThread();
                 },
+                @field(Task.Tag, typeBaseName(@typeName(ZlibEncoder))) => {
+                    var any: *ZlibEncoder = task.get(ZlibEncoder).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ZlibDecoder))) => {
+                    var any: *ZlibDecoder = task.get(ZlibDecoder).?;
+                    any.runFromJSThread();
+                },
                 @field(Task.Tag, typeBaseName(@typeName(ProcessWaiterThreadTask))) => {
                     bun.markPosixOnly();
                     var any: *ProcessWaiterThreadTask = task.get(ProcessWaiterThreadTask).?;
@@ -1229,7 +1251,14 @@ pub const EventLoop = struct {
                 },
                 @field(Task.Tag, typeBaseName(@typeName(TimerObject))) => {
                     var any: *TimerObject = task.get(TimerObject).?;
-                    any.runImmediateTask(this.virtual_machine);
+                    any.runImmediateTask(virtual_machine);
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ServerAllConnectionsClosedTask))) => {
+                    var any: *ServerAllConnectionsClosedTask = task.get(ServerAllConnectionsClosedTask).?;
+                    any.runFromJSThread(virtual_machine);
+                },
+                @field(Task.Tag, typeBaseName(@typeName(bun.kit.DevServer.BundleTask))) => {
+                    task.get(bun.kit.DevServer.BundleTask).?.completeOnMainThread();
                 },
 
                 else => if (Environment.allow_assert) {
@@ -1247,20 +1276,26 @@ pub const EventLoop = struct {
         return @as(u32, @truncate(counter));
     }
 
-    pub fn tickWithCount(this: *EventLoop) u32 {
-        return this.tickQueueWithCount("tasks");
+    fn tickWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u32 {
+        return this.tickQueueWithCount(virtual_machine, "tasks");
     }
 
-    pub fn tickImmediateTasks(this: *EventLoop) void {
-        _ = this.tickQueueWithCount("immediate_tasks");
+    pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) void {
+        _ = this.tickQueueWithCount(virtual_machine, "immediate_tasks");
     }
 
-    pub fn tickConcurrent(this: *EventLoop) void {
+    fn tickConcurrent(this: *EventLoop) void {
         _ = this.tickConcurrentWithCount();
     }
 
+    /// Check whether refConcurrently has been called but the change has not yet been applied to the
+    /// underlying event loop's `active` counter
+    pub fn hasPendingRefs(this: *const EventLoop) bool {
+        return this.concurrent_ref.load(.seq_cst) > 0;
+    }
+
     fn updateCounts(this: *EventLoop) void {
-        const delta = this.concurrent_ref.swap(0, .monotonic);
+        const delta = this.concurrent_ref.swap(0, .seq_cst);
         const loop = this.virtual_machine.event_loop_handle.?;
         if (comptime Environment.isWindows) {
             if (delta > 0) {
@@ -1335,7 +1370,7 @@ pub const EventLoop = struct {
         var loop = this.usocketsLoop();
 
         this.flushImmediateQueue();
-        this.tickImmediateTasks();
+        this.tickImmediateTasks(ctx);
 
         if (comptime Environment.isPosix) {
             // Some tasks need to keep the event loop alive for one more tick.
@@ -1426,7 +1461,7 @@ pub const EventLoop = struct {
         var loop = this.usocketsLoop();
         var ctx = this.virtual_machine;
         this.flushImmediateQueue();
-        this.tickImmediateTasks();
+        this.tickImmediateTasks(ctx);
 
         if (comptime Environment.isPosix) {
             const pending_unref = ctx.pending_unref_counter;
@@ -1475,7 +1510,7 @@ pub const EventLoop = struct {
             const global_vm = ctx.jsc;
 
             while (true) {
-                while (this.tickWithCount() > 0) : (this.global.handleRejectedPromises()) {
+                while (this.tickWithCount(ctx) > 0) : (this.global.handleRejectedPromises()) {
                     this.tickConcurrent();
                 } else {
                     this.drainMicrotasksWithGlobal(global, global_vm);
@@ -1485,7 +1520,7 @@ pub const EventLoop = struct {
                 break;
             }
 
-            while (this.tickWithCount() > 0) {
+            while (this.tickWithCount(ctx) > 0) {
                 this.tickConcurrent();
             }
 
@@ -1495,11 +1530,11 @@ pub const EventLoop = struct {
 
     pub fn waitForPromise(this: *EventLoop, promise: JSC.AnyPromise) void {
         switch (promise.status(this.virtual_machine.jsc)) {
-            JSC.JSPromise.Status.Pending => {
-                while (promise.status(this.virtual_machine.jsc) == .Pending) {
+            .pending => {
+                while (promise.status(this.virtual_machine.jsc) == .pending) {
                     this.tick();
 
-                    if (promise.status(this.virtual_machine.jsc) == .Pending) {
+                    if (promise.status(this.virtual_machine.jsc) == .pending) {
                         this.autoTick();
                     }
                 }
@@ -1511,11 +1546,11 @@ pub const EventLoop = struct {
     pub fn waitForPromiseWithTermination(this: *EventLoop, promise: JSC.AnyPromise) void {
         const worker = this.virtual_machine.worker orelse @panic("EventLoop.waitForPromiseWithTermination: worker is not initialized");
         switch (promise.status(this.virtual_machine.jsc)) {
-            JSC.JSPromise.Status.Pending => {
-                while (!worker.hasRequestedTerminate() and promise.status(this.virtual_machine.jsc) == .Pending) {
+            .pending => {
+                while (!worker.hasRequestedTerminate() and promise.status(this.virtual_machine.jsc) == .pending) {
                     this.tick();
 
-                    if (!worker.hasRequestedTerminate() and promise.status(this.virtual_machine.jsc) == .Pending) {
+                    if (!worker.hasRequestedTerminate() and promise.status(this.virtual_machine.jsc) == .pending) {
                         this.autoTick();
                     }
                 }
@@ -1613,14 +1648,13 @@ pub const EventLoop = struct {
     }
 
     pub fn refConcurrently(this: *EventLoop) void {
-        // TODO maybe this should be AcquireRelease
-        _ = this.concurrent_ref.fetchAdd(1, .monotonic);
+        _ = this.concurrent_ref.fetchAdd(1, .seq_cst);
         this.wakeup();
     }
 
     pub fn unrefConcurrently(this: *EventLoop) void {
         // TODO maybe this should be AcquireRelease
-        _ = this.concurrent_ref.fetchSub(1, .monotonic);
+        _ = this.concurrent_ref.fetchSub(1, .seq_cst);
         this.wakeup();
     }
 };

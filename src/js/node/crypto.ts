@@ -18,6 +18,8 @@ const {
   generateKeyPairSync,
   sign: nativeSign,
   verify: nativeVerify,
+  publicEncrypt,
+  privateDecrypt,
 } = $cpp("KeyObject.cpp", "createNodeCryptoBinding");
 
 const {
@@ -11610,16 +11612,10 @@ var require_privateDecrypt = __commonJS({
 var require_browser10 = __commonJS({
   "node_modules/public-encrypt/browser.js"(exports) {
     var publicEncrypt = require_publicEncrypt();
-    exports.publicEncrypt = function (key, buf, options) {
-      return publicEncrypt(getKeyFrom(key, "public"), buf, options);
-    };
-    var privateDecrypt = require_privateDecrypt();
-    exports.privateDecrypt = function (key, buf, options) {
-      return privateDecrypt(getKeyFrom(key, "private"), buf, options);
-    };
     exports.privateEncrypt = function (key, buf) {
       return publicEncrypt(getKeyFrom(key, "private"), buf, !0);
     };
+    var privateDecrypt = require_privateDecrypt();
     exports.publicDecrypt = function (key, buf) {
       return privateDecrypt(getKeyFrom(key, "public"), buf, !0);
     };
@@ -11721,10 +11717,8 @@ var require_crypto_browserify2 = __commonJS({
     exports.Verify = sign.Verify;
     exports.createECDH = require_browser9();
     var publicEncrypt = require_browser10();
-    exports.publicEncrypt = publicEncrypt.publicEncrypt;
     exports.privateEncrypt = publicEncrypt.privateEncrypt;
     exports.publicDecrypt = publicEncrypt.publicDecrypt;
-    exports.privateDecrypt = publicEncrypt.privateDecrypt;
     exports.getRandomValues = values => crypto.getRandomValues(values);
     var rf = require_browser11();
     exports.randomFill = rf.randomFill;
@@ -11935,14 +11929,17 @@ function _generateKeyPairSync(algorithm, options) {
 }
 crypto_exports.generateKeyPairSync = _generateKeyPairSync;
 
-crypto_exports.generateKeyPair = function (algorithm, options, callback) {
+function _generateKeyPair(algorithm, options, callback) {
   try {
     const result = _generateKeyPairSync(algorithm, options);
     typeof callback === "function" && callback(null, result.publicKey, result.privateKey);
   } catch (err) {
     typeof callback === "function" && callback(err);
   }
-};
+}
+const { defineCustomPromisifyArgs } = require("internal/promisify");
+defineCustomPromisifyArgs(_generateKeyPair, ["publicKey", "privateKey"]);
+crypto_exports.generateKeyPair = _generateKeyPair;
 
 crypto_exports.createSecretKey = function (key, encoding) {
   if (key instanceof KeyObject || key instanceof CryptoKey) {
@@ -12031,7 +12028,7 @@ function _createPublicKey(key) {
         }
         return KeyObject.from(
           createPublicKey({
-            key: createPrivateKey({ key: actual_key, format: key.format, passphrase: key.passphrase }),
+            key: createPrivateKey({ key: actual_key, format: key.format || "pem", passphrase: key.passphrase }),
             format: "",
           }),
         );
@@ -12161,6 +12158,51 @@ crypto_exports.verify = function (algorithm, data, key, signature, callback) {
       return nativeVerify(key.$bunNativePtr, data, signature, algorithm, dsaEncoding, padding, saltLength);
     }
   }
+};
+
+// We are not allowed to call createPublicKey/createPrivateKey when we're already working with a
+// KeyObject/CryptoKey of the same type (public/private).
+function toCryptoKey(key, asPublic) {
+  // Top level CryptoKey.
+  if (key instanceof KeyObject || key instanceof CryptoKey) {
+    if (asPublic && key.type === "private") {
+      return _createPublicKey(key).$bunNativePtr;
+    }
+    return key.$bunNativePtr || key;
+  }
+
+  // Nested CryptoKey.
+  if (key.key instanceof KeyObject || key.key instanceof CryptoKey) {
+    if (asPublic && key.key.type === "private") {
+      return _createPublicKey(key.key).$bunNativePtr;
+    }
+    return key.key.$bunNativePtr || key.key;
+  }
+
+  // One of string, ArrayBuffer, Buffer, TypedArray, DataView, or Object.
+  return asPublic ? _createPublicKey(key).$bunNativePtr : _createPrivateKey(key).$bunNativePtr;
+}
+
+function doAsymmetricCipher(key, message, operation, isEncrypt) {
+  // Our crypto bindings expect the key to be a `JSCryptoKey` property within an object.
+  const cryptoKey = toCryptoKey(key, isEncrypt);
+  const oaepLabel = typeof key.oaepLabel === "string" ? Buffer.from(key.oaepLabel, key.encoding) : key.oaepLabel;
+  const keyObject = {
+    key: cryptoKey,
+    oaepHash: key.oaepHash,
+    oaepLabel,
+    padding: key.padding,
+  };
+  const buffer = typeof message === "string" ? Buffer.from(message, key.encoding) : message;
+  return operation(keyObject, buffer);
+}
+
+crypto_exports.publicEncrypt = function (key, message) {
+  return doAsymmetricCipher(key, message, publicEncrypt, true);
+};
+
+crypto_exports.privateDecrypt = function (key, message) {
+  return doAsymmetricCipher(key, message, privateDecrypt, false);
 };
 
 __export(crypto_exports, {

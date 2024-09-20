@@ -1,7 +1,7 @@
-import { run, bench } from "mitata";
-import { gzipSync, gunzipSync } from "zlib";
-import { createRequire } from "module";
 import { readFileSync } from "fs";
+import { bench, run } from "mitata";
+import { createRequire } from "module";
+import { gunzipSync, gzipSync } from "zlib";
 
 const require = createRequire(import.meta.url);
 const data = readFileSync(require.resolve("@babel/standalone/babel.min.js"));

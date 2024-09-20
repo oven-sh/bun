@@ -1,6 +1,6 @@
-import { it, expect, test, beforeAll, describe } from "bun:test";
-import { bunExe, bunEnv } from "harness";
 import { spawnSync } from "bun";
+import { beforeAll, describe, expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 
 describe("napi", () => {
@@ -60,18 +60,80 @@ describe("napi", () => {
     });
   });
 
-  it("threadsafe function does not hang on finalize", () => {
-    const result = checkSameOutput("test_napi_threadsafe_function_does_not_hang_after_finalize", []);
-    expect(result).toBe("success!");
-  });
-
   it("#1288", async () => {
     const result = checkSameOutput("self", []);
     expect(result).toBe("hello world!");
   });
+
+  describe("handle_scope", () => {
+    it("keeps strings alive", () => {
+      checkSameOutput("test_napi_handle_scope_string", []);
+    });
+    it("keeps bigints alive", () => {
+      checkSameOutput("test_napi_handle_scope_bigint", []);
+    }, 10000);
+    it("keeps the parent handle scope alive", () => {
+      checkSameOutput("test_napi_handle_scope_nesting", []);
+    });
+    it("exists when calling a napi constructor", () => {
+      checkSameOutput("test_napi_class_constructor_handle_scope", []);
+    });
+    it("exists while calling a napi_async_complete_callback", () => {
+      checkSameOutput("create_promise", []);
+    });
+  });
+
+  describe("escapable_handle_scope", () => {
+    it("keeps the escaped value alive in the outer scope", () => {
+      checkSameOutput("test_napi_escapable_handle_scope", []);
+    });
+  });
+
+  describe("napi_delete_property", () => {
+    it("returns a valid boolean", () => {
+      checkSameOutput(
+        "test_napi_delete_property",
+        // generate a string representing an array around an IIFE which main.js will eval
+        // we do this as the napi_delete_property test needs an object with an own non-configurable
+        // property
+        "[(" +
+          function () {
+            const object = { foo: 42 };
+            Object.defineProperty(object, "bar", {
+              get() {
+                return 1;
+              },
+              configurable: false,
+            });
+            return object;
+          }.toString() +
+          ")()]",
+      );
+    });
+  });
+
+  describe("napi_ref", () => {
+    it("can recover the value from a weak ref", () => {
+      checkSameOutput("test_napi_ref", []);
+    });
+    it("allows creating a handle scope in the finalizer", () => {
+      checkSameOutput("test_napi_handle_scope_finalizer", []);
+    });
+  });
+
+  describe("napi_threadsafe_function", () => {
+    it("keeps the event loop alive without async_work", () => {
+      checkSameOutput("test_promise_with_threadsafe_function", []);
+    });
+
+    it("does not hang on finalize", () => {
+      const result = checkSameOutput("test_napi_threadsafe_function_does_not_hang_after_finalize", []);
+      expect(result).toBe("success!");
+    });
+  });
 });
 
-function checkSameOutput(test: string, args: any[]) {
+function checkSameOutput(test: string, args: any[] | string) {
   const nodeResult = runOn("node", test, args).trim();
   let bunResult = runOn(bunExe(), test, args);
   // remove all debug logs
@@ -80,9 +142,15 @@ function checkSameOutput(test: string, args: any[]) {
   return nodeResult;
 }
 
-function runOn(executable: string, test: string, args: any[]) {
+function runOn(executable: string, test: string, args: any[] | string) {
   const exec = spawnSync({
-    cmd: [executable, join(__dirname, "napi-app/main.js"), test, JSON.stringify(args)],
+    cmd: [
+      executable,
+      "--expose-gc",
+      join(__dirname, "napi-app/main.js"),
+      test,
+      typeof args == "string" ? args : JSON.stringify(args),
+    ],
     env: bunEnv,
   });
   const errs = exec.stderr.toString();

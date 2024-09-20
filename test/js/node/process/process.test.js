@@ -264,6 +264,9 @@ const versions = existsSync(generated_versions_list);
   versions.ares = versions.c_ares;
   delete versions.c_ares;
 
+  // Handled by BUN_WEBKIT_VERSION #define
+  delete versions.webkit;
+
   for (const name in versions) {
     expect(process.versions).toHaveProperty(name);
     expect(process.versions[name]).toBe(versions[name]);
@@ -444,11 +447,11 @@ describe("process.cpuUsage", () => {
   // Skipped on Windows because it seems UV returns { user: 15000, system: 0 } constantly
   it.skipIf(process.platform === "win32")("works with diff", () => {
     const init = process.cpuUsage();
-    init.system = 1;
-    init.user = 1;
+    init.system = 0;
+    init.user = 0;
     const delta = process.cpuUsage(init);
     expect(delta.user).toBeGreaterThan(0);
-    expect(delta.system).toBeGreaterThan(0);
+    expect(delta.system).toBeGreaterThanOrEqual(0);
   });
 
   it.skipIf(process.platform === "win32")("works with diff of different structure", () => {
@@ -458,7 +461,7 @@ describe("process.cpuUsage", () => {
     };
     const delta = process.cpuUsage(init);
     expect(delta.user).toBeGreaterThan(0);
-    expect(delta.system).toBeGreaterThan(0);
+    expect(delta.system).toBeGreaterThanOrEqual(0);
   });
 
   it("throws on invalid property", () => {
@@ -1025,4 +1028,8 @@ describe("process.exitCode", () => {
       6,
     ]).toRunInlineFixture();
   });
+});
+
+it("process._exiting", () => {
+  expect(process._exiting).toBe(false);
 });

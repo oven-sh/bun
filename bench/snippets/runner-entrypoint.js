@@ -1,9 +1,9 @@
 // note: this isn't done yet
 // we look for `// @runtime` in the file to determine which runtimes to run the benchmark in
 import { spawnSync } from "bun";
-import { readdirSync, readFileSync } from "node:fs";
 import { Database } from "bun:sqlite";
-import { extname, basename } from "path";
+import { readdirSync, readFileSync } from "node:fs";
+import { basename, extname } from "path";
 
 const exts = [".js", ".ts", ".mjs", ".tsx"];
 

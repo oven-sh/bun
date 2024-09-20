@@ -16,6 +16,10 @@ function generate(name) {
         fn: "doPublish",
         length: 3,
       },
+      subscriberCount: {
+        fn: "doSubscriberCount",
+        length: 1,
+      },
       reload: {
         fn: "doReload",
         length: 2,
@@ -31,6 +35,10 @@ function generate(name) {
       requestIP: {
         fn: "doRequestIP",
         length: 1,
+      },
+      timeout: {
+        fn: "doTimeout",
+        length: 2,
       },
       port: {
         getter: "getPort",

@@ -7,7 +7,7 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
 const JSC::ClassInfo HandleScopeBuffer::s_info = {
     "HandleScopeBuffer"_s,
-    &Base::s_info,
+    nullptr,
     nullptr,
     nullptr,
     CREATE_METHOD_TABLE(HandleScopeBuffer)
@@ -27,36 +27,62 @@ void HandleScopeBuffer::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    for (int i = 0; i < thisObject->size; i++) {
-        auto& handle = thisObject->storage[i];
+    WTF::Locker locker { thisObject->gc_lock };
+
+    for (auto& handle : thisObject->storage) {
         if (handle.isCell()) {
-            JSCell::visitChildren(reinterpret_cast<JSCell*>(handle.ptr), visitor);
+            visitor.append(handle.object.contents.cell);
         }
     }
 }
 
 DEFINE_VISIT_CHILDREN(HandleScopeBuffer);
 
-Handle& HandleScopeBuffer::createUninitializedHandle()
+Handle& HandleScopeBuffer::createEmptyHandle()
 {
-    RELEASE_ASSERT(size < capacity - 1);
-    int index = size;
-    size++;
-    return storage[index];
+    WTF::Locker locker { gc_lock };
+    storage.append(Handle {});
+    return storage.last();
 }
 
-TaggedPointer* HandleScopeBuffer::createHandle(void* ptr, const Map* map)
+TaggedPointer* HandleScopeBuffer::createHandle(JSCell* ptr, const Map* map, JSC::VM& vm)
 {
-    // TODO(@190n) specify the map more correctly
-    auto& handle = createUninitializedHandle();
-    handle = Handle(map, ptr);
+    auto& handle = createEmptyHandle();
+    handle = Handle(map, ptr, vm, this);
+    return &handle.to_v8_object;
+}
+
+TaggedPointer* HandleScopeBuffer::createRawHandle(void* ptr)
+{
+    auto& handle = createEmptyHandle();
+    handle = Handle(ptr);
     return &handle.to_v8_object;
 }
 
 TaggedPointer* HandleScopeBuffer::createSmiHandle(int32_t smi)
 {
-    auto& handle = createUninitializedHandle();
-    handle.to_v8_object = TaggedPointer(smi);
+    auto& handle = createEmptyHandle();
+    handle = Handle(smi);
+    return &handle.to_v8_object;
+}
+
+TaggedPointer* HandleScopeBuffer::createDoubleHandle(double value)
+{
+    auto& handle = createEmptyHandle();
+    handle = Handle(value);
+    return &handle.to_v8_object;
+}
+
+TaggedPointer* HandleScopeBuffer::createHandleFromExistingHandle(TaggedPointer address)
+{
+    auto& handle = createEmptyHandle();
+    int32_t smi;
+    if (address.getSmi(smi)) {
+        handle = Handle(smi);
+    } else {
+        auto* v8_object = address.getPtr<ObjectLayout>();
+        handle = Handle(v8_object);
+    }
     return &handle.to_v8_object;
 }
 

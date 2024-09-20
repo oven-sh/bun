@@ -112,9 +112,8 @@ pub extern fn WebCore__FetchHeaders__cloneThis(arg0: ?*bindings.FetchHeaders, ar
 pub extern fn WebCore__FetchHeaders__copyTo(arg0: ?*bindings.FetchHeaders, arg1: [*c]StringPointer, arg2: [*c]StringPointer, arg3: [*c]u8) void;
 pub extern fn WebCore__FetchHeaders__count(arg0: ?*bindings.FetchHeaders, arg1: [*c]u32, arg2: [*c]u32) void;
 pub extern fn WebCore__FetchHeaders__createEmpty(...) ?*bindings.FetchHeaders;
-pub extern fn WebCore__FetchHeaders__createFromJS(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) ?*bindings.FetchHeaders;
 pub extern fn WebCore__FetchHeaders__createFromPicoHeaders_(arg0: ?*const anyopaque) ?*bindings.FetchHeaders;
-pub extern fn WebCore__FetchHeaders__createFromUWS(arg0: *bindings.JSGlobalObject, arg1: ?*anyopaque) ?*bindings.FetchHeaders;
+pub extern fn WebCore__FetchHeaders__createFromUWS(arg1: ?*anyopaque) ?*bindings.FetchHeaders;
 pub extern fn WebCore__FetchHeaders__createValue(arg0: *bindings.JSGlobalObject, arg1: [*c]StringPointer, arg2: [*c]StringPointer, arg3: [*c]const ZigString, arg4: u32) JSC__JSValue;
 pub extern fn WebCore__FetchHeaders__deref(arg0: ?*bindings.FetchHeaders) void;
 pub extern fn WebCore__FetchHeaders__fastGet_(arg0: ?*bindings.FetchHeaders, arg1: u8, arg2: [*c]ZigString) void;
@@ -177,7 +176,6 @@ pub extern fn JSC__JSInternalPromise__setHandled(arg0: [*c]bindings.JSInternalPr
 pub extern fn JSC__JSInternalPromise__status(arg0: [*c]const JSC__JSInternalPromise, arg1: *bindings.VM) u32;
 pub extern fn JSC__JSFunction__optimizeSoon(JSValue0: JSC__JSValue) void;
 pub extern fn JSC__JSGlobalObject__bunVM(arg0: *bindings.JSGlobalObject) ?*bindings.VirtualMachine;
-pub extern fn JSC__JSGlobalObject__createAggregateError(arg0: *bindings.JSGlobalObject, arg1: [*c]*anyopaque, arg2: u16, arg3: [*c]const ZigString) JSC__JSValue;
 pub extern fn JSC__JSGlobalObject__createSyntheticModule_(arg0: *bindings.JSGlobalObject, arg1: [*c]ZigString, arg2: usize, arg3: [*c]bindings.JSValue, arg4: usize) void;
 pub extern fn JSC__JSGlobalObject__deleteModuleRegistryEntry(arg0: *bindings.JSGlobalObject, arg1: [*c]ZigString) void;
 pub extern fn JSC__JSGlobalObject__generateHeapSnapshot(arg0: *bindings.JSGlobalObject) JSC__JSValue;

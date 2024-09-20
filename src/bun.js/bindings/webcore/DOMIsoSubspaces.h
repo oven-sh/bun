@@ -49,6 +49,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForJSNextTickQueue;
     std::unique_ptr<IsoSubspace> m_subspaceForNAPIFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForTTYWrapObject;
+    std::unique_ptr<IsoSubspace> m_subspaceForNapiHandleScopeImpl;
 
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/
@@ -891,6 +892,8 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForXPathNSResolver;
     // std::unique_ptr<IsoSubspace> m_subspaceForXPathResult;
     // std::unique_ptr<IsoSubspace> m_subspaceForXSLTProcessor;
+    
+    std::unique_ptr<IsoSubspace> m_subspaceForKitGlobalScope;
 
     std::unique_ptr<IsoSubspace> m_subspaceForAbortController;
     std::unique_ptr<IsoSubspace> m_subspaceForAbortSignal;

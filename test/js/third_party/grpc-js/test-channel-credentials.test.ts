@@ -16,11 +16,11 @@
  */
 
 import * as grpc from "@grpc/grpc-js";
+import { Client, ServiceError } from "@grpc/grpc-js";
+import assert from "assert";
+import { afterAll, beforeAll, describe, it } from "bun:test";
 import * as assert2 from "./assert2";
 import { TestClient, TestServer, ca } from "./common";
-import { ServiceError, Client } from "@grpc/grpc-js";
-import { describe, it, afterAll, beforeAll } from "bun:test";
-import assert from "assert";
 describe("ChannelCredentials usage", () => {
   let client: Client;
   let server: TestServer;

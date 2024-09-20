@@ -1,7 +1,7 @@
 import { spawn } from "bun";
-import { test, expect } from "bun:test";
-import { join } from "path";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, withoutAggressiveGC } from "harness";
+import { join } from "path";
 
 const arg0 = process.argv[0];
 const arg1 = join(import.meta.dir, "print-process-args.js");

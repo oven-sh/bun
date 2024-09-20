@@ -35,7 +35,11 @@
 #include <wtf/Vector.h>
 
 namespace WebCore {
+
+class ScriptExecutionContext;
+
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(FetchHeaders);
+
 class FetchHeaders : public RefCounted<FetchHeaders> {
     WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(FetchHeaders);
 
@@ -59,6 +63,7 @@ public:
     ExceptionOr<String> get(const String&) const;
     ExceptionOr<bool> has(const String&) const;
     ExceptionOr<void> set(const String& name, const String& value);
+    ExceptionOr<void> set(const HTTPHeaderName name, const String& value);
 
     ExceptionOr<void> fill(const Init&);
     ExceptionOr<void> fill(const FetchHeaders&);
@@ -100,6 +105,11 @@ public:
     Iterator createIterator(bool lowerCaseKeys = true)
     {
         return Iterator(*this, lowerCaseKeys);
+    }
+
+    Iterator createIterator(const ScriptExecutionContext* context)
+    {
+        return Iterator(*this, true);
     }
 
     void setInternalHeaders(HTTPHeaderMap&& headers) { m_headers = WTFMove(headers); }

@@ -45,6 +45,7 @@ pub const MutableString = struct {
     }
 
     pub fn write(self: *MutableString, bytes: anytype) !usize {
+        bun.debugAssert(bytes.len == 0 or !bun.isSliceInBuffer(bytes, self.list.allocatedSlice()));
         try self.list.appendSlice(self.allocator, bytes);
         return bytes.len;
     }

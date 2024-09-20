@@ -27,10 +27,10 @@ extern "C" void Bun__JSTimeout__call(JSC::EncodedJSValue encodedTimeoutValue, JS
     WebCore::JSTimeout* timeout = jsCast<WebCore::JSTimeout*>(JSC::JSValue::decode(encodedTimeoutValue));
 
     JSCell* callbackCell = timeout->m_callback.get().asCell();
-    JSValue restoreAsyncContext{};
+    JSValue restoreAsyncContext {};
     JSC::InternalFieldTuple* asyncContextData = nullptr;
 
-    if (auto *wrapper = jsDynamicCast<AsyncContextFrame*>(callbackCell)) {
+    if (auto* wrapper = jsDynamicCast<AsyncContextFrame*>(callbackCell)) {
         callbackCell = wrapper->callback.get().asCell();
         asyncContextData = globalObject->m_asyncContextData.get();
         restoreAsyncContext = asyncContextData->getInternalField(0);
@@ -64,7 +64,7 @@ extern "C" void Bun__JSTimeout__call(JSC::EncodedJSValue encodedTimeoutValue, JS
             }
         }
 
-        JSC::profiledCall(globalObject, ProfilingReason::API, JSValue(callbackCell), JSC::getCallData(callbackCell),  timeout, ArgList(args));
+        JSC::profiledCall(globalObject, ProfilingReason::API, JSValue(callbackCell), JSC::getCallData(callbackCell), timeout, ArgList(args));
         break;
     }
     }

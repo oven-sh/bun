@@ -1,9 +1,9 @@
+import { describe, expect, test } from "bun:test";
 import { createSocket } from "dgram";
-import { describe, test, expect, it } from "bun:test";
 
-import { nodeDataCases } from "./testdata";
 import { disableAggressiveGCScope } from "harness";
 import path from "path";
+import { nodeDataCases } from "./testdata";
 
 describe("createSocket()", () => {
   test("connect", done => {

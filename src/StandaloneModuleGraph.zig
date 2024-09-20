@@ -35,6 +35,8 @@ pub const StandaloneModuleGraph = struct {
 
     pub const base_public_path = targetBasePublicPath(Environment.os, "");
 
+    pub const base_public_path_with_default_suffix = targetBasePublicPath(Environment.os, "root/");
+
     pub fn targetBasePublicPath(target: Environment.OperatingSystem, comptime suffix: [:0]const u8) [:0]const u8 {
         return switch (target) {
             .windows => "B:/~BUN/" ++ suffix,
@@ -56,6 +58,11 @@ pub const StandaloneModuleGraph = struct {
         if (!isBunStandaloneFilePath(base_path)) {
             return null;
         }
+
+        return this.findAssumeStandalonePath(name);
+    }
+
+    pub fn findAssumeStandalonePath(this: *const StandaloneModuleGraph, name: []const u8) ?*File {
         if (Environment.isWindows) {
             var normalized_buf: bun.PathBuffer = undefined;
             const normalized = bun.path.platformToPosixBuf(u8, name, &normalized_buf);
@@ -90,6 +97,12 @@ pub const StandaloneModuleGraph = struct {
         encoding: Encoding = .binary,
         wtf_string: bun.String = bun.String.empty,
 
+        pub fn lessThanByIndex(ctx: []const File, lhs_i: u32, rhs_i: u32) bool {
+            const lhs = ctx[lhs_i];
+            const rhs = ctx[rhs_i];
+            return bun.strings.cmpStringsAsc({}, lhs.name, rhs.name);
+        }
+
         pub fn toWTFString(this: *File) bun.String {
             if (this.wtf_string.isEmpty()) {
                 switch (this.encoding) {
@@ -122,7 +135,15 @@ pub const StandaloneModuleGraph = struct {
                     b.content_type_allocated = false;
                 }
 
+                // The real name goes here:
                 store.data.bytes.stored_name = bun.PathString.init(this.name);
+
+                // The pretty name goes here:
+                if (strings.hasPrefixComptime(this.name, base_public_path_with_default_suffix)) {
+                    b.name = bun.String.createUTF8(this.name[base_public_path_with_default_suffix.len..]);
+                } else if (this.name.len > 0) {
+                    b.name = bun.String.createUTF8(this.name);
+                }
 
                 this.cached_blob = b;
             }

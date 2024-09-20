@@ -6,10 +6,14 @@
 
 namespace v8 {
 
+class Isolate;
+
 // Context is always a reinterpret pointer to V8::Roots, so that inlined V8 functions can find
 // values they expect to find at fixed offsets
 class Context : public Data {
 public:
+    BUN_EXPORT Isolate* GetIsolate();
+
     JSC::VM& vm() const
     {
         return globalObject()->vm();

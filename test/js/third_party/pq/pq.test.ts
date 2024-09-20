@@ -1,6 +1,6 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { getSecret } from "harness";
-import { Pool, Client } from "pg";
+import { Client, Pool } from "pg";
 import { parse } from "pg-connection-string";
 
 const databaseUrl = getSecret("TLS_POSTGRES_DATABASE_URL");

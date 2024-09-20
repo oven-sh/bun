@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 
 describe("url", () => {
   it("URL throws", () => {
@@ -6,6 +6,11 @@ describe("url", () => {
     expect(() => new URL(" ")).toThrow('" " cannot be parsed as a URL');
     expect(() => new URL("boop", "http!/example.com")).toThrow(
       '"boop" cannot be parsed as a URL against "http!/example.com"',
+    );
+    expect(() => new URL("boop", "http!/example.com")).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_URL",
+      }),
     );
 
     // redact

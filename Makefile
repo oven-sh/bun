@@ -1,3 +1,10 @@
+# ------------------------------------------------------------
+#                         WARNING
+# ------------------------------------------------------------
+# This file is very old and will be removed soon!
+# You can build Bun using `cmake` or `bun run build`
+# ------------------------------------------------------------
+
 SHELL := $(shell which bash) # Use bash syntax to be consistent
 
 OS_NAME := $(shell uname -s | tr '[:upper:]' '[:lower:]')
@@ -366,7 +373,7 @@ ifeq ($(OS_NAME),linux)
 endif
 
 ifeq ($(OS_NAME),darwin)
-MACOS_MIN_FLAG=-mmacosx-version-min=$(MIN_MACOS_VERSION)
+MACOS_MIN_FLAG=-mmacos-version-min=$(MIN_MACOS_VERSION)
 POSIX_PKG_MANAGER=brew
 INCLUDE_DIRS += $(MAC_INCLUDE_DIRS)
 endif
@@ -928,7 +935,7 @@ bun-codesign-release-local-debug:
 .PHONY: jsc
 jsc: jsc-build jsc-copy-headers jsc-bindings
 .PHONY: jsc-debug
-jsc-debug: jsc-build-debug jsc-copy-headers-debug
+jsc-debug: jsc-build-debug
 .PHONY: jsc-build
 jsc-build: $(JSC_BUILD_STEPS)
 .PHONY: jsc-build-debug
@@ -1389,10 +1396,10 @@ jsc-build-linux-compile-build-debug:
 
 
 jsc-build-mac: jsc-force-fastjit jsc-build-mac-compile jsc-build-copy
-jsc-build-mac-debug: jsc-force-fastjit jsc-build-mac-compile-debug jsc-build-copy-debug
+jsc-build-mac-debug: jsc-force-fastjit jsc-build-mac-compile-debug
 
 jsc-build-linux: jsc-build-linux-compile-config jsc-build-linux-compile-build jsc-build-copy
-jsc-build-linux-debug: jsc-build-linux-compile-config-debug jsc-build-linux-compile-build-debug jsc-build-copy-debug
+jsc-build-linux-debug: jsc-build-linux-compile-config-debug jsc-build-linux-compile-build-debug
 
 jsc-build-copy:
 	cp $(WEBKIT_RELEASE_DIR)/lib/libJavaScriptCore.a $(BUN_DEPS_OUT_DIR)/libJavaScriptCore.a

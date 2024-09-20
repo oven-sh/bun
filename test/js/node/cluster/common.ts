@@ -1,9 +1,9 @@
-import fs from "node:fs";
-import path from "node:path";
-import os from "node:os";
 import assert from "node:assert";
-import util from "node:util";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import process from "node:process";
+import util from "node:util";
 
 export const isWindows = process.platform === "win32";
 

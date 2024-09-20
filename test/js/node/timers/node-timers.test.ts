@@ -1,5 +1,5 @@
-import { describe, test, it, expect } from "bun:test";
-import { setTimeout, clearTimeout, setInterval, clearInterval, setImmediate } from "node:timers";
+import { describe, expect, it, test } from "bun:test";
+import { clearInterval, clearTimeout, promises, setInterval, setTimeout } from "node:timers";
 import { promisify } from "util";
 
 for (const fn of [setTimeout, setInterval]) {
@@ -51,4 +51,9 @@ it("node.js util.promisify(setImmediate) works", async () => {
       throw new Error("TestPassed");
     });
   }).toThrow("TestPassed");
+});
+
+it("timers.promises === timers/promises", async () => {
+  const ns = await import("node:timers/promises");
+  expect(ns.default).toBe(promises);
 });

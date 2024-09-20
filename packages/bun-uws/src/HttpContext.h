@@ -415,6 +415,12 @@ private:
 
             /* Force close rather than gracefully shutdown and risk confusing the client with a complete download */
             AsyncSocket<SSL> *asyncSocket = (AsyncSocket<SSL> *) s;
+            // Node.js by default sclose the connection but they emit the timeout event before that
+            HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) asyncSocket->getAsyncSocketData();
+
+            if (httpResponseData->onTimeout) {
+                httpResponseData->onTimeout((HttpResponse<SSL> *)s, httpResponseData->userData);
+            }
             return asyncSocket->close();
 
         });

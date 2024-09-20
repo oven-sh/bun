@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, ospath } from "harness";
-import { _nodeModulePaths, builtinModules, isBuiltin, wrap } from "module";
-import Module from "module";
+import { bunEnv, bunExe, ospath } from "harness";
+import Module, { _nodeModulePaths, builtinModules, isBuiltin, wrap } from "module";
 import path from "path";
 
 test("builtinModules exists", () => {

@@ -61,6 +61,7 @@ public:
     {
         return static_cast<CloseEvent&>(Base::wrapped());
     }
+
 protected:
     JSCloseEvent(JSC::Structure*, JSDOMGlobalObject&, Ref<CloseEvent>&&);
 
@@ -77,6 +78,5 @@ template<> struct JSDOMWrapperConverterTraits<CloseEvent> {
     using ToWrappedReturnType = CloseEvent*;
 };
 template<> CloseEvent::Init convertDictionary<CloseEvent::Init>(JSC::JSGlobalObject&, JSC::JSValue);
-
 
 } // namespace WebCore

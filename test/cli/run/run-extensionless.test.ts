@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test";
-import { mkdirSync } from "fs";
+import { mkdirSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
-import { writeFileSync } from "fs";
 import { join } from "path";
 
 test("running extensionless file works", async () => {

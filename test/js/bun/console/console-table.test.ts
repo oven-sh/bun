@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
 import { spawnSync } from "bun";
-import { bunExe, bunEnv } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 describe("console.table", () => {
   test("throws when second arg is invalid", () => {

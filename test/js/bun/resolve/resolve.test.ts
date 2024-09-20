@@ -1,9 +1,8 @@
-import { it, expect } from "bun:test";
-import { mkdirSync, writeFileSync } from "fs";
-import { join } from "path";
-import { bunExe, bunEnv, tempDirWithFiles } from "harness";
 import { pathToFileURL } from "bun";
-import { sep } from "path";
+import { expect, it } from "bun:test";
+import { mkdirSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { join, sep } from "path";
 
 it("spawn test file", () => {
   writePackageJSONImportsFixture();

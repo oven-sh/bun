@@ -3891,6 +3891,10 @@ var require_writable = __commonJS({
       return writeOrBuffer(stream, state, chunk, encoding, cb);
     }
     Writable.prototype.write = function (chunk, encoding, cb) {
+      if ($isCallable(encoding)) {
+        cb = encoding;
+        encoding = null;
+      }
       return _write(this, chunk, encoding, cb) === true;
     };
     Writable.prototype.cork = function () {

@@ -874,34 +874,30 @@ pub const PackageJSON = struct {
                     }
                 }
                 if (json.get("cpu")) |os_field| {
-                    var first = true;
                     if (os_field.asArray()) |array_const| {
                         var array = array_const;
+                        var arch = Architecture.none.negatable();
                         while (array.next()) |item| {
                             if (item.asString(bun.default_allocator)) |str| {
-                                if (first) {
-                                    package_json.arch = Architecture.none;
-                                    first = false;
-                                }
-                                package_json.arch = package_json.arch.apply(str);
+                                arch.apply(str);
                             }
                         }
+
+                        package_json.arch = arch.combine();
                     }
                 }
 
                 if (json.get("os")) |os_field| {
-                    var first = true;
                     var tmp = os_field.asArray();
                     if (tmp) |*array| {
+                        var os = OperatingSystem.none.negatable();
                         while (array.next()) |item| {
                             if (item.asString(bun.default_allocator)) |str| {
-                                if (first) {
-                                    package_json.os = OperatingSystem.none;
-                                    first = false;
-                                }
-                                package_json.os = package_json.os.apply(str);
+                                os.apply(str);
                             }
                         }
+
+                        package_json.os = os.combine();
                     }
                 }
 

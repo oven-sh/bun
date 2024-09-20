@@ -346,6 +346,9 @@ export default {
     page("api/ffi", "FFI", {
       description: `Call native code from JavaScript with Bun's foreign function interface (FFI) API.`,
     }), // "`bun:ffi`"),
+    page("api/cc", "C Compiler", {
+      description: `Build & run native C from JavaScript with Bun's native C compiler API`,
+    }), // "`bun:ffi`"),
     page("api/html-rewriter", "HTMLRewriter", {
       description: `Parse and transform HTML with Bun's native HTMLRewriter API, inspired by Cloudflare Workers.`,
     }), // "`HTMLRewriter`"),

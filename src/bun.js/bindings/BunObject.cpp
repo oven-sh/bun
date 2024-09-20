@@ -85,8 +85,20 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
     }
 
     size_t arrayLength = array->length();
-    if (arrayLength < 1) {
+    const auto returnEmptyArrayBufferView = [&]() -> EncodedJSValue {
+        if (asUint8Array) {
+            return JSValue::encode(
+                JSC::JSUint8Array::create(
+                    lexicalGlobalObject,
+                    lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject),
+                    0));
+        }
+
         RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSArrayBuffer::create(vm, lexicalGlobalObject->arrayBufferStructure(), JSC::ArrayBuffer::create(static_cast<size_t>(0), 1))));
+    };
+
+    if (arrayLength < 1) {
+        return returnEmptyArrayBufferView();
     }
 
     size_t byteLength = 0;
@@ -141,7 +153,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
     byteLength = std::min(byteLength, maxLength);
 
     if (byteLength == 0) {
-        RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSArrayBuffer::create(vm, lexicalGlobalObject->arrayBufferStructure(), JSC::ArrayBuffer::create(static_cast<size_t>(0), 1))));
+        return returnEmptyArrayBufferView();
     }
 
     auto buffer = JSC::ArrayBuffer::tryCreateUninitialized(byteLength, 1);
@@ -229,6 +241,7 @@ JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArrays, (JSGlobalObject * globalObje
     auto arg2 = callFrame->argument(2);
     if (!arg2.isUndefined()) {
         asUint8Array = arg2.toBoolean(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
 
     return flattenArrayOfBuffersIntoArrayBufferOrUint8Array(globalObject, arrayValue, maxLength, asUint8Array);
@@ -303,6 +316,12 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
     bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "escape"_s), 1, BunObject_callback_shellEscape, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
 
     return bunShell;
+}
+
+// This value currently depends on a zig feature flag
+extern "C" JSC::EncodedJSValue Bun__getTemporaryDevServer(JSC::JSGlobalObject* bunObject);
+static JSValue constructBunKit(VM& vm, JSObject* bunObject) {
+    return JSC::JSValue::decode(Bun__getTemporaryDevServer(bunObject->globalObject()));
 }
 
 static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
@@ -618,6 +637,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
     which                                          BunObject_callback_which                                            DontDelete|Function 1
     write                                          BunObject_callback_write                                            DontDelete|Function 1
+    wipDevServerDoNotUseYet                        constructBunKit                                                     DontEnum|ReadOnly|DontDelete|PropertyCallback
 @end
 */
 

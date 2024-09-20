@@ -1,25 +1,14 @@
 import { file, gc, Serve, serve, Server } from "bun";
-import { afterEach, describe, it, expect, afterAll, mock } from "bun:test";
+import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, dumpStats, isIPv4, isIPv6, isPosix, tls, tmpdirSync } from "harness";
 import { join, resolve } from "path";
-import {
-  bunExe,
-  bunEnv,
-  dumpStats,
-  isPosix,
-  isIPv6,
-  tmpdirSync,
-  isIPv4,
-  rejectUnauthorizedScope,
-  tls,
-  isWindows,
-} from "harness";
 // import { renderToReadableStream } from "react-dom/server";
 // import app_jsx from "./app.jsx";
-import { spawn } from "child_process";
-import { tmpdir } from "os";
 import { heapStats } from "bun:jsc";
+import { spawn } from "child_process";
 import net from "node:net";
+import { tmpdir } from "os";
 
 let renderToReadableStream: any = null;
 let app_jsx: any = null;
@@ -2049,3 +2038,20 @@ it("allow requestIP after async operation", async () => {
   expect(ip.address).toBeString();
   expect(ip.family).toBeString();
 });
+
+it("allow custom timeout per request", async () => {
+  using server = Bun.serve({
+    idleTimeout: 1,
+    port: 0,
+    async fetch(req, server) {
+      server.timeout(req, 60);
+      await Bun.sleep(10000); //uWS precision is not great
+
+      return new Response("Hello, World!");
+    },
+  });
+  expect(server.timeout).toBeFunction();
+  const res = await fetch(new URL("/long-timeout", server.url.origin));
+  expect(res.status).toBe(200);
+  expect(res.text()).resolves.toBe("Hello, World!");
+}, 20_000);

@@ -1,28 +1,28 @@
 import { file, spawn, write } from "bun";
+import { install_test_helpers } from "bun:internal-for-testing";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { ChildProcess, fork } from "child_process";
+import { copyFileSync, mkdirSync } from "fs";
+import { cp, exists, mkdir, readlink, rm, writeFile } from "fs/promises";
 import {
+  assertManifestsPopulated,
   bunExe,
   bunEnv as env,
   isLinux,
   isWindows,
-  toBeValidBin,
-  toHaveBins,
-  writeShebangScript,
-  tmpdirSync,
-  toMatchNodeModulesAt,
+  mergeWindowEnvs,
+  randomPort,
   runBunInstall,
   runBunUpdate,
   tempDirWithFiles,
-  randomPort,
-  mergeWindowEnvs,
-  assertManifestsPopulated,
+  tmpdirSync,
+  toBeValidBin,
+  toHaveBins,
+  toMatchNodeModulesAt,
+  writeShebangScript,
 } from "harness";
-import { join, sep, resolve } from "path";
-import { mkdirSync, copyFileSync } from "fs";
-import { rm, writeFile, mkdir, exists, cp, readlink } from "fs/promises";
+import { join, resolve, sep } from "path";
 import { readdirSorted } from "../dummy.registry";
-import { fork, ChildProcess } from "child_process";
-import { beforeAll, afterAll, beforeEach, test, expect, describe, it, setDefaultTimeout } from "bun:test";
-import { install_test_helpers } from "bun:internal-for-testing";
 const { parseLockfile } = install_test_helpers;
 const { iniInternals } = require("bun:internal-for-testing");
 const { loadNpmrc } = iniInternals;
@@ -1739,24 +1739,22 @@ describe("binaries", () => {
       const out = await Bun.readableStreamToText(stdout);
       expect(await exited).toBe(0);
 
-      const cwd = global ? join(packageDir, "global-bin-dir") : packageDir;
-
-      await runBin("dep-with-file-bin", "file-bin\n", cwd, global);
-      await runBin("single-entry-map-bin", "single-entry-map-bin\n", cwd, global);
-      await runBin("directory-bin-1", "directory-bin-1\n", cwd, global);
-      await runBin("directory-bin-2", "directory-bin-2\n", cwd, global);
-      await runBin("map-bin-1", "map-bin-1\n", cwd, global);
-      await runBin("map-bin-2", "map-bin-2\n", cwd, global);
+      await runBin("dep-with-file-bin", "file-bin\n", global);
+      await runBin("single-entry-map-bin", "single-entry-map-bin\n", global);
+      await runBin("directory-bin-1", "directory-bin-1\n", global);
+      await runBin("directory-bin-2", "directory-bin-2\n", global);
+      await runBin("map-bin-1", "map-bin-1\n", global);
+      await runBin("map-bin-2", "map-bin-2\n", global);
     });
   }
 
-  async function runBin(binName: string, expected: string, cwd: string, global: boolean) {
-    const args = [bunExe(), ...(global ? ["run"] : []), `${!isWindows && global ? "./" : ""}${binName}`];
+  async function runBin(binName: string, expected: string, global: boolean) {
+    const args = global ? [`./global-bin-dir/${binName}`] : [bunExe(), binName];
     const result = Bun.spawn({
       cmd: args,
       stdout: "pipe",
       stderr: "pipe",
-      cwd,
+      cwd: packageDir,
       env,
     });
 
@@ -1766,6 +1764,32 @@ describe("binaries", () => {
     expect(err).toBeEmpty();
     expect(await result.exited).toBe(0);
   }
+
+  test("it will skip (without errors) if a folder from `directories.bin` does not exist", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "missing-directory-bin": "file:missing-directory-bin-1.1.1.tgz",
+          },
+        }),
+      ),
+      cp(join(import.meta.dir, "missing-directory-bin-1.1.1.tgz"), join(packageDir, "missing-directory-bin-1.1.1.tgz")),
+    ]);
+
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+  });
 });
 
 test("it should install with missing bun.lockb, node_modules, and/or cache", async () => {

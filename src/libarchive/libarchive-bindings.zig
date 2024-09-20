@@ -4,7 +4,6 @@ pub const la_int64_t = i64;
 pub const la_ssize_t = isize;
 pub const struct_archive = opaque {};
 pub const struct_archive_entry = opaque {};
-pub const archive = struct_archive;
 pub const archive_entry = struct_archive_entry;
 const mode_t = bun.Mode;
 const FILE = @import("std").c.FILE;
@@ -132,14 +131,231 @@ pub const ARCHIVE_MATCH_NEWER = @as(c_int, 0x0001);
 pub const ARCHIVE_MATCH_OLDER = @as(c_int, 0x0002);
 pub const ARCHIVE_MATCH_EQUAL = @as(c_int, 0x0010);
 
-pub extern fn archive_version_number() c_int;
-pub extern fn archive_version_string() [*c]const u8;
-pub extern fn archive_version_details() [*c]const u8;
-pub extern fn archive_zlib_version() [*c]const u8;
-pub extern fn archive_liblzma_version() [*c]const u8;
-pub extern fn archive_bzlib_version() [*c]const u8;
-pub extern fn archive_liblz4_version() [*c]const u8;
-pub extern fn archive_libzstd_version() [*c]const u8;
+pub const Archive = opaque {
+    pub const Result = enum(i32) {
+        eof = ARCHIVE_EOF,
+        ok = ARCHIVE_OK,
+        retry = ARCHIVE_RETRY,
+        warn = ARCHIVE_WARN,
+        failed = ARCHIVE_FAILED,
+        fatal = ARCHIVE_FATAL,
+    };
+
+    extern fn archive_version_number() c_int;
+    pub fn versionNumber() i32 {
+        return archive_version_number();
+    }
+    extern fn archive_version_string() [*c]const u8;
+    pub fn versionString() []const u8 {
+        return bun.sliceTo(archive_version_string(), 0);
+    }
+    extern fn archive_version_details() [*c]const u8;
+    pub fn versionDetails() []const u8 {
+        return bun.sliceTo(archive_version_details(), 0);
+    }
+    extern fn archive_zlib_version() [*c]const u8;
+    pub fn zlibVersion() []const u8 {
+        return bun.sliceTo(archive_zlib_version(), 0);
+    }
+    extern fn archive_liblzma_version() [*c]const u8;
+    pub fn liblzmaVersion() []const u8 {
+        return bun.sliceTo(archive_liblzma_version(), 0);
+    }
+    extern fn archive_bzlib_version() [*c]const u8;
+    pub fn bzlibVersion() []const u8 {
+        return bun.sliceTo(archive_bzlib_version(), 0);
+    }
+    extern fn archive_liblz4_version() [*c]const u8;
+    pub fn liblz4Version() []const u8 {
+        return bun.sliceTo(archive_liblz4_version(), 0);
+    }
+    extern fn archive_libzstd_version() [*c]const u8;
+    pub fn libzstdVersion() []const u8 {
+        return bun.sliceTo(archive_libzstd_version(), 0);
+    }
+
+    extern fn archive_error_string(*Archive) [*c]const u8;
+    pub fn errorString(archive: *Archive) []const u8 {
+        return bun.sliceTo(archive_error_string(archive), 0);
+    }
+
+    extern fn archive_write_new() *Archive;
+    pub fn writeNew() *Archive {
+        return archive_write_new();
+    }
+
+    extern fn archive_write_close(*Archive) Result;
+    pub fn writeClose(archive: *Archive) Result {
+        return archive_write_close(archive);
+    }
+
+    pub extern fn archive_write_finish(*Archive) Result;
+    pub fn writeFinish(archive: *Archive) Result {
+        return archive_write_finish(archive);
+    }
+
+    extern fn archive_free(*Archive) Result;
+    pub fn free(archive: *Archive) Result {
+        return archive_free(archive);
+    }
+
+    pub extern fn archive_write_set_options(_a: *Archive, opts: [*c]const u8) Result;
+    pub fn writeSetOptions(archive: *Archive, opts: [:0]const u8) Result {
+        return archive_write_set_options(archive, opts);
+    }
+
+    extern fn archive_write_set_format_pax_restricted(*Archive) Result;
+    pub fn writeSetFormatPaxRestricted(archive: *Archive) Result {
+        return archive_write_set_format_pax_restricted(archive);
+    }
+
+    pub extern fn archive_write_set_format_gnutar(*Archive) Result;
+    pub fn writeSetFormatGnutar(archive: *Archive) Result {
+        return archive_write_set_format_gnutar(archive);
+    }
+
+    pub extern fn archive_write_set_format_7zip(*Archive) Result;
+    pub fn writeSetFormat7zip(archive: *Archive) Result {
+        return archive_write_set_format_7zip(archive);
+    }
+
+    pub extern fn archive_write_set_format_pax(*Archive) Result;
+    pub fn writeSetFormatPax(archive: *Archive) Result {
+        return archive_write_set_format_pax(archive);
+    }
+
+    pub extern fn archive_write_set_format_ustar(*Archive) Result;
+    pub fn writeSetFormatUstar(archive: *Archive) Result {
+        return archive_write_set_format_ustar(archive);
+    }
+
+    pub extern fn archive_write_set_format_zip(*Archive) Result;
+    pub fn writeSetFormatZip(archive: *Archive) Result {
+        return archive_write_set_format_zip(archive);
+    }
+
+    pub extern fn archive_write_set_format_shar(*Archive) Result;
+    pub fn writeSetFormatShar(archive: *Archive) Result {
+        return archive_write_set_format_shar(archive);
+    }
+
+    extern fn archive_write_set_compression_gzip(*Archive) Result;
+    pub fn writeSetCompressionGzip(archive: *Archive) Result {
+        return archive_write_set_compression_gzip(archive);
+    }
+
+    extern fn archive_write_add_filter_gzip(*Archive) Result;
+    pub fn writeAddFilterGzip(archive: *Archive) Result {
+        return archive_write_add_filter_gzip(archive);
+    }
+
+    extern fn archive_write_set_filter_option(*Archive, [*c]const u8, [*c]const u8, [*c]const u8) Result;
+    pub fn writeSetFilterOption(archive: *Archive, m: ?[:0]const u8, o: [:0]const u8, v: [:0]const u8) Result {
+        return archive_write_set_filter_option(archive, m orelse null, o, v);
+    }
+
+    extern fn archive_write_open_filename(*Archive, [*c]const u8) Result;
+    pub fn writeOpenFilename(archive: *Archive, filename: [:0]const u8) Result {
+        return archive_write_open_filename(archive, filename);
+    }
+
+    pub extern fn archive_write_open_fd(*Archive, _fd: c_int) Result;
+    pub fn writeOpenFd(archive: *Archive, fd: bun.FileDescriptor) Result {
+        return archive_write_open_fd(archive, fd.cast());
+    }
+
+    pub extern fn archive_write_open_memory(*Archive, _buffer: ?*anyopaque, _buffSize: usize, _used: [*c]usize) Result;
+    pub fn writeOpenMemory(archive: *Archive, buf: ?*anyopaque, buf_size: usize, used: *usize) Result {
+        return archive_write_open_memory(archive, buf, buf_size, used);
+    }
+
+    extern fn archive_write_header(*Archive, *Entry) Result;
+    pub fn writeHeader(archive: *Archive, entry: *Entry) Result {
+        return archive_write_header(archive, entry);
+    }
+
+    extern fn archive_write_data(*Archive, ?*const anyopaque, usize) isize;
+    pub fn writeData(archive: *Archive, data: []const u8) isize {
+        return archive_write_data(archive, data.ptr, data.len);
+    }
+
+    pub extern fn archive_write_finish_entry(*Archive) Result;
+    pub fn writeFinishEntry(archive: *Archive) Result {
+        return archive_write_finish_entry(archive);
+    }
+
+    pub extern fn archive_write_free(*Archive) Result;
+    pub fn writeFree(archive: *Archive) Result {
+        return archive_write_free(archive);
+    }
+
+    pub const Entry = opaque {
+        extern fn archive_entry_new() *Entry;
+        pub fn new() *Entry {
+            return archive_entry_new();
+        }
+
+        pub extern fn archive_entry_new2(*Archive) *Entry;
+        pub fn new2(archive: *Archive) *Entry {
+            return archive_entry_new2(archive);
+        }
+
+        extern fn archive_entry_free(*Entry) void;
+        pub fn free(entry: *Entry) void {
+            archive_entry_free(entry);
+        }
+
+        extern fn archive_entry_set_pathname(*Entry, [*c]const u8) void;
+        pub fn setPathname(entry: *Entry, pathname: [:0]const u8) void {
+            archive_entry_set_pathname(entry, pathname);
+        }
+
+        extern fn archive_entry_set_pathname_utf8(*Entry, [*c]const u8) void;
+        pub fn setPathnameUtf8(entry: *Entry, pathname: [:0]const u8) void {
+            archive_entry_set_pathname_utf8(entry, pathname);
+        }
+
+        extern fn archive_entry_copy_pathname(*Entry, [*c]const u8) void;
+        pub fn copyPathname(entry: *Entry, pathname: [:0]const u8) void {
+            return archive_entry_copy_pathname(entry, pathname);
+        }
+
+        pub extern fn archive_entry_copy_pathname_w(*Entry, [*c]const u16) void;
+        pub fn copyPathnameW(entry: *Entry, pathname: [:0]const u16) void {
+            return archive_entry_copy_pathname_w(entry, pathname);
+        }
+
+        extern fn archive_entry_set_size(*Entry, i64) void;
+        pub fn setSize(entry: *Entry, size: i64) void {
+            archive_entry_set_size(entry, size);
+        }
+
+        extern fn archive_entry_set_filetype(*Entry, c_uint) void;
+        pub fn setFiletype(entry: *Entry, filetype: u32) void {
+            archive_entry_set_filetype(entry, filetype);
+        }
+
+        extern fn archive_entry_set_perm(*Entry, bun.Mode) void;
+        pub fn setPerm(entry: *Entry, perm: bun.Mode) void {
+            archive_entry_set_perm(entry, perm);
+        }
+
+        pub extern fn archive_entry_set_mode(*Entry, bun.Mode) void;
+        pub fn setMode(entry: *Entry, mode: bun.Mode) void {
+            archive_entry_set_mode(entry, mode);
+        }
+
+        extern fn archive_entry_set_mtime(*Entry, isize, c_long) void;
+        pub fn setMtime(entry: *Entry, secs: isize, nsecs: c_long) void {
+            archive_entry_set_mtime(entry, secs, nsecs);
+        }
+
+        extern fn archive_entry_clear(*Entry) *Entry;
+        pub fn clear(entry: *Entry) *Entry {
+            return archive_entry_clear(entry);
+        }
+    };
+};
 
 pub const archive_read_callback = *const fn (*struct_archive, *anyopaque, [*c]*const anyopaque) callconv(.C) la_ssize_t;
 pub const archive_skip_callback = *const fn (*struct_archive, *anyopaque, la_int64_t) callconv(.C) la_int64_t;
@@ -250,7 +466,6 @@ pub extern fn archive_read_extract_set_skip_file(*struct_archive, la_int64_t, la
 pub extern fn archive_read_close(*struct_archive) c_int;
 pub extern fn archive_read_free(*struct_archive) c_int;
 pub extern fn archive_read_finish(*struct_archive) c_int;
-pub extern fn archive_write_new() *struct_archive;
 pub extern fn archive_write_set_bytes_per_block(*struct_archive, bytes_per_block: c_int) c_int;
 pub extern fn archive_write_get_bytes_per_block(*struct_archive) c_int;
 pub extern fn archive_write_set_bytes_in_last_block(*struct_archive, bytes_in_last_block: c_int) c_int;
@@ -258,7 +473,6 @@ pub extern fn archive_write_get_bytes_in_last_block(*struct_archive) c_int;
 pub extern fn archive_write_set_skip_file(*struct_archive, la_int64_t, la_int64_t) c_int;
 pub extern fn archive_write_set_compression_bzip2(*struct_archive) c_int;
 pub extern fn archive_write_set_compression_compress(*struct_archive) c_int;
-pub extern fn archive_write_set_compression_gzip(*struct_archive) c_int;
 pub extern fn archive_write_set_compression_lzip(*struct_archive) c_int;
 pub extern fn archive_write_set_compression_lzma(*struct_archive) c_int;
 pub extern fn archive_write_set_compression_none(*struct_archive) c_int;
@@ -270,7 +484,6 @@ pub extern fn archive_write_add_filter_b64encode(*struct_archive) c_int;
 pub extern fn archive_write_add_filter_bzip2(*struct_archive) c_int;
 pub extern fn archive_write_add_filter_compress(*struct_archive) c_int;
 pub extern fn archive_write_add_filter_grzip(*struct_archive) c_int;
-pub extern fn archive_write_add_filter_gzip(*struct_archive) c_int;
 pub extern fn archive_write_add_filter_lrzip(*struct_archive) c_int;
 pub extern fn archive_write_add_filter_lz4(*struct_archive) c_int;
 pub extern fn archive_write_add_filter_lzip(*struct_archive) c_int;
@@ -283,7 +496,6 @@ pub extern fn archive_write_add_filter_xz(*struct_archive) c_int;
 pub extern fn archive_write_add_filter_zstd(*struct_archive) c_int;
 pub extern fn archive_write_set_format(*struct_archive, format_code: c_int) c_int;
 pub extern fn archive_write_set_format_by_name(*struct_archive, name: [*c]const u8) c_int;
-pub extern fn archive_write_set_format_7zip(*struct_archive) c_int;
 pub extern fn archive_write_set_format_ar_bsd(*struct_archive) c_int;
 pub extern fn archive_write_set_format_ar_svr4(*struct_archive) c_int;
 pub extern fn archive_write_set_format_cpio(*struct_archive) c_int;
@@ -291,44 +503,27 @@ pub extern fn archive_write_set_format_cpio_bin(*struct_archive) c_int;
 pub extern fn archive_write_set_format_cpio_newc(*struct_archive) c_int;
 pub extern fn archive_write_set_format_cpio_odc(*struct_archive) c_int;
 pub extern fn archive_write_set_format_cpio_pwb(*struct_archive) c_int;
-pub extern fn archive_write_set_format_gnutar(*struct_archive) c_int;
 pub extern fn archive_write_set_format_iso9660(*struct_archive) c_int;
 pub extern fn archive_write_set_format_mtree(*struct_archive) c_int;
 pub extern fn archive_write_set_format_mtree_classic(*struct_archive) c_int;
-pub extern fn archive_write_set_format_pax(*struct_archive) c_int;
-pub extern fn archive_write_set_format_pax_restricted(*struct_archive) c_int;
 pub extern fn archive_write_set_format_raw(*struct_archive) c_int;
-pub extern fn archive_write_set_format_shar(*struct_archive) c_int;
 pub extern fn archive_write_set_format_shar_dump(*struct_archive) c_int;
-pub extern fn archive_write_set_format_ustar(*struct_archive) c_int;
 pub extern fn archive_write_set_format_v7tar(*struct_archive) c_int;
 pub extern fn archive_write_set_format_warc(*struct_archive) c_int;
 pub extern fn archive_write_set_format_xar(*struct_archive) c_int;
-pub extern fn archive_write_set_format_zip(*struct_archive) c_int;
 pub extern fn archive_write_set_format_filter_by_ext(a: *struct_archive, filename: [*c]const u8) c_int;
 pub extern fn archive_write_set_format_filter_by_ext_def(a: *struct_archive, filename: [*c]const u8, def_ext: [*c]const u8) c_int;
 pub extern fn archive_write_zip_set_compression_deflate(*struct_archive) c_int;
 pub extern fn archive_write_zip_set_compression_store(*struct_archive) c_int;
 pub extern fn archive_write_open(*struct_archive, ?*anyopaque, ?archive_open_callback, ?archive_write_callback, ?archive_close_callback) c_int;
 pub extern fn archive_write_open2(*struct_archive, ?*anyopaque, ?archive_open_callback, ?archive_write_callback, ?archive_close_callback, ?archive_free_callback) c_int;
-pub extern fn archive_write_open_fd(*struct_archive, _fd: c_int) c_int;
-pub extern fn archive_write_open_filename(*struct_archive, _file: [*c]const u8) c_int;
 pub extern fn archive_write_open_filename_w(*struct_archive, _file: [*c]const wchar_t) c_int;
 pub extern fn archive_write_open_file(*struct_archive, _file: [*c]const u8) c_int;
 pub extern fn archive_write_open_FILE(*struct_archive, [*c]FILE) c_int;
-pub extern fn archive_write_open_memory(*struct_archive, _buffer: ?*anyopaque, _buffSize: usize, _used: [*c]usize) c_int;
-pub extern fn archive_write_header(*struct_archive, *struct_archive_entry) c_int;
-pub extern fn archive_write_data(*struct_archive, ?*const anyopaque, usize) la_ssize_t;
 pub extern fn archive_write_data_block(*struct_archive, ?*const anyopaque, usize, la_int64_t) la_ssize_t;
-pub extern fn archive_write_finish_entry(*struct_archive) c_int;
-pub extern fn archive_write_close(*struct_archive) c_int;
 pub extern fn archive_write_fail(*struct_archive) c_int;
-pub extern fn archive_write_free(*struct_archive) c_int;
-pub extern fn archive_write_finish(*struct_archive) c_int;
 pub extern fn archive_write_set_format_option(_a: *struct_archive, m: [*c]const u8, o: [*c]const u8, v: [*c]const u8) c_int;
-pub extern fn archive_write_set_filter_option(_a: *struct_archive, m: [*c]const u8, o: [*c]const u8, v: [*c]const u8) c_int;
 pub extern fn archive_write_set_option(_a: *struct_archive, m: [*c]const u8, o: [*c]const u8, v: [*c]const u8) c_int;
-pub extern fn archive_write_set_options(_a: *struct_archive, opts: [*c]const u8) c_int;
 pub extern fn archive_write_set_passphrase(_a: *struct_archive, p: [*c]const u8) c_int;
 pub extern fn archive_write_set_passphrase_callback(*struct_archive, client_data: ?*anyopaque, ?archive_passphrase_callback) c_int;
 pub extern fn archive_write_disk_new() *struct_archive;
@@ -360,7 +555,6 @@ pub extern fn archive_read_disk_set_atime_restored(*struct_archive) c_int;
 pub extern fn archive_read_disk_set_behavior(*struct_archive, flags: c_int) c_int;
 pub extern fn archive_read_disk_set_matching(*struct_archive, _matching: *struct_archive, _excluded_func: ?*const fn (*struct_archive, ?*anyopaque, *struct_archive_entry) callconv(.C) void, _client_data: ?*anyopaque) c_int;
 pub extern fn archive_read_disk_set_metadata_filter_callback(*struct_archive, _metadata_filter_func: ?*const fn (*struct_archive, ?*anyopaque, *struct_archive_entry) callconv(.C) c_int, _client_data: ?*anyopaque) c_int;
-pub extern fn archive_free(*struct_archive) c_int;
 pub extern fn archive_filter_count(*struct_archive) c_int;
 pub extern fn archive_filter_bytes(*struct_archive, c_int) la_int64_t;
 pub extern fn archive_filter_code(*struct_archive, c_int) c_int;
@@ -370,7 +564,6 @@ pub extern fn archive_position_uncompressed(*struct_archive) la_int64_t;
 pub extern fn archive_compression_name(*struct_archive) [*c]const u8;
 pub extern fn archive_compression(*struct_archive) c_int;
 pub extern fn archive_errno(*struct_archive) c_int;
-pub extern fn archive_error_string(*struct_archive) [*c]const u8;
 pub extern fn archive_format_name(*struct_archive) [*c]const u8;
 pub extern fn archive_format(*struct_archive) c_int;
 pub extern fn archive_clear_error(*struct_archive) void;
@@ -409,11 +602,7 @@ pub extern fn archive_match_include_gname(*struct_archive, [*c]const u8) c_int;
 pub extern fn archive_match_include_gname_w(*struct_archive, [*c]const wchar_t) c_int;
 pub extern fn archive_utility_string_sort([*c][*c]u8) c_int;
 
-pub extern fn archive_entry_clear(*struct_archive_entry) *struct_archive_entry;
 pub extern fn archive_entry_clone(*struct_archive_entry) *struct_archive_entry;
-pub extern fn archive_entry_free(*struct_archive_entry) void;
-pub extern fn archive_entry_new() *struct_archive_entry;
-pub extern fn archive_entry_new2(*struct_archive) *struct_archive_entry;
 pub extern fn archive_entry_atime(*struct_archive_entry) time_t;
 pub extern fn archive_entry_atime_nsec(*struct_archive_entry) c_long;
 pub extern fn archive_entry_atime_is_set(*struct_archive_entry) c_int;
@@ -477,7 +666,6 @@ pub extern fn archive_entry_unset_ctime(*struct_archive_entry) void;
 pub extern fn archive_entry_set_dev(*struct_archive_entry, dev_t) void;
 pub extern fn archive_entry_set_devmajor(*struct_archive_entry, dev_t) void;
 pub extern fn archive_entry_set_devminor(*struct_archive_entry, dev_t) void;
-pub extern fn archive_entry_set_filetype(*struct_archive_entry, c_uint) void;
 pub extern fn archive_entry_set_fflags(*struct_archive_entry, u64, u64) void;
 pub extern fn archive_entry_copy_fflags_text(*struct_archive_entry, [*c]const u8) [*c]const u8;
 pub extern fn archive_entry_copy_fflags_text_w(*struct_archive_entry, [*c]const wchar_t) [*c]const wchar_t;
@@ -499,20 +687,12 @@ pub extern fn archive_entry_set_link_utf8(*struct_archive_entry, [*c]const u8) v
 pub extern fn archive_entry_copy_link(*struct_archive_entry, [*c]const u8) void;
 pub extern fn archive_entry_copy_link_w(*struct_archive_entry, [*c]const wchar_t) void;
 pub extern fn archive_entry_update_link_utf8(*struct_archive_entry, [*c]const u8) c_int;
-pub extern fn archive_entry_set_mode(*struct_archive_entry, mode_t) void;
-pub extern fn archive_entry_set_mtime(*struct_archive_entry, time_t, c_long) void;
 pub extern fn archive_entry_unset_mtime(*struct_archive_entry) void;
 pub extern fn archive_entry_set_nlink(*struct_archive_entry, c_uint) void;
-pub extern fn archive_entry_set_pathname(*struct_archive_entry, [*c]const u8) void;
-pub extern fn archive_entry_set_pathname_utf8(*struct_archive_entry, [*c]const u8) void;
-pub extern fn archive_entry_copy_pathname(*struct_archive_entry, [*c]const u8) void;
-pub extern fn archive_entry_copy_pathname_w(*struct_archive_entry, [*c]const wchar_t) void;
 pub extern fn archive_entry_update_pathname_utf8(*struct_archive_entry, [*c]const u8) c_int;
-pub extern fn archive_entry_set_perm(*struct_archive_entry, mode_t) void;
 pub extern fn archive_entry_set_rdev(*struct_archive_entry, dev_t) void;
 pub extern fn archive_entry_set_rdevmajor(*struct_archive_entry, dev_t) void;
 pub extern fn archive_entry_set_rdevminor(*struct_archive_entry, dev_t) void;
-pub extern fn archive_entry_set_size(*struct_archive_entry, la_int64_t) void;
 pub extern fn archive_entry_unset_size(*struct_archive_entry) void;
 pub extern fn archive_entry_copy_sourcepath(*struct_archive_entry, [*c]const u8) void;
 pub extern fn archive_entry_copy_sourcepath_w(*struct_archive_entry, [*c]const wchar_t) void;

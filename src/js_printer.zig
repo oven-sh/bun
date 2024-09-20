@@ -529,6 +529,7 @@ pub const Options = struct {
     target: options.Target = .browser,
 
     runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
+    input_files_for_kit: ?[]logger.Source = null,
 
     commonjs_named_exports: js_ast.Ast.CommonJSNamedExports = .{},
     commonjs_named_exports_deoptimized: bool = false,
@@ -547,7 +548,7 @@ pub const Options = struct {
 
     require_or_import_meta_for_source_callback: RequireOrImportMeta.Callback = .{},
 
-    module_type: options.OutputFormat = .preserve,
+    module_type: options.Format = .esm,
 
     // /// Used for cross-module inlining of import items when bundling
     // const_values: Ast.ConstValuesMap = .{},
@@ -1014,10 +1015,6 @@ fn NewPrinter(
                     p.writer.print(StringType, str);
                 },
             }
-        }
-
-        pub inline fn unsafePrint(p: *Printer, str: string) void {
-            p.print(str);
         }
 
         pub inline fn unindent(p: *Printer) void {
@@ -2035,7 +2032,17 @@ fn NewPrinter(
                     p.print("(");
                 }
 
-                if (!meta.was_unwrapped_require) {
+                if (p.options.input_files_for_kit) |input_files| {
+                    bun.assert(p.options.module_type == .internal_kit_dev);
+                    p.printSpaceBeforeIdentifier();
+                    p.printSymbol(p.options.commonjs_module_ref);
+                    p.print(".require(");
+                    {
+                        const path = input_files[record.source_index.get()].path;
+                        p.printInlinedEnum(.{ .number = @floatFromInt(path.hashForKit()) }, path.pretty, level);
+                    }
+                    p.print(")");
+                } else if (!meta.was_unwrapped_require) {
                     // Call the wrapper
                     if (meta.wrapper_ref.isValid()) {
                         p.printSpaceBeforeIdentifier();
@@ -2321,7 +2328,10 @@ fn NewPrinter(
                 .e_import_meta => {
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
-                    if (!p.options.import_meta_ref.isValid()) {
+                    if (p.options.module_type == .internal_kit_dev) {
+                        p.printSymbol(p.options.commonjs_module_ref);
+                        p.print(".importMeta()");
+                    } else if (!p.options.import_meta_ref.isValid()) {
                         // Most of the time, leave it in there
                         p.print("import.meta");
                     } else {
@@ -2349,6 +2359,8 @@ fn NewPrinter(
                         }
                         p.print("import.meta.main");
                     } else {
+                        bun.assert(p.options.module_type != .internal_kit_dev);
+
                         p.printSpaceBeforeIdentifier();
                         p.addSourceMapping(expr.loc);
 
@@ -3092,7 +3104,10 @@ fn NewPrinter(
                     // Potentially use a property access instead of an identifier
                     var didPrint = false;
 
-                    const ref = p.symbols().follow(e.ref);
+                    const ref = if (p.options.module_type != .internal_kit_dev)
+                        p.symbols().follow(e.ref)
+                    else
+                        e.ref;
                     const symbol = p.symbols().get(ref).?;
 
                     if (symbol.import_item_status == .missing) {
@@ -3176,6 +3191,7 @@ fn NewPrinter(
                     // }
 
                     if (!didPrint) {
+                        // assert(p.options.module_type != .internal_kit_dev);
                         p.printSpaceBeforeIdentifier();
                         p.addSourceMapping(expr.loc);
                         p.printSymbol(e.ref);
@@ -3971,9 +3987,6 @@ fn NewPrinter(
                         }
                     }
                     p.print("}");
-                },
-                else => {
-                    Output.panic("Unexpected binding of type {any}", .{binding});
                 },
             }
         }
@@ -4863,7 +4876,9 @@ fn NewPrinter(
 
                         p.print("{");
                         if (!s.is_single_line) {
-                            p.unindent();
+                            p.indent();
+                        } else {
+                            p.printSpace();
                         }
 
                         for (s.items, 0..) |item, i| {
@@ -4886,6 +4901,8 @@ fn NewPrinter(
                             p.unindent();
                             p.printNewline();
                             p.printIndent();
+                        } else {
+                            p.printSpace();
                         }
                         p.print("}");
                         item_count += 1;
@@ -5165,7 +5182,7 @@ fn NewPrinter(
         }
 
         inline fn printDisabledImport(p: *Printer) void {
-            p.print("(()=>({}))");
+            p.printWhitespacer(ws("(() => ({}))"));
         }
 
         pub fn printLoadFromBundleWithoutCall(p: *Printer, import_record_index: u32) void {
@@ -5758,12 +5775,6 @@ pub fn NewWriter(
         }
 
         pub inline fn print(writer: *Self, comptime ValueType: type, str: ValueType) void {
-            if (FeatureFlags.disable_printing_null) {
-                if (str == 0) {
-                    Output.panic("Attempted to print null char", .{});
-                }
-            }
-
             switch (ValueType) {
                 comptime_int, u16, u8 => {
                     const written = writeByte(&writer.ctx, @as(u8, @intCast(str))) catch |err| brk: {
@@ -6419,15 +6430,30 @@ pub fn printWithWriterAndPlatform(
         imported_module_ids_list = printer.imported_module_ids;
     }
 
-    for (parts) |part| {
-        for (part.stmts) |stmt| {
-            printer.printStmt(stmt) catch |err| {
-                return .{ .err = err };
-            };
-            if (printer.writer.getError()) {} else |err| {
-                return .{ .err = err };
+    if (opts.module_type == .internal_kit_dev) {
+        printer.indent();
+        printer.printIndent();
+        printer.fmt("{d}", .{source.path.hashForKit()}) catch bun.outOfMemory();
+        printer.print(": function");
+        printer.printFunc(parts[0].stmts[0].data.s_expr.value.data.e_function.func);
+        printer.print(",\n");
+    } else {
+        // The IIFE wrapper is done in `postProcessJSChunk`, so we just manually
+        // trigger an indent.
+        if (opts.module_type == .iife) {
+            printer.indent();
+        }
+
+        for (parts) |part| {
+            for (part.stmts) |stmt| {
+                printer.printStmt(stmt) catch |err| {
+                    return .{ .err = err };
+                };
+                if (printer.writer.getError()) {} else |err| {
+                    return .{ .err = err };
+                }
+                printer.printSemicolonIfNeeded();
             }
-            printer.printSemicolonIfNeeded();
         }
     }
 

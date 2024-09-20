@@ -1,8 +1,7 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
-import { join } from "path";
-import path from "path";
+import path, { join } from "path";
 
 describe("Bun.build", () => {
   test("passing undefined doesnt segfault", () => {
@@ -348,6 +347,20 @@ describe("Bun.build", () => {
         ],
       }),
     ).toThrow();
+  });
+
+  test("non-object plugins throw invalid argument errors", () => {
+    for (const plugin of [null, undefined, 1, "hello", true, false, Symbol.for("hello")]) {
+      expect(() => {
+        Bun.build({
+          entrypoints: [join(import.meta.dir, "./fixtures/trivial/bundle-ws.ts")],
+          plugins: [
+            // @ts-expect-error
+            plugin,
+          ],
+        });
+      }).toThrow("Expected plugin to be an object");
+    }
   });
 
   test("hash considers cross chunk imports", async () => {

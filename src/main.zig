@@ -1,7 +1,5 @@
 const std = @import("std");
 const builtin = @import("builtin");
-pub const build_options = @import("build_options");
-
 const bun = @import("root").bun;
 const Output = bun.Output;
 const Environment = bun.Environment;

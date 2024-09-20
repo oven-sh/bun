@@ -112,3 +112,17 @@ export const npmTag: (
   name: string,
 ) => undefined | "npm" | "dist_tag" | "tarball" | "folder" | "symlink" | "workspace" | "git" | "github" =
   $newZigFunction("dependency.zig", "Version.Tag.inferFromJS", 1);
+
+export const readTarball: (tarball: string) => any = $newZigFunction("pack_command.zig", "bindings.jsReadTarball", 1);
+
+export const isArchitectureMatch: (architecture: string[]) => boolean = $newZigFunction(
+  "npm.zig",
+  "Architecture.jsFunctionArchitectureIsMatch",
+  1,
+);
+
+export const isOperatingSystemMatch: (operatingSystem: string[]) => boolean = $newZigFunction(
+  "npm.zig",
+  "OperatingSystem.jsFunctionOperatingSystemIsMatch",
+  1,
+);

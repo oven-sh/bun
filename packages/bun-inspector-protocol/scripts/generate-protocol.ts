@@ -1,6 +1,6 @@
-import type { Protocol, Domain, Property } from "../src/protocol/schema";
-import { readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
+import type { Domain, Property, Protocol } from "../src/protocol/schema";
 
 run().catch(console.error);
 

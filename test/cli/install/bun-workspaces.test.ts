@@ -1,10 +1,9 @@
-import { spawnSync, write, file } from "bun";
+import { file, write } from "bun";
+import { install_test_helpers } from "bun:internal-for-testing";
+import { beforeEach, describe, expect, test } from "bun:test";
+import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { bunExe, bunEnv as env, runBunInstall, tmpdirSync, toMatchNodeModulesAt } from "harness";
 import { join } from "path";
-import { writeFileSync, mkdirSync, rmSync } from "fs";
-import { writeFile, mkdir } from "fs/promises";
-import { beforeEach, test, expect, describe } from "bun:test";
-import { install_test_helpers } from "bun:internal-for-testing";
 const { parseLockfile } = install_test_helpers;
 
 expect.extend({ toMatchNodeModulesAt });

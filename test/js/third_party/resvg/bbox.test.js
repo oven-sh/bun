@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
 import { Resvg } from "@resvg/resvg-js";
+import { expect, test } from "bun:test";
 
 const opts = {
   fitTo: {

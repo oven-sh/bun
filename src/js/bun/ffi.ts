@@ -214,10 +214,6 @@ ffiWrappers[FFIType.u64_fast] = `{
     return val;
   }
 
-  if (__GlobalBunFFIPtrArrayBufferViewFn(val)) {
-    return val;
-  }
-
   return !val ? 0 : +val || 0;
 }`;
 
@@ -242,20 +238,12 @@ ffiWrappers[FFIType.uint64_t] = `{
     return val <= 0 ? BigInt(0) : BigInt(val || 0);
   }
 
-  if (__GlobalBunFFIPtrArrayBufferViewFn(val)) {
-    return val;
-  }
-
   return BigInt(+val || 0);
 }`;
 
 ffiWrappers[FFIType.u64_fast] = `{
   if (typeof val === "bigint") {
     if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= BigInt(0)) return Number(val);
-    return val;
-  }
-
-  if (__GlobalBunFFIPtrArrayBufferViewFn(val)) {
     return val;
   }
 
@@ -300,7 +288,6 @@ Object.defineProperty(globalThis, "__GlobalBunFFIPtrArrayBufferViewFn", {
   },
   enumerable: false,
   configurable: true,
-  writable: true,
 });
 
 ffiWrappers[FFIType.cstring] = ffiWrappers[FFIType.pointer] = `{

@@ -195,6 +195,10 @@ describe("Function", () => {
   it("correctly receives the this value from JS", () => {
     checkSameOutput("call_function_with_weird_this_values", []);
   });
+
+  it("can call a JS function from native code", () => {
+    checkSameOutput("call_js_functions_from_native", []);
+  });
 });
 
 describe("error handling", () => {

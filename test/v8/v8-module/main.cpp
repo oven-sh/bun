@@ -362,6 +362,32 @@ void return_this(const FunctionCallbackInfo<Value> &info) {
   info.GetReturnValue().Set(info.This());
 }
 
+void run_function_from_js(const FunctionCallbackInfo<Value> &info) {
+  // extract function, this value, and arguments
+  auto context = info.GetIsolate()->GetCurrentContext();
+  auto function = info[0].As<Function>();
+  auto jsThis = info[1];
+  int num_args = info.Length() - 2;
+
+  std::vector<Local<Value>> args(num_args);
+  for (int i = 0; i < num_args; i++) {
+    args[i] = info[i + 2];
+  }
+
+  char buf[1024] = {0};
+  function->GetName().As<String>()->WriteUtf8(info.GetIsolate(), buf,
+                                              sizeof(buf) - 1);
+  printf("function name seen from native = %s\n", buf);
+
+  MaybeLocal<Value> result =
+      function->Call(context, jsThis, num_args, args.data());
+  if (result.IsEmpty()) {
+    printf("callback threw an exception\n");
+  } else {
+    info.GetReturnValue().Set(result.ToLocalChecked());
+  }
+}
+
 class GlobalTestWrapper {
 public:
   static void set(const FunctionCallbackInfo<Value> &info);
@@ -490,60 +516,42 @@ void test_handle_scope_gc(const FunctionCallbackInfo<Value> &info) {
         setup_object_with_string_field(isolate, context, tmp, i, cpp_str);
   }
 
-  // allocate some massive strings
-  // this should cause GC to start looking for objects to free
-  // after each big string allocation, we try reading all of the strings we
-  // created above to ensure they are still alive
-  constexpr size_t num_strings = 50;
-  constexpr size_t string_size = 20 * 1000 * 1000;
+  // force GC
+  run_gc(info);
 
-  auto string_data = new char[string_size];
-  string_data[string_size - 1] = 0;
+  // try to use all mini strings
+  for (size_t j = 0; j < num_small_allocs; j++) {
+    char buf[16];
+    mini_strings[j]->WriteUtf8(isolate, buf);
+    assert(atoi(buf) == (int)j);
+  }
 
-  Local<String> huge_strings[num_strings];
-  for (size_t i = 0; i < num_strings; i++) {
-    printf("%zu\n", i);
-    memset(string_data, i + 1, string_size - 1);
-    huge_strings[i] =
-        String::NewFromUtf8(isolate, string_data).ToLocalChecked();
+  for (size_t j = 0; j < num_small_allocs; j++) {
+    examine_object_fields(isolate, objects[j], j + num_small_allocs,
+                          j + 2 * num_small_allocs);
+  }
 
-    // try to use all mini strings
-    for (size_t j = 0; j < num_small_allocs; j++) {
-      char buf[16];
-      mini_strings[j]->WriteUtf8(isolate, buf);
-      assert(atoi(buf) == (int)j);
-    }
-
-    for (size_t j = 0; j < num_small_allocs; j++) {
-      examine_object_fields(isolate, objects[j], j + num_small_allocs,
-                            j + 2 * num_small_allocs);
-    }
-
-    if (i == 1) {
-      // add more internal fields to the objects a long time after they were
-      // created, to ensure these can also be traced
-      // make a new handlescope here so that the new strings we allocate are
-      // only referenced by the objects
-      HandleScope inner_hs(isolate);
-      for (auto &o : objects) {
-        int i = &o - &objects[0];
-        auto cpp_str = std::to_string(i + 2 * num_small_allocs);
-        Local<String> field =
-            String::NewFromUtf8(isolate, cpp_str.c_str()).ToLocalChecked();
-        o->SetInternalField(1, field);
-      }
+  // add more internal fields to the objects after the first collection, to
+  // ensure these can also be traced. we make a new handlescope here so that the
+  // new strings we allocate are only referenced by the objects
+  {
+    HandleScope inner_hs(isolate);
+    for (auto &o : objects) {
+      int i = &o - &objects[0];
+      auto cpp_str = std::to_string(i + 2 * num_small_allocs);
+      Local<String> field =
+          String::NewFromUtf8(isolate, cpp_str.c_str()).ToLocalChecked();
+      o->SetInternalField(1, field);
     }
   }
 
-  memset(string_data, 0, string_size);
-  for (size_t i = 0; i < num_strings; i++) {
-    huge_strings[i]->WriteUtf8(isolate, string_data);
-    for (size_t j = 0; j < string_size - 1; j++) {
-      assert(string_data[j] == (char)(i + 1));
-    }
-  }
+  run_gc(info);
 
-  delete[] string_data;
+  // make sure the new internal fields didn't get deleted
+  for (size_t j = 0; j < num_small_allocs; j++) {
+    examine_object_fields(isolate, objects[j], j + num_small_allocs,
+                          j + 2 * num_small_allocs);
+  }
 }
 
 Local<String> escape_object(Isolate *isolate) {
@@ -573,6 +581,10 @@ void test_v8_escapable_handle_scope(const FunctionCallbackInfo<Value> &info) {
   Local<String> s = escape_object(isolate);
   Local<Number> n = escape_smi(isolate);
   Local<Boolean> t = escape_true(isolate);
+
+  // we don't trigger GC here because Bun's handle scope eagerly overwrites all
+  // handles once it goes out of scope, so the original handles created in those
+  // functions are already invalidated.
 
   LOG_VALUE_KIND(s);
   LOG_VALUE_KIND(n);
@@ -625,6 +637,7 @@ void initialize(Local<Object> exports, Local<Value> module,
                   create_function_with_data);
   NODE_SET_METHOD(exports, "print_values_from_js", print_values_from_js);
   NODE_SET_METHOD(exports, "return_this", return_this);
+  NODE_SET_METHOD(exports, "run_function_from_js", run_function_from_js);
   NODE_SET_METHOD(exports, "global_get", GlobalTestWrapper::get);
   NODE_SET_METHOD(exports, "global_set", GlobalTestWrapper::set);
   NODE_SET_METHOD(exports, "test_many_v8_locals", test_many_v8_locals);

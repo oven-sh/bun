@@ -35,4 +35,14 @@ Local<Value> Function::GetName() const
     return handleScope->createLocal<Value>(globalObject->vm(), jsString);
 }
 
+MaybeLocal<Value> Function::Call(Local<Context> context, Local<Value> recv, int argc, Local<Value> argv[])
+{
+    if (auto* jsFunction = localToObjectPointer<JSC::JSFunction>()) {
+
+    } else if (auto* internalFunction = localToObjectPointer<JSC::InternalFunction>()) {
+    } else {
+        RELEASE_ASSERT_NOT_REACHED("v8::Function::Call called on invalid type");
+    }
+}
+
 } // namespace v8

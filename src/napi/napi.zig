@@ -1848,6 +1848,10 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn _ZNK2v88Function7GetNameEv() *anyopaque;
     pub extern fn _ZNK2v85Value10IsFunctionEv() *anyopaque;
     pub extern fn _ZN2v88Function4CallENS_5LocalINS_7ContextEEENS1_INS_5ValueEEEiPS5_() *anyopaque;
+    pub extern fn _ZN2v816FunctionTemplate11HasInstanceENS_5LocalINS_5ValueEEE() *anyopaque;
+    pub extern fn _ZN2v816FunctionTemplate12SetClassNameENS_5LocalINS_6StringEEE() *anyopaque;
+    pub extern fn _ZN2v816FunctionTemplate16InstanceTemplateEv() *anyopaque;
+    pub extern fn _ZN2v816FunctionTemplate17PrototypeTemplateEv() *anyopaque;
     pub extern fn uv_os_getpid() *anyopaque;
     pub extern fn uv_os_getppid() *anyopaque;
 } else struct {
@@ -1919,6 +1923,10 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"?GetName@Function@v8@@QEBA?AV?$Local@VValue@v8@@@2@XZ"() *anyopaque;
     pub extern fn @"?IsFunction@Value@v8@@QEBA_NXZ"() *anyopaque;
     pub extern fn @"?Call@Function@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@HQEAV52@@Z"() *anyopaque;
+    pub extern fn @"?HasInstance@FunctionTemplate@v8@@QEAA_NV?$Local@VValue@v8@@@2@@Z"() *anyopaque;
+    pub extern fn @"?SetClassName@FunctionTemplate@v8@@QEAAXV?$Local@VString@v8@@@2@@Z"() *anyopaque;
+    pub extern fn @"?InstanceTemplate@FunctionTemplate@v8@@QEAA?AV?$Local@VObjectTemplate@v8@@@2@XZ"() *anyopaque;
+    pub extern fn @"?PrototypeTemplate@FunctionTemplate@v8@@QEAA?AV?$Local@VObjectTemplate@v8@@@2@XZ"() *anyopaque;
 };
 
 pub fn fixDeadCodeElimination() void {

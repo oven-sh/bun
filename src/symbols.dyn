@@ -216,6 +216,10 @@
     __ZNK2v88Function7GetNameEv;
     __ZNK2v85Value10IsFunctionEv;
     __ZN2v88Function4CallENS_5LocalINS_7ContextEEENS1_INS_5ValueEEEiPS5_;
+    __ZN2v816FunctionTemplate11HasInstanceENS_5LocalINS_5ValueEEE;
+    __ZN2v816FunctionTemplate12SetClassNameENS_5LocalINS_6StringEEE;
+    __ZN2v816FunctionTemplate16InstanceTemplateEv;
+    __ZN2v816FunctionTemplate17PrototypeTemplateEv;
     _uv_os_getpid;
     _uv_os_getppid;
 };

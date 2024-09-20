@@ -72,4 +72,28 @@ MaybeLocal<Function> FunctionTemplate::GetFunction(Local<Context> context)
     return globalInternals->currentHandleScope()->createLocal<Function>(vm, f);
 }
 
+bool FunctionTemplate::HasInstance(Local<Value> object)
+{
+    V8_UNIMPLEMENTED();
+    return false;
+}
+
+void FunctionTemplate::SetClassName(Local<String> name)
+{
+    V8_UNIMPLEMENTED();
+    (void)name;
+}
+
+Local<ObjectTemplate> FunctionTemplate::InstanceTemplate()
+{
+    V8_UNIMPLEMENTED();
+    return Local<ObjectTemplate>();
+}
+
+Local<ObjectTemplate> FunctionTemplate::PrototypeTemplate()
+{
+    V8_UNIMPLEMENTED();
+    return Local<ObjectTemplate>();
+}
+
 } // namespace v8

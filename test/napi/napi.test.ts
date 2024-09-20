@@ -122,7 +122,7 @@ describe("napi", () => {
   });
 
   describe("napi_threadsafe_function", () => {
-    it("can be used to create a promise", () => {
+    it("keeps the event loop alive without async_work", () => {
       checkSameOutput("test_promise_with_threadsafe_function", []);
     });
 

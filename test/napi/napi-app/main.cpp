@@ -8,7 +8,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
-#include <semaphore>
 #include <thread>
 
 napi_value fail(napi_env env, const char *msg) {

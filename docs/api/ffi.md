@@ -110,6 +110,7 @@ The following `FFIType` values are supported.
 
 | `FFIType`  | C Type         | Aliases                     |
 | ---------- | -------------- | --------------------------- |
+| buffer     | `char*`        |                             |
 | cstring    | `char*`        |                             |
 | function   | `(void*)(*)()` | `fn`, `callback`            |
 | ptr        | `void*`        | `pointer`, `void*`, `char*` |
@@ -129,6 +130,8 @@ The following `FFIType` values are supported.
 | char       | `char`         |                             |
 | napi_env   | `napi_env`     |                             |
 | napi_value | `napi_value`   |                             |
+
+Note: `buffer` arguments must be a `TypedArray` or `DataView`.
 
 ## Strings
 

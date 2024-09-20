@@ -45,6 +45,7 @@ export default function (
         unix: path.resolve(notifyUrl.substring("unix://".length)),
       });
     } else {
+      const { hostname, port } = new URL(notifyUrl);
       notify({
         hostname,
         port: port && port !== "0" ? Number(port) : undefined,

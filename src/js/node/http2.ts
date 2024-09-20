@@ -64,9 +64,8 @@ function validateString(value, name) {
   if (typeof value !== "string") throw new ERR_INVALID_ARG_TYPE(name, "string", value);
 }
 function validateFunction(value, name) {
-  if (typeof value !== 'function')
-    throw new ERR_INVALID_ARG_TYPE(name, 'Function', value);
-};
+  if (typeof value !== "function") throw new ERR_INVALID_ARG_TYPE(name, "Function", value);
+}
 hideFromStack(validateString);
 hideFromStack(validateFunction);
 
@@ -75,10 +74,8 @@ function getAuthority(headers) {
   // or Host to be used equivalently. The first is preferred
   // when making HTTP/2 requests, and the latter is preferred
   // when converting from an HTTP/1 message.
-  if (headers[constants.HTTP2_HEADER_AUTHORITY] !== undefined)
-    return headers[constants.HTTP2_HEADER_AUTHORITY];
-  if (headers[constants.HTTP2_HEADER_HOST] !== undefined)
-    return headers[constants.HTTP2_HEADER_HOST];
+  if (headers[constants.HTTP2_HEADER_AUTHORITY] !== undefined) return headers[constants.HTTP2_HEADER_AUTHORITY];
+  if (headers[constants.HTTP2_HEADER_HOST] !== undefined) return headers[constants.HTTP2_HEADER_HOST];
 }
 function onStreamData(chunk) {
   const request = this[kRequest];
@@ -980,7 +977,7 @@ const constants = {
   HTTP_STATUS_SWITCHING_PROTOCOLS: 101,
   HTTP_STATUS_PROCESSING: 102,
   HTTP_STATUS_EARLY_HINTS: 103,
-  constants.HTTP_STATUS_OK: 200,
+  HTTP_STATUS_OK: 200,
   HTTP_STATUS_CREATED: 201,
   HTTP_STATUS_ACCEPTED: 202,
   HTTP_STATUS_NON_AUTHORITATIVE_INFORMATION: 203,

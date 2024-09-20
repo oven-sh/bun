@@ -185,6 +185,7 @@ function create_release() {
     bun-windows-x64-profile.zip
     bun-windows-x64-baseline.zip
     bun-windows-x64-baseline-profile.zip
+    features.json
   )
 
   function upload_artifact() {

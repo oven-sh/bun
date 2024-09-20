@@ -12,6 +12,10 @@ else()
   set(bunStrip bun)
 endif()
 
+# libbun -> C/C++
+# zigbun -> Zig
+# bun
+
 set(bunExe ${bun}${CMAKE_EXECUTABLE_SUFFIX})
 
 if(bunStrip)
@@ -946,43 +950,31 @@ endif()
 
 # --- Dependencies ---
 
-set(BUN_DEPENDENCIES
-  BoringSSL
-  Brotli
-  Cares
-  LibDeflate
-  LolHtml
-  Lshpack
-  Mimalloc
-  TinyCC
-  Zlib
-  LibArchive # must be loaded after zlib
-  Zstd
+link_targets(
+  TARGET ${bun}
+  ${boringssl}
+  ${brotli}
+  ${cares}
+  ${libarchive}
+  ${libdeflate}
+  ${libuv} ${WIN32}
+  ${lolhtml}
+  ${lshpack}
+  ${mimalloc}
+  ${tinycc}
+  ${sqlite} ${USE_STATIC_SQLITE}
+  ${zlib}
+  ${zstd}
 )
-
-if(WIN32)
-  list(APPEND BUN_DEPENDENCIES Libuv)
-endif()
-
-if(USE_STATIC_SQLITE)
-  list(APPEND BUN_DEPENDENCIES SQLite)
-endif()
-
-foreach(dependency ${BUN_DEPENDENCIES})
-  include(Build${dependency})
-endforeach()
-
-list(TRANSFORM BUN_DEPENDENCIES TOLOWER OUTPUT_VARIABLE BUN_TARGETS)
-add_custom_target(dependencies DEPENDS ${BUN_TARGETS})
-
-if(APPLE)
-  target_link_libraries(${bun} PRIVATE icucore resolv)
-endif()
 
 if(USE_STATIC_SQLITE)
   target_compile_definitions(${bun} PRIVATE LAZY_LOAD_SQLITE=0)
 else()
   target_compile_definitions(${bun} PRIVATE LAZY_LOAD_SQLITE=1)
+endif()
+
+if(APPLE)
+  target_link_libraries(${bun} PRIVATE icucore resolv)
 endif()
 
 if(LINUX)

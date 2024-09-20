@@ -4,7 +4,7 @@ optionx(WEBKIT_VERSION STRING "The version of WebKit to use" DEFAULT "4a2db3254a
 if(WEBKIT_LOCAL)
   set(DEFAULT_WEBKIT_PATH ${VENDOR_PATH}/WebKit/WebKitBuild/${CMAKE_BUILD_TYPE})
 else()
-  set(DEFAULT_WEBKIT_PATH ${VENDOR_PATH}/WebKitPreBuilt/${WEBKIT_VERSION})
+  set(DEFAULT_WEBKIT_PATH ${VENDOR_PATH}/webkit-${WEBKIT_VERSION})
 endif()
 
 optionx(WEBKIT_PATH FILEPATH "The path to the WebKit directory" DEFAULT ${DEFAULT_WEBKIT_PATH})

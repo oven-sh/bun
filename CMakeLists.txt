@@ -38,11 +38,20 @@ include(SetupRust)
 
 # --- Targets ---
 
+include(BuildBoringSSL)
+include(BuildBrotli)
+include(BuildCares)
+include(BuildLibDeflate)
+include(BuildLibuv)
+include(BuildLolHtml)
+include(BuildLshpack)
+include(BuildMimalloc)
+include(BuildTinyCC)
+include(BuildSQLite)
+include(BuildZlib)
+include(BuildLibArchive) # must be loaded after zlib
+include(BuildZstd)
 include(BuildBun)
-print_compiler_flags()
-# resolve_dependencies()
-
-# message(FATAL_ERROR "DONE")
 
 # --- Analysis ---
 

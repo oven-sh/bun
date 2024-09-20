@@ -19,9 +19,9 @@ add_compile_options(-Wall)
 if(NOT CMAKE_C_COMPILER_ID MATCHES "tcc")
   add_compile_options(
     -fno-strict-aliasing
-    -Wdeclaration-after-statement
+    -Wno-declaration-after-statement
     -Wpointer-sign
-    -Wsign-compare
+    -Wno-sign-compare
     -Wunused-result
     -Wformat-truncation
   )

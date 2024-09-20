@@ -1,58 +1,63 @@
+register_vendor_target(mimalloc)
+
 register_repository(
   NAME
-    mimalloc
+    ${mimalloc}
   REPOSITORY
     oven-sh/mimalloc
   COMMIT
     4c283af60cdae205df5a872530c77e2a6a307d43
 )
 
-set(MIMALLOC_CMAKE_ARGS
-  -DMI_BUILD_STATIC=ON
-  -DMI_BUILD_OBJECT=ON
-  -DMI_BUILD_SHARED=OFF
-  -DMI_BUILD_TESTS=OFF
-  -DMI_USE_CXX=ON
-  -DMI_OVERRIDE=OFF
-  -DMI_OSX_ZONE=OFF
-  -DMI_OSX_INTERPOSE=OFF
-  -DMI_SKIP_COLLECT_ON_EXIT=ON
+register_cmake_project(
+  TARGET
+    ${mimalloc}
+  CMAKE_TARGETS
+    mimalloc-static
+    mimalloc-obj
 )
 
-if(DEBUG)
-  list(APPEND MIMALLOC_CMAKE_ARGS -DMI_DEBUG_FULL=ON)
-endif()
+register_cmake_definitions(
+  TARGET ${mimalloc}
+  MI_BUILD_STATIC=ON
+  MI_BUILD_OBJECT=ON
+  MI_BUILD_SHARED=OFF
+  MI_BUILD_TESTS=OFF
+  MI_USE_CXX=ON
+  MI_OVERRIDE=OFF
+  MI_OSX_ZONE=OFF
+  MI_OSX_INTERPOSE=OFF
+  MI_SKIP_COLLECT_ON_EXIT=ON
+)
 
-if(ENABLE_VALGRIND)
-  list(APPEND MIMALLOC_CMAKE_ARGS -DMI_VALGRIND=ON)
-endif()
-
-if(WIN32)
-  if(DEBUG)
-    set(MIMALLOC_LIBRARY mimalloc-static-debug)
-  else()
-    set(MIMALLOC_LIBRARY mimalloc-static)
+if(ENABLE_ASSERTIONS)
+  register_cmake_definitions(
+    TARGET ${mimalloc}
+    MI_DEBUG_FULL=ON
+    MI_SHOW_ERRORS=ON
+  )
+  if(ENABLE_VALGRIND)
+    register_cmake_definitions(
+      TARGET ${mimalloc}
+      MI_VALGRIND=ON
+    )
   endif()
-elseif(DEBUG)
-  set(MIMALLOC_LIBRARY mimalloc-debug)
-else()
-  set(MIMALLOC_LIBRARY mimalloc)
 endif()
 
 # Workaround for linker issue on macOS and Linux x64
 # https://github.com/microsoft/mimalloc/issues/512
 if(APPLE OR (LINUX AND NOT DEBUG))
-  set(MIMALLOC_LIBRARY CMakeFiles/mimalloc-obj.dir/src/static.c.o)
+  register_libraries(
+    TARGET ${mimalloc}
+    PATH CMakeFiles/mimalloc-obj.dir/src
+    static.c.o
+  )
+else()
+  register_libraries(
+    TARGET ${mimalloc}
+    mimalloc-static-debug ${WIN32} AND ${DEBUG}
+    mimalloc-static       ${WIN32} AND ${RELEASE}
+    mimalloc-debug        ${UNIX} AND ${DEBUG}
+    mimalloc              ${UNIX} AND ${RELEASE}
+  )
 endif()
-
-register_cmake_command(
-  TARGET
-    mimalloc
-  TARGETS
-    mimalloc-static
-    mimalloc-obj
-  ARGS
-    ${MIMALLOC_CMAKE_ARGS}
-  LIBRARIES
-    ${MIMALLOC_LIBRARY}
-)

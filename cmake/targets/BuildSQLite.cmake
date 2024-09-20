@@ -1,8 +1,13 @@
-register_cmake_command(
+register_vendor_target(sqlite)
+
+register_cmake_project(
   TARGET
-    sqlite
+    ${sqlite}
   CWD
     ${CWD}/src/bun.js/bindings/sqlite
-  LIBRARIES
-    sqlite3
+)
+
+register_libraries(
+  TARGET ${sqlite}
+  sqlite3
 )

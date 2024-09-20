@@ -1,55 +1,61 @@
+register_vendor_target(libarchive)
+
 register_repository(
   NAME
-    libarchive
+    ${libarchive}
   REPOSITORY
     libarchive/libarchive
   COMMIT
     898dc8319355b7e985f68a9819f182aaed61b53a
 )
 
-register_cmake_command(
+register_cmake_project(
   TARGET
-    libarchive
-  TARGETS
+    ${libarchive}
+  CMAKE_TARGET
     archive_static
-  ARGS
-    -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-    -DBUILD_SHARED_LIBS=OFF
-    -DENABLE_INSTALL=OFF
-    -DENABLE_TEST=OFF
-    -DENABLE_WERROR=OFF
-    -DENABLE_BZIP2=OFF
-    -DENABLE_CAT=OFF
-    -DENABLE_EXPAT=OFF
-    -DENABLE_ICONV=OFF
-    -DENABLE_LIBB2=OFF
-    -DENABLE_LibGCC=OFF
-    -DENABLE_LIBXML2=OFF
-    -DENABLE_LZ4=OFF
-    -DENABLE_LZMA=OFF
-    -DENABLE_LZO=OFF
-    -DENABLE_MBEDTLS=OFF
-    -DENABLE_NETTLE=OFF
-    -DENABLE_OPENSSL=OFF
-    -DENABLE_PCRE2POSIX=OFF
-    -DENABLE_PCREPOSIX=OFF
-    -DENABLE_ZSTD=OFF
-    -DENABLE_ZLIB=OFF
-    -DHAVE_ZLIB_H=ON
-  LIB_PATH
-    libarchive
-  LIBRARIES
-    archive
+)
+
+register_cmake_definitions(
+  TARGET ${libarchive}
+  CMAKE_POSITION_INDEPENDENT_CODE=ON
+  BUILD_SHARED_LIBS=OFF
+  ENABLE_INSTALL=OFF
+  ENABLE_TEST=OFF
+  ENABLE_WERROR=OFF
+  ENABLE_BZIP2=OFF
+  ENABLE_CAT=OFF
+  ENABLE_EXPAT=OFF
+  ENABLE_ICONV=OFF
+  ENABLE_LIBB2=OFF
+  ENABLE_LibGCC=OFF
+  ENABLE_LIBXML2=OFF
+  ENABLE_LZ4=OFF
+  ENABLE_LZMA=OFF
+  ENABLE_LZO=OFF
+  ENABLE_MBEDTLS=OFF
+  ENABLE_NETTLE=OFF
+  ENABLE_OPENSSL=OFF
+  ENABLE_PCRE2POSIX=OFF
+  ENABLE_PCREPOSIX=OFF
+  ENABLE_ZSTD=OFF
+  ENABLE_ZLIB=OFF
+  HAVE_ZLIB_H=ON
+)
+
+register_libraries(
+  TARGET ${libarchive}
+  PATH libarchive
+  archive
 )
 
 # libarchive depends on zlib headers, otherwise it will
 # spawn a processes to compress instead of using the library.
 register_includes(
-  TARGET libarchive
-  DESCRIPTION "Include zlib headers for libarchive"
   ${VENDOR_PATH}/zlib
+  TARGET ${libarchive}
 )
 
-# if(TARGET clone-zlib)
-#   add_dependencies(libarchive clone-zlib)
-# endif()
+if(TARGET clone-zlib)
+  add_dependencies(libarchive clone-zlib)
+endif()

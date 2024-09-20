@@ -33,7 +33,6 @@ macro(find_llvm_command VARIABLE COMMAND)
     PATHS ${LLVM_PATH}
     VERSION ${LLVM_VERSION}
   )
-  list(APPEND CMAKE_ARGS -D${VARIABLE}=${${VARIABLE}})
 endmacro()
 
 macro(find_llvm_command_no_version VARIABLE COMMAND)
@@ -43,7 +42,6 @@ macro(find_llvm_command_no_version VARIABLE COMMAND)
     PATHS ${LLVM_PATH}
     REQUIRED ON
   )
-  list(APPEND CMAKE_ARGS -D${VARIABLE}=${${VARIABLE}})
 endmacro()
 
 if(WIN32)

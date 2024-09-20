@@ -1,25 +1,32 @@
+register_vendor_target(cares)
+
 register_repository(
   NAME
-    cares
+    ${cares}
   REPOSITORY
     c-ares/c-ares
   COMMIT
     d1722e6e8acaf10eb73fa995798a9cd421d9f85e
 )
 
-register_cmake_command(
+register_cmake_project(
   TARGET
-    cares
-  TARGETS
+    ${cares}
+  CMAKE_TARGET
     c-ares
-  ARGS
-    -DCARES_STATIC=ON
-    -DCARES_STATIC_PIC=ON
-    -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-    -DCARES_SHARED=OFF
-    -DCARES_BUILD_TOOLS=OFF
-  LIB_PATH
-    lib
-  LIBRARIES
-    cares
+)
+
+register_cmake_definitions(
+  TARGET ${cares}
+  CARES_STATIC=ON
+  CARES_STATIC_PIC=ON
+  CARES_SHARED=OFF
+  CARES_BUILD_TOOLS=OFF
+  CMAKE_POSITION_INDEPENDENT_CODE=ON
+)
+
+register_libraries(
+  TARGET ${cares}
+  PATH lib
+  cares
 )

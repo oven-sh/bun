@@ -406,9 +406,9 @@ function(register_command)
       DEPENDS ${CMD_EFFECTIVE_OUTPUTS}
       JOB_POOL ${CMD_GROUP}
     )
-    # if(TARGET clone-${CMD_TARGET})
-    #   add_dependencies(${CMD_TARGET} clone-${CMD_TARGET})
-    # endif()
+    if(TARGET clone-${CMD_TARGET})
+      add_dependencies(${CMD_TARGET} clone-${CMD_TARGET})
+    endif()
     set_property(TARGET ${CMD_TARGET} PROPERTY OUTPUT ${CMD_EFFECTIVE_OUTPUTS} APPEND)
     set_property(TARGET ${CMD_TARGET} PROPERTY DEPENDS ${CMD_EFFECTIVE_DEPENDS} APPEND)
   endif()
@@ -592,203 +592,122 @@ function(register_repository)
   )
 endfunction()
 
-# register_cmake_command()
-# Description:
-#   Registers a command that builds an external CMake project.
-# Arguments:
-#   TARGET                    string   - The target to register the command with
-#   ARGS                      string[] - The arguments to pass to CMake (e.g. -DKEY=VALUE)
-#   CWD                       string   - The directory where the CMake files are located
-#   BUILD_PATH                string   - The path to build the project to
-#   LIB_PATH                  string   - The path to the libraries
-#   TARGETS                   string[] - The targets to build from CMake
-#   LIBRARIES                 string[] - The libraries that are built
-function(register_cmake_command)
-  set(args TARGET CWD BUILD_PATH LIB_PATH)
-  set(multiArgs ARGS TARGETS LIBRARIES)
-  # Use "MAKE" instead of "CMAKE" to prevent conflicts with CMake's own CMAKE_* variables
-  cmake_parse_arguments(MAKE "" "${args}" "${multiArgs}" ${ARGN})
-
-  if(NOT MAKE_TARGET)
-    message(FATAL_ERROR "register_cmake_command: TARGET is required")
-  endif()
-
-  if(TARGET ${MAKE_TARGET})
-    message(FATAL_ERROR "register_cmake_command: TARGET is already a target: ${MAKE_TARGET}")
-  endif()
-
-  if(NOT MAKE_CWD)
-    set(MAKE_CWD ${VENDOR_PATH}/${MAKE_TARGET})
-  endif()
-
-  if(NOT MAKE_BUILD_PATH)
-    set(MAKE_BUILD_PATH ${BUILD_PATH}/${MAKE_TARGET})
-  endif()
-
-  if(MAKE_LIB_PATH)
-    set(MAKE_LIB_PATH ${MAKE_BUILD_PATH}/${MAKE_LIB_PATH})
-  else()
-    set(MAKE_LIB_PATH ${MAKE_BUILD_PATH})
-  endif()
-
-  set(MAKE_EFFECTIVE_ARGS -B${MAKE_BUILD_PATH} ${CMAKE_ARGS})
-
-  set(setFlags GENERATOR BUILD_TYPE)
-  set(appendFlags C_FLAGS CXX_FLAGS LINKER_FLAGS)
-  set(specialFlags POSITION_INDEPENDENT_CODE)
-  set(flags ${setFlags} ${appendFlags} ${specialFlags})
-
-  foreach(arg ${MAKE_ARGS})
-    foreach(flag ${flags})
-      if(arg MATCHES "-DCMAKE_${flag}=(.*)")
-        if(DEFINED MAKE_${flag})
-          message(FATAL_ERROR "register_cmake_command: CMAKE_${flag} was already set: \"${MAKE_${flag}}\"")
-        endif()
-        set(MAKE_${flag} ${CMAKE_MATCH_1})
-        set(${arg}_USED ON)
-      endif()
-    endforeach()
-    if(NOT ${arg}_USED)
-      list(APPEND MAKE_EFFECTIVE_ARGS ${arg})
-    endif()
-  endforeach()
-
-  foreach(flag ${setFlags})
-    if(NOT DEFINED MAKE_${flag} AND DEFINED CMAKE_${flag})
-      set(MAKE_${flag} ${CMAKE_${flag}})
-    endif()
-  endforeach()
-
-  foreach(flag ${appendFlags})
-    if(MAKE_${flag})
-      set(MAKE_${flag} "${CMAKE_${flag}} ${MAKE_${flag}}")
-    else()
-      set(MAKE_${flag} ${CMAKE_${flag}})
-    endif()
-  endforeach()
-
-  if(MAKE_POSITION_INDEPENDENT_CODE AND NOT WIN32)
-    set(MAKE_C_FLAGS "${MAKE_C_FLAGS} -fPIC")
-    set(MAKE_CXX_FLAGS "${MAKE_CXX_FLAGS} -fPIC")
-  elseif(APPLE)
-    set(MAKE_C_FLAGS "${MAKE_C_FLAGS} -fno-pic -fno-pie")
-    set(MAKE_CXX_FLAGS "${MAKE_CXX_FLAGS} -fno-pic -fno-pie")
-  endif()
-
-  set(effectiveFlags ${setFlags} ${appendFlags})
-  foreach(flag ${effectiveFlags})
-    list(APPEND MAKE_EFFECTIVE_ARGS "-DCMAKE_${flag}=${MAKE_${flag}}")
-  endforeach()
-
-  if(DEFINED FRESH)
-    list(APPEND MAKE_EFFECTIVE_ARGS --fresh)
-  endif()
-
-  register_command(
-    COMMENT "Configuring ${MAKE_TARGET}"
-    TARGET configure-${MAKE_TARGET}
-    COMMAND ${CMAKE_COMMAND} ${MAKE_EFFECTIVE_ARGS}
-    CWD ${MAKE_CWD}
-    OUTPUTS ${MAKE_BUILD_PATH}/CMakeCache.txt
-  )
-
-  # if(TARGET clone-${MAKE_TARGET})
-  #   add_dependencies(configure-${MAKE_TARGET} clone-${MAKE_TARGET})
-  # endif()
-
-  set(MAKE_BUILD_ARGS --build ${MAKE_BUILD_PATH} --config ${MAKE_BUILD_TYPE})
-
-  set(MAKE_EFFECTIVE_LIBRARIES)
-  set(MAKE_ARTIFACTS)
-  foreach(lib ${MAKE_LIBRARIES})
-    if(lib MATCHES "^(WIN32|UNIX|APPLE)$")
-      if(${lib})
-        continue()
-      else()
-        list(POP_BACK MAKE_ARTIFACTS)
-      endif()
-    else()
-      list(APPEND MAKE_EFFECTIVE_LIBRARIES ${lib})
-      if(lib MATCHES "\\.")
-        list(APPEND MAKE_ARTIFACTS ${MAKE_LIB_PATH}/${lib})
-      else()
-        list(APPEND MAKE_ARTIFACTS ${MAKE_LIB_PATH}/${CMAKE_STATIC_LIBRARY_PREFIX}${lib}${CMAKE_STATIC_LIBRARY_SUFFIX})
-      endif()
-    endif()
-  endforeach()
-
-  if(NOT MAKE_TARGETS)
-    set(MAKE_TARGETS ${MAKE_EFFECTIVE_LIBRARIES})
-  endif()
-
-  foreach(target ${MAKE_TARGETS})
-    list(APPEND MAKE_BUILD_ARGS --target ${target})
-  endforeach()
-
-  register_command(
-    COMMENT "Building ${MAKE_TARGET}"
-    TARGET ${MAKE_TARGET}
-    TARGETS configure-${MAKE_TARGET}
-    COMMAND ${CMAKE_COMMAND} ${MAKE_BUILD_ARGS}
-    CWD ${MAKE_CWD}
-    ARTIFACTS ${MAKE_ARTIFACTS}
-  )
-
-  # HACK: Workaround for duplicate symbols when linking mimalloc.o
-  # >| duplicate symbol '_mi_page_queue_append(mi_heap_s*, mi_page_queue_s*, mi_page_queue_s*)' in:
-  # >| mimalloc/CMakeFiles/mimalloc-obj.dir/src/static.c.o
-  # >| ld: 287 duplicate symbols for architecture arm64
-  if(NOT BUN_LINK_ONLY OR NOT MAKE_ARTIFACTS MATCHES "static.c.o")
-    target_link_libraries(${bun} PRIVATE ${MAKE_ARTIFACTS})
-  endif()
-
-  if(BUN_LINK_ONLY)
-    target_sources(${bun} PRIVATE ${MAKE_ARTIFACTS})
-  endif()
-endfunction()
-
-macro(parse_language variable)
+function(parse_language variable)
   if(NOT ${variable})
-    set(${variable} C CXX)
+    set(${variable} C CXX PARENT_SCOPE)
   endif()
   foreach(value ${${variable}})
     if(NOT value MATCHES "^(C|CXX)$")
       message(FATAL_ERROR "${CMAKE_CURRENT_FUNCTION}: Invalid language: \"${value}\"")
     endif()
   endforeach()
-endmacro()
+endfunction()
 
-macro(parse_target variable)
+function(parse_target variable)
   foreach(value ${${variable}})
     if(NOT TARGET ${value})
       message(FATAL_ERROR "${CMAKE_CURRENT_FUNCTION}: Invalid target: \"${value}\"")
     endif()
   endforeach()
-endmacro()
+endfunction()
 
-macro(parse_list list variable)
+function(parse_path variable)
+  foreach(value ${${variable}})
+    if(NOT IS_ABSOLUTE ${value})
+      message(FATAL_ERROR "${CMAKE_CURRENT_FUNCTION}: ${variable} is not an absolute path: \"${value}\"")
+    endif()
+    if(NOT ${value} MATCHES "^(${CWD}|${BUILD_PATH}|${CACHE_PATH}|${VENDOR_PATH})")
+      message(FATAL_ERROR "${CMAKE_CURRENT_FUNCTION}: ${variable} is not in the source, build, cache, or vendor path: \"${value}\"")
+    endif()
+  endforeach()
+endfunction()
+
+function(parse_list list variable)
   set(${variable})
+  
+  macro(check_expression)
+    if(DEFINED expression)
+      if(NOT (${expression}))
+        list(POP_BACK ${variable})
+      endif()
+      unset(expression)
+    endif()
+  endmacro()
+
   foreach(item ${${list}})
-    if(item STREQUAL "ON")
-      continue()
-    elseif(item STREQUAL "OFF")
-      list(POP_BACK ${variable})
+    if(item MATCHES "^(ON|OFF|AND|OR|NOT)$")
+      set(expression ${expression} ${item})
     else()
+      check_expression()
       list(APPEND ${variable} ${item})
     endif()
   endforeach()
-endmacro()
+  check_expression()
 
-macro(parse_path variable)
-  foreach(value ${${variable}})
-    if(NOT IS_ABSOLUTE ${value})
-      message(FATAL_ERROR "${CMAKE_CURRENT_FUNCTION}: Path is not absolute: \"${value}\"")
-    endif()
-    if(NOT ${value} MATCHES "^(${CWD}|${BUILD_PATH}|${CACHE_PATH}|${VENDOR_PATH})")
-      message(FATAL_ERROR "${CMAKE_CURRENT_FUNCTION}: Path is not in the source, build, cache, or vendor directory: \"${value}\"")
+  if(NOT ${variable})
+    message(FATAL_ERROR "${CMAKE_CURRENT_FUNCTION}: ${variable} is empty")
+  endif()
+
+  set(${variable} ${${variable}} PARENT_SCOPE)
+endfunction()
+
+# register_target()
+# Description:
+#   Registers a target that does nothing.
+# Arguments:
+#   target string - The name of the target
+function(register_target target)
+  add_custom_target(${target})
+  set(${target} ${target} PARENT_SCOPE)
+endfunction()
+
+# register_vendor_target()
+# Description:
+#   Registers a target that does nothing.
+# Arguments:
+#   target string - The name of the target
+function(register_vendor_target target)
+  add_custom_target(${target})
+  set(${target} ${target} PARENT_SCOPE)
+  if(NOT TARGET vendor)
+    add_custom_target(vendor)
+  endif()
+  add_dependencies(vendor ${target})
+endfunction()
+
+# register_libraries()
+# Description:
+#   Registers libraries that are built from a target.
+# Arguments:
+#   TARGET    string   - The target that builds the libraries
+#   PATH      string   - The path to the libraries
+#   libraries string[] - The libraries to register
+function(register_libraries)
+  set(args TARGET PATH)
+  cmake_parse_arguments(LIBRARY "" "${args}" "" ${ARGN})
+
+  parse_target(LIBRARY_TARGET)
+  parse_list(LIBRARY_UNPARSED_ARGUMENTS LIBRARY_NAMES)
+
+  if(LIBRARY_PATH)
+    set(LIBRARY_PATH ${BUILD_PATH}/vendor/${LIBRARY_TARGET}/${LIBRARY_PATH})
+  else()
+    set(LIBRARY_PATH ${BUILD_PATH}/vendor/${LIBRARY_TARGET})
+  endif()
+  parse_path(LIBRARY_PATH)
+
+  set(LIBRARY_PATHS)
+  foreach(name ${LIBRARY_NAMES})
+    if(name MATCHES "\\.")
+      list(APPEND LIBRARY_PATHS ${LIBRARY_PATH}/${name})
+    else()
+      list(APPEND LIBRARY_PATHS ${LIBRARY_PATH}/${CMAKE_STATIC_LIBRARY_PREFIX}${name}${CMAKE_STATIC_LIBRARY_SUFFIX})
     endif()
   endforeach()
-endmacro()
+
+  set_property(TARGET ${LIBRARY_TARGET} PROPERTY OUTPUT ${LIBRARY_PATHS} APPEND)
+  set_property(TARGET ${LIBRARY_TARGET} PROPERTY LIBRARIES ${LIBRARY_PATHS} APPEND)
+endfunction()
 
 # register_compiler_flags()
 # Description:
@@ -976,6 +895,141 @@ function(register_includes)
   endforeach()
 endfunction()
 
+# register_cmake_project()
+# Description:
+#   Registers an external CMake project.
+# Arguments:
+#   TARGET       string   - The target to associate the project
+#   CWD          string   - The working directory of the project
+#   CMAKE_TARGET string[] - The CMake targets to build
+#   CMAKE_PATH   string   - The path to the CMake project (default: CWD)
+function(register_cmake_project)
+  set(args TARGET CWD CMAKE_PATH)
+  set(multiArgs CMAKE_TARGET)
+  cmake_parse_arguments(PROJECT "" "${args}" "${multiArgs}" ${ARGN})
+
+  parse_target(PROJECT_TARGET)
+  
+  if(NOT PROJECT_CWD)
+    set(PROJECT_CWD ${VENDOR_PATH}/${PROJECT_TARGET})
+  endif()
+  parse_path(PROJECT_CWD)
+
+  if(PROJECT_CMAKE_PATH)
+    set(PROJECT_CMAKE_PATH ${PROJECT_CWD}/${PROJECT_CMAKE_PATH})
+  else()
+    set(PROJECT_CMAKE_PATH ${PROJECT_CWD})
+  endif()
+  parse_path(PROJECT_CMAKE_PATH)
+
+  set(PROJECT_BUILD_PATH ${BUILD_PATH}/vendor/${PROJECT_TARGET})
+  set(PROJECT_TOOLCHAIN ${PROJECT_BUILD_PATH}/CMakeLists-toolchain.txt)
+
+  register_command(
+    TARGET
+      configure-${PROJECT_TARGET}
+    COMMENT
+      "Configuring ${PROJECT_TARGET}"
+    COMMAND
+      ${CMAKE_COMMAND}
+        -G ${CMAKE_GENERATOR}
+        -B ${PROJECT_BUILD_PATH}
+        -S ${PROJECT_CMAKE_PATH}
+        --toolchain ${PROJECT_TOOLCHAIN}
+        --fresh
+        -DCMAKE_POLICY_DEFAULT_CMP0077=NEW
+    CWD
+      ${PROJECT_CWD}
+    SOURCES
+      ${PROJECT_TOOLCHAIN}
+    OUTPUTS
+      ${PROJECT_BUILD_PATH}/CMakeCache.txt
+  )
+
+  if(TARGET clone-${PROJECT_TARGET})
+    add_dependencies(configure-${PROJECT_TARGET} clone-${PROJECT_TARGET})
+  endif()
+
+  set(PROJECT_BUILD_ARGS --build ${PROJECT_BUILD_PATH})
+  foreach(target ${PROJECT_CMAKE_TARGET})
+    list(APPEND PROJECT_BUILD_ARGS --target ${target})
+  endforeach()
+
+  register_command(
+    TARGET
+      build-${PROJECT_TARGET}
+    COMMENT
+      "Building ${PROJECT_TARGET}"
+    COMMAND
+      ${CMAKE_COMMAND}
+        ${PROJECT_BUILD_ARGS}
+    CWD
+      ${PROJECT_CWD}
+    TARGETS
+      configure-${PROJECT_TARGET}
+  )
+
+  add_dependencies(${PROJECT_TARGET} build-${PROJECT_TARGET})
+  
+  cmake_language(EVAL CODE "cmake_language(DEFER CALL create_toolchain_file ${PROJECT_TOOLCHAIN} ${PROJECT_TARGET})")
+endfunction()
+
+# register_cmake_definitions()
+# Description:
+#   Registers definitions, when compiling an external CMake project.
+# Arguments:
+#   TARGET string        - The target to register the definitions (if not defined, sets for all targets)
+#   DESCRIPTION string   - The description of the definitions
+#   definitions string[] - The definitions to register
+function(register_cmake_definitions)
+  set(args TARGET DESCRIPTION)
+  cmake_parse_arguments(CMAKE "" "${args}" "" ${ARGN})
+
+  parse_target(CMAKE_TARGET)
+  parse_list(CMAKE_UNPARSED_ARGUMENTS CMAKE_EXTRA_DEFINITIONS)
+
+  foreach(definition ${CMAKE_EXTRA_DEFINITIONS})
+    string(REGEX MATCH "^([^=]+)=(.*)$" match ${definition})
+    if(NOT match)
+      message(FATAL_ERROR "${CMAKE_CURRENT_FUNCTION}: Invalid definition: ${definition}")
+    endif()
+  endforeach()
+
+  if(CMAKE_TARGET)
+    set(${CMAKE_TARGET}_CMAKE_DEFINITIONS ${${CMAKE_TARGET}_CMAKE_DEFINITIONS} ${CMAKE_EXTRA_DEFINITIONS} PARENT_SCOPE)
+  else()
+    set(CMAKE_DEFINITIONS ${CMAKE_DEFINITIONS} ${CMAKE_EXTRA_DEFINITIONS} PARENT_SCOPE)
+  endif()
+endfunction()
+
+# link_targets()
+# Description:
+#   Links the libraries of one target to another.
+# Arguments:
+#   TARGET  string   - The main target
+#   targets string[] - The targets to link to the main target
+function(link_targets)
+  set(args TARGET)
+  cmake_parse_arguments(LINK "" "${args}" "" ${ARGN})
+
+  parse_target(LINK_TARGET)
+  get_target_property(type ${LINK_TARGET} TYPE)
+  if(NOT type MATCHES "EXECUTABLE|LIBRARY")
+    message(FATAL_ERROR "${CMAKE_CURRENT_FUNCTION}: Target is not an executable or library: ${LINK_TARGET}")
+  endif()
+
+  parse_list(LINK_UNPARSED_ARGUMENTS LINK_TARGETS)
+  parse_target(LINK_TARGETS)
+
+  foreach(target ${LINK_TARGETS})
+    get_target_property(libraries ${target} LIBRARIES)
+    if(NOT libraries)
+      message(FATAL_ERROR "${CMAKE_CURRENT_FUNCTION}: Target does not have libraries: ${target}")
+    endif()
+    target_link_libraries(${LINK_TARGET} PRIVATE ${libraries})
+  endforeach()
+endfunction()
+
 function(print_compiler_flags)
   get_property(targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
   set(languages C CXX LINKER)
@@ -1044,4 +1098,91 @@ function(resolve_dependencies)
       endif()
     endforeach()
   endforeach()
+endfunction()
+
+# create_toolchain_file()
+# Description:
+#   Creates a CMake toolchain file.
+# Arguments:
+#   filename string - The path to create the toolchain file
+#   target   string - The target to create the toolchain file
+function(create_toolchain_file filename target)
+  parse_path(filename)
+  parse_target(target)
+
+  set(lines)
+
+  if(CMAKE_TOOLCHAIN_FILE)
+    file(STRINGS ${CMAKE_TOOLCHAIN_FILE} lines)
+    list(PREPEND lines "# Copied from ${CMAKE_TOOLCHAIN_FILE}")
+  endif()
+
+  list(APPEND lines "# Generated from ${CMAKE_CURRENT_FUNCTION} in ${CMAKE_CURRENT_LIST_FILE}")
+
+  set(variables
+    CMAKE_BUILD_TYPE
+    CMAKE_EXPORT_COMPILE_COMMANDS
+    CMAKE_COLOR_DIAGNOSTICS
+    CMAKE_C_COMPILER
+    CMAKE_C_COMPILER_LAUNCHER
+    CMAKE_CXX_COMPILER
+    CMAKE_CXX_COMPILER_LAUNCHER
+    CMAKE_LINKER
+    CMAKE_AR
+    CMAKE_RANLIB
+    CMAKE_STRIP
+    CMAKE_OSX_SYSROOT
+    CMAKE_OSX_DEPLOYMENT_TARGET
+  )
+
+  macro(append variable value)
+    if(value MATCHES " ")
+      list(APPEND lines "set(${variable} \"${value}\")")
+    else()
+      list(APPEND lines "set(${variable} ${value})")
+    endif()
+  endmacro()
+
+  foreach(variable ${variables})
+    if(DEFINED ${variable})
+      append(${variable} ${${variable}})
+    endif()
+  endforeach()
+
+  set(flags
+    CMAKE_C_FLAGS
+    CMAKE_CXX_FLAGS
+    CMAKE_LINKER_FLAGS
+  )
+
+  foreach(flag ${flags})
+    set(value)
+    if(DEFINED ${flag})
+      set(value "${${flag}}")
+    endif()
+    if(DEFINED ${target}_${flag})
+      set(value "${value} ${${target}_${flag}}")
+    endif()
+    if(value)
+      append(${flag} ${value})
+    endif()
+  endforeach()
+
+  set(definitions
+    CMAKE_DEFINITIONS
+    ${target}_CMAKE_DEFINITIONS
+  )
+
+  foreach(definition ${definitions})
+    foreach(entry ${${definition}})
+      string(REGEX MATCH "^([^=]+)=(.*)$" match ${entry})
+      if(NOT match)
+        message(FATAL_ERROR "Invalid definition: ${entry}")
+      endif()
+      append(${CMAKE_MATCH_1} ${CMAKE_MATCH_2})
+    endforeach()
+  endforeach()
+
+  list(JOIN lines "\n" lines)
+  file(GENERATE OUTPUT ${filename} CONTENT "${lines}\n")
 endfunction()

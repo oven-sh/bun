@@ -60,11 +60,6 @@ describe("napi", () => {
     });
   });
 
-  it("threadsafe function does not hang on finalize", () => {
-    const result = checkSameOutput("test_napi_threadsafe_function_does_not_hang_after_finalize", []);
-    expect(result).toBe("success!");
-  });
-
   it("#1288", async () => {
     const result = checkSameOutput("self", []);
     expect(result).toBe("hello world!");
@@ -123,6 +118,17 @@ describe("napi", () => {
     });
     it("allows creating a handle scope in the finalizer", () => {
       checkSameOutput("test_napi_handle_scope_finalizer", []);
+    });
+  });
+
+  describe("napi_threadsafe_function", () => {
+    it("keeps the event loop alive without async_work", () => {
+      checkSameOutput("test_promise_with_threadsafe_function", []);
+    });
+
+    it("does not hang on finalize", () => {
+      const result = checkSameOutput("test_napi_threadsafe_function_does_not_hang_after_finalize", []);
+      expect(result).toBe("success!");
     });
   });
 });

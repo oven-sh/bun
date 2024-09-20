@@ -39,6 +39,11 @@ pub const Composes = struct {
     /// The source location of the `composes` property.
     loc: Location,
 
+    pub fn parse(input: *css.Parser) css.Result(Composes) {
+        _ = input; // autofix
+        @panic(css.todo_stuff.depth);
+    }
+
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
         var first = true;
         for (this.names.items) |name| {

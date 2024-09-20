@@ -1087,7 +1087,7 @@ pub const MediaFeatureValue = union(enum) {
                     .result => |v| v,
                     .err => |e| return .{ .err = e },
                 } },
-                .length => .{ .integer = switch (Length.parse(input)) {
+                .length => .{ .length = switch (Length.parse(input)) {
                     .result => |v| v,
                     .err => |e| return .{ .err = e },
                 } },
@@ -1297,19 +1297,19 @@ pub fn MediaFeatureName(comptime FeatureId: type) type {
                 FeatureId,
                 final_name,
                 FeatureId.parse,
-            )) |standard| {
-                return .{
+            ).asValue()) |standard| {
+                return .{ .result = .{
                     .{ .standard = standard },
                     comparator,
-                };
+                } };
             }
 
-            return .{
+            return .{ .result = .{
                 .{
                     .unknown = ident,
                 },
                 null,
-            };
+            } };
         }
     };
 }

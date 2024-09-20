@@ -289,7 +289,11 @@ pub const Length = union(enum) {
     pub fn parse(input: *css.Parser) Result(Length) {
         if (input.tryParse(Calc(Length).parse, .{}).asValue()) |calc_value| {
             // PERF: I don't like this redundant allocation
-            if (calc_value == .value) return .{ .result = .{ .calc = calc_value.value.* } };
+            if (calc_value == .value) {
+                const ret = calc_value.value.*;
+                defer calc_value.deinit(input.allocator());
+                return .{ .result = ret };
+            }
             return .{ .result = .{
                 .calc = bun.create(
                     input.allocator(),

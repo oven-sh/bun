@@ -13,7 +13,7 @@ pub const Percentage = struct {
     v: CSSNumber,
 
     pub fn parse(input: *css.Parser) Result(Percentage) {
-        if (input.tryParse(Calc(Percentage), .{}).asValue()) |calc_value| {
+        if (input.tryParse(Calc(Percentage).parse, .{}).asValue()) |calc_value| {
             if (calc_value == .value) |v| return v.*;
             // Percentages are always compatible, so they will always compute to a value.
             bun.unreachablePanic("Percentages are always compatible, so they will always compute to a value.", .{});

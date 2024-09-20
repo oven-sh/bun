@@ -6,6 +6,7 @@ const Log = logger.Log;
 
 pub const css = @import("./css_parser.zig");
 const CSSString = css.CSSString;
+const CSSStringFns = css.CSSStringFns;
 
 pub const Printer = css.Printer;
 pub const PrintErr = css.PrintErr;
@@ -57,7 +58,7 @@ pub const api = struct {
     };
 
     /// The definition of whitespace per CSS Selectors Level 3 § 4.
-    pub const SELECTOR_WHITESPACE: []const u8 = &u8{ ' ', '\t', '\n', '\r', 0x0C };
+    pub const SELECTOR_WHITESPACE: []const u8 = &[_]u8{ ' ', '\t', '\n', '\r', 0x0C };
 
     pub fn ValidSelectorImpl(comptime T: type) void {
         _ = T.SelectorImpl.ExtraMatchingData;
@@ -108,6 +109,11 @@ pub const api = struct {
 
                 const This = @This();
 
+                const BuildResult = struct {
+                    specifity_and_flags: SpecifityAndFlags,
+                    components: ArrayList(GenericComponent(Impl)),
+                };
+
                 pub inline fn init(allocator: Allocator) This {
                     return This{
                         .allocator = allocator,
@@ -138,6 +144,11 @@ pub const api = struct {
                     this.simple_selectors.insert(this.allocator, 0, .nesting) catch bun.outOfMemory();
                 }
 
+                pub fn deinit(this: *This) void {
+                    _ = this; // autofix
+                    @panic(css.todo_stuff.depth);
+                }
+
                 /// Consumes the builder, producing a Selector.
                 ///
                 /// *NOTE*: This will free all allocated memory in the builder
@@ -147,10 +158,7 @@ pub const api = struct {
                     parsed_pseudo: bool,
                     parsed_slotted: bool,
                     parsed_part: bool,
-                ) struct {
-                    specifity_and_flags: SpecifityAndFlags,
-                    components: ArrayList(GenericComponent(Impl)),
-                } {
+                ) BuildResult {
                     const specifity = compute_specifity(Impl, this.simple_selectors.items);
                     var flags = SelectorFlags.empty();
                     // PERF: is it faster to do these ORs all at once
@@ -169,10 +177,7 @@ pub const api = struct {
                 }
 
                 // TODO: make sure this is correct transliteration of the unsafe Rust original
-                pub fn buildWithSpecificityAndFlags(this: *This, spec: SpecifityAndFlags) struct {
-                    specifity_and_flags: SpecifityAndFlags,
-                    components: ArrayList(GenericComponent(Impl)),
-                } {
+                pub fn buildWithSpecificityAndFlags(this: *This, spec: SpecifityAndFlags) BuildResult {
                     const T = GenericComponent(Impl);
                     const rest: []const T, const current: []const T = splitFromEnd(T, this.simple_selectors.items, this.current_len);
                     const combinators = this.combinators.items;
@@ -204,7 +209,7 @@ pub const api = struct {
                             current_simple_selectors_i += 1;
                         } else {
                             if (combinator_i >= 0) {
-                                const combo: Combinator, const len: usize = combinators[combinator_i];
+                                const combo: Combinator, const len: usize = combinators[@intCast(combinator_i)];
                                 const rest2, const current2 = splitFromEnd(GenericComponent(Impl), rest_of_simple_selectors, len);
                                 rest_of_simple_selectors = rest2;
                                 current_simple_selectors_i = 0;
@@ -265,11 +270,12 @@ pub const api = struct {
                         .exists => {},
                         .with_value => |v| {
                             try v.operator.toCss(W, dest);
-                            try v.expected_value.toCss(dest);
+                            // try v.expected_value.toCss(dest);
+                            try CSSStringFns.toCss(&v.expected_value, W, dest);
                             switch (v.case_sensitivity) {
                                 .case_sensitive, .ascii_case_insensitive_if_in_html_element_in_html_document => {},
                                 .ascii_case_insensitive => {
-                                    try dest.writeChar(" i");
+                                    try dest.writeStr(" i");
                                 },
                                 .explicit_case_sensitive => {
                                     try dest.writeStr(" s");
@@ -353,8 +359,8 @@ pub const api = struct {
         const MAX_10BIT: u32 = (1 << 10) - 1;
 
         pub fn toU32(this: Specifity) u32 {
-            return (@min(this.id_selectors, MAX_10BIT) << @as(u32, 20)) |
-                (@min(this.class_like_selectors, MAX_10BIT) << @as(u32, 10)) |
+            return @as(u32, @as(u32, @min(this.id_selectors, MAX_10BIT)) << @as(u32, 20)) |
+                @as(u32, @as(u32, @min(this.class_like_selectors, MAX_10BIT)) << @as(u32, 10)) |
                 @min(this.element_selectors, MAX_10BIT);
         }
 
@@ -409,13 +415,13 @@ pub const api = struct {
                 // pseudo-elements.
                 //
                 // See: https://github.com/w3c/csswg-drafts/issues/1915
-                specifity.add(selector.specifity());
+                specifity.add(Specifity.fromU32(selector.specifity()));
             },
             .host => |maybe_selector| {
                 specifity.class_like_selectors += 1;
                 if (maybe_selector) |*selector| {
                     // See: https://github.com/w3c/csswg-drafts/issues/1915
-                    specifity.add(selector.specifity());
+                    specifity.add(Specifity.fromU32(selector.specifity()));
                 }
             },
             .id => {
@@ -469,7 +475,6 @@ pub const api = struct {
             .has,
             .explicit_universal_type,
             .explicit_any_namespace,
-            .any_namespace,
             .explicit_no_namespace,
             .default_namespace,
             .namespace,
@@ -564,6 +569,7 @@ pub const api = struct {
                 }
 
                 input.reset(&before_this_token);
+
                 if (any_whitespace) {
                     combinator = .descendant;
                     break;
@@ -899,7 +905,7 @@ pub const api = struct {
         /// The [:target](https://drafts.csswg.org/selectors-4/#the-target-pseudo) pseudo class.
         target,
         /// The [:target-within](https://drafts.csswg.org/selectors-4/#the-target-within-pseudo) pseudo class.
-        taget_within,
+        target_within,
         /// The [:visited](https://drafts.csswg.org/selectors-4/#visited-pseudo) pseudo class.
         visited,
 
@@ -975,9 +981,31 @@ pub const api = struct {
             // PERF(alloc): I don't like making these little allocations
             const writer = s.writer(dest.allocator);
             const W2 = @TypeOf(writer);
-            var printer = Printer(W2).new(dest.allocator, css.PrinterOptions{});
+            const scratchbuf = std.ArrayList(u8).init(dest.allocator);
+            var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions{});
             try serialize.serializePseudoClass(this, W2, &printer, null);
             return dest.writeStr(s.items);
+        }
+
+        pub fn isUserActionState(this: *const PseudoClass) bool {
+            return switch (this.*) {
+                .active, .hover => true,
+                else => false,
+            };
+        }
+
+        pub fn isValidBeforeWebkitScrollbar(this: *const PseudoClass) bool {
+            return !switch (this.*) {
+                .webkit_scrollbar => true,
+                else => false,
+            };
+        }
+
+        pub fn isValidAfterWebkitScrollbar(this: *const PseudoClass) bool {
+            return switch (this.*) {
+                .webkit_scrollbar, .enabled, .disabled, .hover, .active => true,
+                else => false,
+            };
         }
     };
 
@@ -1044,6 +1072,18 @@ pub const api = struct {
             @panic(css.todo_stuff.depth);
         }
 
+        fn parseIsAndWhere(this: *const SelectorParser) bool {
+            _ = this; // autofix
+            return true;
+        }
+
+        /// Whether the given function name is an alias for the `:is()` function.
+        fn parseAnyPrefix(this: *const SelectorParser, name: []const u8) ?css.VendorPrefix {
+            _ = this; // autofix
+            _ = name; // autofix
+            return null;
+        }
+
         pub fn parseNonTsPseudoClass(
             this: *SelectorParser,
             loc: css.SourceLocation,
@@ -1098,16 +1138,16 @@ pub const api = struct {
                     break :pseudo_class .volume_locked;
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "fullscreen")) {
                     // https://fullscreen.spec.whatwg.org/#:fullscreen-pseudo-class
-                    break :pseudo_class .{ .fullscreen = .none };
+                    break :pseudo_class .{ .fullscreen = css.VendorPrefix{ .none = true } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-webkit-full-screen")) {
                     // https://fullscreen.spec.whatwg.org/#:fullscreen-pseudo-class
-                    break :pseudo_class .{ .fullscreen = .webkit };
+                    break :pseudo_class .{ .fullscreen = css.VendorPrefix{ .webkit = true } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-moz-full-screen")) {
                     // https://fullscreen.spec.whatwg.org/#:fullscreen-pseudo-class
-                    break :pseudo_class .{ .fullscreen = .moz_document };
+                    break :pseudo_class .{ .fullscreen = css.VendorPrefix{ .moz = true } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-ms-fullscreen")) {
                     // https://fullscreen.spec.whatwg.org/#:fullscreen-pseudo-class
-                    break :pseudo_class .{ .fullscreen = .ms };
+                    break :pseudo_class .{ .fullscreen = css.VendorPrefix{ .ms = true } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "open")) {
                     // https://drafts.csswg.org/selectors/#display-state-pseudos
                     break :pseudo_class .open;
@@ -1128,13 +1168,13 @@ pub const api = struct {
                     break :pseudo_class .defined;
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "any-link")) {
                     // https://drafts.csswg.org/selectors-4/#location
-                    break :pseudo_class .{ .any_link = .none };
+                    break :pseudo_class .{ .any_link = css.VendorPrefix{ .none = true } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-webkit-any-link")) {
                     // https://drafts.csswg.org/selectors-4/#location
-                    break :pseudo_class .{ .any_link = .webkit };
+                    break :pseudo_class .{ .any_link = css.VendorPrefix{ .webkit = true } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-moz-any-link")) {
                     // https://drafts.csswg.org/selectors-4/#location
-                    break :pseudo_class .{ .any_link = .moz };
+                    break :pseudo_class .{ .any_link = css.VendorPrefix{ .moz = true } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "link")) {
                     // https://drafts.csswg.org/selectors-4/#location
                     break :pseudo_class .link;
@@ -1158,25 +1198,25 @@ pub const api = struct {
                     break :pseudo_class .disabled;
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "read-only")) {
                     // https://drafts.csswg.org/selectors-4/#input-pseudos
-                    break :pseudo_class .{ .read_only = .none };
+                    break :pseudo_class .{ .read_only = css.VendorPrefix{ .none = true } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-moz-read-only")) {
                     // https://drafts.csswg.org/selectors-4/#input-pseudos
-                    break :pseudo_class .{ .read_only = .moz };
+                    break :pseudo_class .{ .read_only = css.VendorPrefix{ .moz = true } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "read-write")) {
                     // https://drafts.csswg.org/selectors-4/#input-pseudos
-                    break :pseudo_class .{ .read_write = .none };
+                    break :pseudo_class .{ .read_write = css.VendorPrefix{ .none = true } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-moz-read-write")) {
                     // https://drafts.csswg.org/selectors-4/#input-pseudos
-                    break :pseudo_class .{ .read_write = .moz };
+                    break :pseudo_class .{ .read_write = css.VendorPrefix{ .moz = true } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "placeholder-shown")) {
                     // https://drafts.csswg.org/selectors-4/#input-pseudos
-                    break :pseudo_class .{ .placeholder_shown = .none };
+                    break :pseudo_class .{ .placeholder_shown = css.VendorPrefix{ .none = true } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-moz-placeholder-shown")) {
                     // https://drafts.csswg.org/selectors-4/#input-pseudos
-                    break :pseudo_class .{ .placeholder_shown = .moz };
+                    break :pseudo_class .{ .placeholder_shown = css.VendorPrefix{ .moz = true } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-ms-placeholder-shown")) {
                     // https://drafts.csswg.org/selectors-4/#input-pseudos
-                    break :pseudo_class .{ .placeholder_shown = .ms };
+                    break :pseudo_class .{ .placeholder_shown = css.VendorPrefix{ .ms = true } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "default")) {
                     // https://drafts.csswg.org/selectors-4/#input-pseudos
                     break :pseudo_class .default;
@@ -1215,13 +1255,13 @@ pub const api = struct {
                     break :pseudo_class .user_invalid;
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "autofill")) {
                     // https://html.spec.whatwg.org/multipage/semantics-other.html#selector-autofill
-                    break :pseudo_class .{ .autofill = .none };
+                    break :pseudo_class .{ .autofill = css.VendorPrefix{ .none = true } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-webkit-autofill")) {
                     // https://html.spec.whatwg.org/multipage/semantics-other.html#selector-autofill
-                    break :pseudo_class .{ .autofill = .webkit };
+                    break :pseudo_class .{ .autofill = css.VendorPrefix{ .webkit = true } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-o-autofill")) {
                     // https://html.spec.whatwg.org/multipage/semantics-other.html#selector-autofill
-                    break :pseudo_class .{ .autofill = .o };
+                    break :pseudo_class .{ .autofill = css.VendorPrefix{ .o = true } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "horizontal")) {
                     // https://webkit.org/blog/363/styling-scrollbars/
                     break :pseudo_class .{ .webkit_scrollbar = .horizontal };
@@ -1259,11 +1299,11 @@ pub const api = struct {
                     if (bun.strings.startsWithChar(name, '_')) {
                         this.options.warn(loc.newCustomError(SelectorParseErrorKind{ .unsupported_pseudo_class_or_element = name }));
                     }
-                    return PseudoClass{ .custom = name };
+                    return .{ .result = PseudoClass{ .custom = .{ .name = name } } };
                 }
             };
 
-            return pseudo_class;
+            return .{ .result = pseudo_class };
         }
 
         pub fn parseNonTsFunctionalPseudoClass(
@@ -1279,9 +1319,9 @@ pub const api = struct {
                         .err => |e| return .{ .err = e },
                         .result => |v| v,
                     };
-                    return PseudoClass{
+                    return .{ .result = PseudoClass{
                         .lang = .{ .languages = languages },
-                    };
+                    } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "dir")) {
                     break :pseudo_class PseudoClass{
                         .dir = .{
@@ -1295,7 +1335,7 @@ pub const api = struct {
                     break :pseudo_class PseudoClass{
                         .local = .{
                             .selector = brk: {
-                                const selector = switch (Selector.parse()) {
+                                const selector = switch (Selector.parse(this, parser)) {
                                     .err => |e| return .{ .err = e },
                                     .result => |v| v,
                                 };
@@ -1308,7 +1348,7 @@ pub const api = struct {
                     break :pseudo_class PseudoClass{
                         .global = .{
                             .selector = brk: {
-                                const selector = switch (Selector.parse()) {
+                                const selector = switch (Selector.parse(this, parser)) {
                                     .err => |e| return .{ .err = e },
                                     .result => |v| v,
                                 };
@@ -1319,7 +1359,7 @@ pub const api = struct {
                     };
                 } else {
                     if (!bun.strings.startsWithChar(name, '-')) {
-                        this.options.warn(parser.newCustomError(SelectorParseErrorKind{ .unsupported_pseudo_class_or_element = name }));
+                        this.options.warn(parser.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .unsupported_pseudo_class_or_element = name })));
                     }
                     var args = ArrayList(css.css_properties.custom.TokenOrValue){};
                     _ = switch (css.TokenListFns.parseRaw(parser, &args, this.options, 0)) {
@@ -1329,13 +1369,13 @@ pub const api = struct {
                     break :pseudo_class PseudoClass{
                         .custom_function = .{
                             .name = name,
-                            .arguments = args,
+                            .arguments = css.TokenList{ .v = args },
                         },
                     };
                 }
             };
 
-            return pseudo_class;
+            return .{ .result = pseudo_class };
         }
 
         pub fn isNestingAllowed(this: *SelectorParser) bool {
@@ -1382,30 +1422,30 @@ pub const api = struct {
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "cue-region")) {
                     break :pseudo_element .cue_region;
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "selection")) {
-                    break :pseudo_element .{ .selection = .none };
+                    break :pseudo_element .{ .selection = css.VendorPrefix{ .none = true } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-moz-selection")) {
-                    break :pseudo_element .{ .selection = .moz };
+                    break :pseudo_element .{ .selection = css.VendorPrefix{ .moz = true } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "placeholder")) {
-                    break :pseudo_element .{ .placeholder = .none };
+                    break :pseudo_element .{ .placeholder = css.VendorPrefix{ .none = true } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-webkit-input-placeholder")) {
-                    break :pseudo_element .{ .placeholder = .webkit };
+                    break :pseudo_element .{ .placeholder = css.VendorPrefix{ .webkit = true } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-moz-placeholder")) {
-                    break :pseudo_element .{ .placeholder = .moz };
+                    break :pseudo_element .{ .placeholder = css.VendorPrefix{ .moz = true } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-ms-input-placeholder")) {
                     // this is a bugin hte source
-                    break :pseudo_element .{ .placeholder = .ms };
+                    break :pseudo_element .{ .placeholder = css.VendorPrefix{ .ms = true } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "marker")) {
-                    break :pseudo_element .maker;
+                    break :pseudo_element .marker;
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "backdrop")) {
-                    break :pseudo_element .{ .backdrop = .none };
+                    break :pseudo_element .{ .backdrop = css.VendorPrefix{ .none = true } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-webkit-backdrop")) {
-                    break :pseudo_element .{ .backdrop = .webkit };
+                    break :pseudo_element .{ .backdrop = css.VendorPrefix{ .webkit = true } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "file-selector-button")) {
-                    break :pseudo_element .{ .file_selector_button = .none };
+                    break :pseudo_element .{ .file_selector_button = css.VendorPrefix{ .none = true } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-webkit-file-upload-button")) {
-                    break :pseudo_element .{ .file_selector_button = .webkit };
+                    break :pseudo_element .{ .file_selector_button = css.VendorPrefix{ .webkit = true } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-ms-browse")) {
-                    break :pseudo_element .{ .file_selector_button = .ms };
+                    break :pseudo_element .{ .file_selector_button = css.VendorPrefix{ .ms = true } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-webkit-scrollbar")) {
                     break :pseudo_element .{ .webkit_scrollbar = .scrollbar };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-webkit-scrollbar-button")) {
@@ -1423,14 +1463,14 @@ pub const api = struct {
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "view-transition")) {
                     break :pseudo_element .view_transition;
                 } else {
-                    if (bun.strings.startsWith(name, '-')) {
+                    if (bun.strings.startsWithChar(name, '-')) {
                         this.options.warn(loc.newCustomError(SelectorParseErrorKind{ .unsupported_pseudo_class_or_element = name }));
                     }
-                    return PseudoElement{ .custom = name };
+                    return .{ .result = PseudoElement{ .custom = .{ .name = name } } };
                 }
             };
 
-            return pseudo_element;
+            return .{ .result = pseudo_element };
         }
     };
 
@@ -1640,7 +1680,7 @@ pub const api = struct {
             }
 
             pub fn specifity(this: *const This) u32 {
-                this.specifity_and_flags.specificity;
+                return this.specifity_and_flags.specificity;
             }
 
             /// Parse a selector, without any pseudo-element.
@@ -1662,7 +1702,7 @@ pub const api = struct {
             /// `offset`.
             pub fn iterRawParseOrderFrom(this: *const This, offset: usize) RawParseOrderFromIter {
                 return RawParseOrderFromIter{
-                    .slice = this.components.items[0 .. this.components.len - offset],
+                    .slice = this.components.items[0 .. this.components.items.len - offset],
                 };
             }
 
@@ -1857,6 +1897,45 @@ pub const api = struct {
                 .b = 1,
             };
         }
+
+        pub fn writeStart(this: *const @This(), comptime W: type, dest: *Printer(W), is_function: bool) PrintErr!void {
+            _ = this; // autofix
+            _ = dest; // autofix
+            _ = is_function; // autofix
+            @panic(css.todo_stuff.depth);
+        }
+
+        pub fn isFunction(this: *const @This()) bool {
+            return this.a != 0 or this.b != 1;
+        }
+
+        fn numberSign(num: i32) []const u8 {
+            if (num >= 0) return "+";
+            return "-";
+        }
+
+        pub fn writeAffine(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+            // PERF: this could be made faster
+            if (this.a == 0 and this.b == 0) {
+                try dest.writeChar('0');
+            } else if (this.a == 1 and this.b == 0) {
+                try dest.writeChar('n');
+            } else if (this.a == -1 and this.b == 0) {
+                try dest.writeStr("-n");
+            } else if (this.b == 0) {
+                try dest.writeFmt("{d}n", .{this.a});
+            } else if (this.a == 2 and this.b == 1) {
+                try dest.writeStr("odd");
+            } else if (this.a == 0) {
+                try dest.writeFmt("{d}", .{this.b});
+            } else if (this.a == 1) {
+                try dest.writeFmt("n{s}{d}", .{ numberSign(this.b), this.b });
+            } else if (this.a == -1) {
+                try dest.writeFmt("-n{s}{d}", .{ numberSign(this.b), this.b });
+            } else {
+                try dest.writeFmt("{}n{s}{d}", .{ this.a, numberSign(this.b), this.b });
+            }
+        }
     };
 
     /// The properties that comprise an :nth- pseudoclass as of Selectors 4 (e.g.,
@@ -1866,6 +1945,14 @@ pub const api = struct {
         return struct {
             data: NthSelectorData,
             selectors: []GenericSelector(Impl),
+
+            pub fn nthData(this: *const @This()) NthSelectorData {
+                return this.data;
+            }
+
+            pub fn selectors(this: *const @This()) []GenericSelector(Impl) {
+                return this.selectors;
+            }
         };
     }
 
@@ -1945,6 +2032,10 @@ pub const api = struct {
         pub fn allowsCombinators(this: SelectorParsingState) bool {
             return this.intersects(SelectorParsingState{ .disallow_combinators = true });
         }
+
+        pub fn allowsCustomFunctionalPseudoClasses(this: SelectorParsingState) bool {
+            return !this.intersects(SelectorParsingState.AFTER_PSEUDO);
+        }
     };
 
     pub const SpecifityAndFlags = struct {
@@ -1997,6 +2088,7 @@ pub const api = struct {
         /// Another combinator used for ::slotted(), which represent the jump from
         /// a node to its assigned slot.
         slot_assignment,
+
         /// Another combinator used for `::part()`, which represents the jump from
         /// the part to the containing shadow host.
         part,
@@ -2152,6 +2244,13 @@ pub const api = struct {
             arguments: css.TokenList,
         },
 
+        pub fn validAfterSlotted(this: *const PseudoElement) bool {
+            return switch (this.*) {
+                .before, .after, .marker, .placeholder, .file_selector_button => true,
+                else => false,
+            };
+        }
+
         pub fn isUnknown(this: *const PseudoElement) bool {
             return switch (this.*) {
                 .custom, .custom_function => true,
@@ -2181,7 +2280,8 @@ pub const api = struct {
             // PERF(alloc): I don't like making small allocations here for the string.
             const writer = s.writer(dest.allocator);
             const W2 = @TypeOf(writer);
-            var printer = Printer(W2).new(dest.allocator, css.PrinterOptions{});
+            const scratchbuf = std.ArrayList(u8).init(dest.allocator);
+            var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions{});
             try serialize.serializePseudoElement(this, W2, &printer, null);
             return dest.writeStr(s.items);
         }
@@ -2537,6 +2637,7 @@ pub const api = struct {
                             } };
                         }
                     },
+                    else => {},
                 }
             },
             else => {},
@@ -2580,7 +2681,7 @@ pub const api = struct {
         };
 
         const location = input.currentSourceLocation();
-        const operator = operator: {
+        const operator: attrs.AttrSelectorOperator = operator: {
             const tok = switch (input.next()) {
                 .result => |v| v,
                 .err => {
@@ -2598,7 +2699,7 @@ pub const api = struct {
                             .operation = .exists,
                         };
                         return .{
-                            .result = .{ .attribute_other = bun.create(parser.allocatr, attrs.AttrSelectorWithOptionalNamespace(Impl), x) },
+                            .result = .{ .attribute_other = bun.create(parser.allocator, attrs.AttrSelectorWithOptionalNamespace(Impl), x) },
                         };
                     } else {
                         return .{ .result = .{
@@ -2634,12 +2735,12 @@ pub const api = struct {
         const value_str: []const u8 = switch (input.expectIdentOrString()) {
             .result => |v| v,
             .err => |e| {
-                if (e.kind == .unexpected_token) {
-                    return .{ .err = e.location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .bad_value_in_attr = e.kind.unexpected_token })) };
+                if (e.kind == .basic and e.kind.basic == .unexpected_token) {
+                    return .{ .err = e.location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .bad_value_in_attr = e.kind.basic.unexpected_token })) };
                 }
                 return .{
                     .err = .{
-                        .kind = .{ .basic = e.kind },
+                        .kind = e.kind,
                         .location = e.location,
                     },
                 };
@@ -2647,7 +2748,7 @@ pub const api = struct {
         };
         const never_matches = switch (operator) {
             .equal, .dash_match => false,
-            .includes => value_str.len == 0 or std.mem.indexOfAny(u8, value_str, SELECTOR_WHITESPACE),
+            .includes => value_str.len == 0 or std.mem.indexOfAny(u8, value_str, SELECTOR_WHITESPACE) != null,
             .prefix, .substring, .suffix => value_str.len == 0,
         };
 
@@ -2760,21 +2861,21 @@ pub const api = struct {
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "nth-last-col")) {
             return parse_nth_pseudo_class(Impl, parser, input, state.*, .last_col);
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "is") and parser.parseIsAndWhere()) {
-            return parse_is_or_where(Impl, parser, input, state.*, GenericComponent(Impl).convertHelper_is, .{});
+            return parse_is_or_where(Impl, parser, input, state, GenericComponent(Impl).convertHelper_is, .{});
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "where") and parser.parseIsAndWhere()) {
-            return parse_is_or_where(Impl, parser, input, state.*, GenericComponent(Impl).convertHelper_where, .{});
+            return parse_is_or_where(Impl, parser, input, state, GenericComponent(Impl).convertHelper_where, .{});
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "has")) {
             return parse_has(Impl, parser, input, state);
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "host")) {
             if (!state.allowsTreeStructuralPseudoClasses()) {
                 return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_state)) };
             }
-            return .{
+            return .{ .result = .{
                 .host = switch (parse_inner_compound_selector(Impl, parser, input, state)) {
                     .err => |e| return .{ .err = e },
                     .result => |v| v,
                 },
-            };
+            } };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "not")) {
             return parse_negation(Impl, parser, input, state);
         } else {
@@ -2789,11 +2890,12 @@ pub const api = struct {
             return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_state)) };
         }
 
-        const result = switch (parser.parseNonTsFunctionalPseudoClass(Impl, name, input)) {
+        const result = switch (parser.parseNonTsFunctionalPseudoClass(name, input)) {
             .err => |e| return .{ .err = e },
             .result => |v| v,
         };
-        return .{ .non_ts_pseudo_class = result };
+
+        return .{ .result = .{ .non_ts_pseudo_class = result } };
     }
 
     pub fn parse_simple_pseudo_class(
@@ -2810,25 +2912,25 @@ pub const api = struct {
         if (state.allowsTreeStructuralPseudoClasses()) {
             // css.todo_stuff.match_ignore_ascii_case
             if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "first-child")) {
-                return .{ .nth = NthSelectorData.first(false) };
+                return .{ .result = .{ .nth = NthSelectorData.first(false) } };
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "last-child")) {
-                return .{ .nth = NthSelectorData.last(false) };
+                return .{ .result = .{ .nth = NthSelectorData.last(false) } };
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "only-child")) {
-                return .{ .nth = NthSelectorData.only(false) };
+                return .{ .result = .{ .nth = NthSelectorData.only(false) } };
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "root")) {
-                return .root;
+                return .{ .result = .root };
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "empty")) {
-                return .empty;
+                return .{ .result = .empty };
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "scope")) {
-                return .scope;
+                return .{ .result = .scope };
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "host")) {
-                return .{ .host = null };
+                return .{ .result = .{ .host = null } };
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "first-of-type")) {
-                return .{ .nth = NthSelectorData.first(true) };
+                return .{ .result = .{ .nth = NthSelectorData.first(true) } };
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "last-of-type")) {
-                return .{ .nth = NthSelectorData.last(true) };
+                return .{ .result = .{ .nth = NthSelectorData.last(true) } };
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "only-of-type")) {
-                return .{ .nth = NthSelectorData.only(true) };
+                return .{ .result = .{ .nth = NthSelectorData.only(true) } };
             } else {}
         }
 
@@ -2836,7 +2938,7 @@ pub const api = struct {
         // https://w3c.github.io/csswg-drafts/css-view-transitions-1/#pseudo-root
         if (state.intersects(SelectorParsingState{ .after_view_transition = true })) {
             if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "only-child")) {
-                return .{ .nth = NthSelectorData.only(false) };
+                return .{ .result = .{ .nth = NthSelectorData.only(false) } };
             }
         }
 
@@ -2845,18 +2947,18 @@ pub const api = struct {
             .result => |v| v,
         };
         if (state.intersects(SelectorParsingState{ .after_webkit_scrollbar = true })) {
-            if (!pseudo_class.isValidAterWebkitScrollbar()) {
-                return .{ .err = location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .invalid_pseudo_class_after_webkit_scrollbar = true })) };
+            if (!pseudo_class.isValidAfterWebkitScrollbar()) {
+                return .{ .err = location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_pseudo_class_after_webkit_scrollbar)) };
             }
         } else if (state.intersects(SelectorParsingState{ .after_pseudo_element = true })) {
             if (!pseudo_class.isUserActionState()) {
-                return .{ .err = location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .invalid_pseudo_class_after_pseudo_element = true })) };
+                return .{ .err = location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_pseudo_class_after_pseudo_element)) };
             }
         } else if (!pseudo_class.isValidBeforeWebkitScrollbar()) {
-            return .{ .err = location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .invalid_pseudo_class_before_webkit_scrollbar = true })) };
+            return .{ .err = location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_pseudo_class_before_webkit_scrollbar)) };
         }
 
-        return .{ .non_ts_pseudo_class = pseudo_class };
+        return .{ .result = .{ .non_ts_pseudo_class = pseudo_class } };
     }
 
     pub fn parse_nth_pseudo_class(
@@ -2882,12 +2984,12 @@ pub const api = struct {
         };
 
         if (!ty.allowsOfSelector()) {
-            return .{ .nth = nth_data };
+            return .{ .result = .{ .nth = nth_data } };
         }
 
         // Try to parse "of <selector-list>".
         if (input.tryParse(css.Parser.expectIdentMatching, .{"of"}).isErr()) {
-            return .{ .nth = nth_data };
+            return .{ .result = .{ .nth = nth_data } };
         }
 
         // Whitespace between "of" and the selector list is optional
@@ -2899,23 +3001,23 @@ pub const api = struct {
             break :child_state s;
         };
 
-        const selectors = switch (SelectorList.parseWithState) {
-            .err => |e| return .{ .err = e },
-            .result => |v| v,
-        }(
+        const selectors = switch (SelectorList.parseWithState(
             parser,
             input,
             &child_state,
             .ignore_invalid_selector,
             .none,
-        );
+        )) {
+            .err => |e| return .{ .err = e },
+            .result => |v| v,
+        };
 
-        return .{
+        return .{ .result = .{
             .nth_of = NthOfSelectorData(Impl){
                 .data = nth_data,
                 .selectors = selectors.v.items,
             },
-        };
+        } };
     }
 
     /// `func` must be of the type: fn([]GenericSelector(Impl), ...@TypeOf(args_)) GenericComponent(Impl)
@@ -2940,7 +3042,7 @@ pub const api = struct {
             break :brk child_state;
         };
 
-        const inner = switch (SelectorList.parseWithState(parser, input, &child_state, parser.isAndWhereRecovery(), NestingRequirement.none)) {
+        const inner = switch (SelectorList.parseWithState(parser, input, &child_state, parser.isAndWhereErrorRecovery(), NestingRequirement.none)) {
             .err => |e| return .{ .err = e },
             .result => |v| v,
         };
@@ -2965,7 +3067,7 @@ pub const api = struct {
             break :result @call(.auto, func, args);
         };
 
-        return result;
+        return .{ .result = result };
     }
 
     pub fn parse_has(
@@ -2989,7 +3091,7 @@ pub const api = struct {
         if (child_state.after_nesting) {
             state.after_nesting = true;
         }
-        return .{ .has = inner.v.items };
+        return .{ .result = .{ .has = inner.v.items } };
     }
 
     /// Level 3: Parse **one** simple_selector.  (Though we might insert a second
@@ -3013,7 +3115,7 @@ pub const api = struct {
             state.after_nesting = true;
         }
 
-        return .{ .negation = list.v.items };
+        return .{ .result = .{ .negation = list.v.items } };
     }
 
     pub fn OptionalQName(comptime Impl: type) type {
@@ -3081,21 +3183,24 @@ pub const api = struct {
                     '*' => {
                         const after_star = input.state();
                         const result = input.nextIncludingWhitespace();
-                        if (result) |t| if (t == .delim and t.delim == '|')
+                        if (result.asValue()) |t| if (t.* == .delim and t.delim == '|')
                             return parse_qualified_name_eplicit_namespace_helper(
                                 Impl,
                                 input,
                                 .explicit_any_namespace,
                                 in_attr_selector,
                             );
-                        input.reset(after_star);
+                        input.reset(&after_star);
                         if (in_attr_selector) {
-                            if (result) |t| {
-                                return .{ .err = after_star.sourceLocation().newCustomError(SelectorParseErrorKind{
-                                    .expected_bar_in_attr = t.*,
-                                }) };
-                            } else |e| {
-                                return e;
+                            switch (result) {
+                                .result => |t| {
+                                    return .{ .err = after_star.sourceLocation().newCustomError(SelectorParseErrorKind{
+                                        .expected_bar_in_attr = t.*,
+                                    }) };
+                                },
+                                .err => |e| {
+                                    return .{ .err = e };
+                                },
                             }
                         } else {
                             return .{ .result = parse_qualified_name_default_namespace_helper(Impl, parser, null) };
@@ -3179,7 +3284,7 @@ pub const api = struct {
                 .case_sensitive => .explicit_case_sensitive,
                 .ascii_case_insensitive => .ascii_case_insensitive,
                 .case_sensitivity_depends_on_name => {
-                    @compileError(css.todo_stuff.depth);
+                    @panic(css.todo_stuff.depth);
                 },
             };
         }
@@ -3191,6 +3296,13 @@ pub const api = struct {
         all,
         /// <custom-ident>
         name: css.css_values.ident.CustomIdent,
+
+        pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+            return switch (this.*) {
+                .all => try dest.writeStr("*"),
+                .name => |name| try css.CustomIdentFns.toCss(&name, W, dest),
+            };
+        }
     };
 
     pub fn parse_attribute_flags(input: *css.Parser) Result(AttributeFlags) {
@@ -3200,16 +3312,16 @@ pub const api = struct {
             .err => {
                 // Selectors spec says language-defined; HTML says it depends on the
                 // exact attribute name.
-                return AttributeFlags.case_sensitivity_depends_on_name;
+                return .{ .result = AttributeFlags.case_sensitivity_depends_on_name };
             },
         };
 
         const ident = if (token.* == .ident) token.ident else return .{ .err = location.newBasicUnexpectedTokenError(token.*) };
 
         if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "i")) {
-            return AttributeFlags.ascii_case_insensitive;
+            return .{ .result = AttributeFlags.ascii_case_insensitive };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "s")) {
-            return AttributeFlags.case_sensitive;
+            return .{ .result = AttributeFlags.case_sensitive };
         } else {
             return .{ .err = location.newBasicUnexpectedTokenError(token.*) };
         }
@@ -3375,7 +3487,7 @@ pub const serialize = struct {
                         break :brk compound[@min(1, compound.len)..];
                     } else compound;
 
-                    for (slice) |simple| {
+                    for (slice) |*simple| {
                         try serializeComponent(simple, W, dest, context);
                     }
 
@@ -3404,7 +3516,7 @@ pub const serialize = struct {
                 var i: usize = 0;
                 if (has_leading_nesting and
                     should_compile_nesting and
-                    isTypeSelector(if (first_non_namespace < compound.len) compound[first_non_namespace] else null))
+                    isTypeSelector(if (first_non_namespace < compound.len) &compound[first_non_namespace] else null))
                 {
                     // Swap nesting and type selector (e.g. &div -> div&).
                     // This ensures that the compiled selector is valid. e.g. (div.foo is valid, .foodiv is not).
@@ -3412,16 +3524,16 @@ pub const serialize = struct {
                     i += 1;
                     const local = iter[i];
                     i += 1;
-                    try serializeComponent(local, W, dest, context);
+                    try serializeComponent(&local, W, dest, context);
 
                     // Also check the next item in case of namespaces.
                     if (first_non_namespace > first_index) {
                         const local2 = iter[i];
                         i += 1;
-                        try serializeComponent(local2, W, dest, context);
+                        try serializeComponent(&local2, W, dest, context);
                     }
 
-                    try serializeComponent(nesting, W, dest, context);
+                    try serializeComponent(&nesting, W, dest, context);
                 } else if (has_leading_nesting and should_compile_nesting) {
                     // Nesting selector may serialize differently if it is leading, due to type selectors.
                     i += 1;
@@ -3464,7 +3576,7 @@ pub const serialize = struct {
     }
 
     fn serializeComponent(
-        component: *api.Component,
+        component: *const api.Component,
         comptime W: type,
         dest: *css.Printer(W),
         context: ?*const css.StyleContext,
@@ -3481,12 +3593,9 @@ pub const serialize = struct {
                     // Serialize as both an identifier and a string and choose the shorter one.
                     var id = std.ArrayList(u8).init(dest.allocator);
                     const writer = id.writer();
-                    css.serializer.serializeIdentifier(v.value, W, writer);
+                    css.serializer.serializeIdentifier(v.value, writer) catch return dest.addFmtError();
 
-                    const s = switch (css.to_css.string(dest.allocator, CSSString, &v.value, css.PrinterOptions{})) {
-                        .err => |e| return .{ .err = e },
-                        .result => |v2| v2,
-                    };
+                    const s = try css.to_css.string(dest.allocator, CSSString, &v.value, css.PrinterOptions{});
 
                     if (id.items.len > 0 and id.items.len < s.len) {
                         try dest.writeStr(id.items);
@@ -3527,7 +3636,7 @@ pub const serialize = struct {
                     },
                     .any => |v| {
                         const vp = dest.vendor_prefix.bitwiseOr(v.vendor_prefix);
-                        if (vp.intersects(css.VendorPrefix{ .webkit = true, .mox = true })) {
+                        if (vp.intersects(css.VendorPrefix{ .webkit = true, .moz = true })) {
                             try dest.writeChar(':');
                             try vp.toCss(W, dest);
                             try dest.writeStr("any(");
@@ -3549,10 +3658,10 @@ pub const serialize = struct {
                 try serializeSelectorList(list, W, dest, context, true);
                 return dest.writeStr(")");
             },
-            .non_ts_pseudo_class => |pseudo| {
+            .non_ts_pseudo_class => |*pseudo| {
                 return serializePseudoClass(pseudo, W, dest, context);
             },
-            .pseudo_element => |pseudo| {
+            .pseudo_element => |*pseudo| {
                 return serializePseudoElement(pseudo, W, dest, context);
             },
             .nesting => {
@@ -3570,23 +3679,23 @@ pub const serialize = struct {
                 try dest.writeStr(":host");
                 if (selector) |*sel| {
                     try dest.writeChar('(');
-                    try sel.toCss(W, dest);
+                    try serializeSelector(sel, W, dest, dest.context(), false);
                     try dest.writeChar(')');
                 }
                 return;
             },
-            .slotted => |selector| {
+            .slotted => |*selector| {
                 try dest.writeStr("::slotted(");
-                try selector.toCss(W, dest);
+                try serializeSelector(selector, W, dest, dest.context(), false);
                 try dest.writeChar(')');
             },
-            .nth => |nth_data| {
-                try nth_data.writeStart(W, dest, nth_data.isFunction());
-                if (nth_data.isFunction()) {
-                    try nth_data.writeAffine(W, dest);
-                    try dest.writeChar(')');
-                }
-            },
+            // .nth => |nth_data| {
+            //     try nth_data.writeStart(W, dest, nth_data.isFunction());
+            //     if (nth_data.isFunction()) {
+            //         try nth_data.writeAffine(W, dest);
+            //         try dest.writeChar(')');
+            //     }
+            // },
 
             else => {
                 try tocss_servo.toCss_Component(component, W, dest);
@@ -3618,7 +3727,7 @@ pub const serialize = struct {
         pseudo_class: *const api.PseudoClass,
         comptime W: type,
         dest: *Printer(W),
-        context: ?*css.StyleContext,
+        context: ?*const css.StyleContext,
     ) PrintErr!void {
         switch (pseudo_class.*) {
             .lang => {
@@ -3630,7 +3739,7 @@ pub const serialize = struct {
                     } else {
                         try dest.delim(',', false);
                     }
-                    try css.serializer.serializeIdentifier(lang, W, dest);
+                    css.serializer.serializeIdentifier(lang, dest) catch return dest.addFmtError();
                 }
                 return dest.writeStr(")");
             },
@@ -3651,8 +3760,8 @@ pub const serialize = struct {
             ) PrintErr!void {
                 try d.writeChar(':');
                 // If the printer has a vendor prefix override, use that.
-                const vp = if (!dest.vendor_prefix.isEmpty())
-                    dest.vendor_prefix.bitwiseOr(prefix).orNone()
+                const vp = if (!d.vendor_prefix.isEmpty())
+                    d.vendor_prefix.bitwiseOr(prefix).orNone()
                 else
                     prefix;
 
@@ -3664,7 +3773,15 @@ pub const serialize = struct {
                 comptime key: []const u8,
                 comptime s: []const u8,
             ) PrintErr!void {
-                const _class = if (dest.pseudo_classes) |*pseudo_classes| @field(pseudo_classes, key) else null;
+                const key_snake_case = comptime key_snake_case: {
+                    var buf: [key.len]u8 = undefined;
+                    for (key, 0..) |c, i| {
+                        buf[i] = if (c >= 'A' and c <= 'Z') c + 32 else if (c == '-') '_' else c;
+                    }
+                    const buf2 = buf;
+                    break :key_snake_case buf2;
+                };
+                const _class = if (d.pseudo_classes) |*pseudo_classes| @field(pseudo_classes, &key_snake_case) else null;
 
                 if (_class) |class| {
                     try d.writeChar('.');
@@ -3677,11 +3794,11 @@ pub const serialize = struct {
 
         switch (pseudo_class.*) {
             // https://drafts.csswg.org/selectors-4/#useraction-pseudos
-            .hover => Helpers.pseudo(dest, "hover", ":hover"),
-            .active => Helpers.pseudo(dest, "active", ":active"),
-            .focus => Helpers.pseudo(dest, "focus", ":focus"),
-            .focus_visible => Helpers.pseudo(dest, "focus-visible", ":focus-visible"),
-            .focus_within => Helpers.pseudo(dest, "focus-within", ":focus-within"),
+            .hover => try Helpers.pseudo(dest, "hover", ":hover"),
+            .active => try Helpers.pseudo(dest, "active", ":active"),
+            .focus => try Helpers.pseudo(dest, "focus", ":focus"),
+            .focus_visible => try Helpers.pseudo(dest, "focus-visible", ":focus-visible"),
+            .focus_within => try Helpers.pseudo(dest, "focus-within", ":focus-within"),
 
             // https://drafts.csswg.org/selectors-4/#time-pseudos
             .current => try dest.writeStr(":current"),
@@ -3725,7 +3842,7 @@ pub const serialize = struct {
             .defined => try dest.writeStr(":defined"),
 
             // https://drafts.csswg.org/selectors-4/#location
-            .any_link => |prefix| Helpers.writePrefixed(dest, prefix, "any-link"),
+            .any_link => |prefix| try Helpers.writePrefixed(dest, prefix, "any-link"),
             .link => try dest.writeStr(":link"),
             .local_link => try dest.writeStr(":local-link"),
             .target => try dest.writeStr(":target"),
@@ -3735,9 +3852,9 @@ pub const serialize = struct {
             // https://drafts.csswg.org/selectors-4/#input-pseudos
             .enabled => try dest.writeStr(":enabled"),
             .disabled => try dest.writeStr(":disabled"),
-            .read_only => |prefix| Helpers.writePrefixed(dest, prefix, "read-only"),
-            .read_write => |prefix| Helpers.writePrefixed(dest, prefix, "read-write"),
-            .placeholder_shown => |prefix| Helpers.writePrefixed(dest, prefix, "placeholder-shown"),
+            .read_only => |prefix| try Helpers.writePrefixed(dest, prefix, "read-only"),
+            .read_write => |prefix| try Helpers.writePrefixed(dest, prefix, "read-write"),
+            .placeholder_shown => |prefix| try Helpers.writePrefixed(dest, prefix, "placeholder-shown"),
             .default => try dest.writeStr(":default"),
             .checked => try dest.writeStr(":checked"),
             .indeterminate => try dest.writeStr(":indeterminate"),
@@ -3752,12 +3869,15 @@ pub const serialize = struct {
             .user_invalid => try dest.writeStr(":user-invalid"),
 
             // https://html.spec.whatwg.org/multipage/semantics-other.html#selector-autofill
-            .autofill => |prefix| Helpers.writePrefixed(dest, prefix, "autofill"),
+            .autofill => |prefix| try Helpers.writePrefixed(dest, prefix, "autofill"),
 
-            .local => |selector| serializeSelector(selector, dest, context, false),
+            .local => |selector| try serializeSelector(selector.selector, W, dest, context, false),
             .global => |selector| {
-                const css_module = std.mem.take(&dest.css_module);
-                try serializeSelector(selector, dest, context, false);
+                const css_module = if (dest.css_module) |module| css_module: {
+                    dest.css_module = null;
+                    break :css_module module;
+                } else null;
+                try serializeSelector(selector.selector, W, dest, context, false);
                 dest.css_module = css_module;
             },
 
@@ -3782,7 +3902,7 @@ pub const serialize = struct {
             .dir => unreachable,
             .custom => |name| {
                 try dest.writeChar(':');
-                return dest.writeStr(name);
+                return dest.writeStr(name.name);
             },
             .custom_function => |v| {
                 try dest.writeChar(':');
@@ -3798,19 +3918,19 @@ pub const serialize = struct {
         pseudo_element: *const api.PseudoElement,
         comptime W: type,
         dest: *Printer(W),
-        context: ?*css.StyleContext,
+        context: ?*const css.StyleContext,
     ) PrintErr!void {
         const Helpers = struct {
             pub fn writePrefix(d: *Printer(W), prefix: css.VendorPrefix) PrintErr!css.VendorPrefix {
                 try d.writeStr("::");
                 // If the printer has a vendor prefix override, use that.
-                const vp = if (!d.vendor_prefix.isEmpty()) dest.vendor_prefix.bitwiseAnd(prefix).orNone() else prefix;
+                const vp = if (!d.vendor_prefix.isEmpty()) d.vendor_prefix.bitwiseAnd(prefix).orNone() else prefix;
                 try vp.toCss(W, d);
                 return vp;
             }
 
             pub fn writePrefixed(d: *Printer(W), prefix: css.VendorPrefix, comptime val: []const u8) PrintErr!void {
-                _ = writePrefix(d, prefix);
+                _ = try writePrefix(d, prefix);
                 try d.writeStr(val);
             }
         };
@@ -3839,30 +3959,30 @@ pub const serialize = struct {
             .first_line => try dest.writeStr(":first-line"),
             .first_letter => try dest.writeStr(":first-letter"),
             .marker => try dest.writeStr("::marker"),
-            .selection => |prefix| Helpers.writePrefixed(dest, prefix, "selection"),
+            .selection => |prefix| try Helpers.writePrefixed(dest, prefix, "selection"),
             .cue => try dest.writeStr("::cue"),
             .cue_region => try dest.writeStr("::cue-region"),
             .cue_function => |v| {
                 try dest.writeStr("::cue(");
-                try serializeSelector(v.selector, dest, context, false);
+                try serializeSelector(v.selector, W, dest, context, false);
                 try dest.writeChar(')');
             },
             .cue_region_function => |v| {
                 try dest.writeStr("::cue-region(");
-                try serializeSelector(v.selector, dest, context, false);
+                try serializeSelector(v.selector, W, dest, context, false);
                 try dest.writeChar(')');
             },
             .placeholder => |prefix| {
-                const vp = try Helpers.writePrefix(prefix);
+                const vp = try Helpers.writePrefix(dest, prefix);
                 if (vp.webkit or vp.ms) {
                     try dest.writeStr("input-placeholder");
                 } else {
                     try dest.writeStr("placeholder");
                 }
             },
-            .backdrop => |prefix| Helpers.writePrefixed(dest, prefix, "backdrop"),
+            .backdrop => |prefix| try Helpers.writePrefixed(dest, prefix, "backdrop"),
             .file_selector_button => |prefix| {
-                const vp = try Helpers.writePrefix(prefix);
+                const vp = try Helpers.writePrefix(dest, prefix);
                 if (vp.webkit) {
                     try dest.writeStr("file-upload-button");
                 } else if (vp.ms) {
@@ -3885,34 +4005,34 @@ pub const serialize = struct {
             .view_transition => try dest.writeStr("::view-transition"),
             .view_transition_group => |v| {
                 try dest.writeStr("::view-transition-group(");
-                try v.part_name.toCss(dest);
+                try v.part_name.toCss(W, dest);
                 try dest.writeChar(')');
             },
             .view_transition_image_pair => |v| {
                 try dest.writeStr("::view-transition-image-pair(");
-                try v.part_name.toCss(dest);
+                try v.part_name.toCss(W, dest);
                 try dest.writeChar(')');
             },
             .view_transition_old => |v| {
                 try dest.writeStr("::view-transition-old(");
-                try v.part_name.toCss(dest);
+                try v.part_name.toCss(W, dest);
                 try dest.writeChar(')');
             },
             .view_transition_new => |v| {
                 try dest.writeStr("::view-transition-new(");
-                try v.part_name.toCss(dest);
+                try v.part_name.toCss(W, dest);
                 try dest.writeChar(')');
             },
             .custom => |val| {
                 try dest.writeStr("::");
-                return dest.writeStr(val);
+                return dest.writeStr(val.name);
             },
             .custom_function => |v| {
                 const name = v.name;
                 try dest.writeStr("::");
                 try dest.writeStr(name);
                 try dest.writeChar('(');
-                try v.arguments.toCssRaw(dest);
+                try v.arguments.toCssRaw(W, dest);
                 try dest.writeChar(')');
             },
         }
@@ -3921,7 +4041,7 @@ pub const serialize = struct {
     fn serializeNesting(
         comptime W: type,
         dest: *Printer(W),
-        context: ?*css.StyleContext,
+        context: ?*const css.StyleContext,
         first: bool,
     ) PrintErr!void {
         if (context) |ctx| {
@@ -3930,19 +4050,19 @@ pub const serialize = struct {
             // Type selectors are only allowed at the start of a compound selector,
             // so use :is() if that is not the case.
             if (ctx.selectors.v.items.len == 1 and
-                (first or (!hasTypeSelector(&ctx.selectors.v[0]) and
-                isSimple(&ctx.selectors.v[0]))))
+                (first or (!hasTypeSelector(&ctx.selectors.v.items[0]) and
+                isSimple(&ctx.selectors.v.items[0]))))
             {
                 try serializeSelector(&ctx.selectors.v.items[0], W, dest, ctx.parent, false);
             } else {
                 try dest.writeStr(":is(");
-                try serializeSelectorList(ctx.selectors.items, W, dest, ctx.parent, false);
+                try serializeSelectorList(ctx.selectors.v.items, W, dest, ctx.parent, false);
                 try dest.writeChar(')');
             }
         } else {
             // If there is no context, we are at the root if nesting is supported. This is equivalent to :scope.
             // Otherwise, if nesting is supported, serialize the nesting selector directly.
-            if (dest.targets.shouldCompile(css.compat.Feature.nesting, .nesting)) {
+            if (dest.targets.shouldCompileSame(.nesting)) {
                 try dest.writeStr(":scope");
             } else {
                 try dest.writeChar('&');
@@ -4042,7 +4162,7 @@ const tocss_servo = struct {
         // which we need for |split|. So we split by combinators on a match-order
         // sequence and then reverse.
         var combinators = CombinatorIter{ .sel = selector };
-        const compound_selectors = CompoundSelectorIter{ .sel = selector };
+        var compound_selectors = CompoundSelectorIter{ .sel = selector };
 
         var combinators_exhausted = false;
         while (compound_selectors.next()) |compound| {
@@ -4061,11 +4181,12 @@ const tocss_servo = struct {
             //
             // If we are in this case, after we have serialized the universal
             // selector, we skip Step 2 and continue with the algorithm.
-            const can_elide_namespace, const first_non_namespace = if (0 >= compound.len)
+            const can_elide_namespace, const first_non_namespace: usize = if (0 >= compound.len)
                 .{ true, 0 }
             else switch (compound[0]) {
                 .explicit_any_namespace, .explicit_no_namespace, .namespace => .{ false, 1 },
                 .default_namespace => .{ true, 1 },
+                else => .{ true, 0 },
             };
             var perform_step_2 = true;
             const next_combinator = combinators.next();
@@ -4077,7 +4198,7 @@ const tocss_servo = struct {
                 // -- Combinator::PseudoElement, just like
                 // Combinator::SlotAssignment, don't exist in the
                 // spec.
-                if (next_combinator == .pseudo_element and compound[first_non_namespace] == .slot_assignment) {
+                if (next_combinator == .pseudo_element and compound[first_non_namespace].asCombinator() == .slot_assignment) {
                     // do nothing
                 } else if (compound[first_non_namespace] == .explicit_universal_type) {
                     // Iterate over everything so we serialize the namespace
@@ -4141,8 +4262,8 @@ const tocss_servo = struct {
         dest: *Printer(W),
     ) PrintErr!void {
         switch (component.*) {
-            .combinator => |c| try toCss_Combinator(&c, W, dest),
-            .slotted => |selector| {
+            .combinator => |*c| try toCss_Combinator(c, W, dest),
+            .slotted => |*selector| {
                 try dest.writeStr("::slotted(");
                 try tocss_servo.toCss_Selector(selector, W, dest);
                 try dest.writeChar(')');
@@ -4184,7 +4305,7 @@ const tocss_servo = struct {
             },
             .namespace => |ns| {
                 try css.IdentFns.toCss(&ns.prefix, W, dest);
-                try try dest.writeChar('|');
+                try dest.writeChar('|');
             },
             .attribute_in_no_namespace_exists => |v| {
                 try dest.writeChar('[');
@@ -4204,7 +4325,7 @@ const tocss_servo = struct {
                 try dest.writeChar(']');
             },
             .attribute_other => |attr_selector| {
-                attr_selector.toCss(W, dest);
+                try attr_selector.toCss(W, dest);
             },
             // Pseudo-classes
             .root => {
@@ -4243,24 +4364,24 @@ const tocss_servo = struct {
                 bun.debugAssert(nth_of_data.selectors.len != 0);
                 try dest.writeStr(" of ");
                 try tocss_servo.toCss_SelectorList(nth_of_data.selectors, W, dest);
-                dest.writeChar(')');
+                try dest.writeChar(')');
             },
             .is, .where, .negation, .has, .any => {
                 switch (component.*) {
                     .where => try dest.writeStr(":where("),
                     .is => try dest.writeStr(":is("),
-                    .not => try dest.writeStr(":not("),
+                    .negation => try dest.writeStr(":not("),
                     .has => try dest.writeStr(":has("),
                     .any => |v| {
                         try dest.writeChar(':');
                         try v.vendor_prefix.toCss(W, dest);
-                        dest.writeStr("any(");
+                        try dest.writeStr("any(");
                     },
                     else => unreachable,
                 }
                 try tocss_servo.toCss_SelectorList(
                     switch (component.*) {
-                        .where, .is, .not, .has => |list| list,
+                        .where, .is, .negation, .has => |list| list,
                         .any => |v| v.selectors,
                         else => unreachable,
                     },
@@ -4277,7 +4398,7 @@ const tocss_servo = struct {
     }
 
     fn toCss_Combinator(
-        combinator: *api.Combinator,
+        combinator: *const api.Combinator,
         comptime W: type,
         dest: *Printer(W),
     ) PrintErr!void {
@@ -4309,7 +4430,7 @@ const tocss_servo = struct {
 pub fn shouldUnwrapIs(selectors: []const api.Selector) bool {
     if (selectors.len == 1) {
         const first = selectors[0];
-        if (!hasTypeSelector(first) and isSimple(first)) return true;
+        if (!hasTypeSelector(&first) and isSimple(&first)) return true;
     }
 
     return false;
@@ -4318,8 +4439,10 @@ pub fn shouldUnwrapIs(selectors: []const api.Selector) bool {
 fn hasTypeSelector(selector: *const api.Selector) bool {
     var iter = selector.iterRawParseOrderFrom(0);
     const first = iter.next();
-    if (isNamespace(first)) return isTypeSelector(iter.next());
-    return isTypeSelector(first);
+
+    if (isNamespace(if (first) |*f| f else null)) return isTypeSelector(if (iter.next()) |*n| n else null);
+
+    return isTypeSelector(if (first) |*f| f else null);
 }
 
 fn isNamespace(component: ?*const api.Component) bool {

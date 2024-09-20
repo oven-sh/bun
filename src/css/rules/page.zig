@@ -130,21 +130,20 @@ pub const PageRule = struct {
         while (parser.next()) |decl| {
             if (decl.asErr()) |e| {
                 if (parser.parser.options.error_recovery) {
-                    // parser.parser.options.warn(err);
-                    // continue;
-                    @compileError(css.todo_stuff.warn);
+                    parser.parser.options.warn(e);
+                    continue;
                 }
 
                 return .{ .err = e };
             }
         }
 
-        return PageRule{
+        return .{ .result = PageRule{
             .selectors = selectors,
             .declarations = declarations,
             .rules = rules,
             .loc = loc,
-        };
+        } };
     }
 
     const This = @This();
@@ -322,7 +321,7 @@ pub const PageRuleParser = struct {
             )) {
                 .result => |v| return .{ .result = v },
                 .err => {
-                    return loc.newCustomError(css.ParserError{ .at_rule_invalid = name });
+                    return .{ .err = loc.newCustomError(css.ParserError{ .at_rule_invalid = name }) };
                 },
             };
         }
@@ -355,11 +354,11 @@ pub const PageRuleParser = struct {
         pub const QualifiedRule = void;
 
         pub fn parsePrelude(_: *This, input: *css.Parser) Result(Prelude) {
-            return input.newError(css.BasicParseErrorKind.qualified_rule_invalid);
+            return .{ .err = input.newError(css.BasicParseErrorKind.qualified_rule_invalid) };
         }
 
         pub fn parseBlock(_: *This, _: Prelude, _: *const css.ParserState, input: *css.Parser) Result(QualifiedRule) {
-            return input.newError(css.BasicParseErrorKind.qualified_rule_invalid);
+            return .{ .err = input.newError(css.BasicParseErrorKind.qualified_rule_invalid) };
         }
     };
 };

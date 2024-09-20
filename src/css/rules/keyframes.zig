@@ -61,12 +61,12 @@ pub const KeyframesListParser = struct {
         pub const QualifiedRule = Keyframe;
 
         pub fn parsePrelude(_: *This, input: *css.Parser) Result(Prelude) {
-            return input.parseCommaSeparated(Prelude, KeyframeSelector.parse);
+            return input.parseCommaSeparated(KeyframeSelector, KeyframeSelector.parse);
         }
 
         pub fn parseBlock(_: *This, prelude: Prelude, _: *const css.ParserState, input: *css.Parser) Result(QualifiedRule) {
             // For now there are no options that apply within @keyframes
-            const options = css.ParserOptions{};
+            const options = css.ParserOptions.default(input.allocator(), null);
             return .{
                 .result = Keyframe{
                     .selectors = prelude,

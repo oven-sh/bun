@@ -216,22 +216,22 @@ pub fn Printer(comptime Writer: type) type {
                 if (this.css_module) |*css_module| {
                     const Closure = struct { first: bool, printer: *This };
                     var closure = Closure{ .first = true, .printer = this };
-                    try css_module.config.pattern.write(
+                    css_module.config.pattern.write(
                         css_module.hashes.items[this.loc.source_index],
                         css_module.sources.items[this.loc.source_index],
                         ident,
                         &closure,
                         struct {
-                            pub fn writeFn(self: *Closure, s1: []const u8, replace_dots: bool) PrintErr!void {
+                            pub fn writeFn(self: *Closure, s1: []const u8, replace_dots: bool) void {
                                 // PERF: stack fallback?
                                 const s = if (!replace_dots) s1 else replaceDots(self.printer.allocator, s1);
                                 defer if (replace_dots) self.printer.allocator.free(s);
                                 self.printer.col += @intCast(s.len);
                                 if (self.first) {
                                     self.first = false;
-                                    return css.serializer.serializeIdentifier(s, self.printer) catch return self.printer.addFmtError();
+                                    return css.serializer.serializeIdentifier(s, self.printer) catch |e| css.OOM(e);
                                 } else {
-                                    return css.serializer.serializeName(s, self.printer) catch return self.printer.addFmtError();
+                                    return css.serializer.serializeName(s, self.printer) catch |e| css.OOM(e);
                                 }
                             }
                         }.writeFn,
@@ -251,14 +251,14 @@ pub fn Printer(comptime Writer: type) type {
             if (this.css_module) |*css_module| {
                 if (css_module.config.dashed_idents) {
                     const Fn = struct {
-                        pub fn writeFn(self: *This, s1: []const u8, replace_dots: bool) PrintErr!void {
+                        pub fn writeFn(self: *This, s1: []const u8, replace_dots: bool) void {
                             const s = if (!replace_dots) s1 else replaceDots(self.allocator, s1);
                             defer if (replace_dots) self.allocator.free(s);
                             self.col += @intCast(s.len);
-                            return css.serializer.serializeName(s, self) catch return self.addFmtError();
+                            return css.serializer.serializeName(s, self) catch |e| css.OOM(e);
                         }
                     };
-                    try css_module.config.pattern.write(
+                    css_module.config.pattern.write(
                         css_module.hashes.items[this.loc.source_index],
                         css_module.sources.items[this.loc.source_index],
                         ident[2..],

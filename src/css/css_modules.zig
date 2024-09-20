@@ -229,26 +229,26 @@ pub const Pattern = struct {
         path: []const u8,
         local: []const u8,
         closure: anytype,
-        comptime writefn: *const fn (@TypeOf(closure), []const u8, replace_dots: bool) PrintErr!void,
-    ) PrintErr!void {
+        comptime writefn: *const fn (@TypeOf(closure), []const u8, replace_dots: bool) void,
+    ) void {
         for (this.segments.items) |*segment| {
             switch (segment.*) {
                 .literal => |s| {
-                    try writefn(closure, s, false);
+                    writefn(closure, s, false);
                 },
                 .name => {
                     const stem = std.fs.path.stem(path);
                     if (std.mem.indexOf(u8, stem, ".")) |_| {
-                        try writefn(closure, stem, true);
+                        writefn(closure, stem, true);
                     } else {
-                        try writefn(closure, stem, false);
+                        writefn(closure, stem, false);
                     }
                 },
                 .local => {
-                    try writefn(closure, local, false);
+                    writefn(closure, local, false);
                 },
                 .hash => {
-                    try writefn(closure, hash_, false);
+                    writefn(closure, hash_, false);
                 },
             }
         }
@@ -263,11 +263,12 @@ pub const Pattern = struct {
         local: []const u8,
     ) []const u8 {
         const Closure = struct { res: ArrayList(u8), allocator: Allocator };
-        return this.write(
+        var closure = Closure{ .res = .{}, .allocator = allocator };
+        this.write(
             hash_,
             path,
             local,
-            &Closure{ .res = .{}, .allocator = allocator },
+            &closure,
             struct {
                 pub fn writefn(self: *Closure, slice: []const u8, replace_dots: bool) void {
                     self.res.appendSlice(self.allocator, prefix) catch bun.outOfMemory();
@@ -286,19 +287,21 @@ pub const Pattern = struct {
                 }
             }.writefn,
         );
+        return closure.res.items;
     }
 
     pub fn writeToString(
         this: *const Pattern,
         allocator: Allocator,
-        res: ArrayList(u8),
+        res_: ArrayList(u8),
         hash_: []const u8,
         path: []const u8,
         local: []const u8,
     ) []const u8 {
-        const Closure = struct { res: ArrayList(u8), allocator: Allocator };
-        var closure = &Closure{ .res = res, .allocator = allocator };
-        return this.write(
+        var res = res_;
+        const Closure = struct { res: *ArrayList(u8), allocator: Allocator };
+        var closure = Closure{ .res = &res, .allocator = allocator };
+        this.write(
             hash_,
             path,
             local,
@@ -321,6 +324,8 @@ pub const Pattern = struct {
                 }
             }.writefn,
         );
+
+        return res.items;
     }
 };
 

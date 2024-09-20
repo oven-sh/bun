@@ -95,6 +95,13 @@ pub const PrintErr = error{
     lol,
 };
 
+pub fn OOM(e: anyerror) noreturn {
+    if (comptime bun.Environment.isDebug) {
+        std.debug.assert(e == std.mem.Allocator.Error.OutOfMemory);
+    }
+    bun.outOfMemory();
+}
+
 // TODO: smallvec
 pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
     _ = N; // autofix
@@ -149,16 +156,7 @@ pub const VendorPrefix = packed struct(u8) {
 
     /// Returns VendorPrefix::None if empty.
     pub fn orNone(this: VendorPrefix) VendorPrefix {
-        return this.@"or"(VendorPrefix{ .none = true });
-    }
-
-    pub fn @"or"(this: VendorPrefix, other: VendorPrefix) VendorPrefix {
-        if (this.isEmpty()) return other;
-        return this;
-    }
-
-    pub fn bitwiseOr(lhs: VendorPrefix, rhs: VendorPrefix) VendorPrefix {
-        return @bitCast(@as(u8, @bitCast(lhs)) | @as(u8, @bitCast(rhs)));
+        return this.bitwiseOr(VendorPrefix{ .none = true });
     }
 };
 
@@ -187,7 +185,7 @@ pub const SourceLocation = struct {
             .kind = .{ .custom = switch (@TypeOf(err)) {
                 ParserError => err,
                 BasicParseError => return BasicParseError.intoDefaultParseError(err),
-                selector.api.SelectorParseErrorKind => return selector.api.SelectorParseErrorKind.intoDefaultParserError(err),
+                selector.api.SelectorParseErrorKind => selector.api.SelectorParseErrorKind.intoDefaultParserError(err),
                 else => @compileError("TODO implement this for: " ++ @typeName(@TypeOf(err))),
             } },
             .location = this,
@@ -1250,11 +1248,11 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                         .err => |e| return .{ .err = e },
                         .result => |v| v,
                     };
-                    return .{ .result = .{ .property = property_name } };
+                    return .{ .result = .{ .property = .{property_name} } };
                 } else {
                     const Nested = NestedRuleParser(AtRuleParserT);
-                    const nested_rule_parser: Nested = this.nested();
-                    return .{ .result = Nested.AtRuleParser.parsePrelude(&nested_rule_parser, name, input) };
+                    var nested_rule_parser: Nested = this.nested();
+                    return Nested.AtRuleParser.parsePrelude(&nested_rule_parser, name, input);
                 }
             }
 
@@ -1316,6 +1314,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                                 },
                             },
                         ) catch bun.outOfMemory();
+                        return .{ .result = {} };
                     },
                     .layer => {
                         if (@intFromEnum(this.state) <= @intFromEnum(State.layers)) {
@@ -1336,6 +1335,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                             .block = null,
                             .loc = loc,
                         } }) catch bun.outOfMemory();
+                        return .{ .result = {} };
                     },
                     .custom => {
                         this.state = .body;
@@ -1630,6 +1630,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 },
                             },
                         ) catch bun.outOfMemory();
+                        return .{ .result = {} };
                     },
                     .font_palette_values => {
                         const name = prelude.font_palette_values;
@@ -1641,6 +1642,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                             input.allocator(),
                             .{ .font_palette_values = rule },
                         ) catch bun.outOfMemory();
+                        return .{ .result = {} };
                     },
                     .counter_style => {
                         const name = prelude.counter_style;
@@ -1657,6 +1659,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 },
                             },
                         ) catch bun.outOfMemory();
+                        return .{ .result = {} };
                     },
                     .media => {
                         const query = prelude.media;
@@ -1674,6 +1677,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 },
                             },
                         ) catch bun.outOfMemory();
+                        return .{ .result = {} };
                     },
                     .supports => {
                         const condition = prelude.supports;
@@ -1688,6 +1692,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 .loc = loc,
                             },
                         }) catch bun.outOfMemory();
+                        return .{ .result = {} };
                     },
                     .container => {
                         const rules = switch (this.parseStyleBlock(input)) {
@@ -1705,6 +1710,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 },
                             },
                         ) catch bun.outOfMemory();
+                        return .{ .result = {} };
                     },
                     .scope => {
                         const rules = switch (this.parseStyleBlock(input)) {
@@ -1722,6 +1728,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 },
                             },
                         ) catch bun.outOfMemory();
+                        return .{ .result = {} };
                     },
                     .viewport => {
                         this.rules.v.append(input.allocator(), .{
@@ -1734,6 +1741,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 .loc = loc,
                             },
                         }) catch bun.outOfMemory();
+                        return .{ .result = {} };
                     },
                     .keyframes => {
                         var parser = css_rules.keyframes.KeyframesListParser{};
@@ -1742,7 +1750,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                         var keyframes = ArrayList(css_rules.keyframes.Keyframe){};
 
                         while (iter.next()) |result| {
-                            if (result) |keyframe| {
+                            if (result.asValue()) |keyframe| {
                                 keyframes.append(
                                     input.allocator(),
                                     keyframe,
@@ -1758,6 +1766,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 .loc = loc,
                             },
                         }) catch bun.outOfMemory();
+                        return .{ .result = {} };
                     },
                     .page => {
                         const selectors = prelude.page;
@@ -1769,6 +1778,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                             input.allocator(),
                             .{ .page = rule },
                         ) catch bun.outOfMemory();
+                        return .{ .result = {} };
                     },
                     .moz_document => {
                         const rules = switch (this.parseStyleBlock(input)) {
@@ -1781,6 +1791,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 .loc = loc,
                             },
                         }) catch bun.outOfMemory();
+                        return .{ .result = {} };
                     },
                     .layer => {
                         const name = if (prelude.layer.items.len == 0) null else if (prelude.layer.items.len == 1) names: {
@@ -1795,8 +1806,9 @@ pub fn NestedRuleParser(comptime T: type) type {
                         };
 
                         this.rules.v.append(input.allocator(), .{
-                            .layer_block = css_rules.layer.LayerBlockRule{ .name = name, .rules = rules, .loc = loc },
-                        });
+                            .layer_block = css_rules.layer.LayerBlockRule(T.CustomAtRuleParser.AtRule){ .name = name, .rules = rules, .loc = loc },
+                        }) catch bun.outOfMemory();
+                        return .{ .result = {} };
                     },
                     .property => {
                         const name = prelude.property[0];
@@ -1805,7 +1817,8 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 .err => |e| return .{ .err = e },
                                 .result => |v| v,
                             },
-                        });
+                        }) catch bun.outOfMemory();
+                        return .{ .result = {} };
                     },
                     .import, .namespace, .custom_media, .charset => {
                         // These rules don't have blocks
@@ -1825,6 +1838,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 },
                             },
                         ) catch bun.outOfMemory();
+                        return .{ .result = {} };
                     },
                     .nest => {
                         const selectors = prelude.nest;
@@ -1849,6 +1863,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 },
                             },
                         ) catch bun.outOfMemory();
+                        return .{ .result = {} };
                     },
                     .font_feature_values => bun.unreachablePanic("", .{}),
                     .unknown => {
@@ -1866,6 +1881,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 },
                             },
                         ) catch bun.outOfMemory();
+                        return .{ .result = {} };
                     },
                     .custom => {
                         this.rules.v.append(
@@ -1877,6 +1893,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 },
                             },
                         ) catch bun.outOfMemory();
+                        return .{ .result = {} };
                     },
                 }
             }
@@ -1898,7 +1915,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 },
                             },
                         ) catch bun.outOfMemory();
-                        return Maybe(AtRuleParser.AtRule, void).success;
+                        return .{ .result = {} };
                     },
                     .unknown => {
                         this.rules.v.append(
@@ -1912,7 +1929,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 },
                             },
                         ) catch bun.outOfMemory();
-                        return Maybe(AtRuleParser.AtRule, void).success;
+                        return .{ .result = {} };
                     },
                     .custom => {
                         this.rules.v.append(this.allocator, switch (parse_custom_at_rule_without_block(
@@ -1926,7 +1943,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                             .err => |e| return .{ .err = e },
                             .result => |v| v,
                         }) catch bun.outOfMemory();
-                        return Maybe(AtRuleParser.AtRule, void).success;
+                        return .{ .result = {} };
                     },
                     else => return .{ .err = {} },
                 }
@@ -3244,19 +3261,19 @@ pub const nth = struct {
         };
         switch (tok.*) {
             .number => {
-                if (tok.number.int_value) |b| return .{ 0, b };
+                if (tok.number.int_value) |b| return .{ .result = .{ 0, b } };
             },
             .dimension => {
                 if (tok.dimension.num.int_value) |a| {
                     // @compileError(todo_stuff.match_ignore_ascii_case);
                     const unit = tok.dimension.unit;
                     if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "n")) {
-                        return if (parse_b(input, a).asErr()) |e| return .{ .err = e };
+                        return parse_b(input, a);
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "n-")) {
-                        return if (parse_signless_b(input, a).asErr()) |e| return .{ .err = e };
+                        return parse_signless_b(input, a);
                     } else {
                         if (parse_n_dash_digits(input.allocator, unit)) |b| {
-                            return .{ a, b };
+                            return .{ .result = .{ a, b } };
                         } else {
                             return .{ .err = input.newUnexpectedTokenError(.{ .ident = unit }) };
                         }
@@ -3267,20 +3284,20 @@ pub const nth = struct {
                 const value = tok.ident;
                 // @compileError(todo_stuff.match_ignore_ascii_case);
                 if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(value, "even")) {
-                    return .{ 2, 0 };
+                    return .{ .result = .{ 2, 0 } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(value, "odd")) {
-                    return .{ 2, 1 };
+                    return .{ .result = .{ 2, 1 } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(value, "n")) {
-                    return if (parse_b(input, 1).asErr()) |e| return .{ .err = e };
+                    return parse_b(input, 1);
                 } else if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(value, "-n")) {
-                    return if (parse_b(input, -1).asErr()) |e| return .{ .err = e };
+                    return parse_b(input, -1);
                 } else if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(value, "n-")) {
-                    return if (parse_signless_b(input, 1, -1).asErr()) |e| return .{ .err = e };
+                    return parse_signless_b(input, 1, -1);
                 } else if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(value, "-n-")) {
-                    return if (parse_signless_b(input, -1, -1).asErr()) |e| return .{ .err = e };
+                    return parse_signless_b(input, -1, -1);
                 } else {
                     const slice, const a = if (bun.strings.startsWithChar(value, '-')) .{ value[1..], -1 } else .{ value, 1 };
-                    if (parse_n_dash_digits(input.allocator, slice)) |b| return .{ a, b };
+                    if (parse_n_dash_digits(input.allocator, slice).asValue()) |b| return .{ .result = .{ a, b } };
                     return .{ .err = input.newUnexpectedTokenError(.{ .ident = value }) };
                 }
             },
@@ -3292,12 +3309,12 @@ pub const nth = struct {
                 if (next_tok.* == .ident) {
                     const value = next_tok.ident;
                     if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(value, "n")) {
-                        return if (parse_b(input, 1).asErr()) |e| return .{ .err = e };
+                        return parse_b(input, 1);
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(value, "-n")) {
-                        return if (parse_signless_b(input, 1, -1).asErr()) |e| return .{ .err = e };
+                        return parse_signless_b(input, 1, -1);
                     } else {
                         if (parse_n_dash_digits(input.allocator, value)) |b| {
-                            return .{ 1, b };
+                            return .{ .result = .{ 1, b } };
                         } else {
                             return .{ .err = input.newUnexpectedTokenError(.{ .ident = value }) };
                         }
@@ -5096,7 +5113,7 @@ pub const color = struct {
                 (try fromHex(value[0])) * 16 + (try fromHex(value[1])),
                 (try fromHex(value[2])) * 16 + (try fromHex(value[3])),
                 (try fromHex(value[4])) * 16 + (try fromHex(value[5])),
-                @as(f32, (try fromHex(value[6])) * 16 + (try fromHex(value[7]))) / 255.0,
+                @as(f32, @floatFromInt((try fromHex(value[6])) * 16 + (try fromHex(value[7])))) / 255.0,
             },
             6 => .{
                 (try fromHex(value[0])) * 16 + (try fromHex(value[1])),
@@ -5108,7 +5125,7 @@ pub const color = struct {
                 (try fromHex(value[0])) * 17,
                 (try fromHex(value[1])) * 17,
                 (try fromHex(value[2])) * 17,
-                @as(f32, @intCast((try fromHex(value[3])) * 17)) / 255.0,
+                @as(f32, @floatFromInt((try fromHex(value[3])) * 17)) / 255.0,
             },
             3 => .{
                 (try fromHex(value[0])) * 17,
@@ -5380,8 +5397,9 @@ pub const generic = struct {
             f32 => CSSNumberFns.parse(input),
             CSSInteger => CSSIntegerFns.parse(input),
             CustomIdent => CustomIdentFns.parse(input),
-            DashedIdent => DashedIdentFns.parse(input),
-            Ident => IdentFns.parse(input),
+            // FIXME: when we fix these damn types
+            // DashedIdent => DashedIdentFns.parse(input),
+            // Ident => IdentFns.parse(input),
             else => T.parse(input),
         };
     }
@@ -5391,8 +5409,9 @@ pub const generic = struct {
             f32 => CSSNumberFns.parse(input),
             CSSInteger => CSSIntegerFns.parse(input),
             CustomIdent => CustomIdentFns.parse(input),
-            DashedIdent => DashedIdentFns.parse(input),
-            Ident => IdentFns.parse(input),
+            // FIXME: when we fix these damn types
+            // DashedIdent => DashedIdentFns.parse(input),
+            // Ident => IdentFns.parse(input),
             else => T.parse(input),
         };
     }
@@ -5463,7 +5482,7 @@ pub const to_css = struct {
         var printer = Printer(W).new(allocator, std.ArrayList(u8).init(allocator), writer, options);
         defer printer.deinit();
         switch (T) {
-            CSSString => try CSSStringFns.toCss(W, &printer),
+            CSSString => try CSSStringFns.toCss(this, W, &printer),
             else => try this.toCss(W, &printer),
         }
         return s.items;

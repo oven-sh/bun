@@ -117,15 +117,15 @@ pub fn Calc(comptime V: type) type {
         pub fn add(this: @This(), allocator: std.mem.Allocator, rhs: @This()) @This() {
             if (this == .value and rhs == .value) {
                 // PERF: we can reuse the allocation here
-                return .{ .value = bun.create(allocator, V, addValue(this.value.*, rhs.value.*)) };
+                return .{ .value = bun.create(allocator, V, addValue(allocator, this.value.*, rhs.value.*)) };
             } else if (this == .number and rhs == .number) {
                 return .{ .number = this.number + rhs.number };
             } else if (this == .value) {
                 // PERF: we can reuse the allocation here
-                return .{ .value = bun.create(allocator, V, addValue(this.value.*, intoValue(rhs))) };
+                return .{ .value = bun.create(allocator, V, addValue(allocator, this.value.*, intoValue(rhs))) };
             } else if (rhs == .value) {
                 // PERF: we can reuse the allocation here
-                return .{ .value = bun.create(allocator, V, addValue(intoValue(this), rhs.value.*)) };
+                return .{ .value = bun.create(allocator, V, addValue(allocator, intoValue(this), rhs.value.*)) };
             } else if (this == .function) {
                 return This{
                     .sum = .{
@@ -144,7 +144,7 @@ pub fn Calc(comptime V: type) type {
                 return .{ .value = bun.create(
                     allocator,
                     V,
-                    addValue(intoValue(this), intoValue(rhs)),
+                    addValue(allocator, intoValue(this), intoValue(rhs)),
                 ) };
             }
         }
@@ -232,12 +232,13 @@ pub fn Calc(comptime V: type) type {
                     }
                 };
                 var closure = Closure{ .ctx = ctx };
-                var args = switch (input.parseNestedBlock(ArrayList(This), &closure, Closure.parseNestedBlockFn)) {
+                var reduced = switch (input.parseNestedBlock(ArrayList(This), &closure, Closure.parseNestedBlockFn)) {
                     .result => |vv| vv,
                     .err => |e| return .{ .err = e },
                 };
                 // PERF: i don't like this additional allocation
-                var reduced: ArrayList(This) = This.reduceArgs(&args, std.math.Order.gt);
+                This.reduceArgs(&reduced, std.math.Order.gt);
+                // var reduced: ArrayList(This) = This.reduceArgs(&args, std.math.Order.gt);
                 if (reduced.items.len == 1) {
                     return .{ .result = reduced.orderedRemove(0) };
                 }
@@ -475,7 +476,7 @@ pub fn Calc(comptime V: type) type {
                             };
                         }
 
-                        return i.newCustomError(css.ParserError{ .invalid_value = {} });
+                        return .{ .err = i.newCustomError(css.ParserError{ .invalid_value = {} }) };
                     }
                 };
                 var closure = Closure{ .ctx = ctx };
@@ -798,7 +799,7 @@ pub fn Calc(comptime V: type) type {
                 return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
             }
 
-            const value = switch (input.tryParse(css.generic.parse(V, input), .{})) {
+            const value = switch (input.tryParse(css.generic.parseFor(V), .{})) {
                 .result => |vv| vv,
                 .err => |e| return .{ .err = e },
             };
@@ -859,7 +860,7 @@ pub fn Calc(comptime V: type) type {
                             .number => break :rad trig_fn.run(v.number),
                             else => {},
                         }
-                        return i.newCustomError(css.ParserError{ .invalid_value = {} });
+                        return .{ .err = i.newCustomError(css.ParserError{ .invalid_value = {} }) };
                     };
 
                     if (to_angle and !std.math.isNan(rad)) {
@@ -872,7 +873,7 @@ pub fn Calc(comptime V: type) type {
                                 ),
                             };
                         }
-                        return i.newCustomError(css.ParserError{ .invalid_value = {} });
+                        return .{ .err = i.newCustomError(css.ParserError{ .invalid_value = {} }) };
                     } else {
                         return .{ .number = rad };
                     }

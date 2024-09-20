@@ -110,6 +110,7 @@ pub const Url = struct {
             // PERF(alloc) we could use stack fallback here?
             var bufw = buf.writer(dest.allocator);
             const BufW = @TypeOf(bufw);
+            _ = BufW; // autofix
             defer buf.deinit(dest.allocator);
             try css.Token.toCssGeneric(&css.Token{ .unquoted_url = this.url }, &bufw);
 
@@ -117,10 +118,10 @@ pub const Url = struct {
             // then serialize as a string and choose the shorter version.
             if (buf.items.len > this.url.len + 7) {
                 var buf2 = ArrayList(u8){};
-                defer buf2.deinit();
+                defer buf2.deinit(dest.allocator);
                 // PERF(alloc) we could use stack fallback here?
                 bufw = buf2.writer(dest.allocator);
-                try css.serializer.serializeString(this.url, BufW, &bufw);
+                css.serializer.serializeString(this.url, &bufw) catch return dest.addFmtError();
                 if (buf2.items.len + 5 < buf.items.len) {
                     try dest.writeStr("url(");
                     try dest.writeStr(buf2.items);
@@ -131,7 +132,7 @@ pub const Url = struct {
             try dest.writeStr(buf.items);
         } else {
             try dest.writeStr("url(");
-            try css.serializer.serializeString(this.url, W, dest);
+            css.serializer.serializeString(this.url, dest) catch return dest.addFmtError();
             try dest.writeChar(')');
         }
     }

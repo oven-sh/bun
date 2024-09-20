@@ -198,8 +198,8 @@ pub const SupportsCondition = union(enum) {
             return .{ .result = ret };
         }
 
-        if (expected_type == 1) return .{ .@"and" = conditions };
-        if (expected_type == 2) return .{ .@"or" = conditions };
+        if (expected_type == 1) return .{ .result = .{ .@"and" = conditions } };
+        if (expected_type == 2) return .{ .result = .{ .@"or" = conditions } };
         return .{ .result = in_parens };
     }
 

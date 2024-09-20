@@ -191,11 +191,11 @@ pub const PropertyRuleDeclarationParser = struct {
         pub const AtRule = void;
 
         pub fn parsePrelude(_: *This, name: []const u8, input: *css.Parser) Result(Prelude) {
-            return input.newError(css.BasicParseErrorKind{ .at_rule_invalid = name });
+            return .{ .err = input.newError(css.BasicParseErrorKind{ .at_rule_invalid = name }) };
         }
 
         pub fn parseBlock(_: *This, _: AtRuleParser.Prelude, _: *const css.ParserState, input: *css.Parser) Result(AtRuleParser.AtRule) {
-            return input.newError(css.BasicParseErrorKind.at_rule_body_invalid);
+            return .{ .err = input.newError(css.BasicParseErrorKind.at_rule_body_invalid) };
         }
 
         pub fn ruleWithoutBlock(_: *This, _: AtRuleParser.Prelude, _: *const css.ParserState) css.Maybe(AtRuleParser.AtRule, void) {
@@ -208,11 +208,11 @@ pub const PropertyRuleDeclarationParser = struct {
         pub const QualifiedRule = void;
 
         pub fn parsePrelude(_: *This, input: *css.Parser) Result(Prelude) {
-            return input.newError(css.BasicParseErrorKind.qualified_rule_invalid);
+            return .{ .err = input.newError(css.BasicParseErrorKind.qualified_rule_invalid) };
         }
 
         pub fn parseBlock(_: *This, _: Prelude, _: *const css.ParserState, input: *css.Parser) Result(QualifiedRule) {
-            return input.newError(css.BasicParseErrorKind.qualified_rule_invalid);
+            return .{ .err = input.newError(css.BasicParseErrorKind.qualified_rule_invalid) };
         }
     };
 };

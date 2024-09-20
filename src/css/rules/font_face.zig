@@ -126,7 +126,7 @@ pub const UnicodeRange = struct {
             const end_remainder = this.end & remainder_mask;
 
             if (start_remainder == 0 and end_remainder == remainder_mask) {
-                const start = (this.start & !remainder_mask) >> shift;
+                const start = (this.start & ~remainder_mask) >> shift;
                 if (start != 0) {
                     try dest.writeFmt("U+{x}", .{start});
                 } else {

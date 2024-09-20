@@ -132,11 +132,11 @@ pub const TokenList = struct {
                         has_whitespace = try this.writeWhitespaceIfNeeded(i, W, dest);
                     },
                     .dimension => {
-                        try css.serializer.serializeDimension(token.dimension.value, token.dimension.unit, W, dest);
+                        try css.serializer.serializeDimension(token.dimension.num.value, token.dimension.unit, W, dest);
                         has_whitespace = false;
                     },
-                    .number => {
-                        try css.css_values.number.CSSNumberFns.toCss(W, dest);
+                    .number => |v| {
+                        try css.css_values.number.CSSNumberFns.toCss(&v.value, W, dest);
                         has_whitespace = false;
                     },
                     else => {
@@ -421,7 +421,7 @@ pub const TokenList = struct {
                         const Closure = struct {
                             options: *const css.ParserOptions,
                             depth: usize,
-                            pub fn parsefn(this: *@This(), input2: *css.Parser) Result(Function) {
+                            pub fn parsefn(this: *@This(), input2: *css.Parser) Result(TokenList) {
                                 const args = switch (TokenListFns.parse(input2, this.options, this.depth + 1)) {
                                     .result => |vv| vv,
                                     .err => |e| return .{ .err = e },
@@ -531,13 +531,13 @@ pub const TokenList = struct {
                     last_is_whitespace = false;
                 },
                 .dimension => {
-                    const value = if (LengthValue.tryFromToken(tok)) |length|
+                    const value = if (LengthValue.tryFromToken(tok).asValue()) |length|
                         TokenOrValue{ .length = length }
-                    else if (Angle.tryFromToken(tok)) |angle|
+                    else if (Angle.tryFromToken(tok).asValue()) |angle|
                         TokenOrValue{ .angle = angle }
-                    else if (Time.tryFromToken(tok)) |time|
+                    else if (Time.tryFromToken(tok).asValue()) |time|
                         TokenOrValue{ .time = time }
-                    else if (Resolution.tryFromToken(tok)) |resolution|
+                    else if (Resolution.tryFromToken(tok).asValue) |resolution|
                         TokenOrValue{ .resolution = resolution }
                     else
                         TokenOrValue{ .token = tok.* };
@@ -736,14 +736,14 @@ pub const UnresolvedColor = union(enum) {
                         .result => |vv| vv,
                         .err => |e| return .{ .err = e },
                     };
-                    return UnresolvedColor{
+                    return .{ .result = UnresolvedColor{
                         .RGB = .{
                             .r = r,
                             .g = g,
                             .b = b,
                             .alpha = alpha,
                         },
-                    };
+                    } };
                 }
             };
             var closure = Closure{
@@ -771,14 +771,14 @@ pub const UnresolvedColor = union(enum) {
                         .result => |vv| vv,
                         .err => |e| return .{ .err = e },
                     };
-                    return UnresolvedColor{
+                    return .{ .result = UnresolvedColor{
                         .HSL = .{
                             .h = h,
                             .s = s,
                             .l = l,
                             .alpha = alpha,
                         },
-                    };
+                    } };
                 }
             };
             var closure = Closure{
@@ -833,8 +833,8 @@ pub const UnresolvedColor = union(enum) {
         darklist.append(allocator, TokenOrValue{ .unresolved_color = dark }) catch bun.outOfMemory();
         return UnresolvedColor{
             .light_dark = .{
-                .light = lightlist,
-                .dark = darklist,
+                .light = css.TokenList{ .v = lightlist },
+                .dark = css.TokenList{ .v = darklist },
             },
         };
     }
@@ -981,7 +981,7 @@ pub const EnvironmentVariableName = union(enum) {
         }
 
         if (input.tryParse(DashedIdentReference.parseWithOptions, .{
-            css.ParserOptions.default(
+            &css.ParserOptions.default(
                 input.allocator(),
                 null,
             ),

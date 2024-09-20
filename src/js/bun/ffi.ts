@@ -295,9 +295,12 @@ Object.defineProperty(globalThis, "__GlobalBunFFIPtrFunctionForWrapper", {
   configurable: true,
 });
 Object.defineProperty(globalThis, "__GlobalBunFFIPtrArrayBufferViewFn", {
-  value: ArrayBuffer.$isView,
+  value: function isTypedArrayView(val) {
+    return $isTypedArrayView(val);
+  },
   enumerable: false,
   configurable: true,
+  writable: true,
 });
 
 ffiWrappers[FFIType.cstring] = ffiWrappers[FFIType.pointer] = `{

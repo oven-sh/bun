@@ -2708,6 +2708,17 @@ pub const Parser = struct {
         return result;
     }
 
+    pub inline fn tryParseImpl(this: *Parser, comptime Ret: type, comptime func: anytype, args: anytype) Ret {
+        const start = this.state();
+        const result = result: {
+            break :result @call(.auto, func, args);
+        };
+        if (result == .err) {
+            this.reset(&start);
+        }
+        return result;
+    }
+
     pub inline fn parseNestedBlock(this: *Parser, comptime T: type, closure: anytype, comptime parsefn: *const fn (@TypeOf(closure), *Parser) Result(T)) Result(T) {
         return parse_nested_block(this, T, closure, parsefn);
     }
@@ -5423,7 +5434,11 @@ pub const generic = struct {
         };
     }
 
-    pub inline fn parseFor(comptime T: type) *const fn (*Parser) Result(T) {
+    pub inline fn parseFor(comptime T: type) @TypeOf(struct {
+        fn parsefn(input: *Parser) Result(T) {
+            return generic.parse(T, input);
+        }
+    }.parsefn) {
         return struct {
             fn parsefn(input: *Parser) Result(T) {
                 return generic.parse(T, input);
@@ -5449,6 +5464,91 @@ pub const generic = struct {
             CustomIdent, DashedIdent, Ident => bun.strings.eql(lhs.*, rhs.*),
             else => T.eql(lhs, rhs),
         };
+    }
+
+    const Angle = css_values.angle.Angle;
+    pub inline fn tryFromAngle(comptime T: type, angle: Angle) ?T {
+        return switch (T) {
+            CSSNumber => CSSNumberFns.tryFromAngle(angle),
+            Angle => return Angle.tryFromAngle(angle),
+            else => T.tryFromAngle(angle),
+        };
+    }
+
+    pub inline fn trySign(comptime T: type, val: *const T) ?f32 {
+        return switch (T) {
+            CSSNumber => CSSNumberFns.sign(val),
+            else => {
+                if (@hasDecl(T, "sign")) return T.sign(val);
+                return T.trySign(val);
+            },
+        };
+    }
+
+    pub inline fn tryMap(
+        comptime T: type,
+        val: *const T,
+        comptime map_fn: *const fn (a: f32) f32,
+    ) ?T {
+        return switch (T) {
+            CSSNumber => map_fn(val.*),
+            else => {
+                if (@hasDecl(T, "map")) return T.map(val, map_fn);
+                return T.tryMap(val, map_fn);
+            },
+        };
+    }
+
+    pub inline fn tryOpTo(
+        comptime T: type,
+        comptime R: type,
+        lhs: *const T,
+        rhs: *const T,
+        ctx: anytype,
+        comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) R,
+    ) ?R {
+        return switch (T) {
+            CSSNumber => op_fn(ctx, lhs.*, rhs.*),
+            else => {
+                if (@hasDecl(T, "opTo")) return T.opTo(lhs, rhs, R, ctx, op_fn);
+                return T.tryOpTo(lhs, rhs, R, ctx, op_fn);
+            },
+        };
+    }
+
+    pub inline fn tryOp(
+        comptime T: type,
+        lhs: *const T,
+        rhs: *const T,
+        ctx: anytype,
+        comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) f32,
+    ) ?T {
+        return switch (T) {
+            Angle => Angle.tryOp(lhs, rhs, ctx, op_fn),
+            CSSNumber => op_fn(ctx, lhs.*, rhs.*),
+            else => {
+                if (@hasDecl(T, "op")) return T.op(lhs, rhs, ctx, op_fn);
+                return T.tryOp(lhs, rhs, ctx, op_fn);
+            },
+        };
+    }
+
+    pub inline fn partialCmp(comptime T: type, lhs: *const T, rhs: *const T) ?std.math.Order {
+        return switch (T) {
+            f32 => partialCmpF32(lhs, rhs),
+            CSSInteger => std.math.order(lhs.*, rhs.*),
+            css_values.angle.Angle => css_values.angle.Angle.partialCmp(lhs, rhs),
+            else => T.partialCmp(lhs, rhs),
+        };
+    }
+
+    pub inline fn partialCmpF32(lhs: *const f32, rhs: *const f32) ?std.math.Order {
+        const lte = lhs.* <= rhs.*;
+        const rte = lhs.* >= rhs.*;
+        if (!lte and !rte) return null;
+        if (!lte and rte) return .gt;
+        if (lte and !rte) return .lt;
+        return .eq;
     }
 };
 

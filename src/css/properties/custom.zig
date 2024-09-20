@@ -1100,6 +1100,20 @@ pub const UnparsedProperty = struct {
     property_id: css.PropertyId,
     /// The property value, stored as a raw token list.
     value: TokenList,
+
+    pub fn parse(property_id: css.PropertyId, input: *css.Parser, options: *const css.ParserOptions) Result(UnparsedProperty) {
+        const Closure = struct { options: *const css.ParserOptions };
+        const value = switch (input.parseUntilBefore(css.Delimiters{ .bang = true, .semicolon = true }, css.TokenList, &Closure{ .options = options }, struct {
+            pub fn parseFn(self: *const Closure, i: *css.Parser) Result(TokenList) {
+                return TokenList.parse(i, self.options, 0);
+            }
+        }.parseFn)) {
+            .result => |v| v,
+            .err => |e| return .{ .err = e },
+        };
+
+        return .{ .result = .{ .property_id = property_id, .value = value } };
+    }
 };
 
 /// A CSS custom property, representing any unknown property.

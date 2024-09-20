@@ -14,7 +14,7 @@ pub const Percentage = struct {
 
     pub fn parse(input: *css.Parser) Result(Percentage) {
         if (input.tryParse(Calc(Percentage).parse, .{}).asValue()) |calc_value| {
-            if (calc_value == .value) |v| return v.*;
+            if (calc_value == .value) return .{ .result = calc_value.value.* };
             // Percentages are always compatible, so they will always compute to a value.
             bun.unreachablePanic("Percentages are always compatible, so they will always compute to a value.", .{});
         }
@@ -77,6 +77,49 @@ pub const Percentage = struct {
     pub fn trySign(this: *const Percentage) ?f32 {
         return this.sign();
     }
+
+    pub fn partialCmp(this: *const Percentage, other: *const Percentage) ?std.math.Order {
+        return css.generic.partialCmp(f32, &this.v, &other.v);
+    }
+
+    pub fn tryFromAngle(_: css.css_values.angle.Angle) ?Percentage {
+        return null;
+    }
+
+    pub fn tryMap(_: *const Percentage, comptime _: *const fn (f32) f32) ?Percentage {
+        // Percentages cannot be mapped because we don't know what they will resolve to.
+        // For example, they might be positive or negative depending on what they are a
+        // percentage of, which we don't know.
+        return null;
+    }
+
+    pub fn op(
+        this: *const Percentage,
+        other: *const Percentage,
+        ctx: anytype,
+        comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) f32,
+    ) Percentage {
+        return Percentage{ .v = op_fn(ctx, this.v, other.v) };
+    }
+
+    pub fn opTo(
+        this: *const Percentage,
+        other: *const Percentage,
+        comptime R: type,
+        ctx: anytype,
+        comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) R,
+    ) R {
+        return op_fn(ctx, this.v, other.v);
+    }
+
+    pub fn tryOp(
+        this: *const Percentage,
+        other: *const Percentage,
+        ctx: anytype,
+        comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) f32,
+    ) ?Percentage {
+        return Percentage{ .v = op_fn(ctx, this.v, other.v) };
+    }
 };
 
 pub fn DimensionPercentage(comptime D: type) type {
@@ -87,30 +130,15 @@ pub fn DimensionPercentage(comptime D: type) type {
 
         const This = @This();
 
-        fn mulValueF32(lhs: D, allocator: std.mem.Allocator, rhs: f32) D {
-            return switch (D) {
-                f32 => lhs * rhs,
-                else => lhs.mulF32(allocator, rhs),
-            };
-        }
-
-        pub fn mulF32(this: This, allocator: std.mem.Allocator, other: f32) This {
-            return switch (this) {
-                .dimension => |d| .{ .dimension = mulValueF32(d, allocator, other) },
-                .percentage => |p| .{ .percentage = p.mulF32(allocator, other) },
-                .calc => |c| .{ .calc = bun.create(allocator, Calc(DimensionPercentage(D)), c.mulF32(allocator, other)) },
-            };
-        }
-
         pub fn parse(input: *css.Parser) Result(@This()) {
-            if (input.tryParse(Calc(This, .{})).asValue()) |calc_value| {
+            if (input.tryParse(Calc(This).parse, .{}).asValue()) |calc_value| {
                 if (calc_value == .value) return .{ .result = calc_value.value.* };
                 return .{ .result = .{
-                    .calc = bun.create(input.allocator(), This, calc_value),
+                    .calc = bun.create(input.allocator(), Calc(DimensionPercentage(D)), calc_value),
                 } };
             }
 
-            if (input.tryParse(D.parse(), .{}).asValue()) |length| {
+            if (input.tryParse(D.parse, .{}).asValue()) |length| {
                 return .{ .result = .{ .dimension = length } };
             }
 
@@ -151,12 +179,64 @@ pub fn DimensionPercentage(comptime D: type) type {
             };
         }
 
+        fn mulValueF32(lhs: D, allocator: std.mem.Allocator, rhs: f32) D {
+            return switch (D) {
+                f32 => lhs * rhs,
+                else => lhs.mulF32(allocator, rhs),
+            };
+        }
+
+        pub fn mulF32(this: This, allocator: std.mem.Allocator, other: f32) This {
+            return switch (this) {
+                .dimension => |d| .{ .dimension = mulValueF32(d, allocator, other) },
+                .percentage => |p| .{ .percentage = p.mulF32(allocator, other) },
+                .calc => |c| .{ .calc = bun.create(allocator, Calc(DimensionPercentage(D)), c.mulF32(allocator, other)) },
+            };
+        }
+
+        pub fn add(this: This, allocator: std.mem.Allocator, other: This) This {
+            _ = this; // autofix
+            _ = allocator; // autofix
+            _ = other; // autofix
+            @panic(css.todo_stuff.depth);
+        }
+
+        pub fn partialCmp(this: *const This, other: *const This) ?std.math.Order {
+            _ = this; // autofix
+            _ = other; // autofix
+            @panic(css.todo_stuff.depth);
+        }
+
         pub fn trySign(this: *const This) ?f32 {
             return switch (this.*) {
                 .dimension => |d| d.trySign(),
                 .percentage => |p| p.trySign(),
                 .calc => |c| c.trySign(),
             };
+        }
+
+        pub fn tryFromAngle(angle: css.css_values.angle.Angle) ?This {
+            return DimensionPercentage(D){
+                .dimension = D.tryFromAngle(angle) orelse return null,
+            };
+        }
+
+        pub fn tryMap(this: *const This, comptime mapfn: *const fn (f32) f32) ?This {
+            return switch (this.*) {
+                .dimension => |vv| if (css.generic.tryMap(D, &vv, mapfn)) |v| .{ .dimension = v } else null,
+                else => null,
+            };
+        }
+
+        pub fn tryOp(
+            this: *const This,
+            other: *const This,
+            ctx: anytype,
+            comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) f32,
+        ) ?This {
+            if (this.* == .dimension and other.* == .dimension) return .{ .dimension = css.generic.tryOp(D, &this.dimension, &other.dimension, ctx, op_fn) orelse return null };
+            if (this.* == .percentage and other.* == .percentage) return .{ .percentage = Percentage{ .v = op_fn(ctx, this.percentage.v, other.percentage.v) } };
+            return null;
         }
     };
 }

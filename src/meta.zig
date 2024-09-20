@@ -165,3 +165,28 @@ pub inline fn ConcatArgs4(
 
     return args;
 }
+
+// Copied from std.meta
+fn CreateUniqueTuple(comptime N: comptime_int, comptime types: [N]type) type {
+    var tuple_fields: [types.len]std.builtin.Type.StructField = undefined;
+    inline for (types, 0..) |T, i| {
+        @setEvalBranchQuota(10_000);
+        var num_buf: [128]u8 = undefined;
+        tuple_fields[i] = .{
+            .name = std.fmt.bufPrintZ(&num_buf, "{d}", .{i}) catch unreachable,
+            .type = T,
+            .default_value = null,
+            .is_comptime = false,
+            .alignment = if (@sizeOf(T) > 0) @alignOf(T) else 0,
+        };
+    }
+
+    return @Type(.{
+        .Struct = .{
+            .is_tuple = true,
+            .layout = .auto,
+            .decls = &.{},
+            .fields = &tuple_fields,
+        },
+    });
+}

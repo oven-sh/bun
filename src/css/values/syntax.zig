@@ -59,10 +59,13 @@ pub const SyntaxString = union(enum) {
     }
 
     pub fn parse(input: *css.Parser) Result(SyntaxString) {
-        const string = input.expectString();
+        const string = switch (input.expectString()) {
+            .result => |v| v,
+            .err => |e| return .{ .err = e },
+        };
         const result = SyntaxString.parseString(input.allocator(), string);
         if (result.isErr()) return .{ .err = input.newCustomError(css.ParserError.invalid_value) };
-        return result;
+        return .{ .result = result.result };
     }
 
     /// Parses a syntax string.
@@ -73,7 +76,7 @@ pub const SyntaxString = union(enum) {
             return .{ .err = {} };
         }
 
-        if (bun.strings.eqlComptime(u8, trimmed_input, "*")) {
+        if (bun.strings.eqlComptime(trimmed_input, "*")) {
             return .{ .result = SyntaxString.universal };
         }
 
@@ -81,13 +84,16 @@ pub const SyntaxString = union(enum) {
 
         // PERF(alloc): count first?
         while (true) {
-            const component = try SyntaxComponent.parseString(&trimmed_input);
-            try components.append(
+            const component = switch (SyntaxComponent.parseString(trimmed_input)) {
+                .result => |v| v,
+                .err => |e| return .{ .err = e },
+            };
+            components.append(
                 allocator,
                 component,
-            );
+            ) catch bun.outOfMemory();
 
-            trimmed_input = std.mem.trimLeft(u8, trimmed_input, &std.ascii.spaces);
+            trimmed_input = std.mem.trimLeft(u8, trimmed_input, SPACE_CHARACTERS);
             if (trimmed_input.len == 0) {
                 break;
             }
@@ -104,25 +110,32 @@ pub const SyntaxString = union(enum) {
     }
 
     /// Parses a value according to the syntax grammar.
-    pub fn parseValue(this: *SyntaxString, input: *css.Parser) Result(ParsedComponent) {
+    pub fn parseValue(this: *const SyntaxString, input: *css.Parser) Result(ParsedComponent) {
         switch (this.*) {
-            .universal => return ParsedComponent{
-                .token_list = try css.css_properties.custom.TokenList.parse(
+            .universal => return .{ .result = ParsedComponent{
+                .token_list = switch (css.css_properties.custom.TokenList.parse(
                     input,
-                    &css.ParserOptions.default(),
+                    &css.ParserOptions.default(input.allocator(), null),
                     0,
-                ),
-            },
+                )) {
+                    .result => |v| v,
+                    .err => |e| return .{ .err = e },
+                },
+            } },
             .components => |components| {
                 // Loop through each component, and return the first one that parses successfully.
                 for (components.items) |component| {
                     const state = input.state();
+                    // PERF: deinit this on error
                     var parsed = ArrayList(ParsedComponent){};
 
                     while (true) {
                         const value_result = input.tryParse(struct {
-                            fn parse(i: *css.Parser) Result(ParsedComponent) {
-                                const value = switch (component.kind) {
+                            fn parse(
+                                i: *css.Parser,
+                                comp: SyntaxComponent,
+                            ) Result(ParsedComponent) {
+                                const value = switch (comp.kind) {
                                     .length => ParsedComponent{ .length = switch (Length.parse(i)) {
                                         .result => |vv| vv,
                                         .err => |e| return .{ .err = e },
@@ -181,7 +194,10 @@ pub const SyntaxString = union(enum) {
                                     } },
                                     .literal => |value| blk: {
                                         const location = i.currentSourceLocation();
-                                        const ident = if (i.expectIdent().asErr()) |e| return .{ .err = e };
+                                        const ident = switch (i.expectIdent()) {
+                                            .result => |v| v,
+                                            .err => |e| return .{ .err = e },
+                                        };
                                         if (!bun.strings.eql(ident, value)) {
                                             return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
                                         }
@@ -190,13 +206,13 @@ pub const SyntaxString = union(enum) {
                                 };
                                 return .{ .result = value };
                             }
-                        }.parse, .{});
+                        }.parse, .{component});
 
-                        if (value_result) |value| {
+                        if (value_result.asValue()) |value| {
                             switch (component.multiplier) {
-                                .none => return value,
+                                .none => return .{ .result = value },
                                 .space => {
-                                    if (parsed.append(value).asErr()) |e| return .{ .err = e };
+                                    parsed.append(input.allocator(), value) catch bun.outOfMemory();
                                     if (input.isExhausted()) {
                                         return .{ .result = ParsedComponent{ .repeated = .{
                                             .components = parsed,
@@ -205,9 +221,9 @@ pub const SyntaxString = union(enum) {
                                     }
                                 },
                                 .comma => {
-                                    if (parsed.append(value).asErr()) |e| return .{ .err = e };
+                                    parsed.append(input.allocator(), value) catch bun.outOfMemory();
                                     if (input.next().asValue()) |token| {
-                                        if (token == .comma) continue;
+                                        if (token.* == .comma) continue;
                                         break;
                                     } else {
                                         return .{ .result = ParsedComponent{ .repeated = .{
@@ -240,7 +256,8 @@ pub const SyntaxComponent = struct {
     kind: SyntaxComponentKind,
     multiplier: Multiplier,
 
-    pub fn parseString(input: []const u8) !SyntaxComponent {
+    pub fn parseString(input_: []const u8) css.Maybe(SyntaxComponent, void) {
+        var input = input_;
         const kind = switch (SyntaxComponentKind.parseString(input)) {
             .result => |vv| vv,
             .err => |e| return .{ .err = e },
@@ -248,10 +265,10 @@ pub const SyntaxComponent = struct {
 
         // Pre-multiplied types cannot have multipliers.
         if (kind == .transform_list) {
-            return SyntaxComponent{
+            return .{ .result = SyntaxComponent{
                 .kind = kind,
                 .multiplier = .none,
-            };
+            } };
         }
 
         var multiplier: Multiplier = .none;
@@ -263,7 +280,7 @@ pub const SyntaxComponent = struct {
             multiplier = .comma;
         }
 
-        return SyntaxComponent{ .kind = kind, .multiplier = multiplier };
+        return .{ .result = SyntaxComponent{ .kind = kind, .multiplier = multiplier } };
     }
 
     pub fn toCss(this: *const SyntaxComponent, comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -317,7 +334,7 @@ pub const SyntaxComponentKind = union(enum) {
             const end_idx = std.mem.indexOfScalar(u8, input, '>') orelse return .{ .err = {} };
             const name = input[1..end_idx];
             // todo_stuff.match_ignore_ascii_case
-            const component = if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "length"))
+            const component: SyntaxComponentKind = if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "length"))
                 .length
             else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "number"))
                 .number
@@ -349,7 +366,7 @@ pub const SyntaxComponentKind = union(enum) {
                 return .{ .err = {} };
 
             input = input[end_idx + 1 ..];
-            return component;
+            return .{ .result = component };
         } else if (input.len > 0 and isIdentStart(input[0])) {
             // A literal.
             var end_idx: usize = 0;
@@ -359,7 +376,7 @@ pub const SyntaxComponentKind = union(enum) {
             {}
             const literal = input[0..end_idx];
             input = input[end_idx..];
-            return SyntaxComponentKind{ .literal = literal };
+            return .{ .result = SyntaxComponentKind{ .literal = literal } };
         } else {
             return .{ .err = {} };
         }

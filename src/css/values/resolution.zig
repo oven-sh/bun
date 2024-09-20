@@ -60,13 +60,13 @@ pub const Resolution = union(enum) {
                 const unit = dim.unit;
                 // todo_stuff.match_ignore_ascii_case
                 if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "dpi")) {
-                    return .{ .dpi = value };
+                    return .{ .result = .{ .dpi = value } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "dpcm")) {
-                    return .{ .dpcm = value };
+                    return .{ .result = .{ .dpcm = value } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "dppx") or
                     bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "x"))
                 {
-                    return .{ .dppx = value };
+                    return .{ .result = .{ .dppx = value } };
                 } else {
                     return .{ .err = {} };
                 }

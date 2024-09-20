@@ -28,6 +28,13 @@ pub const LengthPercentageOrAuto = union(enum) {
     length: LengthPercentage,
 };
 
+const PX_PER_IN: f32 = 96.0;
+const PX_PER_CM: f32 = PX_PER_IN / 2.54;
+const PX_PER_MM: f32 = PX_PER_CM / 10.0;
+const PX_PER_Q: f32 = PX_PER_CM / 40.0;
+const PX_PER_PT: f32 = PX_PER_IN / 72.0;
+const PX_PER_PC: f32 = PX_PER_IN / 6.0;
+
 pub const LengthValue = union(enum) {
     // https://www.w3.org/TR/css-values-4/#absolute-lengths
     /// A length in pixels.
@@ -156,13 +163,15 @@ pub const LengthValue = union(enum) {
         };
         switch (token.*) {
             .dimension => |*dim| {
+                // todo_stuff.match_ignore_ascii_case
                 inline for (std.meta.fields(@This())) |field| {
                     if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(field.name, dim.unit)) {
-                        return @unionInit(LengthValue, field.name, dim.num.value);
+                        return .{ .result = @unionInit(LengthValue, field.name, dim.num.value) };
                     }
                 }
             },
             .number => |*num| return .{ .result = .{ .px = num.value } },
+            else => {},
         }
         return .{ .err = location.newUnexpectedTokenError(token.*) };
     }
@@ -177,6 +186,21 @@ pub const LengthValue = union(enum) {
         }
 
         return css.serializer.serializeDimension(value, unit, W, dest);
+    }
+
+    /// Attempts to convert the value to pixels.
+    /// Returns `None` if the conversion is not possible.
+    pub fn toPx(this: *const @This()) ?CSSNumber {
+        return switch (this.*) {
+            .px => |v| v,
+            .in => |v| v * PX_PER_IN,
+            .cm => |v| v * PX_PER_CM,
+            .mm => |v| v * PX_PER_MM,
+            .q => |v| v * PX_PER_Q,
+            .pt => |v| v * PX_PER_PT,
+            .pc => |v| v * PX_PER_PC,
+            else => null,
+        };
     }
 
     pub fn trySign(this: *const @This()) ?f32 {
@@ -217,6 +241,15 @@ pub const LengthValue = union(enum) {
         unreachable;
     }
 
+    pub fn map(this: *const @This(), comptime map_fn: *const fn (f32) f32) LengthValue {
+        inline for (comptime bun.meta.EnumFields(@This())) |field| {
+            if (field.value == @intFromEnum(this.*)) {
+                return @unionInit(LengthValue, field.name, map_fn(@field(this, field.name)));
+            }
+        }
+        unreachable;
+    }
+
     pub fn mulF32(this: @This(), _: Allocator, other: f32) LengthValue {
         const fields = comptime bun.meta.EnumFields(@This());
         inline for (fields) |field| {
@@ -226,6 +259,81 @@ pub const LengthValue = union(enum) {
         }
         unreachable;
     }
+
+    pub fn tryFromAngle(_: css.css_values.angle.Angle) ?@This() {
+        return null;
+    }
+
+    pub fn partialCmp(this: *const LengthValue, other: *const LengthValue) ?std.math.Order {
+        if (@intFromEnum(this.*) == @intFromEnum(other.*)) {
+            inline for (bun.meta.EnumFields(LengthValue)) |field| {
+                if (field.value == @intFromEnum(this.*)) {
+                    const a = @field(this, field.name);
+                    const b = @field(this, field.name);
+                    return css.generic.partialCmpF32(&a, &b);
+                }
+            }
+            unreachable;
+        }
+
+        const a = this.toPx();
+        const b = this.toPx();
+        if (a != null and b != null) {
+            return css.generic.partialCmpF32(&a.?, &b.?);
+        }
+        return null;
+    }
+
+    pub fn tryOp(
+        this: *const LengthValue,
+        other: *const LengthValue,
+        ctx: anytype,
+        comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) f32,
+    ) ?LengthValue {
+        if (@intFromEnum(this.*) == @intFromEnum(other.*)) {
+            inline for (bun.meta.EnumFields(LengthValue)) |field| {
+                if (field.value == @intFromEnum(this.*)) {
+                    const a = @field(this, field.name);
+                    const b = @field(this, field.name);
+                    return @unionInit(LengthValue, field.name, op_fn(ctx, a, b));
+                }
+            }
+            unreachable;
+        }
+
+        const a = this.toPx();
+        const b = this.toPx();
+        if (a != null and b != null) {
+            return .{ .px = op_fn(ctx, a.?, b.?) };
+        }
+        return null;
+    }
+
+    pub fn tryOpTo(
+        this: *const LengthValue,
+        other: *const LengthValue,
+        comptime R: type,
+        ctx: anytype,
+        comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) R,
+    ) ?R {
+        if (@intFromEnum(this.*) == @intFromEnum(other.*)) {
+            inline for (bun.meta.EnumFields(LengthValue)) |field| {
+                if (field.value == @intFromEnum(this.*)) {
+                    const a = @field(this, field.name);
+                    const b = @field(this, field.name);
+                    return op_fn(ctx, a, b);
+                }
+            }
+            unreachable;
+        }
+
+        const a = this.toPx();
+        const b = this.toPx();
+        if (a != null and b != null) {
+            return op_fn(ctx, a.?, b.?);
+        }
+        return null;
+    }
 };
 
 /// A CSS [`<length>`](https://www.w3.org/TR/css-values-4/#lengths) value, with support for `calc()`.
@@ -234,6 +342,38 @@ pub const Length = union(enum) {
     value: LengthValue,
     /// A computed length value using `calc()`.
     calc: *Calc(Length),
+
+    pub fn parse(input: *css.Parser) Result(Length) {
+        if (input.tryParse(Calc(Length).parse, .{}).asValue()) |calc_value| {
+            // PERF: I don't like this redundant allocation
+            if (calc_value == .value) {
+                var mutable: *Calc(Length) = @constCast(&calc_value);
+                const ret = calc_value.value.*;
+                mutable.deinit(input.allocator());
+                return .{ .result = ret };
+            }
+            return .{ .result = .{
+                .calc = bun.create(
+                    input.allocator(),
+                    Calc(Length),
+                    calc_value,
+                ),
+            } };
+        }
+
+        const len = switch (LengthValue.parse(input)) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
+        return .{ .result = .{ .value = len } };
+    }
+
+    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+        return switch (this.*) {
+            .value => |a| a.toCss(W, dest),
+            .calc => |c| c.toCss(W, dest),
+        };
+    }
 
     pub fn px(p: CSSNumber) Length {
         return .{ .value = .{ .px = p } };
@@ -286,34 +426,45 @@ pub const Length = union(enum) {
         };
     }
 
-    pub fn parse(input: *css.Parser) Result(Length) {
-        if (input.tryParse(Calc(Length).parse, .{}).asValue()) |calc_value| {
-            // PERF: I don't like this redundant allocation
-            if (calc_value == .value) {
-                const ret = calc_value.value.*;
-                defer calc_value.deinit(input.allocator());
-                return .{ .result = ret };
-            }
-            return .{ .result = .{
-                .calc = bun.create(
-                    input.allocator(),
-                    Calc(Length),
-                    calc_value,
-                ),
-            } };
-        }
-
-        const len = switch (LengthValue.parse(input)) {
-            .result => |vv| vv,
-            .err => |e| return .{ .err = e },
-        };
-        return .{ .result = .{ .value = len } };
+    pub fn partialCmp(this: *const Length, other: *const Length) ?std.math.Order {
+        if (this.* == .value and other.* == .value) return css.generic.partialCmp(LengthValue, &this.value, &other.value);
+        return null;
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn tryFromAngle(_: css.css_values.angle.Angle) ?@This() {
+        return null;
+    }
+
+    pub fn tryMap(this: *const Length, comptime map_fn: *const fn (f32) f32) ?Length {
         return switch (this.*) {
-            .value => |a| a.toCss(W, dest),
-            .calc => |c| c.toCss(W, dest),
+            .value => |v| .{ .value = v.map(map_fn) },
+            else => null,
         };
+    }
+
+    pub fn tryOp(
+        this: *const Length,
+        other: *const Length,
+        ctx: anytype,
+        comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) f32,
+    ) ?Length {
+        if (this.* == .value and other.* == .value) {
+            if (this.value.tryOp(&other.value, ctx, op_fn)) |val| return .{ .value = val };
+            return null;
+        }
+        return null;
+    }
+
+    pub fn tryOpTo(
+        this: *const Length,
+        other: *const Length,
+        comptime R: type,
+        ctx: anytype,
+        comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) R,
+    ) ?R {
+        if (this.* == .value and other.* == .value) {
+            return this.value.tryOpTo(&other.value, R, ctx, op_fn);
+        }
+        return null;
     }
 };

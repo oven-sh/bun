@@ -45,6 +45,15 @@ pub const CSSNumberFns = struct {
             };
         }
     }
+
+    pub fn tryFromAngle(_: css.css_values.angle.Angle) ?CSSNumber {
+        return null;
+    }
+
+    pub fn sign(this: *const CSSNumber) f32 {
+        if (this.* == 0.0) return if (css.signfns.isSignPositive(this.*)) 0.0 else 0.0;
+        return css.signfns.signum(this.*);
+    }
 };
 
 /// A CSS [`<integer>`](https://www.w3.org/TR/css-values-4/#integers) value.

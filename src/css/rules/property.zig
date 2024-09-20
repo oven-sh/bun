@@ -18,7 +18,7 @@ pub const PropertyRule = struct {
     name: css.css_values.ident.DashedIdent,
     syntax: SyntaxString,
     inherits: bool,
-    initial_vlaue: ?css.css_values.syntax.ParsedComponent,
+    initial_value: ?css.css_values.syntax.ParsedComponent,
     loc: Location,
 
     pub fn parse(name: css.css_values.ident.DashedIdent, input: *css.Parser, loc: Location) Result(PropertyRule) {
@@ -30,22 +30,16 @@ pub const PropertyRule = struct {
 
         var decl_parser = css.RuleBodyParser(PropertyRuleDeclarationParser).new(input, &p);
         while (decl_parser.next()) |decl| {
-            _ = decl catch |e| {
-                return e;
-            };
+            if (decl.asErr()) |e| {
+                return .{ .err = e };
+            }
         }
 
         // `syntax` and `inherits` are always required.
         const parser = decl_parser.parser;
         // TODO(zack): source clones these two, but I omitted here becaues it seems 100% unnecessary
-        const syntax: SyntaxString = parser.syntax orelse switch (decl_parser.input.newCustomError(css.ParserError.at_rule_body_invalid)) {
-            .result => |vv| vv,
-            .err => |e| return .{ .err = e },
-        };
-        const inherits: bool = parser.inherits orelse switch (decl_parser.input.newCustomError(css.ParserError.at_rule_body_invalid)) {
-            .result => |vv| vv,
-            .err => |e| return .{ .err = e },
-        };
+        const syntax: SyntaxString = parser.syntax orelse return .{ .err = decl_parser.input.newCustomError(css.ParserError.at_rule_body_invalid) };
+        const inherits: bool = parser.inherits orelse return .{ .err = decl_parser.input.newCustomError(css.ParserError.at_rule_body_invalid) };
 
         // `initial-value` is required unless the syntax is a universal definition.
         const initial_value = switch (syntax) {
@@ -54,7 +48,7 @@ pub const PropertyRule = struct {
                 var p2 = css.Parser.new(&i);
 
                 if (p2.isExhausted()) {
-                    return ParsedComponent{
+                    break :brk ParsedComponent{
                         .token_list = css.TokenList{
                             .v = .{},
                         },
@@ -114,7 +108,7 @@ pub const PropertyRule = struct {
             try dest.writeStr("false");
         }
 
-        if (this.initial_vlaue) |*initial_value| {
+        if (this.initial_value) |*initial_value| {
             try dest.writeChar(';');
             try dest.newline();
 
@@ -167,12 +161,14 @@ pub const PropertyRuleDeclarationParser = struct {
             } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("initial-value", name)) {
                 // Buffer the value into a string. We will parse it later.
                 const start = input.position();
-                while (input.next()) {}
+                while (input.next().isOk()) {}
                 const initial_value = input.sliceFrom(start);
                 this.initial_value = initial_value;
             } else {
                 return .{ .err = input.newCustomError(css.ParserError.invalid_declaration) };
             }
+
+            return .{ .result = {} };
         }
     };
 

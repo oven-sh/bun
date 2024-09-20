@@ -74,8 +74,14 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
 
     switch (property_id) {
       ${generatePropertyImplParseCases(property_defs)}
-      .all => return .{ .result = .{ .all = try CSSWideKeyword.parse(input, options) } },
-      .custom => |name| return .{ .result = .{ .custom = try CustomProperty.parse(name, input, options) } },
+      .all => return .{ .result = .{ .all = switch (CSSWideKeyword.parse(input)) {
+        .result => |v| v,
+        .err => |e| return .{ .err = e },
+      } } },
+      .custom => |name| return .{ .result = .{ .custom = switch (CustomProperty.parse(name, input, options)) {
+        .result => |v| v,
+        .err => |e| return .{ .err = e },
+      } } },
       else => {},
     }
 
@@ -84,7 +90,10 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
     // and stored as an enum rather than a string. This lets property handlers more easily deal with it.
     // Ideally we'd only do this if var() or env() references were seen, but err on the safe side for now.
     input.reset(&state);
-    return .{ .result = .{ .unparsed = try UnparsedProperty.parse(property_id, input, options) } };
+    return .{ .result = .{ .unparsed = switch (UnparsedProperty.parse(property_id, input, options)) {
+    .result => |v| v,
+    .err => |e| return .{ .err = e },
+    } } };
   }
 
   pub inline fn __toCssHelper(this: *const Property) struct{[]const u8, VendorPrefix} {

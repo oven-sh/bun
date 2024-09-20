@@ -107,9 +107,13 @@ pub const Angle = union(Tag) {
         }
     }
 
+    pub fn tryFromAngle(angle: Angle) ?This {
+        return angle;
+    }
+
     pub fn tryFromToken(token: *const css.Token) css.Maybe(Angle, void) {
         if (token.* == .dimension) {
-            const value = token.dimension.num;
+            const value = token.dimension.num.value;
             const unit = token.dimension.unit;
             if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "deg")) {
                 return .{ .result = .{ .deg = value } };
@@ -166,13 +170,26 @@ pub const Angle = union(Tag) {
         };
     }
 
-    pub fn add(this: *const Angle, rhs: *const Angle) Angle {
+    pub fn map(this: *const Angle, comptime opfn: *const fn (f32) f32) Angle {
+        return switch (this.*) {
+            .deg => |deg| .{ .deg = opfn(deg) },
+            .rad => |rad| .{ .rad = opfn(rad) },
+            .grad => |grad| .{ .grad = opfn(grad) },
+            .turn => |turn| .{ .turn = opfn(turn) },
+        };
+    }
+
+    pub fn tryMap(this: *const Angle, comptime opfn: *const fn (f32) f32) ?Angle {
+        return map(this, opfn);
+    }
+
+    pub fn add(this: Angle, rhs: Angle) Angle {
         const addfn = struct {
-            pub fn add(a: f32, b: f32) f32 {
+            pub fn add(_: void, a: f32, b: f32) f32 {
                 return a + b;
             }
         };
-        return Angle.op(this, rhs, addfn.add);
+        return Angle.op(&this, &rhs, {}, addfn.add);
     }
 
     pub fn eql(lhs: *const Angle, rhs: *const Angle) bool {
@@ -189,27 +206,34 @@ pub const Angle = union(Tag) {
         };
     }
 
+    pub fn partialCmp(this: *const Angle, other: *const Angle) ?std.math.Order {
+        return css.generic.partialCmpF32(&this.toDegrees(), &other.toDegrees());
+    }
+
     pub fn tryOp(
         this: *const Angle,
         other: *const Angle,
-        comptime op_fn: *const fn (a: f32, b: f32) f32,
+        ctx: anytype,
+        comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) f32,
     ) ?Angle {
-        return Angle.op(this, other, op_fn);
+        return Angle.op(this, other, ctx, op_fn);
     }
 
     pub fn tryOpTo(
         this: *const Angle,
         other: *const Angle,
-        comptime T: type,
-        comptime op_fn: *const fn (a: f32, b: f32) T,
-    ) ?T {
-        return Angle.opTo(this, other, T, op_fn);
+        comptime R: type,
+        ctx: anytype,
+        comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) R,
+    ) ?R {
+        return Angle.opTo(this, other, R, ctx, op_fn);
     }
 
     pub fn op(
         this: *const Angle,
         other: *const Angle,
-        comptime op_fn: *const fn (a: f32, b: f32) f32,
+        ctx: anytype,
+        comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) f32,
     ) Angle {
         // PERF: not sure if this is faster
         const self_tag: u8 = @intFromEnum(this.*);
@@ -217,15 +241,15 @@ pub const Angle = union(Tag) {
         const DEG: u8 = @intFromEnum(Tag.deg);
         const GRAD: u8 = @intFromEnum(Tag.grad);
         const RAD: u8 = @intFromEnum(Tag.rad);
-        const TURN: u8 = @intFromEnum(Tag.trun);
+        const TURN: u8 = @intFromEnum(Tag.turn);
 
         const switch_val: u8 = self_tag | other_tag;
         return switch (switch_val) {
-            DEG | DEG => Angle{ .deg = op_fn(this.deg, other.deg) },
-            RAD | RAD => Angle{ .rad = op_fn(this.rad, other.rad) },
-            GRAD | GRAD => Angle{ .grad = op_fn(this.grad, other.grad) },
-            TURN | TURN => Angle{ .turn = op_fn(this.turn, other.turn) },
-            else => Angle{ .deg = op_fn(this.toDegrees(), other.toDegrees()) },
+            DEG | DEG => Angle{ .deg = op_fn(ctx, this.deg, other.deg) },
+            RAD | RAD => Angle{ .rad = op_fn(ctx, this.rad, other.rad) },
+            GRAD | GRAD => Angle{ .grad = op_fn(ctx, this.grad, other.grad) },
+            TURN | TURN => Angle{ .turn = op_fn(ctx, this.turn, other.turn) },
+            else => Angle{ .deg = op_fn(ctx, this.toDegrees(), other.toDegrees()) },
         };
     }
 
@@ -233,7 +257,8 @@ pub const Angle = union(Tag) {
         this: *const Angle,
         other: *const Angle,
         comptime T: type,
-        comptime op_fn: *const fn (a: f32, b: f32) T,
+        ctx: anytype,
+        comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) T,
     ) T {
         // PERF: not sure if this is faster
         const self_tag: u8 = @intFromEnum(this.*);
@@ -241,15 +266,21 @@ pub const Angle = union(Tag) {
         const DEG: u8 = @intFromEnum(Tag.deg);
         const GRAD: u8 = @intFromEnum(Tag.grad);
         const RAD: u8 = @intFromEnum(Tag.rad);
-        const TURN: u8 = @intFromEnum(Tag.trun);
+        const TURN: u8 = @intFromEnum(Tag.turn);
 
         const switch_val: u8 = self_tag | other_tag;
         return switch (switch_val) {
-            DEG | DEG => Angle{ .deg = op_fn(this.deg, other.deg) },
-            RAD | RAD => Angle{ .rad = op_fn(this.rad, other.rad) },
-            GRAD | GRAD => Angle{ .grad = op_fn(this.grad, other.grad) },
-            TURN | TURN => Angle{ .turn = op_fn(this.turn, other.turn) },
-            else => Angle{ .deg = op_fn(this.toDegrees(), other.toDegrees()) },
+            DEG | DEG => op_fn(ctx, this.deg, other.deg),
+            RAD | RAD => op_fn(ctx, this.rad, other.rad),
+            GRAD | GRAD => op_fn(ctx, this.grad, other.grad),
+            TURN | TURN => op_fn(ctx, this.turn, other.turn),
+            else => op_fn(ctx, this.toDegrees(), other.toDegrees()),
+        };
+    }
+
+    pub fn sign(this: *const Angle) f32 {
+        return switch (this.*) {
+            .deg, .rad, .grad, .turn => |v| CSSNumberFns.sign(&v),
         };
     }
 };

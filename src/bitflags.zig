@@ -32,7 +32,7 @@ pub fn Bitflags(comptime T: type) type {
         }
 
         pub fn bitwiseAnd(lhs: T, rhs: T) T {
-            return asBits(lhs) & asBits(rhs);
+            return @bitCast(@as(IntType, asBits(lhs) & asBits(rhs)));
         }
 
         pub inline fn insert(this: *T, other: T) void {

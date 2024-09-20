@@ -8,7 +8,7 @@ pub const css = @import("../css_parser.zig");
 const SmallList = css.SmallList;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
-const Error = css.Error;
+const Result = css.Result;
 
 const ContainerName = css.css_rules.container.ContainerName;
 
@@ -37,9 +37,9 @@ const LineStyle = css.css_properties.border.LineStyle;
 pub const TransformList = struct {
     v: ArrayList(Transform),
 
-    pub fn parse(input: *css.Parser) Error!@This() {
+    pub fn parse(input: *css.Parser) Result(@This()) {
         _ = input; // autofix
-        @compileError(css.todo_stuff.depth);
+        @panic(css.todo_stuff.depth);
     }
 
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -94,9 +94,9 @@ pub const Transform = union(enum) {
     /// A 3D matrix transform.
     matrix_3d: Matrix3d(f32),
 
-    pub fn parse(input: *css.Parser) Error!Transform {
+    pub fn parse(input: *css.Parser) Result(Transform) {
         _ = input; // autofix
-        @compileError(css.todo_stuff.depth);
+        @panic(css.todo_stuff.depth);
     }
 
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {

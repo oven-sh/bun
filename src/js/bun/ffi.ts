@@ -294,7 +294,7 @@ Object.defineProperty(globalThis, "__GlobalBunFFIPtrFunctionForWrapper", {
   enumerable: false,
   configurable: true,
 });
-Object.defineProperty(ArrayBuffer.$isView, "__GlobalBunFFIPtrArrayBufferViewFn", {
+Object.defineProperty(globalThis, "__GlobalBunFFIPtrArrayBufferViewFn", {
   value: ArrayBuffer.$isView,
   enumerable: false,
   configurable: true,

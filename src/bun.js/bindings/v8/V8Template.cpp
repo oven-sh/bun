@@ -11,4 +11,9 @@ JSC::EncodedJSValue Template::DummyCallback(JSC::JSGlobalObject* globalObject, J
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+void Template::Set(Local<Name> name, Local<Data> value, PropertyAttribute attribute)
+{
+    V8_UNIMPLEMENTED();
+}
+
 } // namespace v8

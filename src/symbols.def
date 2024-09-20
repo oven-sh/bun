@@ -637,3 +637,4 @@ EXPORTS
   ?Get@Object@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@I@Z
   ?SetAlignedPointerInInternalField@Object@v8@@QEAAXHPEAX@Z
   ?SlowGetAlignedPointerFromInternalField@Object@v8@@AEAAPEAXH@Z
+  ?Set@Template@v8@@QEAAXV?$Local@VName@v8@@@2@V?$Local@VData@v8@@@2@W4PropertyAttribute@2@@Z

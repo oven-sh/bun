@@ -1856,6 +1856,7 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn _ZN2v86Object3GetENS_5LocalINS_7ContextEEEj() *anyopaque;
     pub extern fn _ZN2v86Object38SlowGetAlignedPointerFromInternalFieldEi() *anyopaque;
     pub extern fn _ZN2v86Object32SetAlignedPointerInInternalFieldEiPv() *anyopaque;
+    pub extern fn _ZN2v88Template3SetENS_5LocalINS_4NameEEENS1_INS_4DataEEENS_17PropertyAttributeE() *anyopaque;
     pub extern fn uv_os_getpid() *anyopaque;
     pub extern fn uv_os_getppid() *anyopaque;
 } else struct {
@@ -1935,6 +1936,7 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"?SlowGetAlignedPointerFromInternalField@Object@v8@@AEAAPEAXH@Z"() *anyopaque;
     pub extern fn @"?Get@Object@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@@Z"() *anyopaque;
     pub extern fn @"?Get@Object@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@I@Z"() *anyopaque;
+    pub extern fn @"?Set@Template@v8@@QEAAXV?$Local@VName@v8@@@2@V?$Local@VData@v8@@@2@W4PropertyAttribute@2@@Z"() *anyopaque;
 };
 
 pub fn fixDeadCodeElimination() void {

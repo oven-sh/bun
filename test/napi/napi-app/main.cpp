@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <iostream>
 #include <semaphore>
+#include <thread>
 
 napi_value fail(napi_env env, const char *msg) {
   napi_value result;
@@ -374,29 +375,12 @@ struct AsyncWorkData {
   int result;
   napi_deferred deferred;
   napi_async_work work;
-  // if nonnull, promise resolves to the result of calling tsfn
-  napi_threadsafe_function tsfn;
-  // if tsfn is nonnull, used to signal from tsfn_callback() to execute()
-  std::binary_semaphore result_ready;
 
-  AsyncWorkData()
-      : result(0), deferred(nullptr), work(nullptr), tsfn(nullptr),
-        result_ready(0) {}
+  AsyncWorkData() : result(0), deferred(nullptr), work(nullptr) {}
 
   static void execute(napi_env env, void *data) {
     AsyncWorkData *async_work_data = reinterpret_cast<AsyncWorkData *>(data);
-
-    if (async_work_data->tsfn) {
-      // nonblocking means it will return an error if the threadsafe function's
-      // queue is full, which it should never do because we only use it once and
-      // we init with a capacity of 1
-      assert(napi_call_threadsafe_function(async_work_data->tsfn, nullptr,
-                                           napi_tsfn_nonblocking) == napi_ok);
-      // block until the callback finishes
-      async_work_data->result_ready.acquire();
-    } else {
-      async_work_data->result = 42;
-    }
+    async_work_data->result = 42;
   }
 
   static void complete(napi_env env, napi_status status, void *data) {
@@ -411,36 +395,7 @@ struct AsyncWorkData {
     assert(napi_resolve_deferred(env, async_work_data->deferred, result) ==
            napi_ok);
     assert(napi_delete_async_work(env, async_work_data->work) == napi_ok);
-    if (async_work_data->tsfn) {
-      assert(napi_release_threadsafe_function(async_work_data->tsfn,
-                                              napi_tsfn_abort) == napi_ok);
-    }
     delete async_work_data;
-  }
-
-  static void tsfn_callback(napi_env env, napi_value js_callback, void *context,
-                            void *data) {
-    // env and js_callback are "NULL if the thread-safe function is being torn
-    // down and data may need to be freed." our data is freed in complete so we
-    // don't care.
-    printf("tsfn_callback\n");
-    if (!env || !js_callback) {
-      return;
-    }
-    AsyncWorkData *async_work_data = reinterpret_cast<AsyncWorkData *>(context);
-
-    napi_value recv;
-    assert(napi_get_undefined(env, &recv) == napi_ok);
-
-    napi_value js_result;
-    assert(napi_call_function(env, recv, js_callback, 0, nullptr, &js_result) ==
-           napi_ok);
-    // js function should return an integer
-    assert(napi_get_value_int32(env, js_result, &async_work_data->result) ==
-           napi_ok);
-
-    // signal that we are done
-    async_work_data->result_ready.release();
   }
 };
 
@@ -459,20 +414,88 @@ napi_value create_promise(const Napi::CallbackInfo &info) {
                                 AsyncWorkData::execute, AsyncWorkData::complete,
                                 data, &data->work) == napi_ok);
 
-  if (info.Length() == 2) {
-    // argument 0 to this function is a callback to run GC
-    // argument 1 to this function, if present, is a JS callback to determine
-    // the resolved value
-    assert(napi_create_threadsafe_function(
-               env, info[1], nullptr, resource_name,
-               // max_queue_size, initial_thread_count
-               1, 1,
-               // thread_finalize_data, thread_finalize_cb
-               nullptr, nullptr, data, AsyncWorkData::tsfn_callback,
-               &data->tsfn) == napi_ok);
+  assert(napi_queue_async_work(env, data->work) == napi_ok);
+  return promise;
+}
+
+struct ThreadsafeFunctionData {
+  napi_threadsafe_function tsfn;
+  napi_deferred deferred;
+
+  static void thread_entry(ThreadsafeFunctionData *data) {
+    using namespace std::chrono_literals;
+    std::this_thread::sleep_for(10ms);
+    // nonblocking means it will return an error if the threadsafe function's
+    // queue is full, which it should never do because we only use it once and
+    // we init with a capacity of 1
+    assert(napi_call_threadsafe_function(data->tsfn, nullptr,
+                                         napi_tsfn_nonblocking) == napi_ok);
   }
 
-  assert(napi_queue_async_work(env, data->work) == napi_ok);
+  static void tsfn_finalize_callback(napi_env env, void *finalize_data,
+                                     void *finalize_hint) {
+    printf("tsfn_finalize_callback\n");
+    ThreadsafeFunctionData *data =
+        reinterpret_cast<ThreadsafeFunctionData *>(finalize_data);
+    delete data;
+  }
+
+  static void tsfn_callback(napi_env env, napi_value js_callback, void *context,
+                            void *data) {
+    // context == ThreadsafeFunctionData pointer
+    // data == nullptr
+    printf("tsfn_callback\n");
+    ThreadsafeFunctionData *tsfn_data =
+        reinterpret_cast<ThreadsafeFunctionData *>(context);
+
+    napi_value recv;
+    assert(napi_get_undefined(env, &recv) == napi_ok);
+
+    // call our JS function with undefined for this and no arguments
+    napi_value js_result;
+    assert(napi_call_function(env, recv, js_callback, 0, nullptr, &js_result) ==
+           napi_ok);
+
+    // resolve the promise with the return value of the JS function
+    assert(napi_resolve_deferred(env, tsfn_data->deferred, js_result) ==
+           napi_ok);
+
+    // clean up the threadsafe function
+    assert(napi_release_threadsafe_function(tsfn_data->tsfn, napi_tsfn_abort) ==
+           napi_ok);
+  }
+};
+
+napi_value
+create_promise_with_threadsafe_function(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  ThreadsafeFunctionData *tsfn_data = new ThreadsafeFunctionData;
+
+  napi_value async_resource_name;
+  assert(napi_create_string_utf8(
+             env, "napitests::create_promise_with_threadsafe_function",
+             NAPI_AUTO_LENGTH, &async_resource_name) == napi_ok);
+
+  // this is called directly, without the GC callback, so argument 0 is a JS
+  // callback used to resolve the promise
+  assert(napi_create_threadsafe_function(
+             env, info[0], nullptr, async_resource_name,
+             // max_queue_size, initial_thread_count
+             1, 1,
+             // thread_finalize_data, thread_finalize_cb
+             tsfn_data, ThreadsafeFunctionData::tsfn_finalize_callback,
+             // context
+             tsfn_data, ThreadsafeFunctionData::tsfn_callback,
+             &tsfn_data->tsfn) == napi_ok);
+  // create a promise we can return to JS and put the deferred counterpart in
+  // tsfn_data
+  napi_value promise;
+  assert(napi_create_promise(env, &tsfn_data->deferred, &promise) == napi_ok);
+
+  // spawn and release std::thread
+  std::thread secondary_thread(ThreadsafeFunctionData::thread_entry, tsfn_data);
+  secondary_thread.detach();
+  // return the promise to javascript
   return promise;
 }
 
@@ -575,6 +598,9 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
   exports.Set("get_class_with_constructor",
               Napi::Function::New(env, get_class_with_constructor));
   exports.Set("create_promise", Napi::Function::New(env, create_promise));
+  exports.Set(
+      "create_promise_with_threadsafe_function",
+      Napi::Function::New(env, create_promise_with_threadsafe_function));
   exports.Set("test_napi_ref", Napi::Function::New(env, test_napi_ref));
   exports.Set("create_ref_with_finalizer",
               Napi::Function::New(env, create_ref_with_finalizer));

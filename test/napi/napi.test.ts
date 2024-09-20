@@ -60,11 +60,6 @@ describe("napi", () => {
     });
   });
 
-  it("threadsafe function does not hang on finalize", () => {
-    const result = checkSameOutput("test_napi_threadsafe_function_does_not_hang_after_finalize", []);
-    expect(result).toBe("success!");
-  });
-
   it("#1288", async () => {
     const result = checkSameOutput("self", []);
     expect(result).toBe("hello world!");
@@ -127,8 +122,13 @@ describe("napi", () => {
   });
 
   describe("napi_threadsafe_function", () => {
-    it("can call a JS callback via a native callback", () => {
-      checkSameOutput("create_promise_with_js_callback", []);
+    it("can be used to create a promise", () => {
+      checkSameOutput("test_promise_with_threadsafe_function", []);
+    });
+
+    it("does not hang on finalize", () => {
+      const result = checkSameOutput("test_napi_threadsafe_function_does_not_hang_after_finalize", []);
+      expect(result).toBe("success!");
     });
   });
 });

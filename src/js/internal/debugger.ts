@@ -1,4 +1,12 @@
-import type { ServerWebSocket, Socket, SocketHandler, WebSocketHandler, Server as WebSocketServer } from "bun";
+import type {
+  ServerWebSocket,
+  Socket,
+  SocketHandler,
+  TCPSocketConnectOptions,
+  UnixSocketOptions,
+  WebSocketHandler,
+  Server as WebSocketServer,
+} from "bun";
 
 export default function (
   executionContextId: string,
@@ -28,21 +36,18 @@ export default function (
     Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
   }
 
-  if (process.platform === "win32") {
-    const notifyUrl = process.env["BUN_INSPECT_NOTIFY"];
-    if (notifyUrl) {
-      const { protocol } = new URL(notifyUrl);
-      if (protocol === "ws:" || protocol === "wss:") {
-        notifyWebSocket(notifyUrl);
-      }
-    }
-  } else {
-    const unix = process.env["BUN_INSPECT_NOTIFY"];
-    if (unix) {
-      const { protocol, pathname } = parseUrl(unix);
-      if (protocol === "unix:") {
-        notify(pathname);
-      }
+  const notifyUrl = process.env["BUN_INSPECT_NOTIFY"] || "";
+  if (notifyUrl) {
+    const { hostname, port, pathname, protocol } = parseUrl(notifyUrl);
+    if (protocol.startsWith("unix")) {
+      notify({
+        unix: pathname,
+      });
+    } else {
+      notify({
+        hostname,
+        port: port ? Number(port) : undefined,
+      });
     }
   }
 }
@@ -331,21 +336,9 @@ function reset(): string {
   return "";
 }
 
-function notifyWebSocket(url: string): void {
-  const ws = new WebSocket(url);
-  ws.onopen = () => {
-    ws.send("1");
-    ws.close();
-  };
-  ws.onerror = error => {
-    // Handle error if needed
-    console.error("WebSocket error:", error);
-  };
-}
-
-function notify(unix: string): void {
+function notify(options): void {
   Bun.connect({
-    unix,
+    ...options,
     socket: {
       open: socket => {
         socket.end("1");

@@ -15,6 +15,8 @@ enum BuildMode {
   release,
 }
 
+console.log(bunEnv);
+
 // clang-cl does not work on Windows with node-gyp 10.2.0, so we should not let that affect the
 // test environment
 delete bunEnv.CC;
@@ -287,11 +289,7 @@ function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, jsArgs:
   const exec = spawnSync({
     cmd,
     cwd: baseDir,
-    env: {
-      ...bunEnv,
-      BUN_GARBAGE_COLLECTOR_LEVEL: "2",
-      BUN_JSC_randomIntegrityAuditRate: "1.0",
-    },
+    env: bunEnv,
   });
   const errs = exec.stderr.toString();
   const crashMsg = `test ${testName} crashed under ${Runtime[runtime]} in ${BuildMode[buildMode]} mode`;

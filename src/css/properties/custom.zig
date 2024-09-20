@@ -226,7 +226,7 @@ pub const TokenList = struct {
                         input.allocator(),
                         .{ .token = token.* },
                     ) catch unreachable;
-                    const closing_delimiter = switch (token.*) {
+                    const closing_delimiter: css.Token = switch (token.*) {
                         .open_paren => .close_paren,
                         .open_square => .close_square,
                         .open_curly => .close_curly,
@@ -250,7 +250,7 @@ pub const TokenList = struct {
                         .depth = depth,
                         .tokens = tokens,
                     };
-                    if (input.parseNestedBlock(void, &closure, closure.parsefn).asErr()) |e| return .{ .err = e };
+                    if (input.parseNestedBlock(void, &closure, Closure.parsefn).asErr()) |e| return .{ .err = e };
                     tokens.append(
                         input.allocator(),
                         .{ .token = closing_delimiter },
@@ -279,7 +279,7 @@ pub const TokenList = struct {
                         .depth = depth,
                         .tokens = tokens,
                     };
-                    if (input.parseNestedBlock(void, &closure, closure.parsefn).asErr()) |e| return .{ .err = e };
+                    if (input.parseNestedBlock(void, &closure, Closure.parsefn).asErr()) |e| return .{ .err = e };
                     tokens.append(
                         input.allocator(),
                         .{ .token = .close_paren },
@@ -289,7 +289,7 @@ pub const TokenList = struct {
                     if (token.isParseError()) {
                         return .{
                             .err = css.ParseError(css.ParserError){
-                                .kind = .{ .basic = .{ .unexpected_token = token } },
+                                .kind = .{ .basic = .{ .unexpected_token = token.* } },
                                 .location = state.sourceLocation(),
                             },
                         };
@@ -498,7 +498,7 @@ pub const TokenList = struct {
                         input.allocator(),
                         .{ .token = tok.* },
                     ) catch unreachable;
-                    const closing_delimiter = switch (tok.*) {
+                    const closing_delimiter: css.Token = switch (tok.*) {
                         .open_paren => .close_paren,
                         .open_square => .close_square,
                         .open_curly => .close_curly,
@@ -522,7 +522,7 @@ pub const TokenList = struct {
                         .depth = depth,
                         .tokens = tokens,
                     };
-                    if (input.parseNestedBlock(void, &closure, closure.parsefn).asErr()) |e| return .{ .err = e };
+                    if (input.parseNestedBlock(void, &closure, Closure.parsefn).asErr()) |e| return .{ .err = e };
                     tokens.append(
                         input.allocator(),
                         .{ .token = closing_delimiter },
@@ -537,7 +537,7 @@ pub const TokenList = struct {
                         TokenOrValue{ .angle = angle }
                     else if (Time.tryFromToken(tok).asValue()) |time|
                         TokenOrValue{ .time = time }
-                    else if (Resolution.tryFromToken(tok).asValue) |resolution|
+                    else if (Resolution.tryFromToken(tok).asValue()) |resolution|
                         TokenOrValue{ .resolution = resolution }
                     else
                         TokenOrValue{ .token = tok.* };
@@ -556,7 +556,7 @@ pub const TokenList = struct {
             if (tok.isParseError()) {
                 return .{
                     .err = .{
-                        .kind = .{ .basic = .{ .unexpected_token = tok } },
+                        .kind = .{ .basic = .{ .unexpected_token = tok.* } },
                         .location = state.sourceLocation(),
                     },
                 };
@@ -764,7 +764,7 @@ pub const UnresolvedColor = union(enum) {
                         .err => |e| return .{ .err = e },
                     };
                     if (is_legacy) {
-                        return .{ .err = input.newCustomError(css.ParserError.invalid_value) };
+                        return .{ .err = i.newCustomError(css.ParserError.invalid_value) };
                     }
                     if (i.expectDelim('/').asErr()) |e| return .{ .err = e };
                     const alpha = switch (TokenListFns.parse(i, opts, 0)) {

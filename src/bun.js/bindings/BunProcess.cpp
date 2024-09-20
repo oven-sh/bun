@@ -173,7 +173,7 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
     object->putDirect(vm, JSC::Identifier::fromString(vm, "uwebsockets"_s),
         JSC::JSValue(JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(Bun__versions_uws)))), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "webkit"_s),
-        JSC::JSValue(JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(Bun__versions_webkit)))), 0);
+        JSC::JSValue(JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(BUN_WEBKIT_VERSION)))), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "zig"_s),
         JSC::JSValue(JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(Bun__versions_zig)))), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "zlib"_s),
@@ -2835,22 +2835,33 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessTitle,
 #endif
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_functionCwd,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+static inline JSValue getCachedCwd(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
-    auto* processObject = jsCast<Process*>(defaultGlobalObject(globalObject)->processObject());
     auto scope = DECLARE_THROW_SCOPE(vm);
+
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L142-L146
+    auto* processObject = jsCast<Process*>(defaultGlobalObject(globalObject)->processObject());
     if (auto* cached = processObject->cachedCwd()) {
-        return JSValue::encode(cached);
+        return cached;
     }
 
     auto cwd = Bun__Process__getCwd(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     JSString* cwdStr = jsCast<JSString*>(JSValue::decode(cwd));
     processObject->setCachedCwd(vm, cwdStr);
-    return JSValue::encode(cwdStr);
+    RELEASE_AND_RETURN(scope, cwdStr);
+}
+
+extern "C" EncodedJSValue Process__getCachedCwd(JSC::JSGlobalObject* globalObject)
+{
+    return JSValue::encode(getCachedCwd(globalObject));
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionCwd,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return JSValue::encode(getCachedCwd(globalObject));
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill,

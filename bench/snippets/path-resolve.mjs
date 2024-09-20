@@ -3,6 +3,8 @@ import { posix } from "path";
 
 const pathConfigurations = [
   "",
+  ".",
+  "./",
   ["", ""].join("|"),
   ["./abc.js"].join("|"),
   ["foo/bar", "/tmp/file/", "..", "a/../subfile"].join("|"),

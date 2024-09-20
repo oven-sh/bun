@@ -161,7 +161,7 @@ export interface BundlerTestInput {
   /** Defaults to "bundle" */
   packages?: "bundle" | "external";
   /** Defaults to "esm" */
-  format?: "esm" | "cjs" | "iife";
+  format?: "esm" | "cjs" | "iife" | "internal_kit_dev";
   globalName?: string;
   ignoreDCEAnnotations?: boolean;
   emitDCEAnnotations?: boolean;
@@ -337,6 +337,8 @@ export interface BundlerTestRunOptions {
    */
   errorLineMatch?: RegExp;
 
+  env?: Record<string, string>;
+
   runtime?: "bun" | "node";
 
   setCwd?: boolean;
@@ -477,8 +479,8 @@ function expectBundled(
   if (bundling === false && entryPoints.length > 1) {
     throw new Error("bundling:false only supports a single entry point");
   }
-  if (!ESBUILD && format !== "esm") {
-    throw new Error("formats besides esm not implemented in bun build");
+  if (!ESBUILD && (format === "cjs" || format === 'iife')) {
+    throw new Error(`format ${format} not implemented in bun build`);
   }
   if (!ESBUILD && metafile) {
     throw new Error("metafile not implemented in bun build");
@@ -628,7 +630,7 @@ function expectBundled(
               outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
               define && Object.entries(define).map(([k, v]) => ["--define", `${k}=${v}`]),
               `--target=${target}`,
-              // `--format=${format}`,
+              `--format=${format}`,
               external && external.map(x => ["--external", x]),
               packages && ["--packages", packages],
               conditions && conditions.map(x => ["--conditions", x]),
@@ -879,10 +881,11 @@ function expectBundled(
       if (!ESBUILD) {
         const warningText = stderr!.toUnixString();
         const allWarnings = warnParser(warningText).map(([error, source]) => {
+          if(!source) return;
           const [_str2, fullFilename, line, col] = source.match(/bun-build-tests[\/\\](.*):(\d+):(\d+)/)!;
           const file = fullFilename.slice(id.length + path.basename(tempDirectory).length + 1).replaceAll("\\", "/");
           return { error, file, line, col };
-        });
+        }).filter(Boolean);
         const expectedWarnings = bundleWarnings
           ? Object.entries(bundleWarnings).flatMap(([file, v]) => v.map(error => ({ file, error })))
           : null;

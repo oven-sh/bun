@@ -1,20 +1,26 @@
-include(Macros)
+option(WEBKIT_VERSION "The version of WebKit to use")
+option(WEBKIT_LOCAL "If a local version of WebKit should be used instead of downloading")
 
-optionx(WEBKIT_VERSION STRING "The version of WebKit to use" DEFAULT "147ed53838e21525677492c27099567a6cd19c6b")
-optionx(WEBKIT_PREBUILT BOOL "If a pre-built version of WebKit should be used" DEFAULT ON)
-
-if(WEBKIT_PREBUILT)
-  set(DEFAULT_WEBKIT_PATH ${CACHE_PATH}/webkit)
-else()
-  set(DEFAULT_WEBKIT_PATH ${CWD}/src/bun.js/WebKit)
+if(NOT WEBKIT_VERSION)
+  set(WEBKIT_VERSION 4a2db3254a9535949a5d5380eb58cf0f77c8e15a)
 endif()
 
-optionx(WEBKIT_PATH FILEPATH "The path to the WebKit directory" DEFAULT ${DEFAULT_WEBKIT_PATH})
+if(WEBKIT_LOCAL)
+  set(DEFAULT_WEBKIT_PATH ${VENDOR_PATH}/WebKit/WebKitBuild/${CMAKE_BUILD_TYPE})
+else()
+  set(DEFAULT_WEBKIT_PATH ${CACHE_PATH}/webkit-${WEBKIT_VERSION})
+endif()
 
-setx(WEBKIT_INCLUDE_PATH ${WEBKIT_PATH}/include)
-setx(WEBKIT_LIB_PATH ${WEBKIT_PATH}/lib)
+option(WEBKIT_PATH "The path to the WebKit directory")
 
-if(NOT WEBKIT_PREBUILT)
+if(NOT WEBKIT_PATH)
+  set(WEBKIT_PATH ${DEFAULT_WEBKIT_PATH})
+endif()
+
+set(WEBKIT_INCLUDE_PATH ${WEBKIT_PATH}/include)
+set(WEBKIT_LIB_PATH ${WEBKIT_PATH}/lib)
+
+if(WEBKIT_LOCAL)
   if(EXISTS ${WEBKIT_PATH}/cmakeconfig.h)
     # You may need to run:
     # make jsc-compile-debug jsc-copy-headers
@@ -69,8 +75,8 @@ set(WEBKIT_NAME bun-webkit-${WEBKIT_OS}-${WEBKIT_ARCH}${WEBKIT_SUFFIX})
 set(WEBKIT_FILENAME ${WEBKIT_NAME}.tar.gz)
 setx(WEBKIT_DOWNLOAD_URL https://github.com/oven-sh/WebKit/releases/download/autobuild-${WEBKIT_VERSION}/${WEBKIT_FILENAME})
 
-file(DOWNLOAD ${WEBKIT_DOWNLOAD_URL} ${CACHE_PATH}/${WEBKIT_FILENAME})
-file(ARCHIVE_EXTRACT INPUT ${CACHE_PATH}/${WEBKIT_FILENAME} DESTINATION ${CACHE_PATH})
+file(DOWNLOAD ${WEBKIT_DOWNLOAD_URL} ${CACHE_PATH}/${WEBKIT_FILENAME} SHOW_PROGRESS)
+file(ARCHIVE_EXTRACT INPUT ${CACHE_PATH}/${WEBKIT_FILENAME} DESTINATION ${CACHE_PATH} TOUCH)
 file(REMOVE ${CACHE_PATH}/${WEBKIT_FILENAME})
 file(REMOVE_RECURSE ${WEBKIT_PATH})
 file(RENAME ${CACHE_PATH}/bun-webkit ${WEBKIT_PATH})
@@ -78,57 +84,3 @@ file(RENAME ${CACHE_PATH}/bun-webkit ${WEBKIT_PATH})
 if(APPLE)
   file(REMOVE_RECURSE ${WEBKIT_INCLUDE_PATH}/unicode)
 endif()
-
-# --- WebKit ---
-# WebKit is either prebuilt and distributed via NPM, or you can pass WEBKIT_PATH to use a local build.
-# We cannot include their CMake build files (TODO: explain why, for now ask @paperdave why)
-#
-# On Unix, this will pull from NPM the single package that is needed and use that
-# if(WIN32)
-#   set(STATIC_LIB_EXT "lib")
-#   set(libJavaScriptCore "JavaScriptCore")
-#   set(libWTF "WTF")
-# else()
-#   set(STATIC_LIB_EXT "a")
-#   set(libJavaScriptCore "libJavaScriptCore")
-#   set(libWTF "libWTF")
-# endif()
-
-# if(WEBKIT_PREBUILT)
-
-# elseif(WEBKIT_PATH STREQUAL "omit")
-    
-# else()
-#     # Expected to be WebKit/WebKitBuild/${CMAKE_BUILD_TYPE}
-#     if(EXISTS "${WEBKIT_PATH}/cmakeconfig.h")
-#         # You may need to run:
-#         # make jsc-compile-debug jsc-copy-headers
-#         include_directories(
-#             "${WEBKIT_PATH}/"
-#             "${WEBKIT_PATH}/JavaScriptCore/Headers/JavaScriptCore"
-#             "${WEBKIT_PATH}/JavaScriptCore/PrivateHeaders"
-#             "${WEBKIT_PATH}/bmalloc/Headers"
-#             "${WEBKIT_PATH}/WTF/Headers"
-#         )
-#         set(WEBKIT_LIB_DIR "${WEBKIT_PATH}/lib")
-
-#         if(ENABLE_ASSERTIONS)
-#             add_compile_definitions("BUN_DEBUG=1")
-#         endif()
-
-#         message(STATUS "Using WebKit from ${WEBKIT_PATH}")
-#     else()
-#         if(NOT EXISTS "${WEBKIT_PATH}/lib/${libWTF}.${STATIC_LIB_EXT}" OR NOT EXISTS "${WEBKIT_PATH}/lib/${libJavaScriptCore}.${STATIC_LIB_EXT}")
-#             if(WEBKIT_PATH MATCHES "src/bun.js/WebKit$")
-#                 message(FATAL_ERROR "WebKit directory ${WEBKIT_PATH} does not contain all the required files for Bun. Did you forget to init submodules?")
-#             endif()
-
-#             message(FATAL_ERROR "WebKit directory ${WEBKIT_PATH} does not contain all the required files for Bun. Expected a path to the oven-sh/WebKit repository, or a path to a folder containing `include` and `lib`.")
-#         endif()
-
-#         set(WEBKIT_LIB_DIR "${WEBKIT_PATH}/lib")
-
-#         message(STATUS "Using specified WebKit directory: ${WEBKIT_PATH}")
-#         message(STATUS "WebKit assertions: OFF")
-#     endif()
-# endif()

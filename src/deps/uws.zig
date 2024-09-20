@@ -172,15 +172,13 @@ pub const UpgradedDuplex = struct {
                 const buffer = JSC.BinaryType.toJS(.Buffer, data_, globalThis);
                 buffer.ensureStillAlive();
 
-                const result = writeOrEnd.call(globalThis, duplex, &[_]JSC.JSValue{buffer});
-                if (result.toError()) |err| {
-                    this.handlers.onError(this.handlers.ctx, err);
-                }
+                _ = writeOrEnd.call(globalThis, duplex, &.{buffer}) catch |err| {
+                    this.handlers.onError(this.handlers.ctx, globalThis.takeException(err));
+                };
             } else {
-                const result = writeOrEnd.call(globalThis, duplex, &[_]JSC.JSValue{JSC.JSValue.jsNull()});
-                if (result.toError()) |err| {
-                    this.handlers.onError(this.handlers.ctx, err);
-                }
+                _ = writeOrEnd.call(globalThis, duplex, &.{.null}) catch |err| {
+                    this.handlers.onError(this.handlers.ctx, globalThis.takeException(err));
+                };
             }
         }
     }
@@ -2874,30 +2872,37 @@ pub const WebSocketBehavior = extern struct {
 
             const active_field_name = if (is_ssl) "ssl" else "tcp";
 
-            pub fn _open(raw_ws: *RawWebSocket) callconv(.C) void {
-                var ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
+            pub fn onOpen(raw_ws: *RawWebSocket) callconv(.C) void {
+                const ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
-                @call(bun.callmod_inline, Type.onOpen, .{ this, ws });
+                @call(bun.callmod_inline, Type.onOpen, .{
+                    this,
+                    ws,
+                });
             }
-            pub fn _message(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize, opcode: Opcode) callconv(.C) void {
-                var ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
+
+            pub fn onMessage(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize, opcode: Opcode) callconv(.C) void {
+                const ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
-                @call(
-                    .always_inline,
-                    Type.onMessage,
-                    .{ this, ws, if (length > 0) message[0..length] else "", opcode },
-                );
+                @call(.always_inline, Type.onMessage, .{
+                    this,
+                    ws,
+                    if (length > 0) message[0..length] else "",
+                    opcode,
+                });
             }
-            pub fn _drain(raw_ws: *RawWebSocket) callconv(.C) void {
-                var ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
+
+            pub fn onDrain(raw_ws: *RawWebSocket) callconv(.C) void {
+                const ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
                 @call(bun.callmod_inline, Type.onDrain, .{
                     this,
                     ws,
                 });
             }
-            pub fn _ping(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize) callconv(.C) void {
-                var ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
+
+            pub fn onPing(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize) callconv(.C) void {
+                const ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
                 @call(bun.callmod_inline, Type.onPing, .{
                     this,
@@ -2905,8 +2910,9 @@ pub const WebSocketBehavior = extern struct {
                     if (length > 0) message[0..length] else "",
                 });
             }
-            pub fn _pong(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize) callconv(.C) void {
-                var ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
+
+            pub fn onPong(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize) callconv(.C) void {
+                const ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
                 @call(bun.callmod_inline, Type.onPong, .{
                     this,
@@ -2914,30 +2920,30 @@ pub const WebSocketBehavior = extern struct {
                     if (length > 0) message[0..length] else "",
                 });
             }
-            pub fn _close(raw_ws: *RawWebSocket, code: i32, message: [*c]const u8, length: usize) callconv(.C) void {
-                var ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
+
+            pub fn onClose(raw_ws: *RawWebSocket, code: i32, message: [*c]const u8, length: usize) callconv(.C) void {
+                const ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
-                @call(
-                    .always_inline,
-                    Type.onClose,
-                    .{
-                        this,
-                        ws,
-                        code,
-                        if (length > 0 and message != null) message[0..length] else "",
-                    },
-                );
+                @call(.always_inline, Type.onClose, .{
+                    this,
+                    ws,
+                    code,
+                    if (length > 0 and message != null) message[0..length] else "",
+                });
             }
-            pub fn _upgrade(ptr: *anyopaque, res: *uws_res, req: *Request, context: *uws_socket_context_t, id: usize) callconv(.C) void {
-                @call(
-                    .always_inline,
-                    Server.onWebSocketUpgrade,
-                    .{ bun.cast(*Server, ptr), @as(*NewApp(is_ssl).Response, @ptrCast(res)), req, context, id },
-                );
+
+            pub fn onUpgrade(ptr: *anyopaque, res: *uws_res, req: *Request, context: *uws_socket_context_t, id: usize) callconv(.C) void {
+                @call(.always_inline, Server.onWebSocketUpgrade, .{
+                    bun.cast(*Server, ptr),
+                    @as(*NewApp(is_ssl).Response, @ptrCast(res)),
+                    req,
+                    context,
+                    id,
+                });
             }
 
             pub fn apply(behavior: WebSocketBehavior) WebSocketBehavior {
-                return WebSocketBehavior{
+                return .{
                     .compression = behavior.compression,
                     .maxPayloadLength = behavior.maxPayloadLength,
                     .idleTimeout = behavior.idleTimeout,
@@ -2946,13 +2952,13 @@ pub const WebSocketBehavior = extern struct {
                     .resetIdleTimeoutOnSend = behavior.resetIdleTimeoutOnSend,
                     .sendPingsAutomatically = behavior.sendPingsAutomatically,
                     .maxLifetime = behavior.maxLifetime,
-                    .upgrade = _upgrade,
-                    .open = _open,
-                    .message = _message,
-                    .drain = _drain,
-                    .ping = _ping,
-                    .pong = _pong,
-                    .close = _close,
+                    .upgrade = onUpgrade,
+                    .open = onOpen,
+                    .message = if (@hasDecl(Type, "onMessage")) onMessage else null,
+                    .drain = if (@hasDecl(Type, "onDrain")) onDrain else null,
+                    .ping = if (@hasDecl(Type, "onPing")) onPing else null,
+                    .pong = if (@hasDecl(Type, "onPong")) onPong else null,
+                    .close = onClose,
                 };
             }
         };
@@ -3192,24 +3198,13 @@ pub fn NewApp(comptime ssl: bool) type {
         const ThisApp = @This();
 
         pub fn close(this: *ThisApp) void {
-            if (comptime is_bindgen) {
-                unreachable;
-            }
-
             return uws_app_close(ssl_flag, @as(*uws_app_s, @ptrCast(this)));
         }
 
         pub fn create(opts: us_bun_socket_context_options_t) *ThisApp {
-            if (comptime is_bindgen) {
-                unreachable;
-            }
             return @as(*ThisApp, @ptrCast(uws_create_app(ssl_flag, opts)));
         }
         pub fn destroy(app: *ThisApp) void {
-            if (comptime is_bindgen) {
-                unreachable;
-            }
-
             return uws_app_destroy(ssl_flag, @as(*uws_app_s, @ptrCast(app)));
         }
 
@@ -3224,10 +3219,6 @@ pub fn NewApp(comptime ssl: bool) type {
         fn RouteHandler(comptime UserDataType: type, comptime handler: fn (UserDataType, *Request, *Response) void) type {
             return struct {
                 pub fn handle(res: *uws_res, req: *Request, user_data: ?*anyopaque) callconv(.C) void {
-                    if (comptime is_bindgen) {
-                        unreachable;
-                    }
-
                     if (comptime UserDataType == void) {
                         return @call(
                             .always_inline,
@@ -3255,15 +3246,9 @@ pub fn NewApp(comptime ssl: bool) type {
 
         pub const ListenSocket = opaque {
             pub inline fn close(this: *ThisApp.ListenSocket) void {
-                if (comptime is_bindgen) {
-                    unreachable;
-                }
                 return us_listen_socket_close(ssl_flag, @as(*uws.ListenSocket, @ptrCast(this)));
             }
             pub inline fn getLocalPort(this: *ThisApp.ListenSocket) i32 {
-                if (comptime is_bindgen) {
-                    unreachable;
-                }
                 return us_socket_local_port(ssl_flag, @as(*uws.Socket, @ptrCast(this)));
             }
 
@@ -3279,10 +3264,7 @@ pub fn NewApp(comptime ssl: bool) type {
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
-            if (comptime is_bindgen) {
-                unreachable;
-            }
-            uws_app_get(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, user_data);
+            uws_app_get(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
         }
         pub fn post(
             app: *ThisApp,
@@ -3291,10 +3273,7 @@ pub fn NewApp(comptime ssl: bool) type {
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
-            if (comptime is_bindgen) {
-                unreachable;
-            }
-            uws_app_post(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, user_data);
+            uws_app_post(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
         }
         pub fn options(
             app: *ThisApp,
@@ -3303,10 +3282,7 @@ pub fn NewApp(comptime ssl: bool) type {
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
-            if (comptime is_bindgen) {
-                unreachable;
-            }
-            uws_app_options(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, user_data);
+            uws_app_options(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
         }
         pub fn delete(
             app: *ThisApp,
@@ -3315,10 +3291,7 @@ pub fn NewApp(comptime ssl: bool) type {
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
-            if (comptime is_bindgen) {
-                unreachable;
-            }
-            uws_app_delete(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, user_data);
+            uws_app_delete(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
         }
         pub fn patch(
             app: *ThisApp,
@@ -3327,10 +3300,7 @@ pub fn NewApp(comptime ssl: bool) type {
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
-            if (comptime is_bindgen) {
-                unreachable;
-            }
-            uws_app_patch(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, user_data);
+            uws_app_patch(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
         }
         pub fn put(
             app: *ThisApp,
@@ -3339,10 +3309,7 @@ pub fn NewApp(comptime ssl: bool) type {
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
-            if (comptime is_bindgen) {
-                unreachable;
-            }
-            uws_app_put(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, user_data);
+            uws_app_put(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
         }
         pub fn head(
             app: *ThisApp,
@@ -3351,10 +3318,7 @@ pub fn NewApp(comptime ssl: bool) type {
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
-            if (comptime is_bindgen) {
-                unreachable;
-            }
-            uws_app_head(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern.ptr, pattern.len, RouteHandler(UserDataType, handler).handle, user_data);
+            uws_app_head(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern.ptr, pattern.len, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
         }
         pub fn connect(
             app: *ThisApp,
@@ -3363,10 +3327,7 @@ pub fn NewApp(comptime ssl: bool) type {
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
-            if (comptime is_bindgen) {
-                unreachable;
-            }
-            uws_app_connect(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, user_data);
+            uws_app_connect(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
         }
         pub fn trace(
             app: *ThisApp,
@@ -3375,10 +3336,7 @@ pub fn NewApp(comptime ssl: bool) type {
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
-            if (comptime is_bindgen) {
-                unreachable;
-            }
-            uws_app_trace(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, user_data);
+            uws_app_trace(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
         }
         pub fn any(
             app: *ThisApp,
@@ -3387,18 +3345,12 @@ pub fn NewApp(comptime ssl: bool) type {
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
-            if (comptime is_bindgen) {
-                unreachable;
-            }
-            uws_app_any(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern.ptr, pattern.len, RouteHandler(UserDataType, handler).handle, user_data);
+            uws_app_any(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern.ptr, pattern.len, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
         }
         pub fn domain(app: *ThisApp, pattern: [:0]const u8) void {
             uws_app_domain(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern);
         }
         pub fn run(app: *ThisApp) void {
-            if (comptime is_bindgen) {
-                unreachable;
-            }
             return uws_app_run(ssl_flag, @as(*uws_app_t, @ptrCast(app)));
         }
         pub fn listen(
@@ -3408,9 +3360,6 @@ pub fn NewApp(comptime ssl: bool) type {
             user_data: UserData,
             comptime handler: fn (UserData, ?*ThisApp.ListenSocket, uws_app_listen_config_t) void,
         ) void {
-            if (comptime is_bindgen) {
-                unreachable;
-            }
             const Wrapper = struct {
                 pub fn handle(socket: ?*uws.ListenSocket, conf: uws_app_listen_config_t, data: ?*anyopaque) callconv(.C) void {
                     if (comptime UserData == void) {
@@ -4084,10 +4033,11 @@ pub const SendStatus = enum(c_uint) {
     dropped = 2,
 };
 pub const uws_app_listen_config_t = extern struct {
-    port: i32,
-    host: [*c]const u8 = null,
-    options: i32,
+    port: c_int,
+    host: ?[*:0]const u8 = null,
+    options: c_int = 0,
 };
+pub const AppListenConfig = uws_app_listen_config_t;
 
 extern fn us_socket_mark_needs_more_not_ssl(socket: ?*uws_res) void;
 

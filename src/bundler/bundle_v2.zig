@@ -88,6 +88,7 @@ const Timer = @import("../system_timer.zig");
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
 const DebugLogs = _resolver.DebugLogs;
+const OOM = bun.OOM;
 
 const Router = @import("../router.zig");
 const isPackagePath = _resolver.isPackagePath;
@@ -330,8 +331,9 @@ pub const BundleV2 = struct {
     graph: Graph = Graph{},
     linker: LinkerContext = LinkerContext{ .loop = undefined },
     bun_watcher: ?*Watcher.Watcher = null,
+    // kit_watcher: ?*bun.kit.DevServer.HotReloader.Watcher = null,
     plugins: ?*JSC.API.JSBundler.Plugin = null,
-    completion: ?*JSBundleCompletionTask = null,
+    completion: ?CompletionPtr = null,
     source_code_length: usize = 0,
 
     // There is a race condition where an onResolve plugin may schedule a task on the bundle thread before it's parsing task completes
@@ -342,6 +344,17 @@ pub const BundleV2 = struct {
 
     unique_key: u64 = 0,
     dynamic_import_entry_points: std.AutoArrayHashMap(Index.Int, void) = undefined,
+
+    pub const CompletionPtr = union(enum) {
+        js: *JSBundleCompletionTask,
+        kit: *bun.kit.DevServer.BundleTask,
+
+        pub fn log(ptr: CompletionPtr) *bun.logger.Log {
+            return switch (ptr) {
+                inline else => |inner| &inner.log,
+            };
+        }
+    };
 
     const debug = Output.scoped(.Bundle, false);
 
@@ -483,7 +496,7 @@ pub const BundleV2 = struct {
         ) catch |err| {
             var handles_import_errors = false;
             var source: ?*const Logger.Source = null;
-            const log = &this.completion.?.log;
+            const log = this.completion.?.log();
 
             if (import_record.importer_source_index) |importer| {
                 var record: *ImportRecord = &this.graph.ast.items(.import_records)[importer].slice()[import_record.import_record_index];
@@ -720,12 +733,11 @@ pub const BundleV2 = struct {
     ) !*BundleV2 {
         bundler.env.loadTracy();
 
-        var generator = try allocator.create(BundleV2);
+        const this = try allocator.create(BundleV2);
         bundler.options.mark_builtins_as_external = bundler.options.target.isBun() or bundler.options.target == .node;
         bundler.resolver.opts.mark_builtins_as_external = bundler.options.target.isBun() or bundler.options.target == .node;
 
-        const this = generator;
-        generator.* = BundleV2{
+        this.* = .{
             .bundler = bundler,
             .client_bundler = bundler,
             .server_bundler = bundler,
@@ -742,49 +754,64 @@ pub const BundleV2 = struct {
                 },
             },
         };
-        generator.linker.graph.allocator = generator.graph.heap.allocator();
-        generator.graph.allocator = generator.linker.graph.allocator;
-        generator.bundler.allocator = generator.graph.allocator;
-        generator.bundler.resolver.allocator = generator.graph.allocator;
-        generator.bundler.linker.allocator = generator.graph.allocator;
-        generator.bundler.log.msgs.allocator = generator.graph.allocator;
-        generator.bundler.log.clone_line_text = true;
+        this.linker.graph.allocator = this.graph.heap.allocator();
+        this.graph.allocator = this.linker.graph.allocator;
+        this.bundler.allocator = this.graph.allocator;
+        this.bundler.resolver.allocator = this.graph.allocator;
+        this.bundler.linker.allocator = this.graph.allocator;
+        this.bundler.log.msgs.allocator = this.graph.allocator;
+        this.bundler.log.clone_line_text = true;
 
-        // We don't expose a way to disable this right now.
-        generator.bundler.options.tree_shaking = true;
-        generator.bundler.resolver.opts.tree_shaking = true;
+        // We don't expose an option to disable this. Kit requires tree-shaking
+        // disabled since every export is always referenced in case a future
+        // module depends on a previously unused export.
+        if (this.bundler.options.output_format == .internal_kit_dev) {
+            this.bundler.options.tree_shaking = false;
+            this.bundler.resolver.opts.tree_shaking = false;
+        } else {
+            this.bundler.options.tree_shaking = true;
+            this.bundler.resolver.opts.tree_shaking = true;
+        }
 
-        generator.linker.graph.bundler_graph = &generator.graph;
-        generator.linker.resolver = &generator.bundler.resolver;
-        generator.linker.graph.code_splitting = bundler.options.code_splitting;
-        generator.graph.code_splitting = bundler.options.code_splitting;
+        this.linker.graph.bundler_graph = &this.graph;
+        this.linker.resolver = &this.bundler.resolver;
+        this.linker.graph.code_splitting = bundler.options.code_splitting;
+        this.graph.code_splitting = bundler.options.code_splitting;
 
-        generator.linker.options.minify_syntax = bundler.options.minify_syntax;
-        generator.linker.options.minify_identifiers = bundler.options.minify_identifiers;
-        generator.linker.options.minify_whitespace = bundler.options.minify_whitespace;
-        generator.linker.options.emit_dce_annotations = bundler.options.emit_dce_annotations;
-        generator.linker.options.ignore_dce_annotations = bundler.options.ignore_dce_annotations;
+        this.linker.options.minify_syntax = bundler.options.minify_syntax;
+        this.linker.options.minify_identifiers = bundler.options.minify_identifiers;
+        this.linker.options.minify_whitespace = bundler.options.minify_whitespace;
+        this.linker.options.emit_dce_annotations = bundler.options.emit_dce_annotations;
+        this.linker.options.ignore_dce_annotations = bundler.options.ignore_dce_annotations;
 
-        generator.linker.options.source_maps = bundler.options.source_map;
-        generator.linker.options.tree_shaking = bundler.options.tree_shaking;
-        generator.linker.options.public_path = bundler.options.public_path;
-        generator.linker.options.target = bundler.options.target;
+        this.linker.options.source_maps = bundler.options.source_map;
+        this.linker.options.tree_shaking = bundler.options.tree_shaking;
+        this.linker.options.public_path = bundler.options.public_path;
+        this.linker.options.target = bundler.options.target;
+        this.linker.options.output_format = bundler.options.output_format;
 
-        var pool = try generator.graph.allocator.create(ThreadPool);
+        var pool = try this.graph.allocator.create(ThreadPool);
         if (enable_reloading) {
-            Watcher.enableHotModuleReloading(generator);
+            Watcher.enableHotModuleReloading(this);
         }
         // errdefer pool.destroy();
-        errdefer generator.graph.heap.deinit();
+        errdefer this.graph.heap.deinit();
 
         pool.* = ThreadPool{};
-        generator.graph.pool = pool;
+        this.graph.pool = pool;
         try pool.start(
             this,
             thread_pool,
         );
 
-        return generator;
+        // sanity checks for kit
+        if (this.bundler.options.output_format == .internal_kit_dev) {
+            if (this.bundler.options.compile) @panic("TODO: internal_kit_dev does not support compile");
+            if (this.bundler.options.code_splitting) @panic("TODO: internal_kit_dev does not support code splitting");
+            if (this.bundler.options.transform_only) @panic("TODO: internal_kit_dev does not support transform_only");
+        }
+
+        return this;
     }
 
     pub fn enqueueEntryPoints(this: *BundleV2, user_entry_points: []const string) !ThreadPoolLib.Batch {
@@ -1142,13 +1169,15 @@ pub const BundleV2 = struct {
         }
     }
 
+    pub const JSBundleThread = BundleThread(JSBundleCompletionTask);
+
     pub fn generateFromJavaScript(
         config: bun.JSC.API.JSBundler.Config,
         plugins: ?*bun.JSC.API.JSBundler.Plugin,
         globalThis: *JSC.JSGlobalObject,
         event_loop: *bun.JSC.EventLoop,
         allocator: std.mem.Allocator,
-    ) !bun.JSC.JSValue {
+    ) OOM!bun.JSC.JSValue {
         var completion = try allocator.create(JSBundleCompletionTask);
         completion.* = JSBundleCompletionTask{
             .config = config,
@@ -1169,7 +1198,7 @@ pub const BundleV2 = struct {
         // conditions from creating two
         _ = JSC.WorkPool.get();
 
-        BundleThread.enqueue(completion);
+        JSBundleThread.singleton.enqueue(completion);
 
         completion.poll_ref.ref(globalThis.bunVM());
 
@@ -1178,6 +1207,12 @@ pub const BundleV2 = struct {
 
     pub const BuildResult = struct {
         output_files: std.ArrayList(options.OutputFile),
+    };
+
+    pub const Result = union(enum) {
+        pending: void,
+        err: anyerror,
+        value: BuildResult,
     };
 
     pub const JSBundleCompletionTask = struct {
@@ -1197,11 +1232,67 @@ pub const BundleV2 = struct {
         plugins: ?*bun.JSC.API.JSBundler.Plugin = null,
         ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
 
-        pub const Result = union(enum) {
-            pending: void,
-            err: anyerror,
-            value: BuildResult,
-        };
+        pub fn configureBundler(
+            completion: *JSBundleCompletionTask,
+            bundler: *Bundler,
+            allocator: std.mem.Allocator,
+        ) !void {
+            const config = &completion.config;
+
+            bundler.* = try bun.Bundler.init(
+                allocator,
+                &completion.log,
+                Api.TransformOptions{
+                    .define = if (config.define.count() > 0) config.define.toAPI() else null,
+                    .entry_points = config.entry_points.keys(),
+                    .target = config.target.toAPI(),
+                    .absolute_working_dir = if (config.dir.list.items.len > 0)
+                        config.dir.toOwnedSliceLeaky()
+                    else
+                        null,
+                    .inject = &.{},
+                    .external = config.external.keys(),
+                    .main_fields = &.{},
+                    .extension_order = &.{},
+                    .env_files = &.{},
+                    .conditions = config.conditions.map.keys(),
+                    .ignore_dce_annotations = bundler.options.ignore_dce_annotations,
+                },
+                completion.env,
+            );
+
+            bundler.options.entry_points = config.entry_points.keys();
+            bundler.options.jsx = config.jsx;
+            bundler.options.no_macros = config.no_macros;
+            bundler.options.react_server_components = config.server_components.client.items.len > 0 or config.server_components.server.items.len > 0;
+            bundler.options.loaders = try options.loadersFromTransformOptions(allocator, config.loaders, config.target);
+            bundler.options.entry_naming = config.names.entry_point.data;
+            bundler.options.chunk_naming = config.names.chunk.data;
+            bundler.options.asset_naming = config.names.asset.data;
+
+            bundler.options.public_path = config.public_path.list.items;
+
+            bundler.options.output_dir = config.outdir.toOwnedSliceLeaky();
+            bundler.options.root_dir = config.rootdir.toOwnedSliceLeaky();
+            bundler.options.minify_syntax = config.minify.syntax;
+            bundler.options.minify_whitespace = config.minify.whitespace;
+            bundler.options.minify_identifiers = config.minify.identifiers;
+            bundler.options.inlining = config.minify.syntax;
+            bundler.options.source_map = config.source_map;
+            bundler.options.packages = config.packages;
+            bundler.options.code_splitting = config.code_splitting;
+            bundler.options.emit_dce_annotations = config.emit_dce_annotations orelse !config.minify.whitespace;
+            bundler.options.ignore_dce_annotations = config.ignore_dce_annotations;
+
+            bundler.configureLinker();
+            try bundler.configureDefines();
+
+            bundler.resolver.opts = bundler.options;
+        }
+
+        pub fn completeOnBundleThread(completion: *JSBundleCompletionTask) void {
+            completion.jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.create(completion.task.task()));
+        }
 
         pub const TaskCompletion = bun.JSC.AnyTask.New(JSBundleCompletionTask, onComplete);
 
@@ -1546,188 +1637,6 @@ pub const BundleV2 = struct {
         }
     }
 
-    pub fn timerCallback(_: *bun.windows.libuv.Timer) callconv(.C) void {}
-
-    pub fn generateInNewThreadWrap(instance: *BundleThread) void {
-        Output.Source.configureNamedThread("Bundler");
-
-        instance.waker = bun.Async.Waker.init() catch @panic("Failed to create waker");
-
-        var timer: bun.windows.libuv.Timer = undefined;
-        if (bun.Environment.isWindows) {
-            timer.init(instance.waker.loop.uv_loop);
-            timer.start(std.math.maxInt(u64), std.math.maxInt(u64), &timerCallback);
-        }
-
-        // 3. Unblock the calling thread so it can continue.
-        instance.wait_for_thread_to_have_created_the_waker.store(0, .monotonic);
-        std.Thread.Futex.wake(&instance.wait_for_thread_to_have_created_the_waker, 10);
-
-        var has_bundled = false;
-        while (true) {
-            while (instance.queue.pop()) |completion| {
-                generateInNewThread(completion, instance.generation) catch |err| {
-                    completion.result = .{ .err = err };
-                    completion.jsc_event_loop.enqueueTaskConcurrent(
-                        JSC.ConcurrentTask.create(completion.task.task()),
-                    );
-                };
-                has_bundled = true;
-            }
-            instance.generation +|= 1;
-
-            if (has_bundled) {
-                bun.Mimalloc.mi_collect(false);
-                has_bundled = false;
-            }
-
-            _ = instance.waker.wait();
-        }
-    }
-
-    pub const BundleThread = struct {
-        /// Must be created on the BundleThread.
-        /// Uninitialized until `wait_for_thread_to_have_created_the_waker` is set to 0.
-        waker: bun.Async.Waker,
-        queue: bun.UnboundedQueue(JSBundleCompletionTask, .next),
-        generation: bun.Generation,
-        wait_for_thread_to_have_created_the_waker: std.atomic.Value(u32),
-
-        pub var instance: ?*BundleThread = undefined;
-        pub var load_once = std.once(loadOnce);
-
-        // Blocks the calling thread until the bun build thread is created.
-        // std.once also blocks other callers of this function until the first caller is done.
-        fn loadOnce() void {
-            const this = bun.default_allocator.create(BundleThread) catch bun.outOfMemory();
-            this.* = .{
-                .waker = undefined,
-                .queue = .{},
-                .generation = 0,
-                .wait_for_thread_to_have_created_the_waker = .{
-                    .raw = 1,
-                },
-            };
-            BundleThread.instance = this;
-
-            // 2. Spawn the bun build thread.
-            var thread = std.Thread.spawn(.{}, generateInNewThreadWrap, .{instance.?}) catch Output.panic("Failed to spawn bun build thread", .{});
-            thread.detach();
-
-            while (this.wait_for_thread_to_have_created_the_waker.load(.monotonic) > 0) std.Thread.Futex.wait(&this.wait_for_thread_to_have_created_the_waker, 1);
-        }
-        fn get() *BundleThread {
-            load_once.call();
-            return instance.?;
-        }
-        pub fn enqueue(task: *JSBundleCompletionTask) void {
-            const this = get();
-            this.queue.push(task);
-            this.waker.wake();
-        }
-    };
-
-    /// This is called from `Bun.build` in JavaScript.
-    fn generateInNewThread(
-        completion: *JSBundleCompletionTask,
-        generation: bun.Generation,
-    ) !void {
-        var heap = try ThreadlocalArena.init();
-        defer heap.deinit();
-
-        const allocator = heap.allocator();
-        var ast_memory_allocator = try allocator.create(js_ast.ASTMemoryAllocator);
-        ast_memory_allocator.* = .{
-            .allocator = allocator,
-        };
-        ast_memory_allocator.reset();
-        ast_memory_allocator.push();
-
-        const config = &completion.config;
-        var bundler = try allocator.create(bun.Bundler);
-
-        bundler.* = try bun.Bundler.init(
-            allocator,
-            &completion.log,
-            Api.TransformOptions{
-                .define = if (config.define.count() > 0) config.define.toAPI() else null,
-                .entry_points = config.entry_points.keys(),
-                .target = config.target.toAPI(),
-                .absolute_working_dir = if (config.dir.list.items.len > 0) config.dir.toOwnedSliceLeaky() else null,
-                .inject = &.{},
-                .external = config.external.keys(),
-                .main_fields = &.{},
-                .extension_order = &.{},
-                .env_files = &.{},
-                .conditions = config.conditions.map.keys(),
-                .ignore_dce_annotations = bundler.options.ignore_dce_annotations,
-            },
-            completion.env,
-        );
-        bundler.options.jsx = config.jsx;
-        bundler.options.no_macros = config.no_macros;
-        bundler.options.react_server_components = config.server_components.client.items.len > 0 or config.server_components.server.items.len > 0;
-        bundler.options.loaders = try options.loadersFromTransformOptions(allocator, config.loaders, config.target);
-        bundler.options.entry_naming = config.names.entry_point.data;
-        bundler.options.chunk_naming = config.names.chunk.data;
-        bundler.options.asset_naming = config.names.asset.data;
-
-        bundler.options.public_path = config.public_path.list.items;
-
-        bundler.options.output_dir = config.outdir.toOwnedSliceLeaky();
-        bundler.options.root_dir = config.rootdir.toOwnedSliceLeaky();
-        bundler.options.minify_syntax = config.minify.syntax;
-        bundler.options.minify_whitespace = config.minify.whitespace;
-        bundler.options.minify_identifiers = config.minify.identifiers;
-        bundler.options.inlining = config.minify.syntax;
-        bundler.options.source_map = config.source_map;
-        bundler.options.packages = config.packages;
-        bundler.resolver.generation = generation;
-        bundler.options.code_splitting = config.code_splitting;
-        bundler.options.emit_dce_annotations = config.emit_dce_annotations orelse !config.minify.whitespace;
-        bundler.options.ignore_dce_annotations = config.ignore_dce_annotations;
-
-        bundler.configureLinker();
-        try bundler.configureDefines();
-
-        bundler.resolver.opts = bundler.options;
-
-        const this = try BundleV2.init(bundler, allocator, JSC.AnyEventLoop.init(allocator), false, JSC.WorkPool.get(), heap);
-        this.plugins = completion.plugins;
-        this.completion = completion;
-        completion.bundler = this;
-
-        defer {
-            if (this.graph.pool.pool.threadpool_context == @as(?*anyopaque, @ptrCast(this.graph.pool))) {
-                this.graph.pool.pool.threadpool_context = null;
-            }
-
-            ast_memory_allocator.pop();
-            this.deinit();
-        }
-
-        errdefer {
-            // Wait for wait groups to finish. There still may be
-            this.linker.source_maps.line_offset_wait_group.wait();
-            this.linker.source_maps.quoted_contents_wait_group.wait();
-
-            var out_log = Logger.Log.init(bun.default_allocator);
-            this.bundler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
-            completion.log = out_log;
-        }
-
-        completion.result = .{
-            .value = .{
-                .output_files = try this.runFromJSInNewThread(config),
-            },
-        };
-
-        var out_log = Logger.Log.init(bun.default_allocator);
-        this.bundler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
-        completion.log = out_log;
-        completion.jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.create(completion.task.task()));
-    }
-
     pub fn deinit(this: *BundleV2) void {
         defer this.graph.ast.deinit(bun.default_allocator);
         defer this.graph.input_files.deinit(bun.default_allocator);
@@ -1751,7 +1660,7 @@ pub const BundleV2 = struct {
         this.free_list.clearAndFree();
     }
 
-    pub fn runFromJSInNewThread(this: *BundleV2, config: *const bun.JSC.API.JSBundler.Config) !std.ArrayList(options.OutputFile) {
+    pub fn runFromJSInNewThread(this: *BundleV2, entry_points: []const []const u8) !std.ArrayList(options.OutputFile) {
         this.unique_key = std.crypto.random.int(u64);
 
         if (this.bundler.log.errors > 0) {
@@ -1763,7 +1672,7 @@ pub const BundleV2 = struct {
             bun.Mimalloc.mi_collect(true);
         }
 
-        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(config.entry_points.keys()));
+        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(entry_points));
 
         // We must wait for all the parse tasks to complete, even if there are errors.
         this.waitForParse();
@@ -1831,7 +1740,7 @@ pub const BundleV2 = struct {
                             .original_target = original_target orelse this.bundler.options.target,
                         },
                     },
-                    this.completion.?,
+                    this.completion.?.js,
                 );
                 resolve.dispatch();
                 return true;
@@ -1851,7 +1760,7 @@ pub const BundleV2 = struct {
                 });
                 var load = bun.default_allocator.create(JSC.API.JSBundler.Load) catch unreachable;
                 load.* = JSC.API.JSBundler.Load.create(
-                    this.completion.?,
+                    this.completion.?.js,
                     parse.source_index,
                     parse.path.loader(&this.bundler.options.loaders) orelse options.Loader.js,
                     parse.path,
@@ -2150,9 +2059,9 @@ pub const BundleV2 = struct {
                     });
                 }
 
-                if (this.bun_watcher != null) {
+                if (this.bun_watcher) |watcher| {
                     if (empty_result.watcher_data.fd != .zero and empty_result.watcher_data.fd != bun.invalid_fd) {
-                        _ = this.bun_watcher.?.addFile(
+                        _ = watcher.addFile(
                             empty_result.watcher_data.fd,
                             input_files.items(.source)[empty_result.source_index.get()].path.text,
                             bun.hash32(input_files.items(.source)[empty_result.source_index.get()].path.text),
@@ -2163,15 +2072,28 @@ pub const BundleV2 = struct {
                         );
                     }
                 }
+                // else if (this.kit_watcher) |watcher| {
+                //     if (empty_result.watcher_data.fd != .zero and empty_result.watcher_data.fd != bun.invalid_fd) {
+                //         _ = watcher.addFile(
+                //             empty_result.watcher_data.fd,
+                //             input_files.items(.source)[empty_result.source_index.get()].path.text,
+                //             bun.hash32(input_files.items(.source)[empty_result.source_index.get()].path.text),
+                //             graph.input_files.items(.loader)[empty_result.source_index.get()],
+                //             empty_result.watcher_data.dir_fd,
+                //             null,
+                //             false,
+                //         );
+                //     }
+                // }
             },
             .success => |*result| {
                 result.log.cloneToWithRecycled(this.bundler.log, true) catch unreachable;
 
                 {
                     // to minimize contention, we add watcher here
-                    if (this.bun_watcher != null) {
+                    if (this.bun_watcher) |watcher| {
                         if (result.watcher_data.fd != .zero and result.watcher_data.fd != bun.invalid_fd) {
-                            _ = this.bun_watcher.?.addFile(
+                            _ = watcher.addFile(
                                 result.watcher_data.fd,
                                 result.source.path.text,
                                 bun.hash32(result.source.path.text),
@@ -2182,6 +2104,19 @@ pub const BundleV2 = struct {
                             );
                         }
                     }
+                    // else if (this.kit_watcher) |watcher| {
+                    //     if (result.watcher_data.fd != .zero and result.watcher_data.fd != bun.invalid_fd) {
+                    //         _ = watcher.addFile(
+                    //             result.watcher_data.fd,
+                    //             result.source.path.text,
+                    //             bun.hash32(result.source.path.text),
+                    //             result.source.path.loader(&this.bundler.options.loaders) orelse options.Loader.file,
+                    //             result.watcher_data.dir_fd,
+                    //             result.watcher_data.package_json,
+                    //             false,
+                    //         );
+                    //     }
+                    // }
                 }
 
                 // Warning: this array may resize in this function call
@@ -2328,6 +2263,182 @@ pub const BundleV2 = struct {
         }
     }
 };
+
+/// Used to keep the bundle thread from spinning on Windows
+pub fn timerCallback(_: *bun.windows.libuv.Timer) callconv(.C) void {}
+
+/// Used for Bun.build and Kit, as they asynchronously schedule multiple
+/// bundles. To account for their respective differences, the scheduling code
+/// is generalized over the Task structure.
+///
+/// - `configureBundler` is used to configure `Bundler`.
+/// - `completeOnBundleThread` is used to tell the task that it is done.
+///
+pub fn BundleThread(CompletionStruct: type) type {
+    return struct {
+        const Self = @This();
+
+        waker: bun.Async.Waker,
+        ready_event: std.Thread.ResetEvent,
+        queue: bun.UnboundedQueue(CompletionStruct, .next),
+        generation: bun.Generation = 0,
+
+        /// To initialize, put this somewhere in memory, and then call `spawn()`
+        pub const uninitialized: Self = .{
+            .waker = undefined,
+            .queue = .{},
+            .generation = 0,
+            .ready_event = .{},
+        };
+
+        pub fn spawn(instance: *Self) !std.Thread {
+            const thread = try std.Thread.spawn(.{}, threadMain, .{instance});
+            instance.ready_event.wait();
+            return thread;
+        }
+
+        /// Lazily-initialized singleton. This is used for `Bun.build` since the
+        /// bundle thread may not be needed. Kit always uses the bundler, so it
+        /// just initializes `BundleThread`
+        pub const singleton = struct {
+            var once = std.once(loadOnceImpl);
+            var instance: ?*Self = null;
+
+            // Blocks the calling thread until the bun build thread is created.
+            // std.once also blocks other callers of this function until the first caller is done.
+            fn loadOnceImpl() void {
+                const bundle_thread = bun.default_allocator.create(Self) catch bun.outOfMemory();
+                bundle_thread.* = uninitialized;
+                instance = bundle_thread;
+
+                // 2. Spawn the bun build thread.
+                const os_thread = bundle_thread.spawn() catch
+                    Output.panic("Failed to spawn bun build thread", .{});
+                os_thread.detach();
+            }
+
+            pub fn get() *Self {
+                once.call();
+                return instance.?;
+            }
+
+            pub fn enqueue(completion: *CompletionStruct) void {
+                get().enqueue(completion);
+            }
+        };
+
+        pub fn enqueue(instance: *Self, completion: *CompletionStruct) void {
+            instance.queue.push(completion);
+            instance.waker.wake();
+        }
+
+        fn threadMain(instance: *Self) void {
+            Output.Source.configureNamedThread("Bundler");
+
+            instance.waker = bun.Async.Waker.init() catch @panic("Failed to create waker");
+
+            // Unblock the calling thread so it can continue.
+            instance.ready_event.set();
+
+            var timer: bun.windows.libuv.Timer = undefined;
+            if (bun.Environment.isWindows) {
+                timer.init(instance.waker.loop.uv_loop);
+                timer.start(std.math.maxInt(u64), std.math.maxInt(u64), &timerCallback);
+            }
+
+            var has_bundled = false;
+            while (true) {
+                while (instance.queue.pop()) |completion| {
+                    generateInNewThread(completion, instance.generation) catch |err| {
+                        completion.result = .{ .err = err };
+                        completion.completeOnBundleThread();
+                    };
+                    has_bundled = true;
+                }
+                instance.generation +|= 1;
+
+                if (has_bundled) {
+                    bun.Mimalloc.mi_collect(false);
+                    has_bundled = false;
+                }
+
+                _ = instance.waker.wait();
+            }
+        }
+
+        /// This is called from `Bun.build` in JavaScript.
+        fn generateInNewThread(completion: *CompletionStruct, generation: bun.Generation) !void {
+            var heap = try ThreadlocalArena.init();
+            defer heap.deinit();
+
+            const allocator = heap.allocator();
+            var ast_memory_allocator = try allocator.create(js_ast.ASTMemoryAllocator);
+            ast_memory_allocator.* = .{ .allocator = allocator };
+            ast_memory_allocator.reset();
+            ast_memory_allocator.push();
+
+            const bundler = try allocator.create(bun.Bundler);
+
+            try completion.configureBundler(bundler, allocator);
+
+            bundler.resolver.generation = generation;
+
+            const this = try BundleV2.init(
+                bundler,
+                allocator,
+                JSC.AnyEventLoop.init(allocator),
+                false,
+                JSC.WorkPool.get(),
+                heap,
+            );
+
+            // switch (CompletionStruct) {
+            //     bun.kit.DevServer.BundleTask => {
+            //         this.kit_watcher = completion.route.dev.bun_watcher;
+            //     },
+            //     else => {},
+            // }
+
+            this.plugins = completion.plugins;
+            this.completion = switch (CompletionStruct) {
+                BundleV2.JSBundleCompletionTask => .{ .js = completion },
+                bun.kit.DevServer.BundleTask => .{ .kit = completion },
+                else => @compileError("Unknown completion struct: " ++ CompletionStruct),
+            };
+            completion.bundler = this;
+
+            defer {
+                if (this.graph.pool.pool.threadpool_context == @as(?*anyopaque, @ptrCast(this.graph.pool))) {
+                    this.graph.pool.pool.threadpool_context = null;
+                }
+
+                ast_memory_allocator.pop();
+                this.deinit();
+            }
+
+            errdefer {
+                // Wait for wait groups to finish. There still may be
+                this.linker.source_maps.line_offset_wait_group.wait();
+                this.linker.source_maps.quoted_contents_wait_group.wait();
+
+                var out_log = Logger.Log.init(bun.default_allocator);
+                this.bundler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
+                completion.log = out_log;
+            }
+
+            completion.result = .{
+                .value = .{
+                    .output_files = try this.runFromJSInNewThread(bundler.options.entry_points),
+                },
+            };
+
+            var out_log = Logger.Log.init(bun.default_allocator);
+            this.bundler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
+            completion.log = out_log;
+            completion.completeOnBundleThread();
+        }
+    };
+}
 
 const UseDirective = js_ast.UseDirective;
 
@@ -2526,7 +2637,8 @@ pub const ParseTask = struct {
     }
 
     pub const Result = struct {
-        task: EventLoop.Task = undefined,
+        task: EventLoop.Task,
+        ctx: *BundleV2,
 
         value: union(Tag) {
             success: Success,
@@ -2864,7 +2976,11 @@ pub const ParseTask = struct {
 
         errdefer if (task.contents_or_fd == .fd) entry.deinit(allocator);
 
-        const will_close_file_descriptor = task.contents_or_fd == .fd and !entry.fd.isStdio() and this.ctx.bun_watcher == null;
+        const will_close_file_descriptor = task.contents_or_fd == .fd and
+            !entry.fd.isStdio() and
+            (this.ctx.bun_watcher == null
+        // and this.ctx.kit_watcher == null
+        );
         if (will_close_file_descriptor) {
             _ = entry.closeFD();
         }
@@ -2895,14 +3011,13 @@ pub const ParseTask = struct {
         const target = targetFromHashbang(entry.contents) orelse use_directive.target(task.known_target orelse bundler.options.target);
 
         var opts = js_parser.Parser.Options.init(task.jsx, loader);
-        opts.legacy_transform_require_to_import = false;
-        opts.features.allow_runtime = !source.index.isRuntime();
-        opts.features.use_import_meta_require = target.isBun();
+        opts.bundle = true;
         opts.warn_about_unbundled_modules = false;
         opts.macro_context = &this.data.macro_context;
-        opts.bundle = true;
         opts.package_version = task.package_version;
 
+        opts.features.allow_runtime = !source.index.isRuntime();
+        opts.features.use_import_meta_require = target.isBun();
         opts.features.top_level_await = true;
         opts.features.auto_import_jsx = task.jsx.parse and bundler.options.auto_import_jsx;
         opts.features.trim_unused_imports = loader.isTypeScript() or (bundler.options.trim_unused_imports orelse false);
@@ -2910,6 +3025,11 @@ pub const ParseTask = struct {
         opts.features.minify_syntax = bundler.options.minify_syntax;
         opts.features.minify_identifiers = bundler.options.minify_identifiers;
         opts.features.emit_decorator_metadata = bundler.options.emit_decorator_metadata;
+        opts.features.unwrap_commonjs_packages = bundler.options.unwrap_commonjs_packages;
+        opts.features.hot_module_reloading = bundler.options.output_format == .internal_kit_dev and !source.index.isRuntime();
+        opts.features.react_fast_refresh = (bundler.options.hot_module_reloading or bundler.options.react_fast_refresh) and
+            loader.isJSX() and !source.path.isNodeModule();
+
         opts.ignore_dce_annotations = bundler.options.ignore_dce_annotations and !source.index.isRuntime();
 
         // For files that are not user-specified entrypoints, set `import.meta.main` to `false`.
@@ -2923,7 +3043,6 @@ pub const ParseTask = struct {
 
         opts.tree_shaking = if (source.index.isRuntime()) true else bundler.options.tree_shaking;
         opts.module_type = task.module_type;
-        opts.features.unwrap_commonjs_packages = bundler.options.unwrap_commonjs_packages;
 
         task.jsx.parse = loader.isJSX();
 
@@ -2944,7 +3063,7 @@ pub const ParseTask = struct {
 
         ast.target = target;
         if (ast.parts.len <= 1) {
-            task.side_effects = _resolver.SideEffects.no_side_effects__empty_ast;
+            task.side_effects = .no_side_effects__empty_ast;
         }
 
         if (task.presolved_source_indices.len > 0) {
@@ -2995,6 +3114,8 @@ pub const ParseTask = struct {
 
         const result = bun.default_allocator.create(Result) catch unreachable;
         result.* = .{
+            .ctx = this.ctx,
+            .task = undefined,
             .value = brk: {
                 if (run_(
                     this,
@@ -3040,13 +3161,24 @@ pub const ParseTask = struct {
             },
         };
 
-        worker.ctx.loop().enqueueTaskConcurrent(
-            Result,
-            BundleV2,
-            result,
-            BundleV2.onParseTaskComplete,
-            .task,
-        );
+        switch (worker.ctx.loop().*) {
+            .js => |jsc_event_loop| {
+                jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(result, onComplete));
+            },
+            .mini => |*mini| {
+                mini.enqueueTaskConcurrentWithExtraCtx(
+                    Result,
+                    BundleV2,
+                    result,
+                    BundleV2.onParseTaskComplete,
+                    .task,
+                );
+            },
+        }
+    }
+
+    pub fn onComplete(result: *Result) void {
+        BundleV2.onParseTaskComplete(result, result.ctx);
     }
 };
 
@@ -3244,8 +3376,6 @@ pub const Graph = struct {
     path_to_source_index_map: PathToSourceIndexMap = .{},
 
     use_directive_entry_points: UseDirective.List = .{},
-
-    // const_values: std.HashMapUnmanaged(Ref, Expr, Ref.HashCtx, 80) = .{},
 
     estimated_file_loader_count: usize = 0,
 
@@ -3555,8 +3685,8 @@ const LinkerGraph = struct {
 
         // Track that this specific symbol was imported
         if (source_index_to_import_from.get() != source_index) {
-            var to_bind = &g.meta.items(.imports_to_bind)[source_index];
-            try to_bind.put(g.allocator, ref, .{
+            const imports_to_bind = &g.meta.items(.imports_to_bind)[source_index];
+            try imports_to_bind.put(g.allocator, ref, .{
                 .data = .{
                     .source_index = source_index_to_import_from,
                     .import_ref = ref,
@@ -3895,7 +4025,7 @@ pub const LinkerContext = struct {
     pending_task_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
     pub const LinkerOptions = struct {
-        output_format: options.OutputFormat = .esm,
+        output_format: options.Format = .esm,
         ignore_dce_annotations: bool = false,
         emit_dce_annotations: bool = true,
         tree_shaking: bool = true,
@@ -3994,7 +4124,7 @@ pub const LinkerContext = struct {
             record.source_index.get() != source_index;
     }
 
-    inline fn shouldCallRuntimeRequire(format: options.OutputFormat) bool {
+    inline fn shouldCallRuntimeRequire(format: options.Format) bool {
         return format != .cjs;
     }
 
@@ -4203,6 +4333,7 @@ pub const LinkerContext = struct {
             chunks: []Chunk,
             allocator: std.mem.Allocator,
             source_id: u32,
+
             pub fn next(c: *@This(), chunk_id: usize) void {
                 _ = c.chunks[chunk_id].files_with_parts_in_chunk.getOrPut(c.allocator, @as(u32, @truncate(c.source_id))) catch unreachable;
             }
@@ -4816,7 +4947,6 @@ pub const LinkerContext = struct {
                 // for entry point files in CommonJS format (or when in pass-through mode).
                 if (kind == .cjs and (!entry_point_kinds[id].isEntryPoint() or output_format == .iife or output_format == .esm)) {
                     flags[id].wrap = .cjs;
-                    bun.assert(kind == .cjs);
                 }
             }
 
@@ -4991,7 +5121,7 @@ pub const LinkerContext = struct {
                     // then we'll be using the actual CommonJS "exports" and/or "module"
                     // symbols. In that case make sure to mark them as such so they don't
                     // get minified.
-                    if ((output_format == .cjs or output_format == .preserve) and
+                    if ((output_format == .cjs) and
                         entry_point_kinds[source_index].isEntryPoint() and
                         export_kind == .cjs and flag.wrap == .none)
                     {
@@ -5081,7 +5211,7 @@ pub const LinkerContext = struct {
                         count += "init_".len + ident_fmt_len;
                     }
 
-                    if (wrap != .cjs and export_kind != .cjs) {
+                    if (wrap != .cjs and export_kind != .cjs and this.options.output_format != .internal_kit_dev) {
                         count += "exports_".len + ident_fmt_len;
                         count += "module_".len + ident_fmt_len;
                     }
@@ -5129,7 +5259,7 @@ pub const LinkerContext = struct {
                 // actual CommonJS files from being renamed. This is purely about
                 // aesthetics and is not about correctness. This is done here because by
                 // this point, we know the CommonJS status will not change further.
-                if (wrap != .cjs and export_kind != .cjs) {
+                if (wrap != .cjs and export_kind != .cjs and this.options.output_format != .internal_kit_dev) {
                     const exports_name = builder.fmt("exports_{}", .{source.fmtIdentifier()});
                     const module_name = builder.fmt("module_{}", .{source.fmtIdentifier()});
 
@@ -5277,7 +5407,7 @@ pub const LinkerContext = struct {
                     this.graph.meta.items(.entry_point_part_index)[id] = Index.part(entry_point_part_index);
 
                     // Pull in the "__toCommonJS" symbol if we need it due to being an entry point
-                    if (force_include_exports) {
+                    if (force_include_exports and this.options.output_format != .internal_kit_dev) {
                         this.graph.generateRuntimeSymbolImportAndUse(
                             source_index,
                             Index.part(entry_point_part_index),
@@ -5288,7 +5418,7 @@ pub const LinkerContext = struct {
                 }
 
                 // Encode import-specific constraints in the dependency graph
-                var import_records: []ImportRecord = import_records_list[id].slice();
+                const import_records: []ImportRecord = import_records_list[id].slice();
                 debug("Binding {d} imports for file {s} (#{d})", .{ import_records.len, source.path.text, id });
 
                 for (parts, 0..) |*part, part_index| {
@@ -5304,6 +5434,8 @@ pub const LinkerContext = struct {
 
                         // Don't follow external imports (this includes import() expressions)
                         if (!record.source_index.isValid() or this.isExternalDynamicImport(record, source_index)) {
+                            if (this.options.output_format == .internal_kit_dev) continue;
+
                             // This is an external import. Check if it will be a "require()" call.
                             if (kind == .require or !output_format.keepES6ImportExportSyntax() or kind == .dynamic) {
                                 if (record.source_index.isValid() and kind == .dynamic and ast_flags[other_id].force_cjs_to_esm) {
@@ -5375,7 +5507,7 @@ pub const LinkerContext = struct {
 
                             // This is an ES6 import of a CommonJS module, so it needs the
                             // "__toESM" wrapper as long as it's not a bare "require()"
-                            if (kind != .require and other_export_kind == .cjs) {
+                            if (kind != .require and other_export_kind == .cjs and this.options.output_format != .internal_kit_dev) {
                                 record.wrap_with_to_esm = true;
                                 to_esm_uses += 1;
                             }
@@ -5424,33 +5556,6 @@ pub const LinkerContext = struct {
                         }
                     }
 
-                    // If there's an ES6 import of a CommonJS module, then we're going to need the
-                    // "__toESM" symbol from the runtime to wrap the result of "require()"
-                    this.graph.generateRuntimeSymbolImportAndUse(
-                        source_index,
-                        Index.part(part_index),
-                        "__toESM",
-                        to_esm_uses,
-                    ) catch unreachable;
-
-                    // If there's a CommonJS require of an ES6 module, then we're going to need the
-                    // "__toCommonJS" symbol from the runtime to wrap the exports object
-                    this.graph.generateRuntimeSymbolImportAndUse(
-                        source_index,
-                        Index.part(part_index),
-                        "__toCommonJS",
-                        to_common_js_uses,
-                    ) catch unreachable;
-
-                    // If there are unbundled calls to "require()" and we're not generating
-                    // code for node, then substitute a "__require" wrapper for "require".
-                    this.graph.generateRuntimeSymbolImportAndUse(
-                        source_index,
-                        Index.part(part_index),
-                        "__require",
-                        runtime_require_uses,
-                    ) catch unreachable;
-
                     // If there's an ES6 export star statement of a non-ES6 module, then we're
                     // going to need the "__reExport" symbol from the runtime
                     var re_export_uses: u32 = 0;
@@ -5498,13 +5603,41 @@ pub const LinkerContext = struct {
                         }
                     }
 
-                    this.graph.generateRuntimeSymbolImportAndUse(
-                        source_index,
-                        Index.part(part_index),
+                    if (this.options.output_format != .internal_kit_dev) {
+                        // If there's an ES6 import of a CommonJS module, then we're going to need the
+                        // "__toESM" symbol from the runtime to wrap the result of "require()"
+                        this.graph.generateRuntimeSymbolImportAndUse(
+                            source_index,
+                            Index.part(part_index),
+                            "__toESM",
+                            to_esm_uses,
+                        ) catch unreachable;
 
-                        "__reExport",
-                        re_export_uses,
-                    ) catch unreachable;
+                        // If there's a CommonJS require of an ES6 module, then we're going to need the
+                        // "__toCommonJS" symbol from the runtime to wrap the exports object
+                        this.graph.generateRuntimeSymbolImportAndUse(
+                            source_index,
+                            Index.part(part_index),
+                            "__toCommonJS",
+                            to_common_js_uses,
+                        ) catch unreachable;
+
+                        // If there are unbundled calls to "require()" and we're not generating
+                        // code for node, then substitute a "__require" wrapper for "require".
+                        this.graph.generateRuntimeSymbolImportAndUse(
+                            source_index,
+                            Index.part(part_index),
+                            "__require",
+                            runtime_require_uses,
+                        ) catch unreachable;
+
+                        this.graph.generateRuntimeSymbolImportAndUse(
+                            source_index,
+                            Index.part(part_index),
+                            "__reExport",
+                            re_export_uses,
+                        ) catch unreachable;
+                    }
                 }
             }
         }
@@ -5713,7 +5846,7 @@ pub const LinkerContext = struct {
             // Initialize the part that was allocated for us earlier. The information
             // here will be used after this during tree shaking.
             c.graph.ast.items(.parts)[id].slice()[js_ast.namespace_export_part_index] = .{
-                .stmts = all_export_stmts,
+                .stmts = if (c.options.output_format != .internal_kit_dev) all_export_stmts else &.{},
                 .symbol_uses = ns_export_symbol_uses,
                 .dependencies = js_ast.Dependency.List.fromList(ns_export_dependencies),
                 .declared_symbols = declared_symbols,
@@ -6840,10 +6973,7 @@ pub const LinkerContext = struct {
         const runtimeRequireRef = if (c.resolver.opts.target.isBun()) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
         {
-            // TODO: IIFE indent
-
             const print_options = js_printer.Options{
-                // TODO: IIFE indent
                 .indent = .{},
                 .has_run_symbol_renamer = true,
 
@@ -6954,7 +7084,31 @@ pub const LinkerContext = struct {
 
         // TODO: directive
 
-        // TODO: IIFE wrap
+        // For Kit, hoist runtime.js outside of the IIFE
+        const compile_results = chunk.compile_results_for_chunk;
+        if (c.options.output_format == .internal_kit_dev) {
+            for (compile_results) |compile_result| {
+                const source_index = compile_result.sourceIndex();
+                if (source_index != Index.runtime.value) break;
+                line_offset.advance(compile_result.code());
+                j.push(compile_result.code(), bun.default_allocator);
+            }
+        }
+
+        switch (c.options.output_format) {
+            .internal_kit_dev => {
+                const start = bun.kit.getHmrRuntime(if (c.options.target.isBun()) .server else .client);
+                j.pushStatic(start);
+                line_offset.advance(start);
+            },
+            .iife => {
+                // Bun does not do arrow function lowering. So the wrapper can be an arrow.
+                const start = if (c.options.minify_whitespace) "(()=>{" else "(() => {\n";
+                j.pushStatic(start);
+                line_offset.advance(start);
+            },
+            else => {}, // no wrapper
+        }
 
         if (cross_chunk_prefix.len > 0) {
             newline_before_comment = true;
@@ -6963,31 +7117,31 @@ pub const LinkerContext = struct {
         }
 
         // Concatenate the generated JavaScript chunks together
-
         var prev_filename_comment: Index.Int = 0;
-        const compile_results = chunk.compile_results_for_chunk;
-        var compile_results_for_source_map = std.MultiArrayList(CompileResultForSourceMap){};
 
-        compile_results_for_source_map.ensureUnusedCapacity(worker.allocator, compile_results.len) catch unreachable;
+        var compile_results_for_source_map: std.MultiArrayList(CompileResultForSourceMap) = .{};
+        compile_results_for_source_map.setCapacity(worker.allocator, compile_results.len) catch bun.outOfMemory();
+
+        const show_comments = c.options.mode == .bundle and
+            !c.options.minify_whitespace;
 
         const sources: []const Logger.Source = c.parse_graph.input_files.items(.source);
-        for (@as([]CompileResult, compile_results)) |compile_result| {
+        for (compile_results) |compile_result| {
             const source_index = compile_result.sourceIndex();
             const is_runtime = source_index == Index.runtime.value;
 
             // TODO: extracated legal comments
 
             // Add a comment with the file path before the file contents
-            if (c.options.mode == .bundle and !c.options.minify_whitespace and source_index != prev_filename_comment and compile_result.code().len > 0) {
+            if (show_comments and source_index != prev_filename_comment and compile_result.code().len > 0) {
                 prev_filename_comment = source_index;
+
                 if (newline_before_comment) {
                     j.pushStatic("\n");
                     line_offset.advance("\n");
                 }
 
-                // Make sure newlines in the path can't cause a syntax error. This does
-                // not minimize allocations because it's expected that this case never
-                // comes up in practice.
+                // Make sure newlines in the path can't cause a syntax error.
                 const CommentType = enum {
                     multiline,
                     single,
@@ -7000,6 +7154,13 @@ pub const LinkerContext = struct {
                     CommentType.multiline
                 else
                     CommentType.single;
+
+                if (!c.options.minify_whitespace and
+                    (c.options.output_format == .iife or c.options.output_format == .internal_kit_dev))
+                {
+                    j.pushStatic("  ");
+                    line_offset.advance("  ");
+                }
 
                 switch (comment_type) {
                     .multiline => {
@@ -7025,12 +7186,13 @@ pub const LinkerContext = struct {
                         line_offset.advance("\n");
                     },
                 }
-                prev_filename_comment = source_index;
             }
 
             if (is_runtime) {
-                line_offset.advance(compile_result.code());
-                j.push(compile_result.code(), bun.default_allocator);
+                if (c.options.output_format != .internal_kit_dev) {
+                    line_offset.advance(compile_result.code());
+                    j.push(compile_result.code(), bun.default_allocator);
+                }
             } else {
                 j.push(compile_result.code(), bun.default_allocator);
 
@@ -7070,15 +7232,44 @@ pub const LinkerContext = struct {
             j.push(cross_chunk_suffix, bun.default_allocator);
         }
 
-        if (c.options.output_format == .iife) {
-            const without_newline = "})();";
+        switch (c.options.output_format) {
+            .iife => {
+                const without_newline = "})();";
 
-            const with_newline = if (newline_before_comment)
-                without_newline ++ "\n"
-            else
-                without_newline;
+                const with_newline = if (newline_before_comment)
+                    without_newline ++ "\n"
+                else
+                    without_newline;
 
-            j.pushStatic(with_newline);
+                j.pushStatic(with_newline);
+            },
+            .internal_kit_dev => {
+                {
+                    const str = "}, {\n  main: ";
+                    j.pushStatic(str);
+                    line_offset.advance(str);
+                }
+                {
+                    const input = c.parse_graph.input_files.items(.source)[chunk.entry_point.source_index].path;
+                    // var buf = MutableString.initEmpty(c.allocator);
+                    // js_printer.quoteForJSONBuffer(input.pretty, &buf, true) catch bun.outOfMemory();
+                    // const str = buf.toOwnedSliceLeaky(); // c.allocator is an arena
+                    const str = try std.fmt.allocPrint(c.allocator, "{d}", .{input.hashForKit()});
+                    j.pushStatic(str);
+                    line_offset.advance(str);
+                }
+                // {
+                //     const str = "\n  react_refresh: ";
+                //     j.pushStatic(str);
+                //     line_offset.advance(str);
+                // }
+                {
+                    const str = "\n});";
+                    j.pushStatic(str);
+                    line_offset.advance(str);
+                }
+            },
+            else => {},
         }
 
         j.ensureNewlineAtEnd();
@@ -7370,9 +7561,6 @@ pub const LinkerContext = struct {
         const ast: JSAst = c.graph.ast.get(source_index);
 
         switch (c.options.output_format) {
-            // TODO:
-            .preserve => {},
-
             .esm => {
                 switch (flags.wrap) {
                     .cjs => {
@@ -7686,6 +7874,11 @@ pub const LinkerContext = struct {
 
             // TODO: iife
             .iife => {},
+
+            .internal_kit_dev => {
+                // nothing needs to be done here, as the exports are already
+                // forwarded in the module closure.
+            },
 
             .cjs => {
                 switch (flags.wrap) {
@@ -8027,7 +8220,6 @@ pub const LinkerContext = struct {
     /// In that case, when bundling, we still need to preserve that module
     /// namespace object (foo) because we cannot know what they are going to
     /// attempt to access statically
-    ///
     fn convertStmtsForChunk(
         c: *LinkerContext,
         source_index: u32,
@@ -8038,6 +8230,12 @@ pub const LinkerContext = struct {
         wrap: WrapKind,
         ast: *const JSAst,
     ) !void {
+        // for Bun Kit, export wrapping is already done. Import wrapping is special cased.
+        if (c.options.output_format == .internal_kit_dev and source_index != Index.runtime.value) {
+            try c.convertStmtsForChunkKit(source_index, stmts, part_stmts, allocator, ast);
+            return;
+        }
+
         const shouldExtractESMStmtsForWrap = wrap != .none;
         const shouldStripExports = c.options.mode != .passthrough or c.graph.files.items(.entry_point_kind)[source_index] != .none;
 
@@ -8348,7 +8546,6 @@ pub const LinkerContext = struct {
                     },
 
                     .s_function => |s| {
-
                         // Strip the "export" keyword while bundling
                         if (shouldStripExports and s.func.flags.contains(.is_export)) {
                             // Be c areful to not modify the original statement
@@ -8364,10 +8561,9 @@ pub const LinkerContext = struct {
                     },
 
                     .s_class => |s| {
-
                         // Strip the "export" keyword while bundling
                         if (shouldStripExports and s.is_export) {
-                            // Be c areful to not modify the original statement
+                            // Be careful to not modify the original statement
                             stmt = Stmt.alloc(
                                 S.Class,
                                 S.Class{
@@ -8382,7 +8578,7 @@ pub const LinkerContext = struct {
                     .s_local => |s| {
                         // Strip the "export" keyword while bundling
                         if (shouldStripExports and s.is_export) {
-                            // Be c areful to not modify the original statement
+                            // Be careful to not modify the original statement
                             stmt = Stmt.alloc(
                                 S.Local,
                                 s.*,
@@ -8526,6 +8722,112 @@ pub const LinkerContext = struct {
         }
     }
 
+    /// The conversion logic is completely different for format .kit_internal_hmr
+    fn convertStmtsForChunkKit(
+        c: *LinkerContext,
+        source_index: u32,
+        stmts: *StmtList,
+        part_stmts: []const js_ast.Stmt,
+        allocator: std.mem.Allocator,
+        ast: *const JSAst,
+    ) !void {
+        _ = source_index; // autofix
+
+        const receiver_args = try allocator.dupe(G.Arg, &.{
+            .{ .binding = Binding.alloc(allocator, B.Identifier{ .ref = ast.module_ref }, Logger.Loc.Empty) },
+        });
+        const module_id = Expr.initIdentifier(ast.module_ref, Logger.Loc.Empty);
+        for (part_stmts) |stmt| {
+            switch (stmt.data) {
+                else => {
+                    try stmts.inside_wrapper_suffix.append(stmt);
+                },
+                .s_local => |st| {
+                    // TODO: check if this local is immediately assigned
+                    // `require()` if so, we will instrument it with hot module
+                    // reloading. other cases of `require` won't receive receive
+                    // updates.
+                    _ = st; // autofix
+
+                    try stmts.inside_wrapper_suffix.append(stmt);
+                },
+                .s_import => |st| {
+                    // hmr-runtime.ts defines `module.importSync` to be
+                    // a synchronous import. this is different from
+                    // require in that esm <-> cjs is handled
+                    // automatically, instead of with bundler-added
+                    // annotations like '__commonJS'.
+                    //
+                    // this is not done in the parse step because the final
+                    // pretty path is not yet known. the other statement types
+                    // are not handled here because some of those generate
+                    // new local variables (it is too late to do that here).
+                    const record = ast.import_records.at(st.import_record_index);
+                    const path = c.parse_graph.input_files.items(.source)[record.source_index.get()].path;
+
+                    const is_bare_import = st.star_name_loc == null and st.items.len == 0 and st.default_name == null;
+
+                    const key_expr = Expr.init(E.InlinedEnum, .{
+                        .comment = path.pretty,
+                        .value = Expr.init(E.Number, .{
+                            .value = @floatFromInt(path.hashForKit()),
+                        }, stmt.loc),
+                    }, stmt.loc);
+
+                    // module.importSync('path', (module) => ns = module)
+                    const call = Expr.init(E.Call, .{
+                        .target = Expr.init(E.Dot, .{
+                            .target = module_id,
+                            .name = "importSync",
+                            .name_loc = stmt.loc,
+                        }, stmt.loc),
+                        .args = js_ast.ExprNodeList.init(
+                            try allocator.dupe(Expr, if (is_bare_import)
+                                &.{key_expr}
+                            else
+                                &.{
+                                    key_expr,
+                                    Expr.init(E.Arrow, .{
+                                        .args = receiver_args,
+                                        .body = .{
+                                            .stmts = try allocator.dupe(Stmt, &.{Stmt.alloc(S.Return, .{
+                                                .value = Expr.assign(
+                                                    Expr.initIdentifier(st.namespace_ref, st.star_name_loc orelse stmt.loc),
+                                                    module_id,
+                                                ),
+                                            }, stmt.loc)}),
+                                            .loc = stmt.loc,
+                                        },
+                                        .prefer_expr = true,
+                                    }, stmt.loc),
+                                }),
+                        ),
+                    }, stmt.loc);
+
+                    if (is_bare_import) {
+                        // the import value is never read
+                        try stmts.inside_wrapper_prefix.append(Stmt.alloc(S.SExpr, .{ .value = call }, stmt.loc));
+                    } else {
+                        // 'let namespace = module.importSync(...)'
+                        try stmts.inside_wrapper_prefix.append(Stmt.alloc(S.Local, .{
+                            .kind = .k_let,
+                            .decls = try G.Decl.List.fromSlice(allocator, &.{.{
+                                .binding = Binding.alloc(
+                                    allocator,
+                                    B.Identifier{ .ref = st.namespace_ref },
+                                    st.star_name_loc orelse stmt.loc,
+                                ),
+                                .value = call,
+                            }}),
+                        }, stmt.loc));
+                    }
+
+                    continue;
+                },
+            }
+        }
+    }
+
     fn runtimeFunction(c: *LinkerContext, name: []const u8) Ref {
         return c.graph.runtimeFunction(name);
     }
@@ -8543,10 +8845,7 @@ pub const LinkerContext = struct {
         allocator: std.mem.Allocator,
         temp_allocator: std.mem.Allocator,
     ) js_printer.PrintResult {
-
-        // var file = &c.graph.files.items(.input_file)[part.source_index.get()];
         const parts: []js_ast.Part = c.graph.ast.items(.parts)[part_range.source_index.get()].slice()[part_range.part_index_begin..part_range.part_index_end];
-        // const resolved_exports: []ResolvedExports = c.graph.meta.items(.resolved_exports);
         const all_flags: []const JSMeta.Flags = c.graph.meta.items(.flags);
         const flags = all_flags[part_range.source_index.get()];
         const wrapper_part_index = if (flags.wrap != .none)
@@ -8585,8 +8884,9 @@ pub const LinkerContext = struct {
                 temp_allocator,
                 flags.wrap,
                 &ast,
-            ) catch |err| return .{
-                .err = err,
+            ) catch |err| {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                return .{ .err = err };
             };
 
             switch (flags.wrap) {
@@ -8741,24 +9041,55 @@ pub const LinkerContext = struct {
 
         var out_stmts: []js_ast.Stmt = stmts.all_stmts.items;
 
+        // Turn each module into a function if this is Kit
+        var stmt_storage: Stmt = undefined;
+        if (c.options.output_format == .internal_kit_dev and !part_range.source_index.isRuntime()) {
+            var clousure_args = std.BoundedArray(G.Arg, 2).fromSlice(&.{
+                .{ .binding = Binding.alloc(temp_allocator, B.Identifier{
+                    .ref = ast.module_ref,
+                }, Logger.Loc.Empty) },
+            }) catch unreachable; // is within bounds
+
+            if (flags.wrap == .cjs and ast.flags.uses_exports_ref) {
+                clousure_args.appendAssumeCapacity(
+                    .{
+                        .binding = Binding.alloc(temp_allocator, B.Identifier{
+                            .ref = ast.exports_ref,
+                        }, Logger.Loc.Empty),
+                        .default = Expr.allocate(temp_allocator, E.Dot, .{
+                            .target = Expr.initIdentifier(ast.module_ref, Logger.Loc.Empty),
+                            .name = "exports",
+                            .name_loc = Logger.Loc.Empty,
+                        }, Logger.Loc.Empty),
+                    },
+                );
+            }
+
+            stmt_storage = Stmt.allocateExpr(temp_allocator, Expr.init(E.Function, .{ .func = .{
+                .args = temp_allocator.dupe(G.Arg, clousure_args.slice()) catch bun.outOfMemory(),
+                .body = .{
+                    .stmts = stmts.all_stmts.items,
+                    .loc = Logger.Loc.Empty,
+                },
+            } }, Logger.Loc.Empty));
+            out_stmts = (&stmt_storage)[0..1];
+        }
         // Optionally wrap all statements in a closure
-        if (needs_wrapper) {
+        else if (needs_wrapper) {
             switch (flags.wrap) {
                 .cjs => {
-                    const uses_exports_ref = ast.uses_exports_ref();
-
                     // Only include the arguments that are actually used
-                    var args = std.ArrayList(js_ast.G.Arg).initCapacity(
+                    var args = std.ArrayList(G.Arg).initCapacity(
                         temp_allocator,
-                        if (ast.uses_module_ref() or uses_exports_ref) 2 else 0,
+                        if (ast.flags.uses_module_ref or ast.flags.uses_exports_ref) 2 else 0,
                     ) catch unreachable;
 
-                    if (ast.uses_module_ref() or uses_exports_ref) {
+                    if (ast.flags.uses_module_ref or ast.flags.uses_exports_ref) {
                         args.appendAssumeCapacity(
-                            js_ast.G.Arg{
-                                .binding = js_ast.Binding.alloc(
+                            G.Arg{
+                                .binding = Binding.alloc(
                                     temp_allocator,
-                                    js_ast.B.Identifier{
+                                    B.Identifier{
                                         .ref = ast.exports_ref,
                                     },
                                     Logger.Loc.Empty,
@@ -8766,12 +9097,12 @@ pub const LinkerContext = struct {
                             },
                         );
 
-                        if (ast.uses_module_ref()) {
+                        if (ast.flags.uses_module_ref) {
                             args.appendAssumeCapacity(
-                                js_ast.G.Arg{
-                                    .binding = js_ast.Binding.alloc(
+                                G.Arg{
+                                    .binding = Binding.alloc(
                                         temp_allocator,
-                                        js_ast.B.Identifier{
+                                        B.Identifier{
                                             .ref = ast.module_ref,
                                         },
                                         Logger.Loc.Empty,
@@ -9059,7 +9390,10 @@ pub const LinkerContext = struct {
             .indent = .{},
             .commonjs_named_exports = ast.commonjs_named_exports,
             .commonjs_named_exports_ref = ast.exports_ref,
-            .commonjs_module_ref = if (ast.flags.uses_module_ref) ast.module_ref else Ref.None,
+            .commonjs_module_ref = if (ast.flags.uses_module_ref or c.options.output_format == .internal_kit_dev)
+                ast.module_ref
+            else
+                Ref.None,
             .commonjs_named_exports_deoptimized = flags.wrap == .cjs,
             .commonjs_module_exports_assigned_deoptimized = ast.flags.commonjs_module_exports_assigned_deoptimized,
             // .const_values = c.graph.const_values,
@@ -9067,14 +9401,17 @@ pub const LinkerContext = struct {
 
             .minify_whitespace = c.options.minify_whitespace,
             .minify_syntax = c.options.minify_syntax,
-            .module_type = c.options.output_format,
+            .module_type = switch (c.options.output_format) {
+                else => |format| format,
+                .internal_kit_dev => if (part_range.source_index.isRuntime()) .esm else .internal_kit_dev,
+            },
             .print_dce_annotations = c.options.emit_dce_annotations,
             .has_run_symbol_renamer = true,
 
             .allocator = allocator,
             .to_esm_ref = toESMRef,
             .to_commonjs_ref = toCommonJSRef,
-            .require_ref = runtimeRequireRef,
+            .require_ref = if (c.options.output_format == .internal_kit_dev) ast.require_ref else runtimeRequireRef,
             .require_or_import_meta_for_source_callback = js_printer.RequireOrImportMeta.Callback.init(
                 LinkerContext,
                 requireOrImportMetaForSource,
@@ -9082,6 +9419,11 @@ pub const LinkerContext = struct {
             ),
             .line_offset_tables = c.graph.files.items(.line_offset_table)[part_range.source_index.get()],
             .target = c.options.target,
+
+            .input_files_for_kit = if (c.options.output_format == .internal_kit_dev and !part_range.source_index.isRuntime())
+                c.parse_graph.input_files.items(.source)
+            else
+                null,
         };
 
         writer.buffer.reset();
@@ -9178,7 +9520,7 @@ pub const LinkerContext = struct {
                 for (chunks, chunk_contexts) |*chunk, *chunk_ctx| {
                     chunk_ctx.* = .{ .wg = wait_group, .c = c, .chunks = chunks, .chunk = chunk };
                     total_count += chunk.content.javascript.parts_in_chunk_in_order.len;
-                    chunk.compile_results_for_chunk = c.allocator.alloc(CompileResult, chunk.content.javascript.parts_in_chunk_in_order.len) catch unreachable;
+                    chunk.compile_results_for_chunk = c.allocator.alloc(CompileResult, chunk.content.javascript.parts_in_chunk_in_order.len) catch bun.outOfMemory();
                 }
 
                 debug(" START {d} compiling part ranges", .{total_count});
@@ -10626,33 +10968,33 @@ pub const LinkerContext = struct {
             // However, that generation is special-cased for various reasons and is
             // done later on. Still, we're going to need to ensure that this file
             // both depends on the "__commonJS" symbol and declares the "require_foo"
-            // symbol. Instead of special-casing this during the reachablity analysis
+            // symbol. Instead of special-casing this during the reachability analysis
             // below, we just append a dummy part to the end of the file with these
-            // dependencies and let the general-purpose reachablity analysis take care
+            // dependencies and let the general-purpose reachability analysis take care
             // of it.
             .cjs => {
                 const common_js_parts = c.topLevelSymbolsToPartsForRuntime(c.cjs_runtime_ref);
 
-                var total_dependencies_count = common_js_parts.len;
-                var runtime_parts = c.graph.ast.items(.parts)[Index.runtime.get()].slice();
-
                 for (common_js_parts) |part_id| {
-                    var part: *js_ast.Part = &runtime_parts[part_id];
+                    const runtime_parts = c.graph.ast.items(.parts)[Index.runtime.get()].slice();
+                    const part: *js_ast.Part = &runtime_parts[part_id];
                     const symbol_refs = part.symbol_uses.keys();
                     for (symbol_refs) |ref| {
                         if (ref.eql(c.cjs_runtime_ref)) continue;
-                        total_dependencies_count += c.topLevelSymbolsToPartsForRuntime(ref).len;
                     }
                 }
 
-                // generate a dummy part that depends on the "__commonJS" symbol
-                const dependencies = c.allocator.alloc(js_ast.Dependency, common_js_parts.len) catch unreachable;
-                for (common_js_parts, dependencies) |part, *cjs| {
-                    cjs.* = .{
-                        .part_index = part,
-                        .source_index = Index.runtime,
-                    };
-                }
+                // Generate a dummy part that depends on the "__commonJS" symbol.
+                const dependencies: []js_ast.Dependency = if (c.options.output_format != .internal_kit_dev) brk: {
+                    const dependencies = c.allocator.alloc(js_ast.Dependency, common_js_parts.len) catch bun.outOfMemory();
+                    for (common_js_parts, dependencies) |part, *cjs| {
+                        cjs.* = .{
+                            .part_index = part,
+                            .source_index = Index.runtime,
+                        };
+                    }
+                    break :brk dependencies;
+                } else &.{};
                 const part_index = c.graph.addPartToFile(
                     source_index,
                     .{
@@ -10677,13 +11019,17 @@ pub const LinkerContext = struct {
                 ) catch unreachable;
                 bun.assert(part_index != js_ast.namespace_export_part_index);
                 wrapper_part_index.* = Index.part(part_index);
-                c.graph.generateSymbolImportAndUse(
-                    source_index,
-                    part_index,
-                    c.cjs_runtime_ref,
-                    1,
-                    Index.runtime,
-                ) catch unreachable;
+
+                // Kit uses a wrapping approach that does not use __commonJS
+                if (c.options.output_format != .internal_kit_dev) {
+                    c.graph.generateSymbolImportAndUse(
+                        source_index,
+                        part_index,
+                        c.cjs_runtime_ref,
+                        1,
+                        Index.runtime,
+                    ) catch unreachable;
+                }
             },
 
             .esm => {
@@ -10697,7 +11043,7 @@ pub const LinkerContext = struct {
                 //
                 // This depends on the "__esm" symbol and declares the "init_foo" symbol
                 // for similar reasons to the CommonJS closure above.
-                const esm_parts = if (wrapper_ref.isValid())
+                const esm_parts = if (wrapper_ref.isValid() and c.options.output_format != .internal_kit_dev)
                     c.topLevelSymbolsToPartsForRuntime(c.esm_runtime_ref)
                 else
                     &.{};
@@ -10729,15 +11075,14 @@ pub const LinkerContext = struct {
                 ) catch unreachable;
                 bun.assert(part_index != js_ast.namespace_export_part_index);
                 wrapper_part_index.* = Index.part(part_index);
-
-                if (wrapper_ref.isValid()) {
+                if (wrapper_ref.isValid() and c.options.output_format != .internal_kit_dev) {
                     c.graph.generateSymbolImportAndUse(
                         source_index,
                         part_index,
                         c.esm_runtime_ref,
                         1,
                         Index.runtime,
-                    ) catch unreachable;
+                    ) catch bun.outOfMemory();
                 }
             },
             else => {},
@@ -11214,7 +11559,7 @@ pub const LinkerContext = struct {
         export_star_map: std.AutoHashMap(Index.Int, void),
         entry_point_kinds: []EntryPoint.Kind,
         export_star_records: [][]u32,
-        output_format: options.OutputFormat,
+        output_format: options.Format,
 
         pub fn hasDynamicExportsDueToExportStar(this: *DependencyWrapper, source_index: Index.Int) bool {
             // Terminate the traversal now if this file already has dynamic exports

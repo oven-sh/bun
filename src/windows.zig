@@ -69,6 +69,7 @@ pub const advapi32 = windows.advapi32;
 pub const INVALID_FILE_ATTRIBUTES: u32 = std.math.maxInt(u32);
 
 pub const nt_object_prefix = [4]u16{ '\\', '?', '?', '\\' };
+pub const nt_unc_object_prefix = [8]u16{ '\\', '?', '?', '\\', 'U', 'N', 'C', '\\' };
 pub const nt_maxpath_prefix = [4]u16{ '\\', '\\', '?', '\\' };
 
 const std = @import("std");
@@ -3420,8 +3421,14 @@ pub fn GetFinalPathNameByHandle(
 
     bun.sys.syslog("GetFinalPathNameByHandleW({*p}) = {}", .{ hFile, bun.fmt.utf16(ret) });
 
-    if (ret.len > 4 and std.mem.eql(u16, ret[0..4], &.{ '\\', '\\', '?', '\\' })) {
+    if (bun.strings.hasPrefixComptimeType(u16, ret, nt_maxpath_prefix)) {
+        // '\\?\C:\absolute\path' -> 'C:\absolute\path'
         ret = ret[4..];
+        if (bun.strings.hasPrefixComptimeUTF16(ret, "UNC\\")) {
+            // '\\?\UNC\absolute\path' -> '\\absolute\path'
+            ret[2] = '\\';
+            ret = ret[2..];
+        }
     }
 
     return ret;

@@ -349,6 +349,20 @@ describe("Bun.build", () => {
     ).toThrow();
   });
 
+  test("non-object plugins throw invalid argument errors", () => {
+    for (const plugin of [null, undefined, 1, "hello", true, false, Symbol.for("hello")]) {
+      expect(() => {
+        Bun.build({
+          entrypoints: [join(import.meta.dir, "./fixtures/trivial/bundle-ws.ts")],
+          plugins: [
+            // @ts-expect-error
+            plugin,
+          ],
+        });
+      }).toThrow("Expected plugin to be an object");
+    }
+  });
+
   test("hash considers cross chunk imports", async () => {
     Bun.gc(true);
     const fixture = tempDirWithFiles("build-hash-cross-chunk-imports", {

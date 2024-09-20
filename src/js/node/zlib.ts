@@ -27,9 +27,20 @@ const kFlushBuffers: Buffer[] = [];
   }
 }
 
+// TODO: this doesn't match node exactly so improve this more later
+const alias = function (proto, to, from) {
+  ObjectDefineProperty(proto, to, {
+    get: function () {
+      return this[kHandle][from];
+    },
+    set: function (v) {}, // changing these would be a bug
+    enumerable: true,
+  });
+};
+
 //
 
-function Base(method, options) {
+function ZlibBase(options, method) {
   if (options == null) options = {};
   if ($isObject(options)) {
     options.maxOutputLength ??= maxOutputLengthDefault;
@@ -45,8 +56,8 @@ function Base(method, options) {
   this[kHandle] = private_constructor(options, {}, null, method);
   stream.Transform.$call(this, options);
 }
-Base.prototype = Object.create(stream.Transform.prototype);
-ObjectDefineProperty(Base.prototype, "_handle", {
+ZlibBase.prototype = Object.create(stream.Transform.prototype);
+ObjectDefineProperty(ZlibBase.prototype, "_handle", {
   get: function () {
     return this[kHandle];
   },
@@ -54,25 +65,18 @@ ObjectDefineProperty(Base.prototype, "_handle", {
     //noop
   },
 });
-ObjectDefineProperty(Base.prototype, "bytesWritten", {
-  get: function () {
-    return this[kHandle].bytesWritten;
-  },
-});
-ObjectDefineProperty(Base.prototype, "bytesRead", {
-  get: function () {
-    return this[kHandle].bytesRead;
-  },
-});
-ObjectDefineProperty(Base.prototype, "_closed", {
-  get: function () {
-    return this[kHandle].closed;
-  },
-});
-Base.prototype.flush = function (kind, callback) {
+alias(ZlibBase.prototype, "bytesWritten", "bytesWritten");
+alias(ZlibBase.prototype, "bytesRead", "bytesRead");
+alias(ZlibBase.prototype, "_closed", "closed");
+alias(ZlibBase.prototype, "_chunkSize", "chunkSize");
+alias(ZlibBase.prototype, "_defaultFlushFlag", "flush");
+alias(ZlibBase.prototype, "_finishFlushFlag", "finishFlush");
+alias(ZlibBase.prototype, "_defaultFullFlushFlag", "fullFlush");
+alias(ZlibBase.prototype, "_maxOutputLength", "maxOutputLength");
+ZlibBase.prototype.flush = function (kind, callback) {
   if (typeof kind === "function" || (kind === undefined && !callback)) {
     callback = kind;
-    kind = 3;
+    kind = this._defaultFullFlushFlag;
   }
   if (this.writableFinished) {
     if (callback) process.nextTick(callback);
@@ -82,32 +86,32 @@ Base.prototype.flush = function (kind, callback) {
     this.write(kFlushBuffers[kind], "", callback);
   }
 };
-Base.prototype.reset = function () {
+ZlibBase.prototype.reset = function () {
   assert(this[kHandle], "zlib binding closed");
   return this[kHandle].reset();
 };
-Base.prototype.close = function (callback) {
+ZlibBase.prototype.close = function (callback) {
   if (callback) stream.finished(this, callback);
   this.destroy();
 };
-Base.prototype._transform = function _transform(chunk, encoding, callback) {
+ZlibBase.prototype._transform = function _transform(chunk, encoding, callback) {
   try {
     callback(undefined, this[kHandle].transformSync(chunk, encoding, false));
   } catch (err) {
     callback(err, undefined);
   }
 };
-Base.prototype._flush = function _flush(callback) {
+ZlibBase.prototype._flush = function _flush(callback) {
   try {
     callback(undefined, this[kHandle].transformSync("", undefined, true));
   } catch (err) {
     callback(err, undefined);
   }
 };
-Base.prototype._final = function (callback) {
+ZlibBase.prototype._final = function (callback) {
   callback();
 };
-Base.prototype._processChunk = function (chunk, flushFlag, cb) {
+ZlibBase.prototype._processChunk = function (chunk, flushFlag, cb) {
   // _processChunk() is left for backwards compatibility
   if (typeof cb === "function") processChunk(this, chunk, flushFlag, cb);
   else return processChunkSync(this, chunk, flushFlag);
@@ -124,20 +128,12 @@ function processChunk(self, chunk, flushFlag, cb) {
 
 //
 
-function Zlib(method, options) {
-  Base.$call(this, method, options);
+function Zlib(options, method) {
+  ZlibBase.$call(this, options, method);
 }
-Zlib.prototype = Object.create(Base.prototype);
-ObjectDefineProperty(Zlib.prototype, "_level", {
-  get: function () {
-    return this[kHandle].level;
-  },
-});
-ObjectDefineProperty(Zlib.prototype, "_strategy", {
-  get: function () {
-    return this[kHandle].strategy;
-  },
-});
+Zlib.prototype = Object.create(ZlibBase.prototype);
+alias(Zlib.prototype, "_level", "level");
+alias(Zlib.prototype, "_strategy", "strategy");
 Zlib.prototype.params = function (level, strategy, callback) {
   return this[kHandle].params(level, strategy, callback);
 };
@@ -154,23 +150,23 @@ Zlib.prototype._transform = function _transform(chunk, encoding, callback) {
 
 function BrotliCompress(opts) {
   if (!(this instanceof BrotliCompress)) return new BrotliCompress(opts);
-  Base.$call(this, BROTLI_ENCODE, opts);
+  ZlibBase.$call(this, opts, BROTLI_ENCODE);
 }
-BrotliCompress.prototype = Object.create(Base.prototype);
+BrotliCompress.prototype = Object.create(ZlibBase.prototype);
 
 //
 
 function BrotliDecompress(opts) {
   if (!(this instanceof BrotliDecompress)) return new BrotliDecompress(opts);
-  Base.$call(this, BROTLI_DECODE, opts);
+  ZlibBase.$call(this, opts, BROTLI_DECODE);
 }
-BrotliDecompress.prototype = Object.create(Base.prototype);
+BrotliDecompress.prototype = Object.create(ZlibBase.prototype);
 
 //
 
 function Deflate(opts) {
   if (!(this instanceof Deflate)) return new Deflate(opts);
-  Zlib.$call(this, DEFLATE, opts);
+  Zlib.$call(this, opts, DEFLATE);
 }
 Deflate.prototype = Object.create(Zlib.prototype);
 
@@ -178,7 +174,7 @@ Deflate.prototype = Object.create(Zlib.prototype);
 
 function Inflate(opts) {
   if (!(this instanceof Inflate)) return new Inflate(opts);
-  Zlib.$call(this, INFLATE, opts);
+  Zlib.$call(this, opts, INFLATE);
 }
 Inflate.prototype = Object.create(Zlib.prototype);
 
@@ -186,7 +182,7 @@ Inflate.prototype = Object.create(Zlib.prototype);
 
 function DeflateRaw(opts) {
   if (!(this instanceof DeflateRaw)) return new DeflateRaw(opts);
-  Zlib.$call(this, DEFLATERAW, opts);
+  Zlib.$call(this, opts, DEFLATERAW);
 }
 DeflateRaw.prototype = Object.create(Zlib.prototype);
 
@@ -194,7 +190,7 @@ DeflateRaw.prototype = Object.create(Zlib.prototype);
 
 function InflateRaw(opts) {
   if (!(this instanceof InflateRaw)) return new InflateRaw(opts);
-  Zlib.$call(this, INFLATERAW, opts);
+  Zlib.$call(this, opts, INFLATERAW);
 }
 InflateRaw.prototype = Object.create(Zlib.prototype);
 
@@ -202,7 +198,7 @@ InflateRaw.prototype = Object.create(Zlib.prototype);
 
 function Gzip(opts) {
   if (!(this instanceof Gzip)) return new Gzip(opts);
-  Zlib.$call(this, GZIP, opts);
+  Zlib.$call(this, opts, GZIP);
 }
 Gzip.prototype = Object.create(Zlib.prototype);
 
@@ -210,7 +206,7 @@ Gzip.prototype = Object.create(Zlib.prototype);
 
 function Gunzip(opts) {
   if (!(this instanceof Gunzip)) return new Gunzip(opts);
-  Zlib.$call(this, GUNZIP, opts);
+  Zlib.$call(this, opts, GUNZIP);
 }
 Gunzip.prototype = Object.create(Zlib.prototype);
 
@@ -218,7 +214,7 @@ Gunzip.prototype = Object.create(Zlib.prototype);
 
 function Unzip(opts) {
   if (!(this instanceof Unzip)) return new Unzip(opts);
-  Zlib.$call(this, UNZIP, opts);
+  Zlib.$call(this, opts, UNZIP);
 }
 Unzip.prototype = Object.create(Zlib.prototype);
 

@@ -1,5 +1,3 @@
-include(Macros)
-
 register_repository(
   NAME
     mimalloc
@@ -30,7 +28,11 @@ if(ENABLE_VALGRIND)
 endif()
 
 if(WIN32)
-  set(MIMALLOC_LIBRARY mimalloc-static)
+  if(DEBUG)
+    set(MIMALLOC_LIBRARY mimalloc-static-debug)
+  else()
+    set(MIMALLOC_LIBRARY mimalloc-static)
+  endif()
 elseif(DEBUG)
   set(MIMALLOC_LIBRARY mimalloc-debug)
 else()

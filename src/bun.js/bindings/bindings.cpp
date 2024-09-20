@@ -1,5 +1,3 @@
-
-
 #include "root.h"
 
 #include "JavaScriptCore/Exception.h"
@@ -2289,19 +2287,15 @@ bool JSC__JSValue__jestDeepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, J
     return Bun__deepMatch<true>(obj, subset, globalObject, &scope, replacePropsWithAsymmetricMatchers, false);
 }
 
-// This is the same as the C API version, except it returns a JSValue which may be a *Exception
-// We want that so we can return stack traces.
-extern "C" JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSC__JSValue object,
+extern "C" JSC__JSValue Bun__JSValue__call(JSContextRef ctx, JSC__JSValue object,
     JSC__JSValue thisObject, size_t argumentCount,
     const JSValueRef* arguments)
 {
     JSC::JSGlobalObject* globalObject = toJS(ctx);
     JSC::VM& vm = globalObject->vm();
 
-#if BUN_DEBUG
     // This is a redundant check, but we add it to make the error message clearer.
     ASSERT_WITH_MESSAGE(!vm.isCollectorBusyOnCurrentThread(), "Cannot call function inside a finalizer or while GC is running on same thread.");
-#endif
 
     if (UNLIKELY(!object))
         return JSC::JSValue::encode(JSC::JSValue());
@@ -2336,8 +2330,10 @@ extern "C" JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSC_
         asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
     }
 
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     if (returnedException.get()) {
-        return JSC::JSValue::encode(JSC::JSValue(returnedException.get()));
+        scope.throwException(globalObject, returnedException.get());
+        return JSC::JSValue::encode({});
     }
 
     return JSC::JSValue::encode(result);
@@ -2762,7 +2758,7 @@ JSC__JSValue JSC__JSValue__createStringArray(JSC__JSGlobalObject* globalObject, 
 }
 
 JSC__JSValue JSC__JSGlobalObject__createAggregateError(JSC__JSGlobalObject* globalObject,
-    void** errors, uint16_t errors_count,
+    const JSValue* errors, size_t errors_count,
     const ZigString* arg3)
 {
     JSC::VM& vm = globalObject->vm();
@@ -2778,9 +2774,8 @@ JSC__JSValue JSC__JSGlobalObject__createAggregateError(JSC__JSGlobalObject* glob
                  globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
                  errors_count))) {
 
-            for (uint16_t i = 0; i < errors_count; ++i) {
-                array->initializeIndexWithoutBarrier(
-                    initializationScope, i, JSC::JSValue(reinterpret_cast<JSC::JSCell*>(errors[i])));
+            for (size_t i = 0; i < errors_count; ++i) {
+                array->initializeIndexWithoutBarrier(initializationScope, i, errors[i]);
             }
         }
     }
@@ -4878,6 +4873,23 @@ void JSC__VM__holdAPILock(JSC__VM* arg0, void* ctx, void (*callback)(void* arg0)
     callback(ctx);
 }
 
+// The following two functions are copied 1:1 from JSLockHolder to provide a
+// new, more ergonomic binding for interacting with the lock from Zig
+// https://github.com/WebKit/WebKit/blob/main/Source/JavaScriptCore/runtime/JSLock.cpp
+
+extern "C" void JSC__VM__getAPILock(JSC::VM* vm)
+{
+    // https://github.com/WebKit/WebKit/blob/6cb5017d237ef7cb898582a22f05acca22322845/Source/JavaScriptCore/runtime/JSLock.cpp#L67
+    vm->apiLock().lock();
+}
+
+extern "C"  void JSC__VM__releaseAPILock(JSC::VM* vm)
+{
+    // https://github.com/WebKit/WebKit/blob/6cb5017d237ef7cb898582a22f05acca22322845/Source/JavaScriptCore/runtime/JSLock.cpp#L72
+    RefPtr<JSLock> apiLock(&vm->apiLock());
+    apiLock->unlock();
+}
+
 void JSC__JSString__iterator(JSC__JSString* arg0, JSC__JSGlobalObject* arg1, void* arg2)
 {
     jsstring_iterator* iter = (jsstring_iterator*)arg2;
@@ -5817,6 +5829,23 @@ extern "C" EncodedJSValue JSArray__constructEmptyArray(
 extern "C" bool JSGlobalObject__hasException(JSC::JSGlobalObject* globalObject)
 {
     return DECLARE_CATCH_SCOPE(globalObject->vm()).exception() != 0;
+}
+
+extern "C" void JSGlobalObject__clearException(JSC::JSGlobalObject* globalObject)
+{
+    DECLARE_CATCH_SCOPE(globalObject->vm()).clearException();
+}
+
+extern "C" JSC::EncodedJSValue JSGlobalObject__tryTakeException(JSC::JSGlobalObject* globalObject)
+{
+    auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
+
+    if (auto exception = scope.exception()) {
+        scope.clearException();
+        return JSC::JSValue::encode(exception);
+    }
+
+    return {};
 }
 
 CPP_DECL bool JSC__GetterSetter__isGetterNull(JSC__GetterSetter* gettersetter)

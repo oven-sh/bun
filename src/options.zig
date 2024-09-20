@@ -29,6 +29,8 @@ const Analytics = @import("./analytics/analytics_thread.zig");
 const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
 const DotEnv = @import("./env_loader.zig");
 
+pub const Define = defines.Define;
+
 const assert = bun.assert;
 
 pub const WriteDestination = enum {
@@ -589,14 +591,45 @@ pub const Target = enum {
 };
 
 pub const Format = enum {
+    /// ES module format
+    /// This is the default format
     esm,
-    cjs,
+
+    /// Immediately-invoked function expression
+    /// (function(){
+    ///     ...
+    /// })();
     iife,
+
+    /// CommonJS
+    cjs,
+
+    /// Kit's uses a special module format for Hot-module-reloading. It includes a
+    /// runtime payload, sourced from src/kit/hmr-runtime.ts.
+    ///
+    /// ((input_graph, entry_point_key) => {
+    ///   ... runtime code ...
+    /// })([
+    ///   "module1.ts"(require, module) { ... },
+    ///   "module2.ts"(require, module) { ... },
+    /// ], "module1.ts");
+    internal_kit_dev,
+
+    pub fn keepES6ImportExportSyntax(this: Format) bool {
+        return this == .esm;
+    }
+
+    pub inline fn isESM(this: Format) bool {
+        return this == .esm;
+    }
 
     pub const Map = bun.ComptimeStringMap(Format, .{
         .{ "esm", .esm },
         .{ "cjs", .cjs },
         .{ "iife", .iife },
+
+        // TODO: Disable this outside of debug builds
+        .{ "internal_kit_dev", .internal_kit_dev },
     });
 
     pub fn fromJS(global: *JSC.JSGlobalObject, format: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Format {
@@ -651,6 +684,8 @@ pub const Loader = enum(u8) {
             .napi,
             .sqlite,
             .sqlite_embedded,
+            // TODO: loader for reading bytes and creating module or instance
+            .wasm,
             => true,
             else => false,
         };
@@ -1308,7 +1343,7 @@ pub const ResolveFileExtensions = struct {
     };
 };
 
-pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.LoaderMap, target: Target) !bun.StringArrayHashMap(Loader) {
+pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.LoaderMap, target: Target) std.mem.Allocator.Error!bun.StringArrayHashMap(Loader) {
     const input_loaders = _loaders orelse std.mem.zeroes(Api.LoaderMap);
     const loader_values = try allocator.alloc(Loader, input_loaders.loaders.len);
 
@@ -1402,29 +1437,6 @@ pub const PackagesOption = enum {
     });
 };
 
-pub const OutputFormat = enum {
-    preserve,
-
-    /// ES module format
-    /// This is the default format
-    esm,
-    /// Immediately-invoked function expression
-    /// (
-    ///   function(){}
-    /// )();
-    iife,
-    /// CommonJS
-    cjs,
-
-    pub fn keepES6ImportExportSyntax(this: OutputFormat) bool {
-        return this == .esm;
-    }
-
-    pub inline fn isESM(this: OutputFormat) bool {
-        return this == .esm;
-    }
-};
-
 /// BundleOptions is used when ResolveMode is not set to "disable".
 /// BundleOptions is effectively webpack + babel
 pub const BundleOptions = struct {
@@ -1443,6 +1455,7 @@ pub const BundleOptions = struct {
     react_server_components: bool = false,
     react_server_components_boundary: string = "",
     hot_module_reloading: bool = false,
+    react_fast_refresh: bool = false,
     inject: ?[]string = null,
     origin: URL = URL{},
     output_dir_handle: ?Dir = null,
@@ -1460,7 +1473,7 @@ pub const BundleOptions = struct {
     serve: bool = false,
 
     // only used by bundle_v2
-    output_format: OutputFormat = .esm,
+    output_format: Format = .esm,
 
     append_package_version_in_query_string: bool = false,
 

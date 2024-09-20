@@ -367,7 +367,7 @@ pub const WebWorker = struct {
             return;
         };
 
-        if (promise.status(vm.global.vm()) == .Rejected) {
+        if (promise.status(vm.global.vm()) == .rejected) {
             const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
 
             if (!handled) {

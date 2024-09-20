@@ -36,6 +36,17 @@ pub inline fn containsT(comptime T: type, self: []const T, str: []const T) bool 
     return indexOfT(T, self, str) != null;
 }
 
+pub inline fn containsCaseInsensitiveASCII(self: string, str: string) bool {
+    var start: usize = 0;
+    while (start + str.len <= self.len) {
+        if (eqlCaseInsensitiveASCIIIgnoreLength(self[start..][0..str.len], str)) {
+            return true;
+        }
+        start += 1;
+    }
+    return false;
+}
+
 pub inline fn removeLeadingDotSlash(slice: []const u8) []const u8 {
     if (slice.len >= 2) {
         if ((@as(u16, @bitCast(slice[0..2].*)) == comptime std.mem.readInt(u16, "./", .little)) or
@@ -1731,8 +1742,16 @@ pub fn toNTPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
         return toWPathNormalized(wbuf, utf8);
     }
 
-    wbuf[0..4].* = bun.windows.nt_object_prefix;
-    return wbuf[0 .. toWPathNormalized(wbuf[4..], utf8).len + 4 :0];
+    // UNC absolute path, replace leading '\\' with '\??\UNC\'
+    if (strings.hasPrefixComptime(utf8, "\\\\")) {
+        const prefix = bun.windows.nt_unc_object_prefix;
+        wbuf[0..prefix.len].* = prefix;
+        return wbuf[0 .. toWPathNormalized(wbuf[prefix.len..], utf8[2..]).len + prefix.len :0];
+    }
+
+    const prefix = bun.windows.nt_object_prefix;
+    wbuf[0..prefix.len].* = prefix;
+    return wbuf[0 .. toWPathNormalized(wbuf[prefix.len..], utf8).len + prefix.len :0];
 }
 
 pub fn addNTPathPrefix(wbuf: []u16, utf16: []const u16) [:0]const u16 {

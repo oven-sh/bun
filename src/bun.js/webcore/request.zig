@@ -135,10 +135,9 @@ pub const Request = struct {
 
         pub fn trigger(this: *InternalJSEventCallback, eventType: EventType, globalThis: *JSC.JSGlobalObject) bool {
             if (this.function.get()) |callback| {
-                const result = callback.call(globalThis, JSC.JSValue.jsUndefined(), &.{JSC.JSValue.jsNumber(@intFromEnum(eventType))});
-                if (result.toError()) |js_error| {
-                    globalThis.throwValue(js_error);
-                }
+                _ = callback.call(globalThis, JSC.JSValue.jsUndefined(), &.{JSC.JSValue.jsNumber(
+                    @intFromEnum(eventType),
+                )}) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
                 return true;
             }
             return false;

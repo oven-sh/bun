@@ -1,5 +1,3 @@
-include(Macros)
-
 if(CMAKE_HOST_WIN32)
   setx(ESBUILD_EXECUTABLE ${CWD}/node_modules/.bin/esbuild.exe)
 else()

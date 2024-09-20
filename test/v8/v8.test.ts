@@ -15,8 +15,6 @@ enum BuildMode {
   release,
 }
 
-console.log(bunEnv);
-
 // clang-cl does not work on Windows with node-gyp 10.2.0, so we should not let that affect the
 // test environment
 delete bunEnv.CC;

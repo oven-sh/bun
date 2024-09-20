@@ -1178,7 +1178,8 @@ fn doResolveWithArgs(
             errorable.result.value,
             query_string,
         }) catch {
-            JSC.JSError(allocator, "Failed to allocate memory", .{}, ctx, exception);
+            // TODO: binding for createOutOfMemoryError
+            exception.* = JSC.createError(ctx, "Out of memory", .{}).asObjectRef();
             return null;
         };
 

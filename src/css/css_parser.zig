@@ -181,14 +181,20 @@ pub const SourceLocation = struct {
     }
 
     pub fn newCustomError(this: SourceLocation, err: anytype) ParseError(ParserError) {
-        return ParseError(@TypeOf(err)){
-            .kind = .{ .custom = switch (@TypeOf(err)) {
-                ParserError => err,
-                BasicParseError => return BasicParseError.intoDefaultParseError(err),
-                selector.api.SelectorParseErrorKind => selector.api.SelectorParseErrorKind.intoDefaultParserError(err),
-                else => @compileError("TODO implement this for: " ++ @typeName(@TypeOf(err))),
-            } },
-            .location = this,
+        return switch (@TypeOf(err)) {
+            ParserError => .{
+                .kind = .{ .custom = err },
+                .location = this,
+            },
+            BasicParseError => .{
+                .kind = .{ .custom = BasicParseError.intoDefaultParseError(err) },
+                .location = this,
+            },
+            selector.api.SelectorParseErrorKind => .{
+                .kind = .{ .custom = selector.api.SelectorParseErrorKind.intoDefaultParserError(err) },
+                .location = this,
+            },
+            else => @compileError("TODO implement this for: " ++ @typeName(@TypeOf(err))),
         };
     }
 };
@@ -1832,7 +1838,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                         this.rules.v.append(
                             input.allocator(),
                             .{
-                                .starting_style = css_rules.starting_style.StartingStyleRule{
+                                .starting_style = css_rules.starting_style.StartingStyleRule(T.CustomAtRuleParser.AtRule){
                                     .rules = rules,
                                     .loc = loc,
                                 },
@@ -1851,7 +1857,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                         this.rules.v.append(
                             input.allocator(),
                             .{
-                                .nesting = css_rules.nesting.NestingRule{
+                                .nesting = css_rules.nesting.NestingRule(T.CustomAtRuleParser.AtRule){
                                     .style = css_rules.style.StyleRule(T.CustomAtRuleParser.AtRule){
                                         .selectors = selectors,
                                         .declarations = declarations,
@@ -1887,7 +1893,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                         this.rules.v.append(
                             input.allocator(),
                             .{
-                                .custom = switch (parse_custom_at_rule_body(T, prelude, input, start, this.options, this.at_rule_parser, this.is_in_style_rule)) {
+                                .custom = switch (parse_custom_at_rule_body(T, prelude.custom, input, start, this.options, this.at_rule_parser, this.is_in_style_rule)) {
                                     .err => |e| return .{ .err = e },
                                     .result => |v| v,
                                 },
@@ -3250,11 +3256,12 @@ const BlockType = enum {
 };
 
 pub const nth = struct {
+    const NthResult = struct { i32, i32 };
     /// Parse the *An+B* notation, as found in the `:nth-child()` selector.
     /// The input is typically the arguments of a function,
     /// in which case the caller needs to check if the arguments’ parser is exhausted.
     /// Return `Ok((A, B))`, or `Err(())` for a syntax error.
-    pub fn parse_nth(input: *Parser) Result(struct { i32, i32 }) {
+    pub fn parse_nth(input: *Parser) Result(NthResult) {
         const tok = switch (input.next()) {
             .err => |e| return .{ .err = e },
             .result => |v| v,
@@ -3270,9 +3277,9 @@ pub const nth = struct {
                     if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "n")) {
                         return parse_b(input, a);
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "n-")) {
-                        return parse_signless_b(input, a);
+                        return parse_signless_b(input, a, -1);
                     } else {
-                        if (parse_n_dash_digits(input.allocator, unit)) |b| {
+                        if (parse_n_dash_digits(input.allocator(), unit).asValue()) |b| {
                             return .{ .result = .{ a, b } };
                         } else {
                             return .{ .err = input.newUnexpectedTokenError(.{ .ident = unit }) };
@@ -3296,8 +3303,8 @@ pub const nth = struct {
                 } else if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(value, "-n-")) {
                     return parse_signless_b(input, -1, -1);
                 } else {
-                    const slice, const a = if (bun.strings.startsWithChar(value, '-')) .{ value[1..], -1 } else .{ value, 1 };
-                    if (parse_n_dash_digits(input.allocator, slice).asValue()) |b| return .{ .result = .{ a, b } };
+                    const slice, const a: i32 = if (bun.strings.startsWithChar(value, '-')) .{ value[1..], -1 } else .{ value, 1 };
+                    if (parse_n_dash_digits(input.allocator(), slice).asValue()) |b| return .{ .result = .{ a, b } };
                     return .{ .err = input.newUnexpectedTokenError(.{ .ident = value }) };
                 }
             },
@@ -3313,7 +3320,7 @@ pub const nth = struct {
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(value, "-n")) {
                         return parse_signless_b(input, 1, -1);
                     } else {
-                        if (parse_n_dash_digits(input.allocator, value)) |b| {
+                        if (parse_n_dash_digits(input.allocator(), value).asValue()) |b| {
                             return .{ .result = .{ 1, b } };
                         } else {
                             return .{ .err = input.newUnexpectedTokenError(.{ .ident = value }) };
@@ -3328,13 +3335,13 @@ pub const nth = struct {
         return .{ .err = input.newUnexpectedTokenError(tok.*) };
     }
 
-    fn parse_b(input: *Parser, a: i23) Result(struct { i32, i32 }) {
+    fn parse_b(input: *Parser, a: i32) Result(NthResult) {
         const start = input.state();
         const tok = switch (input.next()) {
             .result => |v| v,
             .err => {
                 input.reset(&start);
-                return .{ a, 0 };
+                return .{ .result = .{ a, 0 } };
             },
         };
 
@@ -3342,17 +3349,17 @@ pub const nth = struct {
         if (tok.* == .delim and tok.delim == '-') return parse_signless_b(input, a, -1);
         if (tok.* == .number and tok.number.has_sign and tok.number.int_value != null) return parse_signless_b(input, a, tok.number.int_value.?);
         input.reset(&start);
-        return .{ a, 0 };
+        return .{ .result = .{ a, 0 } };
     }
 
-    fn parse_signless_b(input: *Parser, a: i32, b_sign: i32) Result(struct { i32, i32 }) {
+    fn parse_signless_b(input: *Parser, a: i32, b_sign: i32) Result(NthResult) {
         const tok = switch (input.next()) {
             .err => |e| return .{ .err = e },
             .result => |v| v,
         };
         if (tok.* == .number and !tok.number.has_sign and tok.number.int_value != null) {
             const b = tok.number.int_value.?;
-            return .{ a, b_sign * b };
+            return .{ .result = .{ a, b_sign * b } };
         }
         return .{ .err = input.newUnexpectedTokenError(tok.*) };
     }

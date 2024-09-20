@@ -88,7 +88,7 @@ class Debugger {
   #listen(): void {
     const { protocol, hostname, port, pathname } = this.#url;
 
-    if (protocol === "ws:" || protocol === "wss:" || protocol === "ws+tcp:") {
+    if (protocol === "ws:" || protocol === "ws+tcp:") {
       const server = Bun.serve({
         hostname,
         port,
@@ -109,7 +109,7 @@ class Debugger {
       return;
     }
 
-    throw new TypeError(`Unsupported protocol: '${protocol}' (expected 'ws:', 'ws+unix:', or 'wss:')`);
+    throw new TypeError(`Unsupported protocol: '${protocol}' (expected 'ws:' or 'ws+unix:')`);
   }
 
   get #websocket(): WebSocketHandler<Connection> {

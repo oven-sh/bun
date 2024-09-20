@@ -9,11 +9,17 @@ import { randomUnixPath, UnixSignal, WebSocketSignal } from "./signal";
 import { Location, SourceMap } from "./sourcemap";
 import { createServer, AddressInfo } from "node:net";
 
-export function getAvailablePort(): number {
-  const server = createServer().listen(0);
-  const port = (server.address() as AddressInfo).port;
-  server.close();
-  return port;
+export async function getAvailablePort(): Promise<number> {
+  const server = createServer();
+  server.listen(0);
+  return new Promise((resolve, reject) => {
+    server.on("listening", () => {
+      const { port } = server.address() as AddressInfo;
+      server.close(() => {
+        resolve(port);
+      });
+    });
+  });
 }
 
 const capabilities: DAP.Capabilities = {
@@ -533,7 +539,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     } else {
       // we're on windows
       // Create WebSocketSignal
-      const signalUrl = `ws://localhost:${getAvailablePort()}`;
+      const signalUrl = `ws://localhost:${await getAvailablePort()}`;
       this.#signal = new WebSocketSignal(signalUrl);
 
       // Set BUN_INSPECT_NOTIFY to signal's URL

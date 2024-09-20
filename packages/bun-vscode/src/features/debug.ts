@@ -171,22 +171,24 @@ class InlineDebugAdapterFactory implements vscode.DebugAdapterDescriptorFactory 
 }
 
 class FileDebugSession extends DebugSession {
-  readonly adapter: DebugAdapter;
+  adapter: DebugAdapter;
 
   constructor(sessionId?: string) {
     super();
     const uniqueId = sessionId ?? Math.random().toString(36).slice(2);
-    const url =
-      process.platform === "win32" ? `ws://localhost:${getAvailablePort()}` : `ws+unix://${tmpdir()}/${uniqueId}.sock`;
+    // the signal is only first used well after this resolves
+    getAvailablePort().then(port => {
+      const url = process.platform === "win32" ? `ws://localhost:${port}` : `ws+unix://${tmpdir()}/${uniqueId}.sock`;
 
-    this.adapter = new DebugAdapter(url);
-    this.adapter.on("Adapter.response", response => this.sendResponse(response));
-    this.adapter.on("Adapter.event", event => this.sendEvent(event));
-    this.adapter.on("Adapter.reverseRequest", ({ command, arguments: args }) =>
-      this.sendRequest(command, args, 5000, () => {}),
-    );
+      this.adapter = new DebugAdapter(url);
+      this.adapter.on("Adapter.response", response => this.sendResponse(response));
+      this.adapter.on("Adapter.event", event => this.sendEvent(event));
+      this.adapter.on("Adapter.reverseRequest", ({ command, arguments: args }) =>
+        this.sendRequest(command, args, 5000, () => {}),
+      );
 
-    adapters.set(url, this);
+      adapters.set(url, this);
+    });
   }
 
   handleMessage(message: DAP.Event | DAP.Request | DAP.Response): void {
@@ -205,20 +207,23 @@ class FileDebugSession extends DebugSession {
 }
 
 class TerminalDebugSession extends FileDebugSession {
-  readonly signal: WebSocketSignal | UnixSignal;
+  signal: WebSocketSignal | UnixSignal;
 
   constructor() {
     super();
-    if (process.platform === "win32") {
-      const signalUrl = `ws://localhost:${getAvailablePort()}`;
-      this.signal = new WebSocketSignal(signalUrl);
-    } else {
-      this.signal = new UnixSignal();
-    }
-    this.signal.on("Signal.received", () => {
-      vscode.debug.startDebugging(undefined, {
-        ...ATTACH_CONFIGURATION,
-        url: this.adapter.url,
+    // the signal is only first used well after this resolves
+    getAvailablePort().then(port => {
+      if (process.platform === "win32") {
+        const signalUrl = `ws://localhost:${port}`;
+        this.signal = new WebSocketSignal(signalUrl);
+      } else {
+        this.signal = new UnixSignal();
+      }
+      this.signal.on("Signal.received", () => {
+        vscode.debug.startDebugging(undefined, {
+          ...ATTACH_CONFIGURATION,
+          url: this.adapter.url,
+        });
       });
     });
   }

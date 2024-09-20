@@ -1,4 +1,12 @@
-import type { ServerWebSocket, Socket, SocketHandler, WebSocketHandler, Server as WebSocketServer } from "bun";
+import type {
+  ServerWebSocket,
+  Socket,
+  SocketHandler,
+  TCPSocketConnectOptions,
+  UnixSocketOptions,
+  WebSocketHandler,
+  Server as WebSocketServer,
+} from "bun";
 
 export default function (
   executionContextId: string,
@@ -28,11 +36,18 @@ export default function (
     Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
   }
 
-  const unix = process.env["BUN_INSPECT_NOTIFY"];
-  if (unix) {
-    const { protocol, pathname } = parseUrl(unix);
-    if (protocol === "unix:") {
-      notify(pathname);
+  const notifyUrl = process.env["BUN_INSPECT_NOTIFY"] || "";
+  if (notifyUrl) {
+    const { hostname, port, pathname, protocol } = new URL(notifyUrl);
+    if (protocol.startsWith("unix")) {
+      notify({
+        unix: pathname,
+      });
+    } else {
+      notify({
+        hostname,
+        port: port && port !== "0" ? Number(port) : undefined,
+      });
     }
   }
 }
@@ -73,7 +88,7 @@ class Debugger {
   #listen(): void {
     const { protocol, hostname, port, pathname } = this.#url;
 
-    if (protocol === "ws:" || protocol === "ws+tcp:") {
+    if (protocol === "ws:" || protocol === "wss:" || protocol === "ws+tcp:") {
       const server = Bun.serve({
         hostname,
         port,
@@ -94,7 +109,7 @@ class Debugger {
       return;
     }
 
-    throw new TypeError(`Unsupported protocol: '${protocol}' (expected 'ws:', 'ws+unix:', or 'unix:')`);
+    throw new TypeError(`Unsupported protocol: '${protocol}' (expected 'ws:', 'ws+unix:', or 'wss:')`);
   }
 
   get #websocket(): WebSocketHandler<Connection> {
@@ -321,9 +336,9 @@ function reset(): string {
   return "";
 }
 
-function notify(unix: string): void {
+function notify(options): void {
   Bun.connect({
-    unix,
+    ...options,
     socket: {
       open: socket => {
         socket.end("1");

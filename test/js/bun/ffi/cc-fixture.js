@@ -35,6 +35,6 @@ if (napi_main(null) !== "Hello, Napi!") {
   throw new Error("napi_main() !== Hello, Napi!");
 }
 
-if (lastByte(bytes, bytes) !== 42) {
+if (lastByte(bytes, bytes.byteLength) !== 42) {
   throw new Error("lastByte(bytes, bytes.length) !== 42");
 }

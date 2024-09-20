@@ -125,6 +125,12 @@ describe("napi", () => {
       checkSameOutput("test_napi_handle_scope_finalizer", []);
     });
   });
+
+  describe("napi_threadsafe_function", () => {
+    it("can call a JS callback via a native callback", () => {
+      checkSameOutput("create_promise_with_js_callback", []);
+    });
+  });
 });
 
 function checkSameOutput(test: string, args: any[] | string) {

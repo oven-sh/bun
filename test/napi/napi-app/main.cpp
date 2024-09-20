@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
+#include <semaphore>
 
 napi_value fail(napi_env env, const char *msg) {
   napi_value result;
@@ -373,10 +374,29 @@ struct AsyncWorkData {
   int result;
   napi_deferred deferred;
   napi_async_work work;
+  // if nonnull, promise resolves to the result of calling tsfn
+  napi_threadsafe_function tsfn;
+  // if tsfn is nonnull, used to signal from tsfn_callback() to execute()
+  std::binary_semaphore result_ready;
+
+  AsyncWorkData()
+      : result(0), deferred(nullptr), work(nullptr), tsfn(nullptr),
+        result_ready(0) {}
 
   static void execute(napi_env env, void *data) {
     AsyncWorkData *async_work_data = reinterpret_cast<AsyncWorkData *>(data);
-    async_work_data->result = 42;
+
+    if (async_work_data->tsfn) {
+      // nonblocking means it will return an error if the threadsafe function's
+      // queue is full, which it should never do because we only use it once and
+      // we init with a capacity of 1
+      assert(napi_call_threadsafe_function(async_work_data->tsfn, nullptr,
+                                           napi_tsfn_nonblocking) == napi_ok);
+      // block until the callback finishes
+      async_work_data->result_ready.acquire();
+    } else {
+      async_work_data->result = 42;
+    }
   }
 
   static void complete(napi_env env, napi_status status, void *data) {
@@ -391,13 +411,43 @@ struct AsyncWorkData {
     assert(napi_resolve_deferred(env, async_work_data->deferred, result) ==
            napi_ok);
     assert(napi_delete_async_work(env, async_work_data->work) == napi_ok);
+    if (async_work_data->tsfn) {
+      assert(napi_release_threadsafe_function(async_work_data->tsfn,
+                                              napi_tsfn_abort) == napi_ok);
+    }
     delete async_work_data;
+  }
+
+  static void tsfn_callback(napi_env env, napi_value js_callback, void *context,
+                            void *data) {
+    // env and js_callback are "NULL if the thread-safe function is being torn
+    // down and data may need to be freed." our data is freed in complete so we
+    // don't care.
+    printf("tsfn_callback\n");
+    if (!env || !js_callback) {
+      return;
+    }
+    AsyncWorkData *async_work_data = reinterpret_cast<AsyncWorkData *>(context);
+
+    napi_value recv;
+    assert(napi_get_undefined(env, &recv) == napi_ok);
+
+    napi_value js_result;
+    assert(napi_call_function(env, recv, js_callback, 0, nullptr, &js_result) ==
+           napi_ok);
+    // js function should return an integer
+    assert(napi_get_value_int32(env, js_result, &async_work_data->result) ==
+           napi_ok);
+
+    // signal that we are done
+    async_work_data->result_ready.release();
   }
 };
 
 napi_value create_promise(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
-  auto *data = new AsyncWorkData;
+  auto *data = new AsyncWorkData();
+
   napi_value promise;
 
   assert(napi_create_promise(env, &data->deferred, &promise) == napi_ok);
@@ -408,6 +458,20 @@ napi_value create_promise(const Napi::CallbackInfo &info) {
   assert(napi_create_async_work(env, nullptr, resource_name,
                                 AsyncWorkData::execute, AsyncWorkData::complete,
                                 data, &data->work) == napi_ok);
+
+  if (info.Length() == 2) {
+    // argument 0 to this function is a callback to run GC
+    // argument 1 to this function, if present, is a JS callback to determine
+    // the resolved value
+    assert(napi_create_threadsafe_function(
+               env, info[1], nullptr, resource_name,
+               // max_queue_size, initial_thread_count
+               1, 1,
+               // thread_finalize_data, thread_finalize_cb
+               nullptr, nullptr, data, AsyncWorkData::tsfn_callback,
+               &data->tsfn) == napi_ok);
+  }
+
   assert(napi_queue_async_work(env, data->work) == napi_ok);
   return promise;
 }

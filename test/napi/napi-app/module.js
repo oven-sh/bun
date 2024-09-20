@@ -24,4 +24,11 @@ nativeTests.test_napi_handle_scope_finalizer = async () => {
   }
 };
 
+nativeTests.create_promise_with_js_callback = async () => {
+  // when we provide a function for the second argument, create_promise returns a promise that calls
+  // our function from another thread (via napi_threadsafe_function) and resolves with its return
+  // value
+  return await nativeTests.create_promise(null, () => 1234);
+};
+
 module.exports = nativeTests;

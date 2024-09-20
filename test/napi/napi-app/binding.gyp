@@ -4,6 +4,9 @@
             "target_name": "napitests",
             "cflags!": ["-fno-exceptions"],
             "cflags_cc!": ["-fno-exceptions"],
+            "xcode_settings": {
+                "OTHER_CFLAGS": ["-mmacosx-version-min=11.0.0"],
+            },
             "msvs_settings": {
                 "VCCLCompilerTool": {
                     "ExceptionHandling": "0",

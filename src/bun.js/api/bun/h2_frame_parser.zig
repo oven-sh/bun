@@ -553,6 +553,8 @@ const MAX_BUFFER_SIZE = 32768;
 var CORK_BUFFER: [16386]u8 = undefined;
 var CORK_OFFSET: u16 = 0;
 var CORKED_H2: ?*H2FrameParser = null;
+
+const ENABLE_AUTO_CORK = true;
 const H2FrameParserHiveAllocator = bun.HiveArray(H2FrameParser, 256).Fallback;
 
 var h2frameparser_allocator = H2FrameParserHiveAllocator.init(bun.default_allocator);
@@ -1035,26 +1037,30 @@ pub const H2FrameParser = struct {
     pub fn write(this: *H2FrameParser, bytes: []const u8) void {
         JSC.markBinding(@src());
         log("write", .{});
-        this.cork();
-        const available = CORK_BUFFER[CORK_OFFSET..];
-        if (bytes.len > available.len) {
-            // not worth corking
-            if (CORK_OFFSET != 0) {
-                // clean already corked data
-                this.flushCorked();
-            }
-            this._write(bytes);
-        } else {
-            // write at the cork buffer
-            CORK_OFFSET += @truncate(bytes.len);
-            @memcpy(available[0..bytes.len], bytes);
+        if (comptime ENABLE_AUTO_CORK) {
+            this.cork();
+            const available = CORK_BUFFER[CORK_OFFSET..];
+            if (bytes.len > available.len) {
+                // not worth corking
+                if (CORK_OFFSET != 0) {
+                    // clean already corked data
+                    this.flushCorked();
+                }
+                this._write(bytes);
+            } else {
+                // write at the cork buffer
+                CORK_OFFSET += @truncate(bytes.len);
+                @memcpy(available[0..bytes.len], bytes);
 
-            // register auto uncork
-            if (!this.autouncork_registered) {
-                this.autouncork_registered = true;
-                this.ref();
-                bun.uws.Loop.get().nextTick(*H2FrameParser, this, H2FrameParser.onAutoUncork);
+                // register auto uncork
+                if (!this.autouncork_registered) {
+                    this.autouncork_registered = true;
+                    this.ref();
+                    bun.uws.Loop.get().nextTick(*H2FrameParser, this, H2FrameParser.onAutoUncork);
+                }
             }
+        } else {
+            this._write(bytes);
         }
     }
 
@@ -1123,13 +1129,14 @@ pub const H2FrameParser = struct {
     }
 
     pub fn decodeHeaderBlock(this: *H2FrameParser, payload: []const u8, stream: *Stream, flags: u8) void {
-        log("decodeHeaderBlock", .{});
+        log("decodeHeaderBlock isSever: {}", .{this.isServer});
 
         var offset: usize = 0;
 
         const globalObject = this.handlers.globalObject;
 
         const headers = JSC.JSValue.createEmptyObject(globalObject, 0);
+        headers.ensureStillAlive();
         const stream_id = stream.id;
         while (true) {
             const header = this.decode(payload[offset..]) catch break;
@@ -1221,6 +1228,7 @@ pub const H2FrameParser = struct {
         if (data_needed > padding) {
             data_needed -= padding;
             payload = payload[0..@min(@as(usize, @intCast(data_needed)), payload.len)];
+            log("onData payload {s}", .{payload});
             const chunk = this.handlers.binary_type.toJS(payload, this.handlers.globalObject);
             this.dispatchWithExtra(.onStreamData, stream.getIdentifier(), chunk);
         } else {
@@ -1368,7 +1376,7 @@ pub const H2FrameParser = struct {
                 if (stream.state == .HALF_CLOSED_REMOTE) {
                     // no more continuation headers we can call it closed
                     stream.state = .CLOSED;
-                    this.dispatch(.onStreamEnd, JSC.JSValue.jsNumber(frame.streamIdentifier));
+                    this.dispatch(.onStreamEnd, stream.getIdentifier());
                 }
                 stream.isWaitingMoreHeaders = false;
             }

@@ -38,7 +38,7 @@ export default function (
 
   const notifyUrl = process.env["BUN_INSPECT_NOTIFY"] || "";
   if (notifyUrl) {
-    const { hostname, port, pathname, protocol } = parseUrl(notifyUrl);
+    const { hostname, port, pathname, protocol } = new URL(notifyUrl);
     if (protocol.startsWith("unix")) {
       notify({
         unix: pathname,
@@ -46,7 +46,7 @@ export default function (
     } else {
       notify({
         hostname,
-        port: port ? Number(port) : undefined,
+        port: port && port !== "0" ? Number(port) : undefined,
       });
     }
   }

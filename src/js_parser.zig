@@ -23824,6 +23824,8 @@ pub const ConvertESMExportsForHmr = struct {
                                     .key = Expr.init(E.String, .{ .data = symbol.original_name }, decl.binding.loc),
                                     .value = decl.value,
                                 });
+
+                                return; // do not emit the s_local
                             },
 
                             else => {

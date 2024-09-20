@@ -4005,9 +4005,18 @@ pub const VirtualMachine = struct {
         return instance;
     }
 
+    /// To satisfy the interface from NewHotReloader()
+    pub fn getLoaders(vm: *VirtualMachine) *bun.options.Loader.HashTable {
+        return &vm.bundler.options.loaders;
+    }
+
+    /// To satisfy the interface from NewHotReloader()
+    pub fn bustDirCache(vm: *VirtualMachine, path: []const u8) bool {
+        return vm.bundler.resolver.bustDirCache(path);
+    }
+
     comptime {
-        if (!JSC.is_bindgen)
-            _ = Bun__remapStackFramePositions;
+        _ = Bun__remapStackFramePositions;
     }
 };
 
@@ -4262,14 +4271,9 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             defer ctx.flushEvictions();
             defer Output.flush();
 
-            const bundler = if (@TypeOf(this.ctx.bundler) == *bun.Bundler)
-                this.ctx.bundler
-            else
-                &this.ctx.bundler;
-
-            var fs: *Fs.FileSystem = bundler.fs;
-            var rfs: *Fs.FileSystem.RealFS = &fs.fs;
-            var resolver = &bundler.resolver;
+            const fs: *Fs.FileSystem = &Fs.FileSystem.instance;
+            const rfs = &fs.fs;
+            bun.assert(Fs.FileSystem.instance_loaded);
             var _on_file_update_path_buf: bun.PathBuffer = undefined;
 
             var current_task: HotReloadTask = .{
@@ -4315,7 +4319,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             // on windows we receive file events for all items affected by a directory change
                             // so we only need to clear the directory cache. all other effects will be handled
                             // by the file events
-                            _ = resolver.bustDirCache(strings.pathWithoutTrailingSlashOne(file_path));
+                            _ = this.ctx.bustDirCache(strings.pathWithoutTrailingSlashOne(file_path));
                             continue;
                         }
                         var affected_buf: [128][]const u8 = undefined;
@@ -4365,7 +4369,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             }
                         }
 
-                        _ = resolver.bustDirCache(strings.pathWithoutTrailingSlashOne(file_path));
+                        _ = this.ctx.bustDirCache(strings.pathWithoutTrailingSlashOne(file_path));
 
                         if (entries_option) |dir_ent| {
                             var last_file_hash: GenericWatcher.HashType = std.math.maxInt(GenericWatcher.HashType);
@@ -4377,7 +4381,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                     bun.asByteSlice(changed_name_.?);
                                 if (changed_name.len == 0 or changed_name[0] == '~' or changed_name[0] == '.') continue;
 
-                                const loader = (bundler.options.loaders.get(Fs.PathName.init(changed_name).ext) orelse .file);
+                                const loader = (this.ctx.getLoaders().get(Fs.PathName.init(changed_name).ext) orelse .file);
                                 var prev_entry_id: usize = std.math.maxInt(usize);
                                 if (loader != .file) {
                                     var path_string: bun.PathString = undefined;

@@ -3735,9 +3735,10 @@ fn NewPrinter(
                                         }
                                     }
                                 },
-                                // .e_import_identifier => |e| inner: {
-                                .e_import_identifier => |e| {
+                                .e_import_identifier => |e| inner: {
                                     const ref = p.symbols().follow(e.ref);
+                                    if (p.options.input_files_for_kit != null)
+                                        break :inner;
                                     // if (p.options.const_values.count() > 0 and p.options.const_values.contains(ref))
                                     //     break :inner;
 

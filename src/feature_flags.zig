@@ -163,8 +163,7 @@ pub const kit = env.is_canary or env.isDebug;
 
 /// String keys are easier to debug with, however number keys
 /// are potentially faster.
-///
-/// TODO: prove that numbers are undoubtly faster
+// TODO: prove that numbers are undoubtly faster.
 pub const kit_dev_module_keys: enum { numbers, strings } = .strings;
 
 /// Enable --server-components

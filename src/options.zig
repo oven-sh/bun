@@ -462,6 +462,13 @@ pub const Target = enum {
         };
     }
 
+    pub fn side(target: Target) bun.kit.Side {
+        return switch (target) {
+            .browser => .client,
+            else => .server,
+        };
+    }
+
     pub const Extensions = struct {
         pub const In = struct {
             pub const JavaScript = [_]string{ ".js", ".cjs", ".mts", ".cts", ".ts", ".tsx", ".jsx", ".json" };
@@ -559,7 +566,7 @@ pub const Target = enum {
         break :brk array;
     };
 
-    pub const DefaultConditions: std.EnumArray(Target, []const string) = brk: {
+    pub const default_conditions: std.EnumArray(Target, []const string) = brk: {
         var array = std.EnumArray(Target, []const string).initUndefined();
 
         array.set(Target.node, &[_]string{
@@ -581,6 +588,10 @@ pub const Target = enum {
 
         break :brk array;
     };
+
+    pub fn defaultConditions(t: Target) []const []const u8 {
+        return default_conditions.get(t);
+    }
 };
 
 pub const Format = enum {
@@ -600,12 +611,12 @@ pub const Format = enum {
     /// Kit's uses a special module format for Hot-module-reloading. It includes a
     /// runtime payload, sourced from src/kit/hmr-runtime.ts.
     ///
-    /// ((input_graph, entry_point_key) => {
+    /// ((input_graph, config) => {
     ///   ... runtime code ...
-    /// })([
-    ///   "module1.ts"(require, module) { ... },
-    ///   "module2.ts"(require, module) { ... },
-    /// ], "module1.ts");
+    /// })({
+    ///   "module1.ts"(module) { ... },
+    ///   "module2.ts"(module) { ... },
+    /// }, { metadata });
     internal_kit_dev,
 
     pub fn keepES6ImportExportSyntax(this: Format) bool {
@@ -1469,7 +1480,6 @@ pub const BundleOptions = struct {
 
     append_package_version_in_query_string: bool = false,
 
-    resolve_mode: api.Api.ResolveMode,
     tsconfig_override: ?string = null,
     target: Target = Target.browser,
     main_fields: []const string = Target.DefaultMainFields.get(Target.browser),
@@ -1526,7 +1536,7 @@ pub const BundleOptions = struct {
 
     /// Set when Kit is bundling. This changes the interface of the bundler
     /// from emitting OutputFile to emitting the lower level []CompileResult
-    kit: ?*bun.kit.DevServer.IncrementalGraph = null,
+    kit: ?*bun.kit.DevServer = null,
 
     /// This is a list of packages which even when require() is used, we will
     /// instead convert to ESM import statements.
@@ -1683,7 +1693,6 @@ pub const BundleOptions = struct {
     ) !BundleOptions {
         var opts: BundleOptions = BundleOptions{
             .log = log,
-            .resolve_mode = transform.resolve orelse .dev,
             .define = undefined,
             .loaders = try loadersFromTransformOptions(allocator, transform.loaders, Target.from(transform.target)),
             .output_dir = transform.output_dir orelse "out",
@@ -1720,7 +1729,7 @@ pub const BundleOptions = struct {
             opts.main_fields = Target.DefaultMainFields.get(opts.target);
         }
 
-        opts.conditions = try ESMConditions.init(allocator, Target.DefaultConditions.get(opts.target));
+        opts.conditions = try ESMConditions.init(allocator, opts.target.defaultConditions());
 
         if (transform.conditions.len > 0) {
             opts.conditions.appendSlice(transform.conditions) catch bun.outOfMemory();

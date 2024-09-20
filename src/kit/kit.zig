@@ -124,20 +124,20 @@ pub const Framework = struct {
     ///
     /// All resolution errors will happen before returning error.ModuleNotFound
     /// Details written into `r.log`
-    pub fn resolve(f: Framework, r: *bun.resolver.Resolver) !Framework {
+    pub fn resolve(f: Framework, server: *bun.resolver.Resolver, client: *bun.resolver.Resolver) !Framework {
         var clone = f;
         var had_errors: bool = false;
 
-        if (clone.entry_client) |*path| resolveHelper(r, path, &had_errors);
-        if (clone.entry_server) |*path| resolveHelper(r, path, &had_errors);
+        if (clone.entry_client) |*path| resolveHelper(client, path, &had_errors);
+        if (clone.entry_server) |*path| resolveHelper(server, path, &had_errors);
 
         if (clone.react_fast_refresh) |*react_fast_refresh| {
-            resolveHelper(r, &react_fast_refresh.import_source, &had_errors);
+            resolveHelper(client, &react_fast_refresh.import_source, &had_errors);
         }
 
         if (clone.server_components) |*sc| {
-            resolveHelper(r, &sc.client_runtime_import, &had_errors);
-            resolveHelper(r, &sc.client_runtime_import, &had_errors);
+            resolveHelper(server, &sc.server_runtime_import, &had_errors);
+            resolveHelper(client, &sc.client_runtime_import, &had_errors);
         }
 
         if (had_errors) return error.ModuleNotFound;

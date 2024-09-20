@@ -485,7 +485,7 @@ pub const Task = TaggedPointerUnion(.{
     TimerObject,
     bun.shell.Interpreter.Builtin.Yes.YesTask,
 
-    bun.kit.DevServer.BundleTask,
+    // bun.kit.DevServer.BundleTask,
     bun.kit.DevServer.HotReloadTask,
 
     ProcessWaiterThreadTask,
@@ -1257,15 +1257,12 @@ pub const EventLoop = struct {
                     var any: *ServerAllConnectionsClosedTask = task.get(ServerAllConnectionsClosedTask).?;
                     any.runFromJSThread(virtual_machine);
                 },
-                @field(Task.Tag, typeBaseName(@typeName(bun.kit.DevServer.BundleTask))) => {
-                    task.get(bun.kit.DevServer.BundleTask).?.completeOnMainThread();
-                },
+                // @field(Task.Tag, typeBaseName(@typeName(bun.kit.DevServer.BundleTask))) => {
+                //     task.get(bun.kit.DevServer.BundleTask).?.completeOnMainThread();
+                // },
 
-                else => if (Environment.allow_assert) {
-                    bun.Output.prettyln("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});
-                } else {
-                    log("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});
-                    unreachable;
+                else => {
+                    bun.Output.panic("Unexpected tag: {s}", .{@tagName(task.tag())});
                 },
             }
 

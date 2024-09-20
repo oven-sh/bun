@@ -1,5 +1,5 @@
 //! Instance of the development server. Controls an event loop, web server,
-//! bundling threads, and JavaScript VM instance. All data is held in memory.
+//! bundling state, and JavaScript VM instance. Work is cached in-memory.
 //!
 //! Currently does not have a `deinit()`, as it is assumed to be alive for the
 //! remainder of this process' lifespan.
@@ -12,7 +12,7 @@ pub const Options = struct {
     listen_config: uws.AppListenConfig = .{ .port = 3000 },
     dump_sources: ?[]const u8 = if (Environment.isDebug) ".kit-debug" else null,
     verbose_watcher: bool = false,
-    // TODO: make it possible to inherit a js VM
+    // TODO: make it required to inherit a js VM
 };
 
 /// Accepting a custom allocator for all of DevServer would be misleading
@@ -35,14 +35,25 @@ server_global: *DevGlobalObject,
 vm: *VirtualMachine,
 
 // Bundling
-bundle_thread: BundleThread,
-hot_graph: IncrementalGraph,
+client_graph: IncrementalGraph(.client),
+server_graph: IncrementalGraph(.server),
 framework: kit.Framework,
 bun_watcher: *JSC.Watcher,
-/// Required by `bun.JSC.NewHotReloader`
-bundler: Bundler,
-/// Required by `Bundler`
+server_bundler: Bundler,
+client_bundler: Bundler,
+/// Stored and reused for bundling tasks
 log: Log,
+
+/// To reduce complexity of BundleV2's return type being different on
+/// compile-time logic, extra kit-specific metadata is returned through a
+/// pointer to DevServer, and writing directly to this field.
+///
+/// Only one bundle is run at a time (batched with all files needed),
+/// so there is never contention.
+bundle_result: ?ExtraBundleData,
+
+// Debugging
+dump_dir: ?std.fs.Dir,
 
 pub const internal_prefix = "/_bun";
 pub const client_prefix = internal_prefix ++ "/client";
@@ -52,8 +63,10 @@ pub const Route = struct {
     pattern: [:0]const u8,
     entry_point: []const u8,
 
-    server_bundle: BundlePromise(ServerBundle) = .unqueued,
-    client_bundle: BundlePromise(ClientBundle) = .unqueued,
+    /// When empty, the server module has not been loaded.
+    server_bundle: JSC.Strong = .{},
+    /// Backed by default_allocator
+    client_bundle: ?[]const u8 = null,
 
     /// Assigned in DevServer.init
     dev: *DevServer = undefined,
@@ -62,19 +75,6 @@ pub const Route = struct {
     pub fn clientPublicPath(route: *const Route) []const u8 {
         return route.client_bundled_url[0 .. route.client_bundled_url.len - "/client.js".len];
     }
-};
-
-/// Prepared server-side bundle and loaded JavaScript module
-const ServerBundle = struct {
-    files: []OutputFile,
-    server_request_callback: JSC.JSValue,
-};
-
-/// Prepared client-side bundle.
-/// Namespaced to URL: `/_bun/client/:route_index/:file_path`
-const ClientBundle = struct {
-    entry_file_contents: []const u8,
-    entry_file_stale: bool,
 };
 
 pub fn init(options: Options) !*DevServer {
@@ -101,52 +101,37 @@ pub fn init(options: Options) !*DevServer {
             .hostname = options.listen_config.host orelse "localhost",
         },
         .listener = null,
-        .bundle_thread = BundleThread.uninitialized,
         .server_global = undefined,
         .vm = undefined,
         .bun_watcher = undefined,
-        .bundler = undefined,
+        .server_bundler = undefined,
+        .client_bundler = undefined,
         .log = Log.init(default_allocator),
-        .hot_graph = .{ .dump_dir = dump_dir },
+        .client_graph = .{},
+        .server_graph = .{},
+        .dump_dir = dump_dir,
         .framework = options.framework,
+        .bundle_result = null,
     });
 
-    dev.bundler = bun.Bundler.init(
-        default_allocator,
-        &dev.log,
-        std.mem.zeroes(bun.Schema.Api.TransformOptions),
-        null, // TODO:
-    ) catch bun.outOfMemory();
-
-    const loaders = bun.options.loadersFromTransformOptions(default_allocator, null, .bun) catch
-        bun.outOfMemory();
-
-    dev.bundler.options = .{
-        .entry_points = &.{},
-        .define = dev.bundler.options.define,
-        .loaders = loaders,
-        .log = &dev.log,
-        .output_dir = "", // this disables filesystem output
-        .output_format = .internal_kit_dev,
-        .out_extensions = bun.StringHashMap([]const u8).init(bun.failing_allocator),
-
-        // unused by all code
-        .resolve_mode = .dev,
-        // technically used (in macro) but should be removed
-        .transform_options = std.mem.zeroes(bun.Schema.Api.TransformOptions),
-    };
-    dev.bundler.configureLinker();
-    dev.bundler.resolver.opts = dev.bundler.options;
-
-    dev.framework = dev.framework.resolve(&dev.bundler.resolver) catch {
-        Output.errGeneric("Failed to resolve all imports required by the framework.", .{});
-        dev.bundler.resolver.log.printForLogLevel(Output.errorWriter()) catch {};
-        return error.FrameworkInitialization;
-    };
+    assert(dev.client_graph.owner() == dev);
+    assert(dev.server_graph.owner() == dev);
 
     const fs = try bun.fs.FileSystem.init(options.cwd);
     dev.bun_watcher = HotReloader.init(dev, fs, options.verbose_watcher, false);
-    dev.bundler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
+    dev.server_bundler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
+    dev.client_bundler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
+
+    try dev.initBundler(&dev.server_bundler, .server);
+    try dev.initBundler(&dev.client_bundler, .client);
+
+    dev.framework = dev.framework.resolve(
+        &dev.server_bundler.resolver,
+        &dev.client_bundler.resolver,
+    ) catch {
+        Output.errGeneric("Failed to resolve all imports required by the framework", .{});
+        return error.FrameworkInitialization;
+    };
 
     dev.vm = VirtualMachine.initKit(.{
         .allocator = default_allocator,
@@ -158,10 +143,6 @@ pub fn init(options: Options) !*DevServer {
     dev.vm.regular_event_loop.global = dev.vm.global;
     dev.vm.jsc = dev.vm.global.vm();
     dev.vm.event_loop.ensureWaker();
-
-    _ = JSC.WorkPool.get();
-    const thread = try dev.bundle_thread.spawn();
-    thread.detach();
 
     var has_fallback = false;
 
@@ -196,6 +177,58 @@ pub fn init(options: Options) !*DevServer {
     return dev;
 }
 
+fn initBundler(
+    dev: *DevServer,
+    bundler: *Bundler,
+    comptime side: kit.Side,
+) !void {
+    const framework = dev.framework;
+
+    bundler.* = try bun.Bundler.init(
+        default_allocator, // TODO: this is likely a memory leak
+        &dev.log,
+        std.mem.zeroes(bun.Schema.Api.TransformOptions),
+        null, // TODO:
+    );
+
+    bundler.options.target = switch (side) {
+        .client => .browser,
+        .server => .bun,
+    };
+    bundler.options.public_path = switch (side) {
+        .client => client_prefix,
+        .server => dev.cwd,
+    };
+    bundler.options.entry_points = &.{};
+    bundler.options.log = &dev.log;
+    bundler.options.output_dir = ""; // this disables filesystem output;
+    bundler.options.entry_naming = "bundle.js"; // unused output file generation is skipped
+    bundler.options.output_format = .internal_kit_dev;
+    bundler.options.out_extensions = bun.StringHashMap([]const u8).init(bundler.allocator);
+    bundler.options.hot_module_reloading = true;
+
+    bundler.options.react_fast_refresh = side == .client and framework.react_fast_refresh != null;
+    bundler.options.server_components = framework.server_components != null;
+
+    bundler.options.conditions = try bun.options.ESMConditions.init(default_allocator, bundler.options.target.defaultConditions());
+    if (side == .server) {
+        try bundler.options.conditions.appendSlice(&.{"react-server"});
+    }
+
+    bundler.options.tree_shaking = false;
+    bundler.options.minify_syntax = true;
+    bundler.options.minify_identifiers = false;
+    bundler.options.minify_whitespace = false;
+    bundler.options.kit = dev;
+
+    bundler.configureLinker();
+    try bundler.configureDefines();
+
+    try kit.addImportMetaDefines(default_allocator, bundler.options.define, .development, side);
+
+    bundler.resolver.opts = bundler.options;
+}
+
 pub fn runLoopForever(dev: *DevServer) noreturn {
     const lock = dev.vm.jsc.getAPILock();
     defer lock.release();
@@ -224,41 +257,138 @@ fn onListen(ctx: *DevServer, maybe_listen: ?*App.ListenSocket) void {
 }
 
 fn onAssetRequestInit(dev: *DevServer, req: *Request, resp: *Response) void {
-    const route = route: {
-        const route_id = req.parameter(0);
-        const i = std.fmt.parseInt(u16, route_id, 10) catch
-            return req.setYield(true);
-        if (i >= dev.routes.len)
-            return req.setYield(true);
-        break :route &dev.routes[i];
-    };
-    const asset_name = req.parameter(1);
-    dev.getOrEnqueueBundle(resp, route, .client, .{ .file_name = asset_name });
+    _ = dev; // autofix
+    _ = req; // autofix
+    _ = resp; // autofix
+    // const route = route: {
+    //     const route_id = req.parameter(0);
+    //     const i = std.fmt.parseInt(u16, route_id, 10) catch
+    //         return req.setYield(true);
+    //     if (i >= dev.routes.len)
+    //         return req.setYield(true);
+    //     break :route &dev.routes[i];
+    // };
+    // const asset_name = req.parameter(1);
+    // dev.getOrEnqueueBundle(resp, route, .client, .{ .file_name = asset_name });
 }
 
 fn onServerRequestInit(route: *Route, req: *Request, resp: *Response) void {
-    _ = req;
-    route.dev.getOrEnqueueBundle(resp, route, .server, .{});
+    _ = req; // autofix
+    route.dev.performBundle(route) catch @panic("TODO");
+    onServerRequestWithBundle(route, resp);
+}
+
+const ExtraBundleData = struct {};
+
+fn performBundle(dev: *DevServer, route: *Route) !void {
+    var heap = try ThreadlocalArena.init();
+    defer heap.deinit();
+
+    const allocator = heap.allocator();
+    var ast_memory_allocator = try allocator.create(bun.JSAst.ASTMemoryAllocator);
+    ast_memory_allocator.* = .{ .allocator = allocator };
+    ast_memory_allocator.reset();
+    ast_memory_allocator.push();
+
+    if (dev.framework.server_components == null) {
+        // The handling of the dependency graph is SLIGHTLY different. It's
+        // enough that it would be incorrect to let the current code execute at
+        // all.
+        @panic("TODO: support non-server components");
+    }
+
+    const bv2 = try BundleV2.init(
+        &dev.server_bundler,
+        if (dev.framework.server_components != null) &dev.client_bundler else null,
+        allocator,
+        JSC.AnyEventLoop.init(allocator),
+        false, // reloading is handled separately
+        JSC.WorkPool.get(),
+        heap,
+    );
+    bv2.bun_watcher = dev.bun_watcher;
+    // this.plugins = completion.plugins;
+
+    defer {
+        if (bv2.graph.pool.pool.threadpool_context == @as(?*anyopaque, @ptrCast(bv2.graph.pool))) {
+            bv2.graph.pool.pool.threadpool_context = null;
+        }
+
+        ast_memory_allocator.pop();
+        bv2.deinit();
+    }
+
+    errdefer {
+        // Wait for wait groups to finish. There still may be ongoing work.
+        bv2.linker.source_maps.line_offset_wait_group.wait();
+        bv2.linker.source_maps.quoted_contents_wait_group.wait();
+
+        // var out_log = Log.init(bun.default_allocator);
+        // _ = out_log; // autofix
+        bv2.bundler.log.printForLogLevel(Output.errorWriter()) catch {};
+        bv2.client_bundler.log.printForLogLevel(Output.errorWriter()) catch {};
+        // bv2.bundler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
+    }
+
+    const output_files = try bv2.runFromJSInNewThread(&.{
+        route.entry_point,
+    });
+    assert(output_files.items.len == 0);
+
+    bv2.bundler.log.printForLogLevel(Output.errorWriter()) catch {};
+    bv2.client_bundler.log.printForLogLevel(Output.errorWriter()) catch {};
+
+    {
+        const server_bundle = try dev.server_graph.takeBundle(.initial_response);
+        defer default_allocator.free(server_bundle);
+        std.debug.print("server:\n---\n{s}\n---\n", .{server_bundle});
+    }
+
+    {
+        // TODO: for initial bundles we do need to combine with used-stale entries
+        assert(route.client_bundle == null); // was not marked as stale
+        const client_bundle = try dev.client_graph.takeBundle(.initial_response);
+        route.client_bundle = client_bundle;
+    }
+
+    // var out_log = Log.init(bun.default_allocator);
+    // this.bundler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
+    // completion.log = out_log;
+    // completion.completeOnBundleThread();
+}
+
+pub fn receiveChunk(
+    dev: *DevServer,
+    abs_path: []const u8,
+    side: kit.Side,
+    chunk: bun.bundle_v2.CompileResult,
+) !void {
+    return switch (side) {
+        .server => dev.server_graph.addChunk(abs_path, chunk),
+        .client => dev.client_graph.addChunk(abs_path, chunk),
+    };
 }
 
 // uws with bundle handlers
 
-fn onAssetRequestWithBundle(route: *Route, resp: *Response, ctx: BundleKind.client.Context(), bundle: *ClientBundle) void {
-    _ = ctx; // autofix
-    _ = route;
-    assert(!bundle.entry_file_stale);
-    sendJavaScriptSource(bundle.entry_file_contents, resp);
+// fn onAssetRequestWithBundle(route: *Route, resp: *Response, ctx: BundleKind.client.Context(), bundle: *ClientBundle) void {
+//     _ = ctx; // autofix
+//     _ = route;
+//     assert(!bundle.entry_file_stale);
+//     sendJavaScriptSource(bundle.entry_file_contents, resp);
 
-    // const file = bundle.getFile(ctx.file_name) orelse
-    //     return sendBuiltInNotFound(resp);
+//     // const file = bundle.getFile(ctx.file_name) orelse
+//     //     return sendBuiltInNotFound(resp);
 
-    // sendOutputFile(file, resp);
-}
+//     // sendOutputFile(file, resp);
+// }
 
-fn onServerRequestWithBundle(route: *Route, resp: *Response, ctx: BundleKind.server.Context(), bundle: *ServerBundle) void {
-    _ = ctx; // autofix
+fn onServerRequestWithBundle(route: *Route, resp: *Response) void {
     const dev = route.dev;
     const global = dev.server_global.js();
+
+    const server_request_callback = route.server_bundle.get() orelse
+        unreachable; // did not bundle
 
     const context = JSValue.createEmptyObject(global, 1);
     context.put(
@@ -267,7 +397,7 @@ fn onServerRequestWithBundle(route: *Route, resp: *Response, ctx: BundleKind.ser
         bun.String.init(route.client_bundled_url).toJS(global),
     );
 
-    const result = bundle.server_request_callback.call(
+    const result = server_request_callback.call(
         global,
         .undefined,
         &.{context},
@@ -290,8 +420,8 @@ fn onServerRequestWithBundle(route: *Route, resp: *Response, ctx: BundleKind.ser
     // This would allow us to support all of the nice things `new Response` allows
 
     const bun_string = result.toBunString(dev.server_global.js());
-    if (bun_string.tag == .Dead) @panic("TODO NOT STRING");
     defer bun_string.deref();
+    if (bun_string.tag == .Dead) @panic("TODO NOT STRING");
 
     const utf8 = bun_string.toUTF8(default_allocator);
     defer utf8.deinit();
@@ -348,519 +478,500 @@ fn sendBuiltInNotFound(resp: *Response) void {
 
 // bundling
 
-const BundleKind = enum {
-    client,
-    server,
+// const BundleKind = enum {
+//     client,
+//     server,
 
-    fn Bundle(kind: BundleKind) type {
-        return switch (kind) {
-            .client => ClientBundle,
-            .server => ServerBundle,
-        };
-    }
+// fn Bundle(kind: BundleKind) type {
+//     return switch (kind) {
+//         .client => ClientBundle,
+//         .server => ServerBundle,
+//     };
+// }
 
-    /// Routing information from uws.Request is stack allocated.
-    /// This union has no type tag because it can be inferred from surrounding data.
-    fn Context(kind: BundleKind) type {
-        return switch (kind) {
-            .client => struct { file_name: []const u8 },
-            .server => struct {},
-        };
-    }
+// /// Routing information from uws.Request is stack allocated.
+// /// This union has no type tag because it can be inferred from surrounding data.
+// fn Context(kind: BundleKind) type {
+//     return switch (kind) {
+//         .client => struct { file_name: []const u8 },
+//         .server => struct {},
+//     };
+// }
 
-    inline fn completionFunction(comptime kind: BundleKind) fn (*Route, *Response, kind.Context(), *kind.Bundle()) void {
-        return switch (kind) {
-            .client => onAssetRequestWithBundle,
-            .server => onServerRequestWithBundle,
-        };
-    }
+// inline fn completionFunction(comptime kind: BundleKind) fn (*Route, *Response, kind.Context(), *kind.Bundle()) void {
+//     return switch (kind) {
+//         .client => onAssetRequestWithBundle,
+//         .server => onServerRequestWithBundle,
+//     };
+// }
 
-    const AnyContext: type = @Type(.{
-        .Union = .{
-            .layout = .auto,
-            .tag_type = null,
-            .fields = &fields: {
-                const values = std.enums.values(BundleKind);
-                var fields: [values.len]std.builtin.Type.UnionField = undefined;
-                for (&fields, values) |*field, kind| {
-                    field.* = .{
-                        .name = @tagName(kind),
-                        .type = kind.Context(),
-                        .alignment = @alignOf(kind.Context()),
-                    };
-                }
-                break :fields fields;
-            },
-            .decls = &.{},
-        },
-    });
+// const AnyContext: type = @Type(.{
+//     .Union = .{
+//         .layout = .auto,
+//         .tag_type = null,
+//         .fields = &fields: {
+//             const values = std.enums.values(BundleKind);
+//             var fields: [values.len]std.builtin.Type.UnionField = undefined;
+//             for (&fields, values) |*field, kind| {
+//                 field.* = .{
+//                     .name = @tagName(kind),
+//                     .type = kind.Context(),
+//                     .alignment = @alignOf(kind.Context()),
+//                 };
+//             }
+//             break :fields fields;
+//         },
+//         .decls = &.{},
+//     },
+// });
 
-    inline fn initAnyContext(comptime kind: BundleKind, data: kind.Context()) AnyContext {
-        return @unionInit(AnyContext, @tagName(kind), data);
-    }
-};
+// inline fn initAnyContext(comptime kind: BundleKind, data: kind.Context()) AnyContext {
+//     return @unionInit(AnyContext, @tagName(kind), data);
+// }
+// };
 
 /// This will either immediately call `kind.completionFunction()`, or schedule a
 /// task to call it when the bundle is ready. The completion function is allowed
 /// to use yield.
-fn getOrEnqueueBundle(
-    dev: *DevServer,
-    resp: *Response,
-    route: *Route,
-    comptime kind: BundleKind,
-    ctx: kind.Context(),
-) void {
-    // const bundler = &dev.bundler;
-    const bundle = switch (kind) {
-        .client => &route.client_bundle,
-        .server => &route.server_bundle,
-    };
+// fn getOrEnqueueBundle(
+//     dev: *DevServer,
+//     resp: *Response,
+//     route: *Route,
+//     comptime kind: BundleKind,
+//     ctx: kind.Context(),
+// ) void {
+//     // const bundler = &dev.bundler;
+//     const bundle = switch (kind) {
+//         .client => &route.client_bundle,
+//         .server => &route.server_bundle,
+//     };
 
-    switch (bundle.*) {
-        .unqueued => {
-            // TODO: use an object pool for this. `bun.ObjectPool` needs a refactor before it can be used
-            const cb = BundleTask.DeferredRequest.newNode(resp, kind.initAnyContext(ctx));
+//     switch (bundle.*) {
+//         .unqueued => {
+//             // TODO: use an object pool for this. `bun.ObjectPool` needs a refactor before it can be used
+//             const cb = BundleTask.DeferredRequest.newNode(resp, kind.initAnyContext(ctx));
 
-            const task = bun.new(BundleTask, .{
-                .owner = dev,
-                .route = route,
-                .kind = kind,
-                .plugins = null,
-                .handlers = .{ .first = cb },
-            });
-            bundle.* = .{ .pending = task };
-            dev.bundle_thread.enqueue(task);
-        },
-        .pending => |task| {
-            const cb = BundleTask.DeferredRequest.newNode(resp, kind.initAnyContext(ctx));
-            // This is not a data race, since this list is drained on
-            // the same thread as this function is called.
-            task.handlers.prepend(cb);
-        },
-        .failed => |fail| {
-            fail.sendAsHttpResponse(resp, route, kind);
-        },
-        .value => |*val| {
-            kind.completionFunction()(route, resp, ctx, val);
-        },
-    }
-}
+//             const task = bun.new(BundleTask, .{
+//                 .owner = dev,
+//                 .route = route,
+//                 .kind = kind,
+//                 .plugins = null,
+//                 .handlers = .{ .first = cb },
+//             });
+//             bundle.* = .{ .pending = task };
+//             dev.bundle_thread.enqueue(task);
+//         },
+//         .pending => |task| {
+//             const cb = BundleTask.DeferredRequest.newNode(resp, kind.initAnyContext(ctx));
+//             // This is not a data race, since this list is drained on
+//             // the same thread as this function is called.
+//             task.handlers.prepend(cb);
+//         },
+//         .failed => |fail| {
+//             fail.sendAsHttpResponse(resp, route, kind);
+//         },
+//         .value => |*val| {
+//             kind.completionFunction()(route, resp, ctx, val);
+//         },
+//     }
+// }
 
-pub const IncrementalGraph = struct {
-    dump_dir: ?std.fs.Dir,
+/// The paradigm of Kit's incremental state is to store a separate list of files
+/// than the Graph in bundle_v2. When watch events happen, the bundler is run on
+/// the changed files, excluding non-stale files via `isFileStale`.
+///
+/// Upon bundle completion, both `client_graph` and `server_graph` have their
+/// `addChunk` methods called with all new chunks, counting the total length
+/// needed. A call to `takeBundle` joins all of the chunks, resulting in the
+/// code to send to client or evaluate on the server.
+///
+/// This approach was selected as it resulted in the fewest changes in the
+/// bundler. It also allows the bundler to avoid memory buildup by ensuring its
+/// arenas don't live too long.
+///
+/// Since all routes share the two graphs, bundling a new route that shared
+/// a module from a previously bundled route will perform the same exclusion
+/// behavior that rebuilds use. This also ensures that two routes on the server
+/// do not emit duplicate dependencies. By tracing `imports` on each file in
+/// the module graph recursively, the full bundle for any given route can
+/// be re-materialized (required when pressing Cmd+R after any client update)
+pub fn IncrementalGraph(side: kit.Side) type {
+    return struct {
+        bundled_files: bun.StringArrayHashMapUnmanaged(File) = .{},
+        stale_files: bun.bit_set.DynamicBitSetUnmanaged = .{},
 
-    // framework_imports: bun.StringArrayHashMapUnmanaged(FrameworkImport) = .{},
+        /// Byte length of every file queued for concatenation
+        current_incremental_chunk_len: usize = 0,
+        current_incremental_chunk_parts: std.ArrayListUnmanaged(switch (side) {
+            .client => Index,
+            // these slices do not outlive the bundler, and must be joined
+            // before its arena is deinitialized.
+            .server => []const u8,
+        }) = .{},
 
-    bundled_files: bun.StringArrayHashMapUnmanaged(File) = .{},
-
-    current_incremental_chunk_len: usize = 0,
-    current_incremental_chunk_parts: std.ArrayListUnmanaged(File.Index) = .{},
-
-    // TODO: move this to the bundle completion struct. i am currently a little sleepy to work out how that would wire up. this is easier.
-    main_path: ?[]const u8 = null,
-
-    pub const File = struct {
-        code: []const u8,
-        // TODO: each file needs to track it's dependencies, but i dislike this allocation strategy
-        depends: []u32,
-        stale: bool,
-
+        /// An index into `bundled_files` or `stale_files`
         pub const Index = enum(u32) { _ };
-    };
 
-    // pub const FrameworkImport = struct {
-    //     resolved: File.Index,
-
-    //     pub const Index = enum {
-    //         react_fast_refresh,
-    //         server_components_client,
-    //         server_components_server,
-    //     };
-    // };
-
-    pub fn addChunk(
-        g: *IncrementalGraph,
-        abs_path: []const u8,
-        chunk: bun.bundle_v2.CompileResult,
-    ) !void {
-        const code = chunk.code();
-        if (code.len == 0) return;
-
-        g.current_incremental_chunk_len += code.len;
-
-        if (g.dump_dir) |dump_dir| {
-            const cwd = g.owner().cwd;
-            var a: bun.PathBuffer = undefined;
-            var b: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
-            const rel_path = bun.path.relativeBufZ(&a, cwd, abs_path);
-            const size = std.mem.replacementSize(u8, rel_path, "../", "_.._/");
-            _ = std.mem.replace(u8, rel_path, "../", "_.._/", &b);
-            const rel_path_escaped = b[0..size];
-            dumpBundle(dump_dir, .client, rel_path_escaped, code) catch |err| {
-                bun.handleErrorReturnTrace(err, @errorReturnTrace());
-                Output.warn("Could not dump bundle: {}", .{err});
-            };
-        }
-
-        const gop = try g.bundled_files.getOrPut(default_allocator, abs_path);
-        try g.current_incremental_chunk_parts.append(default_allocator, @enumFromInt(gop.index));
-
-        if (gop.found_existing) {
-            bun.default_allocator.free(gop.value_ptr.code);
-        }
-
-        gop.value_ptr.* = .{
-            .code = chunk.code(),
-            .stale = false,
-            .depends = &.{},
-        };
-    }
-
-    const ChunkKind = enum {
-        initial_response,
-        hmr_chunk,
-    };
-
-    fn reset(g: *IncrementalGraph) void {
-        g.current_incremental_chunk_len = 0;
-        g.current_incremental_chunk_parts.clearRetainingCapacity();
-    }
-
-    pub fn takeChunk(g: *IncrementalGraph, kind: ChunkKind) ![]const u8 {
-        const runtime = switch (kind) {
-            .initial_response => bun.kit.getHmrRuntime(.client),
-            .hmr_chunk => "({\n",
+        pub const File = switch (side) {
+            // The server's incremental graph does not store previously bundled
+            // code because there is only one instance of the server.
+            .server => struct {},
+            .client => struct {
+                /// allocated by default_allocator
+                code: []const u8,
+                // /// To re-assemble a stale bundle (browser hard-reload), follow `imports`
+                // imports: []Index,
+            },
         };
 
-        // A small amount of metadata is present at the end of the chunk
-        // to inform the HMR runtime some crucial entry-point info. The
-        // upper bound of this can be calculated, but 16kb is given to
-        // ensure no problems.
-        // TODO: do windows paths mess this up?
-        var end_buf: [16384]u8 = undefined;
-        const end = end: {
-            var fbs = std.io.fixedBufferStream(&end_buf);
-            const w = fbs.writer();
-            switch (kind) {
-                .initial_response => {
-                    w.writeAll("}, {\n  main: ") catch unreachable;
-                    const main = g.main_path.?;
-                    switch (bun.FeatureFlags.kit_dev_module_keys) {
-                        .strings => {
-                            bun.js_printer.writeJSONString(main, @TypeOf(w), w, .utf8) catch unreachable;
-                        },
-                        .numbers => {
-                            w.print("{d}", .{0}) catch unreachable;
-                            @compileError("TODO");
-                        },
+        pub fn addChunk(
+            g: *@This(),
+            abs_path: []const u8,
+            chunk: bun.bundle_v2.CompileResult,
+        ) !void {
+            const code = chunk.code();
+            if (code.len == 0) return;
+
+            g.current_incremental_chunk_len += code.len;
+
+            if (g.owner().dump_dir) |dump_dir| {
+                const cwd = g.owner().cwd;
+                var a: bun.PathBuffer = undefined;
+                var b: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
+                const rel_path = bun.path.relativeBufZ(&a, cwd, abs_path);
+                const size = std.mem.replacementSize(u8, rel_path, "../", "_.._/");
+                _ = std.mem.replace(u8, rel_path, "../", "_.._/", &b);
+                const rel_path_escaped = b[0..size];
+                dumpBundle(dump_dir, side, rel_path_escaped, code) catch |err| {
+                    bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                    Output.warn("Could not dump bundle: {}", .{err});
+                };
+            }
+
+            const gop = try g.bundled_files.getOrPut(default_allocator, abs_path);
+
+            switch (side) {
+                .client => {
+                    if (gop.found_existing) {
+                        bun.default_allocator.free(gop.value_ptr.code);
                     }
-                    w.writeAll("\n});") catch unreachable;
+                    gop.value_ptr.* = .{
+                        .code = chunk.code(),
+                        // .imports = &.{},
+                    };
+                    try g.current_incremental_chunk_parts.append(default_allocator, @enumFromInt(gop.index));
                 },
-                .hmr_chunk => {
-                    w.writeAll("\n})") catch unreachable;
+                .server => {
+                    try g.current_incremental_chunk_parts.append(default_allocator, chunk.code());
                 },
             }
-            break :end fbs.getWritten();
-        };
-
-        const files = g.bundled_files.values();
-
-        var chunk = try std.ArrayListUnmanaged(u8).initCapacity(
-            default_allocator,
-            g.current_incremental_chunk_len + runtime.len + end.len,
-        );
-        chunk.appendSliceAssumeCapacity(runtime);
-        for (g.current_incremental_chunk_parts.items) |file_index| {
-            chunk.appendSliceAssumeCapacity(files[@intFromEnum(file_index)].code);
-        }
-        chunk.appendSliceAssumeCapacity(end);
-        assert(chunk.capacity == chunk.items.len);
-
-        return chunk.items;
-    }
-
-    pub fn invalidate(g: *IncrementalGraph, paths: []const []const u8, hashes: []const u32) void {
-        for (paths, hashes) |path, hash| {
-            const ctx: bun.StringArrayHashMapContext.Prehashed = .{
-                .value = hash,
-                .input = path,
-            };
-            const get = g.bundled_files.getPtrAdapted(path, ctx) orelse {
-                Output.debugWarn("attempted to invalidate missing file: {s}", .{path});
-                continue;
-            };
-            get.stale = true;
-        }
-    }
-
-    pub fn owner(g: *IncrementalGraph) *DevServer {
-        return @alignCast(@fieldParentPtr("hot_graph", g));
-    }
-};
-
-const BundleThread = bun.bundle_v2.BundleThread(BundleTask);
-
-/// A request to bundle something for development. Has one or more pending HTTP requests.
-pub const BundleTask = struct {
-    owner: *DevServer,
-    route: *Route,
-    kind: BundleKind,
-    // env: *bun.DotEnv.Loader, // TODO
-    plugins: ?*JSC.API.JSBundler.Plugin,
-    handlers: DeferredRequest.List,
-
-    next: ?*BundleTask = null,
-    result: BundleV2.Result = .pending,
-
-    // initialized in the task itself:
-    concurrent_task: JSC.EventLoopTask = undefined,
-    bundler: *BundleV2 = undefined,
-    log: Log = undefined,
-
-    /// There is no function pointer, route, or context on this struct as all of
-    /// this information is inferable from the associated BundleTask
-    const DeferredRequest = struct {
-        /// When cancelled, this is set to null
-        resp: ?*Response,
-        /// Only valid if req is non-null
-        ctx: BundleKind.AnyContext,
-
-        fn newNode(resp: *Response, ctx: BundleKind.AnyContext) *DeferredRequest.List.Node {
-            const node = bun.new(DeferredRequest.List.Node, .{
-                .data = .{
-                    .resp = resp,
-                    .ctx = ctx,
-                },
-            });
-            resp.onAborted(*DeferredRequest, onCancel, &node.data);
-            return node;
         }
 
-        fn onCancel(node: *DeferredRequest, resp: *Response) void {
-            node.resp = null;
-            node.ctx = undefined;
-            _ = resp;
-        }
-
-        const List = std.SinglyLinkedList(DeferredRequest);
-    };
-
-    pub fn completeOnMainThread(task: *BundleTask) void {
-        switch (task.kind) {
-            inline else => |kind| task.completeOnMainThreadWithKind(kind),
-        }
-    }
-
-    fn completeOnMainThreadWithKind(task: *BundleTask, comptime kind: BundleKind) void {
-        const route = task.route;
-        const bundle = switch (kind) {
-            .client => &route.client_bundle,
-            .server => &route.server_bundle,
-        };
-
-        assert(bundle.* == .pending);
-
-        const dev = route.dev;
-
-        if (task.result == .err) {
-            const fail = Failure.fromLog(&task.log);
-            fail.printToConsole(route, kind);
-            task.finishHttpRequestsFailure(&fail);
-            bundle.* = .{ .failed = fail };
-            return;
-        }
-
-        if (task.log.hasAny()) {
-            Output.warn("Warnings {s} for {s}", .{
-                @tagName(task.kind),
-                route.pattern,
-            });
-            task.log.printForLogLevel(Output.errorWriter()) catch {};
-        }
-
-        switch (kind) {
-            .client => {
-                assert(task.result.value.output_files.items.len == 0);
-                // TODO: revive the code below to handle assets
-
-                // Set the capacity to the exact size required to avoid over-allocation
-                // var files_index: bun.CaseInsensitiveASCIIStringArrayHashMapUnmanaged(void) = .{};
-                // files_index.entries.setCapacity(default_allocator, files.len) catch bun.outOfMemory();
-                // files_index.entries.len = files.len;
-                // for (files_index.keys(), files) |*index_key, file| {
-                //     var dest_path = file.dest_path;
-                //     if (bun.strings.hasPrefixComptime(dest_path, "./")) {
-                //         dest_path = dest_path[2..];
-                //     }
-                //     index_key.* = dest_path;
-                // }
-                // files_index.reIndex(default_allocator) catch bun.outOfMemory();
-
-                const s = struct {
-                    var static = true;
+        pub fn invalidate(g: *@This(), paths: []const []const u8, hashes: []const u32, out_paths: *DualArray([]const u8)) void {
+            for (paths, hashes) |path, hash| {
+                const ctx: bun.StringArrayHashMapContext.Prehashed = .{
+                    .value = hash,
+                    .input = path,
                 };
-                const chunk = dev.hot_graph.takeChunk(if (s.static) .initial_response else .hmr_chunk) catch bun.outOfMemory();
-                s.static = false;
-
-                _ = AnyWebSocket.publishWithOptions(false, dev.app, "TODO", chunk, .text, true);
-
-                bundle.* = .{
-                    .value = .{
-                        // .files = files,
-                        // .files_index = files_index,
-                        .entry_file_contents = chunk,
-                        .entry_file_stale = false,
-                    },
-                };
-            },
-            .server => {
-                const files = task.result.value.output_files.items;
-                assert(files.len == 1);
-                const entry_point = files[0];
-                const code = entry_point.value.buffer.bytes;
-
-                const server_code = c.KitLoadServerCode(dev.server_global, bun.String.createLatin1(code));
-                dev.vm.waitForPromise(.{ .internal = server_code.promise });
-
-                switch (server_code.promise.unwrap(dev.vm.jsc, .mark_handled)) {
-                    .pending => unreachable, // promise is settled
-                    .rejected => |err| {
-                        const fail = Failure.fromJSServerLoad(err, dev.server_global.js());
-                        fail.printToConsole(task.route, .server);
-                        task.finishHttpRequestsFailure(&fail);
-                        bundle.* = .{ .failed = fail };
-                        return;
-                    },
-                    .fulfilled => |v| bun.assert(v == .undefined),
+                const index = g.bundled_files.getIndexAdapted(path, ctx) orelse
+                    continue;
+                g.stale_files.set(index);
+                switch (side) {
+                    .client => out_paths.appendLeft(path),
+                    .server => out_paths.appendRight(path),
                 }
-
-                const handler = c.KitGetRequestHandlerFromModule(dev.server_global, server_code.key);
-
-                if (!handler.isCallable(dev.vm.jsc)) {
-                    @panic("TODO: handle not callable");
-                }
-
-                bundle.* = .{ .value = .{
-                    .files = files,
-                    .server_request_callback = handler,
-                } };
-            },
-        }
-
-        task.finishHttpRequestsSuccess(kind, &bundle.value);
-    }
-
-    fn finishHttpRequestsSuccess(task: *BundleTask, comptime kind: BundleKind, bundle: *kind.Bundle()) void {
-        const func = comptime kind.completionFunction();
-
-        while (task.handlers.popFirst()) |node| {
-            defer bun.destroy(node);
-            if (node.data.resp) |resp| {
-                func(task.route, resp, @field(node.data.ctx, @tagName(kind)), bundle);
             }
         }
-    }
 
-    fn finishHttpRequestsFailure(task: *BundleTask, failure: *const Failure) void {
-        while (task.handlers.popFirst()) |node| {
-            defer bun.destroy(node);
-            if (node.data.resp) |resp| {
-                failure.sendAsHttpResponse(resp, task.route, task.kind);
+        const ChunkKind = enum {
+            initial_response,
+            hmr_chunk,
+        };
+
+        fn reset(g: *@This()) void {
+            g.current_incremental_chunk_len = 0;
+            g.current_incremental_chunk_parts.clearRetainingCapacity();
+        }
+
+        pub fn takeBundle(g: *@This(), kind: ChunkKind) ![]const u8 {
+            if (bun.FeatureFlags.kit_dev_module_keys == .numbers)
+                @compileError("Not Implemented");
+
+            const runtime = switch (kind) {
+                .initial_response => bun.kit.getHmrRuntime(.client),
+                .hmr_chunk => "({\n",
+            };
+
+            // A small amount of metadata is present at the end of the chunk
+            // to inform the HMR runtime some crucial entry-point info. The
+            // upper bound of this can be calculated, but 64kb is given to
+            // ensure no problems.
+            //
+            // TODO: is a higher upper bound required on Windows?
+            // Alternate solution: calculate the upper bound by summing
+            // framework paths and then reusing that allocation.
+            var end_buf: [65536]u8 = undefined;
+            const end = end: {
+                var fbs = std.io.fixedBufferStream(&end_buf);
+                const w = fbs.writer();
+                switch (kind) {
+                    .initial_response => {
+                        w.writeAll("}, {\n  main: ") catch unreachable;
+                        const main = "erm what the sigma?";
+                        bun.js_printer.writeJSONString(main, @TypeOf(w), w, .utf8) catch unreachable;
+                        w.writeAll("\n});") catch unreachable;
+                    },
+                    .hmr_chunk => {
+                        w.writeAll("\n})") catch unreachable;
+                    },
+                }
+                break :end fbs.getWritten();
+            };
+
+            const files = g.bundled_files.values();
+
+            // This function performs one allocation, right here
+            var chunk = try std.ArrayListUnmanaged(u8).initCapacity(
+                default_allocator,
+                g.current_incremental_chunk_len + runtime.len + end.len,
+            );
+
+            chunk.appendSliceAssumeCapacity(runtime);
+            for (g.current_incremental_chunk_parts.items) |entry| {
+                chunk.appendSliceAssumeCapacity(switch (side) {
+                    // entry is an index into files
+                    .client => files[@intFromEnum(entry)].code,
+                    // entry is the '[]const u8' itself
+                    .server => entry,
+                });
             }
-        }
-    }
+            chunk.appendSliceAssumeCapacity(end);
+            assert(chunk.capacity == chunk.items.len);
 
-    pub fn configureBundler(task: *BundleTask, bundler: *Bundler, allocator: Allocator) !void {
-        const dev = task.route.dev;
-
-        bundler.* = try bun.Bundler.init(
-            allocator,
-            &task.log,
-            std.mem.zeroes(bun.Schema.Api.TransformOptions),
-            null, // TODO:
-        );
-
-        const define = bundler.options.define;
-        bundler.options = dev.bundler.options;
-
-        bundler.options.define = define;
-        bundler.options.entry_points = (&task.route.entry_point)[0..1];
-        bundler.options.log = &task.log;
-        bundler.options.output_dir = ""; // this disables filesystem outpu;
-        bundler.options.output_format = .internal_kit_dev;
-        bundler.options.out_extensions = bun.StringHashMap([]const u8).init(bundler.allocator);
-        bundler.options.react_fast_refresh = task.kind == .client;
-
-        bundler.options.public_path = switch (task.kind) {
-            .client => task.route.clientPublicPath(),
-            .server => task.route.dev.cwd,
-        };
-        bundler.options.target = switch (task.kind) {
-            .client => .browser,
-            .server => .bun,
-        };
-        bundler.options.entry_naming = switch (task.kind) {
-            // Always name it "client.{js/css}" so that the server can know
-            // the entry-point script without waiting on a client bundle.
-            .client => "client.[ext]",
-            // For uniformity
-            .server => "server.[ext]",
-        };
-        bundler.options.tree_shaking = false;
-        bundler.options.minify_syntax = true;
-
-        // TODO: server HMR. less interesting but good to have
-        if (task.kind == .client) {
-            dev.hot_graph.reset();
-            bundler.options.kit = &dev.hot_graph;
+            return chunk.items;
         }
 
-        try kit.addImportMetaDefines(allocator, bundler.options.define, .development, .client);
-
-        bundler.configureLinker();
-        try bundler.configureDefines();
-
-        // The following are from Vite: https://vitejs.dev/guide/env-and-mode
-        // TODO: MODE, BASE_URL
-        try bundler.options.define.insert(
-            allocator,
-            "import.meta.env.DEV",
-            Define.Data.initBoolean(true),
-        );
-        try bundler.options.define.insert(
-            allocator,
-            "import.meta.env.PROD",
-            Define.Data.initBoolean(false),
-        );
-        try bundler.options.define.insert(
-            allocator,
-            "import.meta.env.SSR",
-            Define.Data.initBoolean(task.kind == .server),
-        );
-
-        bundler.resolver.opts = bundler.options;
-        bundler.resolver.watcher = dev.bundler.resolver.watcher;
-    }
-
-    pub fn completeMini(task: *BundleTask, _: *void) void {
-        task.completeOnMainThread();
-    }
-
-    pub fn completeOnBundleThread(task: *BundleTask) void {
-        task.route.dev.vm.event_loop.enqueueTaskConcurrent(task.concurrent_task.js.from(task, .manual_deinit));
-    }
-};
-
-/// Bundling should be concurrent, deduplicated, and cached.
-/// This acts as a sort of "native promise"
-fn BundlePromise(T: type) type {
-    return union(enum) {
-        unqueued,
-        pending: *BundleTask,
-        failed: Failure,
-        value: T,
+        pub fn owner(g: *@This()) *DevServer {
+            return @alignCast(@fieldParentPtr(@tagName(side) ++ "_graph", g));
+        }
     };
 }
+// const BundleThread = bun.bundle_v2.BundleThread(BundleTask);
+
+// /// A request to bundle something for development. Has one or more pending HTTP requests.
+// pub const BundleTask = struct {
+//     owner: *DevServer,
+//     route: *Route,
+//     kind: BundleKind,
+//     // env: *bun.DotEnv.Loader, // TODO
+//     plugins: ?*JSC.API.JSBundler.Plugin,
+//     handlers: DeferredRequest.List,
+
+//     next: ?*BundleTask = null,
+//     result: BundleV2.Result = .pending,
+
+//     // initialized in the task itself:
+//     concurrent_task: JSC.EventLoopTask = undefined,
+//     bundler: *BundleV2 = undefined,
+//     log: Log = undefined,
+
+//     /// There is no function pointer, route, or context on this struct as all of
+//     /// this information is inferable from the associated BundleTask
+//     const DeferredRequest = struct {
+//         /// When cancelled, this is set to null
+//         resp: ?*Response,
+//         /// Only valid if req is non-null
+//         ctx: BundleKind.AnyContext,
+
+//         fn newNode(resp: *Response, ctx: BundleKind.AnyContext) *DeferredRequest.List.Node {
+//             const node = bun.new(DeferredRequest.List.Node, .{
+//                 .data = .{
+//                     .resp = resp,
+//                     .ctx = ctx,
+//                 },
+//             });
+//             resp.onAborted(*DeferredRequest, onCancel, &node.data);
+//             return node;
+//         }
+
+//         fn onCancel(node: *DeferredRequest, resp: *Response) void {
+//             node.resp = null;
+//             node.ctx = undefined;
+//             _ = resp;
+//         }
+
+//         const List = std.SinglyLinkedList(DeferredRequest);
+//     };
+
+//     pub fn completeOnMainThread(task: *BundleTask) void {
+//         switch (task.kind) {
+//             inline else => |kind| task.completeOnMainThreadWithKind(kind),
+//         }
+//     }
+
+//     fn completeOnMainThreadWithKind(task: *BundleTask, comptime kind: BundleKind) void {
+//         const route = task.route;
+//         const bundle = switch (kind) {
+//             .client => &route.client_bundle,
+//             .server => &route.server_bundle,
+//         };
+
+//         assert(bundle.* == .pending);
+
+//         const dev = route.dev;
+
+//         if (task.result == .err) {
+//             const fail = Failure.fromLog(&task.log);
+//             fail.printToConsole(route, kind);
+//             task.finishHttpRequestsFailure(&fail);
+//             bundle.* = .{ .failed = fail };
+//             return;
+//         }
+
+//         if (task.log.hasAny()) {
+//             Output.warn("Warnings {s} for {s}", .{
+//                 @tagName(task.kind),
+//                 route.pattern,
+//             });
+//             task.log.printForLogLevel(Output.errorWriter()) catch {};
+//         }
+
+//         switch (kind) {
+//             .client => {
+//                 assert(task.result.value.output_files.items.len == 0);
+//                 // TODO: revive the code below to handle assets
+
+//                 // Set the capacity to the exact size required to avoid over-allocation
+//                 // var files_index: bun.CaseInsensitiveASCIIStringArrayHashMapUnmanaged(void) = .{};
+//                 // files_index.entries.setCapacity(default_allocator, files.len) catch bun.outOfMemory();
+//                 // files_index.entries.len = files.len;
+//                 // for (files_index.keys(), files) |*index_key, file| {
+//                 //     var dest_path = file.dest_path;
+//                 //     if (bun.strings.hasPrefixComptime(dest_path, "./")) {
+//                 //         dest_path = dest_path[2..];
+//                 //     }
+//                 //     index_key.* = dest_path;
+//                 // }
+//                 // files_index.reIndex(default_allocator) catch bun.outOfMemory();
+
+//                 const s = struct {
+//                     var static = true;
+//                 };
+//                 const chunk = dev.hot_graph.takeChunk(if (s.static) .initial_response else .hmr_chunk) catch bun.outOfMemory();
+//                 s.static = false;
+
+//                 _ = AnyWebSocket.publishWithOptions(false, dev.app, "TODO", chunk, .text, true);
+
+//                 bundle.* = .{
+//                     .value = .{
+//                         // .files = files,
+//                         // .files_index = files_index,
+//                         .entry_file_contents = chunk,
+//                         .entry_file_stale = false,
+//                     },
+//                 };
+//             },
+//             .server => {
+//                 const files = task.result.value.output_files.items;
+//                 assert(files.len == 1);
+//                 const entry_point = files[0];
+//                 const code = entry_point.value.buffer.bytes;
+
+//                 const server_code = c.KitLoadServerCode(dev.server_global, bun.String.createLatin1(code));
+//                 dev.vm.waitForPromise(.{ .internal = server_code.promise });
+
+//                 switch (server_code.promise.unwrap(dev.vm.jsc, .mark_handled)) {
+//                     .pending => unreachable, // promise is settled
+//                     .rejected => |err| {
+//                         const fail = Failure.fromJSServerLoad(err, dev.server_global.js());
+//                         fail.printToConsole(task.route, .server);
+//                         task.finishHttpRequestsFailure(&fail);
+//                         bundle.* = .{ .failed = fail };
+//                         return;
+//                     },
+//                     .fulfilled => |v| bun.assert(v == .undefined),
+//                 }
+
+//                 const handler = c.KitGetRequestHandlerFromModule(dev.server_global, server_code.key);
+
+//                 if (!handler.isCallable(dev.vm.jsc)) {
+//                     @panic("TODO: handle not callable");
+//                 }
+
+//                 bundle.* = .{ .value = .{
+//                     .files = files,
+//                     .server_request_callback = handler,
+//                 } };
+//             },
+//         }
+
+//         task.finishHttpRequestsSuccess(kind, &bundle.value);
+//     }
+
+//     fn finishHttpRequestsSuccess(task: *BundleTask, comptime kind: BundleKind, bundle: *kind.Bundle()) void {
+//         const func = comptime kind.completionFunction();
+
+//         while (task.handlers.popFirst()) |node| {
+//             defer bun.destroy(node);
+//             if (node.data.resp) |resp| {
+//                 func(task.route, resp, @field(node.data.ctx, @tagName(kind)), bundle);
+//             }
+//         }
+//     }
+
+//     fn finishHttpRequestsFailure(task: *BundleTask, failure: *const Failure) void {
+//         while (task.handlers.popFirst()) |node| {
+//             defer bun.destroy(node);
+//             if (node.data.resp) |resp| {
+//                 failure.sendAsHttpResponse(resp, task.route, task.kind);
+//             }
+//         }
+//     }
+
+//     pub fn configureBundler(task: *BundleTask, bundler: *Bundler, allocator: Allocator) !void {
+//         const dev = task.route.dev;
+
+//         // The following are from Vite: https://vitejs.dev/guide/env-and-mode
+//         // TODO: MODE, BASE_URL
+//         try bundler.options.define.insert(
+//             allocator,
+//             "import.meta.env.DEV",
+//             Define.Data.initBoolean(true),
+//         );
+//         try bundler.options.define.insert(
+//             allocator,
+//             "import.meta.env.PROD",
+//             Define.Data.initBoolean(false),
+//         );
+//         try bundler.options.define.insert(
+//             allocator,
+//             "import.meta.env.SSR",
+//             Define.Data.initBoolean(task.kind == .server),
+//         );
+
+//         bundler.resolver.opts = bundler.options;
+//         bundler.resolver.watcher = dev.bundler.resolver.watcher;
+//     }
+
+//     pub fn completeMini(task: *BundleTask, _: *void) void {
+//         task.completeOnMainThread();
+//     }
+
+//     pub fn completeOnBundleThread(task: *BundleTask) void {
+//         task.route.dev.vm.event_loop.enqueueTaskConcurrent(task.concurrent_task.js.from(task, .manual_deinit));
+//     }
+// };
+
+// /// Bundling should be concurrent, deduplicated, and cached.
+// /// This acts as a sort of "native promise"
+// fn BundlePromise(T: type) type {
+//     return union(enum) {
+//         unqueued,
+//         pending: *BundleTask,
+//         failed: Failure,
+//         value: T,
+//     };
+// }
 
 /// Represents an error from loading or server sided runtime. Information on
 /// what this error is from, such as the associated Route, is inferred from
@@ -893,7 +1004,7 @@ const Failure = union(enum) {
     // TODO: deduplicate the two methods here. that isnt trivial because one has to
     // style with ansi codes, and the other has to style with HTML.
 
-    fn printToConsole(fail: *const Failure, route: *const Route, kind: BundleKind) void {
+    fn printToConsole(fail: *const Failure, route: *const Route, side: kit.Side) void {
         defer Output.flush();
 
         Output.prettyErrorln("", .{});
@@ -901,7 +1012,7 @@ const Failure = union(enum) {
         switch (fail.*) {
             .bundler => |msgs| {
                 Output.prettyErrorln("<red>Errors while bundling {s}-side for '{s}'<r>", .{
-                    @tagName(kind),
+                    @tagName(side),
                     route.pattern,
                 });
                 Output.flush();
@@ -932,7 +1043,7 @@ const Failure = union(enum) {
         }
     }
 
-    fn sendAsHttpResponse(fail: *const Failure, resp: *Response, route: *const Route, kind: BundleKind) void {
+    fn sendAsHttpResponse(fail: *const Failure, resp: *Response, route: *const Route, side: kit.Side) void {
         resp.writeStatus("500 Internal Server Error");
         var buffer: [32768]u8 = undefined;
 
@@ -943,7 +1054,7 @@ const Failure = union(enum) {
             switch (fail.*) {
                 .bundler => |msgs| {
                     writer.print("Errors while bundling {s}-side for '{s}'\n\n", .{
-                        @tagName(kind),
+                        @tagName(side),
                         route.pattern,
                     }) catch break :message null;
 
@@ -977,9 +1088,9 @@ const Failure = union(enum) {
 };
 
 // For debugging, it is helpful to be able to see bundles.
-fn dumpBundle(dump_dir: std.fs.Dir, kind: BundleKind, rel_path: []const u8, chunk: []const u8) !void {
+fn dumpBundle(dump_dir: std.fs.Dir, side: kit.Side, rel_path: []const u8, chunk: []const u8) !void {
     const name = bun.path.joinAbsString("/", &.{
-        @tagName(kind),
+        @tagName(side),
         rel_path,
     }, .auto)[1..];
     var inner_dir = try dump_dir.makeOpenPath(bun.Dirname.dirname(u8, name).?, .{});
@@ -992,7 +1103,7 @@ fn dumpBundle(dump_dir: std.fs.Dir, kind: BundleKind, rel_path: []const u8, chun
 
     try bufw.writer().print("// {s} bundled for {s}\n", .{
         bun.fmt.quote(rel_path),
-        @tagName(kind),
+        @tagName(side),
     });
     try bufw.writer().print("// Bundled at {d}, Bun " ++ bun.Global.package_json_version_with_canary ++ "\n", .{
         std.time.nanoTimestamp(),
@@ -1006,6 +1117,20 @@ fn dumpBundle(dump_dir: std.fs.Dir, kind: BundleKind, rel_path: []const u8, chun
     try bufw.writer().writeAll("});\n");
 
     try bufw.flush();
+}
+
+pub fn isFileStale(dev: *DevServer, path: []const u8, side: kit.Side) bool {
+    switch (side) {
+        inline else => |side_comptime| {
+            const g = switch (side_comptime) {
+                .client => &dev.client_graph,
+                .server => &dev.server_graph,
+            };
+            const index = g.bundled_files.getIndex(path) orelse
+                return true; // non-existent files are considered stale
+            return g.stale_files.isSet(index);
+        },
+    }
 }
 
 /// This function is required by `HotReloader`
@@ -1077,26 +1202,101 @@ pub const c = struct {
     extern fn KitGetRequestHandlerFromModule(global: *DevGlobalObject, module: *JSC.JSString) JSValue;
 };
 
+// methods to satisfy NewHotReloader()'s interface
+
 pub fn reload(dev: *DevServer, reload_task: *const HotReloadTask) void {
+    dev.reloadWrap(reload_task) catch @panic("TODO handle watch failure");
+}
+
+pub fn reloadWrap(dev: *DevServer, reload_task: *const HotReloadTask) !void {
+    const sfb = default_allocator;
+
     const changed_file_paths = reload_task.paths[0..reload_task.count];
     const changed_hashes = reload_task.hashes[0..reload_task.count];
 
     defer for (changed_file_paths) |path| default_allocator.free(path);
 
-    dev.hot_graph.invalidate(changed_file_paths, changed_hashes);
+    var files_to_bundle = try DualArray([]const u8).initCapacity(sfb, changed_file_paths.len * 2);
+    defer files_to_bundle.deinit(sfb);
+    inline for (.{ &dev.server_graph, &dev.client_graph }) |g| {
+        g.invalidate(changed_file_paths, changed_hashes, &files_to_bundle);
+    }
 
-    const route = &dev.routes[0];
+    // const route = &dev.routes[0];
 
-    const bundle_task = bun.new(BundleTask, .{
-        .owner = dev,
-        .route = route,
-        .kind = .client,
-        .plugins = null,
-        .handlers = .{ .first = null },
-    });
-    assert(route.client_bundle != .pending); // todo: rapid reloads
-    route.client_bundle = .{ .pending = bundle_task };
-    dev.bundle_thread.enqueue(bundle_task);
+    // const bundle_task = bun.new(BundleTask, .{
+    //     .owner = dev,
+    //     .route = route,
+    //     .kind = .client,
+    //     .plugins = null,
+    //     .handlers = .{ .first = null },
+    // });
+    // assert(route.client_bundle != .pending); // todo: rapid reloads
+    // route.client_bundle = .{ .pending = bundle_task };
+    // dev.bundle_thread.enqueue(bundle_task);
+}
+
+pub fn bustDirCache(dev: *DevServer, path: []const u8) bool {
+    const a = dev.server_bundler.resolver.bustDirCache(path);
+    const b = dev.client_bundler.resolver.bustDirCache(path);
+    return a or b;
+}
+
+pub fn getLoaders(dev: *DevServer) *bun.options.Loader.HashTable {
+    // The watcher needs to know what loader to use for a file,
+    // therefore, we must ensure that server and client options
+    // use the same loader set.
+    return &dev.server_bundler.options.loaders;
+}
+
+/// A data structure to represent two arrays that share a known upper bound.
+/// The "left" array starts at the allocation start, and the "right" array
+/// starts at the allocation end.
+///
+/// An example use-case is having a list of files, but categorizing them
+/// into server/client. The total number of files is known.
+pub fn DualArray(T: type) type {
+    return struct {
+        items: []const T,
+        left_end: u32,
+        right_start: u32,
+
+        pub fn initCapacity(allocator: Allocator, cap: usize) !@This() {
+            return .{
+                .items = try allocator.alloc(T, cap),
+                .left_end = 0,
+                .right_start = @intCast(cap),
+            };
+        }
+
+        pub fn deinit(a: @This(), allocator: Allocator) void {
+            allocator.free(a.items);
+        }
+
+        fn hasAny(a: @This()) bool {
+            return a.left_end != 0 or a.right_start != a.items.len;
+        }
+
+        pub fn left(a: @This()) []T {
+            return a.items[0..a.left_end];
+        }
+
+        pub fn right(a: @This()) []T {
+            return a.items[a.right_start..];
+        }
+
+        pub fn appendLeft(a: *@This(), item: T) void {
+            assert(a.left_end < a.right_start);
+            a.items[a.left_len] = item;
+            a.left_end += 1;
+        }
+
+        pub fn appendRight(a: *@This(), item: T) void {
+            assert(a.right_start > a.left_end);
+            a.right_start -= 1;
+            a.items[a.right_start] = item;
+        }
+    };
 }
 
 const std = @import("std");
@@ -1134,3 +1334,5 @@ const JSInternalPromise = JSC.JSInternalPromise;
 
 pub const HotReloader = JSC.NewHotReloader(DevServer, JSC.EventLoop, false);
 pub const HotReloadTask = HotReloader.HotReloadTask;
+
+const ThreadlocalArena = @import("../mimalloc_arena.zig").Arena;

@@ -189,10 +189,6 @@ pub const BuildCommand = struct {
         this_bundler.options.code_splitting = ctx.bundler_options.code_splitting;
         this_bundler.options.transform_only = ctx.bundler_options.transform_only;
 
-        if (this_bundler.options.transform_only) {
-            this_bundler.options.resolve_mode = .disable;
-        }
-
         this_bundler.resolver.opts = this_bundler.options;
         this_bundler.options.jsx.development = !this_bundler.options.production;
         this_bundler.resolver.opts.jsx.development = this_bundler.options.jsx.development;

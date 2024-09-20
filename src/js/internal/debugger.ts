@@ -38,10 +38,11 @@ export default function (
 
   const notifyUrl = process.env["BUN_INSPECT_NOTIFY"] || "";
   if (notifyUrl) {
-    const { hostname, port, pathname, protocol } = new URL(notifyUrl);
-    if (protocol.startsWith("unix")) {
+    if (notifyUrl.startsWith("unix://")) {
+      const path = require("node:path");
       notify({
-        unix: pathname,
+        // This is actually a filesystem path, not a URL.
+        unix: path.resolve(notifyUrl.substring("unix://".length)),
       });
     } else {
       notify({

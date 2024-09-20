@@ -88,6 +88,7 @@ const Timer = @import("../system_timer.zig");
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
 const DebugLogs = _resolver.DebugLogs;
+const OOM = bun.OOM;
 
 const Router = @import("../router.zig");
 const isPackagePath = _resolver.isPackagePath;
@@ -1176,7 +1177,7 @@ pub const BundleV2 = struct {
         globalThis: *JSC.JSGlobalObject,
         event_loop: *bun.JSC.EventLoop,
         allocator: std.mem.Allocator,
-    ) !bun.JSC.JSValue {
+    ) OOM!bun.JSC.JSValue {
         var completion = try allocator.create(JSBundleCompletionTask);
         completion.* = JSBundleCompletionTask{
             .config = config,

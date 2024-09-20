@@ -684,6 +684,8 @@ pub const Loader = enum(u8) {
             .napi,
             .sqlite,
             .sqlite_embedded,
+            // TODO: loader for reading bytes and creating module or instance
+            .wasm,
             => true,
             else => false,
         };

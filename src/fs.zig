@@ -19,6 +19,7 @@ const Fs = @This();
 const path_handler = @import("./resolver/resolve_path.zig");
 const PathString = bun.PathString;
 const allocators = bun.allocators;
+const OOM = bun.OOM;
 
 const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
 const PathBuffer = bun.PathBuffer;
@@ -36,7 +37,7 @@ pub const Preallocate = struct {
 };
 
 pub const FileSystem = struct {
-    top_level_dir: string = if (Environment.isWindows) "C:\\" else "/",
+    top_level_dir: string,
 
     // used on subsequent updates
     top_level_dir_buf: bun.PathBuffer = undefined,
@@ -45,8 +46,6 @@ pub const FileSystem = struct {
 
     dirname_store: *DirnameStore,
     filename_store: *FilenameStore,
-
-    _tmpdir: ?std.fs.Dir = null,
 
     threadlocal var tmpdir_handle: ?std.fs.Dir = null;
 
@@ -136,7 +135,6 @@ pub const FileSystem = struct {
             };
             instance_loaded = true;
 
-            instance.fs.parent_fs = &instance;
             _ = DirEntry.EntryStore.init(allocator);
         }
 
@@ -536,7 +534,6 @@ pub const FileSystem = struct {
         entries_mutex: Mutex = .{},
         entries: *EntriesOption.Map,
         cwd: string,
-        parent_fs: *FileSystem = undefined,
         file_limit: usize = 32,
         file_quota: usize = 32,
 
@@ -617,7 +614,7 @@ pub const FileSystem = struct {
             var existing = this.entries.atIndex(index) orelse return null;
             if (existing.* == .entries) {
                 if (existing.entries.generation < generation) {
-                    var handle = bun.openDirA(std.fs.cwd(), existing.entries.dir) catch |err| {
+                    var handle = bun.openDirForIteration(std.fs.cwd(), existing.entries.dir) catch |err| {
                         existing.entries.data.clearAndFree(bun.fs_allocator);
 
                         return this.readDirectoryError(existing.entries.dir, err) catch unreachable;
@@ -991,7 +988,7 @@ pub const FileSystem = struct {
             return dir;
         }
 
-        fn readDirectoryError(fs: *RealFS, dir: string, err: anyerror) !*EntriesOption {
+        fn readDirectoryError(fs: *RealFS, dir: string, err: anyerror) OOM!*EntriesOption {
             if (comptime FeatureFlags.enable_entry_cache) {
                 var get_or_put_result = try fs.entries.getOrPut(dir);
                 const opt = try fs.entries.put(&get_or_put_result, EntriesOption{
@@ -1092,8 +1089,7 @@ pub const FileSystem = struct {
                 iterator,
             ) catch |err| {
                 if (in_place) |existing| existing.data.clearAndFree(bun.fs_allocator);
-
-                return fs.readDirectoryError(dir, err) catch bun.outOfMemory();
+                return try fs.readDirectoryError(dir, err);
             };
 
             if (comptime FeatureFlags.enable_entry_cache) {

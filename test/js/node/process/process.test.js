@@ -264,6 +264,9 @@ const versions = existsSync(generated_versions_list);
   versions.ares = versions.c_ares;
   delete versions.c_ares;
 
+  // Handled by BUN_WEBKIT_VERSION #define
+  delete versions.webkit;
+
   for (const name in versions) {
     expect(process.versions).toHaveProperty(name);
     expect(process.versions[name]).toBe(versions[name]);

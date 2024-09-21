@@ -176,19 +176,23 @@ class FileDebugSession extends DebugSession {
   constructor(sessionId?: string) {
     super();
     const uniqueId = sessionId ?? Math.random().toString(36).slice(2);
-    // the signal is only first used well after this resolves
-    getAvailablePort().then(port => {
-      const url = process.platform === "win32" ? `ws://127.0.0.1:${port}/${getRandomId()}` : `ws+unix://${tmpdir()}/${uniqueId}.sock`;
+    let url;
+    if (process.platform === "win32") {
+      getAvailablePort().then(port => {
+        // the signal is only first used well after this resolves
+        url = `ws://127.0.0.1:${port}/${getRandomId()}`;
+      });
+    } else {
+      url = `ws+unix://${tmpdir()}/${uniqueId}.sock`;
+    }
+    this.adapter = new DebugAdapter(url);
+    this.adapter.on("Adapter.response", response => this.sendResponse(response));
+    this.adapter.on("Adapter.event", event => this.sendEvent(event));
+    this.adapter.on("Adapter.reverseRequest", ({ command, arguments: args }) =>
+      this.sendRequest(command, args, 5000, () => {}),
+    );
 
-      this.adapter = new DebugAdapter(url);
-      this.adapter.on("Adapter.response", response => this.sendResponse(response));
-      this.adapter.on("Adapter.event", event => this.sendEvent(event));
-      this.adapter.on("Adapter.reverseRequest", ({ command, arguments: args }) =>
-        this.sendRequest(command, args, 5000, () => {}),
-      );
-
-      adapters.set(url, this);
-    });
+    adapters.set(url, this);
   }
 
   handleMessage(message: DAP.Event | DAP.Request | DAP.Response): void {
@@ -211,18 +215,18 @@ class TerminalDebugSession extends FileDebugSession {
 
   constructor() {
     super();
-    // the signal is only first used well after this resolves
-    getAvailablePort().then(port => {
-      if (process.platform === "win32") {
+    if (process.platform === "win32") {
+      getAvailablePort().then(port => {
+        // the signal is only first used well after this resolves
         this.signal = new TCPSocketSignal(port);
-      } else {
-        this.signal = new UnixSignal();
-      }
-      this.signal.on("Signal.received", () => {
-        vscode.debug.startDebugging(undefined, {
-          ...ATTACH_CONFIGURATION,
-          url: this.adapter.url,
-        });
+      });
+    } else {
+      this.signal = new UnixSignal();
+    }
+    this.signal.on("Signal.received", () => {
+      vscode.debug.startDebugging(undefined, {
+        ...ATTACH_CONFIGURATION,
+        url: this.adapter.url,
       });
     });
   }

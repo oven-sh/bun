@@ -2207,7 +2207,7 @@ function titleize(name: string): string {
 }
 
 function sourcePresentationHint(url?: string): DAP.Source["presentationHint"] {
-  if (!url || path.isAbsolute(url)) {
+  if (!url || !path.isAbsolute(url)) {
     return "deemphasize";
   }
   if (url.includes("/node_modules/") || url.includes("\\node_modules\\")) {
@@ -2222,7 +2222,7 @@ function sourceName(url?: string): string {
   }
   if (isJavaScript(url)) {
     if (process.platform === "win32") {
-      return url.split("\\").pop() || url;
+      url = url.replaceAll("\\", "/");
     }
     return url.split("/").pop() || url;
   }
@@ -2633,6 +2633,10 @@ export function getRandomId() {
   return Math.random().toString(36).slice(2);
 }
 
-export function normalizeWindowsPath(path: string): string {
-  return (path.charAt(0).toUpperCase() + path.slice(1)).replaceAll("\\\\", "\\");
+export function normalizeWindowsPath(winPath: string): string {
+  winPath = path.normalize(winPath);
+  if (winPath[1] === ":" && (winPath[2] === "\\" || winPath[2] === "/")) {
+    return (winPath.charAt(0).toUpperCase() + winPath.slice(1)).replaceAll("\\\\", "\\");
+  }
+  return winPath;
 }

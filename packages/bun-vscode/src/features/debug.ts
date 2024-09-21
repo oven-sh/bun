@@ -106,7 +106,7 @@ async function injectDebugTerminal(terminal: vscode.Terminal): Promise<void> {
     env: {
       ...env,
       "BUN_INSPECT": `${adapter.url}?${query}`,
-      "BUN_INSPECT_NOTIFY": `${signal instanceof UnixSignal ? signal.url : `tcp://127.0.0.1:${signal.port}`}`,
+      "BUN_INSPECT_NOTIFY": signal.url,
     },
   });
 

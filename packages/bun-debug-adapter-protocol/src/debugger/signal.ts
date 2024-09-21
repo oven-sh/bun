@@ -87,11 +87,11 @@ function parseUnixPath(path: string | URL): string {
 }
 
 export type TCPSocketSignalEventMap = {
-  'Signal.listening': [];
-  'Signal.error': [Error];
-  'Signal.closed': [];
-  'Signal.received': [string];
-}
+  "Signal.listening": [];
+  "Signal.error": [Error];
+  "Signal.closed": [];
+  "Signal.received": [string];
+};
 
 export class TCPSocketSignal extends EventEmitter {
   #port: number;
@@ -103,25 +103,25 @@ export class TCPSocketSignal extends EventEmitter {
     this.#port = port;
 
     this.#server = createServer((socket: Socket) => {
-      socket.on('data', (data) => {
-        this.emit('Signal.received', data.toString());
+      socket.on("data", data => {
+        this.emit("Signal.received", data.toString());
       });
 
-      socket.on('error', (error) => {
-        this.emit('Signal.error', error);
+      socket.on("error", error => {
+        this.emit("Signal.error", error);
       });
 
-      socket.on('close', () => {
-        this.emit('Signal.closed');
+      socket.on("close", () => {
+        this.emit("Signal.closed");
       });
     });
 
     this.#ready = new Promise((resolve, reject) => {
       this.#server.listen(this.#port, () => {
-        this.emit('Signal.listening');
+        this.emit("Signal.listening");
         resolve();
       });
-      this.#server.on('error', reject);
+      this.#server.on("error", reject);
     });
   }
 
@@ -137,6 +137,10 @@ export class TCPSocketSignal extends EventEmitter {
    */
   get port(): number {
     return this.#port;
+  }
+
+  get url(): string {
+    return `tcp://127.0.0.1:${this.#port}`;
   }
 
   /**

@@ -117,7 +117,6 @@ else
 
 pub const Error = @import("ErrorCode").Error;
 
-pub const MAX_SAFE_INTEGER = std.math.maxInt(i52);
-pub const MIN_SAFE_INTEGER = std.math.minInt(i52);
-pub const MAX_NUMBER = std.math.maxInt(f64);
-pub const MIN_NUMBER = std.math.minInt(f64);
+pub const MAX_SAFE_INTEGER = 9007199254740991;
+
+pub const MIN_SAFE_INTEGER = -9007199254740991;

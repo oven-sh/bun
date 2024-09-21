@@ -6289,6 +6289,7 @@ pub const CallFrame = opaque {
         return struct {
             ptr: [max]JSC.JSValue,
             len: usize,
+
             pub inline fn init(comptime i: usize, ptr: [*]const JSC.JSValue) @This() {
                 var args: [max]JSC.JSValue = std.mem.zeroes([max]JSC.JSValue);
                 args[0..i].* = ptr[0..i].*;
@@ -6297,6 +6298,12 @@ pub const CallFrame = opaque {
                     .ptr = args,
                     .len = i,
                 };
+            }
+
+            pub inline fn initUndef(comptime i: usize, ptr: [*]const JSC.JSValue) @This() {
+                var args = [1]JSC.JSValue{.undefined} ** max;
+                args[0..i].* = ptr[0..i].*;
+                return @This(){ .ptr = args, .len = i };
             }
 
             pub inline fn slice(self: *const @This()) []const JSValue {
@@ -6311,6 +6318,16 @@ pub const CallFrame = opaque {
         return switch (@as(u4, @min(len, max))) {
             0 => .{ .ptr = undefined, .len = 0 },
             inline 1...9 => |count| Arguments(max).init(comptime @min(count, max), ptr),
+            else => unreachable,
+        };
+    }
+
+    pub fn argumentsUndef(self: *const CallFrame, comptime max: usize) Arguments(max) {
+        const len = self.argumentsCount();
+        const ptr = self.argumentsPtr();
+        return switch (@as(u4, @min(len, max))) {
+            0 => .{ .ptr = .{.undefined} ** max, .len = 0 },
+            inline 1...9 => |count| Arguments(max).initUndef(@min(count, max), ptr),
             else => unreachable,
         };
     }

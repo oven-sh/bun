@@ -3451,9 +3451,7 @@ pub fn assert_neql(a: anytype, b: anytype) callconv(callconv_inline) void {
 }
 
 pub fn unsafeAssert(condition: bool) callconv(callconv_inline) void {
-    if (!condition) {
-        unreachable;
-    }
+    if (!condition) unreachable;
 }
 
 pub const dns = @import("./dns.zig");

@@ -2597,14 +2597,14 @@ export default {
   getUnpackedSettings,
   sensitiveHeaders,
   Http2ServerRequest,
-  // Http2ServerResponse,
+  Http2ServerResponse,
   connect,
   ClientHttp2Session,
 };
 
 hideFromStack([
   Http2ServerRequest,
-  // Http2ServerResponse,
+  Http2ServerResponse,
   connect,
   createServer,
   createSecureServer,

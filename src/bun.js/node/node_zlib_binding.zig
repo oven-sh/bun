@@ -651,6 +651,7 @@ pub const SNativeBrotli = struct {
             .globalThis = globalThis,
         });
         ptr.stream.mode = ptr.mode;
+        ptr.stream.mode_ = ptr.mode;
         return ptr;
     }
 
@@ -707,6 +708,7 @@ const BrotliContext = struct {
     const Op = bun.brotli.c.BrotliEncoder.Operation;
 
     mode: bun.zlib.NodeMode = .NONE,
+    mode_: bun.zlib.NodeMode = .NONE,
     state: *anyopaque = undefined,
 
     next_in: ?[*]const u8 = null,
@@ -720,7 +722,7 @@ const BrotliContext = struct {
     error_: c.BrotliDecoderErrorCode2 = .NO_ERROR,
 
     pub fn init(this: *BrotliContext) Error {
-        switch (this.mode) {
+        switch (this.mode_) {
             .BROTLI_ENCODE => {
                 const alloc = &bun.brotli.BrotliAllocator.alloc;
                 const free = &bun.brotli.BrotliAllocator.free;
@@ -746,7 +748,7 @@ const BrotliContext = struct {
     }
 
     pub fn setParams(this: *BrotliContext, key: c_uint, value: u32) Error {
-        switch (this.mode) {
+        switch (this.mode_) {
             .BROTLI_ENCODE => {
                 if (c.BrotliEncoderSetParameter(@ptrCast(this.state), key, value) == 0) {
                     return Error.init("Setting parameter failed", -1, "ERR_BROTLI_PARAM_SET_FAILED");
@@ -779,7 +781,7 @@ const BrotliContext = struct {
     }
 
     pub fn doWork(this: *BrotliContext) void {
-        switch (this.mode) {
+        switch (this.mode_) {
             .BROTLI_ENCODE => {
                 var next_in = this.next_in;
                 this.last_result.e = c.BrotliEncoderCompressStream(@ptrCast(this.state), this.flush, &this.avail_in, &next_in, &this.avail_out, &this.next_out, null);
@@ -803,7 +805,7 @@ const BrotliContext = struct {
     }
 
     pub fn getErrorInfo(this: *BrotliContext) Error {
-        switch (this.mode) {
+        switch (this.mode_) {
             .BROTLI_ENCODE => {
                 if (this.last_result.e == 0) {
                     return Error.init("Compression failed", -1, "ERR_BROTLI_COMPRESSION_FAILED");

@@ -1228,7 +1228,6 @@ pub const H2FrameParser = struct {
         if (data_needed > padding) {
             data_needed -= padding;
             payload = payload[0..@min(@as(usize, @intCast(data_needed)), payload.len)];
-            log("onData payload {s}", .{payload});
             const chunk = this.handlers.binary_type.toJS(payload, this.handlers.globalObject);
             this.dispatchWithExtra(.onStreamData, stream.getIdentifier(), chunk);
         } else {

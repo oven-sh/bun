@@ -822,7 +822,7 @@ elseif(APPLE)
 else()
   # Try to use lld-16 if available, otherwise fallback to lld
   # Cache it so we don't have to re-run CMake to pick it up
-  if(NOT DEFINED LLD_NAME)
+  if((NOT DEFINED LLD_NAME) AND (NOT CI OR BUN_LINK_ONLY))
     find_program(LLD_EXECUTABLE_NAME lld-${LLVM_VERSION_MAJOR})
 
     if(NOT LLD_EXECUTABLE_NAME)
@@ -842,6 +842,8 @@ else()
     # normalize to basename so it can be used with -fuse-ld
     get_filename_component(LLD_NAME ${LLD_EXECUTABLE_NAME} NAME CACHE)
     message(STATUS "Using linker: ${LLD_NAME} (${LLD_EXECUTABLE_NAME})")
+  elseif(NOT DEFINED LLD_NAME)
+    set(LLD_NAME lld-${LLVM_VERSION_MAJOR})
   endif()
 
   target_link_options(${bun} PUBLIC

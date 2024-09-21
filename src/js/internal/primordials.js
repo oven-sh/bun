@@ -83,12 +83,14 @@ function ErrorCaptureStackTrace(targetObject) {
 }
 
 const arrayProtoPush = Array.prototype.push;
-
+const ArrayPrototypeSymbolIterator = uncurryThis(Array.prototype[Symbol.iterator]);
+const ArrayIteratorPrototypeNext = uncurryThis(ArrayPrototypeSymbolIterator.next);
 export default {
   makeSafe, // exported for testing
   Array,
   ArrayFrom: Array.from,
   ArrayIsArray: Array.isArray,
+  SafeArrayIterator: createSafeIterator(ArrayPrototypeSymbolIterator, ArrayIteratorPrototypeNext),
   ArrayPrototypeFlat: uncurryThis(Array.prototype.flat),
   ArrayPrototypeFilter: uncurryThis(Array.prototype.filter),
   ArrayPrototypeForEach,

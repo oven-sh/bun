@@ -1825,7 +1825,7 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn onData(this: *This, _: Socket, data: []const u8) void {
             JSC.markBinding(@src());
-            log("onData({s} - {d})", .{data, data.len});
+            log("onData({d})", .{data.len});
             if (this.socket.isDetached()) return;
 
             if (this.native_callbacks.onData) |nativeCallback| {

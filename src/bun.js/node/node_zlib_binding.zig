@@ -345,8 +345,8 @@ pub const SNativeZlib = struct {
             return .zero;
         }
 
-        const level = validators.validateInt32(globalThis, arguments[1], "level", .{}, null, null) catch return .zero;
-        const strategy = validators.validateInt32(globalThis, arguments[3], "strategy", .{}, null, null) catch return .zero;
+        const level = validators.validateInt32(globalThis, arguments[0], "level", .{}, null, null) catch return .zero;
+        const strategy = validators.validateInt32(globalThis, arguments[1], "strategy", .{}, null, null) catch return .zero;
 
         const err = this.stream.setParams(level, strategy);
         if (err.isError()) {

@@ -450,7 +450,7 @@ const ZlibContext = struct {
             },
             else => {},
         }
-        if (this.err != .Ok or this.err != .BufError) {
+        if (this.err != .Ok and this.err != .BufError) {
             return this.error_for_message("Failed to set parameters");
         }
         return Error.ok;

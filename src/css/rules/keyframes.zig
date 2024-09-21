@@ -107,7 +107,7 @@ pub const KeyframesName = union(enum) {
                 {
                     return .{ .err = input.newUnexpectedTokenError(.{ .ident = s }) };
                 } else {
-                    return .{ .result = .{ .ident = s } };
+                    return .{ .result = .{ .ident = .{ .v = s } } };
                 }
             },
             .quoted_string => |s| return .{ .result = .{ .custom = s } },
@@ -122,7 +122,7 @@ pub const KeyframesName = union(enum) {
 
         switch (this.*) {
             .ident => |ident| {
-                try dest.writeIdent(ident, css_module_aimation_enabled);
+                try dest.writeIdent(ident.v, css_module_aimation_enabled);
             },
             .custom => |s| {
                 // todo_stuff.match_ignore_ascii_case

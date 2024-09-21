@@ -25,11 +25,11 @@ pub const ContainerName = struct {
         };
 
         // todo_stuff.match_ignore_ascii_case;
-        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("none", ident) or
-            bun.strings.eqlCaseInsensitiveASCIIICheckLength("and", ident) or
-            bun.strings.eqlCaseInsensitiveASCIIICheckLength("not", ident) or
-            bun.strings.eqlCaseInsensitiveASCIIICheckLength("or", ident))
-            return .{ .err = input.newUnexpectedTokenError(.{ .ident = ident }) };
+        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("none", ident.v) or
+            bun.strings.eqlCaseInsensitiveASCIIICheckLength("and", ident.v) or
+            bun.strings.eqlCaseInsensitiveASCIIICheckLength("not", ident.v) or
+            bun.strings.eqlCaseInsensitiveASCIIICheckLength("or", ident.v))
+            return .{ .err = input.newUnexpectedTokenError(.{ .ident = ident.v }) };
 
         return .{ .result = ContainerName{ .v = ident } };
     }

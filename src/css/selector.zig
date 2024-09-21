@@ -1072,7 +1072,7 @@ pub const api = struct {
 
         pub fn namespaceForPrefix(this: *SelectorParser, prefix: css.css_values.ident.Ident) ?[]const u8 {
             _ = this; // autofix
-            return prefix;
+            return prefix.v;
         }
 
         pub fn parseFunctionalPseudoElement(this: *SelectorParser, name: []const u8, input: *css.Parser) Result(Impl.SelectorImpl.PseudoElement) {
@@ -2410,9 +2410,9 @@ pub const api = struct {
                 .local_name = LocalName(Impl){
                     .lower_name = brk: {
                         var lowercase = parser.allocator.alloc(u8, name.len) catch unreachable;
-                        break :brk bun.strings.copyLowercase(name, lowercase[0..]);
+                        break :brk .{ .v = bun.strings.copyLowercase(name, lowercase[0..]) };
                     },
-                    .name = name,
+                    .name = .{ .v = name },
                 },
             });
         } else {
@@ -2449,7 +2449,7 @@ pub const api = struct {
                 if (state.intersects(SelectorParsingState.AFTER_PSEUDO)) {
                     return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_state)) };
                 }
-                const component: GenericComponent(Impl) = .{ .id = id };
+                const component: GenericComponent(Impl) = .{ .id = .{ .v = id } };
                 return .{ .result = S{
                     .simple_selector = component,
                 } };
@@ -2521,7 +2521,7 @@ pub const api = struct {
                                         self.parser.allocator,
                                         switch (input2.expectIdent()) {
                                             .err => |e| return .{ .err = e },
-                                            .result => |v| v,
+                                            .result => |v| .{ .v = v },
                                         },
                                     ) catch unreachable;
 
@@ -2530,7 +2530,7 @@ pub const api = struct {
                                             self.parser.allocator,
                                             switch (input2.expectIdent()) {
                                                 .err => |e| return .{ .err = e },
-                                                .result => |v| v,
+                                                .result => |v| .{.v = v},
                                             },
                                         ) catch unreachable;
                                     }
@@ -2636,8 +2636,7 @@ pub const api = struct {
                                 return .{ .err = location.newCustomError(e.intoDefaultParserError()) };
                             },
                         };
-                        const component_class = .{ .class = class };
-                        return .{ .result = .{ .simple_selector = component_class } };
+                        return .{ .result = .{ .simple_selector = .{ .class = .{ .v = class } } } };
                     },
                     '&' => {
                         if (parser.isNestingAllowed()) {
@@ -2703,8 +2702,8 @@ pub const api = struct {
                     if (namespace) |ns| {
                         const x = attrs.AttrSelectorWithOptionalNamespace(Impl){
                             .namespace = ns,
-                            .local_name = local_name,
-                            .local_name_lower = local_name_lower,
+                            .local_name = .{ .v = local_name },
+                            .local_name_lower = .{ .v = local_name_lower },
                             .never_matches = false,
                             .operation = .exists,
                         };
@@ -2714,8 +2713,8 @@ pub const api = struct {
                     } else {
                         return .{ .result = .{
                             .attribute_in_no_namespace_exists = .{
-                                .local_name = local_name,
-                                .local_name_lower = local_name_lower,
+                                .local_name = .{ .v = local_name },
+                                .local_name_lower = .{ .v = local_name_lower },
                             },
                         } };
                     }
@@ -2777,18 +2776,18 @@ pub const api = struct {
             }) |first_uppercase| {
                 const str = local_name[first_uppercase..];
                 const lower = parser.allocator.alloc(u8, str.len) catch unreachable;
-                break :brk .{ bun.strings.copyLowercase(str, lower), false };
+                break :brk .{ .{ .v = bun.strings.copyLowercase(str, lower) }, false };
             } else {
-                break :brk .{ local_name, true };
+                break :brk .{ .{ .v = local_name }, true };
             }
         };
-        const case_sensitivity: attrs.ParsedCaseSensitivity = attribute_flags.toCaseSensitivity(local_name_lower, namespace != null);
+        const case_sensitivity: attrs.ParsedCaseSensitivity = attribute_flags.toCaseSensitivity(local_name_lower.v, namespace != null);
         if (namespace != null and !local_name_is_ascii_lowercase) {
             return .{ .result = .{
                 .attribute_other = brk: {
                     const x = attrs.AttrSelectorWithOptionalNamespace(Impl){
                         .namespace = namespace,
-                        .local_name = local_name,
+                        .local_name = .{ .v = local_name },
                         .local_name_lower = local_name_lower,
                         .never_matches = never_matches,
                         .operation = .{
@@ -2805,7 +2804,7 @@ pub const api = struct {
         } else {
             return .{ .result = .{
                 .attribute_in_no_namespace = .{
-                    .local_name = local_name,
+                    .local_name = .{ .v = local_name },
                     .operator = operator,
                     .value = value,
                     .case_sensitivity = case_sensitivity,
@@ -3170,7 +3169,7 @@ pub const api = struct {
                 const after_ident = input.state();
                 const n = if (input.nextIncludingWhitespace().asValue()) |t| t.* == .delim and t.delim == '|' else false;
                 if (n) {
-                    const prefix: Impl.SelectorImpl.NamespacePrefix = value;
+                    const prefix: Impl.SelectorImpl.NamespacePrefix = .{ .v = value };
                     const result: ?Impl.SelectorImpl.NamespaceUrl = parser.namespaceForPrefix(prefix);
                     const url: Impl.SelectorImpl.NamespaceUrl = brk: {
                         if (result) |url| break :brk url;
@@ -3679,11 +3678,11 @@ pub const serialize = struct {
             },
             .class => |class| {
                 try dest.writeChar('.');
-                return dest.writeIdent(class, true);
+                return dest.writeIdent(class.v, true);
             },
             .id => |id| {
                 try dest.writeChar('#');
-                return dest.writeIdent(id, true);
+                return dest.writeIdent(id.v, true);
             },
             .host => |selector| {
                 try dest.writeStr(":host");

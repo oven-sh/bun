@@ -1300,7 +1300,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
 
                         this.rules.v.append(this.allocator, .{
                             .namespace = NamespaceRule{
-                                .prefix = prefix,
+                                .prefix = if (prefix) |p| .{ .v = p } else null,
                                 .url = url,
                                 .loc = loc,
                             },
@@ -2322,7 +2322,6 @@ pub fn StyleSheet(comptime AtRule: type) type {
                 }
             }
 
-            // TODO finish these
             var sources = ArrayList([]const u8){};
             sources.append(allocator, options.filename) catch bun.outOfMemory();
             var source_map_urls = ArrayList(?[]const u8){};
@@ -5417,9 +5416,8 @@ pub const generic = struct {
             f32 => CSSNumberFns.parse(input),
             CSSInteger => CSSIntegerFns.parse(input),
             CustomIdent => CustomIdentFns.parse(input),
-            // FIXME: when we fix these damn types
-            // DashedIdent => DashedIdentFns.parse(input),
-            // Ident => IdentFns.parse(input),
+            DashedIdent => DashedIdentFns.parse(input),
+            Ident => IdentFns.parse(input),
             else => T.parse(input),
         };
     }
@@ -5429,9 +5427,8 @@ pub const generic = struct {
             f32 => CSSNumberFns.parse(input),
             CSSInteger => CSSIntegerFns.parse(input),
             CustomIdent => CustomIdentFns.parse(input),
-            // FIXME: when we fix these damn types
-            // DashedIdent => DashedIdentFns.parse(input),
-            // Ident => IdentFns.parse(input),
+            DashedIdent => DashedIdentFns.parse(input),
+            Ident => IdentFns.parse(input),
             else => T.parse(input),
         };
     }

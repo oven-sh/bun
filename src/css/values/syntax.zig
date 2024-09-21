@@ -201,7 +201,7 @@ pub const SyntaxString = union(enum) {
                                         if (!bun.strings.eql(ident, value)) {
                                             return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
                                         }
-                                        break :blk ParsedComponent{ .literal = ident };
+                                        break :blk ParsedComponent{ .literal = .{ .v = ident } };
                                     },
                                 };
                                 return .{ .result = value };
@@ -472,7 +472,7 @@ pub const ParsedComponent = union(enum) {
             .transform_function => |*v| try v.toCss(W, dest),
             .transform_list => |*v| try v.toCss(W, dest),
             .custom_ident => |*v| try CustomIdentFns.toCss(v, W, dest),
-            .literal => |*v| css.serializer.serializeIdentifier(v.*, dest) catch return dest.addFmtError(),
+            .literal => |*v| css.serializer.serializeIdentifier(v.v, dest) catch return dest.addFmtError(),
             .repeated => |*r| {
                 var first = true;
                 for (r.components.items) |*component| {

@@ -441,7 +441,7 @@ pub const TokenList = struct {
                             input.allocator(),
                             .{
                                 .function = .{
-                                    .name = f,
+                                    .name = .{ .v = f },
                                     .arguments = arguments,
                                 },
                             },
@@ -488,7 +488,7 @@ pub const TokenList = struct {
                 },
                 .ident => |name| {
                     if (bun.strings.startsWith(name, "--")) {
-                        tokens.append(input.allocator(), .{ .dashed_ident = name }) catch unreachable;
+                        tokens.append(input.allocator(), .{ .dashed_ident = .{ .v = name } }) catch unreachable;
                         last_is_delim = false;
                         last_is_whitespace = false;
                     }
@@ -1164,14 +1164,14 @@ pub const CustomPropertyName = union(enum) {
     unknown: Ident,
 
     pub fn fromStr(name: []const u8) CustomPropertyName {
-        if (bun.strings.startsWith(name, "--")) return .{ .custom = name };
-        return .{ .unknown = name };
+        if (bun.strings.startsWith(name, "--")) return .{ .custom = .{ .v = name } };
+        return .{ .unknown = .{ .v = name } };
     }
 
     pub fn asStr(self: *const CustomPropertyName) []const u8 {
         switch (self.*) {
-            .custom => |custom| return custom,
-            .unknown => |unknown| return unknown,
+            .custom => |custom| return custom.v,
+            .unknown => |unknown| return unknown.v,
         }
     }
 };

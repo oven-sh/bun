@@ -1234,8 +1234,8 @@ pub fn MediaFeatureName(comptime FeatureId: type) type {
             if (@intFromEnum(lhs.*) != @intFromEnum(rhs.*)) return false;
             return switch (lhs.*) {
                 .standard => |fid| fid == rhs.standard,
-                .custom => |ident| bun.strings.eql(ident, rhs.custom),
-                .unknown => |ident| bun.strings.eql(ident, rhs.unknown),
+                .custom => |ident| bun.strings.eql(ident.v, rhs.custom.v),
+                .unknown => |ident| bun.strings.eql(ident.v, rhs.unknown.v),
             };
         }
 
@@ -1278,7 +1278,7 @@ pub fn MediaFeatureName(comptime FeatureId: type) type {
             if (bun.strings.startsWith(ident, "--")) {
                 return .{ .result = .{
                     .{
-                        .custom = ident,
+                        .custom = .{ .v = ident },
                     },
                     null,
                 } };
@@ -1334,7 +1334,7 @@ pub fn MediaFeatureName(comptime FeatureId: type) type {
 
             return .{ .result = .{
                 .{
-                    .unknown = ident,
+                    .unknown = .{ .v = ident },
                 },
                 null,
             } };

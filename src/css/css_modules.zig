@@ -99,20 +99,20 @@ pub const CssModule = struct {
                             const reference: CssModuleReference = if (composes.from) |*specifier|
                                 switch (specifier.*) {
                                     .source_index => |dep_source_index| {
-                                        if (this.exports_by_source_index.items[dep_source_index].get(name)) |entry| {
+                                        if (this.exports_by_source_index.items[dep_source_index].get(name.v)) |entry| {
                                             const entry_name = entry.name;
                                             const composes2 = &entry.composes;
-                                            const @"export" = this.exports_by_source_index.items[source_index].getPtr(id).?;
+                                            const @"export" = this.exports_by_source_index.items[source_index].getPtr(id.v).?;
 
                                             @"export".composes.append(allocator, .{ .local = .{ .name = entry_name } }) catch bun.outOfMemory();
                                             @"export".composes.appendSlice(allocator, composes2.items) catch bun.outOfMemory();
                                         }
                                         continue;
                                     },
-                                    .global => CssModuleReference{ .global = .{ .name = name } },
+                                    .global => CssModuleReference{ .global = .{ .name = name.v } },
                                     .file => |file| CssModuleReference{
                                         .dependency = .{
-                                            .name = name,
+                                            .name = name.v,
                                             .specifier = file,
                                         },
                                     },
@@ -125,12 +125,12 @@ pub const CssModule = struct {
                                             ArrayList(u8){},
                                             this.hashes.items[source_index],
                                             this.sources.items[source_index],
-                                            name,
+                                            name.v,
                                         ),
                                     },
                                 };
 
-                            const export_value = this.exports_by_source_index.items[source_index].getPtr(id) orelse unreachable;
+                            const export_value = this.exports_by_source_index.items[source_index].getPtr(id.v) orelse unreachable;
                             export_value.composes.append(allocator, reference) catch bun.outOfMemory();
 
                             const contains_reference = brk: {

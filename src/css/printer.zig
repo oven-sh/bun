@@ -245,7 +245,7 @@ pub fn Printer(comptime Writer: type) type {
             return css.serializer.serializeIdentifier(ident, this) catch return this.addFmtError();
         }
 
-        pub fn writeDashedIdent(this: *This, ident: []const u8, is_declaration: bool) !void {
+        pub fn writeDashedIdent(this: *This, ident: *const DashedIdent, is_declaration: bool) !void {
             try this.writeStr("--");
 
             if (this.css_module) |*css_module| {
@@ -261,18 +261,18 @@ pub fn Printer(comptime Writer: type) type {
                     css_module.config.pattern.write(
                         css_module.hashes.items[this.loc.source_index],
                         css_module.sources.items[this.loc.source_index],
-                        ident[2..],
+                        ident.v[2..],
                         this,
                         Fn.writeFn,
                     );
 
                     if (is_declaration) {
-                        css_module.addDashed(this.allocator, ident, this.loc.source_index);
+                        css_module.addDashed(this.allocator, ident.v, this.loc.source_index);
                     }
                 }
             }
 
-            return css.serializer.serializeName(ident[2..], this) catch return this.addFmtError();
+            return css.serializer.serializeName(ident.v[2..], this) catch return this.addFmtError();
         }
 
         /// Write a single character to the underlying destination.

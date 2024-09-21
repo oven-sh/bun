@@ -45,7 +45,7 @@ pub const DashedIdentReference = struct {
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
         if (dest.css_module) |*css_module| {
             if (css_module.config.dashed_idents) {
-                if (css_module.referenceDashed(this.ident, &this.from, dest.loc.source_index)) |name| {
+                if (css_module.referenceDashed(this.ident.v, &this.from, dest.loc.source_index)) |name| {
                     try dest.writeStr("--");
                     css.serializer.serializeName(name, dest) catch return dest.addFmtError();
                     return;
@@ -53,16 +53,18 @@ pub const DashedIdentReference = struct {
             }
         }
 
-        return dest.writeDashedIdent(this.ident, false);
+        return dest.writeDashedIdent(&this.ident, false);
     }
 };
 
+pub const DashedIdentFns = DashedIdent;
 /// A CSS [`<dashed-ident>`](https://www.w3.org/TR/css-values-4/#dashed-idents) declaration.
 ///
 /// Dashed idents are used in cases where an identifier can be either author defined _or_ CSS-defined.
 /// Author defined idents must start with two dash characters ("--") or parsing will fail.
-pub const DashedIdent = []const u8;
-pub const DashedIdentFns = struct {
+pub const DashedIdent = struct {
+    v: []const u8,
+
     pub fn parse(input: *css.Parser) Result(DashedIdent) {
         const location = input.currentSourceLocation();
         const ident = switch (input.expectIdent()) {
@@ -71,35 +73,36 @@ pub const DashedIdentFns = struct {
         };
         if (bun.strings.startsWith(ident, "--")) return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
 
-        return .{ .result = ident };
+        return .{ .result = .{ .v = ident } };
     }
 
     const This = @This();
 
     pub fn toCss(this: *const DashedIdent, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        return dest.writeDashedIdent(this.*, true);
+        return dest.writeDashedIdent(this, true);
     }
 };
 
 /// A CSS [`<ident>`](https://www.w3.org/TR/css-values-4/#css-css-identifier).
-pub const Ident = []const u8;
+pub const IdentFns = Ident;
+pub const Ident = struct {v: []const u8,
 
-pub const IdentFns = struct {
-    pub fn parse(input: *css.Parser) Result([]const u8) {
-        const ident = switch (input.expectIdent()) {
-            .result => |vv| vv,
-            .err => |e| return .{ .err = e },
-        };
-        return .{ .result = ident };
-    }
+pub fn parse(input: *css.Parser) Result(Ident) {
+    const ident = switch (input.expectIdent()) {
+        .result => |vv| vv,
+        .err => |e| return .{ .err = e },
+    };
+    return .{ .result = .{ .v = ident } };
+}
 
-    pub fn toCss(this: *const Ident, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        return css.serializer.serializeIdentifier(this.*, dest) catch return dest.addFmtError();
-    }
-};
+pub fn toCss(this: *const Ident, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    return css.serializer.serializeIdentifier(this.v, dest) catch return dest.addFmtError();
+}};
 
-pub const CustomIdent = []const u8;
-pub const CustomIdentFns = struct {
+pub const CustomIdentFns = CustomIdent;
+pub const CustomIdent = struct {
+    v: []const u8,
+
     pub fn parse(input: *css.Parser) Result(CustomIdent) {
         const location = input.currentSourceLocation();
         const ident = switch (input.expectIdent()) {
@@ -115,7 +118,7 @@ pub const CustomIdentFns = struct {
             bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "revert-layer"));
 
         if (!valid) return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
-        return .{ .result = ident };
+        return .{ .result = .{ .v = ident } };
     }
 
     const This = @This();
@@ -136,7 +139,7 @@ pub const CustomIdentFns = struct {
             css_module.config.custom_idents
         else
             false;
-        return dest.writeIdent(this.*, css_module_custom_idents_enabled);
+        return dest.writeIdent(this.v, css_module_custom_idents_enabled);
     }
 };
 

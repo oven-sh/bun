@@ -552,7 +552,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
       const query = stopOnEntry ? "break=1" : "wait=1";
       processEnv["BUN_INSPECT"] = `${url}?${query}`;
-      processEnv["BUN_INSPECT_NOTIFY"] = `tcp://127.0.0.1:${signal.port}`; // 127.0.0.1 so it resolves correctly on windows
+      processEnv["BUN_INSPECT_NOTIFY"] = signal.url; // 127.0.0.1 so it resolves correctly on windows
 
       // This is probably not correct, but it's the best we can do for now.
       processEnv["FORCE_COLOR"] = "1";

@@ -247,4 +247,48 @@ export default [
       },
     },
   }),
+
+  define({
+    name: "NativeZlib",
+    construct: true,
+    noConstructor: false,
+    finalize: true,
+    configurable: false,
+    hasPendingActivity: true,
+    klass: {},
+    JSType: "0b11101110",
+    values: ["callback"],
+
+    proto: {
+      init: { fn: "init" },
+      write: { fn: "write" },
+      writeSync: { fn: "writeSync" },
+      params: { fn: "params" },
+      reset: { fn: "reset" },
+      close: { fn: "close" },
+      onerror: { setter: "setOnError" },
+    },
+  }),
+
+  define({
+    name: "NativeBrotli",
+    construct: true,
+    noConstructor: false,
+    finalize: true,
+    configurable: false,
+    hasPendingActivity: true,
+    klass: {},
+    JSType: "0b11101110",
+    values: ["callback"],
+
+    proto: {
+      init: { fn: "init" },
+      write: { fn: "write" },
+      writeSync: { fn: "writeSync" },
+      params: { fn: "params" },
+      reset: { fn: "reset" },
+      close: { fn: "close" },
+      onerror: { setter: "setOnError" },
+    },
+  }),
 ];

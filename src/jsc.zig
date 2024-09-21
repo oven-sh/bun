@@ -53,6 +53,8 @@ pub const API = struct {
     pub const BrotliDecoder = @import("./bun.js/api/js_brotli.zig").BrotliDecoder;
     pub const ZlibEncoder = @import("./bun.js/api/js_zlib.zig").ZlibEncoder;
     pub const ZlibDecoder = @import("./bun.js/api/js_zlib.zig").ZlibDecoder;
+    pub const NativeZlib = @import("./bun.js/node/node_zlib_binding.zig").SNativeZlib;
+    pub const NativeBrotli = @import("./bun.js/node/node_zlib_binding.zig").SNativeBrotli;
 };
 pub const Postgres = @import("./sql/postgres.zig");
 pub const DNS = @import("./bun.js/api/bun/dns_resolver.zig");

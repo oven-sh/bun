@@ -66,7 +66,7 @@ pub const z_streamp = @import("zlib-internal").z_streamp;
 // } z_stream;
 
 const DataType = @import("zlib-internal").DataType;
-const FlushValue = @import("zlib-internal").FlushValue;
+pub const FlushValue = @import("zlib-internal").FlushValue;
 pub const ReturnCode = @import("zlib-internal").ReturnCode;
 
 // ZEXTERN int ZEXPORT inflateInit OF((z_streamp strm));
@@ -659,7 +659,7 @@ pub extern fn deflate(strm: z_streamp, flush: FlushValue) ReturnCode;
 ///   deallocated).
 pub extern fn deflateEnd(stream: z_streamp) ReturnCode;
 
-pub extern fn deflateReset(stream: z_streamp) c_int;
+pub extern fn deflateReset(stream: z_streamp) ReturnCode;
 
 //   deflateBound() returns an upper bound on the compressed size after
 //  deflation of sourceLen bytes.  It must be called after deflateInit() or

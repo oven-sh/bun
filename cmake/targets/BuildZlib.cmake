@@ -9,6 +9,13 @@ register_repository(
     886098f3f339617b4243b286f5ed364b9989e245
 )
 
+register_libraries(
+  TARGET ${zlib}
+  z      ${UNIX}
+  zlib   ${WIN32} AND ${RELEASE}
+  zlibd  ${WIN32} AND ${DEBUG}
+)
+
 register_cmake_project(
   TARGET
     ${zlib}
@@ -20,13 +27,6 @@ register_cmake_definitions(
   TARGET ${zlib}
   BUILD_SHARED_LIBS=OFF
   BUILD_EXAMPLES=OFF
-)
-
-register_libraries(
-  TARGET ${zlib}
-  z      ${UNIX}
-  zlib   ${WIN32} AND ${RELEASE}
-  zlibd  ${WIN32} AND ${DEBUG}
 )
 
 # https://gitlab.kitware.com/cmake/cmake/-/issues/25755

@@ -9,10 +9,15 @@ register_repository(
     3d0f1fc1d6e66a642e7a98c55deb38aa986eb4b0
 )
 
+register_libraries(
+  TARGET ${lshpack}
+  ls-hpack
+)
+
 register_cmake_project(
   TARGET
     ${lshpack}
-  CMAKE_TARGETS
+  CMAKE_TARGET
     ls-hpack
 )
 
@@ -35,8 +40,3 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
     CMAKE_BUILD_TYPE=Release
   )
 endif()
-
-register_libraries(
-  TARGET ${lshpack}
-  ls-hpack
-)

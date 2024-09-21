@@ -12,10 +12,6 @@ else()
   set(bunStrip bun)
 endif()
 
-# libbun -> C/C++
-# zigbun -> Zig
-# bun
-
 set(bunExe ${bun}${CMAKE_EXECUTABLE_SUFFIX})
 
 if(bunStrip)
@@ -581,17 +577,6 @@ file(GLOB BUN_C_SOURCES ${CONFIGURE_DEPENDS}
   ${BUN_USOCKETS_SOURCE}/src/crypto/*.c
 )
 
-register_repository(
-  NAME
-    picohttpparser
-  REPOSITORY
-    h2o/picohttpparser
-  COMMIT
-    066d2b1e9ab820703db0837a7255d92d30f0c9f5
-  OUTPUTS
-    picohttpparser.c
-)
-
 list(APPEND BUN_C_SOURCES ${VENDOR_PATH}/picohttpparser/picohttpparser.c)
 
 if(WIN32)
@@ -680,18 +665,6 @@ register_includes(
   ${CWD}/src/deps
   ${CWD}/src/bun.js/bindings/windows ${WIN32}
   ${CODEGEN_PATH}
-  ${VENDOR_PATH}
-  ${VENDOR_PATH}/picohttpparser
-  ${VENDOR_PATH}/boringssl/include
-  ${VENDOR_PATH}/brotli/c/include
-  ${VENDOR_PATH}/cares/include
-  ${VENDOR_PATH}/libarchive/include
-  ${VENDOR_PATH}/libdeflate
-  ${VENDOR_PATH}/libuv/include ${WIN32}
-  ${VENDOR_PATH}/lshpack
-  ${VENDOR_PATH}/lshpack/compact/queue ${WIN32}
-  ${VENDOR_PATH}/mimalloc/include
-  ${VENDOR_PATH}/zlib
   TARGET ${bun}
 )
 
@@ -910,45 +883,41 @@ endif()
 
 set_target_properties(${bun} PROPERTIES LINK_DEPENDS ${BUN_SYMBOLS_PATH})
 
-# --- WebKit ---
-
-include(SetupWebKit)
-
-if(WIN32)
-  if(DEBUG)
-    target_link_libraries(${bun} PRIVATE
-      ${WEBKIT_LIB_PATH}/WTF.lib
-      ${WEBKIT_LIB_PATH}/JavaScriptCore.lib
-      ${WEBKIT_LIB_PATH}/sicudtd.lib
-      ${WEBKIT_LIB_PATH}/sicuind.lib
-      ${WEBKIT_LIB_PATH}/sicuucd.lib
-    )
-  else()
-    target_link_libraries(${bun} PRIVATE
-      ${WEBKIT_LIB_PATH}/WTF.lib
-      ${WEBKIT_LIB_PATH}/JavaScriptCore.lib
-      ${WEBKIT_LIB_PATH}/sicudt.lib
-      ${WEBKIT_LIB_PATH}/sicuin.lib
-      ${WEBKIT_LIB_PATH}/sicuuc.lib
-    )
-  endif()
-else()
-  target_link_libraries(${bun} PRIVATE
-    ${WEBKIT_LIB_PATH}/libWTF.a
-    ${WEBKIT_LIB_PATH}/libJavaScriptCore.a
-  )
-  if(NOT APPLE OR EXISTS ${WEBKIT_LIB_PATH}/libbmalloc.a)
-    target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libbmalloc.a)
-  endif()
-endif()
-
-register_includes(${WEBKIT_INCLUDE_PATH} TARGET ${bun})
-
-if(NOT WEBKIT_LOCAL AND NOT APPLE)
-  register_includes(${WEBKIT_INCLUDE_PATH}/wtf/unicode TARGET ${bun})
-endif()
-
 # --- Dependencies ---
+
+register_includes(
+  TARGET ${bun}
+  ${VENDOR_PATH}/${picohttpparser}
+  ${VENDOR_PATH}/${boringssl}/include
+  ${VENDOR_PATH}/${brotli}/c/include
+  ${VENDOR_PATH}/${cares}/include
+  ${VENDOR_PATH}/${libarchive}/include
+  ${VENDOR_PATH}/${libdeflate}
+  ${VENDOR_PATH}/${libuv}/include ${WIN32}
+  ${VENDOR_PATH}/${lshpack}
+  ${VENDOR_PATH}/${lshpack}/compact/queue ${WIN32}
+  ${VENDOR_PATH}/${mimalloc}/include
+  ${VENDOR_PATH}/${zlib}
+)
+
+if(WEBKIT_LOCAL)
+  register_includes(
+    TARGET ${bun}
+    ${WEBKIT_PATH}
+    ${WEBKIT_PATH}/JavaScriptCore/Headers/JavaScriptCore
+    ${WEBKIT_PATH}/JavaScriptCore/PrivateHeaders
+    ${WEBKIT_PATH}/bmalloc/Headers
+    ${WEBKIT_PATH}/WTF/Headers
+  )
+else()
+  register_includes(
+    TARGET ${bun}
+    ${WEBKIT_PATH}/include
+    ${WEBKIT_PATH}/include/wtf/unicode NOT ${APPLE}
+  )
+endif()
+
+add_dependencies(${bun} clone-webkit)
 
 link_targets(
   TARGET ${bun}
@@ -963,6 +932,7 @@ link_targets(
   ${mimalloc}
   ${tinycc}
   ${sqlite} ${USE_STATIC_SQLITE}
+  ${webkit}
   ${zlib}
   ${zstd}
 )

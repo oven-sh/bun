@@ -11,7 +11,7 @@ else()
   set(TMP_PATH $ENV{TMPDIR})
 endif()
 
-if(NOT EXISTS TMP_PATH)
+if(NOT TMP_PATH)
   set(TMP_PATH ${CMAKE_BINARY_DIR}/tmp)
 endif()
 

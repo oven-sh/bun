@@ -9,6 +9,12 @@ register_repository(
     d1722e6e8acaf10eb73fa995798a9cd421d9f85e
 )
 
+register_libraries(
+  TARGET ${cares}
+  PATH lib
+  cares
+)
+
 register_cmake_project(
   TARGET
     ${cares}
@@ -23,10 +29,4 @@ register_cmake_definitions(
   CARES_SHARED=OFF
   CARES_BUILD_TOOLS=OFF
   CMAKE_POSITION_INDEPENDENT_CODE=ON
-)
-
-register_libraries(
-  TARGET ${cares}
-  PATH lib
-  cares
 )

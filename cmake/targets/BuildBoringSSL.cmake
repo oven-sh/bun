@@ -9,6 +9,13 @@ register_repository(
     29a2cd359458c9384694b75456026e4b57e3e567
 )
 
+register_libraries(
+  TARGET ${boringssl}
+  crypto
+  ssl
+  decrepit
+)
+
 register_cmake_project(
   TARGET
     ${boringssl}
@@ -21,11 +28,4 @@ register_cmake_project(
 register_cmake_definitions(
   TARGET ${boringssl}
   BUILD_SHARED_LIBS=OFF
-)
-
-register_libraries(
-  TARGET ${boringssl}
-  crypto
-  ssl
-  decrepit
 )

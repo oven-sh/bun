@@ -9,6 +9,12 @@ register_repository(
     898dc8319355b7e985f68a9819f182aaed61b53a
 )
 
+register_libraries(
+  TARGET ${libarchive}
+  PATH libarchive
+  archive
+)
+
 register_cmake_project(
   TARGET
     ${libarchive}
@@ -43,19 +49,13 @@ register_cmake_definitions(
   HAVE_ZLIB_H=ON
 )
 
-register_libraries(
-  TARGET ${libarchive}
-  PATH libarchive
-  archive
-)
-
 # libarchive depends on zlib headers, otherwise it will
 # spawn a processes to compress instead of using the library.
 register_includes(
-  ${VENDOR_PATH}/zlib
   TARGET ${libarchive}
+  ${VENDOR_PATH}/${zlib}
 )
 
-if(TARGET clone-zlib)
-  add_dependencies(libarchive clone-zlib)
+if(TARGET clone-${zlib})
+  add_dependencies(${libarchive} clone-${zlib})
 endif()

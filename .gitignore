@@ -142,6 +142,9 @@ test/node.js/upstream
 scripts/env.local
 *.generated.ts
 
+# Temporary files
+/tmp
+
 # Dependencies
 /vendor
 

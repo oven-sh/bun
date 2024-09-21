@@ -590,6 +590,8 @@ function(register_repository)
       ${GIT_PATH}
       ${GIT_EFFECTIVE_OUTPUTS}
   )
+
+  register_outputs(TARGET clone-${GIT_NAME} ${GIT_PATH})
 endfunction()
 
 function(parse_language variable)
@@ -623,12 +625,14 @@ function(parse_path variable)
 endfunction()
 
 function(parse_list list variable)
-  set(${variable})
+  set(result)
   
   macro(check_expression)
     if(DEFINED expression)
       if(NOT (${expression}))
-        list(POP_BACK ${variable})
+        list(POP_BACK result)
+      else()
+        list(GET result -1 item)
       endif()
       unset(expression)
     endif()
@@ -639,16 +643,13 @@ function(parse_list list variable)
       set(expression ${expression} ${item})
     else()
       check_expression()
-      list(APPEND ${variable} ${item})
+      list(APPEND result ${item})
     endif()
   endforeach()
   check_expression()
 
-  if(NOT ${variable})
-    message(FATAL_ERROR "${CMAKE_CURRENT_FUNCTION}: ${variable} is empty")
-  endif()
-
-  set(${variable} ${${variable}} PARENT_SCOPE)
+  set(${variable} ${result} PARENT_SCOPE)
+  message(WARNING "LIST: ${variable}: ${result}")
 endfunction()
 
 # register_target()
@@ -658,7 +659,10 @@ endfunction()
 #   target string - The name of the target
 function(register_target target)
   add_custom_target(${target})
+
   set(${target} ${target} PARENT_SCOPE)
+  set(${target}_CWD ${CWD} PARENT_SCOPE)
+  set(${target}_BUILD_PATH ${BUILD_PATH} PARENT_SCOPE)
 endfunction()
 
 # register_vendor_target()
@@ -668,45 +672,74 @@ endfunction()
 #   target string - The name of the target
 function(register_vendor_target target)
   add_custom_target(${target})
+
   set(${target} ${target} PARENT_SCOPE)
+  set(${target}_CWD ${VENDOR_PATH}/${target} PARENT_SCOPE)
+  set(${target}_BUILD_PATH ${BUILD_PATH}/vendor/${target} PARENT_SCOPE)
+  
   if(NOT TARGET vendor)
     add_custom_target(vendor)
   endif()
   add_dependencies(vendor ${target})
 endfunction()
 
-# register_libraries()
+# register_outputs()
 # Description:
-#   Registers libraries that are built from a target.
+#   Registers outputs that are built from a target.
 # Arguments:
-#   TARGET    string   - The target that builds the libraries
-#   PATH      string   - The path to the libraries
-#   libraries string[] - The libraries to register
-function(register_libraries)
+#   TARGET  string   - The target that builds the outputs
+#   outputs string[] - The list of outputs
+function(register_outputs)
   set(args TARGET PATH)
-  cmake_parse_arguments(LIBRARY "" "${args}" "" ${ARGN})
+  cmake_parse_arguments(OUTPUT "" "${args}" "" ${ARGN})
 
-  parse_target(LIBRARY_TARGET)
-  parse_list(LIBRARY_UNPARSED_ARGUMENTS LIBRARY_NAMES)
+  parse_target(OUTPUT_TARGET)
+  parse_list(OUTPUT_UNPARSED_ARGUMENTS OUTPUT_PATHS)
+  parse_path(OUTPUT_PATHS)
 
-  if(LIBRARY_PATH)
-    set(LIBRARY_PATH ${BUILD_PATH}/vendor/${LIBRARY_TARGET}/${LIBRARY_PATH})
-  else()
-    set(LIBRARY_PATH ${BUILD_PATH}/vendor/${LIBRARY_TARGET})
-  endif()
-  parse_path(LIBRARY_PATH)
+  foreach(path ${OUTPUT_PATHS})
+    set_property(GLOBAL PROPERTY ${path} ${OUTPUT_TARGET} APPEND)
+    set_property(TARGET ${OUTPUT_TARGET} PROPERTY OUTPUT ${path} APPEND)
+  endforeach()
+endfunction()
 
-  set(LIBRARY_PATHS)
-  foreach(name ${LIBRARY_NAMES})
-    if(name MATCHES "\\.")
-      list(APPEND LIBRARY_PATHS ${LIBRARY_PATH}/${name})
-    else()
-      list(APPEND LIBRARY_PATHS ${LIBRARY_PATH}/${CMAKE_STATIC_LIBRARY_PREFIX}${name}${CMAKE_STATIC_LIBRARY_SUFFIX})
+# register_inputs()
+# Description:
+#   Registers inputs that are required to build a target.
+# Arguments:
+#   TARGET  string  - The target that builds the inputs
+#   inputs string[] - The list of inputs
+function(register_inputs)
+  set(args TARGET)
+  cmake_parse_arguments(INPUT "" "${args}" "" ${ARGN})
+
+  parse_target(INPUT_TARGET)
+  parse_list(INPUT_UNPARSED_ARGUMENTS INPUT_PATHS)
+
+  foreach(path ${INPUT_PATHS})
+    set(search ${path})
+    set(found OFF)
+    while(search)
+      if(EXISTS ${search})
+        set(found ON)
+        break()
+      endif()
+      get_property(target GLOBAL PROPERTY ${search})
+      if(TARGET ${target})
+        set(found ON)
+        set_property(TARGET ${target} PROPERTY OUTPUT ${path} APPEND)
+        break()
+      endif()
+      get_filename_component(next_search ${search} DIRECTORY)
+      if(next_search STREQUAL search OR next_search STREQUAL ${CWD} OR next_search STREQUAL ${VENDOR_PATH})
+        break()
+      endif()
+      set(search ${next_search})
+    endwhile()
+    if(NOT found)
+      message(FATAL_ERROR "${CMAKE_CURRENT_FUNCTION}: ${path} does not have a target")
     endif()
   endforeach()
-
-  set_property(TARGET ${LIBRARY_TARGET} PROPERTY OUTPUT ${LIBRARY_PATHS} APPEND)
-  set_property(TARGET ${LIBRARY_TARGET} PROPERTY LIBRARIES ${LIBRARY_PATHS} APPEND)
 endfunction()
 
 # register_compiler_flags()
@@ -860,23 +893,68 @@ function(register_linker_flags)
   endforeach()
 endfunction()
 
+# register_libraries()
+# Description:
+#   Registers libraries that are built from a target.
+# Arguments:
+#   TARGET    string   - The target that builds the libraries
+#   PATH      string   - The relative path to the libraries
+#   libraries string[] - The libraries to register
+function(register_libraries)
+  set(args TARGET PATH)
+  cmake_parse_arguments(LIBRARY "" "${args}" "" ${ARGN})
+
+  parse_target(LIBRARY_TARGET)
+  parse_list(LIBRARY_UNPARSED_ARGUMENTS LIBRARY_NAMES)
+
+  if(LIBRARY_PATH)
+    if(NOT IS_ABSOLUTE ${LIBRARY_PATH})
+      set(LIBRARY_PATH ${${LIBRARY_TARGET}_BUILD_PATH}/${LIBRARY_PATH})
+    endif()
+  else()
+    set(LIBRARY_PATH ${${LIBRARY_TARGET}_BUILD_PATH})
+  endif()
+  parse_path(LIBRARY_PATH)
+
+  set(LIBRARY_PATHS)
+  foreach(name ${LIBRARY_NAMES})
+    if(name MATCHES "\\.")
+      list(APPEND LIBRARY_PATHS ${LIBRARY_PATH}/${name})
+    else()
+      list(APPEND LIBRARY_PATHS ${LIBRARY_PATH}/${CMAKE_STATIC_LIBRARY_PREFIX}${name}${CMAKE_STATIC_LIBRARY_SUFFIX})
+    endif()
+  endforeach()
+
+  set_property(TARGET ${LIBRARY_TARGET} PROPERTY OUTPUT ${LIBRARY_PATHS} APPEND)
+endfunction()
+
+function(get_libraries target variable)
+  get_target_property(libraries ${target} OUTPUT)
+  if(libraries MATCHES "NOTFOUND")
+    set(libraries)
+  endif()
+  set(${variable} ${libraries} PARENT_SCOPE)
+endfunction()
+
 # register_includes()
 # Description:
 #   Registers a include directory, similar to `target_include_directories()`.
 # Arguments:
-#   includes string[]  - The includes to register
+#   TARGET string      - The target to register the include (default: all)
 #   DESCRIPTION string - The description of the include
 #   LANGUAGE string[]  - The languages to register the include (default: C, CXX)
-#   TARGET string[]    - The targets to register the include (default: all)
+#   includes string[]  - The includes to register
 function(register_includes)
-  set(args DESCRIPTION)
-  set(multiArgs LANGUAGE TARGET)
+  set(args TARGET DESCRIPTION)
+  set(multiArgs LANGUAGE)
   cmake_parse_arguments(INCLUDE "" "${args}" "${multiArgs}" ${ARGN})
 
   parse_language(INCLUDE_LANGUAGE)
   parse_target(INCLUDE_TARGET)
   parse_list(INCLUDE_UNPARSED_ARGUMENTS INCLUDE_PATHS)
   parse_path(INCLUDE_PATHS)
+
+  register_inputs(TARGET ${INCLUDE_TARGET} ${INCLUDE_PATHS})
 
   list(TRANSFORM INCLUDE_PATHS PREPEND "-I" OUTPUT_VARIABLE INCLUDE_FLAGS)
   list(JOIN INCLUDE_FLAGS " " INCLUDE_FLAGS_STRING)
@@ -904,8 +982,8 @@ endfunction()
 #   CMAKE_TARGET string[] - The CMake targets to build
 #   CMAKE_PATH   string   - The path to the CMake project (default: CWD)
 function(register_cmake_project)
-  set(args TARGET CWD CMAKE_PATH)
-  set(multiArgs CMAKE_TARGET)
+  set(args TARGET CWD CMAKE_PATH LIBRARY_PATH)
+  set(multiArgs CMAKE_TARGET LIBRARY OUTPUT)
   cmake_parse_arguments(PROJECT "" "${args}" "${multiArgs}" ${ARGN})
 
   parse_target(PROJECT_TARGET)
@@ -923,7 +1001,7 @@ function(register_cmake_project)
   parse_path(PROJECT_CMAKE_PATH)
 
   set(PROJECT_BUILD_PATH ${BUILD_PATH}/vendor/${PROJECT_TARGET})
-  set(PROJECT_TOOLCHAIN ${PROJECT_BUILD_PATH}/CMakeLists-toolchain.txt)
+  set(PROJECT_TOOLCHAIN_PATH ${PROJECT_BUILD_PATH}/CMakeLists-toolchain.txt)
 
   register_command(
     TARGET
@@ -935,13 +1013,13 @@ function(register_cmake_project)
         -G ${CMAKE_GENERATOR}
         -B ${PROJECT_BUILD_PATH}
         -S ${PROJECT_CMAKE_PATH}
-        --toolchain ${PROJECT_TOOLCHAIN}
+        --toolchain ${PROJECT_TOOLCHAIN_PATH}
         --fresh
         -DCMAKE_POLICY_DEFAULT_CMP0077=NEW
     CWD
       ${PROJECT_CWD}
     SOURCES
-      ${PROJECT_TOOLCHAIN}
+      ${PROJECT_TOOLCHAIN_PATH}
     OUTPUTS
       ${PROJECT_BUILD_PATH}/CMakeCache.txt
   )
@@ -951,9 +1029,13 @@ function(register_cmake_project)
   endif()
 
   set(PROJECT_BUILD_ARGS --build ${PROJECT_BUILD_PATH})
+
+  parse_list(PROJECT_CMAKE_TARGET PROJECT_CMAKE_TARGET)
   foreach(target ${PROJECT_CMAKE_TARGET})
     list(APPEND PROJECT_BUILD_ARGS --target ${target})
   endforeach()
+
+  get_libraries(${PROJECT_TARGET} PROJECT_OUTPUTS)
 
   register_command(
     TARGET
@@ -967,11 +1049,13 @@ function(register_cmake_project)
       ${PROJECT_CWD}
     TARGETS
       configure-${PROJECT_TARGET}
+    OUTPUTS
+      ${PROJECT_OUTPUTS}
   )
 
   add_dependencies(${PROJECT_TARGET} build-${PROJECT_TARGET})
   
-  cmake_language(EVAL CODE "cmake_language(DEFER CALL create_toolchain_file ${PROJECT_TOOLCHAIN} ${PROJECT_TARGET})")
+  cmake_language(EVAL CODE "cmake_language(DEFER CALL create_toolchain_file ${PROJECT_TOOLCHAIN_PATH} ${PROJECT_TARGET})")
 endfunction()
 
 # register_cmake_definitions()
@@ -1022,7 +1106,7 @@ function(link_targets)
   parse_target(LINK_TARGETS)
 
   foreach(target ${LINK_TARGETS})
-    get_target_property(libraries ${target} LIBRARIES)
+    get_target_property(libraries ${target} OUTPUT)
     if(NOT libraries)
       message(FATAL_ERROR "${CMAKE_CURRENT_FUNCTION}: Target does not have libraries: ${target}")
     endif()

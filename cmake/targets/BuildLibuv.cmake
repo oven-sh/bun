@@ -9,6 +9,12 @@ register_repository(
     da527d8d2a908b824def74382761566371439003
 )
 
+register_libraries(
+  TARGET ${libuv}
+  uv_a ${WIN32}
+  uv ${UNIX}
+)
+
 register_cmake_project(
   TARGET
     ${libuv}
@@ -31,9 +37,3 @@ if(WIN32)
     -Wno-int-conversion
   )
 endif()
-
-register_libraries(
-  uv_a ${WIN32}
-  uv ${UNIX}
-  TARGET ${libuv}
-)

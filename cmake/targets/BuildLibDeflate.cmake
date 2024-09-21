@@ -9,6 +9,12 @@ register_repository(
     dc76454a39e7e83b68c3704b6e3784654f8d5ac5
 )
 
+register_libraries(
+  TARGET ${libdeflate}
+  deflatestatic ${WIN32}
+  deflate ${UNIX}
+)
+
 register_cmake_project(
   TARGET
     ${libdeflate}
@@ -21,10 +27,4 @@ register_cmake_definitions(
   LIBDEFLATE_BUILD_STATIC_LIB=ON
   LIBDEFLATE_BUILD_SHARED_LIB=OFF
   LIBDEFLATE_BUILD_GZIP=OFF
-)
-
-register_libraries(
-  deflatestatic ${WIN32}
-  deflate ${UNIX}
-  TARGET ${libdeflate}
 )

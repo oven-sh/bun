@@ -9,6 +9,13 @@ register_repository(
     794ea1b0afca0f020f4e57b6732332231fb23c70
 )
 
+register_libraries(
+  TARGET ${zstd}
+  PATH lib
+  zstd_static ${WIN32}
+  zstd ${UNIX}
+)
+
 register_cmake_project(
   TARGET
     ${zstd}
@@ -24,11 +31,4 @@ register_cmake_definitions(
   ZSTD_BUILD_PROGRAMS=OFF
   ZSTD_BUILD_TESTS=OFF
   ZSTD_BUILD_CONTRIB=OFF
-)
-
-register_libraries(
-  TARGET ${zstd}
-  PATH lib
-  zstd_static ${WIN32}
-  zstd ${UNIX}
 )

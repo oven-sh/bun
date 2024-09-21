@@ -185,6 +185,7 @@ endif()
 
 # Note: This is a helpful guide about assertions:
 # https://best.openssf.org/Compiler-Hardening-Guides/Compiler-Options-Hardening-Guide-for-C-and-C++
+
 if(ENABLE_ASSERTIONS)
   register_compiler_flags(
     DESCRIPTION "Do not eliminate null-pointer checks"

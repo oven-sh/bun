@@ -9,6 +9,24 @@ register_repository(
     4c283af60cdae205df5a872530c77e2a6a307d43
 )
 
+# Workaround for linker issue on macOS and Linux x64
+# https://github.com/microsoft/mimalloc/issues/512
+if(APPLE OR (LINUX AND NOT DEBUG))
+  register_libraries(
+    TARGET ${mimalloc}
+    PATH CMakeFiles/mimalloc-obj.dir/src
+    static.c.o
+  )
+else()
+  register_libraries(
+    TARGET ${mimalloc}
+    mimalloc-static-debug ${WIN32} AND ${DEBUG}
+    mimalloc-static       ${WIN32} AND ${RELEASE}
+    mimalloc-debug        ${UNIX} AND ${DEBUG}
+    mimalloc              ${UNIX} AND ${RELEASE}
+  )
+endif()
+
 register_cmake_project(
   TARGET
     ${mimalloc}
@@ -42,22 +60,4 @@ if(ENABLE_ASSERTIONS)
       MI_VALGRIND=ON
     )
   endif()
-endif()
-
-# Workaround for linker issue on macOS and Linux x64
-# https://github.com/microsoft/mimalloc/issues/512
-if(APPLE OR (LINUX AND NOT DEBUG))
-  register_libraries(
-    TARGET ${mimalloc}
-    PATH CMakeFiles/mimalloc-obj.dir/src
-    static.c.o
-  )
-else()
-  register_libraries(
-    TARGET ${mimalloc}
-    mimalloc-static-debug ${WIN32} AND ${DEBUG}
-    mimalloc-static       ${WIN32} AND ${RELEASE}
-    mimalloc-debug        ${UNIX} AND ${DEBUG}
-    mimalloc              ${UNIX} AND ${RELEASE}
-  )
 endif()

@@ -112,7 +112,7 @@ describe("zlib.brotli", () => {
   it("can compress streaming", () => {
     const encoder = zlib.createBrotliCompress();
     for (const chunk of window(inputString, 55)) {
-      encoder._transform(chunk, undefined, (err, data) => {
+      encoder._transform(Buffer.from(chunk), undefined, (err, data) => {
         expect(err).toBeUndefined();
         expect(data).toEqual(Buffer(0));
       });
@@ -148,7 +148,7 @@ describe("zlib.brotli", () => {
     const encoder = zlib.createBrotliCompress();
     // prettier-ignore
     for (const chunk of window(inputString+inputString+inputString+inputString, 65)) {
-      encoder._transform(chunk, undefined, (err, data) => {
+      encoder._transform(Buffer.from(chunk), undefined, (err, data) => {
         expect(err).toBeUndefined();
         expect(data).toEqual(Buffer(0));
       });

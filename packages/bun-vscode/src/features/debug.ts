@@ -81,7 +81,7 @@ function debugFileCommand(resource?: vscode.Uri) {
   if (path) debugCommand(path);
 }
 
-function injectDebugTerminal(terminal: vscode.Terminal): void {
+async function injectDebugTerminal(terminal: vscode.Terminal): Promise<void> {
   if (!getConfig("debugTerminal.enabled")) return;
 
   const { name, creationOptions } = terminal;
@@ -97,14 +97,16 @@ function injectDebugTerminal(terminal: vscode.Terminal): void {
   const stopOnEntry = getConfig("debugTerminal.stopOnEntry") === true;
   const query = stopOnEntry ? "break=1" : "wait=1";
 
-  const { adapter, signal } = new TerminalDebugSession();
+  const debugSession = new TerminalDebugSession();
+  await debugSession.initialize();
+  const { adapter, signal } = debugSession;
   const debug = vscode.window.createTerminal({
     ...creationOptions,
     name: "JavaScript Debug Terminal",
     env: {
       ...env,
       "BUN_INSPECT": `${adapter.url}?${query}`,
-      "BUN_INSPECT_NOTIFY": `${signal.url}`,
+      "BUN_INSPECT_NOTIFY": `${signal instanceof UnixSignal ? signal.url : `tcp://127.0.0.1:${signal.port}`}`,
     },
   });
 
@@ -153,7 +155,9 @@ class DebugConfigurationProvider implements vscode.DebugConfigurationProvider {
 }
 
 class InlineDebugAdapterFactory implements vscode.DebugAdapterDescriptorFactory {
-  createDebugAdapterDescriptor(session: vscode.DebugSession): vscode.ProviderResult<vscode.DebugAdapterDescriptor> {
+  async createDebugAdapterDescriptor(
+    session: vscode.DebugSession,
+  ): vscode.ProviderResult<vscode.DebugAdapterDescriptor> {
     const { configuration } = session;
     const { request, url } = configuration;
 
@@ -166,22 +170,25 @@ class InlineDebugAdapterFactory implements vscode.DebugAdapterDescriptorFactory 
     }
 
     const adapter = new FileDebugSession(session.id);
+    await adapter.initialize();
     return new vscode.DebugAdapterInlineImplementation(adapter);
   }
 }
 
 class FileDebugSession extends DebugSession {
   adapter: DebugAdapter;
+  sessionId?: string;
 
   constructor(sessionId?: string) {
     super();
-    const uniqueId = sessionId ?? Math.random().toString(36).slice(2);
+    this.sessionId = sessionId;
+  }
+
+  async initialize() {
+    const uniqueId = this.sessionId ?? Math.random().toString(36).slice(2);
     let url;
     if (process.platform === "win32") {
-      getAvailablePort().then(port => {
-        // the signal is only first used well after this resolves
-        url = `ws://127.0.0.1:${port}/${getRandomId()}`;
-      });
+      url = `ws://127.0.0.1:${await getAvailablePort()}/${getRandomId()}`;
     } else {
       url = `ws+unix://${tmpdir()}/${uniqueId}.sock`;
     }
@@ -215,11 +222,11 @@ class TerminalDebugSession extends FileDebugSession {
 
   constructor() {
     super();
+  }
+
+  async initialize() {
     if (process.platform === "win32") {
-      getAvailablePort().then(port => {
-        // the signal is only first used well after this resolves
-        this.signal = new TCPSocketSignal(port);
-      });
+      this.signal = new TCPSocketSignal(await getAvailablePort());
     } else {
       this.signal = new UnixSignal();
     }

@@ -539,7 +539,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     } else {
       // we're on windows
       // Create TCPSocketSignal
-      const url = `ws://127.0.0.1:${await getAvailablePort()}/${getRandomId()}`;
+      const url = `ws://127.0.0.1:${await getAvailablePort()}/${getRandomId()}`; // 127.0.0.1 so it resolves correctly on windows
       const signal = new TCPSocketSignal(await getAvailablePort());
 
       signal.on("Signal.received", async () => {
@@ -552,7 +552,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
       const query = stopOnEntry ? "break=1" : "wait=1";
       processEnv["BUN_INSPECT"] = `${url}?${query}`;
-      processEnv["BUN_INSPECT_NOTIFY"] = `tcp://127.0.0.1:${signal.port}`;
+      processEnv["BUN_INSPECT_NOTIFY"] = `tcp://127.0.0.1:${signal.port}`; // 127.0.0.1 so it resolves correctly on windows
 
       // This is probably not correct, but it's the best we can do for now.
       processEnv["FORCE_COLOR"] = "1";
@@ -735,7 +735,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
   async breakpointLocations(request: DAP.BreakpointLocationsRequest): Promise<DAP.BreakpointLocationsResponse> {
     const { line, endLine, column, endColumn, source: source0 } = request;
-    if(process.platform === "win32") {
+    if (process.platform === "win32") {
       source0.path = source0.path ? normalizeWindowsPath(source0.path) : source0.path;
     }
     const source = await this.#getSource(sourceToId(source0));
@@ -842,7 +842,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   }
 
   async #setBreakpointsByUrl(url: string, requests: DAP.SourceBreakpoint[], unsetOld?: boolean): Promise<Breakpoint[]> {
-    if(process.platform === "win32") {
+    if (process.platform === "win32") {
       url = url ? normalizeWindowsPath(url) : url;
     }
     const source = this.#getSourceIfPresent(url);
@@ -1218,7 +1218,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
   async gotoTargets(request: DAP.GotoTargetsRequest): Promise<DAP.GotoTargetsResponse> {
     const { source: source0 } = request;
-    if(process.platform === "win32") {
+    if (process.platform === "win32") {
       source0.path = source0.path ? normalizeWindowsPath(source0.path) : source0.path;
     }
     const source = await this.#getSource(sourceToId(source0));
@@ -2221,7 +2221,7 @@ function sourceName(url?: string): string {
     return "unknown.js";
   }
   if (isJavaScript(url)) {
-    if(process.platform === "win32") {
+    if (process.platform === "win32") {
       return url.split("\\").pop() || url;
     }
     return url.split("/").pop() || url;
@@ -2634,5 +2634,5 @@ export function getRandomId() {
 }
 
 export function normalizeWindowsPath(path: string): string {
-  return (path.charAt(0).toUpperCase() + path.slice(1)).replaceAll("\\\\", "\\")
+  return (path.charAt(0).toUpperCase() + path.slice(1)).replaceAll("\\\\", "\\");
 }

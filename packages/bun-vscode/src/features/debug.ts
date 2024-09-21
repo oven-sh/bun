@@ -1,8 +1,8 @@
 import { DebugSession } from "@vscode/debugadapter";
 import { tmpdir } from "node:os";
 import * as vscode from "vscode";
-import type { DAP } from "../../../bun-debug-adapter-protocol";
-import { DebugAdapter, getAvailablePort, WebSocketSignal, UnixSignal } from "../../../bun-debug-adapter-protocol";
+import { DAP, TCPSocketSignal } from "../../../bun-debug-adapter-protocol";
+import { DebugAdapter, getAvailablePort, UnixSignal, getRandomId } from "../../../bun-debug-adapter-protocol";
 
 export const DEBUG_CONFIGURATION: vscode.DebugConfiguration = {
   type: "bun",
@@ -178,7 +178,7 @@ class FileDebugSession extends DebugSession {
     const uniqueId = sessionId ?? Math.random().toString(36).slice(2);
     // the signal is only first used well after this resolves
     getAvailablePort().then(port => {
-      const url = process.platform === "win32" ? `ws://localhost:${port}` : `ws+unix://${tmpdir()}/${uniqueId}.sock`;
+      const url = process.platform === "win32" ? `ws://127.0.0.1:${port}/${getRandomId()}` : `ws+unix://${tmpdir()}/${uniqueId}.sock`;
 
       this.adapter = new DebugAdapter(url);
       this.adapter.on("Adapter.response", response => this.sendResponse(response));
@@ -207,15 +207,14 @@ class FileDebugSession extends DebugSession {
 }
 
 class TerminalDebugSession extends FileDebugSession {
-  signal: WebSocketSignal | UnixSignal;
+  signal: TCPSocketSignal | UnixSignal;
 
   constructor() {
     super();
     // the signal is only first used well after this resolves
     getAvailablePort().then(port => {
       if (process.platform === "win32") {
-        const signalUrl = `ws://localhost:${port}`;
-        this.signal = new WebSocketSignal(signalUrl);
+        this.signal = new TCPSocketSignal(port);
       } else {
         this.signal = new UnixSignal();
       }

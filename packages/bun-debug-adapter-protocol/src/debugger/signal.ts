@@ -1,6 +1,5 @@
 import { EventEmitter } from "node:events";
-import { WebSocketServer } from "ws";
-import type { Server } from "node:net";
+import type { Server, Socket } from "node:net";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -87,42 +86,47 @@ function parseUnixPath(path: string | URL): string {
   }
 }
 
-export type WebSocketSignalEventMap = {
-  "Signal.listening": [string];
-  "Signal.error": [Error];
-  "Signal.received": [string];
-  "Signal.closed": [];
-};
+export type TCPSocketSignalEventMap = {
+  'Signal.listening': [];
+  'Signal.error': [Error];
+  'Signal.closed': [];
+  'Signal.received': [string];
+}
 
-/**
- * Starts a server that listens for signals over a WebSocket.
- */
-export class WebSocketSignal extends EventEmitter<WebSocketSignalEventMap> {
-  #url: string;
-  #server: WebSocketServer;
+export class TCPSocketSignal extends EventEmitter {
+  #port: number;
+  #server: ReturnType<typeof createServer>;
   #ready: Promise<void>;
 
-  constructor(url: string) {
+  constructor(port: number) {
     super();
-    this.#url = url;
-    const port = getPortFromUrl(url);
-    this.#server = new WebSocketServer({ port });
+    this.#port = port;
 
-    this.#server.on("listening", () => this.emit("Signal.listening", this.#url));
-    this.#server.on("error", error => this.emit("Signal.error", error));
-    this.#server.on("close", () => this.emit("Signal.closed"));
-    this.#server.on("connection", socket => {
-      socket.on("message", data => {
-        this.emit("Signal.received", data.toString());
+    this.#server = createServer((socket: Socket) => {
+      socket.on('data', (data) => {
+        console.error('received', data);
+        this.emit('Signal.received', data.toString());
+      });
+
+      socket.on('error', (error) => {
+        this.emit('Signal.error', error);
+      });
+
+      socket.on('close', () => {
+        this.emit('Signal.closed');
       });
     });
+
     this.#ready = new Promise((resolve, reject) => {
-      this.#server.on("listening", resolve);
-      this.#server.on("error", reject);
+      this.#server.listen(this.#port, () => {
+        this.emit('Signal.listening');
+        resolve();
+      });
+      this.#server.on('error', reject);
     });
   }
 
-  emit<E extends keyof WebSocketSignalEventMap>(event: E, ...args: WebSocketSignalEventMap[E]): boolean {
+  emit<E extends keyof TCPSocketSignalEventMap>(event: E, ...args: TCPSocketSignalEventMap[E]): boolean {
     if (isDebug) {
       console.log(event, ...args);
     }
@@ -130,10 +134,10 @@ export class WebSocketSignal extends EventEmitter<WebSocketSignalEventMap> {
   }
 
   /**
-   * The WebSocket URL.
+   * The TCP port.
    */
-  get url(): string {
-    return this.#url;
+  get port(): number {
+    return this.#port;
   }
 
   /**
@@ -148,14 +152,5 @@ export class WebSocketSignal extends EventEmitter<WebSocketSignalEventMap> {
    */
   close(): void {
     this.#server.close();
-  }
-}
-
-function getPortFromUrl(url: string): number {
-  try {
-    const parsedUrl = new URL(url);
-    return parseInt(parsedUrl.port, 10) || 0;
-  } catch {
-    throw new Error(`Invalid WebSocket URL: ${url}`);
   }
 }

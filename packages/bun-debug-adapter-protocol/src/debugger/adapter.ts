@@ -5,9 +5,10 @@ import type { DAP } from "../protocol";
 import { spawn, ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { WebSocketInspector, remoteObjectToString } from "../../../bun-inspector-protocol/index";
-import { randomUnixPath, UnixSignal, WebSocketSignal } from "./signal";
+import { randomUnixPath, TCPSocketSignal, UnixSignal } from "./signal";
 import { Location, SourceMap } from "./sourcemap";
 import { createServer, AddressInfo } from "node:net";
+import * as path from "node:path";
 
 export async function getAvailablePort(): Promise<number> {
   const server = createServer();
@@ -228,7 +229,6 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   #variables: Map<number, Variable>;
   #initialized?: InitializeRequest;
   #options?: DebuggerOptions;
-  #signal?: WebSocketSignal;
 
   constructor(url?: string | URL) {
     super();
@@ -538,58 +538,38 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       }
     } else {
       // we're on windows
-      // Create WebSocketSignal
-      const signalUrl = `ws://localhost:${await getAvailablePort()}`;
-      this.#signal = new WebSocketSignal(signalUrl);
+      // Create TCPSocketSignal
+      const url = `ws://127.0.0.1:${await getAvailablePort()}/${getRandomId()}`;
+      const signal = new TCPSocketSignal(await getAvailablePort());
 
-      // Set BUN_INSPECT_NOTIFY to signal's URL
-      processEnv["BUN_INSPECT_NOTIFY"] = this.#signal.url;
+      signal.on("Signal.received", async () => {
+        this.#attach({ url });
+      });
 
-      // Set BUN_INSPECT to the debugger's inspector URL with ?wait=1
-      processEnv["BUN_INSPECT"] = `${this.#inspector.url}?wait=1`;
+      this.once("Adapter.terminated", () => {
+        signal.close();
+      });
 
-      // Spawn the process
-      const child = spawn(runtime, processArgs, {
-        cwd,
+      const query = stopOnEntry ? "break=1" : "wait=1";
+      processEnv["BUN_INSPECT"] = `${url}?${query}`;
+      processEnv["BUN_INSPECT_NOTIFY"] = `tcp://127.0.0.1:${signal.port}`;
+
+      // This is probably not correct, but it's the best we can do for now.
+      processEnv["FORCE_COLOR"] = "1";
+      processEnv["BUN_QUIET_DEBUG_LOGS"] = "1";
+      processEnv["BUN_DEBUG_QUIET_LOGS"] = "1";
+
+      const started = await this.#spawn({
+        command: runtime,
+        args: processArgs,
         env: processEnv,
-        stdio: ["ignore", "pipe", "pipe"],
+        cwd,
+        isDebugee: true,
       });
 
-      this.#process = child;
-
-      // Attach event listeners for the process
-      child.stderr?.setEncoding("utf-8");
-      child.stderr?.on("data", data => this.emit("Process.stderr", data));
-      child.on("exit", (code, signal) => {
-        this.emit("Process.exited", code ?? signal ?? null, signal ?? null);
-      });
-
-      this.emit("Process.spawned", child);
-
-      // Wait for the signal from the debuggee
-      await this.#signal.ready;
-      await new Promise<void>((resolve, reject) => {
-        this.#signal!.once("Signal.received", () => {
-          resolve();
-        });
-        this.#signal!.once("Signal.error", error => {
-          reject(error);
-        });
-      });
-
-      // Connect the debugger to the debuggee
-      const connected = await this.#inspector.start();
-      if (!connected) {
-        this.terminate();
+      if (!started) {
+        throw new Error("Program could not be started.");
       }
-
-      // Additional setup if needed
-      this.emit("Adapter.process", {
-        name: `${runtime} ${processArgs.join(" ")}`,
-        systemProcessId: child.pid,
-        isLocalProcess: true,
-        startMethod: "launch",
-      });
     }
   }
 
@@ -755,6 +735,9 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
   async breakpointLocations(request: DAP.BreakpointLocationsRequest): Promise<DAP.BreakpointLocationsResponse> {
     const { line, endLine, column, endColumn, source: source0 } = request;
+    if(process.platform === "win32") {
+      source0.path = source0.path ? normalizeWindowsPath(source0.path) : source0.path;
+    }
     const source = await this.#getSource(sourceToId(source0));
 
     const { locations } = await this.send("Debugger.getBreakpointLocations", {
@@ -859,6 +842,9 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   }
 
   async #setBreakpointsByUrl(url: string, requests: DAP.SourceBreakpoint[], unsetOld?: boolean): Promise<Breakpoint[]> {
+    if(process.platform === "win32") {
+      url = url ? normalizeWindowsPath(url) : url;
+    }
     const source = this.#getSourceIfPresent(url);
 
     // If the source is not loaded, set a placeholder breakpoint at the start of the file.
@@ -1232,6 +1218,9 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
   async gotoTargets(request: DAP.GotoTargetsRequest): Promise<DAP.GotoTargetsResponse> {
     const { source: source0 } = request;
+    if(process.platform === "win32") {
+      source0.path = source0.path ? normalizeWindowsPath(source0.path) : source0.path;
+    }
     const source = await this.#getSource(sourceToId(source0));
 
     const { breakpoints } = await this.breakpointLocations(request);
@@ -1398,7 +1387,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     // 1. If it has a `path`, the client retrieves the source from the file system.
     // 2. If it has a `sourceReference`, the client sends a `source` request.
     //    Moreover, the code is usually shown in a read-only editor.
-    const isUserCode = url.startsWith("/");
+    const isUserCode = path.isAbsolute(url);
     const sourceMap = SourceMap(sourceMapURL);
     const name = sourceName(url);
     const presentationHint = sourcePresentationHint(url);
@@ -1717,12 +1706,11 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
     // If the source does not have a path or is a builtin module,
     // it cannot be retrieved from the file system.
-    if (typeof sourceId === "number" || !sourceId.startsWith("/")) {
+    if (typeof sourceId === "number" || !path.isAbsolute(sourceId)) {
       throw new Error(`Source not found: ${sourceId}`);
     }
 
     // If the source is not present, it may not have been loaded yet.
-    // In that case, wait for it to be loaded.
     let resolves = this.#pendingSources.get(sourceId);
     if (!resolves) {
       this.#pendingSources.set(sourceId, (resolves = []));
@@ -2178,7 +2166,6 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
   close(): void {
     this.#process?.kill();
-    if (process.platform === "win32") this.#signal?.close();
     this.#inspector.close();
     this.#reset();
   }
@@ -2220,10 +2207,10 @@ function titleize(name: string): string {
 }
 
 function sourcePresentationHint(url?: string): DAP.Source["presentationHint"] {
-  if (!url || !url.startsWith("/")) {
+  if (!url || path.isAbsolute(url)) {
     return "deemphasize";
   }
-  if (url.includes("/node_modules/")) {
+  if (url.includes("/node_modules/") || url.includes("\\node_modules\\")) {
     return "normal";
   }
   return "emphasize";
@@ -2234,6 +2221,9 @@ function sourceName(url?: string): string {
     return "unknown.js";
   }
   if (isJavaScript(url)) {
+    if(process.platform === "win32") {
+      return url.split("\\").pop() || url;
+    }
     return url.split("/").pop() || url;
   }
   return `${url}.js`;
@@ -2637,4 +2627,12 @@ let sequence = 1;
 
 function nextId(): number {
   return sequence++;
+}
+
+export function getRandomId() {
+  return Math.random().toString(36).slice(2);
+}
+
+export function normalizeWindowsPath(path: string): string {
+  return (path.charAt(0).toUpperCase() + path.slice(1)).replaceAll("\\\\", "\\")
 }

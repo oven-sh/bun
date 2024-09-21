@@ -67,6 +67,7 @@ After Visual Studio, you need the following:
 - Perl
 - Ruby
 - Node.js
+- Ccache
 
 {% callout %}
 **Note** – The Zig compiler is automatically downloaded, installed, and updated by the building process.
@@ -78,12 +79,12 @@ After Visual Studio, you need the following:
 
 ```ps1#WinGet
 ## Select "Add LLVM to the system PATH for all users" in the LLVM installer
-> winget install -i LLVM.LLVM -v 18.1.8 && winget install GoLang.Go Rustlang.Rustup NASM.NASM StrawberryPerl.StrawberryPerl RubyInstallerTeam.Ruby.3.2 OpenJS.NodeJS.LTS
+> winget install -i LLVM.LLVM -v 18.1.8 && winget install GoLang.Go Rustlang.Rustup NASM.NASM StrawberryPerl.StrawberryPerl RubyInstallerTeam.Ruby.3.2 OpenJS.NodeJS.LTS Ccache.Ccache
 ```
 
 ```ps1#Scoop
 > irm https://get.scoop.sh | iex
-> scoop install nodejs-lts go rust nasm ruby perl
+> scoop install nodejs-lts go rust nasm ruby perl ccache
 # scoop seems to be buggy if you install llvm and the rest at the same time
 > scoop install llvm@18.1.8
 ```

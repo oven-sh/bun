@@ -508,7 +508,7 @@ pub const enum_property_util = struct {
         unreachable;
     }
 
-    pub fn parse(comptime T: type, input: *Parser) Result(T) {
+    pub inline fn parse(comptime T: type, input: *Parser) Result(T) {
         const location = input.currentSourceLocation();
         const ident = switch (input.expectIdent()) {
             .err => |e| return .{ .err = e },
@@ -558,7 +558,9 @@ pub fn DefineEnumProperty(comptime T: type) type {
         }
 
         pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            return dest.writeStr(asStr(this));
+            _ = this; // autofix
+            _ = dest; // autofix
+            // return dest.writeStr(asStr(this));
         }
     };
 }

@@ -329,7 +329,17 @@ pub const HorizontalPositionKeyword = enum {
     /// The `right` keyword.
     right,
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    pub fn asStr(this: *const @This()) []const u8 {
+        return css.enum_property_util.asStr(@This(), this);
+    }
+
+    pub fn parse(input: *css.Parser) Result(@This()) {
+        return css.enum_property_util.parse(@This(), input);
+    }
+
+    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+        return css.enum_property_util.toCss(@This(), this, W, dest);
+    }
 
     pub fn intoLengthPercentage(this: *const @This()) LengthPercentage {
         return switch (this.*) {
@@ -344,7 +354,18 @@ pub const VerticalPositionKeyword = enum {
     top,
     /// The `bottom` keyword.
     bottom,
-    pub usingnamespace css.DefineEnumProperty(@This());
+
+    pub fn asStr(this: *const @This()) []const u8 {
+        return css.enum_property_util.asStr(@This(), this);
+    }
+
+    pub fn parse(input: *css.Parser) Result(@This()) {
+        return css.enum_property_util.parse(@This(), input);
+    }
+
+    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+        return css.enum_property_util.toCss(@This(), this, W, dest);
+    }
 };
 
 pub const HorizontalPosition = PositionComponent(HorizontalPositionKeyword);

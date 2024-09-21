@@ -1338,7 +1338,17 @@ pub const SystemColor = enum {
     /// Text in windows. Same as CanvasText.
     windowtext,
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    pub fn asStr(this: *const @This()) []const u8 {
+        return css.enum_property_util.asStr(@This(), this);
+    }
+
+    pub fn parse(input: *css.Parser) Result(@This()) {
+        return css.enum_property_util.parse(@This(), input);
+    }
+
+    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+        return css.enum_property_util.toCss(@This(), this, W, dest);
+    }
 };
 
 /// A color in the [CIE Lab](https://www.w3.org/TR/css-color-4/#cie-lab) color space.
@@ -2396,7 +2406,17 @@ pub const ColorSpaceName = union(enum) {
     lch,
     oklch,
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    pub fn asStr(this: *const @This()) []const u8 {
+        return css.enum_property_util.asStr(@This(), this);
+    }
+
+    pub fn parse(input: *css.Parser) Result(@This()) {
+        return css.enum_property_util.parse(@This(), input);
+    }
+
+    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+        return css.enum_property_util.toCss(@This(), this, W, dest);
+    }
 };
 
 pub fn parseColorMix(input: *css.Parser) Result(CssColor) {
@@ -2486,7 +2506,17 @@ pub const HueInterpolationMethod = enum {
     specified,
     @"converts-to-kebab",
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    pub fn asStr(this: *const @This()) []const u8 {
+        return css.enum_property_util.asStr(@This(), this);
+    }
+
+    pub fn parse(input: *css.Parser) Result(@This()) {
+        return css.enum_property_util.parse(@This(), input);
+    }
+
+    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+        return css.enum_property_util.toCss(@This(), this, W, dest);
+    }
 
     pub fn interpolate(
         this: *const HueInterpolationMethod,

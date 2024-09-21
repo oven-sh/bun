@@ -58,7 +58,6 @@ pub const ContainerSizeFeatureId = enum {
     /// The [orientation](https://w3c.github.io/csswg-drafts/css-contain-3/#orientation) size container feature.
     orientation,
 
-    pub usingnamespace css.DefineEnumProperty(@This());
     pub usingnamespace css.DeriveValueType(@This());
 
     pub const ValueTypeMap = .{
@@ -69,6 +68,23 @@ pub const ContainerSizeFeatureId = enum {
         .@"aspect-ratio" = css.MediaFeatureType.ratio,
         .orientation = css.MediaFeatureType.ident,
     };
+
+    pub fn asStr(this: *const @This()) []const u8 {
+        return css.enum_property_util.asStr(@This(), this);
+    }
+
+    pub fn parse(input: *css.Parser) Result(@This()) {
+        return css.enum_property_util.parse(@This(), input);
+    }
+
+    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+        return css.enum_property_util.toCss(@This(), this, W, dest);
+    }
+
+    pub fn toCssWithPrefix(this: *const @This(), prefix: []const u8, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        try dest.writeStr(prefix);
+        try this.toCss(W, dest);
+    }
 };
 
 /// Represents a style query within a container condition.

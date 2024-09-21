@@ -102,7 +102,18 @@ pub const Operator = enum {
     @"and",
     /// The `or` operator.
     @"or",
-    pub usingnamespace css.DefineEnumProperty(@This());
+
+    pub fn asStr(this: *const @This()) []const u8 {
+        return css.enum_property_util.asStr(@This(), this);
+    }
+
+    pub fn parse(input: *css.Parser) Result(@This()) {
+        return css.enum_property_util.parse(@This(), input);
+    }
+
+    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+        return css.enum_property_util.toCss(@This(), this, W, dest);
+    }
 };
 
 /// A [media query](https://drafts.csswg.org/mediaqueries/#media).
@@ -237,10 +248,17 @@ pub const Qualifier = enum {
     /// Negates a media query.
     not,
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    pub fn asStr(this: *const @This()) []const u8 {
+        return css.enum_property_util.asStr(@This(), this);
+    }
 
-    // ~toCssImpl
-    const This = @This();
+    pub fn parse(input: *css.Parser) Result(@This()) {
+        return css.enum_property_util.parse(@This(), input);
+    }
+
+    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+        return css.enum_property_util.toCss(@This(), this, W, dest);
+    }
 };
 
 /// A [media type](https://drafts.csswg.org/mediaqueries/#media-types) within a media query.
@@ -983,15 +1001,25 @@ pub const MediaFeatureComparison = enum(u8) {
     /// `<=`
     @"less-than-equal" = 16,
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    pub fn asStr(this: *const @This()) []const u8 {
+        return css.enum_property_util.asStr(@This(), this);
+    }
 
-    pub fn opposite(this: MediaFeatureComparison) MediaFeatureComparison {
-        return switch (this) {
-            .equal => .equal,
+    pub fn parse(input: *css.Parser) Result(@This()) {
+        return css.enum_property_util.parse(@This(), input);
+    }
+
+    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+        return css.enum_property_util.toCss(@This(), this, W, dest);
+    }
+
+    pub fn opposite(self: @This()) @This() {
+        return switch (self) {
             .@"greater-than" => .@"less-than",
             .@"greater-than-equal" => .@"less-than-equal",
             .@"less-than" => .@"greater-than",
             .@"less-than-equal" => .@"greater-than-equal",
+            .equal => .equal,
         };
     }
 };

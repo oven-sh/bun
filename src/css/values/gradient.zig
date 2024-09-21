@@ -918,7 +918,18 @@ pub const ShapeExtent = enum {
     @"closest-corner",
     /// The farthest corner of the box from the gradient's center.
     @"farthest-corner",
-    pub usingnamespace css.DefineEnumProperty(@This());
+
+    pub fn asStr(this: *const @This()) []const u8 {
+        return css.enum_property_util.asStr(@This(), this);
+    }
+
+    pub fn parse(input: *css.Parser) Result(@This()) {
+        return css.enum_property_util.parse(@This(), input);
+    }
+
+    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+        return css.enum_property_util.toCss(@This(), this, W, dest);
+    }
 };
 
 /// A circle ending shape for a `radial-gradient()`.

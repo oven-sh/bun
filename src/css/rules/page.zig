@@ -231,7 +231,17 @@ pub const PagePseudoClass = enum {
     /// The `:blank` pseudo class.
     blank,
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    pub fn asStr(this: *const @This()) []const u8 {
+        return css.enum_property_util.asStr(@This(), this);
+    }
+
+    pub fn parse(input: *css.Parser) Result(@This()) {
+        return css.enum_property_util.parse(@This(), input);
+    }
+
+    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+        return css.enum_property_util.toCss(@This(), this, W, dest);
+    }
 };
 
 /// A [page margin box](https://www.w3.org/TR/css-page-3/#margin-boxes).
@@ -273,7 +283,17 @@ pub const PageMarginBox = enum {
     /// A fixed-size box defined by the intersection of the bottom and right margins of the page box.
     @"bottom-right-corner",
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    pub fn asStr(this: *const @This()) []const u8 {
+        return css.enum_property_util.asStr(@This(), this);
+    }
+
+    pub fn parse(input: *css.Parser) Result(@This()) {
+        return css.enum_property_util.parse(@This(), input);
+    }
+
+    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+        return css.enum_property_util.toCss(@This(), this, W, dest);
+    }
 };
 
 pub const PageRuleParser = struct {

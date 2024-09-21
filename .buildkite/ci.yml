@@ -39,14 +39,14 @@ steps:
   - key: "darwin-aarch64"
     group: ":darwin: aarch64"
     steps:
-      - key: "darwin-aarch64-build-deps"
-        label: ":darwin: aarch64 - build-deps"
+      - key: "darwin-aarch64-build-vendor"
+        label: ":darwin: aarch64 - build-vendor"
         agents:
           queue: "build-darwin"
           os: "darwin"
           arch: "aarch64"
         command:
-          - "bun run build:ci --target dependencies"
+          - "bun run build:ci --target vendor"
 
       - key: "darwin-aarch64-build-cpp"
         label: ":darwin: aarch64 - build-cpp"
@@ -54,10 +54,8 @@ steps:
           queue: "build-darwin"
           os: "darwin"
           arch: "aarch64"
-        env:
-          BUN_CPP_ONLY: "ON"
         command:
-          - "bun run build:ci --target bun"
+          - "bun run build:ci --target bun-cpp"
 
       - key: "darwin-aarch64-build-zig"
         label: ":darwin: aarch64 - build-zig"
@@ -73,7 +71,7 @@ steps:
           os: "darwin"
           arch: "aarch64"
         depends_on:
-          - "darwin-aarch64-build-deps"
+          - "darwin-aarch64-build-vendor"
           - "darwin-aarch64-build-cpp"
           - "darwin-aarch64-build-zig"
         env:
@@ -141,14 +139,14 @@ steps:
   - key: "darwin-x64"
     group: ":darwin: x64"
     steps:
-      - key: "darwin-x64-build-deps"
-        label: ":darwin: x64 - build-deps"
+      - key: "darwin-x64-build-vendor"
+        label: ":darwin: x64 - build-vendor"
         agents:
           queue: "build-darwin"
           os: "darwin"
           arch: "x64"
         command:
-          - "bun run build:ci --target dependencies"
+          - "bun run build:ci --target vendor"
 
       - key: "darwin-x64-build-cpp"
         label: ":darwin: x64 - build-cpp"
@@ -156,10 +154,8 @@ steps:
           queue: "build-darwin"
           os: "darwin"
           arch: "x64"
-        env:
-          BUN_CPP_ONLY: "ON"
         command:
-          - "bun run build:ci --target bun"
+          - "bun run build:ci --target bun-cpp"
 
       - key: "darwin-x64-build-zig"
         label: ":darwin: x64 - build-zig"
@@ -175,7 +171,7 @@ steps:
           os: "darwin"
           arch: "x64"
         depends_on:
-          - "darwin-x64-build-deps"
+          - "darwin-x64-build-vendor"
           - "darwin-x64-build-cpp"
           - "darwin-x64-build-zig"
         env:
@@ -243,14 +239,14 @@ steps:
   - key: "linux-x64"
     group: ":linux: x64"
     steps:
-      - key: "linux-x64-build-deps"
-        label: ":linux: x64 - build-deps"
+      - key: "linux-x64-build-vendor"
+        label: ":linux: x64 - build-vendor"
         agents:
           queue: "build-linux"
           os: "linux"
           arch: "x64"
         command:
-          - "bun run build:ci --target dependencies"
+          - "bun run build:ci --target vendor"
 
       - key: "linux-x64-build-cpp"
         label: ":linux: x64 - build-cpp"
@@ -258,10 +254,8 @@ steps:
           queue: "build-linux"
           os: "linux"
           arch: "x64"
-        env:
-          BUN_CPP_ONLY: "ON"
         command:
-          - "bun run build:ci --target bun"
+          - "bun run build:ci --target bun-cpp"
 
       - key: "linux-x64-build-zig"
         label: ":linux: x64 - build-zig"
@@ -277,7 +271,7 @@ steps:
           os: "linux"
           arch: "x64"
         depends_on:
-          - "linux-x64-build-deps"
+          - "linux-x64-build-vendor"
           - "linux-x64-build-cpp"
           - "linux-x64-build-zig"
         env:
@@ -376,8 +370,8 @@ steps:
   - key: "linux-x64-baseline"
     group: ":linux: x64-baseline"
     steps:
-      - key: "linux-x64-baseline-build-deps"
-        label: ":linux: x64-baseline - build-deps"
+      - key: "linux-x64-baseline-build-vendor"
+        label: ":linux: x64-baseline - build-vendor"
         agents:
           queue: "build-linux"
           os: "linux"
@@ -385,7 +379,7 @@ steps:
         env:
           ENABLE_BASELINE: "ON"
         command:
-          - "bun run build:ci --target dependencies"
+          - "bun run build:ci --target vendor"
 
       - key: "linux-x64-baseline-build-cpp"
         label: ":linux: x64-baseline - build-cpp"
@@ -395,9 +389,8 @@ steps:
           arch: "x64"
         env:
           ENABLE_BASELINE: "ON"
-          BUN_CPP_ONLY: "ON"
         command:
-          - "bun run build:ci --target bun"
+          - "bun run build:ci --target bun-cpp"
 
       - key: "linux-x64-baseline-build-zig"
         label: ":linux: x64-baseline - build-zig"
@@ -415,7 +408,7 @@ steps:
           os: "linux"
           arch: "x64"
         depends_on:
-          - "linux-x64-baseline-build-deps"
+          - "linux-x64-baseline-build-vendor"
           - "linux-x64-baseline-build-cpp"
           - "linux-x64-baseline-build-zig"
         env:
@@ -515,14 +508,14 @@ steps:
   - key: "linux-aarch64"
     group: ":linux: aarch64"
     steps:
-      - key: "linux-aarch64-build-deps"
-        label: ":linux: aarch64 - build-deps"
+      - key: "linux-aarch64-build-vendor"
+        label: ":linux: aarch64 - build-vendor"
         agents:
           queue: "build-linux"
           os: "linux"
           arch: "aarch64"
         command:
-          - "bun run build:ci --target dependencies"
+          - "bun run build:ci --target vendor"
 
       - key: "linux-aarch64-build-cpp"
         label: ":linux: aarch64 - build-cpp"
@@ -530,10 +523,8 @@ steps:
           queue: "build-linux"
           os: "linux"
           arch: "aarch64"
-        env:
-          BUN_CPP_ONLY: "ON"
         command:
-          - "bun run build:ci --target bun"
+          - "bun run build:ci --target bun-cpp"
 
       - key: "linux-aarch64-build-zig"
         label: ":linux: aarch64 - build-zig"
@@ -549,7 +540,7 @@ steps:
           os: "linux"
           arch: "aarch64"
         depends_on:
-          - "linux-aarch64-build-deps"
+          - "linux-aarch64-build-vendor"
           - "linux-aarch64-build-cpp"
           - "linux-aarch64-build-zig"
         env:
@@ -648,8 +639,8 @@ steps:
   - key: "windows-x64"
     group: ":windows: x64"
     steps:
-      - key: "windows-x64-build-deps"
-        label: ":windows: x64 - build-deps"
+      - key: "windows-x64-build-vendor"
+        label: ":windows: x64 - build-vendor"
         agents:
           queue: "build-windows"
           os: "windows"
@@ -659,7 +650,7 @@ steps:
             - exit_status: 255
               limit: 5
         command:
-          - "bun run build:ci --target dependencies"
+          - "bun run build:ci --target vendor"
 
       - key: "windows-x64-build-cpp"
         label: ":windows: x64 - build-cpp"
@@ -671,10 +662,8 @@ steps:
           automatic:
             - exit_status: 255
               limit: 5
-        env:
-          BUN_CPP_ONLY: "ON"
         command:
-          - "bun run build:ci --target bun"
+          - "bun run build:ci --target bun-cpp"
 
       - key: "windows-x64-build-zig"
         label: ":windows: x64 - build-zig"
@@ -690,7 +679,7 @@ steps:
           os: "windows"
           arch: "x64"
         depends_on:
-          - "windows-x64-build-deps"
+          - "windows-x64-build-vendor"
           - "windows-x64-build-cpp"
           - "windows-x64-build-zig"
         retry:
@@ -731,8 +720,8 @@ steps:
   - key: "windows-x64-baseline"
     group: ":windows: x64-baseline"
     steps:
-      - key: "windows-x64-baseline-build-deps"
-        label: ":windows: x64-baseline - build-deps"
+      - key: "windows-x64-baseline-build-vendor"
+        label: ":windows: x64-baseline - build-vendor"
         agents:
           queue: "build-windows"
           os: "windows"
@@ -744,7 +733,7 @@ steps:
         env:
           ENABLE_BASELINE: "ON"
         command:
-          - "bun run build:ci --target dependencies"
+          - "bun run build:ci --target vendor"
 
       - key: "windows-x64-baseline-build-cpp"
         label: ":windows: x64-baseline - build-cpp"
@@ -758,9 +747,8 @@ steps:
               limit: 5
         env:
           ENABLE_BASELINE: "ON"
-          BUN_CPP_ONLY: "ON"
         command:
-          - "bun run build:ci --target bun"
+          - "bun run build:ci --target bun-cpp"
 
       - key: "windows-x64-baseline-build-zig"
         label: ":windows: x64-baseline - build-zig"
@@ -778,7 +766,7 @@ steps:
           os: "windows"
           arch: "x64"
         depends_on:
-          - "windows-x64-baseline-build-deps"
+          - "windows-x64-baseline-build-vendor"
           - "windows-x64-baseline-build-cpp"
           - "windows-x64-baseline-build-zig"
         retry:

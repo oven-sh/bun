@@ -152,13 +152,13 @@ pub fn CompressionStream(comptime T: type) type {
             this.poll_ref.unref(vm);
             defer this.deref();
 
-            if (!(this.checkError(globalThis) catch return)) {
+            if (!(this.checkError(globalThis) catch return globalThis.reportActiveExceptionAsUnhandled(error.JSError))) {
                 return;
             }
 
             this.stream.updateWriteResult(&this.write_result.?[1], &this.write_result.?[0]);
 
-            _ = this.write_callback.get().?.call(globalThis, .null, &.{}) catch return;
+            _ = this.write_callback.get().?.call(globalThis, .null, &.{}) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
         }
 
         pub fn writeSync(this: *T, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {

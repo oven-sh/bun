@@ -104,7 +104,6 @@ export class TCPSocketSignal extends EventEmitter {
 
     this.#server = createServer((socket: Socket) => {
       socket.on('data', (data) => {
-        console.error('received', data);
         this.emit('Signal.received', data.toString());
       });
 

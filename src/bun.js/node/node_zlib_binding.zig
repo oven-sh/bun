@@ -90,7 +90,7 @@ pub fn CompressionStream(comptime T: type) type {
                 in_len = 0;
                 in_off = 0;
             } else {
-                bun.assert(arguments[1].isBuffer(globalThis));
+                bun.assert(arguments[1].isArrayBufferView(globalThis));
                 const in_buf = arguments[1].asArrayBuffer(globalThis).?;
                 in_off = arguments[2].toU32();
                 in_len = arguments[3].toU32();
@@ -98,7 +98,7 @@ pub fn CompressionStream(comptime T: type) type {
                 in = in_buf.byteSlice()[in_off..][0..in_len];
             }
 
-            bun.assert(arguments[4].isBuffer(globalThis));
+            bun.assert(arguments[4].isArrayBufferView(globalThis));
             const out_buf = arguments[4].asArrayBuffer(globalThis).?;
             out_off = arguments[5].toU32();
             out_len = arguments[6].toU32();
@@ -187,7 +187,7 @@ pub fn CompressionStream(comptime T: type) type {
                 in_len = 0;
                 in_off = 0;
             } else {
-                bun.assert(arguments[1].isBuffer(globalThis));
+                bun.assert(arguments[1].isArrayBufferView(globalThis));
                 const in_buf = arguments[1].asArrayBuffer(globalThis).?;
                 in_off = arguments[2].toU32();
                 in_len = arguments[3].toU32();
@@ -195,7 +195,7 @@ pub fn CompressionStream(comptime T: type) type {
                 in = in_buf.byteSlice()[in_off..][0..in_len];
             }
 
-            bun.assert(arguments[4].isBuffer(globalThis));
+            bun.assert(arguments[4].isArrayBufferView(globalThis));
             const out_buf = arguments[4].asArrayBuffer(globalThis).?;
             out_off = arguments[5].toU32();
             out_len = arguments[6].toU32();

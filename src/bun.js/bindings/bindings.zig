@@ -4235,6 +4235,13 @@ pub const JSValue = enum(JSValueReprInt) {
         return JSBuffer__isBuffer(global, value);
     }
 
+    pub fn isArrayBufferView(val: JSC.JSValue, globalThis: *JSC.JSGlobalObject) bool {
+        if (val.isBuffer(globalThis)) return true;
+        if (val.jsType().isTypedArray()) return true;
+        if (val.jsType() == .DataView) return true;
+        return false;
+    }
+
     pub fn isRegExp(this: JSValue) bool {
         return this.jsType() == .RegExpObject;
     }

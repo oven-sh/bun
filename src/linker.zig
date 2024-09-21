@@ -597,7 +597,7 @@ pub const Linker = struct {
             else => {},
         }
         if (had_resolve_errors) return error.ResolveMessage;
-        result.ast.externals = try externals.toOwnedSlice();
+        externals.clearAndFree();
     }
 
     fn whenModuleNotFound(

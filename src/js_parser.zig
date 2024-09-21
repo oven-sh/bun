@@ -1272,7 +1272,7 @@ pub const ImportScanner = struct {
                                 result.* = alias;
                             }
                             strings.sortDesc(sorted);
-                            p.named_imports.ensureUnusedCapacity(sorted.len) catch unreachable;
+                            p.named_imports.ensureUnusedCapacity(p.allocator, sorted.len) catch bun.outOfMemory();
 
                             // Create named imports for these property accesses. This will
                             // cause missing imports to generate useful warnings.
@@ -1283,6 +1283,7 @@ pub const ImportScanner = struct {
                             for (sorted) |alias| {
                                 const item = existing_items.get(alias).?;
                                 p.named_imports.put(
+                                    p.allocator,
                                     item.ref.?,
                                     js_ast.NamedImport{
                                         .alias = alias,
@@ -1290,7 +1291,7 @@ pub const ImportScanner = struct {
                                         .namespace_ref = namespace_ref,
                                         .import_record_index = st.import_record_index,
                                     },
-                                ) catch unreachable;
+                                ) catch bun.outOfMemory();
 
                                 const name: LocRef = item;
                                 const name_ref = name.ref.?;
@@ -1314,8 +1315,9 @@ pub const ImportScanner = struct {
                         }
 
                         p.named_imports.ensureUnusedCapacity(
+                            p.allocator,
                             st.items.len + @as(usize, @intFromBool(st.default_name != null)) + @as(usize, @intFromBool(st.star_name_loc != null)),
-                        ) catch unreachable;
+                        ) catch bun.outOfMemory();
 
                         if (st.star_name_loc) |loc| {
                             p.named_imports.putAssumeCapacity(
@@ -1370,7 +1372,7 @@ pub const ImportScanner = struct {
                             const name: LocRef = item.name;
                             const name_ref = name.ref.?;
 
-                            try p.named_imports.put(name_ref, js_ast.NamedImport{
+                            try p.named_imports.put(p.allocator, name_ref, js_ast.NamedImport{
                                 .alias = item.alias,
                                 .alias_loc = name.loc,
                                 .namespace_ref = namespace_ref,
@@ -1504,7 +1506,7 @@ pub const ImportScanner = struct {
 
                     if (st.alias) |alias| {
                         // "export * as ns from 'path'"
-                        try p.named_imports.put(st.namespace_ref, js_ast.NamedImport{
+                        try p.named_imports.put(p.allocator, st.namespace_ref, js_ast.NamedImport{
                             .alias = null,
                             .alias_is_star = true,
                             .alias_loc = alias.loc,
@@ -1522,13 +1524,13 @@ pub const ImportScanner = struct {
                 },
                 .s_export_from => |st| {
                     try p.import_records_for_current_part.append(allocator, st.import_record_index);
-                    p.named_imports.ensureUnusedCapacity(st.items.len) catch unreachable;
+                    p.named_imports.ensureUnusedCapacity(p.allocator, st.items.len) catch unreachable;
                     for (st.items) |item| {
                         const ref = item.name.ref orelse p.panic("Expected export from item to have a name {any}", .{st});
                         // Note that the imported alias is not item.Alias, which is the
                         // exported alias. This is somewhat confusing because each
                         // SExportFrom statement is basically SImport + SExportClause in one.
-                        try p.named_imports.put(ref, js_ast.NamedImport{
+                        try p.named_imports.put(p.allocator, ref, js_ast.NamedImport{
                             .alias_is_star = false,
                             .alias = item.original_name,
                             .alias_loc = item.name.loc,
@@ -2842,7 +2844,7 @@ pub const ScanPassResult = struct {
     pub fn init(allocator: Allocator) ScanPassResult {
         return .{
             .import_records = ListManaged(ImportRecord).init(allocator),
-            .named_imports = js_ast.Ast.NamedImports.init(allocator),
+            .named_imports = .{},
             .used_symbols = ParsePassSymbolUsageMap.init(allocator),
             .import_records_to_keep = ListManaged(u32).init(allocator),
             .approximate_newline_count = 0,
@@ -5813,7 +5815,7 @@ fn NewParser_(
                     .{std.mem.trim(u8, alias, "\"'")},
                 );
             } else if (!p.isDeoptimizedCommonJS()) {
-                try p.named_exports.put(alias, js_ast.NamedExport{ .alias_loc = loc, .ref = ref });
+                try p.named_exports.put(p.allocator, alias, js_ast.NamedExport{ .alias_loc = loc, .ref = ref });
             }
         }
 
@@ -6050,7 +6052,7 @@ fn NewParser_(
                 };
                 declared_symbols.appendAssumeCapacity(.{ .ref = ref, .is_top_level = true });
                 try p.is_import_item.put(allocator, ref, {});
-                try p.named_imports.put(ref, js_ast.NamedImport{
+                try p.named_imports.put(allocator, ref, js_ast.NamedImport{
                     .alias = alias_name,
                     .alias_loc = logger.Loc{},
                     .namespace_ref = namespace_ref,
@@ -6145,7 +6147,7 @@ fn NewParser_(
                     declared_symbols.appendAssumeCapacity(.{ .ref = entry.ref, .is_top_level = true });
                     try p.module_scope.generated.push(allocator, entry.ref);
                     try p.is_import_item.put(allocator, entry.ref, {});
-                    try p.named_imports.put(entry.ref, .{
+                    try p.named_imports.put(allocator, entry.ref, .{
                         .alias = entry.name,
                         .alias_loc = logger.Loc.Empty,
                         .namespace_ref = namespace_ref,
@@ -23619,7 +23621,7 @@ fn NewParser_(
                 .define = define,
                 .import_records = undefined,
                 .named_imports = undefined,
-                .named_exports = js_ast.Ast.NamedExports.init(allocator),
+                .named_exports = .{},
                 .log = log,
                 .allocator = allocator,
                 .options = opts,
@@ -23665,7 +23667,7 @@ fn NewParser_(
 
             if (comptime !only_scan_imports_and_do_not_visit) {
                 this.import_records = @TypeOf(this.import_records).init(allocator);
-                this.named_imports = NamedImportsType.init(allocator);
+                this.named_imports = .{};
             }
 
             this.to_expr_wrapper_namespace = Binding2ExprWrapper.Namespace.init(this);

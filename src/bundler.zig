@@ -1029,8 +1029,7 @@ pub const Bundler = struct {
                 js_ast.Symbol.Map.initList(symbols),
                 source,
                 false,
-                js_printer.Options{
-                    .externals = ast.externals,
+                .{
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,
                     .css_import_behavior = bundler.options.cssImportBehavior(),
@@ -1052,8 +1051,7 @@ pub const Bundler = struct {
                 js_ast.Symbol.Map.initList(symbols),
                 source,
                 false,
-                js_printer.Options{
-                    .externals = ast.externals,
+                .{
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,
                     .source_map_handler = source_map_context,
@@ -1076,8 +1074,7 @@ pub const Bundler = struct {
                     js_ast.Symbol.Map.initList(symbols),
                     source,
                     is_bun,
-                    js_printer.Options{
-                        .externals = ast.externals,
+                    .{
                         .runtime_imports = ast.runtime_imports,
                         .require_ref = ast.require_ref,
                         .css_import_behavior = bundler.options.cssImportBehavior(),

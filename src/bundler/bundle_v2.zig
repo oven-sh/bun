@@ -11613,7 +11613,7 @@ pub const LinkerContext = struct {
         imports_to_bind: *RefImportData,
         source_index: Index.Int,
     ) void {
-        var named_imports = named_imports_ptr.cloneWithAllocator(c.allocator) catch unreachable;
+        var named_imports = named_imports_ptr.clone(c.allocator) catch bun.outOfMemory();
         defer named_imports_ptr.* = named_imports;
 
         const Sorter = struct {
@@ -12810,8 +12810,8 @@ pub const AstBuilder = struct {
             .symbols = .{},
             .import_records = .{},
             .import_records_for_current_part = .{},
-            .named_imports = js_ast.Ast.NamedImports.init(allocator),
-            .named_exports = js_ast.Ast.NamedExports.init(allocator),
+            .named_imports = .{},
+            .named_exports = .{},
             .log = Logger.Log.init(allocator),
             .export_star_import_records = .{},
             .module_ref = Ref.None,
@@ -13041,7 +13041,7 @@ pub const AstBuilder = struct {
                 .{alias},
             );
         } else {
-            try p.named_exports.put(alias, .{ .alias_loc = Logger.Loc.Empty, .ref = ref });
+            try p.named_exports.put(p.allocator, alias, .{ .alias_loc = Logger.Loc.Empty, .ref = ref });
         }
     }
 

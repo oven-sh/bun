@@ -6822,7 +6822,6 @@ pub const Ast = struct {
 
     runtime_import_record_id: ?u32 = null,
     needs_runtime: bool = false,
-    externals: []u32 = &[_]u32{},
     // This is a list of CommonJS features. When a file uses CommonJS features,
     // it's not a candidate for "flat bundling" and must be wrapped in its own
     // closure.
@@ -6862,8 +6861,8 @@ pub const Ast = struct {
     // These are used when bundling. They are filled in during the parser pass
     // since we already have to traverse the AST then anyway and the parser pass
     // is conveniently fully parallelized.
-    named_imports: NamedImports = NamedImports.init(bun.failing_allocator),
-    named_exports: NamedExports = NamedExports.init(bun.failing_allocator),
+    named_imports: NamedImports = .{},
+    named_exports: NamedExports = .{},
     export_star_import_records: []u32 = &([_]u32{}),
 
     // allocator: std.mem.Allocator,
@@ -6890,10 +6889,8 @@ pub const Ast = struct {
     };
     pub const CommonJSNamedExports = bun.StringArrayHashMapUnmanaged(CommonJSNamedExport);
 
-    // TODO: make this unmanaged struct
-    pub const NamedImports = std.ArrayHashMap(Ref, NamedImport, RefHashCtx, true);
-    // TODO: make this unmanaged struct
-    pub const NamedExports = bun.StringArrayHashMap(NamedExport);
+    pub const NamedImports = std.ArrayHashMapUnmanaged(Ref, NamedImport, RefHashCtx, true);
+    pub const NamedExports = bun.StringArrayHashMapUnmanaged(NamedExport);
     pub const ConstValuesMap = std.ArrayHashMapUnmanaged(Ref, Expr, RefHashCtx, false);
     pub const TsEnumsMap = std.ArrayHashMapUnmanaged(Ref, bun.StringHashMapUnmanaged(InlinedEnumValue), RefHashCtx, false);
 
@@ -6924,7 +6921,6 @@ pub const Ast = struct {
     pub fn deinit(this: *Ast) void {
         // TODO: assert mimalloc-owned memory
         if (this.parts.len > 0) this.parts.deinitWithAllocator(bun.default_allocator);
-        if (this.externals.len > 0) bun.default_allocator.free(this.externals);
         if (this.symbols.len > 0) this.symbols.deinitWithAllocator(bun.default_allocator);
         if (this.import_records.len > 0) this.import_records.deinitWithAllocator(bun.default_allocator);
     }
@@ -6939,8 +6935,7 @@ pub const Ast = struct {
 /// So we make a slimmer version of Ast for bundling that doesn't allocate as much memory
 pub const BundledAst = struct {
     approximate_newline_count: u32 = 0,
-    nested_scope_slot_counts: SlotCounts = SlotCounts{},
-    externals: []u32 = &.{},
+    nested_scope_slot_counts: SlotCounts = .{},
 
     exports_kind: ExportsKind = .none,
 
@@ -6951,7 +6946,7 @@ pub const BundledAst = struct {
     hashbang: string = "",
     parts: Part.List = .{},
     symbols: Symbol.List = .{},
-    module_scope: Scope = Scope{},
+    module_scope: Scope = .{},
     char_freq: CharFreq = undefined,
     exports_ref: Ref = Ref.None,
     module_ref: Ref = Ref.None,
@@ -6961,11 +6956,10 @@ pub const BundledAst = struct {
     // These are used when bundling. They are filled in during the parser pass
     // since we already have to traverse the AST then anyway and the parser pass
     // is conveniently fully parallelized.
-    named_imports: NamedImports = NamedImports.init(bun.failing_allocator),
-    named_exports: NamedExports = NamedExports.init(bun.failing_allocator),
+    named_imports: NamedImports = .{},
+    named_exports: NamedExports = .{},
     export_star_import_records: []u32 = &.{},
 
-    // allocator: std.mem.Allocator,
     top_level_symbols_to_parts: TopLevelSymbolToParts = .{},
 
     commonjs_named_exports: CommonJSNamedExports = .{},
@@ -7010,7 +7004,6 @@ pub const BundledAst = struct {
         return .{
             .approximate_newline_count = this.approximate_newline_count,
             .nested_scope_slot_counts = this.nested_scope_slot_counts,
-            .externals = this.externals,
 
             .exports_kind = this.exports_kind,
 
@@ -7059,7 +7052,6 @@ pub const BundledAst = struct {
         return .{
             .approximate_newline_count = @as(u32, @truncate(ast.approximate_newline_count)),
             .nested_scope_slot_counts = ast.nested_scope_slot_counts,
-            .externals = ast.externals,
 
             .exports_kind = ast.exports_kind,
 

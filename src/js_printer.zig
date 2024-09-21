@@ -518,7 +518,6 @@ pub const Options = struct {
     require_ref: ?Ref = null,
     import_meta_ref: Ref = Ref.None,
     indent: Indentation = .{},
-    externals: []u32 = &[_]u32{},
     runtime_imports: runtime.Runtime.Imports = runtime.Runtime.Imports{},
     module_hash: u32 = 0,
     source_path: ?fs.Path = null,
@@ -2089,18 +2088,12 @@ fn NewPrinter(
                 return;
             }
 
-            const is_external = std.mem.indexOfScalar(
-                u32,
-                p.options.externals,
-                import_record_index,
-            ) != null;
-
             // External "require()"
             if (record.kind != .dynamic) {
                 p.printSpaceBeforeIdentifier();
 
                 if (p.options.inline_require_and_import_errors) {
-                    if (record.path.is_disabled and record.handles_import_errors and !is_external) {
+                    if (record.path.is_disabled and record.handles_import_errors) {
                         p.printRequireError(record.path.text);
                         return;
                     }

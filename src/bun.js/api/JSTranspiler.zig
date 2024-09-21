@@ -845,7 +845,7 @@ pub fn finalize(
     this: *Transpiler,
 ) callconv(.C) void {
     this.bundler.log.deinit();
-    this.scan_pass_result.named_imports.deinit();
+    this.scan_pass_result.named_imports.deinit(this.scan_pass_result.import_records.allocator);
     this.scan_pass_result.import_records.deinit();
     this.scan_pass_result.used_symbols.deinit();
     if (this.buffer_writer != null) {

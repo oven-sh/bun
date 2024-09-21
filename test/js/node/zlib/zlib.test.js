@@ -315,17 +315,17 @@ for (const [compress, decompressor] of [
     stream => {
       stream.end(compressed);
     },
-    // stream => {
-    //   stream.write(compressed);
-    //   stream.write(trailingData);
-    // },
+    stream => {
+      stream.write(compressed);
+      stream.write(trailingData);
+    },
     stream => {
       stream.write(compressed);
       stream.end(trailingData);
     },
-    // stream => {
-    //   stream.write(Buffer.concat([compressed, trailingData]));
-    // },
+    stream => {
+      stream.write(Buffer.concat([compressed, trailingData]));
+    },
     stream => {
       stream.end(Buffer.concat([compressed, trailingData]));
     },

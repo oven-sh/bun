@@ -125,7 +125,7 @@ It is not recommended to install `ninja` / `cmake` into your global path, becaus
 ```ps1
 > bun run build
 
-# after the initialize `bun run build` you can use the following to build
+# after the initial `bun run build` you can use the following to build
 > ninja -Cbuild/debug
 ```
 

@@ -356,6 +356,7 @@ pub const SNativeZlib = struct {
     }
 
     pub fn deinit(this: *@This()) void {
+        this.write_callback.deinit();
         this.onerror_value.deinit();
         this.destroy();
     }
@@ -700,6 +701,7 @@ pub const SNativeBrotli = struct {
     }
 
     pub fn deinit(this: *@This()) void {
+        this.write_callback.deinit();
         this.onerror_value.deinit();
         this.destroy();
     }

@@ -1,25 +1,5 @@
-if(DEBUG)
-  set(bun bun-debug)
-elseif(ENABLE_SMOL)
-  set(bun bun-smol-profile)
-  set(bunStrip bun-smol)
-elseif(ENABLE_VALGRIND)
-  set(bun bun-valgrind)
-elseif(ENABLE_ASSERTIONS)
-  set(bun bun-assertions)
-else()
-  set(bun bun-profile)
-  set(bunStrip bun)
-endif()
-
-set(bunExe ${bun}${CMAKE_EXECUTABLE_SUFFIX})
-
-if(bunStrip)
-  set(bunStripExe ${bunStrip}${CMAKE_EXECUTABLE_SUFFIX})
-  set(buns ${bun} ${bunStrip})
-else()
-  set(buns ${bun})
-endif()
+# register_target(bun)
+set(bun bun)
 
 # Some commands use this path, and some do not.
 # In the future, change those commands so that generated files are written to this path.
@@ -50,7 +30,7 @@ set(BUN_ZIG_IDENTIFIER_OUTPUTS
 
 register_command(
   TARGET
-    bun-identifier-data
+    ${bun}-identifier-data
   COMMENT
     "Generating src/js_lexer/*.blob"
   COMMAND
@@ -89,7 +69,7 @@ register_bun_install(
 
 register_command(
   TARGET
-    bun-error
+    ${bun}-error
   COMMENT
     "Building bun-error"
   CWD
@@ -116,7 +96,7 @@ set(BUN_FALLBACK_DECODER_OUTPUT ${CWD}/src/fallback.out.js)
 
 register_command(
   TARGET
-    bun-fallback-decoder
+    ${bun}-fallback-decoder
   COMMENT
     "Building src/fallback.out.js"
   COMMAND
@@ -139,7 +119,7 @@ set(BUN_RUNTIME_JS_OUTPUT ${CWD}/src/runtime.out.js)
 
 register_command(
   TARGET
-    bun-runtime-js
+    ${bun}-runtime-js
   COMMENT
     "Building src/runtime.out.js"
   COMMAND
@@ -183,7 +163,7 @@ register_bun_install(
 # it uses ${BUN_EXECUTABLE} x instead of ${ESBUILD_EXECUTABLE}.
 register_command(
   TARGET
-    bun-node-fallbacks
+    ${bun}-node-fallbacks
   COMMENT
     "Building src/node-fallbacks/*.js"
   CWD
@@ -221,7 +201,7 @@ set(BUN_ERROR_CODE_OUTPUTS
 
 register_command(
   TARGET
-    bun-error-code
+    ${bun}-error-code
   COMMENT
     "Generating ErrorCode.{zig,h}"
   COMMAND
@@ -257,7 +237,7 @@ set(BUN_ZIG_GENERATED_CLASSES_OUTPUTS
 
 register_command(
   TARGET
-    bun-zig-generated-classes
+    ${bun}-zig-generated-classes
   COMMENT
     "Generating ZigGeneratedClasses.{zig,cpp,h}"
   COMMAND
@@ -305,7 +285,7 @@ set(BUN_JAVASCRIPT_OUTPUTS
 
 register_command(
   TARGET
-    bun-js-modules
+    ${bun}-js-modules
   COMMENT
     "Generating JavaScript modules"
   COMMAND
@@ -341,7 +321,7 @@ set(BUN_KIT_RUNTIME_OUTPUTS
 
 register_command(
   TARGET
-    bun-kit-codegen
+    ${bun}-kit-codegen
   COMMENT
     "Bundling Kit Runtime"
   COMMAND
@@ -373,7 +353,7 @@ set(BUN_JS_SINK_OUTPUTS
 
 register_command(
   TARGET
-    bun-js-sink
+    ${bun}-js-sink
   COMMENT
     "Generating JSSink.{cpp,h}"
   COMMAND
@@ -433,7 +413,7 @@ foreach(i RANGE 0 ${BUN_OBJECT_LUT_SOURCES_MAX_INDEX})
   get_filename_component(filename ${BUN_OBJECT_LUT_SOURCE} NAME_WE)
   register_command(
     TARGET
-      bun-codegen-lut-${filename}
+      ${bun}-codegen-lut-${filename}
     COMMENT
       "Generating ${filename}.lut.h"
     COMMAND
@@ -522,7 +502,7 @@ endif()
 
 register_command(
   TARGET
-    bun-zig
+    ${bun}-zig
   GROUP
     console
   COMMENT
@@ -549,10 +529,10 @@ register_command(
     ${BUN_ZIG_GENERATED_SOURCES}
 )
 
-set_property(TARGET bun-zig PROPERTY JOB_POOL compile_pool)
+set_property(TARGET ${bun}-zig PROPERTY JOB_POOL compile_pool)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
 
-# --- C/C++ Sources ---
+# --- C/C++ Object ---
 
 set(BUN_USOCKETS_SOURCE ${CWD}/packages/bun-usockets)
 
@@ -606,40 +586,10 @@ if(WIN32)
   list(APPEND BUN_CPP_SOURCES ${CODEGEN_PATH}/windows-app-info.rc)
 endif()
 
-# --- Executable ---
+add_library(${bun}-cpp STATIC ${BUN_CPP_SOURCES})
 
-set(BUN_CPP_OUTPUT ${BUILD_PATH}/${CMAKE_STATIC_LIBRARY_PREFIX}${bun}${CMAKE_STATIC_LIBRARY_SUFFIX})
-
-if(BUN_LINK_ONLY)
-  add_executable(${bun} ${BUN_CPP_OUTPUT} ${BUN_ZIG_OUTPUT})
-  set_target_properties(${bun} PROPERTIES LINKER_LANGUAGE CXX)
-  target_link_libraries(${bun} PRIVATE ${BUN_CPP_OUTPUT})
-elseif(BUN_CPP_ONLY)
-  add_library(${bun} STATIC ${BUN_CPP_SOURCES})
-  register_command(
-    TARGET
-      ${bun}
-    TARGET_PHASE
-      POST_BUILD
-    COMMENT
-      "Uploading ${bun}"
-    COMMAND
-      ${CMAKE_COMMAND} -E true
-    ARTIFACTS
-      ${BUN_CPP_OUTPUT}
-  )
-else()
-  add_executable(${bun} ${BUN_CPP_SOURCES})
-  target_link_libraries(${bun} PRIVATE ${BUN_ZIG_OUTPUT})
-endif()
-
-if(NOT bun STREQUAL "bun")
-  add_custom_target(bun DEPENDS ${bun})
-endif()
-
-# --- C/C++ Properties ---
-
-set_target_properties(${bun} PROPERTIES
+set_target_properties(${bun}-cpp PROPERTIES
+  OUTPUT_NAME ${bun}
   CXX_STANDARD 20
   CXX_STANDARD_REQUIRED YES
   CXX_EXTENSIONS YES
@@ -648,6 +598,8 @@ set_target_properties(${bun} PROPERTIES
   C_STANDARD_REQUIRED YES
   VISIBILITY_INLINES_HIDDEN YES
 )
+
+set(BUN_CPP_OUTPUT ${BUILD_PATH}/${CMAKE_STATIC_LIBRARY_PREFIX}${bun}${CMAKE_STATIC_LIBRARY_SUFFIX})
 
 # --- C/C++ Includes ---
 
@@ -665,14 +617,14 @@ register_includes(
   ${CWD}/src/deps
   ${CWD}/src/bun.js/bindings/windows ${WIN32}
   ${CODEGEN_PATH}
-  TARGET ${bun}
+  TARGET ${bun}-cpp
 )
 
 # --- C/C++ Definitions ---
 
 if(ENABLE_ASSERTIONS)
   register_compiler_definitions(
-    TARGET ${bun}
+    TARGET ${bun}-cpp
     DESCRIPTION "Enable bun assertions"
     ASSERT_ENABLED=1
   )
@@ -680,16 +632,10 @@ endif()
 
 if(DEBUG)
   register_compiler_definitions(
-    TARGET ${bun}
+    TARGET ${bun}-cpp
     DESCRIPTION "Enable bun assertions in debug builds"
     BUN_DEBUG=1
   )
-endif()
-
-if(APPLE)
-  # The $NOCANCEL variants of various system calls are activated by compiling
-  # with __DARWIN_NON_CANCELABLE, which prevents them from being pthread cancellation points.
-  register_compiler_definitions(__DARWIN_NON_CANCELABLE=1)
 endif()
 
 if(WIN32)
@@ -699,7 +645,7 @@ if(WIN32)
     WIN32_LEAN_AND_MEAN=1
     _CRT_SECURE_NO_WARNINGS
     BORINGSSL_NO_CXX=1 # lol
-    TARGET ${bun}
+    TARGET ${bun}-cpp
   )
 endif()
 
@@ -719,16 +665,15 @@ register_compiler_definitions(
   BUILDING_JSCONLY__
   REPORTED_NODEJS_VERSION=\"${NODEJS_VERSION}\"
   REPORTED_NODEJS_ABI_VERSION=${NODEJS_ABI_VERSION}
-  TARGET ${bun}
+  TARGET ${bun}-cpp
 )
 
 if(DEBUG AND NOT CI)
   register_compiler_definitions(
     BUN_DYNAMIC_JS_LOAD_PATH=\"${BUILD_PATH}/js\"
-    TARGET ${bun}
+    TARGET ${bun}-cpp
   )
 endif()
-
 
 # --- Compiler options ---
 
@@ -739,7 +684,7 @@ if(NOT WIN32)
     -fno-pic
     -fno-pie
     -faddrsig
-    TARGET ${bun}
+    TARGET ${bun}-cpp
   )
   if(DEBUG)
     register_compiler_flags(
@@ -766,9 +711,8 @@ if(NOT WIN32)
       -fsanitize=nullability-return
       -fsanitize=returns-nonnull-attribute
       -fsanitize=unreachable
-      TARGET ${bun}
+      TARGET ${bun}-cpp
     )
-    target_link_libraries(${bun} PRIVATE -fsanitize=null)
   else()
     # Leave -Werror=unused off in release builds so we avoid errors from being used in ASSERT
     register_compiler_flags(
@@ -784,9 +728,125 @@ if(NOT WIN32)
       -Werror=sometimes-uninitialized
       -Wno-nullability-completeness
       -Werror
-      TARGET ${bun}
+      TARGET ${bun}-cpp
     )
   endif()
+endif()
+
+# --- Dependencies ---
+
+register_includes(
+  TARGET ${bun}-cpp
+  ${VENDOR_PATH}/${picohttpparser}
+  ${VENDOR_PATH}/${boringssl}/include
+  ${VENDOR_PATH}/${brotli}/c/include
+  ${VENDOR_PATH}/${cares}/include
+  ${VENDOR_PATH}/${libarchive}/include
+  ${VENDOR_PATH}/${libdeflate}
+  ${VENDOR_PATH}/${libuv}/include ${WIN32}
+  ${VENDOR_PATH}/${lshpack}
+  ${VENDOR_PATH}/${lshpack}/compact/queue ${WIN32}
+  ${VENDOR_PATH}/${mimalloc}/include
+  ${VENDOR_PATH}/${zlib}
+)
+
+if(WEBKIT_LOCAL)
+  register_includes(
+    TARGET ${bun}-cpp
+    ${WEBKIT_PATH}
+    ${WEBKIT_PATH}/JavaScriptCore/Headers/JavaScriptCore
+    ${WEBKIT_PATH}/JavaScriptCore/PrivateHeaders
+    ${WEBKIT_PATH}/bmalloc/Headers
+    ${WEBKIT_PATH}/WTF/Headers
+  )
+else()
+  register_includes(
+    TARGET ${bun}-cpp
+    ${WEBKIT_PATH}/include
+    ${WEBKIT_PATH}/include/wtf/unicode NOT ${APPLE}
+  )
+endif()
+
+if(USE_STATIC_SQLITE)
+  target_compile_definitions(${bun}-cpp PRIVATE LAZY_LOAD_SQLITE=0)
+else()
+  target_compile_definitions(${bun}-cpp PRIVATE LAZY_LOAD_SQLITE=1)
+endif()
+
+add_dependencies(${bun}-cpp clone-webkit)
+
+# --- Executable ---
+
+file(GENERATE OUTPUT ${CODEGEN_PATH}/bun.h CONTENT "# Empty file")
+
+add_executable(${bun}-exe ${CODEGEN_PATH}/bun.h)
+
+set(BUN_EXE_OUTPUT ${BUILD_PATH}/${CMAKE_EXECUTABLE_PREFIX}${bun}${CMAKE_EXECUTABLE_SUFFIX})
+
+set_target_properties(${bun}-exe PROPERTIES
+  OUTPUT_NAME ${bun}
+  LINKER_LANGUAGE CXX
+)
+
+target_link_options(${bun}-exe PRIVATE -fsanitize=null)
+
+target_link_libraries(${bun}-exe PRIVATE
+  ${BUN_CPP_OUTPUT}
+  ${BUN_ZIG_OUTPUT}
+)
+
+link_targets(
+  TARGET ${bun}-exe
+  ${boringssl}
+  ${brotli}
+  ${cares}
+  ${libarchive}
+  ${libdeflate}
+  ${libuv} ${WIN32}
+  ${lolhtml}
+  ${lshpack}
+  ${mimalloc}
+  ${tinycc}
+  ${sqlite} ${USE_STATIC_SQLITE}
+  ${webkit}
+  ${zlib}
+  ${zstd}
+)
+
+if(APPLE)
+  target_link_libraries(${bun}-exe PRIVATE icucore resolv)
+endif()
+
+if(LINUX)
+  target_link_libraries(${bun}-exe PRIVATE c pthread dl)
+
+  if(USE_STATIC_LIBATOMIC)
+    target_link_libraries(${bun}-exe PRIVATE libatomic.a)
+  else()
+    target_link_libraries(${bun}-exe PUBLIC libatomic.so)
+  endif()
+
+  if(USE_SYSTEM_ICU)
+    target_link_libraries(${bun}-exe PRIVATE libicudata.a)
+    target_link_libraries(${bun}-exe PRIVATE libicui18n.a)
+    target_link_libraries(${bun}-exe PRIVATE libicuuc.a)
+  else()
+    target_link_libraries(${bun}-exe PRIVATE ${WEBKIT_LIB_PATH}/libicudata.a)
+    target_link_libraries(${bun}-exe PRIVATE ${WEBKIT_LIB_PATH}/libicui18n.a)
+    target_link_libraries(${bun}-exe PRIVATE ${WEBKIT_LIB_PATH}/libicuuc.a)
+  endif()
+endif()
+
+if(WIN32)
+  target_link_libraries(${bun}-exe PRIVATE
+    winmm
+    bcrypt
+    ntdll
+    userenv
+    dbghelp
+    wsock32 # ws2_32 required by TransmitFile aka sendfile on windows
+    delayimp.lib
+  )
 endif()
 
 # --- Linker options ---
@@ -795,7 +855,7 @@ if(WIN32)
   register_linker_flags(
     /STACK:0x1200000,0x100000
     /errorlimit:0
-    TARGET ${bun}
+    TARGET ${bun}-exe
   )
   if(RELEASE)
     register_linker_flags(
@@ -812,7 +872,7 @@ if(WIN32)
       /delayload:WSOCK32.dll
       /delayload:ADVAPI32.dll
       /delayload:IPHLPAPI.dll
-      TARGET ${bun}
+      TARGET ${bun}-exe
     )
   endif()
 elseif(APPLE)
@@ -821,7 +881,7 @@ elseif(APPLE)
     -dead_strip_dylibs
     -Wl,-stack_size,0x1200000
     -fno-keep-static-consts
-    TARGET ${bun}
+    TARGET ${bun}-exe
   )
 else()
   register_linker_flags(
@@ -857,7 +917,7 @@ else()
     -Wl,--compress-debug-sections=zlib
     -Wl,-z,lazy
     -Wl,-z,norelro
-    TARGET ${bun}
+    TARGET ${bun}-exe
   )
 endif()
 
@@ -865,260 +925,198 @@ endif()
 
 if(WIN32)
   set(BUN_SYMBOLS_PATH ${CWD}/src/symbols.def)
-  target_link_options(${bun} PUBLIC /DEF:${BUN_SYMBOLS_PATH})
+  target_link_options(${bun}-exe PUBLIC /DEF:${BUN_SYMBOLS_PATH})
 elseif(APPLE)
   set(BUN_SYMBOLS_PATH ${CWD}/src/symbols.txt)
-  target_link_options(${bun} PUBLIC -exported_symbols_list ${BUN_SYMBOLS_PATH})
+  target_link_options(${bun}-exe PUBLIC -exported_symbols_list ${BUN_SYMBOLS_PATH})
 else()
   set(BUN_SYMBOLS_PATH ${CWD}/src/symbols.dyn)
   set(BUN_LINKER_LDS_PATH ${CWD}/src/linker.lds)
-  target_link_options(${bun} PUBLIC
+  target_link_options(${bun}-exe PUBLIC
     -Bsymbolics-functions
     -rdynamic
     -Wl,--dynamic-list=${BUN_SYMBOLS_PATH}
     -Wl,--version-script=${BUN_LINKER_LDS_PATH}
   )
-  set_target_properties(${bun} PROPERTIES LINK_DEPENDS ${BUN_LINKER_LDS_PATH})
+  set_target_properties(${bun}-exe PROPERTIES LINK_DEPENDS ${BUN_LINKER_LDS_PATH})
 endif()
 
-set_target_properties(${bun} PROPERTIES LINK_DEPENDS ${BUN_SYMBOLS_PATH})
+set_target_properties(${bun}-exe PROPERTIES LINK_DEPENDS ${BUN_SYMBOLS_PATH})
 
-# --- Dependencies ---
-
-register_includes(
-  TARGET ${bun}
-  ${VENDOR_PATH}/${picohttpparser}
-  ${VENDOR_PATH}/${boringssl}/include
-  ${VENDOR_PATH}/${brotli}/c/include
-  ${VENDOR_PATH}/${cares}/include
-  ${VENDOR_PATH}/${libarchive}/include
-  ${VENDOR_PATH}/${libdeflate}
-  ${VENDOR_PATH}/${libuv}/include ${WIN32}
-  ${VENDOR_PATH}/${lshpack}
-  ${VENDOR_PATH}/${lshpack}/compact/queue ${WIN32}
-  ${VENDOR_PATH}/${mimalloc}/include
-  ${VENDOR_PATH}/${zlib}
+register_command(
+  TARGET
+    ${bun}-exe
+  TARGET_PHASE
+    POST_BUILD
+  COMMENT
+    "Testing ${bun}"
+  COMMAND
+    ${CMAKE_COMMAND}
+      -E env BUN_DEBUG_QUIET_LOGS=1
+      ${BUN_EXE_OUTPUT}
+        --revision
+  CWD
+    ${BUILD_PATH}
 )
-
-if(WEBKIT_LOCAL)
-  register_includes(
-    TARGET ${bun}
-    ${WEBKIT_PATH}
-    ${WEBKIT_PATH}/JavaScriptCore/Headers/JavaScriptCore
-    ${WEBKIT_PATH}/JavaScriptCore/PrivateHeaders
-    ${WEBKIT_PATH}/bmalloc/Headers
-    ${WEBKIT_PATH}/WTF/Headers
-  )
-else()
-  register_includes(
-    TARGET ${bun}
-    ${WEBKIT_PATH}/include
-    ${WEBKIT_PATH}/include/wtf/unicode NOT ${APPLE}
-  )
-endif()
-
-add_dependencies(${bun} clone-webkit)
-
-link_targets(
-  TARGET ${bun}
-  ${boringssl}
-  ${brotli}
-  ${cares}
-  ${libarchive}
-  ${libdeflate}
-  ${libuv} ${WIN32}
-  ${lolhtml}
-  ${lshpack}
-  ${mimalloc}
-  ${tinycc}
-  ${sqlite} ${USE_STATIC_SQLITE}
-  ${webkit}
-  ${zlib}
-  ${zstd}
-)
-
-if(USE_STATIC_SQLITE)
-  target_compile_definitions(${bun} PRIVATE LAZY_LOAD_SQLITE=0)
-else()
-  target_compile_definitions(${bun} PRIVATE LAZY_LOAD_SQLITE=1)
-endif()
-
-if(APPLE)
-  target_link_libraries(${bun} PRIVATE icucore resolv)
-endif()
-
-if(LINUX)
-  target_link_libraries(${bun} PRIVATE c pthread dl)
-
-  if(USE_STATIC_LIBATOMIC)
-    target_link_libraries(${bun} PRIVATE libatomic.a)
-  else()
-    target_link_libraries(${bun} PUBLIC libatomic.so)
-  endif()
-
-  if(USE_SYSTEM_ICU)
-    target_link_libraries(${bun} PRIVATE libicudata.a)
-    target_link_libraries(${bun} PRIVATE libicui18n.a)
-    target_link_libraries(${bun} PRIVATE libicuuc.a)
-  else()
-    target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libicudata.a)
-    target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libicui18n.a)
-    target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libicuuc.a)
-  endif()
-endif()
-
-if(WIN32)
-  target_link_libraries(${bun} PRIVATE
-    winmm
-    bcrypt
-    ntdll
-    userenv
-    dbghelp
-    wsock32 # ws2_32 required by TransmitFile aka sendfile on windows
-    delayimp.lib
-  )
-endif()
 
 # --- Packaging ---
 
-if(NOT BUN_CPP_ONLY)
-  if(bunStrip)
-    register_command(
-      TARGET
-        ${bun}
-      TARGET_PHASE
-        POST_BUILD
-      COMMENT
-        "Stripping ${bun}"
-      COMMAND
-        ${CMAKE_STRIP}
-          ${bunExe}
-          --strip-all
-          --strip-debug
-          --discard-all
-          -o ${bunStripExe}
-      CWD
-        ${BUILD_PATH}
-      OUTPUTS
-        ${BUILD_PATH}/${bunStripExe}
-    )
-  endif()
+# register_command(
+#   TARGET
+#     ${bun}-strip
+#   COMMENT
+#     "Stripping ${bun}"
+#   COMMAND
+#     ${CMAKE_STRIP}
+#       ${bunExe}
+#       --strip-all
+#       --strip-debug
+#       --discard-all
+#       -o ${bunStripExe}
+#   CWD
+#     ${BUILD_PATH}
+#   OUTPUTS
+#     ${BUILD_PATH}/${bunStripExe}
+# )
 
-  register_command(
-    TARGET
-      ${bun}
-    TARGET_PHASE
-      POST_BUILD
-    COMMENT
-      "Testing ${bun}"
-    COMMAND
-      ${CMAKE_COMMAND}
-      -E env BUN_DEBUG_QUIET_LOGS=1
-      ${BUILD_PATH}/${bunExe}
-        --revision
-    CWD
-      ${BUILD_PATH}
-  )
+# # if(NOT BUN_CPP_ONLY)
+# #   if(bunStrip)
+# #     register_command(
+# #       TARGET
+# #         ${bun}
+# #       TARGET_PHASE
+# #         POST_BUILD
+# #       COMMENT
+# #         "Stripping ${bun}"
+# #       COMMAND
+# #         ${CMAKE_STRIP}
+# #           ${bunExe}
+# #           --strip-all
+# #           --strip-debug
+# #           --discard-all
+# #           -o ${bunStripExe}
+# #       CWD
+# #         ${BUILD_PATH}
+# #       OUTPUTS
+# #         ${BUILD_PATH}/${bunStripExe}
+# #     )
+# #   endif()
 
-  if(CI)
-    set(BUN_FEATURES_SCRIPT ${CWD}/scripts/features.mjs)
-    register_command(
-      TARGET
-        ${bun}
-      TARGET_PHASE
-        POST_BUILD
-      COMMENT
-        "Generating features.json"
-      COMMAND
-        ${CMAKE_COMMAND}
-          -E env
-            BUN_GARBAGE_COLLECTOR_LEVEL=1
-            BUN_DEBUG_QUIET_LOGS=1
-            BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1
-          ${BUILD_PATH}/${bunExe}
-          ${BUN_FEATURES_SCRIPT}
-      CWD
-        ${BUILD_PATH}
-      ARTIFACTS
-        ${BUILD_PATH}/features.json
-    )
-  endif()
+# #   register_command(
+# #     TARGET
+# #       ${bun}
+# #     TARGET_PHASE
+# #       POST_BUILD
+# #     COMMENT
+# #       "Testing ${bun}"
+# #     COMMAND
+# #       ${CMAKE_COMMAND}
+# #       -E env BUN_DEBUG_QUIET_LOGS=1
+# #       ${BUILD_PATH}/${bunExe}
+# #         --revision
+# #     CWD
+# #       ${BUILD_PATH}
+# #   )
 
-  if(CMAKE_HOST_APPLE AND bunStrip)
-    register_command(
-      TARGET
-        ${bun}
-      TARGET_PHASE
-        POST_BUILD
-      COMMENT
-        "Generating ${bun}.dSYM"
-      COMMAND
-        ${CMAKE_DSYMUTIL}
-          ${bun}
-          --flat
-          --keep-function-for-static
-          --object-prefix-map .=${CWD}
-          -o ${bun}.dSYM
-          -j ${CMAKE_BUILD_PARALLEL_LEVEL}
-      CWD
-        ${BUILD_PATH}
-      OUTPUTS
-        ${BUILD_PATH}/${bun}.dSYM
-    )
-  endif()
+# #   if(CI)
+# #     set(BUN_FEATURES_SCRIPT ${CWD}/scripts/features.mjs)
+# #     register_command(
+# #       TARGET
+# #         ${bun}
+# #       TARGET_PHASE
+# #         POST_BUILD
+# #       COMMENT
+# #         "Generating features.json"
+# #       COMMAND
+# #         ${CMAKE_COMMAND}
+# #           -E env
+# #             BUN_GARBAGE_COLLECTOR_LEVEL=1
+# #             BUN_DEBUG_QUIET_LOGS=1
+# #             BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1
+# #           ${BUILD_PATH}/${bunExe}
+# #           ${BUN_FEATURES_SCRIPT}
+# #       CWD
+# #         ${BUILD_PATH}
+# #       ARTIFACTS
+# #         ${BUILD_PATH}/features.json
+# #     )
+# #   endif()
 
-  if(CI)
-    if(ENABLE_BASELINE)
-      set(bunTriplet bun-${OS}-${ARCH}-baseline)
-    else()
-      set(bunTriplet bun-${OS}-${ARCH})
-    endif()
-    string(REPLACE bun ${bunTriplet} bunPath ${bun})
-    set(bunFiles ${bunExe} features.json)
-    if(WIN32)
-      list(APPEND bunFiles ${bun}.pdb)
-    elseif(APPLE)
-      list(APPEND bunFiles ${bun}.dSYM)
-    endif()
-    register_command(
-      TARGET
-        ${bun}
-      TARGET_PHASE
-        POST_BUILD
-      COMMENT
-        "Generating ${bunPath}.zip"
-      COMMAND
-        ${CMAKE_COMMAND} -E rm -rf ${bunPath} ${bunPath}.zip
-        && ${CMAKE_COMMAND} -E make_directory ${bunPath}
-        && ${CMAKE_COMMAND} -E copy ${bunFiles} ${bunPath}
-        && ${CMAKE_COMMAND} -E tar cfv ${bunPath}.zip --format=zip ${bunPath}
-        && ${CMAKE_COMMAND} -E rm -rf ${bunPath}
-      CWD
-        ${BUILD_PATH}
-      ARTIFACTS
-        ${BUILD_PATH}/${bunPath}.zip
-    )
+# #   if(CMAKE_HOST_APPLE AND bunStrip)
+# #     register_command(
+# #       TARGET
+# #         ${bun}
+# #       TARGET_PHASE
+# #         POST_BUILD
+# #       COMMENT
+# #         "Generating ${bun}.dSYM"
+# #       COMMAND
+# #         ${CMAKE_DSYMUTIL}
+# #           ${bun}
+# #           --flat
+# #           --keep-function-for-static
+# #           --object-prefix-map .=${CWD}
+# #           -o ${bun}.dSYM
+# #           -j ${CMAKE_BUILD_PARALLEL_LEVEL}
+# #       CWD
+# #         ${BUILD_PATH}
+# #       OUTPUTS
+# #         ${BUILD_PATH}/${bun}.dSYM
+# #     )
+# #   endif()
 
-    if(bunStrip)
-      string(REPLACE bun ${bunTriplet} bunStripPath ${bunStrip})
-      register_command(
-        TARGET
-          ${bun}
-        TARGET_PHASE
-          POST_BUILD
-        COMMENT
-          "Generating ${bunStripPath}.zip"
-        COMMAND
-          ${CMAKE_COMMAND} -E rm -rf ${bunStripPath} ${bunStripPath}.zip
-          && ${CMAKE_COMMAND} -E make_directory ${bunStripPath}
-          && ${CMAKE_COMMAND} -E copy ${bunStripExe} ${bunStripPath}
-          && ${CMAKE_COMMAND} -E tar cfv ${bunStripPath}.zip --format=zip ${bunStripPath}
-          && ${CMAKE_COMMAND} -E rm -rf ${bunStripPath}
-        CWD
-          ${BUILD_PATH}
-        ARTIFACTS
-          ${BUILD_PATH}/${bunStripPath}.zip
-      )
-    endif()
-  endif()
-endif()
+# #   if(CI)
+# #     if(ENABLE_BASELINE)
+# #       set(bunTriplet bun-${OS}-${ARCH}-baseline)
+# #     else()
+# #       set(bunTriplet bun-${OS}-${ARCH})
+# #     endif()
+# #     string(REPLACE bun ${bunTriplet} bunPath ${bun})
+# #     set(bunFiles ${bunExe} features.json)
+# #     if(WIN32)
+# #       list(APPEND bunFiles ${bun}.pdb)
+# #     elseif(APPLE)
+# #       list(APPEND bunFiles ${bun}.dSYM)
+# #     endif()
+# #     register_command(
+# #       TARGET
+# #         ${bun}
+# #       TARGET_PHASE
+# #         POST_BUILD
+# #       COMMENT
+# #         "Generating ${bunPath}.zip"
+# #       COMMAND
+# #         ${CMAKE_COMMAND} -E rm -rf ${bunPath} ${bunPath}.zip
+# #         && ${CMAKE_COMMAND} -E make_directory ${bunPath}
+# #         && ${CMAKE_COMMAND} -E copy ${bunFiles} ${bunPath}
+# #         && ${CMAKE_COMMAND} -E tar cfv ${bunPath}.zip --format=zip ${bunPath}
+# #         && ${CMAKE_COMMAND} -E rm -rf ${bunPath}
+# #       CWD
+# #         ${BUILD_PATH}
+# #       ARTIFACTS
+# #         ${BUILD_PATH}/${bunPath}.zip
+# #     )
+
+# #     if(bunStrip)
+# #       string(REPLACE bun ${bunTriplet} bunStripPath ${bunStrip})
+# #       register_command(
+# #         TARGET
+# #           ${bun}
+# #         TARGET_PHASE
+# #           POST_BUILD
+# #         COMMENT
+# #           "Generating ${bunStripPath}.zip"
+# #         COMMAND
+# #           ${CMAKE_COMMAND} -E rm -rf ${bunStripPath} ${bunStripPath}.zip
+# #           && ${CMAKE_COMMAND} -E make_directory ${bunStripPath}
+# #           && ${CMAKE_COMMAND} -E copy ${bunStripExe} ${bunStripPath}
+# #           && ${CMAKE_COMMAND} -E tar cfv ${bunStripPath}.zip --format=zip ${bunStripPath}
+# #           && ${CMAKE_COMMAND} -E rm -rf ${bunStripPath}
+# #         CWD
+# #           ${BUILD_PATH}
+# #         ARTIFACTS
+# #           ${BUILD_PATH}/${bunStripPath}.zip
+# #       )
+# #     endif()
+# #   endif()
+# # endif()

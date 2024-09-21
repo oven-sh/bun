@@ -649,7 +649,6 @@ function(parse_list list variable)
   check_expression()
 
   set(${variable} ${result} PARENT_SCOPE)
-  message(WARNING "LIST: ${variable}: ${result}")
 endfunction()
 
 # register_target()

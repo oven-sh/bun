@@ -289,6 +289,12 @@ if(ENABLE_VALGRIND AND ARCH STREQUAL "x64")
   register_compiler_definitions(__SSE4_2__=0)
 endif()
 
+if(APPLE)
+  # The $NOCANCEL variants of various system calls are activated by compiling
+  # with __DARWIN_NON_CANCELABLE, which prevents them from being pthread cancellation points.
+  register_compiler_definitions(__DARWIN_NON_CANCELABLE=1)
+endif()
+
 # --- Other ---
 
 # Workaround for CMake and clang-cl bug.

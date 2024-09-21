@@ -881,17 +881,17 @@ fn getParseResult(this: *Transpiler, allocator: std.mem.Allocator, code: []const
         // .allocator = this.
     };
 
-    var parse_result = this.bundler.parse(parse_options, null);
+    const parse_result = this.bundler.parse(parse_options, null);
 
     // necessary because we don't run the linker
-    if (parse_result) |*res| {
-        for (res.ast.import_records.slice()) |*import| {
-            if (import.kind.isCommonJS()) {
-                import.do_commonjs_transform_in_printer = true;
-                import.module_id = @as(u32, @truncate(bun.hash(import.path.pretty)));
-            }
-        }
-    }
+    // if (parse_result) |*res| {
+    //     for (res.ast.import_records.slice()) |*import| {
+    //         if (import.kind.isCommonJS()) {
+    //             import.do_commonjs_transform_in_printer = true;
+    //             import.module_id = @as(u32, @truncate(bun.hash(import.path.pretty)));
+    //         }
+    //     }
+    // }
 
     return parse_result;
 }

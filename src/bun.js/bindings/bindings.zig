@@ -1764,6 +1764,10 @@ pub const JSString = extern struct {
     pub const name = "JSC::JSString";
     pub const namespace = "JSC";
 
+    pub fn toJS(str: *JSString) JSValue {
+        return JSValue.fromCell(str);
+    }
+
     pub fn toObject(this: *JSString, global: *JSGlobalObject) ?*JSObject {
         return shim.cppFn("toObject", .{ this, global });
     }

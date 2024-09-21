@@ -6847,7 +6847,6 @@ pub const Ast = struct {
 
     hashbang: string = "",
     directive: ?string = null,
-    url_for_css: ?string = null,
     parts: Part.List = Part.List{},
     // This list may be mutated later, so we should store the capacity
     symbols: Symbol.List = Symbol.List{},
@@ -6867,7 +6866,7 @@ pub const Ast = struct {
     named_exports: NamedExports = NamedExports.init(bun.failing_allocator),
     export_star_import_records: []u32 = &([_]u32{}),
 
-    allocator: std.mem.Allocator,
+    // allocator: std.mem.Allocator,
     top_level_symbols_to_parts: TopLevelSymbolToParts = .{},
 
     commonjs_named_exports: CommonJSNamedExports = .{},
@@ -6901,7 +6900,6 @@ pub const Ast = struct {
     pub fn fromParts(parts: []Part) Ast {
         return Ast{
             .parts = Part.List.init(parts),
-            .allocator = bun.default_allocator,
             .runtime_imports = .{},
         };
     }
@@ -6909,12 +6907,11 @@ pub const Ast = struct {
     pub fn initTest(parts: []Part) Ast {
         return Ast{
             .parts = Part.List.init(parts),
-            .allocator = bun.default_allocator,
             .runtime_imports = .{},
         };
     }
 
-    pub const empty = Ast{ .parts = Part.List{}, .runtime_imports = .{}, .allocator = bun.default_allocator };
+    pub const empty = Ast{ .parts = Part.List{}, .runtime_imports = .{} };
 
     pub fn toJSON(self: *const Ast, _: std.mem.Allocator, stream: anytype) !void {
         const opts = std.json.StringifyOptions{ .whitespace = std.json.StringifyOptions.Whitespace{
@@ -6943,19 +6940,17 @@ pub const Ast = struct {
 pub const BundledAst = struct {
     approximate_newline_count: u32 = 0,
     nested_scope_slot_counts: SlotCounts = SlotCounts{},
-    externals: []u32 = &[_]u32{},
+    externals: []u32 = &.{},
 
-    exports_kind: ExportsKind = ExportsKind.none,
+    exports_kind: ExportsKind = .none,
 
     /// These are stored at the AST level instead of on individual AST nodes so
     /// they can be manipulated efficiently without a full AST traversal
     import_records: ImportRecord.List = .{},
 
     hashbang: string = "",
-    url_for_css: string = "",
-    parts: Part.List = Part.List{},
-    // This list may be mutated later, so we should store the capacity
-    symbols: Symbol.List = Symbol.List{},
+    parts: Part.List = .{},
+    symbols: Symbol.List = .{},
     module_scope: Scope = Scope{},
     char_freq: CharFreq = undefined,
     exports_ref: Ref = Ref.None,
@@ -6968,9 +6963,9 @@ pub const BundledAst = struct {
     // is conveniently fully parallelized.
     named_imports: NamedImports = NamedImports.init(bun.failing_allocator),
     named_exports: NamedExports = NamedExports.init(bun.failing_allocator),
-    export_star_import_records: []u32 = &([_]u32{}),
+    export_star_import_records: []u32 = &.{},
 
-    allocator: std.mem.Allocator,
+    // allocator: std.mem.Allocator,
     top_level_symbols_to_parts: TopLevelSymbolToParts = .{},
 
     commonjs_named_exports: CommonJSNamedExports = .{},
@@ -7022,7 +7017,6 @@ pub const BundledAst = struct {
             .import_records = this.import_records,
 
             .hashbang = this.hashbang,
-            // .url_for_css = this.url_for_css,
             .parts = this.parts,
             // This list may be mutated later, so we should store the capacity
             .symbols = this.symbols,
@@ -7040,7 +7034,6 @@ pub const BundledAst = struct {
             .named_exports = this.named_exports,
             .export_star_import_records = this.export_star_import_records,
 
-            .allocator = this.allocator,
             .top_level_symbols_to_parts = this.top_level_symbols_to_parts,
 
             .commonjs_named_exports = this.commonjs_named_exports,
@@ -7091,7 +7084,7 @@ pub const BundledAst = struct {
             .named_exports = ast.named_exports,
             .export_star_import_records = ast.export_star_import_records,
 
-            .allocator = ast.allocator,
+            // .allocator = ast.allocator,
             .top_level_symbols_to_parts = ast.top_level_symbols_to_parts,
 
             .commonjs_named_exports = ast.commonjs_named_exports,

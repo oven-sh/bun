@@ -7,27 +7,20 @@ const Index = @import("ast/base.zig").Index;
 const Api = @import("./api/schema.zig").Api;
 
 pub const ImportKind = enum(u8) {
-    // An entry point provided by the user
+    /// An entry point provided by the user
     entry_point,
-
-    // An ES6 import or re-export statement
+    /// An ES6 import or re-export statement
     stmt,
-
-    // A call to "require()"
+    /// A call to "require()"
     require,
-
-    // An "import()" expression with a string argument
+    /// An "import()" expression with a string argument
     dynamic,
-
     /// A call to "require.resolve()"
     require_resolve,
-
     /// A CSS "@import" rule
     at,
-
     /// A CSS "@import" rule with import conditions
     at_conditional,
-
     /// A CSS "url(...)" token
     url,
 
@@ -106,9 +99,6 @@ pub const ImportRecord = struct {
     kind: ImportKind,
     tag: Tag = .none,
 
-    // TODO: remove this
-    module_id: u32 = 0,
-
     source_index: Index = Index.invalid,
 
     print_mode: PrintMode = .normal,
@@ -148,9 +138,6 @@ pub const ImportRecord = struct {
     /// If true, this "export * from 'path'" statement is evaluated at run-time by
     /// calling the "__reExport()" helper function
     calls_runtime_re_export_fn: bool = false,
-
-    /// Tell the printer to use runtime code to resolve this import/export
-    do_commonjs_transform_in_printer: bool = false,
 
     /// True for require calls like this: "try { require() } catch {}". In this
     /// case we shouldn't generate an error if the path could not be resolved.

@@ -42,7 +42,7 @@ const results = await Promise.allSettled(['client', 'server'].map(async mode => 
   const in_names = [
     'input_graph',
     'config',
-    mode === 'server' && 'server_fetch_function'
+    mode === 'server' && 'server_exports'
   ].filter(Boolean);
   const combined_source = `
     __marker__;

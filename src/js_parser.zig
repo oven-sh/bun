@@ -3715,7 +3715,6 @@ pub const Parser = struct {
                                     part.symbol_uses = .{};
                                     return js_ast.Result{
                                         .ast = js_ast.Ast{
-                                            .allocator = p.allocator,
                                             .import_records = ImportRecord.List.init(p.import_records.items),
                                             .redirect_import_record_index = id,
                                             .named_imports = p.named_imports,
@@ -23487,7 +23486,6 @@ fn NewParser_(
             parts_list.cap = @intCast(input_parts.len);
 
             return .{
-                .allocator = p.allocator,
                 .runtime_imports = p.runtime_imports,
                 .parts = parts_list,
                 .module_scope = p.module_scope.*,

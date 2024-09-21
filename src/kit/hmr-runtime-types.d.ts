@@ -20,8 +20,14 @@ declare const config: Config;
 */
 declare const mode: 'client' | 'server';
 
-/* What should be `export default`'d */
-declare var server_fetch_function: any;
+/*
+ * This variable becomes the default export. Kit uses this
+ * interface as opposed to a WebSocket connection.
+ */
+declare var server_exports: {
+  fetch: (req: any, id: Id) => any,
+  registerUpdate: (modules: any) => void,
+};
 
 /* 
  * If you are running a debug build of Bun. These debug builds should provide

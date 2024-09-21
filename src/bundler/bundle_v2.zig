@@ -126,7 +126,6 @@ const JSC = bun.JSC;
 const debugTreeShake = Output.scoped(.TreeShake, true);
 const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 const Async = bun.Async;
-const OOM = bun.OOM;
 
 const logPartDependencyTree = Output.scoped(.part_dep_tree, false);
 
@@ -841,7 +840,7 @@ pub const BundleV2 = struct {
         return this;
     }
 
-    pub fn enqueueEntryPoints(this: *BundleV2, user_entry_points: []const string) !ThreadPoolLib.Batch {
+    pub fn enqueueEntryPoints(this: *BundleV2, user_entry_points: []const []const u8, client_entry_points: []const []const u8) !ThreadPoolLib.Batch {
         var batch = ThreadPoolLib.Batch{};
 
         {
@@ -877,6 +876,13 @@ pub const BundleV2 = struct {
             for (user_entry_points) |entry_point| {
                 const resolved = this.bundler.resolveEntryPoint(entry_point) catch continue;
                 if (try this.enqueueItem(null, &batch, resolved, true, this.bundler.options.target)) |source_index| {
+                    this.graph.entry_points.append(this.graph.allocator, Index.source(source_index)) catch unreachable;
+                } else {}
+            }
+
+            for (client_entry_points) |entry_point| {
+                const resolved = this.bundler.resolveEntryPoint(entry_point) catch continue;
+                if (try this.enqueueItem(null, &batch, resolved, true, .browser)) |source_index| {
                     this.graph.entry_points.append(this.graph.allocator, Index.source(source_index)) catch unreachable;
                 } else {}
             }
@@ -1117,7 +1123,7 @@ pub const BundleV2 = struct {
             return error.BuildFailed;
         }
 
-        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(this.bundler.options.entry_points));
+        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(this.bundler.options.entry_points, &.{}));
 
         if (this.bundler.log.hasErrors()) {
             return error.BuildFailed;
@@ -1723,7 +1729,11 @@ pub const BundleV2 = struct {
         this.free_list.clearAndFree();
     }
 
-    pub fn runFromJSInNewThread(this: *BundleV2, entry_points: []const []const u8) !std.ArrayList(options.OutputFile) {
+    pub fn runFromJSInNewThread(
+        this: *BundleV2,
+        entry_points: []const []const u8,
+        client_entry_points: []const []const u8,
+    ) !std.ArrayList(options.OutputFile) {
         this.unique_key = std.crypto.random.int(u64);
 
         if (this.bundler.log.errors > 0) {
@@ -1735,7 +1745,7 @@ pub const BundleV2 = struct {
             bun.Mimalloc.mi_collect(true);
         }
 
-        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(entry_points));
+        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(entry_points, client_entry_points));
 
         // We must wait for all the parse tasks to complete, even if there are errors.
         this.waitForParse();
@@ -2492,7 +2502,7 @@ pub fn BundleThread(CompletionStruct: type) type {
 
             completion.result = .{
                 .value = .{
-                    .output_files = try this.runFromJSInNewThread(bundler.options.entry_points),
+                    .output_files = try this.runFromJSInNewThread(bundler.options.entry_points, &.{}),
                 },
             };
 
@@ -12996,7 +13006,6 @@ pub const AstBuilder = struct {
         parts.mut(1).import_record_indices = BabyList(u32).fromList(p.import_records_for_current_part);
 
         return .{
-            .allocator = p.allocator,
             .parts = parts,
             .module_scope = module_scope.*,
             .symbols = js_ast.Symbol.List.fromList(p.symbols),

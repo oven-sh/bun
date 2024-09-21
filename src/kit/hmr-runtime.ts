@@ -21,9 +21,16 @@ if (mode === 'client') {
 try {
   const main = loadModule(config.main);
   
-  // export it on the server side
-  if (mode === 'server') 
-    server_fetch_function = main.exports.default;
+  if (mode === 'server')  {
+    server_exports = {
+      fetch(req: any, requested_id: Id) {
+        return main.exports.default(loadModule(requested_id).exports);
+      },
+      registerUpdate(modules) {
+        throw new Error('erm... you want me to what')
+      },
+    };
+  }
 
   if (mode === 'client') {
     const ws = new WebSocket('/_bun/hmr');

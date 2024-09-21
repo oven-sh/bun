@@ -19,7 +19,7 @@ pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JS
     if (!bun.FeatureFlags.kit) return .undefined;
 
     bun.Output.warn(
-        \\Be advised that Kit is highly experimental, and its API is subject to change
+        \\Be advised that Bun Kit is experimental, and its API is likely to change.
     , .{});
     bun.Output.flush();
 
@@ -43,17 +43,14 @@ pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JS
 pub const Framework = struct {
     /// This file is the true entrypoint of the client application.
     ///
-    /// It may import 'bun:main' to get the module of the client-bundled route,
-    /// to be used for client-side rendering and hydration.
+    /// It can import the client manifest via the `bun:client-manifest` import
     ///
-    /// When using `server_components`, the route is not bundled for client-side
-    /// and 'bun:main' instead exports the component manifest.
+    /// TODO: how this behaves when server components are off
     entry_client: ?[]const u8 = null,
 
-    /// This file is the true entrypoint of the server application. It may
-    /// import 'bun:main' to get the module of the server-bundled route, to be
-    /// used for server-side rendering. This module must `export default` a
-    /// fetch function.
+    /// This file is the true entrypoint of the server application. This module
+    /// must `export default` a fetch function, which takes a request and the
+    /// bundled route module, and returns a response.
     entry_server: ?[]const u8 = null,
 
     /// Bun offers integration for React's Server Components with an
@@ -212,7 +209,7 @@ pub fn wipDevServer(options: DevServer.Options) noreturn {
     dev.runLoopForever();
 }
 
-pub fn getHmrRuntime(mode: enum { server, client }) []const u8 {
+pub fn getHmrRuntime(mode: Side) []const u8 {
     return if (Environment.embed_code)
         switch (mode) {
             .client => @embedFile("kit-codegen/kit.client.js"),

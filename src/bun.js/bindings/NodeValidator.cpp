@@ -159,7 +159,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateFunction, (JSC::JSGlobalObject * glo
     auto name = callFrame->argument(1);
 
     if (JSC::getCallData(value).type == JSC::CallData::Type::None) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Function"_s, value);
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "function"_s, value);
     }
     return JSValue::encode(jsUndefined());
 }

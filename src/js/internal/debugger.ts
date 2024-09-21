@@ -50,7 +50,6 @@ export default function (
         hostname,
         port: port && port !== "0" ? Number(port) : undefined,
       });
-      return;
     }
   }
 }

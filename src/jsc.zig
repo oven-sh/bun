@@ -49,10 +49,6 @@ pub const API = struct {
     pub const UDPSocket = @import("./bun.js/api/bun/udp_socket.zig").UDPSocket;
     pub const Listener = @import("./bun.js/api/bun/socket.zig").Listener;
     pub const H2FrameParser = @import("./bun.js/api/bun/h2_frame_parser.zig").H2FrameParser;
-    pub const BrotliEncoder = @import("./bun.js/api/js_brotli.zig").BrotliEncoder;
-    pub const BrotliDecoder = @import("./bun.js/api/js_brotli.zig").BrotliDecoder;
-    pub const ZlibEncoder = @import("./bun.js/api/js_zlib.zig").ZlibEncoder;
-    pub const ZlibDecoder = @import("./bun.js/api/js_zlib.zig").ZlibDecoder;
     pub const NativeZlib = @import("./bun.js/node/node_zlib_binding.zig").SNativeZlib;
     pub const NativeBrotli = @import("./bun.js/node/node_zlib_binding.zig").SNativeBrotli;
 };

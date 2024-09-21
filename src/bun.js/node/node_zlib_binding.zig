@@ -7,14 +7,6 @@ const Output = bun.Output;
 const ZigString = JSC.ZigString;
 const validators = @import("./util/validators.zig");
 
-pub const createBrotliEncoder = bun.JSC.API.BrotliEncoder.create;
-
-pub const createBrotliDecoder = bun.JSC.API.BrotliDecoder.create;
-
-pub const createZlibEncoder = bun.JSC.API.ZlibEncoder.create;
-
-pub const createZlibDecoder = bun.JSC.API.ZlibDecoder.create;
-
 pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
     const arguments = callframe.arguments(2).ptr;
 

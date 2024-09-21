@@ -157,7 +157,7 @@ class DebugConfigurationProvider implements vscode.DebugConfigurationProvider {
 class InlineDebugAdapterFactory implements vscode.DebugAdapterDescriptorFactory {
   async createDebugAdapterDescriptor(
     session: vscode.DebugSession,
-  ): vscode.ProviderResult<vscode.DebugAdapterDescriptor> {
+  ): Promise<vscode.ProviderResult<vscode.DebugAdapterDescriptor>> {
     const { configuration } = session;
     const { request, url } = configuration;
 
@@ -225,6 +225,7 @@ class TerminalDebugSession extends FileDebugSession {
   }
 
   async initialize() {
+    await super.initialize();
     if (process.platform === "win32") {
       this.signal = new TCPSocketSignal(await getAvailablePort());
     } else {
@@ -243,7 +244,7 @@ class TerminalDebugSession extends FileDebugSession {
       name: "Bun Terminal",
       env: {
         "BUN_INSPECT": `${this.adapter.url}?wait=1`,
-        "BUN_INSPECT_NOTIFY": `${this.signal.url}`,
+        "BUN_INSPECT_NOTIFY": `${this.signal instanceof UnixSignal ? this.signal.url : `tcp://127.0.0.1:${this.signal.port}`}`,
       },
       isTransient: true,
       iconPath: new vscode.ThemeIcon("debug-console"),

@@ -5737,7 +5737,10 @@ pub const Expr = struct {
         /// outside of a module wrapper (__esm/__commonJS).
         pub fn canBeMoved(data: Expr.Data) bool {
             return switch (data) {
-                .e_identifier => |id| id.can_be_removed_if_unused,
+                // TODO: identifiers can be removed if unused, however code that
+                // moves expressions around sometimes does so incorrectly when
+                // doing destructures. test case: https://github.com/oven-sh/bun/issues/14027
+                // .e_identifier => |id| id.can_be_removed_if_unused,
 
                 .e_class => |class| class.canBeMoved(),
 

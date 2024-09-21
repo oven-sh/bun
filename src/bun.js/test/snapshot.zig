@@ -140,48 +140,32 @@ pub const Snapshots = struct {
 
         // TODO: when common js transform changes, keep this updated or add flag to support this version
 
-        const export_default = brk: {
-            for (ast.parts.slice()) |part| {
-                for (part.stmts) |stmt| {
-                    if (stmt.data == .s_export_default and stmt.data.s_export_default.value == .expr) {
-                        break :brk stmt.data.s_export_default.value.expr;
-                    }
-                }
-            }
-
-            return;
-        };
-
-        if (export_default.data == .e_call) {
-            const function_call = export_default.data.e_call;
-            if (function_call.args.len == 2 and function_call.args.ptr[0].data == .e_function) {
-                const arg_function_stmts = function_call.args.ptr[0].data.e_function.func.body.stmts;
-                for (arg_function_stmts) |stmt| {
-                    switch (stmt.data) {
-                        .s_expr => |expr| {
-                            if (expr.value.data == .e_binary and expr.value.data.e_binary.op == .bin_assign) {
-                                const left = expr.value.data.e_binary.left;
-                                if (left.data == .e_index and left.data.e_index.index.data == .e_string and left.data.e_index.target.data == .e_identifier) {
-                                    const target: js_ast.E.Identifier = left.data.e_index.target.data.e_identifier;
-                                    var index: *js_ast.E.String = left.data.e_index.index.data.e_string;
-                                    if (target.ref.eql(exports_ref) and expr.value.data.e_binary.right.data == .e_string) {
-                                        const key = index.slice(this.allocator);
-                                        var value_string = expr.value.data.e_binary.right.data.e_string;
-                                        const value = value_string.slice(this.allocator);
-                                        defer {
-                                            if (!index.isUTF8()) this.allocator.free(key);
-                                            if (!value_string.isUTF8()) this.allocator.free(value);
-                                        }
-                                        const value_clone = try this.allocator.alloc(u8, value.len);
-                                        bun.copy(u8, value_clone, value);
-                                        const name_hash = bun.hash(key);
-                                        try this.values.put(name_hash, value_clone);
+        for (ast.parts.slice()) |part| {
+            for (part.stmts) |stmt| {
+                switch (stmt.data) {
+                    .s_expr => |expr| {
+                        if (expr.value.data == .e_binary and expr.value.data.e_binary.op == .bin_assign) {
+                            const left = expr.value.data.e_binary.left;
+                            if (left.data == .e_index and left.data.e_index.index.data == .e_string and left.data.e_index.target.data == .e_identifier) {
+                                const target: js_ast.E.Identifier = left.data.e_index.target.data.e_identifier;
+                                var index: *js_ast.E.String = left.data.e_index.index.data.e_string;
+                                if (target.ref.eql(exports_ref) and expr.value.data.e_binary.right.data == .e_string) {
+                                    const key = index.slice(this.allocator);
+                                    var value_string = expr.value.data.e_binary.right.data.e_string;
+                                    const value = value_string.slice(this.allocator);
+                                    defer {
+                                        if (!index.isUTF8()) this.allocator.free(key);
+                                        if (!value_string.isUTF8()) this.allocator.free(value);
                                     }
+                                    const value_clone = try this.allocator.alloc(u8, value.len);
+                                    bun.copy(u8, value_clone, value);
+                                    const name_hash = bun.hash(key);
+                                    try this.values.put(name_hash, value_clone);
                                 }
                             }
-                        },
-                        else => {},
-                    }
+                        }
+                    },
+                    else => {},
                 }
             }
         }

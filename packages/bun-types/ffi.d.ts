@@ -337,6 +337,10 @@ declare module "bun:ffi" {
      */
     u64_fast = 16,
     function = 17,
+
+    napi_env = 18,
+    napi_value = 19,
+    buffer = 20,
   }
 
   type Pointer = number & { __pointer__: null };
@@ -372,6 +376,9 @@ declare module "bun:ffi" {
     [FFIType.i64_fast]: number | bigint;
     [FFIType.u64_fast]: number | bigint;
     [FFIType.function]: Pointer | JSCallback; // cannot be null
+    [FFIType.napi_env]: unknown;
+    [FFIType.napi_value]: unknown;
+    [FFIType.buffer]: NodeJS.TypedArray | DataView;
   }
   interface FFITypeToReturnsType {
     [FFIType.char]: number;
@@ -404,6 +411,9 @@ declare module "bun:ffi" {
     [FFIType.i64_fast]: number | bigint;
     [FFIType.u64_fast]: number | bigint;
     [FFIType.function]: Pointer | null;
+    [FFIType.napi_env]: unknown;
+    [FFIType.napi_value]: unknown;
+    [FFIType.buffer]: NodeJS.TypedArray | DataView;
   }
   interface FFITypeStringToType {
     ["char"]: FFIType.char;
@@ -436,6 +446,9 @@ declare module "bun:ffi" {
     ["function"]: FFIType.pointer; // for now
     ["usize"]: FFIType.uint64_t; // for now
     ["callback"]: FFIType.pointer; // for now
+    ["napi_env"]: FFIType.napi_env;
+    ["napi_value"]: FFIType.napi_value;
+    ["buffer"]: FFIType.buffer;
   }
 
   type FFITypeOrString = FFIType | keyof FFITypeStringToType;

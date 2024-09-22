@@ -2034,8 +2034,8 @@ pub const Process = struct {
                 fs.top_level_dir_buf[len] = std.fs.path.sep;
                 fs.top_level_dir_buf[len + 1] = 0;
                 fs.top_level_dir = fs.top_level_dir_buf[0 .. len + 1];
-
-                var str = bun.String.createUTF8(strings.withoutTrailingSlash(fs.top_level_dir));
+                const withoutTrailingSlash = if (Environment.isWindows) strings.withoutTrailingSlashWindowsPath else strings.withoutTrailingSlash;
+                var str = bun.String.createUTF8(withoutTrailingSlash(fs.top_level_dir));
                 return str.transferToJS(globalObject);
             },
             .err => |e| {

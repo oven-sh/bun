@@ -100,6 +100,23 @@ it("process", () => {
   expect(cwd).toEqual(process.cwd());
 });
 
+it("process.chdir() on root dir", () => {
+  const cwd = process.cwd();
+  try {
+    let root = "/";
+    if (process.platform === "win32") {
+      const driveLetter = process.cwd().split(":\\")[0];
+      root = `${driveLetter}:\\`;
+    }
+    process.chdir(root);
+    expect(process.cwd()).toBe(root);
+    process.chdir(cwd);
+    expect(process.cwd()).toBe(cwd);
+  } finally {
+    process.chdir(cwd);
+  }
+});
+
 it("process.hrtime()", () => {
   const start = process.hrtime();
   const end = process.hrtime(start);

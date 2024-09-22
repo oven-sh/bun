@@ -2779,7 +2779,7 @@ pub const Parser = struct {
             .result => |v| v,
         };
         switch (tok.*) {
-            .semicolon => return .{ .result = {} },
+            .comma => return .{ .result = {} },
             else => {},
         }
         return .{ .err = start_location.newUnexpectedTokenError(tok.*) };

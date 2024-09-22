@@ -121,9 +121,9 @@ pub const CssColor = union(enum) {
 
                     const compact = compactHex(hex);
                     if (hex == expandHex(compact)) {
-                        try dest.writeFmt("{x:0>3}", .{compact});
+                        try dest.writeFmt("#{x:0>3}", .{compact});
                     } else {
-                        try dest.writeFmt("{x:0>6}", .{compact});
+                        try dest.writeFmt("#{x:0>6}", .{compact});
                     }
                 } else {
                     // If the #rrggbbaa syntax is not supported by the browser targets, output rgba()
@@ -571,33 +571,94 @@ pub fn parseColorFunction(location: css.SourceLocation, function: []const u8, in
 
 pub fn parseRGBComponents(input: *css.Parser, parser: *ComponentParser) Result(struct { f32, f32, f32, bool }) {
     const red = switch (parser.parseNumberOrPercentage(input)) {
-        .result => |v| v,
         .err => |e| return .{ .err = e },
+        .result => |v| v,
     };
 
     const is_legacy_syntax = parser.from == null and
         !std.math.isNan(red.unitValue()) and
         input.tryParse(css.Parser.expectComma, .{}).isOk();
-    _ = is_legacy_syntax; // autofix
 
-    // const r, const g, const b = if (is_legacy_syntax) switch (red) {
-    //     .number => |v| brk: {
-    //         const value = v.value;
-    //         const r = std.math.clamp(@round(value), 0.0, 255.0);
-    //         _ = r; // autofix
-    //         const g = std.math.clamp(@round(parser.parseNumber), 0.0, 255.0);
-    //         _ = g; // autofix
-    //     },
-    // } else brk: {};
-    @panic(css.todo_stuff.depth);
+    const r, const g, const b = if (is_legacy_syntax) switch (red) {
+        .number => |v| brk: {
+            const r = std.math.clamp(@round(v.value), 0.0, 255.0);
+            const g = switch (parser.parseNumber(input)) {
+                .err => |e| return .{ .err = e },
+                .result => |vv| std.math.clamp(@round(vv), 0.0, 255.0),
+            };
+            if (input.expectComma().asErr()) |e| return .{ .err = e };
+            const b = switch (parser.parseNumber(input)) {
+                .err => |e| return .{ .err = e },
+                .result => |vv| std.math.clamp(@round(vv), 0.0, 255.0),
+            };
+            break :brk .{ r, g, b };
+        },
+        .percentage => |v| brk: {
+            const r = std.math.clamp(@round(v.unit_value * 255.0), 0.0, 255.0);
+            const g = switch (parser.parsePercentage(input)) {
+                .err => |e| return .{ .err = e },
+                .result => |vv| std.math.clamp(@round(vv * 255.0), 0.0, 255.0),
+            };
+            if (input.expectComma().asErr()) |e| return .{ .err = e };
+            const b = switch (parser.parsePercentage(input)) {
+                .err => |e| return .{ .err = e },
+                .result => |vv| std.math.clamp(@round(vv * 255.0), 0.0, 255.0),
+            };
+            break :brk .{ r, g, b };
+        },
+    } else blk: {
+        const getComponent = struct {
+            fn get(value: NumberOrPercentage) f32 {
+                return switch (value) {
+                    .number => |v| if (std.math.isNan(v.value)) v.value else std.math.clamp(@round(v.value), 0.0, 255.0) / 255.0,
+                    .percentage => |v| std.math.clamp(v.unit_value, 0.0, 1.0),
+                };
+            }
+        }.get;
+
+        const r = getComponent(red);
+        const g = getComponent(switch (parser.parseNumberOrPercentage(input)) {
+            .err => |e| return .{ .err = e },
+            .result => |v| v,
+        });
+        const b = getComponent(switch (parser.parseNumberOrPercentage(input)) {
+            .err => |e| return .{ .err = e },
+            .result => |v| v,
+        });
+        break :blk .{ r, g, b };
+    };
+
+    if (is_legacy_syntax and (std.math.isNan(g) or std.math.isNan(b))) {
+        return .{ .err = input.newCustomError(css.ParserError.invalid_value) };
+    }
+    return .{ .result = .{ r, g, b, is_legacy_syntax } };
 }
 
 pub fn parseHSLHWBComponents(comptime T: type, input: *css.Parser, parser: *ComponentParser, allows_legacy: bool) Result(struct { f32, f32, f32, bool }) {
-    _ = allows_legacy; // autofix
     _ = T; // autofix
-    _ = input; // autofix
-    _ = parser; // autofix
-    @panic(css.todo_stuff.depth);
+    const h = switch (parseAngleOrNumber(input, parser)) {
+        .result => |v| v,
+        .err => |e| return .{ .err = e },
+    };
+    const is_legacy_syntax = allows_legacy and
+        parser.from == null and
+        !std.math.isNan(h) and
+        input.tryParse(css.Parser.expectComma, .{}).isOk();
+    const a = switch (parser.parsePercentage(input)) {
+        .result => |v| std.math.clamp(v, 0.0, 1.0),
+        .err => |e| return .{ .err = e },
+    };
+    if (is_legacy_syntax) {
+        if (input.expectColon().asErr()) |e| return .{ .err = e };
+    }
+    const b = switch (parser.parsePercentage(input)) {
+        .result => |v| std.math.clamp(v, 0.0, 1.0),
+        .err => |e| return .{ .err = e },
+    };
+    if (is_legacy_syntax and (std.math.isNan(a) or std.math.isNan(b))) {
+        return .{ .err = input.newCustomError(css.ParserError.invalid_value) };
+    }
+    return .{ .result = .{ h, a, b, is_legacy_syntax } };
 }
 
 pub fn mapGamut(comptime T: type, color: T) T {
@@ -1503,7 +1564,6 @@ pub const LAB = struct {
         .b = ChannelType{ .number = true },
     };
 
-
     pub fn adjustHue(_: *@This(), _: *@This(), _: HueInterpolationMethod) void {}
 };
 
@@ -1799,7 +1859,6 @@ pub const XYZd65 = struct {
         .z = ChannelType{ .percentage = true },
     };
 
-
     pub fn adjustPowerlessComponents(_: *@This()) void {}
     pub fn adjustHue(_: *@This(), _: *@This(), _: HueInterpolationMethod) void {}
 };
@@ -1856,7 +1915,6 @@ pub const OKLAB = struct {
         .a = ChannelType{ .number = true },
         .b = ChannelType{ .number = true },
     };
-
 
     pub fn adjustHue(_: *@This(), _: *@This(), _: HueInterpolationMethod) void {}
 };
@@ -2034,9 +2092,20 @@ pub const ComponentParser = struct {
     }
 
     pub fn parseNumber(this: *const ComponentParser, input: *css.Parser) Result(f32) {
-        _ = this; // autofix
-        _ = input; // autofix
-        @panic(css.todo_stuff.depth);
+        if (this.from) |*from| {
+            if (input.tryParse(RelativeComponentParser.parseNumber, .{from}).asValue()) |res| {
+                return .{ .result = res };
+            }
+        }
+
+        if (input.tryParse(CSSNumberFns.parse, .{}).asValue()) |val| {
+            return .{ .result = val };
+        } else if (this.allow_none) {
+            if (input.expectIdentMatching("none").asErr()) |e| return .{ .err = e };
+            return .{ .result = std.math.nan(f32) };
+        } else {
+            return .{ .err = input.newCustomError(css.ParserError.invalid_value) };
+        }
     }
 };
 
@@ -2234,7 +2303,10 @@ const RelativeComponentParser = struct {
         return .{ .err = input.newErrorForNextToken() };
     }
 
-    pub fn parseNumber(this: *const RelativeComponentParser, input: *css.Parser) Result(f32) {
+    pub fn parseNumber(
+        input: *css.Parser,
+        this: *const RelativeComponentParser,
+    ) Result(f32) {
         if (input.tryParse(
             RelativeComponentParser.parseIdent,
             .{ this, ChannelType{ .number = true } },
@@ -2673,8 +2745,8 @@ pub const HueInterpolationMethod = enum {
         if (this.* == .specified) {
             // a.* = ((a.* % 360.0) + 360.0) % 360.0;
             // b.* = ((b.* % 360.0) + 360.0) % 360.0;
-            a.* = @mod((@mod(a.* , 360.0) + 360.0) , 360.0);
-            b.* = @mod((@mod(b.* , 360.0) + 360.0), 360.0);
+            a.* = @mod((@mod(a.*, 360.0) + 360.0), 360.0);
+            b.* = @mod((@mod(b.*, 360.0) + 360.0), 360.0);
         }
 
         switch (this.*) {
@@ -3409,7 +3481,7 @@ const color_conversions = struct {
         pub fn intoSRGB(hsl_: *const HSL) SRGB {
             // https://drafts.csswg.org/css-color/#hsl-to-rgb
             const hsl = hsl_.resolveMissing();
-            const h = @floor(hsl.h - 360.0 * (hsl.h / 260.0)) / 260.0;
+            const h = (hsl.h - 360.0 * @floor(hsl.h / 360.0)) / 360.0;
             const r, const g, const b = css.color.hslToRgb(h, hsl.s, hsl.l);
             return SRGB{
                 .r = r,

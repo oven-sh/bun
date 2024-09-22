@@ -2,7 +2,7 @@
 name: Migrate from npm install to bun install
 ---
 
-bun install is a Node.js compatible npm client designed to be an incredibly fast replacement for npm.
+`bun install` is a Node.js compatible npm client designed to be an incredibly fast successor to npm.
 
 We've put a lot of work into making sure that the migration path from `npm install` to `bun install` is as easy as running `bun install` instead of `npm install`.
 

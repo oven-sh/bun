@@ -60,8 +60,8 @@ const css_decls = @import("./declaration.zig");
 pub const DeclarationList = css_decls.DeclarationList;
 pub const DeclarationBlock = css_decls.DeclarationBlock;
 
-pub const selector = @import("./selector.zig");
-pub const SelectorList = selector.api.SelectorList;
+pub const selector = @import("./selectors/selector.zig");
+pub const SelectorList = selector.parser.SelectorList;
 
 pub const logical = @import("./logical.zig");
 pub const PropertyCategory = logical.PropertyCategory;
@@ -190,8 +190,8 @@ pub const SourceLocation = struct {
                 .kind = .{ .custom = BasicParseError.intoDefaultParseError(err) },
                 .location = this,
             },
-            selector.api.SelectorParseErrorKind => .{
-                .kind = .{ .custom = selector.api.SelectorParseErrorKind.intoDefaultParserError(err) },
+            selector.parser.SelectorParseErrorKind => .{
+                .kind = .{ .custom = selector.parser.SelectorParseErrorKind.intoDefaultParserError(err) },
                 .location = this,
             },
             else => @compileError("TODO implement this for: " ++ @typeName(@TypeOf(err))),
@@ -1094,10 +1094,10 @@ pub fn AtRulePrelude(comptime T: type) type {
             condition: css_rules.container.ContainerCondition,
         },
         starting_style,
-        nest: selector.api.SelectorList,
+        nest: selector.parser.SelectorList,
         scope: struct {
-            scope_start: ?selector.api.SelectorList,
-            scope_end: ?selector.api.SelectorList,
+            scope_start: ?selector.parser.SelectorList,
+            scope_end: ?selector.parser.SelectorList,
         },
         unknown: struct {
             name: []const u8,
@@ -1357,7 +1357,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
         };
 
         pub const QualifiedRuleParser = struct {
-            pub const Prelude = selector.api.SelectorList;
+            pub const Prelude = selector.parser.SelectorList;
             pub const QualifiedRule = void;
 
             pub fn parsePrelude(this: *This, input: *Parser) Result(Prelude) {
@@ -1543,15 +1543,15 @@ pub fn NestedRuleParser(comptime T: type) type {
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "starting-style")) {
                         break :brk .starting_style;
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "scope")) {
-                        var selector_parser = selector.api.SelectorParser{
+                        var selector_parser = selector.parser.SelectorParser{
                             .is_nesting_allowed = true,
                             .options = this.options,
                             .allocator = input.allocator(),
                         };
                         const Closure = struct {
-                            selector_parser: *selector.api.SelectorParser,
-                            pub fn parsefn(self: *@This(), input2: *Parser) Result(selector.api.SelectorList) {
-                                return selector.api.SelectorList.parseRelative(self.selector_parser, input2, .ignore_invalid_selector, .none);
+                            selector_parser: *selector.parser.SelectorParser,
+                            pub fn parsefn(self: *@This(), input2: *Parser) Result(selector.parser.SelectorList) {
+                                return selector.parser.SelectorList.parseRelative(self.selector_parser, input2, .ignore_invalid_selector, .none);
                             }
                         };
                         var closure = Closure{
@@ -1559,7 +1559,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                         };
 
                         const scope_start = if (input.tryParse(Parser.expectParenthesisBlock, .{}).isOk()) scope_start: {
-                            break :scope_start switch (input.parseNestedBlock(selector.api.SelectorList, &closure, Closure.parsefn)) {
+                            break :scope_start switch (input.parseNestedBlock(selector.parser.SelectorList, &closure, Closure.parsefn)) {
                                 .result => |v| v,
                                 .err => |e| return .{ .err = e },
                             };
@@ -1567,7 +1567,7 @@ pub fn NestedRuleParser(comptime T: type) type {
 
                         const scope_end = if (input.tryParse(Parser.expectIdentMatching, .{"to"}).isOk()) scope_end: {
                             if (input.expectParenthesisBlock().asErr()) |e| return .{ .err = e };
-                            break :scope_end switch (input.parseNestedBlock(selector.api.SelectorList, &closure, Closure.parsefn)) {
+                            break :scope_end switch (input.parseNestedBlock(selector.parser.SelectorList, &closure, Closure.parsefn)) {
                                 .result => |v| v,
                                 .err => |e| return .{ .err = e },
                             };
@@ -1581,12 +1581,12 @@ pub fn NestedRuleParser(comptime T: type) type {
                         };
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "nest") and this.is_in_style_rule) {
                         this.options.warn(input.newCustomError(ParserError{ .deprecated_nest_rule = {} }));
-                        var selector_parser = selector.api.SelectorParser{
+                        var selector_parser = selector.parser.SelectorParser{
                             .is_nesting_allowed = true,
                             .options = this.options,
                             .allocator = input.allocator(),
                         };
-                        const selectors = switch (selector.api.SelectorList.parse(&selector_parser, input, .discard_list, .contained)) {
+                        const selectors = switch (selector.parser.SelectorList.parse(&selector_parser, input, .discard_list, .contained)) {
                             .err => |e| return .{ .err = e },
                             .result => |v| v,
                         };
@@ -1960,20 +1960,20 @@ pub fn NestedRuleParser(comptime T: type) type {
         };
 
         pub const QualifiedRuleParser = struct {
-            pub const Prelude = selector.api.SelectorList;
+            pub const Prelude = selector.parser.SelectorList;
             pub const QualifiedRule = void;
 
             pub fn parsePrelude(this: *This, input: *Parser) Result(Prelude) {
-                var selector_parser = selector.api.SelectorParser{
+                var selector_parser = selector.parser.SelectorParser{
                     .is_nesting_allowed = true,
                     .options = this.options,
                     .allocator = input.allocator(),
                 };
 
                 if (this.is_in_style_rule) {
-                    return selector.api.SelectorList.parseRelative(&selector_parser, input, .discard_list, .implicit);
+                    return selector.parser.SelectorList.parseRelative(&selector_parser, input, .discard_list, .implicit);
                 } else {
-                    return selector.api.SelectorList.parse(&selector_parser, input, .discard_list, .none);
+                    return selector.parser.SelectorList.parse(&selector_parser, input, .discard_list, .none);
                 }
             }
 
@@ -2107,9 +2107,9 @@ pub fn NestedRuleParser(comptime T: type) type {
                     0,
                     .{
                         .style = StyleRule(T.CustomAtRuleParser.AtRule){
-                            .selectors = selector.api.SelectorList.fromSelector(
+                            .selectors = selector.parser.SelectorList.fromSelector(
                                 input.allocator(),
-                                selector.api.Selector.fromComponent(input.allocator(), .nesting),
+                                selector.parser.Selector.fromComponent(input.allocator(), .nesting),
                             ),
                             .declarations = declarations,
                             .vendor_prefix = VendorPrefix.empty(),

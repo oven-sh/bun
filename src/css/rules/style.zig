@@ -19,7 +19,7 @@ const Location = css.css_rules.Location;
 pub fn StyleRule(comptime R: type) type {
     return struct {
         /// The selectors for the style rule.
-        selectors: css.selector.api.SelectorList,
+        selectors: css.selector.parser.SelectorList,
         /// A vendor prefix override, used during selector printing.
         vendor_prefix: css.VendorPrefix,
         /// The declarations within the style rule.

@@ -21,9 +21,9 @@ const CssRuleList = css.CssRuleList;
 pub fn ScopeRule(comptime R: type) type {
     return struct {
         /// A selector list used to identify the scoping root(s).
-        scope_start: ?css.selector.api.SelectorList,
+        scope_start: ?css.selector.parser.SelectorList,
         /// A selector list used to identify any scoping limits.
-        scope_end: ?css.selector.api.SelectorList,
+        scope_end: ?css.selector.parser.SelectorList,
         /// Nested rules within the `@scope` rule.
         rules: css.CssRuleList(R),
         /// The location of the rule in the source file.
@@ -53,7 +53,7 @@ pub fn ScopeRule(comptime R: type) type {
                 // https://drafts.csswg.org/css-nesting/#nesting-at-scope
                 if (this.scope_start) |*scope_start| {
                     try dest.withContext(scope_start, scope_end, struct {
-                        pub fn toCssFn(scope_end_: *const css.selector.api.SelectorList, comptime WW: type, d: *Printer(WW)) PrintErr!void {
+                        pub fn toCssFn(scope_end_: *const css.selector.parser.SelectorList, comptime WW: type, d: *Printer(WW)) PrintErr!void {
                             return css.selector.serialize.serializeSelectorList(scope_end_.v.items, WW, d, d.context(), false);
                         }
                     }.toCssFn);

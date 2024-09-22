@@ -86,13 +86,13 @@ pub const CssModule = struct {
     pub fn handleComposes(
         this: *CssModule,
         allocator: Allocator,
-        selectors: *const css.selector.api.SelectorList,
+        selectors: *const css.selector.parser.SelectorList,
         composes: *const css.css_properties.css_modules.Composes,
         source_index: u32,
     ) css.Maybe(void, css.PrinterErrorKind) {
         for (selectors.v.items) |*sel| {
             if (sel.len() == 1) {
-                const component: *const css.selector.api.Component = &sel.components.items[0];
+                const component: *const css.selector.parser.Component = &sel.components.items[0];
                 switch (component.*) {
                     .class => |id| {
                         for (composes.names.items) |name| {

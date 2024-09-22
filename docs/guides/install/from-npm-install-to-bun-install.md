@@ -31,12 +31,12 @@ $ bun rm @types/bun
 
 Run scripts from package.json, executables from `node_modules/.bin` (sort of like `npx`), and JavaScript/TypeScript files (just like `node`) - all from a single simple command.
 
-| NPM              | Bun              |
-| ---------------- | ---------------- |
-| `npm <script>`   | `bun <script>`   |
-| `npm exec <bin>` | `bun run <bin>`  |
-| `npx <package>`  | `bunx <package>` |
-| `node <file>`    | `bun <file>`     |
+| NPM                | Bun              |
+| ------------------ | ---------------- |
+| `npm run <script>` | `bun <script>`   |
+| `npm exec <bin>`   | `bun <bin>`      |
+| `node <file>`      | `bun <file>`     |
+| `npx <package>`    | `bunx <package>` |
 
 When you use `bun run <executable>`, it will choose the locally-installed executable
 

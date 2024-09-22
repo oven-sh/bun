@@ -1465,6 +1465,7 @@ pub const Subprocess = struct {
         if (stdin) |pipe| {
             this.weak_file_sink_stdin_ptr = null;
             this.flags.has_stdin_destructor_called = true;
+            // It is okay if it does call deref() here, as in that case it was truly ref'd.
             pipe.onAttachedProcessExit();
         }
 

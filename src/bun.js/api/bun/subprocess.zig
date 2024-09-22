@@ -2178,7 +2178,7 @@ pub const Subprocess = struct {
             ),
             // 1. JavaScript.
             // 2. Process.
-            .ref_count = if (is_sync) 1 else 2,
+            .ref_count = 2,
             .stdio_pipes = spawned.extra_pipes.moveToUnmanaged(),
             .on_exit_callback = if (on_exit_callback != .zero) JSC.Strong.create(on_exit_callback, globalThis) else .{},
             .on_disconnect_callback = if (on_disconnect_callback != .zero) JSC.Strong.create(on_disconnect_callback, globalThis) else .{},

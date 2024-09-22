@@ -211,6 +211,7 @@ pub const Subprocess = struct {
         killed: bool = false,
         has_stdin_destructor_called: bool = false,
         finalized: bool = false,
+        deref_on_stdin_destroyed: bool = false,
     };
 
     pub const SignalCode = bun.SignalCode;
@@ -703,9 +704,13 @@ pub const Subprocess = struct {
     }
 
     pub fn onStdinDestroyed(this: *Subprocess) void {
+        const must_deref = this.flags.deref_on_stdin_destroyed;
+        this.flags.deref_on_stdin_destroyed = false;
+        defer if (must_deref) this.deref();
+
         this.flags.has_stdin_destructor_called = true;
         this.weak_file_sink_stdin_ptr = null;
-        defer this.deref();
+
         if (!this.flags.finalized) {
             // otherwise update the pending activity flag
             this.updateHasPendingActivity();
@@ -1240,6 +1245,7 @@ pub const Subprocess = struct {
                             pipe.writer.setParent(pipe);
                             subprocess.weak_file_sink_stdin_ptr = pipe;
                             subprocess.ref();
+                            subprocess.flags.deref_on_stdin_destroyed = true;
                             subprocess.flags.has_stdin_destructor_called = false;
 
                             return Writable{
@@ -1300,6 +1306,7 @@ pub const Subprocess = struct {
                     subprocess.weak_file_sink_stdin_ptr = pipe;
                     subprocess.ref();
                     subprocess.flags.has_stdin_destructor_called = false;
+                    subprocess.flags.deref_on_stdin_destroyed = true;
 
                     pipe.writer.handle.poll.flags.insert(.socket);
 
@@ -1345,12 +1352,16 @@ pub const Subprocess = struct {
                 .pipe => |pipe| {
                     this.* = .{ .ignore = {} };
                     if (subprocess.process.hasExited() and !subprocess.flags.has_stdin_destructor_called) {
+                        // onAttachedProcessExit() can call deref on the subprocess, but we don't want that.
+                        // since we never called ref() on it here.
+                        bun.debugAssert(!subprocess.flags.deref_on_stdin_destroyed);
                         pipe.onAttachedProcessExit();
                         return pipe.toJS(globalThis);
                     } else {
                         subprocess.flags.has_stdin_destructor_called = false;
                         subprocess.weak_file_sink_stdin_ptr = pipe;
                         subprocess.ref();
+                        subprocess.flags.deref_on_stdin_destroyed = true;
                         if (@intFromPtr(pipe.signal.ptr) == @intFromPtr(subprocess)) {
                             pipe.signal.clear();
                         }
@@ -2157,6 +2168,9 @@ pub const Subprocess = struct {
                 default_max_buffer_size,
                 is_sync,
             ),
+            // 1. JavaScript.
+            // 2. Process.
+            .ref_count = if (is_sync) 1 else 2,
             .stdio_pipes = spawned.extra_pipes.moveToUnmanaged(),
             .on_exit_callback = if (on_exit_callback != .zero) JSC.Strong.create(on_exit_callback, globalThis) else .{},
             .on_disconnect_callback = if (on_disconnect_callback != .zero) JSC.Strong.create(on_disconnect_callback, globalThis) else .{},
@@ -2177,7 +2191,7 @@ pub const Subprocess = struct {
                 .is_sync = is_sync,
             },
         };
-        subprocess.ref(); // + one ref for the process
+
         subprocess.process.setExitHandler(subprocess);
 
         if (subprocess.ipc_data) |*ipc_data| {

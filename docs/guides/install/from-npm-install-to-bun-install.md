@@ -4,11 +4,11 @@ name: Migrate from npm install to bun install
 
 bun install is a Node.js compatible npm client designed to be an incredibly fast replacement for npm.
 
-We've put a lot of work into making sure that the migration path from `npm install` to `bun install` is smooth and automatic.
+We've put a lot of work into making sure that the migration path from `npm install` to `bun install` is as easy as running `bun install` instead of `npm install`.
 
 - **Designed for Node.js & Bun**: `bun install` installs a Node.js compatible `node_modules` folder. You can use it in place of `npm install` for Node.js projects without any code changes and without using Bun's runtime.
 - **Automatically converts `package-lock.json`** to bun's `bun.lockb` lockfile format, preserving your existing resolved dependency versions without any manual work on your part. You can secretly use `bun install` in place of `npm install` at work without anyone noticing.
-- **`.npmrc` compatible**: bun install reads npm registry configuration from npm's `.npmrc` as well as Bun's `bunfig.toml`, letting you use the same configuration for both npm and Bun.
+- **`.npmrc` compatible**: bun install reads npm registry configuration from npm's `.npmrc`, so you can use the same configuration for both npm and Bun.
 - **Hardlinks**: On Windows and Linux, `bun install` uses hardlinks to conserve disk space and install times.
 
 ```bash

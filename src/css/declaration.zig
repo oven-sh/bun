@@ -171,7 +171,7 @@ pub fn parse_declaration(
 ) Result(void) {
     const property_id = css.PropertyId.fromStr(name);
     var delimiters = css.Delimiters{ .bang = true };
-    if (property_id != .custom and property_id.custom != .custom) {
+    if (property_id != .custom or property_id.custom != .custom) {
         delimiters.curly_bracket = true;
     }
     const Closure = struct {

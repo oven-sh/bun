@@ -5712,11 +5712,10 @@ pub const to_css = struct {
     }
 
     pub fn float32(this: f32, writer: anytype) !void {
-        var scratch: [26]u8 = undefined;
+        var scratch: [64]u8 = undefined;
         // PERF/TODO: Compare this to Rust dtoa-short crate
         const floats = std.fmt.formatFloat(scratch[0..], this, .{
-            .mode = .scientific,
-            .precision = 6,
+            .mode = .decimal,
         }) catch unreachable;
         return writer.writeAll(floats);
     }

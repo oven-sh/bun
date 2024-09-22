@@ -73,6 +73,20 @@ pub const CssColor = union(enum) {
         // TODO: why box the two fields separately? why not one allocation?
         light: *CssColor,
         dark: *CssColor,
+
+        pub fn takeLightFreeDark(this: *const @This(), allocator: Allocator) *CssColor {
+            const ret = this.light;
+            this.dark.deinit(allocator);
+            allocator.destroy(this.dark);
+            return ret;
+        }
+
+        pub fn takeDarkFreeLight(this: *const @This(), allocator: Allocator) *CssColor {
+            const ret = this.dark;
+            this.light.deinit(allocator);
+            allocator.destroy(this.light);
+            return ret;
+        }
     },
     /// A system color keyword.
     system: SystemColor,
@@ -202,7 +216,9 @@ pub const CssColor = union(enum) {
             .float => |*float| {
                 // Serialize as hex.
                 const srgb = SRGB.fromFloatColor(float.*);
-                try srgb.intoCssColor().toCss(W, dest);
+                const as_css_color = srgb.intoCssColor(dest.allocator);
+                defer as_css_color.deinit(dest.allocator);
+                try as_css_color.toCss(W, dest);
             },
             .light_dark => |*light_dark| {
                 if (!dest.targets.isCompatible(css.compat.Feature.light_dark)) {
@@ -267,9 +283,27 @@ pub const CssColor = union(enum) {
         }
     }
 
-    pub fn deinit(this: CssColor) void {
-        _ = this; // autofix
-        @compileError(css.todo_stuff.depth);
+    pub fn deinit(this: CssColor, allocator: Allocator) void {
+        switch (this) {
+            .current_color => {},
+            .rgba => {},
+            .lab => {
+                allocator.destroy(this.float);
+            },
+            .predefined => {
+                allocator.destroy(this.float);
+            },
+            .float => {
+                allocator.destroy(this.float);
+            },
+            .light_dark => {
+                this.light_dark.light.deinit(allocator);
+                this.light_dark.dark.deinit(allocator);
+                allocator.destroy(this.light_dark.light);
+                allocator.destroy(this.light_dark.dark);
+            },
+            .system => {},
+        }
     }
 
     pub fn clone(this: *const CssColor, allocator: Allocator) CssColor {
@@ -281,8 +315,8 @@ pub const CssColor = union(enum) {
             .float => |float| CssColor{ .float = bun.create(allocator, FloatColor, float.*) },
             .light_dark => CssColor{
                 .light_dark = .{
-                    .light = this.light_dark.light.clone(allocator),
-                    .dark = this.light_dark.dark.clone(allocator),
+                    .light = bun.create(allocator, CssColor, this.light_dark.light.clone(allocator)),
+                    .dark = bun.create(allocator, CssColor, this.light_dark.dark.clone(allocator)),
                 },
             },
             .system => |sys| CssColor{ .system = sys },
@@ -335,19 +369,19 @@ pub const CssColor = union(enum) {
                     .light = bun.create(
                         allocator,
                         CssColor,
-                        al.interpolate(allocator, T, p1, &bl, p2, method) orelse return null,
+                        al.interpolate(allocator, T, p1, bl, p2, method) orelse return null,
                     ),
                     .dark = bun.create(
                         allocator,
                         CssColor,
-                        ad.interpolate(allocator, T, p1, &bd, p2, method) orelse return null,
+                        ad.interpolate(allocator, T, p1, bd, p2, method) orelse return null,
                     ),
                 },
             };
         }
 
         const check_converted = struct {
-            fn run(color: *CssColor) bool {
+            fn run(color: *const CssColor) bool {
                 bun.debugAssert(color.* != .light_dark and color.* != .current_color and color.* != .system);
                 return switch (color.*) {
                     .rgba => T == RGBA,
@@ -387,11 +421,11 @@ pub const CssColor = union(enum) {
         var second_color = T.tryFromCssColor(other) orelse return null;
 
         if (converted_first and !first_color.inGamut()) {
-            first_color = mapGamut(first_color);
+            first_color = mapGamut(T, first_color);
         }
 
         if (converted_second and !second_color.inGamut()) {
-            second_color = mapGamut(second_color);
+            second_color = mapGamut(T, second_color);
         }
 
         // https://www.w3.org/TR/css-color-4/#powerless
@@ -408,7 +442,7 @@ pub const CssColor = union(enum) {
         second_color.fillMissingComponents(&first_color);
 
         // https://www.w3.org/TR/css-color-4/#hue-interpolation
-        first_color.adjustJue(&second_color, method);
+        first_color.adjustHue(&second_color, method);
 
         // https://www.w3.org/TR/css-color-4/#interpolation-alpha
         first_color.premultiply();
@@ -428,7 +462,7 @@ pub const CssColor = union(enum) {
 
         result_color.unpremultiply(alpha_multiplier);
 
-        return result_color.toCssColor();
+        return result_color.intoCssColor(allocator);
     }
 
     pub fn lightDarkOwned(allocator: Allocator, light: CssColor, dark: CssColor) CssColor {
@@ -442,10 +476,97 @@ pub const CssColor = union(enum) {
 };
 
 pub fn parseColorFunction(location: css.SourceLocation, function: []const u8, input: *css.Parser) Result(CssColor) {
-    _ = location; // autofix
-    _ = function; // autofix
-    _ = input; // autofix
-    @panic(css.todo_stuff.depth);
+    var parser = ComponentParser.new(true);
+
+    if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "lab")) {
+        return parseLab(LAB, input, &parser, struct {
+            fn callback(l: f32, a: f32, b: f32, alpha: f32) LABColor {
+                return .{ .lab = .{ .l = l, .a = a, .b = b, .alpha = alpha } };
+            }
+        }.callback);
+    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "oklab")) {
+        return parseLab(OKLAB, input, &parser, struct {
+            fn callback(l: f32, a: f32, b: f32, alpha: f32) LABColor {
+                return .{ .oklab = .{ .l = l, .a = a, .b = b, .alpha = alpha } };
+            }
+        }.callback);
+    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "lch")) {
+        return parseLch(LCH, input, &parser, struct {
+            fn callback(l: f32, c: f32, h: f32, alpha: f32) LABColor {
+                return .{ .lch = .{ .l = l, .c = c, .h = h, .alpha = alpha } };
+            }
+        }.callback);
+    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "oklch")) {
+        return parseLch(OKLCH, input, &parser, struct {
+            fn callback(l: f32, c: f32, h: f32, alpha: f32) LABColor {
+                return .{ .oklch = .{ .l = l, .c = c, .h = h, .alpha = alpha } };
+            }
+        }.callback);
+    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "color")) {
+        return parsePredefined(input, &parser);
+    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "hsl") or
+        bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "hsla"))
+    {
+        return parseHslHwb(HSL, input, &parser, true, struct {
+            fn callback(allocator: Allocator, h: f32, s: f32, l: f32, a: f32) CssColor {
+                const hsl = HSL{ .h = h, .s = s, .l = l, .alpha = a };
+                if (!std.math.isNan(h) and !std.math.isNan(s) and !std.math.isNan(l) and !std.math.isNan(a)) {
+                    return CssColor{ .rgba = hsl.intoRGBA() };
+                } else {
+                    return CssColor{ .float = bun.create(allocator, FloatColor, .{ .hsl = hsl }) };
+                }
+            }
+        }.callback);
+    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "hwb")) {
+        return parseHslHwb(HWB, input, &parser, false, struct {
+            fn callback(allocator: Allocator, h: f32, w: f32, b: f32, a: f32) CssColor {
+                const hwb = HWB{ .h = h, .w = w, .b = b, .alpha = a };
+                if (!std.math.isNan(h) and !std.math.isNan(w) and !std.math.isNan(b) and !std.math.isNan(a)) {
+                    return CssColor{ .rgba = hwb.intoRGBA() };
+                } else {
+                    return CssColor{ .float = bun.create(allocator, FloatColor, .{ .hwb = hwb }) };
+                }
+            }
+        }.callback);
+    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "rgb") or
+        bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "rgba"))
+    {
+        return parseRgb(input, &parser);
+    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "color-mix")) {
+        return input.parseNestedBlock(CssColor, {}, struct {
+            pub fn parseFn(_: void, i: *css.Parser) Result(CssColor) {
+                return parseColorMix(i);
+            }
+        }.parseFn);
+    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "light-dark")) {
+        return input.parseNestedBlock(CssColor, {}, struct {
+            fn callback(_: void, i: *css.Parser) Result(CssColor) {
+                const light = switch (switch (CssColor.parse(i)) {
+                    .result => |v| v,
+                    .err => |e| return .{ .err = e },
+                }) {
+                    .light_dark => |ld| ld.takeLightFreeDark(i.allocator()),
+                    else => |v| bun.create(i.allocator(), CssColor, v),
+                };
+                if (i.expectComma().asErr()) |e| return .{ .err = e };
+                const dark = switch (switch (CssColor.parse(i)) {
+                    .result => |v| v,
+                    .err => |e| return .{ .err = e },
+                }) {
+                    .light_dark => |ld| ld.takeDarkFreeLight(i.allocator()),
+                    else => |v| bun.create(i.allocator(), CssColor, v),
+                };
+                return .{ .result = .{
+                    .light_dark = .{
+                        .light = light,
+                        .dark = dark,
+                    },
+                } };
+            }
+        }.callback);
+    } else {
+        return .{ .err = location.newUnexpectedTokenError(.{ .ident = function }) };
+    }
 }
 
 pub fn parseRGBComponents(input: *css.Parser, parser: *ComponentParser) Result(struct { f32, f32, f32, bool }) {
@@ -566,7 +687,7 @@ pub fn parseLab(
         pub fn innerfn(i: *css.Parser, p: *ComponentParser) Result(CssColor) {
             // f32::max() does not propagate NaN, so use clamp for now until f32::maximum() is stable.
             const l = std.math.clamp(
-                switch (p.parsePercentage(input)) {
+                switch (p.parsePercentage(i)) {
                     .result => |v| v,
                     .err => |e| return .{ .err = e },
                 },
@@ -586,7 +707,7 @@ pub fn parseLab(
                 .err => |e| return .{ .err = e },
             };
             const lab = func(l, a, b, alpha);
-            const heap_lab = bun.create(i.allocator(), LABColor, lab) catch unreachable;
+            const heap_lab = bun.create(i.allocator(), LABColor, lab);
             heap_lab.* = lab;
             return .{ .result = CssColor{ .lab = heap_lab } };
         }
@@ -596,8 +717,9 @@ pub fn parseLab(
     };
     // https://www.w3.org/TR/css-color-4/#funcdef-lab
     return input.parseNestedBlock(
-        T,
+        CssColor,
         &closure,
+        Closure.parsefn,
     );
 }
 
@@ -621,17 +743,18 @@ pub fn parseLch(
 
         pub fn parseRelativeFn(i: *css.Parser, p: *ComponentParser, this: *@This()) Result(CssColor) {
             _ = this; // autofix
-            if (p.from) |from| {
+            if (p.from) |*from| {
                 // Relative angles should be normalized.
                 // https://www.w3.org/TR/css-color-5/#relative-LCH
-                from.components[2] %= 360.0;
+                // from.components[2] %= 360.0;
+                from.components[2] = @mod(from.components[2], 360.0);
                 if (from.components[2] < 0.0) {
                     from.components[2] += 360.0;
                 }
             }
 
             const l = std.math.clamp(
-                switch (parser.parsePercentage(i)) {
+                switch (p.parsePercentage(i)) {
                     .result => |vv| vv,
                     .err => |e| return .{ .err = e },
                 },
@@ -639,7 +762,7 @@ pub fn parseLch(
                 std.math.floatMax(f32),
             );
             const c = std.math.clamp(
-                switch (parser.parseNumber(i)) {
+                switch (p.parseNumber(i)) {
                     .result => |vv| vv,
                     .err => |e| return .{ .err = e },
                 },
@@ -667,7 +790,7 @@ pub fn parseLch(
         .parser = parser,
     };
 
-    return input.parseNestedBlock(T, &closure, Closure.parseNestedBlockFn);
+    return input.parseNestedBlock(CssColor, &closure, Closure.parseNestedBlockFn);
 }
 
 /// Parses the hsl() and hwb() functions.
@@ -713,7 +836,7 @@ pub fn parseHslHwb(
         .allows_legacy = allows_legacy,
     };
 
-    return input.parseNestedBlock(T, &closure, Closure.parseNestedBlockFn);
+    return input.parseNestedBlock(CssColor, &closure, Closure.parseNestedBlockFn);
 }
 
 pub fn parseHslHwbComponents(
@@ -781,16 +904,16 @@ fn parseRgb(input: *css.Parser, parser: *ComponentParser) Result(CssColor) {
         p: *ComponentParser,
 
         pub fn parseNestedBlockFn(this: *@This(), i: *css.Parser) Result(CssColor) {
-            this.p.parseRelative(i, SRGB, CssColor, @This().parseRelativeFn, .{this});
+            return this.p.parseRelative(i, SRGB, CssColor, @This().parseRelativeFn, .{this});
         }
 
-        pub fn parseRelativeFn(i: *css.Parser, p: *css.Parser, this: *@This()) Result(CssColor) {
+        pub fn parseRelativeFn(i: *css.Parser, p: *ComponentParser, this: *@This()) Result(CssColor) {
             _ = this; // autofix
-            const r, const g, const b, const is_legacy = switch (parseRgbComponents(input, p)) {
+            const r, const g, const b, const is_legacy = switch (parseRgbComponents(i, p)) {
                 .result => |vv| vv,
                 .err => |e| return .{ .err = e },
             };
-            const alpha = switch (if (is_legacy) parseLegacyAlpha(input, p) else parseAlpha(input, p)) {
+            const alpha = switch (if (is_legacy) parseLegacyAlpha(i, p) else parseAlpha(i, p)) {
                 .result => |v| v,
                 .err => |e| return .{ .err = e },
             };
@@ -803,10 +926,10 @@ fn parseRgb(input: *css.Parser, parser: *ComponentParser) Result(CssColor) {
                 if (is_legacy) return .{
                     .result = .{
                         .rgba = RGBA.new(
-                            @intCast(r),
-                            @intCast(g),
-                            @intCast(b),
-                            @intCast(alpha),
+                            @intFromFloat(r),
+                            @intFromFloat(g),
+                            @intFromFloat(b),
+                            alpha,
                         ),
                     },
                 };
@@ -828,7 +951,7 @@ fn parseRgb(input: *css.Parser, parser: *ComponentParser) Result(CssColor) {
                             i.allocator(),
                             FloatColor,
                             .{
-                                .srgb = .{
+                                .rgb = .{
                                     .r = r,
                                     .g = g,
                                     .b = b,
@@ -857,7 +980,7 @@ pub fn parseRgbComponents(input: *css.Parser, parser: *ComponentParser) Result(s
         .result => |vv| vv,
         .err => |e| return .{ .err = e },
     };
-    const is_legacy_syntax = parser.from == null and !std.math.isNan(red.value) and input.tryParse(css.Parser.expectComma).isOk();
+    const is_legacy_syntax = parser.from == null and !std.math.isNan(red.unitValue()) and input.tryParse(css.Parser.expectComma, .{}).isOk();
 
     const r, const g, const b = if (is_legacy_syntax) switch (red) {
         .number => |num| brk: {
@@ -964,7 +1087,10 @@ fn parseLegacyAlpha(input: *css.Parser, parser: *const ComponentParser) Result(f
 
 fn parseAlpha(input: *css.Parser, parser: *const ComponentParser) Result(f32) {
     const res = if (input.tryParse(css.Parser.expectDelim, .{'/'}).isOk())
-        std.math.clamp(try parseNumberOrPercentage(input, parser), 0.0, 1.0)
+        std.math.clamp(switch (parseNumberOrPercentage(input, parser)) {
+            .result => |v| v,
+            .err => |e| return .{ .err = e },
+        }, 0.0, 1.0)
     else
         1.0;
 
@@ -977,8 +1103,8 @@ pub fn parseNumberOrPercentage(input: *css.Parser, parser: *const ComponentParse
         .err => |e| return .{ .err = e },
     };
     return switch (result) {
-        .number => |value| value.value,
-        .percentage => |value| value.unit_value,
+        .number => |value| .{ .result = value.value },
+        .percentage => |value| .{ .result = value.unit_value },
     };
 }
 
@@ -1376,6 +1502,9 @@ pub const LAB = struct {
         .a = ChannelType{ .number = true },
         .b = ChannelType{ .number = true },
     };
+
+
+    pub fn adjustHue(_: *@This(), _: *@This(), _: HueInterpolationMethod) void {}
 };
 
 /// A color in the [`sRGB`](https://www.w3.org/TR/css-color-4/#predefined-sRGB) color space.
@@ -1402,6 +1531,9 @@ pub const SRGB = struct {
         .g = ChannelType{ .percentage = true },
         .b = ChannelType{ .percentage = true },
     };
+
+    pub fn adjustPowerlessComponents(_: *@This()) void {}
+    pub fn adjustHue(_: *@This(), _: *@This(), _: HueInterpolationMethod) void {}
 
     pub fn intoRGBA(_rgb: *const SRGB) RGBA {
         const rgb = _rgb.resolve();
@@ -1453,7 +1585,7 @@ pub const HSL = struct {
     }
 
     pub fn adjustHue(this: *HSL, other: *HSL, method: HueInterpolationMethod) void {
-        method.inperolate(&this.h, &other.h);
+        _ = method.interpolate(&this.h, &other.h);
     }
 };
 
@@ -1482,7 +1614,7 @@ pub const HWB = struct {
         .b = ChannelType{ .percentage = true },
     };
 
-    pub fn adjustPowerlesComponents(this: *HWB) void {
+    pub fn adjustPowerlessComponents(this: *HWB) void {
         // If white+black is equal to 100% (after normalization), it defines an achromatic color,
         // i.e. some shade of gray, without any hint of the chosen hue. In this case, the hue component is powerless.
         if (@abs(this.w + this.b - 1.0) < std.math.floatEps(f32)) {
@@ -1491,7 +1623,7 @@ pub const HWB = struct {
     }
 
     pub fn adjustHue(this: *HWB, other: *HWB, method: HueInterpolationMethod) void {
-        method.inperolate(&this.h, &other.h);
+        _ = method.interpolate(&this.h, &other.h);
     }
 };
 
@@ -1519,6 +1651,9 @@ pub const SRGBLinear = struct {
         .g = ChannelType{ .percentage = true },
         .b = ChannelType{ .percentage = true },
     };
+
+    pub fn adjustPowerlessComponents(_: *@This()) void {}
+    pub fn adjustHue(_: *@This(), _: *@This(), _: HueInterpolationMethod) void {}
 };
 
 /// A color in the [`display-p3`](https://www.w3.org/TR/css-color-4/#predefined-display-p3) color space.
@@ -1663,6 +1798,10 @@ pub const XYZd65 = struct {
         .y = ChannelType{ .percentage = true },
         .z = ChannelType{ .percentage = true },
     };
+
+
+    pub fn adjustPowerlessComponents(_: *@This()) void {}
+    pub fn adjustHue(_: *@This(), _: *@This(), _: HueInterpolationMethod) void {}
 };
 
 /// A color in the [CIE LCH](https://www.w3.org/TR/css-color-4/#cie-lab) color space.
@@ -1717,6 +1856,9 @@ pub const OKLAB = struct {
         .a = ChannelType{ .number = true },
         .b = ChannelType{ .number = true },
     };
+
+
+    pub fn adjustHue(_: *@This(), _: *@This(), _: HueInterpolationMethod) void {}
 };
 
 /// A color in the [OKLCH](https://www.w3.org/TR/css-color-4/#ok-lab) color space.
@@ -1757,6 +1899,8 @@ pub const ComponentParser = struct {
         };
     }
 
+    /// `func` must be a function like:
+    /// fn (*css.Parser, *ComponentParser, ...args)
     pub fn parseRelative(
         this: *ComponentParser,
         input: *css.Parser,
@@ -1836,7 +1980,7 @@ pub const ComponentParser = struct {
     }
 
     pub fn parseAngleOrNumber(this: *const ComponentParser, input: *css.Parser) Result(css.color.AngleOrNumber) {
-        if (this.from) |from| {
+        if (this.from) |*from| {
             if (input.tryParse(RelativeComponentParser.parseAngleOrNumber, .{from}).asValue()) |res| {
                 return .{ .result = res };
             }
@@ -1875,12 +2019,12 @@ pub const ComponentParser = struct {
     pub fn parsePercentage(this: *const ComponentParser, input: *css.Parser) Result(f32) {
         if (this.from) |*from| {
             if (input.tryParse(RelativeComponentParser.parsePercentage, .{from}).asValue()) |res| {
-                return res;
+                return .{ .result = res };
             }
         }
 
         if (input.tryParse(Percentage.parse, .{}).asValue()) |val| {
-            return .{ .result = val };
+            return .{ .result = val.v };
         } else if (this.allow_none) {
             if (input.expectIdentMatching("none").asErr()) |e| return .{ .err = e };
             return .{ .result = std.math.nan(f32) };
@@ -1984,10 +2128,10 @@ const RelativeComponentParser = struct {
 
             pub fn calcParseIdentFn(t: *@This(), ident: []const u8) ?Calc(Angle) {
                 const value = t.parser.getIdent(ident, ChannelType{ .angle = true, .number = true }) orelse return null;
-                t.angle = value;
-                return .{ .result = Calc(Angle){
+                t.angle = .{ .deg = value };
+                return Calc(Angle){
                     .value = &t.angle,
-                } };
+                };
             }
         };
         var closure = Closure{
@@ -2074,13 +2218,13 @@ const RelativeComponentParser = struct {
                     .result => |v| v,
                     .err => return .{ .err = i.newCustomError(css.ParserError.invalid_value) },
                 };
-                if (calc_value == .value) return calc_value.value.*;
+                if (calc_value == .value) return .{ .result = calc_value.value.* };
                 return .{ .err = i.newCustomError(css.ParserError.invalid_value) };
             }
 
             pub fn parseIdentFn(closure: *Closure, ident: []const u8) ?Calc(Percentage) {
                 const v = closure.self.getIdent(ident, ChannelType{ .percentage = true }) orelse return null;
-                closure.temp = v;
+                closure.temp = .{ .v = v };
                 return Calc(Percentage){ .value = &closure.temp };
             }
         }.parseFn, .{&_closure}).asValue()) |value| {
@@ -2201,12 +2345,15 @@ pub fn parsePredefined(input: *css.Parser, parser: *ComponentParser) Result(CssC
             else
                 null;
 
-            const colorspace = if (i.expectIdent().asErr()) |e| return .{ .err = e };
+            const colorspace = switch (i.expectIdent()) {
+                .result => |v| v,
+                .err => |e| return .{ .err = e },
+            };
 
             if (from) |f| {
                 if (f == .light_dark) {
                     const state = i.state();
-                    const light = switch (parsePredefinedRelative(i, this.p, &colorspace, f.light_dark.light)) {
+                    const light = switch (parsePredefinedRelative(i, this.p, colorspace, f.light_dark.light)) {
                         .result => |vv| vv,
                         .err => |e| return .{ .err = e },
                     };
@@ -2232,7 +2379,7 @@ pub fn parsePredefined(input: *css.Parser, parser: *ComponentParser) Result(CssC
                 }
             }
 
-            return parsePredefinedRelative(i, parser, colorspace, if (from) |*f| f else null);
+            return parsePredefinedRelative(i, this.p, colorspace, if (from) |*f| f else null);
         }
     };
 
@@ -2245,7 +2392,7 @@ pub fn parsePredefined(input: *css.Parser, parser: *ComponentParser) Result(CssC
         .err => |e| return .{ .err = e },
     };
 
-    return res;
+    return .{ .result = res };
 }
 
 pub fn parsePredefinedRelative(
@@ -2317,66 +2464,66 @@ pub fn parsePredefinedRelative(
         .err => |e| return .{ .err = e },
     };
 
-    const predefined = predefined: {
+    const predefined: PredefinedColor = predefined: {
         // todo_stuff.match_ignore_ascii_case
         if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("srgb", colorspace)) {
-            break :predefined SRGB{
+            break :predefined .{ .srgb = SRGB{
                 .r = a,
                 .g = b,
                 .b = c,
                 .alpha = alpha,
-            };
+            } };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("srgb-linear", colorspace)) {
-            break :predefined SRGBLinear{
+            break :predefined .{ .srgb_linear = SRGBLinear{
                 .r = a,
                 .g = b,
                 .b = c,
                 .alpha = alpha,
-            };
+            } };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("display-p3", colorspace)) {
-            break :predefined P3{
+            break :predefined .{ .display_p3 = P3{
                 .r = a,
                 .g = b,
                 .b = c,
                 .alpha = alpha,
-            };
+            } };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("a98-rgb", colorspace)) {
-            break :predefined A98{
+            break :predefined .{ .a98 = A98{
                 .r = a,
                 .g = b,
                 .b = c,
                 .alpha = alpha,
-            };
+            } };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("prophoto-rgb", colorspace)) {
-            break :predefined ProPhoto{
+            break :predefined .{ .prophoto = ProPhoto{
                 .r = a,
                 .g = b,
                 .b = c,
                 .alpha = alpha,
-            };
+            } };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("rec2020", colorspace)) {
-            break :predefined Rec2020{
+            break :predefined .{ .rec2020 = Rec2020{
                 .r = a,
                 .g = b,
                 .b = c,
                 .alpha = alpha,
-            };
+            } };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("xyz-d50", colorspace)) {
-            break :predefined XYZd50{
+            break :predefined .{ .xyz_d50 = XYZd50{
                 .x = a,
                 .y = b,
                 .z = c,
                 .alpha = alpha,
-            };
+            } };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("xyz-d65", colorspace) or
             bun.strings.eqlCaseInsensitiveASCIIICheckLength("xyz-d65", colorspace))
         {
-            break :predefined XYZd65{
+            break :predefined .{ .xyz_d65 = XYZd65{
                 .x = a,
                 .y = b,
                 .z = c,
                 .alpha = alpha,
-            };
+            } };
         } else {
             return .{ .err = location.newUnexpectedTokenError(.{ .ident = colorspace }) };
         }
@@ -2384,7 +2531,7 @@ pub fn parsePredefinedRelative(
 
     return .{ .result = .{
         .predefined = bun.create(
-            @compileError(css.todo_stuff.allocator),
+            input.allocator(),
             PredefinedColor,
             predefined,
         ),
@@ -2393,7 +2540,7 @@ pub fn parsePredefinedRelative(
 
 /// A [color space](https://www.w3.org/TR/css-color-4/#interpolation-space) keyword
 /// used in interpolation functions such as `color-mix()`.
-pub const ColorSpaceName = union(enum) {
+pub const ColorSpaceName = enum {
     srgb,
     @"srgb-linear",
     lab,
@@ -2426,7 +2573,7 @@ pub fn parseColorMix(input: *css.Parser) Result(CssColor) {
         .err => |e| return .{ .err = e },
     };
 
-    const hue_method_ = if (switch (method) {
+    const hue_method_: Result(HueInterpolationMethod) = if (switch (method) {
         .hsl, .hwb, .lch, .oklch => true,
         else => false,
     }) brk: {
@@ -2435,9 +2582,9 @@ pub fn parseColorMix(input: *css.Parser) Result(CssColor) {
             if (input.expectIdentMatching("hue").asErr()) |e| return .{ .err = e };
         }
         break :brk hue_method;
-    } else HueInterpolationMethod.shorter;
+    } else .{ .result = HueInterpolationMethod.shorter };
 
-    const hue_method = hue_method_ orelse HueInterpolationMethod.shorter;
+    const hue_method = hue_method_.unwrapOr(HueInterpolationMethod.shorter);
 
     const first_percent_ = input.tryParse(css.Parser.expectPercentage, .{});
     const first_color = switch (CssColor.parse(input)) {
@@ -2476,16 +2623,16 @@ pub fn parseColorMix(input: *css.Parser) Result(CssColor) {
     if ((p1 + p2) == 0.0) return .{ .err = input.newCustomError(css.ParserError.invalid_value) };
 
     const result = switch (method) {
-        .srgb => first_color.interpolate(SRGB, p1, &second_color, p2, hue_method),
-        .@"srgb-linear" => first_color.interpolate(SRGBLinear, p1, &second_color, p2, hue_method),
-        .hsl => first_color.interpolate(HSL, p1, &second_color, p2, hue_method),
-        .hwb => first_color.interpolate(HWB, p1, &second_color, p2, hue_method),
-        .lab => first_color.interpolate(LAB, p1, &second_color, p2, hue_method),
-        .lch => first_color.interpolate(LCH, p1, &second_color, p2, hue_method),
-        .oklab => first_color.interpolate(OKLAB, p1, &second_color, p2, hue_method),
-        .oklch => first_color.interpolate(OKLCH, p1, &second_color, p2, hue_method),
-        .xyz, .@"xyz-d65" => first_color.interpolate(XYZd65, p1, &second_color, p2, hue_method),
-        .@"xyz-d50" => first_color.interpolate(XYZd65, p1, &second_color, p2, hue_method),
+        .srgb => first_color.interpolate(input.allocator(), SRGB, p1, &second_color, p2, hue_method),
+        .@"srgb-linear" => first_color.interpolate(input.allocator(), SRGBLinear, p1, &second_color, p2, hue_method),
+        .hsl => first_color.interpolate(input.allocator(), HSL, p1, &second_color, p2, hue_method),
+        .hwb => first_color.interpolate(input.allocator(), HWB, p1, &second_color, p2, hue_method),
+        .lab => first_color.interpolate(input.allocator(), LAB, p1, &second_color, p2, hue_method),
+        .lch => first_color.interpolate(input.allocator(), LCH, p1, &second_color, p2, hue_method),
+        .oklab => first_color.interpolate(input.allocator(), OKLAB, p1, &second_color, p2, hue_method),
+        .oklch => first_color.interpolate(input.allocator(), OKLCH, p1, &second_color, p2, hue_method),
+        .xyz, .@"xyz-d65" => first_color.interpolate(input.allocator(), XYZd65, p1, &second_color, p2, hue_method),
+        .@"xyz-d50" => first_color.interpolate(input.allocator(), XYZd65, p1, &second_color, p2, hue_method),
     } orelse return .{ .err = input.newCustomError(css.ParserError.invalid_value) };
 
     return .{ .result = result };
@@ -2504,7 +2651,6 @@ pub const HueInterpolationMethod = enum {
     decreasing,
     /// No fixup is performed. Angles are interpolated in the same way as every other component.
     specified,
-    @"converts-to-kebab",
 
     pub fn asStr(this: *const @This()) []const u8 {
         return css.enum_property_util.asStr(@This(), this);
@@ -2522,11 +2668,13 @@ pub const HueInterpolationMethod = enum {
         this: *const HueInterpolationMethod,
         a: *f32,
         b: *f32,
-    ) f32 {
+    ) void {
         // https://drafts.csswg.org/css-color/#hue-interpolation
         if (this.* == .specified) {
-            a.* = ((a.* % 360.0) + 360.0) % 360.0;
-            b.* = ((b.* % 360.0) + 360.0) % 360.0;
+            // a.* = ((a.* % 360.0) + 360.0) % 360.0;
+            // b.* = ((b.* % 360.0) + 360.0) % 360.0;
+            a.* = @mod((@mod(a.* , 360.0) + 360.0) , 360.0);
+            b.* = @mod((@mod(b.* , 360.0) + 360.0), 360.0);
         }
 
         switch (this.*) {
@@ -2859,7 +3007,8 @@ pub fn PolarPremultiply(
         }
 
         pub fn unpremultiply(this: *T, alpha_multiplier: f32) void {
-            this.h %= 360.0;
+            // this.h %= 360.0;
+            this.h = @mod(this.h, 360.0);
             if (!std.math.isNan(this.alpha)) {
                 // PERF: precalculate 1/alpha?
                 @field(this, a) /= this.alpha;
@@ -2895,6 +3044,10 @@ pub fn AdjustPowerlessLCH(comptime T: type) type {
                 this.c = std.math.nan(f32);
                 this.h = std.math.nan(f32);
             }
+        }
+
+        pub fn adjustHue(this: *T, other: *T, method: HueInterpolationMethod) void {
+            _ = method.interpolate(&this.h, &other.h);
         }
     };
 }
@@ -3109,7 +3262,7 @@ const color_conversions = struct {
     pub const convert_LAB = struct {
         pub usingnamespace generated.convert_LAB;
 
-        pub fn intoCssColor(allocator: Allocator, c: *const LAB) CssColor {
+        pub fn intoCssColor(c: *const LAB, allocator: Allocator) CssColor {
             return CssColor{ .lab = bun.create(
                 allocator,
                 LABColor,
@@ -3169,7 +3322,7 @@ const color_conversions = struct {
     pub const convert_SRGB = struct {
         pub usingnamespace generated.convert_SRGB;
 
-        pub fn intoCssColor(srgb: *const SRGB) CssColor {
+        pub fn intoCssColor(srgb: *const SRGB, _: Allocator) CssColor {
             // TODO: should we serialize as color(srgb, ...)?
             // would be more precise than 8-bit color.
             return CssColor{ .rgba = srgb.intoRGBA() };
@@ -3247,7 +3400,7 @@ const color_conversions = struct {
     pub const convert_HSL = struct {
         pub usingnamespace generated.convert_HSL;
 
-        pub fn intoCssColor(c: *const HSL) CssColor {
+        pub fn intoCssColor(c: *const HSL, _: Allocator) CssColor {
             // TODO: should we serialize as color(srgb, ...)?
             // would be more precise than 8-bit color.
             return CssColor{ .rgba = c.intoRGBA() };
@@ -3270,7 +3423,7 @@ const color_conversions = struct {
     pub const convert_HWB = struct {
         pub usingnamespace generated.convert_HWB;
 
-        pub fn intoCssColor(c: *const HWB) CssColor {
+        pub fn intoCssColor(c: *const HWB, _: Allocator) CssColor {
             // TODO: should we serialize as color(srgb, ...)?
             // would be more precise than 8-bit color.
             return CssColor{ .rgba = c.intoRGBA() };
@@ -3306,10 +3459,10 @@ const color_conversions = struct {
         pub usingnamespace generated.convert_SRGBLinear;
 
         pub fn intoPredefinedColor(rgb: *const SRGBLinear) PredefinedColor {
-            return PredefinedColor{ .srgb_linear = *rgb };
+            return PredefinedColor{ .srgb_linear = rgb.* };
         }
 
-        pub fn intoCssColor(allocator: Allocator, rgb: *const SRGBLinear) CssColor {
+        pub fn intoCssColor(rgb: *const SRGBLinear, allocator: Allocator) CssColor {
             return CssColor{
                 .predefined = bun.create(
                     allocator,
@@ -3361,10 +3514,10 @@ const color_conversions = struct {
         pub usingnamespace generated.convert_P3;
 
         pub fn intoPredefinedColor(rgb: *const P3) PredefinedColor {
-            return PredefinedColor{ .display_p3 = *rgb };
+            return PredefinedColor{ .display_p3 = rgb.* };
         }
 
-        pub fn intoCssColor(allocator: Allocator, rgb: *const P3) CssColor {
+        pub fn intoCssColor(rgb: *const P3, allocator: Allocator) CssColor {
             return CssColor{
                 .predefined = bun.create(
                     allocator,
@@ -3407,10 +3560,10 @@ const color_conversions = struct {
         pub usingnamespace generated.convert_A98;
 
         pub fn intoPredefinedColor(rgb: *const A98) PredefinedColor {
-            return PredefinedColor{ .a98 = *rgb };
+            return PredefinedColor{ .a98 = rgb.* };
         }
 
-        pub fn intoCssColor(allocator: Allocator, rgb: *const A98) CssColor {
+        pub fn intoCssColor(rgb: *const A98, allocator: Allocator) CssColor {
             return CssColor{
                 .predefined = bun.create(
                     allocator,
@@ -3470,10 +3623,10 @@ const color_conversions = struct {
         pub usingnamespace generated.convert_ProPhoto;
 
         pub fn intoPredefinedColor(rgb: *const ProPhoto) PredefinedColor {
-            return PredefinedColor{ .prophoto = *rgb };
+            return PredefinedColor{ .prophoto = rgb.* };
         }
 
-        pub fn intoCssColor(allocator: Allocator, rgb: *const ProPhoto) CssColor {
+        pub fn intoCssColor(rgb: *const ProPhoto, allocator: Allocator) CssColor {
             return CssColor{
                 .predefined = bun.create(
                     allocator,
@@ -3538,10 +3691,10 @@ const color_conversions = struct {
         pub usingnamespace generated.convert_Rec2020;
 
         pub fn intoPredefinedColor(rgb: *const Rec2020) PredefinedColor {
-            return PredefinedColor{ .rec2020 = *rgb };
+            return PredefinedColor{ .rec2020 = rgb.* };
         }
 
-        pub fn intoCssColor(allocator: Allocator, rgb: *const Rec2020) CssColor {
+        pub fn intoCssColor(rgb: *const Rec2020, allocator: Allocator) CssColor {
             return CssColor{
                 .predefined = bun.create(
                     allocator,
@@ -3612,10 +3765,10 @@ const color_conversions = struct {
         pub usingnamespace generated.convert_XYZd50;
 
         pub fn intoPredefinedColor(rgb: *const XYZd50) PredefinedColor {
-            return PredefinedColor{ .xyz_d50 = *rgb };
+            return PredefinedColor{ .xyz_d50 = rgb.* };
         }
 
-        pub fn intoCssColor(allocator: Allocator, rgb: *const XYZd50) CssColor {
+        pub fn intoCssColor(rgb: *const XYZd50, allocator: Allocator) CssColor {
             return CssColor{
                 .predefined = bun.create(
                     allocator,
@@ -3625,7 +3778,7 @@ const color_conversions = struct {
             };
         }
 
-        pub fn intoLAB(_xyz: *const XYZd65) LAB {
+        pub fn intoLAB(_xyz: *const XYZd50) LAB {
             // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L332
             // Assuming XYZ is relative to D50, convert to CIE LAB
             // from CIE standard, which now defines these as a rational fraction
@@ -3705,7 +3858,7 @@ const color_conversions = struct {
                     const ET: f32 = 1.0 / 512.0;
                     const abs = @abs(c);
                     if (abs >= ET) {
-                        const sign = if (c < 0.0) -1.0 else 1.0;
+                        const sign: f32 = if (c < 0.0) -1.0 else 1.0;
                         return sign * std.math.pow(f32, abs, 1.0 / 1.8);
                     }
                     return 16.0 * c;
@@ -3729,10 +3882,10 @@ const color_conversions = struct {
         pub usingnamespace generated.convert_XYZd65;
 
         pub fn intoPredefinedColor(rgb: *const XYZd65) PredefinedColor {
-            return PredefinedColor{ .xyz_d65 = *rgb };
+            return PredefinedColor{ .xyz_d65 = rgb.* };
         }
 
-        pub fn intoCssColor(allocator: Allocator, rgb: *const XYZd65) CssColor {
+        pub fn intoCssColor(rgb: *const XYZd65, allocator: Allocator) CssColor {
             return CssColor{
                 .predefined = bun.create(
                     allocator,
@@ -3745,7 +3898,7 @@ const color_conversions = struct {
         pub fn intoXYZd50(_xyz: *const XYZd65) XYZd50 {
             // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L319
 
-            const MATRIX: [9]f32 = &.{
+            const MATRIX: [9]f32 = .{
                 1.0479298208405488,
                 0.022946793341019088,
                 -0.05019222954313557,
@@ -3813,7 +3966,7 @@ const color_conversions = struct {
                     // convert linear-light a98-rgb  in the range 0.0-1.0
                     // to gamma corrected form
                     // negative values are also now accepted
-                    const sign = if (c < 0.0) -1.0 else 1.0;
+                    const sign: f32 = if (c < 0.0) -1.0 else 1.0;
                     return sign * std.math.pow(f32, @abs(c), 256.0 / 563.0);
                 }
             };
@@ -3856,7 +4009,7 @@ const color_conversions = struct {
 
                     const abs = @abs(c);
                     if (abs > B) {
-                        const sign = if (c < 0.0) -1.0 else 1.0;
+                        const sign: f32 = if (c < 0.0) -1.0 else 1.0;
                         return sign * (A * std.math.pow(f32, abs, 0.45) - (A - 1.0));
                     }
 
@@ -3944,7 +4097,7 @@ const color_conversions = struct {
     pub const convert_LCH = struct {
         pub usingnamespace generated.convert_LCH;
 
-        pub fn intoCssColor(allocator: Allocator, c: *const LCH) CssColor {
+        pub fn intoCssColor(c: *const LCH, allocator: Allocator) CssColor {
             return CssColor{ .lab = bun.create(
                 allocator,
                 LABColor,
@@ -3967,12 +4120,16 @@ const color_conversions = struct {
     pub const convert_OKLAB = struct {
         pub usingnamespace generated.convert_OKLAB;
 
-        pub fn intoCssColor(allocator: Allocator, c: *const OKLAB) CssColor {
+        pub fn intoCssColor(c: *const OKLAB, allocator: Allocator) CssColor {
             return CssColor{ .lab = bun.create(
                 allocator,
                 LABColor,
                 LABColor{ .oklab = c.* },
             ) };
+        }
+
+        pub fn intoOKLAB(labb: *const OKLAB) OKLAB {
+            return labb.*;
         }
 
         pub fn intoOKLCH(labb: *const OKLAB) OKLCH {
@@ -4033,7 +4190,7 @@ const color_conversions = struct {
     pub const convert_OKLCH = struct {
         pub usingnamespace generated.convert_OKLCH;
 
-        pub fn intoCssColor(allocator: Allocator, c: *const OKLCH) CssColor {
+        pub fn intoCssColor(c: *const OKLCH, allocator: Allocator) CssColor {
             return CssColor{ .lab = bun.create(
                 allocator,
                 LABColor,
@@ -4050,6 +4207,10 @@ const color_conversions = struct {
                 .b = b,
                 .alpha = lch.alpha,
             };
+        }
+
+        pub fn intoOKLCH(x: *const OKLCH) OKLCH {
+            return x.*;
         }
     };
 };

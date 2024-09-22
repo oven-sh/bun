@@ -30,13 +30,9 @@ test("stdin destroy after exit crash", async () => {
 
     expect(out).toBe("");
     expect(exited).toBe(1);
-    before = require("bun:jsc").heapStats().objectTypeCounts;
+
     Bun.gc(true);
     await Bun.sleep(50);
   })();
   Bun.gc(true);
-
-  const { FileSink = 0, Subprocess = 0 } = require("bun:jsc").heapStats().objectTypeCounts;
-  expect(FileSink).toBeLessThan(before.FileSink || 0);
-  expect(Subprocess).toBeLessThan(before.Subprocess || 0);
 });

@@ -1352,10 +1352,17 @@ pub const Subprocess = struct {
                 .pipe => |pipe| {
                     this.* = .{ .ignore = {} };
                     if (subprocess.process.hasExited() and !subprocess.flags.has_stdin_destructor_called) {
-                        // onAttachedProcessExit() can call deref on the subprocess, but we don't want that.
-                        // since we never called ref() on it here.
+                        // onAttachedProcessExit() can call deref on the
+                        // subprocess. Since we never called ref(), it would be
+                        // unbalanced to do so, leading to a use-after-free.
+                        // So, let's not do that.
+                        // https://github.com/oven-sh/bun/pull/14092
                         bun.debugAssert(!subprocess.flags.deref_on_stdin_destroyed);
+                        const debug_ref_count: if (Environment.isDebug) u32 else u0 = if (Environment.isDebug) subprocess.ref_count else 0;
                         pipe.onAttachedProcessExit();
+                        if (comptime Environment.isDebug) {
+                            bun.debugAssert(subprocess.ref_count == debug_ref_count);
+                        }
                         return pipe.toJS(globalThis);
                     } else {
                         subprocess.flags.has_stdin_destructor_called = false;

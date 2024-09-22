@@ -46,7 +46,7 @@ pub const Percentage = struct {
             var fba = std.heap.FixedBufferAllocator.init(&buf);
             var string = std.ArrayList(u8).init(fba.allocator());
             const writer = string.writer();
-            try percent.toCssGeneric(writer);
+            percent.toCssGeneric(writer) catch return dest.addFmtError();
             if (this.v < 0.0) {
                 try dest.writeChar('-');
                 try dest.writeStr(bun.strings.trimLeadingPattern2(string.items, '-', '0'));

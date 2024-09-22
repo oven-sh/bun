@@ -177,7 +177,7 @@ pub const TokenList = struct {
     }
 
     pub fn parse(input: *css.Parser, options: *const css.ParserOptions, depth: usize) Result(TokenList) {
-        var tokens = ArrayList(TokenOrValue){};
+        var tokens = ArrayList(TokenOrValue){}; // PERF: deinit on error
         if (TokenListFns.parseInto(input, &tokens, options, depth).asErr()) |e| return .{ .err = e };
 
         // Slice off leading and trailing whitespace if there are at least two tokens.
@@ -335,6 +335,7 @@ pub const TokenList = struct {
                         ) catch unreachable;
                         last_is_whitespace = true;
                     }
+                    continue;
                 },
                 .function => |f| {
                     // Attempt to parse embedded color values into hex tokens.
@@ -449,6 +450,7 @@ pub const TokenList = struct {
                         last_is_delim = true; // Whitespace is not required after any of these chars.
                         last_is_whitespace = false;
                     }
+                    continue;
                 },
                 .hash, .idhash => {
                     const h = switch (tok.*) {
@@ -473,6 +475,7 @@ pub const TokenList = struct {
                     }
                     last_is_delim = false;
                     last_is_whitespace = false;
+                    continue;
                 },
                 .unquoted_url => {
                     input.reset(&state);
@@ -485,12 +488,14 @@ pub const TokenList = struct {
                     ) catch unreachable;
                     last_is_delim = false;
                     last_is_whitespace = false;
+                    continue;
                 },
                 .ident => |name| {
                     if (bun.strings.startsWith(name, "--")) {
                         tokens.append(input.allocator(), .{ .dashed_ident = .{ .v = name } }) catch unreachable;
                         last_is_delim = false;
                         last_is_whitespace = false;
+                        continue;
                     }
                 },
                 .open_paren, .open_square, .open_curly => {
@@ -529,6 +534,7 @@ pub const TokenList = struct {
                     ) catch unreachable;
                     last_is_delim = true; // Whitespace is not required after any of these chars.
                     last_is_whitespace = false;
+                    continue;
                 },
                 .dimension => {
                     const value = if (LengthValue.tryFromToken(tok).asValue()) |length|
@@ -549,6 +555,7 @@ pub const TokenList = struct {
 
                     last_is_delim = false;
                     last_is_whitespace = false;
+                    continue;
                 },
                 else => {},
             }
@@ -1162,6 +1169,13 @@ pub const CustomPropertyName = union(enum) {
     custom: DashedIdent,
     /// An unknown CSS property.
     unknown: Ident,
+
+    pub fn toCss(this: *const CustomPropertyName, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        return switch (this.*) {
+            .custom => |custom| try custom.toCss(W, dest),
+            .unknown => |unknown| css.serializer.serializeIdentifier(unknown.v, dest) catch return dest.addFmtError(),
+        };
+    }
 
     pub fn fromStr(name: []const u8) CustomPropertyName {
         if (bun.strings.startsWith(name, "--")) return .{ .custom = .{ .v = name } };

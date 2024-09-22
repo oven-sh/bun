@@ -275,6 +275,10 @@ pub fn Printer(comptime Writer: type) type {
             return css.serializer.serializeName(ident.v[2..], this) catch return this.addFmtError();
         }
 
+        pub fn writeByte(this: *This, char: u8) !void {
+            return this.writeChar(char) catch return Allocator.Error.OutOfMemory;
+        }
+
         /// Write a single character to the underlying destination.
         pub fn writeChar(this: *This, char: u8) PrintErr!void {
             if (char == '\n') {

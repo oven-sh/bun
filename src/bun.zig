@@ -669,11 +669,8 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
 /// however, if something is possibly reachable, it should not be marked unreachable.
 /// It now panics in all release modes.
 pub inline fn unreachablePanic(comptime fmts: []const u8, args: anytype) noreturn {
-    _ = fmts; // autofix
-    _ = args; // autofix
-    // if (comptime !Environment.allow_assert) unreachable;
-    // std.debug.panic(fmts, args);
-    std.debug.panic("foo", .{});
+    if (comptime !Environment.allow_assert) unreachable;
+    std.debug.panic(fmts, args);
 }
 
 pub fn StringEnum(comptime Type: type, comptime Map: anytype, value: []const u8) ?Type {

@@ -807,6 +807,7 @@ fn parse_until_before(
                 parser.at_start_of = null;
                 break :brk block_type;
             } else null,
+            .stop_before = delimiters,
         };
         const result = delimited_parser.parseEntirely(T, closure, parse_fn);
         if (error_behavior == .stop and result.isErr()) {
@@ -2210,10 +2211,10 @@ pub const ToCssResult = struct {
 pub fn StyleSheet(comptime AtRule: type) type {
     return struct {
         /// A list of top-level rules within the style sheet.
-        rules: CssRuleList(AtRule) = .{},
-        sources: ArrayList([]const u8) = .{},
-        source_map_urls: ArrayList(?[]const u8) = .{},
-        license_comments: ArrayList([]const u8) = .{},
+        rules: CssRuleList(AtRule),
+        sources: ArrayList([]const u8),
+        source_map_urls: ArrayList(?[]const u8),
+        license_comments: ArrayList([]const u8),
         options: ParserOptions,
 
         const This = @This();
@@ -2329,6 +2330,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
 
             return .{
                 .result = This{
+                    .rules = rules,
                     .sources = sources,
                     .source_map_urls = source_map_urls,
                     .license_comments = license_comments,
@@ -3460,7 +3462,7 @@ const Tokenizer = struct {
     }
 
     pub fn getPosition(this: *const Tokenizer) usize {
-        bun.debugAssert(!bun.strings.isOnCharBoundary(this.src, this.position));
+        bun.debugAssert(bun.strings.isOnCharBoundary(this.src, this.position));
         return this.position;
     }
 
@@ -3477,7 +3479,7 @@ const Tokenizer = struct {
         while (!this.isEof()) {
             // todo_stuff.match_byte
             switch (this.nextByteUnchecked()) {
-                ' ' | '\t' => this.advance(1),
+                ' ', '\t' => this.advance(1),
                 '\n', 0x0C, '\r' => this.consumeNewline(),
                 '/' => {
                     if (this.startsWith("/*")) {
@@ -4804,10 +4806,104 @@ pub const Token = union(TokenKind) {
     // ~toCssImpl
     const This = @This();
 
-    pub fn toCssGeneric(this: *const This, writer: anytype) PrintErr!void {
-        _ = this; // autofix
-        _ = writer; // autofix
-        @panic("TODO: implement");
+    pub fn toCssGeneric(this: *const This, writer: anytype) !void {
+        return switch (this.*) {
+            .ident => {
+                try serializer.serializeIdentifier(this.ident, writer);
+            },
+            .at_keyword => {
+                try writer.writeAll("@");
+                try serializer.serializeIdentifier(this.at_keyword, writer);
+            },
+            .hash => {
+                try writer.writeAll("#");
+                try serializer.serializeName(this.hash, writer);
+            },
+            .idhash => {
+                try writer.writeAll("#");
+                try serializer.serializeName(this.idhash, writer);
+            },
+            .quoted_string => |x| {
+                try serializer.serializeName(x, writer);
+            },
+            .unquoted_url => |x| {
+                try writer.writeAll("url(");
+                try serializer.serializeUnquotedUrl(x, writer);
+                try writer.writeAll(")");
+            },
+            .delim => |x| {
+                bun.assert(x <= 0x7F);
+                try writer.writeByte(@intCast(x));
+            },
+            .number => |n| {
+                try serializer.writeNumeric(n.value, n.int_value, n.has_sign, writer);
+            },
+            .percentage => |p| {
+                try serializer.writeNumeric(p.unit_value * 100.0, p.int_value, p.has_sign, writer);
+            },
+            .dimension => |d| {
+                try serializer.writeNumeric(d.num.value, d.num.int_value, d.num.has_sign, writer);
+                // Disambiguate with scientific notation.
+                const unit = d.unit;
+                // TODO(emilio): This doesn't handle e.g. 100E1m, which gets us
+                // an unit of "E1m"...
+                if ((unit.len == 1 and unit[0] == 'e') or
+                    (unit.len == 1 and unit[0] == 'E') or
+                    bun.strings.startsWith(unit, "e-") or
+                    bun.strings.startsWith(unit, "E-"))
+                {
+                    try writer.writeAll("\\65 ");
+                    try serializer.serializeName(unit[1..], writer);
+                } else {
+                    try serializer.serializeIdentifier(unit, writer);
+                }
+            },
+            .whitespace => |content| {
+                try writer.writeAll(content);
+            },
+            .comment => |content| {
+                try writer.writeAll("/*");
+                try writer.writeAll(content);
+                try writer.writeAll("*/");
+            },
+            .colon => try writer.writeAll(":"),
+            .semicolon => try writer.writeAll(";"),
+            .comma => try writer.writeAll(","),
+            .include_match => try writer.writeAll("~="),
+            .dash_match => try writer.writeAll("|="),
+            .prefix_match => try writer.writeAll("^="),
+            .suffix_match => try writer.writeAll("$="),
+            .substring_match => try writer.writeAll("*="),
+            .cdo => try writer.writeAll("<!--"),
+            .cdc => try writer.writeAll("-->"),
+
+            .function => |name| {
+                try serializer.serializeIdentifier(name, writer);
+                try writer.writeAll("(");
+            },
+            .open_paren => try writer.writeAll("("),
+            .open_square => try writer.writeAll("["),
+            .open_curly => try writer.writeAll("{"),
+
+            .bad_url => |contents| {
+                try writer.writeAll("url(");
+                try writer.writeAll(contents);
+                try writer.writeByte(')');
+            },
+            .bad_string => |value| {
+                // During tokenization, an unescaped newline after a quote causes
+                // the token to be a BadString instead of a QuotedString.
+                // The BadString token ends just before the newline
+                // (which is in a separate WhiteSpace token),
+                // and therefore does not have a closing quote.
+                try writer.writeByte('"');
+                var string_writer = serializer.CssStringWriter(@TypeOf(writer)).new(writer);
+                try string_writer.writeStr(value);
+            },
+            .close_paren => try writer.writeAll(")"),
+            .close_square => try writer.writeAll("]"),
+            .close_curly => try writer.writeAll("}"),
+        };
     }
 
     pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -5255,7 +5351,7 @@ pub const serializer = struct {
             // TODO: calculate the actual number of chars here
             var buf: [64]u8 = undefined;
             var fbs = std.io.fixedBufferStream(&buf);
-            try token.toCssGeneric(fbs.writer());
+            token.toCssGeneric(fbs.writer()) catch return dest.addFmtError();
             const s = fbs.getWritten();
             if (value < 0.0) {
                 try dest.writeStr("-");
@@ -5264,7 +5360,7 @@ pub const serializer = struct {
                 return dest.writeStr(bun.strings.trimLeadingChar(s, '0'));
             }
         } else {
-            return token.toCssGeneric(dest);
+            return token.toCssGeneric(dest) catch return dest.addFmtError();
         }
     }
 
@@ -5329,9 +5425,12 @@ pub const serializer = struct {
             // TODO: calculate the actual number of chars here
             var buf: [64]u8 = undefined;
             // PERF/TODO: Compare this to Rust dtoa-short crate
+            // const floats = std.fmt.formatFloat(buf[0..], value, .{
+            //     .mode = .scientific,
+            //     .precision = 6,
+            // }) catch unreachable;
             const floats = std.fmt.formatFloat(buf[0..], value, .{
-                .mode = .scientific,
-                .precision = 6,
+                .mode = .decimal,
             }) catch unreachable;
             try writer.writeAll(floats);
             // TODO: this is not correct, might need to copy impl from dtoa_short here

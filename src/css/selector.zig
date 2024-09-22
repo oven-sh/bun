@@ -145,8 +145,8 @@ pub const api = struct {
                 }
 
                 pub fn deinit(this: *This) void {
-                    _ = this; // autofix
-                    @panic(css.todo_stuff.depth);
+                    this.simple_selectors.deinit(this.allocator);
+                    this.combinators.deinit(this.allocator);
                 }
 
                 /// Consumes the builder, producing a Selector.
@@ -196,7 +196,7 @@ pub const api = struct {
                     var components = ArrayList(T){};
 
                     var current_simple_selectors_i: usize = 0;
-                    var combinator_i: i64 = @intCast(this.combinators.items.len - 1);
+                    var combinator_i: i64 = @as(i64, @intCast(this.combinators.items.len)) - 1;
                     var rest_of_simple_selectors = rest;
                     var current_simple_selectors = current;
 
@@ -638,8 +638,12 @@ pub const api = struct {
 
         while (true) {
             const result: SimpleSelectorParseResult(Impl) = result: {
-                if (parse_one_simple_selector(Impl, parser, input, state).asValue()) |result| {
-                    if (result) |r| break :result r;
+                const ret = switch (parse_one_simple_selector(Impl, parser, input, state)) {
+                    .result => |r| r,
+                    .err => |e| return .{ .err = e },
+                };
+                if (ret) |result| {
+                    break :result result;
                 }
                 break;
             };
@@ -2040,7 +2044,7 @@ pub const api = struct {
         }
 
         pub fn allowsCombinators(this: SelectorParsingState) bool {
-            return this.intersects(SelectorParsingState{ .disallow_combinators = true });
+            return !this.intersects(SelectorParsingState{ .disallow_combinators = true });
         }
 
         pub fn allowsCustomFunctionalPseudoClasses(this: SelectorParsingState) bool {
@@ -2409,7 +2413,7 @@ pub const api = struct {
             sink.pushSimpleSelector(.{
                 .local_name = LocalName(Impl){
                     .lower_name = brk: {
-                        var lowercase = parser.allocator.alloc(u8, name.len) catch unreachable;
+                        var lowercase = parser.allocator.alloc(u8, name.len) catch unreachable; // PERF: check if it's already lowercase
                         break :brk .{ .v = bun.strings.copyLowercase(name, lowercase[0..]) };
                     },
                     .name = .{ .v = name },
@@ -2530,7 +2534,7 @@ pub const api = struct {
                                             self.parser.allocator,
                                             switch (input2.expectIdent()) {
                                                 .err => |e| return .{ .err = e },
-                                                .result => |v| .{.v = v},
+                                                .result => |v| .{ .v = v },
                                             },
                                         ) catch unreachable;
                                     }
@@ -3401,23 +3405,37 @@ pub const serialize = struct {
             /// The first slice returned by the iterator would be = [10, 40]
             /// The next slice returned by the iterator would be = [20]
             /// Then none
-            pub fn next(this: *@This()) ?[]const api.Component {
+            pub inline fn next(this: *@This()) ?[]const api.Component {
                 while (this.i < this.sel.components.items.len) {
-                    var j = this.i;
-                    while (j < this.sel.components.items.len and this.sel.components.items[j].isCombinator()) {
-                        j += 1;
+                    const next_index: ?usize = next_index: {
+                        for (this.i..this.sel.components.items.len) |j| {
+                            if (this.sel.components.items[this.sel.components.items.len - 1 - j].isCombinator()) break :next_index j;
+                        }
+                        break :next_index null;
+                    };
+                    if (next_index) |start| {
+                        const end = this.i + 1;
+                        const slice = this.sel.components.items[start..end];
+                        this.i = (this.sel.components.items.len - start) + 1;
+                        return slice;
                     }
-                    const start = this.i;
-                    const end = j;
-                    if (start == end) {
-                        this.i += 1;
-                        continue;
-                    }
-                    const slice = this.sel.components.items[start..end];
-                    this.i = end;
+                    const slice = this.sel.components.items[0 .. this.sel.components.items.len - this.i];
+                    this.i = this.sel.components.items.len;
                     return slice;
                 }
                 return null;
+
+                // while (this.i >= 0 and this.i < this.sel.components.items.len) {
+                //     const next_index: ?usize = next_index: {
+                //         while (this.i >= 0) {
+
+                //         }
+                //         for (this.i..this.sel.components.items.len) |j| {
+                //             if (this.sel.components.items[j].isCombinator()) break :next_index j;
+                //         }
+                //         break :next_index null;
+                //     };
+                // }
             }
         };
 

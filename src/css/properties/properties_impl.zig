@@ -80,6 +80,16 @@ pub fn PropertyImpl() type {
     return struct {
         /// Serializes the CSS property, with an optional `!important` flag.
         pub fn toCss(this: *const Property, comptime W: type, dest: *Printer(W), important: bool) PrintErr!void {
+            if (this.* == .custom) {
+                try this.custom.name.toCss(W, dest);
+                try dest.delim(':', false);
+                try this.valueToCss(W, dest);
+                if (important) {
+                    try dest.whitespace();
+                    try dest.writeStr("!important");
+                }
+                return;
+            }
             const name, const prefix = this.__toCssHelper();
             var first = true;
 

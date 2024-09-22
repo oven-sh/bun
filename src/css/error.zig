@@ -85,6 +85,13 @@ pub fn ParserErrorKind(comptime T: type) type {
         basic: BasicParseErrorKind,
         /// A parse error reported by downstream consumer code.
         custom: T,
+
+        pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            return switch (this) {
+                .basic => |basic| writer.print("basic: {}", .{basic}),
+                .custom => |custom| writer.print("custom: {}", .{custom}),
+            };
+        }
     };
 }
 
@@ -115,7 +122,8 @@ pub const BasicParseErrorKind = union(enum) {
                 try writer.print("invalid @ rule encountered: '@{s}'", .{rule});
             },
             .at_rule_body_invalid => {
-                try writer.print("invalid @ body rule encountered: '@{s}'", .{});
+                // try writer.print("invalid @ body rule encountered: '@{s}'", .{});
+                try writer.print("invalid @ body rule encountered", .{});
             },
             .qualified_rule_invalid => {
                 try writer.print("invalid qualified rule encountered", .{});
@@ -185,6 +193,13 @@ pub const ParserError = union(enum) {
     unexpected_token: css.Token,
     /// Maximum nesting depth was reached.
     maximum_nesting_depth,
+
+    pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        return switch (this) {
+            .at_rule_invalid => |name| writer.print("at_rule_invalid: {s}", .{name}),
+            else => writer.print("{s}", .{@tagName(this)}),
+        };
+    }
 };
 
 /// The fundamental parsing errors that can be triggered by built-in parsing routines.

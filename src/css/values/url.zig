@@ -112,7 +112,7 @@ pub const Url = struct {
             const BufW = @TypeOf(bufw);
             _ = BufW; // autofix
             defer buf.deinit(dest.allocator);
-            try css.Token.toCssGeneric(&css.Token{ .unquoted_url = this.url }, &bufw);
+            css.Token.toCssGeneric(&css.Token{ .unquoted_url = this.url }, &bufw) catch return dest.addFmtError();
 
             // If the unquoted url is longer than it would be quoted (e.g. `url("...")`)
             // then serialize as a string and choose the shorter version.

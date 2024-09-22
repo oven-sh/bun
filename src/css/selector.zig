@@ -152,7 +152,6 @@ pub const api = struct {
                 /// Consumes the builder, producing a Selector.
                 ///
                 /// *NOTE*: This will free all allocated memory in the builder
-                /// TODO: deallocate unused memory after calling this
                 pub fn build(
                     this: *This,
                     parsed_pseudo: bool,
@@ -219,6 +218,7 @@ pub const api = struct {
                                     this.allocator,
                                     .{ .combinator = combo },
                                 ) catch unreachable;
+                                continue;
                             }
                             break;
                         }
@@ -549,17 +549,39 @@ pub const api = struct {
                     .delim => |d| {
                         switch (d) {
                             '>' => {
-                                continue;
+                                if (parser.deepCombinatorEnabled() and input.tryParse(struct {
+                                    pub fn parseFn(i: *css.Parser) Result(void) {
+                                        if (i.expectDelim('>').asErr()) |e| return .{ .err = e };
+                                        return i.expectDelim('>');
+                                    }
+                                }.parseFn, .{}).isOk()) {
+                                    combinator = Combinator.deep_descendant;
+                                } else {
+                                    combinator = Combinator.child;
+                                }
+                                break;
                             },
                             '+' => {
-                                continue;
+                                combinator = .next_sibling;
+                                break;
                             },
                             '~' => {
-                                continue;
+                                combinator = .later_sibling;
+                                break;
                             },
                             '/' => {
                                 if (parser.deepCombinatorEnabled()) {
-                                    continue;
+                                    if (input.tryParse(struct {
+                                        pub fn parseFn(i: *css.Parser) Result(void) {
+                                            if (i.expectIdentMatching("deep").asErr()) |e| return .{ .err = e };
+                                            return i.expectDelim('/');
+                                        }
+                                    }.parseFn, .{}).isOk()) {
+                                        combinator = .deep;
+                                        break;
+                                    } else {
+                                        break :outer_loop;
+                                    }
                                 }
                             },
                             else => {},
@@ -1838,6 +1860,15 @@ pub const api = struct {
 
             const This = @This();
 
+            pub fn format(this: *const This, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                switch (this.*) {
+                    .local_name => return try writer.print("local_name={s}", .{this.local_name.name.v}),
+                    .combinator => return try writer.print("combinator={}", .{this.combinator}),
+                    else => {},
+                }
+                return writer.print("{s}", .{@tagName(this.*)});
+            }
+
             pub fn asCombinator(this: *const This) ?Combinator {
                 if (this.* == .combinator) return this.combinator;
                 return null;
@@ -2120,6 +2151,16 @@ pub const api = struct {
             _ = this; // autofix
             _ = dest; // autofix
             @compileError("Do not call this! Use `serializer.serializeCombinator()` or `tocss_servo.toCss_Combinator()` instead.");
+        }
+
+        pub fn format(this: *const Combinator, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            return switch (this.*) {
+                .child => writer.print(">", .{}),
+                .descendant => writer.print("`descendant` (space)", .{}),
+                .next_sibling => writer.print("+", .{}),
+                .later_sibling => writer.print("~", .{}),
+                else => writer.print("{s}", .{@tagName(this.*)}),
+            };
         }
     };
 
@@ -3413,31 +3454,34 @@ pub const serialize = struct {
                         }
                         break :next_index null;
                     };
-                    if (next_index) |start| {
-                        const end = this.i + 1;
-                        const slice = this.sel.components.items[start..end];
-                        this.i = (this.sel.components.items.len - start) + 1;
+                    if (next_index) |combinator_index| {
+                        const start = combinator_index - 1;
+                        const end = this.i;
+                        const slice = this.sel.components.items[this.sel.components.items.len - 1 - start .. this.sel.components.items.len - end];
+                        this.i = combinator_index + 1;
                         return slice;
                     }
-                    const slice = this.sel.components.items[0 .. this.sel.components.items.len - this.i];
+                    const slice = this.sel.components.items[0 .. this.sel.components.items.len - 1 - this.i + 1];
                     this.i = this.sel.components.items.len;
                     return slice;
                 }
                 return null;
-
-                // while (this.i >= 0 and this.i < this.sel.components.items.len) {
-                //     const next_index: ?usize = next_index: {
-                //         while (this.i >= 0) {
-
-                //         }
-                //         for (this.i..this.sel.components.items.len) |j| {
-                //             if (this.sel.components.items[j].isCombinator()) break :next_index j;
-                //         }
-                //         break :next_index null;
-                //     };
-                // }
             }
         };
+
+        if (comptime bun.Environment.isDebug) {
+            for (selector.components.items) |*comp| {
+                std.debug.print("Selector components: {}\n", .{comp});
+            }
+
+            var compound_selectors = CompoundSelectorIter{ .sel = selector };
+            while (compound_selectors.next()) |comp| {
+                for (comp) |c| {
+                    std.debug.print("{}, ", .{c});
+                }
+            }
+            std.debug.print("\n", .{});
+        }
 
         // Compound selectors invert the order of their contents, so we need to
         // undo that during serialization.

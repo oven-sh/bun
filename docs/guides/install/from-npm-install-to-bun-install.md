@@ -2,104 +2,109 @@
 name: Migrate from npm install to bun install
 ---
 
-`bun install` is a Node.js compatible npm client designed to be an incredibly fast replacement for `npm install`.
+bun install is a Node.js compatible npm client designed to be an incredibly fast replacement for npm.
 
 We've put a lot of work into making sure that the migration path from `npm install` to `bun install` is smooth and automatic.
 
 - **Designed for Node.js & Bun**: `bun install` installs a Node.js compatible `node_modules` folder. You can use it in place of `npm install` for Node.js projects without any code changes.
-- `bun install` automatically converts `package-lock.json` to bun's `bun.lockb` lockfile format, preserving your existing resolved dependency versions without any manual work on your part
-- `bun install` reads npm registry configuration from npm's `.npmrc` as well as Bun's bunfig.toml
+- **Automatically converts `package-lock.json`** to bun's `bun.lockb` lockfile format, preserving your existing resolved dependency versions without any manual work on your part. You can secretly use `bun install` in place of `npm install` at work without anyone noticing.
+- bun install reads npm registry configuration from npm's `.npmrc` as well as Bun's bunfig.toml
 - On Windows and Linux, `bun install` uses hardlinks to conserve disk space and install times
 
-To migrate from `npm install` to `bun install`, run `bun install`:
-
 ```bash
+# It only takes one command to migrate
 $ bun i
+
+# To add dependencies:
+$ bun i @types/bun
+
+# To add devDependencies:
+$ bun i -d @types/bun
+
+# To remove a dependency:
+$ bun rm @types/bun
 ```
 
-## Run package.json scripts and executables with `bun run`
+---
 
-To run a package.json script, you can use `bun <package.json script>`.
+## Run package.json scripts faster
+
+Run scripts from package.json, executables from `node_modules/.bin` (sort of like `npx`), and JavaScript/TypeScript files (just like `node`) - all from a single simple command.
+
+| NPM              | Bun              |
+| ---------------- | ---------------- |
+| `npm <script>`   | `bun <script>`   |
+| `npm exec <bin>` | `bun run <bin>`  |
+| `npx <package>`  | `bunx <package>` |
+| `node <file>`    | `bun <file>`     |
+
+When you use `bun run <executable>`, it will choose the locally-installed executable
 
 ```sh
+# Run a package.json script:
 $ bun my-script
-
-# This also works:
 $ bun run my-script
+
+# Run an executable in node_modules/.bin:
+$ bun run my-executable # such as tsc, esbuild, etc.
+
+# Run a JavaScript/TypeScript file:
+$ bun ./index.ts
 ```
 
-This works for:
+---
 
-- package.json `"scripts"` (`npm run` equivalent)
-- executables in `node_modules/.bin` (`npx` equivalent, for already-installed packages)
-- JavaScript & TypeScript files (just like `node`)
+## Workspaces
 
-If you're coming from npm, you might be used to running scripts with `npm run <script>` and packages with `npx <package>`. In Bun, we also support `bunx <package>`, but it's only needed when running executables which may not already be installed on your system or in your `node_modules/.bin`. When you use `bun run <executable>`, it will choose the locally-installed executable if you have it.
+`bun install` supports workspaces similarly to npm.
 
-### Shebang
+In package.json, you can set `"workspaces"` to an array of relative paths.
 
-Note that if the package references `node` in the `#!/usr/bin/env node` shebang, it will by default respect it and use the system's `node` executable. You can force it to use Bun's `node` by passing `--bun` to `bun run`:
-
-```sh
-$ bun --bun my-script
+```json#package.json
+{
+  "name": "my-app",
+  "workspaces": ["packages/*", "apps/*"]
+}
 ```
 
-When you pass `--bun` to `bun run`, we create a symlink to the locally-installed Bun executable named `"node"` in a temporary directory and add that to your `PATH` for the duration of the script's execution.
+---
 
 ### Filter scripts by workspace name
 
 In Bun, the `--filter` flag accepts a glob pattern, and will run the command concurrently for all workspace packages with a `name` that matches the pattern, respecting dependency order.
 
 ```sh
-# equivalent to:
-# npm run --workspace=@scope/frontend-app --workspace=@scope/frontend-design-system my-script
-bun run --filter @scope/frontend* my-script
+$ bun --filter 'lib-*' my-script
+# instead of:
+# npm run --workspace lib-foo --workspace lib-bar my-script
 ```
 
-## Workspaces
-
-`bun install` supports workspaces similarly to npm.
-
-In package.json, you can set `"workspaces"` to an array of relative paths:
-
-```json
-{
-  "name": "my-app",
-  "workspaces": ["packages/*", "apps/*"]
-}`
-```
-
-Then, run `bun install` in the root directory:
-
-```bash
-bun i
-```
-
-This will install the dependencies for all the workspaces, and symlink them together into the root `node_modules` folder.
-
-We have some more information about workspaces in the [workspaces guide](/docs/install/workspaces).
+---
 
 ## Update dependencies
 
 To update a dependency, you can use `bun update <package>`. This will update the dependency to the latest version that satisfies the semver range specified in package.json.
 
 ```sh
-bun update @types/bun
+# Update a single dependency
+$ bun update @types/bun
+
+# Update all dependencies
+$ bun update
+
+# Ignore semver, update to the latest version
+$ bun update @types/bun --latest
+
+# Update a dependency to a specific version
+$ bun update @types/bun@1.1.10
+
+# Update all dependencies to the latest versions
+$ bun update --latest
 ```
 
-If you want to update all the dependencies in your project, you can use `bun update`. This will update all the dependencies in your project to the latest versions that satisfy the semver ranges specified in package.json.
+---
 
-```sh
-bun update
-```
-
-If you want to forcefully update a dependency to the latest version, you can use `bun update --latest <package>`. This will ignore the semver range specified in package.json and update the dependency to the latest version.
-
-```sh
-bun update @types/bun --latest
-```
-
-## View outdated dependencies
+### View outdated dependencies
 
 To view outdated dependencies, run `bun outdated`. This is like `npm outdated` but with more compact output.
 
@@ -132,10 +137,77 @@ $ bun outdated
 └────────────────────────────────────────┴─────────┴────────┴────────┘
 ```
 
-## Create a package tarball
+---
 
-To create a package tarball, you can use `bun pack`. This will create a tarball of the package in the current directory.
+## List installed packages
+
+To list installed packages, you can use `bun pm ls`. This will list all the packages that are installed in the `node_modules` folder using Bun's lockfile as the source of truth. You can pass the `-a` flag to list all installed packages, including transitive dependencies.
 
 ```sh
-bun pack
+# List top-level installed packages:
+$ bun pm ls
+my-pkg node_modules (781)
+├── @types/node@20.16.5
+├── @types/react@18.3.8
+├── @types/react-dom@18.3.0
+├── eslint@8.57.1
+├── eslint-config-next@14.2.8
+
+# List all installed packages:
+$ bun pm ls -a
+my-pkg node_modules
+├── @alloc/quick-lru@5.2.0
+├── @isaacs/cliui@8.0.2
+│   └── strip-ansi@7.1.0
+│       └── ansi-regex@6.1.0
+├── @jridgewell/gen-mapping@0.3.5
+├── @jridgewell/resolve-uri@3.1.2
+...
+```
+
+---
+
+## Create a package tarball
+
+To create a package tarball, you can use `bun pm pack`. This will create a tarball of the package in the current directory.
+
+```sh
+# Create a tarball
+$ bun pm pack
+
+Total files: 46
+Shasum: 2ee19b6f0c6b001358449ca0eadead703f326216
+Integrity: sha512-ZV0lzWTEkGAMz[...]Gl4f8lA9sl97g==
+Unpacked size: 0.41MB
+Packed size: 117.50KB
+```
+
+---
+
+## Shebang
+
+If the package references `node` in the `#!/usr/bin/env node` shebang, `bun run` will by default respect it and use the system's `node` executable. You can force it to use Bun's `node` by passing `--bun` to `bun run`.
+
+When you pass `--bun` to `bun run`, we create a symlink to the locally-installed Bun executable named `"node"` in a temporary directory and add that to your `PATH` for the duration of the script's execution.
+
+```sh
+# Force using Bun's runtime instead of node
+$ bun --bun my-script
+
+# This also works:
+$ bun run --bun my-script
+```
+
+---
+
+## Global installs
+
+You can install packages globally using `bun i -g <package>`. This will install into a `.bun/install/global/node_modules` folder inside your home directory by default.
+
+```sh
+# Install a package globally
+$ bun i -g eslint
+
+# Run a globally-installed package without the `bun run` prefix
+$ eslint --init
 ```

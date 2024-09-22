@@ -14,7 +14,7 @@ We've put a lot of work into making sure that the migration path from `npm insta
 To migrate from `npm install` to `bun install`, run `bun install`:
 
 ```bash
-bun i
+$ bun i
 ```
 
 ## Run package.json scripts and executables with `bun run`
@@ -22,10 +22,10 @@ bun i
 To run a package.json script, you can use `bun <package.json script>`.
 
 ```sh
-bun my-script
+$ bun my-script
 
 # This also works:
-bun run my-script
+$ bun run my-script
 ```
 
 This works for:
@@ -34,7 +34,17 @@ This works for:
 - executables in `node_modules/.bin` (`npx` equivalent, for already-installed packages)
 - JavaScript & TypeScript files (just like `node`)
 
-If you're coming from npm, you might be used to running scripts with `npm run <script>` and packages with `npx <package>`. In Bun, we also support `bunx <package>`, but it's only needed when running executables which may not already be installed on your system or in your `node_modules/.bin`.
+If you're coming from npm, you might be used to running scripts with `npm run <script>` and packages with `npx <package>`. In Bun, we also support `bunx <package>`, but it's only needed when running executables which may not already be installed on your system or in your `node_modules/.bin`. When you use `bun run <executable>`, it will choose the locally-installed executable if you have it.
+
+### Shebang
+
+Note that if the package references `node` in the `#!/usr/bin/env node` shebang, it will by default respect it and use the system's `node` executable. You can force it to use Bun's `node` by passing `--bun` to `bun run`:
+
+```sh
+$ bun --bun my-script
+```
+
+When you pass `--bun` to `bun run`, we create a symlink to the locally-installed Bun executable named `"node"` in a temporary directory and add that to your `PATH` for the duration of the script's execution.
 
 ### Filter scripts by workspace name
 

@@ -46,7 +46,8 @@ $ bun my-script
 $ bun run my-script
 
 # Run an executable in node_modules/.bin:
-$ bun run my-executable # such as tsc, esbuild, etc.
+$ bun my-executable # such as tsc, esbuild, etc.
+$ bun run my-executable
 
 # Run a JavaScript/TypeScript file:
 $ bun ./index.ts

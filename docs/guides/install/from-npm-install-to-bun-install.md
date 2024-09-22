@@ -55,7 +55,7 @@ $ bun ./index.ts
 
 ---
 
-## Workspaces
+## Workspaces? Yes.
 
 `bun install` supports workspaces similarly to npm.
 

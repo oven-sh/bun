@@ -15,7 +15,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionTty_isatty, (JSGlobalObject * globalObject,
 
   auto scope = DECLARE_CATCH_SCOPE(vm);
   int fd = callFrame->argument(0).toInt32(globalObject);
-  RETURN_IF_EXCEPTION(scope, encodedJSValue());
+  RETURN_IF_EXCEPTION(scope, {});
 
 #if !OS(WINDOWS)
   bool isTTY = isatty(fd);
@@ -40,7 +40,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNotImplementedYet,
   auto throwScope = DECLARE_THROW_SCOPE(vm);
   throwException(globalObject, throwScope,
                  createError(globalObject, "Not implemented yet"_s));
-  return JSValue::encode(jsUndefined());
+  return {};
 }
 
 } // namespace Zig

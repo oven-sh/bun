@@ -206,3 +206,9 @@ pub fn parse_declaration(
 
     return .{ .result = {} };
 }
+
+pub const DeclarationHandler = struct {
+    pub fn default() DeclarationHandler {
+        return .{};
+    }
+};

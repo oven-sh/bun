@@ -270,3 +270,22 @@ pub const SelectorError = union(enum) {
     /// An unsupported pseudo class or pseudo element was encountered.
     unsupported_pseudo_class_or_element: []const u8,
 };
+
+/// A transformation error.
+pub const MinifyErrorKind = union(enum) {
+    /// A circular `@custom-media` rule was detected.
+    circular_custom_media: struct {
+        /// The name of the `@custom-media` rule that was referenced circularly.
+        name: []const u8,
+    },
+    /// Attempted to reference a custom media rule that doesn't exist.
+    custom_media_not_defined: struct {
+        /// The name of the `@custom-media` rule that was not defined.
+        name: []const u8,
+    },
+    /// Boolean logic with media types in @custom-media rules is not supported.
+    unsupported_custom_media_boolean_logic: struct {
+        /// The source location of the `@custom-media` rule with unsupported boolean logic.
+        custom_media_loc: Location,
+    },
+};

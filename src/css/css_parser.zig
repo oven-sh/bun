@@ -74,6 +74,9 @@ pub const targets = @import("./targets.zig");
 pub const Targets = css_printer.Targets;
 // pub const Features = css_printer.Features;
 
+const context = @import("./context.zig");
+const PropertyHandlerContext = context.PropertyHandlerContext;
+
 pub const Maybe = bun.JSC.Node.Maybe;
 // TODO: Remove existing Error defined here and replace it with these
 const errors_ = @import("./error.zig");
@@ -86,6 +89,7 @@ pub const ParserError = errors_.ParserError;
 pub const BasicParseError = errors_.BasicParseError;
 pub const BasicParseErrorKind = errors_.BasicParseErrorKind;
 pub const SelectorError = errors_.SelectorError;
+pub const MinifyErrorKind = errors_.MinifyErrorKind;
 
 pub const compat = @import("./compat.zig");
 
@@ -2208,6 +2212,21 @@ pub const ToCssResult = struct {
     dependencies: ?ArrayList(Dependency),
 };
 
+pub const MinifyOptions = struct {
+    /// Targets to compile the CSS for.
+    targets: targets.Targets,
+    /// A list of known unused symbols, including CSS class names,
+    /// ids, and `@keyframe` names. The declarations of these will be removed.
+    unused_symbols: std.StringArrayHashMapUnmanaged(void),
+
+    pub fn default() MinifyOptions {
+        return MinifyOptions{
+            .targets = .{},
+            .unused_symbols = .{},
+        };
+    }
+};
+
 pub fn StyleSheet(comptime AtRule: type) type {
     return struct {
         /// A list of top-level rules within the style sheet.
@@ -2218,6 +2237,39 @@ pub fn StyleSheet(comptime AtRule: type) type {
         options: ParserOptions,
 
         const This = @This();
+
+        /// Minify and transform the style sheet for the provided browser targets.
+        pub fn minify(this: *@This(), allocator: Allocator, options: MinifyOptions) Maybe(void, Err(MinifyErrorKind)) {
+            _ = this; // autofix
+            _ = allocator; // autofix
+            _ = options; // autofix
+            // TODO: IMPLEMENT THIS!
+            return .{ .result = {} };
+
+            // const ctx = PropertyHandlerContext.new(allocator, options.targets, &options.unused_symbols);
+            // _ = ctx; // autofix
+            // var handler = declaration.DeclarationHandler.default();
+            // _ = handler; // autofix
+            // var important_handler = declaration.DeclarationHandler.default();
+            // _ = important_handler; // autofix
+
+            // // @custom-media rules may be defined after they are referenced, but may only be defined at the top level
+            // // of a stylesheet. Do a pre-scan here and create a lookup table by name.
+            // const custom_media: ?std.StringArrayHashMapUnmanaged(css_rules.custom_media.CustomMediaRule) = if (this.options.flags.contains(ParserFlags{ .custom_media = true }) and options.targets.shouldCompileSame(.custom_media_queries)) brk: {
+            //     var custom_media = std.StringArrayHashMapUnmanaged(css_rules.custom_media.CustomMediaRule){};
+
+            //     for (this.rules.v.items) |*rule| {
+            //         if (rule.* == .custom_media) {
+            //             custom_media.put(allocator, rule.custom_media.name, rule.deepClone(allocator)) catch bun.outOfMemory();
+            //         }
+            //     }
+
+            //     break :brk custom_media;
+            // } else null;
+            // defer if (custom_media) |media| media.deinit(allocator);
+
+            // var minify_ctx = MinifyCtx{};
+        }
 
         pub fn toCss(this: *const @This(), allocator: Allocator, options: css_printer.PrinterOptions) PrintErr!ToCssResult {
             // TODO: this is not necessary

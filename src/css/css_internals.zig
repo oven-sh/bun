@@ -11,15 +11,25 @@ const JSGlobalObject = bun.JSC.JSGlobalObject;
 
 threadlocal var arena_: ?Arena = null;
 
+const TestKind = enum {
+    normal,
+    minify,
+    prefix,
+};
+
 pub fn minifyTestWithOptions(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
-    return minifyTestWithOptionsImpl(globalThis, callframe, true);
+    return testingImpl(globalThis, callframe, .minify);
+}
+
+pub fn prefixTestWithOptions(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    return testingImpl(globalThis, callframe, .prefix);
 }
 
 pub fn testWithOptions(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
-    return minifyTestWithOptionsImpl(globalThis, callframe, false);
+    return testingImpl(globalThis, callframe, .normal);
 }
 
-pub fn minifyTestWithOptionsImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, comptime minify: bool) JSC.JSValue {
+pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, comptime test_kind: TestKind) JSC.JSValue {
     var arena = arena_ orelse brk: {
         break :brk Arena.init() catch @panic("oopsie arena no good");
     };
@@ -61,6 +71,7 @@ pub fn minifyTestWithOptionsImpl(globalThis: *JSC.JSGlobalObject, callframe: *JS
 
     const parser_options = parser_options: {
         const opts = bun.css.ParserOptions.default(alloc, &log);
+        if (test_kind == .prefix) break :parser_options opts;
 
         if (options_arg) |optargs| {
             _ = optargs; // autofix
@@ -78,13 +89,33 @@ pub fn minifyTestWithOptionsImpl(globalThis: *JSC.JSGlobalObject, callframe: *JS
         source.slice(),
         parser_options,
     )) {
-        .result => |stylesheet| {
+        .result => |stylesheet_| {
+            var stylesheet = stylesheet_;
+            var minify_options: bun.css.MinifyOptions = bun.css.MinifyOptions.default();
+            switch (test_kind) {
+                .minify => {},
+                .normal => {},
+                .prefix => {
+                    if (options_arg) |optarg| {
+                        if (optarg.isObject()) {
+                            minify_options.targets.browsers = targetsFromJS(globalThis, optarg);
+                        }
+                    }
+                },
+            }
+            _ = stylesheet.minify(alloc, bun.css.MinifyOptions.default()).assert();
+
             const result = stylesheet.toCss(alloc, bun.css.PrinterOptions{
-                .minify = minify,
+                .minify = switch (test_kind) {
+                    .minify => true,
+                    .normal => false,
+                    .prefix => false,
+                },
             }) catch |e| {
                 bun.handleErrorReturnTrace(e, @errorReturnTrace());
                 return .undefined;
             };
+
             return bun.String.fromBytes(result.code).toJS(globalThis);
         },
         .err => |err| {
@@ -95,4 +126,74 @@ pub fn minifyTestWithOptionsImpl(globalThis: *JSC.JSGlobalObject, callframe: *JS
             return .undefined;
         },
     }
+}
+
+fn targetsFromJS(globalThis: *JSC.JSGlobalObject, jsobj: JSValue) bun.css.targets.Browsers {
+    var targets = bun.css.targets.Browsers{};
+
+    if (jsobj.getTruthy(globalThis, "android")) |val| {
+        if (val.isInt32()) {
+            if (val.getNumber()) |value| {
+                targets.android = @intFromFloat(value);
+            }
+        }
+    }
+    if (jsobj.getTruthy(globalThis, "chrome")) |val| {
+        if (val.isInt32()) {
+            if (val.getNumber()) |value| {
+                targets.chrome = @intFromFloat(value);
+            }
+        }
+    }
+    if (jsobj.getTruthy(globalThis, "edge")) |val| {
+        if (val.isInt32()) {
+            if (val.getNumber()) |value| {
+                targets.edge = @intFromFloat(value);
+            }
+        }
+    }
+    if (jsobj.getTruthy(globalThis, "firefox")) |val| {
+        if (val.isInt32()) {
+            if (val.getNumber()) |value| {
+                targets.firefox = @intFromFloat(value);
+            }
+        }
+    }
+    if (jsobj.getTruthy(globalThis, "ie")) |val| {
+        if (val.isInt32()) {
+            if (val.getNumber()) |value| {
+                targets.ie = @intFromFloat(value);
+            }
+        }
+    }
+    if (jsobj.getTruthy(globalThis, "ios_saf")) |val| {
+        if (val.isInt32()) {
+            if (val.getNumber()) |value| {
+                targets.ios_saf = @intFromFloat(value);
+            }
+        }
+    }
+    if (jsobj.getTruthy(globalThis, "opera")) |val| {
+        if (val.isInt32()) {
+            if (val.getNumber()) |value| {
+                targets.opera = @intFromFloat(value);
+            }
+        }
+    }
+    if (jsobj.getTruthy(globalThis, "safari")) |val| {
+        if (val.isInt32()) {
+            if (val.getNumber()) |value| {
+                targets.safari = @intFromFloat(value);
+            }
+        }
+    }
+    if (jsobj.getTruthy(globalThis, "samsung")) |val| {
+        if (val.isInt32()) {
+            if (val.getNumber()) |value| {
+                targets.samsung = @intFromFloat(value);
+            }
+        }
+    }
+
+    return targets;
 }

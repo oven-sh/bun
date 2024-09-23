@@ -7,6 +7,7 @@
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/SourceCode.h"
 #include "js_native_api_types.h"
+#include "napi_handle_scope.h"
 
 #include "helpers.h"
 #include <JavaScriptCore/JSObjectInlines.h>
@@ -44,7 +45,6 @@
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include "JSFFIFunction.h"
 #include <JavaScriptCore/JavaScript.h>
-#include <JavaScriptCore/JSWeakValue.h>
 #include "napi.h"
 #include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/JSSourceCode.h>
@@ -62,6 +62,8 @@
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include "CommonJSModuleRecord.h"
+#include "wtf/text/ASCIIFastPath.h"
+#include "JavaScriptCore/WeakInlines.h"
 
 // #include <iostream>
 using namespace JSC;
@@ -113,6 +115,15 @@ JSC::SourceCode generateSourceCode(WTF::String keyString, JSC::VM& vm, JSC::JSOb
 // #include <csignal>
 #define NAPI_OBJECT_EXPECTED napi_object_expected
 
+static inline Zig::GlobalObject* defaultGlobalObject(napi_env env)
+{
+    if (env) {
+        return defaultGlobalObject(toJS(env));
+    }
+
+    return defaultGlobalObject();
+}
+
 class NapiRefWeakHandleOwner final : public JSC::WeakHandleOwner {
 public:
     void finalize(JSC::Handle<JSC::Unknown>, void* context) final
@@ -137,7 +148,7 @@ void NapiFinalizer::call(JSC::JSGlobalObject* globalObject, void* data)
 {
     if (this->finalize_cb) {
         NAPI_PREMABLE
-        this->finalize_cb(reinterpret_cast<napi_env>(globalObject), data, this->finalize_hint);
+        this->finalize_cb(toNapi(globalObject), data, this->finalize_hint);
     }
 }
 
@@ -146,13 +157,8 @@ void NapiRef::ref()
     ++refCount;
     if (refCount == 1 && !weakValueRef.isClear()) {
         auto& vm = globalObject.get()->vm();
-        if (weakValueRef.isString()) {
-            strongRef.set(vm, JSC::JSValue(weakValueRef.string()));
-        } else if (weakValueRef.isObject()) {
-            strongRef.set(vm, JSC::JSValue(weakValueRef.object()));
-        } else {
-            strongRef.set(vm, weakValueRef.primitive());
-        }
+        strongRef.set(vm, weakValueRef.get());
+
         // isSet() will return always true after being set once
         // We cannot rely on isSet() to check if the value is set we need to use isClear()
         // .setString/.setObject/.setPrimitive will assert fail if called more than once (even after clear())
@@ -184,8 +190,6 @@ void NapiRef::clear()
 // class Reference
 // }
 
-extern "C" Zig::GlobalObject* Bun__getDefaultGlobalObject();
-
 WTF_MAKE_ISO_ALLOCATED_IMPL(NapiRef);
 
 static uint32_t getPropertyAttributes(napi_property_attributes attributes_)
@@ -216,6 +220,104 @@ static uint32_t getPropertyAttributes(napi_property_descriptor prop)
     // }
 
     return result;
+}
+
+NapiWeakValue::~NapiWeakValue()
+{
+    clear();
+}
+
+void NapiWeakValue::clear()
+{
+    switch (m_tag) {
+    case WeakTypeTag::Cell: {
+        m_value.cell.clear();
+        break;
+    }
+    case WeakTypeTag::String: {
+        m_value.string.clear();
+        break;
+    }
+    default: {
+        break;
+    }
+    }
+
+    m_tag = WeakTypeTag::NotSet;
+}
+
+bool NapiWeakValue::isClear() const
+{
+    return m_tag == WeakTypeTag::NotSet;
+}
+
+void NapiWeakValue::setPrimitive(JSValue value)
+{
+    switch (m_tag) {
+    case WeakTypeTag::Cell: {
+        m_value.cell.clear();
+        break;
+    }
+    case WeakTypeTag::String: {
+        m_value.string.clear();
+        break;
+    }
+    default: {
+        break;
+    }
+    }
+    m_tag = WeakTypeTag::Primitive;
+    m_value.primitive = value;
+}
+
+void NapiWeakValue::set(JSValue value, WeakHandleOwner& owner, void* context)
+{
+    if (value.isCell()) {
+        auto* cell = value.asCell();
+        if (cell->isString()) {
+            setString(jsCast<JSString*>(cell), owner, context);
+        } else {
+            setCell(cell, owner, context);
+        }
+    } else {
+        setPrimitive(value);
+    }
+}
+
+void NapiWeakValue::setCell(JSCell* cell, WeakHandleOwner& owner, void* context)
+{
+    switch (m_tag) {
+    case WeakTypeTag::Cell: {
+        m_value.cell.clear();
+        break;
+    }
+    case WeakTypeTag::String: {
+        m_value.string.clear();
+        break;
+    }
+    default: {
+        break;
+    }
+    }
+
+    m_value.cell = JSC::Weak<JSCell>(cell, &owner, context);
+    m_tag = WeakTypeTag::Cell;
+}
+
+void NapiWeakValue::setString(JSString* string, WeakHandleOwner& owner, void* context)
+{
+    switch (m_tag) {
+    case WeakTypeTag::Cell: {
+        m_value.cell.clear();
+        break;
+    }
+    default: {
+        break;
+    }
+    }
+
+    m_value.string = JSC::Weak<JSString>(string, &owner, context);
+    m_tag = WeakTypeTag::String;
 }
 
 class NAPICallFrame {
@@ -273,10 +375,10 @@ public:
                                                                 // and receives the actual count of args.
         napi_value* argv, // [out] Array of values
         napi_value* this_arg, // [out] Receives the JS 'this' arg for the call
-        void** data)
+        void** data, Zig::GlobalObject* globalObject)
     {
         if (this_arg != nullptr) {
-            *this_arg = toNapi(callframe.thisValue());
+            *this_arg = toNapi(callframe.thisValue(), globalObject);
         }
 
         if (data != nullptr) {
@@ -302,7 +404,7 @@ public:
 
             if (overflow > 0) {
                 while (overflow--) {
-                    *argv = toNapi(jsUndefined());
+                    *argv = toNapi(jsUndefined(), globalObject);
                     argv++;
                 }
             }
@@ -340,6 +442,7 @@ public:
         NAPICallFrame frame(JSC::ArgList(args), function->m_dataPtr);
 
         auto scope = DECLARE_THROW_SCOPE(vm);
+        Bun::NapiHandleScope handleScope(jsCast<Zig::GlobalObject*>(globalObject));
 
         auto result = callback(env, NAPICallFrame::toNapiCallbackInfo(frame));
 
@@ -578,8 +681,12 @@ extern "C" napi_status napi_get_property(napi_env env, napi_value object,
 {
     NAPI_PREMABLE
 
-    if (UNLIKELY(!result)) {
+    if (UNLIKELY(!result || !env)) {
         return napi_invalid_arg;
+    }
+
+    if (UNLIKELY(!object)) {
+        return napi_object_expected;
     }
 
     auto globalObject = toJS(env);
@@ -594,7 +701,7 @@ extern "C" napi_status napi_get_property(napi_env env, napi_value object,
     auto keyProp = toJS(key);
     JSC::EnsureStillAliveScope ensureAlive2(keyProp);
     auto scope = DECLARE_CATCH_SCOPE(vm);
-    *result = toNapi(target->getIfPropertyExists(globalObject, keyProp.toPropertyKey(globalObject)));
+    *result = toNapi(target->getIfPropertyExists(globalObject, keyProp.toPropertyKey(globalObject)), globalObject);
     RETURN_IF_EXCEPTION(scope, napi_generic_failure);
 
     scope.clearException();
@@ -620,7 +727,7 @@ extern "C" napi_status napi_delete_property(napi_env env, napi_value object,
     RETURN_IF_EXCEPTION(scope, napi_generic_failure);
 
     if (LIKELY(result)) {
-        *result = toNapi(deleteResult);
+        *result = deleteResult;
     }
 
     scope.clearException();
@@ -645,7 +752,7 @@ extern "C" napi_status napi_has_own_property(napi_env env, napi_value object,
 
     auto keyProp = toJS(key);
     auto scope = DECLARE_CATCH_SCOPE(vm);
-    *result = toNapi(target->hasOwnProperty(globalObject, JSC::PropertyName(keyProp.toPropertyKey(globalObject))));
+    *result = target->hasOwnProperty(globalObject, JSC::PropertyName(keyProp.toPropertyKey(globalObject)));
     RETURN_IF_EXCEPTION(scope, napi_generic_failure);
 
     scope.clearException();
@@ -665,7 +772,7 @@ extern "C" napi_status napi_set_named_property(napi_env env, napi_value object,
         return napi_object_expected;
     }
 
-    if (UNLIKELY(utf8name == nullptr || !*utf8name)) {
+    if (UNLIKELY(utf8name == nullptr || !*utf8name || !value)) {
         return napi_invalid_arg;
     }
 
@@ -692,7 +799,7 @@ extern "C" napi_status napi_create_arraybuffer(napi_env env,
 {
     NAPI_PREMABLE
 
-    JSC::JSGlobalObject* globalObject = toJS(env);
+    Zig::GlobalObject* globalObject = toJS(env);
     if (UNLIKELY(!globalObject || !result)) {
         return napi_invalid_arg;
     }
@@ -715,7 +822,7 @@ extern "C" napi_status napi_create_arraybuffer(napi_env env,
     if (LIKELY(data && jsArrayBuffer->impl())) {
         *data = jsArrayBuffer->impl()->data();
     }
-    *result = toNapi(jsArrayBuffer);
+    *result = toNapi(jsArrayBuffer, globalObject);
     return napi_ok;
 }
 
@@ -723,12 +830,15 @@ extern "C" napi_status napi_create_arraybuffer(napi_env env,
 // it doesn't copy the string
 // but it's only safe to use if we are not setting a property
 // because we can't guarantee the lifetime of it
-#define PROPERTY_NAME_FROM_UTF8(identifierName) \
-    size_t utf8Len = strlen(utf8name);          \
-    JSC::PropertyName identifierName = LIKELY(charactersAreAllASCII(std::span { reinterpret_cast<const LChar*>(utf8name), utf8Len })) ? JSC::PropertyName(JSC::Identifier::fromString(vm, WTF::String(WTF::StringImpl::createWithoutCopying({ utf8name, utf8Len })))) : JSC::PropertyName(JSC::Identifier::fromString(vm, WTF::String::fromUTF8(utf8name)));
+#define PROPERTY_NAME_FROM_UTF8(identifierName)                                                                                  \
+    size_t utf8Len = strlen(utf8Name);                                                                                           \
+    WTF::String nameString = LIKELY(WTF::charactersAreAllASCII(std::span { reinterpret_cast<const LChar*>(utf8Name), utf8Len })) \
+        ? WTF::String(WTF::StringImpl::createWithoutCopying({ utf8Name, utf8Len }))                                              \
+        : WTF::String::fromUTF8(utf8Name);                                                                                       \
+    JSC::PropertyName identifierName = JSC::Identifier::fromString(vm, nameString);
 
 extern "C" napi_status napi_has_named_property(napi_env env, napi_value object,
-    const char* utf8name,
+    const char* utf8Name,
     bool* result)
 {
     NAPI_PREMABLE
@@ -740,7 +850,7 @@ extern "C" napi_status napi_has_named_property(napi_env env, napi_value object,
     auto globalObject = toJS(env);
     auto& vm = globalObject->vm();
 
-    auto* target = toJS(object).getObject();
+    JSObject* target = toJS(object).getObject();
     if (UNLIKELY(!target)) {
         return napi_object_expected;
     }
@@ -748,14 +858,15 @@ extern "C" napi_status napi_has_named_property(napi_env env, napi_value object,
     PROPERTY_NAME_FROM_UTF8(name);
 
     auto scope = DECLARE_CATCH_SCOPE(vm);
-    *result = !!target->getIfPropertyExists(globalObject, name);
+    PropertySlot slot(target, PropertySlot::InternalMethodType::HasProperty);
+    *result = target->getPropertySlot(globalObject, name, slot);
     RETURN_IF_EXCEPTION(scope, napi_generic_failure);
 
     scope.clearException();
     return napi_ok;
 }
 extern "C" napi_status napi_get_named_property(napi_env env, napi_value object,
-    const char* utf8name,
+    const char* utf8Name,
     napi_value* result)
 {
     NAPI_PREMABLE
@@ -767,7 +878,7 @@ extern "C" napi_status napi_get_named_property(napi_env env, napi_value object,
     auto globalObject = toJS(env);
     auto& vm = globalObject->vm();
 
-    auto* target = toJS(object).getObject();
+    JSObject* target = toJS(object).getObject();
     if (UNLIKELY(!target)) {
         return napi_object_expected;
     }
@@ -775,7 +886,7 @@ extern "C" napi_status napi_get_named_property(napi_env env, napi_value object,
     PROPERTY_NAME_FROM_UTF8(name);
 
     auto scope = DECLARE_CATCH_SCOPE(vm);
-    *result = toNapi(target->getIfPropertyExists(globalObject, name));
+    *result = toNapi(target->getIfPropertyExists(globalObject, name), globalObject);
     RETURN_IF_EXCEPTION(scope, napi_generic_failure);
 
     scope.clearException();
@@ -805,18 +916,14 @@ node_api_create_external_string_latin1(napi_env env,
 #if NAPI_VERBOSE
             printf("[napi] string finalize_callback\n");
 #endif
-            finalize_callback(reinterpret_cast<napi_env>(Bun__getDefaultGlobalObject()), nullptr, hint);
+            finalize_callback(toNapi(defaultGlobalObject()), nullptr, hint);
         }
     });
-    JSGlobalObject* globalObject = toJS(env);
-    // globalObject is allowed to be null here
-    if (UNLIKELY(!globalObject)) {
-        globalObject = Bun__getDefaultGlobalObject();
-    }
+    Zig::GlobalObject* globalObject = toJS(env);
 
     JSString* out = JSC::jsString(globalObject->vm(), WTF::String(impl));
     ensureStillAliveHere(out);
-    *result = toNapi(out);
+    *result = toNapi(out, globalObject);
     ensureStillAliveHere(out);
 
     return napi_ok;
@@ -847,18 +954,14 @@ node_api_create_external_string_utf16(napi_env env,
 #endif
 
         if (finalize_callback) {
-            finalize_callback(reinterpret_cast<napi_env>(Bun__getDefaultGlobalObject()), nullptr, hint);
+            finalize_callback(toNapi(defaultGlobalObject()), nullptr, hint);
         }
     });
-    JSGlobalObject* globalObject = toJS(env);
-    // globalObject is allowed to be null here
-    if (UNLIKELY(!globalObject)) {
-        globalObject = Bun__getDefaultGlobalObject();
-    }
+    Zig::GlobalObject* globalObject = toJS(env);
 
     JSString* out = JSC::jsString(globalObject->vm(), WTF::String(impl));
     ensureStillAliveHere(out);
-    *result = toNapi(out);
+    *result = toNapi(out, globalObject);
     ensureStillAliveHere(out);
 
     return napi_ok;
@@ -866,11 +969,11 @@ node_api_create_external_string_utf16(napi_env env,
 
 extern "C" void napi_module_register(napi_module* mod)
 {
-    auto* globalObject = Bun__getDefaultGlobalObject();
+    auto* globalObject = defaultGlobalObject();
     JSC::VM& vm = globalObject->vm();
     auto keyStr = WTF::String::fromUTF8(mod->nm_modname);
     globalObject->napiModuleRegisterCallCount++;
-    JSValue pendingNapiModule = globalObject->pendingNapiModule;
+    JSValue pendingNapiModule = globalObject->m_pendingNapiModuleAndExports[0].get();
     JSObject* object = (pendingNapiModule && pendingNapiModule.isObject()) ? pendingNapiModule.getObject()
                                                                            : nullptr;
 
@@ -884,7 +987,6 @@ extern "C" void napi_module_register(napi_module* mod)
         object = Bun::JSCommonJSModule::create(globalObject, keyStr, exportsObject, false, jsUndefined());
         strongExportsObject = { vm, exportsObject };
     } else {
-        globalObject->pendingNapiModule = JSC::JSValue();
         JSValue exportsObject = object->getIfPropertyExists(globalObject, WebCore::builtinNames(vm).exportsPublicName());
         RETURN_IF_EXCEPTION(scope, void());
 
@@ -895,23 +997,20 @@ extern "C" void napi_module_register(napi_module* mod)
 
     JSC::Strong<JSC::JSObject> strongObject = { vm, object };
 
-    JSValue resultValue = toJS(mod->nm_register_func(toNapi(globalObject), toNapi(object)));
+    Bun::NapiHandleScope handleScope(globalObject);
+    JSValue resultValue = toJS(mod->nm_register_func(toNapi(globalObject), toNapi(object, globalObject)));
 
     RETURN_IF_EXCEPTION(scope, void());
 
     if (resultValue.isEmpty()) {
         JSValue errorInstance = createError(globalObject, makeString("Node-API module \""_s, keyStr, "\" returned an error"_s));
-        globalObject->pendingNapiModule = errorInstance;
-        vm.writeBarrier(globalObject, errorInstance);
-        EnsureStillAliveScope ensureAlive(globalObject->pendingNapiModule);
+        globalObject->m_pendingNapiModuleAndExports[0].set(vm, globalObject, errorInstance);
         return;
     }
 
     if (!resultValue.isObject()) {
         JSValue errorInstance = createError(globalObject, makeString("Expected Node-API module \""_s, keyStr, "\" to return an exports object"_s));
-        globalObject->pendingNapiModule = errorInstance;
-        vm.writeBarrier(globalObject, errorInstance);
-        EnsureStillAliveScope ensureAlive(globalObject->pendingNapiModule);
+        globalObject->m_pendingNapiModuleAndExports[0].set(vm, globalObject, errorInstance);
         return;
     }
 
@@ -922,7 +1021,7 @@ extern "C" void napi_module_register(napi_module* mod)
         strongObject->put(strongObject.get(), globalObject, WebCore::builtinNames(vm).exportsPublicName(), resultValue, slot);
     }
 
-    globalObject->pendingNapiModule = object;
+    globalObject->m_pendingNapiModuleAndExports[1].set(vm, globalObject, object);
 }
 
 extern "C" napi_status napi_wrap(napi_env env,
@@ -965,7 +1064,8 @@ extern "C" napi_status napi_wrap(napi_env env,
     }
 
     auto* ref = new NapiRef(globalObject, 0);
-    ref->weakValueRef.setObject(value.getObject(), weakValueHandleOwner(), ref);
+
+    ref->weakValueRef.set(value, weakValueHandleOwner(), ref);
 
     if (finalize_cb) {
         ref->finalizer.finalize_cb = finalize_cb;
@@ -1071,7 +1171,7 @@ extern "C" napi_status napi_create_function(napi_env env, const char* utf8name,
     auto* function = NAPIFunction::create(vm, globalObject, length, name, method, data);
 
     ASSERT(function->isCallable());
-    *result = toNapi(JSC::JSValue(function));
+    *result = toNapi(JSC::JSValue(function), globalObject);
 
     return napi_ok;
 }
@@ -1088,9 +1188,10 @@ extern "C" napi_status napi_get_cb_info(
     NAPI_PREMABLE
 
     JSC::CallFrame* callFrame = reinterpret_cast<JSC::CallFrame*>(cbinfo);
+    Zig::GlobalObject* globalObject = toJS(env);
 
     if (NAPICallFrame* frame = NAPICallFrame::get(callFrame).value_or(nullptr)) {
-        NAPICallFrame::extract(*frame, argc, argv, this_arg, data);
+        NAPICallFrame::extract(*frame, argc, argv, this_arg, data, globalObject);
         return napi_ok;
     }
 
@@ -1105,14 +1206,14 @@ extern "C" napi_status napi_get_cb_info(
         memcpy(argv, callFrame->addressOfArgumentsStart(), argsToCopy * sizeof(JSC::JSValue));
 
         for (size_t i = outputArgsCount; i < inputArgsCount; i++) {
-            argv[i] = toNapi(JSC::jsUndefined());
+            argv[i] = toNapi(JSC::jsUndefined(), globalObject);
         }
     }
 
     JSC::JSValue thisValue = callFrame->thisValue();
 
     if (this_arg != nullptr) {
-        *this_arg = toNapi(thisValue);
+        *this_arg = toNapi(thisValue, globalObject);
     }
 
     if (data != nullptr) {
@@ -1199,6 +1300,54 @@ napi_define_properties(napi_env env, napi_value object, size_t property_count,
     return napi_ok;
 }
 
+static void throwErrorWithCode(JSC::JSGlobalObject* globalObject, const char* msg_utf8, const char* code_utf8, const WTF::Function<JSObject*(JSC::JSGlobalObject*, const WTF::String&)>& createError)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto message = msg_utf8 ? WTF::String::fromUTF8(msg_utf8) : String();
+    auto code = msg_utf8 ? WTF::String::fromUTF8(code_utf8) : String();
+
+    auto* error = createError(globalObject, message);
+    if (!code.isEmpty()) {
+        error->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), JSC::jsString(vm, code), 0);
+    }
+
+    scope.throwException(globalObject, Exception::create(vm, error));
+}
+
+static JSValue createErrorForNapi(napi_env env, napi_value code, napi_value msg, const WTF::Function<JSObject*(JSC::JSGlobalObject*, const WTF::String&)>& constructor)
+{
+    auto* globalObject = toJS(env);
+    JSC::VM& vm = globalObject->vm();
+    auto catchScope = DECLARE_CATCH_SCOPE(vm);
+
+    JSValue codeValue = toJS(code);
+    WTF::String message;
+
+    if (msg) {
+        JSValue messageValue = toJS(msg);
+        message = messageValue.toWTFString(globalObject);
+        if (catchScope.exception()) {
+            catchScope.clearException();
+            return {};
+        }
+    }
+
+    auto* error = constructor(globalObject, message);
+
+    if (codeValue && error) {
+        error->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), codeValue, 0);
+    }
+
+    if (catchScope.exception()) {
+        catchScope.clearException();
+        return {};
+    }
+
+    return error;
+}
+
 extern "C" napi_status napi_throw_error(napi_env env,
     const char* code,
     const char* msg)
@@ -1206,12 +1355,10 @@ extern "C" napi_status napi_throw_error(napi_env env,
     NAPI_PREMABLE
     Zig::GlobalObject* globalObject = toJS(env);
 
-    JSC::VM& vm = globalObject->vm();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    throwErrorWithCode(globalObject, msg, code, [](JSC::JSGlobalObject* globalObject, const WTF::String& message) {
+        return JSC::createError(globalObject, message);
+    });
 
-    auto message = msg != nullptr ? WTF::String::fromUTF8(msg) : "Error"_s;
-    auto error = JSC::createError(globalObject, message);
-    JSC::throwException(globalObject, throwScope, error);
     return napi_ok;
 }
 
@@ -1221,13 +1368,13 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
 {
     NAPI_PREMABLE
 
-    if (UNLIKELY(!result)) {
+    if (UNLIKELY(!result || !env)) {
         return napi_invalid_arg;
     }
 
     JSC::JSValue val = toJS(value);
 
-    if (!val || !val.isObject()) {
+    if (!val || !val.isCell()) {
         return napi_object_expected;
     }
 
@@ -1237,14 +1384,7 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
     if (initial_refcount > 0) {
         ref->strongRef.set(globalObject->vm(), val);
     }
-    // we dont have a finalizer but we can use the weak value to re-ref again or get the value until the GC is called
-    if (val.isString()) {
-        ref->weakValueRef.setString(val.toString(globalObject), weakValueHandleOwner(), ref);
-    } else if (val.isObject()) {
-        ref->weakValueRef.setObject(val.getObject(), weakValueHandleOwner(), ref);
-    } else {
-        ref->weakValueRef.setPrimitive(val);
-    }
+    ref->weakValueRef.set(val, weakValueHandleOwner(), ref);
 
     *result = toNapi(ref);
 
@@ -1269,6 +1409,9 @@ extern "C" napi_status napi_add_finalizer(napi_env env, napi_value js_object,
     napi_ref* result)
 {
     NAPI_PREMABLE
+    if (UNLIKELY(!env)) {
+        return napi_invalid_arg;
+    }
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = globalObject->vm();
 
@@ -1292,6 +1435,10 @@ extern "C" napi_status napi_reference_unref(napi_env env, napi_ref ref,
     uint32_t* result)
 {
     NAPI_PREMABLE
+    if (UNLIKELY(!result || !env || !ref)) {
+        return napi_invalid_arg;
+    }
+
     NapiRef* napiRef = toJS(ref);
     napiRef->unref();
     if (LIKELY(result)) {
@@ -1307,11 +1454,11 @@ extern "C" napi_status napi_get_reference_value(napi_env env, napi_ref ref,
     napi_value* result)
 {
     NAPI_PREMABLE
-    if (UNLIKELY(!result)) {
+    if (UNLIKELY(!result || !env || !ref)) {
         return napi_invalid_arg;
     }
     NapiRef* napiRef = toJS(ref);
-    *result = toNapi(napiRef->value());
+    *result = toNapi(napiRef->value(), toJS(env));
 
     return napi_ok;
 }
@@ -1325,6 +1472,9 @@ extern "C" JSC__JSValue napi_get_reference_value_internal(NapiRef* napiRef)
 extern "C" napi_status napi_reference_ref(napi_env env, napi_ref ref,
     uint32_t* result)
 {
+    if (UNLIKELY(!result || !env || !ref)) {
+        return napi_invalid_arg;
+    }
     NAPI_PREMABLE
     NapiRef* napiRef = toJS(ref);
     napiRef->ref();
@@ -1337,6 +1487,9 @@ extern "C" napi_status napi_reference_ref(napi_env env, napi_ref ref,
 extern "C" napi_status napi_delete_reference(napi_env env, napi_ref ref)
 {
     NAPI_PREMABLE
+    if (UNLIKELY(!env || !ref)) {
+        return napi_invalid_arg;
+    }
     NapiRef* napiRef = toJS(ref);
     delete napiRef;
     return napi_ok;
@@ -1365,7 +1518,6 @@ extern "C" napi_status napi_is_detached_arraybuffer(napi_env env,
     }
 
     auto arrayBuffer = jsArrayBuffer->impl();
-
     *result = arrayBuffer->isDetached();
     return napi_ok;
 }
@@ -1432,7 +1584,7 @@ extern "C" napi_status napi_get_and_clear_last_exception(napi_env env,
     }
 
     auto globalObject = toJS(env);
-    *result = toNapi(JSC::JSValue(globalObject->vm().lastException()));
+    *result = toNapi(JSC::JSValue(globalObject->vm().lastException()), globalObject);
     globalObject->vm().clearLastException();
     return napi_ok;
 }
@@ -1482,7 +1634,7 @@ extern "C" napi_status node_api_symbol_for(napi_env env,
     }
 
     auto description = WTF::String::fromUTF8({ utf8description, length == NAPI_AUTO_LENGTH ? strlen(utf8description) : length });
-    *result = toNapi(JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey(description)));
+    *result = toNapi(JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey(description)), globalObject);
 
     return napi_ok;
 }
@@ -1497,16 +1649,15 @@ extern "C" napi_status node_api_create_syntax_error(napi_env env,
         return napi_invalid_arg;
     }
 
-    JSValue messageValue = toJS(msg);
-    JSValue codeValue = toJS(code);
-    auto globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
-    auto* err = messageValue && !messageValue.isUndefinedOrNull() ? createSyntaxError(globalObject, messageValue.toWTFString(globalObject)) : createSyntaxError(globalObject);
-    if (codeValue && !codeValue.isUndefinedOrNull()) {
-        err->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), codeValue, 0);
+    auto err = createErrorForNapi(env, code, msg, [](JSC::JSGlobalObject* globalObject, const WTF::String& message) {
+        return JSC::createSyntaxError(globalObject, message);
+    });
+
+    if (UNLIKELY(!err)) {
+        return napi_generic_failure;
     }
 
-    *result = reinterpret_cast<napi_value>(JSC::JSValue::encode(err));
+    *result = toNapi(err, toJS(env));
     return napi_ok;
 }
 
@@ -1516,16 +1667,12 @@ extern "C" napi_status node_api_throw_syntax_error(napi_env env,
 {
     NAPI_PREMABLE
 
-    auto message = msg ? WTF::String::fromUTF8(msg) : String();
     auto globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
-    auto* err = createSyntaxError(globalObject, message);
-    if (code) {
-        err->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), JSC::jsString(vm, String::fromUTF8(code)), 0);
-    }
 
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    scope.throwException(globalObject, err);
+    throwErrorWithCode(globalObject, msg, code, [](JSC::JSGlobalObject* globalObject, const WTF::String& message) {
+        return JSC::createSyntaxError(globalObject, message);
+    });
+
     return napi_ok;
 }
 
@@ -1535,12 +1682,10 @@ extern "C" napi_status napi_throw_type_error(napi_env env, const char* code,
     NAPI_PREMABLE
     Zig::GlobalObject* globalObject = toJS(env);
 
-    JSC::VM& vm = globalObject->vm();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    throwErrorWithCode(globalObject, msg, code, [](JSC::JSGlobalObject* globalObject, const WTF::String& message) {
+        return JSC::createTypeError(globalObject, message);
+    });
 
-    auto message = WTF::String::fromUTF8(msg);
-    auto error = JSC::createTypeError(globalObject, message);
-    JSC::throwException(globalObject, throwScope, error);
     return napi_ok;
 }
 
@@ -1548,18 +1693,23 @@ extern "C" napi_status napi_create_type_error(napi_env env, napi_value code,
     napi_value msg,
     napi_value* result)
 {
-    Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
-
-    JSC::JSValue codeValue = toJS(code);
-    JSC::JSValue messageValue = toJS(msg);
-
-    auto error = JSC::createTypeError(globalObject, messageValue.toWTFString(globalObject));
-    if (codeValue) {
-        error->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), codeValue, 0);
+    if (UNLIKELY(!result || !env)) {
+        return napi_invalid_arg;
     }
 
-    *result = reinterpret_cast<napi_value>(JSC::JSValue::encode(error));
+    auto err = createErrorForNapi(env, code, msg, [](JSC::JSGlobalObject* globalObject, const WTF::String& message) {
+        if (message.isEmpty()) {
+            return JSC::createTypeError(globalObject);
+        }
+
+        return JSC::createTypeError(globalObject, message);
+    });
+
+    if (UNLIKELY(!err)) {
+        return napi_generic_failure;
+    }
+
+    *result = toNapi(err, toJS(env));
     return napi_ok;
 }
 
@@ -1573,23 +1723,19 @@ extern "C" napi_status napi_create_error(napi_env env, napi_value code,
         return napi_invalid_arg;
     }
 
-    Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
+    auto err = createErrorForNapi(env, code, msg, [](JSC::JSGlobalObject* globalObject, const WTF::String& message) {
+        if (message.isEmpty()) {
+            return JSC::createError(globalObject, String("Error"_s));
+        }
 
-    JSC::JSValue codeValue = toJS(code);
-    JSC::JSValue messageValue = toJS(msg);
+        return JSC::createError(globalObject, message);
+    });
 
-    WTF::String message = messageValue.toWTFString(globalObject);
-    if (message.isEmpty()) {
-        message = "Error"_s;
+    if (UNLIKELY(!err)) {
+        return napi_generic_failure;
     }
 
-    auto* error = JSC::createError(globalObject, message);
-    if (codeValue) {
-        error->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), codeValue, 0);
-    }
-
-    *result = reinterpret_cast<napi_value>(JSC::JSValue::encode(error));
+    *result = toNapi(err, toJS(env));
     return napi_ok;
 }
 extern "C" napi_status napi_throw_range_error(napi_env env, const char* code,
@@ -1598,25 +1744,25 @@ extern "C" napi_status napi_throw_range_error(napi_env env, const char* code,
     NAPI_PREMABLE
     Zig::GlobalObject* globalObject = toJS(env);
 
-    JSC::VM& vm = globalObject->vm();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    throwErrorWithCode(globalObject, msg, code, [](JSC::JSGlobalObject* globalObject, const WTF::String& message) {
+        return JSC::createRangeError(globalObject, message);
+    });
 
-    auto message = WTF::String::fromUTF8(msg);
-    auto error = JSC::createRangeError(globalObject, message);
-    JSC::throwException(globalObject, throwScope, error);
     return napi_ok;
 }
 
 extern "C" napi_status napi_object_freeze(napi_env env, napi_value object_value)
 {
     NAPI_PREMABLE
+    if (UNLIKELY(!env || !object_value)) {
+        return napi_invalid_arg;
+    }
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    JSC::EncodedJSValue encodedValue = reinterpret_cast<JSC::EncodedJSValue>(object_value);
-    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    JSC::JSValue value = toJS(object_value);
     if (!value.isObject()) {
         return NAPI_OBJECT_EXPECTED;
     }
@@ -1635,8 +1781,7 @@ extern "C" napi_status napi_object_seal(napi_env env, napi_value object_value)
     JSC::VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    JSC::EncodedJSValue encodedValue = reinterpret_cast<JSC::EncodedJSValue>(object_value);
-    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    JSC::JSValue value = toJS(object_value);
 
     if (UNLIKELY(!value.isObject())) {
         return NAPI_OBJECT_EXPECTED;
@@ -1659,7 +1804,7 @@ extern "C" napi_status napi_get_global(napi_env env, napi_value* result)
     }
 
     Zig::GlobalObject* globalObject = toJS(env);
-    *result = reinterpret_cast<napi_value>(globalObject->globalThis());
+    *result = toNapi(globalObject->globalThis(), globalObject);
     return napi_ok;
 }
 
@@ -1673,16 +1818,18 @@ extern "C" napi_status napi_create_range_error(napi_env env, napi_value code,
         return napi_invalid_arg;
     }
 
-    Zig::GlobalObject* globalObject = toJS(env);
+    auto err = createErrorForNapi(env, code, msg, [](JSC::JSGlobalObject* globalObject, const WTF::String& message) {
+        if (message.isEmpty()) {
+            return JSC::createRangeError(globalObject, String("Range error"_s));
+        }
 
-    JSC::JSValue codeValue = toJS(code);
-    JSC::JSValue messageValue = toJS(msg);
+        return JSC::createRangeError(globalObject, message);
+    });
 
-    auto error = JSC::createRangeError(globalObject, messageValue.toWTFString(globalObject));
-    if (codeValue) {
-        error->putDirect(globalObject->vm(), WebCore::builtinNames(globalObject->vm()).codePublicName(), codeValue, 0);
+    if (UNLIKELY(!err)) {
+        return napi_generic_failure;
     }
-    *result = reinterpret_cast<napi_value>(error);
+    *result = toNapi(err, toJS(env));
     return napi_ok;
 }
 
@@ -1701,12 +1848,12 @@ extern "C" napi_status napi_get_new_target(napi_env env,
     CallFrame* callFrame = reinterpret_cast<JSC::CallFrame*>(cbinfo);
 
     if (NAPICallFrame* frame = NAPICallFrame::get(callFrame).value_or(nullptr)) {
-        *result = toNapi(frame->newTarget);
+        *result = toNapi(frame->newTarget, toJS(env));
         return napi_ok;
     }
 
     JSC::JSValue newTarget = callFrame->newTarget();
-    *result = reinterpret_cast<napi_value>(JSC::JSValue::encode(newTarget));
+    *result = toNapi(newTarget, toJS(env));
     return napi_ok;
 }
 
@@ -1725,14 +1872,14 @@ extern "C" napi_status napi_create_dataview(napi_env env, size_t length,
     JSC::VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    JSC::EncodedJSValue encodedArraybuffer = reinterpret_cast<JSC::EncodedJSValue>(arraybuffer);
-    auto arraybufferValue = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(JSC::JSValue::decode(encodedArraybuffer));
-    if (!arraybufferValue) {
+    JSC::JSValue arraybufferValue = toJS(arraybuffer);
+    auto arraybufferPtr = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(arraybufferValue);
+    if (!arraybufferPtr) {
         return napi_arraybuffer_expected;
     }
-    auto dataView = JSC::DataView::create(arraybufferValue->impl(), byte_offset, length);
+    auto dataView = JSC::DataView::create(arraybufferPtr->impl(), byte_offset, length);
 
-    *result = reinterpret_cast<napi_value>(dataView->wrap(globalObject, globalObject));
+    *result = toNapi(dataView->wrap(globalObject, globalObject), globalObject);
 
     return napi_ok;
 }
@@ -1785,6 +1932,7 @@ JSC_DEFINE_HOST_FUNCTION(NapiClass_ConstructorFunction,
     });
     NAPICallFrame frame(JSC::ArgList(args), nullptr);
     frame.newTarget = newTarget;
+    Bun::NapiHandleScope handleScope(jsCast<Zig::GlobalObject*>(globalObject));
 
     napi->constructor()(globalObject, reinterpret_cast<JSC::CallFrame*>(NAPICallFrame::toNapiCallbackInfo(frame)));
     RETURN_IF_EXCEPTION(scope, {});
@@ -1872,7 +2020,7 @@ extern "C" napi_status napi_get_all_property_names(
 
     JSC::JSArray* exportKeys = ownPropertyKeys(globalObject, object, jsc_property_mode, jsc_key_mode);
     // TODO: filter
-    *result = toNapi(JSC::JSValue::encode(exportKeys));
+    *result = toNapi(JSC::JSValue(exportKeys), globalObject);
     return napi_ok;
 }
 
@@ -1944,7 +2092,7 @@ extern "C" napi_status napi_define_class(napi_env env,
         napiClass->dataPtr = data;
     }
 
-    *result = toNapi(value);
+    *result = toNapi(value, globalObject);
     return napi_ok;
 }
 
@@ -1966,10 +2114,10 @@ extern "C" napi_status napi_coerce_to_string(napi_env env, napi_value value,
     // .toString() can throw
     JSC::JSValue resultValue = JSC::JSValue(jsValue.toString(globalObject));
     JSC::EnsureStillAliveScope ensureStillAlive1(resultValue);
-    *result = toNapi(resultValue);
+    *result = toNapi(resultValue, globalObject);
 
     if (UNLIKELY(scope.exception())) {
-        *result = reinterpret_cast<napi_value>(JSC::JSValue::encode(JSC::jsUndefined()));
+        *result = toNapi(JSC::jsUndefined(), globalObject);
         return napi_generic_failure;
     }
     scope.clearException();
@@ -1997,13 +2145,13 @@ extern "C" napi_status napi_get_property_names(napi_env env, napi_value object,
     JSC::EnsureStillAliveScope ensureStillAlive(jsValue);
     JSC::JSValue value = JSC::ownPropertyKeys(globalObject, jsValue.getObject(), PropertyNameMode::Strings, DontEnumPropertiesMode::Include);
     if (UNLIKELY(scope.exception())) {
-        *result = reinterpret_cast<napi_value>(JSC::JSValue::encode(JSC::jsUndefined()));
+        *result = toNapi(JSC::jsUndefined(), globalObject);
         return napi_generic_failure;
     }
     scope.clearException();
     JSC::EnsureStillAliveScope ensureStillAlive1(value);
 
-    *result = toNapi(value);
+    *result = toNapi(value, globalObject);
 
     return napi_ok;
 }
@@ -2033,7 +2181,7 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
 
     auto* buffer = JSC::JSUint8Array::create(globalObject, subclassStructure, WTFMove(arrayBuffer), 0, length);
 
-    *result = toNapi(buffer);
+    *result = toNapi(buffer, globalObject);
     return napi_ok;
 }
 
@@ -2060,7 +2208,7 @@ extern "C" napi_status napi_create_external_arraybuffer(napi_env env, void* exte
 
     auto* buffer = JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Shared), WTFMove(arrayBuffer));
 
-    *result = toNapi(buffer);
+    *result = toNapi(buffer, globalObject);
 
     return napi_ok;
 }
@@ -2073,7 +2221,7 @@ extern "C" napi_status napi_create_double(napi_env env, double value,
         return napi_invalid_arg;
     }
 
-    *result = toNapi(jsDoubleNumber(value));
+    *result = toNapi(jsDoubleNumber(value), toJS(env));
     return napi_ok;
 }
 
@@ -2189,7 +2337,7 @@ extern "C" napi_status napi_get_element(napi_env env, napi_value objectValue,
     JSValue element = object->getIndex(toJS(env), index);
     RETURN_IF_EXCEPTION(scope, napi_generic_failure);
 
-    *result = toNapi(element);
+    *result = toNapi(element, toJS(env));
 
     return napi_ok;
 }
@@ -2228,7 +2376,7 @@ extern "C" napi_status napi_create_object(napi_env env, napi_value* result)
 
     JSValue value = JSValue(NapiPrototype::create(vm, globalObject->NapiPrototypeStructure()));
 
-    *result = toNapi(value);
+    *result = toNapi(value, globalObject);
     JSC::EnsureStillAliveScope ensureStillAlive(value);
 
     return napi_ok;
@@ -2249,7 +2397,7 @@ extern "C" napi_status napi_create_external(napi_env env, void* data,
     auto* structure = globalObject->NapiExternalStructure();
     JSValue value = Bun::NapiExternal::create(vm, structure, data, finalize_hint, reinterpret_cast<void*>(finalize_cb));
     JSC::EnsureStillAliveScope ensureStillAlive(value);
-    *result = toNapi(value);
+    *result = toNapi(value, globalObject);
     return napi_ok;
 }
 
@@ -2424,7 +2572,7 @@ extern "C" napi_status napi_run_script(napi_env env, napi_value script,
 {
     NAPI_PREMABLE
 
-    JSC::JSGlobalObject* globalObject = toJS(env);
+    Zig::GlobalObject* globalObject = toJS(env);
     if (UNLIKELY(result == nullptr)) {
         return napi_invalid_arg;
     }
@@ -2452,7 +2600,7 @@ extern "C" napi_status napi_run_script(napi_env env, napi_value script,
     }
 
     if (result != nullptr) {
-        *result = toNapi(value);
+        *result = toNapi(value, globalObject);
     }
 
     RELEASE_AND_RETURN(throwScope, napi_ok);
@@ -2466,8 +2614,7 @@ extern "C" napi_status napi_set_instance_data(napi_env env,
     NAPI_PREMABLE
 
     Zig::GlobalObject* globalObject = toJS(env);
-    if (data)
-        globalObject->napiInstanceData = data;
+    globalObject->napiInstanceData = data;
 
     globalObject->napiInstanceDataFinalizer = reinterpret_cast<void*>(finalize_cb);
     globalObject->napiInstanceDataFinalizerHint = finalize_hint;
@@ -2506,7 +2653,7 @@ extern "C" napi_status napi_create_bigint_words(napi_env env,
         }
     }
 
-    *result = toNapi(bigint);
+    *result = toNapi(bigint, globalObject);
     return napi_ok;
 }
 
@@ -2534,12 +2681,13 @@ extern "C" napi_status napi_create_symbol(napi_env env, napi_value description,
         }
 
         if (descriptionString->length() > 0) {
-            *result = toNapi(JSC::Symbol::createWithDescription(vm, descriptionString->value(globalObject)));
+            *result = toNapi(JSC::Symbol::createWithDescription(vm, descriptionString->value(globalObject)),
+                globalObject);
             return napi_ok;
         }
     }
 
-    *result = toNapi(JSC::Symbol::create(vm));
+    *result = toNapi(JSC::Symbol::create(vm), globalObject);
     return napi_ok;
 }
 
@@ -2575,7 +2723,7 @@ extern "C" napi_status napi_new_instance(napi_env env, napi_value constructor,
 
     auto value = construct(globalObject, constructorObject, constructData, args);
     RETURN_IF_EXCEPTION(throwScope, napi_pending_exception);
-    *result = toNapi(value);
+    *result = toNapi(value, globalObject);
 
     RELEASE_AND_RETURN(throwScope, napi_ok);
 }
@@ -2615,9 +2763,9 @@ extern "C" napi_status napi_call_function(napi_env env, napi_value recv_napi,
 
     if (result_ptr) {
         if (result.isEmpty()) {
-            *result_ptr = toNapi(JSC::jsUndefined());
+            *result_ptr = toNapi(JSC::jsUndefined(), globalObject);
         } else {
-            *result_ptr = toNapi(result);
+            *result_ptr = toNapi(result, globalObject);
         }
     }
 

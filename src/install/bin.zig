@@ -482,6 +482,11 @@ pub const Bin = extern struct {
             const abs_exe_file: [:0]const u16 = dest_buf[0 .. abs_dest_w.len + ".exe".len :0];
 
             bun.sys.File.writeFile(bun.invalid_fd, abs_exe_file, WinBinLinkingShim.embedded_executable_data).unwrap() catch |err| {
+                if (err == error.EBUSY) {
+                    // exe is most likely running. bunx file has already been updated, ignore error
+                    return;
+                }
+
                 this.err = err;
                 return;
             };
@@ -654,6 +659,11 @@ pub const Bin = extern struct {
                     const abs_target_dir = path.joinAbsStringZ(package_dir, &.{target}, .auto);
 
                     var target_dir = bun.openDirAbsolute(abs_target_dir) catch |err| {
+                        if (err == error.ENOENT) {
+                            // https://github.com/npm/cli/blob/366c07e2f3cb9d1c6ddbd03e624a4d73fbd2676e/node_modules/bin-links/lib/link-gently.js#L43
+                            // avoid erroring when the directory does not exist
+                            return;
+                        }
                         this.err = err;
                         return;
                     };

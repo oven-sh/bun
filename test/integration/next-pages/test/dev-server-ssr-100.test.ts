@@ -1,11 +1,11 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync, toMatchNodeModulesAt } from "../../../harness";
 import { Subprocess } from "bun";
-import { copyFileSync, rmSync } from "fs";
+import { install_test_helpers } from "bun:internal-for-testing";
+import { afterAll, beforeAll, expect, test } from "bun:test";
+import { copyFileSync } from "fs";
+import { cp, rm } from "fs/promises";
 import { join } from "path";
 import { StringDecoder } from "string_decoder";
-import { cp, rm } from "fs/promises";
-import { install_test_helpers } from "bun:internal-for-testing";
+import { bunEnv, bunExe, tmpdirSync, toMatchNodeModulesAt } from "../../../harness";
 const { parseLockfile } = install_test_helpers;
 
 expect.extend({ toMatchNodeModulesAt });
@@ -96,7 +96,7 @@ beforeAll(async () => {
     stdin: "inherit",
   });
   if (!install.success) {
-    const reason = installProcess.signalCode || `code ${installProcess.exitCode}`;
+    const reason = install.signalCode || `code ${install.exitCode}`;
     throw new Error(`Failed to install dependencies: ${reason}`);
   }
 

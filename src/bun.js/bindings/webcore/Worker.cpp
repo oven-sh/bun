@@ -399,10 +399,12 @@ extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker*
         JSC::VM& vm = globalObject->vm();
         vm.setHasTerminationRequest();
 
-        while (!vm.hasOneRef())
-            vm.deref();
+        // clang-tidy is smart enough to realize that deref() leads to freeing
+        // but it's not smart enough to realize that `hasOneRef()` ensures its safety
+        while (!vm.hasOneRef()) // NOLINT
+            vm.deref(); // NOLINT
 
-        vm.deref();
+        vm.deref(); // NOLINT
     }
 }
 extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* globalObject)
@@ -458,7 +460,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     VM& vm = globalObject->vm();
 
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    JSValue workerData = jsUndefined();
+    JSValue workerData = jsNull();
     JSValue threadId = jsNumber(0);
 
     if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM())) {
@@ -475,11 +477,11 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
         threadId = jsNumber(worker->clientIdentifier() - 1);
     }
 
-    JSArray* array = constructEmptyArray(globalObject, nullptr, 3);
+    JSObject* array = constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
 
-    array->putByIndexInline(globalObject, (unsigned)0, workerData, false);
-    array->putByIndexInline(globalObject, (unsigned)1, threadId, false);
-    array->putByIndexInline(globalObject, (unsigned)2, JSFunction::create(vm, globalObject, 1, "receiveMessageOnPort"_s, jsReceiveMessageOnPort, ImplementationVisibility::Public, NoIntrinsic), false);
+    array->putDirectIndex(globalObject, 0, workerData);
+    array->putDirectIndex(globalObject, 1, threadId);
+    array->putDirectIndex(globalObject, 2, JSFunction::create(vm, globalObject, 1, "receiveMessageOnPort"_s, jsReceiveMessageOnPort, ImplementationVisibility::Public, NoIntrinsic));
 
     return array;
 }

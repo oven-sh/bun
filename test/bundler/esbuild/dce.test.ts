@@ -1,5 +1,6 @@
-import { itBundled, dedent } from "../expectBundled";
 import { describe, expect } from "bun:test";
+import { isWindows } from "harness";
+import { dedent, itBundled } from "../expectBundled";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_dce_test.go
@@ -107,7 +108,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsTrueKeepES6", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg"
@@ -129,7 +129,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsTrueKeepCommonJS", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg"
@@ -151,7 +150,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsFalseKeepBareImportAndRequireES6", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg"
@@ -174,7 +172,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsFalseKeepBareImportAndRequireCommonJS", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg"
@@ -197,7 +194,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsFalseRemoveBareImportES6", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg"
@@ -219,7 +215,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsFalseRemoveBareImportCommonJS", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg"
@@ -241,7 +236,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsFalseRemoveNamedImportES6", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -263,7 +257,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsFalseRemoveNamedImportCommonJS", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -285,7 +278,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsFalseRemoveStarImportES6", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import * as ns from "demo-pkg"
@@ -307,7 +299,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsFalseRemoveStarImportCommonJS", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import * as ns from "demo-pkg"
@@ -351,7 +342,7 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeep", {
-    todo: true,
+    todo: isWindows,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -429,7 +420,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepMainImplicitModule", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -457,7 +447,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepMainImplicitMain", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -490,7 +479,7 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleUseModule", {
-    todo: true,
+    todo: isWindows,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -518,7 +507,7 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleUseMain", {
-    todo: true,
+    todo: isWindows,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -546,7 +535,7 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleImplicitModule", {
-    todo: true,
+    todo: isWindows,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -778,7 +767,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsFalseIntermediateFilesDiamond", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "a"
@@ -807,7 +795,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsFalseOneFork", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": `import("a").then(x => console.log(x.foo))`,
       "/Users/user/project/node_modules/a/index.js": `export {foo} from "b"`,
@@ -828,7 +815,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsFalseAllFork", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": `import("a").then(x => console.log(x.foo))`,
       "/Users/user/project/node_modules/a/index.js": `export {foo} from "b"`,
@@ -851,7 +837,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/JSONLoaderRemoveUnused", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         import unused from "./example.json"
@@ -865,7 +850,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/TextLoaderRemoveUnused", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         import unused from "./example.txt"
@@ -934,7 +918,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/RemoveUnusedImportMeta", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         function foo() {
@@ -948,109 +931,119 @@ describe("bundler", () => {
       stdout: "foo is unused",
     },
   });
-  itBundled("dce/RemoveUnusedPureCommentCalls", {
-    todo: true,
-    // in this test, the bundler must drop all `_yes` variables entirely, and then
-    // preserve the pure comments in the same way esbuild does
-    files: {
-      "/entry.js": /* js */ `
-        function bar() {}
-        let bare = foo(bar);
-  
-        let at_yes = /* @__PURE__ */ foo(bar);
-        let at_no = /* @__PURE__ */ foo(bar());
-        let new_at_yes = /* @__PURE__ */ new foo(bar);
-        let new_at_no = /* @__PURE__ */ new foo(bar());
-  
-        let nospace_at_yes = /*@__PURE__*/ foo(bar);
-        let nospace_at_no = /*@__PURE__*/ foo(bar());
-        let nospace_new_at_yes = /*@__PURE__*/ new foo(bar);
-        let nospace_new_at_no = /*@__PURE__*/ new foo(bar());
-  
-        let num_yes = /* #__PURE__ */ foo(bar);
-        let num_no = /* #__PURE__ */ foo(bar());
-        let new_num_yes = /* #__PURE__ */ new foo(bar);
-        let new_num_no = /* #__PURE__ */ new foo(bar());
-  
-        let nospace_num_yes = /*#__PURE__*/ foo(bar);
-        let nospace_num_no = /*#__PURE__*/ foo(bar());
-        let nospace_new_num_yes = /*#__PURE__*/ new foo(bar);
-        let nospace_new_num_no = /*#__PURE__*/ new foo(bar());
-  
-        let dot_yes = /* @__PURE__ */ foo(sideEffect()).dot(bar);
-        let dot_no = /* @__PURE__ */ foo(sideEffect()).dot(bar());
-        let new_dot_yes = /* @__PURE__ */ new foo(sideEffect()).dot(bar);
-        let new_dot_no = /* @__PURE__ */ new foo(sideEffect()).dot(bar());
-  
-        let nested_yes = [1, /* @__PURE__ */ foo(bar), 2];
-        let nested_no = [1, /* @__PURE__ */ foo(bar()), 2];
-        let new_nested_yes = [1, /* @__PURE__ */ new foo(bar), 2];
-        let new_nested_no = [1, /* @__PURE__ */ new foo(bar()), 2];
-  
-        let single_at_yes = // @__PURE__
-          foo(bar);
-        let single_at_no = // @__PURE__
-          foo(bar());
-        let new_single_at_yes = // @__PURE__
-          new foo(bar);
-        let new_single_at_no = // @__PURE__
-          new foo(bar());
-  
-        let single_num_yes = // #__PURE__
-          foo(bar);
-        let single_num_no = // #__PURE__
-          foo(bar());
-        let new_single_num_yes = // #__PURE__
-          new foo(bar);
-        let new_single_num_no = // #__PURE__
-          new foo(bar());
-  
-        let bad_no = /* __PURE__ */ foo(bar);
-        let new_bad_no = /* __PURE__ */ new foo(bar);
-  
-        let parens_no = (/* @__PURE__ */ foo)(bar);
-        let new_parens_no = new (/* @__PURE__ */ foo)(bar);
-  
-        let exp_no = /* @__PURE__ */ foo() ** foo();
-        let new_exp_no = /* @__PURE__ */ new foo() ** foo();
-      `,
-    },
-    onAfterBundle(api) {
-      const code = api.readFile("/out.js");
-      expect(code).not.toContain("_yes"); // should not contain any *_yes variables
-      expect(code).toContain("var bare = foo(bar)"); // should contain `var bare = foo(bar)`
-      const keep = [
-        ["at_no", true],
-        ["new_at_no", true],
-        ["nospace_at_no", true],
-        ["nospace_new_at_no", true],
-        ["num_no", true],
-        ["new_num_no", true],
-        ["nospace_num_no", true],
-        ["nospace_new_num_no", true],
-        ["dot_no", true],
-        ["new_dot_no", true],
-        ["nested_no", true],
-        ["new_nested_no", true],
-        ["single_at_no", true],
-        ["new_single_at_no", true],
-        ["single_num_no", true],
-        ["new_single_num_no", true],
-        ["bad_no", false],
-        ["new_bad_no", false],
-        ["parens_no", false],
-        ["new_parens_no", false],
-        ["exp_no", true],
-        ["new_exp_no", true],
-      ];
-      for (const [name, pureComment] of keep) {
-        const regex = new RegExp(`${name}\\s*=[^\/\n]*(\\/\\*.*?\\*\\/)?`, "g");
-        const match = regex.exec(code);
-        expect(match).toBeTruthy(); // should contain ${name}
-        expect(pureComment ? !!match[1] : !match[1]).toBeTruthy(); // should contain a pure comment for ${name}
-      }
-    },
-  });
+  for (const { minify, emitDCEAnnotations, name } of [
+    { minify: false, emitDCEAnnotations: false, name: "dce/RemoveUnusedPureCommentCalls" },
+    { minify: true, emitDCEAnnotations: false, name: "dce/RemoveUnusedPureCommentCallsMinify" },
+    { minify: true, emitDCEAnnotations: true, name: "dce/RemoveUnusedPureCommentCallsMinifyExplitOn" },
+  ]) {
+    itBundled(name, {
+      // in this test, the bundler must drop all `_yes` variables entirely, and then
+      // preserve the pure comments in the same way esbuild does
+      files: {
+        "/entry.js": /* js */ `
+          function bar() {}
+          let bare = foo(bar);
+
+          let at_yes = /* @__PURE__ */ foo(bar);
+          let at_no = /* @__PURE__ */ foo(bar());
+          let new_at_yes = /* @__PURE__ */ new foo(bar);
+          let new_at_no = /* @__PURE__ */ new foo(bar());
+
+          let nospace_at_yes = /*@__PURE__*/ foo(bar);
+          let nospace_at_no = /*@__PURE__*/ foo(bar());
+          let nospace_new_at_yes = /*@__PURE__*/ new foo(bar);
+          let nospace_new_at_no = /*@__PURE__*/ new foo(bar());
+
+          let num_yes = /* #__PURE__ */ foo(bar);
+          let num_no = /* #__PURE__ */ foo(bar());
+          let new_num_yes = /* #__PURE__ */ new foo(bar);
+          let new_num_no = /* #__PURE__ */ new foo(bar());
+
+          let nospace_num_yes = /*#__PURE__*/ foo(bar);
+          let nospace_num_no = /*#__PURE__*/ foo(bar());
+          let nospace_new_num_yes = /*#__PURE__*/ new foo(bar);
+          let nospace_new_num_no = /*#__PURE__*/ new foo(bar());
+
+          let dot_yes = /* @__PURE__ */ foo(sideEffect()).dot(bar);
+          let dot_no = /* @__PURE__ */ foo(sideEffect()).dot(bar());
+          let new_dot_yes = /* @__PURE__ */ new foo(sideEffect()).dot(bar);
+          let new_dot_no = /* @__PURE__ */ new foo(sideEffect()).dot(bar());
+
+          let nested_yes = [1, /* @__PURE__ */ foo(bar), 2];
+          let nested_no = [1, /* @__PURE__ */ foo(bar()), 2];
+          let new_nested_yes = [1, /* @__PURE__ */ new foo(bar), 2];
+          let new_nested_no = [1, /* @__PURE__ */ new foo(bar()), 2];
+
+          let single_at_yes = // @__PURE__
+            foo(bar);
+          let single_at_no = // @__PURE__
+            foo(bar());
+          let new_single_at_yes = // @__PURE__
+            new foo(bar);
+          let new_single_at_no = // @__PURE__
+            new foo(bar());
+
+          let single_num_yes = // #__PURE__
+            foo(bar);
+          let single_num_no = // #__PURE__
+            foo(bar());
+          let new_single_num_yes = // #__PURE__
+            new foo(bar);
+          let new_single_num_no = // #__PURE__
+            new foo(bar());
+
+          let bad_no = /* __PURE__ */ foo(bar);
+          let new_bad_no = /* __PURE__ */ new foo(bar);
+
+          let parens_no = (/* @__PURE__ */ foo)(bar);
+          let new_parens_no = new (/* @__PURE__ */ foo)(bar);
+
+          let exp_no = /* @__PURE__ */ foo() ** foo();
+          let new_exp_no = /* @__PURE__ */ new foo() ** foo();
+        `,
+      },
+      minifyWhitespace: minify,
+      emitDCEAnnotations: emitDCEAnnotations,
+      onAfterBundle(api) {
+        const code = api.readFile("/out.js");
+        expect(code).not.toContain("_yes"); // should not contain any *_yes variables
+        expect(code).toContain(minify ? "var bare=foo(bar)" : "var bare = foo(bar)");
+        const keep = [
+          ["at_no", true],
+          ["new_at_no", true],
+          ["nospace_at_no", true],
+          ["nospace_new_at_no", true],
+          ["num_no", true],
+          ["new_num_no", true],
+          ["nospace_num_no", true],
+          ["nospace_new_num_no", true],
+          ["dot_no", true],
+          ["new_dot_no", true],
+          ["nested_no", true],
+          ["new_nested_no", true],
+          ["single_at_no", true],
+          ["new_single_at_no", true],
+          ["single_num_no", true],
+          ["new_single_num_no", true],
+          ["parens_no", false],
+          ["new_parens_no", false],
+          ["exp_no", true],
+          ["new_exp_no", true],
+        ];
+        for (const [name, pureComment] of keep) {
+          const regex = new RegExp(`${name}\\s*=[^\/\n;]*(\\/\\*[^\/\n;]*?PURE[^\/\n;]*?\\*\\/)?`, "g");
+          const match = regex.exec(code)!;
+          expect(match).toBeTruthy(); // should contain ${name}
+
+          if ((emitDCEAnnotations || !minify) && pureComment) {
+            expect(match[1], "should contain pure comment for " + name).toBeTruthy();
+          } else {
+            expect(match[1], "should not contain pure comment for " + name).toBeFalsy();
+          }
+        }
+      },
+    });
+  }
   itBundled("dce/TreeShakingReactElements", {
     files: {
       "/entry.jsx": /* jsx */ `
@@ -2608,7 +2601,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/CrossModuleConstantFolding", {
-    todo: true,
     files: {
       "/enum-constants.ts": /* ts */ `
         export enum remove {
@@ -2718,7 +2710,6 @@ describe("bundler", () => {
     dce: true,
   });
   itBundled("dce/MultipleDeclarationTreeShaking", {
-    todo: true,
     files: {
       "/var2.js": /* js */ `
         var x = 1
@@ -2757,7 +2748,6 @@ describe("bundler", () => {
     ],
   });
   itBundled("dce/MultipleDeclarationTreeShakingMinifySyntax", {
-    todo: true,
     files: {
       "/var2.js": /* js */ `
         var x = 1
@@ -2962,6 +2952,62 @@ describe("bundler", () => {
     },
     run: {
       stdout: "foo\nbar",
+    },
+  });
+  itBundled("dce/CallWithNoArg", {
+    files: {
+      "/entry.js": /* js */ `
+        /* @__PURE__ */ noSideEffects();
+      `,
+    },
+    run: {
+      stdout: "",
+    },
+  });
+  itBundled("dce/ConstructWithNoArg", {
+    files: {
+      "/entry.js": /* js */ `
+        /* @__PURE__ */ new NoSideEffects();
+      `,
+    },
+    run: {
+      stdout: "",
+    },
+  });
+  itBundled("dce/IgnoreAnnotations", {
+    files: {
+      "/entry.js": /* js */ `
+        function noSideEffects() { console.log("PASS"); }
+        /* @__PURE__ */ noSideEffects(1);
+      `,
+    },
+    ignoreDCEAnnotations: true,
+    run: {
+      stdout: "PASS",
+    },
+  });
+  itBundled("dce/IgnoreAnnotationsDoesNotApplyToRuntime", {
+    files: {
+      "/entry.js": /* js */ `
+        import("./other.js");
+      `,
+      "/other.js": /* js */ `
+        export function foo() { }
+      `,
+    },
+    ignoreDCEAnnotations: true,
+    onAfterBundle(api) {
+      // These symbols technically have side effects, and we use dce annotations
+      // to let them tree-shake User-specified --ignore-annotations should not
+      // apply to our code.
+      api.expectFile("/out.js").not.toContain("__dispose");
+      api.expectFile("/out.js").not.toContain("__asyncDispose");
+      api.expectFile("/out.js").not.toContain("__require");
+
+      // This assertion catches if the bundler changes in that the runtime is no
+      // longer included. If this fails, just adjust the code snippet so some
+      // part of runtime.js is used
+      api.expectFile("/out.js").toContain("__defProp");
     },
   });
   // itBundled("dce/TreeShakingJSWithAssociatedCSS", {

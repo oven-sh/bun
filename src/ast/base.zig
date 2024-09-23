@@ -2,6 +2,8 @@ const std = @import("std");
 const bun = @import("root").bun;
 const unicode = std.unicode;
 
+const js_ast = bun.JSAst;
+
 pub const NodeIndex = u32;
 pub const NodeIndexNone = 4294967293;
 
@@ -147,6 +149,27 @@ pub const Ref = packed struct(u64) {
         );
     }
 
+    pub fn dump(ref: Ref, symbol_table: anytype) std.fmt.Formatter(dumpImpl) {
+        return .{ .data = .{
+            .ref = ref,
+            .symbol = ref.getSymbol(symbol_table),
+        } };
+    }
+
+    fn dumpImpl(data: struct { ref: Ref, symbol: *js_ast.Symbol }, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try std.fmt.format(
+            writer,
+            "Ref[inner={d}, src={d}, .{s}; original_name={s}, uses={d}]",
+            .{
+                data.ref.inner_index,
+                data.ref.source_index,
+                @tagName(data.ref.tag),
+                data.symbol.original_name,
+                data.symbol.use_count_estimate,
+            },
+        );
+    }
+
     pub fn isValid(this: Ref) bool {
         return this.tag != .invalid;
     }
@@ -196,5 +219,18 @@ pub const Ref = packed struct(u64) {
 
     pub fn jsonStringify(self: *const Ref, writer: anytype) !void {
         return try writer.write([2]u32{ self.sourceIndex(), self.innerIndex() });
+    }
+
+    pub fn getSymbol(ref: Ref, symbol_table: anytype) *js_ast.Symbol {
+        // Different parts of the bundler use different formats of the symbol table
+        // In the parser you only have one array, and .sourceIndex() is ignored.
+        // In the bundler, you have a 2D array where both parts of the ref are used.
+        const resolved_symbol_table = switch (@TypeOf(symbol_table)) {
+            *const std.ArrayList(js_ast.Symbol) => symbol_table.items,
+            *std.ArrayList(js_ast.Symbol) => symbol_table.items,
+            []js_ast.Symbol => symbol_table,
+            else => |T| @compileError("Unsupported type to Ref.getSymbol: " ++ @typeName(T)),
+        };
+        return &resolved_symbol_table[ref.innerIndex()];
     }
 };

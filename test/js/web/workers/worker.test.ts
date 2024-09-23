@@ -1,9 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe } from "harness";
 import path from "path";
 import wt from "worker_threads";
-
-const todoIfWindows = isWindows ? test.todo : test;
 
 describe("web worker", () => {
   async function waitForWorkerResult(worker: Worker, message: any): Promise<any> {
@@ -237,7 +235,7 @@ describe("worker_threads", () => {
     });
   });
 
-  todoIfWindows("worker terminate", async () => {
+  test("worker terminate", async () => {
     const worker = new wt.Worker(new URL("worker-fixture-hang.js", import.meta.url).href, {
       smol: true,
     });
@@ -245,7 +243,7 @@ describe("worker_threads", () => {
     expect(code).toBe(0);
   });
 
-  todoIfWindows("worker with process.exit (delay) and terminate", async () => {
+  test("worker with process.exit (delay) and terminate", async () => {
     const worker = new wt.Worker(new URL("worker-fixture-process-exit.js", import.meta.url).href, {
       smol: true,
     });
@@ -294,5 +292,31 @@ describe("worker_threads", () => {
     // ensure they didn't change for the main thread
     expect(process.argv).toEqual(original_argv);
     expect(process.execArgv).toEqual(original_execArgv);
+  });
+
+  test("worker with eval = false fails with code", async () => {
+    let has_error = false;
+    try {
+      const worker = new wt.Worker("console.log('this should not get printed')", { eval: false });
+    } catch (err) {
+      expect(err.constructor.name).toEqual("TypeError");
+      expect(err.message).toMatch(/BuildMessage: ModuleNotFound.+/);
+      has_error = true;
+    }
+    expect(has_error).toBe(true);
+  });
+
+  test("worker with eval = true succeeds with valid code", async () => {
+    let message;
+    const worker = new wt.Worker("postMessage('hello')", { eval: true });
+    worker.on("message", e => {
+      message = e;
+    });
+    const p = new Promise((resolve, reject) => {
+      worker.on("error", reject);
+      worker.on("exit", resolve);
+    });
+    await p;
+    expect(message).toEqual("hello");
   });
 });

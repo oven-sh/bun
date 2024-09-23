@@ -139,6 +139,8 @@ export default {
   startupSnapshot,
   Deserializer,
   Serializer,
+  DefaultDeserializer,
+  DefaultSerializer,
 };
 
 hideFromStack(
@@ -160,4 +162,6 @@ hideFromStack(
   DefaultDeserializer,
   DefaultSerializer,
   GCProfiler,
+  DefaultDeserializer,
+  DefaultSerializer,
 );

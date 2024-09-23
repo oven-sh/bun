@@ -3,8 +3,11 @@
 #include "root.h"
 
 #include "../bindings/JSBuffer.h"
+#include "ErrorCode.h"
+#include "JavaScriptCore/PageCount.h"
 #include "_NativeModule.h"
-#include "simdutf.h"
+#include "wtf/SIMDUTF.h"
+#include <limits>
 
 namespace Zig {
 using namespace WebCore;
@@ -56,10 +59,9 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isUtf8,
 
     ptr = reinterpret_cast<const char *>(impl->data());
   } else {
-    throwVMError(
-        lexicalGlobalObject, throwScope,
-        createTypeError(lexicalGlobalObject,
-                        "First argument must be an ArrayBufferView"_s));
+    Bun::throwError(lexicalGlobalObject, throwScope,
+                    Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
+                    "First argument must be an ArrayBufferView"_s);
     return JSValue::encode({});
   }
 
@@ -113,10 +115,9 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isAscii,
 
     ptr = reinterpret_cast<const char *>(impl->data());
   } else {
-    throwVMError(
-        lexicalGlobalObject, throwScope,
-        createTypeError(lexicalGlobalObject,
-                        "First argument must be an ArrayBufferView"_s));
+    Bun::throwError(lexicalGlobalObject, throwScope,
+                    Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
+                    "First argument must be an ArrayBufferView"_s);
     return JSValue::encode({});
   }
 
@@ -165,18 +166,18 @@ DEFINE_NATIVE_MODULE(NodeBuffer) {
       JSC::jsNumber(50));
 
   put(JSC::Identifier::fromString(vm, "kMaxLength"_s),
-      JSC::jsNumber(4294967296LL));
+      JSC::jsNumber(MAX_ARRAY_BUFFER_SIZE));
 
   put(JSC::Identifier::fromString(vm, "kStringMaxLength"_s),
-      JSC::jsNumber(536870888));
+      JSC::jsNumber(std::numeric_limits<unsigned>().max()));
 
   JSC::JSObject *constants = JSC::constructEmptyObject(
       lexicalGlobalObject, globalObject->objectPrototype(), 2);
   constants->putDirect(vm, JSC::Identifier::fromString(vm, "MAX_LENGTH"_s),
-                       JSC::jsNumber(4294967296LL));
+                       JSC::jsNumber(MAX_ARRAY_BUFFER_SIZE));
   constants->putDirect(vm,
                        JSC::Identifier::fromString(vm, "MAX_STRING_LENGTH"_s),
-                       JSC::jsNumber(536870888));
+                       JSC::jsNumber(std::numeric_limits<unsigned>().max()));
 
   put(JSC::Identifier::fromString(vm, "constants"_s), constants);
 

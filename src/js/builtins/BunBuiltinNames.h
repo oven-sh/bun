@@ -82,6 +82,7 @@ using namespace JSC;
     macro(encoding) \
     macro(end) \
     macro(errno) \
+    macro(makeErrorWithCode) \
     macro(errorSteps) \
     macro(evaluateCommonJSModule) \
     macro(evaluated) \
@@ -94,7 +95,7 @@ using namespace JSC;
     macro(fetch) \
     macro(fetchRequest) \
     macro(file) \
-    macro(filePath) \
+    macro(filename) \
     macro(fillFromJS) \
     macro(finishConsumingStream) \
     macro(flush) \
@@ -152,6 +153,7 @@ using namespace JSC;
     macro(password) \
     macro(patch) \
     macro(path) \
+    macro(paths) \
     macro(pathname) \
     macro(pause) \
     macro(pendingAbortRequest) \
@@ -220,9 +222,11 @@ using namespace JSC;
     macro(stream) \
     macro(structuredCloneForStream) \
     macro(syscall) \
+    macro(textDecoder) \
     macro(textDecoderStreamDecoder) \
     macro(textDecoderStreamTransform) \
     macro(textEncoderStreamEncoder) \
+    macro(TextEncoderStreamEncoder) \
     macro(textEncoderStreamTransform) \
     macro(toNamespacedPath) \
     macro(trace) \

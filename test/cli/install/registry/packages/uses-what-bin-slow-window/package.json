@@ -5,26 +5,27 @@
 			"name": "uses-what-bin-slow-window",
 			"version": "1.0.0",
 			"scripts": {
-				"install": "sleep 5 && what-bin"
+				"install": "bun sleep.js && what-bin"
 			},
 			"dependencies": {
 				"what-bin": "1.0.0"
 			},
 			"_id": "uses-what-bin-slow-window@1.0.0",
-			"_nodeVersion": "21.7.1",
-			"_npmVersion": "10.5.0",
+			"gitHead": "9207d4123bb4116b8e19153b38fb9f2b58032ee4",
+			"_nodeVersion": "22.7.0",
+			"_npmVersion": "10.8.3",
 			"dist": {
-				"integrity": "sha512-SVknEB1K9N8f3WldcidJMAwpIGkwdVJ3gwF/7lrqtToWdVs4l7g+6PoQk3VoCbyN6csPHVhr4m8oV/MwYZDiLw==",
-				"shasum": "898c8ed1ec91694ebeb9dc4ea4a4b2fbdad2f6d4",
+				"integrity": "sha512-u7EgbLjHj4a4EzZM3ed3aVBGKJBqhZ8yXdbOB2QsM4MfoLhjR/lxFBWbuca5kraC0PdtfpvVzhkT921UWPsauw==",
+				"shasum": "de6e837e6ca15e2400ebd2ce069dc384a1444ad8",
 				"tarball": "http://localhost:4873/uses-what-bin-slow-window/-/uses-what-bin-slow-window-1.0.0.tgz"
 			},
 			"contributors": []
 		}
 	},
 	"time": {
-		"modified": "2024-04-25T06:58:20.908Z",
-		"created": "2024-04-25T06:58:20.908Z",
-		"1.0.0": "2024-04-25T06:58:20.908Z"
+		"modified": "2024-09-11T04:59:52.705Z",
+		"created": "2024-09-11T04:59:52.705Z",
+		"1.0.0": "2024-09-11T04:59:52.705Z"
 	},
 	"users": {},
 	"dist-tags": {
@@ -34,7 +35,7 @@
 	"_distfiles": {},
 	"_attachments": {
 		"uses-what-bin-slow-window-1.0.0.tgz": {
-			"shasum": "898c8ed1ec91694ebeb9dc4ea4a4b2fbdad2f6d4",
+			"shasum": "de6e837e6ca15e2400ebd2ce069dc384a1444ad8",
 			"version": "1.0.0"
 		}
 	},

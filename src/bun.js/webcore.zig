@@ -512,7 +512,7 @@ pub const Crypto = struct {
             // i don't think its a real scenario, but just in case
             buf = globalThis.allocator().alloc(u8, keylen) catch {
                 globalThis.throw("Failed to allocate memory", .{});
-                return JSC.JSValue.jsUndefined();
+                return .undefined;
             };
             needs_deinit = true;
         } else {
@@ -538,25 +538,13 @@ pub const Crypto = struct {
     }
 
     fn throwInvalidParameter(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        const err = globalThis.createErrorInstanceWithCode(
-            .ERR_CRYPTO_SCRYPT_INVALID_PARAMETER,
-            "Invalid scrypt parameters",
-            .{},
-        );
-        globalThis.throwValue(err);
+        globalThis.ERR_CRYPTO_SCRYPT_INVALID_PARAMETER("Invalid scrypt parameters", .{}).throw();
         return .zero;
     }
 
-    fn throwInvalidParams(globalThis: *JSC.JSGlobalObject, comptime error_type: @Type(.EnumLiteral), comptime message: string, fmt: anytype) JSC.JSValue {
-        const err = switch (error_type) {
-            .RangeError => globalThis.createRangeErrorInstanceWithCode(
-                .ERR_CRYPTO_INVALID_SCRYPT_PARAMS,
-                message,
-                fmt,
-            ),
-            else => @compileError("Error type not added!"),
-        };
-        globalThis.throwValue(err);
+    fn throwInvalidParams(globalThis: *JSC.JSGlobalObject, comptime error_type: @Type(.EnumLiteral), comptime message: [:0]const u8, fmt: anytype) JSC.JSValue {
+        if (error_type != .RangeError) @compileError("Error type not added!");
+        globalThis.ERR_CRYPTO_INVALID_SCRYPT_PARAMS(message, fmt).throw();
         BoringSSL.ERR_clear_error();
         return .zero;
     }
@@ -570,25 +558,25 @@ pub const Crypto = struct {
 
         if (arguments.len < 2) {
             globalThis.throwInvalidArguments("Expected 2 typed arrays but got nothing", .{});
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
 
         const array_buffer_a = arguments[0].asArrayBuffer(globalThis) orelse {
             globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[0].jsType())});
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         };
         const a = array_buffer_a.byteSlice();
 
         const array_buffer_b = arguments[1].asArrayBuffer(globalThis) orelse {
             globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[1].jsType())});
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         };
         const b = array_buffer_b.byteSlice();
 
         const len = a.len;
         if (b.len != len) {
             globalThis.throw("Input buffers must have the same byte length", .{});
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
         return JSC.jsBoolean(len == 0 or bun.BoringSSL.CRYPTO_memcmp(a.ptr, b.ptr, len) == 0);
     }
@@ -619,12 +607,12 @@ pub const Crypto = struct {
         const arguments = callframe.arguments(1).slice();
         if (arguments.len == 0) {
             globalThis.throwInvalidArguments("Expected typed array but got nothing", .{});
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
 
         var array_buffer = arguments[0].asArrayBuffer(globalThis) orelse {
             globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[0].jsType())});
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         };
         const slice = array_buffer.byteSlice();
 

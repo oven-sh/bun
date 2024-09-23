@@ -174,9 +174,7 @@ var access = function access(path, mode, callback) {
     } else if (callback == undefined) {
       fs.close(fd).then(() => {});
     } else {
-      const err = new TypeError("Callback must be a function");
-      err.code = "ERR_INVALID_ARG_TYPE";
-      throw err;
+      callback = ensureCallback(callback);
     }
   },
   rm = function rm(path, options, callback) {
@@ -552,9 +550,7 @@ var access = function access(path, mode, callback) {
       position = null;
     }
 
-    if (!$isCallable(callback)) {
-      throw new TypeError("callback must be a function");
-    }
+    callback = ensureCallback(callback);
 
     fs.writev(fd, buffers, position).$then(bytesWritten => callback(null, bytesWritten, buffers), callback);
   },
@@ -565,9 +561,7 @@ var access = function access(path, mode, callback) {
       position = null;
     }
 
-    if (!$isCallable(callback)) {
-      throw new TypeError("callback must be a function");
-    }
+    callback = ensureCallback(callback);
 
     fs.readv(fd, buffers, position).$then(bytesRead => callback(null, bytesRead, buffers), callback);
   },
@@ -868,8 +862,7 @@ function ReadStream(this: typeof ReadStream, pathOrFd, options) {
   $assert(overridden_fs);
   this[kFs] = overridden_fs;
 }
-ReadStream.prototype = {};
-ObjectSetPrototypeOf(ReadStream.prototype, NativeReadable.prototype);
+ReadStream.prototype = Object.create(NativeReadable.prototype);
 
 ReadStream.prototype._construct = function (callback) {
   if (NativeReadablePrototype._construct) {
@@ -1523,6 +1516,10 @@ export default {
   // get ReadStream() {
   //   return getLazyReadStream();
   // },
+  F_OK: 0,
+  R_OK: 4,
+  W_OK: 2,
+  X_OK: 1,
 };
 
 // Preserve the names

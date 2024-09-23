@@ -594,18 +594,6 @@ pub const Bundler = struct {
         if (this.options.define.dots.get("NODE_ENV")) |NODE_ENV| {
             if (NODE_ENV.len > 0 and NODE_ENV[0].data.value == .e_string and NODE_ENV[0].data.value.e_string.eqlComptime("production")) {
                 this.options.production = true;
-
-                if (this.options.target.isBun()) {
-                    if (strings.eqlComptime(this.options.jsx.package_name, "react")) {
-                        if (this.options.jsx_optimization_inline == null) {
-                            this.options.jsx_optimization_inline = true;
-                        }
-
-                        if (this.options.jsx_optimization_hoist == null and (this.options.jsx_optimization_inline orelse false)) {
-                            this.options.jsx_optimization_hoist = true;
-                        }
-                    }
-                }
             }
         }
     }
@@ -639,7 +627,7 @@ pub const Bundler = struct {
                 framework.resolved = true;
                 this.options.framework = framework.*;
             } else if (!framework.resolved) {
-                Global.panic("directly passing framework path is not implemented yet!", .{});
+                Output.panic("directly passing framework path is not implemented yet!", .{});
             }
         }
     }
@@ -1144,6 +1132,7 @@ pub const Bundler = struct {
                     .minify_identifiers = bundler.options.minify_identifiers,
                     .transform_only = bundler.options.transform_only,
                     .runtime_transpiler_cache = runtime_transpiler_cache,
+                    .print_dce_annotations = bundler.options.emit_dce_annotations,
                 },
                 enable_source_map,
             ),
@@ -1167,6 +1156,7 @@ pub const Bundler = struct {
                     .transform_only = bundler.options.transform_only,
                     .import_meta_ref = ast.import_meta_ref,
                     .runtime_transpiler_cache = runtime_transpiler_cache,
+                    .print_dce_annotations = bundler.options.emit_dce_annotations,
                 },
                 enable_source_map,
             ),
@@ -1199,6 +1189,8 @@ pub const Bundler = struct {
                         .inline_require_and_import_errors = false,
                         .import_meta_ref = ast.import_meta_ref,
                         .runtime_transpiler_cache = runtime_transpiler_cache,
+                        .target = bundler.options.target,
+                        .print_dce_annotations = bundler.options.emit_dce_annotations,
                     },
                     enable_source_map,
                 ),
@@ -1234,6 +1226,18 @@ pub const Bundler = struct {
         comptime format: js_printer.Format,
         handler: js_printer.SourceMapHandler,
     ) !usize {
+        if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS")) {
+            return bundler.printWithSourceMapMaybe(
+                result.ast,
+                &result.source,
+                Writer,
+                writer,
+                format,
+                false,
+                handler,
+                result.runtime_transpiler_cache,
+            );
+        }
         return bundler.printWithSourceMapMaybe(
             result.ast,
             &result.source,
@@ -1383,7 +1387,6 @@ pub const Bundler = struct {
 
                 var opts = js_parser.Parser.Options.init(jsx, loader);
 
-                opts.legacy_transform_require_to_import = bundler.options.allow_runtime and !bundler.options.target.isBun();
                 opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;
                 opts.features.allow_runtime = bundler.options.allow_runtime;
                 opts.features.set_breakpoint_on_first_line = this_parse.set_breakpoint_on_first_line;
@@ -1392,6 +1395,8 @@ pub const Bundler = struct {
                 opts.features.no_macros = bundler.options.no_macros;
                 opts.features.runtime_transpiler_cache = this_parse.runtime_transpiler_cache;
                 opts.transform_only = bundler.options.transform_only;
+
+                opts.ignore_dce_annotations = bundler.options.ignore_dce_annotations;
 
                 // @bun annotation
                 opts.features.dont_bundle_twice = this_parse.dont_bundle_twice;
@@ -1407,13 +1412,7 @@ pub const Bundler = struct {
                 opts.filepath_hash_for_hmr = file_hash orelse 0;
                 opts.features.auto_import_jsx = bundler.options.auto_import_jsx;
                 opts.warn_about_unbundled_modules = target.isNotBun();
-                opts.features.jsx_optimization_inline = opts.features.allow_runtime and
-                    (bundler.options.jsx_optimization_inline orelse (target.isBun() and jsx.parse and
-                    !jsx.development)) and
-                    (jsx.runtime == .automatic or jsx.runtime == .classic) and
-                    strings.eqlComptime(jsx.import_source.production, "react/jsx-runtime");
 
-                opts.features.jsx_optimization_hoist = bundler.options.jsx_optimization_hoist orelse opts.features.jsx_optimization_inline;
                 opts.features.inject_jest_globals = this_parse.inject_jest_globals;
                 opts.features.minify_syntax = bundler.options.minify_syntax;
                 opts.features.minify_identifiers = bundler.options.minify_identifiers;
@@ -1649,7 +1648,7 @@ pub const Bundler = struct {
                 }
             },
             .css => {},
-            else => Global.panic("Unsupported loader {s} for path: {s}", .{ @tagName(loader), source.path.text }),
+            else => Output.panic("Unsupported loader {s} for path: {s}", .{ @tagName(loader), source.path.text }),
         }
 
         return null;

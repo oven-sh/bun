@@ -168,10 +168,6 @@ pub fn crashHandler(
 ) noreturn {
     @setCold(true);
 
-    // If a segfault happens while panicking, we want it to actually segfault, not trigger
-    // the handler.
-    resetSegfaultHandler();
-
     if (bun.Environment.isDebug)
         bun.Output.disableScopedDebugWriter();
 
@@ -197,7 +193,7 @@ pub fn crashHandler(
                 const writer = std.io.getStdErr().writer();
 
                 // The format of the panic trace is slightly different in debug
-                // builds Mainly, we demangle the backtrace immediately instead
+                // builds. Mainly, we demangle the backtrace immediately instead
                 // of using a trace string.
                 //
                 // To make the release-mode behavior easier to demo, debug mode
@@ -208,6 +204,9 @@ pub fn crashHandler(
                             break :check_flag false;
                         }
                     }
+                    // Act like release build when explicitly enabling reporting
+                    if (isReportingEnabled()) break :check_flag false;
+
                     break :check_flag true;
                 };
 
@@ -343,11 +342,21 @@ pub fn crashHandler(
                     writer.writeAll("\n") catch std.posix.abort();
                 }
             }
+
             // Be aware that this function only lets one thread return from it.
             // This is important so that we do not try to run the following reload logic twice.
             waitForOtherThreadToFinishPanicking();
 
             report(trace_str_buf.slice());
+
+            // At this point, the crash handler has performed it's job. Reset the segfault handler
+            // so that a crash will actually crash. We need this because we want the process to
+            // exit with a signal, and allow tools to be able to gather core dumps.
+            //
+            // This is done so late (in comparison to the Zig Standard Library's panic handler)
+            // because if multiple threads segfault (more often the case on Windows), we don't
+            // want another thread to interrupt the crashing of the first one.
+            resetSegfaultHandler();
 
             if (bun.auto_reload_on_crash and
                 // Do not reload if the panic arose FROM the reload function.
@@ -368,6 +377,8 @@ pub fn crashHandler(
         inline 1, 2 => |t| {
             if (t == 1) {
                 panic_stage = 2;
+
+                resetSegfaultHandler();
                 Output.flush();
             }
             panic_stage = 3;
@@ -381,6 +392,7 @@ pub fn crashHandler(
         },
         3 => {
             // Panicked while printing "Panicked during a panic."
+            panic_stage = 4;
         },
         else => {
             // Panicked or otherwise looped into the panic handler while trying to exit.
@@ -751,6 +763,15 @@ pub fn updatePosixSegfaultHandler(act: ?*std.posix.Sigaction) !void {
 
 var windows_segfault_handle: ?windows.HANDLE = null;
 
+pub fn resetOnPosix() void {
+    var act = std.posix.Sigaction{
+        .handler = .{ .sigaction = handleSegfaultPosix },
+        .mask = std.posix.empty_sigset,
+        .flags = (std.posix.SA.SIGINFO | std.posix.SA.RESTART | std.posix.SA.RESETHAND),
+    };
+    updatePosixSegfaultHandler(&act) catch {};
+}
+
 pub fn init() void {
     if (!enable) return;
     switch (bun.Environment.os) {
@@ -758,18 +779,15 @@ pub fn init() void {
             windows_segfault_handle = windows.kernel32.AddVectoredExceptionHandler(0, handleSegfaultWindows);
         },
         .mac, .linux => {
-            var act = std.posix.Sigaction{
-                .handler = .{ .sigaction = handleSegfaultPosix },
-                .mask = std.posix.empty_sigset,
-                .flags = (std.posix.SA.SIGINFO | std.posix.SA.RESTART | std.posix.SA.RESETHAND),
-            };
-            updatePosixSegfaultHandler(&act) catch {};
+            resetOnPosix();
         },
         else => @compileError("TODO"),
     }
 }
 
 pub fn resetSegfaultHandler() void {
+    if (!enable) return;
+
     if (bun.Environment.os == .windows) {
         if (windows_segfault_handle) |handle| {
             const rc = windows.kernel32.RemoveVectoredExceptionHandler(handle);
@@ -816,6 +834,8 @@ pub fn printMetadata(writer: anytype) !void {
         try writer.writeAll(Output.prettyFmt("<r><d>", true));
     }
 
+    var is_ancient_cpu = false;
+
     try writer.writeAll(metadata_version_line);
     {
         const platform = bun.Analytics.GenerateHeader.GeneratePlatform.forOS();
@@ -831,6 +851,14 @@ pub fn printMetadata(writer: anytype) !void {
             }
         } else if (bun.Environment.isMac) {
             try writer.print("macOS v{s}\n", .{platform.version});
+        } else if (bun.Environment.isWindows) {
+            try writer.print("Windows v{s}\n", .{std.zig.system.windows.detectRuntimeVersion()});
+        }
+
+        if (comptime bun.Environment.isX64) {
+            if (!cpu_features.avx and !cpu_features.avx2 and !cpu_features.avx512) {
+                is_ancient_cpu = true;
+            }
         }
 
         if (!cpu_features.isEmpty()) {
@@ -870,10 +898,12 @@ pub fn printMetadata(writer: anytype) !void {
             &peak_commit,
             &page_faults,
         );
-        try writer.print("Elapsed: {d}ms | User: {d}ms | Sys: {d}ms\nRSS: {:<3.2} | Peak: {:<3.2} | Commit: {:<3.2} | Faults: {d}\n", .{
+        try writer.print("Elapsed: {d}ms | User: {d}ms | Sys: {d}ms\n", .{
             elapsed_msecs,
             user_msecs,
             system_msecs,
+        });
+        try writer.print("RSS: {:<3.2} | Peak: {:<3.2} | Commit: {:<3.2} | Faults: {d}\n", .{
             std.fmt.fmtIntSizeDec(current_rss),
             std.fmt.fmtIntSizeDec(peak_rss),
             std.fmt.fmtIntSizeDec(current_commit),
@@ -885,6 +915,12 @@ pub fn printMetadata(writer: anytype) !void {
         try writer.writeAll(Output.prettyFmt("<r>", true));
     }
     try writer.writeAll("\n");
+
+    if (comptime bun.Environment.isX64) {
+        if (is_ancient_cpu) {
+            try writer.writeAll("CPU lacks AVX support. Please consider upgrading to a newer CPU.\n");
+        }
+    }
 }
 
 fn waitForOtherThreadToFinishPanicking() void {
@@ -893,6 +929,22 @@ fn waitForOtherThreadToFinishPanicking() void {
         // and call abort()
         if (builtin.single_threaded) unreachable;
 
+        // Sleep forever without hammering the CPU
+        var futex = std.atomic.Value(u32).init(0);
+        while (true) std.Thread.Futex.wait(&futex, 0);
+        comptime unreachable;
+    }
+}
+
+/// This is to be called by any thread that is attempting to exit the process.
+/// If another thread is panicking, this will sleep this thread forever, under
+/// the assumption that the crash handler will terminate the program.
+///
+/// There have been situations in the past where a bundler thread starts
+/// panicking, but the main thread ends up marking a test as passing and then
+/// exiting with code zero before the crash handler can finish the crash.
+pub fn sleepForeverIfAnotherThreadIsCrashing() void {
+    if (panicking.load(.acquire) > 0) {
         // Sleep forever without hammering the CPU
         var futex = std.atomic.Value(u32).init(0);
         while (true) std.Thread.Futex.wait(&futex, 0);
@@ -963,7 +1015,11 @@ const StackLine = struct {
                     .address = @intCast(addr - base_address),
 
                     .object = if (!std.mem.eql(u16, name, image_path)) name: {
-                        const basename = name[std.mem.lastIndexOfAny(u16, name, &[_]u16{ '\\', '/' }) orelse 0 ..];
+                        const basename = name[if (std.mem.lastIndexOfAny(u16, name, &[_]u16{ '\\', '/' })) |i|
+                            // skip the last slash
+                            i + 1
+                        else
+                            0..];
                         break :name bun.strings.convertUTF16toUTF8InBuffer(name_bytes, basename) catch null;
                     } else null,
                 };
@@ -1485,7 +1541,7 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
         },
         .linux => {
             // Linux doesnt seem to be able to decode it's own debug info.
-            // TODO(@paperdave): see if zig 0.12 fixes this
+            // TODO(@paperdave): see if zig 0.14 fixes this
         },
         else => {
             stdDumpStackTrace(trace);
@@ -1560,6 +1616,7 @@ pub const js_bindings = struct {
             .{ "panic", jsPanic },
             .{ "rootError", jsRootError },
             .{ "outOfMemory", jsOutOfMemory },
+            .{ "raiseIgnoringPanicHandler", jsRaiseIgnoringPanicHandler },
         }) |tuple| {
             const name = JSC.ZigString.static(tuple[0]);
             obj.put(global, name, JSC.createCallback(global, name, 1, tuple[1]));
@@ -1597,11 +1654,15 @@ pub const js_bindings = struct {
         bun.outOfMemory();
     }
 
+    pub fn jsRaiseIgnoringPanicHandler(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+        bun.Global.raiseIgnoringPanicHandler(.SIGSEGV);
+    }
+
     pub fn jsGetFeaturesAsVLQ(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         const bits = bun.Analytics.packedFeatures();
         var buf = std.BoundedArray(u8, 16){};
         writeU64AsTwoVLQs(buf.writer(), @bitCast(bits)) catch {
-            // there is definetly enough space in the bounded array
+            // there is definitely enough space in the bounded array
             unreachable;
         };
         return bun.String.createLatin1(buf.slice()).toJS(global);
@@ -1617,7 +1678,11 @@ pub const js_bindings = struct {
         obj.put(global, JSC.ZigString.static("features"), array);
         obj.put(global, JSC.ZigString.static("version"), bun.String.init(Global.package_json_version).toJS(global));
         obj.put(global, JSC.ZigString.static("is_canary"), JSC.JSValue.jsBoolean(bun.Environment.is_canary));
+
+        // This is the source of truth for the git sha.
+        // Not the github ref or the git tag.
         obj.put(global, JSC.ZigString.static("revision"), bun.String.init(bun.Environment.git_sha).toJS(global));
+
         obj.put(global, JSC.ZigString.static("generated_at"), JSValue.jsNumberFromInt64(@max(std.time.milliTimestamp(), 0)));
         return obj;
     }

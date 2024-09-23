@@ -1,4 +1,4 @@
-import { it, expect, describe } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { tmpdirSync } from "harness";
 import { join } from "path";
 import util from "util";
@@ -540,4 +540,26 @@ describe("console.logging function displays async and generator names", async ()
       expect(Bun.inspect(cases[i])).toBe(expected_logs[i]);
     });
   }
+});
+
+it("console.log on a Blob shows name", () => {
+  const blob = new Blob(["foo"], { type: "text/plain" });
+  expect(Bun.inspect(blob)).toBe('Blob (3 bytes) {\n  type: "text/plain;charset=utf-8"\n}');
+  blob.name = "bar";
+  expect(Bun.inspect(blob)).toBe('Blob (3 bytes) {\n  name: "bar",\n  type: "text/plain;charset=utf-8"\n}');
+  blob.name = "foobar";
+  expect(Bun.inspect(blob)).toBe('Blob (3 bytes) {\n  name: "foobar",\n  type: "text/plain;charset=utf-8"\n}');
+
+  const file = new File(["foo"], "bar.txt", { type: "text/plain" });
+  expect(Bun.inspect(file)).toBe(
+    `File (3 bytes) {\n  name: "bar.txt",\n  type: "text/plain;charset=utf-8",\n  lastModified: ${file.lastModified}\n}`,
+  );
+  file.name = "foobar";
+  expect(Bun.inspect(file)).toBe(
+    `File (3 bytes) {\n  name: "foobar",\n  type: "text/plain;charset=utf-8",\n  lastModified: ${file.lastModified}\n}`,
+  );
+  file.name = "";
+  expect(Bun.inspect(file)).toBe(
+    `File (3 bytes) {\n  name: "",\n  type: "text/plain;charset=utf-8",\n  lastModified: ${file.lastModified}\n}`,
+  );
 });

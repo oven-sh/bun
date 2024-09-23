@@ -387,17 +387,17 @@ pub fn resetTerminal() void {
     }
 
     if (enable_ansi_colors_stderr) {
-        _ = source.error_stream.write("\x1b[H\x1b[2J").unwrap() catch 0;
+        _ = source.error_stream.write("\x1B[2J\x1B[3J\x1B[H").unwrap() catch 0;
     } else {
-        _ = source.stream.write("\x1b[H\x1b[2J").unwrap() catch 0;
+        _ = source.stream.write("\x1B[2J\x1B[3J\x1B[H").unwrap() catch 0;
     }
 }
 
 pub fn resetTerminalAll() void {
     if (enable_ansi_colors_stderr)
-        _ = source.error_stream.write("\x1b[H\x1b[2J").unwrap() catch 0;
+        _ = source.error_stream.write("\x1B[2J\x1B[3J\x1B[H").unwrap() catch 0;
     if (enable_ansi_colors_stdout)
-        _ = source.stream.write("\x1b[H\x1b[2J").unwrap() catch 0;
+        _ = source.stream.write("\x1B[2J\x1B[3J\x1B[H").unwrap() catch 0;
 }
 
 /// Write buffered stdout & stderr to the terminal.
@@ -700,7 +700,7 @@ pub const color_map = ComptimeStringMap(string, .{
     &.{ "yellow", ED ++ "33m" },
 });
 const RESET: string = "\x1b[0m";
-pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
+pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) [:0]const u8 {
     if (comptime bun.fast_debug_build_mode)
         return fmt;
 
@@ -778,8 +778,7 @@ pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
         }
     };
 
-    const fmt_data = comptime new_fmt[0..new_fmt_i].*;
-    return &fmt_data;
+    return comptime (new_fmt[0..new_fmt_i].* ++ .{0})[0..new_fmt_i :0];
 }
 
 pub noinline fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime printer: anytype, comptime l: Destination) void {
@@ -1013,6 +1012,11 @@ fn scopedWriter() File.QuietWriter {
 /// Print a red error message with "error: " as the prefix. For custom prefixes see `err()`
 pub inline fn errGeneric(comptime fmt: []const u8, args: anytype) void {
     prettyErrorln("<r><red>error<r><d>:<r> " ++ fmt, args);
+}
+
+/// Print a red error message with "error: " as the prefix and a formatted message.
+pub inline fn errFmt(formatter: anytype) void {
+    return errGeneric("{}", .{formatter});
 }
 
 /// This struct is a workaround a Windows terminal bug.

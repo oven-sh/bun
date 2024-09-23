@@ -34,6 +34,7 @@ const kStateSymbol = Symbol("state symbol");
 const async_id_symbol = Symbol("async_id_symbol");
 
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
+const { ERR_SOCKET_BAD_TYPE } = require("internal/errors");
 
 const {
   FunctionPrototypeBind,
@@ -139,7 +140,7 @@ function validateString(value, name) {
 }
 hideFromStack(validateString);
 
-function validateNumber(value, name, min = undefined, max) {
+function validateNumber(value, name, min?, max?) {
   if (typeof value !== "number") throw new ERR_INVALID_ARG_TYPE(name, "number", value);
 
   if (

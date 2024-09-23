@@ -1,8 +1,8 @@
-import { createServer, Server, AddressInfo, Socket } from "net";
 import { realpathSync } from "fs";
+import { AddressInfo, createServer, Server, Socket } from "net";
+import { createTest } from "node-harness";
 import { tmpdir } from "os";
 import { join } from "path";
-import { createTest } from "node-harness";
 
 const { describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
 
@@ -388,15 +388,12 @@ describe("net.createServer events", () => {
     );
   });
 
-  it("should call close", done => {
-    let closed = false;
+  it("should call close", async () => {
+    const { promise, reject, resolve } = Promise.withResolvers();
     const server: Server = createServer();
-    server.listen().on("close", () => {
-      closed = true;
-    });
+    server.listen().on("close", resolve).on("error", reject);
     server.close();
-    expect(closed).toBe(true);
-    done();
+    await promise;
   });
 
   it("should call connection and drop", done => {

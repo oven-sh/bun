@@ -315,7 +315,7 @@ pub const struct_nameinfo = extern struct {
             const node_slice = this.node[0..node_len];
             array.putIndex(globalThis, 0, JSC.ZigString.fromUTF8(node_slice).toJS(globalThis));
         } else {
-            array.putIndex(globalThis, 0, JSC.JSValue.jsUndefined());
+            array.putIndex(globalThis, 0, .undefined);
         }
 
         if (this.service != null) {
@@ -323,7 +323,7 @@ pub const struct_nameinfo = extern struct {
             const service_slice = this.service[0..service_len];
             array.putIndex(globalThis, 1, JSC.ZigString.fromUTF8(service_slice).toJS(globalThis));
         } else {
-            array.putIndex(globalThis, 1, JSC.JSValue.jsUndefined());
+            array.putIndex(globalThis, 1, .undefined);
         }
 
         return array;
@@ -854,7 +854,7 @@ pub const struct_ares_srv_reply = extern struct {
         //   name: 'service.example.com'
         // }
 
-        obj.put(globalThis, JSC.ZigString.static("priority"), JSC.JSValue.jsNumber(this.weight));
+        obj.put(globalThis, JSC.ZigString.static("priority"), JSC.JSValue.jsNumber(this.priority));
         obj.put(globalThis, JSC.ZigString.static("weight"), JSC.JSValue.jsNumber(this.weight));
         obj.put(globalThis, JSC.ZigString.static("port"), JSC.JSValue.jsNumber(this.port));
 
@@ -1579,7 +1579,7 @@ pub export fn Bun__canonicalizeIP(
         const addr_slice = addr.toSlice(bun.default_allocator);
         const addr_str = addr_slice.slice();
         if (addr_str.len >= INET6_ADDRSTRLEN) {
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
 
         var ip_std_text: [INET6_ADDRSTRLEN + 1]u8 = undefined;
@@ -1593,18 +1593,19 @@ pub export fn Bun__canonicalizeIP(
         if (ares_inet_pton(af, &ip_addr, &ip_std_text) != 1) {
             af = AF.INET6;
             if (ares_inet_pton(af, &ip_addr, &ip_std_text) != 1) {
-                return JSC.JSValue.jsUndefined();
+                return .undefined;
             }
         }
         // ip_addr will contain the null-terminated string of the cannonicalized IP
         if (ares_inet_ntop(af, &ip_std_text, &ip_addr, @sizeOf(@TypeOf(ip_addr))) == null) {
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
         // use the null-terminated size to return the string
         const size = bun.len(bun.cast([*:0]u8, &ip_addr));
         return JSC.ZigString.init(ip_addr[0..size]).toJS(globalThis);
     } else {
-        globalThis.throwInvalidArguments("address must be a string", .{});
+        if (!globalThis.hasException())
+            globalThis.throwInvalidArguments("address must be a string", .{});
         return .zero;
     }
 }

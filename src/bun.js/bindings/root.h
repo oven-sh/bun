@@ -8,6 +8,12 @@
 #error "root.h must be included before any other WebCore or JavaScriptCore headers"
 #endif
 
+#if defined(WIN32) || defined(_WIN32)
+#define BUN_EXPORT __declspec(dllexport)
+#else
+#define BUN_EXPORT JS_EXPORT
+#endif
+
 /*
  * Copyright (C) 2006-2021 Apple Inc. All rights reserved.
  * Copyright (C) 2006 Samuel Weinig "sam.weinig@gmail.com"
@@ -69,6 +75,7 @@
 
 #include <wtf/PlatformCallingConventions.h>
 #include <JavaScriptCore/JSCJSValue.h>
+#include <wtf/text/MakeString.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <wtf/IsoMalloc.h>
 #include <wtf/IsoMallocInlines.h>

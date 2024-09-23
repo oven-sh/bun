@@ -30,6 +30,8 @@
  */
 
 #include "headers.h"
+
+#include "JavaScriptCore/Synchronousness.h"
 #include "JavaScriptCore/JSCast.h"
 #include <JavaScriptCore/JSMapInlines.h>
 #include "root.h"
@@ -72,6 +74,7 @@
 #include "PathInlines.h"
 #include "wtf/NakedPtr.h"
 #include "wtf/URL.h"
+#include "wtf/text/StringImpl.h"
 
 extern "C" bool Bun__isBunMain(JSC::JSGlobalObject* global, const BunString*);
 
@@ -152,7 +155,6 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     JSValue fnValue = JSC::evaluate(globalObject, code, jsUndefined(), exception);
 
     if (UNLIKELY(exception.get() || fnValue.isEmpty())) {
-
         return false;
     }
 
@@ -171,6 +173,13 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         args.append(Zig::ImportMetaObject::create(globalObject, filename));
     }
 
+    // Clear the source code as early as possible.
+    code = {};
+
+    // Call the CommonJS module wrapper function.
+    //
+    //    fn(exports, require, module, __filename, __dirname) { /* code */ }(exports, require, module, __filename, __dirname)
+    //
     JSC::call(globalObject, fn, callData, moduleObject, args, exception);
 
     return exception.get() == nullptr;
@@ -290,7 +299,7 @@ RequireFunctionPrototype* RequireFunctionPrototype::create(
     RequireFunctionPrototype* prototype = new (NotNull, JSC::allocateCell<RequireFunctionPrototype>(vm)) RequireFunctionPrototype(vm, structure);
     prototype->finishCreation(vm);
 
-    prototype->putDirect(vm, builtinNames(vm).resolvePublicName(), jsCast<Zig::GlobalObject*>(globalObject)->requireResolveFunctionUnbound(), 0);
+    prototype->putDirect(vm, vm.propertyNames->resolve, jsCast<Zig::GlobalObject*>(globalObject)->requireResolveFunctionUnbound(), 0);
 
     return prototype;
 }
@@ -299,20 +308,22 @@ void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
+    auto* globalObject = this->globalObject();
 
     reifyStaticProperties(vm, info(), RequireFunctionPrototypeValues, *this);
     JSC::JSFunction* requireDotMainFunction = JSFunction::create(
         vm,
+        globalObject,
         moduleMainCodeGenerator(vm),
-        globalObject()->globalScope());
+        globalObject->globalScope());
 
     this->putDirectAccessor(
-        globalObject(),
+        globalObject,
         JSC::Identifier::fromString(vm, "main"_s),
-        JSC::GetterSetter::create(vm, globalObject(), requireDotMainFunction, requireDotMainFunction),
+        JSC::GetterSetter::create(vm, globalObject, requireDotMainFunction, requireDotMainFunction),
         PropertyAttribute::Accessor | PropertyAttribute::ReadOnly | 0);
 
-    auto extensions = constructEmptyObject(globalObject());
+    auto extensions = constructEmptyObject(globalObject);
     extensions->putDirect(vm, JSC::Identifier::fromString(vm, ".js"_s), jsBoolean(true), 0);
     extensions->putDirect(vm, JSC::Identifier::fromString(vm, ".json"_s), jsBoolean(true), 0);
     extensions->putDirect(vm, JSC::Identifier::fromString(vm, ".node"_s), jsBoolean(true), 0);
@@ -352,9 +363,15 @@ JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC:
     if (UNLIKELY(!thisObject)) {
         return JSValue::encode(jsUndefined());
     }
-    auto v = thisObject->m_parent.get();
-    if (v)
-        return JSValue::encode(thisObject->m_parent.get());
+
+    if (thisObject->m_overridenParent) {
+        return JSValue::encode(thisObject->m_overridenParent.get());
+    }
+
+    if (thisObject->m_parent) {
+        auto* parent = thisObject->m_parent.get();
+        return JSValue::encode(parent);
+    }
 
     // initialize parent by checking if it is the main module. we do this lazily because most people
     // dont need `module.parent` and creating commonjs module records is done a ton.
@@ -363,12 +380,11 @@ JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC:
         auto id = idValue->value(globalObject);
         auto idStr = Bun::toString(id);
         if (Bun__isBunMain(globalObject, &idStr)) {
-            thisObject->m_parent.set(globalObject->vm(), thisObject, jsNull());
+            thisObject->m_overridenParent.set(globalObject->vm(), thisObject, jsNull());
             return JSValue::encode(jsNull());
         }
     }
 
-    thisObject->m_parent.set(globalObject->vm(), thisObject, jsUndefined());
     return JSValue::encode(jsUndefined());
 }
 
@@ -454,7 +470,15 @@ JSC_DEFINE_CUSTOM_SETTER(setterParent,
     if (!thisObject)
         return false;
 
-    thisObject->m_parent.set(globalObject->vm(), thisObject, JSValue::decode(value));
+    JSValue decodedValue = JSValue::decode(value);
+
+    if (auto* parent = jsDynamicCast<JSCommonJSModule*>(decodedValue)) {
+        thisObject->m_parent = parent;
+        thisObject->m_overridenParent.clear();
+    } else {
+        thisObject->m_parent = {};
+        thisObject->m_overridenParent.set(globalObject->vm(), thisObject, JSValue::decode(value));
+    }
 
     return true;
 }
@@ -640,7 +664,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateCommonJSModule, (JSGlobalObject * globa
 {
     RELEASE_ASSERT(callframe->argumentCount() == 4);
 
-    auto id = callframe->uncheckedArgument(0).toWTFString(globalObject);
+    auto id = callframe->uncheckedArgument(0).toString(globalObject);
     JSValue object = callframe->uncheckedArgument(1);
     JSValue hasEvaluated = callframe->uncheckedArgument(2);
     ASSERT(hasEvaluated.isBoolean());
@@ -651,15 +675,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateCommonJSModule, (JSGlobalObject * globa
 
 JSCommonJSModule* JSCommonJSModule::create(
     Zig::GlobalObject* globalObject,
-    const WTF::String& key,
+    JSC::JSString* requireMapKey,
     JSValue exportsObject,
     bool hasEvaluated,
     JSValue parent)
 {
     auto& vm = globalObject->vm();
-    JSString* requireMapKey = JSC::jsStringWithCache(vm, key);
-
-    auto index = key.reverseFind(PLATFORM_SEP, key.length());
+    auto key = requireMapKey->value(globalObject);
+    auto index = key->reverseFind(PLATFORM_SEP, key->length());
 
     JSString* dirname;
     if (index != WTF::notFound) {
@@ -679,9 +702,29 @@ JSCommonJSModule* JSCommonJSModule::create(
         exportsObject,
         0);
     out->hasEvaluated = hasEvaluated;
-    out->m_parent.set(vm, out, parent);
+    if (parent && parent.isCell()) {
+        if (auto* parentModule = jsDynamicCast<JSCommonJSModule*>(parent)) {
+            out->m_parent = JSC::Weak<JSCommonJSModule>(parentModule);
+        } else {
+            out->m_overridenParent.set(vm, out, parent);
+        }
+    } else if (parent) {
+        out->m_overridenParent.set(vm, out, parent);
+    }
 
     return out;
+}
+
+JSCommonJSModule* JSCommonJSModule::create(
+    Zig::GlobalObject* globalObject,
+    const WTF::String& key,
+    JSValue exportsObject,
+    bool hasEvaluated,
+    JSValue parent)
+{
+    auto& vm = globalObject->vm();
+    auto* requireMapKey = JSC::jsStringWithCache(vm, key);
+    return JSCommonJSModule::create(globalObject, requireMapKey, exportsObject, hasEvaluated, parent);
 }
 
 void JSCommonJSModule::destroy(JSC::JSCell* cell)
@@ -771,12 +814,13 @@ void populateESMExports(
             if (canPerformFastEnumeration(structure)) {
                 exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                     auto key = entry.key();
-                    if (key->isSymbol() || entry.attributes() & PropertyAttribute::DontEnum || key == esModuleMarker)
+                    if (key->isSymbol() || key == esModuleMarker)
                         return true;
 
                     needsToAssignDefault = needsToAssignDefault && key != vm.propertyNames->defaultKeyword;
 
                     JSValue value = exports->getDirect(entry.offset());
+
                     exportNames.append(Identifier::fromUid(vm, key));
                     exportValues.append(value);
                     return true;
@@ -801,6 +845,14 @@ void populateESMExports(
                     if (!exports->getPropertySlot(globalObject, property, slot))
                         continue;
 
+                    // Allow DontEnum properties which are not getter/setters
+                    // https://github.com/oven-sh/bun/issues/4432
+                    if (slot.attributes() & PropertyAttribute::DontEnum) {
+                        if (!(slot.isValue() || slot.isCustom())) {
+                            continue;
+                        }
+                    }
+
                     exportNames.append(property);
 
                     JSValue getterResult = slot.getValue(globalObject, property);
@@ -821,7 +873,7 @@ void populateESMExports(
         } else if (canPerformFastEnumeration(structure)) {
             exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                 auto key = entry.key();
-                if (key->isSymbol() || entry.attributes() & PropertyAttribute::DontEnum || key == vm.propertyNames->defaultKeyword)
+                if (key->isSymbol() || key == vm.propertyNames->defaultKeyword)
                     return true;
 
                 JSValue value = exports->getDirect(entry.offset());
@@ -832,7 +884,7 @@ void populateESMExports(
             });
         } else {
             JSC::PropertyNameArray properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-            exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Exclude);
+            exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Include);
             if (catchScope.exception()) {
                 catchScope.clearExceptionExceptTermination();
                 return;
@@ -849,6 +901,14 @@ void populateESMExports(
                 JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
                 if (!exports->getPropertySlot(globalObject, property, slot))
                     continue;
+
+                if (slot.attributes() & PropertyAttribute::DontEnum) {
+                    // Allow DontEnum properties which are not getter/setters
+                    // https://github.com/oven-sh/bun/issues/4432
+                    if (!(slot.isValue() || slot.isCustom())) {
+                        continue;
+                    }
+                }
 
                 exportNames.append(property);
 
@@ -908,6 +968,7 @@ void JSCommonJSModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_filename);
     visitor.append(thisObject->m_dirname);
     visitor.append(thisObject->m_paths);
+    visitor.append(thisObject->m_overridenParent);
 }
 
 DEFINE_VISIT_CHILDREN(JSCommonJSModule);
@@ -1014,7 +1075,6 @@ bool JSCommonJSModule::evaluate(
     this->sourceCode = JSC::SourceCode(WTFMove(sourceProvider));
 
     WTF::NakedPtr<JSC::Exception> exception;
-
     evaluateCommonJSModuleOnce(vm, globalObject, this, this->m_dirname.get(), this->m_filename.get(), exception);
 
     if (exception.get()) {

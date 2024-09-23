@@ -1,5 +1,5 @@
-import { itBundled } from "./expectBundled";
 import { describe, expect } from "bun:test";
+import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   itBundled("minify/TemplateStringFolding", {
@@ -395,6 +395,76 @@ describe("bundler", () => {
     backend: "cli",
     run: {
       stdout: "PASS",
+    },
+  });
+  itBundled("minify/RequireInDeadBranch", {
+    files: {
+      "/entry.ts": /* js */ `
+        if (0 !== 0) {
+          require;
+        }
+      `,
+    },
+    outfile: "/out.js",
+    minifySyntax: true,
+    onAfterBundle(api) {
+      // This should not be marked as a CommonJS module
+      api.expectFile("/out.js").not.toContain("require");
+      api.expectFile("/out.js").not.toContain("module");
+    },
+  });
+  itBundled("minify/TypeOfRequire", {
+    files: {
+      "/entry.ts": /* js */ `
+        capture(typeof require); 
+      `,
+    },
+    outfile: "/out.js",
+    capture: ['"function"'],
+    minifySyntax: true,
+    onAfterBundle(api) {
+      // This should not be marked as a CommonJS module
+      api.expectFile("/out.js").not.toContain("require");
+      api.expectFile("/out.js").not.toContain("module");
+    },
+  });
+  itBundled("minify/RequireMainToImportMetaMain", {
+    files: {
+      "/entry.ts": /* js */ `
+        capture(require.main === module); 
+        capture(require.main !== module); 
+        capture(require.main == module); 
+        capture(require.main != module); 
+        capture(!(require.main === module)); 
+        capture(!(require.main !== module)); 
+        capture(!(require.main == module)); 
+        capture(!(require.main != module)); 
+        capture(!!(require.main === module)); 
+        capture(!!(require.main !== module)); 
+        capture(!!(require.main == module)); 
+        capture(!!(require.main != module)); 
+      `,
+    },
+    outfile: "/out.js",
+    capture: [
+      "import.meta.main",
+      "!import.meta.main",
+      "import.meta.main",
+      "!import.meta.main",
+      "!import.meta.main",
+      "import.meta.main",
+      "!import.meta.main",
+      "import.meta.main",
+      "import.meta.main",
+      "!import.meta.main",
+      "import.meta.main",
+      "!import.meta.main",
+    ],
+    minifySyntax: true,
+    onAfterBundle(api) {
+      // This should not be marked as a CommonJS module
+      api.expectFile("/out.js").not.toContain("require");
+      api.expectFile("/out.js").not.toContain("module");
     },
   });
 });

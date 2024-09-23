@@ -225,7 +225,7 @@ static inline JSValue jsAbortSignal_reasonGetter(JSGlobalObject& lexicalGlobalOb
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = thisObject.wrapped();
-    RELEASE_AND_RETURN(throwScope, (toJS<IDLAny>(lexicalGlobalObject, throwScope, impl.reason())));
+    RELEASE_AND_RETURN(throwScope, (toJS<IDLAny>(lexicalGlobalObject, throwScope, impl.jsReason(lexicalGlobalObject))));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsAbortSignal_reason, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -361,7 +361,7 @@ void JSAbortSignal::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 DEFINE_VISIT_CHILDREN(JSAbortSignal);
 
 template<typename Visitor>
-void JSAbortSignal::visitOutputConstraints(JSCell* cell, Visitor& visitor)
+void JSAbortSignal::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
 {
     auto* thisObject = jsCast<JSAbortSignal*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
@@ -369,8 +369,8 @@ void JSAbortSignal::visitOutputConstraints(JSCell* cell, Visitor& visitor)
     thisObject->visitAdditionalChildren(visitor);
 }
 
-template void JSAbortSignal::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
-template void JSAbortSignal::visitOutputConstraints(JSCell*, SlotVisitor&);
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSAbortSignal);
+
 void JSAbortSignal::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
     auto* thisObject = jsCast<JSAbortSignal*>(cell);

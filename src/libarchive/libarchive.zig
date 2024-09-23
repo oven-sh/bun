@@ -1,6 +1,6 @@
 // @link "../deps/libarchive.a"
 
-const lib = @import("./libarchive-bindings.zig");
+pub const lib = @import("./libarchive-bindings.zig");
 const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
@@ -740,7 +740,7 @@ pub const Archive = struct {
                                         },
                                         else => {
                                             if (options.log) {
-                                                const archive_error = std.mem.span(lib.archive_error_string(archive));
+                                                const archive_error = bun.sliceTo(lib.Archive.errorString(@ptrCast(archive)), 0);
                                                 Output.err("libarchive error", "extracting {}: {s}", .{
                                                     bun.fmt.fmtOSPath(path_slice, .{}),
                                                     archive_error,

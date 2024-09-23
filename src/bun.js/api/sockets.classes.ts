@@ -126,11 +126,11 @@ function generate(ssl) {
       },
 
       ref: {
-        fn: "ref",
+        fn: "jsRef",
         length: 0,
       },
       unref: {
-        fn: "unref",
+        fn: "jsUnref",
         length: 0,
       },
 

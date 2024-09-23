@@ -26,7 +26,7 @@
 #include <string_view>
 
 // bun-specific
-#include "simdutf.h"
+#include "wtf/SIMDUTF.h"
 
 namespace uWS {
 

@@ -5,7 +5,7 @@ const UUID = bun.UUID;
 const assert = bun.assert;
 const ObjectURLRegistry = @This();
 
-lock: bun.Lock = bun.Lock.init(),
+lock: bun.Lock = .{},
 map: std.AutoHashMap(UUID, *RegistryEntry) = std.AutoHashMap(UUID, *RegistryEntry).init(bun.default_allocator),
 
 pub const RegistryEntry = struct {

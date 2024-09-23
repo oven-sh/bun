@@ -1,8 +1,8 @@
-import { expect, it, describe } from "bun:test";
-import { Database, constants, SQLiteError } from "bun:sqlite";
-import { existsSync, fstat, readdirSync, realpathSync, rmSync, writeFileSync } from "fs";
-import { $, spawnSync } from "bun";
-import { BREAKING_CHANGES_BUN_1_2, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDirWithFiles } from "harness";
+import { spawnSync } from "bun";
+import { constants, Database, SQLiteError } from "bun:sqlite";
+import { describe, expect, it } from "bun:test";
+import { existsSync, readdirSync, realpathSync, writeFileSync } from "fs";
+import { bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 
@@ -1260,4 +1260,29 @@ it("reports changes in Statement#run", () => {
   expect(db.run(sql).changes).toBe(2);
   expect(db.prepare(sql).run().changes).toBe(2);
   expect(db.query(sql).run().changes).toBe(2);
+});
+
+it("#13082", async () => {
+  async function run() {
+    const stmt = (() => {
+      const db = new Database(":memory:");
+      let stmt = db.prepare("select 1");
+      db.close();
+      return stmt;
+    })();
+    Bun.gc(true);
+    await Bun.sleep(100);
+    Bun.gc(true);
+    stmt.all();
+    stmt.get();
+    stmt.run();
+  }
+
+  const count = 100;
+  const runs = new Array(count);
+  for (let i = 0; i < count; i++) {
+    runs[i] = run();
+  }
+
+  await Promise.allSettled(runs);
 });

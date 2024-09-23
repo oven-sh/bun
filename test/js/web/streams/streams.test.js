@@ -1,16 +1,16 @@
 import {
+  ArrayBufferSink,
   file,
+  readableStreamToArray,
   readableStreamToArrayBuffer,
   readableStreamToBytes,
-  readableStreamToArray,
   readableStreamToText,
-  ArrayBufferSink,
 } from "bun";
-import { expect, it, describe, test } from "bun:test";
-import { mkfifo } from "mkfifo";
-import { realpathSync, unlinkSync, writeFileSync, createReadStream } from "node:fs";
-import { join } from "node:path";
+import { describe, expect, it, test } from "bun:test";
 import { tmpdirSync } from "harness";
+import { mkfifo } from "mkfifo";
+import { createReadStream, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 const isWindows = process.platform === "win32";
 

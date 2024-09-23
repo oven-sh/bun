@@ -1,11 +1,11 @@
-import tls, { rootCertificates, connect, createServer, Server, TLSSocket } from "tls";
-import type { PeerCertificate } from "tls";
-import { realpathSync, readFileSync } from "fs";
+import { readFileSync, realpathSync } from "fs";
+import { tls as cert1 } from "harness";
+import { AddressInfo } from "net";
+import { createTest } from "node-harness";
 import { tmpdir } from "os";
 import { join } from "path";
-import { createTest } from "node-harness";
-import { AddressInfo } from "net";
-import { tls as cert1, expiredTls as cert2 } from "harness";
+import type { PeerCertificate } from "tls";
+import tls, { connect, createServer, rootCertificates, Server, TLSSocket } from "tls";
 
 const { describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
 
@@ -464,15 +464,12 @@ describe("tls.createServer events", () => {
     );
   });
 
-  it("should call close", done => {
-    let closed = false;
+  it("should call close", async () => {
+    const { promise, reject, resolve } = Promise.withResolvers();
     const server: Server = createServer(COMMON_CERT);
-    server.listen().on("close", () => {
-      closed = true;
-    });
+    server.listen().on("close", resolve).on("error", reject);
     server.close();
-    expect(closed).toBe(true);
-    done();
+    await promise;
   });
 
   it("should call connection and drop", done => {
@@ -628,6 +625,9 @@ describe("tls.createServer events", () => {
           hostname: address.address,
           port: address.port,
           socket: {
+            error(socket, err) {
+              closeAndFail();
+            },
             drain(socket) {
               socket.write("Hello");
             },

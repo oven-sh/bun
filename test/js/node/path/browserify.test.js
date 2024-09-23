@@ -1,6 +1,6 @@
-import { describe, it, expect, test } from "bun:test";
-import path from "node:path";
 import assert from "assert";
+import { describe, expect, it, test } from "bun:test";
+import path from "node:path";
 
 const { file } = import.meta;
 const isWindows = process.platform === "win32";

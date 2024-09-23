@@ -1,4 +1,5 @@
 
+
 #if defined(WIN32)
 
 #include <cstdint>
@@ -266,94 +267,22 @@ extern "C" int __wrap_mknodat(int dirfd, const char* path, __mode_t mode, __dev_
 // macOS
 #if defined(__APPLE__)
 
+#include <version>
 #include <dlfcn.h>
 #include <cstdint>
+#include <cstdarg>
+#include <cstdio>
+#include "headers.h"
 
-extern "C" int pthread_self_is_exiting_np()
+void std::__libcpp_verbose_abort(char const* format, ...)
 {
-    static void* pthread_self_is_exiting_np_ptr = nullptr;
-    static bool pthread_self_is_exiting_np_ptr_initialized = false;
-    if (UNLIKELY(!pthread_self_is_exiting_np_ptr_initialized)) {
-        pthread_self_is_exiting_np_ptr_initialized = true;
-        pthread_self_is_exiting_np_ptr = dlsym(RTLD_DEFAULT, "pthread_self_is_exiting_np");
-    }
+    va_list list;
+    va_start(list, format);
+    char buffer[1024];
+    size_t len = vsnprintf(buffer, sizeof(buffer), format, list);
+    va_end(list);
 
-    if (UNLIKELY(pthread_self_is_exiting_np_ptr == nullptr))
-        return 0;
-
-    return ((int (*)())pthread_self_is_exiting_np_ptr)();
-}
-
-extern "C" int posix_spawn_file_actions_addchdir_np(
-    void* file_actions,
-    const char* path)
-{
-    static void* posix_spawn_file_actions_addchdir_np_ptr = nullptr;
-    static bool posix_spawn_file_actions_addchdir_np_ptr_initialized = false;
-    if (UNLIKELY(!posix_spawn_file_actions_addchdir_np_ptr_initialized)) {
-        posix_spawn_file_actions_addchdir_np_ptr_initialized = true;
-        posix_spawn_file_actions_addchdir_np_ptr = dlsym(RTLD_DEFAULT, "posix_spawn_file_actions_addchdir_np");
-    }
-
-    if (UNLIKELY(posix_spawn_file_actions_addchdir_np_ptr == nullptr))
-        return 0;
-
-    return ((int (*)(void*, const char*))posix_spawn_file_actions_addchdir_np_ptr)(file_actions, path);
-}
-
-extern "C" int posix_spawn_file_actions_addinherit_np(void* ptr,
-    int status)
-{
-    static void* posix_spawn_file_actions_addinherit_np_ptr = nullptr;
-    static bool posix_spawn_file_actions_addinherit_np_ptr_initialized = false;
-    if (UNLIKELY(!posix_spawn_file_actions_addinherit_np_ptr_initialized)) {
-        posix_spawn_file_actions_addinherit_np_ptr_initialized = true;
-        posix_spawn_file_actions_addinherit_np_ptr = dlsym(RTLD_DEFAULT, "posix_spawn_file_actions_addinherit_np");
-    }
-
-    if (UNLIKELY(posix_spawn_file_actions_addinherit_np_ptr == nullptr))
-        return 0;
-
-    return ((int (*)(void*, int))posix_spawn_file_actions_addinherit_np_ptr)(ptr, status);
-}
-
-extern "C" int posix_spawn_file_actions_addfchdir_np(void* ptr,
-    int fd)
-{
-    static void* posix_spawn_file_actions_addfchdir_np_ptr = nullptr;
-    static bool posix_spawn_file_actions_addfchdir_np_ptr_initialized = false;
-    if (UNLIKELY(!posix_spawn_file_actions_addfchdir_np_ptr_initialized)) {
-        posix_spawn_file_actions_addfchdir_np_ptr_initialized = true;
-        posix_spawn_file_actions_addfchdir_np_ptr = dlsym(RTLD_DEFAULT, "posix_spawn_file_actions_addfchdir_np");
-    }
-
-    if (UNLIKELY(posix_spawn_file_actions_addfchdir_np_ptr == nullptr))
-        return 0;
-
-    return ((int (*)(void*, int))posix_spawn_file_actions_addfchdir_np_ptr)(ptr, fd);
-}
-
-extern "C" int __ulock_wait(uint32_t operation, void* addr, uint64_t value,
-    uint32_t timeout_microseconds); /* timeout is specified in microseconds */
-
-// https://github.com/oven-sh/bun/pull/2426#issuecomment-1532343394
-extern "C" int __ulock_wait2(uint32_t operation, void* addr, uint64_t value,
-    uint64_t timeout_ns, uint64_t value2)
-{
-    static void* __ulock_wait2_ptr = nullptr;
-    static bool __ulock_wait2_ptr_initialized = false;
-    if (UNLIKELY(!__ulock_wait2_ptr_initialized)) {
-        __ulock_wait2_ptr_initialized = true;
-        __ulock_wait2_ptr = dlsym(RTLD_DEFAULT, "__ulock_wait2");
-    }
-
-    if (UNLIKELY(__ulock_wait2_ptr == nullptr)) {
-        uint64_t timeout = timeout_ns / 1000;
-        uint32_t timeout_us = static_cast<uint32_t>(timeout > UINT32_MAX ? UINT32_MAX : timeout);
-        return __ulock_wait(operation, addr, value, timeout_us);
-    }
-
-    return ((int (*)(uint32_t, void*, uint64_t, uint64_t, uint64_t))__ulock_wait2_ptr)(operation, addr, value, timeout_ns, value2);
+    Bun__panic(buffer, len);
 }
 
 #endif

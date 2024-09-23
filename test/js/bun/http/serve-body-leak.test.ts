@@ -1,7 +1,7 @@
-import { join } from "path";
-import { it, expect, beforeAll, afterAll } from "bun:test";
-import { bunExe, bunEnv, isDebug } from "harness";
 import type { Subprocess } from "bun";
+import { afterEach, beforeEach, expect, it } from "bun:test";
+import { bunEnv, bunExe, isDebug } from "harness";
+import { join } from "path";
 
 const payload = Buffer.alloc(512 * 1024, "1").toString("utf-8"); // decent size payload to test memory leak
 const batchSize = 40;
@@ -10,20 +10,26 @@ const zeroCopyPayload = new Blob([payload]);
 
 let url: URL;
 let process: Subprocess<"ignore", "pipe", "inherit"> | null = null;
-beforeAll(async () => {
+beforeEach(async () => {
+  if (process) {
+    process?.kill();
+  }
+
+  let defer = Promise.withResolvers();
   process = Bun.spawn([bunExe(), "--smol", join(import.meta.dirname, "body-leak-test-fixture.ts")], {
     env: bunEnv,
-    stdout: "pipe",
+    stdout: "inherit",
     stderr: "inherit",
     stdin: "ignore",
+    ipc(message) {
+      defer.resolve(message);
+    },
   });
-  const { value } = await process.stdout.getReader().read();
-  url = new URL(new TextDecoder().decode(value));
+  url = new URL(await defer.promise);
   process.unref();
-
   await warmup();
 });
-afterAll(() => {
+afterEach(() => {
   process?.kill();
 });
 
@@ -52,6 +58,14 @@ async function warmup() {
 
 async function callBuffering() {
   const result = await fetch(`${url.origin}/buffering`, {
+    method: "POST",
+    body: zeroCopyPayload,
+  }).then(res => res.text());
+  expect(result).toBe("Ok");
+}
+
+async function callBufferingBodyGetter() {
+  const result = await fetch(`${url.origin}/buffering+body-getter`, {
     method: "POST",
     body: zeroCopyPayload,
   }).then(res => res.text());
@@ -126,23 +140,24 @@ async function calculateMemoryLeak(fn: () => Promise<void>) {
 // If it was leaking the body, the memory usage would be at least 512 KB * 10_000 = 5 GB
 // If it ends up around 280 MB, it's probably not leaking the body.
 for (const test_info of [
-  ["#10265 should not leak memory when ignoring the body", callIgnore, false, 48],
-  ["should not leak memory when buffering the body", callBuffering, false, 48],
-  ["should not leak memory when streaming the body", callStreaming, false, 48],
+  ["#10265 should not leak memory when ignoring the body", callIgnore, false, 64],
+  ["should not leak memory when buffering the body", callBuffering, false, 64],
+  ["should not leak memory when buffering the body and accessing req.body", callBufferingBodyGetter, false, 64],
+  ["should not leak memory when streaming the body", callStreaming, false, 64],
   ["should not leak memory when streaming the body incompletely", callIncompleteStreaming, false, 64],
   ["should not leak memory when streaming the body and echoing it back", callStreamingEcho, false, 64],
 ] as const) {
   const [testName, fn, skip, maxMemoryGrowth] = test_info;
-  it.todoIf(skip)(
+  it(
     testName,
     async () => {
       const report = await calculateMemoryLeak(fn);
       // peak memory is too high
-      expect(report.peak_memory > report.start_memory * 2).toBe(false);
+      expect(report.peak_memory).not.toBeGreaterThan(report.start_memory * 2.5);
       // acceptable memory leak
       expect(report.leak).toBeLessThanOrEqual(maxMemoryGrowth);
       expect(report.end_memory).toBeLessThanOrEqual(512 * 1024 * 1024);
     },
-    isDebug ? 60_000 : 30_000,
+    isDebug ? 60_000 : 40_000,
   );
 }

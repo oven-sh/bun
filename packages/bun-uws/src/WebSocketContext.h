@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+// clang-format off
 #ifndef UWS_WEBSOCKETCONTEXT_H
 #define UWS_WEBSOCKETCONTEXT_H
 
@@ -252,6 +252,8 @@ private:
 
         /* Handle socket disconnections */
         us_socket_context_on_close(SSL, getSocketContext(), [](auto *s, int code, void *reason) {
+            ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
+
             /* For whatever reason, if we already have emitted close event, do not emit it again */
             WebSocketData *webSocketData = (WebSocketData *) (us_socket_ext(SSL, s));
             if (!webSocketData->isShuttingDown) {
@@ -270,7 +272,7 @@ private:
                 webSocketData->subscriber = nullptr;
 
                 if (webSocketContextData->closeHandler) {
-                    webSocketContextData->closeHandler((WebSocket<SSL, isServer, USERDATA> *) s, 1006, {(char *) reason, (size_t) code});
+                    webSocketContextData->closeHandler((WebSocket<SSL, isServer, USERDATA> *) s, 1006, reason != NULL && code > 0 ? std::string_view{(char *) reason, (size_t) code} : std::string_view());
                 }
             }
 
@@ -371,6 +373,7 @@ private:
 
         /* Handle FIN, HTTP does not support half-closed sockets, so simply close */
         us_socket_context_on_end(SSL, getSocketContext(), [](auto *s) {
+            ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
 
             /* If we get a fin, we just close I guess */
             us_socket_close(SSL, (us_socket_t *) s, 0, nullptr);

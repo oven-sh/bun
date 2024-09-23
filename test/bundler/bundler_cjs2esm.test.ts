@@ -1,5 +1,5 @@
-import { itBundled } from "./expectBundled";
 import { describe, expect } from "bun:test";
+import { itBundled } from "./expectBundled";
 
 const fakeReactNodeModules = {
   "/node_modules/react/index.js": /* js */ `
@@ -306,5 +306,90 @@ describe("bundler", () => {
       stdout: "side effect\nSymbol(pass)",
     },
     minifySyntax: true,
+  });
+  itBundled("cjs2esm/ReactSpecificUnwrapping2", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as react from "react-dom";
+        console.log(react);
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        export const stuff = [
+          require('./a.js'),
+          require('./b.js')
+        ];
+      `,
+      "/node_modules/react-dom/a.js": /* js */ `
+        (function () {
+          var React = require('react');
+          var stream = require('stream');
+
+          console.log([React, stream]);
+
+          exports.version = null;
+        })();
+      `,
+      "/node_modules/react-dom/b.js": /* js */ `
+        (function () {
+          var React = require('react');
+          var util = require('util');
+
+          console.log([React, util]);
+
+          exports.version = null;
+        })();
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        module.exports = 123;
+      `,
+    },
+    run: true,
+    minifyIdentifiers: true,
+    target: "bun",
+  });
+  itBundled("cjs2esm/ModuleExportsRenamingNoDeopt", {
+    files: {
+      "/entry.js": /* js */ `
+        eval('exports = { xyz: 123 }; module.exports = { xyz: 456 }');
+        let w = () => [module.exports, module.exports.xyz]; // rewrite to exports, exports.xyz
+        let x = () => [exports, exports.xyz];               // keep as is
+        console.log(JSON.stringify([w(), x()]));
+      `,
+    },
+    run: {
+      stdout: '[[{"xyz":123},123],[{"xyz":123},123]]',
+    },
+  });
+  itBundled("cjs2esm/ModuleExportsRenamingAssignDeOpt", {
+    files: {
+      "/entry.js": /* js */ `
+        eval('exports = { xyz: 123 }');
+        let w = () => [module.exports, module.exports.xyz]; // keep as is
+        let x = () => [exports, exports.xyz];               // keep as is
+        module.exports = { xyz: 456 };
+        let y = () => [module.exports, module.exports.xyz]; // keep as is
+        let z = () => [exports, exports.xyz];               // keep as is
+        console.log(JSON.stringify([w(), x(), y(), z()]));
+      `,
+    },
+    run: {
+      stdout: '[[{"xyz":456},456],[{"xyz":123},123],[{"xyz":456},456],[{"xyz":123},123]]',
+    },
+  });
+  itBundled("cjs2esm/ModuleExportsRenamingAssignExportsDeOpt", {
+    files: {
+      "/entry.js": /* js */ `
+        eval('module.exports = { xyz: 456 }');
+        let w = () => [module.exports, module.exports.xyz];
+        let x = () => [exports, exports.xyz];
+        exports = { xyz: 123 };
+        let y = () => [module.exports, module.exports.xyz];
+        let z = () => [exports, exports.xyz];
+        console.log(JSON.stringify([w(), x(), y(), z()]));
+      `,
+    },
+    run: {
+      stdout: '[[{"xyz":456},456],[{"xyz":123},123],[{"xyz":456},456],[{"xyz":123},123]]',
+    },
   });
 });

@@ -236,7 +236,7 @@ const DarwinWatcher = struct {
 };
 
 const WindowsWatcher = struct {
-    mutex: Mutex = Mutex.init(),
+    mutex: Mutex = .{},
     iocp: w.HANDLE = undefined,
     watcher: DirWatcher = undefined,
 
@@ -535,6 +535,8 @@ pub fn getHash(filepath: string) HashType {
     return @as(HashType, @truncate(bun.hash(filepath)));
 }
 
+// TODO: this should not be a function with a generic context. every function
+// besides `watchLoop` does not refer to context.
 pub fn NewWatcher(comptime ContextType: type) type {
     return struct {
         const Watcher = @This();
@@ -573,7 +575,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 .watched_count = 0,
                 .ctx = ctx,
                 .watchlist = WatchList{},
-                .mutex = Mutex.init(),
+                .mutex = .{},
                 .cwd = fs.top_level_dir,
             };
 
@@ -595,7 +597,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 this.running = false;
             } else {
                 // if the mutex is locked, then that's now a UAF.
-                this.mutex.releaseAssertUnlocked("Internal consistency error: watcher mutex is locked when it should not be.");
+                this.mutex.releaseAssertUnlocked("Watcher mutex is locked when it should not be.");
 
                 if (close_descriptors and this.running) {
                     const fds = this.watchlist.items(.fd);
@@ -700,7 +702,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                         null,
                     );
 
-                    // Give the events more time to coallesce
+                    // Give the events more time to coalesce
                     if (count_ < 128 / 2) {
                         const remain = 128 - count_;
                         var timespec = std.posix.timespec{ .tv_sec = 0, .tv_nsec = 100_000 };
@@ -1275,6 +1277,10 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     }
                 }
             }
+        }
+
+        pub fn getResolveWatcher(watcher: *Watcher) bun.resolver.AnyResolveWatcher {
+            return bun.resolver.ResolveWatcher(*@This(), @typeInfo(ContextType).Pointer.child.onMaybeWatchDirectory).init(watcher);
         }
     };
 }

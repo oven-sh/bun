@@ -62,11 +62,11 @@ pub const OS = struct {
         } catch {
             const err = JSC.SystemError{
                 .message = bun.String.static("Failed to get cpu information"),
-                .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                .code = bun.String.static(@tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR)),
             };
 
             globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         };
     }
 
@@ -313,14 +313,11 @@ pub const OS = struct {
         const arguments: []const JSC.JSValue = args_.ptr[0..args_.len];
 
         if (arguments.len > 0 and !arguments[0].isNumber()) {
-            const err = JSC.toTypeError(
-                JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE,
+            globalThis.ERR_INVALID_ARG_TYPE(
                 "getPriority() expects a number",
                 .{},
-                globalThis,
-            );
-            globalThis.vm().throwError(globalThis, err);
-            return JSC.JSValue.jsUndefined();
+            ).throw();
+            return .undefined;
         }
 
         const pid = if (arguments.len > 0) arguments[0].asInt32() else 0;
@@ -335,14 +332,14 @@ pub const OS = struct {
 
             const err = JSC.SystemError{
                 .message = bun.String.static("A system error occurred: uv_os_getpriority returned ESRCH (no such process)"),
-                .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                .code = bun.String.static("ERR_SYSTEM_ERROR"),
                 //.info = info,
                 .errno = -3,
                 .syscall = bun.String.static("uv_os_getpriority"),
             };
 
             globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
 
         return JSC.JSValue.jsNumberFromInt32(priority);
@@ -419,13 +416,13 @@ pub const OS = struct {
         if (rc != 0) {
             const err = JSC.SystemError{
                 .message = bun.String.static("A system error occurred: getifaddrs returned an error"),
-                .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                .code = bun.String.static("ERR_SYSTEM_ERROR"),
                 .errno = @intFromEnum(std.posix.errno(rc)),
                 .syscall = bun.String.static("getifaddrs"),
             };
 
             globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
         defer C.freeifaddrs(interface_start);
 
@@ -602,7 +599,7 @@ pub const OS = struct {
         if (err != 0) {
             const sys_err = JSC.SystemError{
                 .message = bun.String.static("uv_interface_addresses failed"),
-                .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                .code = bun.String.static("ERR_SYSTEM_ERROR"),
                 //.info = info,
                 .errno = err,
                 .syscall = bun.String.static("uv_interface_addresses"),
@@ -730,13 +727,13 @@ pub const OS = struct {
 
         if (arguments.len == 0) {
             const err = JSC.toTypeError(
-                JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE,
+                .ERR_INVALID_ARG_TYPE,
                 "The \"priority\" argument must be of type number. Received undefined",
                 .{},
                 globalThis,
             );
             globalThis.vm().throwError(globalThis, err);
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
 
         const pid = if (arguments.len == 2) arguments[0].coerce(i32, globalThis) else 0;
@@ -744,13 +741,13 @@ pub const OS = struct {
 
         if (priority < -20 or priority > 19) {
             const err = JSC.toTypeError(
-                JSC.Node.ErrorCode.ERR_OUT_OF_RANGE,
+                .ERR_OUT_OF_RANGE,
                 "The value of \"priority\" is out of range. It must be >= -20 && <= 19",
                 .{},
                 globalThis,
             );
             globalThis.vm().throwError(globalThis, err);
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
 
         const errcode = C.setProcessPriority(pid, priority);
@@ -758,31 +755,31 @@ pub const OS = struct {
             .SRCH => {
                 const err = JSC.SystemError{
                     .message = bun.String.static("A system error occurred: uv_os_setpriority returned ESRCH (no such process)"),
-                    .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                    .code = bun.String.static(@tagName(.ERR_SYSTEM_ERROR)),
                     //.info = info,
                     .errno = -3,
                     .syscall = bun.String.static("uv_os_setpriority"),
                 };
 
                 globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-                return JSC.JSValue.jsUndefined();
+                return .undefined;
             },
             .ACCES => {
                 const err = JSC.SystemError{
                     .message = bun.String.static("A system error occurred: uv_os_setpriority returned EACCESS (permission denied)"),
-                    .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                    .code = bun.String.static(@tagName(.ERR_SYSTEM_ERROR)),
                     //.info = info,
                     .errno = -13,
                     .syscall = bun.String.static("uv_os_setpriority"),
                 };
 
                 globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-                return JSC.JSValue.jsUndefined();
+                return .undefined;
             },
             else => {},
         }
 
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
 
     pub fn totalmem(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
@@ -811,7 +808,7 @@ pub const OS = struct {
             if (err != 0) {
                 const sys_err = JSC.SystemError{
                     .message = bun.String.static("failed to get system uptime"),
-                    .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                    .code = bun.String.static("ERR_SYSTEM_ERROR"),
                     .errno = err,
                     .syscall = bun.String.static("uv_uptime"),
                 };
@@ -853,7 +850,7 @@ pub const OS = struct {
         return JSC.ZigString.init(C.getVersion(&name_buffer)).withEncoding().toJS(globalThis);
     }
 
-    inline fn getMachineName() []const u8 {
+    inline fn getMachineName() [:0]const u8 {
         return switch (@import("builtin").target.cpu.arch) {
             .arm => "arm",
             .aarch64 => "arm64",

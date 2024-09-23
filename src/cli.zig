@@ -81,7 +81,7 @@ pub const debug_flags = if (Environment.isDebug) struct {
         }
         return false;
     }
-} else @compileError("Do not access this namespace []const u8; in a release build");
+} else @compileError("Do not access this namespace in a release build");
 
 const LoaderMatcher = strings.ExactSizeMatcher(4);
 const ColonListType = @import("./cli/colon_list_type.zig").ColonListType;
@@ -115,6 +115,7 @@ pub const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
 pub const ExecCommand = @import("./cli/exec_command.zig").ExecCommand;
 pub const PatchCommand = @import("./cli/patch_command.zig").PatchCommand;
 pub const PatchCommitCommand = @import("./cli/patch_commit_command.zig").PatchCommitCommand;
+pub const OutdatedCommand = @import("./cli/outdated_command.zig").OutdatedCommand;
 
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
@@ -185,6 +186,7 @@ pub const Arguments = struct {
         clap.parseParam("--jsx-fragment <STR>              Changes the function called when compiling JSX fragments") catch unreachable,
         clap.parseParam("--jsx-import-source <STR>         Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: \"react\"") catch unreachable,
         clap.parseParam("--jsx-runtime <STR>               \"automatic\" (default) or \"classic\"") catch unreachable,
+        clap.parseParam("--ignore-dce-annotations          Ignore tree-shaking annotations such as @__PURE__") catch unreachable,
     };
     const runtime_params_ = [_]ParamType{
         clap.parseParam("--watch                           Automatically restart the process on file change") catch unreachable,
@@ -207,6 +209,7 @@ pub const Arguments = struct {
         clap.parseParam("-u, --origin <STR>") catch unreachable,
         clap.parseParam("--conditions <STR>...             Pass custom conditions to resolve") catch unreachable,
         clap.parseParam("--fetch-preconnect <STR>...       Preconnect to a URL while code is loading") catch unreachable,
+        clap.parseParam("--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -238,8 +241,8 @@ pub const Arguments = struct {
         clap.parseParam("--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled") catch unreachable,
         clap.parseParam("--target <STR>                   The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\"") catch unreachable,
         clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
-        clap.parseParam("--outfile <STR>                   Write to a file") catch unreachable,
-        clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'inline', 'external', or 'none'") catch unreachable,
+        clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
+        clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'linked', 'inline', 'external', or 'none'") catch unreachable,
         clap.parseParam("--format <STR>                   Specifies the module format to build to. Only \"esm\" is supported.") catch unreachable,
         clap.parseParam("--root <STR>                     Root directory used for multiple entry points") catch unreachable,
         clap.parseParam("--splitting                      Enable code splitting") catch unreachable,
@@ -249,12 +252,14 @@ pub const Arguments = struct {
         clap.parseParam("--entry-naming <STR>             Customize entry point filenames. Defaults to \"[dir]/[name].[ext]\"") catch unreachable,
         clap.parseParam("--chunk-naming <STR>             Customize chunk filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
         clap.parseParam("--asset-naming <STR>             Customize asset filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
+        clap.parseParam("--react-fast-refresh             Enable React Fast Refresh transform (does not emit hot-module code, use this for testing)") catch unreachable,
         clap.parseParam("--server-components              Enable React Server Components (experimental)") catch unreachable,
         clap.parseParam("--no-bundle                      Transpile file only, do not bundle") catch unreachable,
+        clap.parseParam("--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed.") catch unreachable,
         clap.parseParam("--minify                         Enable all minification flags") catch unreachable,
         clap.parseParam("--minify-syntax                  Minify syntax and inline data") catch unreachable,
         clap.parseParam("--minify-whitespace              Minify whitespace") catch unreachable,
-        clap.parseParam("--minify-identifiers              Minify identifiers") catch unreachable,
+        clap.parseParam("--minify-identifiers             Minify identifiers") catch unreachable,
         clap.parseParam("--dump-environment-variables") catch unreachable,
         clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
     };
@@ -563,7 +568,7 @@ pub const Arguments = struct {
 
         ctx.passthrough = args.remaining();
 
-        if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .BuildCommand) {
+        if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .BuildCommand or cmd == .TestCommand) {
             if (args.options("--conditions").len > 0) {
                 opts.conditions = args.options("--conditions");
             }
@@ -602,10 +607,28 @@ pub const Arguments = struct {
                     ctx.runtime_options.eval.eval_and_print = true;
                 } else {
                     opts.port = std.fmt.parseInt(u16, port_str, 10) catch {
-                        Output.errGeneric("Invalid value for --port: \"{s}\". Must be a number\n", .{port_str});
+                        Output.errFmt(
+                            bun.fmt.outOfRange(port_str, .{
+                                .field_name = "--port",
+                                .min = 0,
+                                .max = std.math.maxInt(u16),
+                            }),
+                        );
                         Output.note("To evaluate TypeScript here, use 'bun --print'", .{});
                         Global.exit(1);
                     };
+                }
+            }
+
+            if (args.option("--max-http-header-size")) |size_str| {
+                const size = std.fmt.parseInt(usize, size_str, 10) catch {
+                    Output.errGeneric("Invalid value for --max-http-header-size: \"{s}\". Must be a positive integer\n", .{size_str});
+                    Global.exit(1);
+                };
+                if (size == 0) {
+                    bun.http.max_http_header_size = 1024 * 1024 * 1024;
+                } else {
+                    bun.http.max_http_header_size = size;
                 }
             }
 
@@ -697,6 +720,8 @@ pub const Arguments = struct {
         const output_dir: ?string = null;
         const output_file: ?string = null;
 
+        ctx.bundler_options.ignore_dce_annotations = args.flag("--ignore-dce-annotations");
+
         if (cmd == .BuildCommand) {
             ctx.bundler_options.transform_only = args.flag("--no-bundle");
 
@@ -709,10 +734,13 @@ pub const Arguments = struct {
             ctx.bundler_options.minify_whitespace = minify_flag or args.flag("--minify-whitespace");
             ctx.bundler_options.minify_identifiers = minify_flag or args.flag("--minify-identifiers");
 
+            ctx.bundler_options.emit_dce_annotations = args.flag("--emit-dce-annotations") or
+                !ctx.bundler_options.minify_whitespace;
+
             if (args.options("--external").len > 0) {
-                var externals = try allocator.alloc([]u8, args.options("--external").len);
+                var externals = try allocator.alloc([]const u8, args.options("--external").len);
                 for (args.options("--external"), 0..) |external, i| {
-                    externals[i] = @constCast(external);
+                    externals[i] = external;
                 }
                 opts.external = externals;
             }
@@ -767,6 +795,7 @@ pub const Arguments = struct {
 
             if (args.flag("--compile")) {
                 ctx.bundler_options.compile = true;
+                ctx.bundler_options.inline_entrypoint_import_meta_main = true;
             }
 
             if (args.option("--outdir")) |outdir| {
@@ -787,16 +816,27 @@ pub const Arguments = struct {
 
             if (args.option("--format")) |format_str| {
                 const format = options.Format.fromString(format_str) orelse {
-                    Output.prettyErrorln("<r><red>error<r>: Invalid format - must be esm, cjs, or iife", .{});
+                    Output.errGeneric("Invalid format - must be esm, cjs, or iife", .{});
                     Global.crash();
                 };
+
                 switch (format) {
-                    .esm => {},
-                    else => {
-                        Output.prettyErrorln("<r><red>error<r>: Formats besides 'esm' are not implemented", .{});
-                        Global.crash();
+                    .internal_kit_dev => {
+                        bun.Output.warn("--format={s} is for debugging only, and may experience breaking changes at any moment", .{format_str});
+                        bun.Output.flush();
                     },
+                    .cjs => {
+                        // Make this a soft error in debug to allow experimenting with these flags.
+                        const function = if (Environment.isDebug) Output.debugWarn else Output.errGeneric;
+                        function("Format '{s}' are not implemented", .{@tagName(format)});
+                        if (!Environment.isDebug) {
+                            Global.crash();
+                        }
+                    },
+                    else => {},
                 }
+
+                ctx.bundler_options.output_format = format;
             }
 
             if (args.flag("--splitting")) {
@@ -815,10 +855,12 @@ pub const Arguments = struct {
                 ctx.bundler_options.asset_naming = try strings.concat(allocator, &.{ "./", bun.strings.removeLeadingDotSlash(asset_naming) });
             }
 
-            if (comptime FeatureFlags.react_server_components) {
-                if (args.flag("--server-components")) {
-                    ctx.bundler_options.react_server_components = true;
-                }
+            if (args.flag("--server-components")) {
+                ctx.bundler_options.react_server_components = true;
+            }
+
+            if (args.flag("--react-fast-refresh")) {
+                ctx.bundler_options.react_fast_refresh = true;
             }
 
             if (args.option("--sourcemap")) |setting| {
@@ -839,6 +881,13 @@ pub const Arguments = struct {
                 } else {
                     Output.prettyErrorln("<r><red>error<r>: Invalid sourcemap setting: \"{s}\"", .{setting});
                     Global.crash();
+                }
+
+                // when using --compile, only `external` works, as we do not
+                // look at the source map comment. so after we validate the
+                // user's choice was in the list, we secretly override it
+                if (ctx.bundler_options.compile) {
+                    opts.source_map = .external;
                 }
             }
         }
@@ -1067,6 +1116,8 @@ pub const HelpCommand = struct {
         \\  <b><blue>add<r>       <d>{s:<16}<r>     Add a dependency to package.json <d>(bun a)<r>
         \\  <b><blue>remove<r>    <d>{s:<16}<r>     Remove a dependency from package.json <d>(bun rm)<r>
         \\  <b><blue>update<r>    <d>{s:<16}<r>     Update outdated dependencies
+        \\  <b><blue>outdated<r>                       Display latest versions of outdated dependencies
+        \\  <b><blue>pack<r>                           Archive the current workspace package
         \\  <b><blue>link<r>      <d>[\<package\>]<r>          Register or link a local npm package
         \\  <b><blue>unlink<r>                         Unregister a local npm package
         \\  <b><blue>patch <d>\<pkg\><r>                    Prepare a package for patching
@@ -1270,11 +1321,16 @@ pub const Command = struct {
             chunk_naming: []const u8 = "./[name]-[hash].[ext]",
             asset_naming: []const u8 = "./[name]-[hash].[ext]",
             react_server_components: bool = false,
+            react_fast_refresh: bool = false,
             code_splitting: bool = false,
             transform_only: bool = false,
+            inline_entrypoint_import_meta_main: bool = false,
             minify_syntax: bool = false,
             minify_whitespace: bool = false,
             minify_identifiers: bool = false,
+            ignore_dce_annotations: bool = false,
+            emit_dce_annotations: bool = true,
+            output_format: options.Format = .esm,
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
@@ -1420,6 +1476,8 @@ pub const Command = struct {
 
             RootCommandMatcher.case("exec") => .ExecCommand,
 
+            RootCommandMatcher.case("outdated") => .OutdatedCommand,
+
             // These are reserved for future use by Bun, so that someone
             // doing `bun deploy` to run a script doesn't accidentally break
             // when we add our actual command
@@ -1434,7 +1492,6 @@ pub const Command = struct {
             RootCommandMatcher.case("whoami") => .ReservedCommand,
             RootCommandMatcher.case("publish") => .ReservedCommand,
             RootCommandMatcher.case("prune") => .ReservedCommand,
-            RootCommandMatcher.case("outdated") => .ReservedCommand,
             RootCommandMatcher.case("list") => .ReservedCommand,
             RootCommandMatcher.case("why") => .ReservedCommand,
 
@@ -1554,6 +1611,13 @@ pub const Command = struct {
                 const ctx = try Command.init(allocator, log, .PatchCommitCommand);
 
                 try PatchCommitCommand.exec(ctx);
+                return;
+            },
+            .OutdatedCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .OutdatedCommand) unreachable;
+                const ctx = try Command.init(allocator, log, .OutdatedCommand);
+
+                try OutdatedCommand.exec(ctx);
                 return;
             },
             .BunxCommand => {
@@ -2123,6 +2187,7 @@ pub const Command = struct {
         ExecCommand,
         PatchCommand,
         PatchCommitCommand,
+        OutdatedCommand,
 
         /// Used by crash reports.
         ///
@@ -2154,6 +2219,7 @@ pub const Command = struct {
                 .ExecCommand => 'e',
                 .PatchCommand => 'x',
                 .PatchCommitCommand => 'z',
+                .OutdatedCommand => 'o',
             };
         }
 
@@ -2371,11 +2437,16 @@ pub const Command = struct {
                         \\<b><red>Note<r>: If executing this from a shell, make sure to escape the string!
                         \\
                         \\<b>Examples<d>:<r>
-                        \\  <b>bunx exec "echo hi"<r>
-                        \\  <b>bunx exec "echo \"hey friends\"!"<r>
+                        \\  <b>bun exec "echo hi"<r>
+                        \\  <b>bun exec "echo \"hey friends\"!"<r>
                         \\
                     , .{});
                     Output.flush();
+                },
+                .OutdatedCommand => {
+                    Install.PackageManager.CommandLineArguments.printHelp(switch (cmd) {
+                        .OutdatedCommand => .outdated,
+                    });
                 },
                 else => {
                     HelpCommand.printWithReason(.explicit);
@@ -2385,7 +2456,16 @@ pub const Command = struct {
 
         pub fn readGlobalConfig(this: Tag) bool {
             return switch (this) {
-                .BunxCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand, .UpdateCommand, .PatchCommand, .PatchCommitCommand => true,
+                .BunxCommand,
+                .PackageManagerCommand,
+                .InstallCommand,
+                .AddCommand,
+                .RemoveCommand,
+                .UpdateCommand,
+                .PatchCommand,
+                .PatchCommitCommand,
+                .OutdatedCommand,
+                => true,
                 else => false,
             };
         }
@@ -2402,6 +2482,7 @@ pub const Command = struct {
                 .UpdateCommand,
                 .PatchCommand,
                 .PatchCommitCommand,
+                .OutdatedCommand,
                 => true,
                 else => false,
             };
@@ -2421,6 +2502,7 @@ pub const Command = struct {
             .AutoCommand = true,
             .RunCommand = true,
             .RunAsNodeCommand = true,
+            .OutdatedCommand = true,
         });
 
         pub const always_loads_config: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{
@@ -2434,6 +2516,7 @@ pub const Command = struct {
             .PatchCommitCommand = true,
             .PackageManagerCommand = true,
             .BunxCommand = true,
+            .OutdatedCommand = true,
         });
 
         pub const uses_global_options: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(true, .{
@@ -2448,6 +2531,7 @@ pub const Command = struct {
             .LinkCommand = false,
             .UnlinkCommand = false,
             .BunxCommand = false,
+            .OutdatedCommand = false,
         });
     };
 };

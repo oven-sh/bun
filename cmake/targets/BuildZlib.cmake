@@ -32,7 +32,7 @@ register_cmake_definitions(
 # https://gitlab.kitware.com/cmake/cmake/-/issues/25755
 if(APPLE)
   register_compiler_flags(
-    -fno-define-target-os-macros
     TARGET ${zlib}
+    -fno-define-target-os-macros
   )
 endif()

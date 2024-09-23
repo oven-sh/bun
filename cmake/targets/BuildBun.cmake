@@ -679,15 +679,16 @@ endif()
 
 if(NOT WIN32)
   register_compiler_flags(
+    TARGET ${bun}-cpp
     -fconstexpr-steps=2542484
     -fconstexpr-depth=54
     -fno-pic
     -fno-pie
     -faddrsig
-    TARGET ${bun}-cpp
   )
   if(DEBUG)
     register_compiler_flags(
+      TARGET ${bun}-cpp
       -Werror=return-type
       -Werror=return-stack-address
       -Werror=implicit-function-declaration
@@ -711,11 +712,11 @@ if(NOT WIN32)
       -fsanitize=nullability-return
       -fsanitize=returns-nonnull-attribute
       -fsanitize=unreachable
-      TARGET ${bun}-cpp
     )
   else()
     # Leave -Werror=unused off in release builds so we avoid errors from being used in ASSERT
     register_compiler_flags(
+      TARGET ${bun}-cpp
       -Werror=return-type
       -Werror=return-stack-address
       -Werror=implicit-function-declaration
@@ -728,7 +729,6 @@ if(NOT WIN32)
       -Werror=sometimes-uninitialized
       -Wno-nullability-completeness
       -Werror
-      TARGET ${bun}-cpp
     )
   endif()
 endif()

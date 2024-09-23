@@ -745,17 +745,16 @@ endfunction()
 # Description:
 #   Registers a compiler flag, similar to `add_compile_options()`, but has more validation and features.
 # Arguments:
-#   flags string[]     - The flags to register
+#   TARGET string      - The target to register the flag (default: all)
+#   LANGUAGE string    - The language to register the flag (default: C, CXX)
 #   DESCRIPTION string - The description of the flag
-#   LANGUAGE string[]  - The languages to register the flag (default: C, CXX)
-#   TARGET string[]    - The targets to register the flag (default: all)
+#   flags string[]     - The flags to register
 function(register_compiler_flags)
-  set(args DESCRIPTION)
-  set(multiArgs LANGUAGE TARGET)
-  cmake_parse_arguments(COMPILER "" "${args}" "${multiArgs}" ${ARGN})
+  set(args TARGET LANGUAGE DESCRIPTION)
+  cmake_parse_arguments(COMPILER "" "${args}" "" ${ARGN})
 
-  parse_language(COMPILER_LANGUAGE)
   parse_target(COMPILER_TARGET)
+  parse_language(COMPILER_LANGUAGE)
   parse_list(COMPILER_UNPARSED_ARGUMENTS COMPILER_FLAGS)
 
   foreach(flag ${COMPILER_FLAGS})
@@ -764,30 +763,25 @@ function(register_compiler_flags)
     endif()
   endforeach()
 
-  foreach(lang ${COMPILER_LANGUAGE})
+  foreach(language ${COMPILER_LANGUAGE})
     list(JOIN COMPILER_FLAGS " " COMPILER_FLAGS_STRING)
-
-    if(NOT COMPILER_TARGET)
-      set(CMAKE_${lang}_FLAGS "${CMAKE_${lang}_FLAGS} ${COMPILER_FLAGS_STRING}" PARENT_SCOPE)
+    if(COMPILER_TARGET)
+      set(${target}_CMAKE_${language}_FLAGS "${${target}_CMAKE_${language}_FLAGS} ${COMPILER_FLAGS_STRING}" PARENT_SCOPE)
+    else()
+      set(CMAKE_${language}_FLAGS "${CMAKE_${language}_FLAGS} ${COMPILER_FLAGS_STRING}" PARENT_SCOPE)
     endif()
-
-    foreach(target ${COMPILER_TARGET})
-      set(${target}_CMAKE_${lang}_FLAGS "${${target}_CMAKE_${lang}_FLAGS} ${COMPILER_FLAGS_STRING}" PARENT_SCOPE)
-    endforeach()
   endforeach()
 
-  foreach(lang ${COMPILER_LANGUAGE})
+  foreach(language ${COMPILER_LANGUAGE})
     foreach(flag ${COMPILER_FLAGS})
-      if(NOT COMPILER_TARGET)
-        add_compile_options($<$<COMPILE_LANGUAGE:${lang}>:${flag}>)
-      endif()
-      
-      foreach(target ${COMPILER_TARGET})
+      if(COMPILER_TARGET)
         get_target_property(type ${target} TYPE)
         if(type MATCHES "EXECUTABLE|LIBRARY")
-          target_compile_options(${target} PRIVATE $<$<COMPILE_LANGUAGE:${lang}>:${flag}>)
+          target_compile_options(${target} PRIVATE $<$<COMPILE_LANGUAGE:${language}>:${flag}>)
         endif()
-      endforeach()
+      else()
+        add_compile_options($<$<COMPILE_LANGUAGE:${language}>:${flag}>)
+      endif()
     endforeach()
   endforeach()
 endfunction()
@@ -796,14 +790,13 @@ endfunction()
 # Description:
 #   Registers a compiler definition, similar to `add_compile_definitions()`.
 # Arguments:
+#   TARGET string        - The target to register the definitions (default: all)
+#   LANGUAGE string      - The language to register the definitions (default: C, CXX)
+#   DESCRIPTION string   - The description of the definitions
 #   definitions string[] - The definitions to register
-#   DESCRIPTION string   - The description of the definition
-#   LANGUAGE string[]    - The languages to register the definition (default: C, CXX)
-#   TARGET string[]      - The targets to register the definition (default: all)
 function(register_compiler_definitions)
-  set(args DESCRIPTION)
-  set(multiArgs LANGUAGE TARGET)
-  cmake_parse_arguments(COMPILER "" "${args}" "${multiArgs}" ${ARGN})
+  set(args TARGET LANGUAGE DESCRIPTION)
+  cmake_parse_arguments(COMPILER "" "${args}" "" ${ARGN})
 
   parse_language(COMPILER_LANGUAGE)
   parse_target(COMPILER_TARGET)
@@ -823,28 +816,23 @@ function(register_compiler_definitions)
 
   foreach(lang ${COMPILER_LANGUAGE})
     list(JOIN COMPILER_FLAGS " " COMPILER_FLAGS_STRING)
-
-    if(NOT COMPILER_TARGET)
+    if(COMPILER_TARGET)
+      set(${target}_CMAKE_${lang}_FLAGS "${${target}_CMAKE_${lang}_FLAGS} ${COMPILER_FLAGS_STRING}" PARENT_SCOPE)
+    else()
       set(CMAKE_${lang}_FLAGS "${CMAKE_${lang}_FLAGS} ${COMPILER_FLAGS_STRING}" PARENT_SCOPE)
     endif()
-
-    foreach(target ${COMPILER_TARGET})
-      set(${target}_CMAKE_${lang}_FLAGS "${${target}_CMAKE_${lang}_FLAGS} ${COMPILER_FLAGS_STRING}" PARENT_SCOPE)
-    endforeach()
   endforeach()
 
   foreach(definition ${COMPILER_DEFINITIONS})
     foreach(language ${COMPILER_LANGUAGE})
-      if(NOT COMPILER_TARGET)
-        add_compile_definitions($<$<COMPILE_LANGUAGE:${language}>:${definition}>)
-      endif()
-
-      foreach(target ${COMPILER_TARGET})
+      if(COMPILER_TARGET)
         get_target_property(type ${target} TYPE)
         if(type MATCHES "EXECUTABLE|LIBRARY")
           target_compile_definitions(${target} PRIVATE $<$<COMPILE_LANGUAGE:${language}>:${definition}>)
         endif()
-      endforeach()
+      else()
+        add_compile_definitions($<$<COMPILE_LANGUAGE:${language}>:${definition}>)
+      endif()
     endforeach()
   endforeach()
 endfunction()
@@ -853,13 +841,12 @@ endfunction()
 # Description:
 #   Registers a linker flag, similar to `add_link_options()`.
 # Arguments:
-#   flags string[]     - The flags to register
+#   TARGET string      - The target to register the flag (default: all)
 #   DESCRIPTION string - The description of the flag
-#   TARGET string[]    - The targets to register the definition (default: all)
+#   flags string[]     - The flags to register
 function(register_linker_flags)
-  set(args DESCRIPTION)
-  set(multiArgs LANGUAGE TARGET)
-  cmake_parse_arguments(LINKER "" "${args}" "${multiArgs}" ${ARGN})
+  set(args TARGET DESCRIPTION)
+  cmake_parse_arguments(LINKER "" "${args}" "" ${ARGN})
 
   parse_target(LINKER_TARGET)
   parse_list(LINKER_UNPARSED_ARGUMENTS LINKER_FLAGS)
@@ -872,23 +859,55 @@ function(register_linker_flags)
 
   list(JOIN LINKER_FLAGS " " LINKER_FLAGS_STRING)
 
-  if(NOT LINKER_TARGET)
+  if(LINKER_TARGET)
+    set(${LINKER_TARGET}_CMAKE_LINKER_FLAGS "${${LINKER_TARGET}_CMAKE_LINKER_FLAGS} ${LINKER_FLAGS_STRING}" PARENT_SCOPE)
+  else()
     set(CMAKE_LINKER_FLAGS "${CMAKE_LINKER_FLAGS} ${LINKER_FLAGS_STRING}" PARENT_SCOPE)
   endif()
 
-  foreach(target ${LINKER_TARGET})
-    set(${target}_CMAKE_LINKER_FLAGS "${${target}_CMAKE_LINKER_FLAGS} ${LINKER_FLAGS_STRING}" PARENT_SCOPE)
-  endforeach()
-
-  if(NOT LINKER_TARGET)
-    add_link_options(${LINKER_FLAGS})
-  endif()
-
-  foreach(target ${LINKER_TARGET})
+  if(LINKER_TARGET)
     get_target_property(type ${target} TYPE)
     if(type MATCHES "EXECUTABLE|LIBRARY")
       target_link_options(${target} PRIVATE ${LINKER_FLAGS})
     endif()
+  else()
+    add_link_options(${LINKER_FLAGS})
+  endif()
+endfunction()
+
+# register_includes()
+# Description:
+#   Registers a include directory, similar to `target_include_directories()`.
+# Arguments:
+#   TARGET string      - The target to register the include (default: all)
+#   LANGUAGE string    - The language to register the include (default: C, CXX)
+#   DESCRIPTION string - The description of the include
+#   paths string[]     - The include paths to register
+function(register_includes)
+  set(args TARGET LANGUAGE DESCRIPTION)
+  cmake_parse_arguments(INCLUDE "" "${args}" "" ${ARGN})
+
+  parse_target(INCLUDE_TARGET)
+  parse_language(INCLUDE_LANGUAGE)
+  parse_list(INCLUDE_UNPARSED_ARGUMENTS INCLUDE_PATHS)
+  parse_path(INCLUDE_PATHS)
+
+  register_inputs(TARGET ${INCLUDE_TARGET} ${INCLUDE_PATHS})
+
+  list(TRANSFORM INCLUDE_PATHS PREPEND "-I" OUTPUT_VARIABLE INCLUDE_FLAGS)
+  list(JOIN INCLUDE_FLAGS " " INCLUDE_FLAGS_STRING)
+
+  foreach(language ${INCLUDE_LANGUAGE})
+    if(NOT INCLUDE_TARGET)
+      set(CMAKE_${language}_FLAGS "${CMAKE_${language}_FLAGS} ${INCLUDE_FLAGS_STRING}" PARENT_SCOPE)
+    endif()
+
+    foreach(target ${INCLUDE_TARGET})
+      get_target_property(type ${target} TYPE)
+      if(type MATCHES "EXECUTABLE|LIBRARY")
+        target_include_directories(${target} PRIVATE ${INCLUDE_PATHS})
+      endif()
+    endforeach()
   endforeach()
 endfunction()
 
@@ -935,43 +954,6 @@ function(get_libraries target variable)
   set(${variable} ${libraries} PARENT_SCOPE)
 endfunction()
 
-# register_includes()
-# Description:
-#   Registers a include directory, similar to `target_include_directories()`.
-# Arguments:
-#   TARGET string      - The target to register the include (default: all)
-#   DESCRIPTION string - The description of the include
-#   LANGUAGE string[]  - The languages to register the include (default: C, CXX)
-#   includes string[]  - The includes to register
-function(register_includes)
-  set(args TARGET DESCRIPTION)
-  set(multiArgs LANGUAGE)
-  cmake_parse_arguments(INCLUDE "" "${args}" "${multiArgs}" ${ARGN})
-
-  parse_language(INCLUDE_LANGUAGE)
-  parse_target(INCLUDE_TARGET)
-  parse_list(INCLUDE_UNPARSED_ARGUMENTS INCLUDE_PATHS)
-  parse_path(INCLUDE_PATHS)
-
-  register_inputs(TARGET ${INCLUDE_TARGET} ${INCLUDE_PATHS})
-
-  list(TRANSFORM INCLUDE_PATHS PREPEND "-I" OUTPUT_VARIABLE INCLUDE_FLAGS)
-  list(JOIN INCLUDE_FLAGS " " INCLUDE_FLAGS_STRING)
-
-  foreach(language ${INCLUDE_LANGUAGE})
-    if(NOT INCLUDE_TARGET)
-      set(CMAKE_${language}_FLAGS "${CMAKE_${language}_FLAGS} ${INCLUDE_FLAGS_STRING}" PARENT_SCOPE)
-    endif()
-
-    foreach(target ${INCLUDE_TARGET})
-      get_target_property(type ${target} TYPE)
-      if(type MATCHES "EXECUTABLE|LIBRARY")
-        target_include_directories(${target} PRIVATE ${INCLUDE_PATHS})
-      endif()
-    endforeach()
-  endforeach()
-endfunction()
-
 # register_cmake_project()
 # Description:
 #   Registers an external CMake project.
@@ -982,7 +964,7 @@ endfunction()
 #   CMAKE_PATH   string   - The path to the CMake project (default: CWD)
 function(register_cmake_project)
   set(args TARGET CWD CMAKE_PATH LIBRARY_PATH)
-  set(multiArgs CMAKE_TARGET LIBRARY OUTPUT)
+  set(multiArgs CMAKE_TARGET)
   cmake_parse_arguments(PROJECT "" "${args}" "${multiArgs}" ${ARGN})
 
   parse_target(PROJECT_TARGET)
@@ -1074,7 +1056,7 @@ function(register_cmake_definitions)
   foreach(definition ${CMAKE_EXTRA_DEFINITIONS})
     string(REGEX MATCH "^([^=]+)=(.*)$" match ${definition})
     if(NOT match)
-      message(FATAL_ERROR "${CMAKE_CURRENT_FUNCTION}: Invalid definition: ${definition}")
+      message(FATAL_ERROR "${CMAKE_CURRENT_FUNCTION}: Invalid definition: \"${definition}\"")
     endif()
   endforeach()
 
@@ -1121,64 +1103,6 @@ function(print_compiler_flags)
     message(STATUS "Target: ${target}")
     foreach(lang ${languages})
       message(STATUS "  ${lang} Flags: ${${target}_CMAKE_${lang}_FLAGS} ${CMAKE_${lang}_FLAGS}")
-    endforeach()
-  endforeach()
-endfunction()
-
-# resolve_dependencies()
-# Description:
-#   Resolves dependencies of a target.
-function(resolve_dependencies)
-  get_property(targetz DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
-
-  set(input_files)
-  set(input_targets)
-  set(output_files)
-  set(output_targets)
-  foreach(target ${targetz})
-    set(input_properties SOURCES DEPENDS INCLUDE_DIRECTORIES LINK_LIBRARIES LINK_DIRECTORIES)
-    set(output_properties OUTPUT)
-
-    foreach(property ${input_properties})
-      get_target_property(values ${target} ${property})
-      foreach(value ${values})
-        if(value MATCHES "NOTFOUND")
-          continue()
-        endif()
-        list(APPEND input_files ${value})
-        list(APPEND input_targets ${target})
-      endforeach()
-    endforeach()
-
-    foreach(property ${output_properties})
-      get_target_property(values ${target} ${property})
-      foreach(value ${values})
-        if(value MATCHES "NOTFOUND")
-          continue()
-        endif()
-        list(APPEND output_files ${value})
-        list(APPEND output_targets ${target})
-      endforeach()
-    endforeach()
-  endforeach()
-
-  list(LENGTH input_files input_length)
-  math(EXPR max_input_index "${input_length} - 1")
-  list(LENGTH output_files output_length)
-  math(EXPR max_output_index "${output_length} - 1")
-
-  foreach(i RANGE 0 ${max_input_index})
-    list(GET input_files ${i} input_file)
-    list(GET input_targets ${i} input_target)
-
-    foreach(j RANGE 0 ${max_output_index})
-      list(GET output_files ${j} output_file)
-      list(GET output_targets ${j} output_target)
-
-      if(input_file MATCHES "^${output_file}")
-        message(STATUS "${input_target} depends on ${output_target} because ${input_file} -> ${output_file}")
-        add_dependencies(${input_target} ${output_target} ${output_file})
-      endif()
     endforeach()
   endforeach()
 endfunction()

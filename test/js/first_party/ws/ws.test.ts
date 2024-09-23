@@ -435,25 +435,32 @@ function test(label: string, fn: (ws: WebSocket, done: (err?: unknown) => void) 
 }
 
 async function listen(): Promise<URL> {
-  const pathname = path.resolve(import.meta.dir, "../../web/websocket/websocket-server-echo.mjs");
+  const pathname = path.join(import.meta.dir, "./websocket-server-echo.mjs");
+  const { promise, resolve, reject } = Promise.withResolvers();
   const server = spawn({
-    cmd: [bunExe(), pathname],
+    cmd: [nodeExe() ?? bunExe(), pathname],
     cwd: import.meta.dir,
     env: bunEnv,
+    stdout: "inherit",
     stderr: "inherit",
-    stdout: "pipe",
+    serialization: "json",
+    ipc(message) {
+      const url = message?.href;
+      if (url) {
+        try {
+          resolve(new URL(url));
+        } catch (error) {
+          reject(error);
+        }
+      }
+    },
   });
+
   servers.push(server);
-  for await (const chunk of server.stdout) {
-    const text = new TextDecoder().decode(chunk);
-    try {
-      return new URL(text);
-    } catch {
-      throw new Error(`Invalid URL: '${text}'`);
-    }
-  }
-  throw new Error("No URL found?");
+
+  return await promise;
 }
+
 it("WebSocketServer should handle backpressure", async () => {
   const { promise, resolve, reject } = Promise.withResolvers();
   const PAYLOAD_SIZE = 64 * 1024;

@@ -1,8 +1,105 @@
 import type { Socket } from "bun";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
-import { heapStats } from "bun:jsc";
+import { createSocketPair } from "bun:internal-for-testing";
 import { expect, it, jest } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, isWindows, tls } from "harness";
+import { closeSync } from "fs";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, getMaxFD, isWindows, tls } from "harness";
+
+it("should throw when a socket from a file descriptor has a bad file descriptor", async () => {
+  const open = jest.fn();
+  const close = jest.fn();
+  const data = jest.fn();
+  const connectError = jest.fn(() => {});
+  {
+    expect(
+      async () =>
+        await Bun.connect({
+          fd: getMaxFD() + 1024,
+          socket: {
+            open,
+            close,
+            data,
+            connectError,
+          },
+        }),
+    ).toThrow();
+    Bun.gc(true);
+    await Bun.sleep(10);
+    Bun.gc(true);
+  }
+
+  await Bun.sleep(10);
+  expect(open).toHaveBeenCalledTimes(0);
+  expect(close).toHaveBeenCalledTimes(0);
+  expect(data).toHaveBeenCalledTimes(0);
+  expect(connectError).toHaveBeenCalledTimes(1);
+  connectError.mockClear();
+  open.mockClear();
+  close.mockClear();
+  data.mockClear();
+});
+
+it.skipIf(isWindows)("should not crash when a socket from a file descriptor is closed after opening", async () => {
+  const [server, client] = createSocketPair();
+  const open = jest.fn();
+  const close = jest.fn();
+  const data = jest.fn();
+  {
+    const socket = await Bun.connect({
+      fd: server,
+      socket: {
+        open,
+        close,
+        data,
+      },
+    });
+    Bun.gc(true);
+    await Bun.sleep(10);
+    closeSync(client);
+    Bun.gc(true);
+  }
+
+  await Bun.sleep(10);
+  expect(open).toHaveBeenCalledTimes(1);
+  expect(close).toHaveBeenCalledTimes(1);
+  expect(data).toHaveBeenCalledTimes(0);
+  open.mockClear();
+  close.mockClear();
+  data.mockClear();
+});
+
+it.skipIf(isWindows)(
+  "should not crash when a socket from a file descriptor is already closed after opening",
+  async () => {
+    const [server, client] = createSocketPair();
+    const open = jest.fn();
+    const close = jest.fn();
+    const data = jest.fn();
+    closeSync(client);
+    {
+      const socket = await Bun.connect({
+        fd: server,
+        socket: {
+          open,
+          close,
+          data,
+        },
+      });
+      Bun.gc(true);
+      await Bun.sleep(10);
+      Bun.gc(true);
+    }
+    await Bun.sleep(10);
+
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(data).toHaveBeenCalledTimes(0);
+    open.mockClear();
+    close.mockClear();
+    data.mockClear();
+  },
+);
+
 it("should coerce '0' to 0", async () => {
   const listener = Bun.listen({
     // @ts-expect-error

@@ -938,7 +938,8 @@ elseif(APPLE)
 else()
   set(BUN_SYMBOLS_PATH ${CWD}/src/symbols.dyn)
   set(BUN_LINKER_LDS_PATH ${CWD}/src/linker.lds)
-  register_linker_flags(${bun}-exe
+  register_linker_flags(
+    TARGET ${bun}-exe
     -Bsymbolics-functions
     -rdynamic
     -Wl,--dynamic-list=${BUN_SYMBOLS_PATH}

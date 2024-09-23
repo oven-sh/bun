@@ -5556,6 +5556,14 @@ pub const generic = struct {
         };
     }
 
+    pub fn eqlList(comptime T: type, lhs: *const ArrayList(T), rhs: *const ArrayList(T)) bool {
+        if (lhs.items.len != rhs.items.len) return false;
+        for (lhs.items, 0..) |*item, i| {
+            if (!eql(T, item, &rhs.items[i])) return false;
+        }
+        return true;
+    }
+
     pub inline fn eql(comptime T: type, lhs: *const T, rhs: *const T) bool {
         return switch (T) {
             f32 => lhs.* == rhs.*,

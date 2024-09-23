@@ -122,13 +122,30 @@ pub const Percentage = struct {
     }
 };
 
+fn needsDeepclone(comptime D: type) bool {
+    return switch (D) {
+        css.css_values.angle.Angle => false,
+        css.css_values.length.LengthValue => false,
+        else => @compileError("Can't tell if " ++ @typeName(D) ++ " needs deepclone, please add it to this switch statement."),
+    };
+}
+
 pub fn DimensionPercentage(comptime D: type) type {
+    const needs_deepclone = needsDeepclone(D);
     return union(enum) {
         dimension: D,
         percentage: Percentage,
         calc: *Calc(DimensionPercentage(D)),
 
         const This = @This();
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
+            return switch (this.*) {
+                .dimension => |d| if (comptime needs_deepclone) .{ .dimension = d.deepClone(allocator) } else this.*,
+                .percentage => return this.*,
+                .calc => |calc| .{ .calc = bun.create(allocator, Calc(DimensionPercentage(D)), calc.deepClone(allocator)) },
+            };
+        }
 
         pub fn deinit(this: *const @This(), allocator: std.mem.Allocator) void {
             return switch (this.*) {

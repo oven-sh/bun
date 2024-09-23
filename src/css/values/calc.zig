@@ -151,6 +151,16 @@ pub fn Calc(comptime V: type) type {
             };
         }
 
+        pub fn eql(this: *const @This(), other: *const @This()) bool {
+            return switch (this.*) {
+                .value => |a| return other.* == .value and css.generic.eql(V, a, other.value),
+                .number => |*a| return other.* == .number and css.generic.eql(f32, a, &other.number),
+                .sum => |s| return other.* == .sum and s.left.eql(other.sum.left) and s.right.eql(other.sum.right),
+                .product => |p| return other.* == .product and p.number == other.product.number and p.expression.eql(other.product.expression),
+                .function => |f| return other.* == .function and f.eql(other.function),
+            };
+        }
+
         fn mulValueF32(lhs: V, allocator: Allocator, rhs: f32) V {
             return switch (V) {
                 f32 => lhs * rhs,
@@ -1263,7 +1273,7 @@ pub fn Calc(comptime V: type) type {
                     // White space is always required.
                     if (b.isSignNegative()) {
                         try dest.writeStr(" - ");
-                        var b2 = b.mulF32(dest.allocator, -1.0);
+                        var b2 = b.deepClone(dest.allocator).mulF32(dest.allocator, -1.0);
                         defer b2.deinit(dest.allocator);
                         try b2.toCss(W, dest);
                     } else {
@@ -1365,7 +1375,6 @@ pub fn Calc(comptime V: type) type {
         /// I am pretty sure we could do this reduction in place, or do it as the
         /// arguments are being parsed.
         fn reduceArgs(allocator: Allocator, args: *ArrayList(This), order: std.math.Order) void {
-            defer css.deepDeinit(This, allocator, args);
             // Reduces the arguments of a min() or max() expression, combining compatible values.
             // e.g. min(1px, 1em, 2px, 3in) => min(1px, 1em)
             var reduced = ArrayList(This){};
@@ -1412,6 +1421,7 @@ pub fn Calc(comptime V: type) type {
                 arg.* = This{ .number = 420 };
             }
 
+            css.deepDeinit(This, allocator, args);
             args.* = reduced;
         }
     };
@@ -1457,6 +1467,21 @@ pub fn MathFunction(comptime V: type) type {
         sign: Calc(V),
         /// The `hypot()` function.
         hypot: ArrayList(Calc(V)),
+
+        pub fn eql(this: *const @This(), other: *const @This()) bool {
+            return switch (this.*) {
+                .calc => |a| return other.* == .calc and a.eql(&other.calc),
+                .min => |*a| return other.* == .min and css.generic.eqlList(Calc(V), a, &other.min),
+                .max => |*a| return other.* == .max and css.generic.eqlList(Calc(V), a, &other.max),
+                .clamp => |*a| return other.* == .clamp and a.min.eql(&other.clamp.min) and a.center.eql(&other.clamp.center) and a.max.eql(&other.clamp.max),
+                .round => |*a| return other.* == .round and a.strategy == other.round.strategy and a.value.eql(&other.round.value) and a.interval.eql(&other.round.interval),
+                .rem => |*a| return other.* == .rem and a.dividend.eql(&other.rem.dividend) and a.divisor.eql(&other.rem.divisor),
+                .mod_ => |*a| return other.* == .mod_ and a.dividend.eql(&other.mod_.dividend) and a.divisor.eql(&other.mod_.divisor),
+                .abs => |*a| return other.* == .abs and a.eql(&other.abs),
+                .sign => |*a| return other.* == .sign and a.eql(&other.sign),
+                .hypot => |*a| return other.* == .hypot and css.generic.eqlList(Calc(V), a, &other.hypot),
+            };
+        }
 
         pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
             return switch (this.*) {

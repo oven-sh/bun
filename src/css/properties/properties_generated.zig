@@ -18,7 +18,8 @@ const CustomProperty = css.css_properties.custom.CustomProperty;
 const css_values = css.css_values;
 const CssColor = css.css_values.color.CssColor;
 const Image = css.css_values.image.Image;
-const Length = css.css_values.length.LengthValue;
+const Length = css.css_values.length.Length;
+const LengthValue = css.css_values.length.LengthValue;
 const LengthPercentage = css_values.length.LengthPercentage;
 const LengthPercentageOrAuto = css_values.length.LengthPercentageOrAuto;
 const PropertyCategory = css.PropertyCategory;
@@ -242,6 +243,7 @@ const ArrayList = std.ArrayListUnmanaged;
 const SmallList = css.SmallList;
 pub const Property = union(PropertyIdTag) {
     @"background-color": CssColor,
+    @"border-spacing": css.css_values.size.Size2D(Length),
     composes: Composes,
     all: CSSWideKeyword,
     unparsed: UnparsedProperty,
@@ -257,6 +259,13 @@ pub const Property = union(PropertyIdTag) {
                 if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .@"background-color" = c } };
+                    }
+                }
+            },
+            .@"border-spacing" => {
+                if (css.generic.parseWithOptions(css.css_values.size.Size2D(Length), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-spacing" = c } };
                     }
                 }
             },
@@ -292,6 +301,7 @@ pub const Property = union(PropertyIdTag) {
     pub inline fn __toCssHelper(this: *const Property) struct { []const u8, VendorPrefix } {
         return switch (this.*) {
             .@"background-color" => .{ "background-color", VendorPrefix{ .none = true } },
+            .@"border-spacing" => .{ "border-spacing", VendorPrefix{ .none = true } },
             .composes => .{ "composes", VendorPrefix{ .none = true } },
             .all => .{ "all", VendorPrefix{ .none = true } },
             .unparsed => |*unparsed| brk: {
@@ -309,6 +319,7 @@ pub const Property = union(PropertyIdTag) {
     pub fn valueToCss(this: *const Property, comptime W: type, dest: *css.Printer(W)) PrintErr!void {
         return switch (this.*) {
             .@"background-color" => |*value| value.toCss(W, dest),
+            .@"border-spacing" => |*value| value.toCss(W, dest),
             .composes => |*value| value.toCss(W, dest),
             .all => |*keyword| keyword.toCss(W, dest),
             .unparsed => |*unparsed| unparsed.value.toCss(W, dest, false),
@@ -327,6 +338,7 @@ pub const Property = union(PropertyIdTag) {
 };
 pub const PropertyId = union(PropertyIdTag) {
     @"background-color",
+    @"border-spacing",
     composes,
     all,
     unparsed,
@@ -343,6 +355,7 @@ pub const PropertyId = union(PropertyIdTag) {
     pub fn prefix(this: *const PropertyId) VendorPrefix {
         return switch (this.*) {
             .@"background-color" => VendorPrefix.empty(),
+            .@"border-spacing" => VendorPrefix.empty(),
             .composes => VendorPrefix.empty(),
             .all, .custom, .unparsed => VendorPrefix.empty(),
         };
@@ -353,6 +366,9 @@ pub const PropertyId = union(PropertyIdTag) {
         if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "background-color")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"background-color";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-spacing")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-spacing";
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "composes")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .composes;
@@ -367,6 +383,7 @@ pub const PropertyId = union(PropertyIdTag) {
         _ = pre; // autofix
         return switch (this.*) {
             .@"background-color" => .@"background-color",
+            .@"border-spacing" => .@"border-spacing",
             .composes => .composes,
             else => this.*,
         };
@@ -376,6 +393,7 @@ pub const PropertyId = union(PropertyIdTag) {
         _ = pre; // autofix
         return switch (this.*) {
             .@"background-color" => {},
+            .@"border-spacing" => {},
             .composes => {},
             else => {},
         };
@@ -383,6 +401,7 @@ pub const PropertyId = union(PropertyIdTag) {
 };
 pub const PropertyIdTag = enum(u16) {
     @"background-color",
+    @"border-spacing",
     composes,
     all,
     unparsed,

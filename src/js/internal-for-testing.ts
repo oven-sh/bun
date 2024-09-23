@@ -56,6 +56,11 @@ export const iniInternals = {
   loadNpmrc: $newZigFunction("ini.zig", "IniTestingAPIs.loadNpmrcFromJS", 2),
 };
 
+export const cssInternals = {
+  minifyTestWithOptions: $newZigFunction("css_internals.zig", "minifyTestWithOptions", 3),
+  testWithOptions: $newZigFunction("css_internals.zig", "testWithOptions", 3),
+};
+
 export const crash_handler = $zig("crash_handler.zig", "js_bindings.generate") as {
   getMachOImageZeroOffset: () => number;
   segfault: () => void;

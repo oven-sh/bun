@@ -54,7 +54,7 @@ pub fn Size2D(comptime T: type) type {
 
         pub fn toCss(this: *const Size2D(T), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
             try valToCss(&this.a, W, dest);
-            if (valEql(&this.b, &this.a)) {
+            if (!valEql(&this.b, &this.a)) {
                 try dest.writeStr(" ");
                 try valToCss(&this.b, W, dest);
             }

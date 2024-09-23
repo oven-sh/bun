@@ -203,6 +203,15 @@ pub const LengthValue = union(enum) {
         };
     }
 
+    pub inline fn eql(this: *const @This(), other: *const @This()) bool {
+        inline for (bun.meta.EnumFields(@This())) |field| {
+            if (field.value == @intFromEnum(this.*) and field.value == @intFromEnum(other.*)) {
+                return @field(this, field.name) == @field(other, field.name);
+            }
+        }
+        return false;
+    }
+
     pub fn trySign(this: *const @This()) ?f32 {
         return sign(this);
     }
@@ -386,6 +395,13 @@ pub const Length = union(enum) {
         return switch (this.*) {
             .value => |a| a.toCss(W, dest),
             .calc => |c| c.toCss(W, dest),
+        };
+    }
+
+    pub fn eql(this: *const @This(), other: *const @This()) bool {
+        return switch (this.*) {
+            .value => |a| other.* == .value and a.eql(&other.value),
+            .calc => |a| other.* == .calc and a.eql(other.calc),
         };
     }
 

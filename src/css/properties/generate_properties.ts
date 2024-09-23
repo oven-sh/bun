@@ -38,7 +38,7 @@ async function generateCode(property_defs: Record<string, PropertyDef>) {
   await Bun.$`echo ${generateProperty(property_defs)} >> ${OUTPUT_FILE}`;
   await Bun.$`echo ${generatePropertyId(property_defs)} >> ${OUTPUT_FILE}`;
   await Bun.$`echo ${generatePropertyIdTag(property_defs)} >> ${OUTPUT_FILE}`;
-  await Bun.$`zig fmt ${OUTPUT_FILE}`;
+  await Bun.$`vendor/zig/zig.exe fmt ${OUTPUT_FILE}`;
 }
 
 function generatePropertyIdTag(property_defs: Record<string, PropertyDef>): string {
@@ -473,9 +473,9 @@ generateCode({
   //   ty: "margin_padding.Inset",
   //   shorthand: true,
   // },
-  // "border-spacing": {
-  //   ty: "css.css_values.size.Size2D(Length)",
-  // },
+  "border-spacing": {
+    ty: "css.css_values.size.Size2D(Length)",
+  },
   // "border-top-color": {
   //   ty: "CssColor",
   //   logical_group: { ty: "border_color", category: "physical" },
@@ -1575,7 +1575,8 @@ const CustomProperty = css.css_properties.custom.CustomProperty;
 const css_values = css.css_values;
 const CssColor = css.css_values.color.CssColor;
 const Image = css.css_values.image.Image;
-const Length = css.css_values.length.LengthValue;
+const Length = css.css_values.length.Length;
+const LengthValue = css.css_values.length.LengthValue;
 const LengthPercentage = css_values.length.LengthPercentage;
 const LengthPercentageOrAuto = css_values.length.LengthPercentageOrAuto;
 const PropertyCategory = css.PropertyCategory;

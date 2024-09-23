@@ -371,6 +371,8 @@ void us_poll_init(us_poll_r p, LIBUS_SOCKET_DESCRIPTOR fd, int poll_type);
 
 /* Start, change and stop polling for events */
 void us_poll_start(us_poll_r p, us_loop_r loop, int events) nonnull_fn_decl;
+/* Returns 0 if successful */
+int us_poll_start_rc(us_poll_r p, us_loop_r loop, int events) nonnull_fn_decl;
 void us_poll_change(us_poll_r p, us_loop_r loop, int events) nonnull_fn_decl;
 void us_poll_stop(us_poll_r p, struct us_loop_t *loop) nonnull_fn_decl;
 

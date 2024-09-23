@@ -40,7 +40,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionWrite, (JSC::JSGlobalObject * globalObject,
   int32_t fd = STDOUT_FILENO;
   if (callframe->argumentCount() > 1) {
     fd = arg1.toInt32(globalObject);
-    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    RETURN_IF_EXCEPTION(scope, {});
   } else {
     toWriteArg = arg1;
   }
@@ -53,7 +53,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionWrite, (JSC::JSGlobalObject * globalObject,
   }
 
   auto string = toWriteArg.toWTFString(globalObject);
-  RETURN_IF_EXCEPTION(scope, encodedJSValue());
+  RETURN_IF_EXCEPTION(scope, {});
   auto utf8 = string.utf8();
   auto length = utf8.length();
   auto written = write(fd, utf8.data(), length);

@@ -935,8 +935,12 @@ pub const VirtualMachine = struct {
 
     pub fn isEventLoopAlive(vm: *const VirtualMachine) bool {
         return vm.unhandled_error_counter == 0 and
-            (vm.event_loop_handle.?.isActive() or
-            vm.active_tasks + vm.event_loop.tasks.count + vm.event_loop.immediate_tasks.count + vm.event_loop.next_immediate_tasks.count > 0);
+            (@intFromBool(vm.event_loop_handle.?.isActive()) +
+            vm.active_tasks +
+            vm.event_loop.tasks.count +
+            vm.event_loop.immediate_tasks.count +
+            vm.event_loop.next_immediate_tasks.count +
+            @intFromBool(vm.event_loop.hasPendingRefs()) > 0);
     }
 
     pub fn wakeup(this: *VirtualMachine) void {

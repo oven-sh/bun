@@ -1285,8 +1285,14 @@ pub const EventLoop = struct {
         _ = this.tickConcurrentWithCount();
     }
 
+    /// Check whether refConcurrently has been called but the change has not yet been applied to the
+    /// underlying event loop's `active` counter
+    pub fn hasPendingRefs(this: *const EventLoop) bool {
+        return this.concurrent_ref.load(.seq_cst) > 0;
+    }
+
     fn updateCounts(this: *EventLoop) void {
-        const delta = this.concurrent_ref.swap(0, .monotonic);
+        const delta = this.concurrent_ref.swap(0, .seq_cst);
         const loop = this.virtual_machine.event_loop_handle.?;
         if (comptime Environment.isWindows) {
             if (delta > 0) {
@@ -1639,14 +1645,13 @@ pub const EventLoop = struct {
     }
 
     pub fn refConcurrently(this: *EventLoop) void {
-        // TODO maybe this should be AcquireRelease
-        _ = this.concurrent_ref.fetchAdd(1, .monotonic);
+        _ = this.concurrent_ref.fetchAdd(1, .seq_cst);
         this.wakeup();
     }
 
     pub fn unrefConcurrently(this: *EventLoop) void {
         // TODO maybe this should be AcquireRelease
-        _ = this.concurrent_ref.fetchSub(1, .monotonic);
+        _ = this.concurrent_ref.fetchSub(1, .seq_cst);
         this.wakeup();
     }
 };

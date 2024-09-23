@@ -20,6 +20,7 @@ const result = fn.apply(null, [
     } else if (global.gc) {
       global.gc();
     }
+    console.log("GC did run");
   },
   ...eval(process.argv[3] ?? "[]"),
 ]);

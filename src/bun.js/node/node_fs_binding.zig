@@ -90,9 +90,17 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
     const Arguments = comptime function.params[1].type.?;
     const NodeBindingClosure = struct {
         pub fn bind(this: *JSC.Node.NodeJSFS, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
-            var arguments = callframe.arguments(8);
+            var arguments = callframe.arguments(9);
+            var arguments_slice = arguments.slice();
+            var callback_argument = JSC.JSValue.zero;
+            if (this.is_callback_api) {
+                if (arguments_slice.len > 0) {
+                    callback_argument = arguments_slice[arguments_slice.len - 1];
+                    arguments_slice = arguments_slice[0 .. arguments_slice.len - 1];
+                }
+            }
 
-            var slice = ArgumentsSlice.init(globalObject.bunVM(), arguments.slice());
+            var slice = ArgumentsSlice.init(globalObject.bunVM(), arguments_slice);
             slice.will_be_async = true;
             var exceptionref: JSC.C.JSValueRef = null;
             const args = if (comptime Arguments != void)
@@ -119,15 +127,15 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
 
             const Task = @field(JSC.Node.Async, @tagName(FunctionEnum));
             if (comptime FunctionEnum == .cp) {
-                return Task.create(globalObject, this, args, globalObject.bunVM(), slice.arena);
+                return Task.create(globalObject, this, args, globalObject.bunVM(), slice.arena, callback_argument);
             } else {
                 if (comptime FunctionEnum == .readdir) {
                     if (args.recursive) {
-                        return JSC.Node.Async.readdir_recursive.create(globalObject, args, globalObject.bunVM());
+                        return JSC.Node.Async.readdir_recursive.create(globalObject, this, args, globalObject.bunVM(), callback_argument);
                     }
                 }
 
-                return Task.create(globalObject, this, args, globalObject.bunVM());
+                return Task.create(globalObject, this, args, globalObject.bunVM(), callback_argument);
             }
         }
     };
@@ -136,6 +144,7 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
 
 pub const NodeJSFS = struct {
     node_fs: JSC.Node.NodeFS = .{},
+    is_callback_api: bool = false,
 
     pub usingnamespace JSC.Codegen.JSNodeJSFS;
     pub usingnamespace bun.New(@This());
@@ -256,13 +265,21 @@ pub const NodeJSFS = struct {
 };
 
 pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-    const module = NodeJSFS.new(.{});
-
+    const promises = NodeJSFS.new(.{
+        .is_callback_api = false,
+    });
+    const callbacks = NodeJSFS.new(.{
+        .is_callback_api = true,
+    });
     const vm = globalObject.bunVM();
-    if (vm.standalone_module_graph != null)
-        module.node_fs.vm = vm;
+    if (vm.standalone_module_graph != null) {
+        promises.node_fs.vm = vm;
+    }
 
-    return module.toJS(globalObject);
+    const array = JSC.JSValue.createEmptyObject(globalObject, 2);
+    array.putIndex(globalObject, 0, promises.toJS(globalObject));
+    array.putIndex(globalObject, 1, callbacks.toJS(globalObject));
+    return array;
 }
 
 pub fn createMemfdForTesting(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {

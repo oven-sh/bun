@@ -160,7 +160,7 @@ pub const Async = struct {
 
         comptime bun.assert(Environment.isWindows);
         return struct {
-            promise: JSC.JSPromise.Strong,
+            async_task: JSC.AsyncTask,
             args: ArgumentType,
             globalObject: *JSC.JSGlobalObject,
             req: uv.fs_t = std.mem.zeroes(uv.fs_t),
@@ -174,9 +174,9 @@ pub const Async = struct {
 
             pub usingnamespace bun.New(@This());
 
-            pub fn create(globalObject: *JSC.JSGlobalObject, this: *JSC.Node.NodeJSFS, args: ArgumentType, vm: *JSC.VirtualMachine) JSC.JSValue {
+            pub fn create(globalObject: *JSC.JSGlobalObject, this: *JSC.Node.NodeJSFS, args: ArgumentType, vm: *JSC.VirtualMachine, callback_argument: JSC.JSValue) JSC.JSValue {
                 var task = Task.new(.{
-                    .promise = JSC.JSPromise.Strong.init(globalObject),
+                    .async_task = JSC.AsyncTask.init(globalObject, if (this.is_callback_api) .{ .callback = callback_argument } else .promise),
                     .args = args,
                     .result = undefined,
                     .globalObject = globalObject,
@@ -213,7 +213,7 @@ pub const Async = struct {
                             log("uv close({}) SKIPPED", .{fd});
                             task.result = Maybe(Return.Close).success;
                             task.globalObject.bunVM().eventLoop().enqueueTask(JSC.Task.init(task));
-                            return task.promise.value();
+                            return task.async_task.value();
                         }
 
                         const rc = uv.uv_fs_close(loop, &task.req, fd, &uv_callback);
@@ -267,7 +267,7 @@ pub const Async = struct {
                     else => comptime unreachable,
                 }
 
-                return task.promise.value();
+                return task.async_task.value();
             }
 
             fn uv_callback(req: *uv.fs_t) callconv(.C) void {
@@ -296,8 +296,10 @@ pub const Async = struct {
                         break :brk out;
                     },
                 };
-                var promise_value = this.promise.value();
-                var promise = this.promise.get();
+                var promise_value = this.async_task.value();
+                var promise = this.async_task;
+                this.async_task = JSC.AsyncTask.empty;
+                defer promise.deinit();
                 promise_value.ensureStillAlive();
 
                 const tracker = this.tracker;
@@ -326,7 +328,7 @@ pub const Async = struct {
                 } else {
                     this.args.deinit();
                 }
-                this.promise.deinit();
+                this.async_task.deinit();
                 this.destroy();
             }
         };
@@ -334,7 +336,7 @@ pub const Async = struct {
 
     fn NewAsyncFSTask(comptime ReturnType: type, comptime ArgumentType: type, comptime Function: anytype) type {
         return struct {
-            promise: JSC.JSPromise.Strong,
+            async_task: JSC.AsyncTask,
             args: ArgumentType,
             globalObject: *JSC.JSGlobalObject,
             task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
@@ -348,14 +350,15 @@ pub const Async = struct {
 
             pub fn create(
                 globalObject: *JSC.JSGlobalObject,
-                _: *JSC.Node.NodeJSFS,
+                node_fs: *JSC.Node.NodeJSFS,
                 args: ArgumentType,
                 vm: *JSC.VirtualMachine,
+                callback_argument: JSC.JSValue,
             ) JSC.JSValue {
                 var task = bun.new(
                     Task,
                     Task{
-                        .promise = JSC.JSPromise.Strong.init(globalObject),
+                        .async_task = JSC.AsyncTask.init(globalObject, if (node_fs.is_callback_api) .{ .callback = callback_argument } else .promise),
                         .args = args,
                         .result = undefined,
                         .globalObject = globalObject,
@@ -367,7 +370,7 @@ pub const Async = struct {
                 task.tracker.didSchedule(globalObject);
                 JSC.WorkPool.schedule(&task.task);
 
-                return task.promise.value();
+                return task.async_task.value();
             }
 
             fn workPoolCallback(task: *JSC.WorkPoolTask) void {
@@ -396,8 +399,10 @@ pub const Async = struct {
                         break :brk out;
                     },
                 };
-                var promise_value = this.promise.value();
-                var promise = this.promise.get();
+                var promise_value = this.async_task.value();
+                var promise = this.async_task;
+                defer promise.deinit();
+                this.async_task = JSC.AsyncTask.empty;
                 promise_value.ensureStillAlive();
 
                 const tracker = this.tracker;
@@ -426,7 +431,7 @@ pub const Async = struct {
                 } else {
                     this.args.deinit();
                 }
-                this.promise.deinit();
+                this.async_task.deinit();
                 bun.destroy(this);
             }
         };
@@ -440,7 +445,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
     const ShellTask = bun.shell.Interpreter.Builtin.Cp.ShellCpTask;
     const ShellTaskT = if (is_shell) *ShellTask else u0;
     return struct {
-        promise: JSC.JSPromise.Strong = .{},
+        async_task: JSC.AsyncTask = JSC.AsyncTask.empty,
         args: Arguments.Cp,
         evtloop: JSC.EventLoopHandle,
         task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
@@ -547,13 +552,14 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
 
         pub fn create(
             globalObject: *JSC.JSGlobalObject,
-            _: *JSC.Node.NodeJSFS,
+            node_fs: *JSC.Node.NodeJSFS,
             cp_args: Arguments.Cp,
             vm: *JSC.VirtualMachine,
             arena: bun.ArenaAllocator,
+            callback_argument: JSC.JSValue,
         ) JSC.JSValue {
-            const task = createWithShellTask(globalObject, cp_args, vm, arena, 0, true);
-            return task.promise.value();
+            const task = createWithShellTask(globalObject, cp_args, vm, arena, 0, if (node_fs.is_callback_api) .{ .callback = callback_argument } else .promise);
+            return task.async_task.value();
         }
 
         pub fn createWithShellTask(
@@ -562,12 +568,12 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             vm: *JSC.VirtualMachine,
             arena: bun.ArenaAllocator,
             shelltask: ShellTaskT,
-            comptime enable_promise: bool,
+            async_task_type: ?JSC.AsyncTask.Argument,
         ) *ThisAsyncCpTask {
             var task = bun.new(
                 ThisAsyncCpTask,
                 ThisAsyncCpTask{
-                    .promise = if (comptime enable_promise) JSC.JSPromise.Strong.init(globalObject) else .{},
+                    .async_task = if (async_task_type) |task_type| JSC.AsyncTask.init(globalObject, task_type) else JSC.AsyncTask.empty,
                     .args = cp_args,
                     .has_result = .{ .raw = false },
                     .result = undefined,
@@ -665,8 +671,10 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                     break :brk out;
                 },
             };
-            var promise_value = this.promise.value();
-            var promise = this.promise.get();
+            var promise_value = this.async_task.value();
+            var promise = this.async_task;
+            defer promise.deinit();
+            this.async_task = JSC.AsyncTask.empty;
             promise_value.ensureStillAlive();
 
             const tracker = this.tracker;
@@ -689,7 +697,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             this.deinitialized = true;
             if (comptime !is_shell) this.ref.unref(this.evtloop);
             this.args.deinit();
-            this.promise.deinit();
+            this.async_task.deinit();
             this.arena.deinit();
             bun.destroy(this);
         }
@@ -920,7 +928,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
 }
 
 pub const AsyncReaddirRecursiveTask = struct {
-    promise: JSC.JSPromise.Strong,
+    async_task: JSC.AsyncTask,
     args: Arguments.Readdir,
     globalObject: *JSC.JSGlobalObject,
     task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
@@ -1024,11 +1032,19 @@ pub const AsyncReaddirRecursiveTask = struct {
 
     pub fn create(
         globalObject: *JSC.JSGlobalObject,
+        node_fs: *JSC.Node.NodeJSFS,
         args: Arguments.Readdir,
         vm: *JSC.VirtualMachine,
+        callback_argument: JSC.JSValue,
     ) JSC.JSValue {
         var task = AsyncReaddirRecursiveTask.new(.{
-            .promise = JSC.JSPromise.Strong.init(globalObject),
+            .async_task = JSC.AsyncTask.init(
+                globalObject,
+                if (node_fs.is_callback_api)
+                    .{ .callback = callback_argument }
+                else
+                    .promise,
+            ),
             .args = args,
             .has_result = .{ .raw = false },
             .globalObject = globalObject,
@@ -1047,7 +1063,7 @@ pub const AsyncReaddirRecursiveTask = struct {
 
         JSC.WorkPool.schedule(&task.task);
 
-        return task.promise.value();
+        return task.async_task.value();
     }
 
     pub fn performWork(this: *AsyncReaddirRecursiveTask, basename: [:0]const u8, buf: *bun.PathBuffer, comptime is_root: bool) void {
@@ -1223,8 +1239,10 @@ pub const AsyncReaddirRecursiveTask = struct {
 
             break :brk out;
         };
-        var promise_value = this.promise.value();
-        var promise = this.promise.get();
+        var promise_value = this.async_task.value();
+        var promise = this.async_task;
+        defer promise.deinit();
+        this.async_task = JSC.AsyncTask.empty;
         promise_value.ensureStillAlive();
 
         const tracker = this.tracker;
@@ -1252,7 +1270,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         this.args.deinit();
         bun.default_allocator.free(this.root_path.slice());
         this.clearResultList();
-        this.promise.deinit();
+        this.async_task.deinit();
         this.destroy();
     }
 };

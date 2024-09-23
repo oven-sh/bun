@@ -11068,7 +11068,7 @@ pub const Interpreter = struct {
                             vm,
                             bun.ArenaAllocator.init(bun.default_allocator),
                             this,
-                            false,
+                            null,
                         );
                     } else {
                         _ = JSC.Node.ShellAsyncCpTask.createMini(

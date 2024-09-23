@@ -2162,6 +2162,67 @@ pub const AbortSignal = extern opaque {
     pub const Extern = [_][]const u8{ "create", "ref", "unref", "signal", "abortReason", "aborted", "addListener", "fromJS", "toJS", "cleanNativeBindings" };
 };
 
+pub const AsyncTask = union(Type) {
+    promise: JSPromise.Strong,
+    callback: JSC.Strong,
+
+    pub const Type = enum {
+        promise,
+        callback,
+    };
+
+    pub const Argument = union(Type) {
+        promise: void,
+        callback: JSValue,
+    };
+
+    pub const empty = AsyncTask{ .promise = .{} };
+
+    pub fn init(global: *JSC.JSGlobalObject, k: Argument) AsyncTask {
+        return switch (k) {
+            .promise => AsyncTask{ .promise = JSPromise.Strong.init(global) },
+            .callback => |callback| AsyncTask{ .callback = JSC.Strong.create(callback, global) },
+        };
+    }
+
+    pub fn value(this: *const AsyncTask) JSValue {
+        switch (this.*) {
+            .promise => |*promise| return promise.value(),
+            .callback => |*callback| return callback.get() orelse .zero,
+        }
+    }
+
+    pub fn deinit(this: *AsyncTask) void {
+        switch (this.*) {
+            .promise => |*promise| promise.deinit(),
+            .callback => |*callback| callback.deinit(),
+        }
+    }
+
+    pub fn reject(this: *AsyncTask, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
+        switch (this.*) {
+            .promise => |*promise| promise.reject(globalThis, val),
+            .callback => |*callback| {
+                callback.swap().call(globalThis, .undefined, &.{
+                    val,
+                }) catch |err| globalThis.takeException(err);
+            },
+        }
+    }
+
+    pub fn resolve(this: *AsyncTask, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
+        switch (this.*) {
+            .promise => |*promise| promise.resolve(globalThis, val),
+            .callback => |*callback| {
+                callback.swap().call(globalThis, .undefined, &.{
+                    .null,
+                    val,
+                }) catch |err| globalThis.takeException(err);
+            },
+        }
+    }
+};
+
 pub const JSPromise = extern struct {
     pub const shim = Shimmer("JSC", "JSPromise", @This());
     bytes: shim.Bytes,

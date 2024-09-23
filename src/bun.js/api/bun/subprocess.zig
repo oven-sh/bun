@@ -2125,6 +2125,11 @@ pub const Subprocess = struct {
             },
         });
 
+        const posix_ipc_fd = if (Environment.isPosix and !is_sync and maybe_ipc_mode != null)
+            spawned.extra_pipes.items[@intCast(ipc_channel)]
+        else
+            bun.invalid_fd;
+
         // When run synchronously, subprocess isn't garbage collected
         subprocess.* = Subprocess{
             .globalThis = globalThis,
@@ -2184,7 +2189,7 @@ pub const Subprocess = struct {
                 if (uws.us_socket_from_fd(
                     jsc_vm.rareData().spawnIPCContext(jsc_vm),
                     @sizeOf(*Subprocess),
-                    spawned.extra_pipes.items[@intCast(ipc_channel)].cast(),
+                    posix_ipc_fd.cast(),
                 )) |socket| {
                     posix_ipc_info = IPC.Socket.from(socket);
                     subprocess.ipc_data = .{

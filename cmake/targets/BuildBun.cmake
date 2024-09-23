@@ -452,6 +452,19 @@ WEBKIT_ADD_SOURCE_DEPENDENCIES(
   ${CODEGEN_PATH}/InternalModuleRegistryConstants.h
 )
 
+if(WIN32)
+  if(ENABLE_CANARY)
+    set(Bun_VERSION_WITH_TAG ${VERSION}-canary.${CANARY_REVISION})
+  else()
+    set(Bun_VERSION_WITH_TAG ${VERSION})
+  endif()
+  set(BUN_ICO_PATH ${CWD}/src/bun.ico)
+  configure_file(
+    ${CWD}/src/windows-app-info.rc
+    ${CODEGEN_PATH}/windows-app-info.rc
+  )
+endif()
+
 # --- Zig ---
 
 file(GLOB_RECURSE BUN_ZIG_SOURCES ${CONFIGURE_DEPENDS}
@@ -573,16 +586,6 @@ list(APPEND BUN_CPP_SOURCES
 )
 
 if(WIN32)
-  if(ENABLE_CANARY)
-    set(Bun_VERSION_WITH_TAG ${VERSION}-canary.${CANARY_REVISION})
-  else()
-    set(Bun_VERSION_WITH_TAG ${VERSION})
-  endif()
-  set(BUN_ICO_PATH ${CWD}/src/bun.ico)
-  configure_file(
-    ${CWD}/src/windows-app-info.rc
-    ${CODEGEN_PATH}/windows-app-info.rc
-  )
   list(APPEND BUN_CPP_SOURCES ${CODEGEN_PATH}/windows-app-info.rc)
 endif()
 
@@ -600,6 +603,11 @@ set_target_properties(${bun}-cpp PROPERTIES
 )
 
 set(BUN_CPP_OUTPUT ${BUILD_PATH}/${CMAKE_STATIC_LIBRARY_PREFIX}${bun}${CMAKE_STATIC_LIBRARY_SUFFIX})
+
+upload_artifacts(
+  TARGET ${bun}-cpp
+  ${BUN_CPP_OUTPUT}
+)
 
 # --- C/C++ Includes ---
 
@@ -782,6 +790,11 @@ file(GENERATE OUTPUT ${CODEGEN_PATH}/bun.h CONTENT "# Empty file")
 add_executable(${bun}-exe ${CODEGEN_PATH}/bun.h)
 
 set(BUN_EXE_OUTPUT ${BUILD_PATH}/${CMAKE_EXECUTABLE_PREFIX}${bun}${CMAKE_EXECUTABLE_SUFFIX})
+
+upload_artifacts(
+  TARGET ${bun}-exe
+  ${BUN_EXE_OUTPUT}
+)
 
 set_target_properties(${bun}-exe PROPERTIES
   OUTPUT_NAME ${bun}

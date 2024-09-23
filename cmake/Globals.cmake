@@ -739,6 +739,34 @@ function(register_inputs)
   endforeach()
 endfunction()
 
+# upload_artifacts()
+# Description:
+#   Uploads artifacts after a target has been built.
+# Arguments:
+#   TARGET    string   - The target to upload artifacts for
+#   artifacts string[] - The artifacts to upload
+function(upload_artifacts)
+  set(args TARGET)
+  cmake_parse_arguments(ARTIFACT "" "${args}" "" ${ARGN})
+
+  parse_target(ARTIFACT_TARGET)
+  parse_list(ARTIFACT_UNPARSED_ARGUMENTS ARTIFACT_PATHS)
+
+  register_command(
+    TARGET
+      ${ARTIFACT_TARGET}
+    TARGET_PHASE
+      POST_BUILD
+    COMMENT
+      "Uploading ${path}"
+    COMMAND
+      ${CMAKE_COMMAND} -E true
+    ARTIFACTS
+      ${ARTIFACT_PATHS}
+  )
+endfunction()
+
+
 # register_compiler_flags()
 # Description:
 #   Registers a compiler flag, similar to `add_compile_options()`, but has more validation and features.

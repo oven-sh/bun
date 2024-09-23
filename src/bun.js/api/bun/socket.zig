@@ -1356,6 +1356,9 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn doConnect(this: *This, connection: Listener.UnixOrHost) !void {
             bun.assert(this.socket_context != null);
             this.ref();
+            errdefer {
+                this.deref();
+            }
 
             switch (connection) {
                 .host => |c| {
@@ -1374,9 +1377,6 @@ fn NewSocket(comptime ssl: bool) type {
                     );
                 },
                 .fd => |f| {
-                    errdefer {
-                        this.deref();
-                    }
                     const socket = This.Socket.fromFd(this.socket_context.?, f, This, this, null) orelse return error.ConnectionFailed;
                     this.onOpen(socket);
                 },

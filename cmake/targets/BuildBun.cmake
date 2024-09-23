@@ -745,7 +745,7 @@ register_includes(
   ${VENDOR_PATH}/${libdeflate}
   ${VENDOR_PATH}/${libuv}/include ${WIN32}
   ${VENDOR_PATH}/${lshpack}
-  ${VENDOR_PATH}/${lshpack}/compact/queue ${WIN32}
+  ${VENDOR_PATH}/${lshpack}/compat/queue ${WIN32}
   ${VENDOR_PATH}/${mimalloc}/include
   ${VENDOR_PATH}/${zlib}
 )

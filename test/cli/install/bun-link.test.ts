@@ -1,7 +1,7 @@
-import { spawn, file } from "bun";
+import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
-import { bunExe, bunEnv as env, runBunInstall, toBeValidBin, toHaveBins, tmpdirSync } from "harness";
-import { access, writeFile, mkdir } from "fs/promises";
+import { access, mkdir, writeFile } from "fs/promises";
+import { bunExe, bunEnv as env, runBunInstall, tmpdirSync, toBeValidBin, toHaveBins } from "harness";
 import { basename, join } from "path";
 import {
   dummyAfterAll,

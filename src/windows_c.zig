@@ -814,11 +814,11 @@ pub const SystemErrno = enum(u16) {
         return @as(SystemErrno, @enumFromInt(code));
     }
 
-    pub fn label(this: SystemErrno) ?[]const u8 {
+    pub fn label(this: SystemErrno) ?[:0]const u8 {
         return labels.get(this) orelse null;
     }
 
-    const LabelMap = std.enums.EnumMap(SystemErrno, []const u8);
+    const LabelMap = std.enums.EnumMap(SystemErrno, [:0]const u8);
     pub const labels: LabelMap = brk: {
         var map: LabelMap = LabelMap.initFull("");
 
@@ -1169,7 +1169,7 @@ pub const E = enum(u16) {
     HWPOISON = 133,
     UNKNOWN = 134,
     CHARSET = 135,
-    OF = 136,
+    EOF = 136,
 
     UV_E2BIG = -uv.UV_E2BIG,
     UV_EACCES = -uv.UV_EACCES,

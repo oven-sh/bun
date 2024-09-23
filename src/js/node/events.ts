@@ -424,20 +424,34 @@ function on(emitter, event, options = {}) {
   return iterator();
 }
 
-const toStringTag = Symbol.toStringTag;
+const getEventListenersForEventTarget = $newCppFunction(
+  "JSEventTargetNode.cpp",
+  "jsFunctionNodeEventsGetEventListeners",
+  1,
+);
+
 function getEventListeners(emitter, type) {
-  if (emitter?.[toStringTag] === "EventTarget") {
-    throwNotImplemented("getEventListeners with an EventTarget", 2678);
+  if ($isCallable(emitter?.listeners)) {
+    return emitter.listeners(type);
   }
-  return emitter.listeners(type);
+
+  return getEventListenersForEventTarget(emitter, type);
 }
 
-function setMaxListeners(n, ...eventTargets) {
+// https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/events.js#L315-L339
+function setMaxListeners(n = defaultMaxListeners, ...eventTargets) {
   validateNumber(n, "setMaxListeners", 0);
-  var length;
-  if (eventTargets && (length = eventTargets.length)) {
-    for (let i = 0; i < length; i++) {
-      eventTargets[i].setMaxListeners(n);
+  const length = eventTargets?.length;
+  if (length) {
+    for (let eventTargetOrEmitter of eventTargets) {
+      // TODO: EventTarget setMaxListeners is not implemented yet.
+      // Only EventEmitter has it.
+      if ($isCallable(eventTargetOrEmitter?.setMaxListeners)) {
+        eventTargetOrEmitter.setMaxListeners(n);
+      } else if ($isObject(eventTargetOrEmitter) && eventTargetOrEmitter instanceof EventTarget) {
+        // This is a fake number so that the number can be checked against with getMaxListeners()
+        eventTargetOrEmitter[eventTargetMaxListenersSymbol] = n;
+      }
     }
   } else {
     defaultMaxListeners = n;
@@ -521,9 +535,9 @@ function validateBoolean(value, name) {
 
 let AsyncResource = null;
 
+const eventTargetMaxListenersSymbol = Symbol("EventTarget.maxListeners");
 function getMaxListeners(emitterOrTarget) {
-  // TODO: apparently EventTarget in Node can have a max number of listeners?
-  return emitterOrTarget?._maxListeners ?? defaultMaxListeners;
+  return emitterOrTarget?.[eventTargetMaxListenersSymbol] ?? emitterOrTarget?._maxListeners ?? defaultMaxListeners;
 }
 
 // Copy-pasta from Node.js source code

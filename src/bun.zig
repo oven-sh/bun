@@ -57,6 +57,17 @@ pub inline fn namedAllocator(comptime name: [:0]const u8) std.mem.Allocator {
     return default_allocator;
 }
 
+pub const OOM = error{OutOfMemory};
+
+pub const JSError = error{
+    /// There is an active exception on the global object. Options:
+    ///
+    /// - Bubble it up to the caller
+    /// - Call `global.takeException(err)` to get the JSValue of the exception,
+    /// - Call `global.reportActiveExceptionAsUnhandled(err)` to make it unhandled.
+    JSError,
+};
+
 pub const C = @import("root").C;
 pub const sha = @import("./sha.zig");
 pub const FeatureFlags = @import("feature_flags.zig");
@@ -119,17 +130,17 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     /// On Windows, it is always a mistake, as the integer is bitcast of a tagged packed struct.
     ///
     /// TODO(@paperdave): remove this API.
-    pub inline fn int(self: FileDescriptor) std.posix.fd_t {
+    pub fn int(self: FileDescriptor) std.posix.fd_t {
         if (Environment.isWindows)
             @compileError("FileDescriptor.int() is not allowed on Windows.");
         return @intFromEnum(self);
     }
 
-    pub inline fn writeTo(fd: FileDescriptor, writer: anytype, endian: std.builtin.Endian) !void {
+    pub fn writeTo(fd: FileDescriptor, writer: anytype, endian: std.builtin.Endian) !void {
         try writer.writeInt(FileDescriptorInt, @intFromEnum(fd), endian);
     }
 
-    pub inline fn readFrom(reader: anytype, endian: std.builtin.Endian) !FileDescriptor {
+    pub fn readFrom(reader: anytype, endian: std.builtin.Endian) !FileDescriptor {
         return @enumFromInt(try reader.readInt(FileDescriptorInt, endian));
     }
 
@@ -139,35 +150,35 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     /// to Windows' *HANDLE, and casts the types for proper usage.
     ///
     /// This may be needed in places where a FileDescriptor is given to `std` or `kernel32` apis
-    pub inline fn cast(fd: FileDescriptor) std.posix.fd_t {
+    pub fn cast(fd: FileDescriptor) std.posix.fd_t {
         if (!Environment.isWindows) return fd.int();
         // if not having this check, the cast may crash zig compiler?
         if (@inComptime() and fd == invalid_fd) return FDImpl.invalid.system();
-        return FDImpl.decode(fd).system();
+        return fd.impl().system();
     }
 
-    pub inline fn asDir(fd: FileDescriptor) std.fs.Dir {
+    pub fn asDir(fd: FileDescriptor) std.fs.Dir {
         return std.fs.Dir{ .fd = fd.cast() };
     }
 
-    pub inline fn asFile(fd: FileDescriptor) std.fs.File {
+    pub fn asFile(fd: FileDescriptor) std.fs.File {
         return std.fs.File{ .handle = fd.cast() };
     }
 
     pub fn format(fd: FileDescriptor, comptime fmt_: string, options_: std.fmt.FormatOptions, writer: anytype) !void {
-        try FDImpl.format(FDImpl.decode(fd), fmt_, options_, writer);
+        try FDImpl.format(fd.impl(), fmt_, options_, writer);
     }
 
     pub fn assertValid(fd: FileDescriptor) void {
-        FDImpl.decode(fd).assertValid();
+        fd.impl().assertValid();
     }
 
     pub fn isValid(fd: FileDescriptor) bool {
-        return FDImpl.decode(fd).isValid();
+        return fd.impl().isValid();
     }
 
     pub fn assertKind(fd: FileDescriptor, kind: FDImpl.Kind) void {
-        assert(FDImpl.decode(fd).kind == kind);
+        assert(fd.impl().kind == kind);
     }
 
     pub fn cwd() FileDescriptor {
@@ -193,7 +204,7 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
 
     pub fn isStdio(fd: FileDescriptor) bool {
         // fd.assertValid();
-        const decoded = FDImpl.decode(fd);
+        const decoded = fd.impl();
         return switch (Environment.os) {
             else => decoded.value.as_system < 3,
             .windows => switch (decoded.kind) {
@@ -207,6 +218,10 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
 
     pub fn toJS(value: FileDescriptor, global: *JSC.JSGlobalObject) JSC.JSValue {
         return FDImpl.decode(value).toJS(global);
+    }
+
+    pub fn impl(fd: FileDescriptor) FDImpl {
+        return FDImpl.decode(fd);
     }
 };
 
@@ -809,14 +824,23 @@ pub fn openDirForIteration(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
 }
 
 pub fn openDirAbsolute(path_: []const u8) !std.fs.Dir {
-    if (comptime Environment.isWindows) {
-        const res = try sys.openDirAtWindowsA(invalid_fd, path_, .{ .iterable = true, .can_rename_or_delete = true, .read_only = true }).unwrap();
-        return res.asDir();
-    } else {
-        const fd = try sys.openA(path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0).unwrap();
-        return fd.asDir();
-    }
+    const fd = if (comptime Environment.isWindows)
+        try sys.openDirAtWindowsA(invalid_fd, path_, .{ .iterable = true, .can_rename_or_delete = true, .read_only = true }).unwrap()
+    else
+        try sys.openA(path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0).unwrap();
+
+    return fd.asDir();
 }
+
+pub fn openDirAbsoluteNotForDeletingOrRenaming(path_: []const u8) !std.fs.Dir {
+    const fd = if (comptime Environment.isWindows)
+        try sys.openDirAtWindowsA(invalid_fd, path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true }).unwrap()
+    else
+        try sys.openA(path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0).unwrap();
+
+    return fd.asDir();
+}
+
 pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;
 pub fn getRuntimeFeatureFlag(comptime flag: [:0]const u8) bool {
     return struct {
@@ -1062,6 +1086,10 @@ pub fn CaseInsensitiveASCIIStringArrayHashMap(comptime Type: type) type {
     return std.ArrayHashMap([]const u8, Type, CaseInsensitiveASCIIStringContext, true);
 }
 
+pub fn CaseInsensitiveASCIIStringArrayHashMapUnmanaged(comptime Type: type) type {
+    return std.ArrayHashMapUnmanaged([]const u8, Type, CaseInsensitiveASCIIStringContext, true);
+}
+
 pub fn StringArrayHashMapUnmanaged(comptime Type: type) type {
     return std.ArrayHashMapUnmanaged([]const u8, Type, StringArrayHashMapContext, true);
 }
@@ -1261,11 +1289,11 @@ pub const JSON = @import("./json_parser.zig");
 pub const JSAst = @import("./js_ast.zig");
 pub const bit_set = @import("./bit_set.zig");
 
-pub fn enumMap(comptime T: type, comptime args: anytype) (fn (T) []const u8) {
+pub fn enumMap(comptime T: type, comptime args: anytype) (fn (T) [:0]const u8) {
     const Map = struct {
         const vargs = args;
         const labels = brk: {
-            var vabels_ = std.enums.EnumArray(T, []const u8).initFill("");
+            var vabels_ = std.enums.EnumArray(T, [:0]const u8).initFill("");
             @setEvalBranchQuota(99999);
             for (vargs) |field| {
                 vabels_.set(field.@"0", field.@"1");
@@ -1273,7 +1301,7 @@ pub fn enumMap(comptime T: type, comptime args: anytype) (fn (T) []const u8) {
             break :brk vabels_;
         };
 
-        pub fn get(input: T) []const u8 {
+        pub fn get(input: T) [:0]const u8 {
             return labels.get(input);
         }
     };
@@ -1282,7 +1310,7 @@ pub fn enumMap(comptime T: type, comptime args: anytype) (fn (T) []const u8) {
 }
 
 pub fn ComptimeEnumMap(comptime T: type) type {
-    var entries: [std.enums.values(T).len]struct { string, T } = undefined;
+    var entries: [std.enums.values(T).len]struct { [:0]const u8, T } = undefined;
     for (std.enums.values(T), &entries) |value, *entry| {
         entry.* = .{ .@"0" = @tagName(value), .@"1" = value };
     }
@@ -1530,10 +1558,8 @@ pub const StringJoiner = @import("./StringJoiner.zig");
 pub const NullableAllocator = @import("./NullableAllocator.zig");
 
 pub const renamer = @import("./renamer.zig");
-pub const sourcemap = struct {
-    pub usingnamespace @import("./sourcemap/sourcemap.zig");
-    pub usingnamespace @import("./sourcemap/CodeCoverage.zig");
-};
+// TODO: Rename to SourceMap as this is a struct.
+pub const sourcemap = @import("./sourcemap/sourcemap.zig");
 
 pub fn asByteSlice(buffer: anytype) []const u8 {
     return switch (@TypeOf(buffer)) {
@@ -3224,6 +3250,49 @@ pub fn getUserName(output_buffer: []u8) ?[]const u8 {
     return output_buffer[0..size];
 }
 
+pub fn runtimeEmbedFile(
+    comptime root: enum { codegen, src },
+    comptime sub_path: []const u8,
+) []const u8 {
+    comptime assert(Environment.isDebug);
+    comptime assert(!Environment.embed_code);
+
+    const abs_path = comptime path: {
+        var buf: bun.PathBuffer = undefined;
+        var fba = std.heap.FixedBufferAllocator.init(&buf);
+        const resolved = (std.fs.path.resolve(fba.allocator(), &.{
+            switch (root) {
+                .codegen => Environment.codegen_path,
+                .src => Environment.base_path ++ "/src",
+            },
+            sub_path,
+        }) catch
+            @compileError(unreachable))[0..].*;
+        break :path &resolved;
+    };
+
+    const static = struct {
+        var storage: []const u8 = undefined;
+        var once = std.once(load);
+
+        fn load() void {
+            storage = std.fs.cwd().readFileAlloc(default_allocator, abs_path, std.math.maxInt(usize)) catch |e| {
+                Output.panic(
+                    \\Failed to load '{s}': {}
+                    \\
+                    \\To improve iteration speed, some files are not embedded but
+                    \\loaded at runtime, at the cost of making the binary non-portable.
+                    \\To fix this, pass -DFORCE_EMBED_CODE=1 to CMake
+                , .{ abs_path, e });
+            };
+        }
+    };
+
+    static.once.call();
+
+    return static.storage;
+}
+
 pub inline fn markWindowsOnly() if (Environment.isWindows) void else noreturn {
     if (Environment.isWindows) {
         return;
@@ -3263,7 +3332,7 @@ pub fn selfExePath() ![:0]u8 {
             4096 + 1 // + 1 for the null terminator
         ]u8 = undefined;
         var len: usize = 0;
-        var lock = Lock.init();
+        var lock: Lock = .{};
 
         pub fn load() ![:0]u8 {
             const init = try std.fs.selfExePath(&value);
@@ -3332,7 +3401,7 @@ noinline fn assertionFailureWithLocation(src: std.builtin.SourceLocation) noretu
     });
 }
 
-pub inline fn debugAssert(cheap_value_only_plz: bool) void {
+pub fn debugAssert(cheap_value_only_plz: bool) callconv(callconv_inline) void {
     if (comptime !Environment.isDebug) {
         return;
     }
@@ -3365,16 +3434,23 @@ pub fn assertWithLocation(value: bool, src: std.builtin.SourceLocation) callconv
 }
 
 /// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
-pub inline fn assert_eql(a: anytype, b: anytype) void {
+pub fn assert_eql(a: anytype, b: anytype) callconv(callconv_inline) void {
+    if (@inComptime()) {
+        if (a != b) {
+            @compileLog(a);
+            @compileLog(b);
+            @compileError("A != B");
+        }
+    }
     return assert(a == b);
 }
 
 /// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
-pub inline fn assert_neql(a: anytype, b: anytype) void {
+pub fn assert_neql(a: anytype, b: anytype) callconv(callconv_inline) void {
     return assert(a != b);
 }
 
-pub inline fn unsafeAssert(condition: bool) void {
+pub fn unsafeAssert(condition: bool) callconv(callconv_inline) void {
     if (!condition) {
         unreachable;
     }
@@ -3638,3 +3714,74 @@ pub fn memmove(output: []u8, input: []const u8) void {
 
 pub const hmac = @import("./hmac.zig");
 pub const libdeflate = @import("./deps/libdeflate.zig");
+
+pub const kit = @import("kit/kit.zig");
+
+/// like std.enums.tagName, except it doesn't lose the sentinel value.
+pub fn tagName(comptime Enum: type, value: Enum) ?[:0]const u8 {
+    return inline for (@typeInfo(Enum).Enum.fields) |f| {
+        if (@intFromEnum(value) == f.value) break f.name;
+    } else null;
+}
+extern "C" fn Bun__ramSize() usize;
+pub fn getTotalMemorySize() usize {
+    return Bun__ramSize();
+}
+
+pub const WeakPtrData = packed struct(u32) {
+    reference_count: u31 = 0,
+    finalized: bool = false,
+
+    pub fn onFinalize(this: *WeakPtrData) bool {
+        bun.debugAssert(!this.finalized);
+        this.finalized = true;
+        return this.reference_count == 0;
+    }
+};
+
+pub fn WeakPtr(comptime T: type, comptime weakable_field: std.meta.FieldEnum(T)) type {
+    return struct {
+        const WeakRef = @This();
+
+        value: ?*T = null,
+        pub fn create(req: *T) WeakRef {
+            bun.debugAssert(!@field(req, @tagName(weakable_field)).finalized);
+            @field(req, @tagName(weakable_field)).reference_count += 1;
+            return .{ .value = req };
+        }
+
+        comptime {
+            if (@TypeOf(@field(@as(T, undefined), @tagName(weakable_field))) != WeakPtrData) {
+                @compileError("Expected " ++ @typeName(T) ++ " to have a " ++ @typeName(WeakPtrData) ++ " field named " ++ @tagName(weakable_field));
+            }
+        }
+
+        fn deinitInternal(this: *WeakRef, value: *T) void {
+            const weak_data: *WeakPtrData = &@field(value, @tagName(weakable_field));
+
+            this.value = null;
+            const count = weak_data.reference_count - 1;
+            weak_data.reference_count = count;
+            if (weak_data.finalized and count == 0) {
+                value.destroy();
+            }
+        }
+
+        pub fn deinit(this: *WeakRef) void {
+            if (this.value) |value| {
+                this.deinitInternal(value);
+            }
+        }
+
+        pub fn get(this: *WeakRef) ?*T {
+            if (this.value) |value| {
+                if (!@field(value, @tagName(weakable_field)).finalized) {
+                    return value;
+                }
+
+                this.deinitInternal(value);
+            }
+            return null;
+        }
+    };
+}

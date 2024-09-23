@@ -1,33 +1,31 @@
 // @ts-nocheck
+import { bunExe } from "bun:harness";
+import { bunEnv, randomPort } from "harness";
+import { createTest } from "node-harness";
+import { spawnSync } from "node:child_process";
+import { EventEmitter, once } from "node:events";
+import nodefs, { unlinkSync } from "node:fs";
 import http, {
-  createServer,
-  request,
-  get,
   Agent,
+  createServer,
+  get,
   globalAgent,
-  Server,
-  validateHeaderName,
-  validateHeaderValue,
-  ServerResponse,
   IncomingMessage,
   OutgoingMessage,
+  request,
+  Server,
+  ServerResponse,
+  validateHeaderName,
+  validateHeaderValue,
 } from "node:http";
 import https, { createServer as createHttpsServer } from "node:https";
-import { EventEmitter } from "node:events";
-import { createServer as createHttpsServer } from "node:https";
-import { createTest } from "node-harness";
-import url from "node:url";
 import { tmpdir } from "node:os";
-import { spawnSync } from "node:child_process";
-import nodefs from "node:fs";
 import * as path from "node:path";
-import { unlinkSync } from "node:fs";
-import { PassThrough } from "node:stream";
-const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock } = createTest(import.meta.path);
-import { bunExe } from "bun:harness";
-import { bunEnv, disableAggressiveGCScope, tmpdirSync, randomPort } from "harness";
 import * as stream from "node:stream";
+import { PassThrough } from "node:stream";
+import url from "node:url";
 import * as zlib from "node:zlib";
+const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);
 
 function listen(server: Server, protocol: string = "http"): Promise<URL> {
   return new Promise((resolve, reject) => {
@@ -159,12 +157,24 @@ describe("node:http", () => {
     });
 
     it("should use the provided port", async () => {
-      const server = http.createServer(() => {});
-      const random_port = randomPort();
-      server.listen(random_port);
-      const { port } = server.address();
-      expect(port).toEqual(random_port);
-      server.close();
+      while (true) {
+        try {
+          const server = http.createServer(() => {});
+          const random_port = randomPort();
+          server.listen(random_port);
+          await once(server, 'listening');
+          const { port } = server.address();
+          expect(port).toEqual(random_port);
+          server.close();
+          break;
+        } catch (err) {
+          // Address in use try another port
+          if (err.code === "EADDRINUSE") {
+            continue;
+          }
+          throw err;
+        }
+      }
     });
 
     it("should assign a random port when undefined", async () => {
@@ -420,7 +430,7 @@ describe("node:http", () => {
     });
 
     it("should make a https:// GET request when passed string as first arg", done => {
-      const req = request("https://example.com", { headers: { "accept-encoding": "identity" } }, res => {
+      const req = https.request("https://example.com", { headers: { "accept-encoding": "identity" } }, res => {
         let data = "";
         res.setEncoding("utf8");
         res.on("data", chunk => {
@@ -1081,12 +1091,14 @@ describe("node:http", () => {
 
     test("should not decompress gzip, issue#4397", async () => {
       const { promise, resolve } = Promise.withResolvers();
-      request("https://bun.sh/", { headers: { "accept-encoding": "gzip" } }, res => {
-        res.on("data", function cb(chunk) {
-          resolve(chunk);
-          res.off("data", cb);
-        });
-      }).end();
+      https
+        .request("https://bun.sh/", { headers: { "accept-encoding": "gzip" } }, res => {
+          res.on("data", function cb(chunk) {
+            resolve(chunk);
+            res.off("data", cb);
+          });
+        })
+        .end();
       const chunk = await promise;
       expect(chunk.toString()).not.toContain("<html");
     });
@@ -1128,14 +1140,14 @@ describe("node:http", () => {
     const server = createServer((req, res) => {
       res.end();
     });
-    server.listen({ port: 42069 }, () => {
+    server.listen({ port: 0 }, () => {
       const server2 = createServer((_, res) => {
         res.end();
       });
       server2.on("error", err => {
         resolve(err);
       });
-      server2.listen({ port: 42069 }, () => {});
+      server2.listen({ port: server.address().port }, () => {});
     });
     const err = await promise;
     expect(err.code).toBe("EADDRINUSE");
@@ -1891,51 +1903,55 @@ it("should emit events in the right order", async () => {
 
 it("destroy should end download", async () => {
   // just simulate some file that will take forever to download
-  const payload = Buffer.from("X".repeat(128 * 1024));
-  let sendedByteLength = 0;
-  using server = Bun.serve({
-    port: 0,
-    async fetch(req) {
-      let running = true;
-      req.signal.onabort = () => (running = false);
-      return new Response(async function* () {
-        while (running) {
-          sendedByteLength += payload.byteLength;
-          yield payload;
-          await Bun.sleep(10);
-        }
-      });
-    },
-  });
-
-  async function run() {
-    let receivedByteLength = 0;
-    let { promise, resolve } = Promise.withResolvers();
-    const req = request(server.url, res => {
-      res.on("data", data => {
-        receivedByteLength += data.length;
-        if (resolve) {
-          resolve();
-          resolve = null;
-        }
-      });
+  const payload = Buffer.alloc(128 * 1024, "X");
+  for (let i = 0; i < 5; i++) {
+    let sendedByteLength = 0;
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        let running = true;
+        req.signal.onabort = () => (running = false);
+        return new Response(async function* () {
+          while (running) {
+            sendedByteLength += payload.byteLength;
+            yield payload;
+            await Bun.sleep(10);
+          }
+        });
+      },
     });
-    req.end();
-    await promise;
-    req.destroy();
-    await Bun.sleep(10);
-    const initialByteLength = receivedByteLength;
-    // we should receive the same amount of data we sent
-    expect(initialByteLength).toBeLessThanOrEqual(sendedByteLength);
-    await Bun.sleep(10);
-    // we should not receive more data after destroy
-    expect(initialByteLength).toBe(receivedByteLength);
+
+    async function run() {
+      let receivedByteLength = 0;
+      let { promise, resolve } = Promise.withResolvers();
+      const req = request(server.url, res => {
+        res.on("data", data => {
+          receivedByteLength += data.length;
+          if (resolve) {
+            resolve();
+            resolve = null;
+          }
+        });
+      });
+      req.end();
+      await promise;
+      req.destroy();
+      await Bun.sleep(10);
+      const initialByteLength = receivedByteLength;
+      // we should receive the same amount of data we sent
+      expect(initialByteLength).toBeLessThanOrEqual(sendedByteLength);
+      await Bun.sleep(10);
+      // we should not receive more data after destroy
+      expect(initialByteLength).toBe(receivedByteLength);
+      await Bun.sleep(10);
+    }
+
+    const runCount = 50;
+    const runs = Array.from({ length: runCount }, run);
+    await Promise.all(runs);
+    Bun.gc(true);
     await Bun.sleep(10);
   }
-
-  const runCount = 50;
-  const runs = Array.from({ length: runCount }, run);
-  await Promise.all(runs);
 });
 
 it("can send brotli from Server and receive with fetch", async () => {
@@ -2135,51 +2151,6 @@ it("should error with faulty args", async () => {
   server.close();
 });
 
-it("should mark complete true", async () => {
-  const { promise: serve, resolve: resolveServe } = Promise.withResolvers();
-  const server = createServer(async (req, res) => {
-    let count = 0;
-    let data = "";
-    req.on("data", chunk => {
-      data += chunk.toString();
-    });
-    while (!req.complete) {
-      await Bun.sleep(100);
-      count++;
-      if (count > 10) {
-        res.writeHead(500, { "Content-Type": "text/plain" });
-        res.end("Request timeout");
-        return;
-      }
-    }
-    res.writeHead(200, { "Content-Type": "text/plain" });
-    res.end(data);
-  });
-
-  server.listen(0, () => {
-    resolveServe(`http://localhost:${server.address().port}`);
-  });
-
-  const url = await serve;
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        name: "Hotel 1",
-        price: 100,
-      }),
-    });
-
-    expect(response.status).toBe(200);
-    expect(await response.text()).toBe('{"name":"Hotel 1","price":100}');
-  } finally {
-    server.close();
-  }
-});
-
 it("should propagate exception in sync data handler", async () => {
   const { exitCode, stdout } = Bun.spawnSync({
     cmd: [bunExe(), "run", path.join(import.meta.dir, "node-http-error-in-data-handler-fixture.1.js")],
@@ -2202,4 +2173,270 @@ it("should propagate exception in async data handler", async () => {
 
   expect(stdout.toString()).toContain("Test passed");
   expect(exitCode).toBe(0);
+});
+
+// This test is disabled because it can OOM the CI
+it.skip("should be able to stream huge amounts of data", async () => {
+  const buf = Buffer.alloc(1024 * 1024 * 256);
+  const CONTENT_LENGTH = 3 * 1024 * 1024 * 1024;
+  let received = 0;
+  let written = 0;
+  const { promise: listen, resolve: resolveListen } = Promise.withResolvers();
+  const server = http
+    .createServer((req, res) => {
+      res.writeHead(200, {
+        "Content-Type": "text/plain",
+        "Content-Length": CONTENT_LENGTH,
+      });
+      function commit() {
+        if (written < CONTENT_LENGTH) {
+          written += buf.byteLength;
+          res.write(buf, commit);
+        } else {
+          res.end();
+        }
+      }
+
+      commit();
+    })
+    .listen(0, "localhost", resolveListen);
+  await listen;
+
+  try {
+    const response = await fetch(`http://localhost:${server.address().port}`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/plain");
+    const reader = response.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      received += value ? value.byteLength : 0;
+      if (done) {
+        break;
+      }
+    }
+    expect(written).toBe(CONTENT_LENGTH);
+    expect(received).toBe(CONTENT_LENGTH);
+  } finally {
+    server.close();
+  }
+}, 30_000);
+
+// TODO: today we use a workaround to continue event, we need to fix it in the future.
+it("should emit continue event #7480", done => {
+  let receivedContinue = false;
+  const req = https.request(
+    "https://example.com",
+    { headers: { "accept-encoding": "identity", "expect": "100-continue" } },
+    res => {
+      let data = "";
+      res.setEncoding("utf8");
+      res.on("data", chunk => {
+        data += chunk;
+      });
+      res.on("end", () => {
+        expect(receivedContinue).toBe(true);
+        expect(data).toContain("This domain is for use in illustrative examples in documents");
+        done();
+      });
+      res.on("error", err => done(err));
+    },
+  );
+  req.on("continue", () => {
+    receivedContinue = true;
+  });
+  req.end();
+});
+
+it("should not emit continue event #7480", done => {
+  let receivedContinue = false;
+  const req = https.request("https://example.com", { headers: { "accept-encoding": "identity" } }, res => {
+    let data = "";
+    res.setEncoding("utf8");
+    res.on("data", chunk => {
+      data += chunk;
+    });
+    res.on("end", () => {
+      expect(receivedContinue).toBe(false);
+      expect(data).toContain("This domain is for use in illustrative examples in documents");
+      done();
+    });
+    res.on("error", err => done(err));
+  });
+  req.on("continue", () => {
+    receivedContinue = true;
+  });
+  req.end();
+});
+
+it("http.Agent is configured correctly", () => {
+  const agent = new http.Agent();
+  expect(agent.defaultPort).toBe(80);
+  expect(agent.protocol).toBe("http:");
+});
+
+it("https.Agent is configured correctly", () => {
+  const agent = new https.Agent();
+  expect(agent.defaultPort).toBe(443);
+  expect(agent.protocol).toBe("https:");
+});
+
+it("http.get can use http.Agent", async () => {
+  const agent = new http.Agent();
+  const { promise, resolve } = Promise.withResolvers();
+  http.get({ agent, hostname: "google.com" }, resolve);
+  const response = await promise;
+  expect(response.req.port).toBe(80);
+  expect(response.req.protocol).toBe("http:");
+});
+
+it("https.get can use https.Agent", async () => {
+  const agent = new https.Agent();
+  const { promise, resolve } = Promise.withResolvers();
+  https.get({ agent, hostname: "google.com" }, resolve);
+  const response = await promise;
+  expect(response.req.port).toBe(443);
+  expect(response.req.protocol).toBe("https:");
+});
+
+it("http.request has the correct options", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  http.request("http://google.com/", resolve).end();
+  const response = await promise;
+  expect(response.req.port).toBe(80);
+  expect(response.req.protocol).toBe("http:");
+});
+
+it("https.request has the correct options", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  https.request("https://google.com/", resolve).end();
+  const response = await promise;
+  expect(response.req.port).toBe(443);
+  expect(response.req.protocol).toBe("https:");
+});
+
+it("using node:http to do https: request fails", () => {
+  expect(() => http.request("https://example.com")).toThrow(TypeError);
+  expect(() => http.request("https://example.com")).toThrow({
+    code: "ERR_INVALID_PROTOCOL",
+    message: `Protocol "https:" not supported. Expected "http:"`,
+  });
+});
+
+it("should emit close, and complete should be true only after close #13373", async () => {
+  const server = http.createServer().listen(0);
+  try {
+    await once(server, "listening");
+    fetch(`http://localhost:${server.address().port}`)
+      .then(res => res.text())
+      .catch(() => {});
+
+    const [req, res] = await once(server, "request");
+    expect(req.complete).toBe(false);
+    const closeEvent = once(req, "close");
+    res.end("hi");
+
+    await closeEvent;
+    expect(req.complete).toBe(true);
+  } finally {
+    server.closeAllConnections();
+  }
+});
+
+it("should emit close when connection is aborted", async () => {
+  const server = http.createServer().listen(0);
+  try {
+    await once(server, "listening");
+    const controller = new AbortController();
+    fetch(`http://localhost:${server.address().port}`, { signal: controller.signal })
+      .then(res => res.text())
+      .catch(() => {});
+
+    const [req, res] = await once(server, "request");
+    expect(req.complete).toBe(false);
+    const closeEvent = once(req, "close");
+    controller.abort();
+    await closeEvent;
+    expect(req.complete).toBe(true);
+  } finally {
+    server.close();
+  }
+});
+
+it("should emit timeout event", async () => {
+  const server = http.createServer().listen(0);
+  try {
+    await once(server, "listening");
+    fetch(`http://localhost:${server.address().port}`)
+      .then(res => res.text())
+      .catch(() => {});
+
+    const [req, res] = await once(server, "request");
+    expect(req.complete).toBe(false);
+    let callBackCalled = false;
+    req.setTimeout(1000, () => {
+      callBackCalled = true;
+    });
+    await once(req, "timeout");
+    expect(callBackCalled).toBe(true);
+  } finally {
+    server.closeAllConnections();
+  }
+}, 12_000);
+
+it("should emit timeout event when using server.setTimeout", async () => {
+  const server = http.createServer().listen(0);
+  try {
+    await once(server, "listening");
+    let callBackCalled = false;
+    server.setTimeout(1000, () => {
+      callBackCalled = true;
+    });
+    fetch(`http://localhost:${server.address().port}`)
+      .then(res => res.text())
+      .catch(() => {});
+
+    const [req, res] = await once(server, "request");
+    expect(req.complete).toBe(false);
+
+    await once(server, "timeout");
+    expect(callBackCalled).toBe(true);
+  } finally {
+    server.closeAllConnections();
+  }
+}, 12_000);
+
+it("must set headersSent to true after headers are sent #3458", async () => {
+  const server = createServer().listen(0);
+  try {
+    await once(server, "listening");
+    fetch(`http://localhost:${server.address().port}`).then(res => res.text());
+    const [req, res] = await once(server, "request");
+    expect(res.headersSent).toBe(false);
+    const { promise, resolve } = Promise.withResolvers();
+    res.end("OK", resolve);
+    await promise;
+    expect(res.headersSent).toBe(true);
+  } finally {
+    server.close();
+  }
+});
+
+it("must set headersSent to true after headers are sent when using chunk encoded", async () => {
+  const server = createServer().listen(0);
+  try {
+    await once(server, "listening");
+    fetch(`http://localhost:${server.address().port}`).then(res => res.text());
+    const [req, res] = await once(server, "request");
+    expect(res.headersSent).toBe(false);
+    const { promise, resolve } = Promise.withResolvers();
+    res.write("first", () => {
+      res.write("second", () => {
+        res.end("OK", resolve);
+      });
+    });
+    await promise;
+    expect(res.headersSent).toBe(true);
+  } finally {
+    server.close();
+  }
 });

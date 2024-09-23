@@ -2085,7 +2085,7 @@ pub const PostgresSQLQuery = struct {
             return;
         }
 
-        const instance = globalObject.createTypeErrorInstance("Failed to bind query: {s}", .{@errorName(err)});
+        const instance = globalObject.createErrorInstance("Failed to bind query: {s}", .{@errorName(err)});
 
         // TODO: error handling
         const vm = JSC.VirtualMachine.get();
@@ -2888,7 +2888,7 @@ pub const PostgresSQLConnection = struct {
             &[_]JSValue{
                 instance,
             },
-        );
+        ) catch |e| this.globalObject.reportActiveExceptionAsUnhandled(e);
     }
 
     pub fn onClose(this: *PostgresSQLConnection) void {

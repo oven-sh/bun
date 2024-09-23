@@ -1,31 +1,31 @@
 "use strict";
 
+import { describe, expect, it, test } from "bun:test";
 import {
   createCipheriv,
   createDecipheriv,
+  createPrivateKey,
+  createPublicKey,
+  createSecretKey,
   createSign,
   createVerify,
-  createSecretKey,
-  createPublicKey,
-  createPrivateKey,
-  KeyObject,
-  randomBytes,
-  publicDecrypt,
-  publicEncrypt,
-  privateDecrypt,
-  privateEncrypt,
+  generateKey,
+  generateKeyPair,
   generateKeyPairSync,
   generateKeySync,
-  generateKeyPair,
+  KeyObject,
+  privateDecrypt,
+  privateEncrypt,
+  publicDecrypt,
+  publicEncrypt,
+  randomBytes,
   sign,
   verify,
-  generateKey,
 } from "crypto";
-import { test, it, expect, describe } from "bun:test";
-import { createContext, Script } from "node:vm";
 import fs from "fs";
-import path from "path";
 import { isWindows } from "harness";
+import { createContext, runInContext, runInThisContext, Script } from "node:vm";
+import path from "path";
 
 function readFile(...args) {
   const result = fs.readFileSync(...args);
@@ -1407,74 +1407,105 @@ describe("crypto.KeyObjects", () => {
     expect(privateKey.asymmetricKeyDetails?.modulusLength).toBe(513);
   });
 
-  function testRunInContext(fn: any) {
-    test("can generate key", () => {
-      const context = createContext({ generateKeySync });
-      const result = fn(`generateKeySync("aes", { length: 128 })`, context);
-      expect(result).toBeDefined();
-      const keybuf = result.export();
-      expect(keybuf.byteLength).toBe(128 / 8);
-    });
-    test("can be used on another context", () => {
-      const context = createContext({ generateKeyPairSync, assertApproximateSize, testEncryptDecrypt, testSignVerify });
-      const result = fn(
-        `
-        const { publicKey: publicKeyDER, privateKey: privateKeyDER } = generateKeyPairSync(
-          "rsa",
-          {
-            publicExponent: 0x10001,
-            modulusLength: 512,
-            publicKeyEncoding: {
-              type: "pkcs1",
-              format: "der",
-            },
-            privateKeyEncoding: {
-              type: "pkcs8",
-              format: "der",
-            },
-          }
+  type TestRunInContextArg =
+    | { fn: typeof runInContext; isIsolated: true }
+    | { fn: typeof runInThisContext; isIsolated?: false };
+
+  function testRunInContext({ fn, isIsolated }: TestRunInContextArg) {
+    if (isIsolated) {
+      test("can generate key", () => {
+        const context = createContext({ generateKeySync });
+        const result = fn(`generateKeySync("aes", { length: 128 })`, context);
+        expect(result).toBeDefined();
+        const keybuf = result.export();
+        expect(keybuf.byteLength).toBe(128 / 8);
+      });
+      test("can be used on another context", () => {
+        const context = createContext({
+          generateKeyPairSync,
+          assertApproximateSize,
+          testEncryptDecrypt,
+          testSignVerify,
+        });
+        const result = fn(
+          `
+          const { publicKey: publicKeyDER, privateKey: privateKeyDER } = generateKeyPairSync(
+            "rsa",
+            {
+              publicExponent: 0x10001,
+              modulusLength: 512,
+              publicKeyEncoding: {
+                type: "pkcs1",
+                format: "der",
+              },
+              privateKeyEncoding: {
+                type: "pkcs8",
+                format: "der",
+              },
+            }
+          );
+
+          assertApproximateSize(publicKeyDER, 74);
+
+          const publicKey = {
+            key: publicKeyDER,
+            type: "pkcs1",
+            format: "der",
+          };
+          const privateKey = {
+            key: privateKeyDER,
+            format: "der",
+            type: "pkcs8",
+            passphrase: "secret",
+          };
+          testEncryptDecrypt(publicKey, privateKey);
+          testSignVerify(publicKey, privateKey);
+        `,
+          context,
         );
-
-        assertApproximateSize(publicKeyDER, 74);
-
-        const publicKey = {
-          key: publicKeyDER,
-          type: "pkcs1",
-          format: "der",
-        };
-        const privateKey = {
-          key: privateKeyDER,
-          format: "der",
-          type: "pkcs8",
-          passphrase: "secret",
-        };
-        testEncryptDecrypt(publicKey, privateKey);
-        testSignVerify(publicKey, privateKey);
-      `,
-        context,
-      );
-    });
+      });
+    } else {
+      test("can generate key", () => {
+        const prop = randomProp();
+        // @ts-expect-error
+        globalThis[prop] = generateKeySync;
+        try {
+          const result = fn(`${prop}("aes", { length: 128 })`);
+          expect(result).toBeDefined();
+          const keybuf = result.export();
+          expect(keybuf.byteLength).toBe(128 / 8);
+        } finally {
+          // @ts-expect-error
+          delete globalThis[prop];
+        }
+      });
+    }
   }
   describe("Script", () => {
     describe("runInContext()", () => {
-      testRunInContext((code, context, options) => {
-        // @ts-expect-error
-        const script = new Script(code, options);
-        return script.runInContext(context);
+      testRunInContext({
+        fn: (code, context, options) => {
+          const script = new Script(code, options);
+          return script.runInContext(context);
+        },
+        isIsolated: true,
       });
     });
     describe("runInNewContext()", () => {
-      testRunInContext((code, context, options) => {
-        // @ts-expect-error
-        const script = new Script(code, options);
-        return script.runInNewContext(context);
+      testRunInContext({
+        fn: (code, context, options) => {
+          const script = new Script(code, options);
+          return script.runInNewContext(context);
+        },
+        isIsolated: true,
       });
     });
     describe("runInThisContext()", () => {
-      testRunInContext((code, context, options) => {
-        // @ts-expect-error
-        const script = new Script(code, options);
-        return script.runInThisContext(context);
+      testRunInContext({
+        fn: (code: string, options: any) => {
+          const script = new Script(code, options);
+          return script.runInThisContext();
+        },
       });
     });
   });
@@ -1697,3 +1728,7 @@ test("ECDSA should work", async () => {
     verify("sha256", Buffer.from("foo"), { key: publicKey, dsaEncoding: "der" }, signature);
   }).toThrow(/invalid dsaEncoding/);
 });
+
+function randomProp() {
+  return "prop" + crypto.randomUUID().replace(/-/g, "");
+}

@@ -42,7 +42,6 @@ const JSTypeOfMap = bun.ComptimeStringMap([]const u8, .{
 pub var active_test_expectation_counter: Counter = .{};
 pub var is_expecting_assertions: bool = false;
 pub var is_expecting_assertions_count: bool = false;
-pub var expected_assertions_number: u32 = 0;
 
 const log = bun.Output.scoped(.expect, false);
 
@@ -129,7 +128,7 @@ pub const Expect = struct {
         }
     };
 
-    pub fn getSignature(comptime matcher_name: string, comptime args: string, comptime not: bool) string {
+    pub fn getSignature(comptime matcher_name: string, comptime args: string, comptime not: bool) [:0]const u8 {
         const received = "<d>expect(<r><red>received<r><d>).<r>";
         comptime if (not) {
             return received ++ "not<d>.<r>" ++ matcher_name ++ "<d>(<r>" ++ args ++ "<d>)<r>";
@@ -222,7 +221,7 @@ pub const Expect = struct {
 
                     const newValue = promise.result(vm);
                     switch (promise.status(vm)) {
-                        .Fulfilled => switch (resolution) {
+                        .fulfilled => switch (resolution) {
                             .resolves => {},
                             .rejects => {
                                 if (!silent) {
@@ -234,7 +233,7 @@ pub const Expect = struct {
                             },
                             .none => unreachable,
                         },
-                        .Rejected => switch (resolution) {
+                        .rejected => switch (resolution) {
                             .rejects => {},
                             .resolves => {
                                 if (!silent) {
@@ -246,7 +245,7 @@ pub const Expect = struct {
                             },
                             .none => unreachable,
                         },
-                        .Pending => unreachable,
+                        .pending => unreachable,
                     }
 
                     newValue.ensureStillAlive();
@@ -264,6 +263,28 @@ pub const Expect = struct {
         }
 
         return value;
+    }
+
+    pub fn isAsymmetricMatcher(value: JSValue) bool {
+        if (ExpectCustomAsymmetricMatcher.fromJS(value) != null) {
+            return true;
+        } else if (ExpectAny.fromJS(value) != null) {
+            return true;
+        } else if (ExpectAnything.fromJS(value) != null) {
+            return true;
+        } else if (ExpectStringMatching.fromJS(value) != null) {
+            return true;
+        } else if (ExpectCloseTo.fromJS(value) != null) {
+            return true;
+        } else if (ExpectObjectContaining.fromJS(value) != null) {
+            return true;
+        } else if (ExpectStringContaining.fromJS(value) != null) {
+            return true;
+        } else if (ExpectArrayContaining.fromJS(value) != null) {
+            return true;
+        }
+
+        return false;
     }
 
     /// Called by C++ when matching with asymmetric matchers
@@ -394,11 +415,11 @@ pub const Expect = struct {
         return expect_js_value;
     }
 
-    pub fn throw(this: *Expect, globalThis: *JSGlobalObject, comptime signature: string, comptime fmt: string, args: anytype) void {
+    pub fn throw(this: *Expect, globalThis: *JSGlobalObject, comptime signature: [:0]const u8, comptime fmt: [:0]const u8, args: anytype) void {
         if (this.custom_label.isEmpty()) {
-            globalThis.throwPretty(comptime signature ++ fmt, args);
+            globalThis.throwPretty(signature ++ fmt, args);
         } else {
-            globalThis.throwPretty(comptime "{}" ++ fmt, .{this.custom_label} ++ args);
+            globalThis.throwPretty("{}" ++ fmt, .{this.custom_label} ++ args);
         }
     }
 
@@ -851,8 +872,7 @@ pub const Expect = struct {
 
         const not = this.flags.not;
         if (!value.isObject()) {
-            const err = globalThis.createTypeErrorInstance("Expected value must be an object\nReceived: {}", .{value.toFmt(&formatter)});
-            globalThis.throwValue(err);
+            globalThis.throwInvalidArguments("Expected value must be an object\nReceived: {}", .{value.toFmt(&formatter)});
             return .zero;
         }
 
@@ -2316,43 +2336,40 @@ pub const Expect = struct {
             const prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
             vm.unhandled_pending_rejection_to_capture = &return_value;
             vm.onUnhandledRejection = &VirtualMachine.onQuietUnhandledRejectionHandlerCaptureValue;
-            const return_value_from_fucntion: JSValue = value.call(globalThis, .undefined, &.{});
+            const return_value_from_function: JSValue = value.call(globalThis, .undefined, &.{}) catch |err|
+                globalThis.takeException(err);
             vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
 
             vm.global.handleRejectedPromises();
 
             if (return_value == .zero) {
-                return_value = return_value_from_fucntion;
+                return_value = return_value_from_function;
             }
 
             if (return_value.asAnyPromise()) |promise| {
                 vm.waitForPromise(promise);
                 scope.apply(vm);
-                const promise_result = promise.result(globalThis.vm());
-
-                switch (promise.status(globalThis.vm())) {
-                    .Fulfilled => {
+                switch (promise.unwrap(globalThis.vm(), .mark_handled)) {
+                    .fulfilled => {
                         break :brk null;
                     },
-                    .Rejected => {
-                        promise.setHandled(globalThis.vm());
-
+                    .rejected => |rejected| {
                         // since we know for sure it rejected, we should always return the error
-                        break :brk promise_result.toError() orelse promise_result;
+                        break :brk rejected.toError() orelse rejected;
                     },
-                    .Pending => unreachable,
+                    .pending => unreachable,
                 }
             }
 
-            if (return_value != return_value_from_fucntion) {
-                if (return_value_from_fucntion.asAnyPromise()) |existing| {
+            if (return_value != return_value_from_function) {
+                if (return_value_from_function.asAnyPromise()) |existing| {
                     existing.setHandled(globalThis.vm());
                 }
             }
 
             scope.apply(vm);
 
-            break :brk return_value.toError() orelse return_value_from_fucntion.toError();
+            break :brk return_value.toError() orelse return_value_from_function.toError();
         };
 
         const did_throw = result_ != null;
@@ -2385,7 +2402,13 @@ pub const Expect = struct {
             }
 
             if (expected_value.isString()) {
-                const received_message = result.fastGet(globalThis, .message) orelse .undefined;
+                const received_message: JSValue = (if (result.isObject())
+                    result.fastGet(globalThis, .message)
+                else if (result.toStringOrNull(globalThis)) |js_str|
+                    JSValue.fromCell(js_str)
+                else
+                    .undefined) orelse .undefined;
+                if (globalThis.hasException()) return .zero;
 
                 // TODO: remove this allocation
                 // partial match
@@ -2405,11 +2428,17 @@ pub const Expect = struct {
             }
 
             if (expected_value.isRegExp()) {
-                const received_message = result.fastGet(globalThis, .message) orelse .undefined;
+                const received_message: JSValue = (if (result.isObject())
+                    result.fastGet(globalThis, .message)
+                else if (result.toStringOrNull(globalThis)) |js_str|
+                    JSValue.fromCell(js_str)
+                else
+                    .undefined) orelse .undefined;
 
+                if (globalThis.hasException()) return .zero;
                 // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
                 if (expected_value.get(globalThis, "test")) |test_fn| {
-                    const matches = test_fn.call(globalThis, expected_value, &.{received_message});
+                    const matches = test_fn.call(globalThis, expected_value, &.{received_message}) catch |err| globalThis.takeException(err);
                     if (!matches.toBooleanSlow(globalThis)) return .undefined;
                 }
 
@@ -2421,7 +2450,14 @@ pub const Expect = struct {
             }
 
             if (expected_value.fastGet(globalThis, .message)) |expected_message| {
-                const received_message = result.fastGet(globalThis, .message) orelse .undefined;
+                const received_message: JSValue = (if (result.isObject())
+                    result.fastGet(globalThis, .message)
+                else if (result.toStringOrNull(globalThis)) |js_str|
+                    JSValue.fromCell(js_str)
+                else
+                    .undefined) orelse .undefined;
+                if (globalThis.hasException()) return .zero;
+
                 // no partial match for this case
                 if (!expected_message.isSameValue(received_message, globalThis)) return .undefined;
 
@@ -2487,7 +2523,7 @@ pub const Expect = struct {
                 if (_received_message) |received_message| {
                     // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
                     if (expected_value.get(globalThis, "test")) |test_fn| {
-                        const matches = test_fn.call(globalThis, expected_value, &.{received_message});
+                        const matches = test_fn.call(globalThis, expected_value, &.{received_message}) catch |err| globalThis.takeException(err);
                         if (matches.toBooleanSlow(globalThis)) return .undefined;
                     }
                 }
@@ -2509,6 +2545,25 @@ pub const Expect = struct {
                 const received_fmt = result.toFmt(&formatter);
                 const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
                 this.throw(globalThis, signature, "\n\n" ++ "Expected pattern: <green>{any}<r>\nReceived value: <red>{any}<r>", .{ expected_fmt, received_fmt });
+                return .zero;
+            }
+
+            if (Expect.isAsymmetricMatcher(expected_value)) {
+                const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
+                const is_equal = result.jestStrictDeepEquals(expected_value, globalThis);
+
+                if (globalThis.hasException()) {
+                    return .zero;
+                }
+
+                if (is_equal) {
+                    return .undefined;
+                }
+
+                var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                const received_fmt = result.toFmt(&formatter);
+                const expected_fmt = expected_value.toFmt(&formatter);
+                this.throw(globalThis, signature, "\n\nExpected value: <green>{any}<r>\nReceived value: <red>{any}<r>\n", .{ expected_fmt, received_fmt });
                 return .zero;
             }
 
@@ -2608,7 +2663,6 @@ pub const Expect = struct {
         this.throw(globalThis, signature, expected_fmt, .{expected_class});
         return .zero;
     }
-
     pub fn toMatchSnapshot(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) JSValue {
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();
@@ -3743,18 +3797,12 @@ pub const Expect = struct {
         };
         value.ensureStillAlive();
 
-        const result = predicate.call(globalThis, .undefined, &.{value});
-
-        if (result.toError()) |err| {
-            var errors: [1]*anyopaque = undefined;
-            var _err = errors[0..errors.len];
-
-            _err[0] = err.asVoid();
-
+        const result = predicate.call(globalThis, .undefined, &.{value}) catch |e| {
+            const err = globalThis.takeException(e);
             const fmt = ZigString.init("toSatisfy() predicate threw an exception");
-            globalThis.vm().throwError(globalThis, globalThis.createAggregateError(_err.ptr, _err.len, &fmt));
+            globalThis.vm().throwError(globalThis, globalThis.createAggregateError(&.{err}, &fmt));
             return .zero;
-        }
+        };
 
         const not = this.flags.not;
         const pass = (result.isBoolean() and result.toBoolean()) != not;
@@ -4615,7 +4663,7 @@ pub const Expect = struct {
         matcher_context_jsvalue.ensureStillAlive();
 
         // call the custom matcher implementation
-        var result = matcher_fn.call(globalThis, matcher_context_jsvalue, args);
+        var result = matcher_fn.call(globalThis, matcher_context_jsvalue, args) catch |err| globalThis.takeException(err);
         assert(!result.isEmpty());
         if (result.toError()) |err| {
             globalThis.throwValue(err);
@@ -4632,9 +4680,9 @@ pub const Expect = struct {
             result.ensureStillAlive();
             assert(!result.isEmpty());
             switch (promise.status(vm)) {
-                .Pending => unreachable,
-                .Fulfilled => {},
-                .Rejected => {
+                .pending => unreachable,
+                .fulfilled => {},
+                .rejected => {
                     // TODO: rewrite this code to use .then() instead of blocking the event loop
                     JSC.VirtualMachine.get().runErrorHandler(result, null);
                     globalThis.throw("Matcher `{s}` returned a promise that rejected", .{matcher_name});
@@ -4686,7 +4734,8 @@ pub const Expect = struct {
             if (comptime Environment.allow_assert)
                 assert(message.isCallable(globalThis.vm())); // checked above
 
-            var message_result = message.callWithGlobalThis(globalThis, &[_]JSValue{});
+            const message_result = message.callWithGlobalThis(globalThis, &.{}) catch |err|
+                globalThis.takeException(err);
             assert(!message_result.isEmpty());
             if (message_result.toError()) |err| {
                 globalThis.throwValue(err);
@@ -4809,8 +4858,8 @@ pub const Expect = struct {
             return .zero;
         }
 
-        const expected_assertions: f64 = expected.asNumber();
-        if (@round(expected_assertions) != expected_assertions or std.math.isInf(expected_assertions) or std.math.isNan(expected_assertions) or expected_assertions < 0) {
+        const expected_assertions: f64 = expected.coerceToDouble(globalThis);
+        if (@round(expected_assertions) != expected_assertions or std.math.isInf(expected_assertions) or std.math.isNan(expected_assertions) or expected_assertions < 0 or expected_assertions > std.math.maxInt(u32)) {
             var fmt = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
             globalThis.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(&fmt)});
             return .zero;
@@ -4819,7 +4868,7 @@ pub const Expect = struct {
         const unsigned_expected_assertions: u32 = @intFromFloat(expected_assertions);
 
         is_expecting_assertions_count = true;
-        expected_assertions_number = unsigned_expected_assertions;
+        active_test_expectation_counter.expected = unsigned_expected_assertions;
 
         return .undefined;
     }
@@ -5368,15 +5417,13 @@ pub const ExpectCustomAsymmetricMatcher = struct {
                     args.appendAssumeCapacity(arg);
                 }
 
-                var result = matcher_fn.call(globalThis, thisValue, args.items);
-                if (result.toError()) |err| {
+                const result = matcher_fn.call(globalThis, thisValue, args.items) catch |err| {
                     if (dontThrow) {
+                        globalThis.clearException();
                         return false;
-                    } else {
-                        globalThis.throwValue(globalThis, err);
-                        return error.JSError;
                     }
-                }
+                    return err;
+                };
                 try writer.print("{}", .{result.toBunString(globalThis)});
             }
         }

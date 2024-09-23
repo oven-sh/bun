@@ -465,14 +465,14 @@ pub const HTMLRewriter = struct {
                 return switch (buffering_error) {
                     error.StreamAlreadyUsed => {
                         var err = JSC.SystemError{
-                            .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_STREAM_ALREADY_FINISHED))),
+                            .code = bun.String.static("ERR_STREAM_ALREADY_FINISHED"),
                             .message = bun.String.static("Stream already used, please create a new one"),
                         };
                         return err.toErrorInstance(sink.global);
                     },
                     else => {
                         var err = JSC.SystemError{
-                            .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_STREAM_CANNOT_PIPE))),
+                            .code = bun.String.static("ERR_STREAM_CANNOT_PIPE"),
                             .message = bun.String.static("Failed to pipe stream"),
                         };
                         return err.toErrorInstance(sink.global);
@@ -880,14 +880,14 @@ fn HandlerCallback(
             @field(zig_element, field_name) = value;
             defer @field(zig_element, field_name) = null;
 
-            var result = @field(this, callback_name).?.call(
+            const result = @field(this, callback_name).?.call(
                 this.global,
                 if (comptime @hasField(HandlerType, "thisObject"))
                     @field(this, "thisObject")
                 else
                     JSValue.zero,
                 &.{zig_element.toJS(this.global)},
-            );
+            ) catch |err| this.global.takeException(err);
 
             if (!result.isUndefinedOrNull()) {
                 if (result.isError() or result.isAggregateError(this.global)) {
@@ -896,7 +896,7 @@ fn HandlerCallback(
 
                 if (result.asAnyPromise()) |promise| {
                     this.global.bunVM().waitForPromise(promise);
-                    const fail = promise.status(this.global.vm()) == .Rejected;
+                    const fail = promise.status(this.global.vm()) == .rejected;
                     if (fail) {
                         _ = this.global.bunVM().unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue(this.global));
                     }

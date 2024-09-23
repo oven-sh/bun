@@ -1,6 +1,6 @@
 import assert from "assert";
-import { itBundled } from "./expectBundled";
 import { describe, expect } from "bun:test";
+import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   const nodePolyfillList = {

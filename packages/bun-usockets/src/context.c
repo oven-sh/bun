@@ -20,12 +20,12 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
 #ifndef _WIN32
 #include <arpa/inet.h>
 #endif
 
-#define CONCURRENT_CONNECTIONS 2
+#define CONCURRENT_CONNECTIONS 4
+
 // clang-format off
 int default_is_low_prio_handler(struct us_socket_t *s) {
     return 0;
@@ -60,11 +60,19 @@ void us_listen_socket_close(int ssl, struct us_listen_socket_t *ls) {
 }
 
 void us_socket_context_close(int ssl, struct us_socket_context_t *context) {
-    /* Begin by closing all listen sockets */
+    /* First start closing pending connecting sockets*/
+    struct us_connecting_socket_t *c = context->head_connecting_sockets;
+    while (c) {
+        struct us_connecting_socket_t *nextC = c->next_pending;
+        us_connecting_socket_close(ssl, c);
+        c = nextC;
+    }
+    /* After this by closing all listen sockets */
     struct us_listen_socket_t *ls = context->head_listen_sockets;
     while (ls) {
         struct us_listen_socket_t *nextLS = (struct us_listen_socket_t *) ls->s.next;
         us_listen_socket_close(ssl, ls);
+        
         ls = nextLS;
     }
 
@@ -118,6 +126,21 @@ void us_internal_socket_context_unlink_socket(int ssl, struct us_socket_context_
     }
     us_socket_context_unref(ssl, context);
 }
+void us_internal_socket_context_unlink_connecting_socket(int ssl, struct us_socket_context_t *context, struct us_connecting_socket_t *c) {
+    if (c->prev_pending == c->next_pending) {
+        context->head_connecting_sockets = 0;
+    } else {
+        if (c->prev_pending) {
+            c->prev_pending->next_pending = c->next_pending;
+        } else {
+            context->head_connecting_sockets = c->next_pending;
+        }
+        if (c->next_pending) {
+            c->next_pending->prev_pending = c->prev_pending;
+        }
+    }
+    us_socket_context_unref(ssl, context);
+}
 
 /* We always add in the top, so we don't modify any s.next */
 void us_internal_socket_context_link_listen_socket(struct us_socket_context_t *context, struct us_listen_socket_t *ls) {
@@ -128,8 +151,20 @@ void us_internal_socket_context_link_listen_socket(struct us_socket_context_t *c
         context->head_listen_sockets->s.prev = &ls->s;
     }
     context->head_listen_sockets = ls;
-    context->ref_count++;
+    us_socket_context_ref(0, context);
 }
+
+void us_internal_socket_context_link_connecting_socket(int ssl, struct us_socket_context_t *context, struct us_connecting_socket_t *c) {
+    c->context = context;
+    c->next_pending = context->head_connecting_sockets;
+    c->prev_pending = 0;
+    if (context->head_connecting_sockets) {
+        context->head_connecting_sockets->prev_pending = c;
+    }
+    context->head_connecting_sockets = c;
+    us_socket_context_ref(ssl, context);
+}
+
 
 /* We always add in the top, so we don't modify any s.next */
 void us_internal_socket_context_link_socket(struct us_socket_context_t *context, struct us_socket_t *s) {
@@ -140,7 +175,7 @@ void us_internal_socket_context_link_socket(struct us_socket_context_t *context,
         context->head_sockets->prev = s;
     }
     context->head_sockets = s;
-    context->ref_count++;
+    us_socket_context_ref(0, context);
 }
 
 struct us_loop_t *us_socket_context_loop(int ssl, struct us_socket_context_t *context) {
@@ -277,9 +312,8 @@ struct us_bun_verify_error_t us_socket_verify_error(int ssl, struct us_socket_t 
     return (struct us_bun_verify_error_t) { .error = 0, .code = NULL, .reason = NULL };    
 }
 
-
-
 void us_internal_socket_context_free(int ssl, struct us_socket_context_t *context) {
+
 #ifndef LIBUS_NO_SSL
     if (ssl) {
         /* This function will call us again with SSL=false */
@@ -300,9 +334,10 @@ void us_internal_socket_context_free(int ssl, struct us_socket_context_t *contex
 void us_socket_context_ref(int ssl, struct us_socket_context_t *context) {
     context->ref_count++;
 }
-
 void us_socket_context_unref(int ssl, struct us_socket_context_t *context) {
-    if (--context->ref_count == 0) {
+    uint32_t ref_count = context->ref_count;
+    context->ref_count--;    
+    if (ref_count == 1) {
         us_internal_socket_context_free(ssl, context);
     }
 }
@@ -479,14 +514,14 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
     }
 
     struct us_connecting_socket_t *c = us_calloc(1, sizeof(struct us_connecting_socket_t) + socket_ext_size);
-    c->socket_ext_size = socket_ext_size;
-    c->context = context;
+    c->socket_ext_size = socket_ext_size;  
     c->options = options;
     c->ssl = ssl > 0;
     c->timeout = 255;
     c->long_timeout = 255;
     c->pending_resolve_callback = 1;
     c->port = port;
+    us_internal_socket_context_link_connecting_socket(ssl, context, c);
 
 #ifdef _WIN32
     loop->uv_loop->active_handles++;
@@ -548,15 +583,12 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     c->pending_resolve_callback = 0;
     // if the socket was closed while we were resolving the address, free it
     if (c->closed) {
-        us_connecting_socket_free(c);
+        us_connecting_socket_free(c->ssl, c);
         return;
     }
     struct addrinfo_result *result = Bun__addrinfo_getRequestResult(c->addrinfo_req);
     if (result->error) {
-        c->error = result->error;
-        c->context->on_connect_error(c, result->error);
-        Bun__addrinfo_freeRequest(c->addrinfo_req, 0);
-        us_connecting_socket_close(0, c);
+        us_connecting_socket_close(c->ssl, c);
         return;
     }
 
@@ -564,10 +596,7 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
 
     int opened = start_connections(c, CONCURRENT_CONNECTIONS);
     if (opened == 0) {
-        c->error = ECONNREFUSED;
-        c->context->on_connect_error(c, ECONNREFUSED);
-        Bun__addrinfo_freeRequest(c->addrinfo_req, 1);
-        us_connecting_socket_close(0, c);
+        us_connecting_socket_close(c->ssl, c);
         return;
     }
 }
@@ -635,10 +664,7 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                 // we have run out of addresses to attempt, signal the connection error
                 // but only if there are no other sockets in the list
                 if (opened == 0 && c->connecting_head == NULL) {
-                    c->error = ECONNREFUSED;
-                    c->context->on_connect_error(c, error);
-                    Bun__addrinfo_freeRequest(c->addrinfo_req, ECONNREFUSED);
-                    us_connecting_socket_close(0, c);
+                    us_connecting_socket_close(c->ssl, c);
                 }
             }
         } else {
@@ -667,7 +693,7 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
             }
             // now that the socket is open, we can release the associated us_connecting_socket_t if it exists
             Bun__addrinfo_freeRequest(c->addrinfo_req, 0);
-            us_connecting_socket_free(c);
+            us_connecting_socket_free(c->ssl, c);
             s->connect_state = NULL;
         }
 
@@ -726,11 +752,13 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
 #endif
 
     /* Cannot adopt a closed socket */
-    if (us_socket_is_closed(ssl, s)) {
+    if (us_socket_is_closed(ssl, s) || us_socket_is_shut_down(ssl, s)) {
         return s;
     }
 
     if (s->low_prio_state != 1) {
+         /* We need to be sure that we still holding a reference*/
+        us_socket_context_ref(ssl, context);
         /* This properly updates the iterator if in on_timeout */
         us_internal_socket_context_unlink_socket(ssl, s->context, s);
     }
@@ -743,7 +771,10 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
         new_s = (struct us_socket_t *) us_poll_resize(&s->p, s->context->loop, sizeof(struct us_socket_t) + ext_size);
         if (c) {
             c->connecting_head = new_s;
+            struct us_socket_context_t *old_context = s->context;
             c->context = context;
+            us_internal_socket_context_link_connecting_socket(ssl, context, c);
+            us_internal_socket_context_unlink_connecting_socket(ssl, old_context, c);
         }
     }
     new_s->timeout = 255;
@@ -757,6 +788,7 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
         if (new_s->next) new_s->next->prev = new_s;
     } else {
         us_internal_socket_context_link_socket(context, new_s);
+        us_socket_context_unref(ssl, context);
     }
 
     return new_s;

@@ -18,10 +18,11 @@ const Fs = @import("../../fs.zig");
 const Base = @import("../base.zig");
 const getAllocator = Base.getAllocator;
 const JSObject = JSC.JSObject;
-const JSError = Base.JSError;
 const JSValue = bun.JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const strings = bun.strings;
+const JSError = bun.JSError;
+const OOM = bun.OOM;
 
 const To = Base.To;
 const Request = WebCore.Request;
@@ -61,7 +62,8 @@ pub const JSBundler = struct {
         minify: Minify = .{},
         server_components: ServerComponents = ServerComponents{},
         no_macros: bool = false,
-
+        ignore_dce_annotations: bool = false,
+        emit_dce_annotations: ?bool = null,
         names: Names = .{},
         external: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         source_map: options.SourceMapOption = .none,
@@ -71,7 +73,9 @@ pub const JSBundler = struct {
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
-        pub fn fromJS(globalThis: *JSC.JSGlobalObject, config: JSC.JSValue, plugins: *?*Plugin, allocator: std.mem.Allocator) !Config {
+        const FromJSError = OOM || JSError;
+
+        pub fn fromJS(globalThis: *JSC.JSGlobalObject, config: JSC.JSValue, plugins: *?*Plugin, allocator: std.mem.Allocator) FromJSError!Config {
             var this = Config{
                 .entry_points = bun.StringSet.init(allocator),
                 .external = bun.StringSet.init(allocator),
@@ -92,6 +96,10 @@ pub const JSBundler = struct {
             if (try config.getArray(globalThis, "plugins")) |array| {
                 var iter = array.arrayIterator(globalThis);
                 while (iter.next()) |plugin| {
+                    if (!plugin.isObject()) {
+                        globalThis.throwInvalidArguments("Expected plugin to be an object", .{});
+                        return error.JSError;
+                    }
                     if (try plugin.getObject(globalThis, "SECRET_SERVER_COMPONENTS_INTERNALS")) |internals| {
                         if (internals.get(globalThis, "router")) |router_value| {
                             if (router_value.as(JSC.API.FileSystemRouter) != null) {
@@ -112,14 +120,14 @@ pub const JSBundler = struct {
                             while (array_iter.next()) |client_name| {
                                 var slice = client_name.toSliceOrNull(globalThis) orelse {
                                     globalThis.throwInvalidArguments("Expected directive.client to be an array of strings", .{});
-                                    return error.JSException;
+                                    return error.JSError;
                                 };
                                 defer slice.deinit();
-                                try this.server_components.client.append(allocator, OwnedString.initCopy(allocator, slice.slice()) catch unreachable);
+                                try this.server_components.client.append(allocator, try OwnedString.initCopy(allocator, slice.slice()));
                             }
                         } else {
                             globalThis.throwInvalidArguments("Expected directive.client to be an array of strings", .{});
-                            return error.JSException;
+                            return error.JSError;
                         }
 
                         if (try directive_object.getArray(globalThis, "server")) |server_names_array| {
@@ -127,14 +135,14 @@ pub const JSBundler = struct {
                             while (array_iter.next()) |server_name| {
                                 var slice = server_name.toSliceOrNull(globalThis) orelse {
                                     globalThis.throwInvalidArguments("Expected directive.server to be an array of strings", .{});
-                                    return error.JSException;
+                                    return error.JSError;
                                 };
                                 defer slice.deinit();
-                                try this.server_components.server.append(allocator, OwnedString.initCopy(allocator, slice.slice()) catch unreachable);
+                                try this.server_components.server.append(allocator, try OwnedString.initCopy(allocator, slice.slice()));
                             }
                         } else {
                             globalThis.throwInvalidArguments("Expected directive.server to be an array of strings", .{});
-                            return error.JSException;
+                            return error.JSError;
                         }
 
                         continue;
@@ -203,7 +211,7 @@ pub const JSBundler = struct {
             var has_out_dir = false;
             if (try config.getOptional(globalThis, "outdir", ZigString.Slice)) |slice| {
                 defer slice.deinit();
-                this.outdir.appendSliceExact(slice.slice()) catch unreachable;
+                try this.outdir.appendSliceExact(slice.slice());
                 has_out_dir = true;
             }
 
@@ -233,7 +241,7 @@ pub const JSBundler = struct {
                     .esm => {},
                     else => {
                         globalThis.throwInvalidArguments("Formats besides 'esm' are not implemented", .{});
-                        return error.JSException;
+                        return error.JSError;
                     },
                 }
             }
@@ -264,7 +272,7 @@ pub const JSBundler = struct {
                     }
                 } else {
                     globalThis.throwInvalidArguments("Expected minify to be a boolean or an object", .{});
-                    return error.JSException;
+                    return error.JSError;
                 }
             }
 
@@ -273,21 +281,33 @@ pub const JSBundler = struct {
                 while (iter.next()) |entry_point| {
                     var slice = entry_point.toSliceOrNull(globalThis) orelse {
                         globalThis.throwInvalidArguments("Expected entrypoints to be an array of strings", .{});
-                        return error.JSException;
+                        return error.JSError;
                     };
                     defer slice.deinit();
                     try this.entry_points.insert(slice.slice());
                 }
             } else {
                 globalThis.throwInvalidArguments("Expected entrypoints to be an array of strings", .{});
-                return error.JSException;
+                return error.JSError;
+            }
+
+            if (config.getTruthy(globalThis, "emitDCEAnnotations")) |flag| {
+                if (flag.coerce(bool, globalThis)) {
+                    this.emit_dce_annotations = true;
+                }
+            }
+
+            if (config.getTruthy(globalThis, "ignoreDCEAnnotations")) |flag| {
+                if (flag.coerce(bool, globalThis)) {
+                    this.ignore_dce_annotations = true;
+                }
             }
 
             if (config.getTruthy(globalThis, "conditions")) |conditions_value| {
                 if (conditions_value.isString()) {
                     var slice = conditions_value.toSliceOrNull(globalThis) orelse {
                         globalThis.throwInvalidArguments("Expected conditions to be an array of strings", .{});
-                        return error.JSException;
+                        return error.JSError;
                     };
                     defer slice.deinit();
                     try this.conditions.insert(slice.slice());
@@ -296,14 +316,14 @@ pub const JSBundler = struct {
                     while (iter.next()) |entry_point| {
                         var slice = entry_point.toSliceOrNull(globalThis) orelse {
                             globalThis.throwInvalidArguments("Expected conditions to be an array of strings", .{});
-                            return error.JSException;
+                            return error.JSError;
                         };
                         defer slice.deinit();
                         try this.conditions.insert(slice.slice());
                     }
                 } else {
                     globalThis.throwInvalidArguments("Expected conditions to be an array of strings", .{});
-                    return error.JSException;
+                    return error.JSError;
                 }
             }
 
@@ -326,12 +346,16 @@ pub const JSBundler = struct {
 
                 var dir = std.fs.cwd().openDir(path.slice(), .{}) catch |err| {
                     globalThis.throwPretty("{s}: failed to open root directory: {s}", .{ @errorName(err), path.slice() });
-                    return error.JSException;
+                    return error.JSError;
                 };
                 defer dir.close();
 
                 var rootdir_buf: bun.PathBuffer = undefined;
-                this.rootdir.appendSliceExact(try bun.getFdPath(bun.toFD(dir.fd), &rootdir_buf)) catch unreachable;
+                const rootdir = bun.getFdPath(bun.toFD(dir.fd), &rootdir_buf) catch |err| {
+                    globalThis.throwPretty("{s}: failed to get full root directory path: {s}", .{ @errorName(err), path.slice() });
+                    return error.JSError;
+                };
+                try this.rootdir.appendSliceExact(rootdir);
             }
 
             if (try config.getArray(globalThis, "external")) |externals| {
@@ -339,7 +363,7 @@ pub const JSBundler = struct {
                 while (iter.next()) |entry_point| {
                     var slice = entry_point.toSliceOrNull(globalThis) orelse {
                         globalThis.throwInvalidArguments("Expected external to be an array of strings", .{});
-                        return error.JSException;
+                        return error.JSError;
                     };
                     defer slice.deinit();
                     try this.external.insert(slice.slice());
@@ -355,7 +379,7 @@ pub const JSBundler = struct {
 
             if (try config.getOptional(globalThis, "publicPath", ZigString.Slice)) |slice| {
                 defer slice.deinit();
-                this.public_path.appendSliceExact(slice.slice()) catch unreachable;
+                try this.public_path.appendSliceExact(slice.slice());
             }
 
             if (config.getTruthy(globalThis, "naming")) |naming| {
@@ -363,48 +387,48 @@ pub const JSBundler = struct {
                     if (try config.getOptional(globalThis, "naming", ZigString.Slice)) |slice| {
                         defer slice.deinit();
                         if (!strings.hasPrefixComptime(slice.slice(), "./")) {
-                            this.names.owned_entry_point.appendSliceExact("./") catch unreachable;
+                            try this.names.owned_entry_point.appendSliceExact("./");
                         }
-                        this.names.owned_entry_point.appendSliceExact(slice.slice()) catch unreachable;
+                        try this.names.owned_entry_point.appendSliceExact(slice.slice());
                         this.names.entry_point.data = this.names.owned_entry_point.list.items;
                     }
                 } else if (naming.isObject()) {
                     if (try naming.getOptional(globalThis, "entry", ZigString.Slice)) |slice| {
                         defer slice.deinit();
                         if (!strings.hasPrefixComptime(slice.slice(), "./")) {
-                            this.names.owned_entry_point.appendSliceExact("./") catch unreachable;
+                            try this.names.owned_entry_point.appendSliceExact("./");
                         }
-                        this.names.owned_entry_point.appendSliceExact(slice.slice()) catch unreachable;
+                        try this.names.owned_entry_point.appendSliceExact(slice.slice());
                         this.names.entry_point.data = this.names.owned_entry_point.list.items;
                     }
 
                     if (try naming.getOptional(globalThis, "chunk", ZigString.Slice)) |slice| {
                         defer slice.deinit();
                         if (!strings.hasPrefixComptime(slice.slice(), "./")) {
-                            this.names.owned_chunk.appendSliceExact("./") catch unreachable;
+                            try this.names.owned_chunk.appendSliceExact("./");
                         }
-                        this.names.owned_chunk.appendSliceExact(slice.slice()) catch unreachable;
+                        try this.names.owned_chunk.appendSliceExact(slice.slice());
                         this.names.chunk.data = this.names.owned_chunk.list.items;
                     }
 
                     if (try naming.getOptional(globalThis, "asset", ZigString.Slice)) |slice| {
                         defer slice.deinit();
                         if (!strings.hasPrefixComptime(slice.slice(), "./")) {
-                            this.names.owned_asset.appendSliceExact("./") catch unreachable;
+                            try this.names.owned_asset.appendSliceExact("./");
                         }
-                        this.names.owned_asset.appendSliceExact(slice.slice()) catch unreachable;
+                        try this.names.owned_asset.appendSliceExact(slice.slice());
                         this.names.asset.data = this.names.owned_asset.list.items;
                     }
                 } else {
                     globalThis.throwInvalidArguments("Expected naming to be a string or an object", .{});
-                    return error.JSException;
+                    return error.JSError;
                 }
             }
 
             if (try config.getObject(globalThis, "define")) |define| {
                 if (!define.isObject()) {
                     globalThis.throwInvalidArguments("define must be an object", .{});
-                    return error.JSException;
+                    return error.JSError;
                 }
 
                 var define_iter = JSC.JSPropertyIterator(.{
@@ -419,7 +443,7 @@ pub const JSBundler = struct {
 
                     if (!value_type.isStringLike()) {
                         globalThis.throwInvalidArguments("define \"{s}\" must be a JSON string", .{prop});
-                        return error.JSException;
+                        return error.JSError;
                     }
 
                     var val = JSC.ZigString.init("");
@@ -428,7 +452,7 @@ pub const JSBundler = struct {
                         val = JSC.ZigString.fromUTF8("\"\"");
                     }
 
-                    const key = prop.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
+                    const key = try prop.toOwnedSlice(bun.default_allocator);
 
                     // value is always cloned
                     const value = val.toSlice(bun.default_allocator);
@@ -454,7 +478,7 @@ pub const JSBundler = struct {
                 while (loader_iter.next()) |prop| {
                     if (!prop.hasPrefixComptime(".") or prop.length() < 2) {
                         globalThis.throwInvalidArguments("loader property names must be file extensions, such as '.txt'", .{});
-                        return error.JSException;
+                        return error.JSError;
                     }
 
                     loader_values[loader_iter.i] = try loader_iter.value.toEnumFromMap(
@@ -463,7 +487,7 @@ pub const JSBundler = struct {
                         Api.Loader,
                         options.Loader.api_names,
                     );
-                    loader_names[loader_iter.i] = prop.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
+                    loader_names[loader_iter.i] = try prop.toOwnedSlice(bun.default_allocator);
                 }
 
                 this.loaders = Api.LoaderMap{
@@ -552,8 +576,16 @@ pub const JSBundler = struct {
         }
 
         var plugins: ?*Plugin = null;
-        const config = Config.fromJS(globalThis, arguments[0], &plugins, globalThis.allocator()) catch {
-            return .undefined;
+        const config = Config.fromJS(globalThis, arguments[0], &plugins, globalThis.allocator()) catch |err| {
+            switch (err) {
+                error.JSError => {
+                    return .zero;
+                },
+                error.OutOfMemory => {
+                    globalThis.throwOutOfMemory();
+                    return .zero;
+                },
+            }
         };
 
         return bun.BundleV2.generateFromJavaScript(
@@ -562,8 +594,13 @@ pub const JSBundler = struct {
             globalThis,
             globalThis.bunVM().eventLoop(),
             bun.default_allocator,
-        ) catch {
-            return .undefined;
+        ) catch |err| {
+            switch (err) {
+                error.OutOfMemory => {
+                    globalThis.throwOutOfMemory();
+                    return .zero;
+                },
+            }
         };
     }
 

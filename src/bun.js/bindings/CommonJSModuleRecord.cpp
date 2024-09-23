@@ -225,7 +225,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionLoadModule, (JSGlobalObject * lexicalGlobalOb
     if (!moduleObject->load(vm, globalObject, exception)) {
         throwException(globalObject, throwScope, exception.get());
         exception.clear();
-        return JSValue::encode({});
+        return {};
     }
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsBoolean(true)));
@@ -308,20 +308,22 @@ void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
+    auto* globalObject = this->globalObject();
 
     reifyStaticProperties(vm, info(), RequireFunctionPrototypeValues, *this);
     JSC::JSFunction* requireDotMainFunction = JSFunction::create(
         vm,
+        globalObject,
         moduleMainCodeGenerator(vm),
-        globalObject()->globalScope());
+        globalObject->globalScope());
 
     this->putDirectAccessor(
-        globalObject(),
+        globalObject,
         JSC::Identifier::fromString(vm, "main"_s),
-        JSC::GetterSetter::create(vm, globalObject(), requireDotMainFunction, requireDotMainFunction),
+        JSC::GetterSetter::create(vm, globalObject, requireDotMainFunction, requireDotMainFunction),
         PropertyAttribute::Accessor | PropertyAttribute::ReadOnly | 0);
 
-    auto extensions = constructEmptyObject(globalObject());
+    auto extensions = constructEmptyObject(globalObject);
     extensions->putDirect(vm, JSC::Identifier::fromString(vm, ".js"_s), jsBoolean(true), 0);
     extensions->putDirect(vm, JSC::Identifier::fromString(vm, ".json"_s), jsBoolean(true), 0);
     extensions->putDirect(vm, JSC::Identifier::fromString(vm, ".node"_s), jsBoolean(true), 0);
@@ -509,11 +511,11 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     String sourceString = callframe->argument(0).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     JSValue filenameValue = callframe->argument(1);
     String filenameString = filenameValue.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     String wrappedString = makeString(
         "(function(exports,require,module,__filename,__dirname){"_s,
@@ -534,7 +536,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
 #else
     JSValue dirnameValue = JSValue::decode(Bun__Path__dirname(globalObject, false, &encodedFilename, 1));
 #endif
-    RETURN_IF_EXCEPTION(throwScope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     String dirnameString = dirnameValue.toWTFString(globalObject);
 
@@ -550,7 +552,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
     if (exception) {
         throwException(globalObject, throwScope, exception.get());
         exception.clear();
-        return JSValue::encode({});
+        return {};
     }
 
     return JSValue::encode(jsUndefined());
@@ -812,12 +814,13 @@ void populateESMExports(
             if (canPerformFastEnumeration(structure)) {
                 exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                     auto key = entry.key();
-                    if (key->isSymbol() || entry.attributes() & PropertyAttribute::DontEnum || key == esModuleMarker)
+                    if (key->isSymbol() || key == esModuleMarker)
                         return true;
 
                     needsToAssignDefault = needsToAssignDefault && key != vm.propertyNames->defaultKeyword;
 
                     JSValue value = exports->getDirect(entry.offset());
+
                     exportNames.append(Identifier::fromUid(vm, key));
                     exportValues.append(value);
                     return true;
@@ -842,6 +845,14 @@ void populateESMExports(
                     if (!exports->getPropertySlot(globalObject, property, slot))
                         continue;
 
+                    // Allow DontEnum properties which are not getter/setters
+                    // https://github.com/oven-sh/bun/issues/4432
+                    if (slot.attributes() & PropertyAttribute::DontEnum) {
+                        if (!(slot.isValue() || slot.isCustom())) {
+                            continue;
+                        }
+                    }
+
                     exportNames.append(property);
 
                     JSValue getterResult = slot.getValue(globalObject, property);
@@ -862,7 +873,7 @@ void populateESMExports(
         } else if (canPerformFastEnumeration(structure)) {
             exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                 auto key = entry.key();
-                if (key->isSymbol() || entry.attributes() & PropertyAttribute::DontEnum || key == vm.propertyNames->defaultKeyword)
+                if (key->isSymbol() || key == vm.propertyNames->defaultKeyword)
                     return true;
 
                 JSValue value = exports->getDirect(entry.offset());
@@ -873,7 +884,7 @@ void populateESMExports(
             });
         } else {
             JSC::PropertyNameArray properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-            exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Exclude);
+            exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Include);
             if (catchScope.exception()) {
                 catchScope.clearExceptionExceptTermination();
                 return;
@@ -890,6 +901,14 @@ void populateESMExports(
                 JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
                 if (!exports->getPropertySlot(globalObject, property, slot))
                     continue;
+
+                if (slot.attributes() & PropertyAttribute::DontEnum) {
+                    // Allow DontEnum properties which are not getter/setters
+                    // https://github.com/oven-sh/bun/issues/4432
+                    if (!(slot.isValue() || slot.isCustom())) {
+                        continue;
+                    }
+                }
 
                 exportNames.append(property);
 

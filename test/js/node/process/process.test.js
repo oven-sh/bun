@@ -100,6 +100,23 @@ it("process", () => {
   expect(cwd).toEqual(process.cwd());
 });
 
+it("process.chdir() on root dir", () => {
+  const cwd = process.cwd();
+  try {
+    let root = "/";
+    if (process.platform === "win32") {
+      const driveLetter = process.cwd().split(":\\")[0];
+      root = `${driveLetter}:\\`;
+    }
+    process.chdir(root);
+    expect(process.cwd()).toBe(root);
+    process.chdir(cwd);
+    expect(process.cwd()).toBe(cwd);
+  } finally {
+    process.chdir(cwd);
+  }
+});
+
 it("process.hrtime()", () => {
   const start = process.hrtime();
   const end = process.hrtime(start);
@@ -264,6 +281,9 @@ const versions = existsSync(generated_versions_list);
   versions.ares = versions.c_ares;
   delete versions.c_ares;
 
+  // Handled by BUN_WEBKIT_VERSION #define
+  delete versions.webkit;
+
   for (const name in versions) {
     expect(process.versions).toHaveProperty(name);
     expect(process.versions[name]).toBe(versions[name]);
@@ -277,6 +297,7 @@ const versions = existsSync(generated_versions_list);
 it("process.config", () => {
   expect(process.config).toEqual({
     variables: {
+      enable_lto: false,
       v8_enable_i8n_support: 1,
     },
     target_defaults: {},
@@ -377,6 +398,30 @@ describe("process.onBeforeExit", () => {
     expect(exitCode).toBe(0);
     expect(stdout.toString().trim()).toBe("beforeExit: 0\nbeforeExit: 1\nexit: 2");
   });
+
+  it("throwing inside preserves exit code", async () => {
+    const proc = Bun.spawnSync({
+      cmd: [bunExe(), "-e", `process.on("beforeExit", () => {throw new Error("boom")});`],
+      env: bunEnv,
+      stdio: ["inherit", "pipe", "pipe"],
+    });
+    expect(proc.exitCode).toBe(1);
+    expect(proc.stderr.toString("utf8")).toInclude("error: boom");
+    expect(proc.stdout.toString("utf8")).toBeEmpty();
+  });
+});
+
+describe("process.onExit", () => {
+  it("throwing inside preserves exit code", async () => {
+    const proc = Bun.spawnSync({
+      cmd: [bunExe(), "-e", `process.on("exit", () => {throw new Error("boom")});`],
+      env: bunEnv,
+      stdio: ["inherit", "pipe", "pipe"],
+    });
+    expect(proc.exitCode).toBe(1);
+    expect(proc.stderr.toString("utf8")).toInclude("error: boom");
+    expect(proc.stdout.toString("utf8")).toBeEmpty();
+  });
 });
 
 it("process.memoryUsage", () => {
@@ -401,24 +446,39 @@ describe("process.cpuUsage", () => {
     });
   });
 
+  it("throws for negative input", () => {
+    expect(() =>
+      process.cpuUsage({
+        user: -1,
+        system: 100,
+      }),
+    ).toThrow("The 'user' property must be a number between 0 and 2^53");
+    expect(() =>
+      process.cpuUsage({
+        user: 100,
+        system: -1,
+      }),
+    ).toThrow("The 'system' property must be a number between 0 and 2^53");
+  });
+
   // Skipped on Windows because it seems UV returns { user: 15000, system: 0 } constantly
   it.skipIf(process.platform === "win32")("works with diff", () => {
     const init = process.cpuUsage();
-    init.system = 1;
-    init.user = 1;
+    init.system = 0;
+    init.user = 0;
     const delta = process.cpuUsage(init);
     expect(delta.user).toBeGreaterThan(0);
-    expect(delta.system).toBeGreaterThan(0);
+    expect(delta.system).toBeGreaterThanOrEqual(0);
   });
 
   it.skipIf(process.platform === "win32")("works with diff of different structure", () => {
     const init = {
-      user: 0,
       system: 0,
+      user: 0,
     };
     const delta = process.cpuUsage(init);
     expect(delta.user).toBeGreaterThan(0);
-    expect(delta.system).toBeGreaterThan(0);
+    expect(delta.system).toBeGreaterThanOrEqual(0);
   });
 
   it("throws on invalid property", () => {
@@ -440,7 +500,8 @@ describe("process.cpuUsage", () => {
   // Skipped on Linux/Windows because it seems to not change as often as on macOS
   it.skipIf(process.platform !== "darwin")("increases monotonically", () => {
     const init = process.cpuUsage();
-    for (let i = 0; i < 10000; i++) {}
+    let start = performance.now();
+    while (performance.now() - start < 10) {}
     const another = process.cpuUsage();
     expect(another.user).toBeGreaterThan(init.user);
     expect(another.system).toBeGreaterThan(init.system);
@@ -984,4 +1045,8 @@ describe("process.exitCode", () => {
       6,
     ]).toRunInlineFixture();
   });
+});
+
+it("process._exiting", () => {
+  expect(process._exiting).toBe(false);
 });

@@ -42,7 +42,7 @@ runs:
           canary) release="canary";;
           *)      release="bun-v${{ inputs.bun-version }}";;
         esac
-        curl -LO "${{ inputs.download-url }}/${release}/${target}.zip"
+        curl -LO "${{ inputs.download-url }}/${release}/${target}.zip" --retry 5
         unzip ${target}.zip
         mkdir -p ${{ runner.temp }}/.bun/bin
         mv ${target}/bun* ${{ runner.temp }}/.bun/bin/

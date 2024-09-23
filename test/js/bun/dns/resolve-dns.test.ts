@@ -1,5 +1,5 @@
 import { SystemError, dns } from "bun";
-import { describe, expect, it, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { withoutAggressiveGC } from "harness";
 import { isIP, isIPv4, isIPv6 } from "node:net";
 

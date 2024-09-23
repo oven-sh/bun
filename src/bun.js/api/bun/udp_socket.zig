@@ -42,10 +42,9 @@ fn onDrain(socket: *uws.udp.Socket) callconv(.C) void {
     const event_loop = vm.eventLoop();
     event_loop.enter();
     defer event_loop.exit();
-    const result = callback.call(this.globalThis, this.thisValue, &[_]JSValue{this.thisValue});
-    if (result.toError()) |err| {
-        _ = this.callErrorHandler(.zero, &[_]JSValue{err});
-    }
+    _ = callback.call(this.globalThis, this.thisValue, &.{this.thisValue}) catch |err| {
+        _ = this.callErrorHandler(.zero, &.{this.globalThis.takeException(err)});
+    };
 }
 
 fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) callconv(.C) void {
@@ -91,16 +90,14 @@ fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) c
         _ = udpSocket.js_refcount.fetchAdd(1, .monotonic);
         defer _ = udpSocket.js_refcount.fetchSub(1, .monotonic);
 
-        const result = callback.call(globalThis, udpSocket.thisValue, &[_]JSValue{
+        _ = callback.call(globalThis, udpSocket.thisValue, &.{
             udpSocket.thisValue,
             udpSocket.config.binary_type.toJS(slice, globalThis),
             JSC.jsNumber(port),
             JSC.ZigString.init(std.mem.span(hostname.?)).toJS(globalThis),
-        });
-
-        if (result.toError()) |err| {
-            _ = udpSocket.callErrorHandler(.zero, &[_]JSValue{err});
-        }
+        }) catch |err| {
+            _ = udpSocket.callErrorHandler(.zero, &.{udpSocket.globalThis.takeException(err)});
+        };
     }
 }
 
@@ -368,10 +365,7 @@ pub const UDPSocket = struct {
             return false;
         }
 
-        const result = callback.call(globalThis, thisValue, err);
-        if (result.isAnyError()) {
-            _ = vm.uncaughtException(globalThis, result, false);
-        }
+        _ = callback.call(globalThis, thisValue, err) catch |e| globalThis.reportActiveExceptionAsUnhandled(e);
 
         return true;
     }
@@ -496,20 +490,19 @@ pub const UDPSocket = struct {
         };
 
         const payload_arg = arguments.ptr[0];
-        var payload = brk: {
+        var payload_str = JSC.ZigString.Slice.empty;
+        defer payload_str.deinit();
+        const payload = brk: {
             if (payload_arg.asArrayBuffer(globalThis)) |array_buffer| {
-                break :brk bun.JSC.ZigString.Slice{
-                    .ptr = array_buffer.ptr,
-                    .len = array_buffer.len,
-                };
+                break :brk array_buffer.slice();
             } else if (payload_arg.isString()) {
-                break :brk payload_arg.asString().toSlice(globalThis, bun.default_allocator);
+                payload_str = payload_arg.asString().toSlice(globalThis, bun.default_allocator);
+                break :brk payload_str.slice();
             } else {
                 globalThis.throwInvalidArguments("Expected ArrayBufferView or string as first argument", .{});
                 return .zero;
             }
         };
-        defer payload.deinit();
 
         var addr: std.posix.sockaddr.storage = std.mem.zeroes(std.posix.sockaddr.storage);
         const addr_ptr = brk: {

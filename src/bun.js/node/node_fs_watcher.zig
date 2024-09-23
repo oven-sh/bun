@@ -535,12 +535,12 @@ pub const FSWatcher = struct {
                 listener.ensureStillAlive();
                 var args = [_]JSC.JSValue{
                     EventType.@"error".toJS(this.globalThis),
-                    if (err.isEmptyOrUndefinedOrNull()) JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.globalThis) else err,
+                    if (err.isEmptyOrUndefinedOrNull()) JSC.CommonAbortReason.UserAbort.toJS(this.globalThis) else err,
                 };
                 _ = listener.callWithGlobalThis(
                     this.globalThis,
                     &args,
-                );
+                ) catch this.globalThis.clearException();
             }
         }
     }
@@ -561,7 +561,7 @@ pub const FSWatcher = struct {
                 _ = listener.callWithGlobalThis(
                     globalObject,
                     &args,
-                );
+                ) catch |e| this.globalThis.reportActiveExceptionAsUnhandled(e);
             }
         }
     }
@@ -600,14 +600,10 @@ pub const FSWatcher = struct {
             filename,
         };
 
-        const err = listener.callWithGlobalThis(
+        _ = listener.callWithGlobalThis(
             globalObject,
             &args,
-        );
-
-        if (err.toError()) |value| {
-            _ = JSC.VirtualMachine.get().uncaughtException(globalObject, value, false);
-        }
+        ) catch |err| globalObject.reportActiveExceptionAsUnhandled(err);
     }
 
     pub fn doRef(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
@@ -741,7 +737,7 @@ pub const FSWatcher = struct {
                 .ctx = undefined,
                 .count = 0,
             },
-            .mutex = Mutex.init(),
+            .mutex = .{},
             .signal = if (args.signal) |s| s.ref() else null,
             .persistent = args.persistent,
             .path_watcher = null,

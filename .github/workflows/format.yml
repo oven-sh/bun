@@ -1,0 +1,61 @@
+name: Format
+
+permissions:
+  contents: write
+
+concurrency:
+  group: format-${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && inputs.run-id  || github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+    inputs:
+      run-id:
+        type: string
+        description: The workflow ID to download artifacts (skips the build step)
+  pull_request:
+
+jobs:
+  format:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .prettierrc-ci
+            .github
+            .vscode
+            src
+            scripts
+            packages
+            test
+            bench
+            package.json
+            bun.lockb
+            .clang-format
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: "1.1.25"
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.13.0
+      - name: Install Dependencies
+        run: |
+          bun install
+      - name: Format
+        run: |
+          bun fmt
+      - name: Format Zig
+        run: |
+          bun fmt:zig
+      - name: Format Cpp
+        run: |
+          bun fmt:cpp
+      - name: Commit
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: Apply formatting changes

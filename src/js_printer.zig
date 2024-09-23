@@ -65,8 +65,8 @@ const ascii_only_always_on_unless_minifying = true;
 fn formatUnsignedIntegerBetween(comptime len: u16, buf: *[len]u8, val: u64) void {
     comptime var i: u16 = len;
     var remainder = val;
-    // Write out the number from the end to the front
 
+    // Write out the number from the end to the front
     inline while (i > 0) {
         comptime i -= 1;
         buf[comptime i] = @as(u8, @intCast((remainder % 10))) + '0';
@@ -526,25 +526,31 @@ pub const Options = struct {
     source_map_handler: ?SourceMapHandler = null,
     source_map_builder: ?*bun.sourcemap.Chunk.Builder = null,
     css_import_behavior: Api.CssInJsBehavior = Api.CssInJsBehavior.facade,
+    target: options.Target = .browser,
 
     runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
+    input_files_for_kit: ?[]logger.Source = null,
 
     commonjs_named_exports: js_ast.Ast.CommonJSNamedExports = .{},
     commonjs_named_exports_deoptimized: bool = false,
+    commonjs_module_exports_assigned_deoptimized: bool = false,
     commonjs_named_exports_ref: Ref = Ref.None,
+    commonjs_module_ref: Ref = Ref.None,
 
     minify_whitespace: bool = false,
     minify_identifiers: bool = false,
     minify_syntax: bool = false,
+    print_dce_annotations: bool = true,
+
     transform_only: bool = false,
     inline_require_and_import_errors: bool = true,
     has_run_symbol_renamer: bool = false,
 
     require_or_import_meta_for_source_callback: RequireOrImportMeta.Callback = .{},
 
-    module_type: options.OutputFormat = .preserve,
+    module_type: options.Format = .esm,
 
-    /// Used for cross-module inlining of import items when bundling
+    // /// Used for cross-module inlining of import items when bundling
     // const_values: Ast.ConstValuesMap = .{},
     ts_enums: Ast.TsEnumsMap = .{},
 
@@ -1009,10 +1015,6 @@ fn NewPrinter(
                     p.writer.print(StringType, str);
                 },
             }
-        }
-
-        pub inline fn unsafePrint(p: *Printer, str: string) void {
-            p.print(str);
         }
 
         pub inline fn unindent(p: *Printer) void {
@@ -2030,7 +2032,17 @@ fn NewPrinter(
                     p.print("(");
                 }
 
-                if (!meta.was_unwrapped_require) {
+                if (p.options.input_files_for_kit) |input_files| {
+                    bun.assert(p.options.module_type == .internal_kit_dev);
+                    p.printSpaceBeforeIdentifier();
+                    p.printSymbol(p.options.commonjs_module_ref);
+                    p.print(".require(");
+                    {
+                        const path = input_files[record.source_index.get()].path;
+                        p.printInlinedEnum(.{ .number = @floatFromInt(path.hashForKit()) }, path.pretty, level);
+                    }
+                    p.print(")");
+                } else if (!meta.was_unwrapped_require) {
                     // Call the wrapper
                     if (meta.wrapper_ref.isValid()) {
                         p.printSpaceBeforeIdentifier();
@@ -2146,8 +2158,10 @@ fn NewPrinter(
             return;
         }
 
-        // noop for now
-        pub inline fn printPure(_: *Printer) void {}
+        pub inline fn printPure(p: *Printer) void {
+            if (Environment.allow_assert) assert(p.options.print_dce_annotations);
+            p.printWhitespacer(ws("/* @__PURE__ */ "));
+        }
 
         pub fn printQuotedUTF8(p: *Printer, str: string, allow_backtick: bool) void {
             const quote = if (comptime !is_json)
@@ -2278,8 +2292,8 @@ fn NewPrinter(
             }
         }
 
-        pub fn printExpr(p: *Printer, expr: Expr, level: Level, _flags: ExprFlag.Set) void {
-            var flags = _flags;
+        pub fn printExpr(p: *Printer, expr: Expr, level: Level, in_flags: ExprFlag.Set) void {
+            var flags = in_flags;
 
             switch (expr.data) {
                 .e_missing => {},
@@ -2314,7 +2328,10 @@ fn NewPrinter(
                 .e_import_meta => {
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
-                    if (!p.options.import_meta_ref.isValid()) {
+                    if (p.options.module_type == .internal_kit_dev) {
+                        p.printSymbol(p.options.commonjs_module_ref);
+                        p.print(".importMeta()");
+                    } else if (!p.options.import_meta_ref.isValid()) {
                         // Most of the time, leave it in there
                         p.print("import.meta");
                     } else {
@@ -2329,6 +2346,64 @@ fn NewPrinter(
                         p.printSymbol(p.options.import_meta_ref);
                     }
                 },
+                .e_import_meta_main => |data| {
+                    if (p.options.module_type == .esm and p.options.target != .node) {
+                        // Node.js doesn't support import.meta.main
+                        // Most of the time, leave it in there
+                        if (data.inverted) {
+                            p.addSourceMapping(expr.loc);
+                            p.print("!");
+                        } else {
+                            p.printSpaceBeforeIdentifier();
+                            p.addSourceMapping(expr.loc);
+                        }
+                        p.print("import.meta.main");
+                    } else {
+                        bun.assert(p.options.module_type != .internal_kit_dev);
+
+                        p.printSpaceBeforeIdentifier();
+                        p.addSourceMapping(expr.loc);
+
+                        if (p.options.require_ref) |require|
+                            p.printSymbol(require)
+                        else
+                            p.print("require");
+
+                        if (data.inverted)
+                            p.printWhitespacer(ws(".main != "))
+                        else
+                            p.printWhitespacer(ws(".main == "));
+
+                        if (p.options.target == .node) {
+                            // "__require.module"
+                            if (p.options.require_ref) |require|
+                                p.printSymbol(require)
+                            else
+                                p.print("require");
+
+                            p.print(".module");
+                        } else if (p.options.commonjs_module_ref.isValid()) {
+                            p.printSymbol(p.options.commonjs_module_ref);
+                        } else {
+                            p.print("module");
+                        }
+                    }
+                },
+                .e_module_dot_exports => {
+                    p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(expr.loc);
+
+                    if (p.options.commonjs_module_exports_assigned_deoptimized) {
+                        if (p.options.commonjs_module_ref.isValid()) {
+                            p.printSymbol(p.options.commonjs_module_ref);
+                        } else {
+                            p.print("module");
+                        }
+                        p.print(".exports");
+                    } else {
+                        p.printSymbol(p.options.commonjs_named_exports_ref);
+                    }
+                },
                 .e_commonjs_export_identifier => |id| {
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
@@ -2336,7 +2411,16 @@ fn NewPrinter(
                     for (p.options.commonjs_named_exports.keys(), p.options.commonjs_named_exports.values()) |key, value| {
                         if (value.loc_ref.ref.?.eql(id.ref)) {
                             if (p.options.commonjs_named_exports_deoptimized or value.needs_decl) {
-                                p.printSymbol(p.options.commonjs_named_exports_ref);
+                                if (p.options.commonjs_module_exports_assigned_deoptimized and
+                                    id.base == .module_dot_exports and
+                                    p.options.commonjs_module_ref.isValid())
+                                {
+                                    p.printSymbol(p.options.commonjs_module_ref);
+                                    p.print(".exports");
+                                } else {
+                                    p.printSymbol(p.options.commonjs_named_exports_ref);
+                                }
+
                                 if (p.canPrintIdentifier(key)) {
                                     p.print(".");
                                     p.print(key);
@@ -2353,7 +2437,7 @@ fn NewPrinter(
                     }
                 },
                 .e_new => |e| {
-                    const has_pure_comment = e.can_be_unwrapped_if_unused;
+                    const has_pure_comment = e.can_be_unwrapped_if_unused and p.options.print_dce_annotations;
                     const wrap = level.gte(.call) or (has_pure_comment and level.gte(.postfix));
 
                     if (wrap) {
@@ -2403,7 +2487,7 @@ fn NewPrinter(
                         wrap = true;
                     }
 
-                    const has_pure_comment = e.can_be_unwrapped_if_unused;
+                    const has_pure_comment = e.can_be_unwrapped_if_unused and p.options.print_dce_annotations;
                     if (has_pure_comment and level.gte(.postfix)) {
                         wrap = true;
                     }
@@ -2455,6 +2539,19 @@ fn NewPrinter(
                     p.print(")");
                     if (wrap) {
                         p.print(")");
+                    }
+                },
+                .e_require_main => {
+                    p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(expr.loc);
+
+                    if (p.options.module_type == .esm and is_bun_platform) {
+                        p.print("import.meta.require.main");
+                    } else if (p.options.require_ref) |require_ref| {
+                        p.printSymbol(require_ref);
+                        p.print(".main");
+                    } else {
+                        p.print("require.main");
                     }
                 },
                 .e_require_call_target => {
@@ -3007,7 +3104,10 @@ fn NewPrinter(
                     // Potentially use a property access instead of an identifier
                     var didPrint = false;
 
-                    const ref = p.symbols().follow(e.ref);
+                    const ref = if (p.options.module_type != .internal_kit_dev)
+                        p.symbols().follow(e.ref)
+                    else
+                        e.ref;
                     const symbol = p.symbols().get(ref).?;
 
                     if (symbol.import_item_status == .missing) {
@@ -3091,6 +3191,7 @@ fn NewPrinter(
                     // }
 
                     if (!didPrint) {
+                        // assert(p.options.module_type != .internal_kit_dev);
                         p.printSpaceBeforeIdentifier();
                         p.addSourceMapping(expr.loc);
                         p.printSymbol(e.ref);
@@ -3221,7 +3322,11 @@ fn NewPrinter(
                         p.print(" */");
                     }
                 },
-                else => {
+
+                .e_jsx_element,
+                .e_private_identifier,
+                .e_template_part,
+                => {
                     if (Environment.isDebug)
                         Output.panic("Unexpected expression of type .{s}", .{@tagName(expr.data)});
                 },
@@ -3882,9 +3987,6 @@ fn NewPrinter(
                         }
                     }
                     p.print("}");
-                },
-                else => {
-                    Output.panic("Unexpected binding of type {any}", .{binding});
                 },
             }
         }
@@ -4774,7 +4876,9 @@ fn NewPrinter(
 
                         p.print("{");
                         if (!s.is_single_line) {
-                            p.unindent();
+                            p.indent();
+                        } else {
+                            p.printSpace();
                         }
 
                         for (s.items, 0..) |item, i| {
@@ -4797,6 +4901,8 @@ fn NewPrinter(
                             p.unindent();
                             p.printNewline();
                             p.printIndent();
+                        } else {
+                            p.printSpace();
                         }
                         p.print("}");
                         item_count += 1;
@@ -5076,7 +5182,7 @@ fn NewPrinter(
         }
 
         inline fn printDisabledImport(p: *Printer) void {
-            p.print("(()=>({}))");
+            p.printWhitespacer(ws("(() => ({}))"));
         }
 
         pub fn printLoadFromBundleWithoutCall(p: *Printer, import_record_index: u32) void {
@@ -5669,12 +5775,6 @@ pub fn NewWriter(
         }
 
         pub inline fn print(writer: *Self, comptime ValueType: type, str: ValueType) void {
-            if (FeatureFlags.disable_printing_null) {
-                if (str == 0) {
-                    Output.panic("Attempted to print null char", .{});
-                }
-            }
-
             switch (ValueType) {
                 comptime_int, u16, u8 => {
                     const written = writeByte(&writer.ctx, @as(u8, @intCast(str))) catch |err| brk: {
@@ -6330,15 +6430,30 @@ pub fn printWithWriterAndPlatform(
         imported_module_ids_list = printer.imported_module_ids;
     }
 
-    for (parts) |part| {
-        for (part.stmts) |stmt| {
-            printer.printStmt(stmt) catch |err| {
-                return .{ .err = err };
-            };
-            if (printer.writer.getError()) {} else |err| {
-                return .{ .err = err };
+    if (opts.module_type == .internal_kit_dev) {
+        printer.indent();
+        printer.printIndent();
+        printer.fmt("{d}", .{source.path.hashForKit()}) catch bun.outOfMemory();
+        printer.print(": function");
+        printer.printFunc(parts[0].stmts[0].data.s_expr.value.data.e_function.func);
+        printer.print(",\n");
+    } else {
+        // The IIFE wrapper is done in `postProcessJSChunk`, so we just manually
+        // trigger an indent.
+        if (opts.module_type == .iife) {
+            printer.indent();
+        }
+
+        for (parts) |part| {
+            for (part.stmts) |stmt| {
+                printer.printStmt(stmt) catch |err| {
+                    return .{ .err = err };
+                };
+                if (printer.writer.getError()) {} else |err| {
+                    return .{ .err = err };
+                }
+                printer.printSemicolonIfNeeded();
             }
-            printer.printSemicolonIfNeeded();
         }
     }
 

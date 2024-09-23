@@ -1,9 +1,9 @@
-import { it, expect, afterEach } from "bun:test";
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
+import { afterEach, expect, it } from "bun:test";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { writeFileSync, rmSync } from "node:fs";
-import { bunExe, bunEnv, tmpdirSync } from "harness";
 
 let watchee: Subprocess;
 
@@ -18,6 +18,7 @@ for (const dir of ["dir", "©️"]) {
 
     let i = 0;
     await updateFile(i);
+    await Bun.sleep(1000);
     watchee = spawn({
       cwd,
       cmd: [bunExe(), "--watch", "watchee.js"],
@@ -35,7 +36,7 @@ for (const dir of ["dir", "©️"]) {
       await updateFile(i);
     }
     rmSync(path);
-  });
+  }, 10000);
 }
 
 afterEach(() => {

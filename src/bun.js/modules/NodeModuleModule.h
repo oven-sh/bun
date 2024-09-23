@@ -120,7 +120,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor, (JSC::JSGlobalOb
   auto scope = DECLARE_THROW_SCOPE(vm);
   if (idValue.isString()) {
     idString = idValue.toString(globalObject);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+    RETURN_IF_EXCEPTION(scope, {});
 
     auto index = idString->tryGetValue()->reverseFind('/', idString->length());
 
@@ -165,7 +165,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionWrap, (JSC::JSGlobalObject * globalObject,
   auto &vm = globalObject->vm();
   auto scope = DECLARE_THROW_SCOPE(vm);
   JSString *code = callFrame->argument(0).toStringOrNull(globalObject);
-  RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+  RETURN_IF_EXCEPTION(scope, {});
   if (!code) {
     return JSC::JSValue::encode(JSC::jsUndefined());
   }
@@ -205,7 +205,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
     val = url.fileSystemPath();
   }
 
-  RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+  RETURN_IF_EXCEPTION(scope, {});
   RELEASE_AND_RETURN(
       scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(
                  vm, globalObject, val)));
@@ -216,7 +216,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFindSourceMap, (JSGlobalObject * globalObject
   auto &vm = globalObject->vm();
   auto scope = DECLARE_THROW_SCOPE(vm);
   throwException(globalObject, scope, createError(globalObject, "module.SourceMap is not yet implemented in Bun"_s));
-  return JSValue::encode(jsUndefined());
+  return {};
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSyncBuiltinExports,
@@ -230,7 +230,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSourceMap, (JSGlobalObject * globalObject, Ca
   auto scope = DECLARE_THROW_SCOPE(vm);
   throwException(globalObject, scope,
                  createError(globalObject, "Not implemented"_s));
-  return JSValue::encode(jsUndefined());
+  return {};
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName, (JSC::JSGlobalObject * globalObject, JSC::CallFrame *callFrame)) {
@@ -267,7 +267,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName, (JSC::JSGlobalObject * globa
         // weird thing.
         (fromValue.isObject()) {
 
-      if (auto idValue = fromValue.getObject()->getIfPropertyExists(globalObject, Identifier::fromString(vm, "filename"_s))) {
+      if (auto idValue = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).filenamePublicName())) {
         if (idValue.isString()) {
           fromValue = idValue;
         }
@@ -334,21 +334,25 @@ struct Parent {
 
 Parent getParent(VM&vm, JSGlobalObject* global, JSValue maybe_parent) {
   Parent value { nullptr, nullptr };
-  if (!maybe_parent.isCell()) {
+
+  if (!maybe_parent) {
     return value;
   }
-  if (!maybe_parent.isObject()) {
-    return value;
-  }
+  
   auto parent = maybe_parent.getObject();
+  if (!parent) {
+    return value;
+  }
+
   auto scope = DECLARE_THROW_SCOPE(vm);
-  JSValue paths = parent->get(global, Identifier::fromString(vm, "paths"_s));
+  const auto& builtinNames = Bun::builtinNames(vm);
+  JSValue paths = parent->get(global, builtinNames.pathsPublicName());
   RETURN_IF_EXCEPTION(scope, value);
   if (paths.isCell()) {
     value.paths = jsDynamicCast<JSArray*>(paths);
   }
 
-  JSValue filename = parent->get(global, Identifier::fromString(vm, "filename"_s));
+  JSValue filename = parent->get(global, builtinNames.filenamePublicName());
   RETURN_IF_EXCEPTION(scope, value);
   if (filename.isString()) {
     value.filename = filename.toString(global);
@@ -517,7 +521,7 @@ DEFINE_NATIVE_MODULE(NodeModule) {
   putNativeFn(Identifier::fromString(vm, "_resolveLookupPaths"_s), jsFunctionResolveLookupPaths);
 
   putNativeFn(Identifier::fromString(vm, "createRequire"_s), jsFunctionNodeModuleCreateRequire);
-  putNativeFn(Identifier::fromString(vm, "paths"_s), Resolver__nodeModulePathsForJS);
+  putNativeFn(builtinNames(vm).pathsPublicName(), Resolver__nodeModulePathsForJS);
   putNativeFn(Identifier::fromString(vm, "findSourceMap"_s), jsFunctionFindSourceMap);
   putNativeFn(Identifier::fromString(vm, "syncBuiltinExports"_s), jsFunctionSyncBuiltinExports);
   putNativeFn(Identifier::fromString(vm, "SourceMap"_s), jsFunctionSourceMap);

@@ -740,7 +740,7 @@ pub const TestCommand = struct {
             loader.* = DotEnv.Loader.init(map, ctx.allocator);
             break :brk loader;
         };
-        bun.JSC.initialize();
+        bun.JSC.initialize(false);
         HTTPThread.init();
 
         var snapshot_file_buf = std.ArrayList(u8).init(ctx.allocator);
@@ -1173,6 +1173,10 @@ pub const TestCommand = struct {
             Output.flush();
         }
 
+        // Restore test.only state after each module.
+        const prev_only = reporter.jest.only;
+        defer reporter.jest.only = prev_only;
+
         const file_start = reporter.jest.files.len;
         const resolution = try vm.bundler.resolveEntryPoint(file_name);
         vm.clearEntryPoint();
@@ -1202,7 +1206,7 @@ pub const TestCommand = struct {
             reporter.summary.files += 1;
 
             switch (promise.status(vm.global.vm())) {
-                .Rejected => {
+                .rejected => {
                     _ = vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue());
                     reporter.summary.fail += 1;
 
@@ -1250,7 +1254,7 @@ pub const TestCommand = struct {
                         if (!jest.Jest.runner.?.has_pending_tests) break;
                         vm.eventLoop().tick();
                     } else {
-                        vm.eventLoop().tickImmediateTasks();
+                        vm.eventLoop().tickImmediateTasks(vm);
                     }
 
                     while (prev_unhandled_count < vm.unhandled_error_counter) {

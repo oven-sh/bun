@@ -35,13 +35,19 @@
 #include <wtf/RefCounted.h>
 #include <wtf/text/WTFString.h>
 #include "blob.h"
+
 namespace WebCore {
+
+class ScriptExecutionContext;
 
 template<typename> class ExceptionOr;
 class HTMLElement;
 class HTMLFormElement;
+DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(DOMFormData);
 
 class DOMFormData : public RefCounted<DOMFormData>, public ContextDestructionObserver {
+    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(DOMFormData);
+
 public:
     using FormDataEntryValue = std::variant<String, RefPtr<Blob>>;
 
@@ -81,6 +87,7 @@ public:
         size_t m_index { 0 };
     };
     Iterator createIterator() { return Iterator { *this }; }
+    Iterator createIterator(const ScriptExecutionContext* context) { return Iterator { *this }; }
 
 private:
     // explicit DOMFormData(ScriptExecutionContext*, const PAL::TextEncoding& = PAL::UTF8Encoding());

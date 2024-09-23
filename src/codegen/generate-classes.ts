@@ -1,7 +1,7 @@
 // @ts-nocheck
 import path from "path";
-import type { Field, ClassDefinition } from "./class-definitions";
-import { writeIfNotChanged, camelCase, pascalCase } from "./helpers";
+import type { ClassDefinition, Field } from "./class-definitions";
+import { camelCase, pascalCase, writeIfNotChanged } from "./helpers";
 
 if (process.env.BUN_SILENT === "1") {
   console.log = () => {};
@@ -132,7 +132,7 @@ static const JSC::DOMJIT::Signature DOMJITSignatureFor${fnName}(${DOMJITName(fnN
   );
 }
 
-function DOMJITFunctionDefinition(jsClassName, fnName, symName, { args }) {
+function DOMJITFunctionDefinition(jsClassName, fnName, symName, { args }, fn) {
   const argNames = args.map((arg, i) => `${argTypeName(arg)} arg${i}`);
   const formattedArgs = argNames.length > 0 ? `, ${argNames.join(", ")}` : "";
   const retArgs = argNames.length > 0 ? `, ${args.map((b, i) => "arg" + i).join(", ")}` : "";
@@ -147,6 +147,24 @@ JSC_DEFINE_JIT_OPERATION(${DOMJITName(
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     IGNORE_WARNINGS_END
     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+#if BUN_DEBUG
+    ${jsClassName}* wrapper = reinterpret_cast<${jsClassName}*>(thisValue);
+    JSC::EncodedJSValue result = ${DOMJITName(symName)}(wrapper->wrapped(), lexicalGlobalObject${retArgs});
+    JSValue decoded = JSValue::decode(result);
+    if (wrapper->m_${fn}_expectedResultType) {
+        if (decoded.isCell() && !decoded.isEmpty()) {
+          ASSERT_WITH_MESSAGE(wrapper->m_${fn}_expectedResultType.value().has_value(), "DOMJIT function return type changed!");
+          ASSERT_WITH_MESSAGE(wrapper->m_${fn}_expectedResultType.value().value() == decoded.asCell()->type(), "DOMJIT function return type changed!");
+        } else {
+          ASSERT_WITH_MESSAGE(!wrapper->m_${fn}_expectedResultType.value().has_value(), "DOMJIT function return type changed!");
+        }
+    } else if (!decoded.isEmpty()) {
+        wrapper->m_${fn}_expectedResultType = decoded.isCell()
+          ? std::optional<JSC::JSType>(decoded.asCell()->type())
+          : std::optional<JSC::JSType>(std::nullopt);
+    }
+    return { result };
+#endif
     return {${DOMJITName(symName)}(reinterpret_cast<${jsClassName}*>(thisValue)->wrapped(), lexicalGlobalObject${retArgs})};
 }
 `.trim();
@@ -600,7 +618,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
     auto* constructor = globalObject->${className(typeName)}Constructor();
     Structure* structure = globalObject->${className(typeName)}Structure();
     if (UNLIKELY(constructor != newTarget)) {
-      auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(
+      auto* functionGlobalObject = defaultGlobalObject(
         // ShadowRealm functions belong to a different global object.
         getFunctionRealm(globalObject, newTarget)
       );
@@ -831,7 +849,8 @@ function renderDecls(symbolName, typeName, proto, supportsObjectCreate = false) 
         `extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${symbolName(
           typeName,
           proto[name].fn,
-        )}(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);` + "\n";
+        )}(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame${proto[name].passThis ? ", JSC::EncodedJSValue thisValue" : ""});` +
+        "\n";
       rows.push(
         `
         JSC_DECLARE_HOST_FUNCTION(${symbolName(typeName, name)}Callback);
@@ -852,6 +871,7 @@ function renderDecls(symbolName, typeName, proto, supportsObjectCreate = false) 
             symbolName(typeName, name),
             symbolName(typeName, proto[name].fn),
             proto[name].DOMJIT,
+            proto[name].fn,
           ),
         );
       }
@@ -1088,22 +1108,23 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObjec
     }
 
     if ("fn" in proto[name]) {
+      const fn = proto[name].fn;
       rows.push(`
 JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
   auto& vm = lexicalGlobalObject->vm();
+  auto scope = DECLARE_THROW_SCOPE(vm);
 
   ${className(typeName)}* thisObject = jsDynamicCast<${className(typeName)}*>(callFrame->thisValue());
 
   if (UNLIKELY(!thisObject)) {
-      auto throwScope = DECLARE_THROW_SCOPE(vm);
-      throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof ${typeName}"_s);
-      return JSValue::encode({});
+      scope.throwException(lexicalGlobalObject, Bun::createInvalidThisError(lexicalGlobalObject, callFrame->thisValue(), "${typeName}"_s));
+      return {};
   }
 
   JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
 
-#ifdef BUN_DEBUG
+#if BUN_DEBUG
     /** View the file name of the JS file that called this function
      * from a debugger */
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
@@ -1113,14 +1134,33 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
       lastFileName = fileName;
     }
 
-    JSC::EncodedJSValue result = ${symbolName(typeName, proto[name].fn)}(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+    JSC::EncodedJSValue result = ${symbolName(typeName, fn)}(thisObject->wrapped(), lexicalGlobalObject, callFrame${proto[name].passThis ? ", JSValue::encode(thisObject)" : ""});
 
     ASSERT_WITH_MESSAGE(!JSValue::decode(result).isEmpty() or DECLARE_CATCH_SCOPE(vm).exception() != 0, \"${typeName}.${proto[name].fn} returned an empty value without an exception\");
+
+    ${
+      !proto[name].DOMJIT
+        ? ""
+        : `
+    JSValue decoded = JSValue::decode(result);
+    if (thisObject->m_${fn}_expectedResultType) {
+      if (decoded.isCell() && !decoded.isEmpty()) {
+        ASSERT_WITH_MESSAGE(thisObject->m_${fn}_expectedResultType.value().has_value(), "DOMJIT function return type changed!");
+        ASSERT_WITH_MESSAGE(thisObject->m_${fn}_expectedResultType.value().value() == decoded.asCell()->type(), "DOMJIT function return type changed!");
+      } else {
+        ASSERT_WITH_MESSAGE(!thisObject->m_${fn}_expectedResultType.value().has_value(), "DOMJIT function return type changed!");
+      }
+    } else if (!decoded.isEmpty()) {
+      thisObject->m_${fn}_expectedResultType = decoded.isCell()
+        ? std::optional<JSC::JSType>(decoded.asCell()->type())
+        : std::optional<JSC::JSType>(std::nullopt);
+    }`
+    }
 
     return result;
 #endif
 
-  return ${symbolName(typeName, proto[name].fn)}(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+  return ${symbolName(typeName, proto[name].fn)}(thisObject->wrapped(), lexicalGlobalObject, callFrame${proto[name].passThis ? ", JSValue::encode(thisObject)" : ""});
 }
 
     `);
@@ -1264,6 +1304,8 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
           })
           .join("\n")}
 
+        ${domJITTypeCheckFields(proto, klass)}
+
         ${weakOwner}
 
         ${DECLARE_VISIT_CHILDREN}
@@ -1273,6 +1315,23 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
     };
     ${suffix}
   `.trim();
+}
+
+function domJITTypeCheckFields(proto, klass) {
+  var output = "#if BUN_DEBUG\n";
+  for (const name in proto) {
+    const { DOMJIT, fn } = proto[name];
+    if (!DOMJIT) continue;
+    output += `std::optional<std::optional<JSC::JSType>> m_${fn}_expectedResultType = std::nullopt;\n`;
+  }
+
+  for (const name in klass) {
+    const { DOMJIT, fn } = klass[name];
+    if (!DOMJIT) continue;
+    output += `std::optional<std::optional<JSC::JSType>> m_${fn}_expectedResultType = std::nullopt;\n`;
+  }
+  output += "#endif\n";
+  return output;
 }
 
 function generateClassImpl(typeName, obj: ClassDefinition) {
@@ -1715,9 +1774,9 @@ const JavaScriptCoreBindings = struct {
           }
 
           output += `
-        pub fn ${names.fn}(thisValue: *${typeName}, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+        pub fn ${names.fn}(thisValue: *${typeName}, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame${proto[name].passThis ? ", js_this_value: JSC.JSValue" : ""}) callconv(JSC.conv) JSC.JSValue {
           if (comptime Environment.enable_logs) zig("<d>${typeName}.<r>${name}<d>({})<r>", .{callFrame});
-          return @call(.always_inline, ${typeName}.${fn}, .{thisValue, globalObject, callFrame});
+          return @call(.always_inline, ${typeName}.${fn}, .{thisValue, globalObject, callFrame${proto[name].passThis ? ", js_this_value" : ""}});
         }
         `;
         }
@@ -1983,6 +2042,8 @@ const GENERATED_CLASSES_IMPL_HEADER_PRE = `
 
 #include "JSDOMConvertBufferSource.h"
 #include "ZigGeneratedClasses.h"
+#include "ErrorCode+List.h"
+#include "ErrorCode.h"
 
 #if !OS(WINDOWS)
 #define JSC_CALLCONV "C"
@@ -1998,6 +2059,7 @@ namespace WebCore {
 
 using namespace JSC;
 using namespace Zig;
+
 `;
 
 const GENERATED_CLASSES_IMPL_FOOTER = `

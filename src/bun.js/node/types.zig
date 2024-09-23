@@ -99,6 +99,14 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             return .{ .err = ErrorType{} };
         }
 
+        pub fn isTrue(this: @This()) bool {
+            if (comptime ReturnType != bool) @compileError("This function can only be called on bool");
+            return switch (this) {
+                .result => |r| r,
+                else => false,
+            };
+        }
+
         pub fn unwrap(this: @This()) !ReturnType {
             return switch (this) {
                 .result => |r| r,
@@ -452,6 +460,7 @@ pub const StringOrBuffer = union(enum) {
             .Int32Array,
             .Uint32Array,
             .Float32Array,
+            .Float16Array,
             .Float64Array,
             .BigInt64Array,
             .BigUint64Array,
@@ -900,6 +909,13 @@ pub const Valid = struct {
             return false;
         }
 
+        const fd_t = if (Environment.isWindows) bun.windows.libuv.uv_file else bun.FileDescriptorInt;
+
+        if (fd > std.math.maxInt(fd_t)) {
+            JSC.throwInvalidArguments("Invalid file descriptor, must not be greater than {d}", .{std.math.maxInt(fd_t)}, ctx, exception);
+            return false;
+        }
+
         return true;
     }
 
@@ -975,7 +991,7 @@ pub const VectorArrayBuffer = struct {
         var bufferlist = std.ArrayList(bun.PlatformIOVec).init(allocator);
         var i: usize = 0;
         const len = val.getLength(globalObject);
-        bufferlist.ensureTotalCapacityPrecise(len) catch @panic("Failed to allocate memory for ArrayBuffer[]");
+        bufferlist.ensureTotalCapacityPrecise(len) catch bun.outOfMemory();
 
         while (i < len) {
             const element = val.getIndex(globalObject, @as(u32, @truncate(i)));
@@ -991,7 +1007,7 @@ pub const VectorArrayBuffer = struct {
             };
 
             const buf = array_buffer.byteSlice();
-            bufferlist.append(bun.platformIOVecCreate(buf)) catch @panic("Failed to allocate memory for ArrayBuffer[]");
+            bufferlist.append(bun.platformIOVecCreate(buf)) catch bun.outOfMemory();
             i += 1;
         }
 
@@ -1131,9 +1147,13 @@ pub fn timeLikeFromJS(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue, _: 
 }
 
 pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Mode {
-    const mode_int = if (value.isNumber())
-        @as(Mode, @truncate(value.to(Mode)))
-    else brk: {
+    const mode_int = if (value.isNumber()) brk: {
+        if (!value.isUInt32AsAnyInt()) {
+            exception.* = ctx.ERR_OUT_OF_RANGE("The value of \"mode\" is out of range. It must be an integer. Received {d}", .{value.asNumber()}).toJS().asObjectRef();
+            return null;
+        }
+        break :brk @as(Mode, @truncate(value.to(Mode)));
+    } else brk: {
         if (value.isUndefinedOrNull()) return null;
 
         //        An easier method of constructing the mode is to use a sequence of
@@ -1334,6 +1354,10 @@ pub const FileSystemFlags = enum(Mode) {
 
     pub fn fromJS(ctx: JSC.C.JSContextRef, val: JSC.JSValue, exception: JSC.C.ExceptionRef) ?FileSystemFlags {
         if (val.isNumber()) {
+            if (!val.isInt32()) {
+                exception.* = ctx.ERR_OUT_OF_RANGE("The value of \"flags\" is out of range. It must be an integer. Received {d}", .{val.asNumber()}).toJS().asObjectRef();
+                return null;
+            }
             const number = val.coerce(i32, ctx);
             return @as(FileSystemFlags, @enumFromInt(@as(Mode, @intCast(@max(number, 0)))));
         }
@@ -1819,104 +1843,6 @@ pub const Dirent = struct {
     }
 };
 
-pub const Emitter = struct {
-    pub const Listener = struct {
-        once: bool = false,
-        callback: JSC.JSValue,
-
-        pub const List = struct {
-            pub const ArrayList = std.MultiArrayList(Listener);
-            list: ArrayList = ArrayList{},
-            once_count: u32 = 0,
-
-            pub fn append(this: *List, allocator: std.mem.Allocator, ctx: JSC.C.JSContextRef, listener: Listener) !void {
-                JSC.C.JSValueProtect(ctx, listener.callback.asObjectRef());
-                try this.list.append(allocator, listener);
-                this.once_count +|= @as(u32, @intFromBool(listener.once));
-            }
-
-            pub fn prepend(this: *List, allocator: std.mem.Allocator, ctx: JSC.C.JSContextRef, listener: Listener) !void {
-                JSC.C.JSValueProtect(ctx, listener.callback.asObjectRef());
-                try this.list.ensureUnusedCapacity(allocator, 1);
-                this.list.insertAssumeCapacity(0, listener);
-                this.once_count +|= @as(u32, @intFromBool(listener.once));
-            }
-
-            // removeListener() will remove, at most, one instance of a listener from the
-            // listener array. If any single listener has been added multiple times to the
-            // listener array for the specified eventName, then removeListener() must be
-            // called multiple times to remove each instance.
-            pub fn remove(this: *List, ctx: JSC.C.JSContextRef, callback: JSC.JSValue) bool {
-                const callbacks = this.list.items(.callback);
-
-                for (callbacks, 0..) |item, i| {
-                    if (callback.eqlValue(item)) {
-                        JSC.C.JSValueUnprotect(ctx, callback.asObjectRef());
-                        this.once_count -|= @as(u32, @intFromBool(this.list.items(.once)[i]));
-                        this.list.orderedRemove(i);
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            pub fn emit(this: *List, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
-                var i: usize = 0;
-                outer: while (true) {
-                    var slice = this.list.slice();
-                    var callbacks = slice.items(.callback);
-                    var once = slice.items(.once);
-                    while (i < callbacks.len) : (i += 1) {
-                        const callback = callbacks[i];
-
-                        globalObject.enqueueMicrotask1(
-                            callback,
-                            value,
-                        );
-
-                        if (once[i]) {
-                            this.once_count -= 1;
-                            JSC.C.JSValueUnprotect(globalObject, callback.asObjectRef());
-                            this.list.orderedRemove(i);
-                            slice = this.list.slice();
-                            callbacks = slice.items(.callback);
-                            once = slice.items(.once);
-                            continue :outer;
-                        }
-                    }
-
-                    return;
-                }
-            }
-        };
-    };
-
-    pub fn New(comptime EventType: type) type {
-        return struct {
-            const EventEmitter = @This();
-            pub const Map = std.enums.EnumArray(EventType, Listener.List);
-            listeners: Map = Map.initFill(Listener.List{}),
-
-            pub fn addListener(this: *EventEmitter, ctx: JSC.C.JSContextRef, event: EventType, listener: Emitter.Listener) !void {
-                try this.listeners.getPtr(event).append(bun.default_allocator, ctx, listener);
-            }
-
-            pub fn prependListener(this: *EventEmitter, ctx: JSC.C.JSContextRef, event: EventType, listener: Emitter.Listener) !void {
-                try this.listeners.getPtr(event).prepend(bun.default_allocator, ctx, listener);
-            }
-
-            pub fn emit(this: *EventEmitter, event: EventType, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
-                this.listeners.getPtr(event).emit(globalObject, value);
-            }
-
-            pub fn removeListener(this: *EventEmitter, ctx: JSC.C.JSContextRef, event: EventType, callback: JSC.JSValue) bool {
-                return this.listeners.getPtr(event).remove(ctx, callback);
-            }
-        };
-    }
-};
-
 pub const Process = struct {
     pub fn getArgv0(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         return JSC.ZigString.fromUTF8(bun.argv[0]).toJS(globalObject);
@@ -2066,20 +1992,25 @@ pub const Process = struct {
 
     pub fn getCwd(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         var buf: bun.PathBuffer = undefined;
-        return switch (Path.getCwd(&buf)) {
-            .result => |r| JSC.ZigString.init(r).withEncoding().toJS(globalObject),
-            .err => |e| e.toJSC(globalObject),
-        };
+        switch (Path.getCwd(&buf)) {
+            .result => |r| return JSC.ZigString.init(r).withEncoding().toJS(globalObject),
+            .err => |e| {
+                globalObject.throwValue(e.toJSC(globalObject));
+                return .zero;
+            },
+        }
     }
 
     pub fn setCwd(globalObject: *JSC.JSGlobalObject, to: *JSC.ZigString) callconv(.C) JSC.JSValue {
         if (to.len == 0) {
-            return JSC.toInvalidArguments("path is required", .{}, globalObject.ref());
+            globalObject.throwInvalidArguments("Expected path to be a non-empty string", .{});
+            return .zero;
         }
 
         var buf: bun.PathBuffer = undefined;
         const slice = to.sliceZBuf(&buf) catch {
-            return JSC.toInvalidArguments("Invalid path", .{}, globalObject.ref());
+            globalObject.throw("Invalid path", .{});
+            return .zero;
         };
 
         switch (Syscall.chdir(slice)) {
@@ -2088,22 +2019,29 @@ pub const Process = struct {
                 // However, this might be called many times in a row, so we use a pre-allocated buffer
                 // that way we don't have to worry about garbage collector
                 const fs = JSC.VirtualMachine.get().bundler.fs;
-                fs.top_level_dir = switch (Path.getCwd(&fs.top_level_dir_buf)) {
+                const into_cwd_buf = switch (bun.sys.getcwd(&buf)) {
                     .result => |r| r,
-                    .err => {
+                    .err => |err| {
                         _ = Syscall.chdir(@as([:0]const u8, @ptrCast(fs.top_level_dir)));
-                        return JSC.toInvalidArguments("Invalid path", .{}, globalObject.ref());
+                        globalObject.throwValue(err.toJSC(globalObject));
+                        return .zero;
                     },
                 };
+                @memcpy(fs.top_level_dir_buf[0..into_cwd_buf.len], into_cwd_buf);
+                fs.top_level_dir = fs.top_level_dir_buf[0..into_cwd_buf.len];
 
                 const len = fs.top_level_dir.len;
                 fs.top_level_dir_buf[len] = std.fs.path.sep;
                 fs.top_level_dir_buf[len + 1] = 0;
                 fs.top_level_dir = fs.top_level_dir_buf[0 .. len + 1];
-
-                return .undefined;
+                const withoutTrailingSlash = if (Environment.isWindows) strings.withoutTrailingSlashWindowsPath else strings.withoutTrailingSlash;
+                var str = bun.String.createUTF8(withoutTrailingSlash(fs.top_level_dir));
+                return str.transferToJS(globalObject);
             },
-            .err => |e| return e.toJSC(globalObject),
+            .err => |e| {
+                globalObject.throwValue(e.toJSC(globalObject));
+                return .zero;
+            },
         }
     }
 

@@ -1,6 +1,12 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 import { join } from "path";
+
+test("require.cache is not an empty object literal when inspected", () => {
+  const inspected = Bun.inspect(require.cache);
+  expect(inspected).not.toBe("{}");
+  expect(inspected).toContain("Module {");
+});
 
 // This also tests __dirname and __filename
 test("require.cache", () => {

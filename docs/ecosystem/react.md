@@ -36,7 +36,7 @@ function Div(props: {className: string;}) {
 
 ### Server-side rendering
 
-To server-side render (SSR) React in an [HTTP server](/docs/api/http):
+To server-side render (SSR) React in an [HTTP server](https://bun.sh/docs/api/http):
 
 ```tsx#ssr.tsx
 import {renderToReadableStream} from 'react-dom/server';

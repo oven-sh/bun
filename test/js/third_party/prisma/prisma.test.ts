@@ -1,7 +1,7 @@
-import { test as bunTest, it as bunIt, expect, describe } from "bun:test";
+import { createCanvas } from "@napi-rs/canvas";
+import { it as bunIt, test as bunTest, describe, expect } from "bun:test";
 import { generate, generateClient } from "./helper.ts";
 import type { PrismaClient } from "./prisma/types.d.ts";
-import { createCanvas } from "@napi-rs/canvas";
 
 function* TestIDGenerator(): Generator<number> {
   while (true) {

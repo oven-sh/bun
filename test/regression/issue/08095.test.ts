@@ -1,7 +1,7 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunExe } from "harness";
-import { Readable } from "node:stream";
 import { spawn, spawnSync } from "node:child_process";
+import { Readable } from "node:stream";
 
 test.each([null, undefined])(`spawnSync can pass %p as option to stdio`, input => {
   const { stdout, stderr, output } = spawnSync(bunExe(), { stdio: [input, input, input] });

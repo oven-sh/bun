@@ -538,25 +538,13 @@ pub const Crypto = struct {
     }
 
     fn throwInvalidParameter(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        const err = globalThis.createErrorInstanceWithCode(
-            .ERR_CRYPTO_SCRYPT_INVALID_PARAMETER,
-            "Invalid scrypt parameters",
-            .{},
-        );
-        globalThis.throwValue(err);
+        globalThis.ERR_CRYPTO_SCRYPT_INVALID_PARAMETER("Invalid scrypt parameters", .{}).throw();
         return .zero;
     }
 
-    fn throwInvalidParams(globalThis: *JSC.JSGlobalObject, comptime error_type: @Type(.EnumLiteral), comptime message: string, fmt: anytype) JSC.JSValue {
-        const err = switch (error_type) {
-            .RangeError => globalThis.createRangeErrorInstanceWithCode(
-                .ERR_CRYPTO_INVALID_SCRYPT_PARAMS,
-                message,
-                fmt,
-            ),
-            else => @compileError("Error type not added!"),
-        };
-        globalThis.throwValue(err);
+    fn throwInvalidParams(globalThis: *JSC.JSGlobalObject, comptime error_type: @Type(.EnumLiteral), comptime message: [:0]const u8, fmt: anytype) JSC.JSValue {
+        if (error_type != .RangeError) @compileError("Error type not added!");
+        globalThis.ERR_CRYPTO_INVALID_SCRYPT_PARAMS(message, fmt).throw();
         BoringSSL.ERR_clear_error();
         return .zero;
     }

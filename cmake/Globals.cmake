@@ -1048,7 +1048,7 @@ function(register_cmake_project)
       ${PROJECT_CWD}
     TARGETS
       configure-${PROJECT_TARGET}
-    OUTPUTS
+    ARTIFACTS
       ${PROJECT_OUTPUTS}
   )
 

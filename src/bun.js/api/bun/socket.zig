@@ -1236,46 +1236,30 @@ pub const Listener = struct {
         const promise_value = promise.asValue(globalObject);
         handlers_ptr.promise.set(globalObject, promise_value);
 
-        if (ssl_enabled) {
-            var tls = TLSSocket.new(.{
-                .handlers = handlers_ptr,
-                .this_value = .zero,
-                .socket = TLSSocket.Socket.detached,
-                .connection = connection,
-                .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p) catch bun.outOfMemory()) else null,
-                .server_name = server_name,
-                .socket_context = socket_context, // owns the socket context
-            });
+        switch (ssl_enabled) {
+            inline else => |is_ssl_enabled| {
+                const SocketType = NewSocket(is_ssl_enabled);
+                var socket = SocketType.new(.{
+                    .handlers = handlers_ptr,
+                    .this_value = .zero,
+                    .socket = SocketType.Socket.detached,
+                    .connection = connection,
+                    .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p) catch bun.outOfMemory()) else null,
+                    .server_name = server_name,
+                    .socket_context = socket_context, // owns the socket context
+                });
 
-            TLSSocket.dataSetCached(tls.getThisValue(globalObject), globalObject, default_data);
+                SocketType.dataSetCached(socket.getThisValue(globalObject), globalObject, default_data);
 
-            tls.doConnect(connection) catch {
-                tls.handleConnectError(@intFromEnum(if (port == null) bun.C.SystemErrno.ENOENT else bun.C.SystemErrno.ECONNREFUSED));
+                socket.doConnect(connection) catch {
+                    socket.handleConnectError(@intFromEnum(if (port == null) bun.C.SystemErrno.ENOENT else bun.C.SystemErrno.ECONNREFUSED));
+                    return promise_value;
+                };
+
+                socket.poll_ref.ref(handlers.vm);
+
                 return promise_value;
-            };
-
-            tls.poll_ref.ref(handlers.vm);
-
-            return promise_value;
-        } else {
-            var tcp = TCPSocket.new(.{
-                .handlers = handlers_ptr,
-                .this_value = .zero,
-                .socket = TCPSocket.Socket.detached,
-                .connection = null,
-                .protos = null,
-                .server_name = null,
-                .socket_context = socket_context, // owns the socket context
-            });
-
-            TCPSocket.dataSetCached(tcp.getThisValue(globalObject), globalObject, default_data);
-            tcp.doConnect(connection) catch {
-                tcp.handleConnectError(@intFromEnum(if (port == null) bun.C.SystemErrno.ENOENT else bun.C.SystemErrno.ECONNREFUSED));
-                return promise_value;
-            };
-            tcp.poll_ref.ref(handlers.vm);
-
-            return promise_value;
+            },
         }
     }
 };
@@ -1371,9 +1355,10 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn doConnect(this: *This, connection: Listener.UnixOrHost) !void {
             bun.assert(this.socket_context != null);
+            this.ref();
+
             switch (connection) {
                 .host => |c| {
-                    this.ref();
                     this.socket = try This.Socket.connectAnon(
                         normalizeHost(c.host),
                         c.port,
@@ -1382,8 +1367,6 @@ fn NewSocket(comptime ssl: bool) type {
                     );
                 },
                 .unix => |u| {
-                    this.ref();
-
                     this.socket = try This.Socket.connectUnixAnon(
                         u,
                         this.socket_context.?,
@@ -1391,6 +1374,9 @@ fn NewSocket(comptime ssl: bool) type {
                     );
                 },
                 .fd => |f| {
+                    errdefer {
+                        this.deref();
+                    }
                     const socket = This.Socket.fromFd(this.socket_context.?, f, This, this, null) orelse return error.ConnectionFailed;
                     this.onOpen(socket);
                 },
@@ -1469,10 +1455,14 @@ fn NewSocket(comptime ssl: bool) type {
 
         fn handleConnectError(this: *This, errno: c_int) void {
             log("onConnectError({d}, {})", .{ errno, this.ref_count });
+            // Ensure the socket is still alive for any defer's we have
+            this.ref();
+            defer this.deref();
+
             const needs_deref = !this.socket.isDetached();
             this.socket = Socket.detached;
-            defer if (needs_deref) this.deref();
             defer this.markInactive();
+            defer if (needs_deref) this.deref();
 
             const handlers = this.handlers;
             const vm = handlers.vm;
@@ -1500,6 +1490,11 @@ fn NewSocket(comptime ssl: bool) type {
 
             if (callback == .zero) {
                 if (handlers.promise.trySwap()) |promise| {
+                    if (this.this_value != .zero) {
+                        this.this_value = .zero;
+                    }
+                    this.has_pending_activity.store(false, .release);
+
                     // reject the promise on connect() error
                     const err_value = err.toErrorInstance(globalObject);
                     promise.asPromise().?.rejectOnNextTick(globalObject, err_value);
@@ -1509,6 +1504,9 @@ fn NewSocket(comptime ssl: bool) type {
             }
 
             const this_value = this.getThisValue(globalObject);
+            this.this_value = .zero;
+            this.has_pending_activity.store(false, .release);
+
             const err_value = err.toErrorInstance(globalObject);
             const result = callback.call(globalObject, this_value, &[_]JSValue{
                 this_value,
@@ -1524,7 +1522,6 @@ fn NewSocket(comptime ssl: bool) type {
                 var promise = val.asPromise().?;
                 const err_ = err.toErrorInstance(globalObject);
                 promise.rejectOnNextTickAsHandled(globalObject, err_);
-                this.has_pending_activity.store(false, .release);
             }
         }
         pub fn onConnectError(this: *This, _: Socket, errno: c_int) void {
@@ -1566,6 +1563,10 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn onOpen(this: *This, socket: Socket) void {
+            // Ensure the socket remains alive until this is finished
+            this.ref();
+            defer this.deref();
+
             log("onOpen {} {}", .{ this.socket.isDetached(), this.ref_count });
             // update the internal socket instance to the one that was just connected
             // This socket must be replaced because the previous one is a connecting socket not a uSockets socket
@@ -1664,6 +1665,9 @@ fn NewSocket(comptime ssl: bool) type {
             JSC.markBinding(@src());
             log("onEnd", .{});
             if (this.socket.isDetached()) return;
+            // Ensure the socket remains alive until this is finished
+            this.ref();
+            defer this.deref();
 
             const handlers = this.handlers;
 
@@ -4120,4 +4124,26 @@ pub fn createNodeTLSBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.JSFunction.create(global, "upgradeDuplexToTLS", JSC.toJSHostFunction(jsUpgradeDuplexToTLS), 2, .{}),
         JSC.JSFunction.create(global, "isNamedPipeSocket", JSC.toJSHostFunction(jsIsNamedPipeSocket), 1, .{}),
     });
+}
+
+pub fn jsCreateSocketPair(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+    JSC.markBinding(@src());
+
+    if (Environment.isWindows) {
+        global.throw("Not implemented on Windows", .{});
+        return .zero;
+    }
+
+    var fds_: [2]std.c.fd_t = .{ 0, 0 };
+    const rc = std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &fds_);
+    if (rc != 0) {
+        const err = bun.sys.Error.fromCode(bun.C.getErrno(rc), .socketpair);
+        global.throwValue(err.toJSC(global));
+        return .zero;
+    }
+
+    const array = JSC.JSValue.createEmptyArray(global, 2);
+    array.putIndex(global, 0, JSC.jsNumber(fds_[0]));
+    array.putIndex(global, 1, JSC.jsNumber(fds_[1]));
+    return array;
 }

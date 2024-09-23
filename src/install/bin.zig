@@ -344,8 +344,8 @@ pub const Bin = extern struct {
         }
 
         fn linkBinOrCreateShim(this: *Linker, abs_target: [:0]const u8, abs_dest: [:0]const u8, global: bool) void {
-            bun.assertWithLocation(std.fs.path.isAbsoluteZ(abs_target), @src());
-            bun.assertWithLocation(std.fs.path.isAbsoluteZ(abs_dest), @src());
+            bun.assertWithLocation(std.fs.path.isAbsolute(abs_target), @src());
+            bun.assertWithLocation(std.fs.path.isAbsolute(abs_dest), @src());
             bun.assertWithLocation(abs_target[abs_target.len - 1] != std.fs.path.sep, @src());
             bun.assertWithLocation(abs_dest[abs_dest.len - 1] != std.fs.path.sep, @src());
 
@@ -586,6 +586,8 @@ pub const Bin = extern struct {
             return remain;
         }
 
+        // target: what the symlink points to
+        // destination: where the symlink exists on disk
         pub fn link(this: *Linker, global: bool) void {
             const package_dir = this.buildTargetPackageDir();
             var abs_dest_buf_remain = this.buildDestinationDir(global);

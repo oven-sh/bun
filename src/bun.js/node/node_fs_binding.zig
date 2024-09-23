@@ -95,7 +95,7 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
             var callback_argument = JSC.JSValue.zero;
             if (this.is_callback_api) {
                 if (arguments_slice.len > 0) {
-                    callback_argument = arguments_slice[arguments_slice.len - 1];
+                    callback_argument = arguments_slice[arguments_slice.len - 1].withAsyncContextIfNeeded(globalObject);
                     arguments_slice = arguments_slice[0 .. arguments_slice.len - 1];
                 }
             }

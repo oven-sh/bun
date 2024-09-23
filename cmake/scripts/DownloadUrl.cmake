@@ -22,6 +22,7 @@ file(REMOVE_RECURSE ${DOWNLOAD_TMP_PATH})
 
 foreach(i RANGE 10)
   set(DOWNLOAD_TMP_FILE_${i} ${DOWNLOAD_TMP_FILE}.${i})
+  message(STATUS "DOWNLOAD_TMP_FILE_${i}: ${DOWNLOAD_TMP_FILE_${i}}")
 
   if(i EQUAL 0)
     message(STATUS "Downloading ${DOWNLOAD_URL}...")
@@ -40,6 +41,14 @@ foreach(i RANGE 10)
   )
 
   list(GET DOWNLOAD_STATUS 0 DOWNLOAD_STATUS_CODE)
+  message(STATUS "DOWNLOAD_STATUS_CODE: ${DOWNLOAD_STATUS_CODE}")
+
+  if(EXISTS ${DOWNLOAD_TMP_FILE_${i}})
+    message(STATUS "File exists: ${DOWNLOAD_TMP_FILE_${i}}")
+  else()
+    message(STATUS "File does not exist: ${DOWNLOAD_TMP_FILE_${i}}")
+  endif()
+
   if(DOWNLOAD_STATUS_CODE EQUAL 0)
     file(RENAME ${DOWNLOAD_TMP_FILE_${i}} ${DOWNLOAD_TMP_FILE})
     break()

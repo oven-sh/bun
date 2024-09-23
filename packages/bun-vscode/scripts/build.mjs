@@ -1,13 +1,9 @@
 import { buildSync } from "esbuild";
 import { execSync } from "node:child_process";
 import { cpSync, mkdirSync, rmSync } from "node:fs";
-import path from "node:path";
+import { dirname } from "node:path";
 
-let { pathname } = new URL("..", import.meta.url);
-if (process.platform === "win32") {
-  pathname = path.normalize(pathname).substring(1); // remove leading slash
-}
-process.chdir(pathname);
+process.chdir(dirname(import.meta.dirname));
 
 buildSync({
   entryPoints: ["src/extension.ts", "src/web-extension.ts"],

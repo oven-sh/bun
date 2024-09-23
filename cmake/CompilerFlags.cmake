@@ -105,7 +105,6 @@ register_compiler_flags(
   /EHsc ${WIN32} # (s- disables C++, c- disables C)
 )
 
-set(STOP_HERE ON)
 register_compiler_flags(
   LANGUAGE CXX
   DESCRIPTION "Disable C++ static destructors"

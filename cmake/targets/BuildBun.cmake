@@ -640,16 +640,17 @@ endif()
 
 if(WIN32)
   register_compiler_definitions(
+    TARGET ${bun}-cpp
     WIN32
     _WINDOWS
     WIN32_LEAN_AND_MEAN=1
     _CRT_SECURE_NO_WARNINGS
     BORINGSSL_NO_CXX=1 # lol
-    TARGET ${bun}-cpp
   )
 endif()
 
 register_compiler_definitions(
+  TARGET ${bun}-cpp
   _HAS_EXCEPTIONS=0
   LIBUS_USE_OPENSSL=1
   LIBUS_USE_BORINGSSL=1
@@ -665,13 +666,12 @@ register_compiler_definitions(
   BUILDING_JSCONLY__
   REPORTED_NODEJS_VERSION=\"${NODEJS_VERSION}\"
   REPORTED_NODEJS_ABI_VERSION=${NODEJS_ABI_VERSION}
-  TARGET ${bun}-cpp
 )
 
 if(DEBUG AND NOT CI)
   register_compiler_definitions(
-    BUN_DYNAMIC_JS_LOAD_PATH=\"${BUILD_PATH}/js\"
     TARGET ${bun}-cpp
+    BUN_DYNAMIC_JS_LOAD_PATH=\"${BUILD_PATH}/js\"    
   )
 endif()
 
@@ -853,12 +853,13 @@ endif()
 
 if(WIN32)
   register_linker_flags(
+    TARGET ${bun}-exe
     /STACK:0x1200000,0x100000
     /errorlimit:0
-    TARGET ${bun}-exe
   )
   if(RELEASE)
     register_linker_flags(
+      TARGET ${bun}-exe
       /LTCG
       /OPT:REF
       /OPT:NOICF
@@ -872,19 +873,19 @@ if(WIN32)
       /delayload:WSOCK32.dll
       /delayload:ADVAPI32.dll
       /delayload:IPHLPAPI.dll
-      TARGET ${bun}-exe
     )
   endif()
 elseif(APPLE)
   register_linker_flags(
+    TARGET ${bun}-exe
     -dead_strip
     -dead_strip_dylibs
     -Wl,-stack_size,0x1200000
     -fno-keep-static-consts
-    TARGET ${bun}-exe
   )
 else()
   register_linker_flags(
+    TARGET ${bun}-exe
     -fuse-ld=lld-${LLVM_VERSION_MAJOR}
     -fno-pic
     -static-libstdc++
@@ -917,7 +918,6 @@ else()
     -Wl,--compress-debug-sections=zlib
     -Wl,-z,lazy
     -Wl,-z,norelro
-    TARGET ${bun}-exe
   )
 endif()
 
@@ -925,14 +925,20 @@ endif()
 
 if(WIN32)
   set(BUN_SYMBOLS_PATH ${CWD}/src/symbols.def)
-  target_link_options(${bun}-exe PUBLIC /DEF:${BUN_SYMBOLS_PATH})
+  register_linker_flags(
+    TARGET ${bun}-exe
+    /DEF:${BUN_SYMBOLS_PATH}
+  )
 elseif(APPLE)
   set(BUN_SYMBOLS_PATH ${CWD}/src/symbols.txt)
-  target_link_options(${bun}-exe PUBLIC -exported_symbols_list ${BUN_SYMBOLS_PATH})
+  register_linker_flags(
+    TARGET ${bun}-exe
+    -exported_symbols_list ${BUN_SYMBOLS_PATH}
+  )
 else()
   set(BUN_SYMBOLS_PATH ${CWD}/src/symbols.dyn)
   set(BUN_LINKER_LDS_PATH ${CWD}/src/linker.lds)
-  target_link_options(${bun}-exe PUBLIC
+  register_linker_flags(${bun}-exe
     -Bsymbolics-functions
     -rdynamic
     -Wl,--dynamic-list=${BUN_SYMBOLS_PATH}

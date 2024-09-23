@@ -51,7 +51,8 @@ pub const SupportsCondition = union(enum) {
     /// An unknown condition.
     unknown: []const u8,
 
-    fn clone(this: *const SupportsCondition) SupportsCondition {
+    pub fn deepClone(this: *const SupportsCondition, allocator: std.mem.Allocator) SupportsCondition {
+        _ = allocator; // autofix
         _ = this; // autofix
         @panic(css.todo_stuff.depth);
     }
@@ -151,7 +152,7 @@ pub const SupportsCondition = union(enum) {
             switch (_condition) {
                 .result => |condition| {
                     if (conditions.items.len == 0) {
-                        conditions.append(input.allocator(), in_parens.clone()) catch bun.outOfMemory();
+                        conditions.append(input.allocator(), in_parens.deepClone(input.allocator())) catch bun.outOfMemory();
                         if (in_parens == .declaration) {
                             const property_id = in_parens.declaration.property_id;
                             const value = in_parens.declaration.value;

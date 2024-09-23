@@ -343,6 +343,20 @@ pub const Length = union(enum) {
     /// A computed length value using `calc()`.
     calc: *Calc(Length),
 
+    pub fn deepClone(this: *const Length, allocator: Allocator) Length {
+        return switch (this.*) {
+            .value => |v| .{ .value = v },
+            .calc => |calc| .{ .calc = bun.create(allocator, Calc(Length), Calc(Length).deepClone(calc, allocator)) },
+        };
+    }
+
+    pub fn deinit(this: *const Length, allocator: Allocator) void {
+        return switch (this.*) {
+            .calc => |calc| calc.deinit(allocator),
+            .value => {},
+        };
+    }
+
     pub fn parse(input: *css.Parser) Result(Length) {
         if (input.tryParse(Calc(Length).parse, .{}).asValue()) |calc_value| {
             // PERF: I don't like this redundant allocation

@@ -306,7 +306,7 @@ pub const CssColor = union(enum) {
         }
     }
 
-    pub fn clone(this: *const CssColor, allocator: Allocator) CssColor {
+    pub fn deepClone(this: *const CssColor, allocator: Allocator) CssColor {
         return switch (this.*) {
             .current_color => .current_color,
             .rgba => |rgba| CssColor{ .rgba = rgba },
@@ -315,8 +315,8 @@ pub const CssColor = union(enum) {
             .float => |float| CssColor{ .float = bun.create(allocator, FloatColor, float.*) },
             .light_dark => CssColor{
                 .light_dark = .{
-                    .light = bun.create(allocator, CssColor, this.light_dark.light.clone(allocator)),
-                    .dark = bun.create(allocator, CssColor, this.light_dark.dark.clone(allocator)),
+                    .light = bun.create(allocator, CssColor, this.light_dark.light.deepClone(allocator)),
+                    .dark = bun.create(allocator, CssColor, this.light_dark.dark.deepClone(allocator)),
                 },
             },
             .system => |sys| CssColor{ .system = sys },
@@ -325,11 +325,11 @@ pub const CssColor = union(enum) {
 
     pub fn toLightDark(this: *const CssColor, allocator: Allocator) CssColor {
         return switch (this.*) {
-            .light_dark => this.clone(allocator),
+            .light_dark => this.deepClone(allocator),
             else => .{
                 .light_dark = .{
-                    .light = bun.create(allocator, CssColor, this.clone(allocator)),
-                    .dark = bun.create(allocator, CssColor, this.clone(allocator)),
+                    .light = bun.create(allocator, CssColor, this.deepClone(allocator)),
+                    .dark = bun.create(allocator, CssColor, this.deepClone(allocator)),
                 },
             },
         };

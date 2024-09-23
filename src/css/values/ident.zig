@@ -71,7 +71,7 @@ pub const DashedIdent = struct {
             .result => |vv| vv,
             .err => |e| return .{ .err = e },
         };
-        if (bun.strings.startsWith(ident, "--")) return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
+        if (!bun.strings.startsWith(ident, "--")) return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
 
         return .{ .result = .{ .v = ident } };
     }
@@ -85,19 +85,21 @@ pub const DashedIdent = struct {
 
 /// A CSS [`<ident>`](https://www.w3.org/TR/css-values-4/#css-css-identifier).
 pub const IdentFns = Ident;
-pub const Ident = struct {v: []const u8,
+pub const Ident = struct {
+    v: []const u8,
 
-pub fn parse(input: *css.Parser) Result(Ident) {
-    const ident = switch (input.expectIdent()) {
-        .result => |vv| vv,
-        .err => |e| return .{ .err = e },
-    };
-    return .{ .result = .{ .v = ident } };
-}
+    pub fn parse(input: *css.Parser) Result(Ident) {
+        const ident = switch (input.expectIdent()) {
+            .result => |vv| vv,
+            .err => |e| return .{ .err = e },
+        };
+        return .{ .result = .{ .v = ident } };
+    }
 
-pub fn toCss(this: *const Ident, comptime W: type, dest: *Printer(W)) PrintErr!void {
-    return css.serializer.serializeIdentifier(this.v, dest) catch return dest.addFmtError();
-}};
+    pub fn toCss(this: *const Ident, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        return css.serializer.serializeIdentifier(this.v, dest) catch return dest.addFmtError();
+    }
+};
 
 pub const CustomIdentFns = CustomIdent;
 pub const CustomIdent = struct {

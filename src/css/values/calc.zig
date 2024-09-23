@@ -17,12 +17,42 @@ const CSSNumber = css.css_values.number.CSSNumber;
 const CSSNumberFns = css.css_values.number.CSSNumberFns;
 
 const eql = css.generic.eql;
+const deepClone = css.deepClone;
+
+pub fn needsDeinit(comptime V: type) bool {
+    return switch (V) {
+        Length => true,
+        DimensionPercentage(Angle) => true,
+        DimensionPercentage(LengthValue) => true,
+        Percentage => false,
+        Angle => false,
+        Time => false,
+        f32 => false,
+        else => @compileError("Can't tell if " ++ @typeName(V) ++ " needs deinit, please add it to the switch statement."),
+    };
+}
+
+pub fn needsDeepclone(comptime V: type) bool {
+    return switch (V) {
+        Length => true,
+        DimensionPercentage(Angle) => true,
+        DimensionPercentage(LengthValue) => true,
+        Percentage => false,
+        Angle => false,
+        Time => false,
+        f32 => false,
+        else => @compileError("Can't tell if " ++ @typeName(V) ++ " needs deepclone, please add it to the switch statement."),
+    };
+}
 
 /// A mathematical expression used within the `calc()` function.
 ///
 /// This type supports generic value types. Values such as `Length`, `Percentage`,
 /// `Time`, and `Angle` support `calc()` expressions.
 pub fn Calc(comptime V: type) type {
+    const needs_deinit = needsDeinit(V);
+    const needs_deepclone = needsDeepclone(V);
+
     return union(Tag) {
         /// A literal value.
         /// PERF: this pointer feels unnecessary if V is small
@@ -57,16 +87,68 @@ pub fn Calc(comptime V: type) type {
 
         const This = @This();
 
-        fn clone(this: *const This, allocator: Allocator) This {
-            _ = this; // autofix
-            _ = allocator; // autofix
-            @panic(css.todo_stuff.depth);
+        pub fn deepClone(this: *const This, allocator: Allocator) This {
+            return switch (this.*) {
+                .value => |v| {
+                    return .{
+                        .value = bun.create(
+                            allocator,
+                            V,
+                            if (needs_deepclone) v.deepClone(allocator) else v.*,
+                        ),
+                    };
+                },
+                .number => this.*,
+                .sum => |sum| {
+                    return .{ .sum = .{
+                        .left = bun.create(allocator, This, sum.left.deepClone(allocator)),
+                        .right = bun.create(allocator, This, sum.right.deepClone(allocator)),
+                    } };
+                },
+                .product => |product| {
+                    return .{
+                        .product = .{
+                            .number = product.number,
+                            .expression = bun.create(allocator, This, product.expression.deepClone(allocator)),
+                        },
+                    };
+                },
+                .function => |function| {
+                    return .{
+                        .function = bun.create(
+                            allocator,
+                            MathFunction(V),
+                            function.deepClone(allocator),
+                        ),
+                    };
+                },
+            };
         }
 
         pub fn deinit(this: *This, allocator: Allocator) void {
-            _ = this; // autofix
-            _ = allocator; // autofix
-            @panic(css.todo_stuff.depth);
+            return switch (this.*) {
+                .value => |v| {
+                    if (comptime needs_deinit) {
+                        v.deinit(allocator);
+                    }
+                    allocator.destroy(this.value);
+                },
+                .number => {},
+                .sum => |sum| {
+                    sum.left.deinit(allocator);
+                    sum.right.deinit(allocator);
+                    allocator.destroy(sum.left);
+                    allocator.destroy(sum.right);
+                },
+                .product => |product| {
+                    product.expression.deinit(allocator);
+                    allocator.destroy(product.expression);
+                },
+                .function => |function| {
+                    function.deinit(allocator);
+                    allocator.destroy(function);
+                },
+            };
         }
 
         fn mulValueF32(lhs: V, allocator: Allocator, rhs: f32) V {
@@ -225,7 +307,7 @@ pub fn Calc(comptime V: type) type {
                 };
                 // PERF(alloc): i don't like this additional allocation
                 // can we use stack fallback here if the common case is that there will be 1 argument?
-                This.reduceArgs(&reduced, std.math.Order.lt);
+                This.reduceArgs(input.allocator(), &reduced, std.math.Order.lt);
                 // var reduced: ArrayList(This) = This.reduceArgs(&args, std.math.Order.lt);
                 if (reduced.items.len == 1) {
                     defer reduced.deinit(input.allocator());
@@ -254,7 +336,7 @@ pub fn Calc(comptime V: type) type {
                     .err => |e| return .{ .err = e },
                 };
                 // PERF: i don't like this additional allocation
-                This.reduceArgs(&reduced, std.math.Order.gt);
+                This.reduceArgs(input.allocator(), &reduced, std.math.Order.gt);
                 // var reduced: ArrayList(This) = This.reduceArgs(&args, std.math.Order.gt);
                 if (reduced.items.len == 1) {
                     return .{ .result = reduced.orderedRemove(0) };
@@ -1278,10 +1360,59 @@ pub fn Calc(comptime V: type) type {
             };
         }
 
-        fn reduceArgs(args: *ArrayList(This), order: std.math.Order) void {
-            _ = args; // autofix
-            _ = order; // autofix
-            @panic(css.todo_stuff.depth);
+        /// PERF:
+        /// I don't like how this function requires allocating a second ArrayList
+        /// I am pretty sure we could do this reduction in place, or do it as the
+        /// arguments are being parsed.
+        fn reduceArgs(allocator: Allocator, args: *ArrayList(This), order: std.math.Order) void {
+            defer css.deepDeinit(This, allocator, args);
+            // Reduces the arguments of a min() or max() expression, combining compatible values.
+            // e.g. min(1px, 1em, 2px, 3in) => min(1px, 1em)
+            var reduced = ArrayList(This){};
+
+            for (args.items) |*arg| {
+                var found: ??*Calc(V) = null;
+                switch (arg.*) {
+                    .value => |val| {
+                        for (reduced.items) |*b| {
+                            switch (b.*) {
+                                .value => |v| {
+                                    const result = css.generic.partialCmp(V, val, v);
+                                    if (result != null) {
+                                        if (result == order) {
+                                            found = b;
+                                            break;
+                                        } else {
+                                            found = @as(?*Calc(V), null);
+                                            break;
+                                        }
+                                    }
+                                },
+                                else => {},
+                            }
+                        }
+                    },
+                    else => {},
+                }
+
+                if (found) |__r| {
+                    if (__r) |r| {
+                        r.* = arg.*;
+                        // set to dummy value since we moved it into `reduced`
+                        arg.* = This{ .number = 420 };
+                        continue;
+                    }
+                } else {
+                    reduced.append(allocator, arg.*) catch bun.outOfMemory();
+                    // set to dummy value since we moved it into `reduced`
+                    arg.* = This{ .number = 420 };
+                    continue;
+                }
+                arg.deinit(allocator);
+                arg.* = This{ .number = 420 };
+            }
+
+            args.* = reduced;
         }
     };
 }
@@ -1326,6 +1457,73 @@ pub fn MathFunction(comptime V: type) type {
         sign: Calc(V),
         /// The `hypot()` function.
         hypot: ArrayList(Calc(V)),
+
+        pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
+            return switch (this.*) {
+                .calc => |*calc| .{ .calc = calc.deepClone(allocator) },
+                .min => |*min| .{ .min = css.deepClone(Calc(V), allocator, min) },
+                .max => |*max| .{ .max = css.deepClone(Calc(V), allocator, max) },
+                .clamp => |*clamp| .{
+                    .clamp = .{
+                        .min = clamp.min.deepClone(allocator),
+                        .center = clamp.center.deepClone(allocator),
+                        .max = clamp.max.deepClone(allocator),
+                    },
+                },
+                .round => |*rnd| .{ .round = .{
+                    .strategy = rnd.strategy,
+                    .value = rnd.value.deepClone(allocator),
+                    .interval = rnd.interval.deepClone(allocator),
+                } },
+                .rem => |*rem| .{ .rem = .{
+                    .dividend = rem.dividend.deepClone(allocator),
+                    .divisor = rem.divisor.deepClone(allocator),
+                } },
+                .mod_ => |*mod_| .{ .mod_ = .{
+                    .dividend = mod_.dividend.deepClone(allocator),
+                    .divisor = mod_.divisor.deepClone(allocator),
+                } },
+                .abs => |*abs| .{ .abs = abs.deepClone(allocator) },
+                .sign => |*sign| .{ .sign = sign.deepClone(allocator) },
+                .hypot => |*hyp| .{
+                    .hypot = css.deepClone(Calc(V), allocator, hyp),
+                },
+            };
+        }
+
+        pub fn deinit(this: *@This(), allocator: Allocator) void {
+            switch (this.*) {
+                .calc => |*calc| calc.deinit(allocator),
+                .min => |*min| css.deepDeinit(Calc(V), allocator, min),
+                .max => |*max| css.deepDeinit(Calc(V), allocator, max),
+                .clamp => |*clamp| {
+                    clamp.min.deinit(allocator);
+                    clamp.center.deinit(allocator);
+                    clamp.max.deinit(allocator);
+                },
+                .round => |*rnd| {
+                    rnd.value.deinit(allocator);
+                    rnd.interval.deinit(allocator);
+                },
+                .rem => |*rem| {
+                    rem.dividend.deinit(allocator);
+                    rem.divisor.deinit(allocator);
+                },
+                .mod_ => |*mod_| {
+                    mod_.dividend.deinit(allocator);
+                    mod_.divisor.deinit(allocator);
+                },
+                .abs => |*abs| {
+                    abs.deinit(allocator);
+                },
+                .sign => |*sign| {
+                    sign.deinit(allocator);
+                },
+                .hypot => |*hyp| {
+                    css.deepDeinit(Calc(V), allocator, hyp);
+                },
+            }
+        }
 
         pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
             return switch (this.*) {

@@ -1045,16 +1045,30 @@ pub const MediaFeatureValue = union(enum) {
     /// An environment variable reference.
     env: EnvironmentVariable,
 
-    pub fn clone(this: *const MediaFeatureValue, allocator: std.mem.Allocator) MediaFeatureValue {
-        _ = this; // autofix
-        _ = allocator; // autofix
-        @panic(css.todo_stuff.depth);
+    pub fn deepClone(this: *const MediaFeatureValue, allocator: std.mem.Allocator) MediaFeatureValue {
+        return switch (this.*) {
+            .length => |*l| .{ .length = l.deepClone(allocator) },
+            .number => |n| .{ .number = n },
+            .integer => |i| .{ .integer = i },
+            .boolean => |b| .{ .boolean = b },
+            .resolution => |r| .{ .resolution = r },
+            .ratio => |r| .{ .ratio = r },
+            .ident => |i| .{ .ident = i },
+            .env => |*e| .{ .env = e.deepClone(allocator) },
+        };
     }
 
-    pub fn deinit(this: *const MediaFeatureValue, allocator: std.mem.Allocator) void {
-        _ = this; // autofix
-        _ = allocator; // autofix
-        @panic(css.todo_stuff.depth);
+    pub fn deinit(this: *MediaFeatureValue, allocator: std.mem.Allocator) void {
+        return switch (this.*) {
+            .length => |l| l.deinit(allocator),
+            .number => {},
+            .integer => {},
+            .boolean => {},
+            .resolution => {},
+            .ratio => {},
+            .ident => {},
+            .env => |*env| env.deinit(allocator),
+        };
     }
 
     pub fn toCss(
@@ -1364,13 +1378,13 @@ fn writeMinMax(
 
     try dest.delim(':', false);
 
-    const adjusted: ?MediaFeatureValue = switch (operator.*) {
-        .@"greater-than" => value.clone(dest.allocator).addF32(dest.allocator, 0.001),
-        .@"less-than" => value.clone(dest.allocator).addF32(dest.allocator, -0.001),
+    var adjusted: ?MediaFeatureValue = switch (operator.*) {
+        .@"greater-than" => value.deepClone(dest.allocator).addF32(dest.allocator, 0.001),
+        .@"less-than" => value.deepClone(dest.allocator).addF32(dest.allocator, -0.001),
         else => null,
     };
 
-    if (adjusted) |val| {
+    if (adjusted) |*val| {
         defer val.deinit(dest.allocator);
         try val.toCss(W, dest);
     } else {

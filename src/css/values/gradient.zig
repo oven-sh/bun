@@ -1010,7 +1010,7 @@ pub fn parseItems(comptime D: type, input: *css.Parser) Result(ArrayList(Gradien
                     };
 
                     if (i.tryParse(comptime css.generic.parseFor(D), .{})) |position| {
-                        const color = stop.color.clone(i.allocator());
+                        const color = stop.color.deepClone(i.allocator());
                         closure.items.append(.{ .color_stop = stop }) catch bun.outOfMemory();
                         closure.items.append(.{ .color_stop = .{
                             .color = color,

@@ -130,6 +130,14 @@ pub fn DimensionPercentage(comptime D: type) type {
 
         const This = @This();
 
+        pub fn deinit(this: *const @This(), allocator: std.mem.Allocator) void {
+            return switch (this.*) {
+                .dimension => |d| if (comptime @hasDecl(D, "deinit")) d.deinit(allocator),
+                .percentage => {},
+                .calc => |calc| calc.deinit(allocator),
+            };
+        }
+
         pub fn parse(input: *css.Parser) Result(@This()) {
             if (input.tryParse(Calc(This).parse, .{}).asValue()) |calc_value| {
                 if (calc_value == .value) return .{ .result = calc_value.value.* };

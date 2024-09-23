@@ -1877,18 +1877,18 @@ pub const SelectorParsingState = packed struct(u16) {
     pub usingnamespace css.Bitflags(@This());
 
     pub fn allowsPseudos(this: SelectorParsingState) bool {
-        _ = this; // autofix
-        @panic(css.todo_stuff.depth);
+        return !this.intersects(SelectorParsingState{
+            .after_pseudo_element = true,
+            .disallow_pseudos = true,
+        });
     }
 
     pub fn allowsPart(this: SelectorParsingState) bool {
-        _ = this; // autofix
-        @panic(css.todo_stuff.depth);
+        return !this.intersects(SelectorParsingState.AFTER_PSEUDO.bitwiseOr(SelectorParsingState{ .disallow_pseudos = true }));
     }
 
     pub fn allowsSlotted(this: SelectorParsingState) bool {
-        _ = this; // autofix
-        @panic(css.todo_stuff.depth);
+        return !this.intersects(SelectorParsingState.AFTER_PSEUDO.bitwiseOr(.{ .disallow_pseudos = true }));
     }
 
     pub fn allowsTreeStructuralPseudoClasses(this: SelectorParsingState) bool {

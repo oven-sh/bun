@@ -41,6 +41,19 @@ pub const TokenList = struct {
 
     const This = @This();
 
+    pub fn deepClone(this: *const TokenList, allocator: Allocator) TokenList {
+        return .{
+            .v = css.deepClone(TokenOrValue, allocator, &this.v),
+        };
+    }
+
+    pub fn deinit(this: *TokenList, allocator: Allocator) void {
+        for (this.v.items) |*token_or_value| {
+            token_or_value.deinit(allocator);
+        }
+        this.v.deinit(allocator);
+    }
+
     pub fn toCss(
         this: *const This,
         comptime W: type,
@@ -629,6 +642,30 @@ pub const UnresolvedColor = union(enum) {
     },
     const This = @This();
 
+    pub fn deepClone(this: *const This, allocator: Allocator) This {
+        return switch (this.*) {
+            .RGB => |*rgb| .{ .RGB = .{ .r = rgb.r, .g = rgb.g, .b = rgb.b, .alpha = rgb.alpha.deepClone(allocator) } },
+            .HSL => |*hsl| .{ .HSL = .{ .h = hsl.h, .s = hsl.s, .l = hsl.l, .alpha = hsl.alpha.deepClone(allocator) } },
+            .light_dark => |*light_dark| .{
+                .light_dark = .{
+                    .light = light_dark.light.deepClone(allocator),
+                    .dark = light_dark.dark.deepClone(allocator),
+                },
+            },
+        };
+    }
+
+    pub fn deinit(this: *This, allocator: Allocator) void {
+        return switch (this.*) {
+            .RGB => |*rgb| rgb.alpha.deinit(allocator),
+            .HSL => |*hsl| hsl.alpha.deinit(allocator),
+            .light_dark => |*light_dark| {
+                light_dark.light.deinit(allocator);
+                light_dark.dark.deinit(allocator);
+            },
+        };
+    }
+
     pub fn toCss(
         this: *const This,
         comptime W: type,
@@ -856,6 +893,19 @@ pub const Variable = struct {
 
     const This = @This();
 
+    pub fn deepClone(this: *const Variable, allocator: Allocator) Variable {
+        return .{
+            .name = this.name,
+            .fallback = if (this.fallback) |*fallback| fallback.deepClone(allocator) else null,
+        };
+    }
+
+    pub fn deinit(this: *Variable, allocator: Allocator) void {
+        if (this.fallback) |*fallback| {
+            fallback.deinit(allocator);
+        }
+    }
+
     pub fn parse(
         input: *css.Parser,
         options: *const css.ParserOptions,
@@ -902,6 +952,21 @@ pub const EnvironmentVariable = struct {
     indices: ArrayList(CSSInteger) = ArrayList(CSSInteger){},
     /// A fallback value in case the variable is not defined.
     fallback: ?TokenList,
+
+    pub fn deepClone(this: *const EnvironmentVariable, allocator: Allocator) EnvironmentVariable {
+        return .{
+            .name = this.name,
+            .indices = this.indices.clone(allocator) catch bun.outOfMemory(),
+            .fallback = if (this.fallback) |*fallback| fallback.deepClone(allocator) else null,
+        };
+    }
+
+    pub fn deinit(this: *EnvironmentVariable, allocator: Allocator) void {
+        this.indices.deinit(allocator);
+        if (this.fallback) |*fallback| {
+            fallback.deinit(allocator);
+        }
+    }
 
     pub fn parse(input: *css.Parser, options: *const css.ParserOptions, depth: usize) Result(EnvironmentVariable) {
         if (input.expectFunctionMatching("env").asErr()) |e| return .{ .err = e };
@@ -1047,6 +1112,17 @@ pub const Function = struct {
 
     const This = @This();
 
+    pub fn deepClone(this: *const Function, allocator: Allocator) Function {
+        return .{
+            .name = this.name,
+            .arguments = this.arguments.deepClone(allocator),
+        };
+    }
+
+    pub fn deinit(this: *Function, allocator: Allocator) void {
+        this.arguments.deinit(allocator);
+    }
+
     pub fn toCss(
         this: *const This,
         comptime W: type,
@@ -1088,6 +1164,42 @@ pub const TokenOrValue = union(enum) {
     dashed_ident: DashedIdent,
     /// An animation name.
     animation_name: AnimationName,
+
+    pub fn deepClone(this: *const TokenOrValue, allocator: Allocator) TokenOrValue {
+        return switch (this.*) {
+            .token => this.*,
+            .color => |*color| .{ .color = color.deepClone(allocator) },
+            .unresolved_color => |*color| .{ .unresolved_color = color.deepClone(allocator) },
+            .url => this.*,
+            .@"var" => |*@"var"| .{ .@"var" = @"var".deepClone(allocator) },
+            .env => |*env| .{ .env = env.deepClone(allocator) },
+            .function => |*f| .{ .function = f.deepClone(allocator) },
+            .length => this.*,
+            .angle => this.*,
+            .time => this.*,
+            .resolution => this.*,
+            .dashed_ident => this.*,
+            .animation_name => this.*,
+        };
+    }
+
+    pub fn deinit(this: *TokenOrValue, allocator: Allocator) void {
+        return switch (this.*) {
+            .token => {},
+            .color => |*color| color.deinit(allocator),
+            .unresolved_color => |*color| color.deinit(allocator),
+            .url => {},
+            .@"var" => |*@"var"| @"var".deinit(allocator),
+            .env => |*env| env.deinit(allocator),
+            .function => |*f| f.deinit(allocator),
+            .length => {},
+            .angle => {},
+            .time => {},
+            .resolution => {},
+            .dashed_ident => {},
+            .animation_name => {},
+        };
+    }
 
     pub fn isWhitespace(self: *const TokenOrValue) bool {
         switch (self.*) {

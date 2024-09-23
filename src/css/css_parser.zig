@@ -274,12 +274,12 @@ pub fn DefineShorthand(comptime T: type, comptime property_name: PropertyIdTag) 
                                 }
 
                                 @field(this, field.name) = if (@hasDecl(@TypeOf(@field(property, field.name)[0]), "clone"))
-                                    @field(property, field.name)[0].clone(allocator)
+                                    @field(property, field.name)[0].deepClone(allocator)
                                 else
                                     @field(property, field.name)[0];
                             } else {
                                 @field(this, field.name) = if (@hasDecl(@TypeOf(@field(property, field.name)), "clone"))
-                                    @field(property, field.name).clone(allocator)
+                                    @field(property, field.name).deepClone(allocator)
                                 else
                                     @field(property, field.name);
                             }
@@ -300,12 +300,12 @@ pub fn DefineShorthand(comptime T: type, comptime property_name: PropertyIdTag) 
                         inline for (std.meta.fields(@TypeOf(T.PropertyFieldMap))) |field| {
                             if (@hasField(T.VendorPrefixMap, field.name)) {
                                 @field(this, field.name) = if (@hasDecl(@TypeOf(@field(property, field.name)[0]), "clone"))
-                                    @field(property, field.name)[0].clone(allocator)
+                                    @field(property, field.name)[0].deepClone(allocator)
                                 else
                                     @field(property, field.name)[0];
                             } else {
                                 @field(this, field.name) = if (@hasDecl(@TypeOf(@field(property, field.name)), "clone"))
-                                    @field(property, field.name).clone(allocator)
+                                    @field(property, field.name).deepClone(allocator)
                                 else
                                     @field(property, field.name);
                             }
@@ -377,7 +377,7 @@ pub fn DefineShorthand(comptime T: type, comptime property_name: PropertyIdTag) 
             inline for (std.meta.fields(@TypeOf(T.PropertyFieldMap))) |field| {
                 if (@as(PropertyIdTag, property_id.*) == @field(T.PropertyFieldMap, field.name)) {
                     const val = if (@hasDecl(@TypeOf(@field(T, field.namee)), "clone"))
-                        @field(this, field.name).clone(allocator)
+                        @field(this, field.name).deepClone(allocator)
                     else
                         @field(this, field.name);
                     return @unionInit(
@@ -398,7 +398,7 @@ pub fn DefineShorthand(comptime T: type, comptime property_name: PropertyIdTag) 
             inline for (std.meta.fields(T.PropertyFieldMap)) |field| {
                 if (@as(PropertyIdTag, property.*) == @field(T.PropertyFieldMap, field.name)) {
                     const val = if (@hasDecl(@TypeOf(@field(T, field.name)), "clone"))
-                        @field(this, field.name).clone(allocator)
+                        @field(this, field.name).deepClone(allocator)
                     else
                         @field(this, field.name);
 
@@ -2674,6 +2674,7 @@ pub const Parser = struct {
             const tok = switch (this.next()) {
                 .result => |v| v,
                 .err => {
+                    // need to clone off the stack
                     const needs_clone = values.items.len == 1;
                     if (needs_clone) return .{ .result = values.clone(this.allocator()) catch bun.outOfMemory() };
                     return .{ .result = values };
@@ -5776,4 +5777,26 @@ pub inline fn copysign(self: f32, sign: f32) f32 {
 
     // Convert the result back to f32
     return @as(f32, @bitCast(result_bits));
+}
+
+pub fn deepClone(comptime V: type, allocator: Allocator, list: *const ArrayList(V)) ArrayList(V) {
+    var newlist = ArrayList(V).initCapacity(allocator, list.items.len) catch bun.outOfMemory();
+
+    for (list.items) |item| {
+        newlist.appendAssumeCapacity(switch (V) {
+            i32, i64, u32, u64, f32, f64 => item,
+            else => item.deepClone(allocator),
+        });
+    }
+
+    return newlist;
+}
+
+pub fn deepDeinit(comptime V: type, allocator: Allocator, list: *ArrayList(V)) void {
+    if (comptime !@hasDecl(V, "deinit")) return;
+    for (list.items) |*item| {
+        item.deinit(allocator);
+    }
+
+    list.deinit(allocator);
 }

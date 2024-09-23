@@ -7165,9 +7165,7 @@ pub const PackageManager = struct {
             }
 
             if (cli_) |cli| {
-                if (cli.registry.len > 0 and strings.startsWith(cli.registry, "https://") or
-                    strings.startsWith(cli.registry, "http://"))
-                {
+                if (cli.registry.len > 0) {
                     this.scope.url = URL.parse(cli.registry);
                 }
 
@@ -9126,7 +9124,7 @@ pub const PackageManager = struct {
         clap.parseParam("-g, --global                          Install globally") catch unreachable,
         clap.parseParam("--cwd <STR>                           Set a specific cwd") catch unreachable,
         clap.parseParam("--backend <STR>                       Platform-specific optimizations for installing dependencies. " ++ platform_specific_backend_label) catch unreachable,
-        clap.parseParam("--link-native-bins <STR>...           Link \"bin\" from a matching platform-specific \"optionalDependencies\" instead. Default: esbuild, turbo") catch unreachable,
+        clap.parseParam("--registry <STR>                      Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables") catch unreachable,
         clap.parseParam("--concurrent-scripts <NUM>            Maximum number of concurrent jobs for lifecycle scripts (default 5)") catch unreachable,
         clap.parseParam("-h, --help                            Print this help menu") catch unreachable,
     };
@@ -9197,7 +9195,6 @@ pub const PackageManager = struct {
     });
 
     pub const CommandLineArguments = struct {
-        registry: string = "",
         cache_dir: string = "",
         lockfile: string = "",
         token: string = "",
@@ -9229,8 +9226,6 @@ pub const PackageManager = struct {
         pack_destination: string = "",
         pack_gzip_level: ?string = null,
 
-        link_native_bins: []const string = &[_]string{},
-
         development: bool = false,
         optional: bool = false,
 
@@ -9242,6 +9237,8 @@ pub const PackageManager = struct {
         concurrent_scripts: ?usize = null,
 
         patch: PatchOpts = .{ .nothing = .{} },
+
+        registry: string = "",
 
         const PatchOpts = union(enum) {
             nothing: struct {},
@@ -9612,8 +9609,6 @@ pub const PackageManager = struct {
                 cli.config = opt;
             }
 
-            cli.link_native_bins = args.options("--link-native-bins");
-
             if (comptime subcommand == .add or subcommand == .install) {
                 cli.development = args.flag("--development") or args.flag("--dev");
                 cli.optional = args.flag("--optional");
@@ -9660,6 +9655,14 @@ pub const PackageManager = struct {
                 if (backend.isSupported()) {
                     cli.backend = backend;
                 }
+            }
+
+            if (args.option("--registry")) |registry| {
+                if (!strings.hasPrefixComptime(registry, "https://") and !strings.hasPrefixComptime(registry, "http://")) {
+                    Output.errGeneric("Registry URL must start with 'https://' or 'http://': {}\n", .{bun.fmt.quote(registry)});
+                    Global.crash();
+                }
+                cli.registry = registry;
             }
 
             cli.positionals = args.positionals();

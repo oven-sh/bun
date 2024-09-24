@@ -117,7 +117,7 @@ pub fn CompressionStream(comptime T: type) type {
             this.poll_ref.ref(vm);
             JSC.WorkPool.schedule(&task.task);
 
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
 
         const AsyncJob = struct {

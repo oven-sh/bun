@@ -33,9 +33,11 @@ execute_process(
   ERROR_STRIP_TRAILING_WHITESPACE
   ERROR_VARIABLE
     GIT_ERROR
+  RESULT_VARIABLE
+    GIT_RESULT
 )
 
-if(GIT_ERROR)
+if(NOT GIT_RESULT EQUAL 0)
   message(FATAL_ERROR "Clone failed: ${GIT_ERROR}")
 endif()
 
@@ -64,9 +66,11 @@ if(GIT_PATCH_COUNT GREATER 0)
         ERROR_STRIP_TRAILING_WHITESPACE
         ERROR_VARIABLE
           GIT_PATCH_ERROR
+        RESULT_VARIABLE
+          GIT_PATCH_RESULT
       )
 
-      if(GIT_PATCH_ERROR AND NOT GIT_PATCH_ERROR MATCHES "cleanly")
+      if(NOT GIT_PATCH_RESULT EQUAL 0 AND NOT GIT_PATCH_ERROR MATCHES "cleanly")
         file(REMOVE_RECURSE ${GIT_PATH})
         message(FATAL_ERROR "Failed to apply patch: ${GIT_PATCH_ERROR}")
       endif()

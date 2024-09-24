@@ -1,6 +1,6 @@
-optionx(BUILDKITE_CACHE BOOL "If the build can use Buildkite caches, even if not running in Buildkite" DEFAULT ${BUILDKITE})
+optionx(BUILDKITE_CACHE BOOL "If the build can use Buildkite caches, even if not running in Buildkite" DEFAULT OFF)
 
-if(NOT BUILDKITE_CACHE OR NOT BUN_LINK_ONLY)
+if(NOT BUILDKITE_CACHE)
   return()
 endif()
 
@@ -33,7 +33,7 @@ if(NOT BUILDKITE_BUILD_ID)
 endif()
 
 setx(BUILDKITE_BUILD_URL https://buildkite.com/${BUILDKITE_ORGANIZATION_SLUG}/${BUILDKITE_PIPELINE_SLUG}/builds/${BUILDKITE_BUILD_ID})
-setx(BUILDKITE_BUILD_PATH ${BUILDKITE_BUILDS_PATH}/builds/${BUILDKITE_BUILD_ID})
+setx(BUILDKITE_BUILD_PATH ${BUILDKITE_BUILDS_PATH}/${BUILDKITE_BUILD_ID})
 
 file(
   DOWNLOAD ${BUILDKITE_BUILD_URL}
@@ -125,15 +125,14 @@ foreach(i RANGE ${BUILDKITE_JOBS_MAX_INDEX})
       set(BUILDKITE_DOWNLOAD_COMMAND curl -L -o ${BUILDKITE_ARTIFACT_PATH} ${BUILDKITE_ARTIFACTS_URL}/${BUILDKITE_ARTIFACT_ID})
     endif()
 
-    add_custom_command(
-      COMMENT
-        "Downloading ${BUILDKITE_ARTIFACT_PATH}"
-      VERBATIM COMMAND
-        ${BUILDKITE_DOWNLOAD_COMMAND}
-      WORKING_DIRECTORY
-        ${BUILD_PATH}
-      OUTPUT
-        ${BUILD_PATH}/${BUILDKITE_ARTIFACT_PATH}
+    message(STATUS "Downloading ${BUILD_PATH}/${BUILDKITE_ARTIFACT_PATH}")
+    get_filename_component(BUILDKITE_ARTIFACT_NAME ${BUILDKITE_ARTIFACT_PATH} NAME_WE)
+    register_command(
+      TARGET download-${BUILDKITE_ARTIFACT_NAME}
+      COMMENT "Downloading ${BUILDKITE_ARTIFACT_PATH}"
+      COMMAND ${BUILDKITE_DOWNLOAD_COMMAND}
+      CWD ${BUILD_PATH}
+      OUTPUTS ${BUILD_PATH}/${BUILDKITE_ARTIFACT_PATH}
     )
   endforeach()
 

@@ -1,5 +1,22 @@
-# register_target(bun)
-set(bun bun)
+if(DEBUG)
+  set(bun bun-debug)
+elseif(ENABLE_SMOL)
+  set(bun bun-smol-profile)
+  set(bunStrip bun-smol)
+elseif(ENABLE_VALGRIND)
+  set(bun bun-valgrind)
+elseif(ENABLE_ASSERTIONS)
+  set(bun bun-assertions)
+else()
+  set(bun bun-profile)
+  set(bunStrip bun)
+endif()
+
+if(bunStrip)
+  set(buns ${bun} ${bunStrip})
+else()
+  set(buns ${bun})
+endif()
 
 # Some commands use this path, and some do not.
 # In the future, change those commands so that generated files are written to this path.
@@ -543,7 +560,7 @@ register_command(
 )
 
 set_property(TARGET ${bun}-zig PROPERTY JOB_POOL compile_pool)
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CWD}/build.zig)
 
 # --- C/C++ Object ---
 
@@ -589,29 +606,52 @@ if(WIN32)
   list(APPEND BUN_CPP_SOURCES ${CODEGEN_PATH}/windows-app-info.rc)
 endif()
 
-add_library(${bun}-cpp STATIC ${BUN_CPP_SOURCES})
-
-set_target_properties(${bun}-cpp PROPERTIES
-  OUTPUT_NAME ${bun}
-  CXX_STANDARD 20
-  CXX_STANDARD_REQUIRED YES
-  CXX_EXTENSIONS YES
-  CXX_VISIBILITY_PRESET hidden
-  C_STANDARD 17
-  C_STANDARD_REQUIRED YES
-  VISIBILITY_INLINES_HIDDEN YES
-)
-
 set(BUN_CPP_OUTPUT ${BUILD_PATH}/${CMAKE_STATIC_LIBRARY_PREFIX}${bun}${CMAKE_STATIC_LIBRARY_SUFFIX})
+set(BUN_EXE_OUTPUT ${BUILD_PATH}/${CMAKE_EXECUTABLE_PREFIX}${bun}${CMAKE_EXECUTABLE_SUFFIX})
 
-upload_artifacts(
-  TARGET ${bun}-cpp
-  ${BUN_CPP_OUTPUT}
-)
+if(BUN_LINK_ONLY)
+  add_executable(${bun} ${BUN_CPP_OUTPUT} ${BUN_ZIG_OUTPUT})
+  set_target_properties(${bun} PROPERTIES LINKER_LANGUAGE CXX)
+  target_link_libraries(${bun} PRIVATE ${BUN_CPP_OUTPUT})
+elseif(BUN_CPP_ONLY)
+  add_library(${bun} STATIC ${BUN_CPP_SOURCES})
+  upload_artifacts(
+    TARGET ${bun}
+    ${BUN_CPP_OUTPUT}
+  )
+else()
+  add_executable(${bun} ${BUN_CPP_SOURCES})
+  target_link_libraries(${bun} PRIVATE ${BUN_ZIG_OUTPUT})
+  upload_artifacts(
+    TARGET ${bun}
+    ${BUN_EXE_OUTPUT}
+  )
+endif()
+
+if(NOT BUN_CPP_ONLY)
+  set_target_properties(${bun} PROPERTIES
+    OUTPUT_NAME ${bun}
+    LINKER_LANGUAGE CXX
+  )
+endif()
+
+if(NOT BUN_LINK_ONLY)
+  set_target_properties(${bun} PROPERTIES
+    OUTPUT_NAME ${bun}
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS YES
+    CXX_VISIBILITY_PRESET hidden
+    C_STANDARD 17
+    C_STANDARD_REQUIRED YES
+    VISIBILITY_INLINES_HIDDEN YES
+  )
+endif()
 
 # --- C/C++ Includes ---
 
 register_includes(
+  TARGET ${bun}
   ${CWD}/packages
   ${CWD}/packages/bun-usockets
   ${CWD}/packages/bun-usockets/src
@@ -625,14 +665,13 @@ register_includes(
   ${CWD}/src/deps
   ${CWD}/src/bun.js/bindings/windows ${WIN32}
   ${CODEGEN_PATH}
-  TARGET ${bun}-cpp
 )
 
 # --- C/C++ Definitions ---
 
 if(ENABLE_ASSERTIONS)
   register_compiler_definitions(
-    TARGET ${bun}-cpp
+    TARGET ${bun}
     DESCRIPTION "Enable bun assertions"
     ASSERT_ENABLED=1
   )
@@ -640,7 +679,7 @@ endif()
 
 if(DEBUG)
   register_compiler_definitions(
-    TARGET ${bun}-cpp
+    TARGET ${bun}
     DESCRIPTION "Enable bun assertions in debug builds"
     BUN_DEBUG=1
   )
@@ -648,7 +687,7 @@ endif()
 
 if(WIN32)
   register_compiler_definitions(
-    TARGET ${bun}-cpp
+    TARGET ${bun}
     WIN32
     _WINDOWS
     WIN32_LEAN_AND_MEAN=1
@@ -658,7 +697,7 @@ if(WIN32)
 endif()
 
 register_compiler_definitions(
-  TARGET ${bun}-cpp
+  TARGET ${bun}
   _HAS_EXCEPTIONS=0
   LIBUS_USE_OPENSSL=1
   LIBUS_USE_BORINGSSL=1
@@ -678,7 +717,7 @@ register_compiler_definitions(
 
 if(DEBUG AND NOT CI)
   register_compiler_definitions(
-    TARGET ${bun}-cpp
+    TARGET ${bun}
     BUN_DYNAMIC_JS_LOAD_PATH=\"${BUILD_PATH}/js\"    
   )
 endif()
@@ -687,7 +726,7 @@ endif()
 
 if(NOT WIN32)
   register_compiler_flags(
-    TARGET ${bun}-cpp
+    TARGET ${bun}
     -fconstexpr-steps=2542484
     -fconstexpr-depth=54
     -fno-pic
@@ -696,7 +735,7 @@ if(NOT WIN32)
   )
   if(DEBUG)
     register_compiler_flags(
-      TARGET ${bun}-cpp
+      TARGET ${bun}
       -Werror=return-type
       -Werror=return-stack-address
       -Werror=implicit-function-declaration
@@ -724,7 +763,7 @@ if(NOT WIN32)
   else()
     # Leave -Werror=unused off in release builds so we avoid errors from being used in ASSERT
     register_compiler_flags(
-      TARGET ${bun}-cpp
+      TARGET ${bun}
       -Werror=return-type
       -Werror=return-stack-address
       -Werror=implicit-function-declaration
@@ -744,23 +783,23 @@ endif()
 # --- Dependencies ---
 
 register_includes(
-  TARGET ${bun}-cpp
-  ${VENDOR_PATH}/${picohttpparser}
-  ${VENDOR_PATH}/${boringssl}/include
-  ${VENDOR_PATH}/${brotli}/c/include
-  ${VENDOR_PATH}/${cares}/include
-  ${VENDOR_PATH}/${libarchive}/include
-  ${VENDOR_PATH}/${libdeflate}
-  ${VENDOR_PATH}/${libuv}/include ${WIN32}
-  ${VENDOR_PATH}/${lshpack}
-  ${VENDOR_PATH}/${lshpack}/compat/queue ${WIN32}
-  ${VENDOR_PATH}/${mimalloc}/include
-  ${VENDOR_PATH}/${zlib}
+  TARGET ${bun}
+  ${${picohttpparser}_CWD}
+  ${${boringssl}_CWD}/include
+  ${${brotli}_CWD}/c/include
+  ${${cares}_CWD}/include
+  ${${libarchive}_CWD}/include
+  ${${libdeflate}_CWD}
+  ${${libuv}_CWD}/include ${WIN32}
+  ${${lshpack}_CWD}
+  ${${lshpack}_CWD}/compat/queue ${WIN32}
+  ${${mimalloc}_CWD}/include
+  ${${zlib}_CWD}
 )
 
 if(WEBKIT_LOCAL)
   register_includes(
-    TARGET ${bun}-cpp
+    TARGET ${bun}
     ${WEBKIT_PATH}
     ${WEBKIT_PATH}/JavaScriptCore/Headers/JavaScriptCore
     ${WEBKIT_PATH}/JavaScriptCore/PrivateHeaders
@@ -769,47 +808,44 @@ if(WEBKIT_LOCAL)
   )
 else()
   register_includes(
-    TARGET ${bun}-cpp
+    TARGET ${bun}
     ${WEBKIT_PATH}/include
     ${WEBKIT_PATH}/include/wtf/unicode NOT ${APPLE}
   )
 endif()
 
-if(USE_STATIC_SQLITE)
-  target_compile_definitions(${bun}-cpp PRIVATE LAZY_LOAD_SQLITE=0)
-else()
-  target_compile_definitions(${bun}-cpp PRIVATE LAZY_LOAD_SQLITE=1)
+register_compiler_definitions(
+  TARGET ${bun}
+  LAZY_LOAD_SQLITE=0 ${USE_STATIC_SQLITE}
+  LAZY_LOAD_SQLITE=1 NOT ${USE_STATIC_SQLITE}
+)
+
+# FIXME: this should be handled by register_includes
+if(NOT BUN_LINK_ONLY)
+  add_dependencies(${bun}
+    clone-${webkit}
+    clone-${picohttpparser}
+    clone-${boringssl}
+    clone-${brotli}
+    clone-${cares}
+    clone-${libarchive}
+    clone-${libdeflate}
+    clone-${libuv}
+    clone-${lshpack}
+    clone-${mimalloc}
+    clone-${zlib}
+  )
 endif()
 
-add_dependencies(${bun}-cpp clone-webkit)
+# --- Linker options ---
 
-# --- Executable ---
-
-file(GENERATE OUTPUT ${CODEGEN_PATH}/bun.h CONTENT "# Empty file")
-
-add_executable(${bun}-exe ${CODEGEN_PATH}/bun.h)
-
-set(BUN_EXE_OUTPUT ${BUILD_PATH}/${CMAKE_EXECUTABLE_PREFIX}${bun}${CMAKE_EXECUTABLE_SUFFIX})
-
-upload_artifacts(
-  TARGET ${bun}-exe
-  ${BUN_EXE_OUTPUT}
+register_linker_flags(
+  TARGET ${bun}
+  -fsanitize=null
 )
 
-set_target_properties(${bun}-exe PROPERTIES
-  OUTPUT_NAME ${bun}
-  LINKER_LANGUAGE CXX
-)
-
-target_link_options(${bun}-exe PRIVATE -fsanitize=null)
-
-target_link_libraries(${bun}-exe PRIVATE
-  ${BUN_CPP_OUTPUT}
-  ${BUN_ZIG_OUTPUT}
-)
-
-link_targets(
-  TARGET ${bun}-exe
+register_link_targets(
+  TARGET ${bun}
   ${boringssl}
   ${brotli}
   ${cares}
@@ -827,31 +863,38 @@ link_targets(
 )
 
 if(APPLE)
-  target_link_libraries(${bun}-exe PRIVATE icucore resolv)
+  register_link_libraries(TARGET ${bun} icucore resolv)
 endif()
 
 if(LINUX)
-  target_link_libraries(${bun}-exe PRIVATE c pthread dl)
+  register_link_libraries(TARGET ${bun} c pthread dl)
 
   if(USE_STATIC_LIBATOMIC)
-    target_link_libraries(${bun}-exe PRIVATE libatomic.a)
+    register_link_libraries(TARGET ${bun} libatomic.a)
   else()
-    target_link_libraries(${bun}-exe PUBLIC libatomic.so)
+    register_link_libraries(TARGET ${bun} libatomic.so)
   endif()
 
   if(USE_SYSTEM_ICU)
-    target_link_libraries(${bun}-exe PRIVATE libicudata.a)
-    target_link_libraries(${bun}-exe PRIVATE libicui18n.a)
-    target_link_libraries(${bun}-exe PRIVATE libicuuc.a)
+    register_link_libraries(
+      TARGET ${bun}
+      libicudata.a
+      libicui18n.a
+      libicuuc.a
+    )
   else()
-    target_link_libraries(${bun}-exe PRIVATE ${WEBKIT_LIB_PATH}/libicudata.a)
-    target_link_libraries(${bun}-exe PRIVATE ${WEBKIT_LIB_PATH}/libicui18n.a)
-    target_link_libraries(${bun}-exe PRIVATE ${WEBKIT_LIB_PATH}/libicuuc.a)
+    register_link_libraries(
+      TARGET ${bun}
+      ${WEBKIT_LIB_PATH}/libicudata.a
+      ${WEBKIT_LIB_PATH}/libicui18n.a
+      ${WEBKIT_LIB_PATH}/libicuuc.a
+    )
   endif()
 endif()
 
 if(WIN32)
-  target_link_libraries(${bun}-exe PRIVATE
+  register_link_libraries(
+    TARGET ${bun}
     winmm
     bcrypt
     ntdll
@@ -862,17 +905,15 @@ if(WIN32)
   )
 endif()
 
-# --- Linker options ---
-
 if(WIN32)
   register_linker_flags(
-    TARGET ${bun}-exe
+    TARGET ${bun}
     /STACK:0x1200000,0x100000
     /errorlimit:0
   )
   if(RELEASE)
     register_linker_flags(
-      TARGET ${bun}-exe
+      TARGET ${bun}
       /LTCG
       /OPT:REF
       /OPT:NOICF
@@ -888,17 +929,21 @@ if(WIN32)
       /delayload:IPHLPAPI.dll
     )
   endif()
-elseif(APPLE)
+endif()
+
+if(APPLE)
   register_linker_flags(
-    TARGET ${bun}-exe
+    TARGET ${bun}
     -dead_strip
     -dead_strip_dylibs
     -Wl,-stack_size,0x1200000
     -fno-keep-static-consts
   )
-else()
+endif()
+
+if(LINUX)
   register_linker_flags(
-    TARGET ${bun}-exe
+    TARGET ${bun}
     -fuse-ld=lld-${LLVM_VERSION_MAJOR}
     -fno-pic
     -static-libstdc++
@@ -939,33 +984,33 @@ endif()
 if(WIN32)
   set(BUN_SYMBOLS_PATH ${CWD}/src/symbols.def)
   register_linker_flags(
-    TARGET ${bun}-exe
+    TARGET ${bun}
     /DEF:${BUN_SYMBOLS_PATH}
   )
 elseif(APPLE)
   set(BUN_SYMBOLS_PATH ${CWD}/src/symbols.txt)
   register_linker_flags(
-    TARGET ${bun}-exe
+    TARGET ${bun}
     -exported_symbols_list ${BUN_SYMBOLS_PATH}
   )
 else()
   set(BUN_SYMBOLS_PATH ${CWD}/src/symbols.dyn)
   set(BUN_LINKER_LDS_PATH ${CWD}/src/linker.lds)
   register_linker_flags(
-    TARGET ${bun}-exe
+    TARGET ${bun}
     -Bsymbolics-functions
     -rdynamic
     -Wl,--dynamic-list=${BUN_SYMBOLS_PATH}
     -Wl,--version-script=${BUN_LINKER_LDS_PATH}
   )
-  set_target_properties(${bun}-exe PROPERTIES LINK_DEPENDS ${BUN_LINKER_LDS_PATH})
+  set_target_properties(${bun} PROPERTIES LINK_DEPENDS ${BUN_LINKER_LDS_PATH})
 endif()
 
-set_target_properties(${bun}-exe PROPERTIES LINK_DEPENDS ${BUN_SYMBOLS_PATH})
+set_target_properties(${bun} PROPERTIES LINK_DEPENDS ${BUN_SYMBOLS_PATH})
 
 register_command(
   TARGET
-    ${bun}-exe
+    ${bun}
   TARGET_PHASE
     POST_BUILD
   COMMENT

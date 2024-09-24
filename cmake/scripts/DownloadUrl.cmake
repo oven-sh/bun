@@ -24,9 +24,14 @@ set(DOWNLOAD_TMP_FILE ${DOWNLOAD_TMP_PATH}/tmp)
 
 file(REMOVE_RECURSE ${DOWNLOAD_TMP_PATH})
 
+if(DOWNLOAD_ACCEPT_HEADER)
+  set(DOWNLOAD_ACCEPT_HEADER "Accept: ${DOWNLOAD_ACCEPT_HEADER}")
+else()
+  set(DOWNLOAD_ACCEPT_HEADER "Accept: */*")
+endif()
+
 foreach(i RANGE 10)
   set(DOWNLOAD_TMP_FILE_${i} ${DOWNLOAD_TMP_FILE}.${i})
-  message(STATUS "DOWNLOAD_TMP_FILE_${i}: ${DOWNLOAD_TMP_FILE_${i}}")
 
   if(i EQUAL 0)
     message(STATUS "Downloading ${DOWNLOAD_URL}...")
@@ -38,6 +43,7 @@ foreach(i RANGE 10)
     ${DOWNLOAD_URL}
     ${DOWNLOAD_TMP_FILE_${i}}
     HTTPHEADER "User-Agent: cmake/${CMAKE_VERSION}"
+    HTTPHEADER ${DOWNLOAD_ACCEPT_HEADER}
     STATUS DOWNLOAD_STATUS
     INACTIVITY_TIMEOUT 60
     TIMEOUT 180
@@ -45,15 +51,12 @@ foreach(i RANGE 10)
   )
 
   list(GET DOWNLOAD_STATUS 0 DOWNLOAD_STATUS_CODE)
-  message(STATUS "DOWNLOAD_STATUS_CODE: ${DOWNLOAD_STATUS_CODE}")
-
-  if(EXISTS ${DOWNLOAD_TMP_FILE_${i}})
-    message(STATUS "File exists: ${DOWNLOAD_TMP_FILE_${i}}")
-  else()
-    message(STATUS "File does not exist: ${DOWNLOAD_TMP_FILE_${i}}")
-  endif()
-
   if(DOWNLOAD_STATUS_CODE EQUAL 0)
+    if(NOT EXISTS ${DOWNLOAD_TMP_FILE_${i}})
+      message(WARNING "Download failed: result is ok, but file does not exist: ${DOWNLOAD_TMP_FILE_${i}}")
+      continue()
+    endif()
+
     file(RENAME ${DOWNLOAD_TMP_FILE_${i}} ${DOWNLOAD_TMP_FILE})
     break()
   endif()

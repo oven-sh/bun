@@ -2,9 +2,6 @@ if(NOT CMAKE_SYSTEM_NAME OR NOT CMAKE_SYSTEM_PROCESSOR)
   message(FATAL_ERROR "CMake included this file before project() was called")
 endif()
 
-optionx(BUN_LINK_ONLY BOOL "If only the linking step should be built" DEFAULT OFF)
-optionx(BUN_CPP_ONLY BOOL "If only the C++ part of Bun should be built" DEFAULT OFF)
-
 optionx(BUILDKITE BOOL "If Buildkite is enabled" DEFAULT OFF)
 optionx(GITHUB_ACTIONS BOOL "If GitHub Actions is enabled" DEFAULT OFF)
 
@@ -142,13 +139,5 @@ if(CMAKE_HOST_LINUX AND NOT WIN32 AND NOT APPLE)
 endif()
 
 optionx(USE_STATIC_LIBATOMIC BOOL "If libatomic should be statically linked" DEFAULT ${DEFAULT_STATIC_LIBATOMIC})
-
-if(APPLE)
-  set(DEFAULT_WEBKIT_ICU OFF)
-else()
-  set(DEFAULT_WEBKIT_ICU ON)
-endif()
-
-optionx(USE_WEBKIT_ICU BOOL "Use the ICU libraries from WebKit" DEFAULT ${DEFAULT_WEBKIT_ICU})
 
 optionx(ERROR_LIMIT STRING "Maximum number of errors to show when compiling C++ code" DEFAULT "100")

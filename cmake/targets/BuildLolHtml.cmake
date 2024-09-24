@@ -9,38 +9,38 @@ register_repository(
     8d4c273ded322193d017042d1f48df2766b0f88b
 )
 
-set(LOLHTML_CWD ${VENDOR_PATH}/${lolhtml}/c-api)
-set(LOLHTML_BUILD_PATH ${BUILD_PATH}/vendor/${lolhtml})
-
 if(DEBUG)
-  set(LOLHTML_BUILD_TYPE debug)
+  set(${lolhtml}_BUILD_TYPE debug)
 else()
-  set(LOLHTML_BUILD_TYPE release)
-endif()
-
-set(LOLHTML_BUILD_ARGS --target-dir ${LOLHTML_BUILD_PATH})
-
-if(RELEASE)
-  list(APPEND LOLHTML_BUILD_ARGS --release)
+  set(${lolhtml}_BUILD_TYPE release)
 endif()
 
 register_libraries(
   TARGET ${lolhtml}
-  PATH ${LOLHTML_BUILD_TYPE}
+  PATH ${${lolhtml}_BUILD_TYPE}
+  VARIABLE ${lolhtml}_LIBRARY
   lolhtml
 )
+
+set(${lolhtml}_BUILD_COMMAND
+  ${CARGO_EXECUTABLE}
+    build
+    --target-dir ${${lolhtml}_BUILD_PATH}
+)
+
+if(RELEASE)
+  list(APPEND ${lolhtml}_BUILD_COMMAND --release)
+endif()
 
 register_command(
   TARGET
     build-${lolhtml}
   CWD
-    ${LOLHTML_CWD}
+    ${${lolhtml}_CWD}/c-api
   COMMAND
-    ${CARGO_EXECUTABLE}
-      build
-      ${LOLHTML_BUILD_ARGS}
+    ${${lolhtml}_BUILD_COMMAND}
   OUTPUTS
-    ${LOLHTML_BUILD_PATH}/${LOLHTML_BUILD_TYPE}/${CMAKE_STATIC_LIBRARY_PREFIX}lolhtml${CMAKE_STATIC_LIBRARY_SUFFIX}
+    ${${lolhtml}_LIBRARY}
 )
 
 if(TARGET clone-${lolhtml})

@@ -54,8 +54,10 @@ steps:
           queue: "build-darwin"
           os: "darwin"
           arch: "aarch64"
+        env:
+          BUN_CPP_ONLY: "ON"
         command:
-          - "bun run build:ci --target bun-cpp"
+          - "bun run build:ci --target bun"
 
       - key: "darwin-aarch64-build-zig"
         label: ":darwin: aarch64 - build-zig"
@@ -154,8 +156,10 @@ steps:
           queue: "build-darwin"
           os: "darwin"
           arch: "x64"
+        env:
+          BUN_CPP_ONLY: "ON"
         command:
-          - "bun run build:ci --target bun-cpp"
+          - "bun run build:ci --target bun"
 
       - key: "darwin-x64-build-zig"
         label: ":darwin: x64 - build-zig"
@@ -254,8 +258,10 @@ steps:
           queue: "build-linux"
           os: "linux"
           arch: "x64"
+        env:
+          BUN_CPP_ONLY: "ON"
         command:
-          - "bun run build:ci --target bun-cpp"
+          - "bun run build:ci --target bun"
 
       - key: "linux-x64-build-zig"
         label: ":linux: x64 - build-zig"
@@ -389,8 +395,9 @@ steps:
           arch: "x64"
         env:
           ENABLE_BASELINE: "ON"
+          BUN_CPP_ONLY: "ON"
         command:
-          - "bun run build:ci --target bun-cpp"
+          - "bun run build:ci --target bun"
 
       - key: "linux-x64-baseline-build-zig"
         label: ":linux: x64-baseline - build-zig"
@@ -523,8 +530,10 @@ steps:
           queue: "build-linux"
           os: "linux"
           arch: "aarch64"
+        env:
+          BUN_CPP_ONLY: "ON"
         command:
-          - "bun run build:ci --target bun-cpp"
+          - "bun run build:ci --target bun"
 
       - key: "linux-aarch64-build-zig"
         label: ":linux: aarch64 - build-zig"
@@ -645,10 +654,6 @@ steps:
           queue: "build-windows"
           os: "windows"
           arch: "x64"
-        retry:
-          automatic:
-            - exit_status: 255
-              limit: 5
         command:
           - "bun run build:ci --target vendor"
 
@@ -658,12 +663,10 @@ steps:
           queue: "build-windows"
           os: "windows"
           arch: "x64"
-        retry:
-          automatic:
-            - exit_status: 255
-              limit: 5
+        env:
+          BUN_CPP_ONLY: "ON"
         command:
-          - "bun run build:ci --target bun-cpp"
+          - "bun run build:ci --target bun"
 
       - key: "windows-x64-build-zig"
         label: ":windows: x64 - build-zig"
@@ -682,10 +685,6 @@ steps:
           - "windows-x64-build-vendor"
           - "windows-x64-build-cpp"
           - "windows-x64-build-zig"
-        retry:
-          automatic:
-            - exit_status: 255
-              limit: 5
         env:
           BUN_LINK_ONLY: "ON"
         command:
@@ -726,10 +725,6 @@ steps:
           queue: "build-windows"
           os: "windows"
           arch: "x64"
-        retry:
-          automatic:
-            - exit_status: 255
-              limit: 5
         env:
           ENABLE_BASELINE: "ON"
         command:
@@ -741,14 +736,11 @@ steps:
           queue: "build-windows"
           os: "windows"
           arch: "x64"
-        retry:
-          automatic:
-            - exit_status: 255
-              limit: 5
         env:
           ENABLE_BASELINE: "ON"
+          BUN_CPP_ONLY: "ON"
         command:
-          - "bun run build:ci --target bun-cpp"
+          - "bun run build:ci --target bun"
 
       - key: "windows-x64-baseline-build-zig"
         label: ":windows: x64-baseline - build-zig"
@@ -769,10 +761,6 @@ steps:
           - "windows-x64-baseline-build-vendor"
           - "windows-x64-baseline-build-cpp"
           - "windows-x64-baseline-build-zig"
-        retry:
-          automatic:
-            - exit_status: 255
-              limit: 5
         env:
           ENABLE_BASELINE: "ON"
           BUN_LINK_ONLY: "ON"

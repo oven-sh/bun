@@ -39,7 +39,7 @@ register_command(
     ${${lolhtml}_CWD}/c-api
   COMMAND
     ${${lolhtml}_BUILD_COMMAND}
-  OUTPUTS
+  ARTIFACTS
     ${${lolhtml}_LIBRARY}
 )
 

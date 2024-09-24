@@ -1118,7 +1118,7 @@ pub const Formatter = struct {
 
             // Is this a react element?
             if (js_type.isObject()) {
-                if (value.get(globalThis, "$$typeof")) |typeof_symbol| {
+                if (value.getOwnTruthy(globalThis, "$$typeof")) |typeof_symbol| {
                     var reactElement = ZigString.init("react.element");
                     var react_fragment = ZigString.init("react.fragment");
 

@@ -9008,7 +9008,7 @@ pub const LinkerContext = struct {
         allocator: std.mem.Allocator,
         ast: *const JSAst,
     ) !void {
-        _ = source_index; // autofix
+        _ = source_index; // may be used
 
         const receiver_args = try allocator.dupe(G.Arg, &.{
             .{ .binding = Binding.alloc(allocator, B.Identifier{ .ref = ast.module_ref }, Logger.Loc.Empty) },
@@ -9023,8 +9023,7 @@ pub const LinkerContext = struct {
                     // TODO: check if this local is immediately assigned
                     // `require()` if so, we will instrument it with hot module
                     // reloading. other cases of `require` won't receive updates.
-                    _ = st; // autofix
-
+                    _ = st;
                     try stmts.inside_wrapper_suffix.append(stmt);
                 },
                 .s_import => |st| {
@@ -9034,7 +9033,7 @@ pub const LinkerContext = struct {
                     // automatically, instead of with bundler-added
                     // annotations like '__commonJS'.
                     //
-                    // this is not done in the parse step because the final
+                    // this cannot be done in the parse step because the final
                     // pretty path is not yet known. the other statement types
                     // are not handled here because some of those generate
                     // new local variables (it is too late to do that here).
@@ -9044,6 +9043,7 @@ pub const LinkerContext = struct {
                     else
                         record.path;
 
+                    const is_builtin = record.tag == .builtin or record.tag == .bun_test or record.tag == .bun;
                     const is_bare_import = st.star_name_loc == null and st.items.len == 0 and st.default_name == null;
 
                     const key_expr = switch (bun.FeatureFlags.kit_dev_module_keys) {
@@ -9056,15 +9056,14 @@ pub const LinkerContext = struct {
                     };
 
                     // module.importSync('path', (module) => ns = module)
-                    std.debug.print("uhh: {}, {}, {d}, {s}\n", .{ record.kind, record.tag, record.source_index.get(), record.path.text });
                     const call = Expr.init(E.Call, .{
                         .target = Expr.init(E.Dot, .{
                             .target = module_id,
-                            .name = "importSync",
+                            .name = if (is_builtin) "importBuiltin" else "importSync",
                             .name_loc = stmt.loc,
                         }, stmt.loc),
                         .args = js_ast.ExprNodeList.init(
-                            try allocator.dupe(Expr, if (is_bare_import)
+                            try allocator.dupe(Expr, if (is_bare_import or is_builtin)
                                 &.{key_expr}
                             else
                                 &.{

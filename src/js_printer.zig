@@ -2107,7 +2107,10 @@ fn NewPrinter(
                 if (p.options.module_type == .internal_kit_dev) {
                     p.printSpaceBeforeIdentifier();
                     p.printSymbol(p.options.commonjs_module_ref);
-                    p.print(".require(");
+                    if (record.tag == .builtin)
+                        p.print(".importBuiltin(")
+                    else
+                        p.print(".require(");
                     {
                         const path = record.path;
                         switch (bun.FeatureFlags.kit_dev_module_keys) {

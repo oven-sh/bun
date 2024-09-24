@@ -2815,7 +2815,7 @@ pub const HardcodedModule = enum {
 
     pub const Alias = struct {
         path: string,
-        tag: ImportRecord.Tag = .none,
+        tag: ImportRecord.Tag = .builtin,
     };
 
     pub const Aliases = struct {

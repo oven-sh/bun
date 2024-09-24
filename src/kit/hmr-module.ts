@@ -13,7 +13,11 @@ export const enum State {
 /**
  * This object is passed as the CommonJS "module", but has a bunch of
  * non-standard properties that are used for implementing hot-module
- * reloading. It is unacceptable to depend 
+ * reloading. It is unacceptable to depend on these properties, and
+ * it will not be considered a breaking change.
+ * 
+ * TODO: consider property mangling on this to prevent people
+ * depending on the HMR internals
  */
 export class HotModule {
   exports: any = {};
@@ -70,15 +74,7 @@ export function loadModule(key: Id): HotModule {
   module = new HotModule(key);
   const load = input_graph[key];
   if (!load) {
-    // TODO: use a separate function for node builtins
-    if (mode === 'server') {
-      try {
-        module.exports = import.meta.require(key);
-        registry.set(key, module);
-        return module;
-      } catch {}
-    }
-    throw new Error(`Failed to load bundled module '${key}'. This is not a dynamic import, and therefore is a bug in Bun`);
+    throw new Error(`Failed to load bundled module '${key}'. This is not a dynamic import, and therefore is a bug in Bun.`);
   }
   try {
     registry.set(key, module);

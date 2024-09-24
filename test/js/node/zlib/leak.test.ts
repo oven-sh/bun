@@ -29,6 +29,8 @@ describe("zlib compression does not leak memory", () => {
         Bun.gc(true);
         const after = process.memoryUsage.rss();
         console.log(after);
+        console.log("-", after - baseline);
+        console.log("-", 1024 * 1024 * 20);
         expect(after - baseline).toBeLessThan(1024 * 1024 * 20);
       },
       0,
@@ -50,6 +52,8 @@ describe("zlib compression does not leak memory", () => {
         Bun.gc(true);
         const after = process.memoryUsage.rss();
         console.log(after);
+        console.log("-", after - baseline);
+        console.log("-", 1024 * 1024 * 20);
         expect(after - baseline).toBeLessThan(1024 * 1024 * 20);
       },
       0,

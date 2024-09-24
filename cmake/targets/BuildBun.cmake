@@ -610,6 +610,9 @@ if(BUN_LINK_ONLY)
   target_link_libraries(${bun} PRIVATE ${BUN_CPP_OUTPUT})
 elseif(BUN_CPP_ONLY)
   add_library(${bun} STATIC ${BUN_CPP_SOURCES})
+  if(bunStrip)
+    add_custom_target(bun DEPENDS ${bun})
+  endif()
   upload_artifacts(
     TARGET ${bun}
     ${BUN_CPP_OUTPUT}

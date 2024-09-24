@@ -25,7 +25,6 @@ const isAnyArrayBuffer = b => b instanceof ArrayBuffer || b instanceof SharedArr
 const kMaxLength = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModule.kMaxLength;
 
 const {
-  genericNodeError,
   ERR_BROTLI_INVALID_PARAM,
   ERR_BUFFER_TOO_LARGE,
   ERR_INVALID_ARG_TYPE,
@@ -138,7 +137,7 @@ function zlibBufferSync(engine, buffer) {
 function zlibOnError(message, errno, code) {
   const self = this[owner_symbol];
   // There is no way to cleanly recover. Continuing only obscures problems.
-  const error = genericNodeError(message, { errno, code });
+  const error = new Error(message);
   error.errno = errno;
   error.code = code;
   self.destroy(error);

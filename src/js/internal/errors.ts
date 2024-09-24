@@ -1,12 +1,4 @@
-function genericNodeError(message, errorProperties) {
-  const err = new Error(message);
-  Object.assign(err, errorProperties);
-  return err;
-}
-
 export default {
-  genericNodeError,
-
   ERR_INVALID_ARG_TYPE: $newCppFunction("ErrorCode.cpp", "jsFunction_ERR_INVALID_ARG_TYPE", 3),
   ERR_OUT_OF_RANGE: $newCppFunction("ErrorCode.cpp", "jsFunction_ERR_OUT_OF_RANGE", 3),
   ERR_IPC_DISCONNECTED: $newCppFunction("ErrorCode.cpp", "jsFunction_ERR_IPC_DISCONNECTED", 0),

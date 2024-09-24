@@ -257,21 +257,21 @@ extern "C" uint8_t AsymmetricMatcherConstructorType__fromJS(JSC__JSGlobalObject*
         }
 
         auto stringConstructorValue = globalObject->stringPrototype()->getIfPropertyExists(globalObject, vm.propertyNames->constructor);
-        RETURN_IF_EXCEPTION(scope, static_cast<uint8_t>(AsymmetricMatcherConstructorType::none));
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (stringConstructorValue == object) {
             return static_cast<uint8_t>(AsymmetricMatcherConstructorType::String);
         }
 
         auto symbolConstructorValue = globalObject->symbolPrototype()->getIfPropertyExists(globalObject, vm.propertyNames->constructor);
-        RETURN_IF_EXCEPTION(scope, static_cast<uint8_t>(AsymmetricMatcherConstructorType::none));
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (symbolConstructorValue == object) {
             return static_cast<uint8_t>(AsymmetricMatcherConstructorType::Symbol);
         }
 
         auto bigIntConstructorValue = globalObject->bigIntPrototype()->getIfPropertyExists(globalObject, vm.propertyNames->constructor);
-        RETURN_IF_EXCEPTION(scope, static_cast<uint8_t>(AsymmetricMatcherConstructorType::none));
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (bigIntConstructorValue == object) {
             return static_cast<uint8_t>(AsymmetricMatcherConstructorType::BigInt);
@@ -1831,7 +1831,7 @@ JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
     result->putDirect(vm, clientData->builtinNames().errnoPublicName(), JSC::JSValue(err.errno_),
         JSC::PropertyAttribute::DontDelete | 0);
 
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::JSValue()));
+    RETURN_IF_EXCEPTION(scope, {});
     scope.release();
 
     return JSC::JSValue::encode(JSC::JSValue(result));
@@ -1853,10 +1853,10 @@ bool JSC__JSValue__hasOwnPropertyValue(JSC__JSValue value, JSC__JSGlobalObject* 
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     auto* object = JSC::jsCast<JSC::JSObject*>(JSC::JSValue::decode(value));
     auto propertyKey = JSC::JSValue::decode(ownKey).toPropertyKey(globalObject);
-    RETURN_IF_EXCEPTION(scope, false);
+    RETURN_IF_EXCEPTION(scope, {});
 
     const bool result = JSC::objectPrototypeHasOwnProperty(globalObject, object, propertyKey);
-    RETURN_IF_EXCEPTION(scope, false);
+    RETURN_IF_EXCEPTION(scope, {});
 
     return result;
 }
@@ -1939,7 +1939,7 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC__JSValue value, JSC__
         if (auto* object = jsDynamicCast<JSObject*>(cell)) {
             auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
             if (JSValue lengthValue = object->getIfPropertyExists(globalObject, globalObject->vm().propertyNames->length)) {
-                RETURN_IF_EXCEPTION(scope, 0);
+                RETURN_IF_EXCEPTION(scope, {});
                 RELEASE_AND_RETURN(scope, lengthValue.toNumber(globalObject));
             }
         }
@@ -2472,7 +2472,7 @@ extern "C" JSC::JSInternalPromise* JSModuleLoader__import(JSC::JSGlobalObject* g
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* promise = JSC::importModule(globalObject, JSC::Identifier::fromString(vm, moduleNameStr->toWTFString()), jsUndefined(), jsUndefined(), jsUndefined());
 
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    RETURN_IF_EXCEPTION(scope, {});
     return promise;
 }
 
@@ -2605,7 +2605,7 @@ JSC__JSValue JSC__JSValue__keys(JSC__JSGlobalObject* globalObject, JSC__JSValue 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSObject* object = JSC::JSValue::decode(objectValue).toObject(globalObject);
-    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    RETURN_IF_EXCEPTION(scope, {});
 
     RELEASE_AND_RETURN(scope, JSValue::encode(ownPropertyKeys(globalObject, object, PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude)));
 }
@@ -2750,7 +2750,7 @@ JSC__JSValue JSC__JSValue__createStringArray(JSC__JSGlobalObject* globalObject, 
 
         if (!array) {
             JSC::throwOutOfMemoryError(globalObject, scope);
-            return JSC::JSValue::encode(JSC::JSValue());
+            return {};
         }
 
         RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue(array)));
@@ -2781,7 +2781,7 @@ JSC__JSValue JSC__JSGlobalObject__createAggregateError(JSC__JSGlobalObject* glob
     }
     if (!array) {
         JSC::throwOutOfMemoryError(globalObject, scope);
-        return JSC::JSValue::encode(JSC::JSValue());
+        return {};
     }
 
     JSC::Structure* errorStructure = globalObject->errorStructure(JSC::ErrorType::AggregateError);
@@ -3147,7 +3147,7 @@ void JSC__JSPromise__rejectOnNextTickWithHandled(JSC__JSPromise* promise, JSC__J
             globalObject->m_asyncContextData.get()->getInternalField(0),
             promise,
             value);
-        RETURN_IF_EXCEPTION(scope, void());
+        RETURN_IF_EXCEPTION(scope, );
     }
 }
 
@@ -3389,7 +3389,7 @@ extern "C" void JSC__JSValue__putMayBeIndex(JSC__JSValue target, JSC__JSGlobalOb
 
     JSC::JSObject* object = JSC::JSValue::decode(target).asCell()->getObject();
     object->putDirectMayBeIndex(globalObject, JSC::PropertyName(identifier), JSC::JSValue::decode(value));
-    RETURN_IF_EXCEPTION(scope, void());
+    RETURN_IF_EXCEPTION(scope, );
 }
 
 bool JSC__JSValue__isClass(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
@@ -3846,12 +3846,12 @@ JSC__JSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC__JSValue JSValue0, JS
             }
 
             JSString* propNameString = item.toString(globalObject);
-            RETURN_IF_EXCEPTION(scope, false);
+            RETURN_IF_EXCEPTION(scope, {});
             PropertyName propName = PropertyName(propNameString->toIdentifier(globalObject));
-            RETURN_IF_EXCEPTION(scope, false);
+            RETURN_IF_EXCEPTION(scope, {});
 
             currProp = currProp.toObject(globalObject)->getIfPropertyExists(globalObject, propName);
-            RETURN_IF_EXCEPTION(scope, false);
+            RETURN_IF_EXCEPTION(scope, {});
             if (currProp.isEmpty()) {
                 return false;
             }
@@ -4000,10 +4000,10 @@ bool JSC__JSValue__stringIncludes(JSC__JSValue value, JSC__JSGlobalObject* globa
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     WTF::String stringToSearchIn = JSC::JSValue::decode(value).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, false);
+    RETURN_IF_EXCEPTION(scope, {});
 
     WTF::String searchString = JSC::JSValue::decode(other).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, false);
+    RETURN_IF_EXCEPTION(scope, {});
 
     return stringToSearchIn.find(searchString, 0) != WTF::notFound;
 }
@@ -5224,7 +5224,7 @@ restart:
                 iterating->methodTable()->getOwnPropertyNames(iterating, globalObject, properties, DontEnumPropertiesMode::Include);
             }
 
-            RETURN_IF_EXCEPTION(scope, void());
+            RETURN_IF_EXCEPTION(scope, );
             for (auto& property : properties) {
                 if (UNLIKELY(property.isEmpty() || property.isNull()))
                     continue;
@@ -5436,7 +5436,7 @@ bool JSC__JSValue__isInstanceOf(JSC__JSValue JSValue0, JSC__JSGlobalObject* glob
         return false;
     bool result = jsConstructor->hasInstance(globalObject, jsValue);
 
-    RETURN_IF_EXCEPTION(scope, false);
+    RETURN_IF_EXCEPTION(scope, {});
 
     return result;
 }

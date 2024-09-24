@@ -111,7 +111,7 @@ class Debugger {
       return;
     }
 
-    throw new TypeError(`Unsupported protocol: '${protocol}' (expected 'ws:', 'ws+unix:', or 'wss:')`);
+    throw new TypeError(`Unsupported protocol: '${protocol}' (expected 'ws:' or 'ws+unix:')`);
   }
 
   get #websocket(): WebSocketHandler<Connection> {

@@ -207,6 +207,36 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             return null;
         }
 
+        pub fn getAnyCase(input: anytype) ?V {
+            return getCaseInsensitiveWithEql(input, bun.strings.eqlComptimeIgnoreLen);
+        }
+
+        pub fn getCaseInsensitiveWithEql(input: anytype, comptime eql: anytype) ?V {
+            const Input = @TypeOf(input);
+            const length = if (@hasField(Input, "len")) input.len else input.length();
+            if (length < precomputed.min_len or length > precomputed.max_len)
+                return null;
+
+            comptime var i: usize = precomputed.min_len;
+            inline while (i <= precomputed.max_len) : (i += 1) {
+                if (length == i) {
+                    const lowercased: [i]u8 = brk: {
+                        var buf: [i]u8 = undefined;
+                        for (input[0..i], &buf) |c, *b| {
+                            b.* = switch (c) {
+                                'A'...'Z' => c + 32,
+                                else => c,
+                            };
+                        }
+                        break :brk buf;
+                    };
+                    return getWithLengthAndEql(&lowercased, i, eql);
+                }
+            }
+
+            return null;
+        }
+
         pub fn getWithEqlList(input: anytype, comptime eql: anytype) ?V {
             const Input = @TypeOf(input);
             const length = if (@hasField(Input, "len")) input.len else input.length();

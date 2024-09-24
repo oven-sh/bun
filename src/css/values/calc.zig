@@ -269,6 +269,32 @@ pub fn Calc(comptime V: type) type {
             return parseWith(input, {}, Fn.parseWithFn);
         }
 
+        const CalcUnit = enum {
+            abs,
+            acos,
+            asin,
+            atan,
+            atan2,
+            calc,
+            clamp,
+            cos,
+            exp,
+            hypot,
+            log,
+            max,
+            min,
+            mod,
+            pow,
+            rem,
+            round,
+            sign,
+            sin,
+            sqrt,
+            tan,
+
+            pub const Map = bun.ComptimeEnumMap(CalcUnit);
+        };
+
         pub fn parseWith(
             input: *css.Parser,
             ctx: anytype,
@@ -279,470 +305,490 @@ pub fn Calc(comptime V: type) type {
                 .result => |v| v,
                 .err => |e| return .{ .err = e },
             };
-            // todo_stuff.match_ignore_ascii_case
-            if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("calc", f)) {
-                const Closure = struct {
-                    ctx: @TypeOf(ctx),
-                    pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
-                        return This.parseSum(i, self.ctx, parseIdent);
-                    }
-                };
-                var closure = Closure{ .ctx = ctx };
-                const calc = switch (input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn)) {
-                    .result => |vv| vv,
-                    .err => |e| return .{ .err = e },
-                };
-                if (calc == .value or calc == .number) return .{ .result = calc };
-                return .{ .result = Calc(V){
-                    .function = bun.create(
-                        input.allocator(),
-                        MathFunction(V),
-                        MathFunction(V){ .calc = calc },
-                    ),
-                } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("min", f)) {
-                const Closure = struct {
-                    ctx: @TypeOf(ctx),
-                    pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(ArrayList(This)) {
-                        return i.parseCommaSeparatedWithCtx(This, self, @This().parseOne);
-                    }
-                    pub fn parseOne(self: *@This(), i: *css.Parser) Result(This) {
-                        return This.parseSum(i, self.ctx, parseIdent);
-                    }
-                };
-                var closure = Closure{ .ctx = ctx };
-                var reduced = switch (input.parseNestedBlock(ArrayList(This), &closure, Closure.parseNestedBlockFn)) {
-                    .result => |vv| vv,
-                    .err => |e| return .{ .err = e },
-                };
-                // PERF(alloc): i don't like this additional allocation
-                // can we use stack fallback here if the common case is that there will be 1 argument?
-                This.reduceArgs(input.allocator(), &reduced, std.math.Order.lt);
-                // var reduced: ArrayList(This) = This.reduceArgs(&args, std.math.Order.lt);
-                if (reduced.items.len == 1) {
-                    defer reduced.deinit(input.allocator());
-                    return .{ .result = reduced.swapRemove(0) };
-                }
-                return .{ .result = This{
-                    .function = bun.create(
-                        input.allocator(),
-                        MathFunction(V),
-                        MathFunction(V){ .min = reduced },
-                    ),
-                } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("max", f)) {
-                const Closure = struct {
-                    ctx: @TypeOf(ctx),
-                    pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(ArrayList(This)) {
-                        return i.parseCommaSeparatedWithCtx(This, self, @This().parseOne);
-                    }
-                    pub fn parseOne(self: *@This(), i: *css.Parser) Result(This) {
-                        return This.parseSum(i, self.ctx, parseIdent);
-                    }
-                };
-                var closure = Closure{ .ctx = ctx };
-                var reduced = switch (input.parseNestedBlock(ArrayList(This), &closure, Closure.parseNestedBlockFn)) {
-                    .result => |vv| vv,
-                    .err => |e| return .{ .err = e },
-                };
-                // PERF: i don't like this additional allocation
-                This.reduceArgs(input.allocator(), &reduced, std.math.Order.gt);
-                // var reduced: ArrayList(This) = This.reduceArgs(&args, std.math.Order.gt);
-                if (reduced.items.len == 1) {
-                    return .{ .result = reduced.orderedRemove(0) };
-                }
-                return .{ .result = This{
-                    .function = bun.create(
-                        input.allocator(),
-                        MathFunction(V),
-                        MathFunction(V){ .max = reduced },
-                    ),
-                } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("clamp", f)) {
-                const ClosureResult = struct { ?This, This, ?This };
-                const Closure = struct {
-                    ctx: @TypeOf(ctx),
 
-                    pub fn parseNestedBlock(self: *@This(), i: *css.Parser) Result(ClosureResult) {
-                        const min = switch (This.parseSum(i, self, parseIdentWrapper)) {
-                            .result => |vv| vv,
-                            .err => |e| return .{ .err = e },
-                        };
-                        if (i.expectComma().asErr()) |e| return .{ .err = e };
-                        const center = switch (This.parseSum(i, self, parseIdentWrapper)) {
-                            .result => |vv| vv,
-                            .err => |e| return .{ .err = e },
-                        };
-                        if (i.expectComma().asErr()) |e| return .{ .err = e };
-                        const max = switch (This.parseSum(i, self, parseIdentWrapper)) {
-                            .result => |vv| vv,
-                            .err => |e| return .{ .err = e },
-                        };
-                        return .{ .result = .{ min, center, max } };
-                    }
-
-                    pub fn parseIdentWrapper(self: *@This(), ident: []const u8) ?This {
-                        return parseIdent(self.ctx, ident);
-                    }
-                };
-                var closure = Closure{
-                    .ctx = ctx,
-                };
-                var min, var center, var max = switch (input.parseNestedBlock(
-                    ClosureResult,
-                    &closure,
-                    Closure.parseNestedBlock,
-                )) {
-                    .result => |vv| vv,
-                    .err => |e| return .{ .err = e },
-                };
-
-                // According to the spec, the minimum should "win" over the maximum if they are in the wrong order.
-                const cmp = if (max != null and max.? == .value and center == .value)
-                    css.generic.partialCmp(V, center.value, max.?.value)
-                else
-                    null;
-
-                // If center is known to be greater than the maximum, replace it with maximum and remove the max argument.
-                // Otherwise, if center is known to be less than the maximum, remove the max argument.
-                if (cmp) |cmp_val| {
-                    if (cmp_val == std.math.Order.gt) {
-                        const val = max.?;
-                        center = val;
-                        max = null;
-                    } else {
-                        min = null;
-                    }
-                }
-
-                const switch_val: u8 = (@as(u8, @intFromBool(min != null)) << 1) | (@as(u8, @intFromBool(min != null)));
-                // switch (min, max)
-                return .{ .result = switch (switch_val) {
-                    0b00 => center,
-                    0b10 => This{
+            switch (CalcUnit.Map.getAnyCase(f) orelse return .{ .err = location.newUnexpectedTokenError(.{ .ident = f }) }) {
+                .calc => {
+                    const Closure = struct {
+                        ctx: @TypeOf(ctx),
+                        pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
+                            return This.parseSum(i, self.ctx, parseIdent);
+                        }
+                    };
+                    var closure = Closure{ .ctx = ctx };
+                    const calc = switch (input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn)) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    };
+                    if (calc == .value or calc == .number) return .{ .result = calc };
+                    return .{ .result = Calc(V){
                         .function = bun.create(
                             input.allocator(),
                             MathFunction(V),
-                            MathFunction(V){
-                                .max = arr2(
-                                    input.allocator(),
-                                    min.?,
-                                    center,
-                                ),
-                            },
+                            MathFunction(V){ .calc = calc },
                         ),
-                    },
-                    0b01 => This{
+                    } };
+                },
+                .min => {
+                    const Closure = struct {
+                        ctx: @TypeOf(ctx),
+                        pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(ArrayList(This)) {
+                            return i.parseCommaSeparatedWithCtx(This, self, @This().parseOne);
+                        }
+                        pub fn parseOne(self: *@This(), i: *css.Parser) Result(This) {
+                            return This.parseSum(i, self.ctx, parseIdent);
+                        }
+                    };
+                    var closure = Closure{ .ctx = ctx };
+                    var reduced = switch (input.parseNestedBlock(ArrayList(This), &closure, Closure.parseNestedBlockFn)) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    };
+                    // PERF(alloc): i don't like this additional allocation
+                    // can we use stack fallback here if the common case is that there will be 1 argument?
+                    This.reduceArgs(input.allocator(), &reduced, std.math.Order.lt);
+                    // var reduced: ArrayList(This) = This.reduceArgs(&args, std.math.Order.lt);
+                    if (reduced.items.len == 1) {
+                        defer reduced.deinit(input.allocator());
+                        return .{ .result = reduced.swapRemove(0) };
+                    }
+                    return .{ .result = This{
                         .function = bun.create(
                             input.allocator(),
                             MathFunction(V),
-                            MathFunction(V){
-                                .min = arr2(
-                                    input.allocator(),
-                                    max.?,
-                                    center,
-                                ),
-                            },
+                            MathFunction(V){ .min = reduced },
                         ),
-                    },
-                    0b11 => This{
+                    } };
+                },
+                .max => {
+                    const Closure = struct {
+                        ctx: @TypeOf(ctx),
+                        pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(ArrayList(This)) {
+                            return i.parseCommaSeparatedWithCtx(This, self, @This().parseOne);
+                        }
+                        pub fn parseOne(self: *@This(), i: *css.Parser) Result(This) {
+                            return This.parseSum(i, self.ctx, parseIdent);
+                        }
+                    };
+                    var closure = Closure{ .ctx = ctx };
+                    var reduced = switch (input.parseNestedBlock(ArrayList(This), &closure, Closure.parseNestedBlockFn)) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    };
+                    // PERF: i don't like this additional allocation
+                    This.reduceArgs(input.allocator(), &reduced, std.math.Order.gt);
+                    // var reduced: ArrayList(This) = This.reduceArgs(&args, std.math.Order.gt);
+                    if (reduced.items.len == 1) {
+                        return .{ .result = reduced.orderedRemove(0) };
+                    }
+                    return .{ .result = This{
                         .function = bun.create(
                             input.allocator(),
                             MathFunction(V),
-                            MathFunction(V){
-                                .clamp = .{
-                                    .min = min.?,
-                                    .center = center,
-                                    .max = max.?,
-                                },
-                            },
+                            MathFunction(V){ .max = reduced },
                         ),
-                    },
-                    else => unreachable,
-                } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("round", f)) {
-                const Closure = struct {
-                    ctx: @TypeOf(ctx),
-                    pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
-                        const strategy = if (i.tryParse(RoundingStrategy.parse, .{}).asValue()) |s| brk: {
+                    } };
+                },
+                .clamp => {
+                    const ClosureResult = struct { ?This, This, ?This };
+                    const Closure = struct {
+                        ctx: @TypeOf(ctx),
+
+                        pub fn parseNestedBlock(self: *@This(), i: *css.Parser) Result(ClosureResult) {
+                            const min = switch (This.parseSum(i, self, parseIdentWrapper)) {
+                                .result => |vv| vv,
+                                .err => |e| return .{ .err = e },
+                            };
                             if (i.expectComma().asErr()) |e| return .{ .err = e };
-                            break :brk s;
-                        } else RoundingStrategy.default();
+                            const center = switch (This.parseSum(i, self, parseIdentWrapper)) {
+                                .result => |vv| vv,
+                                .err => |e| return .{ .err = e },
+                            };
+                            if (i.expectComma().asErr()) |e| return .{ .err = e };
+                            const max = switch (This.parseSum(i, self, parseIdentWrapper)) {
+                                .result => |vv| vv,
+                                .err => |e| return .{ .err = e },
+                            };
+                            return .{ .result = .{ min, center, max } };
+                        }
 
-                        const OpAndFallbackCtx = struct {
-                            strategy: RoundingStrategy,
+                        pub fn parseIdentWrapper(self: *@This(), ident: []const u8) ?This {
+                            return parseIdent(self.ctx, ident);
+                        }
+                    };
+                    var closure = Closure{
+                        .ctx = ctx,
+                    };
+                    var min, var center, var max = switch (input.parseNestedBlock(
+                        ClosureResult,
+                        &closure,
+                        Closure.parseNestedBlock,
+                    )) {
+                        .result => |vv| vv,
+                        .err => |e| return .{ .err = e },
+                    };
 
-                            pub fn op(this: *const @This(), a: f32, b: f32) f32 {
-                                return round({}, a, b, this.strategy);
-                            }
+                    // According to the spec, the minimum should "win" over the maximum if they are in the wrong order.
+                    const cmp = if (max != null and max.? == .value and center == .value)
+                        css.generic.partialCmp(V, center.value, max.?.value)
+                    else
+                        null;
 
-                            pub fn fallback(this: *const @This(), a: This, b: This) MathFunction(V) {
-                                return MathFunction(V){
-                                    .round = .{
-                                        .strategy = this.strategy,
-                                        .value = a,
-                                        .interval = b,
+                    // If center is known to be greater than the maximum, replace it with maximum and remove the max argument.
+                    // Otherwise, if center is known to be less than the maximum, remove the max argument.
+                    if (cmp) |cmp_val| {
+                        if (cmp_val == std.math.Order.gt) {
+                            const val = max.?;
+                            center = val;
+                            max = null;
+                        } else {
+                            min = null;
+                        }
+                    }
+
+                    const switch_val: u8 = (@as(u8, @intFromBool(min != null)) << 1) | (@as(u8, @intFromBool(min != null)));
+                    // switch (min, max)
+                    return .{ .result = switch (switch_val) {
+                        0b00 => center,
+                        0b10 => This{
+                            .function = bun.create(
+                                input.allocator(),
+                                MathFunction(V),
+                                MathFunction(V){
+                                    .max = arr2(
+                                        input.allocator(),
+                                        min.?,
+                                        center,
+                                    ),
+                                },
+                            ),
+                        },
+                        0b01 => This{
+                            .function = bun.create(
+                                input.allocator(),
+                                MathFunction(V),
+                                MathFunction(V){
+                                    .min = arr2(
+                                        input.allocator(),
+                                        max.?,
+                                        center,
+                                    ),
+                                },
+                            ),
+                        },
+                        0b11 => This{
+                            .function = bun.create(
+                                input.allocator(),
+                                MathFunction(V),
+                                MathFunction(V){
+                                    .clamp = .{
+                                        .min = min.?,
+                                        .center = center,
+                                        .max = max.?,
                                     },
-                                };
+                                },
+                            ),
+                        },
+                        else => unreachable,
+                    } };
+                },
+                .round => {
+                    const Closure = struct {
+                        ctx: @TypeOf(ctx),
+                        pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
+                            const strategy = if (i.tryParse(RoundingStrategy.parse, .{}).asValue()) |s| brk: {
+                                if (i.expectComma().asErr()) |e| return .{ .err = e };
+                                break :brk s;
+                            } else RoundingStrategy.default();
+
+                            const OpAndFallbackCtx = struct {
+                                strategy: RoundingStrategy,
+
+                                pub fn op(this: *const @This(), a: f32, b: f32) f32 {
+                                    return round({}, a, b, this.strategy);
+                                }
+
+                                pub fn fallback(this: *const @This(), a: This, b: This) MathFunction(V) {
+                                    return MathFunction(V){
+                                        .round = .{
+                                            .strategy = this.strategy,
+                                            .value = a,
+                                            .interval = b,
+                                        },
+                                    };
+                                }
+                            };
+                            var ctx_for_op_and_fallback = OpAndFallbackCtx{
+                                .strategy = strategy,
+                            };
+                            return This.parseMathFn(
+                                i,
+                                &ctx_for_op_and_fallback,
+                                OpAndFallbackCtx.op,
+                                OpAndFallbackCtx.fallback,
+                                self.ctx,
+                                parseIdent,
+                            );
+                        }
+                    };
+                    var closure = Closure{
+                        .ctx = ctx,
+                    };
+                    return input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
+                },
+                .rem => {
+                    const Closure = struct {
+                        ctx: @TypeOf(ctx),
+
+                        pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
+                            return This.parseMathFn(
+                                i,
+                                {},
+                                @This().rem,
+                                mathFunctionRem,
+                                self.ctx,
+                                parseIdent,
+                            );
+                        }
+
+                        pub fn rem(_: void, a: f32, b: f32) f32 {
+                            return @mod(a, b);
+                        }
+                        pub fn mathFunctionRem(_: void, a: This, b: This) MathFunction(V) {
+                            return MathFunction(V){
+                                .rem = .{
+                                    .dividend = a,
+                                    .divisor = b,
+                                },
+                            };
+                        }
+                    };
+                    var closure = Closure{
+                        .ctx = ctx,
+                    };
+                    return input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
+                },
+                .mod => {
+                    const Closure = struct {
+                        ctx: @TypeOf(ctx),
+
+                        pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
+                            return This.parseMathFn(
+                                i,
+                                {},
+                                @This().modulo,
+                                mathFunctionMod,
+                                self.ctx,
+                                parseIdent,
+                            );
+                        }
+
+                        pub fn modulo(_: void, a: f32, b: f32) f32 {
+                            // return ((a % b) + b) % b;
+                            return @mod((@mod(a, b) + b), b);
+                        }
+                        pub fn mathFunctionMod(_: void, a: This, b: This) MathFunction(V) {
+                            return MathFunction(V){
+                                .mod_ = .{
+                                    .dividend = a,
+                                    .divisor = b,
+                                },
+                            };
+                        }
+                    };
+                    var closure = Closure{
+                        .ctx = ctx,
+                    };
+                    return input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
+                },
+                .sin => {
+                    return This.parseTrig(input, .sin, false, ctx, parseIdent);
+                },
+                .cos => {
+                    return This.parseTrig(input, .cos, false, ctx, parseIdent);
+                },
+                .tan => {
+                    return This.parseTrig(input, .tan, false, ctx, parseIdent);
+                },
+                .asin => {
+                    return This.parseTrig(input, .asin, true, ctx, parseIdent);
+                },
+                .acos => {
+                    return This.parseTrig(input, .acos, true, ctx, parseIdent);
+                },
+                .atan => {
+                    return This.parseTrig(input, .atan, true, ctx, parseIdent);
+                },
+                .atan2 => {
+                    const Closure = struct {
+                        ctx: @TypeOf(ctx),
+                        pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
+                            const res = switch (This.parseAtan2(i, self.ctx, parseIdent)) {
+                                .result => |v| v,
+                                .err => |e| return .{ .err = e },
+                            };
+                            if (css.generic.tryFromAngle(V, res)) |v| {
+                                return .{ .result = This{
+                                    .value = bun.create(
+                                        i.allocator(),
+                                        V,
+                                        v,
+                                    ),
+                                } };
                             }
-                        };
-                        var ctx_for_op_and_fallback = OpAndFallbackCtx{
-                            .strategy = strategy,
-                        };
-                        return This.parseMathFn(
-                            i,
-                            &ctx_for_op_and_fallback,
-                            OpAndFallbackCtx.op,
-                            OpAndFallbackCtx.fallback,
-                            self.ctx,
-                            parseIdent,
-                        );
-                    }
-                };
-                var closure = Closure{
-                    .ctx = ctx,
-                };
-                return input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("rem", f)) {
-                const Closure = struct {
-                    ctx: @TypeOf(ctx),
 
-                    pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
-                        return This.parseMathFn(
-                            i,
-                            {},
-                            @This().rem,
-                            mathFunctionRem,
-                            self.ctx,
-                            parseIdent,
-                        );
-                    }
+                            return .{ .err = i.newCustomError(css.ParserError{ .invalid_value = {} }) };
+                        }
+                    };
+                    var closure = Closure{ .ctx = ctx };
+                    return input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
+                },
+                .pow => {
+                    const Closure = struct {
+                        ctx: @TypeOf(ctx),
+                        pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
+                            const a = switch (This.parseNumeric(i, self.ctx, parseIdent)) {
+                                .result => |vv| vv,
+                                .err => |e| return .{ .err = e },
+                            };
 
-                    pub fn rem(_: void, a: f32, b: f32) f32 {
-                        return @mod(a, b);
-                    }
-                    pub fn mathFunctionRem(_: void, a: This, b: This) MathFunction(V) {
-                        return MathFunction(V){
-                            .rem = .{
-                                .dividend = a,
-                                .divisor = b,
-                            },
-                        };
-                    }
-                };
-                var closure = Closure{
-                    .ctx = ctx,
-                };
-                return input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("mod", f)) {
-                const Closure = struct {
-                    ctx: @TypeOf(ctx),
+                            if (i.expectComma().asErr()) |e| return .{ .err = e };
 
-                    pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
-                        return This.parseMathFn(
-                            i,
-                            {},
-                            @This().modulo,
-                            mathFunctionMod,
-                            self.ctx,
-                            parseIdent,
-                        );
-                    }
+                            const b = switch (This.parseNumeric(i, self.ctx, parseIdent)) {
+                                .result => |vv| vv,
+                                .err => |e| return .{ .err = e },
+                            };
 
-                    pub fn modulo(_: void, a: f32, b: f32) f32 {
-                        // return ((a % b) + b) % b;
-                        return @mod((@mod(a, b) + b), b);
-                    }
-                    pub fn mathFunctionMod(_: void, a: This, b: This) MathFunction(V) {
-                        return MathFunction(V){
-                            .mod_ = .{
-                                .dividend = a,
-                                .divisor = b,
-                            },
-                        };
-                    }
-                };
-                var closure = Closure{
-                    .ctx = ctx,
-                };
-                return input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("sin", f)) {
-                return This.parseTrig(input, .sin, false, ctx, parseIdent);
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("cos", f)) {
-                return This.parseTrig(input, .cos, false, ctx, parseIdent);
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("tan", f)) {
-                return This.parseTrig(input, .tan, false, ctx, parseIdent);
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("asin", f)) {
-                return This.parseTrig(input, .asin, true, ctx, parseIdent);
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("acos", f)) {
-                return This.parseTrig(input, .acos, true, ctx, parseIdent);
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("atan", f)) {
-                return This.parseTrig(input, .atan, true, ctx, parseIdent);
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("atan2", f)) {
-                const Closure = struct {
-                    ctx: @TypeOf(ctx),
-                    pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
-                        const res = switch (This.parseAtan2(i, self.ctx, parseIdent)) {
-                            .result => |v| v,
-                            .err => |e| return .{ .err = e },
-                        };
-                        if (css.generic.tryFromAngle(V, res)) |v| {
                             return .{ .result = This{
-                                .value = bun.create(
+                                .number = std.math.pow(f32, a, b),
+                            } };
+                        }
+                    };
+                    var closure = Closure{ .ctx = ctx };
+                    return input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
+                },
+                .log => {
+                    const Closure = struct {
+                        ctx: @TypeOf(ctx),
+                        pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
+                            const value = switch (This.parseNumeric(i, self.ctx, parseIdent)) {
+                                .result => |vv| vv,
+                                .err => |e| return .{ .err = e },
+                            };
+                            if (i.tryParse(css.Parser.expectComma, .{}).isOk()) {
+                                const base = switch (This.parseNumeric(i, self.ctx, parseIdent)) {
+                                    .result => |vv| vv,
+                                    .err => |e| return .{ .err = e },
+                                };
+                                return .{ .result = This{ .number = std.math.log(f32, base, value) } };
+                            }
+                            return .{ .result = This{ .number = std.math.log(f32, std.math.e, value) } };
+                        }
+                    };
+                    var closure = Closure{ .ctx = ctx };
+                    return input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
+                },
+                .sqrt => {
+                    return This.parseNumericFn(input, .sqrt, ctx, parseIdent);
+                },
+                .exp => {
+                    return This.parseNumericFn(input, .exp, ctx, parseIdent);
+                },
+                .hypot => {
+                    const Closure = struct {
+                        ctx: @TypeOf(ctx),
+                        pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
+                            var args = switch (i.parseCommaSeparatedWithCtx(This, self, parseOne)) {
+                                .result => |v| v,
+                                .err => |e| return .{ .err = e },
+                            };
+                            const val = switch (This.parseHypot(i.allocator(), &args)) {
+                                .result => |vv| vv,
+                                .err => |e| return .{ .err = e },
+                            };
+
+                            if (val) |v| return .{ .result = v };
+
+                            return .{ .result = This{
+                                .function = bun.create(
                                     i.allocator(),
-                                    V,
-                                    v,
+                                    MathFunction(V),
+                                    MathFunction(V){ .hypot = args },
                                 ),
                             } };
                         }
 
-                        return .{ .err = i.newCustomError(css.ParserError{ .invalid_value = {} }) };
-                    }
-                };
-                var closure = Closure{ .ctx = ctx };
-                return input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("pow", f)) {
-                const Closure = struct {
-                    ctx: @TypeOf(ctx),
-                    pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
-                        const a = switch (This.parseNumeric(i, self.ctx, parseIdent)) {
-                            .result => |vv| vv,
-                            .err => |e| return .{ .err = e },
-                        };
-
-                        if (i.expectComma().asErr()) |e| return .{ .err = e };
-
-                        const b = switch (This.parseNumeric(i, self.ctx, parseIdent)) {
-                            .result => |vv| vv,
-                            .err => |e| return .{ .err = e },
-                        };
-
-                        return .{ .result = This{
-                            .number = std.math.pow(f32, a, b),
-                        } };
-                    }
-                };
-                var closure = Closure{ .ctx = ctx };
-                return input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("log", f)) {
-                const Closure = struct {
-                    ctx: @TypeOf(ctx),
-                    pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
-                        const value = switch (This.parseNumeric(i, self.ctx, parseIdent)) {
-                            .result => |vv| vv,
-                            .err => |e| return .{ .err = e },
-                        };
-                        if (i.tryParse(css.Parser.expectComma, .{}).isOk()) {
-                            const base = switch (This.parseNumeric(i, self.ctx, parseIdent)) {
+                        pub fn parseOne(self: *@This(), i: *css.Parser) Result(This) {
+                            return This.parseSum(i, self.ctx, parseIdent);
+                        }
+                    };
+                    var closure = Closure{ .ctx = ctx };
+                    return input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
+                },
+                .abs => {
+                    const Closure = struct {
+                        ctx: @TypeOf(ctx),
+                        pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
+                            const v = switch (This.parseSum(i, self.ctx, parseIdent)) {
                                 .result => |vv| vv,
                                 .err => |e| return .{ .err = e },
                             };
-                            return .{ .result = This{ .number = std.math.log(f32, base, value) } };
+                            return .{
+                                .result = if (This.applyMap(&v, i.allocator(), absf)) |vv| vv else This{
+                                    .function = bun.create(
+                                        i.allocator(),
+                                        MathFunction(V),
+                                        MathFunction(V){ .abs = v },
+                                    ),
+                                },
+                            };
                         }
-                        return .{ .result = This{ .number = std.math.log(f32, std.math.e, value) } };
-                    }
-                };
-                var closure = Closure{ .ctx = ctx };
-                return input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("sqrt", f)) {
-                return This.parseNumericFn(input, .sqrt, ctx, parseIdent);
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("exp", f)) {
-                return This.parseNumericFn(input, .exp, ctx, parseIdent);
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("hypot", f)) {
-                const Closure = struct {
-                    ctx: @TypeOf(ctx),
-                    pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
-                        var args = switch (i.parseCommaSeparatedWithCtx(This, self, parseOne)) {
-                            .result => |v| v,
-                            .err => |e| return .{ .err = e },
-                        };
-                        const val = switch (This.parseHypot(i.allocator(), &args)) {
-                            .result => |vv| vv,
-                            .err => |e| return .{ .err = e },
-                        };
+                    };
+                    var closure = Closure{ .ctx = ctx };
+                    return input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
+                },
+                .sign => {
+                    const Closure = struct {
+                        ctx: @TypeOf(ctx),
+                        pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
+                            const v = switch (This.parseSum(i, self.ctx, parseIdent)) {
+                                .result => |vv| vv,
+                                .err => |e| return .{ .err = e },
+                            };
+                            switch (v) {
+                                .number => |*n| return .{ .result = This{ .number = std.math.sign(n.*) } },
+                                .value => |v2| {
+                                    const MapFn = struct {
+                                        pub fn sign(s: f32) f32 {
+                                            return std.math.sign(s);
+                                        }
+                                    };
+                                    // First map so we ignore percentages, which must be resolved to their
+                                    // computed value in order to determine the sign.
+                                    if (css.generic.tryMap(V, v2, MapFn.sign)) |new_v| {
+                                        // sign() alwasy resolves to a number.
+                                        return .{
+                                            .result = This{
+                                                // .number = css.generic.trySign(V, &new_v) orelse bun.unreachablePanic("sign always resolved to a number.", .{}),
+                                                .number = css.generic.trySign(V, &new_v) orelse @panic("sign() always resolves to a number."),
+                                            },
+                                        };
+                                    }
+                                },
+                                else => {},
+                            }
 
-                        if (val) |v| return .{ .result = v };
-
-                        return .{ .result = This{
-                            .function = bun.create(
-                                i.allocator(),
-                                MathFunction(V),
-                                MathFunction(V){ .hypot = args },
-                            ),
-                        } };
-                    }
-
-                    pub fn parseOne(self: *@This(), i: *css.Parser) Result(This) {
-                        return This.parseSum(i, self.ctx, parseIdent);
-                    }
-                };
-                var closure = Closure{ .ctx = ctx };
-                return input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("abs", f)) {
-                const Closure = struct {
-                    ctx: @TypeOf(ctx),
-                    pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
-                        const v = switch (This.parseSum(i, self.ctx, parseIdent)) {
-                            .result => |vv| vv,
-                            .err => |e| return .{ .err = e },
-                        };
-                        return .{
-                            .result = if (This.applyMap(&v, i.allocator(), absf)) |vv| vv else This{
+                            return .{ .result = This{
                                 .function = bun.create(
                                     i.allocator(),
                                     MathFunction(V),
-                                    MathFunction(V){ .abs = v },
+                                    MathFunction(V){ .sign = v },
                                 ),
-                            },
-                        };
-                    }
-                };
-                var closure = Closure{ .ctx = ctx };
-                return input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("sign", f)) {
-                const Closure = struct {
-                    ctx: @TypeOf(ctx),
-                    pub fn parseNestedBlockFn(self: *@This(), i: *css.Parser) Result(This) {
-                        const v = switch (This.parseSum(i, self.ctx, parseIdent)) {
-                            .result => |vv| vv,
-                            .err => |e| return .{ .err = e },
-                        };
-                        switch (v) {
-                            .number => |*n| return .{ .result = This{ .number = std.math.sign(n.*) } },
-                            .value => |v2| {
-                                const MapFn = struct {
-                                    pub fn sign(s: f32) f32 {
-                                        return std.math.sign(s);
-                                    }
-                                };
-                                // First map so we ignore percentages, which must be resolved to their
-                                // computed value in order to determine the sign.
-                                if (css.generic.tryMap(V, v2, MapFn.sign)) |new_v| {
-                                    // sign() alwasy resolves to a number.
-                                    return .{
-                                        .result = This{
-                                            // .number = css.generic.trySign(V, &new_v) orelse bun.unreachablePanic("sign always resolved to a number.", .{}),
-                                            .number = css.generic.trySign(V, &new_v) orelse @panic("sign() always resolves to a number."),
-                                        },
-                                    };
-                                }
-                            },
-                            else => {},
+                            } };
                         }
-
-                        return .{ .result = This{
-                            .function = bun.create(
-                                i.allocator(),
-                                MathFunction(V),
-                                MathFunction(V){ .sign = v },
-                            ),
-                        } };
-                    }
-                };
-                var closure = Closure{ .ctx = ctx };
-                return input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
-            } else {
-                return .{ .err = location.newUnexpectedTokenError(.{ .ident = f }) };
+                    };
+                    var closure = Closure{ .ctx = ctx };
+                    return input.parseNestedBlock(This, &closure, Closure.parseNestedBlockFn);
+                },
             }
         }
 

@@ -42,6 +42,7 @@ pub const BunObject = struct {
     pub const shellEscape = toJSCallback(Bun.shellEscape);
     pub const createParsedShellScript = toJSCallback(bun.shell.ParsedShellScript.createParsedShellScript);
     pub const createShellInterpreter = toJSCallback(bun.shell.Interpreter.createShellInterpreter);
+    pub const color = bun.css.CssColor.jsFunctionColor;
     // --- Callbacks ---
 
     // --- Getters ---
@@ -136,12 +137,13 @@ pub const BunObject = struct {
         // --- Getters --
 
         // -- Callbacks --
-        @export(BunObject.createParsedShellScript, .{ .name = callbackName("createParsedShellScript") });
-        @export(BunObject.createShellInterpreter, .{ .name = callbackName("createShellInterpreter") });
         @export(BunObject.allocUnsafe, .{ .name = callbackName("allocUnsafe") });
         @export(BunObject.braces, .{ .name = callbackName("braces") });
         @export(BunObject.build, .{ .name = callbackName("build") });
+        @export(BunObject.color, .{ .name = callbackName("color") });
         @export(BunObject.connect, .{ .name = callbackName("connect") });
+        @export(BunObject.createParsedShellScript, .{ .name = callbackName("createParsedShellScript") });
+        @export(BunObject.createShellInterpreter, .{ .name = callbackName("createShellInterpreter") });
         @export(BunObject.deflateSync, .{ .name = callbackName("deflateSync") });
         @export(BunObject.file, .{ .name = callbackName("file") });
         @export(BunObject.gc, .{ .name = callbackName("gc") });
@@ -152,7 +154,6 @@ pub const BunObject = struct {
         @export(BunObject.inflateSync, .{ .name = callbackName("inflateSync") });
         @export(BunObject.jest, .{ .name = callbackName("jest") });
         @export(BunObject.listen, .{ .name = callbackName("listen") });
-        @export(BunObject.udpSocket, .{ .name = callbackName("udpSocket") });
         @export(BunObject.mmap, .{ .name = callbackName("mmap") });
         @export(BunObject.nanoseconds, .{ .name = callbackName("nanoseconds") });
         @export(BunObject.openInEditor, .{ .name = callbackName("openInEditor") });
@@ -161,14 +162,15 @@ pub const BunObject = struct {
         @export(BunObject.resolveSync, .{ .name = callbackName("resolveSync") });
         @export(BunObject.serve, .{ .name = callbackName("serve") });
         @export(BunObject.sha, .{ .name = callbackName("sha") });
+        @export(BunObject.shellEscape, .{ .name = callbackName("shellEscape") });
         @export(BunObject.shrink, .{ .name = callbackName("shrink") });
         @export(BunObject.sleepSync, .{ .name = callbackName("sleepSync") });
         @export(BunObject.spawn, .{ .name = callbackName("spawn") });
         @export(BunObject.spawnSync, .{ .name = callbackName("spawnSync") });
+        @export(BunObject.stringWidth, .{ .name = callbackName("stringWidth") });
+        @export(BunObject.udpSocket, .{ .name = callbackName("udpSocket") });
         @export(BunObject.which, .{ .name = callbackName("which") });
         @export(BunObject.write, .{ .name = callbackName("write") });
-        @export(BunObject.stringWidth, .{ .name = callbackName("stringWidth") });
-        @export(BunObject.shellEscape, .{ .name = callbackName("shellEscape") });
         // -- Callbacks --
     }
 };

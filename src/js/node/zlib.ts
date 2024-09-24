@@ -659,11 +659,7 @@ function createConvenienceMethod(ctor, sync) {
   };
 }
 
-const kMaxBrotliParam = MathMax(
-  ...ArrayPrototypeMap.$call(ObjectKeys(constants), key =>
-    StringPrototypeStartsWith.$call(key, "BROTLI_PARAM_") ? constants[key] : 0,
-  ),
-);
+const kMaxBrotliParam = 9;
 
 const brotliInitParamsArray = new Uint32Array(kMaxBrotliParam + 1);
 

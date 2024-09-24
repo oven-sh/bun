@@ -48,6 +48,7 @@ pub const BrotliEncoderParameter = enum(c_uint) {
     npostfix = 7,
     ndirect = 8,
     stream_offset = 9,
+    // update kMaxBrotliParam in src/js/node/zlib.ts if this list changes
 };
 
 pub extern fn BrotliEncoderSetParameter(state: *BrotliEncoder, param: c_uint, value: u32) c_int;

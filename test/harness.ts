@@ -393,9 +393,9 @@ expect.extend({
       message: () => `Expected ${cmds.join(" ")} to fail`,
     };
   },
-  toThrowWithCode(fn: CallableFunction, cls: CallableFunction, code: string) {
+  async toThrowWithCode(fn: CallableFunction, cls: CallableFunction, code: string) {
     try {
-      fn();
+      await fn();
       return {
         pass: false,
         message: () => `Received function did not throw`,

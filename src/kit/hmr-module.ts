@@ -5,6 +5,11 @@ const registry = new Map<Id, HotModule>()
 export type ModuleLoadFunction = (module: HotModule) => void;
 export type ExportsCallbackFunction = (new_exports: any) => void;
 
+export const enum State {
+  Loading,
+  Error,
+}
+
 /**
  * This object is passed as the CommonJS "module", but has a bunch of
  * non-standard properties that are used for implementing hot-module
@@ -13,9 +18,11 @@ export type ExportsCallbackFunction = (new_exports: any) => void;
 export class HotModule {
   exports: any = {};
 
+  _state = State.Loading;
   _ext_exports = undefined;
   __esModule = false;
-  _import_meta?: ImportMeta;
+  _import_meta: ImportMeta | undefined = undefined;
+  _cached_failure: any = undefined;
 
   constructor(public id: Id) {}
 
@@ -34,6 +41,10 @@ export class HotModule {
   importMeta() {
     return this._import_meta ??= initImportMeta(this);
   }
+
+  importBuiltin(id: string) {
+    return import.meta.require(id);
+  }
 }
 
 function initImportMeta(m: HotModule): ImportMeta {
@@ -49,14 +60,34 @@ function initImportMeta(m: HotModule): ImportMeta {
 
 export function loadModule(key: Id): HotModule {
   let module = registry.get(key);
-  if (module) return module;
+  if (module) {
+    // Preserve failures until they are re-saved.
+    if (module._state == State.Error)
+      throw module._cached_failure;
+
+    return module;
+  }
   module = new HotModule(key);
-  registry.set(key, module);
   const load = input_graph[key];
   if (!load) {
+    // TODO: use a separate function for node builtins
+    if (mode === 'server') {
+      try {
+        module.exports = import.meta.require(key);
+        registry.set(key, module);
+        return module;
+      } catch {}
+    }
     throw new Error(`Failed to load bundled module '${key}'. This is not a dynamic import, and therefore is a bug in Bun`);
   }
-  load(module);
+  try {
+    registry.set(key, module);
+    load(module);
+  } catch (err) {
+    module._cached_failure = err;
+    module._state = State.Error;
+    throw err;
+  }
   return module;
 }
 

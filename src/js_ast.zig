@@ -552,7 +552,7 @@ pub const B = union(Binding.Tag) {
 };
 
 pub const ClauseItem = struct {
-    alias: string = "",
+    alias: string,
     alias_loc: logger.Loc = logger.Loc.Empty,
     name: LocRef,
 
@@ -1153,55 +1153,53 @@ pub const Symbol = struct {
     }
 
     pub const Kind = enum {
-
-        // An unbound symbol is one that isn't declared in the file it's referenced
-        // in. For example, using "window" without declaring it will be unbound.
+        /// An unbound symbol is one that isn't declared in the file it's referenced
+        /// in. For example, using "window" without declaring it will be unbound.
         unbound,
 
-        // This has special merging behavior. You're allowed to re-declare these
-        // symbols more than once in the same scope. These symbols are also hoisted
-        // out of the scope they are declared in to the closest containing function
-        // or module scope. These are the symbols with this kind:
-        //
-        // - Function arguments
-        // - Function statements
-        // - Variables declared using "var"
-        //
+        /// This has special merging behavior. You're allowed to re-declare these
+        /// symbols more than once in the same scope. These symbols are also hoisted
+        /// out of the scope they are declared in to the closest containing function
+        /// or module scope. These are the symbols with this kind:
+        ///
+        /// - Function arguments
+        /// - Function statements
+        /// - Variables declared using "var"
         hoisted,
         hoisted_function,
 
-        // There's a weird special case where catch variables declared using a simple
-        // identifier (i.e. not a binding pattern) block hoisted variables instead of
-        // becoming an error:
-        //
-        //   var e = 0;
-        //   try { throw 1 } catch (e) {
-        //     print(e) // 1
-        //     var e = 2
-        //     print(e) // 2
-        //   }
-        //   print(e) // 0 (since the hoisting stops at the catch block boundary)
-        //
-        // However, other forms are still a syntax error:
-        //
-        //   try {} catch (e) { let e }
-        //   try {} catch ({e}) { var e }
-        //
-        // This symbol is for handling this weird special case.
+        /// There's a weird special case where catch variables declared using a simple
+        /// identifier (i.e. not a binding pattern) block hoisted variables instead of
+        /// becoming an error:
+        ///
+        ///   var e = 0;
+        ///   try { throw 1 } catch (e) {
+        ///     print(e) // 1
+        ///     var e = 2
+        ///     print(e) // 2
+        ///   }
+        ///   print(e) // 0 (since the hoisting stops at the catch block boundary)
+        ///
+        /// However, other forms are still a syntax error:
+        ///
+        ///   try {} catch (e) { let e }
+        ///   try {} catch ({e}) { var e }
+        ///
+        /// This symbol is for handling this weird special case.
         catch_identifier,
 
-        // Generator and async functions are not hoisted, but still have special
-        // properties such as being able to overwrite previous functions with the
-        // same name
+        /// Generator and async functions are not hoisted, but still have special
+        /// properties such as being able to overwrite previous functions with the
+        /// same name
         generator_or_async_function,
 
-        // This is the special "arguments" variable inside functions
+        /// This is the special "arguments" variable inside functions
         arguments,
 
-        // Classes can merge with TypeScript namespaces.
+        /// Classes can merge with TypeScript namespaces.
         class,
 
-        // A class-private identifier (i.e. "#foo").
+        /// A class-private identifier (i.e. "#foo").
         private_field,
         private_method,
         private_get,
@@ -1213,25 +1211,26 @@ pub const Symbol = struct {
         private_static_set,
         private_static_get_set_pair,
 
-        // Labels are in their own namespace
+        /// Labels are in their own namespace
         label,
 
-        // TypeScript enums can merge with TypeScript namespaces and other TypeScript
-        // enums.
+        /// TypeScript enums can merge with TypeScript namespaces and other TypeScript
+        /// enums.
         ts_enum,
 
-        // TypeScript namespaces can merge with classes, functions, TypeScript enums,
-        // and other TypeScript namespaces.
+        /// TypeScript namespaces can merge with classes, functions, TypeScript enums,
+        /// and other TypeScript namespaces.
         ts_namespace,
 
-        // In TypeScript, imports are allowed to silently collide with symbols within
-        // the module. Presumably this is because the imports may be type-only.
+        /// In TypeScript, imports are allowed to silently collide with symbols within
+        /// the module. Presumably this is because the imports may be type-only.
+        /// Import statement namespace references should NOT have this set.
         import,
 
-        // Assigning to a "const" symbol will throw a TypeError at runtime
+        /// Assigning to a "const" symbol will throw a TypeError at runtime
         constant,
 
-        // This annotates all other symbols that don't have special behavior.
+        /// This annotates all other symbols that don't have special behavior.
         other,
 
         pub fn jsonStringify(self: @This(), writer: anytype) !void {
@@ -1427,21 +1426,6 @@ pub const Symbol = struct {
 
     pub inline fn isHoisted(self: *const Symbol) bool {
         return Symbol.isKindHoisted(self.kind);
-    }
-
-    pub fn isReactComponentishName(symbol: *const Symbol) bool {
-        switch (symbol.kind) {
-            .hoisted, .hoisted_function, .constant, .class, .other => {
-                return switch (symbol.original_name[0]) {
-                    'A'...'Z' => true,
-                    else => false,
-                };
-            },
-
-            else => {
-                return false;
-            },
-        }
     }
 };
 
@@ -6453,7 +6437,7 @@ pub const S = struct {
         // when converting this module to a CommonJS module.
         namespace_ref: Ref,
         default_name: ?LocRef = null,
-        items: []ClauseItem = &([_]ClauseItem{}),
+        items: []ClauseItem = &.{},
         star_name_loc: ?logger.Loc = null,
         import_record_index: u32,
         is_single_line: bool = false,
@@ -8530,8 +8514,11 @@ pub const UseDirective = enum(u2) {
 
 /// Represents a boundary between client and server code. Every boundary
 /// gets bundled twice, once for the desired target, and once to generate
-/// a module of "references". See `Framework.ServerComponents` for more
-/// details about this generated file.
+/// a module of "references". Specifically, the generated file takes the
+/// canonical Ast as input to derive a wrapper. See `Framework.ServerComponents`
+/// for more details about this generated file.
+///
+/// This is sometimes abbreviated as SCB
 pub const ServerComponentBoundary = struct {
     use_directive: UseDirective,
 
@@ -8543,10 +8530,15 @@ pub const ServerComponentBoundary = struct {
     /// server's code. For server actions, this is the client's code.
     reference_source_index: Index.Int,
 
+    /// The requirements for this data structure is to have reasonable lookup
+    /// speed, but also being able to pull a `[]const Index.Int` of all
+    /// boundaries for iteration.
     pub const List = struct {
         list: std.MultiArrayList(ServerComponentBoundary) = .{},
         /// Used to facilitate fast lookups into `items` by `.source_index`
-        map: std.ArrayHashMapUnmanaged(void, void, struct {}, true) = .{},
+        map: Map = .{},
+
+        const Map = std.ArrayHashMapUnmanaged(void, void, struct {}, true);
 
         /// Can only be called on the bundler thread.
         pub fn put(
@@ -8554,11 +8546,12 @@ pub const ServerComponentBoundary = struct {
             allocator: std.mem.Allocator,
             source_index: Index.Int,
             use_directive: UseDirective,
+            reference_source_index: Index.Int,
         ) !void {
             try m.list.append(allocator, .{
                 .source_index = source_index,
                 .use_directive = use_directive,
-                .reference_source_index = Index.invalid.get(),
+                .reference_source_index = reference_source_index,
             });
             const gop = try m.map.getOrPutAdapted(
                 allocator,
@@ -8568,25 +8561,46 @@ pub const ServerComponentBoundary = struct {
             bun.assert(!gop.found_existing);
         }
 
-        pub fn get(l: *const List, real_source_index: Index.Int) ?usize {
+        /// Can only be called on the bundler thread.
+        pub fn getIndex(l: *const List, real_source_index: Index.Int) ?usize {
             return l.map.getIndexAdapted(
                 real_source_index,
                 Adapter{ .list = l.list.slice() },
             );
         }
-    };
 
-    pub const Adapter = struct {
-        list: std.MultiArrayList(ServerComponentBoundary).Slice,
-
-        pub fn hash(_: Adapter, key: Index.Int) u32 {
-            return std.hash.uint32(key);
+        /// Use this to improve speed of accessing fields at the cost of
+        /// storing more pointers. Invalidated when input is mutated.
+        pub fn slice(l: List) Slice {
+            return .{ .list = l.list.slice(), .map = l.map };
         }
 
-        pub fn eql(adapt: Adapter, a: Index.Int, _: void, b_index: usize) bool {
-            bun.unsafeAssert(adapt.list.capacity > 0); // optimize MultiArrayList.items
-            return a == adapt.list.items(.source_index)[b_index];
-        }
+        pub const Slice = struct {
+            list: std.MultiArrayList(ServerComponentBoundary).Slice,
+            map: Map,
+
+            pub fn getReferenceSourceIndex(l: *const Slice, real_source_index: Index.Int) ?u32 {
+                const i = l.map.getIndexAdapted(
+                    real_source_index,
+                    Adapter{ .list = l.list },
+                ) orelse return null;
+                bun.unsafeAssert(l.list.capacity > 0); // optimize MultiArrayList.Slice.items
+                return l.list.items(.reference_source_index)[i];
+            }
+        };
+
+        pub const Adapter = struct {
+            list: std.MultiArrayList(ServerComponentBoundary).Slice,
+
+            pub fn hash(_: Adapter, key: Index.Int) u32 {
+                return std.hash.uint32(key);
+            }
+
+            pub fn eql(adapt: Adapter, a: Index.Int, _: void, b_index: usize) bool {
+                bun.unsafeAssert(adapt.list.capacity > 0); // optimize MultiArrayList.Slice.items
+                return a == adapt.list.items(.source_index)[b_index];
+            }
+        };
     };
 };
 

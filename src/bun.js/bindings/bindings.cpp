@@ -4394,9 +4394,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     if (except->code == SYNTAX_ERROR_CODE) {
         except->message = Bun::toStringRef(err->sanitizedMessageString(global));
     } else if (JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message)) {
-
         except->message = Bun::toStringRef(global, message);
-
     } else {
         except->message = Bun::toStringRef(err->sanitizedMessageString(global));
     }
@@ -4787,7 +4785,7 @@ void JSC__JSValue__toZigException(JSC__JSValue jsException, JSC__JSGlobalObject*
 
     if (JSC::Exception* jscException = JSC::jsDynamicCast<JSC::Exception*>(value)) {
         if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(jscException->value())) {
-            fromErrorInstance(exception, global, error, &jscException->stack(), value);
+            fromErrorInstance(exception, global, error, &jscException->stack(), jscException->value());
             return;
         }
     }

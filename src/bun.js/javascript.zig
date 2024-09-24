@@ -2407,18 +2407,18 @@ pub const VirtualMachine = struct {
         }
 
         if (JSC.HardcodedModule.Aliases.getWithEql(specifier, bun.String.eqlComptime, jsc_vm.bundler.options.target)) |hardcoded| {
-            if (hardcoded.tag == .none) {
-                resolveMaybeNeedsTrailingSlash(
-                    res,
-                    global,
-                    bun.String.init(hardcoded.path),
-                    source,
-                    query_string,
-                    is_esm,
-                    is_a_file_path,
-                );
-                return;
-            }
+            // if (hardcoded.tag == .none) {
+            //     resolveMaybeNeedsTrailingSlash(
+            //         res,
+            //         global,
+            //         bun.String.init(hardcoded.path),
+            //         source,
+            //         query_string,
+            //         is_esm,
+            //         is_a_file_path,
+            //     );
+            //     return;
+            // }
 
             res.* = ErrorableString.ok(bun.String.init(hardcoded.path));
             return;

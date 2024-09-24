@@ -382,95 +382,129 @@ pub const BundleV2 = struct {
             &this.graph.client_path_to_source_index_map;
     }
 
-    pub fn findReachableFiles(this: *BundleV2) ![]Index {
-        const trace = tracer(@src(), "findReachableFiles");
-        defer trace.end();
+    const ReachableFileVisitor = struct {
+        reachable: std.ArrayList(Index),
+        visited: bun.bit_set.DynamicBitSet,
+        all_import_records: []ImportRecord.List,
+        redirects: []u32,
+        redirect_map: PathToSourceIndexMap,
+        dynamic_import_entry_points: *std.AutoArrayHashMap(Index.Int, void),
+        /// Files which are Server Component Boundaries
+        scb_bitset: ?bun.bit_set.DynamicBitSetUnmanaged,
+        scb_list: ServerComponentBoundary.List.Slice,
 
-        const Visitor = struct {
-            reachable: std.ArrayList(Index),
-            visited: bun.bit_set.DynamicBitSet = undefined,
-            all_import_records: []ImportRecord.List,
-            redirects: []u32,
-            redirect_map: PathToSourceIndexMap,
-            dynamic_import_entry_points: *std.AutoArrayHashMap(Index.Int, void),
+        const MAX_REDIRECTS: usize = 64;
 
-            const MAX_REDIRECTS: usize = 64;
+        // Find all files reachable from all entry points. This order should be
+        // deterministic given that the entry point order is deterministic, since the
+        // returned order is the postorder of the graph traversal and import record
+        // order within a given file is deterministic.
+        pub fn visit(v: *@This(), source_index: Index, was_dynamic_import: bool, comptime check_dynamic_imports: bool) void {
+            if (source_index.isInvalid()) return;
 
-            // Find all files reachable from all entry points. This order should be
-            // deterministic given that the entry point order is deterministic, since the
-            // returned order is the postorder of the graph traversal and import record
-            // order within a given file is deterministic.
-            pub fn visit(v: *@This(), source_index: Index, was_dynamic_import: bool, comptime check_dynamic_imports: bool) void {
-                if (source_index.isInvalid()) return;
-
-                if (v.visited.isSet(source_index.get())) {
-                    if (comptime check_dynamic_imports) {
-                        if (was_dynamic_import) {
-                            v.dynamic_import_entry_points.put(source_index.get(), {}) catch unreachable;
-                        }
-                    }
-                    return;
-                }
-                v.visited.set(source_index.get());
-
-                const import_record_list_id = source_index;
-                // when there are no import records, v index will be invalid
-                if (import_record_list_id.get() < v.all_import_records.len) {
-                    const import_records = v.all_import_records[import_record_list_id.get()].slice();
-                    for (import_records) |*import_record| {
-                        var other_source = import_record.source_index;
-                        if (other_source.isValid()) {
-                            var redirect_count: usize = 0;
-                            while (getRedirectId(v.redirects[other_source.get()])) |redirect_id| : (redirect_count += 1) {
-                                var other_import_records = v.all_import_records[other_source.get()].slice();
-                                const other_import_record = &other_import_records[redirect_id];
-                                import_record.source_index = other_import_record.source_index;
-                                import_record.path = other_import_record.path;
-                                other_source = other_import_record.source_index;
-                                if (redirect_count == MAX_REDIRECTS) {
-                                    import_record.path.is_disabled = true;
-                                    import_record.source_index = Index.invalid;
-                                    break;
-                                }
-
-                                // Handle redirects to a builtin or external module
-                                // https://github.com/oven-sh/bun/issues/3764
-                                if (!other_source.isValid()) {
-                                    break;
-                                }
-                            }
-
-                            v.visit(import_record.source_index, check_dynamic_imports and import_record.kind == .dynamic, check_dynamic_imports);
-                        }
-                    }
-
-                    // Redirects replace the source file with another file
-                    if (getRedirectId(v.redirects[source_index.get()])) |redirect_id| {
-                        const redirect_source_index = v.all_import_records[source_index.get()].slice()[redirect_id].source_index.get();
-                        v.visit(Index.source(redirect_source_index), was_dynamic_import, check_dynamic_imports);
-                        return;
-                    }
-                }
-
-                // Each file must come after its dependencies
-                v.reachable.append(source_index) catch unreachable;
+            if (v.visited.isSet(source_index.get())) {
                 if (comptime check_dynamic_imports) {
                     if (was_dynamic_import) {
                         v.dynamic_import_entry_points.put(source_index.get(), {}) catch unreachable;
                     }
                 }
+                return;
             }
-        };
+            v.visited.set(source_index.get());
+
+            if (v.scb_bitset) |scb_bitset| {
+                if (scb_bitset.isSet(source_index.get())) {
+                    std.debug.print("hit found {d}\n", .{source_index.get()});
+                    v.visit(
+                        Index.init(v.scb_list.getReferenceSourceIndex(source_index.get()) orelse unreachable),
+                        false,
+                        check_dynamic_imports,
+                    );
+                }
+            }
+
+            const import_record_list_id = source_index;
+            // when there are no import records, v index will be invalid
+            if (import_record_list_id.get() < v.all_import_records.len) {
+                const import_records = v.all_import_records[import_record_list_id.get()].slice();
+                for (import_records) |*import_record| {
+                    var other_source = import_record.source_index;
+                    if (other_source.isValid()) {
+                        var redirect_count: usize = 0;
+                        while (getRedirectId(v.redirects[other_source.get()])) |redirect_id| : (redirect_count += 1) {
+                            var other_import_records = v.all_import_records[other_source.get()].slice();
+                            const other_import_record = &other_import_records[redirect_id];
+                            import_record.source_index = other_import_record.source_index;
+                            import_record.path = other_import_record.path;
+                            other_source = other_import_record.source_index;
+                            if (redirect_count == MAX_REDIRECTS) {
+                                import_record.path.is_disabled = true;
+                                import_record.source_index = Index.invalid;
+                                break;
+                            }
+
+                            // Handle redirects to a builtin or external module
+                            // https://github.com/oven-sh/bun/issues/3764
+                            if (!other_source.isValid()) {
+                                break;
+                            }
+                        }
+
+                        v.visit(import_record.source_index, check_dynamic_imports and import_record.kind == .dynamic, check_dynamic_imports);
+                    }
+                }
+
+                // Redirects replace the source file with another file
+                if (getRedirectId(v.redirects[source_index.get()])) |redirect_id| {
+                    const redirect_source_index = v.all_import_records[source_index.get()].slice()[redirect_id].source_index.get();
+                    v.visit(Index.source(redirect_source_index), was_dynamic_import, check_dynamic_imports);
+                    return;
+                }
+            }
+
+            // Each file must come after its dependencies
+            v.reachable.append(source_index) catch unreachable;
+            if (comptime check_dynamic_imports) {
+                if (was_dynamic_import) {
+                    v.dynamic_import_entry_points.put(source_index.get(), {}) catch unreachable;
+                }
+            }
+        }
+    };
+
+    pub fn findReachableFiles(this: *BundleV2) ![]Index {
+        const trace = tracer(@src(), "findReachableFiles");
+        defer trace.end();
+
+        // Create a quick index for server-component boundaries.
+        // We need to mark the generated files as reachable, or else many files will appear missing.
+        var sfa = std.heap.stackFallback(4096, this.graph.allocator);
+        const stack_alloc = sfa.get();
+        var scb_bitset = if (this.graph.server_component_boundaries.list.len > 0) brk: {
+            var scb_bitset = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(stack_alloc, this.graph.input_files.len);
+            const scbs = this.graph.server_component_boundaries.list.slice();
+            for (scbs.items(.source_index)) |source_index| {
+                scb_bitset.set(source_index);
+                // insert the other one?
+            }
+            break :brk scb_bitset;
+        } else null;
+        defer if (scb_bitset) |*b| b.deinit(stack_alloc);
 
         this.dynamic_import_entry_points = std.AutoArrayHashMap(Index.Int, void).init(this.graph.allocator);
 
-        var visitor = Visitor{
+        var visitor = ReachableFileVisitor{
             .reachable = try std.ArrayList(Index).initCapacity(this.graph.allocator, this.graph.entry_points.items.len + 1),
             .visited = try bun.bit_set.DynamicBitSet.initEmpty(this.graph.allocator, this.graph.input_files.len),
             .redirects = this.graph.ast.items(.redirect_import_record_index),
             .all_import_records = this.graph.ast.items(.import_records),
             .redirect_map = this.graph.path_to_source_index_map,
             .dynamic_import_entry_points = &this.dynamic_import_entry_points,
+            .scb_bitset = scb_bitset,
+            .scb_list = if (scb_bitset != null)
+                this.graph.server_component_boundaries.slice()
+            else
+                undefined, // will never be read since the above bitset is `null`
         };
         defer visitor.visited.deinit();
 
@@ -907,176 +941,48 @@ pub const BundleV2 = struct {
         }
     }
 
-    pub fn enqueueShadowEntryPoints(this: *BundleV2) OOM!void {
+    pub fn enqueueServerComponentManifestFiles(this: *BundleV2) OOM!void {
         const trace = tracer(@src(), "enqueueShadowEntryPoints");
         defer trace.end();
         const allocator = this.graph.allocator;
+        _ = allocator; // autofix
 
-        // TODO: make this not slow
-        {
-            // process redirects
-            const initial_reachable = try this.findReachableFiles();
-            allocator.free(initial_reachable);
-            this.dynamic_import_entry_points.deinit();
-        }
+        // const bitset_length = this.graph.input_files.len;
+        // var react_client_component_boundary = try bun.bit_set.DynamicBitSet.initEmpty(allocator, bitset_length);
+        // defer react_client_component_boundary.deinit();
+        // var any_client = false;
 
-        const bitset_length = this.graph.input_files.len;
-        var react_client_component_boundary = try bun.bit_set.DynamicBitSet.initEmpty(allocator, bitset_length);
-        defer react_client_component_boundary.deinit();
-        var any_client = false;
-
-        // Loop #1: populate the list of files that are react client components
-        const scbs = this.graph.server_component_boundaries.list.slice();
-        var components_for_client_manifest = try std.ArrayListUnmanaged(u32).initCapacity(allocator, scbs.len);
-        for (
-            scbs.items(.use_directive),
-            scbs.items(.source_index),
-            scbs.items(.reference_source_index),
-        ) |use, source_id, *reference_source_index| {
-            if (use == .client) {
-                any_client = true;
-                react_client_component_boundary.set(source_id);
-
-                const client_source = this.graph.input_files.items(.source)[source_id];
-                reference_source_index.* = try this.enqueueGenerateTask(
-                    .{ .client_reference_proxy = .{
-                        .other_source = client_source,
-                    } },
-                    client_source,
-                );
-
-                // write dependencies on the underlying module, not the proxy
-                try components_for_client_manifest.append(allocator, source_id);
-            }
-        }
-
-        const client_manifest = try this.enqueueGenerateTask(
-            .{ .client_manifest = .{
-                .source_indices = try components_for_client_manifest.toOwnedSlice(allocator),
-            } },
-            Logger.Source.initEmptyFile("internal.client-manifest.js"),
-        );
-        // TODO: client entry point needs to then import this file
-        this.graph.entry_points.append(allocator, Index.source(client_manifest)) catch bun.outOfMemory();
-
-        // var visit_queue = std.fifo.LinearFifo(Index.Int, .Dynamic).init(allocator);
-        // visit_queue.ensureUnusedCapacity(64) catch unreachable;
-        // defer visit_queue.deinit();
-        // const original_file_count = this.graph.entry_points.items.len;
-
-        // for (0..original_file_count) |entry_point_id| {
-        //     // we are modifying the array while iterating
-        //     // so we should be careful
-        //     const entry_point_source_index = this.graph.entry_points.items[entry_point_id];
-
-        //     var all_imported_files = try bun.bit_set.DynamicBitSet.initEmpty(allocator, bitset_length);
-        //     defer all_imported_files.deinit();
-        //     visit_queue.head = 0;
-        //     visit_queue.count = 0;
-        //     const input_path = this.graph.input_files.items(.source)[entry_point_source_index.get()].path;
-
-        //     {
-        //         const import_records = this.graph.ast.items(.import_records)[entry_point_source_index.get()];
-        //         for (import_records.slice()) |import_record| {
-        //             if (!import_record.source_index.isValid()) {
-        //                 continue;
-        //             }
-
-        //             if (all_imported_files.isSet(import_record.source_index.get())) {
-        //                 continue;
-        //             }
-
-        //             all_imported_files.set(import_record.source_index.get());
-
-        //             try visit_queue.writeItem(import_record.source_index.get());
-        //         }
+        // // Loop #1: populate the list of files that are react client components
+        // const scbs = this.graph.server_component_boundaries.list.slice();
+        // var components_for_client_manifest = try std.ArrayListUnmanaged(u32).initCapacity(allocator, scbs.len);
+        // for (
+        //     scbs.items(.use_directive),
+        //     scbs.items(.source_index),
+        // ) |use, source_id| {
+        //     if (use == .client) {
+        //         any_client = true;
+        //         react_client_component_boundary.set(source_id);
+        //         // write dependencies on the underlying module, not the proxy
+        //         try components_for_client_manifest.append(allocator, source_id);
         //     }
-
-        //     while (visit_queue.readItem()) |target_source_index| {
-        //         const import_records = this.graph.ast.items(.import_records)[target_source_index];
-        //         for (import_records.slice()) |import_record| {
-        //             if (!import_record.source_index.isValid()) {
-        //                 continue;
-        //             }
-
-        //             if (all_imported_files.isSet(import_record.source_index.get())) continue;
-        //             all_imported_files.set(import_record.source_index.get());
-
-        //             try visit_queue.writeItem(import_record.source_index.get());
-        //         }
-        //     }
-
-        //     all_imported_files.setIntersection(react_client_component_boundary);
-        //     if (all_imported_files.findFirstSet() == null) continue;
-        //     const source_index = Index.init(@as(u32, @intCast(this.graph.ast.len)));
-
-        //     var shadow = ShadowEntryPoint{
-        //         .from_source_index = entry_point_source_index.get(),
-        //         .to_source_index = source_index.get(),
-        //     };
-        //     var builder = ShadowEntryPoint.Builder{
-        //         .ctx = this,
-        //         .source_code_buffer = MutableString.initEmpty(allocator),
-        //         .resolved_source_indices = std.ArrayList(Index.Int).init(allocator),
-        //         .shadow = &shadow,
-        //     };
-
-        //     var iter = all_imported_files.iterator(.{});
-        //     while (iter.next()) |index| {
-        //         builder.addClientComponent(index);
-        //     }
-        //     bun.assert(builder.resolved_source_indices.items.len > 0);
-
-        //     const path = Fs.Path.initWithNamespace(
-        //         try std.fmt.allocPrint(
-        //             allocator,
-        //             "{s}/{s}.client.js",
-        //             .{ input_path.name.dirOrDot(), input_path.name.base },
-        //         ),
-        //         "client-component",
-        //     );
-
-        this.graph.shadow_entry_point_range.loc.start = @intCast(client_manifest);
-
-        //     try this.graph.ast.append(bun.default_allocator, JSAst.empty);
-        //     try this.graph.input_files.append(bun.default_allocator, .{
-        //         .source = .{
-        //             .path = path,
-        //             .key_path = path,
-        //             .contents = builder.source_code_buffer.toOwnedSliceLeaky(),
-        //             .index = source_index,
-        //         },
-        //         .loader = options.Loader.js,
-        //         .side_effects = _resolver.SideEffects.has_side_effects,
-        //     });
-
-        //     const task = try bun.default_allocator.create(ParseTask);
-        //     task.* = ParseTask{
-        //         .ctx = this,
-        //         .path = path,
-        //         // unknown at this point:
-        //         .contents_or_fd = .{
-        //             .contents = builder.source_code_buffer.toOwnedSliceLeaky(),
-        //         },
-        //         .side_effects = _resolver.SideEffects.has_side_effects,
-        //         .jsx = this.bundler.options.jsx,
-        //         .source_index = source_index,
-        //         .module_type = .unknown,
-        //         .loader = options.Loader.js,
-        //         .tree_shaking = this.linker.options.tree_shaking,
-        //         .known_target = options.Target.browser,
-        //         .presolved_source_indices = builder.resolved_source_indices.items,
-        //     };
-        //     task.task.node.next = null;
-
-        //     _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .monotonic);
-        //     this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&task.task));
-        this.graph.shadow_entry_point_range.len = 1;
         // }
+
+        // const client_manifest = try this.enqueueGenerateTask(
+        //     .{ .client_manifest = .{
+        //         .source_indices = try components_for_client_manifest.toOwnedSlice(allocator),
+        //     } },
+        //     Logger.Source.initEmptyFile("internal.client-manifest.js"),
+        // );
+
+        // // TODO: client entry point needs to then import this file
+        // this.graph.entry_points.append(allocator, Index.source(client_manifest)) catch bun.outOfMemory();
+
+        // this.graph.shadow_entry_point_range.loc.start = @intCast(client_manifest);
+        // this.graph.shadow_entry_point_range.len = 1;
     }
 
-    /// Enqueue a GenerateTask
-    /// `source_without_index` is copied and it's index is initialized for you
+    /// Enqueue a GenerateTask.
+    /// `source_without_index` is copied and assigned a new source index. That index is returned.
     pub fn enqueueGenerateTask(
         this: *BundleV2,
         data: GenerateTask.Data,
@@ -1145,7 +1051,7 @@ pub const BundleV2 = struct {
         // server file, and then that server file imports another client
         // component. this if check will not cover that use case
         if (this.graph.server_component_boundaries.list.len > 0) {
-            try this.enqueueShadowEntryPoints();
+            try this.enqueueServerComponentManifestFiles();
             this.waitForParse();
 
             if (this.bundler.log.hasErrors()) {
@@ -1759,14 +1665,8 @@ pub const BundleV2 = struct {
             return error.BuildFailed;
         }
 
-        // TODO: see if i can avoid this secondary pass and instead kick off
-        // the extra server component files right as the first one happens
-        //
-        // it is totally a real situation that a client file can invoke a
-        // server file, and then that server file imports another client
-        // component. this if check will not cover that use case
         if (this.graph.server_component_boundaries.list.len > 0) {
-            try this.enqueueShadowEntryPoints();
+            try this.enqueueServerComponentManifestFiles();
             this.waitForParse();
 
             if (this.bundler.log.hasErrors()) {
@@ -2018,7 +1918,7 @@ pub const BundleV2 = struct {
             // if there were errors, lets go ahead and collect them all
             if (last_error != null) continue;
 
-            var path: *Fs.Path = resolve_result.path() orelse {
+            const path: *Fs.Path = resolve_result.path() orelse {
                 import_record.path.is_disabled = true;
                 import_record.source_index = Index.invalid;
 
@@ -2296,14 +2196,38 @@ pub const BundleV2 = struct {
 
                 graph.ast.set(result.source.index.get(), result.ast);
 
-                // For files with use directives, index them
+                // For files with use directives, index and prepare the other side.
                 if (result.use_directive != .none and
                     ((result.use_directive == .client) == (result.ast.target == .browser)))
                 {
+                    if (result.use_directive == .server)
+                        @panic("TODO: 'use server'");
+
+                    const reference_source_index = this.enqueueGenerateTask(
+                        .{ .client_reference_proxy = .{
+                            .other_source = result.source,
+                        } },
+                        result.source,
+                    ) catch bun.outOfMemory();
+
+                    const other_path_to_source_index_map = switch (result.use_directive) {
+                        .client => &this.graph.path_to_source_index_map,
+                        .server => &this.graph.client_path_to_source_index_map,
+                        else => unreachable,
+                    };
+                    other_path_to_source_index_map.put(
+                        graph.allocator,
+                        result.source.path.hashKey(),
+                        reference_source_index,
+                    ) catch bun.outOfMemory();
+
+                    std.debug.print("OwO {d} {d}: {s}\n", .{ result.source.index.get(), reference_source_index, result.source.path.text });
+
                     graph.server_component_boundaries.put(
                         graph.allocator,
                         result.source.index.get(),
                         result.use_directive,
+                        reference_source_index,
                     ) catch bun.outOfMemory();
                 }
             },
@@ -3339,14 +3263,14 @@ pub const GenerateTask = struct {
         log: *Logger.Log,
         allocator: std.mem.Allocator,
     ) !ParseTask.Result.Success {
-        var ab = try AstBuilder.init(allocator, &task.source);
+        var ab = try AstBuilder.init(allocator, &task.source, task.ctx.bundler.options.hot_module_reloading);
 
         try switch (task.data) {
             .client_reference_proxy => |data| task.generateClientReferenceProxy(data, &ab),
             .client_manifest => |data| task.generateClientManifest(data, &ab),
         };
 
-        var ast = try ab.toBundledAst(task.ctx.bundler.options.hot_module_reloading);
+        var ast = try ab.toBundledAst();
         ast.target = switch (task.data) {
             // Server-side
             .client_reference_proxy => task.ctx.bundler.options.target,
@@ -3473,7 +3397,7 @@ pub const GenerateTask = struct {
             });
 
             for (exports.keys(), clause_items, decls) |key, *clause, *decl| {
-                if (key.len == 0) continue;
+                bun.assert(key.len > 0);
 
                 const ref = try b.newSymbol(.import, "x");
                 b.getSymbol(ref).namespace_alias = .{
@@ -4062,7 +3986,7 @@ const LinkerGraph = struct {
         dynamic_import_entry_points: []const Index.Int,
         shadow_entry_point_range: Logger.Range,
     ) !void {
-        const scb = server_component_boundaries.list.slice();
+        const scb = server_component_boundaries.slice();
         try this.files.setCapacity(this.allocator, sources.len);
         this.files.zero();
         this.files_live = try BitSet.initEmpty(
@@ -4130,7 +4054,7 @@ const LinkerGraph = struct {
                 var any_client = false;
 
                 // Loop #1: populate the list of files that are react client components
-                for (scb.items(.use_directive), scb.items(.source_index)) |use, source_id| {
+                for (scb.list.items(.use_directive), scb.list.items(.source_index)) |use, source_id| {
                     switch (use) {
                         .none => {},
                         .client => {
@@ -4174,10 +4098,9 @@ const LinkerGraph = struct {
                                                     // import_record.path.namespace = "client";
                                                     // import_record.print_namespace_in_path = true;
                                                     import_record.source_index = Index.init(
-                                                        scb.items(.reference_source_index)[
-                                                            server_component_boundaries.get(source_index) orelse
-                                                                unreachable // file didn't have a boundary
-                                                        ],
+                                                        scb.getReferenceSourceIndex(
+                                                            source_index,
+                                                        ) orelse unreachable, // file didn't have a boundary
                                                     );
                                                     bun.assert(import_record.source_index.isValid()); // did not generate
                                                 }
@@ -5450,6 +5373,10 @@ pub const LinkerContext = struct {
                     }
 
                     const named_imports_ = &named_imports[source_index];
+                    std.debug.print("named imports in {d} is {d}\n", .{
+                        source_index,
+                        named_imports_.count(),
+                    });
                     if (named_imports_.count() > 0) {
                         this.matchImportsWithExportsForFile(
                             named_imports_,
@@ -5683,6 +5610,10 @@ pub const LinkerContext = struct {
                         }
                     }
 
+                    std.debug.print("merge {} -> {}\n", .{
+                        ref.dump(&this.graph.symbols),
+                        import.data.import_ref.dump(&this.graph.symbols),
+                    });
                     _ = this.graph.symbols.merge(ref, import.data.import_ref);
                 }
 
@@ -6390,6 +6321,8 @@ pub const LinkerContext = struct {
 
             // Now that we know this, we can determine cross-part dependencies
             for (part.symbol_uses.keys(), 0..) |ref, j| {
+                // if (bun.strings.eql(c.graph.symbols.get(ref).?.original_name, "registerClientReference")) @breakpoint();
+
                 if (comptime Environment.allow_assert) {
                     bun.assert(part.symbol_uses.values()[j].count_estimate > 0);
                 }
@@ -6412,6 +6345,7 @@ pub const LinkerContext = struct {
                 }
 
                 // Also map from imports to parts that use them
+                std.debug.print("lookup named_imports on {d} by {}\n", .{ source_index_.get(), ref.dump(&c.graph.symbols) });
                 if (named_imports.getPtr(ref)) |existing| {
                     existing.local_parts_with_uses.push(allocator, @intCast(part_index)) catch unreachable;
                 }
@@ -11645,6 +11579,7 @@ pub const LinkerContext = struct {
                 },
                 &re_exports,
             );
+            std.debug.print("matchImportWithExport({}) -> {}\n\n", .{ import_ref.dump(&c.graph.symbols), result });
 
             switch (result.kind) {
                 .normal => {
@@ -11661,6 +11596,8 @@ pub const LinkerContext = struct {
                     ) catch unreachable;
                 },
                 .namespace => {
+                    std.debug.print("the {s} -> {}", .{ result.alias, result.namespace_ref.dump(&c.graph.symbols) });
+
                     c.graph.symbols.get(import_ref).?.namespace_alias = js_ast.G.NamespaceAlias{
                         .namespace_ref = result.namespace_ref,
                         .alias = result.alias,
@@ -12780,9 +12717,14 @@ pub const AstBuilder = struct {
     log: Logger.Log,
     module_ref: Ref,
     declared_symbols: js_ast.DeclaredSymbol.List,
+    /// When set, codegen is altered
+    hot_reloading: bool,
 
     // stub fields for ImportScanner duck typing
-    comptime options: js_parser.Parser.Options = .{ .jsx = .{} },
+    comptime options: js_parser.Parser.Options = .{
+        .jsx = .{},
+        .bundle = true,
+    },
     comptime import_items_for_namespace: struct {
         pub fn get(_: @This(), _: Ref) ?js_parser.ImportItemForNamespaceMap {
             return null;
@@ -12792,7 +12734,7 @@ pub const AstBuilder = struct {
         pub const typescript = false;
     };
 
-    pub fn init(allocator: std.mem.Allocator, source: *Logger.Source) !AstBuilder {
+    pub fn init(allocator: std.mem.Allocator, source: *Logger.Source, hot_reloading: bool) !AstBuilder {
         const scope = try allocator.create(Scope);
         scope.* = .{
             .kind = .entry,
@@ -12816,6 +12758,7 @@ pub const AstBuilder = struct {
             .export_star_import_records = .{},
             .module_ref = Ref.None,
             .declared_symbols = .{},
+            .hot_reloading = hot_reloading,
         };
         ab.module_ref = try ab.newSymbol(.other, "module");
         return ab;
@@ -12890,15 +12833,18 @@ pub const AstBuilder = struct {
         inline for (identifiers_to_import, &out, clauses) |import_id_untyped, *out_ref, *clause| {
             const import_id: []const u8 = import_id_untyped; // must be given '[N][]const u8'
             const ref = try p.newSymbol(.import, import_id);
-            p.getSymbol(ref).namespace_alias = .{
-                .namespace_ref = namespace_ref,
-                .alias = import_id,
-                .import_record_index = record,
-            };
+            if (p.hot_reloading) {
+                p.getSymbol(ref).namespace_alias = .{
+                    .namespace_ref = namespace_ref,
+                    .alias = import_id,
+                    .import_record_index = record,
+                };
+            }
             out_ref.* = p.newExpr(E.ImportIdentifier{ .ref = ref });
             clause.* = .{
                 .name = .{ .loc = Logger.Loc.Empty, .ref = ref },
                 .original_name = import_id,
+                .alias = import_id,
             };
         }
 
@@ -12934,7 +12880,7 @@ pub const AstBuilder = struct {
         return ref;
     }
 
-    pub fn toBundledAst(p: *AstBuilder, hot_reloading: bool) !js_ast.BundledAst {
+    pub fn toBundledAst(p: *AstBuilder) !js_ast.BundledAst {
         // TODO: missing import scanner
         bun.assert(p.scopes.items.len == 0);
         const module_scope = p.current_scope;
@@ -12979,7 +12925,7 @@ pub const AstBuilder = struct {
 
         // For more details on this section, look at js_parser.toAST
         // This is mimicking how it calls ImportScanner
-        if (hot_reloading) {
+        if (p.hot_reloading) {
             var hmr_transform_ctx = js_parser.ConvertESMExportsForHmr{
                 .last_part = parts.last() orelse
                     unreachable, // was definitely allocated
@@ -13004,6 +12950,11 @@ pub const AstBuilder = struct {
         parts.mut(1).declared_symbols = p.declared_symbols;
         parts.mut(1).scopes = p.scopes.items;
         parts.mut(1).import_record_indices = BabyList(u32).fromList(p.import_records_for_current_part);
+
+        std.debug.print("generated imports\n", .{});
+        for (p.named_imports.keys(), p.named_imports.values()) |k, v| {
+            std.debug.print("K: {} V: {}\n", .{ k.dump(p.symbols.items), v });
+        }
 
         return .{
             .parts = parts,

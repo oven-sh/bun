@@ -99,6 +99,10 @@ pub const BuildCommand = struct {
         this_bundler.options.output_dir = ctx.bundler_options.outdir;
         this_bundler.options.output_format = ctx.bundler_options.output_format;
 
+        if (ctx.bundler_options.output_format == .internal_kit_dev) {
+            this_bundler.options.tree_shaking = false;
+        }
+
         if (ctx.bundler_options.compile) {
             if (ctx.bundler_options.code_splitting) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile with --splitting", .{});

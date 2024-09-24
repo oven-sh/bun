@@ -17,7 +17,9 @@ declare const config: Config;
  * The runtime is bundled for server and client, which influences
  * how hmr connection should be established, as well if there is
  * a window to visually display errors with.
-*/
+ * 
+ * TODO: rename this "side" to align with other code
+ */
 declare const mode: 'client' | 'server';
 
 /*

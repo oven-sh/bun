@@ -1077,7 +1077,7 @@ pub const ImportScanner = struct {
                         st__.* = st;
                     }
 
-                    var record: *ImportRecord = &p.import_records.items[st.import_record_index];
+                    const record: *ImportRecord = &p.import_records.items[st.import_record_index];
 
                     if (record.path.isMacro()) {
                         record.is_unused = true;

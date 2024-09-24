@@ -1,5 +1,5 @@
 //! Instance of the development server. Controls an event loop, web server,
-//! bundling state, and JavaScript VM instance. Work is cached in-memory.
+//! bundling state, and JavaScript VM instance. All work is cached in-memory.
 //!
 //! Currently does not have a `deinit()`, as it is assumed to be alive for the
 //! remainder of this process' lifespan.
@@ -491,6 +491,7 @@ fn onServerRequestWithBundle(route: *Route, bundle: Bundle, req: *Request, resp:
         },
     ) catch |err| {
         const exception = global.takeException(err);
+        exception.print(global, .Log, .Error);
         const fail: Failure = .{ .request_handler = exception };
         fail.printToConsole(route);
         fail.sendAsHttpResponse(resp, route);

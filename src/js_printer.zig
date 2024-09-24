@@ -3128,6 +3128,10 @@ fn NewPrinter(
                         e.ref;
                     const symbol = p.symbols().get(ref).?;
 
+                    // if (bun.strings.eql(symbol.original_name, "registerClientReference")) {
+                    //     @breakpoint();
+                    // }
+
                     if (symbol.import_item_status == .missing) {
                         p.printUndefined(expr.loc, level);
                         didPrint = true;

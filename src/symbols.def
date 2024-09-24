@@ -642,3 +642,4 @@ EXPORTS
   ?Value@Integer@v8@@QEBA_JXZ
   ?NewFromUnsigned@Integer@v8@@SA?AV?$Local@VInteger@v8@@@2@PEAVIsolate@2@I@Z
   ?New@Integer@v8@@SA?AV?$Local@VInteger@v8@@@2@PEAVIsolate@2@H@Z
+  ?FromJustIsNothing@api_internal@v8@@YAXXZ

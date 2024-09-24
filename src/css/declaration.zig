@@ -213,13 +213,12 @@ pub fn parse_declaration(
         .err => |e| return .{ .err = e },
         .result => |v| v,
     };
-    const Fn = struct {
-        pub fn parsefn(input2: *css.Parser) Result(void) {
-            if (input2.expectDelim('?').asErr()) |e| return .{ .err = e };
-            return input2.expectIdentMatching("important");
+    const important = input.tryParse(struct {
+        pub fn parsefn(i: *css.Parser) Result(void) {
+            if (i.expectDelim('!').asErr()) |e| return .{ .err = e };
+            return i.expectIdentMatching("important");
         }
-    };
-    const important = if (input.tryParse(Fn.parsefn, .{}).isOk()) true else false;
+    }.parsefn, .{}).isOk();
     if (input.expectExhausted().asErr()) |e| return .{ .err = e };
     if (important) {
         important_declarations.append(input.allocator(), property) catch bun.outOfMemory();

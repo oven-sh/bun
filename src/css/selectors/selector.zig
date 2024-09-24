@@ -73,13 +73,13 @@ pub const serialize = struct {
 
         if (comptime bun.Environment.isDebug) {
             for (selector.components.items) |*comp| {
-                std.debug.print("Selector components: {}\n", .{comp});
+                std.debug.print("Selector components:\n  {}", .{comp});
             }
 
             var compound_selectors = CompoundSelectorIter{ .sel = selector };
             while (compound_selectors.next()) |comp| {
                 for (comp) |c| {
-                    std.debug.print("{}, ", .{c});
+                    std.debug.print("  {}, ", .{c});
                 }
             }
             std.debug.print("\n", .{});

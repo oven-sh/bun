@@ -3139,10 +3139,10 @@ pub const Parser = struct {
     /// This ignores whitespace and comments.
     pub fn expectExhausted(this: *Parser) Result(void) {
         const start = this.state();
-        const result = switch (this.next()) {
-            .result => |t| return .{ .err = start.sourceLocation().newUnexpectedTokenError(t.*) },
-            .err => |e| {
-                if (e.kind == .basic and e.kind.basic == .end_of_input) return .{ .result = {} };
+        const result: Result(void) = switch (this.next()) {
+            .result => |t| .{ .err = start.sourceLocation().newUnexpectedTokenError(t.*) },
+            .err => |e| brk: {
+                if (e.kind == .basic and e.kind.basic == .end_of_input) break :brk .{ .result = {} };
                 bun.unreachablePanic("Unexpected error encountered: {}", .{e.kind});
             },
         };
@@ -5329,11 +5329,15 @@ pub const color = struct {
                 (try fromHex(value[4])) * 16 + (try fromHex(value[5])),
                 @as(f32, @floatFromInt((try fromHex(value[6])) * 16 + (try fromHex(value[7])))) / 255.0,
             },
-            6 => .{
-                (try fromHex(value[0])) * 16 + (try fromHex(value[1])),
-                (try fromHex(value[2])) * 16 + (try fromHex(value[3])),
-                (try fromHex(value[4])) * 16 + (try fromHex(value[5])),
-                OPAQUE,
+            6 => {
+                const r = (try fromHex(value[0])) * 16 + (try fromHex(value[1]));
+                const g = (try fromHex(value[2])) * 16 + (try fromHex(value[3]));
+                const b = (try fromHex(value[4])) * 16 + (try fromHex(value[5]));
+                return .{
+                    r,      g, b,
+
+                    OPAQUE,
+                };
             },
             4 => .{
                 (try fromHex(value[0])) * 17,

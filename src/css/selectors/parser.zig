@@ -2785,7 +2785,7 @@ pub fn parse_simple_pseudo_class(
     name: []const u8,
     state: SelectorParsingState,
 ) Result(GenericComponent(Impl)) {
-    if (state.allowsNonFunctionalPseudoClasses()) {
+    if (!state.allowsNonFunctionalPseudoClasses()) {
         return .{ .err = location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_state)) };
     }
 

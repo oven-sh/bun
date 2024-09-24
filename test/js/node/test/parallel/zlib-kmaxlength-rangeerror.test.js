@@ -3,7 +3,6 @@
 //-----------------
 "use strict";
 
-const assert = require("assert");
 const util = require("util");
 
 // Change kMaxLength for zlib to trigger the error without having to allocate large Buffers.
@@ -21,7 +20,10 @@ describe("ensure that zlib throws a RangeError if the final buffer needs to be l
   });
 
   test("async", async () => {
-    expect(async () => await util.promisify(zlib.gunzip)(encoded)).toThrowWithCode(RangeError, "ERR_BUFFER_TOO_LARGE");
+    await expect(async () => util.promisify(zlib.gunzip)(encoded)).toThrowWithCodeAsync(
+      RangeError,
+      "ERR_BUFFER_TOO_LARGE",
+    );
   });
 });
 

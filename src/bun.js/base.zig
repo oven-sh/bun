@@ -149,18 +149,6 @@ const ZigString = JSC.ZigString;
 
 pub const PathString = bun.PathString;
 
-pub fn JSError(
-    _: std.mem.Allocator,
-    comptime fmt: string,
-    args: anytype,
-    ctx: js.JSContextRef,
-    exception: ExceptionValueRef,
-) void {
-    @setCold(true);
-
-    exception.* = createError(ctx, fmt, args).asObjectRef();
-}
-
 pub fn createError(
     globalThis: *JSC.JSGlobalObject,
     comptime fmt: string,

@@ -1,6 +1,4 @@
-optionx(BUILDKITE_CACHE BOOL "If the build can use Buildkite caches, even if not running in Buildkite" DEFAULT OFF)
-
-if(NOT BUILDKITE_CACHE OR NOT BUN_LINK_ONLY)
+if(NOT BUN_LINK_ONLY)
   return()
 endif()
 

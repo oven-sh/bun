@@ -6264,7 +6264,7 @@ pub const CallFrame = opaque {
 
     pub const name = "JSC::CallFrame";
 
-    fn argsDirect(self: *const CallFrame) [*]const JSC.JSValue {
+    inline fn asUnsafeJSValueArray(self: *const CallFrame) [*]const JSC.JSValue {
         return @as([*]align(alignment) const JSC.JSValue, @ptrCast(@alignCast(self)));
     }
 
@@ -6297,11 +6297,11 @@ pub const CallFrame = opaque {
     }
 
     pub fn argumentsPtr(self: *const CallFrame) [*]const JSC.JSValue {
-        return self.argsDirect()[Sizes.Bun_CallFrame__firstArgument..];
+        return self.asUnsafeJSValueArray()[Sizes.Bun_CallFrame__firstArgument..];
     }
 
     pub fn callee(self: *const CallFrame) JSC.JSValue {
-        return self.argsDirect()[Sizes.Bun_CallFrame__callee];
+        return self.asUnsafeJSValueArray()[Sizes.Bun_CallFrame__callee];
     }
 
     fn Arguments(comptime max: usize) type {
@@ -6356,11 +6356,11 @@ pub const CallFrame = opaque {
     }
 
     pub fn this(self: *const CallFrame) JSC.JSValue {
-        return self.argsDirect()[Sizes.Bun_CallFrame__thisArgument];
+        return self.asUnsafeJSValueArray()[Sizes.Bun_CallFrame__thisArgument];
     }
 
     pub fn argumentsCount(self: *const CallFrame) usize {
-        return @as(usize, @intCast(self.argsDirect()[Sizes.Bun_CallFrame__argumentCountIncludingThis].asInt32() - 1));
+        return @as(usize, @intCast(self.asUnsafeJSValueArray()[Sizes.Bun_CallFrame__argumentCountIncludingThis].asInt32() - 1));
     }
 };
 

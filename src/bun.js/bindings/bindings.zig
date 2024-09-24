@@ -6271,6 +6271,10 @@ pub const CallFrame = opaque {
 
     pub const name = "JSC::CallFrame";
 
+    fn argsDirect(self: *const CallFrame) [*]const JSC.JSValue {
+        return @as([*]align(alignment) const JSC.JSValue, @ptrCast(@alignCast(self)));
+    }
+
     pub fn format(frame: *CallFrame, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         const args = frame.argumentsPtr()[0..frame.argumentsCount()];
 
@@ -6300,11 +6304,11 @@ pub const CallFrame = opaque {
     }
 
     pub fn argumentsPtr(self: *const CallFrame) [*]const JSC.JSValue {
-        return @as([*]align(alignment) const JSC.JSValue, @ptrCast(@alignCast(self))) + Sizes.Bun_CallFrame__firstArgument;
+        return self.argsDirect()[Sizes.Bun_CallFrame__firstArgument..];
     }
 
     pub fn callee(self: *const CallFrame) JSC.JSValue {
-        return (@as([*]align(alignment) const JSC.JSValue, @ptrCast(@alignCast(self))) + Sizes.Bun_CallFrame__callee)[0];
+        return self.argsDirect()[Sizes.Bun_CallFrame__callee];
     }
 
     fn Arguments(comptime max: usize) type {
@@ -6359,11 +6363,11 @@ pub const CallFrame = opaque {
     }
 
     pub fn this(self: *const CallFrame) JSC.JSValue {
-        return (@as([*]align(alignment) const JSC.JSValue, @ptrCast(@alignCast(self))) + Sizes.Bun_CallFrame__thisArgument)[0];
+        return self.argsDirect()[Sizes.Bun_CallFrame__thisArgument];
     }
 
     pub fn argumentsCount(self: *const CallFrame) usize {
-        return @as(usize, @intCast((@as([*]align(alignment) const JSC.JSValue, @ptrCast(@alignCast(self))) + Sizes.Bun_CallFrame__argumentCountIncludingThis)[0].asInt32() - 1));
+        return @as(usize, @intCast(self.argsDirect()[Sizes.Bun_CallFrame__argumentCountIncludingThis].asInt32() - 1));
     }
 };
 

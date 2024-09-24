@@ -326,7 +326,7 @@ pub const SocketConfig = struct {
         var ssl: ?JSC.API.ServerConfig.SSLConfig = null;
         var default_data = JSValue.zero;
 
-        if (opts.getOwnTruthy(globalObject, "tls")) |tls| {
+        if (opts.getTruthy(globalObject, "tls")) |tls| {
             if (tls.isBoolean()) {
                 if (tls.toBoolean()) {
                     ssl = JSC.API.ServerConfig.SSLConfig.zero;
@@ -3115,7 +3115,7 @@ fn NewSocket(comptime ssl: bool) type {
                 }
             }
 
-            if (opts.getOwnTruthy(globalObject, "tls")) |tls| {
+            if (opts.getTruthy(globalObject, "tls")) |tls| {
                 if (tls.isBoolean()) {
                     if (tls.toBoolean()) {
                         ssl_opts = JSC.API.ServerConfig.SSLConfig.zero;
@@ -4018,7 +4018,7 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.C
     };
 
     var ssl_opts: ?JSC.API.ServerConfig.SSLConfig = null;
-    if (opts.getOwnTruthy(globalObject, "tls")) |tls| {
+    if (opts.getTruthy(globalObject, "tls")) |tls| {
         if (tls.isBoolean()) {
             if (tls.toBoolean()) {
                 ssl_opts = JSC.API.ServerConfig.SSLConfig.zero;

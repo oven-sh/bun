@@ -8,6 +8,7 @@ test("Object prototype followSymlinks", async () => {
     "abc/def/file.txt": "file",
     "symed/file2.txt": "file",
   });
+
   await symlink(path.join(dir, "symed"), path.join(dir, "abc/def/sym"), "dir");
   const glob = new Bun.Glob("**/*.txt");
 
@@ -16,13 +17,13 @@ test("Object prototype followSymlinks", async () => {
     onlyFiles: true,
     followSymlinks: true,
   });
-  expect([...zero].map(a => path.posix.normalize(a)).sort()).toEqual(["def/file.txt", "def/sym/file2.txt"]);
+  expect([...zero].map(a => a.replaceAll("\\", "/")).sort()).toEqual(["def/file.txt", "def/sym/file2.txt"]);
 
   const first = glob.scanSync({
     "cwd": path.join(dir, "abc"),
     onlyFiles: true,
   });
-  expect([...first].map(a => path.posix.normalize(a))).toEqual(["def/file.txt"]);
+  expect([...first].map(a => a.replaceAll("\\", "/"))).toEqual(["def/file.txt"]);
 
   Object.defineProperty(Object.prototype, "followSymlinks", {
     value: true,
@@ -34,12 +35,12 @@ test("Object prototype followSymlinks", async () => {
     "cwd": path.join(dir, "abc"),
     onlyFiles: true,
   });
-  expect([...second].map(a => path.posix.normalize(a))).toEqual(["def/file.txt"]);
+  expect([...second].map(a => a.replaceAll("\\", "/"))).toEqual(["def/file.txt"]);
   delete Object.prototype.followSymlinks;
 
   const third = glob.scanSync({
     "cwd": path.join(dir, "abc"),
     onlyFiles: true,
   });
-  expect([...third].map(a => path.posix.normalize(a))).toEqual(["def/file.txt"]);
+  expect([...third].map(a => a.replaceAll("\\", "/"))).toEqual(["def/file.txt"]);
 });

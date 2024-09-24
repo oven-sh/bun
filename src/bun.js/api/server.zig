@@ -1433,7 +1433,7 @@ pub const ServerConfig = struct {
             }
             if (global.hasException()) return args;
 
-            if (arg.getOwnTruthy(global, "fetch")) |onRequest_| {
+            if (arg.getTruthy(global, "fetch")) |onRequest_| {
                 if (!onRequest_.isCallable(global.vm())) {
                     JSC.throwInvalidArguments("Expected fetch() to be a function", .{}, global, exception);
                     return args;
@@ -1447,7 +1447,7 @@ pub const ServerConfig = struct {
                 return args;
             }
 
-            if (arg.getOwnTruthy(global, "tls")) |tls| {
+            if (arg.getTruthy(global, "tls")) |tls| {
                 if (tls.jsType().isArray()) {
                     var value_iter = tls.arrayIterator(global);
                     if (value_iter.len == 1) {

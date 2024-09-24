@@ -30,7 +30,7 @@ steps:
         env:
           BUN_CPP_ONLY: "ON"
         command:
-          - "bun run build:ci"
+          - "bun run build:ci --target bun"
 
       - key: "darwin-aarch64-build-zig"
         label: ":darwin: aarch64 - build-zig"
@@ -52,7 +52,7 @@ steps:
         env:
           BUN_LINK_ONLY: "ON"
         command:
-          - "bun run build:ci"
+          - "bun run build:ci --target bun"
 
       - key: "darwin-aarch64-test-macos-14"
         label: ":darwin: 14 aarch64 - test-bun"
@@ -132,7 +132,7 @@ steps:
         env:
           BUN_CPP_ONLY: "ON"
         command:
-          - "bun run build:ci"
+          - "bun run build:ci --target bun"
 
       - key: "darwin-x64-build-zig"
         label: ":darwin: x64 - build-zig"
@@ -154,7 +154,7 @@ steps:
         env:
           BUN_LINK_ONLY: "ON"
         command:
-          - "bun run build:ci"
+          - "bun run build:ci --target bun"
 
       - key: "darwin-x64-test-macos-14"
         label: ":darwin: 14 x64 - test-bun"
@@ -234,7 +234,7 @@ steps:
         env:
           BUN_CPP_ONLY: "ON"
         command:
-          - "bun run build:ci"
+          - "bun run build:ci --target bun"
 
       - key: "linux-x64-build-zig"
         label: ":linux: x64 - build-zig"
@@ -256,7 +256,7 @@ steps:
         env:
           BUN_LINK_ONLY: "ON"
         command:
-          - "bun run build:ci"
+          - "bun run build:ci --target bun"
 
       - key: "linux-x64-test-debian-12"
         label: ":debian: 12 x64 - test-bun"
@@ -370,7 +370,7 @@ steps:
           ENABLE_BASELINE: "ON"
           BUN_CPP_ONLY: "ON"
         command:
-          - "bun run build:ci"
+          - "bun run build:ci --target bun"
 
       - key: "linux-x64-baseline-build-zig"
         label: ":linux: x64-baseline - build-zig"
@@ -395,7 +395,7 @@ steps:
           ENABLE_BASELINE: "ON"
           BUN_LINK_ONLY: "ON"
         command:
-          - "bun run build:ci"
+          - "bun run build:ci --target bun"
 
       - key: "linux-x64-baseline-test-debian-12"
         label: ":debian: 12 x64-baseline - test-bun"
@@ -506,7 +506,7 @@ steps:
         env:
           BUN_CPP_ONLY: "ON"
         command:
-          - "bun run build:ci"
+          - "bun run build:ci --target bun"
 
       - key: "linux-aarch64-build-zig"
         label: ":linux: aarch64 - build-zig"
@@ -528,7 +528,7 @@ steps:
         env:
           BUN_LINK_ONLY: "ON"
         command:
-          - "bun run build:ci"
+          - "bun run build:ci --target bun"
 
       - key: "linux-aarch64-test-debian-12"
         label: ":debian: 12 aarch64 - test-bun"
@@ -639,7 +639,7 @@ steps:
         env:
           BUN_CPP_ONLY: "ON"
         command:
-          - "bun run build:ci"
+          - "bun run build:ci --target bun"
 
       - key: "windows-x64-build-zig"
         label: ":windows: x64 - build-zig"
@@ -661,7 +661,7 @@ steps:
         env:
           BUN_LINK_ONLY: "ON"
         command:
-          - "bun run build:ci"
+          - "bun run build:ci --target bun"
 
       - key: "windows-x64-test-bun"
         label: ":windows: x64 - test-bun"
@@ -713,7 +713,7 @@ steps:
           ENABLE_BASELINE: "ON"
           BUN_CPP_ONLY: "ON"
         command:
-          - "bun run build:ci"
+          - "bun run build:ci --target bun"
 
       - key: "windows-x64-baseline-build-zig"
         label: ":windows: x64-baseline - build-zig"
@@ -738,7 +738,7 @@ steps:
           ENABLE_BASELINE: "ON"
           BUN_LINK_ONLY: "ON"
         command:
-          - "bun run build:ci"
+          - "bun run build:ci --target bun"
 
       - key: "windows-x64-baseline-test-bun"
         label: ":windows: x64-baseline - test-bun"

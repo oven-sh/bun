@@ -398,6 +398,10 @@ fn performBundleAndWaitInner(dev: *DevServer, route: *Route, fail: *Failure) !Bu
     }, &.{
         dev.framework.entry_client.?,
     });
+
+    try dev.client_graph.ensureStaleBitCapacity();
+    try dev.server_graph.ensureStaleBitCapacity();
+
     assert(output_files.items.len == 0);
 
     bv2.bundler.log.printForLogLevel(Output.errorWriter()) catch {};
@@ -482,7 +486,7 @@ fn onServerRequestWithBundle(route: *Route, bundle: Bundle, req: *Request, resp:
         bun.String.init(route.client_bundled_url).toJS(global),
     );
 
-    const result = server_request_callback.call(
+    var result = server_request_callback.call(
         global,
         .undefined,
         &.{
@@ -491,13 +495,25 @@ fn onServerRequestWithBundle(route: *Route, bundle: Bundle, req: *Request, resp:
         },
     ) catch |err| {
         const exception = global.takeException(err);
-        exception.print(global, .Log, .Error);
         const fail: Failure = .{ .request_handler = exception };
         fail.printToConsole(route);
         fail.sendAsHttpResponse(resp, route);
-        exception.ensureStillAlive();
         return;
     };
+
+    if (result.asAnyPromise()) |promise| {
+        dev.vm.waitForPromise(promise);
+        switch (promise.unwrap(dev.vm.jsc, .mark_handled)) {
+            .pending => unreachable, // was waited for
+            .fulfilled => |r| result = r,
+            .rejected => |e| {
+                const fail: Failure = .{ .request_handler = e };
+                fail.printToConsole(route);
+                fail.sendAsHttpResponse(resp, route);
+                return;
+            },
+        }
+    }
 
     // TODO: This interface and implementation is very poor. but fine until API
     // considerations become important (as of writing, there are 3 dozen todo
@@ -657,6 +673,10 @@ pub fn IncrementalGraph(side: kit.Side) type {
                     try g.current_incremental_chunk_parts.append(default_allocator, chunk.code());
                 },
             }
+        }
+
+        pub fn ensureStaleBitCapacity(g: *@This()) !void {
+            try g.stale_files.resize(default_allocator, g.bundled_files.count(), false);
         }
 
         pub fn invalidate(g: *@This(), paths: []const []const u8, hashes: []const u32, out_paths: *DualArray([]const u8)) void {
@@ -1138,19 +1158,23 @@ const DevWebSocket = struct {
     dev: *DevServer,
 
     pub fn onOpen(dw: *DevWebSocket, ws: AnyWebSocket) void {
+        _ = dw; // autofix
         _ = ws.send("bun!", .text, false, true);
-        std.debug.print("open {*} {}\n", .{ dw, ws });
         _ = ws.subscribe("TODO");
     }
 
     pub fn onMessage(dw: *DevWebSocket, ws: AnyWebSocket, msg: []const u8, opcode: uws.Opcode) void {
-        std.debug.print("message {*} {} {} '{s}'\n", .{ dw, ws, opcode, msg });
+        _ = dw; // autofix
+        _ = ws; // autofix
+        _ = msg; // autofix
+        _ = opcode; // autofix
     }
 
     pub fn onClose(dw: *DevWebSocket, ws: AnyWebSocket, exit_code: i32, message: []const u8) void {
+        _ = ws; // autofix
+        _ = exit_code; // autofix
+        _ = message; // autofix
         defer bun.destroy(dw);
-
-        std.debug.print("close {*} {} {} '{s}'\n", .{ dw, ws, exit_code, message });
     }
 };
 

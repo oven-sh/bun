@@ -414,7 +414,6 @@ pub const BundleV2 = struct {
 
             if (v.scb_bitset) |scb_bitset| {
                 if (scb_bitset.isSet(source_index.get())) {
-                    std.debug.print("hit found {d}\n", .{source_index.get()});
                     v.visit(
                         Index.init(v.scb_list.getReferenceSourceIndex(source_index.get()) orelse unreachable),
                         false,
@@ -2220,8 +2219,6 @@ pub const BundleV2 = struct {
                         result.source.path.hashKey(),
                         reference_source_index,
                     ) catch bun.outOfMemory();
-
-                    std.debug.print("OwO {d} {d}: {s}\n", .{ result.source.index.get(), reference_source_index, result.source.path.text });
 
                     graph.server_component_boundaries.put(
                         graph.allocator,
@@ -5373,10 +5370,6 @@ pub const LinkerContext = struct {
                     }
 
                     const named_imports_ = &named_imports[source_index];
-                    std.debug.print("named imports in {d} is {d}\n", .{
-                        source_index,
-                        named_imports_.count(),
-                    });
                     if (named_imports_.count() > 0) {
                         this.matchImportsWithExportsForFile(
                             named_imports_,
@@ -5610,10 +5603,6 @@ pub const LinkerContext = struct {
                         }
                     }
 
-                    std.debug.print("merge {} -> {}\n", .{
-                        ref.dump(&this.graph.symbols),
-                        import.data.import_ref.dump(&this.graph.symbols),
-                    });
                     _ = this.graph.symbols.merge(ref, import.data.import_ref);
                 }
 
@@ -6345,7 +6334,6 @@ pub const LinkerContext = struct {
                 }
 
                 // Also map from imports to parts that use them
-                std.debug.print("lookup named_imports on {d} by {}\n", .{ source_index_.get(), ref.dump(&c.graph.symbols) });
                 if (named_imports.getPtr(ref)) |existing| {
                     existing.local_parts_with_uses.push(allocator, @intCast(part_index)) catch unreachable;
                 }
@@ -9068,6 +9056,7 @@ pub const LinkerContext = struct {
                     };
 
                     // module.importSync('path', (module) => ns = module)
+                    std.debug.print("uhh: {}, {}, {d}, {s}\n", .{ record.kind, record.tag, record.source_index.get(), record.path.text });
                     const call = Expr.init(E.Call, .{
                         .target = Expr.init(E.Dot, .{
                             .target = module_id,
@@ -11572,14 +11561,10 @@ pub const LinkerContext = struct {
             const import_ref = ref;
 
             var re_exports = std.ArrayList(js_ast.Dependency).init(c.allocator);
-            const result = c.matchImportWithExport(
-                .{
-                    .source_index = Index.source(source_index),
-                    .import_ref = import_ref,
-                },
-                &re_exports,
-            );
-            std.debug.print("matchImportWithExport({}) -> {}\n\n", .{ import_ref.dump(&c.graph.symbols), result });
+            const result = c.matchImportWithExport(.{
+                .source_index = Index.source(source_index),
+                .import_ref = import_ref,
+            }, &re_exports);
 
             switch (result.kind) {
                 .normal => {
@@ -11596,8 +11581,6 @@ pub const LinkerContext = struct {
                     ) catch unreachable;
                 },
                 .namespace => {
-                    std.debug.print("the {s} -> {}", .{ result.alias, result.namespace_ref.dump(&c.graph.symbols) });
-
                     c.graph.symbols.get(import_ref).?.namespace_alias = js_ast.G.NamespaceAlias{
                         .namespace_ref = result.namespace_ref,
                         .alias = result.alias,
@@ -12950,11 +12933,6 @@ pub const AstBuilder = struct {
         parts.mut(1).declared_symbols = p.declared_symbols;
         parts.mut(1).scopes = p.scopes.items;
         parts.mut(1).import_record_indices = BabyList(u32).fromList(p.import_records_for_current_part);
-
-        std.debug.print("generated imports\n", .{});
-        for (p.named_imports.keys(), p.named_imports.values()) |k, v| {
-            std.debug.print("K: {} V: {}\n", .{ k.dump(p.symbols.items), v });
-        }
 
         return .{
             .parts = parts,

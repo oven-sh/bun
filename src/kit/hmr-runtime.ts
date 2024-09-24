@@ -24,7 +24,14 @@ try {
   if (mode === 'server')  {
     server_exports = {
       fetch(req: any, requested_id: Id) {
-        return main.exports.default(loadModule(requested_id).exports);
+        const serverRenderer = main.exports.default;
+        if (!serverRenderer) {
+          throw new Error('Framework server entrypoint is missing a "default" export.');
+        }
+        if (typeof serverRenderer !== 'function') {
+          throw new Error('Framework server entrypoint\'s "default" export is not a function.');
+        }
+        return serverRenderer(req, loadModule(requested_id).exports);
       },
       registerUpdate(modules) {
         throw new Error('erm... you want me to what')

@@ -9,6 +9,8 @@ const stringZ = bun.stringZ;
 const FeatureFlags = bun.FeatureFlags;
 const options = @import("./options.zig");
 
+const debug = Output.scoped(.watcher, false);
+
 const Mutex = @import("./lock.zig").Lock;
 const Futex = @import("./futex.zig");
 pub const WatchItemIndex = u16;
@@ -1296,7 +1298,7 @@ pub const GenericWatcher = struct {
         // - Directories outside the root directory
         // - Directories inside node_modules
         if (std.mem.indexOf(u8, file_path, "node_modules") == null and std.mem.indexOf(u8, file_path, watch.fs.top_level_dir) != null) {
-            std.debug.print("watch {s} : {d}\n", .{ file_path, getHash(file_path) });
+            debug("watch {s} ({d})\n", .{ file_path, getHash(file_path) });
             _ = watch.addDirectory(dir_fd, file_path, getHash(file_path), false);
         }
     }

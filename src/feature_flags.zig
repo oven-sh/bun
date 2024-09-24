@@ -158,7 +158,7 @@ pub fn isLibdeflateEnabled() bool {
     return !bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_NO_LIBDEFLATE");
 }
 
-/// Enable experimental bundler tools, codenamed "bun kit"
+/// Enable Bun Kit's experimental bundler tools
 pub const kit = env.is_canary or env.isDebug;
 
 /// String keys are easier to debug with, however number keys

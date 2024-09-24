@@ -191,6 +191,34 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             return str.inMapCaseInsensitive(@This());
         }
 
+        pub fn getASCIIICaseInsensitive(input: anytype) ?V {
+            return getWithEqlLowercase(input, bun.strings.eqlComptime);
+        }
+
+        pub fn getWithEqlLowercase(input: anytype, comptime eql: anytype) ?V {
+            const Input = @TypeOf(input);
+            const length = if (@hasField(Input, "len")) input.len else input.length();
+            if (length < precomputed.min_len or length > precomputed.max_len)
+                return null;
+
+            comptime var i: usize = precomputed.min_len;
+            inline while (i <= precomputed.max_len) : (i += 1) {
+                if (length == i) {
+                    const lowerbuf: [length]u8 = brk: {
+                        var buf: [length]u8 = undefined;
+                        for (input[0..length].*, &buf) |c, *j| {
+                            j.* = std.ascii.toLower(c);
+                        }
+                        break :brk buf;
+                    };
+
+                    return getWithLengthAndEql(&lowerbuf, i, eql);
+                }
+            }
+
+            return null;
+        }
+
         pub fn getWithEql(input: anytype, comptime eql: anytype) ?V {
             const Input = @TypeOf(input);
             const length = if (@hasField(Input, "len")) input.len else input.length();

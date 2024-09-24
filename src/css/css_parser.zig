@@ -2315,6 +2315,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
                 };
             } else {
                 try this.rules.toCss(W, &printer);
+                try printer.newline();
                 return ToCssResult{
                     .dependencies = printer.dependencies,
                     .code = dest.items,

@@ -1,5 +1,4 @@
 // Hardcoded module "node:zlib"
-// XXX: `.bind(handle)` is used in 3 places, this should eventually be not necessary
 
 const assert = require("node:assert");
 const BufferModule = require("node:buffer");
@@ -197,7 +196,7 @@ function ZlibBase(opts, mode, handle, { flush, finishFlush, fullFlush }) {
   this._handle = handle;
   handle[owner_symbol] = this;
   // Used by processCallback() and zlibOnError()
-  handle.onerror = zlibOnError.bind(handle);
+  handle.onerror = zlibOnError;
   this._outBuffer = Buffer.allocUnsafe(chunkSize);
   this._outOffset = 0;
 
@@ -571,7 +570,7 @@ function Zlib(opts, mode) {
 
   const handle = new NativeZlib(mode);
   this._writeState = new Uint32Array(2);
-  handle.init(windowBits, level, memLevel, strategy, this._writeState, processCallback.bind(handle), dictionary);
+  handle.init(windowBits, level, memLevel, strategy, this._writeState, processCallback, dictionary);
 
   ZlibBase.$apply(this, [opts, mode, handle, zlibDefaultOpts]);
 
@@ -696,7 +695,7 @@ function Brotli(opts, mode) {
   const handle = new NativeBrotli(mode);
 
   this._writeState = new Uint32Array(2);
-  if (!handle.init(brotliInitParamsArray, this._writeState, processCallback.bind(handle))) {
+  if (!handle.init(brotliInitParamsArray, this._writeState, processCallback)) {
     throw ERR_ZLIB_INITIALIZATION_FAILED();
   }
 

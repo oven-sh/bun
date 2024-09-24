@@ -158,7 +158,7 @@ pub fn CompressionStream(comptime T: type) type {
 
             this.stream.updateWriteResult(&this.write_result.?[1], &this.write_result.?[0]);
 
-            _ = this.write_callback.get().?.call(globalThis, .null, &.{}) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
+            _ = this.write_callback.get().?.call(globalThis, this.this_value, &.{}) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
         }
 
         pub fn writeSync(this: *T, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
@@ -257,7 +257,7 @@ pub fn CompressionStream(comptime T: type) type {
             var code_str = bun.String.createFormat("{s}", .{std.mem.sliceTo(err_.code, 0) orelse ""}) catch bun.outOfMemory();
             const code_value = code_str.transferToJS(globalThis);
 
-            _ = try this.onerror_value.get().?.call(globalThis, .null, &.{ msg_value, err_value, code_value });
+            _ = try this.onerror_value.get().?.call(globalThis, this.this_value, &.{ msg_value, err_value, code_value });
         }
 
         pub fn finalize(this: *T) void {
@@ -281,6 +281,7 @@ pub const SNativeZlib = struct {
     write_callback: JSC.Strong = .{},
     onerror_value: JSC.Strong = .{},
     poll_ref: bun.Async.KeepAlive = .{},
+    this_value: JSC.JSValue = .zero,
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) ?*@This() {
         const arguments = callframe.argumentsUndef(4).ptr;
@@ -625,6 +626,7 @@ pub const SNativeBrotli = struct {
     write_callback: JSC.Strong = .{},
     onerror_value: JSC.Strong = .{},
     poll_ref: bun.Async.KeepAlive = .{},
+    this_value: JSC.JSValue = .zero,
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) ?*@This() {
         const arguments = callframe.argumentsUndef(1).ptr;

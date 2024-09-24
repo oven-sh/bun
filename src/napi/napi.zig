@@ -1826,6 +1826,7 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn _ZNK2v85Value8IsObjectEv() *anyopaque;
     pub extern fn _ZNK2v85Value8IsNumberEv() *anyopaque;
     pub extern fn _ZNK2v85Value8IsUint32Ev() *anyopaque;
+    pub extern fn _ZNK2v85Value7IsInt32Ev() *anyopaque;
     pub extern fn _ZNK2v85Value11Uint32ValueENS_5LocalINS_7ContextEEE() *anyopaque;
     pub extern fn _ZNK2v85Value11IsUndefinedEv() *anyopaque;
     pub extern fn _ZNK2v85Value6IsNullEv() *anyopaque;
@@ -1857,6 +1858,9 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn _ZN2v86Object38SlowGetAlignedPointerFromInternalFieldEi() *anyopaque;
     pub extern fn _ZN2v86Object32SetAlignedPointerInInternalFieldEiPv() *anyopaque;
     pub extern fn _ZN2v88Template3SetENS_5LocalINS_4NameEEENS1_INS_4DataEEENS_17PropertyAttributeE() *anyopaque;
+    pub extern fn _ZN2v87Integer15NewFromUnsignedEPNS_7IsolateEj() *anyopaque;
+    pub extern fn _ZN2v87Integer3NewEPNS_7IsolateEi() *anyopaque;
+    pub extern fn _ZNK2v87Integer5ValueEv() *anyopaque;
     pub extern fn uv_os_getpid() *anyopaque;
     pub extern fn uv_os_getppid() *anyopaque;
 } else struct {
@@ -1906,6 +1910,7 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"?IsObject@Value@v8@@QEBA_NXZ"() *anyopaque;
     pub extern fn @"?IsNumber@Value@v8@@QEBA_NXZ"() *anyopaque;
     pub extern fn @"?IsUint32@Value@v8@@QEBA_NXZ"() *anyopaque;
+    pub extern fn @"?IsInt32@Value@v8@@QEBA_NXZ"() *anyopaque;
     pub extern fn @"?Uint32Value@Value@v8@@QEBA?AV?$Maybe@I@2@V?$Local@VContext@v8@@@2@@Z"() *anyopaque;
     pub extern fn @"?IsUndefined@Value@v8@@QEBA_NXZ"() *anyopaque;
     pub extern fn @"?IsNull@Value@v8@@QEBA_NXZ"() *anyopaque;
@@ -1937,6 +1942,9 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"?Get@Object@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@@Z"() *anyopaque;
     pub extern fn @"?Get@Object@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@I@Z"() *anyopaque;
     pub extern fn @"?Set@Template@v8@@QEAAXV?$Local@VName@v8@@@2@V?$Local@VData@v8@@@2@W4PropertyAttribute@2@@Z"() *anyopaque;
+    pub extern fn @"?Value@Integer@v8@@QEBA_JXZ"() *anyopaque;
+    pub extern fn @"?NewFromUnsigned@Integer@v8@@SA?AV?$Local@VInteger@v8@@@2@PEAVIsolate@2@I@Z"() *anyopaque;
+    pub extern fn @"?New@Integer@v8@@SA?AV?$Local@VInteger@v8@@@2@PEAVIsolate@2@H@Z"() *anyopaque;
 };
 
 pub fn fixDeadCodeElimination() void {

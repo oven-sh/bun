@@ -194,6 +194,7 @@
     __ZNK2v85Value8IsObjectEv;
     __ZNK2v85Value8IsNumberEv;
     __ZNK2v85Value8IsUint32Ev;
+    __ZNK2v85Value7IsInt32Ev;
     __ZNK2v85Value11Uint32ValueENS_5LocalINS_7ContextEEE;
     __ZNK2v85Value11IsUndefinedEv;
     __ZNK2v85Value6IsNullEv;
@@ -225,6 +226,9 @@
     __ZN2v86Object32SetAlignedPointerInInternalFieldEiPv;
     __ZN2v86Object38SlowGetAlignedPointerFromInternalFieldEi;
     __ZN2v88Template3SetENS_5LocalINS_4NameEEENS1_INS_4DataEEENS_17PropertyAttributeE;
+    __ZN2v87Integer15NewFromUnsignedEPNS_7IsolateEj;
+    __ZN2v87Integer3NewEPNS_7IsolateEi;
+    __ZNK2v87Integer5ValueEv;
     _uv_os_getpid;
     _uv_os_getppid;
 };

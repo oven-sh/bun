@@ -36,6 +36,7 @@ using namespace v8;
     LOG_EXPR(v->IsObject());                                                   \
     LOG_EXPR(v->IsNumber());                                                   \
     LOG_EXPR(v->IsUint32());                                                   \
+    LOG_EXPR(v->IsInt32());                                                    \
   } while (0)
 
 namespace v8tests {
@@ -121,31 +122,49 @@ void test_v8_primitives(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
-static void perform_number_test(const FunctionCallbackInfo<Value> &info,
+static void
+perform_number_and_integer_test(const FunctionCallbackInfo<Value> &info,
                                 double number) {
   Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
 
   Local<Number> v8_number = Number::New(isolate, number);
   LOG_EXPR(v8_number->Value());
-  LOG_MAYBE(v8_number->Uint32Value(isolate->GetCurrentContext()));
+  LOG_MAYBE(v8_number->Uint32Value(context));
   LOG_VALUE_KIND(v8_number);
+
+  // we need to check if number can be a uint32 or a int32 before running these
+  // tests. first, check if it has a fractional part
+  double _int_part;
+  if (modf(number, &_int_part) == 0.0) {
+    if (number >= 0 && number <= UINT32_MAX) {
+      Local<Integer> v8_uint = Integer::NewFromUnsigned(isolate, number);
+      LOG_EXPR(v8_uint->Value());
+      LOG_VALUE_KIND(v8_uint);
+    }
+    if (number >= INT32_MIN && number <= INT32_MAX) {
+      Local<Integer> v8_int = Integer::New(isolate, number);
+      LOG_EXPR(v8_int->Value());
+      LOG_VALUE_KIND(v8_int);
+    }
+  }
 
   return ok(info);
 }
 
 void test_v8_number_int(const FunctionCallbackInfo<Value> &info) {
-  perform_number_test(info, 123.0);
+  perform_number_and_integer_test(info, 123.0);
 }
 
 void test_v8_number_large_int(const FunctionCallbackInfo<Value> &info) {
   // 2^31 (should fit as uint32 but not as int32)
-  perform_number_test(info, 2147483648.0);
+  perform_number_and_integer_test(info, 2147483648.0);
   // 2^33 (should not fit as any 32-bit integer)
-  perform_number_test(info, 8589934592.0);
+  perform_number_and_integer_test(info, 8589934592.0);
 }
 
 void test_v8_number_fraction(const FunctionCallbackInfo<Value> &info) {
-  perform_number_test(info, 2.5);
+  perform_number_and_integer_test(info, 2.5);
 }
 
 void test_v8_value_uint32value(const FunctionCallbackInfo<Value> &info) {

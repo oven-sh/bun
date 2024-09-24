@@ -607,6 +607,7 @@ EXPORTS
   ?IsObject@Value@v8@@QEBA_NXZ
   ?IsNumber@Value@v8@@QEBA_NXZ
   ?IsUint32@Value@v8@@QEBA_NXZ
+  ?IsInt32@Value@v8@@QEBA_NXZ
   ?Uint32Value@Value@v8@@QEBA?AV?$Maybe@I@2@V?$Local@VContext@v8@@@2@@Z
   ?IsUndefined@Value@v8@@QEBA_NXZ
   ?IsNull@Value@v8@@QEBA_NXZ
@@ -638,3 +639,6 @@ EXPORTS
   ?SetAlignedPointerInInternalField@Object@v8@@QEAAXHPEAX@Z
   ?SlowGetAlignedPointerFromInternalField@Object@v8@@AEAAPEAXH@Z
   ?Set@Template@v8@@QEAAXV?$Local@VName@v8@@@2@V?$Local@VData@v8@@@2@W4PropertyAttribute@2@@Z
+  ?Value@Integer@v8@@QEBA_JXZ
+  ?NewFromUnsigned@Integer@v8@@SA?AV?$Local@VInteger@v8@@@2@PEAVIsolate@2@I@Z
+  ?New@Integer@v8@@SA?AV?$Local@VInteger@v8@@@2@PEAVIsolate@2@H@Z

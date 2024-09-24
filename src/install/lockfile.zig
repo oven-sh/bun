@@ -841,15 +841,19 @@ pub fn isRootDependency(this: *const Lockfile, manager: *PackageManager, id: Dep
 /// Is this a direct dependency of any workspace (including workspace root)?
 /// TODO make this faster by caching the workspace package ids
 pub fn isWorkspaceDependency(this: *const Lockfile, id: DependencyID) bool {
+    return getWorkspacePkgIfWorkspaceDep(this, id) != invalid_package_id;
+}
+
+pub fn getWorkspacePkgIfWorkspaceDep(this: *const Lockfile, id: DependencyID) PackageID {
     const packages = this.packages.slice();
     const resolutions = packages.items(.resolution);
     const dependencies_lists = packages.items(.dependencies);
-    for (resolutions, dependencies_lists) |resolution, dependencies| {
+    for (resolutions, dependencies_lists, 0..) |resolution, dependencies, pkg_id| {
         if (resolution.tag != .workspace and resolution.tag != .root) continue;
-        if (dependencies.contains(id)) return true;
+        if (dependencies.contains(id)) return @intCast(pkg_id);
     }
 
-    return false;
+    return invalid_package_id;
 }
 
 /// Does this tree id belong to a workspace (including workspace root)?

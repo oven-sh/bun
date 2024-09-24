@@ -829,9 +829,37 @@ pub const Task = struct {
                 this.status = Status.success;
             },
             .local_tarball => {
+                const workspace_pkg_id = manager.lockfile.getWorkspacePkgIfWorkspaceDep(this.request.local_tarball.tarball.dependency_id);
+
+                var abs_buf: bun.PathBuffer = undefined;
+                const tarball_path, const normalize = if (workspace_pkg_id != invalid_package_id) tarball_path: {
+                    const workspace_res = manager.lockfile.packages.items(.resolution)[workspace_pkg_id];
+
+                    if (workspace_res.tag != .workspace) break :tarball_path .{ this.request.local_tarball.tarball.url.slice(), true };
+
+                    // Construct an absolute path to the tarball.
+                    // Normally tarball paths are always relative to the root directory, but if a
+                    // workspace depends on a tarball path, it should be relative to the workspace.
+                    const workspace_path = workspace_res.value.workspace.slice(manager.lockfile.buffers.string_bytes.items);
+                    break :tarball_path .{
+                        Path.joinAbsStringBuf(
+                            FileSystem.instance.top_level_dir,
+                            &abs_buf,
+                            &[_][]const u8{
+                                workspace_path,
+                                this.request.local_tarball.tarball.url.slice(),
+                            },
+                            .auto,
+                        ),
+                        false,
+                    };
+                } else .{ this.request.local_tarball.tarball.url.slice(), true };
+
                 const result = readAndExtract(
                     manager.allocator,
                     &this.request.local_tarball.tarball,
+                    tarball_path,
+                    normalize,
                 ) catch |err| {
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
@@ -848,8 +876,16 @@ pub const Task = struct {
         }
     }
 
-    fn readAndExtract(allocator: std.mem.Allocator, tarball: *const ExtractTarball) !ExtractData {
-        const bytes = try File.readFromUserInput(std.fs.cwd(), tarball.url.slice(), allocator).unwrap();
+    fn readAndExtract(
+        allocator: std.mem.Allocator,
+        tarball: *const ExtractTarball,
+        tarball_path: string,
+        normalize: bool,
+    ) !ExtractData {
+        const bytes = if (normalize)
+            try File.readFromUserInput(std.fs.cwd(), tarball_path, allocator).unwrap()
+        else
+            try File.readFrom(bun.FD.cwd(), tarball_path, allocator).unwrap();
         defer allocator.free(bytes);
         return tarball.run(bytes);
     }

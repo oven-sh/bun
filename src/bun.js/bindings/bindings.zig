@@ -2927,13 +2927,13 @@ pub const JSGlobalObject = opaque {
         this.vm().throwError(this, err);
     }
 
-    pub fn throwMissingArgumentsValue(this: *JSGlobalObject, arg_names: []const []const u8) JSValue {
+    pub inline fn throwMissingArgumentsValue(this: *JSGlobalObject, comptime arg_names: []const []const u8) JSValue {
         switch (arg_names.len) {
-            0 => @panic("requires at least one argument"),
+            0 => @compileError("requires at least one argument"),
             1 => this.ERR_MISSING_ARGS("The \"{s}\" argument must be specified", .{arg_names[0]}).throw(),
             2 => this.ERR_MISSING_ARGS("The \"{s}\" and \"{s}\" arguments must be specified", .{ arg_names[0], arg_names[1] }).throw(),
             3 => this.ERR_MISSING_ARGS("The \"{s}\", \"{s}\", and \"{s}\" arguments must be specified", .{ arg_names[0], arg_names[1], arg_names[2] }).throw(),
-            else => @panic("implement this message"),
+            else => @compileError("implement this message"),
         }
         return .zero;
     }

@@ -1665,7 +1665,8 @@ pub const js_bindings = struct {
             // there is definitely enough space in the bounded array
             unreachable;
         };
-        return bun.String.createLatin1(buf.slice()).toJS(global);
+        var str = bun.String.createLatin1(buf.slice());
+        return str.transferToJS(global);
     }
 
     pub fn jsGetFeatureData(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {

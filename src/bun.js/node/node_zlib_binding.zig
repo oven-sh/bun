@@ -856,7 +856,11 @@ const BrotliContext = struct {
     }
 
     pub fn close(this: *BrotliContext) void {
-        _ = this.reset();
+        switch (this.mode_) {
+            .BROTLI_ENCODE => c.BrotliEncoderDestroyInstance(@ptrCast(@alignCast(this.state))),
+            .BROTLI_DECODE => c.BrotliDecoderDestroyInstance(@ptrCast(@alignCast(this.state))),
+            else => unreachable,
+        }
         this.mode = .NONE;
     }
 

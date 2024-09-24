@@ -59,4 +59,38 @@ describe("zlib compression does not leak memory", () => {
       0,
     );
   }
+
+  test("brotliCompress", async () => {
+    for (let index = 0; index < 1_000; index++) {
+      await promisify(zlib.brotliCompress)(input);
+    }
+    const baseline = process.memoryUsage.rss();
+    console.log(baseline);
+    for (let index = 0; index < 1_000; index++) {
+      await promisify(zlib.brotliCompress)(input);
+    }
+    Bun.gc(true);
+    const after = process.memoryUsage.rss();
+    console.log(after);
+    console.log("-", after - baseline);
+    console.log("-", 1024 * 1024 * 20);
+    expect(after - baseline).toBeLessThan(1024 * 1024 * 20);
+  }, 0);
+
+  test("brotliCompressSync", async () => {
+    for (let index = 0; index < 1_000; index++) {
+      zlib.brotliCompressSync(input);
+    }
+    const baseline = process.memoryUsage.rss();
+    console.log(baseline);
+    for (let index = 0; index < 1_000; index++) {
+      zlib.brotliCompressSync(input);
+    }
+    Bun.gc(true);
+    const after = process.memoryUsage.rss();
+    console.log(after);
+    console.log("-", after - baseline);
+    console.log("-", 1024 * 1024 * 20);
+    expect(after - baseline).toBeLessThan(1024 * 1024 * 20);
+  }, 0);
 });

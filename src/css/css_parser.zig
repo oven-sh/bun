@@ -751,7 +751,7 @@ pub fn DeriveValueType(comptime T: type) type {
 
     const ValueTypeMap = T.ValueTypeMap;
     const field_values: []const MediaFeatureType = field_values: {
-        const fields = std.meta.fields(@This());
+        const fields = std.meta.fields(T);
         var mapping: [fields.len]MediaFeatureType = undefined;
         for (fields, 0..) |field, i| {
             // Check that it exists in the type map
@@ -760,14 +760,12 @@ pub fn DeriveValueType(comptime T: type) type {
         const mapping_final = mapping;
         break :field_values mapping_final[0..];
     };
-    _ = field_values; // autofix
 
     return struct {
         pub fn valueType(this: *const T) MediaFeatureType {
             inline for (std.meta.fields(T), 0..) |field, i| {
-                _ = i; // autofix
                 if (field.value == @intFromEnum(this.*)) {
-                    return @enumFromInt(field.value);
+                    return field_values[i];
                 }
             }
             unreachable;

@@ -9,6 +9,9 @@ endif()
 
 optionx(WEBKIT_PATH FILEPATH "The path to the WebKit directory" DEFAULT ${DEFAULT_WEBKIT_PATH})
 
+set(WEBKIT_INCLUDE_PATH ${WEBKIT_PATH}/include)
+set(WEBKIT_LIB_PATH ${WEBKIT_PATH}/lib)
+
 register_vendor_target(webkit)
 
 register_libraries(

@@ -11,11 +11,19 @@ test("Object prototype followSymlinks", async () => {
   await symlink(path.join(dir, "symed"), path.join(dir, "abc/def/sym"), "dir");
   const glob = new Bun.Glob("**/*.txt");
 
+  const zero = glob.scanSync({
+    "cwd": path.join(dir, "abc"),
+    onlyFiles: true,
+    followSymlinks: true,
+  });
+  expect([...zero].map(a => path.posix.normalize(a)).sort()).toEqual(["def/file.txt", "def/sym/file2.txt"]);
+
   const first = glob.scanSync({
     "cwd": path.join(dir, "abc"),
     onlyFiles: true,
   });
   expect([...first].map(a => path.posix.normalize(a))).toEqual(["def/file.txt"]);
+
   Object.defineProperty(Object.prototype, "followSymlinks", {
     value: true,
     writable: true,

@@ -23,7 +23,7 @@ bool Value::IsNumber() const
 
 bool Value::IsUint32() const
 {
-    return localToJSValue().isUInt32();
+    return localToJSValue().isUInt32AsAnyInt();
 }
 
 bool Value::IsUndefined() const
@@ -64,11 +64,10 @@ bool Value::IsFunction() const
 Maybe<uint32_t> Value::Uint32Value(Local<Context> context) const
 {
     auto js_value = localToJSValue();
-    uint32_t value;
-    if (js_value.getUInt32(value)) {
-        return Just(value);
-    }
-    return Nothing<uint32_t>();
+    auto scope = DECLARE_THROW_SCOPE(context->vm());
+    uint32_t num = js_value.toUInt32(context->globalObject());
+    RETURN_IF_EXCEPTION(scope, Nothing<uint32_t>());
+    RELEASE_AND_RETURN(scope, Just(num));
 }
 
 bool Value::FullIsTrue() const

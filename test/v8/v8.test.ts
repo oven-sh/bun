@@ -135,6 +135,17 @@ describe("Number", () => {
   });
 });
 
+describe("Value", () => {
+  describe("Uint32Value", () => {
+    it("coerces correctly", () => {
+      checkSameOutput("test_v8_value_uint32value", []);
+    });
+    it("throws in the right cases", () => {
+      checkSameOutput("test_v8_value_uint32value_throw", []);
+    });
+  });
+});
+
 describe("String", () => {
   it("can create and read back strings with only ASCII characters", () => {
     checkSameOutput("test_v8_string_ascii", []);

@@ -13,6 +13,17 @@ using namespace v8;
 
 #define LOG_EXPR(e) std::cout << #e << " = " << (e) << std::endl
 
+#define LOG_MAYBE(m)                                                           \
+  do {                                                                         \
+    auto maybe__ = (m);                                                        \
+    std::cout << #m << " = ";                                                  \
+    if (maybe__.IsJust()) {                                                    \
+      std::cout << "Just(" << maybe__.FromJust() << ")" << std::endl;          \
+    } else {                                                                   \
+      std::cout << "Nothing" << std::endl;                                     \
+    }                                                                          \
+  } while (0)
+
 #define LOG_VALUE_KIND(v)                                                      \
   do {                                                                         \
     LOG_EXPR(v->IsUndefined());                                                \
@@ -24,6 +35,7 @@ using namespace v8;
     LOG_EXPR(v->IsString());                                                   \
     LOG_EXPR(v->IsObject());                                                   \
     LOG_EXPR(v->IsNumber());                                                   \
+    LOG_EXPR(v->IsUint32());                                                   \
   } while (0)
 
 namespace v8tests {
@@ -115,6 +127,7 @@ static void perform_number_test(const FunctionCallbackInfo<Value> &info,
 
   Local<Number> v8_number = Number::New(isolate, number);
   LOG_EXPR(v8_number->Value());
+  LOG_MAYBE(v8_number->Uint32Value(isolate->GetCurrentContext()));
   LOG_VALUE_KIND(v8_number);
 
   return ok(info);
@@ -125,12 +138,36 @@ void test_v8_number_int(const FunctionCallbackInfo<Value> &info) {
 }
 
 void test_v8_number_large_int(const FunctionCallbackInfo<Value> &info) {
-  // 2^33
+  // 2^31 (should fit as uint32 but not as int32)
+  perform_number_test(info, 2147483648.0);
+  // 2^33 (should not fit as any 32-bit integer)
   perform_number_test(info, 8589934592.0);
 }
 
 void test_v8_number_fraction(const FunctionCallbackInfo<Value> &info) {
   perform_number_test(info, 2.5);
+}
+
+void test_v8_value_uint32value(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<Value> vals[] = {
+      String::NewFromUtf8(isolate, "53").ToLocalChecked(),
+      Boolean::New(isolate, true),
+      Number::New(isolate, -1.5),
+      Number::New(isolate, 8589934593.9),
+  };
+
+  for (int i = 0; i < 4; i++) {
+    Maybe<uint32_t> maybe_u32 = vals[i]->Uint32Value(context);
+    LOG_MAYBE(maybe_u32);
+  }
+}
+
+void call_uint32value_on_arg_from_js(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  LOG_MAYBE(info[0]->Uint32Value(context));
 }
 
 static void perform_string_test(const FunctionCallbackInfo<Value> &info,
@@ -271,12 +308,7 @@ void test_v8_object(const FunctionCallbackInfo<Value> &info) {
   Local<Object> obj = Object::New(isolate);
   auto key = String::NewFromUtf8(isolate, "key").ToLocalChecked();
   auto val = Number::New(isolate, 5.0);
-  Maybe<bool> set_status = obj->Set(context, key, val);
-  LOG_EXPR(set_status.IsJust());
-  LOG_EXPR(set_status.FromJust());
-
-  // Local<Value> retval = obj->Get(context, key).ToLocalChecked();
-  // LOG_EXPR(describe(isolate, retval));
+  LOG_MAYBE(obj->Set(context, key, val));
 
   return ok(info);
 }
@@ -288,11 +320,7 @@ void set_field_from_js(const FunctionCallbackInfo<Value> &info) {
   Local<Object> obj = info[0].As<Object>();
   Local<Value> key = info[1];
   Local<Number> value = Number::New(isolate, 321.0);
-  Maybe<bool> ret = obj->Set(context, key, value);
-  LOG_EXPR(ret.IsJust());
-  if (ret.IsJust()) {
-    LOG_EXPR(ret.ToChecked());
-  }
+  LOG_MAYBE(obj->Set(context, key, value));
 
   return ok(info);
 }
@@ -702,6 +730,10 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "test_v8_number_large_int",
                   test_v8_number_large_int);
   NODE_SET_METHOD(exports, "test_v8_number_fraction", test_v8_number_fraction);
+  NODE_SET_METHOD(exports, "test_v8_value_uint32value",
+                  test_v8_value_uint32value);
+  NODE_SET_METHOD(exports, "call_uint32value_on_arg_from_js",
+                  call_uint32value_on_arg_from_js);
   NODE_SET_METHOD(exports, "test_v8_string_ascii", test_v8_string_ascii);
   NODE_SET_METHOD(exports, "test_v8_string_utf8", test_v8_string_utf8);
   NODE_SET_METHOD(exports, "test_v8_string_invalid_utf8",

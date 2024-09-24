@@ -103,6 +103,9 @@ pub fn CompressionStream(comptime T: type) type {
             bun.assert(out_buf.byte_len >= out_off + out_len);
             out = out_buf.byteSlice()[out_off..][0..out_len];
 
+            bun.assert(!this.write_in_progress);
+            bun.assert(!this.pending_close);
+            this.write_in_progress = true;
             this.ref();
 
             this.stream.setBuffers(in, out);
@@ -150,13 +153,17 @@ pub fn CompressionStream(comptime T: type) type {
             this.poll_ref.unref(vm);
             defer this.deref();
 
+            this.write_in_progress = false;
+
             if (!(this.checkError(globalThis) catch return globalThis.reportActiveExceptionAsUnhandled(error.JSError))) {
                 return;
             }
 
             this.stream.updateWriteResult(&this.write_result.?[1], &this.write_result.?[0]);
 
-            _ = this.write_callback.get().?.call(globalThis, this.this_value, &.{}) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
+            _ = this.write_callback.get().?.call(globalThis, this.this_value.get().?, &.{}) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
+
+            if (this.pending_close) _ = this._close();
         }
 
         pub fn writeSync(this: *T, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
@@ -198,6 +205,9 @@ pub fn CompressionStream(comptime T: type) type {
             bun.assert(out_buf.byte_len >= out_off + out_len);
             out = out_buf.byteSlice()[out_off..][0..out_len];
 
+            bun.assert(!this.write_in_progress);
+            bun.assert(!this.pending_close);
+            this.write_in_progress = true;
             this.ref();
 
             this.stream.setBuffers(in, out);
@@ -205,11 +215,12 @@ pub fn CompressionStream(comptime T: type) type {
 
             //
 
-            defer this.deref();
             this.stream.doWork();
             if (this.checkError(globalThis) catch return .zero) {
                 this.stream.updateWriteResult(&this.write_result.?[1], &this.write_result.?[0]);
+                this.write_in_progress = false;
             }
+            this.deref();
 
             return .undefined;
         }
@@ -227,8 +238,19 @@ pub fn CompressionStream(comptime T: type) type {
         pub fn close(this: *T, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
             _ = globalThis;
             _ = callframe;
-            this.stream.close();
+            this._close();
             return .undefined;
+        }
+
+        fn _close(this: *T) void {
+            if (this.write_in_progress) {
+                this.pending_close = true;
+                return;
+            }
+            this.pending_close = false;
+            this.closed = true;
+            this.this_value.deinit();
+            this.stream.close();
         }
 
         pub fn setOnError(this: *T, globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) bool {
@@ -253,7 +275,10 @@ pub fn CompressionStream(comptime T: type) type {
             var code_str = bun.String.createFormat("{s}", .{std.mem.sliceTo(err_.code, 0) orelse ""}) catch bun.outOfMemory();
             const code_value = code_str.transferToJS(globalThis);
 
-            _ = try this.onerror_value.get().?.call(globalThis, this.this_value, &.{ msg_value, err_value, code_value });
+            _ = try this.onerror_value.get().?.call(globalThis, this.this_value.get().?, &.{ msg_value, err_value, code_value });
+
+            this.write_in_progress = false;
+            if (this.pending_close) _ = this._close();
         }
 
         pub fn finalize(this: *T) void {
@@ -277,7 +302,10 @@ pub const SNativeZlib = struct {
     write_callback: JSC.Strong = .{},
     onerror_value: JSC.Strong = .{},
     poll_ref: bun.Async.KeepAlive = .{},
-    this_value: JSC.JSValue = .zero,
+    this_value: JSC.Strong = .{},
+    write_in_progress: bool = false,
+    pending_close: bool = false,
+    closed: bool = false,
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) ?*@This() {
         const arguments = callframe.argumentsUndef(4).ptr;
@@ -622,7 +650,10 @@ pub const SNativeBrotli = struct {
     write_callback: JSC.Strong = .{},
     onerror_value: JSC.Strong = .{},
     poll_ref: bun.Async.KeepAlive = .{},
-    this_value: JSC.JSValue = .zero,
+    this_value: JSC.Strong = .{},
+    write_in_progress: bool = false,
+    pending_close: bool = false,
+    closed: bool = false,
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) ?*@This() {
         const arguments = callframe.argumentsUndef(1).ptr;

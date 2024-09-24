@@ -359,7 +359,7 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_writeBody(JSC
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     if (callFrame->argumentCount() < 1) {
         throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     auto buffer = callFrame->uncheckedArgument(0);
@@ -374,7 +374,7 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_writeBody(JSC
         }
 
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
-        return JSValue::encode(jsUndefined());
+        return {};
     }
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->write(vm, lexicalGlobalObject, reinterpret_cast<uint8_t*>(view->vector()), view->byteLength())));
 }
@@ -390,7 +390,7 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_endBody(JSC::
     JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(buffer);
     if (UNLIKELY(!view || view->isDetached())) {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
-        return JSValue::encode(jsUndefined());
+        return {};
     }
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->end(vm, lexicalGlobalObject, reinterpret_cast<uint8_t*>(view->vector()), view->byteLength())));
 }
@@ -400,14 +400,14 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_textBody(JSC:
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     if (callFrame->argumentCount() < 2) {
         throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     auto buffer = callFrame->uncheckedArgument(0);
     JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(buffer);
     if (UNLIKELY(!view || view->isDetached())) {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
-        return JSValue::encode(jsUndefined());
+        return {};
     }
     int32_t offset = callFrame->uncheckedArgument(1).toInt32(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));

@@ -211,6 +211,7 @@ pub const Subprocess = struct {
         killed: bool = false,
         has_stdin_destructor_called: bool = false,
         finalized: bool = false,
+        deref_on_stdin_destroyed: bool = false,
     };
 
     pub const SignalCode = bun.SignalCode;
@@ -703,9 +704,13 @@ pub const Subprocess = struct {
     }
 
     pub fn onStdinDestroyed(this: *Subprocess) void {
+        const must_deref = this.flags.deref_on_stdin_destroyed;
+        this.flags.deref_on_stdin_destroyed = false;
+        defer if (must_deref) this.deref();
+
         this.flags.has_stdin_destructor_called = true;
         this.weak_file_sink_stdin_ptr = null;
-        defer this.deref();
+
         if (!this.flags.finalized) {
             // otherwise update the pending activity flag
             this.updateHasPendingActivity();
@@ -1240,6 +1245,7 @@ pub const Subprocess = struct {
                             pipe.writer.setParent(pipe);
                             subprocess.weak_file_sink_stdin_ptr = pipe;
                             subprocess.ref();
+                            subprocess.flags.deref_on_stdin_destroyed = true;
                             subprocess.flags.has_stdin_destructor_called = false;
 
                             return Writable{
@@ -1300,6 +1306,7 @@ pub const Subprocess = struct {
                     subprocess.weak_file_sink_stdin_ptr = pipe;
                     subprocess.ref();
                     subprocess.flags.has_stdin_destructor_called = false;
+                    subprocess.flags.deref_on_stdin_destroyed = true;
 
                     pipe.writer.handle.poll.flags.insert(.socket);
 
@@ -1345,12 +1352,23 @@ pub const Subprocess = struct {
                 .pipe => |pipe| {
                     this.* = .{ .ignore = {} };
                     if (subprocess.process.hasExited() and !subprocess.flags.has_stdin_destructor_called) {
+                        // onAttachedProcessExit() can call deref on the
+                        // subprocess. Since we never called ref(), it would be
+                        // unbalanced to do so, leading to a use-after-free.
+                        // So, let's not do that.
+                        // https://github.com/oven-sh/bun/pull/14092
+                        bun.debugAssert(!subprocess.flags.deref_on_stdin_destroyed);
+                        const debug_ref_count: if (Environment.isDebug) u32 else u0 = if (Environment.isDebug) subprocess.ref_count else 0;
                         pipe.onAttachedProcessExit();
+                        if (comptime Environment.isDebug) {
+                            bun.debugAssert(subprocess.ref_count == debug_ref_count);
+                        }
                         return pipe.toJS(globalThis);
                     } else {
                         subprocess.flags.has_stdin_destructor_called = false;
                         subprocess.weak_file_sink_stdin_ptr = pipe;
                         subprocess.ref();
+                        subprocess.flags.deref_on_stdin_destroyed = true;
                         if (@intFromPtr(pipe.signal.ptr) == @intFromPtr(subprocess)) {
                             pipe.signal.clear();
                         }
@@ -1447,6 +1465,7 @@ pub const Subprocess = struct {
         if (stdin) |pipe| {
             this.weak_file_sink_stdin_ptr = null;
             this.flags.has_stdin_destructor_called = true;
+            // It is okay if it does call deref() here, as in that case it was truly ref'd.
             pipe.onAttachedProcessExit();
         }
 
@@ -1800,18 +1819,18 @@ pub const Subprocess = struct {
                     if (args.getTruthy(globalThis, "ipc")) |val| {
                         if (val.isCell() and val.isCallable(globalThis.vm())) {
                             maybe_ipc_mode = ipc_mode: {
-                                if (args.get(globalThis, "serialization")) |mode_val| {
+                                if (args.getTruthy(globalThis, "serialization")) |mode_val| {
                                     if (mode_val.isString()) {
-                                        const mode_str = mode_val.toBunString(globalThis);
-                                        defer mode_str.deref();
-                                        const slice = mode_str.toUTF8(bun.default_allocator);
-                                        defer slice.deinit();
-                                        break :ipc_mode IPC.Mode.fromString(slice.slice()) orelse {
-                                            globalThis.throwInvalidArguments("serialization must be \"json\" or \"advanced\"", .{});
+                                        break :ipc_mode IPC.Mode.fromJS(globalThis, mode_val) orelse {
+                                            if (!globalThis.hasException()) {
+                                                globalThis.throwInvalidArguments("serialization must be \"json\" or \"advanced\"", .{});
+                                            }
                                             return .zero;
                                         };
                                     } else {
-                                        globalThis.throwInvalidArguments("serialization must be a 'string'", .{});
+                                        if (!globalThis.hasException()) {
+                                            globalThis.throwInvalidArgumentType("spawn", "serialization", "string");
+                                        }
                                         return .zero;
                                     }
                                 }
@@ -2063,13 +2082,35 @@ pub const Subprocess = struct {
             } else {},
         };
 
+        var spawned = switch (bun.spawn.spawnProcess(
+            &spawn_options,
+            @ptrCast(argv.items.ptr),
+            @ptrCast(env_array.items.ptr),
+        ) catch |err| {
+            spawn_options.deinit();
+            globalThis.throwError(err, ": failed to spawn process");
+
+            return .zero;
+        }) {
+            .err => |err| {
+                spawn_options.deinit();
+                globalThis.throwValue(err.toJSC(globalThis));
+                return .zero;
+            },
+            .result => |result| result,
+        };
+
+        const loop = jsc_vm.eventLoop();
+
+        const process = spawned.toProcess(loop, is_sync);
+
         var subprocess = Subprocess.new(.{
             .globalThis = globalThis,
-            .process = undefined,
+            .process = process,
             .pid_rusage = null,
-            .stdin = undefined,
-            .stdout = undefined,
-            .stderr = undefined,
+            .stdin = .{ .ignore = {} },
+            .stdout = .{ .ignore = {} },
+            .stderr = .{ .ignore = {} },
             .stdio_pipes = .{},
             .on_exit_callback = .{},
             .on_disconnect_callback = .{},
@@ -2080,51 +2121,15 @@ pub const Subprocess = struct {
             },
         });
 
-        var spawned = switch (bun.spawn.spawnProcess(
-            &spawn_options,
-            @ptrCast(argv.items.ptr),
-            @ptrCast(env_array.items.ptr),
-        ) catch |err| {
-            subprocess.deref();
-            spawn_options.deinit();
-            globalThis.throwError(err, ": failed to spawn process");
-
-            return .zero;
-        }) {
-            .err => |err| {
-                subprocess.deref();
-                spawn_options.deinit();
-                globalThis.throwValue(err.toJSC(globalThis));
-                return .zero;
-            },
-            .result => |result| result,
-        };
-
-        var posix_ipc_info: if (Environment.isPosix) IPC.Socket else void = undefined;
-        if (Environment.isPosix and !is_sync) {
-            if (maybe_ipc_mode != null) {
-                posix_ipc_info = IPC.Socket.from(
-                    // we initialize ext later in the function
-                    uws.us_socket_from_fd(
-                        jsc_vm.rareData().spawnIPCContext(jsc_vm),
-                        @sizeOf(*Subprocess),
-                        spawned.extra_pipes.items[@intCast(ipc_channel)].cast(),
-                    ) orelse {
-                        subprocess.deref();
-                        spawn_options.deinit();
-                        globalThis.throw("failed to create socket pair", .{});
-                        return .zero;
-                    },
-                );
-            }
-        }
-
-        const loop = jsc_vm.eventLoop();
+        const posix_ipc_fd = if (Environment.isPosix and !is_sync and maybe_ipc_mode != null)
+            spawned.extra_pipes.items[@intCast(ipc_channel)]
+        else
+            bun.invalid_fd;
 
         // When run synchronously, subprocess isn't garbage collected
         subprocess.* = Subprocess{
             .globalThis = globalThis,
-            .process = spawned.toProcess(loop, is_sync),
+            .process = process,
             .pid_rusage = null,
             .stdin = Writable.init(
                 stdio[0],
@@ -2133,6 +2138,7 @@ pub const Subprocess = struct {
                 spawned.stdin,
             ) catch {
                 globalThis.throwOutOfMemory();
+                subprocess.deref();
                 return .zero;
             },
             .stdout = Readable.init(
@@ -2153,19 +2159,16 @@ pub const Subprocess = struct {
                 default_max_buffer_size,
                 is_sync,
             ),
+            // 1. JavaScript.
+            // 2. Process.
+            .ref_count = 2,
             .stdio_pipes = spawned.extra_pipes.moveToUnmanaged(),
             .on_exit_callback = if (on_exit_callback != .zero) JSC.Strong.create(on_exit_callback, globalThis) else .{},
             .on_disconnect_callback = if (on_disconnect_callback != .zero) JSC.Strong.create(on_disconnect_callback, globalThis) else .{},
-            .ipc_data = if (!is_sync)
-                if (maybe_ipc_mode) |ipc_mode|
-                    if (Environment.isWindows) .{
-                        .mode = ipc_mode,
-                    } else .{
-                        .socket = posix_ipc_info,
-                        .mode = ipc_mode,
-                    }
-                else
-                    null
+            .ipc_data = if (!is_sync and comptime Environment.isWindows)
+                if (maybe_ipc_mode) |ipc_mode| .{
+                    .mode = ipc_mode,
+                } else null
             else
                 null,
             .ipc_callback = if (ipc_callback != .zero) JSC.Strong.create(ipc_callback, globalThis) else .{},
@@ -2173,8 +2176,25 @@ pub const Subprocess = struct {
                 .is_sync = is_sync,
             },
         };
-        subprocess.ref(); // + one ref for the process
+
         subprocess.process.setExitHandler(subprocess);
+
+        var posix_ipc_info: if (Environment.isPosix) IPC.Socket else void = undefined;
+        if (Environment.isPosix and !is_sync) {
+            if (maybe_ipc_mode) |mode| {
+                if (uws.us_socket_from_fd(
+                    jsc_vm.rareData().spawnIPCContext(jsc_vm),
+                    @sizeOf(*Subprocess),
+                    posix_ipc_fd.cast(),
+                )) |socket| {
+                    posix_ipc_info = IPC.Socket.from(socket);
+                    subprocess.ipc_data = .{
+                        .socket = posix_ipc_info,
+                        .mode = mode,
+                    };
+                }
+            }
+        }
 
         if (subprocess.ipc_data) |*ipc_data| {
             if (Environment.isPosix) {

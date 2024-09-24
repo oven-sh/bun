@@ -41,7 +41,7 @@ set(BUN_ZIG_IDENTIFIER_OUTPUTS
 
 register_command(
   TARGET
-    ${bun}-identifier-data
+    bun-identifier-data
   COMMENT
     "Generating src/js_lexer/*.blob"
   COMMAND
@@ -80,7 +80,7 @@ register_bun_install(
 
 register_command(
   TARGET
-    ${bun}-error
+    bun-error
   COMMENT
     "Building bun-error"
   CWD
@@ -107,7 +107,7 @@ set(BUN_FALLBACK_DECODER_OUTPUT ${CWD}/src/fallback.out.js)
 
 register_command(
   TARGET
-    ${bun}-fallback-decoder
+    bun-fallback-decoder
   COMMENT
     "Building src/fallback.out.js"
   COMMAND
@@ -130,7 +130,7 @@ set(BUN_RUNTIME_JS_OUTPUT ${CWD}/src/runtime.out.js)
 
 register_command(
   TARGET
-    ${bun}-runtime-js
+    bun-runtime-js
   COMMENT
     "Building src/runtime.out.js"
   COMMAND
@@ -174,7 +174,7 @@ register_bun_install(
 # it uses ${BUN_EXECUTABLE} x instead of ${ESBUILD_EXECUTABLE}.
 register_command(
   TARGET
-    ${bun}-node-fallbacks
+    bun-node-fallbacks
   COMMENT
     "Building src/node-fallbacks/*.js"
   CWD
@@ -212,7 +212,7 @@ set(BUN_ERROR_CODE_OUTPUTS
 
 register_command(
   TARGET
-    ${bun}-error-code
+    bun-error-code
   COMMENT
     "Generating ErrorCode.{zig,h}"
   COMMAND
@@ -248,7 +248,7 @@ set(BUN_ZIG_GENERATED_CLASSES_OUTPUTS
 
 register_command(
   TARGET
-    ${bun}-zig-generated-classes
+    bun-zig-generated-classes
   COMMENT
     "Generating ZigGeneratedClasses.{zig,cpp,h}"
   COMMAND
@@ -296,7 +296,7 @@ set(BUN_JAVASCRIPT_OUTPUTS
 
 register_command(
   TARGET
-    ${bun}-js-modules
+    bun-js-modules
   COMMENT
     "Generating JavaScript modules"
   COMMAND
@@ -332,7 +332,7 @@ set(BUN_KIT_RUNTIME_OUTPUTS
 
 register_command(
   TARGET
-    ${bun}-kit-codegen
+    bun-kit-codegen
   COMMENT
     "Bundling Kit Runtime"
   COMMAND
@@ -364,7 +364,7 @@ set(BUN_JS_SINK_OUTPUTS
 
 register_command(
   TARGET
-    ${bun}-js-sink
+    bun-js-sink
   COMMENT
     "Generating JSSink.{cpp,h}"
   COMMAND
@@ -424,7 +424,7 @@ foreach(i RANGE 0 ${BUN_OBJECT_LUT_SOURCES_MAX_INDEX})
   get_filename_component(filename ${BUN_OBJECT_LUT_SOURCE} NAME_WE)
   register_command(
     TARGET
-      ${bun}-codegen-lut-${filename}
+      bun-codegen-lut-${filename}
     COMMENT
       "Generating ${filename}.lut.h"
     COMMAND
@@ -526,7 +526,7 @@ endif()
 
 register_command(
   TARGET
-    ${bun}-zig
+    bun-zig
   GROUP
     console
   COMMENT
@@ -553,7 +553,7 @@ register_command(
     ${BUN_ZIG_GENERATED_SOURCES}
 )
 
-set_property(TARGET ${bun}-zig PROPERTY JOB_POOL compile_pool)
+set_property(TARGET bun-zig PROPERTY JOB_POOL compile_pool)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CWD}/build.zig)
 
 # --- C/C++ Object ---

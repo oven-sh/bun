@@ -284,7 +284,7 @@ void test_v8_object(const FunctionCallbackInfo<Value> &info) {
 void set_field_from_js(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
   Local<Context> context = isolate->GetCurrentContext();
-
+  LOG_EXPR(info[0]->IsObject());
   Local<Object> obj = info[0].As<Object>();
   Local<Value> key = info[1];
   Local<Number> value = Number::New(isolate, 321.0);

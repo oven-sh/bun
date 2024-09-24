@@ -45,21 +45,21 @@ Maybe<bool> Object::Set(Local<Context> context, Local<Value> key, Local<Value> v
     JSValue v = value->localToJSValue();
     auto& vm = globalObject->vm();
 
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PutPropertySlot slot(object, false);
 
     Identifier identifier = k.toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, Nothing<bool>());
 
-    if (!object->put(object, globalObject, identifier, v, slot)) {
-        scope.clearExceptionExceptTermination();
-        return Nothing<bool>();
+    if (!object->methodTable()->put(object, globalObject, identifier, v, slot)) {
+        // ProxyObject::performPut returns false if the JS handler returned a falsy value no matter
+        // the mode. V8 native functions run as if they are in sloppy mode, so we only consider a
+        // failure if the handler function actually threw, not if it returned false without
+        // throwing.
+        RETURN_IF_EXCEPTION(scope, Nothing<bool>());
+        RELEASE_AND_RETURN(scope, Just(true));
     }
-    if (scope.exception()) {
-        scope.clearException();
-        return Nothing<bool>();
-    }
-    return Just(true);
+    RELEASE_AND_RETURN(scope, Just(true));
 }
 
 void Object::SetInternalField(int index, Local<Data> data)

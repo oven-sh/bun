@@ -109,6 +109,22 @@ module.exports = debugMode => {
       );
     },
 
+    test_v8_object_set_proxy() {
+      "use strict";
+      const object = {};
+      const proxy = new Proxy(object, {
+        set(obj, prop, value) {
+          obj[prop] = 2 * value;
+          // should NOT throw because the native function behaves as if it is in sloppy mode
+          return false;
+        },
+      });
+
+      nativeModule.set_field_from_js(proxy, "foo");
+      console.log("proxy.foo =", proxy.foo);
+      console.log("object.foo =", object.foo);
+    },
+
     test_v8_object_set_failure() {
       const object = {};
       const key = {
@@ -117,9 +133,11 @@ module.exports = debugMode => {
         },
       };
 
+      console.log("=== key with a toString() that throws ===");
+
       try {
         nativeModule.set_field_from_js(object, key);
-        console.log("no error while setting with key that throws in toString()");
+        console.log("no exception while setting with key that throws in toString()");
       } catch (e) {
         console.log(e.toString());
       }
@@ -130,9 +148,11 @@ module.exports = debugMode => {
         },
       });
 
+      console.log("=== proxy that throws in set() ===");
+
       try {
         nativeModule.set_field_from_js(setterThrows, "xyz");
-        console.log("no error while setting on Proxy that throws");
+        console.log("no exception while setting on Proxy that throws");
       } catch (e) {
         console.log(e.toString());
       }
@@ -145,10 +165,12 @@ module.exports = debugMode => {
         },
       };
 
+      console.log("=== object with only a getter for the key ===");
+
       try {
         nativeModule.set_field_from_js(onlyGetter, "foo");
         // apparently this is expected in node
-        console.log("no error while setting a key that only has a getter");
+        console.log("no exception while setting a key that only has a getter");
       } catch (e) {
         console.log(e.toString());
       }

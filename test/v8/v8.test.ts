@@ -166,6 +166,9 @@ describe("Object", () => {
   it("can create an object and set properties", () => {
     checkSameOutput("test_v8_object", []);
   });
+  it("uses proxies properly", () => {
+    checkSameOutput("test_v8_object_set_proxy", []);
+  });
   it("can handle failure in Set()", () => {
     checkSameOutput("test_v8_object_set_failure", []);
   });

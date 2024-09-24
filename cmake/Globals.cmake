@@ -1153,7 +1153,6 @@ function(register_link_libraries)
   parse_target(LINK_TARGET)
   parse_list(LINK_UNPARSED_ARGUMENTS LINK_TARGETS)
 
-  message(WARNING "Linking ${LINK_TARGET} to ${LINK_TARGETS}")
   foreach(target ${LINK_TARGETS})
     target_link_libraries(${LINK_TARGET} PRIVATE ${target})
   endforeach()

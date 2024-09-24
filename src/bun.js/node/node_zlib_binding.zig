@@ -68,7 +68,7 @@ pub fn CompressionStream(comptime T: type) type {
             const arguments = callframe.argumentsUndef(7).slice();
 
             if (arguments.len != 7) {
-                globalThis.ERR_MISSING_ARGS("writeSync(flush, in, in_off, in_len, out, out_off, out_len)", .{}).throw();
+                globalThis.ERR_MISSING_ARGS("write(flush, in, in_off, in_len, out, out_off, out_len)", .{}).throw();
                 return .zero;
             }
 

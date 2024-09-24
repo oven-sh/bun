@@ -57,7 +57,6 @@ Maybe<bool> Object::Set(Local<Context> context, Local<Value> key, Local<Value> v
         // failure if the handler function actually threw, not if it returned false without
         // throwing.
         RETURN_IF_EXCEPTION(scope, Nothing<bool>());
-        RELEASE_AND_RETURN(scope, Just(true));
     }
     RELEASE_AND_RETURN(scope, Just(true));
 }

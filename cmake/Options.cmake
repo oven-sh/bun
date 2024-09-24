@@ -2,6 +2,9 @@ if(NOT CMAKE_SYSTEM_NAME OR NOT CMAKE_SYSTEM_PROCESSOR)
   message(FATAL_ERROR "CMake included this file before project() was called")
 endif()
 
+optionx(BUN_CPP_ONLY BOOL "If only the C++ library should be built" DEFAULT OFF)
+optionx(BUN_LINK_ONLY BOOL "If only the executable should be linked" DEFAULT OFF)
+
 optionx(BUILDKITE BOOL "If Buildkite is enabled" DEFAULT OFF)
 optionx(GITHUB_ACTIONS BOOL "If GitHub Actions is enabled" DEFAULT OFF)
 

@@ -74,7 +74,7 @@ const Browsers = css.targets.Browsers;
 pub fn Printer(comptime Writer: type) type {
     return struct {
         // #[cfg(feature = "sourcemap")]
-        sources: ?*ArrayList([]const u8),
+        sources: ?*const ArrayList([]const u8),
         dest: Writer,
         loc: Location = Location{
             .source_index = 0,

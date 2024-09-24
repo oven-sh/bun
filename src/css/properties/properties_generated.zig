@@ -244,6 +244,20 @@ const SmallList = css.SmallList;
 pub const Property = union(PropertyIdTag) {
     @"background-color": CssColor,
     @"border-spacing": css.css_values.size.Size2D(Length),
+    @"border-top-color": CssColor,
+    @"border-bottom-color": CssColor,
+    @"border-left-color": CssColor,
+    @"border-right-color": CssColor,
+    @"border-block-start-color": CssColor,
+    @"border-block-end-color": CssColor,
+    @"border-inline-start-color": CssColor,
+    @"border-inline-end-color": CssColor,
+    @"border-top-style": border.LineStyle,
+    @"border-bottom-style": border.LineStyle,
+    @"border-left-style": border.LineStyle,
+    @"border-right-style": border.LineStyle,
+    @"border-block-start-style": border.LineStyle,
+    @"border-block-end-style": border.LineStyle,
     composes: Composes,
     all: CSSWideKeyword,
     unparsed: UnparsedProperty,
@@ -266,6 +280,104 @@ pub const Property = union(PropertyIdTag) {
                 if (css.generic.parseWithOptions(css.css_values.size.Size2D(Length), input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .@"border-spacing" = c } };
+                    }
+                }
+            },
+            .@"border-top-color" => {
+                if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-top-color" = c } };
+                    }
+                }
+            },
+            .@"border-bottom-color" => {
+                if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-bottom-color" = c } };
+                    }
+                }
+            },
+            .@"border-left-color" => {
+                if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-left-color" = c } };
+                    }
+                }
+            },
+            .@"border-right-color" => {
+                if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-right-color" = c } };
+                    }
+                }
+            },
+            .@"border-block-start-color" => {
+                if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-block-start-color" = c } };
+                    }
+                }
+            },
+            .@"border-block-end-color" => {
+                if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-block-end-color" = c } };
+                    }
+                }
+            },
+            .@"border-inline-start-color" => {
+                if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-inline-start-color" = c } };
+                    }
+                }
+            },
+            .@"border-inline-end-color" => {
+                if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-inline-end-color" = c } };
+                    }
+                }
+            },
+            .@"border-top-style" => {
+                if (css.generic.parseWithOptions(border.LineStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-top-style" = c } };
+                    }
+                }
+            },
+            .@"border-bottom-style" => {
+                if (css.generic.parseWithOptions(border.LineStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-bottom-style" = c } };
+                    }
+                }
+            },
+            .@"border-left-style" => {
+                if (css.generic.parseWithOptions(border.LineStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-left-style" = c } };
+                    }
+                }
+            },
+            .@"border-right-style" => {
+                if (css.generic.parseWithOptions(border.LineStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-right-style" = c } };
+                    }
+                }
+            },
+            .@"border-block-start-style" => {
+                if (css.generic.parseWithOptions(border.LineStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-block-start-style" = c } };
+                    }
+                }
+            },
+            .@"border-block-end-style" => {
+                if (css.generic.parseWithOptions(border.LineStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-block-end-style" = c } };
                     }
                 }
             },
@@ -302,6 +414,20 @@ pub const Property = union(PropertyIdTag) {
         return switch (this.*) {
             .@"background-color" => .{ "background-color", VendorPrefix{ .none = true } },
             .@"border-spacing" => .{ "border-spacing", VendorPrefix{ .none = true } },
+            .@"border-top-color" => .{ "border-top-color", VendorPrefix{ .none = true } },
+            .@"border-bottom-color" => .{ "border-bottom-color", VendorPrefix{ .none = true } },
+            .@"border-left-color" => .{ "border-left-color", VendorPrefix{ .none = true } },
+            .@"border-right-color" => .{ "border-right-color", VendorPrefix{ .none = true } },
+            .@"border-block-start-color" => .{ "border-block-start-color", VendorPrefix{ .none = true } },
+            .@"border-block-end-color" => .{ "border-block-end-color", VendorPrefix{ .none = true } },
+            .@"border-inline-start-color" => .{ "border-inline-start-color", VendorPrefix{ .none = true } },
+            .@"border-inline-end-color" => .{ "border-inline-end-color", VendorPrefix{ .none = true } },
+            .@"border-top-style" => .{ "border-top-style", VendorPrefix{ .none = true } },
+            .@"border-bottom-style" => .{ "border-bottom-style", VendorPrefix{ .none = true } },
+            .@"border-left-style" => .{ "border-left-style", VendorPrefix{ .none = true } },
+            .@"border-right-style" => .{ "border-right-style", VendorPrefix{ .none = true } },
+            .@"border-block-start-style" => .{ "border-block-start-style", VendorPrefix{ .none = true } },
+            .@"border-block-end-style" => .{ "border-block-end-style", VendorPrefix{ .none = true } },
             .composes => .{ "composes", VendorPrefix{ .none = true } },
             .all => .{ "all", VendorPrefix{ .none = true } },
             .unparsed => |*unparsed| brk: {
@@ -320,6 +446,20 @@ pub const Property = union(PropertyIdTag) {
         return switch (this.*) {
             .@"background-color" => |*value| value.toCss(W, dest),
             .@"border-spacing" => |*value| value.toCss(W, dest),
+            .@"border-top-color" => |*value| value.toCss(W, dest),
+            .@"border-bottom-color" => |*value| value.toCss(W, dest),
+            .@"border-left-color" => |*value| value.toCss(W, dest),
+            .@"border-right-color" => |*value| value.toCss(W, dest),
+            .@"border-block-start-color" => |*value| value.toCss(W, dest),
+            .@"border-block-end-color" => |*value| value.toCss(W, dest),
+            .@"border-inline-start-color" => |*value| value.toCss(W, dest),
+            .@"border-inline-end-color" => |*value| value.toCss(W, dest),
+            .@"border-top-style" => |*value| value.toCss(W, dest),
+            .@"border-bottom-style" => |*value| value.toCss(W, dest),
+            .@"border-left-style" => |*value| value.toCss(W, dest),
+            .@"border-right-style" => |*value| value.toCss(W, dest),
+            .@"border-block-start-style" => |*value| value.toCss(W, dest),
+            .@"border-block-end-style" => |*value| value.toCss(W, dest),
             .composes => |*value| value.toCss(W, dest),
             .all => |*keyword| keyword.toCss(W, dest),
             .unparsed => |*unparsed| unparsed.value.toCss(W, dest, false),
@@ -339,6 +479,20 @@ pub const Property = union(PropertyIdTag) {
 pub const PropertyId = union(PropertyIdTag) {
     @"background-color",
     @"border-spacing",
+    @"border-top-color",
+    @"border-bottom-color",
+    @"border-left-color",
+    @"border-right-color",
+    @"border-block-start-color",
+    @"border-block-end-color",
+    @"border-inline-start-color",
+    @"border-inline-end-color",
+    @"border-top-style",
+    @"border-bottom-style",
+    @"border-left-style",
+    @"border-right-style",
+    @"border-block-start-style",
+    @"border-block-end-style",
     composes,
     all,
     unparsed,
@@ -356,6 +510,20 @@ pub const PropertyId = union(PropertyIdTag) {
         return switch (this.*) {
             .@"background-color" => VendorPrefix.empty(),
             .@"border-spacing" => VendorPrefix.empty(),
+            .@"border-top-color" => VendorPrefix.empty(),
+            .@"border-bottom-color" => VendorPrefix.empty(),
+            .@"border-left-color" => VendorPrefix.empty(),
+            .@"border-right-color" => VendorPrefix.empty(),
+            .@"border-block-start-color" => VendorPrefix.empty(),
+            .@"border-block-end-color" => VendorPrefix.empty(),
+            .@"border-inline-start-color" => VendorPrefix.empty(),
+            .@"border-inline-end-color" => VendorPrefix.empty(),
+            .@"border-top-style" => VendorPrefix.empty(),
+            .@"border-bottom-style" => VendorPrefix.empty(),
+            .@"border-left-style" => VendorPrefix.empty(),
+            .@"border-right-style" => VendorPrefix.empty(),
+            .@"border-block-start-style" => VendorPrefix.empty(),
+            .@"border-block-end-style" => VendorPrefix.empty(),
             .composes => VendorPrefix.empty(),
             .all, .custom, .unparsed => VendorPrefix.empty(),
         };
@@ -369,6 +537,48 @@ pub const PropertyId = union(PropertyIdTag) {
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-spacing")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"border-spacing";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-top-color")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-top-color";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-bottom-color")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-bottom-color";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-left-color")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-left-color";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-right-color")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-right-color";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-block-start-color")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-block-start-color";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-block-end-color")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-block-end-color";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-inline-start-color")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-inline-start-color";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-inline-end-color")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-inline-end-color";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-top-style")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-top-style";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-bottom-style")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-bottom-style";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-left-style")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-left-style";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-right-style")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-right-style";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-block-start-style")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-block-start-style";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-block-end-style")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-block-end-style";
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "composes")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .composes;
@@ -384,6 +594,20 @@ pub const PropertyId = union(PropertyIdTag) {
         return switch (this.*) {
             .@"background-color" => .@"background-color",
             .@"border-spacing" => .@"border-spacing",
+            .@"border-top-color" => .@"border-top-color",
+            .@"border-bottom-color" => .@"border-bottom-color",
+            .@"border-left-color" => .@"border-left-color",
+            .@"border-right-color" => .@"border-right-color",
+            .@"border-block-start-color" => .@"border-block-start-color",
+            .@"border-block-end-color" => .@"border-block-end-color",
+            .@"border-inline-start-color" => .@"border-inline-start-color",
+            .@"border-inline-end-color" => .@"border-inline-end-color",
+            .@"border-top-style" => .@"border-top-style",
+            .@"border-bottom-style" => .@"border-bottom-style",
+            .@"border-left-style" => .@"border-left-style",
+            .@"border-right-style" => .@"border-right-style",
+            .@"border-block-start-style" => .@"border-block-start-style",
+            .@"border-block-end-style" => .@"border-block-end-style",
             .composes => .composes,
             else => this.*,
         };
@@ -394,6 +618,20 @@ pub const PropertyId = union(PropertyIdTag) {
         return switch (this.*) {
             .@"background-color" => {},
             .@"border-spacing" => {},
+            .@"border-top-color" => {},
+            .@"border-bottom-color" => {},
+            .@"border-left-color" => {},
+            .@"border-right-color" => {},
+            .@"border-block-start-color" => {},
+            .@"border-block-end-color" => {},
+            .@"border-inline-start-color" => {},
+            .@"border-inline-end-color" => {},
+            .@"border-top-style" => {},
+            .@"border-bottom-style" => {},
+            .@"border-left-style" => {},
+            .@"border-right-style" => {},
+            .@"border-block-start-style" => {},
+            .@"border-block-end-style" => {},
             .composes => {},
             else => {},
         };
@@ -402,6 +640,20 @@ pub const PropertyId = union(PropertyIdTag) {
 pub const PropertyIdTag = enum(u16) {
     @"background-color",
     @"border-spacing",
+    @"border-top-color",
+    @"border-bottom-color",
+    @"border-left-color",
+    @"border-right-color",
+    @"border-block-start-color",
+    @"border-block-end-color",
+    @"border-inline-start-color",
+    @"border-inline-end-color",
+    @"border-top-style",
+    @"border-bottom-style",
+    @"border-left-style",
+    @"border-right-style",
+    @"border-block-start-style",
+    @"border-block-end-style",
     composes,
     all,
     unparsed,

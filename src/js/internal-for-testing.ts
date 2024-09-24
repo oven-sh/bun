@@ -60,6 +60,7 @@ export const cssInternals = {
   minifyTestWithOptions: $newZigFunction("css_internals.zig", "minifyTestWithOptions", 3),
   testWithOptions: $newZigFunction("css_internals.zig", "testWithOptions", 3),
   prefixTestWithOptions: $newZigFunction("css_internals.zig", "prefixTestWithOptions", 3),
+  attrTest: $newZigFunction("css_internals.zig", "attrTest", 3),
 };
 
 export const crash_handler = $zig("crash_handler.zig", "js_bindings.generate") as {

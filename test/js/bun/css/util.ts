@@ -1,6 +1,7 @@
+import { describe, expect, test } from "bun:test";
 import { cssInternals } from "bun:internal-for-testing";
 import dedent from "./dedent";
-const { minifyTestWithOptions, testWithOptions, prefixTestWithOptions } = cssInternals;
+const { minifyTestWithOptions, testWithOptions, prefixTestWithOptions, attrTest: __attrTest } = cssInternals;
 
 type Browsers = {
   android?: number;
@@ -18,21 +19,28 @@ export function minify_test(source: string, expected: string) {
   return minifyTest(source, expected);
 }
 export function minifyTest(source: string, expected: string) {
-  return minifyTestWithOptions(source, expected);
+  test(source, () => {
+    expect(minifyTestWithOptions(source, expected)).toEqual(expected);
+  });
 }
 
 export function prefix_test(source: string, expected: string, targets: Browsers) {
-  return prefixTestWithOptions(source, expected, targets);
-}
-export function prefixTest(source: string, expected: string, targets: Browsers) {
-  return minifyTestWithOptions(source, expected);
+  test(source, () => {
+    expect(prefixTestWithOptions(source, expected, targets)).toEqual(expected);
+  });
 }
 
 export function css_test(source: string, expected: string) {
   return cssTest(source, expected);
 }
 export function cssTest(source: string, expected: string) {
-  return testWithOptions(source, expected);
+  test(source, () => {
+    expect(testWithOptions(source, expected)).toEqual(expected);
+  });
+}
+
+export function attrTest(source: string, expected: string, minify: boolean, targets?: Browsers) {
+  return __attrTest(source, expected, minify, targets);
 }
 
 //

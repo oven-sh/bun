@@ -54,14 +54,16 @@ fn fmtStatusTextLine(comptime status: @Type(.EnumLiteral), comptime emoji_or_col
             true => switch (status) {
                 .pass => Output.prettyFmt("<r><green>✓<r>", emoji_or_color),
                 .fail => Output.prettyFmt("<r><red>✗<r>", emoji_or_color),
-                .skip => Output.prettyFmt("<r><yellow>»<d>", emoji_or_color),
+                // .skip => Output.prettyFmt("<r><yellow>»<d>", emoji_or_color),
+                .skip => "",
                 .todo => Output.prettyFmt("<r><magenta>✎<r>", emoji_or_color),
                 else => @compileError("Invalid status " ++ @tagName(status)),
             },
             else => switch (status) {
                 .pass => Output.prettyFmt("<r><green>(pass)<r>", emoji_or_color),
                 .fail => Output.prettyFmt("<r><red>(fail)<r>", emoji_or_color),
-                .skip => Output.prettyFmt("<r><yellow>(skip)<d>", emoji_or_color),
+                // .skip => Output.prettyFmt("<r><yellow>(skip)<d>", emoji_or_color),
+                .skip => "",
                 .todo => Output.prettyFmt("<r><magenta>(todo)<r>", emoji_or_color),
                 else => @compileError("Invalid status " ++ @tagName(status)),
             },

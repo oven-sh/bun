@@ -278,7 +278,7 @@ pub const LengthValue = union(enum) {
             inline for (bun.meta.EnumFields(LengthValue)) |field| {
                 if (field.value == @intFromEnum(this.*)) {
                     const a = @field(this, field.name);
-                    const b = @field(this, field.name);
+                    const b = @field(other, field.name);
                     return css.generic.partialCmpF32(&a, &b);
                 }
             }
@@ -303,7 +303,7 @@ pub const LengthValue = union(enum) {
             inline for (bun.meta.EnumFields(LengthValue)) |field| {
                 if (field.value == @intFromEnum(this.*)) {
                     const a = @field(this, field.name);
-                    const b = @field(this, field.name);
+                    const b = @field(other, field.name);
                     return @unionInit(LengthValue, field.name, op_fn(ctx, a, b));
                 }
             }
@@ -329,7 +329,7 @@ pub const LengthValue = union(enum) {
             inline for (bun.meta.EnumFields(LengthValue)) |field| {
                 if (field.value == @intFromEnum(this.*)) {
                     const a = @field(this, field.name);
-                    const b = @field(this, field.name);
+                    const b = @field(other, field.name);
                     return op_fn(ctx, a, b);
                 }
             }

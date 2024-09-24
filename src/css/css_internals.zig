@@ -103,7 +103,7 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
                     }
                 },
             }
-            _ = stylesheet.minify(alloc, bun.css.MinifyOptions.default()).assert();
+            _ = stylesheet.minify(alloc, minify_options).assert();
 
             const result = stylesheet.toCss(alloc, bun.css.PrinterOptions{
                 .minify = switch (test_kind) {
@@ -196,4 +196,84 @@ fn targetsFromJS(globalThis: *JSC.JSGlobalObject, jsobj: JSValue) bun.css.target
     }
 
     return targets;
+}
+
+pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    var arena = arena_ orelse brk: {
+        break :brk Arena.init() catch @panic("oopsie arena no good");
+    };
+    defer arena.reset();
+    const alloc = arena.allocator();
+
+    const arguments_ = callframe.arguments(4);
+    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    const source_arg: JSC.JSValue = arguments.nextEat() orelse {
+        globalThis.throw("attrTest: expected 3 arguments, got 0", .{});
+        return .undefined;
+    };
+    if (!source_arg.isString()) {
+        globalThis.throw("attrTest: expected source to be a string", .{});
+        return .undefined;
+    }
+    const source_bunstr = source_arg.toBunString(globalThis);
+    defer source_bunstr.deref();
+    const source = source_bunstr.toUTF8(bun.default_allocator);
+    defer source.deinit();
+
+    const expected_arg = arguments.nextEat() orelse {
+        globalThis.throw("attrTest: expected 3 arguments, got 1", .{});
+        return .undefined;
+    };
+    if (!expected_arg.isString()) {
+        globalThis.throw("attrTest: expected `expected` arg to be a string", .{});
+        return .undefined;
+    }
+    const expected_bunstr = expected_arg.toBunString(globalThis);
+    defer expected_bunstr.deref();
+    const expected = expected_bunstr.toUTF8(bun.default_allocator);
+    defer expected.deinit();
+
+    const minify_arg: JSC.JSValue = arguments.nextEat() orelse {
+        globalThis.throw("attrTest: expected 3 arguments, got 2", .{});
+        return .undefined;
+    };
+    const minify = minify_arg.isBoolean() and minify_arg.toBoolean();
+
+    var targets: bun.css.targets.Targets = .{};
+    if (arguments.nextEat()) |arg| {
+        if (arg.isObject()) {
+            targets.browsers = targetsFromJS(globalThis, arg);
+        }
+    }
+
+    var log = bun.logger.Log.init(alloc);
+    defer log.deinit();
+
+    const parser_options = bun.css.ParserOptions.default(alloc, &log);
+
+    switch (bun.css.StyleAttribute.parse(alloc, source.slice(), parser_options)) {
+        .result => |stylesheet_| {
+            var stylesheet = stylesheet_;
+            var minify_options: bun.css.MinifyOptions = bun.css.MinifyOptions.default();
+            minify_options.targets = targets;
+            stylesheet.minify(alloc, minify_options);
+
+            const result = stylesheet.toCss(alloc, bun.css.PrinterOptions{
+                .minify = minify,
+                .targets = targets,
+            }) catch |e| {
+                bun.handleErrorReturnTrace(e, @errorReturnTrace());
+                return .undefined;
+            };
+
+            return bun.String.fromBytes(result.code).toJS(globalThis);
+        },
+        .err => |err| {
+            if (log.hasAny()) {
+                return log.toJS(globalThis, bun.default_allocator, "parsing failed:");
+            }
+            globalThis.throw("parsing failed: {}", .{err.kind});
+            return .undefined;
+        },
+    }
 }

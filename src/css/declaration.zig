@@ -62,6 +62,29 @@ pub const DeclarationBlock = struct {
         return this.declarations.items.len + this.important_declarations.items.len;
     }
 
+    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        const length = this.len();
+        var i: usize = 0;
+
+        const DECLS: []const []const u8 = &[_][]const u8{ "declarations", "important_declarations" };
+
+        inline for (DECLS) |decl_field_name| {
+            const decls = &@field(this, decl_field_name);
+            const is_important = comptime std.mem.eql(u8, decl_field_name, "important_declarations");
+
+            for (decls.items) |*decl| {
+                try decl.toCss(W, dest, is_important);
+                if (i != length - 1) {
+                    try dest.writeChar(';');
+                    try dest.whitespace();
+                }
+                i += 1;
+            }
+        }
+
+        return;
+    }
+
     /// Writes the declarations to a CSS block, including starting and ending braces.
     pub fn toCssBlock(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
         try dest.whitespace();

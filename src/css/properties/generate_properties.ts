@@ -251,7 +251,7 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
       ${Object.entries(property_defs)
         .map(([prop_name, def]) => {
           if (def.valid_prefixes === undefined) return `.${escapeIdent(prop_name)} => {},`;
-          return `.${escapeIdent(prop_name)} => |*p| .{ p.insert(pre); },`;
+          return `.${escapeIdent(prop_name)} => |*p| { p.insert(pre); },`;
         })
         .join("\n")}
       else => {},
@@ -476,62 +476,62 @@ generateCode({
   "border-spacing": {
     ty: "css.css_values.size.Size2D(Length)",
   },
-  // "border-top-color": {
-  //   ty: "CssColor",
-  //   logical_group: { ty: "border_color", category: "physical" },
-  // },
-  // "border-bottom-color": {
-  //   ty: "CssColor",
-  //   logical_group: { ty: "border_color", category: "physical" },
-  // },
-  // "border-left-color": {
-  //   ty: "CssColor",
-  //   logical_group: { ty: "border_color", category: "physical" },
-  // },
-  // "border-right-color": {
-  //   ty: "CssColor",
-  //   logical_group: { ty: "border_color", category: "physical" },
-  // },
-  // "border-block-start-color": {
-  //   ty: "CssColor",
-  //   logical_group: { ty: "border_color", category: "logical" },
-  // },
-  // "border-block-end-color": {
-  //   ty: "CssColor",
-  //   logical_group: { ty: "border_color", category: "logical" },
-  // },
-  // "border-inline-start-color": {
-  //   ty: "CssColor",
-  //   logical_group: { ty: "border_color", category: "logical" },
-  // },
-  // "border-inline-end-color": {
-  //   ty: "CssColor",
-  //   logical_group: { ty: "border_color", category: "logical" },
-  // },
-  // "border-top-style": {
-  //   ty: "border.LineStyle",
-  //   logical_group: { ty: "border_style", category: "physical" },
-  // },
-  // "border-bottom-style": {
-  //   ty: "border.LineStyle",
-  //   logical_group: { ty: "border_style", category: "physical" },
-  // },
-  // "border-left-style": {
-  //   ty: "border.LineStyle",
-  //   logical_group: { ty: "border_style", category: "physical" },
-  // },
-  // "border-right-style": {
-  //   ty: "border.LineStyle",
-  //   logical_group: { ty: "border_style", category: "physical" },
-  // },
-  // "border-block-start-style": {
-  //   ty: "border.LineStyle",
-  //   logical_group: { ty: "border_style", category: "logical" },
-  // },
-  // "border-block-end-style": {
-  //   ty: "border.LineStyle",
-  //   logical_group: { ty: "border_style", category: "logical" },
-  // },
+  "border-top-color": {
+    ty: "CssColor",
+    logical_group: { ty: "border_color", category: "physical" },
+  },
+  "border-bottom-color": {
+    ty: "CssColor",
+    logical_group: { ty: "border_color", category: "physical" },
+  },
+  "border-left-color": {
+    ty: "CssColor",
+    logical_group: { ty: "border_color", category: "physical" },
+  },
+  "border-right-color": {
+    ty: "CssColor",
+    logical_group: { ty: "border_color", category: "physical" },
+  },
+  "border-block-start-color": {
+    ty: "CssColor",
+    logical_group: { ty: "border_color", category: "logical" },
+  },
+  "border-block-end-color": {
+    ty: "CssColor",
+    logical_group: { ty: "border_color", category: "logical" },
+  },
+  "border-inline-start-color": {
+    ty: "CssColor",
+    logical_group: { ty: "border_color", category: "logical" },
+  },
+  "border-inline-end-color": {
+    ty: "CssColor",
+    logical_group: { ty: "border_color", category: "logical" },
+  },
+  "border-top-style": {
+    ty: "border.LineStyle",
+    logical_group: { ty: "border_style", category: "physical" },
+  },
+  "border-bottom-style": {
+    ty: "border.LineStyle",
+    logical_group: { ty: "border_style", category: "physical" },
+  },
+  "border-left-style": {
+    ty: "border.LineStyle",
+    logical_group: { ty: "border_style", category: "physical" },
+  },
+  "border-right-style": {
+    ty: "border.LineStyle",
+    logical_group: { ty: "border_style", category: "physical" },
+  },
+  "border-block-start-style": {
+    ty: "border.LineStyle",
+    logical_group: { ty: "border_style", category: "logical" },
+  },
+  "border-block-end-style": {
+    ty: "border.LineStyle",
+    logical_group: { ty: "border_style", category: "logical" },
+  },
   // "border-inline-start-style": {
   //   ty: "border.LineStyle",
   //   logical_group: { ty: "border_style", category: "logical" },

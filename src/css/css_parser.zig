@@ -2393,6 +2393,57 @@ pub fn StyleSheet(comptime AtRule: type) type {
     };
 }
 
+pub const StyleAttribute = struct {
+    declarations: DeclarationBlock,
+    sources: ArrayList([]const u8),
+
+    pub fn parse(allocator: Allocator, code: []const u8, options: ParserOptions) Maybe(StyleAttribute, Err(ParserError)) {
+        var input = ParserInput.new(allocator, code);
+        var parser = Parser.new(&input);
+        const sources = sources: {
+            var s = ArrayList([]const u8).initCapacity(allocator, 1) catch bun.outOfMemory();
+            s.appendAssumeCapacity(options.filename);
+            break :sources s;
+        };
+        return .{ .result = StyleAttribute{
+            .declarations = switch (DeclarationBlock.parse(&parser, &options)) {
+                .result => |v| v,
+                .err => |e| return .{ .err = Err(ParserError).fromParseError(e, "") },
+            },
+            .sources = sources,
+        } };
+    }
+
+    pub fn toCss(this: *const StyleAttribute, allocator: Allocator, options: PrinterOptions) PrintErr!ToCssResult {
+        // #[cfg(feature = "sourcemap")]
+        // assert!(
+        //   options.source_map.is_none(),
+        //   "Source maps are not supported for style attributes"
+        // );
+
+        var dest = ArrayList(u8){};
+        const writer = dest.writer(allocator);
+        var printer = Printer(@TypeOf(writer)).new(allocator, std.ArrayList(u8).init(allocator), writer, options);
+        printer.sources = &this.sources;
+
+        try this.declarations.toCss(@TypeOf(writer), &printer);
+
+        return ToCssResult{
+            .dependencies = printer.dependencies,
+            .code = dest.items,
+            .exports = null,
+            .references = null,
+        };
+    }
+
+    pub fn minify(this: *@This(), allocator: Allocator, options: MinifyOptions) void {
+        _ = allocator; // autofix
+        _ = this; // autofix
+        _ = options; // autofix
+        // TODO: IMPLEMENT THIS!
+    }
+};
+
 pub fn ValidDeclarationParser(comptime P: type) void {
     // The finished representation of a declaration.
     _ = P.DeclarationParser.Declaration;

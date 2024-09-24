@@ -5,6 +5,8 @@ function describeValue(x) {
     return "globalThis";
   } else if (x instanceof String) {
     return `boxed String: ${x.toString()}`;
+  } else if (x instanceof Object) {
+    return JSON.stringify(x);
   } else {
     return x;
   }
@@ -17,11 +19,6 @@ function printValues() {
     console.log(`argument ${i} = ${typeof arguments[i]}`, describeValue(arguments[i]));
   }
   return "hello";
-}
-
-function printThisStrict() {
-  "use strict";
-  console.log(`in strict mode, this = ${typeof this}`, describeValue(this));
 }
 
 module.exports = debugMode => {
@@ -53,6 +50,27 @@ module.exports = debugMode => {
       console.log(f());
     },
 
+    test_v8_function_template_instance() {
+      const instance = nativeModule.create_object_from_template();
+      const constructor = instance.constructor;
+
+      console.log("instanceof =", instance instanceof constructor);
+      console.log("func_property =", constructor.func_property);
+      console.log("proto_method() on prototype =", constructor.prototype.proto_method());
+      console.log("proto_method() on instance =", instance.proto_method());
+      console.log("proto_const on prototype =", constructor.prototype.proto_const);
+      console.log("proto_const on instance =", instance.proto_const);
+      console.log("hasOwnProperty('proto_const') =", instance.hasOwnProperty("proto_const"));
+      console.log("instance_accessor on prototype =", constructor.prototype.instance_accessor);
+      console.log("instance_accessor on instance =", instance.instance_accessor);
+      console.log("hasOwnProperty('instance_accessor') =", instance.hasOwnProperty("instance_accessor"));
+      instance.instance_accessor = "hello";
+      console.log("instance_accessor on instance after assignment =", instance.instance_accessor);
+      console.log("instance_property on prototype =", constructor.prototype.instance_property);
+      console.log("instance_property on instance =", instance.instance_property);
+      console.log("hasOwnProperty('instance_property') =", instance.hasOwnProperty("instance_property"));
+    },
+
     print_native_function() {
       nativeModule.print_values_from_js(nativeModule.create_function_with_data());
     },
@@ -71,8 +89,6 @@ module.exports = debugMode => {
         "nativeModule.run_function_from_js returned",
         nativeModule.run_function_from_js(printValues, 1, 2, 3, { foo: "bar" }),
       );
-
-      nativeModule.run_function_from_js(printThisStrict, 42);
 
       try {
         nativeModule.run_function_from_js(function () {

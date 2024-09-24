@@ -4,6 +4,6 @@
 
 namespace v8 {
 
-class Name : public Primitive {}
+class Name : public Primitive {};
 
 } // namespace v8

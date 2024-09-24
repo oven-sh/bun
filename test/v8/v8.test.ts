@@ -184,9 +184,14 @@ describe("FunctionTemplate", () => {
   it("keeps the data parameter alive", () => {
     checkSameOutput("test_v8_function_template", []);
   });
+  // calls tons of functions we don't implement yet
+  it.skip("can create an object with prototype properties, instance properties, and an accessor", () => {
+    checkSameOutput("test_v8_function_template_instance", []);
+  });
 });
 
 describe("Function", () => {
+  // TODO call native from native and napi from native
   it("correctly receives all its arguments from JS", () => {
     checkSameOutput("print_values_from_js", [5.0, true, null, false, "meow", {}]);
     checkSameOutput("print_native_function", []);

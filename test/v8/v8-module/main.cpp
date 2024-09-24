@@ -348,6 +348,70 @@ void create_function_with_data(const FunctionCallbackInfo<Value> &info) {
   info.GetReturnValue().Set(f);
 }
 
+void proto_method_callback(const FunctionCallbackInfo<Value> &info) {
+  printf("proto_method()\n");
+  info.GetReturnValue().Set(Number::New(info.GetIsolate(), 42.0));
+}
+
+void instance_accessor_getter(Local<Name> property,
+                              const PropertyCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  printf("get %s()\n", describe(isolate, property).c_str());
+  printf("data = %s\n", describe(isolate, info.Data()).c_str());
+  info.GetReturnValue().Set(Number::New(info.GetIsolate(), 43.0));
+}
+
+void instance_accessor_setter(Local<Name> property, Local<Value> value,
+                              const PropertyCallbackInfo<void> &info) {
+  Isolate *isolate = info.GetIsolate();
+  printf("set %s() to %s\n", describe(isolate, property).c_str(),
+         describe(isolate, value).c_str());
+  printf("data = %s\n", describe(isolate, info.Data()).c_str());
+}
+
+void create_object_from_template(const FunctionCallbackInfo<Value> &info) {
+  // https://v8.github.io/api/v12.4/classv8_1_1FunctionTemplate.html#details
+  Isolate *isolate = info.GetIsolate();
+  Local<FunctionTemplate> t = FunctionTemplate::New(isolate);
+  Local<String> func_property =
+      String::NewFromUtf8(isolate, "func_property").ToLocalChecked();
+  t->Set(func_property, Number::New(isolate, 1.0));
+
+  Local<ObjectTemplate> proto_t = t->PrototypeTemplate();
+
+  Local<String> proto_method =
+      String::NewFromUtf8(isolate, "proto_method").ToLocalChecked();
+  proto_t->Set(proto_method,
+               FunctionTemplate::New(isolate, proto_method_callback));
+
+  Local<String> proto_const =
+      String::NewFromUtf8(isolate, "proto_const").ToLocalChecked();
+  proto_t->Set(proto_const, Number::New(isolate, 2.0));
+
+  Local<ObjectTemplate> instance_t = t->InstanceTemplate();
+  // pass as Local<Name> instead of Local<String> to ensure we use the right
+  // overload
+  Local<Name> instance_accessor =
+      String::NewFromUtf8(isolate, "instance_accessor").ToLocalChecked();
+  instance_t->SetAccessor(instance_accessor, instance_accessor_getter,
+                          instance_accessor_setter,
+                          Number::New(isolate, 123.0));
+
+  // not trying to support handlers yet
+  // instance_t->SetHandler(
+  //     NamedPropertyHandlerConfiguration(PropertyHandlerCallback));
+
+  Local<String> instance_property =
+      String::NewFromUtf8(isolate, "instance_property").ToLocalChecked();
+  instance_t->Set(instance_property, Number::New(isolate, 3.0));
+
+  // actually construct the object
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<Function> function = t->GetFunction(context).ToLocalChecked();
+  Local<Object> instance = function->NewInstance(context).ToLocalChecked();
+  info.GetReturnValue().Set(instance);
+}
+
 void print_values_from_js(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
   printf("%d arguments\n", info.Length());
@@ -635,6 +699,8 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "test_v8_object_template", test_v8_object_template);
   NODE_SET_METHOD(exports, "create_function_with_data",
                   create_function_with_data);
+  NODE_SET_METHOD(exports, "create_object_from_template",
+                  create_object_from_template);
   NODE_SET_METHOD(exports, "print_values_from_js", print_values_from_js);
   NODE_SET_METHOD(exports, "return_this", return_this);
   NODE_SET_METHOD(exports, "run_function_from_js", run_function_from_js);

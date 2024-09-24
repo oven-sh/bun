@@ -44,7 +44,7 @@ const {
 const kFlushFlag = Symbol("kFlushFlag");
 const kError = Symbol("kError");
 
-const constants: Record<string, number> = $cpp("Constants.cpp", "ZlibConstants");
+const { zlib: constants } = process.binding("constants");
 // prettier-ignore
 const {
   // Zlib flush levels

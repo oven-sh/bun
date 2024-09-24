@@ -3855,7 +3855,7 @@ const Tokenizer = struct {
             else => false,
         }) {
             is_integer = false;
-            this.advance(1);
+            this.advance(1); // Consume '.'
             var factor: f64 = 0.1;
             while (byteToDecimalDigit(this.nextByteUnchecked())) |digit| {
                 fractional_part += @as(f64, @floatFromInt(digit)) * factor;

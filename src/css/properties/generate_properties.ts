@@ -348,9 +348,9 @@ generateCode({
   // opacity: {
   //   ty: "css.css_values.alpha.AlphaValue",
   // },
-  // color: {
-  //   ty: "CssColor",
-  // },
+  color: {
+    ty: "CssColor",
+  },
   // display: {
   //   ty: "display.Display",
   // },

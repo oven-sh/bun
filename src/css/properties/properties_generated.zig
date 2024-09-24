@@ -243,6 +243,7 @@ const ArrayList = std.ArrayListUnmanaged;
 const SmallList = css.SmallList;
 pub const Property = union(PropertyIdTag) {
     @"background-color": CssColor,
+    color: CssColor,
     @"border-spacing": css.css_values.size.Size2D(Length),
     @"border-top-color": CssColor,
     @"border-bottom-color": CssColor,
@@ -273,6 +274,13 @@ pub const Property = union(PropertyIdTag) {
                 if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .@"background-color" = c } };
+                    }
+                }
+            },
+            .color => {
+                if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .color = c } };
                     }
                 }
             },
@@ -413,6 +421,7 @@ pub const Property = union(PropertyIdTag) {
     pub inline fn __toCssHelper(this: *const Property) struct { []const u8, VendorPrefix } {
         return switch (this.*) {
             .@"background-color" => .{ "background-color", VendorPrefix{ .none = true } },
+            .color => .{ "color", VendorPrefix{ .none = true } },
             .@"border-spacing" => .{ "border-spacing", VendorPrefix{ .none = true } },
             .@"border-top-color" => .{ "border-top-color", VendorPrefix{ .none = true } },
             .@"border-bottom-color" => .{ "border-bottom-color", VendorPrefix{ .none = true } },
@@ -445,6 +454,7 @@ pub const Property = union(PropertyIdTag) {
     pub fn valueToCss(this: *const Property, comptime W: type, dest: *css.Printer(W)) PrintErr!void {
         return switch (this.*) {
             .@"background-color" => |*value| value.toCss(W, dest),
+            .color => |*value| value.toCss(W, dest),
             .@"border-spacing" => |*value| value.toCss(W, dest),
             .@"border-top-color" => |*value| value.toCss(W, dest),
             .@"border-bottom-color" => |*value| value.toCss(W, dest),
@@ -478,6 +488,7 @@ pub const Property = union(PropertyIdTag) {
 };
 pub const PropertyId = union(PropertyIdTag) {
     @"background-color",
+    color,
     @"border-spacing",
     @"border-top-color",
     @"border-bottom-color",
@@ -509,6 +520,7 @@ pub const PropertyId = union(PropertyIdTag) {
     pub fn prefix(this: *const PropertyId) VendorPrefix {
         return switch (this.*) {
             .@"background-color" => VendorPrefix.empty(),
+            .color => VendorPrefix.empty(),
             .@"border-spacing" => VendorPrefix.empty(),
             .@"border-top-color" => VendorPrefix.empty(),
             .@"border-bottom-color" => VendorPrefix.empty(),
@@ -534,6 +546,9 @@ pub const PropertyId = union(PropertyIdTag) {
         if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "background-color")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"background-color";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "color")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .color;
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-spacing")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"border-spacing";
@@ -593,6 +608,7 @@ pub const PropertyId = union(PropertyIdTag) {
         _ = pre; // autofix
         return switch (this.*) {
             .@"background-color" => .@"background-color",
+            .color => .color,
             .@"border-spacing" => .@"border-spacing",
             .@"border-top-color" => .@"border-top-color",
             .@"border-bottom-color" => .@"border-bottom-color",
@@ -617,6 +633,7 @@ pub const PropertyId = union(PropertyIdTag) {
         _ = pre; // autofix
         return switch (this.*) {
             .@"background-color" => {},
+            .color => {},
             .@"border-spacing" => {},
             .@"border-top-color" => {},
             .@"border-bottom-color" => {},
@@ -639,6 +656,7 @@ pub const PropertyId = union(PropertyIdTag) {
 };
 pub const PropertyIdTag = enum(u16) {
     @"background-color",
+    color,
     @"border-spacing",
     @"border-top-color",
     @"border-bottom-color",

@@ -2690,9 +2690,6 @@ pub const VirtualMachine = struct {
                     return e;
                 },
                 .pending, .not_found => {
-                    {
-                        @panic("fuck");
-                    }
                     this.log.addErrorFmt(
                         null,
                         logger.Loc.Empty,

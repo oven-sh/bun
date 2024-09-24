@@ -474,12 +474,189 @@ pub fn DefineSizeShorthand(comptime T: type, comptime V: type) type {
 }
 
 pub fn DeriveParse(comptime T: type) type {
+    const tyinfo = @typeInfo(T);
+    const is_union_enum = tyinfo == .Union;
+    const enum_type = if (comptime is_union_enum) @typeInfo(tyinfo.Union.tag_type.?) else tyinfo;
+    const enum_actual_type = if (comptime is_union_enum) tyinfo.Union.tag_type.? else T;
+
+    const Map = bun.ComptimeEnumMap(enum_actual_type);
+
     // TODO: this has to work for enums and union(enums)
     return struct {
+        inline fn gnerateCode(
+            input: *Parser,
+            comptime first_payload_index: usize,
+            comptime maybe_first_void_index: ?usize,
+            comptime void_count: usize,
+            comptime payload_count: usize,
+        ) Result(T) {
+            const last_payload_index = first_payload_index + payload_count - 1;
+            if (comptime maybe_first_void_index == null) {
+                inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
+                    if (comptime (i == last_payload_index)) {
+                        return generic.parseFor(field.type)(input);
+                    }
+                    if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
+                        return .{ .result = @unionInit(T, field.name, v) };
+                    }
+                }
+            }
+
+            const first_void_index = maybe_first_void_index.?;
+
+            const void_fields = bun.meta.EnumFields(T)[first_void_index .. first_void_index + void_count];
+
+            if (comptime void_count == 1) {
+                const void_field = enum_type.Enum.fields[first_void_index];
+                // The field is declared before the payload fields.
+                // So try to parse an ident matching the name of the field, then fallthrough
+                // to parsing the payload fields.
+                if (comptime first_void_index < first_payload_index) {
+                    if (input.tryParse(Parser.expectIdentMatching, .{void_field.name}).isOk()) {
+                        if (comptime is_union_enum) return .{ .result = @unionInit(T, void_field.name, {}) };
+                        return .{ .result = @enumFromInt(void_field.value) };
+                    }
+
+                    inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
+                        if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
+                            return generic.parseFor(field.type)(input);
+                        }
+                        if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
+                            return .{ .result = @unionInit(T, field.name, v) };
+                        }
+                    }
+                } else {
+                    inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
+                        if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
+                            return generic.parseFor(field.type)(input);
+                        }
+                        if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
+                            return .{ .result = @unionInit(T, field.name, v) };
+                        }
+                    }
+
+                    // We can generate this as the last statements of the function, avoiding the `input.tryParse` routine above
+                    if (input.expectIdentMatching(void_field.name).asErr()) |e| return .{ .err = e };
+                    if (comptime is_union_enum) return .{ .result = @unionInit(T, void_field.name, {}) };
+                    return .{ .result = @enumFromInt(void_field.value) };
+                }
+            } else if (comptime first_void_index < first_payload_index) {
+                // Multiple fields declared before the payload fields, use tryParse
+                const state = input.state();
+                if (input.tryParse(Parser.expectIdent, .{}).asValue()) |ident| {
+                    if (Map.getCaseInsensitiveWithEql(ident, bun.strings.eqlComptime)) |matched| {
+                        inline for (void_fields) |field| {
+                            if (field.value == @intFromEnum(matched)) {
+                                if (comptime is_union_enum) return .{ .result = @unionInit(T, field.name, {}) };
+                                return .{ .result = @enumFromInt(field.value) };
+                            }
+                        }
+                        unreachable;
+                    }
+                    input.reset(&state);
+                }
+
+                inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
+                    if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
+                        return generic.parseFor(field.type)(input);
+                    }
+                    if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
+                        return .{ .result = @unionInit(T, field.name, v) };
+                    }
+                }
+            } else if (comptime first_void_index > first_payload_index) {
+                inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
+                    if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
+                        return generic.parseFor(field.type)(input);
+                    }
+                    if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
+                        return .{ .result = @unionInit(T, field.name, v) };
+                    }
+                }
+
+                const location = input.currentSourceLocation();
+                const ident = switch (input.expectIdent()) {
+                    .result => |v| v,
+                    .err => |e| return .{ .err = e },
+                };
+                if (Map.getCaseInsensitiveWithEql(ident, bun.strings.eqlComptime)) |matched| {
+                    inline for (void_fields) |field| {
+                        if (field.value == @intFromEnum(matched)) {
+                            if (comptime is_union_enum) return .{ .result = @unionInit(T, field.name, {}) };
+                            return .{ .result = @enumFromInt(field.value) };
+                        }
+                    }
+                    unreachable;
+                }
+                return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
+            }
+            @compileError("SHOULD BE UNREACHABLE!");
+        }
+
+        // inline fn generatePayloadBranches(
+        //     input: *Parser,
+        //     comptime first_payload_index: usize,
+        //     comptime first_void_index: usize,
+        //     comptime payload_count: usize,
+        // ) Result(T) {
+        //     const last_payload_index = first_payload_index + payload_count - 1;
+        //     inline for (tyinfo.Union.fields[first_payload_index..], first_payload_index..) |field, i| {
+        //         if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
+        //             return generic.parseFor(field.type)(input);
+        //         }
+        //         if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
+        //             return .{ .result = @unionInit(T, field.name, v) };
+        //         }
+        //     }
+        //     // The last field will return so this is never reachable
+        //     unreachable;
+        // }
+
         pub fn parse(input: *Parser) Result(T) {
-            // to implement this, we need to cargo expand the derive macro
-            _ = input; // autofix
-            @compileError(todo_stuff.depth);
+            if (comptime is_union_enum) {
+                const payload_count, const first_payload_index, const void_count, const first_void_index = comptime counts: {
+                    var first_void_index: ?usize = null;
+                    var first_payload_index: ?usize = null;
+                    var payload_count: usize = 0;
+                    var void_count: usize = 0;
+                    for (tyinfo.Union.fields, 0..) |field, i| {
+                        if (field.type == void) {
+                            void_count += 1;
+                            if (first_void_index == null) first_void_index = i;
+                        } else {
+                            payload_count += 1;
+                            if (first_payload_index == null) first_payload_index = i;
+                        }
+                    }
+                    if (first_payload_index == null) {
+                        @compileError("Type defined as `union(enum)` but no variant carries a payload. Make it an `enum` instead.");
+                    }
+                    if (first_void_index) |void_index| {
+                        // Check if they overlap
+                        if (first_payload_index.? < void_index and void_index < first_payload_index.? + payload_count) @compileError("Please put all the fields with data together and all the fields with no data together.");
+                        if (first_payload_index.? > void_index and first_payload_index.? < void_index + void_count) @compileError("Please put all the fields with data together and all the fields with no data together.");
+                    }
+                    break :counts .{ payload_count, first_payload_index.?, void_count, first_void_index };
+                };
+
+                return gnerateCode(input, first_payload_index, first_void_index, void_count, payload_count);
+            }
+
+            const location = input.currentSourceLocation();
+            const ident = switch (input.expectIdent()) {
+                .result => |v| v,
+                .err => |e| return .{ .err = e },
+            };
+            if (Map.getCaseInsensitiveWithEql(ident, bun.strings.eqlComptime)) |matched| {
+                inline for (bun.meta.EnumFields(enum_type)) |field| {
+                    if (field.value == @intFromEnum(matched)) {
+                        if (comptime is_union_enum) return .{ .result = @unionInit(T, field.name, void) };
+                        return .{ .result = @enumFromInt(field.value) };
+                    }
+                }
+                unreachable;
+            }
+            return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
         }
 
         // pub fn parse(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -583,12 +760,14 @@ pub fn DeriveValueType(comptime T: type) type {
         const mapping_final = mapping;
         break :field_values mapping_final[0..];
     };
+    _ = field_values; // autofix
 
     return struct {
         pub fn valueType(this: *const T) MediaFeatureType {
-            inline for (std.meta.fields(@This()), 0..) |field, i| {
+            inline for (std.meta.fields(T), 0..) |field, i| {
+                _ = i; // autofix
                 if (field.value == @intFromEnum(this.*)) {
-                    return field_values[i];
+                    return @enumFromInt(field.value);
                 }
             }
             unreachable;
@@ -4050,6 +4229,7 @@ const Tokenizer = struct {
     }
 
     pub fn consumeQuotedString(this: *Tokenizer, comptime single_quote: bool) struct { str: []const u8, bad: bool = false } {
+        this.advance(1); // Skip the initial quote
         const start_pos = this.position;
         var string_bytes: CopyOnWriteStr = undefined;
 

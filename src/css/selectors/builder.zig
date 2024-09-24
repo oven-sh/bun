@@ -177,7 +177,7 @@ pub fn SelectorBuilder(comptime Impl: type) type {
             var current_simple_selectors = current;
 
             while (true) {
-                if (current_simple_selectors_i < current.len) {
+                if (current_simple_selectors_i < current_simple_selectors.len) {
                     components.append(
                         this.allocator,
                         current_simple_selectors[current_simple_selectors_i],

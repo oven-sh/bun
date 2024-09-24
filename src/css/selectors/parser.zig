@@ -2462,6 +2462,8 @@ pub fn parse_one_simple_selector(
                 if (state.intersects(.{ .after_slotted = true }) and pseudo_element.validAfterSlotted()) {
                     return .{ .result = .{ .pseudo_element = pseudo_element } };
                 }
+
+                return .{ .result = .{ .pseudo_element = pseudo_element } };
             } else {
                 const pseudo_class: GenericComponent(Impl) = if (is_functional) pseudo_class: {
                     const Closure = struct {

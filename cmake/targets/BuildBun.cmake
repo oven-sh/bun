@@ -1006,22 +1006,6 @@ endif()
 
 set_target_properties(${bun} PROPERTIES LINK_DEPENDS ${BUN_SYMBOLS_PATH})
 
-register_command(
-  TARGET
-    ${bun}
-  TARGET_PHASE
-    POST_BUILD
-  COMMENT
-    "Testing ${bun}"
-  COMMAND
-    ${CMAKE_COMMAND}
-      -E env BUN_DEBUG_QUIET_LOGS=1
-      ${BUN_EXE_OUTPUT}
-        --revision
-  CWD
-    ${BUILD_PATH}
-)
-
 # --- Packaging ---
 
 if(bunStrip)

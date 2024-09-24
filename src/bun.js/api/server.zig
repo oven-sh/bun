@@ -5810,7 +5810,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         temporary_url_buffer: std.ArrayListUnmanaged(u8) = .{},
 
         cached_hostname: bun.String = bun.String.empty,
-        cached_protocol: bun.String = bun.String.empty,
 
         flags: packed struct(u4) {
             deinit_scheduled: bool = false,
@@ -6467,11 +6466,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
 
         pub fn getProtocol(this: *ThisServer, globalThis: *JSGlobalObject) JSC.JSValue {
-            if (this.cached_protocol.isEmpty()) {
-                this.cached_protocol = bun.String.createUTF8(if (ssl_enabled) "https" else "http");
-            }
-
-            return this.cached_protocol.toJS(globalThis);
+            _ = this;
+            return ZigString.static(if (ssl_enabled) "https" else "http").toJS(globalThis);
         }
 
         pub fn getDevelopment(
@@ -6587,7 +6583,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub fn deinit(this: *ThisServer) void {
             httplog("deinit", .{});
             this.cached_hostname.deref();
-            this.cached_protocol.deref();
 
             this.config.deinit();
             this.app.destroy();

@@ -514,12 +514,50 @@ test("Bun should be able to handle utf16 inside Content-Type header #11316", asy
   expect(result.headers.get("Content-Type")).toBe("text/html");
 });
 
-test.only("should be able to await server.stop()", async () => {
+test("should be able to await server.stop()", async () => {
   const { promise, resolve } = Promise.withResolvers();
   const ready = Promise.withResolvers();
   const received = Promise.withResolvers();
   using server = Bun.serve({
     port: 0,
+    // Avoid waiting for DNS resolution in fetch()
+    hostname: "127.0.0.1",
+    async fetch(req) {
+      received.resolve();
+      await ready.promise;
+      return new Response("Hello World", {
+        headers: {
+          // Prevent Keep-Alive from keeping the connection open
+          "Connection": "close",
+        },
+      });
+    },
+  });
+
+  // Start the request
+  const responsePromise = fetch(server.url);
+  // Wait for the server to receive it.
+  await received.promise;
+  // Stop listening for new connections
+  const stopped = server.stop();
+  // Continue the request
+  ready.resolve();
+  // Wait for the response
+  await (await responsePromise).text();
+  // Wait for the server to stop
+  await stopped;
+  // Ensure the server is completely stopped
+  expect(async () => await fetch(server.url)).toThrow();
+});
+
+test("should be able to await server.stop(true) with keep alive", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  const ready = Promise.withResolvers();
+  const received = Promise.withResolvers();
+  using server = Bun.serve({
+    port: 0,
+    // Avoid waiting for DNS resolution in fetch()
+    hostname: "127.0.0.1",
     async fetch(req) {
       received.resolve();
       await ready.promise;
@@ -532,13 +570,22 @@ test.only("should be able to await server.stop()", async () => {
   // Wait for the server to receive it.
   await received.promise;
   // Stop listening for new connections
-  const stopped = server.stop();
+  const stopped = server.stop(true);
   // Continue the request
   ready.resolve();
-  await (await responsePromise).text();
+
+  // Wait for the server to stop
   await stopped;
+
+  // It should fail before the server responds
+  expect(async () => {
+    await (await responsePromise).text();
+  }).toThrow();
+
+  // Ensure the server is completely stopped
   expect(async () => await fetch(server.url)).toThrow();
 });
+
 test("should be able to async upgrade using custom protocol", async () => {
   const { promise, resolve } = Promise.withResolvers<{ code: number; reason: string } | boolean>();
   using server = Bun.serve<unknown>({

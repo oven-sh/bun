@@ -260,10 +260,6 @@ pub fn CompressionStream(comptime T: type) type {
             _ = try this.onerror_value.get().?.call(globalThis, .null, &.{ msg_value, err_value, code_value });
         }
 
-        pub fn hasPendingActivity(this: *T) bool {
-            return this.ref_count > 0;
-        }
-
         pub fn finalize(this: *T) void {
             this.deref();
         }

@@ -32,6 +32,10 @@ jobs:
         uses: ./.github/actions/setup-bun
         with:
           bun-version: "1.1.25"
+      - name: Setup LLVM
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "16.0.6"
       - name: Format
         run: |
           bun run clang-format

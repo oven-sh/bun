@@ -60,7 +60,7 @@
     "clang-format:check": "bun run cmake --target clang-format-check",
     "zig-format": "bun run cmake --target zig-format",
     "zig-format:check": "bun run cmake --target zig-format-check",
-    "prettier": "prettier --config=.prettierrc --write --cache './{.vscode,src,test,bench,packages/{bun-types,bun-inspector-*,bun-vscode,bun-debug-adapter-protocol}}/**/*.{mjs,ts,tsx,js,jsx}'",
+    "prettier": "bunx prettier --config=.prettierrc --write --cache './{.vscode,src,test,bench,packages/{bun-types,bun-inspector-*,bun-vscode,bun-debug-adapter-protocol}}/**/*.{mjs,ts,tsx,js,jsx}'",
     "prettier:check": "bun run prettier --check",
     "prettier:extra": "bun run prettier --plugin=prettier-plugin-organize-imports"
   }

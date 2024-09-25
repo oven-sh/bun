@@ -2556,7 +2556,7 @@ function setupCompat(ev) {
   }
 }
 class Http2Server extends net.Server {
-  static #connectionListener(socket: TLSSocket | Socket) {
+  static #connectionListener(socket: Socket) {
     const session = new ServerHttp2Session(socket, this[bunSocketServerOptions], this);
     this.emit("session", session);
   }
@@ -2577,11 +2577,33 @@ class Http2Server extends net.Server {
     }
   }
 }
+class Http2SecureServer extends tls.Server {
+  static #connectionListener(socket: TLSSocket | Socket) {
+    const session = new ServerHttp2Session(socket, this[bunSocketServerOptions], this);
+    this.emit("session", session);
+  }
+  constructor(options, onRequestHandler) {
+    if (typeof options === "function") {
+      onRequestHandler = options;
+      options = {};
+    } else if (options == null || typeof options == "object") {
+      options = {};
+    } else {
+      throw new TypeError("ERR_INVALID_ARG_TYPE: options must be an object");
+    }
+    super(options);
+    this.on("newListener", setupCompat);
+    this.on("connection", Http2SecureServer.#connectionListener);
+    if (typeof onRequestHandler === "function") {
+      this.on("request", onRequestHandler);
+    }
+  }
+}
 function createServer(options, onRequestHandler) {
   return new Http2Server(options, onRequestHandler);
 }
-function createSecureServer() {
-  throwNotImplemented("node:http2 createSecureServer", 8823);
+function createSecureServer(options, onRequestHandler) {
+  return new Http2SecureServer(options, onRequestHandler);
 }
 function getDefaultSettings() {
   // return default settings

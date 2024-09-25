@@ -260,6 +260,11 @@ pub fn CompressionStream(comptime T: type) type {
             return true;
         }
 
+        pub fn getOnError(this: *T, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+            _ = globalThis;
+            return this.onerror_value.get() orelse .undefined;
+        }
+
         /// returns true if no error was detected/emitted
         fn checkError(this: *T, globalThis: *JSC.JSGlobalObject) !bool {
             const err = this.stream.getErrorInfo();

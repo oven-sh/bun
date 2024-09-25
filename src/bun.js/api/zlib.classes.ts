@@ -19,7 +19,7 @@ export default [
       params: { fn: "params" },
       reset: { fn: "reset" },
       close: { fn: "close" },
-      onerror: { setter: "setOnError" },
+      onerror: { setter: "setOnError", getter: "getOnError" },
     },
   }),
 
@@ -41,7 +41,7 @@ export default [
       params: { fn: "params" },
       reset: { fn: "reset" },
       close: { fn: "close" },
-      onerror: { setter: "setOnError" },
+      onerror: { setter: "setOnError", getter: "getOnError" },
     },
   }),
 ];

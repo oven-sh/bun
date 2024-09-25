@@ -39,6 +39,10 @@ jobs:
         uses: KyleMayes/install-llvm-action@v2
         with:
           version: ${{ env.LLVM_VERSION }}
+      - name: Install Dependencies
+        run: |
+          apt install -y libncurses5
+          clang --version
       - name: Format
         run: |
           bun run clang-format -DLLVM_VERSION=${{ env.LLVM_VERSION }}

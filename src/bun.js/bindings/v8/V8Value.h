@@ -16,6 +16,7 @@ public:
     BUN_EXPORT bool IsInt32() const;
     BUN_EXPORT bool IsFunction() const;
     BUN_EXPORT Maybe<uint32_t> Uint32Value(Local<Context> context) const;
+    BUN_EXPORT Maybe<double> NumberValue(Local<Context> context) const;
 
     // usually inlined:
     BUN_EXPORT bool IsUndefined() const;

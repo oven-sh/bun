@@ -1862,6 +1862,7 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn _ZN2v87Integer3NewEPNS_7IsolateEi() *anyopaque;
     pub extern fn _ZNK2v87Integer5ValueEv() *anyopaque;
     pub extern fn _ZN2v812api_internal17FromJustIsNothingEv() *anyopaque;
+    pub extern fn _ZNK2v85Value11NumberValueENS_5LocalINS_7ContextEEE() *anyopaque;
     pub extern fn uv_os_getpid() *anyopaque;
     pub extern fn uv_os_getppid() *anyopaque;
 } else struct {
@@ -1947,6 +1948,7 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"?NewFromUnsigned@Integer@v8@@SA?AV?$Local@VInteger@v8@@@2@PEAVIsolate@2@I@Z"() *anyopaque;
     pub extern fn @"?New@Integer@v8@@SA?AV?$Local@VInteger@v8@@@2@PEAVIsolate@2@H@Z"() *anyopaque;
     pub extern fn @"?FromJustIsNothing@api_internal@v8@@YAXXZ"() *anyopaque;
+    pub extern fn @"?NumberValue@Value@v8@@QEBA?AV?$Maybe@N@2@V?$Local@VContext@v8@@@2@@Z"() *anyopaque;
 };
 
 pub fn fixDeadCodeElimination() void {

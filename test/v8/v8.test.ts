@@ -122,11 +122,10 @@ describe("primitives", () => {
   });
 });
 
-describe("Number", () => {
+describe("Number & Integer", () => {
   it("can create small integer", () => {
     checkSameOutput("test_v8_number_int", []);
   });
-  // non-i32 v8::Number is not implemented yet
   it("can create large integer", () => {
     checkSameOutput("test_v8_number_large_int", []);
   });
@@ -136,12 +135,12 @@ describe("Number", () => {
 });
 
 describe("Value", () => {
-  describe("Uint32Value", () => {
+  describe("Uint32Value & NumberValue", () => {
     it("coerces correctly", () => {
-      checkSameOutput("test_v8_value_uint32value", []);
+      checkSameOutput("test_v8_value_uint32value_and_numbervalue", []);
     });
     it("throws in the right cases", () => {
-      checkSameOutput("test_v8_value_uint32value_throw", []);
+      checkSameOutput("test_v8_value_uint32value_and_numbervalue_throw", []);
     });
   });
 });

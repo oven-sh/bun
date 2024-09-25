@@ -26,31 +26,31 @@ module.exports = debugMode => {
   return {
     ...nativeModule,
 
-    test_v8_value_uint32value_throw() {
+    test_v8_value_uint32value_and_numbervalue_throw() {
       // TODO(@190n) once Symbol and BigInt are supported in the V8 API, do this test in C++
-      try {
-        nativeModule.call_uint32value_on_arg_from_js(Symbol("20"));
-        console.log("Uint32Value() on Symbol did not throw");
-      } catch (e) {
-        console.log("threw", e.name);
-      }
-
-      try {
-        nativeModule.call_uint32value_on_arg_from_js(190n);
-        console.log("Uint32Value() on BigInt did not throw");
-      } catch (e) {
-        console.log("threw", e.name);
-      }
-
-      try {
-        nativeModule.call_uint32value_on_arg_from_js({
+      const values = [
+        Symbol("20"),
+        190n,
+        {
           [Symbol.toPrimitive]() {
             throw new RangeError("oops");
           },
-        });
-        console.log("Uint32Value() on object with [Symbol.toPrimitive] that throws did not throw");
-      } catch (e) {
-        console.log("threw", e.toString());
+        },
+      ];
+      for (const value of values) {
+        try {
+          nativeModule.call_uint32value_on_arg_from_js(value);
+          console.log(`Uint32Value() on ${typeof value} did not throw`);
+        } catch (e) {
+          console.log("threw", e.name);
+        }
+
+        try {
+          nativeModule.call_numbervalue_on_arg_from_js(value);
+          console.log(`NumberValue() on ${typeof value} did not throw`);
+        } catch (e) {
+          console.log("threw", e.name);
+        }
       }
     },
 

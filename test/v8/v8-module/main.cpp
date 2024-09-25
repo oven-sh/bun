@@ -167,7 +167,8 @@ void test_v8_number_fraction(const FunctionCallbackInfo<Value> &info) {
   perform_number_and_integer_test(info, 2.5);
 }
 
-void test_v8_value_uint32value(const FunctionCallbackInfo<Value> &info) {
+void test_v8_value_uint32value_and_numbervalue(
+    const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
   Local<Context> context = isolate->GetCurrentContext();
   Local<Value> vals[] = {
@@ -178,8 +179,11 @@ void test_v8_value_uint32value(const FunctionCallbackInfo<Value> &info) {
   };
 
   for (int i = 0; i < 4; i++) {
+    // should not throw for any of the values we check here
     Maybe<uint32_t> maybe_u32 = vals[i]->Uint32Value(context);
     LOG_MAYBE(maybe_u32);
+    Maybe<double> maybe_double = vals[i]->NumberValue(context);
+    LOG_MAYBE(maybe_double);
   }
 }
 
@@ -187,6 +191,12 @@ void call_uint32value_on_arg_from_js(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
   Local<Context> context = isolate->GetCurrentContext();
   LOG_MAYBE(info[0]->Uint32Value(context));
+}
+
+void call_numbervalue_on_arg_from_js(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  LOG_MAYBE(info[0]->NumberValue(context));
 }
 
 static void perform_string_test(const FunctionCallbackInfo<Value> &info,
@@ -749,10 +759,12 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "test_v8_number_large_int",
                   test_v8_number_large_int);
   NODE_SET_METHOD(exports, "test_v8_number_fraction", test_v8_number_fraction);
-  NODE_SET_METHOD(exports, "test_v8_value_uint32value",
-                  test_v8_value_uint32value);
+  NODE_SET_METHOD(exports, "test_v8_value_uint32value_and_numbervalue",
+                  test_v8_value_uint32value_and_numbervalue);
   NODE_SET_METHOD(exports, "call_uint32value_on_arg_from_js",
                   call_uint32value_on_arg_from_js);
+  NODE_SET_METHOD(exports, "call_numbervalue_on_arg_from_js",
+                  call_numbervalue_on_arg_from_js);
   NODE_SET_METHOD(exports, "test_v8_string_ascii", test_v8_string_ascii);
   NODE_SET_METHOD(exports, "test_v8_string_utf8", test_v8_string_utf8);
   NODE_SET_METHOD(exports, "test_v8_string_invalid_utf8",

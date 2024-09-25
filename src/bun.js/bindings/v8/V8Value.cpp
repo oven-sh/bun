@@ -75,6 +75,15 @@ Maybe<uint32_t> Value::Uint32Value(Local<Context> context) const
     RELEASE_AND_RETURN(scope, Just(num));
 }
 
+Maybe<double> Value::NumberValue(Local<Context> context) const
+{
+    auto js_value = localToJSValue();
+    auto scope = DECLARE_THROW_SCOPE(context->vm());
+    double num = js_value.toNumber(context->globalObject());
+    RETURN_IF_EXCEPTION(scope, Nothing<double>());
+    RELEASE_AND_RETURN(scope, Just(num));
+}
+
 bool Value::FullIsTrue() const
 {
     return localToJSValue().isTrue();

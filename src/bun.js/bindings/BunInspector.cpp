@@ -6,6 +6,7 @@
 #include <JavaScriptCore/JSGlobalObjectDebugger.h>
 #include <JavaScriptCore/Debugger.h>
 
+// clang-format off
 extern "C" void Bun__tickWhilePaused(bool*);
 
 namespace Bun {
@@ -121,18 +122,15 @@ static void addInspector(void* app, JSC::JSGlobalObject* globalObject)
                 *ws->getUserData() = new SSLBunInspectorConnection(ws, globalObject);
                 SSLBunInspectorConnection* inspector = *ws->getUserData();
                 inspector->onOpen(globalObject);
-                //
-            },
+                // },
             .message = [](auto* ws, std::string_view message, uWS::OpCode opCode) {
                 SSLBunInspectorConnection* inspector = *(SSLBunInspectorConnection**)ws->getUserData();
                 inspector->onMessage(message);
-                //
-            },
+                // },
             .drain = [](auto* ws) {
                 SSLBunInspectorConnection* inspector = *(SSLBunInspectorConnection**)ws->getUserData();
                 inspector->drain();
-                //
-            },
+                // },
             .ping = [](auto* /*ws*/, std::string_view) {
         /* Not implemented yet */ },
             .pong = [](auto* /*ws*/, std::string_view) {
@@ -163,18 +161,15 @@ static void addInspector(void* app, JSC::JSGlobalObject* globalObject)
                 *ws->getUserData() = new BunInspectorConnectionNoSSL(ws, globalObject);
                 BunInspectorConnectionNoSSL* inspector = *ws->getUserData();
                 inspector->onOpen(globalObject);
-                //
-            },
+                // },
             .message = [](auto* ws, std::string_view message, uWS::OpCode opCode) {
                 BunInspectorConnectionNoSSL* inspector = *(BunInspectorConnectionNoSSL**)ws->getUserData();
                 inspector->onMessage(message);
-                //
-            },
+                // },
             .drain = [](auto* ws) {
                 BunInspectorConnectionNoSSL* inspector = *(BunInspectorConnectionNoSSL**)ws->getUserData();
                 inspector->drain();
-                //
-            },
+                // },
             .ping = [](auto* /*ws*/, std::string_view) {
         /* Not implemented yet */ },
             .pong = [](auto* /*ws*/, std::string_view) {

@@ -37,7 +37,7 @@ jobs:
       - name: Setup Dependencies
         run: |
           bun install
-      - name: Format
+      - name: Prettier Format
         env:
           ENABLE_CCACHE: OFF
           SKIP_LLVM: ON

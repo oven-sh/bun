@@ -9200,6 +9200,8 @@ fn NewParser_(
                         }
                     }
                 }
+            } else if (import_tag == .kit_resolve_to_ssr_graph) {
+                p.import_records.items[stmt.import_record_index].tag = import_tag;
             }
         }
 
@@ -12209,6 +12211,7 @@ fn NewParser_(
                 const SupportedAttribute = enum {
                     type,
                     embed,
+                    bun_kit_graph,
                 };
 
                 var has_seen_embed_true = false;
@@ -12217,21 +12220,17 @@ fn NewParser_(
                     const supported_attribute: ?SupportedAttribute = brk: {
                         // Parse the key
                         if (p.lexer.isIdentifierOrKeyword()) {
-                            if (strings.eqlComptime(p.lexer.identifier, "type")) {
-                                break :brk .type;
-                            }
-
-                            if (strings.eqlComptime(p.lexer.identifier, "embed")) {
-                                break :brk .embed;
+                            inline for (comptime std.enums.values(SupportedAttribute)) |t| {
+                                if (strings.eqlComptime(p.lexer.identifier, @tagName(t))) {
+                                    break :brk t;
+                                }
                             }
                         } else if (p.lexer.token == .t_string_literal) {
                             if (p.lexer.string_literal_is_ascii) {
-                                if (strings.eqlComptime(p.lexer.string_literal_slice, "type")) {
-                                    break :brk .type;
-                                }
-
-                                if (strings.eqlComptime(p.lexer.string_literal_slice, "embed")) {
-                                    break :brk .embed;
+                                inline for (comptime std.enums.values(SupportedAttribute)) |t| {
+                                    if (strings.eqlComptime(p.lexer.string_literal_slice, @tagName(t))) {
+                                        break :brk t;
+                                    }
                                 }
                             }
                         } else {
@@ -12273,6 +12272,13 @@ fn NewParser_(
                                         if (path.import_tag == .with_type_sqlite) {
                                             path.import_tag = .with_type_sqlite_embedded;
                                         }
+                                    }
+                                },
+                                .bun_kit_graph => {
+                                    if (strings.eqlComptime(p.lexer.string_literal_slice, "ssr")) {
+                                        path.import_tag = .kit_resolve_to_ssr_graph;
+                                    } else {
+                                        try p.lexer.addRangeError(p.lexer.range(), "'bun_kit_graph' can only be set to 'ssr'", .{}, true);
                                     }
                                 },
                             }
@@ -23816,16 +23822,15 @@ pub const ConvertESMExportsForHmr = struct {
 
                                 // if the symbol is not used, we don't need to preserve
                                 // a binding in this scope. we can move it to the exports object.
-                                if (symbol.use_count_estimate != 0 or !decl.value.?.canBeMoved()) {
+                                if (symbol.use_count_estimate == 0 and decl.value.?.canBeMoved()) {
+                                    try ctx.export_props.append(p.allocator, .{
+                                        .key = Expr.init(E.String, .{ .data = symbol.original_name }, decl.binding.loc),
+                                        .value = decl.value,
+                                    });
+                                } else {
                                     dupe_decls.appendAssumeCapacity(decl);
+                                    try ctx.visitBindingForKitModuleExports(p, decl.binding, false);
                                 }
-
-                                try ctx.export_props.append(p.allocator, .{
-                                    .key = Expr.init(E.String, .{ .data = symbol.original_name }, decl.binding.loc),
-                                    .value = decl.value,
-                                });
-
-                                return; // do not emit the s_local
                             },
 
                             else => {

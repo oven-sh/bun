@@ -1948,7 +1948,47 @@ pub const BundleV2 = struct {
                 continue;
             }
 
-            var resolve_result = this.bundlerForTarget(ast.target).resolver.resolve(source_dir, import_record.path.text, import_record.kind) catch |err| {
+            const bundler, const renderer: kit.Renderer, const target =
+                if (import_record.tag == .kit_resolve_to_ssr_graph)
+            brk: {
+                // TODO: consider moving this error into js_parser so it is caught more reliably
+                // Then we can assert(this.framework != null)
+                if (this.framework == null) {
+                    this.bundler.log.addErrorFmt(
+                        source,
+                        import_record.range.loc,
+                        this.graph.allocator,
+                        "The 'bun_kit_graph' import attribute cannot be used outside of a Bun Kit bundle",
+                        .{},
+                    ) catch @panic("unexpected log error");
+                    continue;
+                }
+
+                const is_supported = this.framework.?.server_components != null and
+                    this.framework.?.server_components.?.separate_ssr_graph;
+                if (!is_supported) {
+                    this.bundler.log.addErrorFmt(
+                        source,
+                        import_record.range.loc,
+                        this.graph.allocator,
+                        "Framework does not have a separate SSR graph to put this import into",
+                        .{},
+                    ) catch @panic("unexpected log error");
+                    continue;
+                }
+
+                break :brk .{
+                    this.ssr_bundler,
+                    .ssr,
+                    .kit_server_components_ssr,
+                };
+            } else .{
+                this.bundlerForTarget(ast.target),
+                ast.target.kitRenderer(),
+                ast.target,
+            };
+
+            var resolve_result = bundler.resolver.resolve(source_dir, import_record.path.text, import_record.kind) catch |err| {
                 // Disable failing packages from being printed.
                 // This may cause broken code to write.
                 // However, doing this means we tell them all the resolve errors
@@ -2024,7 +2064,7 @@ pub const BundleV2 = struct {
             }
 
             if (this.bundler.options.kit) |dev_server| {
-                if (!dev_server.isFileStale(path.text, ast.target.kitRenderer())) {
+                if (!dev_server.isFileStale(path.text, renderer)) {
                     import_record.source_index = Index.invalid;
                     // TODO(paperdave/kit): this relative can be done without a clone in most cases
                     const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
@@ -2035,7 +2075,7 @@ pub const BundleV2 = struct {
 
             const hash_key = path.hashKey();
 
-            if (this.pathToSourceIndexMap(ast.target).get(hash_key)) |id| {
+            if (this.pathToSourceIndexMap(target).get(hash_key)) |id| {
                 import_record.source_index = Index.init(id);
                 continue;
             }
@@ -2043,7 +2083,6 @@ pub const BundleV2 = struct {
             const resolve_entry = resolve_queue.getOrPut(hash_key) catch bun.outOfMemory();
             if (resolve_entry.found_existing) {
                 import_record.path = resolve_entry.value_ptr.*.path;
-
                 continue;
             }
 
@@ -2070,7 +2109,7 @@ pub const BundleV2 = struct {
             const resolve_task = bun.default_allocator.create(ParseTask) catch bun.outOfMemory();
             resolve_task.* = ParseTask.init(&resolve_result, Index.invalid, this);
             resolve_task.secondary_path_for_commonjs_interop = secondary_path_to_copy;
-            resolve_task.known_target = ast.target;
+            resolve_task.known_target = target;
             resolve_task.jsx.development = resolve_result.jsx.development;
 
             if (import_record.tag.loader()) |loader| {
@@ -3108,6 +3147,9 @@ pub const ParseTask = struct {
         };
 
         const target = (if (task.source_index.get() == 1) targetFromHashbang(entry.contents) else null) orelse
+            if (task.known_target == .kit_server_components_ssr)
+            .kit_server_components_ssr
+        else
             bundler.options.target;
 
         var opts = js_parser.Parser.Options.init(task.jsx, loader);

@@ -802,6 +802,17 @@ pub fn IncrementalGraph(side: kit.Side) type {
             chunk.appendSliceAssumeCapacity(end);
             assert(chunk.capacity == chunk.items.len);
 
+            if (g.owner.dump_dir) |dump_dir| {
+                const rel_path_escaped = "latest_chunk.js";
+                dumpBundle(dump_dir, switch (side) {
+                    .client => .client,
+                    .server => .server,
+                }, rel_path_escaped, chunk.items) catch |err| {
+                    bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                    Output.warn("Could not dump bundle: {}", .{err});
+                };
+            }
+
             return chunk.items;
         }
     };

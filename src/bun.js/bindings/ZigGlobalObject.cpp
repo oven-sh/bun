@@ -3890,6 +3890,13 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
     JSValue parameters,
     const SourceOrigin& sourceOrigin)
 {
+    {
+        JSC::VM&vm=jsGlobalObject->vm();
+        auto err = JSC::createTypeError(jsGlobalObject, WTF::makeString("Cannot use import in Kit"_s));
+        auto* promise = JSC::JSInternalPromise::create(vm, jsGlobalObject->internalPromiseStructure());
+        promise->reject(jsGlobalObject, err);
+        return promise;
+    }
     auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(jsGlobalObject);
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

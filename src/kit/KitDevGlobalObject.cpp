@@ -1,9 +1,24 @@
 #include "KitDevGlobalObject.h"
 #include "JavaScriptCore/GlobalObjectMethodTable.h"
 #include "JSNextTickQueue.h"
+#include "JavaScriptCore/JSInternalPromise.h"
 #include "headers-handwritten.h"
 
 namespace Kit {
+
+JSC::JSInternalPromise* moduleLoaderImportModule(
+    JSC::JSGlobalObject* jsGlobalObject,
+    JSC::JSModuleLoader*,
+    JSC::JSString* moduleNameValue,
+    JSC::JSValue parameters,
+    const JSC::SourceOrigin& sourceOrigin)
+{
+    JSC::VM&vm=jsGlobalObject->vm();
+    auto err = JSC::createTypeError(jsGlobalObject, WTF::makeString("Cannot use import in Kit"_s));
+    auto* promise = JSC::JSInternalPromise::create(vm, jsGlobalObject->internalPromiseStructure());
+    promise->reject(jsGlobalObject, err);
+    return promise;
+}
 
 #define INHERIT_HOOK_METHOD(name) Zig::GlobalObject::s_globalObjectMethodTable. name
 
@@ -13,7 +28,7 @@ const JSC::GlobalObjectMethodTable DevGlobalObject::s_globalObjectMethodTable = 
   INHERIT_HOOK_METHOD(javaScriptRuntimeFlags),
   INHERIT_HOOK_METHOD(queueMicrotaskToEventLoop),
   INHERIT_HOOK_METHOD(shouldInterruptScriptBeforeTimeout),
-  INHERIT_HOOK_METHOD(moduleLoaderImportModule),
+  moduleLoaderImportModule,
   INHERIT_HOOK_METHOD(moduleLoaderResolve),
   INHERIT_HOOK_METHOD(moduleLoaderFetch),
   INHERIT_HOOK_METHOD(moduleLoaderCreateImportMetaProperties),

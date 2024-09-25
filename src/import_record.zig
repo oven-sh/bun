@@ -182,12 +182,18 @@ pub const ImportRecord = struct {
         runtime,
         /// A 'macro:' import namespace or 'with { type: "macro" }'
         macro,
+
+        // TODO: evaluate if the following two can be deleted
         /// The imported file has "use client" at the start. This is
         /// a boundary from server -> client side.
         react_client_component,
         /// The imported file has "use server" at the start. This is
         /// a boundary from client -> server side.
         react_server_component,
+
+        /// For Bun Kit, if a module in the server graph should actually
+        /// crossover to the SSR graph. See kit.Framework.ServerComponents.separate_ssr_graph
+        kit_resolve_to_ssr_graph,
 
         with_type_sqlite,
         with_type_sqlite_embedded,

@@ -9,13 +9,6 @@ find_command(
 
 set(CLANG_FORMAT_SOURCES ${BUN_C_SOURCES} ${BUN_CXX_SOURCES})
 
-# TODO: bun-usockets
-foreach(source ${CLANG_FORMAT_SOURCES})
-  if(source MATCHES "bun-usockets")
-    list(REMOVE_ITEM CLANG_FORMAT_SOURCES ${source})
-  endif()
-endforeach()
-
 register_command(
   TARGET
     clang-format-check

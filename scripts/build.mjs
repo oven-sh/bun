@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 import { spawn as nodeSpawn } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, mkdirSync, cpSync, chmodSync } from "node:fs";
-import { basename, join, relative, resolve } from "node:path";
+import { existsSync, readFileSync, mkdirSync, cpSync, chmodSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
 
 // https://cmake.org/cmake/help/latest/manual/cmake.1.html#generate-a-project-buildsystem
 const generateFlags = [
@@ -57,32 +57,32 @@ async function build(args) {
   const cacheRead = isCacheReadEnabled();
   const cacheWrite = isCacheWriteEnabled();
   if (cacheRead || cacheWrite) {
-  //   const cachePath = getCachePath();
-  //   if (cacheRead && !existsSync(cachePath)) {
-  //     const mainCachePath = getCachePath(getDefaultBranch());
-  //     if (existsSync(mainCachePath)) {
-  //       mkdirSync(cachePath, { recursive: true });
-  //       try {
-  //         cpSync(mainCachePath, cachePath, { recursive: true, force: true });
-  //       } catch (error) {
-  //         const { code } = error;
-  //         switch (code) {
-  //           case "EPERM":
-  //           case "EACCES":
-  //             try {
-  //               chmodSync(mainCachePath, 0o777);
-  //               cpSync(mainCachePath, cachePath, { recursive: true, force: true });
-  //             } catch (error) {
-  //               console.warn("Failed to copy cache with permissions fix", error);
-  //             }
-  //             break;
-  //           default:
-  //             console.warn("Failed to copy cache", error);
-  //         }
-  //       }
-  //     }
-  //   }
-    // generateOptions["-DCACHE_PATH"] = cmakePath(cachePath);
+    const cachePath = getCachePath();
+    if (cacheRead && !existsSync(cachePath)) {
+      const mainCachePath = getCachePath(getDefaultBranch());
+      if (existsSync(mainCachePath)) {
+        mkdirSync(cachePath, { recursive: true });
+        try {
+          cpSync(mainCachePath, cachePath, { recursive: true, force: true });
+        } catch (error) {
+          const { code } = error;
+          switch (code) {
+            case "EPERM":
+            case "EACCES":
+              try {
+                chmodSync(mainCachePath, 0o777);
+                cpSync(mainCachePath, cachePath, { recursive: true, force: true });
+              } catch (error) {
+                console.warn("Failed to copy cache with permissions fix", error);
+              }
+              break;
+            default:
+              console.warn("Failed to copy cache", error);
+          }
+        }
+      }
+    }
+    generateOptions["-DCACHE_PATH"] = cmakePath(cachePath);
     generateOptions["--fresh"] = undefined;
     if (cacheRead && cacheWrite) {
       generateOptions["-DCACHE_STRATEGY"] = "read-write";

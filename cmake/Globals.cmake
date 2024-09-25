@@ -129,7 +129,13 @@ else()
   set(WARNING WARNING)
 endif()
 
-optionx(VENDOR_PATH FILEPATH "The path to the vendor directory" DEFAULT ${CWD}/vendor)
+if(CI)
+  set(DEFAULT_VENDOR_PATH ${CACHE_PATH}/vendor)
+else()
+  set(DEFAULT_VENDOR_PATH ${CWD}/vendor)
+endif()
+
+optionx(VENDOR_PATH FILEPATH "The path to the vendor directory" DEFAULT ${DEFAULT_VENDOR_PATH})
 optionx(TMP_PATH FILEPATH "The path to the temporary directory" DEFAULT ${BUILD_PATH}/tmp)
 
 optionx(FRESH BOOL "Set when --fresh is used" DEFAULT OFF)

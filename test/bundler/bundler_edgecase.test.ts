@@ -1835,36 +1835,36 @@ describe("bundler", () => {
     files: {
       "/entry.ts": `
         import x from './second.json';
-        console.log(x);
+        console.log(x + 'a');
       `,
       "/second.json": `
         "测试"
       `,
     },
     target: "bun",
-    run: { stdout: `测试` },
+    run: { stdout: `测试a` },
   });
   itBundled("edgecase/Latin1StringInImportedJSONBrowser", {
     files: {
       "/entry.ts": `
         import x from './second.json';
-        console.log(x);
+        console.log(x + 'a');
       `,
       "/second.json": `
         "测试"
       `,
     },
     target: "browser",
-    run: { stdout: `测试` },
+    run: { stdout: `测试a` },
   });
   itBundled("edgecase/Latin1StringKey", {
     files: {
       "/entry.ts": `
         import x from './second.json';
-        console.log(x["测试"]);
+        console.log(x["测试" + "a"]);
       `,
       "/second.json": `
-        {"测试" : 123}
+        {"测试a" : 123}
       `,
     },
     target: "bun",
@@ -1874,10 +1874,10 @@ describe("bundler", () => {
     files: {
       "/entry.ts": `
         import x from './second.json';
-        console.log(x["测试"]);
+        console.log(x["测试" + "a"]);
       `,
       "/second.json": `
-        {"测试" : 123}
+        {"测试a" : 123}
       `,
     },
     target: "browser",

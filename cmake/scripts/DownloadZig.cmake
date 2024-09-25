@@ -38,7 +38,6 @@ else()
   set(ZIG_FILENAME ${ZIG_NAME}.tar.xz)
 endif()
 
-message(STATUS "Downloading ${ZIG_EXE} ${ZIG_VERSION} on ${ZIG_OS} ${ZIG_ARCH}...")
 set(ZIG_DOWNLOAD_URL https://ziglang.org/download/${ZIG_VERSION}/${ZIG_FILENAME})
 
 execute_process(
@@ -59,7 +58,7 @@ if(NOT ZIG_DOWNLOAD_RESULT EQUAL 0)
 endif()
 
 if(NOT EXISTS ${ZIG_PATH}/${ZIG_EXE})
-  message(FATAL_ERROR "Download failed: executable not found: \"${ZIG_PATH}/${ZIG_EXE}\"")
+  message(FATAL_ERROR "Executable not found: \"${ZIG_PATH}/${ZIG_EXE}\"")
 endif()
 
 # Tools like VSCode need a stable path to the zig executable, on both Unix and Windows
@@ -68,12 +67,12 @@ if(NOT WIN32)
   file(CREATE_LINK ${ZIG_PATH}/${ZIG_EXE} ${ZIG_PATH}/zig.exe SYMBOLIC)
 endif()
 
-message(STATUS "Downloading zig library at ${ZIG_COMMIT}...")
+set(ZIG_REPOSITORY_PATH ${ZIG_PATH}/repository)
 
 execute_process(
   COMMAND
     ${CMAKE_COMMAND}
-      -DGIT_PATH=${ZIG_PATH}/tmp
+      -DGIT_PATH=${ZIG_REPOSITORY_PATH}
       -DGIT_REPOSITORY=oven-sh/zig
       -DGIT_COMMIT=${ZIG_COMMIT}
       -P ${CMAKE_CURRENT_LIST_DIR}/GitClone.cmake
@@ -89,25 +88,9 @@ if(NOT ZIG_REPOSITORY_RESULT EQUAL 0)
 endif()
 
 file(REMOVE_RECURSE ${ZIG_PATH}/lib)
-execute_process(
-  COMMAND
-    ${CMAKE_COMMAND}
-      -E sleep 3
-)
 
-execute_process(
-  COMMAND
-    ${CMAKE_COMMAND}
-      -E copy_directory ${ZIG_PATH}/tmp/lib ${ZIG_PATH}/lib
-)
+# Use copy_directory instead of file(COPY) because there were
+# race conditions in CI where some files were not copied.
+execute_process(COMMAND ${CMAKE_COMMAND} -E copy_directory ${ZIG_REPOSITORY_PATH}/lib ${ZIG_PATH}/lib)
 
-execute_process(
-  COMMAND
-    ${CMAKE_COMMAND}
-      -E sleep 3
-)
-
-file(REMOVE_RECURSE ${ZIG_PATH}/tmp)
-message(STATUS "Saved ${ZIG_PATH}/lib")
-
-message(STATUS "Saved ${ZIG_EXE}")
+file(REMOVE_RECURSE ${ZIG_REPOSITORY_PATH})

@@ -57,32 +57,32 @@ async function build(args) {
   const cacheRead = isCacheReadEnabled();
   const cacheWrite = isCacheWriteEnabled();
   if (cacheRead || cacheWrite) {
-    const cachePath = getCachePath();
-    if (cacheRead && !existsSync(cachePath)) {
-      const mainCachePath = getCachePath(getDefaultBranch());
-      if (existsSync(mainCachePath)) {
-        mkdirSync(cachePath, { recursive: true });
-        try {
-          cpSync(mainCachePath, cachePath, { recursive: true, force: true });
-        } catch (error) {
-          const { code } = error;
-          switch (code) {
-            case "EPERM":
-            case "EACCES":
-              try {
-                chmodSync(mainCachePath, 0o777);
-                cpSync(mainCachePath, cachePath, { recursive: true, force: true });
-              } catch (error) {
-                console.warn("Failed to copy cache with permissions fix", error);
-              }
-              break;
-            default:
-              console.warn("Failed to copy cache", error);
-          }
-        }
-      }
-    }
-    generateOptions["-DCACHE_PATH"] = cmakePath(cachePath);
+  //   const cachePath = getCachePath();
+  //   if (cacheRead && !existsSync(cachePath)) {
+  //     const mainCachePath = getCachePath(getDefaultBranch());
+  //     if (existsSync(mainCachePath)) {
+  //       mkdirSync(cachePath, { recursive: true });
+  //       try {
+  //         cpSync(mainCachePath, cachePath, { recursive: true, force: true });
+  //       } catch (error) {
+  //         const { code } = error;
+  //         switch (code) {
+  //           case "EPERM":
+  //           case "EACCES":
+  //             try {
+  //               chmodSync(mainCachePath, 0o777);
+  //               cpSync(mainCachePath, cachePath, { recursive: true, force: true });
+  //             } catch (error) {
+  //               console.warn("Failed to copy cache with permissions fix", error);
+  //             }
+  //             break;
+  //           default:
+  //             console.warn("Failed to copy cache", error);
+  //         }
+  //       }
+  //     }
+  //   }
+    // generateOptions["-DCACHE_PATH"] = cmakePath(cachePath);
     generateOptions["--fresh"] = undefined;
     if (cacheRead && cacheWrite) {
       generateOptions["-DCACHE_STRATEGY"] = "read-write";
@@ -117,26 +117,6 @@ async function build(args) {
     .sort(([a], [b]) => (a === "--build" ? -1 : a.localeCompare(b)))
     .flatMap(([flag, value]) => [flag, value]);
   await spawn("cmake", buildArgs, { env }, "compilation");
-
-  const buildFiles = ["ccache.log", "compile_commands.json"];
-  const buildPaths = [buildPath, ...readdirSync(buildPath).map(path => join(buildPath, path))];
-  const buildArtifacts = [];
-  for (const buildPath of buildPaths) {
-    for (const buildFile of buildFiles) {
-      const path = join(buildPath, buildFile);
-      if (existsSync(path)) {
-        buildArtifacts.push(path);
-      }
-    }
-  }
-
-  if (isBuildkite()) {
-    await Promise.all(
-      buildArtifacts.map(path =>
-        spawn("buildkite-agent", ["artifact", "upload", relative(buildPath, path)], { cwd: buildPath, env }),
-      ),
-    );
-  }
 
   printDuration("total", Date.now() - startTime);
 }

@@ -13,51 +13,58 @@ const JSC = bun.JSC;
 const css = bun.css;
 
 const OutputColorFormat = enum {
-    css,
-    rgb,
-    rgba,
-    hsl,
-    lab,
-    hex,
-    HEX,
     ansi,
     ansi256,
+    css,
+    hex,
+    HEX,
+    hsl,
+    lab,
     number,
+    rgb,
+    rgba,
+    @"[rgb]",
+    @"[rgba]",
+    @"{rgb}",
+    @"{rgba}",
 
     pub const Map = bun.ComptimeStringMap(OutputColorFormat, .{
+        .{ "[r,g,b,a]", .@"[rgba]" },
+        .{ "[rgb]", .@"[rgb]" },
+        .{ "[rgba]", .@"[rgba]" },
+        .{ "{r,g,b}", .@"{rgb}" },
+        .{ "{rgb}", .@"{rgb}" },
+        .{ "{rgba}", .@"{rgba}" },
+        .{ "ansi_256", .ansi256 },
+        .{ "ansi-256", .ansi256 },
+        .{ "ansi", .ansi },
+        .{ "ansi256", .ansi256 },
         .{ "css", .css },
         .{ "hex", .hex },
         .{ "HEX", .HEX },
         .{ "hsl", .hsl },
         .{ "lab", .lab },
-        .{ "rgb", .rgb },
-        .{ "ansi", .ansi },
-        .{ "rgba", .rgba },
         .{ "number", .number },
-        .{ "ansi256", .ansi256 },
-        .{ "ansi_256", .ansi256 },
-        .{ "ansi-256", .ansi256 },
+        .{ "rgb", .rgb },
+        .{ "rgba", .rgba },
     });
 };
+
+fn colorIntFromJS(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue, comptime property: []const u8) ?i32 {
+    if (input == .zero or input == .undefined or !input.isNumber()) {
+        globalThis.throwInvalidArgumentType("color", property, "integer");
+
+        return null;
+    }
+
+    return @mod(input.coerce(i32, globalThis), 256);
+}
 
 pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
     const args = callFrame.arguments(2).slice();
     if (args.len < 1 or args[0].isUndefined()) {
         globalThis.throwNotEnoughArguments("Bun.color", 2, args.len);
         return JSC.JSValue.jsUndefined();
-    }
-
-    const input = args[0].toSlice(globalThis, bun.default_allocator);
-    defer input.deinit();
-
-    var format = OutputColorFormat.css;
-    if (!args[1].isEmptyOrUndefinedOrNull()) {
-        if (!args[1].isString()) {
-            globalThis.throwInvalidArgumentType("color", "format", "string");
-            return JSC.JSValue.jsUndefined();
-        }
-
-        format = args[1].toEnum(globalThis, "format", OutputColorFormat) catch return .zero;
     }
 
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
@@ -68,9 +75,121 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
     var log = bun.logger.Log.init(allocator);
     defer log.deinit();
 
-    var parser_input = css.ParserInput.new(allocator, input.slice());
-    var parser = css.Parser.new(&parser_input);
-    var parsed_color = css.CssColor.parse(&parser);
+    const format = brk: {
+        if (!args[1].isEmptyOrUndefinedOrNull()) {
+            if (!args[1].isString()) {
+                globalThis.throwInvalidArgumentType("color", "format", "string");
+                return JSC.JSValue.jsUndefined();
+            }
+
+            break :brk args[1].toEnum(globalThis, "format", OutputColorFormat) catch return .zero;
+        }
+
+        break :brk OutputColorFormat.css;
+    };
+    var input = JSC.ZigString.Slice.empty;
+    defer input.deinit();
+
+    var parsed_color: css.CssColor.ParseResult = brk: {
+        if (args[0].isNumber()) {
+            const number: i64 = args[0].toInt64();
+            const Packed = packed struct(u32) {
+                blue: u8,
+                green: u8,
+                red: u8,
+                alpha: u8,
+            };
+            const int: u32 = @truncate(@abs(@mod(number, std.math.maxInt(u32))));
+            const rgba: Packed = @bitCast(int);
+
+            break :brk .{ .result = css.CssColor{ .rgba = .{ .alpha = rgba.alpha, .red = rgba.red, .green = rgba.green, .blue = rgba.blue } } };
+        } else if (args[0].jsType().isArrayLike()) {
+            switch (args[0].getLength(globalThis)) {
+                3 => {
+                    const r = colorIntFromJS(globalThis, args[0].getIndex(globalThis, 0), "[0]") orelse return .zero;
+                    if (globalThis.hasException()) {
+                        return .zero;
+                    }
+                    const g = colorIntFromJS(globalThis, args[0].getIndex(globalThis, 1), "[1]") orelse return .zero;
+                    if (globalThis.hasException()) {
+                        return .zero;
+                    }
+                    const b = colorIntFromJS(globalThis, args[0].getIndex(globalThis, 2), "[2]") orelse return .zero;
+                    if (globalThis.hasException()) {
+                        return .zero;
+                    }
+                    break :brk .{ .result = css.CssColor{ .rgba = .{ .alpha = 255, .red = @intCast(r), .green = @intCast(g), .blue = @intCast(b) } } };
+                },
+                4 => {
+                    const r = colorIntFromJS(globalThis, args[0].getIndex(globalThis, 0), "[0]") orelse return .zero;
+                    if (globalThis.hasException()) {
+                        return .zero;
+                    }
+                    const g = colorIntFromJS(globalThis, args[0].getIndex(globalThis, 1), "[1]") orelse return .zero;
+                    if (globalThis.hasException()) {
+                        return .zero;
+                    }
+                    const b = colorIntFromJS(globalThis, args[0].getIndex(globalThis, 2), "[2]") orelse return .zero;
+                    if (globalThis.hasException()) {
+                        return .zero;
+                    }
+                    const a = colorIntFromJS(globalThis, args[0].getIndex(globalThis, 3), "[3]") orelse return .zero;
+                    if (globalThis.hasException()) {
+                        return .zero;
+                    }
+                    break :brk .{ .result = css.CssColor{ .rgba = .{ .alpha = @intCast(a), .red = @intCast(r), .green = @intCast(g), .blue = @intCast(b) } } };
+                },
+                else => {
+                    globalThis.throw("Expected array length 3 or 4", .{});
+                    return JSC.JSValue.jsUndefined();
+                },
+            }
+        } else if (args[0].isObject()) {
+            const r = colorIntFromJS(globalThis, args[0].get(globalThis, "r") orelse .zero, "r") orelse return .zero;
+
+            if (globalThis.hasException()) {
+                return .zero;
+            }
+            const g = colorIntFromJS(globalThis, args[0].get(globalThis, "g") orelse .zero, "g") orelse return .zero;
+
+            if (globalThis.hasException()) {
+                return .zero;
+            }
+            const b = colorIntFromJS(globalThis, args[0].get(globalThis, "b") orelse .zero, "b") orelse return .zero;
+
+            if (globalThis.hasException()) {
+                return .zero;
+            }
+
+            const a: ?u8 = if (args[0].getTruthy(globalThis, "a")) |a_value| brk2: {
+                if (a_value.isNumber()) {
+                    break :brk2 @intCast(@mod(@as(i64, @intFromFloat(a_value.asNumber() * 255.0)), 256));
+                }
+                break :brk2 null;
+            } else null;
+            if (globalThis.hasException()) {
+                return .zero;
+            }
+
+            break :brk .{
+                .result = css.CssColor{
+                    .rgba = .{
+                        .alpha = if (a != null) @intCast(a.?) else 255,
+                        .red = @intCast(r),
+                        .green = @intCast(g),
+                        .blue = @intCast(b),
+                    },
+                },
+            };
+        }
+
+        input = args[0].toSlice(globalThis, bun.default_allocator);
+
+        var parser_input = css.ParserInput.new(allocator, input.slice());
+        var parser = css.Parser.new(&parser_input);
+        break :brk css.CssColor.parse(&parser);
+    };
+
     switch (parsed_color) {
         .err => |err| {
             if (log.msgs.items.len == 0) {
@@ -86,7 +205,18 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
                     switch (format) {
                         .css => break :formatted,
 
-                        .number, .rgb, .rgba, .hex, .HEX, .ansi, .ansi256 => |tag| {
+                        .number,
+                        .rgb,
+                        .rgba,
+                        .hex,
+                        .HEX,
+                        .ansi,
+                        .ansi256,
+                        .@"{rgba}",
+                        .@"{rgb}",
+                        .@"[rgba]",
+                        .@"[rgb]",
+                        => |tag| {
                             const srgba = switch (result.*) {
                                 .float => |float| switch (float.*) {
                                     .rgb => |rgb| rgb,
@@ -100,6 +230,36 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
                             };
                             const rgba = srgba.intoRGBA();
                             switch (tag) {
+                                .@"{rgba}" => {
+                                    const object = JSC.JSValue.createEmptyObject(globalThis, 4);
+                                    object.put(globalThis, "r", JSC.JSValue.jsNumber(rgba.red));
+                                    object.put(globalThis, "g", JSC.JSValue.jsNumber(rgba.green));
+                                    object.put(globalThis, "b", JSC.JSValue.jsNumber(rgba.blue));
+                                    object.put(globalThis, "a", JSC.JSValue.jsNumber(rgba.alphaF32()));
+                                    return object;
+                                },
+                                .@"{rgb}" => {
+                                    const object = JSC.JSValue.createEmptyObject(globalThis, 4);
+                                    object.put(globalThis, "r", JSC.JSValue.jsNumber(rgba.red));
+                                    object.put(globalThis, "g", JSC.JSValue.jsNumber(rgba.green));
+                                    object.put(globalThis, "b", JSC.JSValue.jsNumber(rgba.blue));
+                                    return object;
+                                },
+                                .@"[rgb]" => {
+                                    const object = JSC.JSValue.createEmptyArray(globalThis, 3);
+                                    object.putIndex(globalThis, 0, JSC.JSValue.jsNumber(rgba.red));
+                                    object.putIndex(globalThis, 1, JSC.JSValue.jsNumber(rgba.green));
+                                    object.putIndex(globalThis, 2, JSC.JSValue.jsNumber(rgba.blue));
+                                    return object;
+                                },
+                                .@"[rgba]" => {
+                                    const object = JSC.JSValue.createEmptyArray(globalThis, 4);
+                                    object.putIndex(globalThis, 0, JSC.JSValue.jsNumber(rgba.red));
+                                    object.putIndex(globalThis, 1, JSC.JSValue.jsNumber(rgba.green));
+                                    object.putIndex(globalThis, 2, JSC.JSValue.jsNumber(rgba.blue));
+                                    object.putIndex(globalThis, 3, JSC.JSValue.jsNumber(rgba.alpha));
+                                    return object;
+                                },
                                 .number => {
                                     var int: u32 = 0;
                                     int |= @as(u32, rgba.red) << 16;

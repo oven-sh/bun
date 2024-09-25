@@ -89,7 +89,7 @@ endif()
 
 file(REMOVE_RECURSE ${ZIG_PATH}/lib)
 
-# Use copy_directory instead of file(COPY) because there were
+# Use copy_directory instead of file(RENAME) because there were
 # race conditions in CI where some files were not copied.
 execute_process(COMMAND ${CMAKE_COMMAND} -E copy_directory ${ZIG_REPOSITORY_PATH}/lib ${ZIG_PATH}/lib)
 

@@ -1,3 +1,5 @@
+optionx(SKIP_LLVM BOOL "If LLVM setup should be skipped")
+
 if(SKIP_LLVM)
   return()
 endif()

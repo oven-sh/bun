@@ -37,9 +37,12 @@ jobs:
       - name: Setup Dependencies
         run: |
           bun install
-      - name: Format
+      - name: Prettier Format
+        env:
+          ENABLE_CCACHE: OFF
+          SKIP_LLVM: ON
         run: |
-          bun run prettier:extra
+          bun run prettier:diff
       - name: Commit
         uses: stefanzweifel/git-auto-commit-action@v5
         with:

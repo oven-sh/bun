@@ -30,6 +30,7 @@ include(CompilerFlags)
 
 # --- Tools ---
 
+include(SetupGit)
 include(SetupBuildkite)
 include(SetupBun)
 include(SetupEsbuild)
@@ -43,4 +44,6 @@ include(BuildBun)
 # --- Analysis ---
 
 include(RunClangFormat)
+include(RunClangTidy)
 include(RunZigFormat)
+include(RunPrettier)

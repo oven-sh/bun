@@ -27,7 +27,10 @@ jobs:
         uses: ./.github/actions/setup-bun
         with:
           bun-version: ${{ env.BUN_VERSION }}
-      - name: Prettier Format
+      - name: Setup Dependencies
+        run: |
+          bun install
+      - name: Format
         run: |
           bun run prettier:extra
       - name: Commit

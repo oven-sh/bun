@@ -225,7 +225,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionLoadModule, (JSGlobalObject * lexicalGlobalOb
     if (!moduleObject->load(vm, globalObject, exception)) {
         throwException(globalObject, throwScope, exception.get());
         exception.clear();
-        return JSValue::encode({});
+        return {};
     }
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsBoolean(true)));
@@ -511,11 +511,11 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     String sourceString = callframe->argument(0).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     JSValue filenameValue = callframe->argument(1);
     String filenameString = filenameValue.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     String wrappedString = makeString(
         "(function(exports,require,module,__filename,__dirname){"_s,
@@ -536,7 +536,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
 #else
     JSValue dirnameValue = JSValue::decode(Bun__Path__dirname(globalObject, false, &encodedFilename, 1));
 #endif
-    RETURN_IF_EXCEPTION(throwScope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     String dirnameString = dirnameValue.toWTFString(globalObject);
 
@@ -552,7 +552,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
     if (exception) {
         throwException(globalObject, throwScope, exception.get());
         exception.clear();
-        return JSValue::encode({});
+        return {};
     }
 
     return JSValue::encode(jsUndefined());

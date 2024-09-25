@@ -1103,7 +1103,7 @@ pub fn wrapInstanceMethod(
                     },
                     ?JSC.Cloudflare.ContentOptions => {
                         if (iter.nextEat()) |content_arg| {
-                            if (content_arg.get(globalThis.ptr(), "html")) |html_val| {
+                            if (content_arg.getOwn(globalThis.ptr(), "html")) |html_val| {
                                 args[i] = .{ .html = html_val.toBoolean() };
                             }
                         } else {
@@ -1267,7 +1267,7 @@ pub fn wrapStaticMethod(
                     },
                     ?JSC.Cloudflare.ContentOptions => {
                         if (iter.nextEat()) |content_arg| {
-                            if (content_arg.get(globalThis.ptr(), "html")) |html_val| {
+                            if (content_arg.getOwn(globalThis.ptr(), "html")) |html_val| {
                                 args[i] = .{ .html = html_val.toBoolean() };
                             }
                         } else {

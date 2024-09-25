@@ -479,7 +479,7 @@ function expectBundled(
   if (bundling === false && entryPoints.length > 1) {
     throw new Error("bundling:false only supports a single entry point");
   }
-  if (!ESBUILD && (format === "cjs" || format === 'iife')) {
+  if (!ESBUILD && (format === "cjs" || format === "iife")) {
     throw new Error(`format ${format} not implemented in bun build`);
   }
   if (!ESBUILD && metafile) {
@@ -880,12 +880,14 @@ function expectBundled(
       // Check for warnings
       if (!ESBUILD) {
         const warningText = stderr!.toUnixString();
-        const allWarnings = warnParser(warningText).map(([error, source]) => {
-          if(!source) return;
-          const [_str2, fullFilename, line, col] = source.match(/bun-build-tests[\/\\](.*):(\d+):(\d+)/)!;
-          const file = fullFilename.slice(id.length + path.basename(tempDirectory).length + 1).replaceAll("\\", "/");
-          return { error, file, line, col };
-        }).filter(Boolean);
+        const allWarnings = warnParser(warningText)
+          .map(([error, source]) => {
+            if (!source) return;
+            const [_str2, fullFilename, line, col] = source.match(/bun-build-tests[\/\\](.*):(\d+):(\d+)/)!;
+            const file = fullFilename.slice(id.length + path.basename(tempDirectory).length + 1).replaceAll("\\", "/");
+            return { error, file, line, col };
+          })
+          .filter(Boolean);
         const expectedWarnings = bundleWarnings
           ? Object.entries(bundleWarnings).flatMap(([file, v]) => v.map(error => ({ file, error })))
           : null;

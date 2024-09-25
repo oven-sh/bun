@@ -81,7 +81,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
     auto array = JSC::jsDynamicCast<JSC::JSArray*>(arrayValue);
     if (UNLIKELY(!array)) {
         throwTypeError(lexicalGlobalObject, throwScope, "Argument must be an array"_s);
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     size_t arrayLength = array->length();
@@ -111,7 +111,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
     args.ensureCapacity(arrayLength);
     if (UNLIKELY(args.hasOverflowed())) {
         throwOutOfMemoryError(lexicalGlobalObject, throwScope);
-        return JSValue::encode({});
+        return {};
     }
 
     for (size_t i = 0; i < arrayLength; i++) {
@@ -121,7 +121,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
         if (auto* typedArray = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(element)) {
             if (UNLIKELY(typedArray->isDetached())) {
                 throwTypeError(lexicalGlobalObject, throwScope, "ArrayBufferView is detached"_s);
-                return JSValue::encode(jsUndefined());
+                return {};
             }
             size_t current = typedArray->byteLength();
             any_typed = true;
@@ -134,7 +134,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
             auto* impl = arrayBuffer->impl();
             if (UNLIKELY(!impl)) {
                 throwTypeError(lexicalGlobalObject, throwScope, "ArrayBuffer is detached"_s);
-                return JSValue::encode(jsUndefined());
+                return {};
             }
 
             size_t current = impl->byteLength();
@@ -147,7 +147,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
             byteLength += current;
         } else {
             throwTypeError(lexicalGlobalObject, throwScope, "Expected TypedArray"_s);
-            return JSValue::encode(jsUndefined());
+            return {};
         }
     }
     byteLength = std::min(byteLength, maxLength);
@@ -159,7 +159,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
     auto buffer = JSC::ArrayBuffer::tryCreateUninitialized(byteLength, 1);
     if (UNLIKELY(!buffer)) {
         throwTypeError(lexicalGlobalObject, throwScope, "Failed to allocate ArrayBuffer"_s);
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     size_t remain = byteLength;
@@ -219,7 +219,7 @@ JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArrays, (JSGlobalObject * globalObje
 
     if (UNLIKELY(callFrame->argumentCount() < 1)) {
         throwTypeError(globalObject, throwScope, "Expected at least one argument"_s);
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     auto arrayValue = callFrame->uncheckedArgument(0);
@@ -320,7 +320,8 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
 
 // This value currently depends on a zig feature flag
 extern "C" JSC::EncodedJSValue Bun__getTemporaryDevServer(JSC::JSGlobalObject* bunObject);
-static JSValue constructBunKit(VM& vm, JSObject* bunObject) {
+static JSValue constructBunKit(VM& vm, JSObject* bunObject)
+{
     return JSC::JSValue::decode(Bun__getTemporaryDevServer(bunObject->globalObject()));
 }
 
@@ -394,7 +395,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
     if (!millisecondsValue.isNumber()) {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         JSC::throwTypeError(globalObject, scope, "sleep expects a number (milliseconds)"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
+        return {};
     }
 
     JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
@@ -443,7 +444,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepEquals, (JSGlobalObject * globalObject, 
     if (callFrame->argumentCount() < 2) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
         throwTypeError(globalObject, throwScope, "Expected 2 values to compare"_s);
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     JSC::JSValue arg1 = callFrame->uncheckedArgument(0);
@@ -475,7 +476,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepMatch, (JSGlobalObject * globalObject, J
     if (callFrame->argumentCount() < 2) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
         throwTypeError(globalObject, throwScope, "Expected 2 values to compare"_s);
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     JSC::JSValue subset = callFrame->uncheckedArgument(0);
@@ -484,7 +485,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepMatch, (JSGlobalObject * globalObject, J
     if (!subset.isObject() || !object.isObject()) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
         throwTypeError(globalObject, throwScope, "Expected 2 objects to match"_s);
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     bool match = Bun__deepMatch<false>(object, subset, globalObject, &scope, false, false);
@@ -528,10 +529,10 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     if (!domURL) {
         if (arg0.isString()) {
             url = WTF::URL(arg0.toWTFString(globalObject));
-            RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+            RETURN_IF_EXCEPTION(scope, {});
         } else {
             throwTypeError(globalObject, scope, "Argument must be a URL"_s);
-            return JSC::JSValue::encode(JSC::JSValue {});
+            return {};
         }
     } else {
         url = domURL->href();
@@ -539,7 +540,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
 
     if (UNLIKELY(!url.protocolIsFile())) {
         throwTypeError(globalObject, scope, "Argument must be a file URL"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
+        return {};
     }
 
     auto fileSystemPath = url.fileSystemPath();
@@ -547,7 +548,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
 #if OS(WINDOWS)
     if (!isAbsolutePath(fileSystemPath)) {
         throwTypeError(globalObject, scope, "File URL path must be absolute"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
+        return {};
     }
 #endif
 

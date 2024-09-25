@@ -1,7 +1,7 @@
 {
   "private": true,
   "name": "bun",
-  "version": "1.1.29",
+  "version": "1.1.30",
   "workspaces": [
     "./packages/bun-types"
   ],
@@ -42,18 +42,26 @@
     "build:debug-zig-release": "cmake . -DCMAKE_BUILD_TYPE=Release -DZIG_OPTIMIZE=Debug -GNinja -Bbuild-debug-zig-release && ninja -Cbuild-debug-zig-release",
     "bump": "bun ./scripts/bump.ts",
     "typecheck": "tsc --noEmit && cd test && bun run typecheck",
-    "fmt": "prettier --config=.prettierrc-ci --write --cache './{.vscode,src,test,bench,packages/{bun-types,bun-inspector-*,bun-vscode,bun-debug-adapter-protocol}}/**/*.{mjs,ts,tsx,js,jsx}'",
-    "fmt:cpp": "clang-format -i src/bun.js/bindings/**/*.{cpp,h} --verbose",
-    "fmt:zig": "bun run zig:fmt",
+    "fmt": "bun run prettier",
+    "fmt:cpp": "bun run clang-format",
+    "fmt:zig": "bun run zig-format",
     "lint": "eslint './**/*.d.ts' --cache",
     "lint:fix": "eslint './**/*.d.ts' --cache --fix",
-    "test": "node scripts/runner.node.mjs ./build/bun-debug",
-    "test:release": "node scripts/runner.node.mjs ./build-release/bun",
+    "test": "node scripts/runner.node.mjs --exec-path ./build/debug/bun-debug",
+    "test:release": "node scripts/runner.node.mjs --exec-path ./build/release/bun",
     "banned": "bun packages/bun-internal-test/src/linter.ts",
     "zig": "vendor/zig/zig.exe",
-    "zig:fmt": "bun run zig fmt src/*.zig src/*/*.zig src/*/*/*.zig src/*/*/*/*.zig",
+    "zig:fmt": "bun run zig-format",
     "zig:check": "bun run zig build check --summary new",
     "zig:check-all": "bun run zig build check-all --summary new",
-    "zig:check-windows": "bun run zig build check-windows --summary new"
+    "zig:check-windows": "bun run zig build check-windows --summary new",
+    "cmake": "bun ./scripts/build.mjs -DCMAKE_BUILD_TYPE=Debug -B build/debug",
+    "clang-format": "bun run cmake --target clang-format",
+    "clang-format:check": "bun run cmake --target clang-format-check",
+    "zig-format": "bun run cmake --target zig-format",
+    "zig-format:check": "bun run cmake --target zig-format-check",
+    "prettier": "prettier --config=.prettierrc --write --cache './{.vscode,src,test,bench,packages/{bun-types,bun-inspector-*,bun-vscode,bun-debug-adapter-protocol}}/**/*.{mjs,ts,tsx,js,jsx}'",
+    "prettier:check": "bun run prettier --check",
+    "prettier:extra": "bun run prettier --plugin=prettier-plugin-organize-imports"
   }
 }

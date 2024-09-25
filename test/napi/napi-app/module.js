@@ -24,4 +24,11 @@ nativeTests.test_napi_handle_scope_finalizer = async () => {
   }
 };
 
+nativeTests.test_promise_with_threadsafe_function = async () => {
+  await new Promise(resolve => setTimeout(resolve, 1));
+  // create_promise_with_threadsafe_function returns a promise that calls our function from another
+  // thread (via napi_threadsafe_function) and resolves with its return value
+  return await nativeTests.create_promise_with_threadsafe_function(() => 1234);
+};
+
 module.exports = nativeTests;

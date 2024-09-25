@@ -1,8 +1,8 @@
 import { fileURLToPath } from "bun";
 import { describe } from "bun:test";
-import { itBundled } from "./expectBundled";
-import { join } from "path";
 import fs from "node:fs";
+import { join } from "path";
+import { itBundled } from "./expectBundled";
 
 describe("bundler", async () => {
   for (let target of ["bun", "node"] as const) {

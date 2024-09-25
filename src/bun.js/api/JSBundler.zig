@@ -100,8 +100,8 @@ pub const JSBundler = struct {
                         globalThis.throwInvalidArguments("Expected plugin to be an object", .{});
                         return error.JSError;
                     }
-                    if (try plugin.getObject(globalThis, "SECRET_SERVER_COMPONENTS_INTERNALS")) |internals| {
-                        if (internals.get(globalThis, "router")) |router_value| {
+                    if (try plugin.getOwnObject(globalThis, "SECRET_SERVER_COMPONENTS_INTERNALS")) |internals| {
+                        if (internals.getOwn(globalThis, "router")) |router_value| {
                             if (router_value.as(JSC.API.FileSystemRouter) != null) {
                                 this.server_components.router.set(globalThis, router_value);
                             } else {
@@ -110,7 +110,7 @@ pub const JSBundler = struct {
                             }
                         }
 
-                        const directive_object = (try internals.getObject(globalThis, "directive")) orelse {
+                        const directive_object = (try internals.getOwnObject(globalThis, "directive")) orelse {
                             globalThis.throwInvalidArguments("Expected directive to be an object", .{});
                             return error.JSError;
                         };
@@ -154,7 +154,7 @@ pub const JSBundler = struct {
                     // };
                     // defer decl.deinit();
 
-                    if (plugin.getOptional(globalThis, "name", ZigString.Slice) catch null) |slice| {
+                    if (plugin.getOwnOptional(globalThis, "name", ZigString.Slice) catch null) |slice| {
                         defer slice.deinit();
                         if (slice.len == 0) {
                             globalThis.throwInvalidArguments("Expected plugin to have a non-empty name", .{});
@@ -198,24 +198,24 @@ pub const JSBundler = struct {
                 }
             }
 
-            if (config.getTruthy(globalThis, "macros")) |macros_flag| {
+            if (config.getOwnTruthy(globalThis, "macros")) |macros_flag| {
                 if (!macros_flag.coerce(bool, globalThis)) {
                     this.no_macros = true;
                 }
             }
 
-            if (try config.getOptionalEnum(globalThis, "target", options.Target)) |target| {
+            if (try config.getOwnOptionalEnum(globalThis, "target", options.Target)) |target| {
                 this.target = target;
             }
 
             var has_out_dir = false;
-            if (try config.getOptional(globalThis, "outdir", ZigString.Slice)) |slice| {
+            if (try config.getOwnOptional(globalThis, "outdir", ZigString.Slice)) |slice| {
                 defer slice.deinit();
                 try this.outdir.appendSliceExact(slice.slice());
                 has_out_dir = true;
             }
 
-            if (config.getTruthy(globalThis, "sourcemap")) |source_map_js| {
+            if (config.getOwnTruthy(globalThis, "sourcemap")) |source_map_js| {
                 if (bun.FeatureFlags.breaking_changes_1_2 and config.isBoolean()) {
                     if (source_map_js == .true) {
                         this.source_map = if (has_out_dir)
@@ -232,11 +232,11 @@ pub const JSBundler = struct {
                 }
             }
 
-            if (try config.getOptionalEnum(globalThis, "packages", options.PackagesOption)) |packages| {
+            if (try config.getOwnOptionalEnum(globalThis, "packages", options.PackagesOption)) |packages| {
                 this.packages = packages;
             }
 
-            if (try config.getOptionalEnum(globalThis, "format", options.Format)) |format| {
+            if (try config.getOwnOptionalEnum(globalThis, "format", options.Format)) |format| {
                 switch (format) {
                     .esm => {},
                     else => {
@@ -246,28 +246,28 @@ pub const JSBundler = struct {
                 }
             }
 
-            // if (try config.getOptional(globalThis, "hot", bool)) |hot| {
+            // if (try config.getOwnOptional(globalThis, "hot", bool)) |hot| {
             //     this.hot = hot;
             // }
 
-            if (try config.getOptional(globalThis, "splitting", bool)) |hot| {
+            if (try config.getOwnOptional(globalThis, "splitting", bool)) |hot| {
                 this.code_splitting = hot;
             }
 
-            if (config.getTruthy(globalThis, "minify")) |hot| {
+            if (config.getOwnTruthy(globalThis, "minify")) |hot| {
                 if (hot.isBoolean()) {
                     const value = hot.coerce(bool, globalThis);
                     this.minify.whitespace = value;
                     this.minify.syntax = value;
                     this.minify.identifiers = value;
                 } else if (hot.isObject()) {
-                    if (try hot.getOptional(globalThis, "whitespace", bool)) |whitespace| {
+                    if (try hot.getOwnOptional(globalThis, "whitespace", bool)) |whitespace| {
                         this.minify.whitespace = whitespace;
                     }
-                    if (try hot.getOptional(globalThis, "syntax", bool)) |syntax| {
+                    if (try hot.getOwnOptional(globalThis, "syntax", bool)) |syntax| {
                         this.minify.syntax = syntax;
                     }
-                    if (try hot.getOptional(globalThis, "identifiers", bool)) |syntax| {
+                    if (try hot.getOwnOptional(globalThis, "identifiers", bool)) |syntax| {
                         this.minify.identifiers = syntax;
                     }
                 } else {
@@ -291,19 +291,19 @@ pub const JSBundler = struct {
                 return error.JSError;
             }
 
-            if (config.getTruthy(globalThis, "emitDCEAnnotations")) |flag| {
+            if (config.getOwnTruthy(globalThis, "emitDCEAnnotations")) |flag| {
                 if (flag.coerce(bool, globalThis)) {
                     this.emit_dce_annotations = true;
                 }
             }
 
-            if (config.getTruthy(globalThis, "ignoreDCEAnnotations")) |flag| {
+            if (config.getOwnTruthy(globalThis, "ignoreDCEAnnotations")) |flag| {
                 if (flag.coerce(bool, globalThis)) {
                     this.ignore_dce_annotations = true;
                 }
             }
 
-            if (config.getTruthy(globalThis, "conditions")) |conditions_value| {
+            if (config.getOwnTruthy(globalThis, "conditions")) |conditions_value| {
                 if (conditions_value.isString()) {
                     var slice = conditions_value.toSliceOrNull(globalThis) orelse {
                         globalThis.throwInvalidArguments("Expected conditions to be an array of strings", .{});
@@ -329,7 +329,7 @@ pub const JSBundler = struct {
 
             {
                 const path: ZigString.Slice = brk: {
-                    if (try config.getOptional(globalThis, "root", ZigString.Slice)) |slice| {
+                    if (try config.getOwnOptional(globalThis, "root", ZigString.Slice)) |slice| {
                         break :brk slice;
                     }
 
@@ -358,7 +358,7 @@ pub const JSBundler = struct {
                 try this.rootdir.appendSliceExact(rootdir);
             }
 
-            if (try config.getArray(globalThis, "external")) |externals| {
+            if (try config.getOwnArray(globalThis, "external")) |externals| {
                 var iter = externals.arrayIterator(globalThis);
                 while (iter.next()) |entry_point| {
                     var slice = entry_point.toSliceOrNull(globalThis) orelse {
@@ -370,21 +370,21 @@ pub const JSBundler = struct {
                 }
             }
 
-            // if (try config.getOptional(globalThis, "dir", ZigString.Slice)) |slice| {
+            // if (try config.getOwnOptional(globalThis, "dir", ZigString.Slice)) |slice| {
             //     defer slice.deinit();
             //     this.appendSliceExact(slice.slice()) catch unreachable;
             // } else {
             //     this.appendSliceExact(globalThis.bunVM().bundler.fs.top_level_dir) catch unreachable;
             // }
 
-            if (try config.getOptional(globalThis, "publicPath", ZigString.Slice)) |slice| {
+            if (try config.getOwnOptional(globalThis, "publicPath", ZigString.Slice)) |slice| {
                 defer slice.deinit();
                 try this.public_path.appendSliceExact(slice.slice());
             }
 
-            if (config.getTruthy(globalThis, "naming")) |naming| {
+            if (config.getOwnTruthy(globalThis, "naming")) |naming| {
                 if (naming.isString()) {
-                    if (try config.getOptional(globalThis, "naming", ZigString.Slice)) |slice| {
+                    if (try config.getOwnOptional(globalThis, "naming", ZigString.Slice)) |slice| {
                         defer slice.deinit();
                         if (!strings.hasPrefixComptime(slice.slice(), "./")) {
                             try this.names.owned_entry_point.appendSliceExact("./");
@@ -393,7 +393,7 @@ pub const JSBundler = struct {
                         this.names.entry_point.data = this.names.owned_entry_point.list.items;
                     }
                 } else if (naming.isObject()) {
-                    if (try naming.getOptional(globalThis, "entry", ZigString.Slice)) |slice| {
+                    if (try naming.getOwnOptional(globalThis, "entry", ZigString.Slice)) |slice| {
                         defer slice.deinit();
                         if (!strings.hasPrefixComptime(slice.slice(), "./")) {
                             try this.names.owned_entry_point.appendSliceExact("./");
@@ -402,7 +402,7 @@ pub const JSBundler = struct {
                         this.names.entry_point.data = this.names.owned_entry_point.list.items;
                     }
 
-                    if (try naming.getOptional(globalThis, "chunk", ZigString.Slice)) |slice| {
+                    if (try naming.getOwnOptional(globalThis, "chunk", ZigString.Slice)) |slice| {
                         defer slice.deinit();
                         if (!strings.hasPrefixComptime(slice.slice(), "./")) {
                             try this.names.owned_chunk.appendSliceExact("./");
@@ -411,7 +411,7 @@ pub const JSBundler = struct {
                         this.names.chunk.data = this.names.owned_chunk.list.items;
                     }
 
-                    if (try naming.getOptional(globalThis, "asset", ZigString.Slice)) |slice| {
+                    if (try naming.getOwnOptional(globalThis, "asset", ZigString.Slice)) |slice| {
                         defer slice.deinit();
                         if (!strings.hasPrefixComptime(slice.slice(), "./")) {
                             try this.names.owned_asset.appendSliceExact("./");
@@ -425,7 +425,7 @@ pub const JSBundler = struct {
                 }
             }
 
-            if (try config.getObject(globalThis, "define")) |define| {
+            if (try config.getOwnObject(globalThis, "define")) |define| {
                 if (!define.isObject()) {
                     globalThis.throwInvalidArguments("define must be an object", .{});
                     return error.JSError;
@@ -463,7 +463,7 @@ pub const JSBundler = struct {
                 }
             }
 
-            if (try config.getObject(globalThis, "loader")) |loaders| {
+            if (try config.getOwnObject(globalThis, "loader")) |loaders| {
                 var loader_iter = JSC.JSPropertyIterator(.{
                     .skip_empty_name = true,
                     .include_value = true,
@@ -967,6 +967,8 @@ pub const JSBundler = struct {
             else
                 bun.String.createUTF8(path.namespace);
             const path_string = bun.String.createUTF8(path.text);
+            defer namespace_string.deref();
+            defer path_string.deref();
             return JSBundlerPlugin__anyMatches(this, &namespace_string, &path_string, is_onLoad);
         }
 

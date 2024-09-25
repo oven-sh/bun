@@ -533,7 +533,7 @@ pub const StreamStart = union(Tag) {
             return .{ .empty = {} };
         }
 
-        if (value.get(globalThis, "chunkSize")) |chunkSize| {
+        if (value.getOwn(globalThis, "chunkSize")) |chunkSize| {
             if (chunkSize.isNumber())
                 return .{ .chunk_size = @as(Blob.SizeType, @intCast(@as(i52, @truncate(chunkSize.toInt64())))) };
         }
@@ -557,7 +557,7 @@ pub const StreamStart = union(Tag) {
                 var chunk_size: JSC.WebCore.Blob.SizeType = 0;
                 var empty = true;
 
-                if (value.get(globalThis, "asUint8Array")) |val| {
+                if (value.getOwn(globalThis, "asUint8Array")) |val| {
                     if (val.isBoolean()) {
                         as_uint8array = val.toBoolean();
                         empty = false;

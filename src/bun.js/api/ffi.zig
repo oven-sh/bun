@@ -627,7 +627,7 @@ pub const FFI = struct {
             }
         }
 
-        const symbols_object = object.get(globalThis, "symbols") orelse .undefined;
+        const symbols_object = object.getOwn(globalThis, "symbols") orelse .undefined;
         if (!globalThis.hasException() and (symbols_object == .zero or !symbols_object.isObject())) {
             _ = globalThis.throwInvalidArgumentTypeValue("symbols", "object", symbols_object);
         }
@@ -647,7 +647,7 @@ pub const FFI = struct {
             return .zero;
         }
 
-        if (object.get(globalThis, "library")) |library_value| {
+        if (object.getOwn(globalThis, "library")) |library_value| {
             compile_c.libraries = StringArray.fromJS(globalThis, library_value, "library");
         }
 
@@ -655,7 +655,7 @@ pub const FFI = struct {
             return .zero;
         }
 
-        if (object.getTruthy(globalThis, "flags")) |flags_value| {
+        if (object.getOwnTruthy(globalThis, "flags")) |flags_value| {
             if (flags_value.isArray()) {
                 var iter = flags_value.arrayIterator(globalThis);
 
@@ -692,7 +692,7 @@ pub const FFI = struct {
             return .zero;
         }
 
-        if (object.getTruthy(globalThis, "define")) |define_value| {
+        if (object.getOwnTruthy(globalThis, "define")) |define_value| {
             if (define_value.isObject()) {
                 const Iter = JSC.JSPropertyIterator(.{ .include_value = true, .skip_empty_name = true });
                 var iter = Iter.init(globalThis, define_value);
@@ -722,7 +722,7 @@ pub const FFI = struct {
             return .zero;
         }
 
-        if (object.getTruthy(globalThis, "include")) |include_value| {
+        if (object.getOwnTruthy(globalThis, "include")) |include_value| {
             compile_c.include_dirs = StringArray.fromJS(globalThis, include_value, "include");
         }
 
@@ -730,7 +730,7 @@ pub const FFI = struct {
             return .zero;
         }
 
-        if (object.get(globalThis, "source")) |source_value| {
+        if (object.getOwn(globalThis, "source")) |source_value| {
             if (source_value.isArray()) {
                 compile_c.source = .{ .files = .{} };
                 var iter = source_value.arrayIterator(globalThis);
@@ -1301,7 +1301,7 @@ pub const FFI = struct {
 
         var abi_types = std.ArrayListUnmanaged(ABIType){};
 
-        if (value.get(global, "args")) |args| {
+        if (value.getOwn(global, "args")) |args| {
             if (args.isEmptyOrUndefinedOrNull() or !args.jsType().isArray()) {
                 return ZigString.static("Expected an object with \"args\" as an array").toErrorInstance(global);
             }
@@ -1347,11 +1347,11 @@ pub const FFI = struct {
 
         var threadsafe = false;
 
-        if (value.getTruthy(global, "threadsafe")) |threadsafe_value| {
+        if (value.getOwnTruthy(global, "threadsafe")) |threadsafe_value| {
             threadsafe = threadsafe_value.toBoolean();
         }
 
-        if (value.getTruthy(global, "returns")) |ret_value| brk: {
+        if (value.getOwnTruthy(global, "returns")) |ret_value| brk: {
             if (ret_value.isAnyInt()) {
                 const int = ret_value.toInt32();
                 switch (int) {

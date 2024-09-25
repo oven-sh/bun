@@ -339,6 +339,13 @@ pub const SNativeZlib = struct {
         return ptr;
     }
 
+    //// adding this didnt help much but leaving it here to compare the number with later
+    // pub fn estimatedSize(this: *const SNativeZlib) usize {
+    //     _ = this;
+    //     const internal_state_size = 3309; // @sizeOf(@cImport(@cInclude("deflate.h")).internal_state) @ cloudflare/zlib @ 92530568d2c128b4432467b76a3b54d93d6350bd
+    //     return @sizeOf(SNativeZlib) + internal_state_size;
+    // }
+
     pub fn init(this: *SNativeZlib, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
         const arguments = callframe.argumentsUndef(7).slice();
 
@@ -687,6 +694,16 @@ pub const SNativeBrotli = struct {
         ptr.stream.mode = ptr.mode;
         ptr.stream.mode_ = ptr.mode;
         return ptr;
+    }
+
+    pub fn estimatedSize(this: *const SNativeBrotli) usize {
+        const encoder_state_size: usize = 5143; // @sizeOf(@cImport(@cInclude("brotli/encode.h")).BrotliEncoderStateStruct)
+        const decoder_state_size: usize = 855; // @sizeOf(@cImport(@cInclude("brotli/decode.h")).BrotliDecoderStateStruct)
+        return @sizeOf(SNativeBrotli) + switch (this.mode) {
+            .BROTLI_ENCODE => encoder_state_size,
+            .BROTLI_DECODE => decoder_state_size,
+            else => 0,
+        };
     }
 
     pub fn init(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {

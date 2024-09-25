@@ -50,7 +50,7 @@
     "test": "node scripts/runner.node.mjs ./build/bun-debug",
     "test:release": "node scripts/runner.node.mjs ./build-release/bun",
     "banned": "bun packages/bun-internal-test/src/linter.ts",
-    "zig": "zig",
+    "zig": "vendor/zig/zig.exe",
     "zig:fmt": "bun run zig fmt src/*.zig src/*/*.zig src/*/*/*.zig src/*/*/*/*.zig",
     "zig:check": "bun run zig build check --summary new",
     "zig:check-all": "bun run zig build check-all --summary new",

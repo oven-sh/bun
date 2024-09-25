@@ -2511,10 +2511,10 @@ fn NewSocket(comptime ssl: bool) type {
 
             const slice = alpn_proto[0..alpn_proto_len];
             if (strings.eql(slice, "h2")) {
-                return ZigString.static("h2").toJS(globalObject);
+                return bun.String.static("h2").toJS(globalObject);
             }
             if (strings.eql(slice, "http/1.1")) {
-                return ZigString.static("http/1.1").toJS(globalObject);
+                return bun.String.static("http/1.1").toJS(globalObject);
             }
             return ZigString.fromUTF8(slice).toJS(globalObject);
         }
@@ -2640,7 +2640,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             switch (kid) {
                 BoringSSL.EVP_PKEY_DH => {
-                    result.put(globalObject, ZigString.static("type"), ZigString.static("DH").toJS(globalObject));
+                    result.put(globalObject, ZigString.static("type"), bun.String.static("DH").toJS(globalObject));
                     result.put(globalObject, ZigString.static("size"), JSValue.jsNumber(bits));
                 },
 
@@ -2663,7 +2663,7 @@ fn NewSocket(comptime ssl: bool) type {
                             curve_name = "";
                         }
                     }
-                    result.put(globalObject, ZigString.static("type"), ZigString.static("ECDH").toJS(globalObject));
+                    result.put(globalObject, ZigString.static("type"), bun.String.static("ECDH").toJS(globalObject));
                     result.put(globalObject, ZigString.static("name"), ZigString.fromUTF8(curve_name).toJS(globalObject));
                     result.put(globalObject, ZigString.static("size"), JSValue.jsNumber(bits));
                 },

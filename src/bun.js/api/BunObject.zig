@@ -3435,7 +3435,7 @@ pub export fn Bun__escapeHTML16(globalObject: *JSC.JSGlobalObject, input_value: 
     assert(len > 0);
     const input_slice = ptr[0..len];
     const escaped = strings.escapeHTMLForUTF16Input(globalObject.bunVM().allocator, input_slice) catch {
-        globalObject.vm().throwError(globalObject, ZigString.init("Out of memory").toJS(globalObject));
+        globalObject.vm().throwError(globalObject, bun.String.static("Out of memory").toJS(globalObject));
         return .undefined;
     };
 
@@ -3481,7 +3481,7 @@ pub export fn Bun__escapeHTML8(globalObject: *JSC.JSGlobalObject, input_value: J
     const allocator = if (input_slice.len <= 32) stack_allocator.get() else stack_allocator.fallback_allocator;
 
     const escaped = strings.escapeHTMLForLatin1Input(allocator, input_slice) catch {
-        globalObject.vm().throwError(globalObject, ZigString.init("Out of memory").toJS(globalObject));
+        globalObject.vm().throwError(globalObject, bun.String.static("Out of memory").toJS(globalObject));
         return .undefined;
     };
 

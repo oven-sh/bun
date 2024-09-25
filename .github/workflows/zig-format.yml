@@ -38,7 +38,7 @@ jobs:
       - name: Zig Format
         run: |
           clang --version
-          bun run zig-format -DLLVM_VERSION=14.0.4
+          bun run zig-format -DLLVM_VERSION=14.0.0
       - name: Commit
         uses: stefanzweifel/git-auto-commit-action@v5
         with:

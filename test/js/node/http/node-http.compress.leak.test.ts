@@ -1,5 +1,5 @@
+import { expect, test } from "bun:test";
 import { bunExe } from "harness";
-import { test, expect } from "bun:test";
 import path from "node:path";
 
 // test does still leak but not as bad

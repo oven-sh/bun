@@ -22,44 +22,35 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
+"use strict";
 // Test uncompressing invalid input
 
-const zlib = require('zlib');
+const zlib = require("zlib");
 
-const nonStringInputs = [
-  1,
-  true,
-  { a: 1 },
-  ['a'],
-];
+const nonStringInputs = [1, true, { a: 1 }, ["a"]];
 
 // zlib.Unzip classes need to get valid data, or else they'll throw.
-const unzips = [
-  zlib.Unzip(),
-  zlib.Gunzip(),
-  zlib.Inflate(),
-  zlib.InflateRaw(),
-  zlib.BrotliDecompress(),
-];
+const unzips = [zlib.Unzip(), zlib.Gunzip(), zlib.Inflate(), zlib.InflateRaw(), zlib.BrotliDecompress()];
 
-test('zlib.gunzip throws TypeError for non-string inputs', () => {
-  nonStringInputs.forEach((input) => {
+test("zlib.gunzip throws TypeError for non-string inputs", () => {
+  nonStringInputs.forEach(input => {
     expect(() => {
       zlib.gunzip(input);
-    }).toThrow(expect.objectContaining({
-      name: 'TypeError',
-      code: 'ERR_INVALID_ARG_TYPE',
-      message: expect.any(String)
-    }));
+    }).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: expect.any(String),
+      }),
+    );
   });
 });
 
-test('unzip classes emit error for invalid compressed data', (done) => {
+test("unzip classes emit error for invalid compressed data", done => {
   let completedCount = 0;
 
   unzips.forEach((uz, i) => {
-    uz.on('error', (err) => {
+    uz.on("error", err => {
       expect(err).toBeTruthy();
       completedCount++;
       if (completedCount === unzips.length) {
@@ -67,12 +58,12 @@ test('unzip classes emit error for invalid compressed data', (done) => {
       }
     });
 
-    uz.on('end', () => {
-      throw new Error('end event should not be emitted');
+    uz.on("end", () => {
+      throw new Error("end event should not be emitted");
     });
 
     // This will trigger error event
-    uz.write('this is not valid compressed data.');
+    uz.write("this is not valid compressed data.");
   });
 });
 

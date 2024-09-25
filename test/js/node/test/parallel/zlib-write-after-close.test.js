@@ -22,23 +22,25 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
+"use strict";
 
-const zlib = require('node:zlib');
+const zlib = require("node:zlib");
 
-test('zlib should not allow writing after close', async () => {
+test("zlib should not allow writing after close", async () => {
   const closeCallback = jest.fn();
-  
-  await new Promise((resolve) => {
-    zlib.gzip('hello', function() {
+
+  await new Promise(resolve => {
+    zlib.gzip("hello", function () {
       const unzip = zlib.createGunzip();
       unzip.close(closeCallback);
-      unzip.write('asd', function(err) {
-        expect(err).toEqual(expect.objectContaining({
-          code: 'ERR_STREAM_DESTROYED',
-          name: 'Error',
-          message: 'Cannot call write after a stream was destroyed'
-        }));
+      unzip.write("asd", function (err) {
+        expect(err).toEqual(
+          expect.objectContaining({
+            code: "ERR_STREAM_DESTROYED",
+            name: "Error",
+            message: "Cannot call write after a stream was destroyed",
+          }),
+        );
         resolve();
       });
     });

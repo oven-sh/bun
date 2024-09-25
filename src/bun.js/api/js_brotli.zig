@@ -105,11 +105,7 @@ pub const BrotliEncoder = struct {
                 if (params.hasOwnPropertyValue(globalThis, JSC.ZigString.static(std.fmt.comptimePrint("{d}", .{f.value})).toJS(globalThis))) {
                     const idx = params.getIndex(globalThis, f.value);
                     if (!idx.isNumber()) {
-                        globalThis.throwValue(globalThis.ERR_INVALID_ARG_TYPE_static(
-                            JSC.ZigString.static("options.params[key]"),
-                            JSC.ZigString.static("number"),
-                            idx,
-                        ));
+                        _ = globalThis.throwInvalidPropertyTypeValue("options.params[key]", "number", idx);
                         this.deinit();
                         return .zero;
                     }

@@ -64,6 +64,8 @@ set(CMAKE_ZIG_FLAGS
 )
 
 register_command(
+  TARGET
+    clone-zig
   COMMENT
     "Downloading zig"
   COMMAND

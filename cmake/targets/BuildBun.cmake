@@ -60,6 +60,8 @@ register_command(
       ${BUN_ZIG_IDENTIFIER_SCRIPT}
   SOURCES
     ${BUN_ZIG_IDENTIFIER_SOURCES}
+  TARGETS
+    clone-zig
   OUTPUTS
     ${BUN_ZIG_IDENTIFIER_OUTPUTS}
 )
@@ -544,6 +546,8 @@ register_command(
       -Dgenerated-code=${CODEGEN_PATH}
   ARTIFACTS
     ${BUN_ZIG_OUTPUT}
+  TARGETS
+    clone-zig
   SOURCES
     ${BUN_ZIG_SOURCES}
     ${BUN_ZIG_GENERATED_SOURCES}

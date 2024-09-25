@@ -129,6 +129,7 @@ else()
   set(WARNING WARNING)
 endif()
 
+# TODO: This causes flaky zig builds in CI, so temporarily disable it.
 # if(CI)
 #   set(DEFAULT_VENDOR_PATH ${CACHE_PATH}/vendor)
 # else()

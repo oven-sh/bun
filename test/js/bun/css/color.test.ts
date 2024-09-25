@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { color } from "bun";
+import { withoutAggressiveGC } from "harness";
 
 const namedColors = ["red", "green", "blue", "yellow", "purple", "orange", "pink", "brown", "gray"];
 
@@ -142,3 +143,61 @@ for (const input of formatted.HEX) {
     expect(color(input, "hex")).toEqual(input.toLowerCase());
   });
 }
+
+const bad = [
+  "rg(255, 255, 255)",
+  "bad color input",
+  "#0129301293",
+  "lab(101%, 100%, 100%)",
+  "lch(100%, 100%, 100%)",
+  "color(red)",
+  "calc(1px + 1px)",
+  "var(--bad)",
+  "url(#bad)",
+  "attr(id)",
+  "calc(1px + 1px)",
+  "calc(1px + 1px)",
+  "calc(1px + 1px)",
+  "calc(1px + 1px)",
+  "calc(1px + 1px)",
+  "calc(1px + 1px)",
+  "0123456",
+  "123456",
+  "23456",
+  "3456",
+  "456",
+  "56",
+  "6",
+  "#-fff",
+  "0xfff",
+];
+test.each(bad)("color(%s, 'css') === null", input => {
+  expect(color(input, "css")).toBeNull();
+});
+
+const weird = [
+  ["rgb(-255, 0, 0)", "#000"],
+  ["rgb(256, 0, 0)", "red"],
+];
+describe("weird", () => {
+  test.each(weird)("color(%s, 'css') === %s", (input, expected) => {
+    expect(color(input, "css")).toEqual(expected);
+  });
+});
+
+test("fuzz ansi256", () => {
+  withoutAggressiveGC(() => {
+    for (let i = 0; i < 256; i++) {
+      const iShifted = i << 16;
+      for (let j = 0; j < 256; j++) {
+        const jShifted = j << 8;
+        for (let k = 0; k < 256; k++) {
+          const int = iShifted | jShifted | k;
+          if (color(int, "ansi256") === null) {
+            throw new Error(`color(${i}, ${j}, ${k}, "ansi256") is null`);
+          }
+        }
+      }
+    }
+  });
+});

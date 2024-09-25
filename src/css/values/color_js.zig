@@ -97,7 +97,9 @@ pub const Ansi256 = struct {
         return idx;
     }
 
-    pub fn from(rgba: RGBA, buf: *[12]u8) []u8 {
+    pub const Buffer = [24]u8;
+
+    pub fn from(rgba: RGBA, buf: *Buffer) []u8 {
         const val = get(rgba.red, rgba.green, rgba.blue);
         // 0x1b is the escape character
         buf[0] = 0x1b;
@@ -352,7 +354,7 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
                                 },
                                 .ansi256 => {
                                     // ANSI escape sequence
-                                    var buf: [12]u8 = undefined;
+                                    var buf: Ansi256.Buffer = undefined;
                                     const val = Ansi256.from(rgba, &buf);
                                     break :color bun.String.createLatin1(val);
                                 },

@@ -24,6 +24,10 @@ jobs:
             .github
             .clang-format
             src
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: "1.1.25"
       - name: Format
         run: |
           bun run clang-format

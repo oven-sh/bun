@@ -43,7 +43,7 @@
     "bump": "bun ./scripts/bump.ts",
     "typecheck": "tsc --noEmit && cd test && bun run typecheck",
     "fmt": "prettier --config=.prettierrc-ci --write --cache './{.vscode,src,test,bench,packages/{bun-types,bun-inspector-*,bun-vscode,bun-debug-adapter-protocol}}/**/*.{mjs,ts,tsx,js,jsx}'",
-    "fmt:cpp": "clang-format -i src/bun.js/bindings/**/*.{cpp,h} --verbose",
+    "fmt:cpp": "bun run clang-format",
     "fmt:zig": "bun run zig:fmt",
     "lint": "eslint './**/*.d.ts' --cache",
     "lint:fix": "eslint './**/*.d.ts' --cache --fix",
@@ -54,6 +54,8 @@
     "zig:fmt": "bun run zig fmt src/*.zig src/*/*.zig src/*/*/*.zig src/*/*/*/*.zig",
     "zig:check": "bun run zig build check --summary new",
     "zig:check-all": "bun run zig build check-all --summary new",
-    "zig:check-windows": "bun run zig build check-windows --summary new"
+    "zig:check-windows": "bun run zig build check-windows --summary new",
+    "clang-format": "bun run build --target clang-format",
+    "clang-format:check": "bun run build --target clang-format-check"
   }
 }

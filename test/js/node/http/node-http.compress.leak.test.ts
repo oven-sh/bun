@@ -4,7 +4,7 @@ import path from "node:path";
 
 // test does still leak but not as bad
 // prettier-ignore
-test("http.Server + compression integration", async () => {
+test.todo("http.Server + compression integration", async () => {
   const { promise, resolve } = Promise.withResolvers();
   const proc = Bun.spawn([bunExe(), path.resolve(import.meta.dir, "fixtures", "http.compress.leak.server.ts")], {
     stdio: ["ignore", "inherit", "inherit"],

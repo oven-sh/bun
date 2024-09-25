@@ -714,6 +714,7 @@ pub fn ParseJSON(
     source: *const logger.Source,
     log: *logger.Log,
     allocator: std.mem.Allocator,
+    comptime force_utf8: bool,
 ) !Expr {
     var parser = try JSONParser.init(allocator, source.*, log);
     switch (source.contents.len) {
@@ -734,7 +735,7 @@ pub fn ParseJSON(
         else => {},
     }
 
-    return try parser.parseExpr(false, false);
+    return try parser.parseExpr(false, force_utf8);
 }
 
 /// Parse Package JSON
@@ -1023,7 +1024,7 @@ pub fn ParseEnvJSON(source: *const logger.Source, log: *logger.Log, allocator: s
     }
 }
 
-pub fn ParseTSConfig(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !Expr {
+pub fn ParseTSConfig(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator, comptime force_utf8: bool) !Expr {
     switch (source.contents.len) {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
@@ -1044,7 +1045,7 @@ pub fn ParseTSConfig(source: *const logger.Source, log: *logger.Log, allocator: 
 
     var parser = try TSConfigParser.init(allocator, source.*, log);
 
-    return parser.parseExpr(false, true);
+    return parser.parseExpr(false, force_utf8);
 }
 
 const duplicateKeyJson = "{ \"name\": \"valid\", \"name\": \"invalid\" }";

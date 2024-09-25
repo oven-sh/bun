@@ -22,13 +22,13 @@ declare const config: Config;
  * The runtime is bundled for server and client, which influences
  * how hmr connection should be established, as well if there is
  * a window to visually display errors with.
-*/
-declare const mode: 'client' | 'server';
+ */
+declare const mode: "client" | "server";
 
 /* What should be `export default`'d */
 declare var server_fetch_function: any;
 
-/* 
+/*
  * If you are running a debug build of Bun. These debug builds should provide
  * helpful information to someone working on the bundler itself.
  */

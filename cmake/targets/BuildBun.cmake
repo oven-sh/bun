@@ -54,7 +54,7 @@ register_command(
   COMMENT
     "Generating src/js_lexer/*.blob"
   COMMAND
-    ${CMAKE_ZIG_COMPILER}
+    ${ZIG_EXECUTABLE}
       run
       ${CMAKE_ZIG_FLAGS}
       ${BUN_ZIG_IDENTIFIER_SCRIPT}
@@ -62,8 +62,6 @@ register_command(
     ${BUN_ZIG_IDENTIFIER_SOURCES}
   OUTPUTS
     ${BUN_ZIG_IDENTIFIER_OUTPUTS}
-  TARGETS
-    clone-zig
 )
 
 set(BUN_ERROR_SOURCE ${CWD}/packages/bun-error)
@@ -484,6 +482,9 @@ list(APPEND BUN_ZIG_SOURCES
   ${CWD}/build.zig
   ${CWD}/root.zig
   ${CWD}/root_wasm.zig
+)
+
+set(BUN_ZIG_GENERATED_SOURCES
   ${BUN_ZIG_IDENTIFIER_OUTPUTS}
   ${BUN_ERROR_OUTPUTS}
   ${BUN_FALLBACK_DECODER_OUTPUT}
@@ -496,9 +497,9 @@ list(APPEND BUN_ZIG_SOURCES
 
 # In debug builds, these are not embedded, but rather referenced at runtime.
 if (DEBUG)
-  list(APPEND BUN_ZIG_SOURCES ${CODEGEN_PATH}/kit_empty_file)
+  list(APPEND BUN_ZIG_GENERATED_SOURCES ${CODEGEN_PATH}/kit_empty_file)
 else()
-  list(APPEND BUN_ZIG_SOURCES ${BUN_KIT_RUNTIME_OUTPUTS})
+  list(APPEND BUN_ZIG_GENERATED_SOURCES ${BUN_KIT_RUNTIME_OUTPUTS})
 endif()
 
 set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.o)
@@ -527,7 +528,7 @@ register_command(
   COMMENT
     "Building src/*.zig for ${ZIG_TARGET}"
   COMMAND
-    ${CMAKE_ZIG_COMPILER}
+    ${ZIG_EXECUTABLE}
       build obj
       ${CMAKE_ZIG_FLAGS}
       --prefix ${BUILD_PATH}
@@ -545,8 +546,7 @@ register_command(
     ${BUN_ZIG_OUTPUT}
   SOURCES
     ${BUN_ZIG_SOURCES}
-  TARGETS
-    clone-zig
+    ${BUN_ZIG_GENERATED_SOURCES}
 )
 
 set_property(TARGET bun-zig PROPERTY JOB_POOL compile_pool)
@@ -577,6 +577,10 @@ file(GLOB BUN_C_SOURCES ${CONFIGURE_DEPENDS}
   ${BUN_USOCKETS_SOURCE}/src/crypto/*.c
 )
 
+if(WIN32)
+  list(APPEND BUN_C_SOURCES ${CWD}/src/bun.js/bindings/windows/musl-memmem.c)
+endif()
+
 register_repository(
   NAME
     picohttpparser
@@ -588,15 +592,10 @@ register_repository(
     picohttpparser.c
 )
 
-list(APPEND BUN_C_SOURCES ${VENDOR_PATH}/picohttpparser/picohttpparser.c)
-
-if(WIN32)
-  list(APPEND BUN_C_SOURCES ${CWD}/src/bun.js/bindings/windows/musl-memmem.c)
-endif()
-
 list(APPEND BUN_CPP_SOURCES
   ${BUN_C_SOURCES}
   ${BUN_CXX_SOURCES}
+  ${VENDOR_PATH}/picohttpparser/picohttpparser.c
   ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}
   ${BUN_JS_SINK_OUTPUTS}
   ${BUN_JAVASCRIPT_OUTPUTS}

@@ -1,8 +1,14 @@
 import { DebugSession } from "@vscode/debugadapter";
 import { tmpdir } from "node:os";
 import * as vscode from "vscode";
-import { DAP, TCPSocketSignal } from "../../../bun-debug-adapter-protocol";
-import { DebugAdapter, getAvailablePort, UnixSignal, getRandomId } from "../../../bun-debug-adapter-protocol";
+import {
+  DAP,
+  DebugAdapter,
+  getAvailablePort,
+  getRandomId,
+  TCPSocketSignal,
+  UnixSignal,
+} from "../../../bun-debug-adapter-protocol";
 
 export const DEBUG_CONFIGURATION: vscode.DebugConfiguration = {
   type: "bun",

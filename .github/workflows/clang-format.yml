@@ -15,7 +15,7 @@ on:
       - "src/**.{c,cpp,h,hpp}"
 
 env:
-  LLVM_VERSION: "18.1.8"
+  LLVM_VERSION: "16.0.6"
 
 jobs:
   clang-format:

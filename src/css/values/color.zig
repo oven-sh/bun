@@ -167,7 +167,7 @@ pub const CssColor = union(enum) {
                     if (hex == expandHex(compact)) {
                         try dest.writeFmt("#{x:0>4}", .{compact});
                     } else {
-                        try dest.writeFmt("#{x:0>8}", .{compact});
+                        try dest.writeFmt("#{x:0>8}", .{hex});
                     }
                 }
                 return;
@@ -184,7 +184,7 @@ pub const CssColor = union(enum) {
                         dest,
                     ),
                     .lch => |*lch| writeComponents(
-                        "lab",
+                        "lch",
                         lch.l,
                         lch.c,
                         lch.h,
@@ -193,7 +193,7 @@ pub const CssColor = union(enum) {
                         dest,
                     ),
                     .oklab => |*oklab| writeComponents(
-                        "lab",
+                        "oklab",
                         oklab.l,
                         oklab.a,
                         oklab.b,
@@ -202,7 +202,7 @@ pub const CssColor = union(enum) {
                         dest,
                     ),
                     .oklch => |*oklch| writeComponents(
-                        "lab",
+                        "oklch",
                         oklch.l,
                         oklch.c,
                         oklch.h,

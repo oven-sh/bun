@@ -39,3 +39,7 @@ include(SetupRust)
 # --- Targets ---
 
 include(BuildBun)
+
+# --- Analysis ---
+
+include(RunClangFormat)

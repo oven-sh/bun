@@ -18,24 +18,25 @@ extern "C" mach_port_t io_darwin_create_machport(uint64_t wakeup, int32_t fd,
   kern_return_t kr = mach_port_allocate(self, MACH_PORT_RIGHT_RECEIVE, &port);
 
   if (UNLIKELY(kr != KERN_SUCCESS)) {
-      return 0;
+    return 0;
   }
 
   // Insert a send right into the port since we also use this to send
   kr = mach_port_insert_right(self, port, port, MACH_MSG_TYPE_MAKE_SEND);
   if (UNLIKELY(kr != KERN_SUCCESS)) {
-      return 0;
+    return 0;
   }
 
   // Modify the port queue size to be 1 because we are only
   // using it for notifications and not for any other purpose.
-  mach_port_limits_t limits = { .mpl_qlimit = 1 };
-  kr = mach_port_set_attributes(self, port, MACH_PORT_LIMITS_INFO, (mach_port_info_t)&limits, MACH_PORT_LIMITS_INFO_COUNT);
-  
-  if (UNLIKELY(kr != KERN_SUCCESS)) {
-      return 0;
-  }
+  mach_port_limits_t limits = {.mpl_qlimit = 1};
+  kr = mach_port_set_attributes(self, port, MACH_PORT_LIMITS_INFO,
+                                (mach_port_info_t)&limits,
+                                MACH_PORT_LIMITS_INFO_COUNT);
 
+  if (UNLIKELY(kr != KERN_SUCCESS)) {
+    return 0;
+  }
 
   // Configure the event to directly receive the Mach message as part of the
   // kevent64() call.
@@ -85,37 +86,32 @@ extern "C" bool io_darwin_schedule_wakeup(mach_port_t waker) {
       .msgh_id = 0,
   };
 
-    mach_msg_return_t kr = mach_msg(
-        &msg,
-        MACH_SEND_MSG | MACH_SEND_TIMEOUT,
-        msg.msgh_size,
-        0,
-        MACH_PORT_NULL,
-        0, // Fail instantly if the port is full
-        MACH_PORT_NULL
-    );
-    
-    switch (kr) {
-        case MACH_MSG_SUCCESS: {
-            return true;
-        }
-        
-        // This means that the send would've blocked because the
-        // queue is full. We assume success because the port is full.
-        case MACH_SEND_TIMED_OUT: {
-            return true;
-        }
+  mach_msg_return_t kr = mach_msg(&msg, MACH_SEND_MSG | MACH_SEND_TIMEOUT,
+                                  msg.msgh_size, 0, MACH_PORT_NULL,
+                                  0, // Fail instantly if the port is full
+                                  MACH_PORT_NULL);
 
-        // No space means it will wake up.
-        case MACH_SEND_NO_BUFFER: {
-            return true;
-        }
+  switch (kr) {
+  case MACH_MSG_SUCCESS: {
+    return true;
+  }
 
-        default: {
-            ASSERT_NOT_REACHED_WITH_MESSAGE("mach_msg failed with %x", kr);
-            return false;
-        }
-    }
+  // This means that the send would've blocked because the
+  // queue is full. We assume success because the port is full.
+  case MACH_SEND_TIMED_OUT: {
+    return true;
+  }
+
+  // No space means it will wake up.
+  case MACH_SEND_NO_BUFFER: {
+    return true;
+  }
+
+  default: {
+    ASSERT_NOT_REACHED_WITH_MESSAGE("mach_msg failed with %x", kr);
+    return false;
+  }
+  }
 }
 
 #else

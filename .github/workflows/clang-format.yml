@@ -1,0 +1,55 @@
+name: clang-format
+
+permissions:
+  contents: write
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/clang-format.yml"
+      - ".clang-format"
+      - "package.json"
+      - "scripts/**"
+      - "cmake/**"
+      - "src/**/*.{c,cpp,h,hpp}"
+      - "packages/**/*.{c,cpp,h,hpp}"
+
+env:
+  BUN_VERSION: "1.1.27"
+  LLVM_VERSION: "18.1.8"
+  LLVM_VERSION_MAJOR: "18"
+
+jobs:
+  clang-format:
+    name: clang-format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github
+            .clang-format
+            package.json
+            scripts
+            cmake
+            src
+            packages
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Install LLVM
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh | sudo bash -s -- ${{ env.LLVM_VERSION_MAJOR }} all
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache
+      - name: Format
+        run: |
+          bun run clang-format -DLLVM_VERSION=${{ env.LLVM_VERSION }}
+      - name: Commit
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "`bun run clang-format`"

@@ -4883,7 +4883,7 @@ extern "C" void JSC__VM__getAPILock(JSC::VM* vm)
     vm->apiLock().lock();
 }
 
-extern "C"  void JSC__VM__releaseAPILock(JSC::VM* vm)
+extern "C" void JSC__VM__releaseAPILock(JSC::VM* vm)
 {
     // https://github.com/WebKit/WebKit/blob/6cb5017d237ef7cb898582a22f05acca22322845/Source/JavaScriptCore/runtime/JSLock.cpp#L72
     RefPtr<JSLock> apiLock(&vm->apiLock());

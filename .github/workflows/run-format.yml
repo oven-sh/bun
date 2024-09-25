@@ -47,9 +47,6 @@ jobs:
       - name: Format Zig
         run: |
           bun fmt:zig
-      - name: Format Cpp
-        run: |
-          bun fmt:cpp
       - name: Commit
         uses: stefanzweifel/git-auto-commit-action@v5
         with:

@@ -60,6 +60,58 @@ fn colorIntFromJS(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue, comptime 
     return @mod(input.coerce(i32, globalThis), 256);
 }
 
+// https://github.com/tmux/tmux/blob/dae2868d1227b95fd076fb4a5efa6256c7245943/colour.c#L44-L55
+pub const Ansi256 = struct {
+    const q2c = [_]u32{ 0x00, 0x5f, 0x87, 0xaf, 0xd7, 0xff };
+
+    fn sqdist(R: u32, G: u32, B: u32, r: u32, g: u32, b: u32) u32 {
+        return ((R -% r) *% (R -% r) +% (G -% g) *% (G -% g) +% (B -% b) *% (B -% b));
+    }
+
+    fn to6Cube(v: u32) u32 {
+        if (v < 48)
+            return (0);
+        if (v < 114)
+            return (1);
+        return ((v - 35) / 40);
+    }
+
+    fn get(r: u32, g: u32, b: u32) u32 {
+        const qr = to6Cube(r);
+        const cr = q2c[@intCast(qr)];
+        const qg = to6Cube(g);
+        const cg = q2c[@intCast(qg)];
+        const qb = to6Cube(b);
+        const cb = q2c[@intCast(qb)];
+
+        if (cr == r and cg == g and cb == b) {
+            return 16 +% (36 *% qr) +% (6 *% qg) +% qb;
+        }
+
+        const grey_avg = (r +% g +% b) / 3;
+        const grey_idx = if (grey_avg > 238) 23 else (grey_avg -% 3) / 10;
+        const grey = 8 +% (10 *% grey_idx);
+
+        const d = sqdist(cr, cg, cb, r, g, b);
+        const idx = if (sqdist(grey, grey, grey, r, g, b) < d) 232 +% grey_idx else 16 +% (36 *% qr) +% (6 *% qg) +% qb;
+        return idx;
+    }
+
+    pub fn from(rgba: RGBA, buf: *[12]u8) []u8 {
+        const val = get(rgba.red, rgba.green, rgba.blue);
+        // 0x1b is the escape character
+        buf[0] = 0x1b;
+        buf[1] = '[';
+        buf[2] = '3';
+        buf[3] = '8';
+        buf[4] = ';';
+        buf[5] = '5';
+        buf[6] = ';';
+        const extra = std.fmt.bufPrint(buf[7..], "{d}m", .{val}) catch unreachable;
+        return buf[0 .. 7 + extra.len];
+    }
+};
+
 pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
     const args = callFrame.arguments(2).slice();
     if (args.len < 1 or args[0].isUndefined()) {
@@ -299,57 +351,10 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
                                     break :color bun.String.createLatin1(buf[0 .. 7 + additional.len]);
                                 },
                                 .ansi256 => {
-                                    // https://github.com/tmux/tmux/blob/dae2868d1227b95fd076fb4a5efa6256c7245943/colour.c#L44-L55
-                                    const Ansi256 = struct {
-                                        const q2c = [_]u32{ 0x00, 0x5f, 0x87, 0xaf, 0xd7, 0xff };
-
-                                        fn sqdist(R: u32, G: u32, B: u32, r: u32, g: u32, b: u32) u32 {
-                                            return ((R -% r) *% (R -% r) +% (G -% g) *% (G -% g) +% (B -% b) *% (B -% b));
-                                        }
-
-                                        fn to6Cube(v: u32) u32 {
-                                            if (v < 48)
-                                                return (0);
-                                            if (v < 114)
-                                                return (1);
-                                            return ((v - 35) / 40);
-                                        }
-
-                                        fn get(r: u32, g: u32, b: u32) u32 {
-                                            const qr = to6Cube(r);
-                                            const cr = q2c[@intCast(qr)];
-                                            const qg = to6Cube(g);
-                                            const cg = q2c[@intCast(qg)];
-                                            const qb = to6Cube(b);
-                                            const cb = q2c[@intCast(qb)];
-
-                                            if (cr == r and cg == g and cb == b) {
-                                                return 16 +% (36 *% qr) +% (6 *% qg) +% qb;
-                                            }
-
-                                            const grey_avg = (r +% g +% b) / 3;
-                                            const grey_idx = if (grey_avg > 238) 23 else (grey_avg -% 3) / 10;
-                                            const grey = 8 +% (10 *% grey_idx);
-
-                                            const d = sqdist(cr, cg, cb, r, g, b);
-                                            const idx = if (sqdist(grey, grey, grey, r, g, b) < d) 232 +% grey_idx else 16 +% (36 *% qr) +% (6 *% qg) +% qb;
-                                            return idx;
-                                        }
-                                    };
-
-                                    const val = Ansi256.get(rgba.red, rgba.green, rgba.blue);
                                     // ANSI escape sequence
                                     var buf: [12]u8 = undefined;
-                                    // 0x1b is the escape character
-                                    buf[0] = 0x1b;
-                                    buf[1] = '[';
-                                    buf[2] = '3';
-                                    buf[3] = '8';
-                                    buf[4] = ';';
-                                    buf[5] = '5';
-                                    buf[6] = ';';
-                                    const extra = std.fmt.bufPrint(buf[7..], "{d}m", .{val}) catch unreachable;
-                                    break :color bun.String.createLatin1(buf[0 .. 7 + extra.len]);
+                                    const val = Ansi256.from(rgba, &buf);
+                                    break :color bun.String.createLatin1(val);
                                 },
                                 else => unreachable,
                             }

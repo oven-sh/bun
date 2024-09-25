@@ -1,0 +1,793 @@
+// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`color(rgb(255, 0, 0), "css") 1`] = `"red"`;
+
+exports[`color(rgb(0, 255, 0), "css") 1`] = `"#0f0"`;
+
+exports[`color(rgb(0, 0, 255), "css") 1`] = `"#00f"`;
+
+exports[`color(rgb(255, 255, 0), "css") 1`] = `"#ff0"`;
+
+exports[`color(rgb(255, 0, 255), "css") 1`] = `"#f0f"`;
+
+exports[`color(rgb(0, 255, 255), "css") 1`] = `"#0ff"`;
+
+exports[`color(rgb(255, 165, 0), "css") 1`] = `"orange"`;
+
+exports[`color(rgb(128, 0, 128), "css") 1`] = `"purple"`;
+
+exports[`color(rgb(255, 204, 204), "css") 1`] = `"#fcc"`;
+
+exports[`color(rgb(128, 128, 128), "css") 1`] = `"gray"`;
+
+exports[`color(rgb(0, 0, 0), "css") 1`] = `"#000"`;
+
+exports[`color(rgb(255, 255, 255), "css") 1`] = `"#fff"`;
+
+exports[`color(rgba(255, 0, 0, 1), "css") 1`] = `"red"`;
+
+exports[`color(rgba(0, 255, 0, 1), "css") 1`] = `"#0f0"`;
+
+exports[`color(rgba(0, 0, 255, 1), "css") 1`] = `"#00f"`;
+
+exports[`color(rgba(255, 255, 0, 1), "css") 1`] = `"#ff0"`;
+
+exports[`color(rgba(255, 0, 255, 1), "css") 1`] = `"#f0f"`;
+
+exports[`color(rgba(0, 255, 255, 1), "css") 1`] = `"#0ff"`;
+
+exports[`color(rgba(255, 165, 0, 1), "css") 1`] = `"orange"`;
+
+exports[`color(rgba(128, 0, 128, 1), "css") 1`] = `"purple"`;
+
+exports[`color(rgba(255, 204, 204, 1), "css") 1`] = `"#fcc"`;
+
+exports[`color(rgba(128, 128, 128, 1), "css") 1`] = `"gray"`;
+
+exports[`color(rgba(0, 0, 0, 1), "css") 1`] = `"#000"`;
+
+exports[`color(rgba(255, 255, 255, 1), "css") 1`] = `"#fff"`;
+
+exports[`color(#ff0000, "css") 1`] = `"red"`;
+
+exports[`color(#00ff00, "css") 1`] = `"#0f0"`;
+
+exports[`color(#0000ff, "css") 1`] = `"#00f"`;
+
+exports[`color(#ffff00, "css") 1`] = `"#ff0"`;
+
+exports[`color(#ff00ff, "css") 1`] = `"#f0f"`;
+
+exports[`color(#00ffff, "css") 1`] = `"#0ff"`;
+
+exports[`color(#ffa500, "css") 1`] = `"orange"`;
+
+exports[`color(#800080, "css") 1`] = `"purple"`;
+
+exports[`color(#ffc0cb, "css") 1`] = `"pink"`;
+
+exports[`color(#808080, "css") 1`] = `"gray"`;
+
+exports[`color(#000000, "css") 1`] = `"#000"`;
+
+exports[`color(#ffffff, "css") 1`] = `"#fff"`;
+
+exports[`color(#FF0000, "css") 1`] = `"red"`;
+
+exports[`color(#00FF00, "css") 1`] = `"#0f0"`;
+
+exports[`color(#0000FF, "css") 1`] = `"#00f"`;
+
+exports[`color(#FFFF00, "css") 1`] = `"#ff0"`;
+
+exports[`color(#FF00FF, "css") 1`] = `"#f0f"`;
+
+exports[`color(#00FFFF, "css") 1`] = `"#0ff"`;
+
+exports[`color(#FFA500, "css") 1`] = `"orange"`;
+
+exports[`color(#800080, "css") 2`] = `"purple"`;
+
+exports[`color(#FFC0CB, "css") 1`] = `"pink"`;
+
+exports[`color(#808080, "css") 2`] = `"gray"`;
+
+exports[`color(#000000, "css") 2`] = `"#000"`;
+
+exports[`color(#FFFFFF, "css") 1`] = `"#fff"`;
+
+exports[`color(16711680, "css") 1`] = `"#f000"`;
+
+exports[`color(65280, "css") 1`] = `"#0f00"`;
+
+exports[`color(255, "css") 1`] = `"#00f0"`;
+
+exports[`color(16776960, "css") 1`] = `"#ff00"`;
+
+exports[`color(16711935, "css") 1`] = `"#f0f0"`;
+
+exports[`color(65535, "css") 1`] = `"#0ff0"`;
+
+exports[`color(16753920, "css") 1`] = `"#0000fa00"`;
+
+exports[`color(8388736, "css") 1`] = `"#00000000"`;
+
+exports[`color(16761035, "css") 1`] = `"#0000fcb0"`;
+
+exports[`color(8421504, "css") 1`] = `"#00000800"`;
+
+exports[`color(0, "css") 1`] = `"#0000"`;
+
+exports[`color(16777215, "css") 1`] = `"#fff0"`;
+
+exports[`color([object Object], "css") 1`] = `"red"`;
+
+exports[`color([object Object], "css") 2`] = `"#0f0"`;
+
+exports[`color([object Object], "css") 3`] = `"#00f"`;
+
+exports[`color([object Object], "css") 4`] = `"#ff0"`;
+
+exports[`color([object Object], "css") 5`] = `"#f0f"`;
+
+exports[`color([object Object], "css") 6`] = `"#0ff"`;
+
+exports[`color([object Object], "css") 7`] = `"orange"`;
+
+exports[`color([object Object], "css") 8`] = `"purple"`;
+
+exports[`color([object Object], "css") 9`] = `"#fcc"`;
+
+exports[`color([object Object], "css") 10`] = `"gray"`;
+
+exports[`color([object Object], "css") 11`] = `"#000"`;
+
+exports[`color([object Object], "css") 12`] = `"#fff"`;
+
+exports[`color({"r":255,"g":0,"b":0}, "css") 1`] = `"red"`;
+
+exports[`color({"r":0,"g":255,"b":0}, "css") 1`] = `"#0f0"`;
+
+exports[`color({"r":0,"g":0,"b":255}, "css") 1`] = `"#00f"`;
+
+exports[`color({"r":255,"g":255,"b":0}, "css") 1`] = `"#ff0"`;
+
+exports[`color({"r":255,"g":0,"b":255}, "css") 1`] = `"#f0f"`;
+
+exports[`color({"r":0,"g":255,"b":255}, "css") 1`] = `"#0ff"`;
+
+exports[`color({"r":255,"g":165,"b":0}, "css") 1`] = `"orange"`;
+
+exports[`color({"r":128,"g":0,"b":128}, "css") 1`] = `"purple"`;
+
+exports[`color({"r":255,"g":204,"b":204}, "css") 1`] = `"#fcc"`;
+
+exports[`color({"r":128,"g":128,"b":128}, "css") 1`] = `"gray"`;
+
+exports[`color({"r":0,"g":0,"b":0}, "css") 1`] = `"#000"`;
+
+exports[`color({"r":255,"g":255,"b":255}, "css") 1`] = `"#fff"`;
+
+exports[`color("rgb(255, 0, 0)", "css") 1`] = `"red"`;
+
+exports[`color("rgb(0, 255, 0)", "css") 1`] = `"#0f0"`;
+
+exports[`color("rgb(0, 0, 255)", "css") 1`] = `"#00f"`;
+
+exports[`color("rgb(255, 255, 0)", "css") 1`] = `"#ff0"`;
+
+exports[`color("rgb(255, 0, 255)", "css") 1`] = `"#f0f"`;
+
+exports[`color("rgb(0, 255, 255)", "css") 1`] = `"#0ff"`;
+
+exports[`color("rgb(255, 165, 0)", "css") 1`] = `"orange"`;
+
+exports[`color("rgb(128, 0, 128)", "css") 1`] = `"purple"`;
+
+exports[`color("rgb(255, 204, 204)", "css") 1`] = `"#fcc"`;
+
+exports[`color("rgb(128, 128, 128)", "css") 1`] = `"gray"`;
+
+exports[`color("rgb(0, 0, 0)", "css") 1`] = `"#000"`;
+
+exports[`color("rgb(255, 255, 255)", "css") 1`] = `"#fff"`;
+
+exports[`color("rgba(255, 0, 0, 1)", "css") 1`] = `"red"`;
+
+exports[`color("rgba(0, 255, 0, 1)", "css") 1`] = `"#0f0"`;
+
+exports[`color("rgba(0, 0, 255, 1)", "css") 1`] = `"#00f"`;
+
+exports[`color("rgba(255, 255, 0, 1)", "css") 1`] = `"#ff0"`;
+
+exports[`color("rgba(255, 0, 255, 1)", "css") 1`] = `"#f0f"`;
+
+exports[`color("rgba(0, 255, 255, 1)", "css") 1`] = `"#0ff"`;
+
+exports[`color("rgba(255, 165, 0, 1)", "css") 1`] = `"orange"`;
+
+exports[`color("rgba(128, 0, 128, 1)", "css") 1`] = `"purple"`;
+
+exports[`color("rgba(255, 204, 204, 1)", "css") 1`] = `"#fcc"`;
+
+exports[`color("rgba(128, 128, 128, 1)", "css") 1`] = `"gray"`;
+
+exports[`color("rgba(0, 0, 0, 1)", "css") 1`] = `"#000"`;
+
+exports[`color("rgba(255, 255, 255, 1)", "css") 1`] = `"#fff"`;
+
+exports[`color("#ff0000", "css") 1`] = `"red"`;
+
+exports[`color("#00ff00", "css") 1`] = `"#0f0"`;
+
+exports[`color("#0000ff", "css") 1`] = `"#00f"`;
+
+exports[`color("#ffff00", "css") 1`] = `"#ff0"`;
+
+exports[`color("#ff00ff", "css") 1`] = `"#f0f"`;
+
+exports[`color("#00ffff", "css") 1`] = `"#0ff"`;
+
+exports[`color("#ffa500", "css") 1`] = `"orange"`;
+
+exports[`color("#800080", "css") 1`] = `"purple"`;
+
+exports[`color("#ffc0cb", "css") 1`] = `"pink"`;
+
+exports[`color("#808080", "css") 1`] = `"gray"`;
+
+exports[`color("#000000", "css") 1`] = `"#000"`;
+
+exports[`color("#ffffff", "css") 1`] = `"#fff"`;
+
+exports[`color("#FF0000", "css") 1`] = `"red"`;
+
+exports[`color("#00FF00", "css") 1`] = `"#0f0"`;
+
+exports[`color("#0000FF", "css") 1`] = `"#00f"`;
+
+exports[`color("#FFFF00", "css") 1`] = `"#ff0"`;
+
+exports[`color("#FF00FF", "css") 1`] = `"#f0f"`;
+
+exports[`color("#00FFFF", "css") 1`] = `"#0ff"`;
+
+exports[`color("#FFA500", "css") 1`] = `"orange"`;
+
+exports[`color("#800080", "css") 2`] = `"purple"`;
+
+exports[`color("#FFC0CB", "css") 1`] = `"pink"`;
+
+exports[`color("#808080", "css") 2`] = `"gray"`;
+
+exports[`color("#000000", "css") 2`] = `"#000"`;
+
+exports[`color("#FFFFFF", "css") 1`] = `"#fff"`;
+
+exports[`color([255,0,0], "css") 1`] = `"red"`;
+
+exports[`color([0,255,0], "css") 1`] = `"#0f0"`;
+
+exports[`color([0,0,255], "css") 1`] = `"#00f"`;
+
+exports[`color([255,255,0], "css") 1`] = `"#ff0"`;
+
+exports[`color([255,0,255], "css") 1`] = `"#f0f"`;
+
+exports[`color([0,255,255], "css") 1`] = `"#0ff"`;
+
+exports[`color([255,165,0], "css") 1`] = `"orange"`;
+
+exports[`color([128,0,128], "css") 1`] = `"purple"`;
+
+exports[`color([255,204,204], "css") 1`] = `"#fcc"`;
+
+exports[`color([128,128,128], "css") 1`] = `"gray"`;
+
+exports[`color([0,0,0], "css") 1`] = `"#000"`;
+
+exports[`color([255,255,255], "css") 1`] = `"#fff"`;
+
+exports[`color([255,0,0,1], "css") 1`] = `"#0000f000"`;
+
+exports[`color([0,255,0,1], "css") 1`] = `"#00000f00"`;
+
+exports[`color([0,0,255,1], "css") 1`] = `"#000000f0"`;
+
+exports[`color([255,255,0,1], "css") 1`] = `"#0000ff00"`;
+
+exports[`color([255,0,255,1], "css") 1`] = `"#0000f0f0"`;
+
+exports[`color([0,255,255,1], "css") 1`] = `"#00000ff0"`;
+
+exports[`color([255,165,0,1], "css") 1`] = `"#0000fa00"`;
+
+exports[`color([128,0,128,1], "css") 1`] = `"#00000000"`;
+
+exports[`color([255,204,204,1], "css") 1`] = `"#0000fcc0"`;
+
+exports[`color([128,128,128,1], "css") 1`] = `"#00000800"`;
+
+exports[`color([0,0,0,1], "css") 1`] = `"#00000000"`;
+
+exports[`color([255,255,255,1], "css") 1`] = `"#0000fff0"`;
+
+exports[`color({"r":255,"g":0,"b":0,"a":1}, "css") 1`] = `"red"`;
+
+exports[`color({"r":0,"g":255,"b":0,"a":1}, "css") 1`] = `"#0f0"`;
+
+exports[`color({"r":0,"g":0,"b":255,"a":1}, "css") 1`] = `"#00f"`;
+
+exports[`color({"r":255,"g":255,"b":0,"a":1}, "css") 1`] = `"#ff0"`;
+
+exports[`color({"r":255,"g":0,"b":255,"a":1}, "css") 1`] = `"#f0f"`;
+
+exports[`color({"r":0,"g":255,"b":255,"a":1}, "css") 1`] = `"#0ff"`;
+
+exports[`color({"r":255,"g":165,"b":0,"a":1}, "css") 1`] = `"orange"`;
+
+exports[`color({"r":128,"g":0,"b":128,"a":1}, "css") 1`] = `"purple"`;
+
+exports[`color({"r":255,"g":204,"b":204,"a":1}, "css") 1`] = `"#fcc"`;
+
+exports[`color({"r":128,"g":128,"b":128,"a":1}, "css") 1`] = `"gray"`;
+
+exports[`color({"r":0,"g":0,"b":0,"a":1}, "css") 1`] = `"#000"`;
+
+exports[`color({"r":255,"g":255,"b":255,"a":1}, "css") 1`] = `"#fff"`;
+
+exports[`color([255,0,0,255], "css") 1`] = `"red"`;
+
+exports[`color([0,255,0,255], "css") 1`] = `"#0f0"`;
+
+exports[`color([0,0,255,255], "css") 1`] = `"#00f"`;
+
+exports[`color([255,255,0,255], "css") 1`] = `"#ff0"`;
+
+exports[`color([255,0,255,255], "css") 1`] = `"#f0f"`;
+
+exports[`color([0,255,255,255], "css") 1`] = `"#0ff"`;
+
+exports[`color([255,165,0,255], "css") 1`] = `"orange"`;
+
+exports[`color([128,0,128,255], "css") 1`] = `"purple"`;
+
+exports[`color([255,204,204,255], "css") 1`] = `"#fcc"`;
+
+exports[`color([128,128,128,255], "css") 1`] = `"gray"`;
+
+exports[`color([0,0,0,255], "css") 1`] = `"#000"`;
+
+exports[`color([255,255,255,255], "css") 1`] = `"#fff"`;
+
+exports[`color({"r":255,"g":0,"b":0}, "ansi") 1`] = `"[38;2;255;0;0m"`;
+
+exports[`color({"r":255,"g":0,"b":0}, "ansi256") 1`] = `"[38;5;196m"`;
+
+exports[`color({"r":0,"g":255,"b":0}, "ansi") 1`] = `"[38;2;0;255;0m"`;
+
+exports[`color({"r":0,"g":255,"b":0}, "ansi256") 1`] = `"[38;5;46m"`;
+
+exports[`color({"r":0,"g":0,"b":255}, "ansi") 1`] = `"[38;2;0;0;255m"`;
+
+exports[`color({"r":0,"g":0,"b":255}, "ansi256") 1`] = `"[38;5;21m"`;
+
+exports[`color({"r":255,"g":255,"b":0}, "ansi") 1`] = `"[38;2;255;255;0m"`;
+
+exports[`color({"r":255,"g":255,"b":0}, "ansi256") 1`] = `"[38;5;226m"`;
+
+exports[`color({"r":255,"g":0,"b":255}, "ansi") 1`] = `"[38;2;255;0;255m"`;
+
+exports[`color({"r":255,"g":0,"b":255}, "ansi256") 1`] = `"[38;5;201m"`;
+
+exports[`color({"r":0,"g":255,"b":255}, "ansi") 1`] = `"[38;2;0;255;255m"`;
+
+exports[`color({"r":0,"g":255,"b":255}, "ansi256") 1`] = `"[38;5;51m"`;
+
+exports[`color({"r":255,"g":165,"b":0}, "ansi") 1`] = `"[38;2;255;165;0m"`;
+
+exports[`color({"r":255,"g":165,"b":0}, "ansi256") 1`] = `"[38;5;214m"`;
+
+exports[`color({"r":128,"g":0,"b":128}, "ansi") 1`] = `"[38;2;128;0;128m"`;
+
+exports[`color({"r":128,"g":0,"b":128}, "ansi256") 1`] = `"[38;5;90m"`;
+
+exports[`color({"r":255,"g":204,"b":204}, "ansi") 1`] = `"[38;2;255;204;204m"`;
+
+exports[`color({"r":255,"g":204,"b":204}, "ansi256") 1`] = `"[38;5;224m"`;
+
+exports[`color({"r":128,"g":128,"b":128}, "ansi") 1`] = `"[38;2;128;128;128m"`;
+
+exports[`color({"r":128,"g":128,"b":128}, "ansi256") 1`] = `"[38;5;244m"`;
+
+exports[`color({"r":0,"g":0,"b":0}, "ansi") 1`] = `"[38;2;0;0;0m"`;
+
+exports[`color({"r":0,"g":0,"b":0}, "ansi256") 1`] = `"[38;5;16m"`;
+
+exports[`color({"r":255,"g":255,"b":255}, "ansi") 1`] = `"[38;2;255;255;255m"`;
+
+exports[`color({"r":255,"g":255,"b":255}, "ansi256") 1`] = `"[38;5;231m"`;
+
+exports[`color({"r":255,"g":0,"b":0,"a":1}, "ansi") 1`] = `"[38;2;255;0;0m"`;
+
+exports[`color({"r":255,"g":0,"b":0,"a":1}, "ansi256") 1`] = `"[38;5;196m"`;
+
+exports[`color({"r":0,"g":255,"b":0,"a":1}, "ansi") 1`] = `"[38;2;0;255;0m"`;
+
+exports[`color({"r":0,"g":255,"b":0,"a":1}, "ansi256") 1`] = `"[38;5;46m"`;
+
+exports[`color({"r":0,"g":0,"b":255,"a":1}, "ansi") 1`] = `"[38;2;0;0;255m"`;
+
+exports[`color({"r":0,"g":0,"b":255,"a":1}, "ansi256") 1`] = `"[38;5;21m"`;
+
+exports[`color({"r":255,"g":255,"b":0,"a":1}, "ansi") 1`] = `"[38;2;255;255;0m"`;
+
+exports[`color({"r":255,"g":255,"b":0,"a":1}, "ansi256") 1`] = `"[38;5;226m"`;
+
+exports[`color({"r":255,"g":0,"b":255,"a":1}, "ansi") 1`] = `"[38;2;255;0;255m"`;
+
+exports[`color({"r":255,"g":0,"b":255,"a":1}, "ansi256") 1`] = `"[38;5;201m"`;
+
+exports[`color({"r":0,"g":255,"b":255,"a":1}, "ansi") 1`] = `"[38;2;0;255;255m"`;
+
+exports[`color({"r":0,"g":255,"b":255,"a":1}, "ansi256") 1`] = `"[38;5;51m"`;
+
+exports[`color({"r":255,"g":165,"b":0,"a":1}, "ansi") 1`] = `"[38;2;255;165;0m"`;
+
+exports[`color({"r":255,"g":165,"b":0,"a":1}, "ansi256") 1`] = `"[38;5;214m"`;
+
+exports[`color({"r":128,"g":0,"b":128,"a":1}, "ansi") 1`] = `"[38;2;128;0;128m"`;
+
+exports[`color({"r":128,"g":0,"b":128,"a":1}, "ansi256") 1`] = `"[38;5;90m"`;
+
+exports[`color({"r":255,"g":204,"b":204,"a":1}, "ansi") 1`] = `"[38;2;255;204;204m"`;
+
+exports[`color({"r":255,"g":204,"b":204,"a":1}, "ansi256") 1`] = `"[38;5;224m"`;
+
+exports[`color({"r":128,"g":128,"b":128,"a":1}, "ansi") 1`] = `"[38;2;128;128;128m"`;
+
+exports[`color({"r":128,"g":128,"b":128,"a":1}, "ansi256") 1`] = `"[38;5;244m"`;
+
+exports[`color({"r":0,"g":0,"b":0,"a":1}, "ansi") 1`] = `"[38;2;0;0;0m"`;
+
+exports[`color({"r":0,"g":0,"b":0,"a":1}, "ansi256") 1`] = `"[38;5;16m"`;
+
+exports[`color({"r":255,"g":255,"b":255,"a":1}, "ansi") 1`] = `"[38;2;255;255;255m"`;
+
+exports[`color({"r":255,"g":255,"b":255,"a":1}, "ansi256") 1`] = `"[38;5;231m"`;
+
+exports[`color([255,0,0], "ansi") 1`] = `"[38;2;255;0;0m"`;
+
+exports[`color([255,0,0], "ansi256") 1`] = `"[38;5;196m"`;
+
+exports[`color([0,255,0], "ansi") 1`] = `"[38;2;0;255;0m"`;
+
+exports[`color([0,255,0], "ansi256") 1`] = `"[38;5;46m"`;
+
+exports[`color([0,0,255], "ansi") 1`] = `"[38;2;0;0;255m"`;
+
+exports[`color([0,0,255], "ansi256") 1`] = `"[38;5;21m"`;
+
+exports[`color([255,255,0], "ansi") 1`] = `"[38;2;255;255;0m"`;
+
+exports[`color([255,255,0], "ansi256") 1`] = `"[38;5;226m"`;
+
+exports[`color([255,0,255], "ansi") 1`] = `"[38;2;255;0;255m"`;
+
+exports[`color([255,0,255], "ansi256") 1`] = `"[38;5;201m"`;
+
+exports[`color([0,255,255], "ansi") 1`] = `"[38;2;0;255;255m"`;
+
+exports[`color([0,255,255], "ansi256") 1`] = `"[38;5;51m"`;
+
+exports[`color([255,165,0], "ansi") 1`] = `"[38;2;255;165;0m"`;
+
+exports[`color([255,165,0], "ansi256") 1`] = `"[38;5;214m"`;
+
+exports[`color([128,0,128], "ansi") 1`] = `"[38;2;128;0;128m"`;
+
+exports[`color([128,0,128], "ansi256") 1`] = `"[38;5;90m"`;
+
+exports[`color([255,204,204], "ansi") 1`] = `"[38;2;255;204;204m"`;
+
+exports[`color([255,204,204], "ansi256") 1`] = `"[38;5;224m"`;
+
+exports[`color([128,128,128], "ansi") 1`] = `"[38;2;128;128;128m"`;
+
+exports[`color([128,128,128], "ansi256") 1`] = `"[38;5;244m"`;
+
+exports[`color([0,0,0], "ansi") 1`] = `"[38;2;0;0;0m"`;
+
+exports[`color([0,0,0], "ansi256") 1`] = `"[38;5;16m"`;
+
+exports[`color([255,255,255], "ansi") 1`] = `"[38;2;255;255;255m"`;
+
+exports[`color([255,255,255], "ansi256") 1`] = `"[38;5;231m"`;
+
+exports[`color([255,0,0,255], "ansi") 1`] = `"[38;2;255;0;0m"`;
+
+exports[`color([255,0,0,255], "ansi256") 1`] = `"[38;5;196m"`;
+
+exports[`color([0,255,0,255], "ansi") 1`] = `"[38;2;0;255;0m"`;
+
+exports[`color([0,255,0,255], "ansi256") 1`] = `"[38;5;46m"`;
+
+exports[`color([0,0,255,255], "ansi") 1`] = `"[38;2;0;0;255m"`;
+
+exports[`color([0,0,255,255], "ansi256") 1`] = `"[38;5;21m"`;
+
+exports[`color([255,255,0,255], "ansi") 1`] = `"[38;2;255;255;0m"`;
+
+exports[`color([255,255,0,255], "ansi256") 1`] = `"[38;5;226m"`;
+
+exports[`color([255,0,255,255], "ansi") 1`] = `"[38;2;255;0;255m"`;
+
+exports[`color([255,0,255,255], "ansi256") 1`] = `"[38;5;201m"`;
+
+exports[`color([0,255,255,255], "ansi") 1`] = `"[38;2;0;255;255m"`;
+
+exports[`color([0,255,255,255], "ansi256") 1`] = `"[38;5;51m"`;
+
+exports[`color([255,165,0,255], "ansi") 1`] = `"[38;2;255;165;0m"`;
+
+exports[`color([255,165,0,255], "ansi256") 1`] = `"[38;5;214m"`;
+
+exports[`color([128,0,128,255], "ansi") 1`] = `"[38;2;128;0;128m"`;
+
+exports[`color([128,0,128,255], "ansi256") 1`] = `"[38;5;90m"`;
+
+exports[`color([255,204,204,255], "ansi") 1`] = `"[38;2;255;204;204m"`;
+
+exports[`color([255,204,204,255], "ansi256") 1`] = `"[38;5;224m"`;
+
+exports[`color([128,128,128,255], "ansi") 1`] = `"[38;2;128;128;128m"`;
+
+exports[`color([128,128,128,255], "ansi256") 1`] = `"[38;5;244m"`;
+
+exports[`color([0,0,0,255], "ansi") 1`] = `"[38;2;0;0;0m"`;
+
+exports[`color([0,0,0,255], "ansi256") 1`] = `"[38;5;16m"`;
+
+exports[`color([255,255,255,255], "ansi") 1`] = `"[38;2;255;255;255m"`;
+
+exports[`color([255,255,255,255], "ansi256") 1`] = `"[38;5;231m"`;
+
+exports[`color("rgb(255, 0, 0)", "ansi") 1`] = `"[38;2;255;0;0m"`;
+
+exports[`color("rgb(255, 0, 0)", "ansi256") 1`] = `"[38;5;196m"`;
+
+exports[`color("rgb(0, 255, 0)", "ansi") 1`] = `"[38;2;0;255;0m"`;
+
+exports[`color("rgb(0, 255, 0)", "ansi256") 1`] = `"[38;5;46m"`;
+
+exports[`color("rgb(0, 0, 255)", "ansi") 1`] = `"[38;2;0;0;255m"`;
+
+exports[`color("rgb(0, 0, 255)", "ansi256") 1`] = `"[38;5;21m"`;
+
+exports[`color("rgb(255, 255, 0)", "ansi") 1`] = `"[38;2;255;255;0m"`;
+
+exports[`color("rgb(255, 255, 0)", "ansi256") 1`] = `"[38;5;226m"`;
+
+exports[`color("rgb(255, 0, 255)", "ansi") 1`] = `"[38;2;255;0;255m"`;
+
+exports[`color("rgb(255, 0, 255)", "ansi256") 1`] = `"[38;5;201m"`;
+
+exports[`color("rgb(0, 255, 255)", "ansi") 1`] = `"[38;2;0;255;255m"`;
+
+exports[`color("rgb(0, 255, 255)", "ansi256") 1`] = `"[38;5;51m"`;
+
+exports[`color("rgb(255, 165, 0)", "ansi") 1`] = `"[38;2;255;165;0m"`;
+
+exports[`color("rgb(255, 165, 0)", "ansi256") 1`] = `"[38;5;214m"`;
+
+exports[`color("rgb(128, 0, 128)", "ansi") 1`] = `"[38;2;128;0;128m"`;
+
+exports[`color("rgb(128, 0, 128)", "ansi256") 1`] = `"[38;5;90m"`;
+
+exports[`color("rgb(255, 204, 204)", "ansi") 1`] = `"[38;2;255;204;204m"`;
+
+exports[`color("rgb(255, 204, 204)", "ansi256") 1`] = `"[38;5;224m"`;
+
+exports[`color("rgb(128, 128, 128)", "ansi") 1`] = `"[38;2;128;128;128m"`;
+
+exports[`color("rgb(128, 128, 128)", "ansi256") 1`] = `"[38;5;244m"`;
+
+exports[`color("rgb(0, 0, 0)", "ansi") 1`] = `"[38;2;0;0;0m"`;
+
+exports[`color("rgb(0, 0, 0)", "ansi256") 1`] = `"[38;5;16m"`;
+
+exports[`color("rgb(255, 255, 255)", "ansi") 1`] = `"[38;2;255;255;255m"`;
+
+exports[`color("rgb(255, 255, 255)", "ansi256") 1`] = `"[38;5;231m"`;
+
+exports[`color("rgba(255, 0, 0, 1)", "ansi") 1`] = `"[38;2;255;0;0m"`;
+
+exports[`color("rgba(255, 0, 0, 1)", "ansi256") 1`] = `"[38;5;196m"`;
+
+exports[`color("rgba(0, 255, 0, 1)", "ansi") 1`] = `"[38;2;0;255;0m"`;
+
+exports[`color("rgba(0, 255, 0, 1)", "ansi256") 1`] = `"[38;5;46m"`;
+
+exports[`color("rgba(0, 0, 255, 1)", "ansi") 1`] = `"[38;2;0;0;255m"`;
+
+exports[`color("rgba(0, 0, 255, 1)", "ansi256") 1`] = `"[38;5;21m"`;
+
+exports[`color("rgba(255, 255, 0, 1)", "ansi") 1`] = `"[38;2;255;255;0m"`;
+
+exports[`color("rgba(255, 255, 0, 1)", "ansi256") 1`] = `"[38;5;226m"`;
+
+exports[`color("rgba(255, 0, 255, 1)", "ansi") 1`] = `"[38;2;255;0;255m"`;
+
+exports[`color("rgba(255, 0, 255, 1)", "ansi256") 1`] = `"[38;5;201m"`;
+
+exports[`color("rgba(0, 255, 255, 1)", "ansi") 1`] = `"[38;2;0;255;255m"`;
+
+exports[`color("rgba(0, 255, 255, 1)", "ansi256") 1`] = `"[38;5;51m"`;
+
+exports[`color("rgba(255, 165, 0, 1)", "ansi") 1`] = `"[38;2;255;165;0m"`;
+
+exports[`color("rgba(255, 165, 0, 1)", "ansi256") 1`] = `"[38;5;214m"`;
+
+exports[`color("rgba(128, 0, 128, 1)", "ansi") 1`] = `"[38;2;128;0;128m"`;
+
+exports[`color("rgba(128, 0, 128, 1)", "ansi256") 1`] = `"[38;5;90m"`;
+
+exports[`color("rgba(255, 204, 204, 1)", "ansi") 1`] = `"[38;2;255;204;204m"`;
+
+exports[`color("rgba(255, 204, 204, 1)", "ansi256") 1`] = `"[38;5;224m"`;
+
+exports[`color("rgba(128, 128, 128, 1)", "ansi") 1`] = `"[38;2;128;128;128m"`;
+
+exports[`color("rgba(128, 128, 128, 1)", "ansi256") 1`] = `"[38;5;244m"`;
+
+exports[`color("rgba(0, 0, 0, 1)", "ansi") 1`] = `"[38;2;0;0;0m"`;
+
+exports[`color("rgba(0, 0, 0, 1)", "ansi256") 1`] = `"[38;5;16m"`;
+
+exports[`color("rgba(255, 255, 255, 1)", "ansi") 1`] = `"[38;2;255;255;255m"`;
+
+exports[`color("rgba(255, 255, 255, 1)", "ansi256") 1`] = `"[38;5;231m"`;
+
+exports[`color("#ff0000", "ansi") 1`] = `"[38;2;255;0;0m"`;
+
+exports[`color("#ff0000", "ansi256") 1`] = `"[38;5;196m"`;
+
+exports[`color("#00ff00", "ansi") 1`] = `"[38;2;0;255;0m"`;
+
+exports[`color("#00ff00", "ansi256") 1`] = `"[38;5;46m"`;
+
+exports[`color("#0000ff", "ansi") 1`] = `"[38;2;0;0;255m"`;
+
+exports[`color("#0000ff", "ansi256") 1`] = `"[38;5;21m"`;
+
+exports[`color("#ffff00", "ansi") 1`] = `"[38;2;255;255;0m"`;
+
+exports[`color("#ffff00", "ansi256") 1`] = `"[38;5;226m"`;
+
+exports[`color("#ff00ff", "ansi") 1`] = `"[38;2;255;0;255m"`;
+
+exports[`color("#ff00ff", "ansi256") 1`] = `"[38;5;201m"`;
+
+exports[`color("#00ffff", "ansi") 1`] = `"[38;2;0;255;255m"`;
+
+exports[`color("#00ffff", "ansi256") 1`] = `"[38;5;51m"`;
+
+exports[`color("#ffa500", "ansi") 1`] = `"[38;2;255;165;0m"`;
+
+exports[`color("#ffa500", "ansi256") 1`] = `"[38;5;214m"`;
+
+exports[`color("#800080", "ansi") 1`] = `"[38;2;128;0;128m"`;
+
+exports[`color("#800080", "ansi256") 1`] = `"[38;5;90m"`;
+
+exports[`color("#ffc0cb", "ansi") 1`] = `"[38;2;255;192;203m"`;
+
+exports[`color("#ffc0cb", "ansi256") 1`] = `"[38;5;218m"`;
+
+exports[`color("#808080", "ansi") 1`] = `"[38;2;128;128;128m"`;
+
+exports[`color("#808080", "ansi256") 1`] = `"[38;5;244m"`;
+
+exports[`color("#000000", "ansi") 1`] = `"[38;2;0;0;0m"`;
+
+exports[`color("#000000", "ansi256") 1`] = `"[38;5;16m"`;
+
+exports[`color("#ffffff", "ansi") 1`] = `"[38;2;255;255;255m"`;
+
+exports[`color("#ffffff", "ansi256") 1`] = `"[38;5;231m"`;
+
+exports[`color("#FF0000", "ansi") 1`] = `"[38;2;255;0;0m"`;
+
+exports[`color("#FF0000", "ansi256") 1`] = `"[38;5;196m"`;
+
+exports[`color("#00FF00", "ansi") 1`] = `"[38;2;0;255;0m"`;
+
+exports[`color("#00FF00", "ansi256") 1`] = `"[38;5;46m"`;
+
+exports[`color("#0000FF", "ansi") 1`] = `"[38;2;0;0;255m"`;
+
+exports[`color("#0000FF", "ansi256") 1`] = `"[38;5;21m"`;
+
+exports[`color("#FFFF00", "ansi") 1`] = `"[38;2;255;255;0m"`;
+
+exports[`color("#FFFF00", "ansi256") 1`] = `"[38;5;226m"`;
+
+exports[`color("#FF00FF", "ansi") 1`] = `"[38;2;255;0;255m"`;
+
+exports[`color("#FF00FF", "ansi256") 1`] = `"[38;5;201m"`;
+
+exports[`color("#00FFFF", "ansi") 1`] = `"[38;2;0;255;255m"`;
+
+exports[`color("#00FFFF", "ansi256") 1`] = `"[38;5;51m"`;
+
+exports[`color("#FFA500", "ansi") 1`] = `"[38;2;255;165;0m"`;
+
+exports[`color("#FFA500", "ansi256") 1`] = `"[38;5;214m"`;
+
+exports[`color("#800080", "ansi") 2`] = `"[38;2;128;0;128m"`;
+
+exports[`color("#800080", "ansi256") 2`] = `"[38;5;90m"`;
+
+exports[`color("#FFC0CB", "ansi") 1`] = `"[38;2;255;192;203m"`;
+
+exports[`color("#FFC0CB", "ansi256") 1`] = `"[38;5;218m"`;
+
+exports[`color("#808080", "ansi") 2`] = `"[38;2;128;128;128m"`;
+
+exports[`color("#808080", "ansi256") 2`] = `"[38;5;244m"`;
+
+exports[`color("#000000", "ansi") 2`] = `"[38;2;0;0;0m"`;
+
+exports[`color("#000000", "ansi256") 2`] = `"[38;5;16m"`;
+
+exports[`color("#FFFFFF", "ansi") 1`] = `"[38;2;255;255;255m"`;
+
+exports[`color("#FFFFFF", "ansi256") 1`] = `"[38;5;231m"`;
+
+exports[`color(16711680, "ansi") 1`] = `"[38;2;255;0;0m"`;
+
+exports[`color(16711680, "ansi256") 1`] = `"[38;5;196m"`;
+
+exports[`color(65280, "ansi") 1`] = `"[38;2;0;255;0m"`;
+
+exports[`color(65280, "ansi256") 1`] = `"[38;5;46m"`;
+
+exports[`color(255, "ansi") 1`] = `"[38;2;0;0;255m"`;
+
+exports[`color(255, "ansi256") 1`] = `"[38;5;21m"`;
+
+exports[`color(16776960, "ansi") 1`] = `"[38;2;255;255;0m"`;
+
+exports[`color(16776960, "ansi256") 1`] = `"[38;5;226m"`;
+
+exports[`color(16711935, "ansi") 1`] = `"[38;2;255;0;255m"`;
+
+exports[`color(16711935, "ansi256") 1`] = `"[38;5;201m"`;
+
+exports[`color(65535, "ansi") 1`] = `"[38;2;0;255;255m"`;
+
+exports[`color(65535, "ansi256") 1`] = `"[38;5;51m"`;
+
+exports[`color(16753920, "ansi") 1`] = `"[38;2;255;165;0m"`;
+
+exports[`color(16753920, "ansi256") 1`] = `"[38;5;214m"`;
+
+exports[`color(8388736, "ansi") 1`] = `"[38;2;128;0;128m"`;
+
+exports[`color(8388736, "ansi256") 1`] = `"[38;5;90m"`;
+
+exports[`color(16761035, "ansi") 1`] = `"[38;2;255;192;203m"`;
+
+exports[`color(16761035, "ansi256") 1`] = `"[38;5;218m"`;
+
+exports[`color(8421504, "ansi") 1`] = `"[38;2;128;128;128m"`;
+
+exports[`color(8421504, "ansi256") 1`] = `"[38;5;244m"`;
+
+exports[`color(0, "ansi") 1`] = `"[38;2;0;0;0m"`;
+
+exports[`color(0, "ansi256") 1`] = `"[38;5;16m"`;
+
+exports[`color(16777215, "ansi") 1`] = `"[38;2;255;255;255m"`;
+
+exports[`color(16777215, "ansi256") 1`] = `"[38;5;231m"`;

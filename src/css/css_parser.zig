@@ -544,7 +544,7 @@ pub fn DeriveParse(comptime T: type) type {
                 // Multiple fields declared before the payload fields, use tryParse
                 const state = input.state();
                 if (input.tryParse(Parser.expectIdent, .{}).asValue()) |ident| {
-                    if (Map.getCaseInsensitiveWithEql(ident, bun.strings.eqlComptime)) |matched| {
+                    if (Map.getCaseInsensitiveWithEql(ident, bun.strings.eqlComptimeIgnoreLen)) |matched| {
                         inline for (void_fields) |field| {
                             if (field.value == @intFromEnum(matched)) {
                                 if (comptime is_union_enum) return .{ .result = @unionInit(T, field.name, {}) };
@@ -579,7 +579,7 @@ pub fn DeriveParse(comptime T: type) type {
                     .result => |v| v,
                     .err => |e| return .{ .err = e },
                 };
-                if (Map.getCaseInsensitiveWithEql(ident, bun.strings.eqlComptime)) |matched| {
+                if (Map.getCaseInsensitiveWithEql(ident, bun.strings.eqlComptimeIgnoreLen)) |matched| {
                     inline for (void_fields) |field| {
                         if (field.value == @intFromEnum(matched)) {
                             if (comptime is_union_enum) return .{ .result = @unionInit(T, field.name, {}) };
@@ -647,7 +647,7 @@ pub fn DeriveParse(comptime T: type) type {
                 .result => |v| v,
                 .err => |e| return .{ .err = e },
             };
-            if (Map.getCaseInsensitiveWithEql(ident, bun.strings.eqlComptime)) |matched| {
+            if (Map.getCaseInsensitiveWithEql(ident, bun.strings.eqlComptimeIgnoreLen)) |matched| {
                 inline for (bun.meta.EnumFields(enum_type)) |field| {
                     if (field.value == @intFromEnum(matched)) {
                         if (comptime is_union_enum) return .{ .result = @unionInit(T, field.name, void) };
@@ -722,20 +722,19 @@ pub fn DefineEnumProperty(comptime T: type) type {
         }
 
         pub fn parse(input: *Parser) Result(T) {
-            _ = input; // autofix
-            // const location = input.currentSourceLocation();
-            // const ident = switch (input.expectIdent()) {
-            //     .err => |e| return .{ .err = e },
-            //     .result => |v| v,
-            // };
+            const location = input.currentSourceLocation();
+            const ident = switch (input.expectIdent()) {
+                .err => |e| return .{ .err = e },
+                .result => |v| v,
+            };
 
-            // // todo_stuff.match_ignore_ascii_case
-            // inline for (fields) |field| {
-            //     if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, field.name)) return .{ .result = @enumFromInt(field.value) };
-            // }
+            // todo_stuff.match_ignore_ascii_case
+            inline for (fields) |field| {
+                if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, field.name)) return .{ .result = @enumFromInt(field.value) };
+            }
 
-            // return location.newUnexpectedTokenError(.{ .ident = ident });
-            @panic("TODO renable this");
+            return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
+            // @panic("TODO renable this");
         }
 
         pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -2797,15 +2796,22 @@ pub const ParserOptions = struct {
     logger: ?*Log = null,
     /// Feature flags to enable.
     flags: ParserFlags,
+    allocator: Allocator,
 
     pub fn warn(this: *const ParserOptions, warning: ParseError(ParserError)) void {
-        _ = this; // autofix
-        _ = warning; // autofix
-        @panic("TODO: implement");
+        if (this.logger) |lg| {
+            lg.addWarningFmtLineCol(
+                this.filename,
+                warning.location.line,
+                warning.location.column,
+                this.allocator,
+                "{}",
+                .{warning.kind},
+            ) catch unreachable;
+        }
     }
 
     pub fn default(allocator: std.mem.Allocator, log: ?*Log) ParserOptions {
-        _ = allocator; // autofix
         return ParserOptions{
             .filename = "",
             .css_modules = null,
@@ -2813,6 +2819,7 @@ pub const ParserOptions = struct {
             .error_recovery = false,
             .logger = log,
             .flags = ParserFlags{},
+            .allocator = allocator,
         };
     }
 };

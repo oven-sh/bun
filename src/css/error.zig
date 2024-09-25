@@ -197,6 +197,8 @@ pub const ParserError = union(enum) {
     pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         return switch (this) {
             .at_rule_invalid => |name| writer.print("at_rule_invalid: {s}", .{name}),
+            .unexpected_token => |token| writer.print("unexpected_token: {s}", .{@tagName(token)}),
+            .selector_error => |err| writer.print("selector_error: {}", .{err}),
             else => writer.print("{s}", .{@tagName(this)}),
         };
     }
@@ -269,6 +271,29 @@ pub const SelectorError = union(enum) {
     unexpected_token_in_attribute_selector: css.Token,
     /// An unsupported pseudo class or pseudo element was encountered.
     unsupported_pseudo_class_or_element: []const u8,
+
+    pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        return switch (this) {
+            .dangling_combinator, .empty_selector, .invalid_state, .missing_nesting_prefix, .missing_nesting_selector => {
+                try writer.print("{s}", .{@tagName(this)});
+            },
+            inline .expected_namespace, .unexpected_ident, .unsupported_pseudo_class_or_element => |str| {
+                try writer.print("{s}: {s}", .{ @tagName(this), str });
+            },
+            inline .bad_value_in_attr,
+            .class_needs_ident,
+            .expected_bar_in_attr,
+            .explicit_namespace_unexpected_token,
+            .invalid_qual_name_in_attr,
+            .no_qualified_name_in_attribute_selector,
+            .pseudo_element_expected_ident,
+            .unexpected_token_in_attribute_selector,
+            => |tok| {
+                try writer.print("{s}: {s}", .{ @tagName(this), @tagName(tok) });
+            },
+            else => try writer.print("{s}", .{@tagName(this)}),
+        };
+    }
 };
 
 /// A transformation error.

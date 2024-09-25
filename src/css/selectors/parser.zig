@@ -1254,66 +1254,40 @@ pub const SelectorParser = struct {
     }
 
     pub fn parsePseudoElement(this: *SelectorParser, loc: css.SourceLocation, name: []const u8) Result(PseudoElement) {
-        const pseudo_element: PseudoElement = pseudo_element: {
-            if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "before")) {
-                break :pseudo_element .before;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "after")) {
-                break :pseudo_element .after;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "first-line")) {
-                break :pseudo_element .first_line;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "first-letter")) {
-                break :pseudo_element .first_letter;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "cue")) {
-                break :pseudo_element .cue;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "cue-region")) {
-                break :pseudo_element .cue_region;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "selection")) {
-                break :pseudo_element .{ .selection = css.VendorPrefix{ .none = true } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-moz-selection")) {
-                break :pseudo_element .{ .selection = css.VendorPrefix{ .moz = true } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "placeholder")) {
-                break :pseudo_element .{ .placeholder = css.VendorPrefix{ .none = true } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-webkit-input-placeholder")) {
-                break :pseudo_element .{ .placeholder = css.VendorPrefix{ .webkit = true } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-moz-placeholder")) {
-                break :pseudo_element .{ .placeholder = css.VendorPrefix{ .moz = true } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-ms-input-placeholder")) {
-                // this is a bugin hte source
-                break :pseudo_element .{ .placeholder = css.VendorPrefix{ .ms = true } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "marker")) {
-                break :pseudo_element .marker;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "backdrop")) {
-                break :pseudo_element .{ .backdrop = css.VendorPrefix{ .none = true } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-webkit-backdrop")) {
-                break :pseudo_element .{ .backdrop = css.VendorPrefix{ .webkit = true } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "file-selector-button")) {
-                break :pseudo_element .{ .file_selector_button = css.VendorPrefix{ .none = true } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-webkit-file-upload-button")) {
-                break :pseudo_element .{ .file_selector_button = css.VendorPrefix{ .webkit = true } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-ms-browse")) {
-                break :pseudo_element .{ .file_selector_button = css.VendorPrefix{ .ms = true } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-webkit-scrollbar")) {
-                break :pseudo_element .{ .webkit_scrollbar = .scrollbar };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-webkit-scrollbar-button")) {
-                break :pseudo_element .{ .webkit_scrollbar = .button };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-webkit-scrollbar-track")) {
-                break :pseudo_element .{ .webkit_scrollbar = .track };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-webkit-scrollbar-track-piece")) {
-                break :pseudo_element .{ .webkit_scrollbar = .track_piece };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-webkit-scrollbar-thumb")) {
-                break :pseudo_element .{ .webkit_scrollbar = .thumb };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-webkit-scrollbar-corner")) {
-                break :pseudo_element .{ .webkit_scrollbar = .corner };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-webkit-resizer")) {
-                break :pseudo_element .{ .webkit_scrollbar = .resizer };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "view-transition")) {
-                break :pseudo_element .view_transition;
-            } else {
-                if (bun.strings.startsWithChar(name, '-')) {
-                    this.options.warn(loc.newCustomError(SelectorParseErrorKind{ .unsupported_pseudo_class_or_element = name }));
-                }
-                return .{ .result = PseudoElement{ .custom = .{ .name = name } } };
+        const Map = comptime bun.ComptimeStringMap(PseudoElement, .{
+            .{ "before", PseudoElement.before },
+            .{ "after", PseudoElement.after },
+            .{ "first-line", PseudoElement.first_line },
+            .{ "first-letter", PseudoElement.first_letter },
+            .{ "cue", PseudoElement.cue },
+            .{ "cue-region", PseudoElement.cue_region },
+            .{ "selection", PseudoElement{ .selection = css.VendorPrefix{ .none = true } } },
+            .{ "-moz-selection", PseudoElement{ .selection = css.VendorPrefix{ .moz = true } } },
+            .{ "placeholder", PseudoElement{ .placeholder = css.VendorPrefix{ .none = true } } },
+            .{ "-webkit-input-placeholder", PseudoElement{ .placeholder = css.VendorPrefix{ .webkit = true } } },
+            .{ "-moz-placeholder", PseudoElement{ .placeholder = css.VendorPrefix{ .moz = true } } },
+            .{ "-ms-input-placeholder", PseudoElement{ .placeholder = css.VendorPrefix{ .ms = true } } },
+            .{ "marker", PseudoElement.marker },
+            .{ "backdrop", PseudoElement{ .backdrop = css.VendorPrefix{ .none = true } } },
+            .{ "-webkit-backdrop", PseudoElement{ .backdrop = css.VendorPrefix{ .webkit = true } } },
+            .{ "file-selector-button", PseudoElement{ .file_selector_button = css.VendorPrefix{ .none = true } } },
+            .{ "-webkit-file-upload-button", PseudoElement{ .file_selector_button = css.VendorPrefix{ .webkit = true } } },
+            .{ "-ms-browse", PseudoElement{ .file_selector_button = css.VendorPrefix{ .ms = true } } },
+            .{ "-webkit-scrollbar", PseudoElement{ .webkit_scrollbar = .scrollbar } },
+            .{ "-webkit-scrollbar-button", PseudoElement{ .webkit_scrollbar = .button } },
+            .{ "-webkit-scrollbar-track", PseudoElement{ .webkit_scrollbar = .track } },
+            .{ "-webkit-scrollbar-track-piece", PseudoElement{ .webkit_scrollbar = .track_piece } },
+            .{ "-webkit-scrollbar-thumb", PseudoElement{ .webkit_scrollbar = .thumb } },
+            .{ "-webkit-scrollbar-corner", PseudoElement{ .webkit_scrollbar = .corner } },
+            .{ "-webkit-resizer", PseudoElement{ .webkit_scrollbar = .resizer } },
+            .{ "view-transition", PseudoElement.view_transition },
+        });
+
+        const pseudo_element = Map.getCaseInsensitiveWithEql(name, bun.strings.eqlComptimeIgnoreLen) orelse brk: {
+            if (!bun.strings.startsWithChar(name, '-')) {
+                this.options.warn(loc.newCustomError(SelectorParseErrorKind{ .unsupported_pseudo_class_or_element = name }));
             }
+            break :brk PseudoElement{ .custom = .{ .name = name } };
         };
 
         return .{ .result = pseudo_element };
@@ -1769,10 +1743,16 @@ pub const NthSelectorData = struct {
     }
 
     pub fn writeStart(this: *const @This(), comptime W: type, dest: *Printer(W), is_function: bool) PrintErr!void {
-        _ = this; // autofix
-        _ = dest; // autofix
-        _ = is_function; // autofix
-        @panic(css.todo_stuff.depth);
+        try dest.writeStr(switch (this.ty) {
+            .child => if (is_function) ":nth-child(" else ":first-child",
+            .last_child => if (is_function) ":nth-last-child(" else ":last-child",
+            .of_type => if (is_function) ":nth-of-type(" else ":first-of-type",
+            .last_of_type => if (is_function) ":nth-last-of-type(" else ":last-of-type",
+            .only_child => if (is_function) ":nth-only-child(" else ":only-of-type",
+            .only_of_type => ":only-of-type",
+            .col => ":nth-col(",
+            .last_col => ":nth-last-col(",
+        });
     }
 
     pub fn isFunction(this: *const @This()) bool {
@@ -3160,13 +3140,62 @@ pub const AttributeFlags = enum {
     case_sensitivity_depends_on_name,
 
     pub fn toCaseSensitivity(this: AttributeFlags, local_name: []const u8, have_namespace: bool) attrs.ParsedCaseSensitivity {
-        _ = local_name; // autofix
-        _ = have_namespace; // autofix
         return switch (this) {
             .case_sensitive => .explicit_case_sensitive,
             .ascii_case_insensitive => .ascii_case_insensitive,
             .case_sensitivity_depends_on_name => {
-                @panic(css.todo_stuff.depth);
+                // <https://html.spec.whatwg.org/multipage/#selectors>
+                const AsciiCaseInsensitiveHtmlAttributes = enum {
+                    dir,
+                    http_equiv,
+                    rel,
+                    enctype,
+                    @"align",
+                    accept,
+                    nohref,
+                    lang,
+                    bgcolor,
+                    direction,
+                    valign,
+                    checked,
+                    frame,
+                    link,
+                    accept_charset,
+                    hreflang,
+                    text,
+                    valuetype,
+                    language,
+                    nowrap,
+                    vlink,
+                    disabled,
+                    noshade,
+                    codetype,
+                    @"defer",
+                    noresize,
+                    target,
+                    scrolling,
+                    rules,
+                    scope,
+                    rev,
+                    media,
+                    method,
+                    charset,
+                    alink,
+                    selected,
+                    multiple,
+                    color,
+                    shape,
+                    type,
+                    clear,
+                    compact,
+                    face,
+                    declare,
+                    axis,
+                    readonly,
+                };
+                const Map = comptime bun.ComptimeEnumMap(AsciiCaseInsensitiveHtmlAttributes);
+                if (!have_namespace and Map.has(local_name)) return .ascii_case_insensitive_if_in_html_element_in_html_document;
+                return .case_sensitive;
             },
         };
     }

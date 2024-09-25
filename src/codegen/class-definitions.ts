@@ -58,6 +58,7 @@ export interface ClassDefinition {
   values?: string[];
   JSType?: string;
   noConstructor?: boolean;
+  wantsThis?: boolean;
   estimatedSize?: boolean;
   hasPendingActivity?: boolean;
   isEventEmitter?: boolean;

@@ -967,6 +967,8 @@ pub const JSBundler = struct {
             else
                 bun.String.createUTF8(path.namespace);
             const path_string = bun.String.createUTF8(path.text);
+            defer namespace_string.deref();
+            defer path_string.deref();
             return JSBundlerPlugin__anyMatches(this, &namespace_string, &path_string, is_onLoad);
         }
 

@@ -35,7 +35,8 @@ jobs:
       - name: Install LLVM
         run: |
           curl -fsSL https://apt.llvm.org/llvm.sh | sudo bash -s -- 18 all
-          clang --version
+          sudo apt-get update
+          sudo apt-get install -y ccache
       - name: Format
         run: |
           bun run clang-format -DLLVM_VERSION=18.1.8

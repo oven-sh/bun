@@ -1,0 +1,33 @@
+name: clang-format
+
+permissions:
+  contents: write
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/clang-format.yml"
+      - ".clang-format"
+      - "src/**.{c,cpp,h,hpp}"
+
+jobs:
+  clang-format:
+    name: clang-format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github
+            .clang-format
+            src
+      - name: Format
+        run: |
+          bun run clang-format
+      - name: Commit
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: Run `bun run clang-format`

@@ -1831,6 +1831,30 @@ describe("bundler", () => {
     },
     run: { stdout: "1\n2" },
   });
+  itBundled("edgecase/Latin1StringInImportedJSON", {
+    files: {
+      "/entry.ts": `
+        import x from './second.json';
+        console.log(x);
+      `,
+      "/second.json": `
+        "测试"
+      `,
+    },
+    run: { stdout: `测试` },
+  });
+  itBundled("edgecase/Latin1StringKey", {
+    files: {
+      "/entry.ts": `
+        import x from './second.json';
+        console.log(x["测试"]);
+      `,
+      "/second.json": `
+        {"测试" : 123}
+      `,
+    },
+    run: { stdout: `123` },
+  });
 
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later
   const requireTranspilationListESM = [

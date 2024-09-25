@@ -42,6 +42,7 @@ const windows = bun.windows;
 const uv = windows.libuv;
 const Maybe = JSC.Maybe;
 const WTFStringImplStruct = @import("../string.zig").WTFStringImplStruct;
+const timespec = bun.timespec;
 
 const Pipe = [2]bun.FileDescriptor;
 const shell = @import("./shell.zig");
@@ -5279,6 +5280,7 @@ pub const Interpreter = struct {
             dirname: Dirname,
             basename: Basename,
             cp: Cp,
+            sleep: Sleep,
         };
 
         const Result = @import("../result.zig").Result;
@@ -5304,6 +5306,7 @@ pub const Interpreter = struct {
             dirname,
             basename,
             cp,
+            sleep,
 
             pub const DISABLED_ON_POSIX: []const Kind = &.{ .cat, .cp };
 
@@ -5332,6 +5335,7 @@ pub const Interpreter = struct {
                     .dirname => "usage: dirname string\n",
                     .basename => "usage: basename string\n",
                     .cp => "usage: cp [-R [-H | -L | -P]] [-fi | -n] [-aclpsvXx] source_file target_file\n       cp [-R [-H | -L | -P]] [-fi | -n] [-aclpsvXx] source_file ... target_directory\n",
+                    .sleep => "usage: sleep seconds\n",
                 };
             }
 
@@ -5510,6 +5514,7 @@ pub const Interpreter = struct {
                 .dirname => this.callImplWithType(Dirname, Ret, "dirname", field, args_),
                 .basename => this.callImplWithType(Basename, Ret, "basename", field, args_),
                 .cp => this.callImplWithType(Cp, Ret, "cp", field, args_),
+                .sleep => this.callImplWithType(Sleep, Ret, "sleep", field, args_),
             };
         }
 
@@ -10505,6 +10510,162 @@ pub const Interpreter = struct {
             }
         };
 
+        pub const Sleep = struct {
+            bltn: *Builtin,
+            state: enum { idle, err, done } = .idle,
+
+            event_loop_timer: JSC.BunTimer.EventLoopTimer = .{
+                .next = .{},
+                .tag = .ShellSleepBuiltin,
+            },
+
+            pub fn start(this: *Sleep) Maybe(void) {
+                const args = this.bltn.argsSlice();
+                var iter = bun.SliceIterator([*:0]const u8).init(args);
+
+                if (args.len == 0) return this.fail(Builtin.Kind.usageString(.sleep));
+
+                var total_seconds: f64 = 0;
+                while (iter.next()) |arg| {
+                    invalid_interval: {
+                        var trimmed: string = bun.strings.trimLeft(bun.sliceTo(arg, 0), " ");
+
+                        if (trimmed.len == 0 or trimmed[0] == '-') {
+                            break :invalid_interval;
+                        }
+
+                        const maybe_unit: ?enum {
+                            seconds,
+                            minutes,
+                            hours,
+                            days,
+
+                            pub fn apply(unit: @This(), value: f64) f64 {
+                                return switch (unit) {
+                                    .seconds => value,
+                                    .minutes => value * 60,
+                                    .hours => value * 60 * 60,
+                                    .days => value * 60 * 60 * 24,
+                                };
+                            }
+                        } = switch (trimmed[trimmed.len - 1]) {
+                            's' => .seconds,
+                            'm' => .minutes,
+                            'h' => .hours,
+                            'd' => .days,
+                            else => null,
+                        };
+
+                        if (maybe_unit != null) {
+                            trimmed = trimmed[0 .. trimmed.len - 1];
+                        }
+
+                        const value = bun.fmt.parseFloat(f64, trimmed) catch {
+                            break :invalid_interval;
+                        };
+
+                        const seconds = if (maybe_unit) |unit| unit.apply(value) else value;
+
+                        if (std.math.isInf(seconds)) {
+                            // if positive infinity is seen, set total seconds to `-1`.
+                            // continue iterating to catch invalid args
+                            total_seconds = -1;
+                        } else if (std.math.isNan(seconds)) {
+                            break :invalid_interval;
+                        }
+
+                        if (total_seconds != -1) {
+                            total_seconds += seconds;
+                        }
+
+                        continue;
+                    }
+
+                    return this.fail("sleep: invalid time interval\n");
+                }
+
+                if (total_seconds != 0) {
+                    switch (this.bltn.eventLoop()) {
+                        .js => |js| {
+                            const vm = js.getVmImpl();
+
+                            const milliseconds: i64 = if (total_seconds == -1)
+                                std.math.maxInt(i64)
+                            else
+                                @intFromFloat(@floor(total_seconds * @as(f64, std.time.ms_per_s)));
+
+                            const sleep_time = timespec.msFromNow(milliseconds);
+
+                            this.event_loop_timer.next = sleep_time;
+                            this.event_loop_timer.tag = .ShellSleepBuiltin;
+                            this.event_loop_timer.state = .ACTIVE;
+                            vm.timer.insert(&this.event_loop_timer);
+                            vm.timer.incrementTimerRef(1);
+                            return Maybe(void).success;
+                        },
+                        .mini => |mini| {
+                            _ = mini;
+                            const sleep_time: u64 = if (total_seconds == -1)
+                                std.math.maxInt(u64)
+                            else
+                                @intFromFloat(@floor(total_seconds * @as(f64, std.time.ns_per_s)));
+
+                            std.time.sleep(sleep_time);
+                        },
+                    }
+                }
+
+                this.state = .done;
+                this.bltn.done(0);
+
+                return Maybe(void).success;
+            }
+
+            pub fn deinit(_: *Sleep) void {}
+
+            pub fn fail(this: *Sleep, msg: string) Maybe(void) {
+                if (this.bltn.stderr.needsIO()) |safeguard| {
+                    this.state = .err;
+                    this.bltn.stderr.enqueue(this, msg, safeguard);
+                    return Maybe(void).success;
+                }
+                _ = this.bltn.writeNoIO(.stderr, msg);
+                this.bltn.done(1);
+                return Maybe(void).success;
+            }
+
+            pub fn onIOWriterChunk(this: *Sleep, _: usize, maybe_e: ?JSC.SystemError) void {
+                if (maybe_e) |e| {
+                    defer e.deref();
+                    this.state = .err;
+                    this.bltn.done(1);
+                    return;
+                }
+                if (this.state == .done) {
+                    this.bltn.done(0);
+                }
+                if (this.state == .err) {
+                    this.bltn.done(1);
+                }
+            }
+
+            pub fn onSleepFinish(this: *Sleep) JSC.BunTimer.EventLoopTimer.Arm {
+                switch (this.bltn.eventLoop()) {
+                    .js => |js| {
+                        const vm = js.getVmImpl();
+                        this.event_loop_timer.state = .FIRED;
+                        this.event_loop_timer.heap = .{};
+                        this.bltn.done(0);
+                        vm.timer.incrementTimerRef(-1);
+                    },
+                    .mini => |mini| {
+                        _ = mini;
+                    },
+                }
+                return .disarm;
+            }
+        };
+
         pub const Cp = struct {
             bltn: *Builtin,
             opts: Opts = .{},
@@ -12288,6 +12449,7 @@ pub const IOWriterChildPtr = struct {
         Interpreter.Builtin.Basename,
         Interpreter.Builtin.Cp,
         Interpreter.Builtin.Cp.ShellCpOutputTask,
+        Interpreter.Builtin.Sleep,
         shell.subproc.PipeReader.CapturedWriter,
     });
 

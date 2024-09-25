@@ -1,3 +1,9 @@
+optionx(SKIP_LLVM BOOL "If LLVM setup should be skipped" DEFAULT OFF)
+
+if(SKIP_LLVM)
+  return()
+endif()
+
 if(CMAKE_HOST_WIN32 OR CMAKE_HOST_APPLE)
   set(DEFAULT_LLVM_VERSION "18.1.8")
 else()

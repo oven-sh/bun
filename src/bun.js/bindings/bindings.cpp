@@ -5097,6 +5097,20 @@ JSC__JSValue JSC__JSValue__fastGet_(JSC__JSValue JSValue0, JSC__JSGlobalObject* 
     return JSValue::encode(value.getObject()->getIfPropertyExists(globalObject, builtinNameMap(globalObject, arg2)));
 }
 
+extern "C" JSC__JSValue JSC__JSValue__fastGetOwn(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, unsigned char arg2)
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    ASSERT(value.isCell());
+    PropertySlot slot = PropertySlot(value, PropertySlot::InternalMethodType::GetOwnProperty);
+    const Identifier name = builtinNameMap(globalObject, arg2);
+    auto* object = value.getObject();
+    if (object->getOwnPropertySlot(object, globalObject, name, slot)) {
+        return JSValue::encode(slot.getValue(globalObject, name));
+    }
+
+    return JSValue::encode({});
+}
+
 bool JSC__JSValue__toBooleanSlow(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject)
 {
     return JSValue::decode(JSValue0).toBoolean(globalObject);

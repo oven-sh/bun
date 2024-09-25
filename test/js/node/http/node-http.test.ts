@@ -162,7 +162,7 @@ describe("node:http", () => {
           const server = http.createServer(() => {});
           const random_port = randomPort();
           server.listen(random_port);
-          await once(server, 'listening');
+          await once(server, "listening");
           const { port } = server.address();
           expect(port).toEqual(random_port);
           server.close();

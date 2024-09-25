@@ -10,6 +10,7 @@ on:
     paths:
       - ".github/workflows/clang-format.yml"
       - ".clang-format"
+      - "package.json"
       - "scripts/**"
       - "cmake/**"
       - "src/**.{c,cpp,h,hpp}"
@@ -30,9 +31,11 @@ jobs:
           sparse-checkout: |
             .github
             .clang-format
+            package.json
             scripts
             cmake
             src
+            packages
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:

@@ -73,13 +73,13 @@ pub const serialize = struct {
 
         if (comptime bun.Environment.isDebug) {
             for (selector.components.items) |*comp| {
-                std.debug.print("Selector components: {}\n", .{comp});
+                std.debug.print("Selector components:\n  {}", .{comp});
             }
 
             var compound_selectors = CompoundSelectorIter{ .sel = selector };
             while (compound_selectors.next()) |comp| {
                 for (comp) |c| {
-                    std.debug.print("{}, ", .{c});
+                    std.debug.print("  {}, ", .{c});
                 }
             }
             std.debug.print("\n", .{});
@@ -193,20 +193,20 @@ pub const serialize = struct {
                 {
                     // Swap nesting and type selector (e.g. &div -> div&).
                     // This ensures that the compiled selector is valid. e.g. (div.foo is valid, .foodiv is not).
-                    const nesting = iter[i];
+                    const nesting = &iter[i];
                     i += 1;
-                    const local = iter[i];
+                    const local = &iter[i];
                     i += 1;
-                    try serializeComponent(&local, W, dest, context);
+                    try serializeComponent(local, W, dest, context);
 
                     // Also check the next item in case of namespaces.
                     if (first_non_namespace > first_index) {
-                        const local2 = iter[i];
+                        const local2 = &iter[i];
                         i += 1;
-                        try serializeComponent(&local2, W, dest, context);
+                        try serializeComponent(local2, W, dest, context);
                     }
 
-                    try serializeComponent(&nesting, W, dest, context);
+                    try serializeComponent(nesting, W, dest, context);
                 } else if (has_leading_nesting and should_compile_nesting) {
                     // Nesting selector may serialize differently if it is leading, due to type selectors.
                     i += 1;
@@ -234,8 +234,8 @@ pub const serialize = struct {
             //    ">", "+", "~", ">>", "||", as appropriate, followed by another
             //    single SPACE (U+0020) if the combinator was not whitespace, to
             //    s.
-            if (next_combinator) |c| {
-                try serializeCombinator(&c, W, dest);
+            if (next_combinator) |*c| {
+                try serializeCombinator(c, W, dest);
             } else {
                 combinators_exhausted = true;
             }
@@ -750,13 +750,17 @@ const tocss_servo = struct {
         comptime W: type,
         dest: *css.Printer(W),
     ) PrintErr!void {
-        var first = true;
-        for (selectors) |*selector| {
-            if (!first) {
+        if (selectors.len == 0) {
+            return;
+        }
+
+        try tocss_servo.toCss_Selector(&selectors[0], W, dest);
+
+        if (selectors.len > 1) {
+            for (selectors[1..]) |*selector| {
                 try dest.writeStr(", ");
+                try tocss_servo.toCss_Selector(selector, W, dest);
             }
-            first = false;
-            try tocss_servo.toCss_Selector(selector, W, dest);
         }
     }
 

@@ -474,12 +474,189 @@ pub fn DefineSizeShorthand(comptime T: type, comptime V: type) type {
 }
 
 pub fn DeriveParse(comptime T: type) type {
+    const tyinfo = @typeInfo(T);
+    const is_union_enum = tyinfo == .Union;
+    const enum_type = if (comptime is_union_enum) @typeInfo(tyinfo.Union.tag_type.?) else tyinfo;
+    const enum_actual_type = if (comptime is_union_enum) tyinfo.Union.tag_type.? else T;
+
+    const Map = bun.ComptimeEnumMap(enum_actual_type);
+
     // TODO: this has to work for enums and union(enums)
     return struct {
+        inline fn gnerateCode(
+            input: *Parser,
+            comptime first_payload_index: usize,
+            comptime maybe_first_void_index: ?usize,
+            comptime void_count: usize,
+            comptime payload_count: usize,
+        ) Result(T) {
+            const last_payload_index = first_payload_index + payload_count - 1;
+            if (comptime maybe_first_void_index == null) {
+                inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
+                    if (comptime (i == last_payload_index)) {
+                        return generic.parseFor(field.type)(input);
+                    }
+                    if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
+                        return .{ .result = @unionInit(T, field.name, v) };
+                    }
+                }
+            }
+
+            const first_void_index = maybe_first_void_index.?;
+
+            const void_fields = bun.meta.EnumFields(T)[first_void_index .. first_void_index + void_count];
+
+            if (comptime void_count == 1) {
+                const void_field = enum_type.Enum.fields[first_void_index];
+                // The field is declared before the payload fields.
+                // So try to parse an ident matching the name of the field, then fallthrough
+                // to parsing the payload fields.
+                if (comptime first_void_index < first_payload_index) {
+                    if (input.tryParse(Parser.expectIdentMatching, .{void_field.name}).isOk()) {
+                        if (comptime is_union_enum) return .{ .result = @unionInit(T, void_field.name, {}) };
+                        return .{ .result = @enumFromInt(void_field.value) };
+                    }
+
+                    inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
+                        if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
+                            return generic.parseFor(field.type)(input);
+                        }
+                        if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
+                            return .{ .result = @unionInit(T, field.name, v) };
+                        }
+                    }
+                } else {
+                    inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
+                        if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
+                            return generic.parseFor(field.type)(input);
+                        }
+                        if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
+                            return .{ .result = @unionInit(T, field.name, v) };
+                        }
+                    }
+
+                    // We can generate this as the last statements of the function, avoiding the `input.tryParse` routine above
+                    if (input.expectIdentMatching(void_field.name).asErr()) |e| return .{ .err = e };
+                    if (comptime is_union_enum) return .{ .result = @unionInit(T, void_field.name, {}) };
+                    return .{ .result = @enumFromInt(void_field.value) };
+                }
+            } else if (comptime first_void_index < first_payload_index) {
+                // Multiple fields declared before the payload fields, use tryParse
+                const state = input.state();
+                if (input.tryParse(Parser.expectIdent, .{}).asValue()) |ident| {
+                    if (Map.getCaseInsensitiveWithEql(ident, bun.strings.eqlComptime)) |matched| {
+                        inline for (void_fields) |field| {
+                            if (field.value == @intFromEnum(matched)) {
+                                if (comptime is_union_enum) return .{ .result = @unionInit(T, field.name, {}) };
+                                return .{ .result = @enumFromInt(field.value) };
+                            }
+                        }
+                        unreachable;
+                    }
+                    input.reset(&state);
+                }
+
+                inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
+                    if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
+                        return generic.parseFor(field.type)(input);
+                    }
+                    if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
+                        return .{ .result = @unionInit(T, field.name, v) };
+                    }
+                }
+            } else if (comptime first_void_index > first_payload_index) {
+                inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
+                    if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
+                        return generic.parseFor(field.type)(input);
+                    }
+                    if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
+                        return .{ .result = @unionInit(T, field.name, v) };
+                    }
+                }
+
+                const location = input.currentSourceLocation();
+                const ident = switch (input.expectIdent()) {
+                    .result => |v| v,
+                    .err => |e| return .{ .err = e },
+                };
+                if (Map.getCaseInsensitiveWithEql(ident, bun.strings.eqlComptime)) |matched| {
+                    inline for (void_fields) |field| {
+                        if (field.value == @intFromEnum(matched)) {
+                            if (comptime is_union_enum) return .{ .result = @unionInit(T, field.name, {}) };
+                            return .{ .result = @enumFromInt(field.value) };
+                        }
+                    }
+                    unreachable;
+                }
+                return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
+            }
+            @compileError("SHOULD BE UNREACHABLE!");
+        }
+
+        // inline fn generatePayloadBranches(
+        //     input: *Parser,
+        //     comptime first_payload_index: usize,
+        //     comptime first_void_index: usize,
+        //     comptime payload_count: usize,
+        // ) Result(T) {
+        //     const last_payload_index = first_payload_index + payload_count - 1;
+        //     inline for (tyinfo.Union.fields[first_payload_index..], first_payload_index..) |field, i| {
+        //         if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
+        //             return generic.parseFor(field.type)(input);
+        //         }
+        //         if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
+        //             return .{ .result = @unionInit(T, field.name, v) };
+        //         }
+        //     }
+        //     // The last field will return so this is never reachable
+        //     unreachable;
+        // }
+
         pub fn parse(input: *Parser) Result(T) {
-            // to implement this, we need to cargo expand the derive macro
-            _ = input; // autofix
-            @compileError(todo_stuff.depth);
+            if (comptime is_union_enum) {
+                const payload_count, const first_payload_index, const void_count, const first_void_index = comptime counts: {
+                    var first_void_index: ?usize = null;
+                    var first_payload_index: ?usize = null;
+                    var payload_count: usize = 0;
+                    var void_count: usize = 0;
+                    for (tyinfo.Union.fields, 0..) |field, i| {
+                        if (field.type == void) {
+                            void_count += 1;
+                            if (first_void_index == null) first_void_index = i;
+                        } else {
+                            payload_count += 1;
+                            if (first_payload_index == null) first_payload_index = i;
+                        }
+                    }
+                    if (first_payload_index == null) {
+                        @compileError("Type defined as `union(enum)` but no variant carries a payload. Make it an `enum` instead.");
+                    }
+                    if (first_void_index) |void_index| {
+                        // Check if they overlap
+                        if (first_payload_index.? < void_index and void_index < first_payload_index.? + payload_count) @compileError("Please put all the fields with data together and all the fields with no data together.");
+                        if (first_payload_index.? > void_index and first_payload_index.? < void_index + void_count) @compileError("Please put all the fields with data together and all the fields with no data together.");
+                    }
+                    break :counts .{ payload_count, first_payload_index.?, void_count, first_void_index };
+                };
+
+                return gnerateCode(input, first_payload_index, first_void_index, void_count, payload_count);
+            }
+
+            const location = input.currentSourceLocation();
+            const ident = switch (input.expectIdent()) {
+                .result => |v| v,
+                .err => |e| return .{ .err = e },
+            };
+            if (Map.getCaseInsensitiveWithEql(ident, bun.strings.eqlComptime)) |matched| {
+                inline for (bun.meta.EnumFields(enum_type)) |field| {
+                    if (field.value == @intFromEnum(matched)) {
+                        if (comptime is_union_enum) return .{ .result = @unionInit(T, field.name, void) };
+                        return .{ .result = @enumFromInt(field.value) };
+                    }
+                }
+                unreachable;
+            }
+            return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
         }
 
         // pub fn parse(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -574,7 +751,7 @@ pub fn DeriveValueType(comptime T: type) type {
 
     const ValueTypeMap = T.ValueTypeMap;
     const field_values: []const MediaFeatureType = field_values: {
-        const fields = std.meta.fields(@This());
+        const fields = std.meta.fields(T);
         var mapping: [fields.len]MediaFeatureType = undefined;
         for (fields, 0..) |field, i| {
             // Check that it exists in the type map
@@ -586,7 +763,7 @@ pub fn DeriveValueType(comptime T: type) type {
 
     return struct {
         pub fn valueType(this: *const T) MediaFeatureType {
-            inline for (std.meta.fields(@This()), 0..) |field, i| {
+            inline for (std.meta.fields(T), 0..) |field, i| {
                 if (field.value == @intFromEnum(this.*)) {
                     return field_values[i];
                 }
@@ -2315,6 +2492,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
                 };
             } else {
                 try this.rules.toCss(W, &printer);
+                try printer.newline();
                 return ToCssResult{
                     .dependencies = printer.dependencies,
                     .code = dest.items,
@@ -3138,10 +3316,10 @@ pub const Parser = struct {
     /// This ignores whitespace and comments.
     pub fn expectExhausted(this: *Parser) Result(void) {
         const start = this.state();
-        const result = switch (this.next()) {
-            .result => |t| return .{ .err = start.sourceLocation().newUnexpectedTokenError(t.*) },
-            .err => |e| {
-                if (e.kind == .basic and e.kind.basic == .end_of_input) return .{ .result = {} };
+        const result: Result(void) = switch (this.next()) {
+            .result => |t| .{ .err = start.sourceLocation().newUnexpectedTokenError(t.*) },
+            .err => |e| brk: {
+                if (e.kind == .basic and e.kind.basic == .end_of_input) break :brk .{ .result = {} };
                 bun.unreachablePanic("Unexpected error encountered: {}", .{e.kind});
             },
         };
@@ -4049,6 +4227,7 @@ const Tokenizer = struct {
     }
 
     pub fn consumeQuotedString(this: *Tokenizer, comptime single_quote: bool) struct { str: []const u8, bad: bool = false } {
+        this.advance(1); // Skip the initial quote
         const start_pos = this.position;
         var string_bytes: CopyOnWriteStr = undefined;
 
@@ -5158,162 +5337,156 @@ pub const color = struct {
     };
 
     const RGB = struct { u8, u8, u8 };
-    // PERF: Make this faster?
-    pub const named_colors: std.StaticStringMap(RGB) = named_colors: {
-        const defined_colors = .{
-            .{ "black", .{ 0, 0, 0 } },
-            .{ "silver", .{ 192, 192, 192 } },
-            .{ "gray", .{ 128, 128, 128 } },
-            .{ "white", .{ 255, 255, 255 } },
-            .{ "maroon", .{ 128, 0, 0 } },
-            .{ "red", .{ 255, 0, 0 } },
-            .{ "purple", .{ 128, 0, 128 } },
-            .{ "fuchsia", .{ 255, 0, 255 } },
-            .{ "green", .{ 0, 128, 0 } },
-            .{ "lime", .{ 0, 255, 0 } },
-            .{ "olive", .{ 128, 128, 0 } },
-            .{ "yellow", .{ 255, 255, 0 } },
-            .{ "navy", .{ 0, 0, 128 } },
-            .{ "blue", .{ 0, 0, 255 } },
-            .{ "teal", .{ 0, 128, 128 } },
-            .{ "aqua", .{ 0, 255, 255 } },
-
-            .{ "aliceblue", .{ 240, 248, 255 } },
-            .{ "antiquewhite", .{ 250, 235, 215 } },
-            .{ "aquamarine", .{ 127, 255, 212 } },
-            .{ "azure", .{ 240, 255, 255 } },
-            .{ "beige", .{ 245, 245, 220 } },
-            .{ "bisque", .{ 255, 228, 196 } },
-            .{ "blanchedalmond", .{ 255, 235, 205 } },
-            .{ "blueviolet", .{ 138, 43, 226 } },
-            .{ "brown", .{ 165, 42, 42 } },
-            .{ "burlywood", .{ 222, 184, 135 } },
-            .{ "cadetblue", .{ 95, 158, 160 } },
-            .{ "chartreuse", .{ 127, 255, 0 } },
-            .{ "chocolate", .{ 210, 105, 30 } },
-            .{ "coral", .{ 255, 127, 80 } },
-            .{ "cornflowerblue", .{ 100, 149, 237 } },
-            .{ "cornsilk", .{ 255, 248, 220 } },
-            .{ "crimson", .{ 220, 20, 60 } },
-            .{ "cyan", .{ 0, 255, 255 } },
-            .{ "darkblue", .{ 0, 0, 139 } },
-            .{ "darkcyan", .{ 0, 139, 139 } },
-            .{ "darkgoldenrod", .{ 184, 134, 11 } },
-            .{ "darkgray", .{ 169, 169, 169 } },
-            .{ "darkgreen", .{ 0, 100, 0 } },
-            .{ "darkgrey", .{ 169, 169, 169 } },
-            .{ "darkkhaki", .{ 189, 183, 107 } },
-            .{ "darkmagenta", .{ 139, 0, 139 } },
-            .{ "darkolivegreen", .{ 85, 107, 47 } },
-            .{ "darkorange", .{ 255, 140, 0 } },
-            .{ "darkorchid", .{ 153, 50, 204 } },
-            .{ "darkred", .{ 139, 0, 0 } },
-            .{ "darksalmon", .{ 233, 150, 122 } },
-            .{ "darkseagreen", .{ 143, 188, 143 } },
-            .{ "darkslateblue", .{ 72, 61, 139 } },
-            .{ "darkslategray", .{ 47, 79, 79 } },
-            .{ "darkslategrey", .{ 47, 79, 79 } },
-            .{ "darkturquoise", .{ 0, 206, 209 } },
-            .{ "darkviolet", .{ 148, 0, 211 } },
-            .{ "deeppink", .{ 255, 20, 147 } },
-            .{ "deepskyblue", .{ 0, 191, 255 } },
-            .{ "dimgray", .{ 105, 105, 105 } },
-            .{ "dimgrey", .{ 105, 105, 105 } },
-            .{ "dodgerblue", .{ 30, 144, 255 } },
-            .{ "firebrick", .{ 178, 34, 34 } },
-            .{ "floralwhite", .{ 255, 250, 240 } },
-            .{ "forestgreen", .{ 34, 139, 34 } },
-            .{ "gainsboro", .{ 220, 220, 220 } },
-            .{ "ghostwhite", .{ 248, 248, 255 } },
-            .{ "gold", .{ 255, 215, 0 } },
-            .{ "goldenrod", .{ 218, 165, 32 } },
-            .{ "greenyellow", .{ 173, 255, 47 } },
-            .{ "grey", .{ 128, 128, 128 } },
-            .{ "honeydew", .{ 240, 255, 240 } },
-            .{ "hotpink", .{ 255, 105, 180 } },
-            .{ "indianred", .{ 205, 92, 92 } },
-            .{ "indigo", .{ 75, 0, 130 } },
-            .{ "ivory", .{ 255, 255, 240 } },
-            .{ "khaki", .{ 240, 230, 140 } },
-            .{ "lavender", .{ 230, 230, 250 } },
-            .{ "lavenderblush", .{ 255, 240, 245 } },
-            .{ "lawngreen", .{ 124, 252, 0 } },
-            .{ "lemonchiffon", .{ 255, 250, 205 } },
-            .{ "lightblue", .{ 173, 216, 230 } },
-            .{ "lightcoral", .{ 240, 128, 128 } },
-            .{ "lightcyan", .{ 224, 255, 255 } },
-            .{ "lightgoldenrodyellow", .{ 250, 250, 210 } },
-            .{ "lightgray", .{ 211, 211, 211 } },
-            .{ "lightgreen", .{ 144, 238, 144 } },
-            .{ "lightgrey", .{ 211, 211, 211 } },
-            .{ "lightpink", .{ 255, 182, 193 } },
-            .{ "lightsalmon", .{ 255, 160, 122 } },
-            .{ "lightseagreen", .{ 32, 178, 170 } },
-            .{ "lightskyblue", .{ 135, 206, 250 } },
-            .{ "lightslategray", .{ 119, 136, 153 } },
-            .{ "lightslategrey", .{ 119, 136, 153 } },
-            .{ "lightsteelblue", .{ 176, 196, 222 } },
-            .{ "lightyellow", .{ 255, 255, 224 } },
-            .{ "limegreen", .{ 50, 205, 50 } },
-            .{ "linen", .{ 250, 240, 230 } },
-            .{ "magenta", .{ 255, 0, 255 } },
-            .{ "mediumaquamarine", .{ 102, 205, 170 } },
-            .{ "mediumblue", .{ 0, 0, 205 } },
-            .{ "mediumorchid", .{ 186, 85, 211 } },
-            .{ "mediumpurple", .{ 147, 112, 219 } },
-            .{ "mediumseagreen", .{ 60, 179, 113 } },
-            .{ "mediumslateblue", .{ 123, 104, 238 } },
-            .{ "mediumspringgreen", .{ 0, 250, 154 } },
-            .{ "mediumturquoise", .{ 72, 209, 204 } },
-            .{ "mediumvioletred", .{ 199, 21, 133 } },
-            .{ "midnightblue", .{ 25, 25, 112 } },
-            .{ "mintcream", .{ 245, 255, 250 } },
-            .{ "mistyrose", .{ 255, 228, 225 } },
-            .{ "moccasin", .{ 255, 228, 181 } },
-            .{ "navajowhite", .{ 255, 222, 173 } },
-            .{ "oldlace", .{ 253, 245, 230 } },
-            .{ "olivedrab", .{ 107, 142, 35 } },
-            .{ "orange", .{ 255, 165, 0 } },
-            .{ "orangered", .{ 255, 69, 0 } },
-            .{ "orchid", .{ 218, 112, 214 } },
-            .{ "palegoldenrod", .{ 238, 232, 170 } },
-            .{ "palegreen", .{ 152, 251, 152 } },
-            .{ "paleturquoise", .{ 175, 238, 238 } },
-            .{ "palevioletred", .{ 219, 112, 147 } },
-            .{ "papayawhip", .{ 255, 239, 213 } },
-            .{ "peachpuff", .{ 255, 218, 185 } },
-            .{ "peru", .{ 205, 133, 63 } },
-            .{ "pink", .{ 255, 192, 203 } },
-            .{ "plum", .{ 221, 160, 221 } },
-            .{ "powderblue", .{ 176, 224, 230 } },
-            .{ "rebeccapurple", .{ 102, 51, 153 } },
-            .{ "rosybrown", .{ 188, 143, 143 } },
-            .{ "royalblue", .{ 65, 105, 225 } },
-            .{ "saddlebrown", .{ 139, 69, 19 } },
-            .{ "salmon", .{ 250, 128, 114 } },
-            .{ "sandybrown", .{ 244, 164, 96 } },
-            .{ "seagreen", .{ 46, 139, 87 } },
-            .{ "seashell", .{ 255, 245, 238 } },
-            .{ "sienna", .{ 160, 82, 45 } },
-            .{ "skyblue", .{ 135, 206, 235 } },
-            .{ "slateblue", .{ 106, 90, 205 } },
-            .{ "slategray", .{ 112, 128, 144 } },
-            .{ "slategrey", .{ 112, 128, 144 } },
-            .{ "snow", .{ 255, 250, 250 } },
-            .{ "springgreen", .{ 0, 255, 127 } },
-            .{ "steelblue", .{ 70, 130, 180 } },
-            .{ "tan", .{ 210, 180, 140 } },
-            .{ "thistle", .{ 216, 191, 216 } },
-            .{ "tomato", .{ 255, 99, 71 } },
-            .{ "turquoise", .{ 64, 224, 208 } },
-            .{ "violet", .{ 238, 130, 238 } },
-            .{ "wheat", .{ 245, 222, 179 } },
-            .{ "whitesmoke", .{ 245, 245, 245 } },
-            .{ "yellowgreen", .{ 154, 205, 50 } },
-        };
-        const map = std.StaticStringMap(RGB).initComptime(defined_colors);
-        break :named_colors map;
-    };
+    pub const named_colors = bun.ComptimeStringMap(RGB, .{
+        .{ "aliceblue", .{ 240, 248, 255 } },
+        .{ "antiquewhite", .{ 250, 235, 215 } },
+        .{ "aqua", .{ 0, 255, 255 } },
+        .{ "aquamarine", .{ 127, 255, 212 } },
+        .{ "azure", .{ 240, 255, 255 } },
+        .{ "beige", .{ 245, 245, 220 } },
+        .{ "bisque", .{ 255, 228, 196 } },
+        .{ "black", .{ 0, 0, 0 } },
+        .{ "blanchedalmond", .{ 255, 235, 205 } },
+        .{ "blue", .{ 0, 0, 255 } },
+        .{ "blueviolet", .{ 138, 43, 226 } },
+        .{ "brown", .{ 165, 42, 42 } },
+        .{ "burlywood", .{ 222, 184, 135 } },
+        .{ "cadetblue", .{ 95, 158, 160 } },
+        .{ "chartreuse", .{ 127, 255, 0 } },
+        .{ "chocolate", .{ 210, 105, 30 } },
+        .{ "coral", .{ 255, 127, 80 } },
+        .{ "cornflowerblue", .{ 100, 149, 237 } },
+        .{ "cornsilk", .{ 255, 248, 220 } },
+        .{ "crimson", .{ 220, 20, 60 } },
+        .{ "cyan", .{ 0, 255, 255 } },
+        .{ "darkblue", .{ 0, 0, 139 } },
+        .{ "darkcyan", .{ 0, 139, 139 } },
+        .{ "darkgoldenrod", .{ 184, 134, 11 } },
+        .{ "darkgray", .{ 169, 169, 169 } },
+        .{ "darkgreen", .{ 0, 100, 0 } },
+        .{ "darkgrey", .{ 169, 169, 169 } },
+        .{ "darkkhaki", .{ 189, 183, 107 } },
+        .{ "darkmagenta", .{ 139, 0, 139 } },
+        .{ "darkolivegreen", .{ 85, 107, 47 } },
+        .{ "darkorange", .{ 255, 140, 0 } },
+        .{ "darkorchid", .{ 153, 50, 204 } },
+        .{ "darkred", .{ 139, 0, 0 } },
+        .{ "darksalmon", .{ 233, 150, 122 } },
+        .{ "darkseagreen", .{ 143, 188, 143 } },
+        .{ "darkslateblue", .{ 72, 61, 139 } },
+        .{ "darkslategray", .{ 47, 79, 79 } },
+        .{ "darkslategrey", .{ 47, 79, 79 } },
+        .{ "darkturquoise", .{ 0, 206, 209 } },
+        .{ "darkviolet", .{ 148, 0, 211 } },
+        .{ "deeppink", .{ 255, 20, 147 } },
+        .{ "deepskyblue", .{ 0, 191, 255 } },
+        .{ "dimgray", .{ 105, 105, 105 } },
+        .{ "dimgrey", .{ 105, 105, 105 } },
+        .{ "dodgerblue", .{ 30, 144, 255 } },
+        .{ "firebrick", .{ 178, 34, 34 } },
+        .{ "floralwhite", .{ 255, 250, 240 } },
+        .{ "forestgreen", .{ 34, 139, 34 } },
+        .{ "fuchsia", .{ 255, 0, 255 } },
+        .{ "gainsboro", .{ 220, 220, 220 } },
+        .{ "ghostwhite", .{ 248, 248, 255 } },
+        .{ "gold", .{ 255, 215, 0 } },
+        .{ "goldenrod", .{ 218, 165, 32 } },
+        .{ "gray", .{ 128, 128, 128 } },
+        .{ "green", .{ 0, 128, 0 } },
+        .{ "greenyellow", .{ 173, 255, 47 } },
+        .{ "grey", .{ 128, 128, 128 } },
+        .{ "honeydew", .{ 240, 255, 240 } },
+        .{ "hotpink", .{ 255, 105, 180 } },
+        .{ "indianred", .{ 205, 92, 92 } },
+        .{ "indigo", .{ 75, 0, 130 } },
+        .{ "ivory", .{ 255, 255, 240 } },
+        .{ "khaki", .{ 240, 230, 140 } },
+        .{ "lavender", .{ 230, 230, 250 } },
+        .{ "lavenderblush", .{ 255, 240, 245 } },
+        .{ "lawngreen", .{ 124, 252, 0 } },
+        .{ "lemonchiffon", .{ 255, 250, 205 } },
+        .{ "lightblue", .{ 173, 216, 230 } },
+        .{ "lightcoral", .{ 240, 128, 128 } },
+        .{ "lightcyan", .{ 224, 255, 255 } },
+        .{ "lightgoldenrodyellow", .{ 250, 250, 210 } },
+        .{ "lightgray", .{ 211, 211, 211 } },
+        .{ "lightgreen", .{ 144, 238, 144 } },
+        .{ "lightgrey", .{ 211, 211, 211 } },
+        .{ "lightpink", .{ 255, 182, 193 } },
+        .{ "lightsalmon", .{ 255, 160, 122 } },
+        .{ "lightseagreen", .{ 32, 178, 170 } },
+        .{ "lightskyblue", .{ 135, 206, 250 } },
+        .{ "lightslategray", .{ 119, 136, 153 } },
+        .{ "lightslategrey", .{ 119, 136, 153 } },
+        .{ "lightsteelblue", .{ 176, 196, 222 } },
+        .{ "lightyellow", .{ 255, 255, 224 } },
+        .{ "lime", .{ 0, 255, 0 } },
+        .{ "limegreen", .{ 50, 205, 50 } },
+        .{ "linen", .{ 250, 240, 230 } },
+        .{ "magenta", .{ 255, 0, 255 } },
+        .{ "maroon", .{ 128, 0, 0 } },
+        .{ "mediumaquamarine", .{ 102, 205, 170 } },
+        .{ "mediumblue", .{ 0, 0, 205 } },
+        .{ "mediumorchid", .{ 186, 85, 211 } },
+        .{ "mediumpurple", .{ 147, 112, 219 } },
+        .{ "mediumseagreen", .{ 60, 179, 113 } },
+        .{ "mediumslateblue", .{ 123, 104, 238 } },
+        .{ "mediumspringgreen", .{ 0, 250, 154 } },
+        .{ "mediumturquoise", .{ 72, 209, 204 } },
+        .{ "mediumvioletred", .{ 199, 21, 133 } },
+        .{ "midnightblue", .{ 25, 25, 112 } },
+        .{ "mintcream", .{ 245, 255, 250 } },
+        .{ "mistyrose", .{ 255, 228, 225 } },
+        .{ "moccasin", .{ 255, 228, 181 } },
+        .{ "navajowhite", .{ 255, 222, 173 } },
+        .{ "navy", .{ 0, 0, 128 } },
+        .{ "oldlace", .{ 253, 245, 230 } },
+        .{ "olive", .{ 128, 128, 0 } },
+        .{ "olivedrab", .{ 107, 142, 35 } },
+        .{ "orange", .{ 255, 165, 0 } },
+        .{ "orangered", .{ 255, 69, 0 } },
+        .{ "orchid", .{ 218, 112, 214 } },
+        .{ "palegoldenrod", .{ 238, 232, 170 } },
+        .{ "palegreen", .{ 152, 251, 152 } },
+        .{ "paleturquoise", .{ 175, 238, 238 } },
+        .{ "palevioletred", .{ 219, 112, 147 } },
+        .{ "papayawhip", .{ 255, 239, 213 } },
+        .{ "peachpuff", .{ 255, 218, 185 } },
+        .{ "peru", .{ 205, 133, 63 } },
+        .{ "pink", .{ 255, 192, 203 } },
+        .{ "plum", .{ 221, 160, 221 } },
+        .{ "powderblue", .{ 176, 224, 230 } },
+        .{ "purple", .{ 128, 0, 128 } },
+        .{ "rebeccapurple", .{ 102, 51, 153 } },
+        .{ "red", .{ 255, 0, 0 } },
+        .{ "rosybrown", .{ 188, 143, 143 } },
+        .{ "royalblue", .{ 65, 105, 225 } },
+        .{ "saddlebrown", .{ 139, 69, 19 } },
+        .{ "salmon", .{ 250, 128, 114 } },
+        .{ "sandybrown", .{ 244, 164, 96 } },
+        .{ "seagreen", .{ 46, 139, 87 } },
+        .{ "seashell", .{ 255, 245, 238 } },
+        .{ "sienna", .{ 160, 82, 45 } },
+        .{ "silver", .{ 192, 192, 192 } },
+        .{ "skyblue", .{ 135, 206, 235 } },
+        .{ "slateblue", .{ 106, 90, 205 } },
+        .{ "slategray", .{ 112, 128, 144 } },
+        .{ "slategrey", .{ 112, 128, 144 } },
+        .{ "snow", .{ 255, 250, 250 } },
+        .{ "springgreen", .{ 0, 255, 127 } },
+        .{ "steelblue", .{ 70, 130, 180 } },
+        .{ "tan", .{ 210, 180, 140 } },
+        .{ "teal", .{ 0, 128, 128 } },
+        .{ "thistle", .{ 216, 191, 216 } },
+        .{ "tomato", .{ 255, 99, 71 } },
+        .{ "turquoise", .{ 64, 224, 208 } },
+        .{ "violet", .{ 238, 130, 238 } },
+        .{ "wheat", .{ 245, 222, 179 } },
+        .{ "white", .{ 255, 255, 255 } },
+        .{ "whitesmoke", .{ 245, 245, 245 } },
+        .{ "yellow", .{ 255, 255, 0 } },
+        .{ "yellowgreen", .{ 154, 205, 50 } },
+    });
 
     /// Returns the named color with the given name.
     /// <https://drafts.csswg.org/css-color-4/#typedef-named-color>
@@ -5334,11 +5507,15 @@ pub const color = struct {
                 (try fromHex(value[4])) * 16 + (try fromHex(value[5])),
                 @as(f32, @floatFromInt((try fromHex(value[6])) * 16 + (try fromHex(value[7])))) / 255.0,
             },
-            6 => .{
-                (try fromHex(value[0])) * 16 + (try fromHex(value[1])),
-                (try fromHex(value[2])) * 16 + (try fromHex(value[3])),
-                (try fromHex(value[4])) * 16 + (try fromHex(value[5])),
-                OPAQUE,
+            6 => {
+                const r = (try fromHex(value[0])) * 16 + (try fromHex(value[1]));
+                const g = (try fromHex(value[2])) * 16 + (try fromHex(value[3]));
+                const b = (try fromHex(value[4])) * 16 + (try fromHex(value[5]));
+                return .{
+                    r,      g, b,
+
+                    OPAQUE,
+                };
             },
             4 => .{
                 (try fromHex(value[0])) * 17,

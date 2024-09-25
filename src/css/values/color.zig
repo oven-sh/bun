@@ -125,7 +125,7 @@ pub const CssColor = union(enum) {
                     if (hex == expandHex(compact)) {
                         try dest.writeFmt("#{x:0>3}", .{compact});
                     } else {
-                        try dest.writeFmt("#{x:0>6}", .{compact});
+                        try dest.writeFmt("#{x:0>6}", .{hex});
                     }
                 } else {
                     // If the #rrggbbaa syntax is not supported by the browser targets, output rgba()
@@ -973,7 +973,7 @@ fn parseRgb(input: *css.Parser, parser: *ComponentParser) Result(CssColor) {
 
         pub fn parseRelativeFn(i: *css.Parser, p: *ComponentParser, this: *@This()) Result(CssColor) {
             _ = this; // autofix
-            const r, const g, const b, const is_legacy = switch (parseRgbComponents(i, p)) {
+            const r, const g, const b, const is_legacy = switch (parseRGBComponents(i, p)) {
                 .result => |vv| vv,
                 .err => |e| return .{ .err = e },
             };
@@ -1034,105 +1034,105 @@ fn parseRgb(input: *css.Parser, parser: *ComponentParser) Result(CssColor) {
     return input.parseNestedBlock(CssColor, &closure, Closure.parseNestedBlockFn);
 }
 
-pub fn parseRgbComponents(input: *css.Parser, parser: *ComponentParser) Result(struct {
-    f32,
-    f32,
-    f32,
-    bool,
-}) {
-    const red = switch (parser.parseNumberOrPercentage(input)) {
-        .result => |vv| vv,
-        .err => |e| return .{ .err = e },
-    };
-    const is_legacy_syntax = parser.from == null and !std.math.isNan(red.unitValue()) and input.tryParse(css.Parser.expectComma, .{}).isOk();
+// pub fn parseRgbComponents(input: *css.Parser, parser: *ComponentParser) Result(struct {
+//     f32,
+//     f32,
+//     f32,
+//     bool,
+// }) {
+//     const red = switch (parser.parseNumberOrPercentage(input)) {
+//         .result => |vv| vv,
+//         .err => |e| return .{ .err = e },
+//     };
+//     const is_legacy_syntax = parser.from == null and !std.math.isNan(red.unitValue()) and input.tryParse(css.Parser.expectComma, .{}).isOk();
 
-    const r, const g, const b = if (is_legacy_syntax) switch (red) {
-        .number => |num| brk: {
-            const r = std.math.clamp(@round(num.value), 0.0, 255.0);
-            const g = std.math.clamp(
-                @round(
-                    switch (parser.parseNumber(input)) {
-                        .result => |vv| vv,
-                        .err => |e| return .{ .err = e },
-                    },
-                ),
-                0.0,
-                255.0,
-            );
-            if (input.expectComma().asErr()) |e| return .{ .err = e };
-            const b = std.math.clamp(
-                @round(
-                    switch (parser.parseNumber(input)) {
-                        .result => |vv| vv,
-                        .err => |e| return .{ .err = e },
-                    },
-                ),
-                0.0,
-                255.0,
-            );
-            break :brk .{ r, g, b };
-        },
-        .percentage => |per| brk: {
-            const unit_value = per.unit_value;
-            const r = std.math.clamp(@round(unit_value * 255.0), 0.0, 255.0);
-            const g = std.math.clamp(
-                @round(
-                    switch (parser.parsePercentage(input)) {
-                        .result => |vv| vv,
-                        .err => |e| return .{ .err = e },
-                    } * 255.0,
-                ),
-                0.0,
-                255.0,
-            );
-            if (input.expectComma().asErr()) |e| return .{ .err = e };
-            const b = std.math.clamp(
-                @round(
-                    switch (parser.parsePercentage(input)) {
-                        .result => |vv| vv,
-                        .err => |e| return .{ .err = e },
-                    } * 255.0,
-                ),
-                0.0,
-                255.0,
-            );
-            break :brk .{ r, g, b };
-        },
-    } else brk: {
-        const get = struct {
-            pub fn component(value: NumberOrPercentage) f32 {
-                return switch (value) {
-                    .number => |num| {
-                        const v = num.value;
-                        if (std.math.isNan(v)) return v;
-                        return std.math.clamp(@round(v), 0.0, 255.0) / 255.0;
-                    },
-                    .percentage => |per| std.math.clamp(per.unit_value, 0.0, 1.0),
-                };
-            }
-        };
-        const r = get.component(red);
-        const g = get.component(
-            switch (parser.parseNumberOrPercentage(input)) {
-                .result => |vv| vv,
-                .err => |e| return .{ .err = e },
-            },
-        );
-        const b = get.component(
-            switch (parser.parseNumberOrPercentage(input)) {
-                .result => |vv| vv,
-                .err => |e| return .{ .err = e },
-            },
-        );
-        break :brk .{ r, g, b };
-    };
+//     const r, const g, const b = if (is_legacy_syntax) switch (red) {
+//         .number => |num| brk: {
+//             const r = std.math.clamp(@round(num.value), 0.0, 255.0);
+//             const g = std.math.clamp(
+//                 @round(
+//                     switch (parser.parseNumber(input)) {
+//                         .result => |vv| vv,
+//                         .err => |e| return .{ .err = e },
+//                     },
+//                 ),
+//                 0.0,
+//                 255.0,
+//             );
+//             if (input.expectComma().asErr()) |e| return .{ .err = e };
+//             const b = std.math.clamp(
+//                 @round(
+//                     switch (parser.parseNumber(input)) {
+//                         .result => |vv| vv,
+//                         .err => |e| return .{ .err = e },
+//                     },
+//                 ),
+//                 0.0,
+//                 255.0,
+//             );
+//             break :brk .{ r, g, b };
+//         },
+//         .percentage => |per| brk: {
+//             const unit_value = per.unit_value;
+//             const r = std.math.clamp(@round(unit_value * 255.0), 0.0, 255.0);
+//             const g = std.math.clamp(
+//                 @round(
+//                     switch (parser.parsePercentage(input)) {
+//                         .result => |vv| vv,
+//                         .err => |e| return .{ .err = e },
+//                     } * 255.0,
+//                 ),
+//                 0.0,
+//                 255.0,
+//             );
+//             if (input.expectComma().asErr()) |e| return .{ .err = e };
+//             const b = std.math.clamp(
+//                 @round(
+//                     switch (parser.parsePercentage(input)) {
+//                         .result => |vv| vv,
+//                         .err => |e| return .{ .err = e },
+//                     } * 255.0,
+//                 ),
+//                 0.0,
+//                 255.0,
+//             );
+//             break :brk .{ r, g, b };
+//         },
+//     } else brk: {
+//         const get = struct {
+//             pub fn component(value: NumberOrPercentage) f32 {
+//                 return switch (value) {
+//                     .number => |num| {
+//                         const v = num.value;
+//                         if (std.math.isNan(v)) return v;
+//                         return std.math.clamp(@round(v), 0.0, 255.0) / 255.0;
+//                     },
+//                     .percentage => |per| std.math.clamp(per.unit_value, 0.0, 1.0),
+//                 };
+//             }
+//         };
+//         const r = get.component(red);
+//         const g = get.component(
+//             switch (parser.parseNumberOrPercentage(input)) {
+//                 .result => |vv| vv,
+//                 .err => |e| return .{ .err = e },
+//             },
+//         );
+//         const b = get.component(
+//             switch (parser.parseNumberOrPercentage(input)) {
+//                 .result => |vv| vv,
+//                 .err => |e| return .{ .err = e },
+//             },
+//         );
+//         break :brk .{ r, g, b };
+//     };
 
-    if (is_legacy_syntax and (std.math.isNan(g) or std.math.isNan(b))) {
-        return .{ .err = input.newCustomError(css.ParserError.invalid_value) };
-    }
+//     if (is_legacy_syntax and (std.math.isNan(g) or std.math.isNan(b))) {
+//         return .{ .err = input.newCustomError(css.ParserError.invalid_value) };
+//     }
 
-    return .{ .result = .{ r, g, b, is_legacy_syntax } };
-}
+//     return .{ .result = .{ r, g, b, is_legacy_syntax } };
+// }
 
 fn parseLegacyAlpha(input: *css.Parser, parser: *const ComponentParser) Result(f32) {
     if (!input.isExhausted()) {

@@ -315,18 +315,6 @@ pub fn build(b: *Build) !void {
         });
     }
 
-    // zig build check-css
-    {
-        const step = b.step("check-css", "Check for semantic analysis errors on css");
-        addMultiCheck(b, step, build_options, &.{
-            .{ .os = .windows, .arch = .x86_64 },
-            .{ .os = .mac, .arch = .x86_64 },
-            .{ .os = .mac, .arch = .aarch64 },
-            .{ .os = .linux, .arch = .x86_64 },
-            .{ .os = .linux, .arch = .aarch64 },
-        });
-    }
-
     // zig build check-windows
     {
         const step = b.step("check-windows", "Check for semantic analysis errors on Windows");

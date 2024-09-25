@@ -183,6 +183,9 @@ pub fn Printer(comptime Writer: type) type {
         /// NOTE: Is is assumed that the string does not contain any newline characters.
         /// If such a string is written, it will break source maps.
         pub fn writeStr(this: *This, s: []const u8) PrintErr!void {
+            if (comptime bun.Environment.isDebug) {
+                bun.assert(std.mem.indexOfScalar(u8, s, '\n') == null);
+            }
             this.col += @intCast(s.len);
             this.dest.writeAll(s) catch {
                 return this.addFmtError();

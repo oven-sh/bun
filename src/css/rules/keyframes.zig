@@ -153,12 +153,12 @@ pub const KeyframeSelector = union(enum) {
     to,
 
     // TODO: implement this
-    // pub usingnamespace css.DeriveParse(@This());
+    pub usingnamespace css.DeriveParse(@This());
 
-    pub fn parse(input: *css.Parser) Result(KeyframeSelector) {
-        _ = input; // autofix
-        @panic(css.todo_stuff.depth);
-    }
+    // pub fn parse(input: *css.Parser) Result(KeyframeSelector) {
+    //     _ = input; // autofix
+    //     @panic(css.todo_stuff.depth);
+    // }
 
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
         switch (this.*) {

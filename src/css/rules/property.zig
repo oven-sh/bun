@@ -136,9 +136,20 @@ pub const PropertyRuleDeclarationParser = struct {
 
     pub const DeclarationParser = struct {
         pub const Declaration = void;
+        const Map = bun.ComptimeStringMap(std.meta.FieldEnum(PropertyRuleDeclarationParser), .{
+            .{ "syntax", .syntax },
+            .{ "inherits", .inherits },
+            .{ "initial-value", .initial_value },
+        });
 
         pub fn parseValue(this: *This, name: []const u8, input: *css.Parser) Result(Declaration) {
             // todo_stuff.match_ignore_ascii_case
+
+            //   if (Map.getASCIIICaseInsensitive(
+            //   name)) |field| {
+            //     return switch (field) {
+            //         .syntax => |syntax| {
+
             if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("syntax", name)) {
                 const syntax = switch (SyntaxString.parse(input)) {
                     .result => |vv| vv,

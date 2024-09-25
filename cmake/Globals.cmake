@@ -124,7 +124,7 @@ optionx(CACHE_STRATEGY "read-write|read-only|write-only|none" "The strategy to u
 optionx(CI BOOL "If CI is enabled" DEFAULT OFF)
 
 if(CI)
-  set(WARNING ERROR)
+  set(WARNING FATAL_ERROR)
 else()
   set(WARNING WARNING)
 endif()

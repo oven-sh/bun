@@ -577,6 +577,10 @@ file(GLOB BUN_C_SOURCES ${CONFIGURE_DEPENDS}
   ${BUN_USOCKETS_SOURCE}/src/crypto/*.c
 )
 
+if(WIN32)
+  list(APPEND BUN_C_SOURCES ${CWD}/src/bun.js/bindings/windows/musl-memmem.c)
+endif()
+
 register_repository(
   NAME
     picohttpparser
@@ -588,15 +592,10 @@ register_repository(
     picohttpparser.c
 )
 
-list(APPEND BUN_C_SOURCES ${VENDOR_PATH}/picohttpparser/picohttpparser.c)
-
-if(WIN32)
-  list(APPEND BUN_C_SOURCES ${CWD}/src/bun.js/bindings/windows/musl-memmem.c)
-endif()
-
 list(APPEND BUN_CPP_SOURCES
   ${BUN_C_SOURCES}
   ${BUN_CXX_SOURCES}
+  ${VENDOR_PATH}/picohttpparser/picohttpparser.c
   ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}
   ${BUN_JS_SINK_OUTPUTS}
   ${BUN_JAVASCRIPT_OUTPUTS}

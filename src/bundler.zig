@@ -893,7 +893,7 @@ pub const Bundler = struct {
                         &writer,
                         .esm,
                     ),
-                    .bun, .bun_macro => try bundler.print(
+                    .bun, .bun_macro, .kit_server_components_ssr => try bundler.print(
                         result,
                         *js_printer.BufferPrinter,
                         &writer,
@@ -1316,7 +1316,7 @@ pub const Bundler = struct {
                     bundler.options.jsx.supports_fast_refresh;
                 opts.filepath_hash_for_hmr = file_hash orelse 0;
                 opts.features.auto_import_jsx = bundler.options.auto_import_jsx;
-                opts.warn_about_unbundled_modules = target.isNotBun();
+                opts.warn_about_unbundled_modules = !target.isBun();
 
                 opts.features.inject_jest_globals = this_parse.inject_jest_globals;
                 opts.features.minify_syntax = bundler.options.minify_syntax;

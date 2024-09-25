@@ -43,7 +43,7 @@ pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JS
 pub const Framework = struct {
     /// This file is the true entrypoint of the client application.
     ///
-    /// It can import the client manifest via the `bun:client-manifest` import
+    /// It can import the client manifest via the `bun:kit/client` import
     ///
     /// TODO: how this behaves when server components are off
     entry_client: ?[]const u8 = null,
@@ -56,18 +56,20 @@ pub const Framework = struct {
     /// Bun offers integration for React's Server Components with an
     /// interface that is generic enough to adapt to any framework.
     server_components: ?ServerComponents = null,
-    /// It is unliekly Fast Refresh is useful outside of React.
+    /// While it is unlikely that Fast Refresh is useful outside of
+    /// React, it can be enabled regardless.
     react_fast_refresh: ?ReactFastRefresh = null,
 
     /// Bun provides built-in support for using React as a framework
     pub fn react() Framework {
         return .{
             .server_components = .{
+                .separate_ssr_graph = true,
                 .server_runtime_import = "react-server-dom-webpack/server",
                 .client_runtime_import = "react-server-dom-webpack/client",
             },
             .react_fast_refresh = .{
-                .import_source = "react-refresh",
+                .import_source = "react-refresh/runtime",
             },
             // TODO: embed these in bun
             .entry_client = "./entry_client.tsx",
@@ -82,6 +84,8 @@ pub const Framework = struct {
     /// will get special processing, using this configuration to implement
     /// server rendering and browser interactivity.
     const ServerComponents = struct {
+        separate_ssr_graph: bool = false,
+
         server_runtime_import: []const u8,
         client_runtime_import: []const u8,
 
@@ -222,6 +226,12 @@ pub fn getHmrRuntime(mode: Side) []const u8 {
 
 pub const Mode = enum { production, development };
 pub const Side = enum { client, server };
+pub const Renderer = enum {
+    client,
+    server,
+    /// Only used Framework has .server_components.separate_ssr_graph set
+    ssr,
+};
 
 pub fn addImportMetaDefines(
     allocator: std.mem.Allocator,

@@ -45,6 +45,7 @@ framework: kit.Framework,
 bun_watcher: *JSC.Watcher,
 server_bundler: Bundler,
 client_bundler: Bundler,
+ssr_bundler: Bundler,
 /// Stored and reused for bundling tasks
 log: Log,
 
@@ -119,7 +120,11 @@ pub fn init(options: Options) !*DevServer {
 
     const app = App.create(.{});
 
-    const dev = bun.new(DevServer, .{
+    const separate_ssr_graph = if (options.framework.server_components) |sc| sc.separate_ssr_graph else false;
+
+    const dev = bun.new(DevServer, undefined);
+
+    dev.* = .{
         .cwd = options.cwd,
         .app = app,
         .routes = options.routes,
@@ -130,21 +135,20 @@ pub fn init(options: Options) !*DevServer {
         .server_fetch_function_callback = .{},
         .server_register_update_callback = .{},
         .listener = null,
+        .log = Log.init(default_allocator),
+        .client_graph = .{ .owner = dev },
+        .server_graph = .{ .owner = dev },
+        .dump_dir = dump_dir,
+        .framework = options.framework,
+        .bundle_result = null,
+
         .server_global = undefined,
         .vm = undefined,
         .bun_watcher = undefined,
         .server_bundler = undefined,
         .client_bundler = undefined,
-        .log = Log.init(default_allocator),
-        .client_graph = .{},
-        .server_graph = .{},
-        .dump_dir = dump_dir,
-        .framework = options.framework,
-        .bundle_result = null,
-    });
-
-    assert(dev.client_graph.owner() == dev);
-    assert(dev.server_graph.owner() == dev);
+        .ssr_bundler = undefined,
+    };
 
     const fs = try bun.fs.FileSystem.init(options.cwd);
     dev.bun_watcher = HotReloader.init(dev, fs, options.verbose_watcher, false);
@@ -153,6 +157,8 @@ pub fn init(options: Options) !*DevServer {
 
     try dev.initBundler(&dev.server_bundler, .server);
     try dev.initBundler(&dev.client_bundler, .client);
+    if (separate_ssr_graph)
+        try dev.initBundler(&dev.ssr_bundler, .ssr);
 
     dev.framework = dev.framework.resolve(
         &dev.server_bundler.resolver,
@@ -206,11 +212,7 @@ pub fn init(options: Options) !*DevServer {
     return dev;
 }
 
-fn initBundler(
-    dev: *DevServer,
-    bundler: *Bundler,
-    comptime side: kit.Side,
-) !void {
+fn initBundler(dev: *DevServer, bundler: *Bundler, comptime renderer: kit.Renderer) !void {
     const framework = dev.framework;
 
     bundler.* = try bun.Bundler.init(
@@ -220,13 +222,13 @@ fn initBundler(
         null, // TODO:
     );
 
-    bundler.options.target = switch (side) {
+    bundler.options.target = switch (renderer) {
         .client => .browser,
-        .server => .bun,
+        .server, .ssr => .bun,
     };
-    bundler.options.public_path = switch (side) {
+    bundler.options.public_path = switch (renderer) {
         .client => client_prefix,
-        .server => dev.cwd,
+        .server, .ssr => dev.cwd,
     };
     bundler.options.entry_points = &.{};
     bundler.options.log = &dev.log;
@@ -236,11 +238,11 @@ fn initBundler(
     bundler.options.out_extensions = bun.StringHashMap([]const u8).init(bundler.allocator);
     bundler.options.hot_module_reloading = true;
 
-    bundler.options.react_fast_refresh = side == .client and framework.react_fast_refresh != null;
+    bundler.options.react_fast_refresh = renderer == .client and framework.react_fast_refresh != null;
     bundler.options.server_components = framework.server_components != null;
 
     bundler.options.conditions = try bun.options.ESMConditions.init(default_allocator, bundler.options.target.defaultConditions());
-    if (side == .server and framework.server_components != null) {
+    if (renderer == .server and framework.server_components != null) {
         try bundler.options.conditions.appendSlice(&.{"react-server"});
     }
 
@@ -253,7 +255,10 @@ fn initBundler(
     bundler.configureLinker();
     try bundler.configureDefines();
 
-    try kit.addImportMetaDefines(default_allocator, bundler.options.define, .development, side);
+    try kit.addImportMetaDefines(default_allocator, bundler.options.define, .development, switch (renderer) {
+        .client => .client,
+        .server, .ssr => .client,
+    });
 
     bundler.resolver.opts = bundler.options;
 }
@@ -368,7 +373,11 @@ fn performBundleAndWaitInner(dev: *DevServer, route: *Route, fail: *Failure) !Bu
 
     const bv2 = try BundleV2.init(
         &dev.server_bundler,
-        if (dev.framework.server_components != null) &dev.client_bundler else null,
+        if (dev.framework.server_components != null) .{
+            .framework = dev.framework,
+            .client_bundler = &dev.client_bundler,
+            .ssr_bundler = &dev.ssr_bundler,
+        } else @panic("TODO: support non-server components"),
         allocator,
         JSC.AnyEventLoop.init(allocator),
         false, // reloading is handled separately
@@ -459,12 +468,13 @@ fn performBundleAndWaitInner(dev: *DevServer, route: *Route, fail: *Failure) !Bu
 pub fn receiveChunk(
     dev: *DevServer,
     abs_path: []const u8,
-    side: kit.Side,
+    side: kit.Renderer,
     chunk: bun.bundle_v2.CompileResult,
 ) !void {
     return switch (side) {
-        .server => dev.server_graph.addChunk(abs_path, chunk),
-        .client => dev.client_graph.addChunk(abs_path, chunk),
+        .server => dev.server_graph.addChunk(abs_path, chunk, false),
+        .ssr => dev.server_graph.addChunk(abs_path, chunk, true),
+        .client => dev.client_graph.addChunk(abs_path, chunk, false),
     };
 }
 
@@ -603,8 +613,15 @@ fn sendBuiltInNotFound(resp: *Response) void {
 /// be re-materialized (required when pressing Cmd+R after any client update)
 pub fn IncrementalGraph(side: kit.Side) type {
     return struct {
+        owner: *DevServer,
+
         bundled_files: bun.StringArrayHashMapUnmanaged(File) = .{},
         stale_files: bun.bit_set.DynamicBitSetUnmanaged = .{},
+
+        server_is_rsc: if (side == .server) bun.bit_set.DynamicBitSetUnmanaged else void =
+            if (side == .server) .{},
+        server_is_ssr: if (side == .server) bun.bit_set.DynamicBitSetUnmanaged else void =
+            if (side == .server) .{},
 
         /// Byte length of every file queued for concatenation
         current_incremental_chunk_len: usize = 0,
@@ -620,7 +637,8 @@ pub fn IncrementalGraph(side: kit.Side) type {
 
         pub const File = switch (side) {
             // The server's incremental graph does not store previously bundled
-            // code because there is only one instance of the server.
+            // code because there is only one instance of the server. Instead,
+            // it stores which
             .server => struct {},
             .client => struct {
                 /// allocated by default_allocator
@@ -636,21 +654,25 @@ pub fn IncrementalGraph(side: kit.Side) type {
             g: *@This(),
             abs_path: []const u8,
             chunk: bun.bundle_v2.CompileResult,
+            is_ssr_graph: bool,
         ) !void {
             const code = chunk.code();
             if (code.len == 0) return;
 
             g.current_incremental_chunk_len += code.len;
 
-            if (g.owner().dump_dir) |dump_dir| {
-                const cwd = g.owner().cwd;
+            if (g.owner.dump_dir) |dump_dir| {
+                const cwd = g.owner.cwd;
                 var a: bun.PathBuffer = undefined;
                 var b: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
                 const rel_path = bun.path.relativeBufZ(&a, cwd, abs_path);
                 const size = std.mem.replacementSize(u8, rel_path, "../", "_.._/");
                 _ = std.mem.replace(u8, rel_path, "../", "_.._/", &b);
                 const rel_path_escaped = b[0..size];
-                dumpBundle(dump_dir, side, rel_path_escaped, code) catch |err| {
+                dumpBundle(dump_dir, switch (side) {
+                    .client => .client,
+                    .server => if (is_ssr_graph) .ssr else .server,
+                }, rel_path_escaped, code) catch |err| {
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
                     Output.warn("Could not dump bundle: {}", .{err});
                 };
@@ -670,7 +692,19 @@ pub fn IncrementalGraph(side: kit.Side) type {
                     try g.current_incremental_chunk_parts.append(default_allocator, @enumFromInt(gop.index));
                 },
                 .server => {
+                    // TODO: THIS ALLOCATION STRATEGY SUCKS. IT DOESNT DESERVE TO SHIP
+                    if (!gop.found_existing) {
+                        try g.server_is_ssr.resize(default_allocator, gop.index + 1, false);
+                        try g.server_is_rsc.resize(default_allocator, gop.index + 1, false);
+                    }
+
                     try g.current_incremental_chunk_parts.append(default_allocator, chunk.code());
+
+                    const bitset = switch (is_ssr_graph) {
+                        true => &g.server_is_ssr,
+                        false => &g.server_is_rsc,
+                    };
+                    bitset.set(gop.index);
                 },
             }
         }
@@ -730,11 +764,11 @@ pub fn IncrementalGraph(side: kit.Side) type {
                     .initial_response => {
                         w.writeAll("}, {\n  main: ") catch unreachable;
                         const entry = switch (side) {
-                            .server => g.owner().framework.entry_server,
-                            .client => g.owner().framework.entry_client,
+                            .server => g.owner.framework.entry_server,
+                            .client => g.owner.framework.entry_client,
                         } orelse @panic("TODO: non-framework provided entry-point");
                         bun.js_printer.writeJSONString(
-                            bun.path.relative(g.owner().cwd, entry),
+                            bun.path.relative(g.owner.cwd, entry),
                             @TypeOf(w),
                             w,
                             .utf8,
@@ -769,10 +803,6 @@ pub fn IncrementalGraph(side: kit.Side) type {
             assert(chunk.capacity == chunk.items.len);
 
             return chunk.items;
-        }
-
-        pub fn owner(g: *@This()) *DevServer {
-            return @alignCast(@fieldParentPtr(@tagName(side) ++ "_graph", g));
         }
     };
 }
@@ -1084,7 +1114,7 @@ const Failure = union(enum) {
 };
 
 // For debugging, it is helpful to be able to see bundles.
-fn dumpBundle(dump_dir: std.fs.Dir, side: kit.Side, rel_path: []const u8, chunk: []const u8) !void {
+fn dumpBundle(dump_dir: std.fs.Dir, side: kit.Renderer, rel_path: []const u8, chunk: []const u8) !void {
     const name = bun.path.joinAbsString("/", &.{
         @tagName(side),
         rel_path,
@@ -1115,12 +1145,13 @@ fn dumpBundle(dump_dir: std.fs.Dir, side: kit.Side, rel_path: []const u8, chunk:
     try bufw.flush();
 }
 
-pub fn isFileStale(dev: *DevServer, path: []const u8, side: kit.Side) bool {
+pub fn isFileStale(dev: *DevServer, path: []const u8, side: kit.Renderer) bool {
     switch (side) {
         inline else => |side_comptime| {
             const g = switch (side_comptime) {
                 .client => &dev.client_graph,
                 .server => &dev.server_graph,
+                .ssr => &dev.server_graph,
             };
             const index = g.bundled_files.getIndex(path) orelse
                 return true; // non-existent files are considered stale

@@ -43,7 +43,6 @@
 //
 const Bundler = bun.Bundler;
 const bun = @import("root").bun;
-const from = bun.from;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -126,6 +125,8 @@ const JSC = bun.JSC;
 const debugTreeShake = Output.scoped(.TreeShake, true);
 const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 const Async = bun.Async;
+
+const kit = bun.kit;
 
 const logPartDependencyTree = Output.scoped(.part_dep_tree, false);
 
@@ -326,9 +327,13 @@ const Watcher = bun.JSC.NewHotReloader(BundleV2, EventLoop, true);
 
 pub const BundleV2 = struct {
     bundler: *Bundler,
-    /// When server component is enabled, this is used for the client bundles
-    /// and `bundler` is used for the server components.
+    /// When Server Component is enabled, this is used for the client bundles
+    /// and `bundler` is used for the server bundles.
     client_bundler: *Bundler,
+    /// See kit.Framework.ServerComponents.separate_ssr_graph
+    ssr_bundler: *Bundler,
+    /// When Bun Kit is used, the resolved framework is passed here
+    framework: ?kit.Framework,
     graph: Graph = .{ .pool = undefined, .allocator = undefined },
     linker: LinkerContext = .{ .loop = undefined },
     bun_watcher: ?*bun.JSC.Watcher = null,
@@ -336,14 +341,20 @@ pub const BundleV2 = struct {
     completion: ?CompletionPtr = null,
     source_code_length: usize = 0,
 
-    // There is a race condition where an onResolve plugin may schedule a task on the bundle thread before it's parsing task completes
+    /// There is a race condition where an onResolve plugin may schedule a task on the bundle thread before it's parsing task completes
     resolve_tasks_waiting_for_import_source_index: std.AutoArrayHashMapUnmanaged(Index.Int, BabyList(struct { to_source_index: Index, import_record_index: u32 })) = .{},
 
     /// Allocations not tracked by a threadlocal heap
-    free_list: std.ArrayList(string) = std.ArrayList(string).init(bun.default_allocator),
+    free_list: std.ArrayList([]const u8) = std.ArrayList([]const u8).init(bun.default_allocator),
 
     unique_key: u64 = 0,
     dynamic_import_entry_points: std.AutoArrayHashMap(Index.Int, void) = undefined,
+
+    const KitOptions = struct {
+        framework: kit.Framework,
+        client_bundler: *Bundler,
+        ssr_bundler: *Bundler,
+    };
 
     pub const CompletionPtr = union(enum) {
         js: *JSBundleCompletionTask,
@@ -355,6 +366,8 @@ pub const BundleV2 = struct {
             };
         }
     };
+
+    const ResolvedFramework = struct {};
 
     const debug = Output.scoped(.Bundle, false);
 
@@ -368,18 +381,24 @@ pub const BundleV2 = struct {
     /// Note that .log, .allocator, and other things are shared
     /// between the two bundler configurations
     pub inline fn bundlerForTarget(this: *BundleV2, target: options.Target) *Bundler {
-        return if (!this.bundler.options.server_components or target.isServerSide())
+        return if (!this.bundler.options.server_components)
             this.bundler
-        else
-            this.client_bundler;
+        else switch (target) {
+            else => this.bundler,
+            .browser => this.client_bundler,
+            .kit_server_components_ssr => this.ssr_bundler,
+        };
     }
 
     /// Same semantics as bundlerForTarget for `path_to_source_index_map`
     pub inline fn pathToSourceIndexMap(this: *BundleV2, target: options.Target) *PathToSourceIndexMap {
-        return if (!this.bundler.options.server_components or target.isServerSide())
+        return if (!this.bundler.options.server_components)
             &this.graph.path_to_source_index_map
-        else
-            &this.graph.client_path_to_source_index_map;
+        else switch (target) {
+            else => &this.graph.path_to_source_index_map,
+            .browser => &this.graph.client_path_to_source_index_map,
+            .kit_server_components_ssr => &this.graph.ssr_path_to_source_index_map,
+        };
     }
 
     const ReachableFileVisitor = struct {
@@ -572,7 +591,7 @@ pub const BundleV2 = struct {
 
                     if (!handles_import_errors) {
                         if (isPackagePath(import_record.specifier)) {
-                            if (target.isWebLike() and options.ExternalModules.isNodeBuiltin(path_to_use)) {
+                            if (target == .browser and options.ExternalModules.isNodeBuiltin(path_to_use)) {
                                 addError(
                                     log,
                                     source,
@@ -654,12 +673,6 @@ pub const BundleV2 = struct {
         const entry = this.pathToSourceIndexMap(target).getOrPut(this.graph.allocator, path.hashKey()) catch bun.outOfMemory();
         if (!entry.found_existing) {
             path.* = path.dupeAllocFixPretty(this.graph.allocator) catch bun.outOfMemory();
-
-            // We need to parse this
-            const source_index = Index.init(@as(u32, @intCast(this.graph.ast.len)));
-            entry.value_ptr.* = source_index.get();
-            out_source_index = source_index;
-            this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
             const loader = brk: {
                 if (import_record.importer_source_index) |importer| {
                     var record: *ImportRecord = &this.graph.ast.items(.import_records)[importer].slice()[import_record.import_record_index];
@@ -670,41 +683,18 @@ pub const BundleV2 = struct {
 
                 break :brk path.loader(&bundler.options.loaders) orelse options.Loader.file;
             };
-
-            this.graph.input_files.append(bun.default_allocator, .{
-                .source = .{
+            const idx = this.enqueueParseTask(
+                &resolve_result,
+                .{
                     .path = path.*,
                     .key_path = path.*,
                     .contents = "",
-                    .index = source_index,
                 },
-                .loader = loader,
-                .side_effects = switch (loader) {
-                    .text, .json, .toml, .file => _resolver.SideEffects.no_side_effects__pure_data,
-                    else => _resolver.SideEffects.has_side_effects,
-                },
-            }) catch bun.outOfMemory();
-            var task = this.graph.allocator.create(ParseTask) catch bun.outOfMemory();
-            task.* = ParseTask.init(&resolve_result, source_index, this);
-            task.loader = loader;
-            task.jsx = bundler.options.jsx;
-            task.task.node.next = null;
-            task.tree_shaking = this.linker.options.tree_shaking;
-            task.known_target = import_record.original_target;
-
-            _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .monotonic);
-
-            // Handle onLoad plugins
-            if (!this.enqueueOnLoadPluginIfNeeded(task)) {
-                if (loader.shouldCopyForBundling()) {
-                    var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
-                    additional_files.push(this.graph.allocator, .{ .source_index = task.source_index.get() }) catch unreachable;
-                    this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
-                    this.graph.estimated_file_loader_count += 1;
-                }
-
-                this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&task.task));
-            }
+                loader,
+                import_record.original_target,
+            ) catch bun.outOfMemory();
+            entry.value_ptr.* = idx;
+            out_source_index = Index.init(idx);
         } else {
             out_source_index = Index.init(entry.value_ptr.*);
         }
@@ -781,7 +771,7 @@ pub const BundleV2 = struct {
 
     pub fn init(
         bundler: *ThisBundler,
-        client_bundler: ?*ThisBundler,
+        kit_options: ?KitOptions,
         allocator: std.mem.Allocator,
         event_loop: EventLoop,
         enable_reloading: bool,
@@ -796,7 +786,9 @@ pub const BundleV2 = struct {
 
         this.* = .{
             .bundler = bundler,
-            .client_bundler = client_bundler orelse bundler,
+            .client_bundler = bundler,
+            .ssr_bundler = bundler,
+            .framework = null,
             .graph = .{
                 .pool = undefined,
                 .heap = heap orelse try ThreadlocalArena.init(),
@@ -809,9 +801,13 @@ pub const BundleV2 = struct {
                 },
             },
         };
-        if (client_bundler) |cb| {
-            bun.assert(cb.options.server_components);
+        if (kit_options) |ko| {
+            this.client_bundler = ko.client_bundler;
+            this.ssr_bundler = ko.ssr_bundler;
+            this.framework = ko.framework;
             bun.assert(bundler.options.server_components);
+            bun.assert(this.client_bundler.options.server_components);
+            bun.assert(this.ssr_bundler.options.server_components);
         }
         this.linker.graph.allocator = this.graph.heap.allocator();
         this.graph.allocator = this.linker.graph.allocator;
@@ -822,8 +818,8 @@ pub const BundleV2 = struct {
         this.bundler.log.clone_line_text = true;
 
         // We don't expose an option to disable this. Kit requires tree-shaking
-        // disabled since every export is always referenced in case a future
-        // module depends on a previously unused export.
+        // disabled since every export must is always exist in case a future
+        // module starts depending on it.
         if (this.bundler.options.output_format == .internal_kit_dev) {
             this.bundler.options.tree_shaking = false;
             this.bundler.resolver.opts.tree_shaking = false;
@@ -847,7 +843,7 @@ pub const BundleV2 = struct {
         this.linker.options.public_path = bundler.options.public_path;
         this.linker.options.target = bundler.options.target;
         this.linker.options.output_format = bundler.options.output_format;
-        this.linker.kit = bundler.options.kit;
+        this.linker.kit_dev_server = bundler.options.kit;
 
         var pool = try this.graph.allocator.create(ThreadPool);
         if (enable_reloading) {
@@ -980,6 +976,101 @@ pub const BundleV2 = struct {
         // this.graph.shadow_entry_point_range.len = 1;
     }
 
+    pub fn enqueueParseTask(
+        this: *BundleV2,
+        resolve_result: *const _resolver.Result,
+        source: Logger.Source,
+        loader: Loader,
+        known_target: options.Target,
+    ) OOM!Index.Int {
+        const source_index = Index.init(@as(u32, @intCast(this.graph.ast.len)));
+        this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
+
+        this.graph.input_files.append(bun.default_allocator, .{
+            .source = source,
+            .loader = loader,
+            .side_effects = switch (loader) {
+                .text, .json, .toml, .file => _resolver.SideEffects.no_side_effects__pure_data,
+                else => _resolver.SideEffects.has_side_effects,
+            },
+        }) catch bun.outOfMemory();
+        var task = this.graph.allocator.create(ParseTask) catch bun.outOfMemory();
+        task.* = ParseTask.init(resolve_result, source_index, this);
+        task.loader = loader;
+        task.jsx = this.bundler.options.jsx;
+        task.task.node.next = null;
+        task.tree_shaking = this.linker.options.tree_shaking;
+        task.known_target = known_target;
+
+        _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .monotonic);
+
+        // Handle onLoad plugins
+        if (!this.enqueueOnLoadPluginIfNeeded(task)) {
+            if (loader.shouldCopyForBundling()) {
+                var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
+                additional_files.push(this.graph.allocator, .{ .source_index = task.source_index.get() }) catch unreachable;
+                this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
+                this.graph.estimated_file_loader_count += 1;
+            }
+
+            this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&task.task));
+        }
+
+        return source_index.get();
+    }
+
+    pub fn enqueueParseTask2(
+        this: *BundleV2,
+        source: Logger.Source,
+        loader: Loader,
+        known_target: options.Target,
+    ) OOM!Index.Int {
+        const source_index = Index.init(@as(u32, @intCast(this.graph.ast.len)));
+        this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
+
+        this.graph.input_files.append(bun.default_allocator, .{
+            .source = source,
+            .loader = loader,
+            .side_effects = switch (loader) {
+                .text, .json, .toml, .file => _resolver.SideEffects.no_side_effects__pure_data,
+                else => _resolver.SideEffects.has_side_effects,
+            },
+        }) catch bun.outOfMemory();
+        var task = this.graph.allocator.create(ParseTask) catch bun.outOfMemory();
+        task.* = .{
+            .ctx = this,
+            .path = source.path,
+            .contents_or_fd = .{
+                .contents = source.contents,
+            },
+            .side_effects = .has_side_effects,
+            .jsx = this.bundler.options.jsx,
+            .source_index = source_index,
+            .module_type = .unknown,
+            .emit_decorator_metadata = false, // TODO
+            .package_version = "",
+            .loader = loader,
+            .tree_shaking = this.linker.options.tree_shaking,
+            .known_target = known_target,
+        };
+        task.task.node.next = null;
+
+        _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .monotonic);
+
+        // Handle onLoad plugins
+        if (!this.enqueueOnLoadPluginIfNeeded(task)) {
+            if (loader.shouldCopyForBundling()) {
+                var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
+                additional_files.push(this.graph.allocator, .{ .source_index = task.source_index.get() }) catch unreachable;
+                this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
+                this.graph.estimated_file_loader_count += 1;
+            }
+
+            this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&task.task));
+        }
+        return source_index.get();
+    }
+
     /// Enqueue a GenerateTask.
     /// `source_without_index` is copied and assigned a new source index. That index is returned.
     pub fn enqueueGenerateTask(
@@ -1012,7 +1103,7 @@ pub const BundleV2 = struct {
 
     pub fn generateFromCLI(
         bundler: *ThisBundler,
-        client_bundler: ?*ThisBundler,
+        kit_options: ?KitOptions,
         allocator: std.mem.Allocator,
         event_loop: EventLoop,
         unique_key: u64,
@@ -1021,7 +1112,7 @@ pub const BundleV2 = struct {
         minify_duration: *u64,
         source_code_size: *u64,
     ) !std.ArrayList(options.OutputFile) {
-        var this = try BundleV2.init(bundler, client_bundler, allocator, event_loop, enable_reloading, null, null);
+        var this = try BundleV2.init(bundler, kit_options, allocator, event_loop, enable_reloading, null, null);
         this.unique_key = unique_key;
 
         if (this.bundler.log.hasErrors()) {
@@ -1871,7 +1962,7 @@ pub const BundleV2 = struct {
                         if (!import_record.handles_import_errors) {
                             last_error = err;
                             if (isPackagePath(import_record.path.text)) {
-                                if (ast.target.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
+                                if (ast.target == .browser and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
                                     addError(
                                         this.bundler.log,
                                         source,
@@ -1932,8 +2023,8 @@ pub const BundleV2 = struct {
                 continue;
             }
 
-            if (this.bundler.options.kit) |kit| {
-                if (!kit.isFileStale(path.text, ast.target.side())) {
+            if (this.bundler.options.kit) |dev_server| {
+                if (!dev_server.isFileStale(path.text, ast.target.kitRenderer())) {
                     import_record.source_index = Index.invalid;
                     // TODO(paperdave/kit): this relative can be done without a clone in most cases
                     const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
@@ -1977,7 +2068,7 @@ pub const BundleV2 = struct {
             debug("created ParseTask: {s}", .{path.text});
 
             const resolve_task = bun.default_allocator.create(ParseTask) catch bun.outOfMemory();
-            resolve_task.* = ParseTask.init(&resolve_result, null, this);
+            resolve_task.* = ParseTask.init(&resolve_result, Index.invalid, this);
             resolve_task.secondary_path_for_commonjs_interop = secondary_path_to_copy;
             resolve_task.known_target = ast.target;
             resolve_task.jsx.development = resolve_result.jsx.development;
@@ -2200,7 +2291,9 @@ pub const BundleV2 = struct {
                     ((result.use_directive == .client) == (result.ast.target == .browser)))
                 {
                     if (result.use_directive == .server)
-                        @panic("TODO: 'use server'");
+                        @panic("TODO: 'use server' (these are for server actions)");
+                    if (!this.framework.?.server_components.?.separate_ssr_graph)
+                        @panic("TODO: without separate_ssr_graph");
 
                     const reference_source_index = this.enqueueGenerateTask(
                         .{ .client_reference_proxy = .{
@@ -2209,15 +2302,16 @@ pub const BundleV2 = struct {
                         result.source,
                     ) catch bun.outOfMemory();
 
-                    const other_path_to_source_index_map = switch (result.use_directive) {
-                        .client => &this.graph.path_to_source_index_map,
-                        .server => &this.graph.client_path_to_source_index_map,
-                        else => unreachable,
-                    };
-                    other_path_to_source_index_map.put(
+                    this.graph.path_to_source_index_map.put(
                         graph.allocator,
                         result.source.path.hashKey(),
                         reference_source_index,
+                    ) catch bun.outOfMemory();
+
+                    const ssr_index = this.enqueueParseTask2(
+                        result.source,
+                        .tsx,
+                        .kit_server_components_ssr,
                     ) catch bun.outOfMemory();
 
                     graph.server_component_boundaries.put(
@@ -2225,6 +2319,7 @@ pub const BundleV2 = struct {
                         result.source.index.get(),
                         result.use_directive,
                         reference_source_index,
+                        ssr_index,
                     ) catch bun.outOfMemory();
                 }
             },
@@ -2382,17 +2477,13 @@ pub fn BundleThread(CompletionStruct: type) type {
 
             const this = try BundleV2.init(
                 bundler,
-                bundler, // TODO: server components
+                null, // TODO: Kit
                 allocator,
                 JSC.AnyEventLoop.init(allocator),
                 false,
                 JSC.WorkPool.get(),
                 heap,
             );
-
-            if (bundler.options.kit) |kit| {
-                this.bun_watcher = kit.bun_watcher;
-            }
 
             this.plugins = completion.plugins;
             this.completion = switch (CompletionStruct) {
@@ -2466,7 +2557,7 @@ pub const ParseTask = struct {
 
     const debug = Output.scoped(.ParseTask, false);
 
-    pub fn init(resolve_result: *const _resolver.Result, source_index: ?Index, ctx: *BundleV2) ParseTask {
+    pub fn init(resolve_result: *const _resolver.Result, source_index: Index, ctx: *BundleV2) ParseTask {
         return .{
             .ctx = ctx,
             .path = resolve_result.path_pair.primary,
@@ -2478,7 +2569,7 @@ pub const ParseTask = struct {
             },
             .side_effects = resolve_result.primary_side_effects_data,
             .jsx = resolve_result.jsx,
-            .source_index = source_index orelse Index.invalid,
+            .source_index = source_index,
             .module_type = resolve_result.module_type,
             .emit_decorator_metadata = resolve_result.emit_decorator_metadata,
             .package_version = if (resolve_result.package_json) |package_json| package_json.version else "",
@@ -2608,15 +2699,15 @@ pub const ParseTask = struct {
         const parse_task = ParseTask{
             .ctx = undefined,
             .path = Fs.Path.initWithNamespace("runtime", "bun:runtime"),
-            .side_effects = _resolver.SideEffects.no_side_effects__pure_data,
-            .jsx = options.JSX.Pragma{
+            .side_effects = .no_side_effects__pure_data,
+            .jsx = .{
                 .parse = false,
             },
             .contents_or_fd = .{
                 .contents = runtime_code,
             },
             .source_index = Index.runtime,
-            .loader = Loader.js,
+            .loader = .js,
             .known_target = target,
         };
         const source = Logger.Source{
@@ -3000,7 +3091,9 @@ pub const ParseTask = struct {
         else
             .none;
 
-        if (use_directive == .client or (bundler.options.server_components and task.known_target == .browser)) {
+        if ((use_directive == .client and task.known_target != .kit_server_components_ssr) or
+            (bundler.options.server_components and task.known_target == .browser))
+        {
             bundler = this.ctx.client_bundler;
             resolver = &bundler.resolver;
             bun.assert(bundler.options.target == .browser);
@@ -3283,14 +3376,13 @@ pub const GenerateTask = struct {
     }
 
     fn generateClientReferenceProxy(task: *GenerateTask, data: Data.ReferenceProxy, b: *AstBuilder) !void {
-        const framework = bun.kit.Framework.react();
-        const server_components = framework.server_components orelse
+        const server_components = task.ctx.framework.?.server_components orelse
             unreachable; // config must be non-null to enter this function
 
         // TODO: we must either:
         // - lock some rw mutex because ast could be resized
-        // - guarantee that this array wont resize
         // - copy named_exports[x], as that slice is guaranteed to be stable
+        // approach 2 should be taken as it is simpler
         const client_named_exports = task.ctx.graph.ast.items(.named_exports)[data.other_source.index.get()];
 
         const register_client_reference = (try b.addImportStmt(
@@ -3370,13 +3462,14 @@ pub const GenerateTask = struct {
         // - lock some rw mutex because ast could be resized
         // - guarantee that this array wont resize
         // - copy named_exports[x], as that slice is guaranteed to be stable
+        // option 2 is likely possible
         const ast_slice = task.ctx.graph.ast.slice();
         const named_exports_array = ast_slice.items(.named_exports);
         const input_file_sources = task.ctx.graph.input_files.items(.source);
         const target_array = if (Environment.allow_assert) ast_slice.items(.target);
 
         for (data.source_indices) |index| {
-            bun.assert(target_array[index].side() == .client);
+            bun.assert(target_array[index].kitRenderer() == .client);
 
             const exports: js_ast.Ast.NamedExports = named_exports_array[index];
 
@@ -3630,7 +3723,20 @@ pub const Graph = struct {
     /// required to avoid incorrect inlining of defines and dependencies on
     /// other files. This is relevant for files shared between server and client
     /// and have no "use <side>" directive, and must be duplicated.
+    ///
+    /// To make linking easier, this second graph contains indices into the
+    /// same `.ast` and `.input_files` arrays.
     client_path_to_source_index_map: PathToSourceIndexMap = .{},
+    /// When using server components with React, there is an additional module
+    /// graph which is used to contain SSR-versions of all client components;
+    /// the SSR graph. The difference between the SSR graph and the server
+    /// graph is that this one does not apply '--conditions react-server'
+    ///
+    /// In Bun's React Framework, it includes SSR versions of 'react' and
+    /// 'react-dom' (an export condition is used to provide a different
+    /// implementation for RSC, which is potentially how they implement
+    /// server-only features such as async components).
+    ssr_path_to_source_index_map: PathToSourceIndexMap = .{},
 
     /// When Server Components is enabled, this holds a list of all boundary
     /// files. This happens for all files with a "use <side>" directive.
@@ -4288,7 +4394,7 @@ pub const LinkerContext = struct {
     pending_task_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
     /// Used by Kit to extract []CompileResult before it is joined
-    kit: ?*bun.kit.DevServer = null,
+    kit_dev_server: ?*bun.kit.DevServer = null,
 
     pub const LinkerOptions = struct {
         output_format: options.Format = .esm,
@@ -7183,8 +7289,8 @@ pub const LinkerContext = struct {
 
         // Client bundles for Kit must be globally allocated,
         // as it must outlive the bundle task.
-        const use_global_allocator = c.kit != null and
-            c.parse_graph.ast.items(.target)[part_range.source_index.get()].side() == .client;
+        const use_global_allocator = c.kit_dev_server != null and
+            c.parse_graph.ast.items(.target)[part_range.source_index.get()].kitRenderer() == .client;
 
         var arena = &worker.temporary_arena;
         var buffer_writer = js_printer.BufferWriter.init(
@@ -9857,7 +9963,7 @@ pub const LinkerContext = struct {
             //
             // When this isnt the initial bundle, the data we would get concatenating
             // everything here would be useless.
-            if (c.kit) |kit| {
+            if (c.kit_dev_server) |dev_server| {
                 const input_file_sources = c.parse_graph.input_files.items(.source);
                 const targets = c.parse_graph.ast.items(.target);
                 for (chunks) |chunk| {
@@ -9865,9 +9971,9 @@ pub const LinkerContext = struct {
                         chunk.content.javascript.parts_in_chunk_in_order,
                         chunk.compile_results_for_chunk,
                     ) |part_range, compile_result| {
-                        try kit.receiveChunk(
+                        try dev_server.receiveChunk(
                             input_file_sources[part_range.source_index.get()].path.text,
-                            targets[part_range.source_index.get()].side(),
+                            targets[part_range.source_index.get()].kitRenderer(),
                             compile_result,
                         );
                     }

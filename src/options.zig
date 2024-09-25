@@ -384,6 +384,9 @@ pub const Target = enum {
     bun_macro,
     node,
 
+    /// This is used by kit.Framework.ServerComponents.separate_ssr_graph
+    kit_server_components_ssr,
+
     pub const Map = bun.ComptimeStringMap(Target, .{
         .{ "browser", Target.browser },
         .{ "bun", Target.bun },
@@ -405,29 +408,22 @@ pub const Target = enum {
         return switch (this) {
             .node => .node,
             .browser => .browser,
-            .bun => .bun,
+            .bun, .kit_server_components_ssr => .bun,
             .bun_macro => .bun_macro,
         };
     }
 
     pub inline fn isServerSide(this: Target) bool {
         return switch (this) {
-            .bun_macro, .node, .bun => true,
+            .bun_macro, .node, .bun, .kit_server_components_ssr => true,
             else => false,
         };
     }
 
     pub inline fn isBun(this: Target) bool {
         return switch (this) {
-            .bun_macro, .bun => true,
+            .bun_macro, .bun, .kit_server_components_ssr => true,
             else => false,
-        };
-    }
-
-    pub inline fn isNotBun(this: Target) bool {
-        return switch (this) {
-            .bun_macro, .bun => false,
-            else => true,
         };
     }
 
@@ -438,67 +434,38 @@ pub const Target = enum {
         };
     }
 
-    pub inline fn supportsBrowserField(this: Target) bool {
-        return switch (this) {
-            .browser => true,
-            else => false,
-        };
-    }
-
-    const browser_define_value_true = "true";
-    const browser_define_value_false = "false";
-
     pub inline fn processBrowserDefineValue(this: Target) ?string {
         return switch (this) {
-            .browser => browser_define_value_true,
-            .bun_macro, .bun, .node => browser_define_value_false,
+            .browser => "true",
+            else => "false",
         };
     }
 
-    pub inline fn isWebLike(target: Target) bool {
-        return switch (target) {
-            .browser => true,
-            else => false,
-        };
-    }
-
-    pub fn side(target: Target) bun.kit.Side {
+    pub fn kitRenderer(target: Target) bun.kit.Renderer {
         return switch (target) {
             .browser => .client,
-            else => .server,
+            .kit_server_components_ssr => .ssr,
+            .bun_macro, .bun, .node => .server,
         };
     }
-
-    pub const Extensions = struct {
-        pub const In = struct {
-            pub const JavaScript = [_]string{ ".js", ".cjs", ".mts", ".cts", ".ts", ".tsx", ".jsx", ".json" };
-        };
-        pub const Out = struct {
-            pub const JavaScript = [_]string{
-                ".js",
-                ".mjs",
-            };
-        };
-    };
 
     pub fn outExtensions(target: Target, allocator: std.mem.Allocator) bun.StringHashMap(string) {
         var exts = bun.StringHashMap(string).init(allocator);
 
-        const js = Extensions.Out.JavaScript[0];
-        const mjs = Extensions.Out.JavaScript[1];
+        const out_extensions_list = [_][]const u8{ ".js", ".cjs", ".mts", ".cts", ".ts", ".tsx", ".jsx", ".json" };
 
         if (target == .node) {
-            exts.ensureTotalCapacity(Extensions.In.JavaScript.len * 2) catch unreachable;
-            for (Extensions.In.JavaScript) |ext| {
-                exts.put(ext, mjs) catch unreachable;
+            exts.ensureTotalCapacity(out_extensions_list.len * 2) catch unreachable;
+            for (out_extensions_list) |ext| {
+                exts.put(ext, ".mjs") catch unreachable;
             }
         } else {
-            exts.ensureTotalCapacity(Extensions.In.JavaScript.len + 1) catch unreachable;
-            exts.put(mjs, js) catch unreachable;
+            exts.ensureTotalCapacity(out_extensions_list.len + 1) catch unreachable;
+            exts.put(".mjs", ".js") catch unreachable;
         }
 
-        for (Extensions.In.JavaScript) |ext| {
-            exts.put(ext, js) catch unreachable;
+        for (out_extensions_list) |ext| {
+            exts.put(ext, ".js") catch unreachable;
         }
 
         return exts;
@@ -556,6 +523,7 @@ pub const Target = enum {
         array.set(Target.browser, &listc);
         array.set(Target.bun, &listd);
         array.set(Target.bun_macro, &listd);
+        array.set(Target.kit_server_components_ssr, &listd);
 
         // Original comment:
         // The neutral target is for people that don't want esbuild to try to
@@ -569,18 +537,22 @@ pub const Target = enum {
     pub const default_conditions: std.EnumArray(Target, []const string) = brk: {
         var array = std.EnumArray(Target, []const string).initUndefined();
 
-        array.set(Target.node, &[_]string{
+        array.set(Target.node, &.{
             "node",
         });
-        array.set(Target.browser, &[_]string{
+        array.set(Target.browser, &.{
             "browser",
             "module",
         });
-        array.set(Target.bun, &[_]string{
+        array.set(Target.bun, &.{
             "bun",
             "node",
         });
-        array.set(Target.bun_macro, &[_]string{
+        array.set(Target.kit_server_components_ssr, &.{
+            "bun",
+            "node",
+        });
+        array.set(Target.bun_macro, &.{
             "macro",
             "bun",
             "node",
@@ -997,6 +969,8 @@ pub const JSX = struct {
         /// /** @jsxImportSource @emotion/core */
         classic_import_source: string = "react",
         package_name: []const u8 = "react",
+
+        // TODO: delete the following three fields
         // https://github.com/facebook/react/commit/2f26eb85d657a08c21edbac1e00f9626d68f84ae
         refresh_runtime: string = "react-refresh/runtime",
         supports_fast_refresh: bool = true,

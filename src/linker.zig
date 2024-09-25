@@ -619,7 +619,7 @@ pub const Linker = struct {
         }
 
         if (import_record.path.text.len > 0 and Resolver.isPackagePath(import_record.path.text)) {
-            if (linker.options.target.isWebLike() and Options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
+            if (linker.options.target == .browser and Options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
                 try linker.log.addResolveError(
                     &result.source,
                     import_record.range,
@@ -790,7 +790,7 @@ pub const Linker = struct {
 
         import_record.path = try linker.generateImportPath(
             source_dir,
-            if (path.is_symlink and import_path_format == .absolute_url and linker.options.target.isNotBun()) path.pretty else path.text,
+            if (path.is_symlink and import_path_format == .absolute_url and !linker.options.target.isBun()) path.pretty else path.text,
             loader == .file or loader == .wasm,
             path.namespace,
             origin,

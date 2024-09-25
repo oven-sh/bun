@@ -280,7 +280,7 @@ pub const BuildCommand = struct {
 
             break :brk (BundleV2.generateFromCLI(
                 &this_bundler,
-                if (this_bundler.options.server_components) &client_bundler else null,
+                if (this_bundler.options.server_components) @panic("TODO") else null,
                 allocator,
                 bun.JSC.AnyEventLoop.init(ctx.allocator),
                 std.crypto.random.int(u64),

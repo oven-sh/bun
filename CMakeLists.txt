@@ -43,3 +43,4 @@ include(BuildBun)
 # --- Analysis ---
 
 include(RunClangFormat)
+include(RunZigFormat)

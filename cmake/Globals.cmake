@@ -575,14 +575,6 @@ function(register_repository)
     set(GIT_PATH ${VENDOR_PATH}/${GIT_NAME})
   endif()
 
-  if(GIT_COMMIT)
-    set(GIT_REF ${GIT_COMMIT})
-  elseif(GIT_TAG)
-    set(GIT_REF refs/tags/${GIT_TAG})
-  else()
-    set(GIT_REF refs/heads/${GIT_BRANCH})
-  endif()
-
   set(GIT_EFFECTIVE_OUTPUTS)
   foreach(output ${GIT_OUTPUTS})
     list(APPEND GIT_EFFECTIVE_OUTPUTS ${GIT_PATH}/${output})
@@ -597,8 +589,10 @@ function(register_repository)
       ${CMAKE_COMMAND}
         -DGIT_PATH=${GIT_PATH}
         -DGIT_REPOSITORY=${GIT_REPOSITORY}
-        -DGIT_REF=${GIT_REF}
         -DGIT_NAME=${GIT_NAME}
+        -DGIT_COMMIT=${GIT_COMMIT}
+        -DGIT_TAG=${GIT_TAG}
+        -DGIT_BRANCH=${GIT_BRANCH}
         -P ${CWD}/cmake/scripts/GitClone.cmake
     OUTPUTS
       ${GIT_PATH}

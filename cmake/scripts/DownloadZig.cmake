@@ -1,21 +1,8 @@
 get_filename_component(SCRIPT_NAME ${CMAKE_CURRENT_LIST_FILE} NAME)
 message(STATUS "Running script: ${SCRIPT_NAME}")
 
-if(NOT ZIG_PATH)
-  message(FATAL_ERROR "ZIG_PATH is required")
-endif()
-
-if(ZIG_REPOSITORY)
-  if(NOT ZIG_COMMIT)
-    message(FATAL_ERROR "ZIG_COMMIT is required when ZIG_REPOSITORY is set")
-  endif()
-elseif(NOT ZIG_COMMIT)
-  set(ZIG_REPOSITORY "oven-sh/zig")
-  set(ZIG_COMMIT "131a009ba2eb127a3447d05b9e12f710429aa5ee")
-endif()
-
-if(NOT ZIG_VERSION)
-  set(ZIG_VERSION "0.13.0")
+if(NOT ZIG_PATH OR NOT ZIG_COMMIT OR NOT ZIG_VERSION)
+  message(FATAL_ERROR "ZIG_PATH, ZIG_COMMIT, and ZIG_VERSION are required")
 endif()
 
 if(CMAKE_HOST_APPLE)
@@ -81,31 +68,29 @@ if(NOT WIN32)
   file(CREATE_LINK ${ZIG_PATH}/${ZIG_EXE} ${ZIG_PATH}/zig.exe SYMBOLIC)
 endif()
 
-if(ZIG_REPOSITORY AND ZIG_COMMIT)
-  message(STATUS "Downloading zig library from ${ZIG_REPOSITORY} at ${ZIG_COMMIT}...")
+message(STATUS "Downloading zig library at ${ZIG_COMMIT}...")
 
-  execute_process(
-    COMMAND
-      ${CMAKE_COMMAND}
-        -DGIT_PATH=${ZIG_PATH}/tmp
-        -DGIT_REPOSITORY=${ZIG_REPOSITORY}
-        -DGIT_COMMIT=${ZIG_COMMIT}
-        -P ${CMAKE_CURRENT_LIST_DIR}/GitClone.cmake
-    ERROR_STRIP_TRAILING_WHITESPACE
-    ERROR_VARIABLE
-      ZIG_REPOSITORY_ERROR
-    RESULT_VARIABLE
-      ZIG_REPOSITORY_RESULT
-  )
+execute_process(
+  COMMAND
+    ${CMAKE_COMMAND}
+      -DGIT_PATH=${ZIG_PATH}/tmp
+      -DGIT_REPOSITORY=oven-sh/zig
+      -DGIT_COMMIT=${ZIG_COMMIT}
+      -P ${CMAKE_CURRENT_LIST_DIR}/GitClone.cmake
+  ERROR_STRIP_TRAILING_WHITESPACE
+  ERROR_VARIABLE
+    ZIG_REPOSITORY_ERROR
+  RESULT_VARIABLE
+    ZIG_REPOSITORY_RESULT
+)
 
-  if(NOT ZIG_REPOSITORY_RESULT EQUAL 0)
-    message(FATAL_ERROR "Download failed: ${ZIG_REPOSITORY_ERROR}")
-  endif()
-
-  file(REMOVE_RECURSE ${ZIG_PATH}/lib)
-  file(RENAME ${ZIG_PATH}/tmp/lib ${ZIG_PATH}/lib)
-  file(REMOVE_RECURSE ${ZIG_PATH}/tmp)
-  message(STATUS "Saved ${ZIG_PATH}/lib")
+if(NOT ZIG_REPOSITORY_RESULT EQUAL 0)
+  message(FATAL_ERROR "Download failed: ${ZIG_REPOSITORY_ERROR}")
 endif()
+
+file(REMOVE_RECURSE ${ZIG_PATH}/lib)
+file(RENAME ${ZIG_PATH}/tmp/lib ${ZIG_PATH}/lib)
+file(REMOVE_RECURSE ${ZIG_PATH}/tmp)
+message(STATUS "Saved ${ZIG_PATH}/lib")
 
 message(STATUS "Saved ${ZIG_EXE}")

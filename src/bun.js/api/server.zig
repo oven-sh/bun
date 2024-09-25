@@ -6300,6 +6300,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
 
         pub fn stopFromJS(this: *ThisServer, abruptly: ?JSValue) JSC.JSValue {
+            const rc = this.getAllClosedPromise(this.globalThis);
+
             if (this.listener != null) {
                 const abrupt = brk: {
                     if (abruptly) |val| {
@@ -6315,7 +6317,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 this.stop(abrupt);
             }
 
-            return .undefined;
+            return rc;
         }
 
         pub fn disposeFromJS(this: *ThisServer) JSC.JSValue {
@@ -6508,6 +6510,18 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             return this.activeSocketsCount() > 0;
         }
 
+        pub fn getAllClosedPromise(this: *ThisServer, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+            if (this.listener == null and this.pending_requests == 0) {
+                return JSC.JSPromise.resolvedPromise(globalThis, .undefined).asValue(globalThis);
+            }
+            const prom = &this.all_closed_promise;
+            if (prom.strong.has()) {
+                return prom.value();
+            }
+            prom.* = JSC.JSPromise.Strong.init(globalThis);
+            return prom.value();
+        }
+
         pub fn deinitIfWeCan(this: *ThisServer) void {
             httplog("deinitIfWeCan", .{});
 
@@ -6522,10 +6536,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
                 const task = ServerAllConnectionsClosedTask.new(.{
                     .globalObject = this.globalThis,
-                    .promise = this.all_closed_promise,
+                    // Duplicate the Strong handle so that we can hold two independent strong references to it.
+                    .promise = JSC.JSPromise.Strong{
+                        .strong = JSC.Strong.create(this.all_closed_promise.value(), this.globalThis),
+                    },
                     .tracker = JSC.AsyncTaskTracker.init(vm),
                 });
-                this.all_closed_promise = .{};
                 event_loop.enqueueTask(JSC.Task.init(task));
             }
             if (this.pending_requests == 0 and this.listener == null and this.flags.has_js_deinited and !this.hasActiveWebSockets()) {
@@ -6588,6 +6604,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             httplog("deinit", .{});
             this.cached_hostname.deref();
             this.cached_protocol.deref();
+            this.all_closed_promise.deinit();
 
             this.config.deinit();
             this.app.destroy();
@@ -7165,12 +7182,11 @@ pub const ServerAllConnectionsClosedTask = struct {
         defer tracker.didDispatch(globalObject);
 
         var promise = this.promise;
+        defer promise.deinit();
         this.destroy();
 
         if (!vm.isShuttingDown()) {
             promise.resolve(globalObject, .undefined);
-        } else {
-            promise.deinit();
         }
     }
 };

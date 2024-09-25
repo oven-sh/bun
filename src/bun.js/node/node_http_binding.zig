@@ -23,15 +23,7 @@ pub fn getBunServerAllClosedPromise(globalThis: *JSC.JSGlobalObject, callframe: 
         JSC.API.DebugHTTPSServer,
     }) |Server| {
         if (value.as(Server)) |server| {
-            if (server.listener == null and server.pending_requests == 0) {
-                return JSC.JSPromise.resolvedPromise(globalThis, .undefined).asValue(globalThis);
-            }
-            const prom = &server.all_closed_promise;
-            if (prom.strong.has()) {
-                return prom.value();
-            }
-            prom.* = JSC.JSPromise.Strong.init(globalThis);
-            return prom.value();
+            return server.getAllClosedPromise(globalThis);
         }
     }
 

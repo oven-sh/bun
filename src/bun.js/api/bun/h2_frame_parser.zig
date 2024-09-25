@@ -1659,6 +1659,10 @@ pub const H2FrameParser = struct {
         }
     }
 
+    fn backPressure(this: H2FrameParser) usize {
+        return this.pendingBuffer.len;
+    }
+
     pub fn setEncoding(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(1);

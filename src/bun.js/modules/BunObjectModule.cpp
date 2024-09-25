@@ -11,8 +11,7 @@ void generateNativeModule_BunObject(JSC::JSGlobalObject *lexicalGlobalObject,
                                     JSC::MarkedArgumentBuffer &exportValues) {
   // FIXME: this does not add each property as a top level export
   JSC::VM &vm = lexicalGlobalObject->vm();
-  Zig::GlobalObject *globalObject =
-      jsCast<Zig::GlobalObject *>(lexicalGlobalObject);
+  Zig::GlobalObject *globalObject = jsCast<Zig::GlobalObject *>(lexicalGlobalObject);
 
   JSObject *object = globalObject->bunObject();
 

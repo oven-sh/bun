@@ -55,9 +55,10 @@
     "zig:check": "bun run zig build check --summary new",
     "zig:check-all": "bun run zig build check-all --summary new",
     "zig:check-windows": "bun run zig build check-windows --summary new",
-    "clang-format": "bun run build --target clang-format",
-    "clang-format:check": "bun run build --target clang-format-check",
-    "zig-format": "bun run build --target zig-format",
-    "zig-format:check": "bun run build --target zig-format-check"
+    "cmake": "bun ./scripts/build.mjs",
+    "clang-format": "bun run cmake --target clang-format",
+    "clang-format:check": "bun run cmake --target clang-format-check",
+    "zig-format": "bun run cmake --target zig-format",
+    "zig-format:check": "bun run cmake --target zig-format-check"
   }
 }

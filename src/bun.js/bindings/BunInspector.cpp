@@ -141,8 +141,7 @@ static void addInspector(void* app, JSC::JSGlobalObject* globalObject)
         ((uWS::SSLApp*)app)->ws<SSLBunInspectorConnection*>("/bun:inspect", std::move(handler));
     } else {
 
-        auto handler = uWS::App::WebSocketBehavior<BunInspectorConnectionNoSSL*>
-        {
+        auto handler = uWS::App::WebSocketBehavior<BunInspectorConnectionNoSSL*> {
             /* Settings */
             .compression = uWS::DISABLED,
             .maxPayloadLength = 16 * 1024 * 1024,
@@ -152,43 +151,40 @@ static void addInspector(void* app, JSC::JSGlobalObject* globalObject)
             .resetIdleTimeoutOnSend = true,
             .sendPingsAutomatically = true,
             /* Handlers */
-                .upgrade = nullptr,
+            .upgrade = nullptr,
             .open = [globalObject](auto* ws) {
                 globalObject->setInspectable(true);
                 *ws->getUserData() = new BunInspectorConnectionNoSSL(ws, globalObject);
                 BunInspectorConnectionNoSSL* inspector = *ws->getUserData();
-                inspector->onOpen(globalObject);
-                // },
-                .message = [](auto* ws, std::string_view message, uWS::OpCode opCode) {
+                inspector->onOpen(globalObject); },
+            .message = [](auto* ws, std::string_view message, uWS::OpCode opCode) {
                     BunInspectorConnectionNoSSL* inspector = *(BunInspectorConnectionNoSSL**)ws->getUserData();
-                    inspector->onMessage(message);
-                    // },
-                    .drain = [](auto* ws) {
+                    inspector->onMessage(message); },
+            .drain = [](auto* ws) {
                         BunInspectorConnectionNoSSL* inspector = *(BunInspectorConnectionNoSSL**)ws->getUserData();
-                        inspector->drain();
-                        // },
-                        .ping = [](auto* /*ws*/, std::string_view) {
+                        inspector->drain(); },
+            .ping = [](auto* /*ws*/, std::string_view) {
         /* Not implemented yet */ },
-                        .pong = [](auto* /*ws*/, std::string_view) {
+            .pong = [](auto* /*ws*/, std::string_view) {
         /* Not implemented yet */ },
 
-                        .close = [](auto* ws, int /*code*/, std::string_view /*message*/) {
+            .close = [](auto* ws, int /*code*/, std::string_view /*message*/) {
             BunInspectorConnectionNoSSL* inspector = *(BunInspectorConnectionNoSSL**)ws->getUserData();
             inspector->onClose();
             delete inspector; }
-                    };
+        };
 
-                    ((uWS::App*)app)->ws<BunInspectorConnectionNoSSL*>("/bun:inspect", std::move(handler));
-                }
-            }
+        ((uWS::App*)app)->ws<BunInspectorConnectionNoSSL*>("/bun:inspect", std::move(handler));
+    }
+}
 
-            extern "C" void
-            Bun__addInspector(bool isSSL, void* app, JSC::JSGlobalObject* globalObject)
-            {
-                if (isSSL) {
-                    addInspector<true>((uWS::TemplatedApp<true>*)app, globalObject);
-                } else {
-                    addInspector<false>((uWS::TemplatedApp<false>*)app, globalObject);
-                }
-            };
-        }
+extern "C" void
+Bun__addInspector(bool isSSL, void* app, JSC::JSGlobalObject* globalObject)
+{
+    if (isSSL) {
+        addInspector<true>((uWS::TemplatedApp<true>*)app, globalObject);
+    } else {
+        addInspector<false>((uWS::TemplatedApp<false>*)app, globalObject);
+    }
+};
+}

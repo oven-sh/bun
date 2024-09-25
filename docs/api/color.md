@@ -26,6 +26,8 @@ There are many different ways to use this API:
 - Format colors for use in CSS injected into HTML
 - Get the `r`, `g`, `b`, and `a` color components as JavaScript objects or numbers from a CSS color string
 
+You can think of this as an alternative to the popular npm packages [`color`](https://github.com/Qix-/color) and [`tinycolor2`](https://github.com/bgrins/TinyColor) except with full support for parsing CSS color strings and zero dependencies built directly into Bun.
+
 ### Flexible input
 
 You can pass in any of the following:

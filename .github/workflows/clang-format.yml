@@ -18,8 +18,8 @@ on:
 
 env:
   BUN_VERSION: "1.1.27"
-  LLVM_VERSION: "18.1.8"
-  LLVM_VERSION_MAJOR: "18"
+  LLVM_VERSION: "16.0.6"
+  LLVM_VERSION_MAJOR: "16"
 
 jobs:
   clang-format:

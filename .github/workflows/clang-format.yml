@@ -32,9 +32,12 @@ jobs:
         uses: ./.github/actions/setup-bun
         with:
           bun-version: "1.1.25"
+      - name: Setup LLVM
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "16.0.5"
       - name: Format
         run: |
-          clang --version
           bun run clang-format -DLLVM_VERSION=16.0.5
       - name: Commit
         uses: stefanzweifel/git-auto-commit-action@v5

@@ -89,7 +89,24 @@ if(NOT ZIG_REPOSITORY_RESULT EQUAL 0)
 endif()
 
 file(REMOVE_RECURSE ${ZIG_PATH}/lib)
-file(RENAME ${ZIG_PATH}/tmp/lib ${ZIG_PATH}/lib)
+execute_process(
+  COMMAND
+    ${CMAKE_COMMAND}
+      -E sleep 3
+)
+
+execute_process(
+  COMMAND
+    ${CMAKE_COMMAND}
+      -E copy_directory ${ZIG_PATH}/tmp/lib ${ZIG_PATH}/lib
+)
+
+execute_process(
+  COMMAND
+    ${CMAKE_COMMAND}
+      -E sleep 3
+)
+
 file(REMOVE_RECURSE ${ZIG_PATH}/tmp)
 message(STATUS "Saved ${ZIG_PATH}/lib")
 

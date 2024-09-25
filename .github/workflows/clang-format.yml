@@ -14,9 +14,6 @@ on:
       - "cmake/**"
       - "src/**.{c,cpp,h,hpp}"
 
-env:
-  LLVM_VERSION: "16.0.6"
-
 jobs:
   clang-format:
     name: clang-format
@@ -37,12 +34,12 @@ jobs:
           bun-version: "1.1.25"
       - name: Install LLVM
         run: |
-          curl -fsSL https://apt.llvm.org/llvm.sh | sudo bash -s -- ${{ env.LLVM_VERSION }} all
+          curl -fsSL https://apt.llvm.org/llvm.sh | sudo bash -s -- 18 all
           clang --version
       - name: Format
         run: |
-          bun run clang-format -DLLVM_VERSION=${{ env.LLVM_VERSION }}
+          bun run clang-format -DLLVM_VERSION=18.1.8
       - name: Commit
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: Run `bun run clang-format` using LLVM ${{ env.LLVM_VERSION }}
+          commit_message: Run `bun run clang-format`

@@ -1841,6 +1841,20 @@ describe("bundler", () => {
         "测试"
       `,
     },
+    target: "bun",
+    run: { stdout: `测试` },
+  });
+  itBundled("edgecase/Latin1StringInImportedJSONBrowser", {
+    files: {
+      "/entry.ts": `
+        import x from './second.json';
+        console.log(x);
+      `,
+      "/second.json": `
+        "测试"
+      `,
+    },
+    target: "browser",
     run: { stdout: `测试` },
   });
   itBundled("edgecase/Latin1StringKey", {
@@ -1853,6 +1867,20 @@ describe("bundler", () => {
         {"测试" : 123}
       `,
     },
+    target: "bun",
+    run: { stdout: `123` },
+  });
+  itBundled("edgecase/Latin1StringKeyBrowser", {
+    files: {
+      "/entry.ts": `
+        import x from './second.json';
+        console.log(x["测试"]);
+      `,
+      "/second.json": `
+        {"测试" : 123}
+      `,
+    },
+    target: "browser",
     run: { stdout: `123` },
   });
 

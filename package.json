@@ -55,7 +55,7 @@
     "zig:check": "bun run zig build check --summary new",
     "zig:check-all": "bun run zig build check-all --summary new",
     "zig:check-windows": "bun run zig build check-windows --summary new",
-    "cmake": "bun ./scripts/build.mjs",
+    "cmake": "bun ./scripts/build.mjs -DCMAKE_BUILD_TYPE=Debug -B build/debug",
     "clang-format": "bun run cmake --target clang-format",
     "clang-format:check": "bun run cmake --target clang-format-check",
     "zig-format": "bun run cmake --target zig-format",

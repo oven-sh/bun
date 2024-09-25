@@ -1,6 +1,5 @@
 import { file, listen, Socket, spawn } from "bun";
 import {
-  jest,
   afterAll,
   afterEach,
   beforeAll,
@@ -8,6 +7,7 @@ import {
   describe,
   expect,
   it,
+  jest,
   setDefaultTimeout,
   test,
 } from "bun:test";

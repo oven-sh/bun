@@ -1,11 +1,11 @@
+import axios from "axios";
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { tls as tlsCert } from "harness";
+import { HttpsProxyAgent } from "https-proxy-agent";
 import { once } from "node:events";
 import net from "node:net";
 import tls from "node:tls";
-import axios from "axios";
-import { HttpsProxyAgent } from "https-proxy-agent";
 async function createProxyServer(is_tls: boolean) {
   const serverArgs = [];
   if (is_tls) {

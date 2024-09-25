@@ -2,13 +2,13 @@ import type { InspectorEventMap } from "../../../bun-inspector-protocol/src/insp
 import type { JSC } from "../../../bun-inspector-protocol/src/protocol";
 import type { DAP } from "../protocol";
 // @ts-ignore
-import { spawn, ChildProcess } from "node:child_process";
+import { ChildProcess, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { WebSocketInspector, remoteObjectToString } from "../../../bun-inspector-protocol/index";
+import { AddressInfo, createServer } from "node:net";
+import * as path from "node:path";
+import { remoteObjectToString, WebSocketInspector } from "../../../bun-inspector-protocol/index";
 import { randomUnixPath, TCPSocketSignal, UnixSignal } from "./signal";
 import { Location, SourceMap } from "./sourcemap";
-import { createServer, AddressInfo } from "node:net";
-import * as path from "node:path";
 
 export async function getAvailablePort(): Promise<number> {
   const server = createServer();

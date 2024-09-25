@@ -36,7 +36,7 @@ jobs:
         run: |
           curl -fsSL https://apt.llvm.org/llvm.sh | sudo bash -s -- 18 all
           sudo apt-get update
-          sudo apt-get install -y ccache
+          sudo apt-get install -y ninja-build ccache
       - name: Format
         run: |
           bun run clang-format -DLLVM_VERSION=18.1.8

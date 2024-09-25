@@ -236,3 +236,26 @@ Bun.color(0xff0000, "HEX"); // "#FF0000"
 Bun.color({ r: 255, g: 0, b: 0 }, "HEX"); // "#FF0000"
 Bun.color([255, 0, 0], "HEX"); // "#FF0000"
 ```
+
+### Bundle-time client-side color formatting
+
+Like many of Bun's APIs, you can use macros to invoke `Bun.color` at bundle-time for use in client-side JavaScript builds:
+
+```ts#client-side.ts
+import { color } from "bun" with { type: "macro" };
+
+console.log(color("#f00", "css"));
+```
+
+Then, build the client-side code:
+
+```sh
+bun build ./client-side.ts
+```
+
+This will output the following to `client-side.js`:
+
+```js
+// client-side.ts
+console.log("red");
+```

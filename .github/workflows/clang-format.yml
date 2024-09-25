@@ -13,8 +13,12 @@ on:
       - "package.json"
       - "scripts/**"
       - "cmake/**"
-      - "src/**/*.{c,cpp,h,hpp}"
-      - "packages/**/*.{c,cpp,h,hpp}"
+      - "src/**/*.c"
+      - "src/**/*.cpp"
+      - "src/**/*.h"
+      - "packages/**/*.c"
+      - "packages/**/*.cpp"
+      - "packages/**/*.h"
 
 env:
   BUN_VERSION: "1.1.27"

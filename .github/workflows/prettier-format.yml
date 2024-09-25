@@ -8,10 +8,15 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
-      - ".github/workflows/prettier.yml"
+      - ".github/workflows/prettier-format.yml"
       - "package.json"
       - "scripts/**"
-      - "**/*.{yml,json,js,ts,tsx,jsx,mjs,cjs,mts,cts}"
+      - "**/*.yml"
+      - "**/*.json"
+      - "**/*.jsx?"
+      - "**/*.tsx?"
+      - "**/*.mjs"
+      - "**/*.cjs"
 
 env:
   BUN_VERSION: "1.1.27"

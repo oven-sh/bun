@@ -1,12 +1,4 @@
-import type {
-  ServerWebSocket,
-  Socket,
-  SocketHandler,
-  TCPSocketConnectOptions,
-  UnixSocketOptions,
-  WebSocketHandler,
-  Server as WebSocketServer,
-} from "bun";
+import type { ServerWebSocket, Socket, SocketHandler, WebSocketHandler, Server as WebSocketServer } from "bun";
 
 export default function (
   executionContextId: string,

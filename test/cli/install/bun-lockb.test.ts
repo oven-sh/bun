@@ -1,9 +1,8 @@
-import { file, listen, Socket, spawn } from "bun";
-import { tmpdirSync } from "harness";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { access, mkdir, readlink, rm, writeFile, copyFile } from "fs/promises";
-import { bunEnv, bunExe, bunEnv as env, tempDirWithFiles, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
-import { join, sep } from "path";
+import { spawn } from "bun";
+import { expect, it } from "bun:test";
+import { access, copyFile, writeFile } from "fs/promises";
+import { bunExe, bunEnv as env, tmpdirSync } from "harness";
+import { join } from "path";
 
 it("should not print anything to stderr when running bun.lockb", async () => {
   const package_dir = tmpdirSync();

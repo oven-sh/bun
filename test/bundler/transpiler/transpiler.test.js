@@ -103,7 +103,7 @@ describe("Bun.Transpiler", () => {
   it("doesn't hang indefinitely #2746", () => {
     // this test passes by not hanging
     expect(() => {
-      console.log('1');
+      console.log("1");
       const y = transpiler.transformSync(`
         class Test {
           test() {

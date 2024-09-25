@@ -89,6 +89,30 @@ pub const KeyframesName = union(enum) {
 
     const This = @This();
 
+    pub fn HashMap(comptime V: type) type {
+        return std.ArrayHashMapUnmanaged(KeyframesName, V, struct {
+            pub fn hash(_: @This(), key: KeyframesName) u32 {
+                return switch (key) {
+                    .ident => std.array_hash_map.hashString(key.ident.v),
+                    .custom => std.array_hash_map.hashString(key.custom),
+                };
+            }
+
+            pub fn eql(_: @This(), a: KeyframesName, b: KeyframesName, _: usize) bool {
+                return switch (a) {
+                    .ident => switch (b) {
+                        .ident => bun.strings.eql(a.ident.v, b.ident.v),
+                        .custom => false,
+                    },
+                    .custom => switch (b) {
+                        .ident => false,
+                        .custom => bun.strings.eql(a.custom, b.custom),
+                    },
+                };
+            }
+        }, false);
+    }
+
     pub fn parse(input: *css.Parser) Result(KeyframesName) {
         switch (switch (input.next()) {
             .result => |v| v.*,
@@ -265,5 +289,11 @@ pub const KeyframesRule = struct {
                 try dest.writeChar('}');
             }
         }
+    }
+
+    pub fn getFallbacks(this: *This, comptime T: type, targets: *const css.targets.Targets) []css.CssRule(T) {
+        _ = this; // autofix
+        _ = targets; // autofix
+        @panic(css.todo_stuff.depth);
     }
 };

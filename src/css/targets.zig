@@ -17,6 +17,18 @@ pub const Targets = struct {
     /// Features that should never be compiled, even when unsupported by targets.
     exclude: Features = .{},
 
+    pub fn prefixes(this: *const Targets, prefix: css.VendorPrefix, feature: css.prefixes.Feature) css.VendorPrefix {
+        if (prefix.contains(css.VendorPrefix{ .none = true }) and !this.exclude.contains(css.targets.Features{ .vendor_prefixes = true })) {
+            if (this.includes(css.targets.Features{ .vendor_prefixes = true })) {
+                return css.VendorPrefix.all();
+            } else {
+                return if (this.browsers) |b| feature.prefixesFor(b) else prefix;
+            }
+        } else {
+            return prefix;
+        }
+    }
+
     pub fn shouldCompile(this: *const Targets, feature: css.compat.Feature, flag: Features) bool {
         return this.include.contains(flag) or (!this.exclude.contains(flag) and !this.isCompatible(feature));
     }

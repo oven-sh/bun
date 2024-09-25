@@ -6,6 +6,8 @@ const Log = logger.Log;
 
 const ArrayList = std.ArrayListUnmanaged;
 
+pub const prefixes = @import("./prefixes.zig");
+
 pub const dependencies = @import("./dependencies.zig");
 pub const Dependency = dependencies.Dependency;
 
@@ -26,6 +28,8 @@ pub const UnknownAtRule = css_rules.unknown.UnknownAtRule;
 pub const ImportRule = css_rules.import.ImportRule;
 pub const StyleRule = css_rules.style.StyleRule;
 pub const StyleContext = css_rules.StyleContext;
+
+pub const MinifyContext = css_rules.MinifyContext;
 
 pub const media_query = @import("./media_query.zig");
 pub const MediaList = media_query.MediaList;
@@ -75,7 +79,8 @@ pub const Targets = css_printer.Targets;
 // pub const Features = css_printer.Features;
 
 const context = @import("./context.zig");
-const PropertyHandlerContext = context.PropertyHandlerContext;
+pub const PropertyHandlerContext = context.PropertyHandlerContext;
+pub const DeclarationHandler = declaration.DeclarationHandler;
 
 pub const Maybe = bun.JSC.Node.Maybe;
 // TODO: Remove existing Error defined here and replace it with these
@@ -90,6 +95,7 @@ pub const BasicParseError = errors_.BasicParseError;
 pub const BasicParseErrorKind = errors_.BasicParseErrorKind;
 pub const SelectorError = errors_.SelectorError;
 pub const MinifyErrorKind = errors_.MinifyErrorKind;
+pub const MinifyError = errors_.MinifyError;
 
 pub const compat = @import("./compat.zig");
 
@@ -147,6 +153,10 @@ pub const VendorPrefix = packed struct(u8) {
     __unused: u3 = 0,
 
     pub usingnamespace Bitflags(@This());
+
+    pub fn all() VendorPrefix {
+        return VendorPrefix{ .webkit = true, .moz = true, .ms = true, .o = true, .none = true };
+    }
 
     pub fn toCss(this: *const VendorPrefix, comptime W: type, dest: *Printer(W)) PrintErr!void {
         return switch (this.asBits()) {
@@ -2419,15 +2429,12 @@ pub fn StyleSheet(comptime AtRule: type) type {
             _ = this; // autofix
             _ = allocator; // autofix
             _ = options; // autofix
-            // TODO: IMPLEMENT THIS!
+            // TODO
             return .{ .result = {} };
 
             // const ctx = PropertyHandlerContext.new(allocator, options.targets, &options.unused_symbols);
-            // _ = ctx; // autofix
             // var handler = declaration.DeclarationHandler.default();
-            // _ = handler; // autofix
             // var important_handler = declaration.DeclarationHandler.default();
-            // _ = important_handler; // autofix
 
             // // @custom-media rules may be defined after they are referenced, but may only be defined at the top level
             // // of a stylesheet. Do a pre-scan here and create a lookup table by name.
@@ -2444,7 +2451,24 @@ pub fn StyleSheet(comptime AtRule: type) type {
             // } else null;
             // defer if (custom_media) |media| media.deinit(allocator);
 
-            // var minify_ctx = MinifyCtx{};
+            // var minify_ctx = MinifyContext{
+            //     .targets = &options.targets,
+            //     .handler = &handler,
+            //     .important_handler = &important_handler,
+            //     .handler_context = ctx,
+            //     .unused_symbols = &options.unused_symbols,
+            //     .custom_media = custom_media,
+            //     .css_modules = this.options.css_modules != null,
+            // };
+
+            // switch (this.rules.minify(&minify_ctx, false)) {
+            //     .result => return .{ .result = {} },
+            //     .err => |e| {
+            //         _ = e; // autofix
+            //         @panic("TODO: here");
+            //         // return .{ .err = .{ .kind = e, .loc = } };
+            //     },
+            // }
         }
 
         pub fn toCss(this: *const @This(), allocator: Allocator, options: css_printer.PrinterOptions) PrintErr!ToCssResult {

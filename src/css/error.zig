@@ -296,6 +296,14 @@ pub const SelectorError = union(enum) {
     }
 };
 
+pub fn ErrorWithLocation(comptime T: type) type {
+    return struct {
+        kind: T,
+        loc: css.Location,
+    };
+}
+
+pub const MinifyError = ErrorWithLocation(MinifyErrorKind);
 /// A transformation error.
 pub const MinifyErrorKind = union(enum) {
     /// A circular `@custom-media` rule was detected.

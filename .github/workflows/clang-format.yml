@@ -10,6 +10,8 @@ on:
     paths:
       - ".github/workflows/clang-format.yml"
       - ".clang-format"
+      - "scripts/**"
+      - "cmake/**"
       - "src/**.{c,cpp,h,hpp}"
 
 jobs:
@@ -24,6 +26,7 @@ jobs:
             .github
             .clang-format
             scripts
+            cmake
             src
       - name: Setup Bun
         uses: ./.github/actions/setup-bun

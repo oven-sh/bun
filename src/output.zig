@@ -103,17 +103,27 @@ pub const Source = struct {
         return no_color.len != 0;
     }
 
-    pub fn isForceColor() bool {
-        const force_color = bun.getenvZ("FORCE_COLOR") orelse return false;
+    pub fn getForceColorDepth() ?ColorDepth {
+        const force_color = bun.getenvZ("FORCE_COLOR") orelse return null;
         // Supported by Node.js, if set will ignore NO_COLOR.
         // - "1", "true", or "" to indicate 16-color support
         // - "2" to indicate 256-color support
         // - "3" to indicate 16 million-color support
-        return force_color.len == 0 or
-            strings.eqlComptime(force_color, "1") or
-            strings.eqlComptime(force_color, "true") or
-            strings.eqlComptime(force_color, "2") or
-            strings.eqlComptime(force_color, "3");
+        if (strings.eqlComptime(force_color, "1") or strings.eqlComptime(force_color, "true") or strings.eqlComptime(force_color, "")) {
+            return ColorDepth.@"16";
+        }
+        if (strings.eqlComptime(force_color, "2")) {
+            return ColorDepth.@"256";
+        }
+        if (strings.eqlComptime(force_color, "3")) {
+            return ColorDepth.@"16m";
+        }
+
+        return ColorDepth.@"256";
+    }
+
+    pub fn isForceColor() bool {
+        return getForceColorDepth() != null;
     }
 
     pub fn isColorTerminal() bool {
@@ -261,6 +271,130 @@ pub const Source = struct {
             }
         }
     };
+
+    pub const ColorDepth = enum {
+        none,
+        @"16",
+        @"256",
+        @"16m",
+    };
+    var lazy_color_depth: ColorDepth = .none;
+    var color_depth_once = std.once(getColorDepthOnce);
+    fn getColorDepthOnce() void {
+        if (getForceColorDepth()) |depth| {
+            lazy_color_depth = depth;
+            return;
+        }
+
+        if (isNoColor()) {
+            return;
+        }
+
+        const term = bun.getenvZ("TERM") orelse "";
+        if (strings.eqlComptime(term, "dumb")) {
+            return;
+        }
+
+        if (bun.getenvZ("TMUX") != null) {
+            lazy_color_depth = .@"256";
+            return;
+        }
+
+        if (bun.getenvZ("CI")) |ci| {
+            inline for (.{ "APPVEYOR", "BUILDKITE", "CIRCLECI", "DRONE", "GITHUB_ACTIONS", "GITLAB_CI", "TRAVIS" }) |ci_env| {
+                if (strings.eqlComptime(ci, ci_env)) {
+                    lazy_color_depth = .@"256";
+                    return;
+                }
+            }
+
+            return;
+        }
+
+        if (bun.getenvZ("TERM_PROGRAM")) |term_program| {
+            if (strings.eqlComptime(term_program, "iTerm.app")) {
+                lazy_color_depth = .@"16m";
+                return;
+            }
+
+            if (strings.eqlComptime(term_program, "WezTerm")) {
+                lazy_color_depth = .@"16m";
+                return;
+            }
+
+            if (strings.eqlComptime(term_program, "ghostty")) {
+                lazy_color_depth = .@"16m";
+                return;
+            }
+        }
+
+        var has_color_term_set = false;
+
+        if (bun.getenvZ("COLORTERM")) |color_term| {
+            if (strings.eqlComptime(color_term, "truecolor") or strings.eqlComptime(color_term, "24bit")) {
+                lazy_color_depth = .@"16m";
+                return;
+            }
+            has_color_term_set = true;
+        }
+
+        if (term.len > 0) {
+            if (strings.hasPrefixComptime(term, "xterm-256")) {
+                lazy_color_depth = .@"256";
+                return;
+            }
+            const pairs = .{
+                .{ "st", ColorDepth.@"16" },
+                .{ "hurd", ColorDepth.@"16" },
+                .{ "eterm", ColorDepth.@"16" },
+                .{ "gnome", ColorDepth.@"16" },
+                .{ "kterm", ColorDepth.@"16" },
+                .{ "mosh", ColorDepth.@"16m" },
+                .{ "putty", ColorDepth.@"16" },
+                .{ "cons25", ColorDepth.@"16" },
+                .{ "cygwin", ColorDepth.@"16" },
+                .{ "dtterm", ColorDepth.@"16" },
+                .{ "mlterm", ColorDepth.@"16" },
+                .{ "console", ColorDepth.@"16" },
+                .{ "jfbterm", ColorDepth.@"16" },
+                .{ "konsole", ColorDepth.@"16" },
+                .{ "terminator", ColorDepth.@"16m" },
+                .{ "xterm-ghostty", ColorDepth.@"16m" },
+                .{ "rxvt-unicode-24bit", ColorDepth.@"16m" },
+            };
+
+            inline for (pairs) |pair| {
+                if (strings.eqlComptime(term, pair[0])) {
+                    lazy_color_depth = pair[1];
+                    return;
+                }
+            }
+
+            if (strings.includes(term, "con") or
+                strings.includes(term, "ansi") or
+                strings.includes(term, "rxvt") or
+                strings.includes(term, "color") or
+                strings.includes(term, "linux") or
+                strings.includes(term, "vt100") or
+                strings.includes(term, "xterm") or
+                strings.includes(term, "screen"))
+            {
+                lazy_color_depth = .@"16";
+                return;
+            }
+        }
+
+        if (has_color_term_set) {
+            lazy_color_depth = .@"16";
+            return;
+        }
+
+        lazy_color_depth = .none;
+    }
+    pub fn colorDepth() ColorDepth {
+        color_depth_once.call();
+        return lazy_color_depth;
+    }
 
     pub fn set(new_source: *const Source) void {
         source = new_source.*;

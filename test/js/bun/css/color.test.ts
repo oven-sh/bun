@@ -104,20 +104,27 @@ const formatted = {
 
 for (const format in formatted) {
   for (const input of formatted[format]) {
-    test(`console.log(color(${JSON.stringify(input)}, "ansi"))`, () => {
-      console.log(color(input, "ansi") + input);
+    test(`console.log(color(${JSON.stringify(input)}, "ansi-24bit"))`, () => {
+      console.log(color(input, "ansi-24bit") + input);
     });
 
-    test(`console.log(color(${JSON.stringify(input)}, "ansi256"))`, () => {
-      console.log(color(input, "ansi256") + input);
+    test(`console.log(color(${JSON.stringify(input)}, "ansi-256"))`, () => {
+      console.log(color(input, "ansi-256") + input);
+    });
+    test(`console.log(color(${JSON.stringify(input)}, "ansi-16"))`, () => {
+      console.log(color(input, "ansi-16") + input);
     });
 
     test(`color(${JSON.stringify(input)}, "${format}") = ${JSON.stringify(input)}`, () => {
       expect(color(input, format)).toEqual(input);
     });
 
-    test(`color(${JSON.stringify(input)}, "ansi")`, () => {
-      expect(color(input, "ansi")).toMatchSnapshot();
+    test(`color(${JSON.stringify(input)}, "ansi-24bit")`, () => {
+      expect(color(input, "ansi-24bit")).toMatchSnapshot();
+    });
+
+    test(`color(${JSON.stringify(input)}, "ansi-16")`, () => {
+      expect(color(input, "ansi-16")).toMatchSnapshot();
     });
 
     test(`color(${JSON.stringify(input)}, "ansi256")`, () => {

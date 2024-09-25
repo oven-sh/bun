@@ -14,7 +14,9 @@ const css = bun.css;
 
 const OutputColorFormat = enum {
     ansi,
-    ansi256,
+    ansi_16,
+    ansi_256,
+    ansi_16m,
     css,
     hex,
     HEX,
@@ -35,10 +37,14 @@ const OutputColorFormat = enum {
         .{ "{r,g,b}", .@"{rgb}" },
         .{ "{rgb}", .@"{rgb}" },
         .{ "{rgba}", .@"{rgba}" },
-        .{ "ansi_256", .ansi256 },
-        .{ "ansi-256", .ansi256 },
+        .{ "ansi_256", .ansi_256 },
+        .{ "ansi-256", .ansi_256 },
+        .{ "ansi-16", .ansi_16 },
+        .{ "ansi-16m", .ansi_16m },
+        .{ "ansi-24bit", .ansi_16m },
+        .{ "ansi-truecolor", .ansi_16m },
         .{ "ansi", .ansi },
-        .{ "ansi256", .ansi256 },
+        .{ "ansi256", .ansi_256 },
         .{ "css", .css },
         .{ "hex", .hex },
         .{ "HEX", .HEX },
@@ -97,6 +103,30 @@ pub const Ansi256 = struct {
         return idx;
     }
 
+    const table_256: [256]u8 = .{
+        0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15,
+        0,  4,  4,  4,  12, 12, 2,  6,  4,  4,  12, 12, 2,  2,  6,  4,
+        12, 12, 2,  2,  2,  6,  12, 12, 10, 10, 10, 10, 14, 12, 10, 10,
+        10, 10, 10, 14, 1,  5,  4,  4,  12, 12, 3,  8,  4,  4,  12, 12,
+        2,  2,  6,  4,  12, 12, 2,  2,  2,  6,  12, 12, 10, 10, 10, 10,
+        14, 12, 10, 10, 10, 10, 10, 14, 1,  1,  5,  4,  12, 12, 1,  1,
+        5,  4,  12, 12, 3,  3,  8,  4,  12, 12, 2,  2,  2,  6,  12, 12,
+        10, 10, 10, 10, 14, 12, 10, 10, 10, 10, 10, 14, 1,  1,  1,  5,
+        12, 12, 1,  1,  1,  5,  12, 12, 1,  1,  1,  5,  12, 12, 3,  3,
+        3,  7,  12, 12, 10, 10, 10, 10, 14, 12, 10, 10, 10, 10, 10, 14,
+        9,  9,  9,  9,  13, 12, 9,  9,  9,  9,  13, 12, 9,  9,  9,  9,
+        13, 12, 9,  9,  9,  9,  13, 12, 11, 11, 11, 11, 7,  12, 10, 10,
+        10, 10, 10, 14, 9,  9,  9,  9,  9,  13, 9,  9,  9,  9,  9,  13,
+        9,  9,  9,  9,  9,  13, 9,  9,  9,  9,  9,  13, 9,  9,  9,  9,
+        9,  13, 11, 11, 11, 11, 11, 15, 0,  0,  0,  0,  0,  0,  8,  8,
+        8,  8,  8,  8,  7,  7,  7,  7,  7,  7,  15, 15, 15, 15, 15, 15,
+    };
+
+    pub fn get16(r: u32, g: u32, b: u32) u8 {
+        const val = get(r, g, b);
+        return table_256[val & 0xff];
+    }
+
     pub const Buffer = [24]u8;
 
     pub fn from(rgba: RGBA, buf: *Buffer) []u8 {
@@ -129,7 +159,7 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
     var log = bun.logger.Log.init(allocator);
     defer log.deinit();
 
-    const format = brk: {
+    const unresolved_format: OutputColorFormat = brk: {
         if (!args[1].isEmptyOrUndefinedOrNull()) {
             if (!args[1].isString()) {
                 globalThis.throwInvalidArgumentType("color", "format", "string");
@@ -254,9 +284,21 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
             return JSC.JSValue.jsUndefined();
         },
         .result => |*result| {
+            const format: OutputColorFormat = if (unresolved_format == .ansi) switch (bun.Output.Source.colorDepth()) {
+                // No color terminal, therefore return an empty string
+                .none => return JSC.JSValue.jsEmptyString(globalThis),
+                .@"16" => .ansi_16,
+                .@"16m" => .ansi_16m,
+                .@"256" => .ansi_256,
+            } else unresolved_format;
+
             formatted: {
                 var str = color: {
                     switch (format) {
+                        // resolved above.
+                        .ansi => unreachable,
+
+                        // Use the CSS printer.
                         .css => break :formatted,
 
                         .number,
@@ -264,8 +306,9 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
                         .rgba,
                         .hex,
                         .HEX,
-                        .ansi,
-                        .ansi256,
+                        .ansi_16,
+                        .ansi_16m,
+                        .ansi_256,
                         .@"{rgba}",
                         .@"{rgb}",
                         .@"[rgba]",
@@ -333,7 +376,18 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
                                 .rgba => {
                                     break :color bun.String.createFormat("rgba({d}, {d}, {d}, {d})", .{ rgba.red, rgba.green, rgba.blue, rgba.alphaF32() });
                                 },
-                                .ansi => {
+                                .ansi_16 => {
+                                    const ansi_16_color = Ansi256.get16(rgba.red, rgba.green, rgba.blue);
+                                    // 16-color ansi, foreground text color
+                                    break :color bun.String.createLatin1(&[_]u8{
+                                        // 0x1b is the escape character
+                                        // 38 is the foreground color code
+                                        // 5 is the 16-color mode
+                                        // {d} is the color index
+                                        0x1b, '[', '3', '8', ';', '5', ';', ansi_16_color, 'm',
+                                    });
+                                },
+                                .ansi_16m => {
                                     // true color ansi
                                     var buf: [48]u8 = undefined;
                                     // 0x1b is the escape character
@@ -352,7 +406,7 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
 
                                     break :color bun.String.createLatin1(buf[0 .. 7 + additional.len]);
                                 },
-                                .ansi256 => {
+                                .ansi_256 => {
                                     // ANSI escape sequence
                                     var buf: Ansi256.Buffer = undefined;
                                     const val = Ansi256.from(rgba, &buf);

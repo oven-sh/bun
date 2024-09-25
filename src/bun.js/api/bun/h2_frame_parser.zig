@@ -20,6 +20,60 @@ const BunSocket = union(enum) {
     tcp: *TCPSocket,
     tcp_writeonly: *TCPSocket,
 };
+pub const WellKnowHeaders = bun.ComptimeStringMap(bun.String, .{
+    .{ ":authority", bun.String.static(":authority") },
+    .{ ":method", bun.String.static(":method") },
+    .{ ":path", bun.String.static(":path") },
+    .{ ":scheme", bun.String.static(":scheme") },
+    .{ ":status", bun.String.static(":status") },
+    .{ "accept-charset", bun.String.static("accept-charset") },
+    .{ "accept-encoding", bun.String.static("accept-encoding") },
+    .{ "accept-language", bun.String.static("accept-language") },
+    .{ "accept-ranges", bun.String.static("accept-ranges") },
+    .{ "accept", bun.String.static("accept") },
+    .{ "access-control-allow-origin", bun.String.static("access-control-allow-origin") },
+    .{ "age", bun.String.static("age") },
+    .{ "allow", bun.String.static("allow") },
+    .{ "authorization", bun.String.static("authorization") },
+    .{ "cache-control", bun.String.static("cache-control") },
+    .{ "content-disposition", bun.String.static("content-disposition") },
+    .{ "content-encoding", bun.String.static("content-encoding") },
+    .{ "content-language", bun.String.static("content-language") },
+    .{ "content-length", bun.String.static("content-length") },
+    .{ "content-location", bun.String.static("content-location") },
+    .{ "content-range", bun.String.static("content-range") },
+    .{ "content-type", bun.String.static("content-type") },
+    .{ "cookie", bun.String.static("cookie") },
+    .{ "date", bun.String.static("date") },
+    .{ "etag", bun.String.static("etag") },
+    .{ "expect", bun.String.static("expect") },
+    .{ "expires", bun.String.static("expires") },
+    .{ "from", bun.String.static("from") },
+    .{ "host", bun.String.static("host") },
+    .{ "if-match", bun.String.static("if-match") },
+    .{ "if-modified-since", bun.String.static("if-modified-since") },
+    .{ "if-none-match", bun.String.static("if-none-match") },
+    .{ "if-range", bun.String.static("if-range") },
+    .{ "if-unmodified-since", bun.String.static("if-unmodified-since") },
+    .{ "last-modified", bun.String.static("last-modified") },
+    .{ "link", bun.String.static("link") },
+    .{ "location", bun.String.static("location") },
+    .{ "max-forwards", bun.String.static("max-forwards") },
+    .{ "proxy-authenticate", bun.String.static("proxy-authenticate") },
+    .{ "proxy-authorization", bun.String.static("proxy-authorization") },
+    .{ "range", bun.String.static("range") },
+    .{ "referer", bun.String.static("referer") },
+    .{ "refresh", bun.String.static("refresh") },
+    .{ "retry-after", bun.String.static("retry-after") },
+    .{ "server", bun.String.static("server") },
+    .{ "set-cookie", bun.String.static("set-cookie") },
+    .{ "strict-transport-security", bun.String.static("strict-transport-security") },
+    .{ "transfer-encoding", bun.String.static("transfer-encoding") },
+    .{ "user-agent", bun.String.static("user-agent") },
+    .{ "vary", bun.String.static("vary") },
+    .{ "via", bun.String.static("via") },
+    .{ "www-authenticate", bun.String.static("www-authenticate") },
+});
 
 const JSValue = JSC.JSValue;
 
@@ -1146,13 +1200,15 @@ pub const H2FrameParser = struct {
                 this.sendGoAway(stream_id, ErrorCode.PROTOCOL_ERROR, "Server received :status header", this.lastStreamID);
                 return;
             }
+
             if (headers.getTruthy(globalObject, header.name)) |current_value| {
                 // Duplicated of single value headers are discarded
                 if (SingleValueHeaders.has(header.name)) {
                     continue;
                 }
 
-                const value = JSC.ZigString.fromUTF8(header.value).toJS(globalObject);
+                var value_str = bun.String.fromUTF8(header.value);
+                const value = value_str.transferToJS(globalObject);
 
                 if (current_value.jsType().isArray()) {
                     current_value.push(globalObject, value);
@@ -1160,14 +1216,16 @@ pub const H2FrameParser = struct {
                     const array = JSC.JSValue.createEmptyArray(globalObject, 2);
                     array.putIndex(globalObject, 0, current_value);
                     array.putIndex(globalObject, 1, value);
-                    // TODO: check for well-known headers and use pre-allocated static strings (see lshpack.c)
-                    const name = JSC.ZigString.fromUTF8(header.name);
+                    const name = WellKnowHeaders.get(header.name) orelse bun.String.fromUTF8(header.name);
+                    defer name.deref();
+
                     headers.put(globalObject, &name, array);
                 }
             } else {
-                // TODO: check for well-known headers and use pre-allocated static strings (see lshpack.c)
-                const name = JSC.ZigString.fromUTF8(header.name);
-                const value = JSC.ZigString.fromUTF8(header.value).toJS(globalObject);
+                const name = WellKnowHeaders.get(header.name) orelse bun.String.fromUTF8(header.name);
+                defer name.deref();
+                var value_str = bun.String.fromUTF8(header.value);
+                const value = value_str.transferToJS(globalObject);
                 headers.put(globalObject, &name, value);
             }
 

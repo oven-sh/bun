@@ -2675,7 +2675,6 @@ pub const VirtualMachine = struct {
                 .success => |r| r,
                 .failure => |e| {
                     {
-                        @panic("LMAO fuck");
                     }
                     this.log.addErrorFmt(
                         null,

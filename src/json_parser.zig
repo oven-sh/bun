@@ -710,7 +710,7 @@ var empty_array_data = Expr.Data{ .e_array = &empty_array };
 /// Parse JSON
 /// This leaves UTF-16 strings as UTF-16 strings
 /// The JavaScript Printer will handle escaping strings if necessary
-pub fn ParseJSON(
+pub fn parseJSON(
     source: *const logger.Source,
     log: *logger.Log,
     allocator: std.mem.Allocator,
@@ -742,7 +742,7 @@ pub fn ParseJSON(
 /// This eagerly transcodes UTF-16 strings into UTF-8 strings
 /// Use this when the text may need to be reprinted to disk as JSON (and not as JavaScript)
 /// Eagerly converting UTF-8 to UTF-16 can cause a performance issue
-pub fn ParsePackageJSONUTF8(
+pub fn parsePackageJSONUTF8(
     source: *const logger.Source,
     log: *logger.Log,
     allocator: std.mem.Allocator,
@@ -778,7 +778,7 @@ pub fn ParsePackageJSONUTF8(
     return try parser.parseExpr(false, true);
 }
 
-pub fn ParsePackageJSONUTF8AlwaysDecode(
+pub fn parsePackageJSONUTF8AlwaysDecode(
     source: *const logger.Source,
     log: *logger.Log,
     allocator: std.mem.Allocator,
@@ -819,7 +819,7 @@ const JsonResult = struct {
     indentation: Indentation = .{},
 };
 
-pub fn ParsePackageJSONUTF8WithOpts(
+pub fn parsePackageJSONUTF8WithOpts(
     source: *const logger.Source,
     log: *logger.Log,
     allocator: std.mem.Allocator,
@@ -863,15 +863,15 @@ pub fn ParsePackageJSONUTF8WithOpts(
 /// This eagerly transcodes UTF-16 strings into UTF-8 strings
 /// Use this when the text may need to be reprinted to disk as JSON (and not as JavaScript)
 /// Eagerly converting UTF-8 to UTF-16 can cause a performance issue
-pub fn ParseJSONUTF8(
+pub fn parseJSONUTF8(
     source: *const logger.Source,
     log: *logger.Log,
     allocator: std.mem.Allocator,
 ) !Expr {
-    return try ParseJSONUTF8Impl(source, log, allocator, false);
+    return try parseJSONUTF8Impl(source, log, allocator, false);
 }
 
-pub fn ParseJSONUTF8Impl(
+pub fn parseJSONUTF8Impl(
     source: *const logger.Source,
     log: *logger.Log,
     allocator: std.mem.Allocator,
@@ -908,7 +908,7 @@ pub fn ParseJSONUTF8Impl(
     }
     return result;
 }
-pub fn ParseJSONForMacro(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !Expr {
+pub fn parseJSONForMacro(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !Expr {
     switch (source.contents.len) {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
@@ -943,7 +943,7 @@ pub const JSONParseResult = struct {
     };
 };
 
-pub fn ParseJSONForBundling(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !JSONParseResult {
+pub fn parseJSONForBundling(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !JSONParseResult {
     switch (source.contents.len) {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
@@ -972,7 +972,7 @@ pub fn ParseJSONForBundling(source: *const logger.Source, log: *logger.Log, allo
 
 // threadlocal var env_json_auto_quote_buffer: MutableString = undefined;
 // threadlocal var env_json_auto_quote_buffer_loaded: bool = false;
-pub fn ParseEnvJSON(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !Expr {
+pub fn parseEnvJSON(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !Expr {
     switch (source.contents.len) {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
@@ -1023,7 +1023,7 @@ pub fn ParseEnvJSON(source: *const logger.Source, log: *logger.Log, allocator: s
     }
 }
 
-pub fn ParseTSConfig(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !Expr {
+pub fn parseTSConfig(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !Expr {
     switch (source.contents.len) {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
@@ -1072,7 +1072,7 @@ fn expectPrintedJSON(_contents: string, expected: string) !void {
         "source.json",
         contents,
     );
-    const expr = try ParseJSON(&source, &log, default_allocator);
+    const expr = try parseJSON(&source, &log, default_allocator);
 
     if (log.msgs.items.len > 0) {
         Output.panic("--FAIL--\nExpr {s}\nLog: {s}\n--FAIL--", .{ expr, log.msgs.items[0].data.text });

@@ -2372,11 +2372,33 @@ pub const AsyncHTTP = struct {
         return this;
     }
 
-    pub fn initSync(allocator: std.mem.Allocator, method: Method, url: URL, headers: Headers.Entries, headers_buf: string, response_buffer: *MutableString, request_body: []const u8, http_proxy: ?URL, hostname: ?[]u8, redirect_type: FetchRedirect) AsyncHTTP {
-        return @This().init(allocator, method, url, headers, headers_buf, response_buffer, request_body, undefined, redirect_type, .{
-            .http_proxy = http_proxy,
-            .hostname = hostname,
-        });
+    pub fn initSync(
+        allocator: std.mem.Allocator,
+        method: Method,
+        url: URL,
+        headers: Headers.Entries,
+        headers_buf: string,
+        response_buffer: *MutableString,
+        request_body: []const u8,
+        http_proxy: ?URL,
+        hostname: ?[]u8,
+        redirect_type: FetchRedirect,
+    ) AsyncHTTP {
+        return @This().init(
+            allocator,
+            method,
+            url,
+            headers,
+            headers_buf,
+            response_buffer,
+            request_body,
+            undefined,
+            redirect_type,
+            .{
+                .http_proxy = http_proxy,
+                .hostname = hostname,
+            },
+        );
     }
 
     fn reset(this: *AsyncHTTP) !void {
@@ -2456,7 +2478,7 @@ pub const AsyncHTTP = struct {
         this.channel.writeItem(result) catch unreachable;
     }
 
-    pub fn sendSync(this: *AsyncHTTP, comptime _: bool) anyerror!picohttp.Response {
+    pub fn sendSync(this: *AsyncHTTP) anyerror!picohttp.Response {
         HTTPThread.init();
 
         var ctx = try bun.default_allocator.create(SingleHTTPChannel);
@@ -2469,14 +2491,13 @@ pub const AsyncHTTP = struct {
         var batch = bun.ThreadPool.Batch{};
         this.schedule(bun.default_allocator, &batch);
         http_thread.schedule(batch);
-        while (true) {
-            const result: HTTPClientResult = ctx.channel.readItem() catch unreachable;
-            if (result.fail) |e| return e;
-            assert(result.metadata != null);
-            return result.metadata.?.response;
-        }
 
-        unreachable;
+        const result = ctx.channel.readItem() catch unreachable;
+        if (result.fail) |err| {
+            return err;
+        }
+        assert(result.metadata != null);
+        return result.metadata.?.response;
     }
 
     pub fn onAsyncHTTPCallback(this: *AsyncHTTP, async_http: *AsyncHTTP, result: HTTPClientResult) void {

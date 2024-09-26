@@ -12,7 +12,7 @@ const std = @import("std");
 const open = @import("../open.zig");
 const CLI = @import("../cli.zig");
 const Fs = @import("../fs.zig");
-const ParseJSON = @import("../json_parser.zig").ParsePackageJSONUTF8;
+const JSON = bun.JSON;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
 const linker = @import("../linker.zig");
@@ -171,7 +171,7 @@ pub const InitCommand = struct {
             process_package_json: {
                 var source = logger.Source.initPathString("package.json", package_json_contents.list.items);
                 var log = logger.Log.init(alloc);
-                var package_json_expr = ParseJSON(&source, &log, alloc) catch {
+                var package_json_expr = JSON.parsePackageJSONUTF8(&source, &log, alloc) catch {
                     package_json_file = null;
                     break :process_package_json;
                 };
@@ -439,7 +439,7 @@ pub const InitCommand = struct {
                 " \"'",
                 fields.entry_point,
             )) {
-                Output.prettyln("  <r><cyan>bun run {any}<r>", .{JSPrinter.formatJSONString(fields.entry_point)});
+                Output.prettyln("  <r><cyan>bun run {any}<r>", .{bun.fmt.formatJSONString(fields.entry_point)});
             } else {
                 Output.prettyln("  <r><cyan>bun run {s}<r>", .{fields.entry_point});
             }

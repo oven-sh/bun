@@ -18,7 +18,7 @@ const logger = bun.logger;
 
 const js_parser = bun.js_parser;
 const Expr = @import("../js_ast.zig").Expr;
-const json_parser = bun.JSON;
+const JSON = bun.JSON;
 const JSPrinter = bun.js_printer;
 
 const linker = @import("../linker.zig");
@@ -3098,7 +3098,7 @@ pub const Package = extern struct {
                 };
 
                 initializeStore();
-                break :brk try json_parser.ParsePackageJSONUTF8(
+                break :brk try JSON.parsePackageJSONUTF8(
                     &json_src,
                     log,
                     allocator,
@@ -3945,7 +3945,7 @@ pub const Package = extern struct {
         comptime features: Features,
     ) !void {
         initializeStore();
-        const json = json_parser.ParsePackageJSONUTF8AlwaysDecode(&source, log, allocator) catch |err| {
+        const json = JSON.parsePackageJSONUTF8AlwaysDecode(&source, log, allocator) catch |err| {
             switch (Output.enable_ansi_colors) {
                 inline else => |enable_ansi_colors| {
                     log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
@@ -4338,7 +4338,7 @@ pub const Package = extern struct {
         }).unwrap();
 
         const name_expr = workspace_json.root.get("name") orelse return error.MissingPackageName;
-        const name = name_expr.asStringCloned(allocator) orelse return error.MissingPackageName;
+        const name = try name_expr.asStringCloned(allocator) orelse return error.MissingPackageName;
 
         var entry = WorkspaceEntry{
             .name = name,
@@ -4346,7 +4346,7 @@ pub const Package = extern struct {
         };
         debug("processWorkspaceName({s}) = {s}", .{ abs_package_json_path, entry.name });
         if (workspace_json.root.get("version")) |version_expr| {
-            if (version_expr.asStringCloned(allocator)) |version| {
+            if (try version_expr.asStringCloned(allocator)) |version| {
                 entry.version = version;
             }
         }
@@ -4376,7 +4376,7 @@ pub const Package = extern struct {
 
         for (arr.slice()) |item| {
             // TODO: when does this get deallocated?
-            const input_path = item.asStringZ(allocator) orelse {
+            const input_path = try item.asStringZ(allocator) orelse {
                 log.addErrorFmt(source, item.loc, allocator,
                     \\Workspaces expects an array of strings, like:
                     \\  <r><green>"workspaces"<r>: [
@@ -5050,7 +5050,7 @@ pub const Package = extern struct {
                     const value = prop.value.?;
                     if (key.isString() and value.isString()) {
                         var sfb = std.heap.stackFallback(1024, allocator);
-                        const keyhash = key.asStringHash(sfb.get(), String.Builder.stringHash) orelse unreachable;
+                        const keyhash = try key.asStringHash(sfb.get(), String.Builder.stringHash) orelse unreachable;
                         const patch_path = string_builder.append(String, value.asString(allocator).?);
                         lockfile.patched_dependencies.put(allocator, keyhash, .{ .path = patch_path }) catch unreachable;
                     }

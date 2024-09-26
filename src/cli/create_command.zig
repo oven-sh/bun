@@ -31,8 +31,8 @@ const fs = @import("../fs.zig");
 const URL = @import("../url.zig").URL;
 const HTTP = bun.http;
 
-const ParseJSON = @import("../json_parser.zig").ParseJSONUTF8;
-const Archive = @import("../libarchive/libarchive.zig").Archive;
+const ParseJSON = @import("../json_parser.zig").parseJSONUTF8;
+const Archiver = bun.libarchive.Archiver;
 const Zlib = @import("../zlib.zig");
 const JSPrinter = bun.js_printer;
 const DotEnv = @import("../env_loader.zig");
@@ -377,19 +377,19 @@ pub const CreateCommand = struct {
 
                 progress.refresh();
 
-                var pluckers: [1]Archive.Plucker = if (!create_options.skip_package_json)
-                    [1]Archive.Plucker{try Archive.Plucker.init(comptime strings.literal(bun.OSPathChar, "package.json"), 2048, ctx.allocator)}
+                var pluckers: [1]Archiver.Plucker = if (!create_options.skip_package_json)
+                    [1]Archiver.Plucker{try Archiver.Plucker.init(comptime strings.literal(bun.OSPathChar, "package.json"), 2048, ctx.allocator)}
                 else
-                    [1]Archive.Plucker{undefined};
+                    [1]Archiver.Plucker{undefined};
 
-                var archive_context = Archive.Context{
+                var archive_context = Archiver.Context{
                     .pluckers = pluckers[0..@as(usize, @intCast(@intFromBool(!create_options.skip_package_json)))],
                     .all_files = undefined,
                     .overwrite_list = bun.StringArrayHashMap(void).init(ctx.allocator),
                 };
 
                 if (!create_options.overwrite) {
-                    try Archive.getOverwritingFileList(
+                    try Archiver.getOverwritingFileList(
                         tarball_buf_list.items,
                         destination,
                         &archive_context,
@@ -427,7 +427,7 @@ pub const CreateCommand = struct {
                     }
                 }
 
-                _ = try Archive.extractToDisk(
+                _ = try Archiver.extractToDisk(
                     tarball_buf_list.items,
                     destination,
                     &archive_context,
@@ -1983,7 +1983,7 @@ pub const Example = struct {
         async_http.client.progress_node = progress;
         async_http.client.flags.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
 
-        const response = try async_http.sendSync(true);
+        const response = try async_http.sendSync();
 
         switch (response.status_code) {
             404 => return error.GitHubRepositoryNotFound,
@@ -2060,7 +2060,7 @@ pub const Example = struct {
         async_http.client.progress_node = progress;
         async_http.client.flags.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
 
-        var response = try async_http.sendSync(true);
+        var response = try async_http.sendSync();
 
         switch (response.status_code) {
             404 => return error.ExampleNotFound,
@@ -2151,7 +2151,7 @@ pub const Example = struct {
 
         refresher.maybeRefresh();
 
-        response = try async_http.sendSync(true);
+        response = try async_http.sendSync();
 
         refresher.maybeRefresh();
 
@@ -2194,7 +2194,7 @@ pub const Example = struct {
             async_http.client.progress_node = progress_node;
         }
 
-        const response = async_http.sendSync(true) catch |err| {
+        const response = async_http.sendSync() catch |err| {
             switch (err) {
                 error.WouldBlock => {
                     Output.prettyErrorln("Request timed out while trying to fetch examples list. Please try again", .{});

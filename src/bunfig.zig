@@ -806,7 +806,7 @@ pub const Bunfig = struct {
                 ctx.log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Failed to parse", .{}) catch unreachable;
             }
             return err;
-        } else JSONParser.ParseTSConfig(&source, ctx.log, allocator) catch |err| {
+        } else JSONParser.parseTSConfig(&source, ctx.log, allocator) catch |err| {
             if (ctx.log.errors + ctx.log.warnings == log_count) {
                 ctx.log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Failed to parse", .{}) catch unreachable;
             }

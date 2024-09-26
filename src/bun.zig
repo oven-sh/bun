@@ -269,6 +269,8 @@ pub fn platformIOVecToSlice(iovec: PlatformIOVec) []u8 {
     return iovec.base[0..iovec.len];
 }
 
+pub const libarchive = @import("./libarchive/libarchive.zig");
+
 pub const StringTypes = @import("string_types.zig");
 pub const stringZ = StringTypes.stringZ;
 pub const string = StringTypes.string;

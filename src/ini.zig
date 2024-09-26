@@ -242,7 +242,7 @@ pub const Parser = struct {
             var log = bun.logger.Log.init(arena_allocator);
             defer log.deinit();
             // Try to parse it and it if fails will just treat it as a string
-            const json_val: Expr = bun.JSON.ParseJSONUTF8Impl(&src, &log, arena_allocator, true) catch {
+            const json_val: Expr = bun.JSON.parseJSONUTF8Impl(&src, &log, arena_allocator, true) catch {
                 break :out;
             };
 
@@ -881,28 +881,11 @@ pub fn loadNpmrcFromFile(
 ) void {
     var log = bun.logger.Log.init(allocator);
     defer log.deinit();
-    const npmrc_file = switch (bun.sys.openat(bun.FD.cwd(), ".npmrc", bun.O.RDONLY, 0)) {
-        .result => |fd| fd,
-        .err => |err| {
-            if (auto_loaded) return;
-            Output.prettyErrorln("{}\nwhile opening .npmrc \"{s}\"", .{
-                err,
-                ".npmrc",
-            });
-            Global.exit(1);
-        },
-    };
-    defer _ = bun.sys.close(npmrc_file);
 
-    const source = switch (bun.sys.File.toSource(".npmrc", allocator)) {
-        .result => |s| s,
-        .err => |e| {
-            Output.prettyErrorln("{}\nwhile reading .npmrc \"{s}\"", .{
-                e,
-                ".npmrc",
-            });
-            Global.exit(1);
-        },
+    const source = bun.sys.File.toSource(".npmrc", allocator).unwrap() catch |err| {
+        if (auto_loaded) return;
+        Output.err(err, "failed to read '.npmrc'", .{});
+        Global.crash();
     };
     defer allocator.free(source.contents);
 

@@ -64,25 +64,6 @@ pub const PackCommand = struct {
             from_root_package_json: bool,
         };
 
-        const IntegrityFormatter = struct {
-            bytes: [sha.SHA512.digest]u8,
-
-            pub fn format(this: IntegrityFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) !void {
-                var buf: [std.base64.standard.Encoder.calcSize(sha.SHA512.digest)]u8 = undefined;
-                const count = bun.simdutf.base64.encode(this.bytes[0..sha.SHA512.digest], &buf, false);
-
-                const encoded = buf[0..count];
-
-                try writer.print("sha512-{s}[...]{s}", .{ encoded[0..13], encoded[encoded.len - 15 ..] });
-            }
-        };
-
-        fn fmtIntegrity(bytes: [sha.SHA512.digest]u8) IntegrityFormatter {
-            return .{
-                .bytes = bytes,
-            };
-        }
-
         pub fn printSummary(this: *const Context, sha1_digest: ?[sha.SHA1.digest]u8, sha512_digest: ?[sha.SHA512.digest]u8, comptime log_level: LogLevel) void {
             if (comptime log_level != .silent) {
                 const stats = this.stats;
@@ -91,7 +72,7 @@ pub const PackCommand = struct {
                     Output.prettyln("<b><blue>Shasum<r>: {s}", .{bun.fmt.bytesToHex(sha1, .lower)});
                 }
                 if (sha512_digest) |sha512| {
-                    Output.prettyln("<b><blue>Integrity<r>: {}", .{fmtIntegrity(sha512)});
+                    Output.prettyln("<b><blue>Integrity<r>: {}", .{bun.fmt.integrity(sha512, true)});
                 }
                 Output.prettyln("<b><blue>Unpacked size<r>: {}", .{
                     bun.fmt.size(stats.unpacked_size, .{ .space_between_number_and_unit = false }),
@@ -639,7 +620,7 @@ pub const PackCommand = struct {
                             Global.crash();
                         };
 
-                        const json = JSON.ParsePackageJSONUTF8(&source, ctx.manager.log, ctx.allocator) catch
+                        const json = JSON.parsePackageJSONUTF8(&source, ctx.manager.log, ctx.allocator) catch
                             break :root_depth;
 
                         // for each dependency in `dependencies` find the closest node_modules folder
@@ -851,7 +832,7 @@ pub const PackCommand = struct {
                 else => break :invalid_field,
             };
             while (iter.next()) |bundled_dep_item| {
-                const bundled_dep = bundled_dep_item.asStringCloned(ctx.allocator) orelse break :invalid_field;
+                const bundled_dep = try bundled_dep_item.asStringCloned(ctx.allocator) orelse break :invalid_field;
                 try deps.append(ctx.allocator, .{
                     .name = bundled_dep,
                     .from_root_package_json = true,
@@ -1105,12 +1086,12 @@ pub const PackCommand = struct {
         };
 
         const package_name_expr: Expr = json.root.get("name") orelse return error.MissingPackageName;
-        const package_name = package_name_expr.asStringCloned(ctx.allocator) orelse return error.InvalidPackageName;
+        const package_name = try package_name_expr.asStringCloned(ctx.allocator) orelse return error.InvalidPackageName;
         defer ctx.allocator.free(package_name);
         if (package_name.len == 0) return error.InvalidPackageName;
 
         const package_version_expr: Expr = json.root.get("version") orelse return error.MissingPackageVersion;
-        const package_version = package_version_expr.asStringCloned(ctx.allocator) orelse return error.InvalidPackageVersion;
+        const package_version = try package_version_expr.asStringCloned(ctx.allocator) orelse return error.InvalidPackageVersion;
         defer ctx.allocator.free(package_version);
         if (package_version.len == 0) return error.InvalidPackageVersion;
 
@@ -1316,7 +1297,7 @@ pub const PackCommand = struct {
             },
             else => {},
         }
-        switch (archive.writeSetCompressionGzip()) {
+        switch (archive.writeAddFilterGzip()) {
             .failed, .fatal, .warn => {
                 Output.errGeneric("failed to set archive compression to gzip: {s}", .{archive.errorString()});
                 Global.crash();
@@ -1336,6 +1317,14 @@ pub const PackCommand = struct {
             else => {},
         }
         print_buf.clearRetainingCapacity();
+
+        switch (archive.writeSetFilterOption(null, "os", "Unknown")) {
+            .failed, .fatal, .warn => {
+                Output.errGeneric("failed to set os to `Unknown`: {s}", .{archive.errorString()});
+                Global.crash();
+            },
+            else => {},
+        }
 
         switch (archive.writeSetOptions("gzip:!timestamp")) {
             .failed, .fatal, .warn => {
@@ -1693,11 +1682,7 @@ pub const PackCommand = struct {
 
         var perm: bun.Mode = @intCast(stat.mode);
         // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L20
-        if (comptime !Environment.isWindows) {
-            // on windows we create a shim executable. the bin file permissions
-            // do not need to change
-            if (isPackageBin(bins, filename)) perm |= 0o111;
-        }
+        if (isPackageBin(bins, filename)) perm |= 0o111;
         entry.setPerm(@intCast(perm));
 
         // '1985-10-26T08:15:00.000Z'
@@ -2190,39 +2175,64 @@ pub const bindings = struct {
         var entries_info = std.ArrayList(EntryInfo).init(bun.default_allocator);
         defer entries_info.deinit();
 
-        const archive = libarchive.archive_read_new();
-        defer {
-            _ = libarchive.archive_read_close(archive);
-            _ = libarchive.archive_read_free(archive);
+        const archive = Archive.readNew();
+
+        switch (archive.readSupportFormatTar()) {
+            .failed, .fatal, .warn => {
+                global.throw("failed to support tar: {s}", .{archive.errorString()});
+                return .zero;
+            },
+            else => {},
+        }
+        switch (archive.readSupportFormatGnutar()) {
+            .failed, .fatal, .warn => {
+                global.throw("failed to support gnutar: {s}", .{archive.errorString()});
+                return .zero;
+            },
+            else => {},
+        }
+        switch (archive.readSupportFilterGzip()) {
+            .failed, .fatal, .warn => {
+                global.throw("failed to support gzip compression: {s}", .{archive.errorString()});
+                return .zero;
+            },
+            else => {},
         }
 
-        _ = libarchive.archive_read_support_format_tar(archive);
-        _ = libarchive.archive_read_support_format_gnutar(archive);
-        _ = libarchive.archive_read_support_compression_gzip(archive);
+        switch (archive.readSetOptions("read_concatenated_archives")) {
+            .failed, .fatal, .warn => {
+                global.throw("failed to set read_concatenated_archives option: {s}", .{archive.errorString()});
+                return .zero;
+            },
+            else => {},
+        }
 
-        _ = libarchive.archive_read_set_options(archive, "read_concatenated_archives");
+        switch (archive.readOpenMemory(tarball)) {
+            .failed, .fatal, .warn => {
+                global.throw("failed to open archive in memory: {s}", .{archive.errorString()});
+                return .zero;
+            },
+            else => {},
+        }
 
-        _ = libarchive.archive_read_open_memory(archive, tarball.ptr, tarball.len);
-
-        var archive_entry: *libarchive.archive_entry = undefined;
-
-        var header_status: Archive.Result = @enumFromInt(libarchive.archive_read_next_header(archive, &archive_entry));
+        var archive_entry: *Archive.Entry = undefined;
+        var header_status = archive.readNextHeader(&archive_entry);
 
         var read_buf = std.ArrayList(u8).init(bun.default_allocator);
         defer read_buf.deinit();
 
-        while (header_status != .eof) : (header_status = @enumFromInt(libarchive.archive_read_next_header(archive, &archive_entry))) {
+        while (header_status != .eof) : (header_status = archive.readNextHeader(&archive_entry)) {
             switch (header_status) {
                 .eof => unreachable,
                 .retry => continue,
                 .failed, .fatal => {
-                    global.throw("failed to read next archive header: {s}", .{Archive.errorString(@ptrCast(archive))});
+                    global.throw("failed to read archive header: {s}", .{Archive.errorString(@ptrCast(archive))});
                     return .zero;
                 },
                 else => {
-                    const pathname = std.mem.sliceTo(libarchive.archive_entry_pathname(archive_entry), 0);
-                    const kind = bun.C.kindFromMode(libarchive.archive_entry_filetype(archive_entry));
-                    const perm = libarchive.archive_entry_perm(archive_entry);
+                    const pathname = archive_entry.pathname();
+                    const kind = bun.C.kindFromMode(archive_entry.filetype());
+                    const perm = archive_entry.perm();
 
                     var entry_info: EntryInfo = .{
                         .pathname = String.createUTF8(pathname),
@@ -2231,11 +2241,11 @@ pub const bindings = struct {
                     };
 
                     if (kind == .file) {
-                        const size: usize = @intCast(libarchive.archive_entry_size(archive_entry));
+                        const size: usize = @intCast(archive_entry.size());
                         read_buf.ensureTotalCapacity(size) catch bun.outOfMemory();
                         defer read_buf.clearRetainingCapacity();
 
-                        const read = libarchive.archive_read_data(archive, read_buf.items.ptr, size);
+                        const read = archive.readData(read_buf.items);
                         if (read < 0) {
                             global.throw("failed to read archive entry \"{}\": {s}", .{
                                 bun.fmt.fmtPath(u8, pathname, .{}),
@@ -2250,6 +2260,21 @@ pub const bindings = struct {
                     entries_info.append(entry_info) catch bun.outOfMemory();
                 },
             }
+        }
+
+        switch (archive.readClose()) {
+            .failed, .fatal, .warn => {
+                global.throw("failed to close read archive: {s}", .{archive.errorString()});
+                return .zero;
+            },
+            else => {},
+        }
+        switch (archive.readFree()) {
+            .failed, .fatal, .warn => {
+                global.throw("failed to close read archive: {s}", .{archive.errorString()});
+                return .zero;
+            },
+            else => {},
         }
 
         const entries = JSArray.createEmpty(global, entries_info.items.len);

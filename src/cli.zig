@@ -116,6 +116,7 @@ pub const ExecCommand = @import("./cli/exec_command.zig").ExecCommand;
 pub const PatchCommand = @import("./cli/patch_command.zig").PatchCommand;
 pub const PatchCommitCommand = @import("./cli/patch_commit_command.zig").PatchCommitCommand;
 pub const OutdatedCommand = @import("./cli/outdated_command.zig").OutdatedCommand;
+pub const PublishCommand = @import("./cli/publish_command.zig").PublishCommand;
 
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
@@ -1477,6 +1478,7 @@ pub const Command = struct {
             RootCommandMatcher.case("exec") => .ExecCommand,
 
             RootCommandMatcher.case("outdated") => .OutdatedCommand,
+            RootCommandMatcher.case("publish") => .PublishCommand,
 
             // These are reserved for future use by Bun, so that someone
             // doing `bun deploy` to run a script doesn't accidentally break
@@ -1490,7 +1492,6 @@ pub const Command = struct {
             RootCommandMatcher.case("login") => .ReservedCommand,
             RootCommandMatcher.case("logout") => .ReservedCommand,
             RootCommandMatcher.case("whoami") => .ReservedCommand,
-            RootCommandMatcher.case("publish") => .ReservedCommand,
             RootCommandMatcher.case("prune") => .ReservedCommand,
             RootCommandMatcher.case("list") => .ReservedCommand,
             RootCommandMatcher.case("why") => .ReservedCommand,
@@ -1618,6 +1619,13 @@ pub const Command = struct {
                 const ctx = try Command.init(allocator, log, .OutdatedCommand);
 
                 try OutdatedCommand.exec(ctx);
+                return;
+            },
+            .PublishCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .PublishCommand) unreachable;
+                const ctx = try Command.init(allocator, log, .PublishCommand);
+
+                try PublishCommand.exec(ctx);
                 return;
             },
             .BunxCommand => {
@@ -2188,6 +2196,7 @@ pub const Command = struct {
         PatchCommand,
         PatchCommitCommand,
         OutdatedCommand,
+        PublishCommand,
 
         /// Used by crash reports.
         ///
@@ -2220,6 +2229,7 @@ pub const Command = struct {
                 .PatchCommand => 'x',
                 .PatchCommitCommand => 'z',
                 .OutdatedCommand => 'o',
+                .PublishCommand => 'k',
             };
         }
 
@@ -2443,9 +2453,10 @@ pub const Command = struct {
                     , .{});
                     Output.flush();
                 },
-                .OutdatedCommand => {
+                .OutdatedCommand, .PublishCommand => {
                     Install.PackageManager.CommandLineArguments.printHelp(switch (cmd) {
                         .OutdatedCommand => .outdated,
+                        .PublishCommand => .publish,
                     });
                 },
                 else => {
@@ -2465,6 +2476,7 @@ pub const Command = struct {
                 .PatchCommand,
                 .PatchCommitCommand,
                 .OutdatedCommand,
+                .PublishCommand,
                 => true,
                 else => false,
             };
@@ -2483,6 +2495,7 @@ pub const Command = struct {
                 .PatchCommand,
                 .PatchCommitCommand,
                 .OutdatedCommand,
+                .PublishCommand,
                 => true,
                 else => false,
             };
@@ -2503,6 +2516,7 @@ pub const Command = struct {
             .RunCommand = true,
             .RunAsNodeCommand = true,
             .OutdatedCommand = true,
+            .PublishCommand = true,
         });
 
         pub const always_loads_config: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{
@@ -2517,6 +2531,7 @@ pub const Command = struct {
             .PackageManagerCommand = true,
             .BunxCommand = true,
             .OutdatedCommand = true,
+            .PublishCommand = true,
         });
 
         pub const uses_global_options: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(true, .{
@@ -2532,6 +2547,7 @@ pub const Command = struct {
             .UnlinkCommand = false,
             .BunxCommand = false,
             .OutdatedCommand = false,
+            .PublishCommand = false,
         });
     };
 };

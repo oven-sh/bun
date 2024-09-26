@@ -884,6 +884,27 @@ pub fn eqlCaseInsensitiveASCII(a: string, b: string, comptime check_len: bool) b
     return bun.C.strncasecmp(a.ptr, b.ptr, a.len) == 0;
 }
 
+pub fn eqlCaseInsensitiveT(comptime T: type, a: []const T, b: []const u8) bool {
+    if (a.len != b.len or a.len == 0) return false;
+    if (comptime T == u8) return eqlCaseInsensitiveASCIIIgnoreLength(a, b);
+
+    for (a, b) |c, d| {
+        switch (c) {
+            'a'...'z' => if (c != d and c & 0b11011111 != d) return false,
+            'A'...'Z' => if (c != d and c | 0b00100000 != d) return false,
+            else => if (c != d) return false,
+        }
+    }
+
+    return true;
+}
+
+pub fn hasPrefixCaseInsensitiveT(comptime T: type, str: []const T, prefix: []const u8) bool {
+    if (str.len < prefix.len) return false;
+
+    return eqlCaseInsensitiveT(T, str[0..prefix.len], prefix);
+}
+
 pub fn eqlLong(a_str: string, b_str: string, comptime check_len: bool) bool {
     const len = b_str.len;
 

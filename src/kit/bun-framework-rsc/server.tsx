@@ -1,5 +1,8 @@
+/// <reference path="../kit.d.ts" />
+import type { Kit } from "bun";
 import React from "react";
 import { PassThrough } from "node:stream";
+// @ts-ignore
 import { renderToPipeableStream } from "react-server-dom-webpack/server";
 import { renderToHtml } from './ssr' with { bunKitGraph: 'ssr' };
 import { serverManifest } from 'bun:kit/server';
@@ -10,7 +13,7 @@ export default async function (request: Request, route: any, meta: Kit.RouteMeta
     <html lang="en">
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>React Server Components</title>
+        <title>Bun + React Server Components</title>
         {meta.styles.map(url => <link rel='stylesheet' href={url} />)}
       </head>
       <body>

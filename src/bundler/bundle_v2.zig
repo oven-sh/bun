@@ -952,7 +952,7 @@ pub const BundleV2 = struct {
         const alloc = this.graph.allocator;
 
         var server = try AstBuilder.init(this.graph.allocator, &kit.server_virtual_source, this.bundler.options.hot_module_reloading);
-        // var client = try AstBuilder.init(this.graph.allocator, &kit.client_virtual_source, this.bundler.options.hot_module_reloading);
+        var client = try AstBuilder.init(this.graph.allocator, &kit.client_virtual_source, this.bundler.options.hot_module_reloading);
 
         var server_manifest_props: std.ArrayListUnmanaged(G.Property) = .{};
         var client_manifest_props: std.ArrayListUnmanaged(G.Property) = .{};
@@ -1058,6 +1058,7 @@ pub const BundleV2 = struct {
         });
 
         this.graph.ast.set(Index.kit_server_data.get(), try server.toBundledAst());
+        this.graph.ast.set(Index.kit_client_data.get(), try client.toBundledAst());
     }
 
     pub fn enqueueParseTask(

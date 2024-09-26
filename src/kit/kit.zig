@@ -40,24 +40,13 @@ pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JS
 
 /// A "Framework" in our eyes is simply set of bundler options that a framework
 /// author would set in order to integrate the framework with the application.
+///
+/// Full documentation on these fields is located in the TypeScript definitions.
 pub const Framework = struct {
-    /// This file is the true entrypoint of the client application.
-    ///
-    /// It can import the client manifest via the `bun:kit/client` import
-    ///
-    /// TODO: how this behaves when server components are off
     entry_client: ?[]const u8 = null,
-
-    /// This file is the true entrypoint of the server application. This module
-    /// must `export default` a fetch function, which takes a request and the
-    /// bundled route module, and returns a response.
     entry_server: ?[]const u8 = null,
 
-    /// Bun offers integration for React's Server Components with an
-    /// interface that is generic enough to adapt to any framework.
     server_components: ?ServerComponents = null,
-    /// While it is unlikely that Fast Refresh is useful outside of
-    /// React, it can be enabled regardless.
     react_fast_refresh: ?ReactFastRefresh = null,
 
     /// Bun provides built-in support for using React as a framework
@@ -77,40 +66,12 @@ pub const Framework = struct {
         };
     }
 
-    /// A high-level overview of what server components means exists
-    /// in the React Docs: https://react.dev/reference/rsc/server-components
-    ///
-    /// When enabled, files with "use server" and "use client" directives
-    /// will get special processing, using this configuration to implement
-    /// server rendering and browser interactivity.
     const ServerComponents = struct {
         separate_ssr_graph: bool = false,
-
         server_runtime_import: []const u8,
         client_runtime_import: []const u8,
-
-        /// When server code imports client code, a stub module is generated,
-        /// where every export calls this export from `server_runtime_import`.
-        /// This is used to implement client components on the server.
-        ///
-        /// The call is given three arguments:
-        ///
-        ///     export const ClientComp = registerClientReference(
-        ///         // A function which may be passed through, it throws an error
-        ///         function () { throw new Error('Cannot call client-component on the server') },
-        ///
-        ///         // The file path. In production, these use hashed strings for
-        ///         // compactness and code privacy.
-        ///         "src/components/Client.tsx",
-        ///
-        ///         // The component name.
-        ///         "ClientComp",
-        ///     );
-        ///
-        /// The bundler will take care of ensuring referenced client imports.
         server_register_client_reference: []const u8 = "registerClientReference",
         server_register_server_reference: []const u8 = "registerServerReference",
-
         client_register_server_reference: []const u8 = "registerServerReference",
     };
 

@@ -23,7 +23,7 @@ try {
   
   if (mode === 'server')  {
     server_exports = {
-      async fetch(req: any, requested_id: Id) {
+      async fetch({ clientEntryPoint }: any, requested_id: Id) {
         const serverRenderer = main.exports.default;
         if (!serverRenderer) {
           throw new Error('Framework server entrypoint is missing a "default" export.');
@@ -32,9 +32,14 @@ try {
           throw new Error('Framework server entrypoint\'s "default" export is not a function.');
         }
         // TODO: create the request object in Native code, consume Response in Native code
+        // The API that i have in mind is faked here for the time being.
         const response = await serverRenderer(
           new Request('http://localhost:3000'),
-          loadModule(requested_id, LoadModuleType.AssertPresent).exports
+          loadModule(requested_id, LoadModuleType.AssertPresent).exports,
+          { 
+            styles: [],
+            scripts: [clientEntryPoint],
+          }
         );
         if (!(response instanceof Response)) {
           throw new Error(`Server-side request handler was expected to return a Response object.`);

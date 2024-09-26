@@ -244,13 +244,7 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
   var drainMicrotasks = drainMicrotasksFn;
   var reportUncaughtException = reportUncaughtExceptionFn;
 
-  function validateFunction(cb) {
-    if (typeof cb !== "function") {
-      const err = new TypeError(`The "callback" argument must be of type "function". Received type ${typeof cb}`);
-      err.code = "ERR_INVALID_ARG_TYPE";
-      throw err;
-    }
-  }
+  const { validateFunction } = require("internal/validators");
 
   var setup;
   setup = () => {

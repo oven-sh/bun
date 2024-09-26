@@ -382,7 +382,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
         return JSValue::encode(jsUndefined());
     }
 
-    JSC::EncodedJSValue (*napi_register_module_v1)(JSC::JSGlobalObject * globalObject,
+    JSC::EncodedJSValue (*napi_register_module_v1)(JSC::JSGlobalObject* globalObject,
         JSC::EncodedJSValue exports);
 #if OS(WINDOWS)
 #define dlsym GetProcAddress
@@ -687,6 +687,16 @@ static const NeverDestroyed<String> signalNames[] = {
     MAKE_STATIC_STRING_IMPL("SIGINFO"),
     MAKE_STATIC_STRING_IMPL("SIGSYS"),
 };
+
+bool isSignalName(WTF::String input)
+{
+    for (auto i = 0; i < std::size(signalNames); i++) {
+        if (input == signalNames[i]) {
+            return true;
+        }
+    }
+    return false;
+}
 
 static void loadSignalNumberMap()
 {

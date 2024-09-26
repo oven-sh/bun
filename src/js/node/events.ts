@@ -2,6 +2,7 @@
 
 // Reference: https://github.com/nodejs/node/blob/main/lib/events.js
 const { throwNotImplemented } = require("internal/shared");
+const { validateAbortSignal, validateNumber, validateBoolean } = require("internal/validators");
 
 const SymbolFor = Symbol.for;
 
@@ -502,35 +503,10 @@ function ERR_OUT_OF_RANGE(name, range, value) {
   return err;
 }
 
-function validateAbortSignal(signal, name) {
-  if (signal !== undefined && (signal === null || typeof signal !== "object" || !("aborted" in signal))) {
-    throw ERR_INVALID_ARG_TYPE(name, "AbortSignal", signal);
-  }
-}
-
-function validateNumber(value, name, min?: number, max?: number) {
-  if (typeof value !== "number") throw ERR_INVALID_ARG_TYPE(name, "number", value);
-  if (
-    (min != null && value < min) ||
-    (max != null && value > max) ||
-    ((min != null || max != null) && Number.isNaN(value))
-  ) {
-    throw ERR_OUT_OF_RANGE(
-      name,
-      `${min != null ? `>= ${min}` : ""}${min != null && max != null ? " && " : ""}${max != null ? `<= ${max}` : ""}`,
-      value,
-    );
-  }
-}
-
 function checkListener(listener) {
   if (typeof listener !== "function") {
     throw new TypeError("The listener must be a function");
   }
-}
-
-function validateBoolean(value, name) {
-  if (typeof value !== "boolean") throw ERR_INVALID_ARG_TYPE(name, "boolean", value);
 }
 
 let AsyncResource = null;

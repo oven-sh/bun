@@ -1,5 +1,8 @@
 // Hardcoded module "node:diagnostics_channel"
 // Reference: https://github.com/nodejs/node/blob/fb47afc335ef78a8cef7eac52b8ee7f045300696/lib/diagnostics_channel.js
+
+const { validateFunction } = require("internal/validators");
+
 const SafeMap = Map;
 const SafeFinalizationRegistry = FinalizationRegistry;
 
@@ -394,14 +397,6 @@ class ERR_INVALID_ARG_TYPE extends TypeError {
     super(`The ${name} argument must be of type ${expected}. Received type ${typeof actual}`);
     this.code = "ERR_INVALID_ARG_TYPE";
   }
-}
-
-function validateFunction(callable, field) {
-  if (typeof callable !== "function") {
-    throw new ERR_INVALID_ARG_TYPE(field, "Function", callable);
-  }
-
-  return callable;
 }
 
 export default {

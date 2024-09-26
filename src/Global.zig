@@ -119,7 +119,7 @@ pub fn exit(code: u32) noreturn {
 
     if (code != 0) {
         Bun__onExit();
-        std._exit(@bitCast(code));
+        std.c._exit(@bitCast(code));
     }
 
     switch (Environment.os) {

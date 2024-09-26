@@ -300,7 +300,7 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
   };
 
   function nextTick(cb, args) {
-    validateFunction(cb);
+    validateFunction(cb, "callback");
     if (setup) {
       setup();
       process = globalThis.process;

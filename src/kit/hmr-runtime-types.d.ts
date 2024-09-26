@@ -27,7 +27,7 @@ declare const mode: 'client' | 'server';
  * interface as opposed to a WebSocket connection.
  */
 declare var server_exports: {
-  fetch: (req: any, id: Id) => any,
+  handleRequest: (req: any, id: Id) => any,
   registerUpdate: (modules: any) => void,
 };
 

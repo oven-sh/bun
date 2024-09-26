@@ -456,8 +456,8 @@ fn performBundleAndWaitInner(dev: *DevServer, route: *Route, fail: *Failure) !Bu
         const default_export = c.KitGetRequestHandlerFromModule(dev.server_global, server_code.key);
         if (!default_export.isObject())
             @panic("Internal assertion failure: expected interface from HMR runtime to be an object");
-        const fetch_function: JSValue = default_export.get(dev.server_global.js(), "fetch") orelse
-            @panic("Internal assertion failure: expected interface from HMR runtime to contain fetch");
+        const fetch_function: JSValue = default_export.get(dev.server_global.js(), "handleRequest") orelse
+            @panic("Internal assertion failure: expected interface from HMR runtime to contain handleRequest");
         bun.assert(fetch_function.isCallable(dev.vm.jsc));
         dev.server_fetch_function_callback = JSC.Strong.create(fetch_function, dev.server_global.js());
         const register_update = default_export.get(dev.server_global.js(), "registerUpdate") orelse

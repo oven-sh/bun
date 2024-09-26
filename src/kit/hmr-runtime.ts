@@ -23,7 +23,7 @@ try {
   
   if (mode === 'server')  {
     server_exports = {
-      async fetch({ clientEntryPoint }: any, requested_id: Id) {
+      async handleRequest({ clientEntryPoint }: any, requested_id: Id) {
         const serverRenderer = main.exports.default;
         if (!serverRenderer) {
           throw new Error('Framework server entrypoint is missing a "default" export.');
@@ -48,7 +48,7 @@ try {
         return await response.text();
       },
       registerUpdate(modules) {
-        throw new Error('erm... you want me to what')
+        throw new Error('TODO')
       },
     };
   }

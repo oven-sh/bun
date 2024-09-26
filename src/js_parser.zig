@@ -12211,7 +12211,7 @@ fn NewParser_(
                 const SupportedAttribute = enum {
                     type,
                     embed,
-                    bun_kit_graph,
+                    bunKitGraph,
                 };
 
                 var has_seen_embed_true = false;
@@ -12274,11 +12274,11 @@ fn NewParser_(
                                         }
                                     }
                                 },
-                                .bun_kit_graph => {
+                                .bunKitGraph => {
                                     if (strings.eqlComptime(p.lexer.string_literal_slice, "ssr")) {
                                         path.import_tag = .kit_resolve_to_ssr_graph;
                                     } else {
-                                        try p.lexer.addRangeError(p.lexer.range(), "'bun_kit_graph' can only be set to 'ssr'", .{}, true);
+                                        try p.lexer.addRangeError(p.lexer.range(), "'bunKitGraph' can only be set to 'ssr'", .{}, true);
                                     }
                                 },
                             }

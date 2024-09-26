@@ -44,7 +44,6 @@ You can pass in any of the following:
 - RGB arrays like `[255, 0, 0]`
 - RGBA arrays like `[255, 0, 0, 255]`
 - LAB strings like `"lab(50% 50% 50%)"`
-- LABA strings like `"laba(50% 50% 50% 1)"`
 - ... anything else that CSS can parse as a single color value
 
 ### Format colors as CSS

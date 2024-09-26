@@ -6192,6 +6192,7 @@ fn restrict_prec(buf: []u8, comptime prec: u8) struct { []u8, Notation } {
     const coeff_end = pos_exp orelse len;
     // Decimal dot is effectively at the end of coefficient part if no
     // dot presents before that.
+    const had_pos_dot = _pos_dot != null;
     const pos_dot = _pos_dot orelse coeff_end;
     // Find the end position of the number within the given precision.
     const prec_end: u8 = brk: {
@@ -6226,7 +6227,7 @@ fn restrict_prec(buf: []u8, comptime prec: u8) struct { []u8, Notation } {
             buf[i] = '0';
         }
         new_coeff_end = pos_dot;
-    } else {
+    } else if (had_pos_dot) {
         // Strip any trailing zeros.
         var i = new_coeff_end;
         while (i != 0) {
@@ -6245,7 +6246,7 @@ fn restrict_prec(buf: []u8, comptime prec: u8) struct { []u8, Notation } {
         const exp_len = len - posexp;
         if (new_coeff_end != posexp) {
             for (0..exp_len) |i| {
-                buf[new_coeff_end + i] = buf[posexp + 1];
+                buf[new_coeff_end + i] = buf[posexp + i];
             }
         }
         break :brk new_coeff_end + exp_len;
@@ -6274,5 +6275,5 @@ fn restrict_prec(buf: []u8, comptime prec: u8) struct { []u8, Notation } {
 }
 
 pub inline fn fract(val: f32) f32 {
-    return 1.0 - @trunc(val);
+    return val - @trunc(val);
 }

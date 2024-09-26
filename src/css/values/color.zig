@@ -40,9 +40,9 @@ pub fn HslHwbColorGamut(comptime T: type, comptime a: []const u8, comptime b: []
             var result: T = this.*;
             // result.h = this.h % 360.0;
             result.h = @mod(this.h, 360.0);
-            @field(result, a) = std.math.clamp(@field(this, a), 0.0, 1.0);
-            @field(result, b) = std.math.clamp(@field(this, b), 0.0, 1.0);
-            result.alpha = std.math.clamp(this.alpha, 0.0, 1.0);
+            @field(result, a) = bun.clamp(@field(this, a), 0.0, 1.0);
+            @field(result, b) = bun.clamp(@field(this, b), 0.0, 1.0);
+            result.alpha = bun.clamp(this.alpha, 0.0, 1.0);
             return result;
         }
     };
@@ -581,28 +581,28 @@ pub fn parseRGBComponents(input: *css.Parser, parser: *ComponentParser) Result(s
 
     const r, const g, const b = if (is_legacy_syntax) switch (red) {
         .number => |v| brk: {
-            const r = std.math.clamp(@round(v.value), 0.0, 255.0);
+            const r = bun.clamp(@round(v.value), 0.0, 255.0);
             const g = switch (parser.parseNumber(input)) {
                 .err => |e| return .{ .err = e },
-                .result => |vv| std.math.clamp(@round(vv), 0.0, 255.0),
+                .result => |vv| bun.clamp(@round(vv), 0.0, 255.0),
             };
             if (input.expectComma().asErr()) |e| return .{ .err = e };
             const b = switch (parser.parseNumber(input)) {
                 .err => |e| return .{ .err = e },
-                .result => |vv| std.math.clamp(@round(vv), 0.0, 255.0),
+                .result => |vv| bun.clamp(@round(vv), 0.0, 255.0),
             };
             break :brk .{ r, g, b };
         },
         .percentage => |v| brk: {
-            const r = std.math.clamp(@round(v.unit_value * 255.0), 0.0, 255.0);
+            const r = bun.clamp(@round(v.unit_value * 255.0), 0.0, 255.0);
             const g = switch (parser.parsePercentage(input)) {
                 .err => |e| return .{ .err = e },
-                .result => |vv| std.math.clamp(@round(vv * 255.0), 0.0, 255.0),
+                .result => |vv| bun.clamp(@round(vv * 255.0), 0.0, 255.0),
             };
             if (input.expectComma().asErr()) |e| return .{ .err = e };
             const b = switch (parser.parsePercentage(input)) {
                 .err => |e| return .{ .err = e },
-                .result => |vv| std.math.clamp(@round(vv * 255.0), 0.0, 255.0),
+                .result => |vv| bun.clamp(@round(vv * 255.0), 0.0, 255.0),
             };
             break :brk .{ r, g, b };
         },
@@ -610,8 +610,8 @@ pub fn parseRGBComponents(input: *css.Parser, parser: *ComponentParser) Result(s
         const getComponent = struct {
             fn get(value: NumberOrPercentage) f32 {
                 return switch (value) {
-                    .number => |v| if (std.math.isNan(v.value)) v.value else std.math.clamp(@round(v.value), 0.0, 255.0) / 255.0,
-                    .percentage => |v| std.math.clamp(v.unit_value, 0.0, 1.0),
+                    .number => |v| if (std.math.isNan(v.value)) v.value else bun.clamp(@round(v.value), 0.0, 255.0) / 255.0,
+                    .percentage => |v| bun.clamp(v.unit_value, 0.0, 1.0),
                 };
             }
         }.get;
@@ -645,14 +645,14 @@ pub fn parseHSLHWBComponents(comptime T: type, input: *css.Parser, parser: *Comp
         !std.math.isNan(h) and
         input.tryParse(css.Parser.expectComma, .{}).isOk();
     const a = switch (parser.parsePercentage(input)) {
-        .result => |v| std.math.clamp(v, 0.0, 1.0),
+        .result => |v| bun.clamp(v, 0.0, 1.0),
         .err => |e| return .{ .err = e },
     };
     if (is_legacy_syntax) {
         if (input.expectColon().asErr()) |e| return .{ .err = e };
     }
     const b = switch (parser.parsePercentage(input)) {
-        .result => |v| std.math.clamp(v, 0.0, 1.0),
+        .result => |v| bun.clamp(v, 0.0, 1.0),
         .err => |e| return .{ .err = e },
     };
     if (is_legacy_syntax and (std.math.isNan(a) or std.math.isNan(b))) {
@@ -747,7 +747,7 @@ pub fn parseLab(
 
         pub fn innerfn(i: *css.Parser, p: *ComponentParser) Result(CssColor) {
             // f32::max() does not propagate NaN, so use clamp for now until f32::maximum() is stable.
-            const l = std.math.clamp(
+            const l = bun.clamp(
                 switch (p.parsePercentage(i)) {
                     .result => |v| v,
                     .err => |e| return .{ .err = e },
@@ -814,7 +814,7 @@ pub fn parseLch(
                 }
             }
 
-            const l = std.math.clamp(
+            const l = bun.clamp(
                 switch (p.parsePercentage(i)) {
                     .result => |vv| vv,
                     .err => |e| return .{ .err = e },
@@ -822,7 +822,7 @@ pub fn parseLch(
                 0.0,
                 std.math.floatMax(f32),
             );
-            const c = std.math.clamp(
+            const c = bun.clamp(
                 switch (p.parseNumber(i)) {
                     .result => |vv| vv,
                     .err => |e| return .{ .err = e },
@@ -916,7 +916,7 @@ pub fn parseHslHwbComponents(
         !std.math.isNan(h) and
         input.tryParse(css.Parser.expectComma, .{}).isOk();
 
-    const a = std.math.clamp(
+    const a = bun.clamp(
         switch (parser.parsePercentage(input)) {
             .result => |vv| vv,
             .err => |e| return .{ .err = e },
@@ -929,7 +929,7 @@ pub fn parseHslHwbComponents(
         if (input.expectComma().asErr()) |e| return .{ .err = e };
     }
 
-    const b = std.math.clamp(
+    const b = bun.clamp(
         switch (parser.parsePercentage(input)) {
             .result => |vv| vv,
             .err => |e| return .{ .err = e },
@@ -1045,8 +1045,8 @@ fn parseRgb(input: *css.Parser, parser: *ComponentParser) Result(CssColor) {
 
 //     const r, const g, const b = if (is_legacy_syntax) switch (red) {
 //         .number => |num| brk: {
-//             const r = std.math.clamp(@round(num.value), 0.0, 255.0);
-//             const g = std.math.clamp(
+//             const r = bun.clamp(@round(num.value), 0.0, 255.0);
+//             const g = bun.clamp(
 //                 @round(
 //                     switch (parser.parseNumber(input)) {
 //                         .result => |vv| vv,
@@ -1057,7 +1057,7 @@ fn parseRgb(input: *css.Parser, parser: *ComponentParser) Result(CssColor) {
 //                 255.0,
 //             );
 //             if (input.expectComma().asErr()) |e| return .{ .err = e };
-//             const b = std.math.clamp(
+//             const b = bun.clamp(
 //                 @round(
 //                     switch (parser.parseNumber(input)) {
 //                         .result => |vv| vv,
@@ -1071,8 +1071,8 @@ fn parseRgb(input: *css.Parser, parser: *ComponentParser) Result(CssColor) {
 //         },
 //         .percentage => |per| brk: {
 //             const unit_value = per.unit_value;
-//             const r = std.math.clamp(@round(unit_value * 255.0), 0.0, 255.0);
-//             const g = std.math.clamp(
+//             const r = bun.clamp(@round(unit_value * 255.0), 0.0, 255.0);
+//             const g = bun.clamp(
 //                 @round(
 //                     switch (parser.parsePercentage(input)) {
 //                         .result => |vv| vv,
@@ -1083,7 +1083,7 @@ fn parseRgb(input: *css.Parser, parser: *ComponentParser) Result(CssColor) {
 //                 255.0,
 //             );
 //             if (input.expectComma().asErr()) |e| return .{ .err = e };
-//             const b = std.math.clamp(
+//             const b = bun.clamp(
 //                 @round(
 //                     switch (parser.parsePercentage(input)) {
 //                         .result => |vv| vv,
@@ -1102,9 +1102,9 @@ fn parseRgb(input: *css.Parser, parser: *ComponentParser) Result(CssColor) {
 //                     .number => |num| {
 //                         const v = num.value;
 //                         if (std.math.isNan(v)) return v;
-//                         return std.math.clamp(@round(v), 0.0, 255.0) / 255.0;
+//                         return bun.clamp(@round(v), 0.0, 255.0) / 255.0;
 //                     },
-//                     .percentage => |per| std.math.clamp(per.unit_value, 0.0, 1.0),
+//                     .percentage => |per| bun.clamp(per.unit_value, 0.0, 1.0),
 //                 };
 //             }
 //         };
@@ -1134,7 +1134,7 @@ fn parseRgb(input: *css.Parser, parser: *ComponentParser) Result(CssColor) {
 fn parseLegacyAlpha(input: *css.Parser, parser: *const ComponentParser) Result(f32) {
     if (!input.isExhausted()) {
         if (input.expectComma().asErr()) |e| return .{ .err = e };
-        return .{ .result = std.math.clamp(
+        return .{ .result = bun.clamp(
             switch (parseNumberOrPercentage(input, parser)) {
                 .result => |vv| vv,
                 .err => |e| return .{ .err = e },
@@ -1148,7 +1148,7 @@ fn parseLegacyAlpha(input: *css.Parser, parser: *const ComponentParser) Result(f
 
 fn parseAlpha(input: *css.Parser, parser: *const ComponentParser) Result(f32) {
     const res = if (input.tryParse(css.Parser.expectDelim, .{'/'}).isOk())
-        std.math.clamp(switch (parseNumberOrPercentage(input, parser)) {
+        bun.clamp(switch (parseNumberOrPercentage(input, parser)) {
             .result => |v| v,
             .err => |e| return .{ .err = e },
         }, 0.0, 1.0)
@@ -2537,68 +2537,70 @@ pub fn parsePredefinedRelative(
     };
 
     const predefined: PredefinedColor = predefined: {
-        // todo_stuff.match_ignore_ascii_case
-        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("srgb", colorspace)) {
-            break :predefined .{ .srgb = SRGB{
-                .r = a,
-                .g = b,
-                .b = c,
-                .alpha = alpha,
-            } };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("srgb-linear", colorspace)) {
-            break :predefined .{ .srgb_linear = SRGBLinear{
-                .r = a,
-                .g = b,
-                .b = c,
-                .alpha = alpha,
-            } };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("display-p3", colorspace)) {
-            break :predefined .{ .display_p3 = P3{
-                .r = a,
-                .g = b,
-                .b = c,
-                .alpha = alpha,
-            } };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("a98-rgb", colorspace)) {
-            break :predefined .{ .a98 = A98{
-                .r = a,
-                .g = b,
-                .b = c,
-                .alpha = alpha,
-            } };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("prophoto-rgb", colorspace)) {
-            break :predefined .{ .prophoto = ProPhoto{
-                .r = a,
-                .g = b,
-                .b = c,
-                .alpha = alpha,
-            } };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("rec2020", colorspace)) {
-            break :predefined .{ .rec2020 = Rec2020{
-                .r = a,
-                .g = b,
-                .b = c,
-                .alpha = alpha,
-            } };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("xyz-d50", colorspace)) {
-            break :predefined .{ .xyz_d50 = XYZd50{
-                .x = a,
-                .y = b,
-                .z = c,
-                .alpha = alpha,
-            } };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("xyz-d65", colorspace) or
-            bun.strings.eqlCaseInsensitiveASCIIICheckLength("xyz-d65", colorspace))
-        {
-            break :predefined .{ .xyz_d65 = XYZd65{
-                .x = a,
-                .y = b,
-                .z = c,
-                .alpha = alpha,
-            } };
-        } else {
-            return .{ .err = location.newUnexpectedTokenError(.{ .ident = colorspace }) };
-        }
+        const Variants = enum {
+            srgb,
+            @"srgb-linear",
+            @"display-p3",
+            @"a99-rgb",
+            @"prophoto-rgb",
+            rec2020,
+            @"xyz-d50",
+            @"xyz-d65",
+            xyz,
+        };
+        const Map = bun.ComptimeEnumMap(Variants);
+        if (Map.getAnyCase(colorspace)) |ret| {
+            switch (ret) {
+                .srgb => break :predefined .{ .srgb = SRGB{
+                    .r = a,
+                    .g = b,
+                    .b = c,
+                    .alpha = alpha,
+                } },
+                .@"srgb-linear" => break :predefined .{ .srgb_linear = SRGBLinear{
+                    .r = a,
+                    .g = b,
+                    .b = c,
+                    .alpha = alpha,
+                } },
+                .@"display-p3" => break :predefined .{ .display_p3 = P3{
+                    .r = a,
+                    .g = b,
+                    .b = c,
+                    .alpha = alpha,
+                } },
+                .@"a99-rgb" => break :predefined .{ .a98 = A98{
+                    .r = a,
+                    .g = b,
+                    .b = c,
+                    .alpha = alpha,
+                } },
+                .@"prophoto-rgb" => break :predefined .{ .prophoto = ProPhoto{
+                    .r = a,
+                    .g = b,
+                    .b = c,
+                    .alpha = alpha,
+                } },
+                .rec2020 => break :predefined .{ .rec2020 = Rec2020{
+                    .r = a,
+                    .g = b,
+                    .b = c,
+                    .alpha = alpha,
+                } },
+                .@"xyz-d50" => break :predefined .{ .xyz_d50 = XYZd50{
+                    .x = a,
+                    .y = b,
+                    .z = c,
+                    .alpha = alpha,
+                } },
+                .@"xyz-d65", .xyz => break :predefined .{ .xyz_d65 = XYZd65{
+                    .x = a,
+                    .y = b,
+                    .z = c,
+                    .alpha = alpha,
+                } },
+            }
+        } else return .{ .err = location.newUnexpectedTokenError(.{ .ident = colorspace }) };
     };
 
     return .{ .result = .{
@@ -2978,10 +2980,10 @@ pub fn BoundedColorGamut(comptime T: type) type {
 
         pub fn clip(this: *const T) T {
             var result: T = this.*;
-            @field(result, a) = std.math.clamp(@field(this, a), 0.0, 1.0);
-            @field(result, b) = std.math.clamp(@field(this, b), 0.0, 1.0);
-            @field(result, c) = std.math.clamp(@field(this, c), 0.0, 1.0);
-            result.alpha = std.math.clamp(this.alpha, 0.0, 1.0);
+            @field(result, a) = bun.clamp(@field(this, a), 0.0, 1.0);
+            @field(result, b) = bun.clamp(@field(this, b), 0.0, 1.0);
+            @field(result, c) = bun.clamp(@field(this, c), 0.0, 1.0);
+            result.alpha = bun.clamp(this.alpha, 0.0, 1.0);
             return result;
         }
     };
@@ -3225,6 +3227,7 @@ pub fn writePredefined(
         .prophoto => |*rgb| .{ "prophoto-rgb", rgb.r, rgb.g, rgb.b, rgb.alpha },
         .rec2020 => |*rgb| .{ "rec2020", rgb.r, rgb.g, rgb.b, rgb.alpha },
         .xyz_d50 => |*xyz| .{ "xyz-d50", xyz.x, xyz.y, xyz.z, xyz.alpha },
+        // "xyz" has better compatibility (Safari 15) than "xyz-d65", and it is shorter.
         .xyz_d65 => |*xyz| .{ "xyz", xyz.x, xyz.y, xyz.z, xyz.alpha },
     };
 
@@ -3238,7 +3241,7 @@ pub fn writePredefined(
     try writeComponent(c, W, dest);
 
     if (std.math.isNan(alpha) or @abs(alpha - 1.0) > std.math.floatEps(f32)) {
-        try dest.delim(',', true);
+        try dest.delim('/', true);
         try writeComponent(alpha, W, dest);
     }
 

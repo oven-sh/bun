@@ -399,13 +399,6 @@ pub const Source = struct {
         if (!stdout_stream_set) {
             stdout_stream_set = true;
             if (comptime Environment.isNative) {
-                var enable_color: ?bool = null;
-                if (isForceColor()) {
-                    enable_color = true;
-                } else if (isNoColor() or !isColorTerminal()) {
-                    enable_color = false;
-                }
-
                 const is_stdout_tty = bun_stdio_tty[1] != 0;
                 if (is_stdout_tty) {
                     stdout_descriptor_type = OutputStreamDescriptor.terminal;
@@ -414,6 +407,15 @@ pub const Source = struct {
                 const is_stderr_tty = bun_stdio_tty[2] != 0;
                 if (is_stderr_tty) {
                     stderr_descriptor_type = OutputStreamDescriptor.terminal;
+                }
+
+                var enable_color: ?bool = null;
+                if (isForceColor()) {
+                    enable_color = true;
+                } else if (isNoColor()) {
+                    enable_color = false;
+                } else if (isColorTerminal() and (is_stdout_tty or is_stderr_tty)) {
+                    enable_color = true;
                 }
 
                 enable_ansi_colors_stdout = enable_color orelse is_stdout_tty;

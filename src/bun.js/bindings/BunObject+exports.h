@@ -38,6 +38,7 @@
     macro(braces) \
     macro(build) \
     macro(connect) \
+    macro(color) \
     macro(deflateSync) \
     macro(file) \
     macro(fs) \

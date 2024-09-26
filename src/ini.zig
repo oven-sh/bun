@@ -574,7 +574,7 @@ pub const IniTestingAPIs = struct {
 
         const install = allocator.create(bun.Schema.Api.BunInstall) catch bun.outOfMemory();
         install.* = std.mem.zeroes(bun.Schema.Api.BunInstall);
-        loadNpmrc(allocator, install, env, false, &log, &source) catch {
+        loadNpmrc(allocator, install, env, false, ".npmrc", &log, &source) catch {
             return log.toJS(globalThis, allocator, "error");
         };
 
@@ -878,18 +878,19 @@ pub fn loadNpmrcFromFile(
     install: *bun.Schema.Api.BunInstall,
     env: *bun.DotEnv.Loader,
     auto_loaded: bool,
+    npmrc_path: [:0]const u8,
 ) void {
     var log = bun.logger.Log.init(allocator);
     defer log.deinit();
 
-    const source = bun.sys.File.toSource(".npmrc", allocator).unwrap() catch |err| {
+    const source = bun.sys.File.toSource(npmrc_path, allocator).unwrap() catch |err| {
         if (auto_loaded) return;
-        Output.err(err, "failed to read '.npmrc'", .{});
+        Output.err(err, "failed to read .npmrc: \"{s}\"", .{npmrc_path});
         Global.crash();
     };
     defer allocator.free(source.contents);
 
-    loadNpmrc(allocator, install, env, auto_loaded, &log, &source) catch {
+    loadNpmrc(allocator, install, env, auto_loaded, npmrc_path, &log, &source) catch {
         if (log.errors == 1)
             Output.warn("Encountered an error while reading <b>.npmrc<r>:\n", .{})
         else
@@ -903,10 +904,11 @@ pub fn loadNpmrc(
     install: *bun.Schema.Api.BunInstall,
     env: *bun.DotEnv.Loader,
     auto_loaded: bool,
+    npmrc_path: [:0]const u8,
     log: *bun.logger.Log,
     source: *const bun.logger.Source,
 ) !void {
-    var parser = bun.ini.Parser.init(allocator, ".npmrc", source.contents, env);
+    var parser = bun.ini.Parser.init(allocator, npmrc_path, source.contents, env);
     defer parser.deinit();
     parser.parse(parser.arena.allocator()) catch |e| {
         if (e == error.ParserError) {
@@ -916,13 +918,13 @@ pub fn loadNpmrc(
         if (auto_loaded) {
             Output.warn("{}\nwhile reading .npmrc \"{s}\"", .{
                 e,
-                ".npmrc",
+                npmrc_path,
             });
             return;
         }
         Output.prettyErrorln("{}\nwhile reading .npmrc \"{s}\"", .{
             e,
-            ".npmrc",
+            npmrc_path,
         });
         Global.exit(1);
     };

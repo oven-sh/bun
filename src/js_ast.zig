@@ -12,8 +12,8 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
-const Ref = @import("ast/base.zig").Ref;
-const Index = @import("ast/base.zig").Index;
+pub const Ref = @import("ast/base.zig").Ref;
+pub const Index = @import("ast/base.zig").Index;
 const RefHashCtx = @import("ast/base.zig").RefHashCtx;
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const ImportRecord = @import("import_record.zig").ImportRecord;
@@ -838,16 +838,15 @@ pub const G = struct {
     };
 
     pub const Property = struct {
-
-        // This is used when parsing a pattern that uses default values:
-        //
-        //   [a = 1] = [];
-        //   ({a = 1} = {});
-        //
-        // It's also used for class fields:
-        //
-        //   class Foo { a = 1 }
-        //
+        /// This is used when parsing a pattern that uses default values:
+        ///
+        ///   [a = 1] = [];
+        ///   ({a = 1} = {});
+        ///
+        /// It's also used for class fields:
+        ///
+        ///   class Foo { a = 1 }
+        ///
         initializer: ?ExprNodeIndex = null,
         kind: Kind = .normal,
         flags: Flags.Property.Set = Flags.Property.None,

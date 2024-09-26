@@ -34,8 +34,6 @@ pub const auto_allocator: std.mem.Allocator = if (!use_mimalloc)
 else
     @import("./memory_allocator.zig").auto_allocator;
 
-pub const huge_allocator_threshold: comptime_int = @import("./memory_allocator.zig").huge_threshold;
-
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
 pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
 

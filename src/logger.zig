@@ -1285,6 +1285,7 @@ pub inline fn usize2Loc(loc: usize) Loc {
 
 pub const Source = struct {
     path: fs.Path,
+    // TODO(@paperdave): delete key_path
     key_path: fs.Path,
 
     contents: string,

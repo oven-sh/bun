@@ -128,6 +128,22 @@ declare class Kit {
   constructor(options: Kit.Options);
 }
 
+module 'bun:kit/server' {
+  declare const clientManifest: ClientManifest;
+  declare const serverManifest: ServerManifest;
+
+  interface ClientManifest {
+    [uid: string]: {
+      /** The module ID in */
+      id: string;
+      /** The export name */
+      name: string;
+      /** Currently not implemented; always an empty array */
+      chunks: [];
+    }
+  }
+}
+
 
 // const serverManifest = {
 //   'Client.tsx#Client': {

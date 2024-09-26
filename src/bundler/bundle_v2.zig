@@ -350,6 +350,9 @@ pub const BundleV2 = struct {
     unique_key: u64 = 0,
     dynamic_import_entry_points: std.AutoArrayHashMap(Index.Int, void) = undefined,
 
+    kit_referenced_server_data: bool,
+    kit_referenced_client_data: bool,
+
     const KitOptions = struct {
         framework: kit.Framework,
         client_bundler: *Bundler,
@@ -793,6 +796,8 @@ pub const BundleV2 = struct {
                     .allocator = undefined,
                 },
             },
+            .kit_referenced_server_data = false,
+            .kit_referenced_client_data = false,
         };
         if (kit_options) |ko| {
             this.client_bundler = ko.client_bundler;
@@ -890,6 +895,10 @@ pub const BundleV2 = struct {
             batch.push(ThreadPoolLib.Batch.from(&runtime_parse_task.task));
         }
 
+        // Kit has two source indexes which are computed at the end of the
+        // Scan+Parse phase, but reserved now so that resolution works.
+        try this.reserveSourceIndexesForKit();
+
         {
             // Setup entry points
             try this.graph.entry_points.ensureUnusedCapacity(this.graph.allocator, user_entry_points.len);
@@ -930,44 +939,125 @@ pub const BundleV2 = struct {
         }
     }
 
-    pub fn enqueueServerComponentManifestFiles(this: *BundleV2) OOM!void {
-        const trace = tracer(@src(), "enqueueShadowEntryPoints");
-        defer trace.end();
-        const allocator = this.graph.allocator;
-        _ = allocator; // autofix
+    /// This generates the two asts for 'bun:kit/client' and 'bun:kit/server'. Both are generated
+    /// at the same time in one pass over the SBC list.
+    pub fn processServerComponentManifestFiles(this: *BundleV2) OOM!void {
+        // If Kit is not being used, do nothing
+        const fw = this.framework orelse return;
+        const sc = fw.server_components orelse return;
 
-        // const bitset_length = this.graph.input_files.len;
-        // var react_client_component_boundary = try bun.bit_set.DynamicBitSet.initEmpty(allocator, bitset_length);
-        // defer react_client_component_boundary.deinit();
-        // var any_client = false;
+        if (this.kit_referenced_client_data) @panic("TODO: bun:kit/client");
+        if (!this.kit_referenced_server_data) return;
 
-        // // Loop #1: populate the list of files that are react client components
-        // const scbs = this.graph.server_component_boundaries.list.slice();
-        // var components_for_client_manifest = try std.ArrayListUnmanaged(u32).initCapacity(allocator, scbs.len);
-        // for (
-        //     scbs.items(.use_directive),
-        //     scbs.items(.source_index),
-        // ) |use, source_id| {
-        //     if (use == .client) {
-        //         any_client = true;
-        //         react_client_component_boundary.set(source_id);
-        //         // write dependencies on the underlying module, not the proxy
-        //         try components_for_client_manifest.append(allocator, source_id);
-        //     }
-        // }
+        const alloc = this.graph.allocator;
 
-        // const client_manifest = try this.enqueueGenerateTask(
-        //     .{ .client_manifest = .{
-        //         .source_indices = try components_for_client_manifest.toOwnedSlice(allocator),
-        //     } },
-        //     Logger.Source.initEmptyFile("internal.client-manifest.js"),
-        // );
+        var server = try AstBuilder.init(this.graph.allocator, &kit.server_virtual_source, this.bundler.options.hot_module_reloading);
+        // var client = try AstBuilder.init(this.graph.allocator, &kit.client_virtual_source, this.bundler.options.hot_module_reloading);
 
-        // // TODO: client entry point needs to then import this file
-        // this.graph.entry_points.append(allocator, Index.source(client_manifest)) catch bun.outOfMemory();
+        var server_manifest_props: std.ArrayListUnmanaged(G.Property) = .{};
+        var client_manifest_props: std.ArrayListUnmanaged(G.Property) = .{};
 
-        // this.graph.shadow_entry_point_range.loc.start = @intCast(client_manifest);
-        // this.graph.shadow_entry_point_range.len = 1;
+        const scbs = this.graph.server_component_boundaries.list.slice();
+        const sources = this.graph.input_files.items(.source);
+        const named_exports_array = this.graph.ast.items(.named_exports);
+
+        const id_string = server.newExpr(E.String{ .data = "id" });
+        const name_string = server.newExpr(E.String{ .data = "name" });
+        const chunks_string = server.newExpr(E.String{ .data = "chunks" });
+        const specifier_string = server.newExpr(E.String{ .data = "specifier_string" });
+        const empty_array = server.newExpr(E.Array{});
+
+        for (
+            scbs.items(.use_directive),
+            scbs.items(.source_index),
+        ) |use, source_id| {
+            const source = sources[source_id];
+            if (use == .client) {
+                // TODO(@paperdave/kit): this file is being generated far too
+                // early. we don't know which exports are dead and which exports
+                // are live.  Tree-shaking figures that out. However,
+                // tree-shaking happens after import binding, which would
+                // require this ast.
+                //
+                // The plan: change this to generate a stub ast which only has
+                // `export const serverManifest = undefined;`, and then
+                // re-generate this file later with the properly decided
+                // manifest. However, I will probably reconsider how this
+                // manifest is being generated when I write the whole
+                // "production build" part of Kit.
+
+                const keys = named_exports_array[source_id].keys();
+                const client_manifest_items = try alloc.alloc(G.Property, keys.len);
+
+                const client_path = server.newExpr(E.String{ .data = source.path.pretty });
+                const ssr_path = if (sc.separate_ssr_graph)
+                    server.newExpr(E.String{ .data = try std.fmt.allocPrint(alloc, "ssr:{s}", .{source.path.pretty}) })
+                else
+                    client_path;
+
+                for (keys, client_manifest_items) |export_name_string, *client_item| {
+                    const server_key_string = try std.fmt.allocPrint(alloc, "{s}#{s}", .{ source.path.pretty, export_name_string });
+                    const export_name = server.newExpr(E.String{ .data = export_name_string });
+
+                    // write dependencies on the underlying module, not the proxy
+                    try server_manifest_props.append(alloc, .{
+                        .key = server.newExpr(E.String{ .data = server_key_string }),
+                        .value = server.newExpr(E.Object{
+                            .properties = try G.Property.List.fromSlice(alloc, &.{
+                                .{ .key = id_string, .value = client_path },
+                                .{ .key = name_string, .value = export_name },
+                                .{ .key = chunks_string, .value = empty_array },
+                            }),
+                        }),
+                    });
+                    client_item.* = .{
+                        .key = export_name,
+                        .value = server.newExpr(E.Object{
+                            .properties = try G.Property.List.fromSlice(alloc, &.{
+                                .{ .key = name_string, .value = export_name },
+                                .{ .key = specifier_string, .value = ssr_path },
+                            }),
+                        }),
+                    };
+                }
+
+                try client_manifest_props.append(alloc, .{
+                    .key = client_path,
+                    .value = server.newExpr(E.Object{
+                        .properties = G.Property.List.init(client_manifest_items),
+                    }),
+                });
+            } else {
+                @panic("TODO");
+            }
+        }
+
+        try server.appendStmt(S.Local{
+            .kind = .k_const,
+            .decls = try G.Decl.List.fromSlice(alloc, &.{.{
+                .binding = Binding.alloc(alloc, B.Identifier{
+                    .ref = try server.newSymbol(.other, "serverManifest"),
+                }, Logger.Loc.Empty),
+                .value = server.newExpr(E.Object{
+                    .properties = G.Property.List.fromList(server_manifest_props),
+                }),
+            }}),
+            .is_export = true,
+        });
+        try server.appendStmt(S.Local{
+            .kind = .k_const,
+            .decls = try G.Decl.List.fromSlice(alloc, &.{.{
+                .binding = Binding.alloc(alloc, B.Identifier{
+                    .ref = try server.newSymbol(.other, "clientManifest"),
+                }, Logger.Loc.Empty),
+                .value = server.newExpr(E.Object{
+                    .properties = G.Property.List.fromList(client_manifest_props),
+                }),
+            }}),
+            .is_export = true,
+        });
+
+        this.graph.ast.set(Index.kit_server_data.get(), try server.toBundledAst());
     }
 
     pub fn enqueueParseTask(
@@ -1128,20 +1218,7 @@ pub const BundleV2 = struct {
             return error.BuildFailed;
         }
 
-        // TODO: see if i can avoid this secondary pass and instead kick off
-        // the extra server component files right as the first one happens
-        //
-        // it is totally a real situation that a client file can invoke a
-        // server file, and then that server file imports another client
-        // component. this if check will not cover that use case
-        if (this.graph.server_component_boundaries.list.len > 0) {
-            try this.enqueueServerComponentManifestFiles();
-            this.waitForParse();
-
-            if (this.bundler.log.hasErrors()) {
-                return error.BuildFailed;
-            }
-        }
+        try this.processServerComponentManifestFiles();
 
         const reachable_files = try this.findReachableFiles();
         reachable_files_count.* = reachable_files.len -| 1; // - 1 for the runtime
@@ -1750,7 +1827,7 @@ pub const BundleV2 = struct {
         }
 
         if (this.graph.server_component_boundaries.list.len > 0) {
-            try this.enqueueServerComponentManifestFiles();
+            try this.processServerComponentManifestFiles();
             this.waitForParse();
 
             if (this.bundler.log.hasErrors()) {
@@ -1868,6 +1945,43 @@ pub const BundleV2 = struct {
         return path_clone.dupeAllocFixPretty(this.graph.allocator);
     }
 
+    fn reserveSourceIndexesForKit(this: *BundleV2) !void {
+        const fw = this.framework orelse return;
+        const sc = fw.server_components orelse return;
+
+        // Call this after
+        bun.assert(this.graph.input_files.len == 1);
+        bun.assert(this.graph.ast.len == 1);
+
+        try this.graph.ast.ensureUnusedCapacity(this.graph.allocator, 2);
+        try this.graph.input_files.ensureUnusedCapacity(this.graph.allocator, 2);
+
+        const server_source = kit.server_virtual_source;
+        const client_source = kit.client_virtual_source;
+
+        this.graph.input_files.appendAssumeCapacity(.{
+            .source = server_source,
+            .loader = .js,
+            .side_effects = .no_side_effects__pure_data,
+        });
+        this.graph.input_files.appendAssumeCapacity(.{
+            .source = client_source,
+            .loader = .js,
+            .side_effects = .no_side_effects__pure_data,
+        });
+
+        bun.assert(this.graph.input_files.items(.source)[Index.kit_server_data.get()].index.get() == Index.kit_server_data.get());
+        bun.assert(this.graph.input_files.items(.source)[Index.kit_client_data.get()].index.get() == Index.kit_client_data.get());
+
+        this.graph.ast.appendAssumeCapacity(JSAst.empty);
+        this.graph.ast.appendAssumeCapacity(JSAst.empty);
+
+        try this.graph.path_to_source_index_map.put(this.graph.allocator, comptime server_source.path.hashKey(), Index.kit_server_data.get());
+        try this.graph.path_to_source_index_map.put(this.graph.allocator, comptime client_source.path.hashKey(), Index.kit_client_data.get());
+        if (sc.separate_ssr_graph)
+            try this.graph.ssr_path_to_source_index_map.put(this.graph.allocator, comptime server_source.path.hashKey(), Index.kit_server_data.get());
+    }
+
     // TODO: remove ResolveQueue
     //
     // Moving this to the Bundle thread was a significant perf improvement on Linux for first builds
@@ -1909,6 +2023,24 @@ pub const BundleV2 = struct {
             {
                 continue;
             }
+
+            if (this.framework) |fw| if (fw.server_components != null) {
+                switch (ast.target.isServerSide()) {
+                    inline else => |is_server| {
+                        const src = if (is_server) kit.server_virtual_source else kit.client_virtual_source;
+                        if (strings.eqlComptime(import_record.path.text, src.path.text)) {
+                            if (is_server) {
+                                this.kit_referenced_server_data = true;
+                            } else {
+                                this.kit_referenced_client_data = true;
+                            }
+                            import_record.path.namespace = "bun";
+                            import_record.source_index = src.index;
+                            continue;
+                        }
+                    },
+                }
+            };
 
             if (ast.target.isBun()) {
                 if (JSC.HardcodedModule.Aliases.get(import_record.path.text, options.Target.bun)) |replacement| {
@@ -3352,14 +3484,14 @@ pub const GenerateTask = struct {
         client_reference_proxy: ReferenceProxy,
 
         /// Generate a file re-exporting every client component.
-        client_manifest: ClientManifest,
+        client_manifest: ServerManifest,
 
         pub const ReferenceProxy = struct {
             other_source: Logger.Source,
             named_exports: JSAst.NamedExports,
         };
 
-        pub const ClientManifest = struct {
+        pub const ServerManifest = struct {
             source_indices: []u32,
         };
     };
@@ -3415,7 +3547,7 @@ pub const GenerateTask = struct {
 
         try switch (task.data) {
             .client_reference_proxy => |data| task.generateClientReferenceProxy(data, &ab),
-            .client_manifest => |data| task.generateClientManifest(data, &ab),
+            .client_manifest => |data| task.generateServerManifest(data, &ab),
         };
 
         var ast = try ab.toBundledAst();
@@ -3511,12 +3643,9 @@ pub const GenerateTask = struct {
         }
     }
 
-    fn generateClientManifest(task: *GenerateTask, data: Data.ClientManifest, b: *AstBuilder) !void {
-        // TODO: we must either:
-        // - lock some rw mutex because ast could be resized
-        // - guarantee that this array wont resize
-        // - copy named_exports[x], as that slice is guaranteed to be stable
-        // option 2 is likely possible
+    fn generateServerManifest(task: *GenerateTask, data: Data.ServerManifest, b: *AstBuilder) !void {
+        // Despite accessing this off the bundler thread, this is safe to do so
+        //
         const ast_slice = task.ctx.graph.ast.slice();
         const named_exports_array = ast_slice.items(.named_exports);
         const input_file_sources = task.ctx.graph.input_files.items(.source);
@@ -12889,7 +13018,7 @@ fn targetFromHashbang(buffer: []const u8) ?options.Target {
 /// inside of `js_parser`
 pub const AstBuilder = struct {
     allocator: std.mem.Allocator,
-    source: *Logger.Source,
+    source: *const Logger.Source,
     source_index: u31,
     stmts: std.ArrayListUnmanaged(Stmt),
     scopes: std.ArrayListUnmanaged(*Scope),
@@ -12920,7 +13049,7 @@ pub const AstBuilder = struct {
         pub const typescript = false;
     };
 
-    pub fn init(allocator: std.mem.Allocator, source: *Logger.Source, hot_reloading: bool) !AstBuilder {
+    pub fn init(allocator: std.mem.Allocator, source: *const Logger.Source, hot_reloading: bool) !AstBuilder {
         const scope = try allocator.create(Scope);
         scope.* = .{
             .kind = .entry,

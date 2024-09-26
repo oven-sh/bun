@@ -81,5 +81,3 @@ try {
   if (mode !== 'client') throw e;
   showErrorOverlay(e);
 }
-
-export {}

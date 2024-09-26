@@ -93,6 +93,15 @@ const BundleState = union(enum) {
 
     ready: Bundle,
 
+    fn reset(s: *BundleState) void {
+        switch (s.*) {
+            .stale => return,
+            .fail => |f| f.deinit(),
+            .ready => |b| b.deinit(),
+        }
+        s.* = .stale;
+    }
+
     const NonStale = union(enum) {
         /// Build failure
         fail: Failure,
@@ -672,7 +681,7 @@ pub fn IncrementalGraph(side: kit.Side) type {
                 dumpBundle(dump_dir, switch (side) {
                     .client => .client,
                     .server => if (is_ssr_graph) .ssr else .server,
-                }, rel_path_escaped, code) catch |err| {
+                }, rel_path_escaped, code, true) catch |err| {
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
                     Output.warn("Could not dump bundle: {}", .{err});
                 };
@@ -807,7 +816,7 @@ pub fn IncrementalGraph(side: kit.Side) type {
                 dumpBundle(dump_dir, switch (side) {
                     .client => .client,
                     .server => .server,
-                }, rel_path_escaped, chunk.items) catch |err| {
+                }, rel_path_escaped, chunk.items, false) catch |err| {
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
                     Output.warn("Could not dump bundle: {}", .{err});
                 };
@@ -1125,7 +1134,7 @@ const Failure = union(enum) {
 };
 
 // For debugging, it is helpful to be able to see bundles.
-fn dumpBundle(dump_dir: std.fs.Dir, side: kit.Renderer, rel_path: []const u8, chunk: []const u8) !void {
+fn dumpBundle(dump_dir: std.fs.Dir, side: kit.Renderer, rel_path: []const u8, chunk: []const u8, wrap: bool) !void {
     const name = bun.path.joinAbsString("/", &.{
         @tagName(side),
         rel_path,
@@ -1149,9 +1158,13 @@ fn dumpBundle(dump_dir: std.fs.Dir, side: kit.Renderer, rel_path: []const u8, ch
     // Wrap in an object to make it valid syntax. Regardless, these files
     // are never executable on their own as they contain only a single module.
 
-    try bufw.writer().writeAll("({\n");
+    if (wrap)
+        try bufw.writer().writeAll("({\n");
+
     try bufw.writer().writeAll(chunk);
-    try bufw.writer().writeAll("});\n");
+
+    if (wrap)
+        try bufw.writer().writeAll("});\n");
 
     try bufw.flush();
 }

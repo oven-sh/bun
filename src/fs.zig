@@ -1627,7 +1627,9 @@ threadlocal var join_buf: [1024]u8 = undefined;
 pub const Path = struct {
     pretty: string,
     text: string,
+    // TODO(@paperdave): remove the default of this field.
     namespace: string = "unspecified",
+    // TODO(@paperdave): investigate removing or simplifying this property
     name: PathName,
     is_disabled: bool = false,
     is_symlink: bool = false,
@@ -1855,13 +1857,23 @@ pub const Path = struct {
         };
     }
 
-    pub fn initWithNamespaceVirtual(comptime text: string, comptime namespace: string, comptime package: string) Path {
-        return Path{
-            .pretty = comptime "node:" ++ package,
+    pub inline fn initWithNamespaceVirtual(comptime text: string, comptime namespace: string, comptime package: string) Path {
+        return comptime Path{
+            .pretty = namespace ++ ":" ++ package,
             .is_symlink = true,
             .text = text,
             .namespace = namespace,
             .name = PathName.init(text),
+        };
+    }
+
+    pub inline fn initWithNamespaceComptime(comptime namespace: string, comptime package: string) Path {
+        return comptime Path{
+            .pretty = namespace ++ ":" ++ package,
+            .is_symlink = true,
+            .text = package,
+            .namespace = namespace,
+            .name = PathName.init(package),
         };
     }
 

@@ -260,6 +260,20 @@ pub fn addImportMetaDefines(
     );
 }
 
+pub const server_virtual_source: bun.logger.Source = .{
+    .path = bun.fs.Path.initWithNamespaceComptime("bun", "kit/server"),
+    .key_path = bun.fs.Path.initWithNamespaceComptime("bun", "kit/server"),
+    .contents = "", // Virtual
+    .index = bun.JSAst.Index.kit_server_data,
+};
+
+pub const client_virtual_source: bun.logger.Source = .{
+    .path = bun.fs.Path.initWithNamespaceComptime("bun", "kit/client"),
+    .key_path = bun.fs.Path.initWithNamespaceComptime("bun", "kit/client"),
+    .contents = "", // Virtual
+    .index = bun.JSAst.Index.kit_client_data,
+};
+
 pub const DevServer = @import("./DevServer.zig");
 
 const std = @import("std");

@@ -48,6 +48,9 @@ pub const Index = packed struct(u32) {
     pub const invalid = Index{ .value = std.math.maxInt(Int) };
     pub const runtime = Index{ .value = 0 };
 
+    pub const kit_server_data = Index{ .value = 1 };
+    pub const kit_client_data = Index{ .value = 2 };
+
     pub const Int = u32;
 
     pub inline fn source(num: anytype) Index {

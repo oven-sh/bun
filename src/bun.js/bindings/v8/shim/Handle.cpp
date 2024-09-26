@@ -41,7 +41,7 @@ Handle::Handle(const ObjectLayout* that)
 Handle& Handle::operator=(const Handle& that)
 {
     m_object = that.m_object;
-    if (that.m_toV8Object.type() == TaggedPointer::Type::Smi) {
+    if (that.m_toV8Object.tag() == TaggedPointer::Tag::Smi) {
         m_toV8Object = that.m_toV8Object;
     } else {
         m_toV8Object = &this->m_object;

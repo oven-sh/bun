@@ -75,7 +75,7 @@ struct Handle {
 
     bool isCell() const
     {
-        if (m_toV8Object.type() == TaggedPointer::Type::Smi) {
+        if (m_toV8Object.tag() == TaggedPointer::Tag::Smi) {
             return false;
         }
         const Map* map_ptr = m_object.map();

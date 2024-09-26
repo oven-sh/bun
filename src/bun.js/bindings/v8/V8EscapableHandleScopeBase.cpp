@@ -24,7 +24,7 @@ uintptr_t* EscapableHandleScopeBase::EscapeSlot(uintptr_t* escape_value)
         m_isolate,
         m_escapeSlot);
     m_escapeSlot = nullptr;
-    return newHandle->asRawPtr();
+    return newHandle->asRawPtrLocation();
 }
 
 } // namespace v8

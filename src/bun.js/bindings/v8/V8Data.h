@@ -18,7 +18,7 @@ public:
     JSC::JSCell* localToCell()
     {
         TaggedPointer root = localToTagged();
-        RELEASE_ASSERT(root.type() != TaggedPointer::Type::Smi);
+        RELEASE_ASSERT(root.tag() != TaggedPointer::Tag::Smi);
         return root.getPtr<shim::ObjectLayout>()->asCell();
     }
 
@@ -44,7 +44,7 @@ public:
     JSC::JSValue localToJSValue() const
     {
         TaggedPointer root = localToTagged();
-        if (root.type() == TaggedPointer::Type::Smi) {
+        if (root.tag() == TaggedPointer::Tag::Smi) {
             return JSC::jsNumber(root.getSmiUnchecked());
         } else {
             using shim::InstanceType;
@@ -65,7 +65,7 @@ public:
     const JSC::JSCell* localToCell() const
     {
         TaggedPointer root = localToTagged();
-        RELEASE_ASSERT(root.type() != TaggedPointer::Type::Smi);
+        RELEASE_ASSERT(root.tag() != TaggedPointer::Tag::Smi);
         return root.getPtr<shim::ObjectLayout>()->asCell();
     }
 

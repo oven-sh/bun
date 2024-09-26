@@ -98,7 +98,7 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
 
     functionTemplate->m_callback(info);
 
-    if (implicit_args.return_value.type() != TaggedPointer::Type::Smi && implicit_args.return_value.getPtr() == nullptr) {
+    if (implicit_args.return_value.isEmpty()) {
         // callback forgot to set a return value, so return undefined
         return JSValue::encode(JSC::jsUndefined());
     } else {

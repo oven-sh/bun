@@ -5,6 +5,11 @@
 // files from Bun's V8 implementation, and it should only be included in source files (not
 // header files).
 
+// Microsoft's C++ headers cause a compiler error if `private` has been redefined, like we do below.
+// These are all the standard library headers included by V8. We include them here so that they
+// are included while `private` is not redefined yet, and then when V8 includes them they will get
+// skipped by include guards.
+
 #include <array>
 #include <atomic>
 #include <bit>

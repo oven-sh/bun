@@ -15,12 +15,15 @@ private:
     uintptr_t m_value;
 
 public:
-    enum class Type : uint8_t {
-        Smi,
-        StrongPointer,
-        WeakPointer,
+    enum class Tag : uint8_t {
+        Smi = 0,
+        StrongPointer = 1,
+        WeakPointer = 3,
     };
 
+    static constexpr uintptr_t TagMask = 0b11;
+
+    // empty
     TaggedPointer()
         : TaggedPointer(nullptr) {};
     TaggedPointer(const TaggedPointer&) = default;
@@ -28,13 +31,14 @@ public:
     bool operator==(const TaggedPointer& other) const { return m_value == other.m_value; }
 
     TaggedPointer(void* ptr, bool weak = false)
-        : m_value(reinterpret_cast<uintptr_t>(ptr) | (weak ? 3 : 1))
+        : m_value(reinterpret_cast<uintptr_t>(ptr) | static_cast<uintptr_t>(weak ? Tag::WeakPointer : Tag::StrongPointer))
     {
-        RELEASE_ASSERT((reinterpret_cast<uintptr_t>(ptr) & 3) == 0);
+        // check original pointer was aligned
+        RELEASE_ASSERT((reinterpret_cast<uintptr_t>(ptr) & TagMask) == 0);
     }
 
     TaggedPointer(int32_t smi)
-        : m_value(static_cast<uintptr_t>(smi) << 32)
+        : m_value((static_cast<uintptr_t>(smi) << 32) | static_cast<uintptr_t>(Tag::Smi))
     {
     }
 
@@ -46,37 +50,34 @@ public:
         return tagged;
     }
 
-    // Get a pointer to where this TaggedPointer is located
-    uintptr_t* asRawPtr()
+    bool isEmpty() const
+    {
+        return *this == TaggedPointer();
+    }
+
+    // Get a pointer to where this TaggedPointer is located (use ->asRawPtrLocation() to reinterpret
+    // TaggedPointer* as uintptr_t*)
+    uintptr_t* asRawPtrLocation()
     {
         return &m_value;
     }
 
-    Type type() const
+    Tag tag() const
     {
-        switch (m_value & 3) {
-        case 0:
-            return Type::Smi;
-        case 1:
-            return Type::StrongPointer;
-        case 3:
-            return Type::WeakPointer;
-        default:
-            RELEASE_ASSERT_NOT_REACHED();
-        }
+        return static_cast<Tag>(m_value & TagMask);
     }
 
     template<typename T = JSC::JSCell> T* getPtr() const
     {
-        if (type() == Type::Smi) {
+        if (tag() == Tag::Smi) {
             return nullptr;
         }
-        return reinterpret_cast<T*>(m_value & ~3ull);
+        return reinterpret_cast<T*>(m_value & ~TagMask);
     }
 
     bool getSmi(int32_t& smi) const
     {
-        if (type() != Type::Smi) {
+        if (tag() != Tag::Smi) {
             return false;
         }
         smi = static_cast<int32_t>(m_value >> 32);
@@ -85,7 +86,7 @@ public:
 
     int32_t getSmiUnchecked() const
     {
-        ASSERT(type() == Type::Smi);
+        ASSERT(tag() == Tag::Smi);
         return static_cast<int32_t>(m_value >> 32);
     }
 };

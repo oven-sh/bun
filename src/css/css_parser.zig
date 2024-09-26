@@ -504,7 +504,10 @@ pub fn DeriveParse(comptime T: type) type {
             if (comptime maybe_first_void_index == null) {
                 inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
                     if (comptime (i == last_payload_index)) {
-                        return generic.parseFor(field.type)(input);
+                        return .{ .result = switch (generic.parseFor(field.type)(input)) {
+                            .result => |v| @unionInit(T, field.name, v),
+                            .err => |e| return .{ .err = e },
+                        } };
                     }
                     if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
                         return .{ .result = @unionInit(T, field.name, v) };
@@ -529,7 +532,10 @@ pub fn DeriveParse(comptime T: type) type {
 
                     inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
                         if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
-                            return generic.parseFor(field.type)(input);
+                            return .{ .result = switch (generic.parseFor(field.type)(input)) {
+                                .result => |v| @unionInit(T, field.name, v),
+                                .err => |e| return .{ .err = e },
+                            } };
                         }
                         if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
                             return .{ .result = @unionInit(T, field.name, v) };
@@ -538,7 +544,10 @@ pub fn DeriveParse(comptime T: type) type {
                 } else {
                     inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
                         if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
-                            return generic.parseFor(field.type)(input);
+                            return .{ .result = switch (generic.parseFor(field.type)(input)) {
+                                .result => |v| @unionInit(T, field.name, v),
+                                .err => |e| return .{ .err = e },
+                            } };
                         }
                         if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
                             return .{ .result = @unionInit(T, field.name, v) };
@@ -568,7 +577,10 @@ pub fn DeriveParse(comptime T: type) type {
 
                 inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
                     if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
-                        return generic.parseFor(field.type)(input);
+                        return .{ .result = switch (generic.parseFor(field.type)(input)) {
+                            .result => |v| @unionInit(T, field.name, v),
+                            .err => |e| return .{ .err = e },
+                        } };
                     }
                     if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
                         return .{ .result = @unionInit(T, field.name, v) };
@@ -577,7 +589,10 @@ pub fn DeriveParse(comptime T: type) type {
             } else if (comptime first_void_index > first_payload_index) {
                 inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
                     if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
-                        return generic.parseFor(field.type)(input);
+                        return .{ .result = switch (generic.parseFor(field.type)(input)) {
+                            .result => |v| @unionInit(T, field.name, v),
+                            .err => |e| return .{ .err = e },
+                        } };
                     }
                     if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
                         return .{ .result = @unionInit(T, field.name, v) };
@@ -679,13 +694,39 @@ pub fn DeriveParse(comptime T: type) type {
 }
 
 pub fn DeriveToCss(comptime T: type) type {
+    const enum_fields = bun.meta.EnumFields(T);
     // TODO: this has to work for enums and union(enums)
     return struct {
         pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            // to implement this, we need to cargo expand the derive macro
-            _ = this; // autofix
-            _ = dest; // autofix
-            @compileError(todo_stuff.depth);
+            inline for (std.meta.fields(T), 0..) |field, i| {
+                if (@intFromEnum(this.*) == enum_fields[i].value) {
+                    if (comptime field.type == void) {
+                        return dest.writeStr(enum_fields[i].name);
+                    } else if (comptime generic.hasToCss(T)) {
+                        return generic.toCss(field.type, &@field(this, field.name), W, dest);
+                    } else {
+                        const variant_fields = std.meta.fields(field.type);
+                        if (variant_fields.len > 1) {
+                            var optional_count = 0;
+                            inline for (variant_fields) |variant_field| {
+                                if (@typeInfo(variant_field.type) == .Optional) {
+                                    optional_count += 1;
+                                    if (optional_count > 1) @compileError("Not supported for multiple optional fields yet sorry.");
+                                    if (@field(@field(this, field.name), variant_field.name)) |*value| {
+                                        try generic.toCss(@TypeOf(value.*), W, dest);
+                                    }
+                                } else {
+                                    try @field(@field(this, field.name), variant_field.name).toCss(W, dest);
+                                }
+                            }
+                        } else {
+                            const variant_field = variant_fields[0];
+                            try @field(variant_field.type, "toCss")(@field(@field(this, field.name), variant_field.name), W, dest);
+                        }
+                    }
+                }
+            }
+            return;
         }
     };
 }
@@ -751,6 +792,7 @@ pub fn DefineEnumProperty(comptime T: type) type {
             _ = this; // autofix
             _ = dest; // autofix
             // return dest.writeStr(asStr(this));
+            @panic(todo_stuff.depth);
         }
     };
 }
@@ -5862,7 +5904,18 @@ pub const generic = struct {
         }.parsefn;
     }
 
+    pub fn hasToCss(comptime T: type) bool {
+        return switch (T) {
+            f32 => true,
+            else => @hasDecl(T, "toCss"),
+        };
+    }
+
     pub inline fn toCss(comptime T: type, this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        if (@typeInfo(T) == .Pointer) {
+            const TT = std.meta.Child(T);
+            return toCss(TT, this.*, W, dest);
+        }
         return switch (T) {
             f32 => CSSNumberFns.toCss(this, W, dest),
             CSSInteger => CSSIntegerFns.toCss(this, W, dest),

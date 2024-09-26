@@ -1005,10 +1005,7 @@ pub const Bundler = struct {
             // ZACK YOUR CODE GOES HERE!!
             .css => {
                 if (comptime bun.FeatureFlags.css) {
-                    const Arena = @import("../src/mimalloc_arena.zig").Arena;
-
-                    var arena = Arena.init() catch @panic("oopsie arena no good");
-                    const alloc = arena.allocator();
+                    const alloc = bundler.allocator;
 
                     const entry = bundler.resolver.caches.fs.readFileWithAllocator(
                         bundler.allocator,

@@ -69,35 +69,35 @@ const box_shadow = css.css_properties.box_shadow;
 const size = css.css_properties.size;
 const overflow = css.css_properties.overflow;
 
-// const BorderSideWidth = border.BorderSideWith;
-// const Size2D = css_values.size.Size2D;
-// const BorderRadius = border_radius.BorderRadius;
-// const Rect = css_values.rect.Rect;
-// const LengthOrNumber = css_values.length.LengthOrNumber;
-// const BorderImageRepeat = border_image.BorderImageRepeat;
-// const BorderImageSideWidth = border_image.BorderImageSideWidth;
-// const BorderImageSlice = border_image.BorderImageSlice;
-// const BorderImage = border_image.BorderImage;
-// const BorderColor = border.BorderColor;
-// const BorderStyle = border.BorderStyle;
-// const BorderWidth = border.BorderWidth;
-// const BorderBlockColor = border.BorderBlockColor;
-// const BorderBlockStyle = border.BorderBlockStyle;
-// const BorderBlockWidth = border.BorderBlockWidth;
-// const BorderInlineColor = border.BorderInlineColor;
-// const BorderInlineStyle = border.BorderInlineStyle;
-// const BorderInlineWidth = border.BorderInlineWidth;
-// const Border = border.Border;
-// const BorderTop = border.BorderTop;
-// const BorderRight = border.BorderRight;
-// const BorderLeft = border.BorderLeft;
-// const BorderBottom = border.BorderBottom;
-// const BorderBlockStart = border.BorderBlockStart;
-// const BorderBlockEnd = border.BorderBlockEnd;
-// const BorderInlineStart = border.BorderInlineStart;
-// const BorderInlineEnd = border.BorderInlineEnd;
-// const BorderBlock = border.BorderBlock;
-// const BorderInline = border.BorderInline;
+const BorderSideWidth = border.BorderSideWidth;
+const Size2D = css_values.size.Size2D;
+const BorderRadius = border_radius.BorderRadius;
+const Rect = css_values.rect.Rect;
+const LengthOrNumber = css_values.length.LengthOrNumber;
+const BorderImageRepeat = border_image.BorderImageRepeat;
+const BorderImageSideWidth = border_image.BorderImageSideWidth;
+const BorderImageSlice = border_image.BorderImageSlice;
+const BorderImage = border_image.BorderImage;
+const BorderColor = border.BorderColor;
+const BorderStyle = border.BorderStyle;
+const BorderWidth = border.BorderWidth;
+const BorderBlockColor = border.BorderBlockColor;
+const BorderBlockStyle = border.BorderBlockStyle;
+const BorderBlockWidth = border.BorderBlockWidth;
+const BorderInlineColor = border.BorderInlineColor;
+const BorderInlineStyle = border.BorderInlineStyle;
+const BorderInlineWidth = border.BorderInlineWidth;
+const Border = border.Border;
+const BorderTop = border.BorderTop;
+const BorderRight = border.BorderRight;
+const BorderLeft = border.BorderLeft;
+const BorderBottom = border.BorderBottom;
+const BorderBlockStart = border.BorderBlockStart;
+const BorderBlockEnd = border.BorderBlockEnd;
+const BorderInlineStart = border.BorderInlineStart;
+const BorderInlineEnd = border.BorderInlineEnd;
+const BorderBlock = border.BorderBlock;
+const BorderInline = border.BorderInline;
 // const Outline = outline.Outline;
 // const OutlineStyle = outline.OutlineStyle;
 // const FlexDirection = flex.FlexDirection;
@@ -629,7 +629,7 @@ pub const PropertyId = union(PropertyIdTag) {
         };
     }
 
-    pub fn addPrefix(this: *const PropertyId, pre: VendorPrefix) void {
+    pub fn addPrefix(this: *PropertyId, pre: VendorPrefix) void {
         _ = pre; // autofix
         return switch (this.*) {
             .@"background-color" => {},

@@ -286,7 +286,7 @@ pub fn runLoopForever(dev: *DevServer) noreturn {
 
 fn onListen(ctx: *DevServer, maybe_listen: ?*App.ListenSocket) void {
     const listen: *App.ListenSocket = maybe_listen orelse {
-        @panic("TODO: handle listen failure");
+        bun.todoPanic(@src(), "handle listen failure");
     };
 
     ctx.listener = listen;
@@ -377,7 +377,7 @@ fn performBundleAndWaitInner(dev: *DevServer, route: *Route, fail: *Failure) !Bu
         // The handling of the dependency graph is SLIGHTLY different. It's
         // enough that it would be incorrect to let the current code execute at
         // all.
-        @panic("TODO: support non-server components");
+        bun.todoPanic(@src(), "support non-server components build", .{});
     }
 
     const bv2 = try BundleV2.init(
@@ -466,7 +466,7 @@ fn performBundleAndWaitInner(dev: *DevServer, route: *Route, fail: *Failure) !Bu
         fetch_function.ensureStillAlive();
         register_update.ensureStillAlive();
     } else {
-        @panic("TODO");
+        bun.todoPanic(@src(), "Kit: server's secondary bundle", .{});
     }
 
     return .{
@@ -546,7 +546,9 @@ fn onServerRequestWithBundle(route: *Route, bundle: Bundle, req: *Request, resp:
 
     const bun_string = result.toBunString(dev.server_global.js());
     defer bun_string.deref();
-    if (bun_string.tag == .Dead) @panic("TODO NOT STRING");
+    if (bun_string.tag == .Dead) {
+        bun.todoPanic(@src(), "Kit: support non-string return value", .{});
+    }
 
     const utf8 = bun_string.toUTF8(default_allocator);
     defer utf8.deinit();
@@ -775,7 +777,7 @@ pub fn IncrementalGraph(side: kit.Side) type {
                         const entry = switch (side) {
                             .server => g.owner.framework.entry_server,
                             .client => g.owner.framework.entry_client,
-                        } orelse @panic("TODO: non-framework provided entry-point");
+                        } orelse bun.todoPanic(@src(), "non-framework provided entry-point");
                         bun.js_printer.writeJSONString(
                             bun.path.relative(g.owner.cwd, entry),
                             @TypeOf(w),
@@ -826,189 +828,6 @@ pub fn IncrementalGraph(side: kit.Side) type {
         }
     };
 }
-// const BundleThread = bun.bundle_v2.BundleThread(BundleTask);
-
-// /// A request to bundle something for development. Has one or more pending HTTP requests.
-// pub const BundleTask = struct {
-//     owner: *DevServer,
-//     route: *Route,
-//     kind: BundleKind,
-//     // env: *bun.DotEnv.Loader, // TODO
-//     plugins: ?*JSC.API.JSBundler.Plugin,
-//     handlers: DeferredRequest.List,
-
-//     next: ?*BundleTask = null,
-//     result: BundleV2.Result = .pending,
-
-//     // initialized in the task itself:
-//     concurrent_task: JSC.EventLoopTask = undefined,
-//     bundler: *BundleV2 = undefined,
-//     log: Log = undefined,
-
-//     /// There is no function pointer, route, or context on this struct as all of
-//     /// this information is inferable from the associated BundleTask
-//     const DeferredRequest = struct {
-//         /// When cancelled, this is set to null
-//         resp: ?*Response,
-//         /// Only valid if req is non-null
-//         ctx: BundleKind.AnyContext,
-
-//         fn newNode(resp: *Response, ctx: BundleKind.AnyContext) *DeferredRequest.List.Node {
-//             const node = bun.new(DeferredRequest.List.Node, .{
-//                 .data = .{
-//                     .resp = resp,
-//                     .ctx = ctx,
-//                 },
-//             });
-//             resp.onAborted(*DeferredRequest, onCancel, &node.data);
-//             return node;
-//         }
-
-//         fn onCancel(node: *DeferredRequest, resp: *Response) void {
-//             node.resp = null;
-//             node.ctx = undefined;
-//             _ = resp;
-//         }
-
-//         const List = std.SinglyLinkedList(DeferredRequest);
-//     };
-
-//     pub fn completeOnMainThread(task: *BundleTask) void {
-//         switch (task.kind) {
-//             inline else => |kind| task.completeOnMainThreadWithKind(kind),
-//         }
-//     }
-
-//     fn completeOnMainThreadWithKind(task: *BundleTask, comptime kind: BundleKind) void {
-//         const route = task.route;
-//         const bundle = switch (kind) {
-//             .client => &route.client_bundle,
-//             .server => &route.server_bundle,
-//         };
-
-//         assert(bundle.* == .pending);
-
-//         const dev = route.dev;
-
-//         if (task.result == .err) {
-//             const fail = Failure.fromLog(&task.log);
-//             fail.printToConsole(route, kind);
-//             task.finishHttpRequestsFailure(&fail);
-//             bundle.* = .{ .failed = fail };
-//             return;
-//         }
-
-//         switch (kind) {
-//             .client => {
-//                 assert(task.result.value.output_files.items.len == 0);
-//                 // TODO: revive the code below to handle assets
-
-//                 // Set the capacity to the exact size required to avoid over-allocation
-//                 // var files_index: bun.CaseInsensitiveASCIIStringArrayHashMapUnmanaged(void) = .{};
-//                 // files_index.entries.setCapacity(default_allocator, files.len) catch bun.outOfMemory();
-//                 // files_index.entries.len = files.len;
-//                 // for (files_index.keys(), files) |*index_key, file| {
-//                 //     var dest_path = file.dest_path;
-//                 //     if (bun.strings.hasPrefixComptime(dest_path, "./")) {
-//                 //         dest_path = dest_path[2..];
-//                 //     }
-//                 //     index_key.* = dest_path;
-//                 // }
-//                 // files_index.reIndex(default_allocator) catch bun.outOfMemory();
-
-//                 const s = struct {
-//                     var static = true;
-//                 };
-//                 const chunk = dev.hot_graph.takeChunk(if (s.static) .initial_response else .hmr_chunk) catch bun.outOfMemory();
-//                 s.static = false;
-
-//                 _ = AnyWebSocket.publishWithOptions(false, dev.app, "TODO", chunk, .text, true);
-
-//                 bundle.* = .{
-//                     .value = .{
-//                         // .files = files,
-//                         // .files_index = files_index,
-//                         .entry_file_contents = chunk,
-//                         .entry_file_stale = false,
-//                     },
-//                 };
-//             },
-//             .server => {
-
-//                 bundle.* = .{ .value = .{
-//                     .files = files,
-//                     .server_request_callback = handler,
-//                 } };
-//             },
-//         }
-
-//         task.finishHttpRequestsSuccess(kind, &bundle.value);
-//     }
-
-//     fn finishHttpRequestsSuccess(task: *BundleTask, comptime kind: BundleKind, bundle: *kind.Bundle()) void {
-//         const func = comptime kind.completionFunction();
-
-//         while (task.handlers.popFirst()) |node| {
-//             defer bun.destroy(node);
-//             if (node.data.resp) |resp| {
-//                 func(task.route, resp, @field(node.data.ctx, @tagName(kind)), bundle);
-//             }
-//         }
-//     }
-
-//     fn finishHttpRequestsFailure(task: *BundleTask, failure: *const Failure) void {
-//         while (task.handlers.popFirst()) |node| {
-//             defer bun.destroy(node);
-//             if (node.data.resp) |resp| {
-//                 failure.sendAsHttpResponse(resp, task.route, task.kind);
-//             }
-//         }
-//     }
-
-//     pub fn configureBundler(task: *BundleTask, bundler: *Bundler, allocator: Allocator) !void {
-//         const dev = task.route.dev;
-
-//         // The following are from Vite: https://vitejs.dev/guide/env-and-mode
-//         // TODO: MODE, BASE_URL
-//         try bundler.options.define.insert(
-//             allocator,
-//             "import.meta.env.DEV",
-//             Define.Data.initBoolean(true),
-//         );
-//         try bundler.options.define.insert(
-//             allocator,
-//             "import.meta.env.PROD",
-//             Define.Data.initBoolean(false),
-//         );
-//         try bundler.options.define.insert(
-//             allocator,
-//             "import.meta.env.SSR",
-//             Define.Data.initBoolean(task.kind == .server),
-//         );
-
-//         bundler.resolver.opts = bundler.options;
-//         bundler.resolver.watcher = dev.bundler.resolver.watcher;
-//     }
-
-//     pub fn completeMini(task: *BundleTask, _: *void) void {
-//         task.completeOnMainThread();
-//     }
-
-//     pub fn completeOnBundleThread(task: *BundleTask) void {
-//         task.route.dev.vm.event_loop.enqueueTaskConcurrent(task.concurrent_task.js.from(task, .manual_deinit));
-//     }
-// };
-
-// /// Bundling should be concurrent, deduplicated, and cached.
-// /// This acts as a sort of "native promise"
-// fn BundlePromise(T: type) type {
-//     return union(enum) {
-//         unqueued,
-//         pending: *BundleTask,
-//         failed: Failure,
-//         value: T,
-//     };
-// }
 
 /// Represents an error from loading or server sided runtime. Information on
 /// what this error is from, such as the associated Route, is inferred from
@@ -1257,10 +1076,8 @@ pub const c = struct {
     extern fn KitGetRequestHandlerFromModule(global: *DevGlobalObject, module: *JSC.JSString) JSValue;
 };
 
-// methods to satisfy NewHotReloader()'s interface
-
 pub fn reload(dev: *DevServer, reload_task: *const HotReloadTask) void {
-    dev.reloadWrap(reload_task) catch @panic("TODO handle watch failure");
+    dev.reloadWrap(reload_task) catch bun.todoPanic(@src(), "handle hot-reloading error", .{});
 }
 
 pub fn reloadWrap(dev: *DevServer, reload_task: *const HotReloadTask) !void {
@@ -1276,6 +1093,8 @@ pub fn reloadWrap(dev: *DevServer, reload_task: *const HotReloadTask) !void {
     inline for (.{ &dev.server_graph, &dev.client_graph }) |g| {
         g.invalidate(changed_file_paths, changed_hashes, &files_to_bundle);
     }
+
+    bun.todoPanic(@src(), "rewire hot-bundling code", .{});
 
     // const route = &dev.routes[0];
 

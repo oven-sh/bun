@@ -23815,7 +23815,7 @@ pub const ConvertESMExportsForHmr = struct {
                         bun.assert(decl.value != null); // const must be initialized
 
                         switch (decl.binding.data) {
-                            .b_missing => @panic("binding missing"),
+                            .b_missing => {},
 
                             .b_identifier => |id| {
                                 const symbol = p.symbols.items[id.ref.inner_index];
@@ -23926,13 +23926,11 @@ pub const ConvertESMExportsForHmr = struct {
                 return; // do not emit a statement here
             },
 
-            .s_export_from => |st| {
-                _ = st; // autofix
-                @panic("TODO s_export_from");
+            .s_export_from => {
+                bun.todoPanic(@src(), "hot-module-reloading instrumentation for 'export { ... } from'", .{});
             },
-            .s_export_star => |st| {
-                _ = st; // autofix
-                @panic("TODO s_export_star");
+            .s_export_star => {
+                bun.todoPanic(@src(), "hot-module-reloading instrumentation for 'export * from'", .{});
             },
 
             // De-duplicate import statements. It is okay to disregard
@@ -23955,7 +23953,7 @@ pub const ConvertESMExportsForHmr = struct {
         is_live_binding: bool,
     ) !void {
         switch (binding.data) {
-            .b_missing => @panic("missing!"),
+            .b_missing => {},
             .b_identifier => |id| {
                 try ctx.visitRefForKitModuleExports(p, id.ref, binding.loc, is_live_binding);
             },

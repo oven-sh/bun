@@ -859,13 +859,6 @@ pub const BundleV2 = struct {
             thread_pool,
         );
 
-        // sanity checks for kit
-        if (this.bundler.options.output_format == .internal_kit_dev) {
-            if (this.bundler.options.compile) @panic("TODO: internal_kit_dev does not support compile");
-            if (this.bundler.options.code_splitting) @panic("TODO: internal_kit_dev does not support code splitting");
-            if (this.bundler.options.transform_only) @panic("TODO: internal_kit_dev does not support transform_only");
-        }
-
         return this;
     }
 
@@ -947,7 +940,7 @@ pub const BundleV2 = struct {
         const fw = this.framework orelse return;
         const sc = fw.server_components orelse return;
 
-        if (this.graph.kit_referenced_client_data) @panic("TODO: bun:kit/client");
+        if (this.graph.kit_referenced_client_data) bun.todoPanic("implement generation for 'bun:kit/client'");
         if (!this.graph.kit_referenced_server_data) return;
 
         const alloc = this.graph.allocator;
@@ -1029,7 +1022,7 @@ pub const BundleV2 = struct {
                     }),
                 });
             } else {
-                @panic("TODO");
+                bun.todoPanic(@src(), "\"use server\"", .{});
             }
         }
 
@@ -2463,9 +2456,9 @@ pub const BundleV2 = struct {
                     ((result.use_directive == .client) == (result.ast.target == .browser)))
                 {
                     if (result.use_directive == .server)
-                        @panic("TODO: 'use server' (these are for server actions)");
+                        bun.todoPanic(@src(), "\"use server\"", .{});
                     if (!this.framework.?.server_components.?.separate_ssr_graph)
-                        @panic("TODO: without separate_ssr_graph");
+                        bun.todoPanic(@src(), "implement 'separate_ssr_graph = false'", .{});
 
                     const reference_source_index = this.enqueueGenerateTask(
                         .{ .client_reference_proxy = .{
@@ -4320,7 +4313,7 @@ const LinkerGraph = struct {
                                             },
                                             .server => {
                                                 {
-                                                    @panic("TODO: server action import");
+                                                    bun.todoPanic(@src(), "\"use server\"", .{});
                                                 }
                                                 import_record.module_id = bun.hash32(sources[source_index].path.pretty);
                                                 import_record.tag = .react_server_component;
@@ -6637,7 +6630,7 @@ pub const LinkerContext = struct {
                                     entry_point_kinds,
                                 );
                             },
-                            .server => @panic("TODO: implement use server here"),
+                            .server => bun.todoPanic(@src(), "rewire hot-bundling code", .{}),
                             else => unreachable,
                         }
                     }
@@ -6711,7 +6704,7 @@ pub const LinkerContext = struct {
                                     file_entry_bits,
                                 );
                             },
-                            .server => @panic("TODO: implement use server here"),
+                            .server => bun.todoPanic(@src(), "rewire hot-bundling code", .{}),
                             else => unreachable,
                         }
                     }

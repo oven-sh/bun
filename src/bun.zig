@@ -2958,6 +2958,12 @@ pub noinline fn outOfMemory() noreturn {
     crash_handler.crashHandler(.out_of_memory, null, @returnAddress());
 }
 
+pub fn todoPanic(src: std.builtin.SourceLocation, comptime format: string, args: anytype) noreturn {
+    @setCold(true);
+    bun.Analytics.Features.todo_panic = true;
+    Output.panic("TODO: " ++ format ++ " ({s}:{d})", args ++ .{ src.file, src.line });
+}
+
 /// Wrapper around allocator.create(T) that safely initializes the pointer. Prefer this over
 /// `std.mem.Allocator.create`, but prefer using `bun.new` over `create(default_allocator, T, t)`
 pub fn create(allocator: std.mem.Allocator, comptime T: type, t: T) *T {

@@ -109,7 +109,7 @@ pub const help_catch_memory_issues = bun.Environment.allow_assert;
 /// But what if we previously unwrapped it?
 ///
 /// In that case, we wrap it again in the printer.
-pub const unwrap_commonjs_to_esm = false;
+pub const unwrap_commonjs_to_esm = true;
 
 /// https://sentry.engineering/blog/the-case-for-debug-ids
 /// https://github.com/mitsuhiko/source-map-rfc/blob/proposals/debug-id/proposals/debug-id.md

@@ -19,12 +19,11 @@ declare namespace Kit {
      * When `serverComponents` is configured, this can access the component
      * manifest using the special 'bun:kit/server' import:
      * 
-     *     import { ...TODO... } from 'bun:kit/server'
+     *     import { clientManifest } from 'bun:kit/server'
      */
     serverEntryPoint: ImportSource;
     /**
      * This file is the true entrypoint of the client application.
-     * TODO: fully define this file's capabilities
      */
     clientEntryPoint: ImportSource;
     /**
@@ -72,7 +71,10 @@ declare namespace Kit {
      * provided for this.
      */
     separateSSRGraph: boolean;
+    /** Server components runtime for the server */
     serverRuntimeImportSource: ImportSource;
+    /** Server components runtime for the client */
+    clientRuntimeImportSource: ImportSource;
     /**
      * When server code imports client code, a stub module is generated,
      * where every export calls this export from `serverRuntimeImportSource`.
@@ -111,10 +113,40 @@ declare namespace Kit {
   interface ServerEntryPoint {
     /// The framework implementation decides and enforces the shape
     /// of the route module. Bun passes it as an opaque value.
-    default: (request: Request, routeModule: unknown) => Response;
+    default: (request: Request, routeModule: unknown, routeMetadata: RouteMetadata) => Response;
+  }
+
+  interface RouteMetadata {
+    /** A list of css files that the route will need to be styled */
+    styles: string[];
+    /** A list of js files that the route will need to be interactive */
+    scripts: string[];
   }
 }
 
 declare class Kit {
   constructor(options: Kit.Options);
 }
+
+
+// const serverManifest = {
+//   'Client.tsx#Client': {
+//     id: 'Client.tsx',
+//     name: 'Client',
+//     chunks: [],
+//   },
+// };
+
+// export const clientManifest = {
+//   moduleMap: {
+//     "Client.tsx": {
+//       Client: {
+//         name: 'Client',
+//         specifier: 'ssr:Client.tsx',
+//       },
+//     }
+//   },
+//   moduleLoading: {
+//     prefix: "",
+//   },
+// };

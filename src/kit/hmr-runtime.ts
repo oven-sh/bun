@@ -33,7 +33,7 @@ try {
         }
         // TODO: create the request object in Native code, consume Response in Native code
         const response = await serverRenderer(
-          new Request('/'),
+          new Request('http://localhost:3000'),
           loadModule(requested_id, LoadModuleType.AssertPresent).exports
         );
         if (!(response instanceof Response)) {

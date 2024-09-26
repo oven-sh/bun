@@ -2348,6 +2348,7 @@ pub const BundleV2 = struct {
                     const reference_source_index = this.enqueueGenerateTask(
                         .{ .client_reference_proxy = .{
                             .other_source = result.source,
+                            .named_exports = result.ast.named_exports,
                         } },
                         result.source,
                     ) catch bun.outOfMemory();
@@ -3355,6 +3356,7 @@ pub const GenerateTask = struct {
 
         pub const ReferenceProxy = struct {
             other_source: Logger.Source,
+            named_exports: JSAst.NamedExports,
         };
 
         pub const ClientManifest = struct {
@@ -3435,11 +3437,7 @@ pub const GenerateTask = struct {
         const server_components = task.ctx.framework.?.server_components orelse
             unreachable; // config must be non-null to enter this function
 
-        // TODO: we must either:
-        // - lock some rw mutex because ast could be resized
-        // - copy named_exports[x], as that slice is guaranteed to be stable
-        // approach 2 should be taken as it is simpler
-        const client_named_exports = task.ctx.graph.ast.items(.named_exports)[data.other_source.index.get()];
+        const client_named_exports = data.named_exports;
 
         const register_client_reference = (try b.addImportStmt(
             server_components.server_runtime_import,

@@ -2647,7 +2647,12 @@ fn NewPrinter(
 
                         p.printSpaceBeforeIdentifier();
                         p.addSourceMapping(expr.loc);
-                        p.print("import(");
+                        if (p.options.module_type == .internal_kit_dev) {
+                            p.printSymbol(p.options.commonjs_module_ref);
+                            p.print(".dynamicImport(");
+                        } else {
+                            p.print("import(");
+                        }
                         // TODO:
                         // if (e.leading_interior_comments.len > 0) {
                         //     p.printNewline();

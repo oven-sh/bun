@@ -433,11 +433,9 @@ pub const BundleV2 = struct {
 
             if (v.scb_bitset) |scb_bitset| {
                 if (scb_bitset.isSet(source_index.get())) {
-                    v.visit(
-                        Index.init(v.scb_list.getReferenceSourceIndex(source_index.get()) orelse unreachable),
-                        false,
-                        check_dynamic_imports,
-                    );
+                    const scb_index = v.scb_list.getIndex(source_index.get()) orelse unreachable;
+                    v.visit(Index.init(v.scb_list.list.items(.reference_source_index)[scb_index]), false, check_dynamic_imports);
+                    v.visit(Index.init(v.scb_list.list.items(.ssr_source_index)[scb_index]), false, check_dynamic_imports);
                 }
             }
 
@@ -672,7 +670,7 @@ pub const BundleV2 = struct {
 
         const entry = this.pathToSourceIndexMap(target).getOrPut(this.graph.allocator, path.hashKey()) catch bun.outOfMemory();
         if (!entry.found_existing) {
-            path.* = path.dupeAllocFixPretty(this.graph.allocator) catch bun.outOfMemory();
+            path.* = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
             const loader = brk: {
                 if (import_record.importer_source_index) |importer| {
                     var record: *ImportRecord = &this.graph.ast.items(.import_records)[importer].slice()[import_record.import_record_index];
@@ -726,12 +724,7 @@ pub const BundleV2 = struct {
         const source_index = Index.source(this.graph.input_files.len);
         const loader = this.bundler.options.loaders.get(path.name.ext) orelse .file;
 
-        if (path.pretty.ptr == path.text.ptr) {
-            // TODO: outbase
-            const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
-            path.pretty = this.graph.allocator.dupe(u8, rel) catch bun.outOfMemory();
-        }
-        path.* = try path.dupeAllocFixPretty(this.graph.allocator);
+        path.* = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
         path.assertPrettyIsValid();
         entry.value_ptr.* = source_index.get();
         this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
@@ -805,6 +798,7 @@ pub const BundleV2 = struct {
             this.client_bundler = ko.client_bundler;
             this.ssr_bundler = ko.ssr_bundler;
             this.framework = ko.framework;
+            this.linker.framework = &this.framework.?;
             bun.assert(bundler.options.server_components);
             bun.assert(this.client_bundler.options.server_components);
             bun.assert(this.ssr_bundler.options.server_components);
@@ -1852,6 +1846,28 @@ pub const BundleV2 = struct {
         return false;
     }
 
+    fn pathWithPrettyInitialized(this: *BundleV2, path: Fs.Path, target: options.Target) !Fs.Path {
+        if (path.pretty.ptr != path.text.ptr) {
+            // TODO(@paperdave): there is a high chance this dupe is no longer required
+            return path.dupeAlloc(this.graph.allocator);
+        }
+
+        // TODO: outbase
+        var buf: bun.PathBuffer = undefined;
+        const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
+        var path_clone = path;
+        // stack-allocated temporary is not leaked because dupeAlloc on the path will
+        // move .pretty into the heap. that function also fixes some slash issues.
+        if (target == .kit_server_components_ssr) {
+            // the SSR graph needs different pretty names or else HMR mode will
+            // confuse the two modules.
+            path_clone.pretty = std.fmt.bufPrint(&buf, "ssr:{s}", .{rel}) catch buf[0..];
+        } else {
+            path_clone.pretty = rel;
+        }
+        return path_clone.dupeAllocFixPretty(this.graph.allocator);
+    }
+
     // TODO: remove ResolveQueue
     //
     // Moving this to the Bundle thread was a significant perf improvement on Linux for first builds
@@ -2086,12 +2102,7 @@ pub const BundleV2 = struct {
                 continue;
             }
 
-            if (path.pretty.ptr == path.text.ptr) {
-                // TODO: outbase
-                const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
-                path.pretty = this.graph.allocator.dupe(u8, rel) catch bun.outOfMemory();
-            }
-            path.* = path.dupeAllocFixPretty(this.graph.allocator) catch bun.outOfMemory();
+            path.* = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
 
             var secondary_path_to_copy: ?Fs.Path = null;
             if (resolve_result.path_pair.secondary) |*secondary| {
@@ -2347,8 +2358,11 @@ pub const BundleV2 = struct {
                         reference_source_index,
                     ) catch bun.outOfMemory();
 
+                    var ssr_source = result.source;
+                    ssr_source.path.pretty = ssr_source.path.text;
+                    ssr_source.path = this.pathWithPrettyInitialized(ssr_source.path, .kit_server_components_ssr) catch bun.outOfMemory();
                     const ssr_index = this.enqueueParseTask2(
-                        result.source,
+                        ssr_source,
                         .tsx,
                         .kit_server_components_ssr,
                     ) catch bun.outOfMemory();
@@ -4437,6 +4451,7 @@ pub const LinkerContext = struct {
 
     /// Used by Kit to extract []CompileResult before it is joined
     kit_dev_server: ?*bun.kit.DevServer = null,
+    framework: ?*const kit.Framework = null,
 
     pub const LinkerOptions = struct {
         output_format: options.Format = .esm,
@@ -6550,6 +6565,28 @@ pub const LinkerContext = struct {
                     entry_point_kinds,
                 );
             }
+
+            // When using server components with a separated SSR graph, these
+            // components are not required to be referenced; The framework may
+            // use a dynamic import to get a handle to it.
+            if (c.framework) |fw| if (fw.server_components) |sc| if (sc.separate_ssr_graph) {
+                const slice = c.parse_graph.server_component_boundaries.list.slice();
+                for (slice.items(.use_directive), slice.items(.ssr_source_index)) |use, ssr_source_index| {
+                    switch (use) {
+                        .client => {
+                            c.markFileLiveForTreeShaking(
+                                ssr_source_index,
+                                side_effects,
+                                parts,
+                                import_records,
+                                entry_point_kinds,
+                            );
+                        },
+                        .server => @panic("TODO: implement use server here"),
+                        else => unreachable,
+                    }
+                }
+            };
         }
 
         {
@@ -6581,6 +6618,27 @@ pub const LinkerContext = struct {
                     import_records,
                     file_entry_bits,
                 );
+
+                if (c.framework) |fw| if (fw.server_components) |sc| if (sc.separate_ssr_graph) {
+                    const slice = c.parse_graph.server_component_boundaries.list.slice();
+                    for (slice.items(.use_directive), slice.items(.ssr_source_index)) |use, ssr_source_index| {
+                        switch (use) {
+                            .client => {
+                                c.markFileReachableForCodeSplitting(
+                                    ssr_source_index,
+                                    i,
+                                    distances,
+                                    0,
+                                    parts,
+                                    import_records,
+                                    file_entry_bits,
+                                );
+                            },
+                            .server => @panic("TODO: implement use server here"),
+                            else => unreachable,
+                        }
+                    }
+                };
             }
         }
     }
@@ -10967,7 +11025,7 @@ pub const LinkerContext = struct {
         if (comptime bun.Environment.allow_assert) {
             debugTreeShake("markFileLiveForTreeShaking({d}, {s}) = {s}", .{
                 source_index,
-                c.parse_graph.input_files.get(source_index).source.path.text,
+                c.parse_graph.input_files.get(source_index).source.path.pretty,
                 if (c.graph.files_live.isSet(source_index)) "seen" else "not seen",
             });
         }
@@ -11075,7 +11133,7 @@ pub const LinkerContext = struct {
         if (comptime bun.Environment.isDebug) {
             debugTreeShake("markPartLiveForTreeShaking({d}): {s}:{d} = {d}, {s}", .{
                 source_index,
-                c.parse_graph.input_files.get(source_index).source.path.text,
+                c.parse_graph.input_files.get(source_index).source.path.pretty,
                 part_index,
                 if (part.stmts.len > 0) part.stmts[0].loc.start else Logger.Loc.Empty.start,
                 if (part.stmts.len > 0) @tagName(part.stmts[0].data) else @tagName(Stmt.empty().data),

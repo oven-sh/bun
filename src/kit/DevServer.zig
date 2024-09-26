@@ -257,7 +257,7 @@ fn initBundler(dev: *DevServer, bundler: *Bundler, comptime renderer: kit.Render
 
     try kit.addImportMetaDefines(default_allocator, bundler.options.define, .development, switch (renderer) {
         .client => .client,
-        .server, .ssr => .client,
+        .server, .ssr => .server,
     });
 
     bundler.resolver.opts = bundler.options;

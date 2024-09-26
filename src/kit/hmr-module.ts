@@ -10,6 +10,11 @@ export const enum State {
   Error,
 }
 
+export const enum LoadModuleType {
+  AssertPresent,
+  UserDynamic,
+}
+
 /**
  * This object is passed as the CommonJS "module", but has a bunch of
  * non-standard properties that are used for implementing hot-module
@@ -32,16 +37,23 @@ export class HotModule {
 
   require(id: Id, onReload: null | ExportsCallbackFunction) {
     console.log('require other', id, this.id);
-    return loadModule(id).exports;
+    return loadModule(id, LoadModuleType.UserDynamic).exports;
   }
 
   importSync(id: Id, onReload: null | ExportsCallbackFunction) {
-    console.log('import other', id, this.id);
-    const module = loadModule(id);
+    const module = loadModule(id, LoadModuleType.AssertPresent);
     const { exports, __esModule } = module;
     return __esModule
       ? exports
       : module._ext_exports ??= { ...exports, default: exports };
+  }
+
+  async dynamicImport(specifier: string, opts?: ImportCallOptions) {
+    const module = loadModule(specifier, LoadModuleType.UserDynamic);
+    const { exports, __esModule } = module;
+    return __esModule
+      ? exports
+      : module._ext_exports ??= { ...exports, default: exports }; 
   }
 
   importMeta() {
@@ -66,7 +78,7 @@ function initImportMeta(m: HotModule): ImportMeta {
 //   registry.set(0, runtime);
 // }
 
-export function loadModule(key: Id): HotModule {
+export function loadModule(key: Id, type: LoadModuleType): HotModule {
   let module = registry.get(key);
   if (module) {
     // Preserve failures until they are re-saved.
@@ -78,7 +90,11 @@ export function loadModule(key: Id): HotModule {
   module = new HotModule(key);
   const load = input_graph[key];
   if (!load) {
-    throw new Error(`Failed to load bundled module '${key}'. This is not a dynamic import, and therefore is a bug in Bun.`);
+    if(type == LoadModuleType.AssertPresent) {
+      throw new Error(`Failed to load bundled module '${key}'. This is not a dynamic import, and therefore is a bug in Bun Kit's bundler.`);
+    } else {
+      throw new Error(`Failed to resolve dynamic import '${key}'. In Bun Kit, all imports must be statically known at compile time so that the bundler can trace everything.`);
+    }
   }
   try {
     registry.set(key, module);

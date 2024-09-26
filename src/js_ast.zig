@@ -8588,6 +8588,13 @@ pub const ServerComponentBoundary = struct {
             list: std.MultiArrayList(ServerComponentBoundary).Slice,
             map: Map,
 
+            pub fn getIndex(l: *const Slice, real_source_index: Index.Int) ?usize {
+                return l.map.getIndexAdapted(
+                    real_source_index,
+                    Adapter{ .list = l.list },
+                ) orelse return null;
+            }
+
             pub fn getReferenceSourceIndex(l: *const Slice, real_source_index: Index.Int) ?u32 {
                 const i = l.map.getIndexAdapted(
                     real_source_index,

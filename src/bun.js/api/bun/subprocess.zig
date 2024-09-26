@@ -203,6 +203,7 @@ pub const Subprocess = struct {
 
     weak_file_sink_stdin_ptr: ?*JSC.WebCore.FileSink = null,
     ref_count: u32 = 1,
+    abort_signal: ?*JSC.AbortSignal = null,
 
     usingnamespace bun.NewRefCounted(@This(), Subprocess.deinit);
 
@@ -225,6 +226,12 @@ pub const Subprocess = struct {
         ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
         poll_ref: Async.KeepAlive = .{},
     };
+
+    pub fn onAbortSignal(subprocess_ctx: ?*anyopaque, _: JSC.JSValue) callconv(.C) void {
+        var this: *Subprocess = @ptrCast(@alignCast(subprocess_ctx.?));
+        this.clearAbortSignal();
+        _ = this.tryKill(1);
+    }
 
     pub fn resourceUsage(
         this: *Subprocess,
@@ -1437,6 +1444,7 @@ pub const Subprocess = struct {
         this_jsvalue.ensureStillAlive();
         this.pid_rusage = rusage.*;
         const is_sync = this.flags.is_sync;
+        this.clearAbortSignal();
         defer this.deref();
         defer this.disconnectIPC(true);
 
@@ -1587,12 +1595,23 @@ pub const Subprocess = struct {
         this.destroy();
     }
 
+    fn clearAbortSignal(this: *Subprocess) void {
+        if (this.abort_signal) |signal| {
+            this.abort_signal = null;
+            signal.pendingActivityUnref();
+            signal.cleanNativeBindings(this);
+            signal.unref();
+        }
+    }
+
     pub fn finalize(this: *Subprocess) callconv(.C) void {
         log("finalize", .{});
         // Ensure any code which references the "this" value doesn't attempt to
         // access it after it's been freed We cannot call any methods which
         // access GC'd values during the finalizer
         this.this_jsvalue = .zero;
+
+        this.clearAbortSignal();
 
         bun.assert(!this.hasPendingActivity() or JSC.VirtualMachine.get().isShuttingDown());
         this.finalizeStreams();
@@ -1702,6 +1721,13 @@ pub const Subprocess = struct {
 
         var windows_hide: bool = false;
         var windows_verbatim_arguments: bool = false;
+        var abort_signal: ?*JSC.WebCore.AbortSignal = null;
+        defer {
+            // Ensure we clean it up on error.
+            if (abort_signal) |signal| {
+                signal.unref();
+            }
+        }
 
         {
             if (args.isEmptyOrUndefinedOrNull()) {
@@ -1843,6 +1869,14 @@ pub const Subprocess = struct {
 
                             ipc_callback = val.withAsyncContextIfNeeded(globalThis);
                         }
+                    }
+                }
+
+                if (args.getOwnTruthy(globalThis, "signal")) |signal_val| {
+                    if (signal_val.as(JSC.WebCore.AbortSignal)) |signal| {
+                        abort_signal = signal.ref();
+                    } else {
+                        return globalThis.throwInvalidArgumentTypeValue("signal", "AbortSignal", signal_val);
                     }
                 }
 
@@ -2280,12 +2314,29 @@ pub const Subprocess = struct {
         should_close_memfd = false;
 
         if (comptime !is_sync) {
+            // Once everything is set up, we can add the abort listener
+            // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
+            // Therefore, we must do this at the very end.
+            if (abort_signal) |signal| {
+                signal.pendingActivityRef();
+                subprocess.abort_signal = signal.addListener(subprocess, onAbortSignal);
+                abort_signal = null;
+            }
             return out;
         }
 
         if (comptime is_sync) {
             switch (subprocess.process.watchOrReap()) {
-                .result => {},
+                .result => {
+                    // Once everything is set up, we can add the abort listener
+                    // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
+                    // Therefore, we must do this at the very end.
+                    if (abort_signal) |signal| {
+                        signal.pendingActivityRef();
+                        subprocess.abort_signal = signal.addListener(subprocess, onAbortSignal);
+                        abort_signal = null;
+                    }
+                },
                 .err => {
                     subprocess.process.wait(true);
                 },

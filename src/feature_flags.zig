@@ -160,3 +160,5 @@ pub fn isLibdeflateEnabled() bool {
 
 /// Enable experimental bundler tools, codenamed "bun kit"
 pub const kit = env.is_canary or env.isDebug;
+
+pub const css = env.is_canary or env.isDebug;

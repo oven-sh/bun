@@ -940,7 +940,7 @@ pub const BundleV2 = struct {
         const fw = this.framework orelse return;
         const sc = fw.server_components orelse return;
 
-        if (this.graph.kit_referenced_client_data) bun.todoPanic("implement generation for 'bun:kit/client'");
+        if (this.graph.kit_referenced_client_data) bun.todoPanic(@src(), "implement generation for 'bun:kit/client'", .{});
         if (!this.graph.kit_referenced_server_data) return;
 
         const alloc = this.graph.allocator;

@@ -2960,7 +2960,7 @@ pub noinline fn outOfMemory() noreturn {
 
 pub fn todoPanic(src: std.builtin.SourceLocation, comptime format: string, args: anytype) noreturn {
     @setCold(true);
-    bun.Analytics.Features.todo_panic = true;
+    bun.Analytics.Features.todo_panic = 1;
     Output.panic("TODO: " ++ format ++ " ({s}:{d})", args ++ .{ src.file, src.line });
 }
 

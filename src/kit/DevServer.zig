@@ -115,6 +115,7 @@ const Bundle = struct {
 };
 
 pub fn init(options: Options) !*DevServer {
+    bun.analytics.Features.kit_dev +|= 1;
     if (JSC.VirtualMachine.VMHolder.vm != null)
         @panic("Cannot initialize kit.DevServer on a thread with an active JSC.VirtualMachine");
 
@@ -286,7 +287,7 @@ pub fn runLoopForever(dev: *DevServer) noreturn {
 
 fn onListen(ctx: *DevServer, maybe_listen: ?*App.ListenSocket) void {
     const listen: *App.ListenSocket = maybe_listen orelse {
-        bun.todoPanic(@src(), "handle listen failure");
+        bun.todoPanic(@src(), "handle listen failure", .{});
     };
 
     ctx.listener = listen;
@@ -777,7 +778,7 @@ pub fn IncrementalGraph(side: kit.Side) type {
                         const entry = switch (side) {
                             .server => g.owner.framework.entry_server,
                             .client => g.owner.framework.entry_client,
-                        } orelse bun.todoPanic(@src(), "non-framework provided entry-point");
+                        } orelse bun.todoPanic(@src(), "non-framework provided entry-point", .{});
                         bun.js_printer.writeJSONString(
                             bun.path.relative(g.owner.cwd, entry),
                             @TypeOf(w),

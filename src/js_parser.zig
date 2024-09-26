@@ -23927,7 +23927,7 @@ pub const ConvertESMExportsForHmr = struct {
             },
 
             .s_export_from => {
-                bun.todoPanic(@src(), "hot-module-reloading instrumentation for 'export { ... } from'", .{});
+                bun.todoPanic(@src(), "hot-module-reloading instrumentation for 'export {{ ... }} from'", .{});
             },
             .s_export_star => {
                 bun.todoPanic(@src(), "hot-module-reloading instrumentation for 'export * from'", .{});

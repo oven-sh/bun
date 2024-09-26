@@ -93,6 +93,8 @@ pub const CssColor = union(enum) {
 
     const This = @This();
 
+    pub const jsFunctionColor = @import("./color_js.zig").jsFunctionColor;
+
     pub fn eql(this: *const This, other: *const This) bool {
         if (@intFromEnum(this.*) != @intFromEnum(other.*)) return false;
 
@@ -245,7 +247,8 @@ pub const CssColor = union(enum) {
         }
     }
 
-    pub fn parse(input: *css.Parser) Result(CssColor) {
+    pub const ParseResult = Result(CssColor);
+    pub fn parse(input: *css.Parser) ParseResult {
         const location = input.currentSourceLocation();
         const token = switch (input.next()) {
             .result => |vv| vv,

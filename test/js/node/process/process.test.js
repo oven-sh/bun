@@ -234,7 +234,7 @@ it("process.umask()", () => {
   for (let notNumber of notNumbers) {
     expect(() => {
       process.umask(notNumber);
-    }).toThrow('The "mask" argument must be a number');
+    }).toThrow('The "mask" argument must be of type number');
   }
 
   let rangeErrors = [NaN, -1.4, Infinity, -Infinity, -1, 1.3, 4294967296];

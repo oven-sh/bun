@@ -1,5 +1,9 @@
 #pragma once
 
+// This file defines macros to check compatibility between types from V8 and types from Bun's V8
+// implementation. The same warning as in real_v8.h applies: only include this in source files in
+// the v8 directory.
+
 #include "real_v8.h"
 
 #define V8_TYPE_ASSERTIONS_NAMESPACE_NAME_INDIRECT(LINE) V8TypeAssertions__##LINE
@@ -7,7 +11,7 @@
 #define V8_TYPE_ASSERTIONS_NAMESPACE_NAME(LINE) \
     V8_TYPE_ASSERTIONS_NAMESPACE_NAME_INDIRECT(LINE)
 
-// usage: [*outside* namespace v8] ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::SomeType<v8::SomeParam>)
+// usage: [*outside* namespace v8] ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::SomeTemplate<v8::SomeParam>)
 #define ASSERT_V8_TYPE_LAYOUT_MATCHES(TYPENAME)                                       \
     namespace V8_TYPE_ASSERTIONS_NAMESPACE_NAME(__LINE__) {                           \
     namespace DeclareBunType {                                                        \

@@ -1,5 +1,8 @@
 #include "V8Number.h"
 #include "V8HandleScope.h"
+#include "v8_compatibility_assertions.h"
+
+ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::Number)
 
 namespace v8 {
 

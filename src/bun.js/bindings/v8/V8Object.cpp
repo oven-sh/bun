@@ -1,9 +1,11 @@
 #include "V8Object.h"
 #include "shim/InternalFieldObject.h"
 #include "V8HandleScope.h"
-
 #include "JavaScriptCore/ConstructData.h"
 #include "JavaScriptCore/ObjectConstructor.h"
+#include "v8_compatibility_assertions.h"
+
+ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::Object)
 
 using JSC::Identifier;
 using JSC::JSFinalObject;

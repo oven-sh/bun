@@ -55,6 +55,4 @@ public:
     std::array<TaggedPointer, 9> m_roots;
 };
 
-static_assert(offsetof(Isolate, m_roots) == 592, "Isolate has wrong layout");
-
 } // namespace v8

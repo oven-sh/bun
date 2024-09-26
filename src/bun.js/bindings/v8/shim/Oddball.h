@@ -12,8 +12,8 @@ struct Oddball {
         kUndefined = 4,
         kNull = 3,
         kInvalid = 255,
-        kTrue = 1,
-        kFalse = 0,
+        kTrue = 99,
+        kFalse = 98,
     };
 
     TaggedPointer m_map;

@@ -1,4 +1,7 @@
 #include "V8EscapableHandleScopeBase.h"
+#include "v8_compatibility_assertions.h"
+
+ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::EscapableHandleScopeBase)
 
 namespace v8 {
 

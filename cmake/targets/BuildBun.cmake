@@ -613,6 +613,7 @@ list(APPEND BUN_CPP_SOURCES
   ${BUN_C_SOURCES}
   ${BUN_CXX_SOURCES}
   ${VENDOR_PATH}/picohttpparser/picohttpparser.c
+  ${NODEJS_HEADERS_PATH}/include/node/node_version.h
   ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}
   ${BUN_JS_SINK_OUTPUTS}
   ${BUN_JAVASCRIPT_OUTPUTS}
@@ -690,6 +691,7 @@ target_include_directories(${bun} PRIVATE
   ${CWD}/src/bun.js/bindings/webcore
   ${CWD}/src/bun.js/bindings/webcrypto
   ${CWD}/src/bun.js/bindings/sqlite
+  ${CWD}/src/bun.js/bindings/v8
   ${CWD}/src/bun.js/modules
   ${CWD}/src/js/builtins
   ${CWD}/src/napi
@@ -697,6 +699,7 @@ target_include_directories(${bun} PRIVATE
   ${CODEGEN_PATH}
   ${VENDOR_PATH}
   ${VENDOR_PATH}/picohttpparser
+  ${NODEJS_HEADERS_PATH}/include
 )
 
 # --- C/C++ Definitions ---

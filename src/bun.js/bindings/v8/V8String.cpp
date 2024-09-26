@@ -1,7 +1,18 @@
 #include "V8String.h"
-
 #include "V8HandleScope.h"
 #include "wtf/SIMDUTF.h"
+#include "v8_compatibility_assertions.h"
+
+ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::String)
+
+ASSERT_V8_ENUM_MATCHES(NewStringType, kNormal)
+ASSERT_V8_ENUM_MATCHES(NewStringType, kInternalized)
+
+ASSERT_V8_ENUM_MATCHES(String::WriteOptions, NO_OPTIONS)
+ASSERT_V8_ENUM_MATCHES(String::WriteOptions, HINT_MANY_WRITES_EXPECTED)
+ASSERT_V8_ENUM_MATCHES(String::WriteOptions, NO_NULL_TERMINATION)
+ASSERT_V8_ENUM_MATCHES(String::WriteOptions, PRESERVE_ONE_BYTE_NULL)
+ASSERT_V8_ENUM_MATCHES(String::WriteOptions, REPLACE_INVALID_UTF8)
 
 using JSC::JSString;
 

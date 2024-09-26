@@ -1,21 +1,19 @@
 #pragma once
 
-#include "Map.h"
 #include <root.h>
+#include "Map.h"
 
 namespace v8 {
 namespace shim {
 
 struct ObjectLayout {
-private:
-    // these two fields are laid out so that V8 can find the map
+    // this field must be at the start so that V8 can find the map
     TaggedPointer m_taggedMap;
     union {
         JSC::WriteBarrier<JSC::JSCell> cell;
         double number;
     } m_contents;
 
-public:
     ObjectLayout()
         // using a smi value for map is most likely to catch bugs as almost every access will expect
         // map to be a pointer (and even if the assertion is bypassed, it'll be a null pointer)
@@ -41,9 +39,6 @@ public:
     double asDouble() const { return m_contents.number; }
 
     JSC::JSCell* asCell() const { return m_contents.cell.get(); }
-
-    friend class Handle;
-    friend class HandleScopeBuffer;
 };
 
 // A handle stored in a HandleScope with layout suitable for V8's inlined functions:
@@ -60,55 +55,23 @@ public:
 //   the third field to get the actual object (either a JSCell* or a void*, depending on whether map
 //   points to Map::object_map or Map::raw_ptr_map).
 struct Handle {
-    static_assert(offsetof(ObjectLayout, m_taggedMap) == 0, "ObjectLayout is wrong");
-    static_assert(offsetof(ObjectLayout, m_contents) == 8, "ObjectLayout is wrong");
-    static_assert(sizeof(ObjectLayout) == 16, "ObjectLayout is wrong");
+    Handle(const Map* map, JSC::JSCell* cell, JSC::VM& vm, const JSC::JSCell* owner);
 
-    Handle(const Map* map, JSC::JSCell* cell, JSC::VM& vm, const JSC::JSCell* owner)
-        : m_toV8Object(&this->m_object)
-        , m_object(map, cell, vm, owner)
-    {
-    }
+    Handle(double number);
 
-    Handle(double number)
-        : m_toV8Object(&this->m_object)
-        , m_object(number)
-    {
-    }
+    Handle(int32_t smi);
 
-    Handle(int32_t smi)
-        : m_toV8Object(smi)
-        , m_object()
-    {
-    }
+    Handle(const Handle& that);
 
-    Handle(const Handle& that)
-    {
-        *this = that;
-    }
-
-    Handle(const ObjectLayout* that)
-        : m_toV8Object(&this->m_object)
-    {
-        m_object = *that;
-    }
-
-    Handle& operator=(const Handle& that)
-    {
-        m_object = that.m_object;
-        if (that.m_toV8Object.type() == TaggedPointer::Type::Smi) {
-            m_toV8Object = that.m_toV8Object;
-        } else {
-            m_toV8Object = &this->m_object;
-        }
-        return *this;
-    }
+    Handle(const ObjectLayout* that);
 
     Handle()
         : m_toV8Object(0)
         , m_object()
     {
     }
+
+    Handle& operator=(const Handle& that);
 
     bool isCell() const
     {
@@ -138,7 +101,6 @@ struct Handle {
         return m_object.m_contents.cell;
     }
 
-private:
     // if not SMI, holds &this->map so that V8 can see what kind of object this is
     TaggedPointer m_toV8Object;
     ObjectLayout m_object;

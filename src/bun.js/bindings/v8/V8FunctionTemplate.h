@@ -30,6 +30,8 @@ enum class SideEffectType {
     kHasSideEffectToReceiver,
 };
 
+// Only used by v8 fast API calls, which Node.js doesn't seem to intend to support
+// (v8-fast-api-calls.h is not in the headers distribution)
 class CFunction {
 private:
     const void* address;

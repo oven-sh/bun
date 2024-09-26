@@ -3,7 +3,11 @@
 
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "CommonJSModuleRecord.h"
-#include <charconv>
+
+#include "node/node_version.h"
+
+static_assert(REPORTED_NODEJS_ABI_VERSION == NODE_MODULE_VERSION,
+    "Bun's Node.js ABI version is not the same as in the reported version of Node.js");
 
 using v8::Context;
 using v8::HandleScope;

@@ -2,6 +2,16 @@
 #include "V8Function.h"
 #include "V8HandleScope.h"
 #include "shim/FunctionTemplate.h"
+#include "v8_compatibility_assertions.h"
+
+ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::FunctionTemplate)
+
+ASSERT_V8_ENUM_MATCHES(ConstructorBehavior, kThrow)
+ASSERT_V8_ENUM_MATCHES(ConstructorBehavior, kAllow)
+
+ASSERT_V8_ENUM_MATCHES(SideEffectType, kHasSideEffect)
+ASSERT_V8_ENUM_MATCHES(SideEffectType, kHasNoSideEffect)
+ASSERT_V8_ENUM_MATCHES(SideEffectType, kHasSideEffectToReceiver)
 
 using JSC::JSCell;
 using JSC::JSValue;

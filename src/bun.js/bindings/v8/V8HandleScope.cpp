@@ -1,6 +1,11 @@
 #include "V8HandleScope.h"
-
 #include "shim/GlobalInternals.h"
+#include "v8_compatibility_assertions.h"
+
+// I haven't found an inlined function which accesses HandleScope fields, so I'm assuming the field
+// offsets do *not* need to match (also, our fields have different types and meanings anyway).
+// But the size must match, because if our HandleScope is too big it'll clobber other stack variables.
+ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::HandleScope)
 
 namespace v8 {
 

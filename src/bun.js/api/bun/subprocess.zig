@@ -230,7 +230,7 @@ pub const Subprocess = struct {
     pub fn onAbortSignal(subprocess_ctx: ?*anyopaque, _: JSC.JSValue) callconv(.C) void {
         var this: *Subprocess = @ptrCast(@alignCast(subprocess_ctx.?));
         this.clearAbortSignal();
-        _ = this.tryKill(1);
+        _ = this.tryKill(SignalCode.default);
     }
 
     pub fn resourceUsage(

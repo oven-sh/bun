@@ -4862,6 +4862,8 @@ pub const LinkerContext = struct {
                 // does it have a JS AST?
                 if (!(id < import_records_list.len)) continue;
 
+                _ = this.validateTLA(id);
+
                 const import_records: []ImportRecord = import_records_list[id].slice();
                 for (import_records) |record| {
                     if (!record.source_index.isValid()) {
@@ -7544,6 +7546,94 @@ pub const LinkerContext = struct {
         hasher.write(chunk.output_source_map.suffix.items);
 
         return hasher.digest();
+    }
+
+    pub fn validateTLA(c: *LinkerContext, source_index: Index.Int) js_ast.tlaCheck {
+        var result = c.parse_graph.ast.get(source_index);
+
+        if (result.tla_check.depth == 0) {
+            const ast = result.toAST();
+            result.tla_check.depth = 1;
+            if (ast.top_level_await_keyword.len > 0) {
+                result.tla_check.parent = source_index;
+            }
+
+            for (0..ast.import_records.len) |import_record_index| {
+                const import_record = ast.import_records.at(import_record_index);
+                if (Index.isValid(import_record.source_index) and (import_record.kind == .require or import_record.kind == .stmt)) {
+                    const parent = c.validateTLA(import_record.source_index.get());
+
+                    if (!Index.isValid(Index.init(parent.parent))) {
+                        continue;
+                    }
+
+                    // Follow any import chains
+                    if (import_record.kind == .stmt and (!Index.isValid(Index.init(result.tla_check.parent)) or parent.depth < result.tla_check.depth)) {
+                        result.tla_check.depth = parent.depth + 1;
+                        result.tla_check.parent = import_record.source_index.get();
+                        result.tla_check.importRecordIndex = @intCast(import_record_index);
+                        continue;
+                    }
+
+                    // Require of a top-level await chain is forbidden
+                    if (import_record.kind == .require) {
+                        var notes = std.ArrayList(Logger.Data).init(c.allocator);
+                        var tlaPrettyPath: string = "";
+                        var otherSourceIndex = import_record.source_index;
+
+                        // Build up a chain of relevant notes for all of the imports
+                        while (true) {
+                            const parentResult = c.parse_graph.ast.get(otherSourceIndex.get());
+                            const parentRepr = parentResult.toAST();
+
+                            if (parentRepr.top_level_await_keyword.len > 0) {
+                                const source = c.parse_graph.input_files.items(.source)[otherSourceIndex.get()];
+                                tlaPrettyPath = source.path.pretty;
+                                notes.append(Logger.rangeData(&source, parentRepr.top_level_await_keyword, std.fmt.allocPrint(c.allocator, "The top-level await in {s} contains a top-level await", .{tlaPrettyPath}) catch bun.outOfMemory())) catch bun.outOfMemory();
+                                break;
+                            }
+
+                            if (!Index.isValid(Index.init(parent.parent))) {
+                                notes.append(.{ .text = "unexpected invalid index" }) catch bun.outOfMemory();
+                                break;
+                            }
+
+                            otherSourceIndex = Index.init(parent.parent);
+
+                            const source: Logger.Source = c.parse_graph.input_files.items(.source)[otherSourceIndex.get()];
+
+                            if (parentResult.tla_check.importRecordIndex >= parentRepr.import_records.len) {
+                                notes.append(.{ .text = "unexpected invalid index" }) catch bun.outOfMemory();
+                                break;
+                            }
+
+                            notes.append(Logger.rangeData(&source, parentRepr.import_records.at(parentResult.tla_check.importRecordIndex).range, std.fmt.allocPrint(c.allocator, "The file {s} imports the file {s} here:", .{ source.path.pretty, tlaPrettyPath }) catch bun.outOfMemory())) catch bun.outOfMemory();
+                        }
+
+                        var text: string = undefined;
+                        const importedPrettyPath = c.parse_graph.input_files.items(.source)[result.tla_check.importRecordIndex].path.pretty;
+
+                        if (strings.eql(importedPrettyPath, tlaPrettyPath)) {
+                            text = std.fmt.allocPrint(c.allocator, "This require call is not allowed because the imported file {s} contains a top-level await", .{importedPrettyPath}) catch bun.outOfMemory();
+                        } else {
+                            text = std.fmt.allocPrint(c.allocator, "This require call is not allowed because the transitive dependency {s} contains a top-level await", .{tlaPrettyPath}) catch bun.outOfMemory();
+                        }
+
+                        const source = c.parse_graph.input_files.items(.source)[result.tla_check.importRecordIndex];
+                        c.log.addRangeErrorWithNotes(&source, import_record.range, text, notes.items) catch unreachable;
+                    }
+                }
+            }
+
+            // Make sure that if we wrap this module in a closure, the closure is also
+            // async. This happens when you call "import()" on this module and code
+            // splitting is off.
+            if (Index.isValid(Index.init(result.tla_check.parent))) {
+                c.graph.meta.items(.flags)[source_index].is_async_or_has_async_dependency = true;
+            }
+        }
+
+        return result.tla_check;
     }
 
     pub fn generateEntryPointTailJS(

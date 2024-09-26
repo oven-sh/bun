@@ -6915,6 +6915,12 @@ pub const Ast = struct {
     }
 };
 
+pub const tlaCheck = struct {
+    depth: i32,
+    parent: Index.Int,
+    importRecordIndex: Index.Int,
+};
+
 /// Like Ast but slimmer and for bundling only.
 ///
 /// On Linux, the hottest function in the bundler is:
@@ -6967,6 +6973,8 @@ pub const BundledAst = struct {
     ts_enums: Ast.TsEnumsMap = .{},
 
     flags: BundledAst.Flags = .{},
+
+    tla_check: tlaCheck = undefined,
 
     pub const NamedImports = Ast.NamedImports;
     pub const NamedExports = Ast.NamedExports;

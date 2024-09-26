@@ -752,9 +752,6 @@ pub fn IncrementalGraph(side: kit.Side) type {
         }
 
         pub fn takeBundle(g: *@This(), kind: ChunkKind) ![]const u8 {
-            if (bun.FeatureFlags.kit_dev_module_keys == .numbers)
-                @compileError("Not Implemented");
-
             const runtime = switch (kind) {
                 .initial_response => bun.kit.getHmrRuntime(side),
                 .hmr_chunk => "({\n",

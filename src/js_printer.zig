@@ -2033,16 +2033,9 @@ fn NewPrinter(
                     p.print(".require(");
                     {
                         const path = input_files[record.source_index.get()].path;
-                        switch (bun.FeatureFlags.kit_dev_module_keys) {
-                            .numbers => {
-                                p.printInlinedEnum(.{ .number = @floatFromInt(path.hashForKit()) }, path.pretty, level);
-                            },
-                            .strings => {
-                                p.print('"');
-                                p.printUTF8StringEscapedQuotes(path.pretty, '"');
-                                p.print('"');
-                            },
-                        }
+                        p.print('"');
+                        p.printUTF8StringEscapedQuotes(path.pretty, '"');
+                        p.print('"');
                     }
                     p.print(")");
                 } else if (!meta.was_unwrapped_require) {
@@ -2113,16 +2106,9 @@ fn NewPrinter(
                         p.print(".require(");
                     {
                         const path = record.path;
-                        switch (bun.FeatureFlags.kit_dev_module_keys) {
-                            .numbers => {
-                                p.printInlinedEnum(.{ .number = @floatFromInt(path.hashForKit()) }, path.pretty, level);
-                            },
-                            .strings => {
-                                p.print('"');
-                                p.printUTF8StringEscapedQuotes(path.pretty, '"');
-                                p.print('"');
-                            },
-                        }
+                        p.print('"');
+                        p.printUTF8StringEscapedQuotes(path.pretty, '"');
+                        p.print('"');
                     }
                     p.print(")");
                     return;
@@ -6302,17 +6288,9 @@ pub fn printWithWriterAndPlatform(
     if (opts.module_type == .internal_kit_dev) {
         printer.indent();
         printer.printIndent();
-        switch (bun.FeatureFlags.kit_dev_module_keys) {
-            .numbers => {
-                printer.fmt("{d}", .{source.path.hashForKit()}) catch bun.outOfMemory();
-                printer.print(": function");
-            },
-            .strings => {
-                printer.print('"');
-                printer.printUTF8StringEscapedQuotes(source.path.pretty, '"');
-                printer.print('"');
-            },
-        }
+        printer.print('"');
+        printer.printUTF8StringEscapedQuotes(source.path.pretty, '"');
+        printer.print('"');
         printer.printFunc(parts[0].stmts[0].data.s_expr.value.data.e_function.func);
         printer.print(",\n");
     } else {

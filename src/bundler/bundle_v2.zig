@@ -7802,15 +7802,9 @@ pub const LinkerContext = struct {
                 }
                 {
                     const input = c.parse_graph.input_files.items(.source)[chunk.entry_point.source_index].path;
-
-                    const str = switch (bun.FeatureFlags.kit_dev_module_keys) {
-                        .numbers => try std.fmt.allocPrint(c.allocator, "{d}", .{input.hashForKit()}),
-                        .strings => brk: {
-                            var buf = MutableString.initEmpty(c.allocator);
-                            js_printer.quoteForJSONBuffer(input.pretty, &buf, true) catch bun.outOfMemory();
-                            break :brk buf.toOwnedSliceLeaky(); // c.allocator is an arena
-                        },
-                    };
+                    var buf = MutableString.initEmpty(c.allocator);
+                    js_printer.quoteForJSONBuffer(input.pretty, &buf, true) catch bun.outOfMemory();
+                    const str = buf.toOwnedSliceLeaky(); // c.allocator is an arena
                     j.pushStatic(str);
                     line_offset.advance(str);
                 }
@@ -9322,14 +9316,9 @@ pub const LinkerContext = struct {
                     const is_builtin = record.tag == .builtin or record.tag == .bun_test or record.tag == .bun;
                     const is_bare_import = st.star_name_loc == null and st.items.len == 0 and st.default_name == null;
 
-                    const key_expr = switch (bun.FeatureFlags.kit_dev_module_keys) {
-                        .numbers => Expr.init(E.InlinedEnum, .{ .comment = path.pretty, .value = Expr.init(E.Number, .{
-                            .value = @floatFromInt(path.hashForKit()),
-                        }, stmt.loc) }, stmt.loc),
-                        .strings => Expr.init(E.String, .{
-                            .data = path.pretty,
-                        }, stmt.loc),
-                    };
+                    const key_expr = Expr.init(E.String, .{
+                        .data = path.pretty,
+                    }, stmt.loc);
 
                     // module.importSync('path', (module) => ns = module)
                     const call = Expr.init(E.Call, .{

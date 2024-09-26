@@ -36,7 +36,6 @@ export class HotModule {
   constructor(public id: Id) {}
 
   require(id: Id, onReload: null | ExportsCallbackFunction) {
-    console.log('require other', id, this.id);
     return loadModule(id, LoadModuleType.UserDynamic).exports;
   }
 
@@ -57,12 +56,10 @@ export class HotModule {
   }
 
   importMeta() {
-    console.log('retrieve import meta', this.id);
     return this._import_meta ??= initImportMeta(this);
   }
 
   importBuiltin(id: string) {
-    console.log('import builtin', id, this.id);
     return import.meta.require(id);
   }
 }

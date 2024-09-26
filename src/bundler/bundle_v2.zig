@@ -334,12 +334,12 @@ pub const BundleV2 = struct {
     ssr_bundler: *Bundler,
     /// When Bun Kit is used, the resolved framework is passed here
     framework: ?kit.Framework,
-    graph: Graph = .{ .pool = undefined, .allocator = undefined },
-    linker: LinkerContext = .{ .loop = undefined },
-    bun_watcher: ?*bun.JSC.Watcher = null,
-    plugins: ?*JSC.API.JSBundler.Plugin = null,
-    completion: ?CompletionPtr = null,
-    source_code_length: usize = 0,
+    graph: Graph,
+    linker: LinkerContext,
+    bun_watcher: ?*bun.JSC.Watcher,
+    plugins: ?*JSC.API.JSBundler.Plugin,
+    completion: ?CompletionPtr,
+    source_code_length: usize,
 
     /// There is a race condition where an onResolve plugin may schedule a task on the bundle thread before it's parsing task completes
     resolve_tasks_waiting_for_import_source_index: std.AutoArrayHashMapUnmanaged(Index.Int, BabyList(struct { to_source_index: Index, import_record_index: u32 })) = .{},
@@ -349,9 +349,6 @@ pub const BundleV2 = struct {
 
     unique_key: u64 = 0,
     dynamic_import_entry_points: std.AutoArrayHashMap(Index.Int, void) = undefined,
-
-    kit_referenced_server_data: bool,
-    kit_referenced_client_data: bool,
 
     const KitOptions = struct {
         framework: kit.Framework,
@@ -789,6 +786,8 @@ pub const BundleV2 = struct {
                 .pool = undefined,
                 .heap = heap orelse try ThreadlocalArena.init(),
                 .allocator = undefined,
+                .kit_referenced_server_data = false,
+                .kit_referenced_client_data = false,
             },
             .linker = .{
                 .loop = event_loop,
@@ -796,8 +795,10 @@ pub const BundleV2 = struct {
                     .allocator = undefined,
                 },
             },
-            .kit_referenced_server_data = false,
-            .kit_referenced_client_data = false,
+            .bun_watcher = null,
+            .plugins = null,
+            .completion = null,
+            .source_code_length = 0,
         };
         if (kit_options) |ko| {
             this.client_bundler = ko.client_bundler;
@@ -946,8 +947,8 @@ pub const BundleV2 = struct {
         const fw = this.framework orelse return;
         const sc = fw.server_components orelse return;
 
-        if (this.kit_referenced_client_data) @panic("TODO: bun:kit/client");
-        if (!this.kit_referenced_server_data) return;
+        if (this.graph.kit_referenced_client_data) @panic("TODO: bun:kit/client");
+        if (!this.graph.kit_referenced_server_data) return;
 
         const alloc = this.graph.allocator;
 
@@ -1827,14 +1828,7 @@ pub const BundleV2 = struct {
             return error.BuildFailed;
         }
 
-        if (this.graph.server_component_boundaries.list.len > 0) {
-            try this.processServerComponentManifestFiles();
-            this.waitForParse();
-
-            if (this.bundler.log.hasErrors()) {
-                return error.BuildFailed;
-            }
-        }
+        try this.processServerComponentManifestFiles();
 
         try this.cloneAST();
 
@@ -1948,7 +1942,7 @@ pub const BundleV2 = struct {
 
     fn reserveSourceIndexesForKit(this: *BundleV2) !void {
         const fw = this.framework orelse return;
-        const sc = fw.server_components orelse return;
+        _ = fw.server_components orelse return;
 
         // Call this after
         bun.assert(this.graph.input_files.len == 1);
@@ -1976,11 +1970,6 @@ pub const BundleV2 = struct {
 
         this.graph.ast.appendAssumeCapacity(JSAst.empty);
         this.graph.ast.appendAssumeCapacity(JSAst.empty);
-
-        try this.graph.path_to_source_index_map.put(this.graph.allocator, comptime server_source.path.hashKey(), Index.kit_server_data.get());
-        try this.graph.path_to_source_index_map.put(this.graph.allocator, comptime client_source.path.hashKey(), Index.kit_client_data.get());
-        if (sc.separate_ssr_graph)
-            try this.graph.ssr_path_to_source_index_map.put(this.graph.allocator, comptime server_source.path.hashKey(), Index.kit_server_data.get());
     }
 
     // TODO: remove ResolveQueue
@@ -2029,11 +2018,11 @@ pub const BundleV2 = struct {
                 switch (ast.target.isServerSide()) {
                     inline else => |is_server| {
                         const src = if (is_server) kit.server_virtual_source else kit.client_virtual_source;
-                        if (strings.eqlComptime(import_record.path.text, src.path.text)) {
+                        if (strings.eqlComptime(import_record.path.text, src.path.pretty)) {
                             if (is_server) {
-                                this.kit_referenced_server_data = true;
+                                this.graph.kit_referenced_server_data = true;
                             } else {
-                                this.kit_referenced_client_data = true;
+                                this.graph.kit_referenced_client_data = true;
                             }
                             import_record.path.namespace = "bun";
                             import_record.source_index = src.index;
@@ -3484,16 +3473,9 @@ pub const GenerateTask = struct {
         /// client ast, a "reference proxy" is created with identical exports.
         client_reference_proxy: ReferenceProxy,
 
-        /// Generate a file re-exporting every client component.
-        client_manifest: ServerManifest,
-
         pub const ReferenceProxy = struct {
             other_source: Logger.Source,
             named_exports: JSAst.NamedExports,
-        };
-
-        pub const ServerManifest = struct {
-            source_indices: []u32,
         };
     };
 
@@ -3548,15 +3530,12 @@ pub const GenerateTask = struct {
 
         try switch (task.data) {
             .client_reference_proxy => |data| task.generateClientReferenceProxy(data, &ab),
-            .client_manifest => |data| task.generateServerManifest(data, &ab),
         };
 
         var ast = try ab.toBundledAst();
         ast.target = switch (task.data) {
             // Server-side
             .client_reference_proxy => task.ctx.bundler.options.target,
-            // Client-side
-            .client_manifest => .browser,
         };
 
         return .{
@@ -3641,62 +3620,6 @@ pub const GenerateTask = struct {
                 .is_export = true,
                 .kind = .k_const,
             });
-        }
-    }
-
-    fn generateServerManifest(task: *GenerateTask, data: Data.ServerManifest, b: *AstBuilder) !void {
-        // Despite accessing this off the bundler thread, this is safe to do so
-        //
-        const ast_slice = task.ctx.graph.ast.slice();
-        const named_exports_array = ast_slice.items(.named_exports);
-        const input_file_sources = task.ctx.graph.input_files.items(.source);
-        const target_array = if (Environment.allow_assert) ast_slice.items(.target);
-
-        for (data.source_indices) |index| {
-            bun.assert(target_array[index].kitRenderer() == .client);
-
-            const exports: js_ast.Ast.NamedExports = named_exports_array[index];
-
-            const clause_items = try b.allocator.alloc(js_ast.ClauseItem, exports.count());
-            const decls = try b.allocator.alloc(js_ast.G.Decl, exports.count());
-
-            const record = try b.addImportRecord(input_file_sources[index].path.text, .stmt);
-            const namespace_ref = try b.newSymbol(.import, "ns");
-
-            try b.appendStmt(S.Import{
-                .namespace_ref = namespace_ref,
-                .items = clause_items,
-                .import_record_index = record,
-                .is_single_line = clause_items.len <= 1,
-            });
-
-            for (exports.keys(), clause_items, decls) |key, *clause, *decl| {
-                bun.assert(key.len > 0);
-
-                const ref = try b.newSymbol(.import, "x");
-                b.getSymbol(ref).namespace_alias = .{
-                    .namespace_ref = namespace_ref,
-                    .alias = key,
-                    .import_record_index = record,
-                };
-                clause.* = .{
-                    .name = .{ .loc = Logger.Loc.Empty, .ref = ref },
-                    .alias = key,
-                    .original_name = key,
-                };
-                decl.* = .{
-                    .binding = Binding.alloc(b.allocator, B.Identifier{
-                        .ref = try b.newSymbol(.other, key),
-                    }, Logger.Loc.Empty),
-                    .value = b.newExpr(E.ImportIdentifier{ .ref = ref }),
-                };
-
-                try b.appendStmt(S.Local{
-                    .kind = .k_const,
-                    .is_export = true,
-                    .decls = G.Decl.List.init(decl[0..1]),
-                });
-            }
         }
     }
 };
@@ -3933,6 +3856,9 @@ pub const Graph = struct {
     estimated_file_loader_count: usize = 0,
 
     additional_output_files: std.ArrayListUnmanaged(options.OutputFile) = .{},
+
+    kit_referenced_server_data: bool,
+    kit_referenced_client_data: bool,
 
     pub const InputFile = struct {
         source: Logger.Source,
@@ -6697,22 +6623,45 @@ pub const LinkerContext = struct {
             // When using server components with a separated SSR graph, these
             // components are not required to be referenced; The framework may
             // use a dynamic import to get a handle to it.
-            if (c.framework) |fw| if (fw.server_components) |sc| if (sc.separate_ssr_graph) {
-                const slice = c.parse_graph.server_component_boundaries.list.slice();
-                for (slice.items(.use_directive), slice.items(.ssr_source_index)) |use, ssr_source_index| {
-                    switch (use) {
-                        .client => {
-                            c.markFileLiveForTreeShaking(
-                                ssr_source_index,
-                                side_effects,
-                                parts,
-                                import_records,
-                                entry_point_kinds,
-                            );
-                        },
-                        .server => @panic("TODO: implement use server here"),
-                        else => unreachable,
+            if (c.framework) |fw| if (fw.server_components) |sc| {
+                if (sc.separate_ssr_graph) {
+                    const slice = c.parse_graph.server_component_boundaries.list.slice();
+                    for (slice.items(.use_directive), slice.items(.ssr_source_index)) |use, ssr_source_index| {
+                        switch (use) {
+                            .client => {
+                                c.markFileLiveForTreeShaking(
+                                    ssr_source_index,
+                                    side_effects,
+                                    parts,
+                                    import_records,
+                                    entry_point_kinds,
+                                );
+                            },
+                            .server => @panic("TODO: implement use server here"),
+                            else => unreachable,
+                        }
                     }
+                }
+
+                // TODO: this is a workaround for a missing tree-shaking
+                // annotated wrt these generated segments
+                if (c.parse_graph.kit_referenced_server_data) {
+                    c.markFileLiveForTreeShaking(
+                        Index.kit_server_data.get(),
+                        side_effects,
+                        parts,
+                        import_records,
+                        entry_point_kinds,
+                    );
+                }
+                if (c.parse_graph.kit_referenced_client_data) {
+                    c.markFileLiveForTreeShaking(
+                        Index.kit_client_data.get(),
+                        side_effects,
+                        parts,
+                        import_records,
+                        entry_point_kinds,
+                    );
                 }
             };
         }
@@ -13282,6 +13231,7 @@ pub const AstBuilder = struct {
             .named_exports = p.named_exports,
             .top_level_symbols_to_parts = top_level_symbols_to_parts,
             .char_freq = .{},
+            .flags = .{},
             // .nested_scope_slot_counts = if (p.options.features.minify_identifiers)
             //     renamer.assignNestedScopeSlots(p.allocator, p.scopes.items[0], p.symbols.items)
             // else

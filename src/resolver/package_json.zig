@@ -148,9 +148,9 @@ pub const PackageJSON = struct {
     pub const SideEffects = union(enum) {
         /// either `package.json` is missing "sideEffects", it is true, or some
         /// other unsupported value. Treat all files as side effects
-        unspecified: void,
+        unspecified,
         /// "sideEffects": false
-        false: void,
+        false,
         /// "sideEffects": ["file.js", "other.js"]
         map: Map,
         // /// "sideEffects": ["side_effects/*.js"]

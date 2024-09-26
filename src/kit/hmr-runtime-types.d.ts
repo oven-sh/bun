@@ -20,7 +20,7 @@ declare const config: Config;
  * 
  * TODO: rename this "side" to align with other code
  */
-declare const mode: 'client' | 'server';
+declare const mode: "client" | "server";
 
 /*
  * This variable becomes the default export. Kit uses this
@@ -31,7 +31,7 @@ declare var server_exports: {
   registerUpdate: (modules: any) => void,
 };
 
-/* 
+/*
  * If you are running a debug build of Bun. These debug builds should provide
  * helpful information to someone working on the bundler itself.
  */

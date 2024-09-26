@@ -589,6 +589,41 @@ pub fn startsWith(self: string, str: string) bool {
     return eqlLong(self[0..str.len], str, false);
 }
 
+/// Transliterated from:
+/// https://github.com/rust-lang/rust/blob/91376f416222a238227c84a848d168835ede2cc3/library/core/src/str/mod.rs#L188
+pub fn isOnCharBoundary(self: string, idx: usize) bool {
+    // 0 is always ok.
+    // Test for 0 explicitly so that it can optimize out the check
+    // easily and skip reading string data for that case.
+    // Note that optimizing `self.get(..idx)` relies on this.
+    if (idx == 0) {
+        return true;
+    }
+
+    // For `idx >= self.len` we have two options:
+    //
+    // - idx == self.len
+    //   Empty strings are valid, so return true
+    // - idx > self.len
+    //   In this case return false
+    //
+    // The check is placed exactly here, because it improves generated
+    // code on higher opt-levels. See PR #84751 for more details.
+    // TODO(zack) this code is optimized for Rust's `self.as_bytes().get(idx)` function, don'
+    if (idx >= self.len) return idx == self.len;
+
+    return isUtf8CharBoundary(self[idx]);
+}
+
+pub fn isUtf8CharBoundary(c: u8) bool {
+    // This is bit magic equivalent to: b < 128 || b >= 192
+    return @as(i8, @intCast(c)) >= -0x40;
+}
+
+pub fn startsWithCaseInsensitiveAscii(self: string, prefix: string) bool {
+    return self.len >= prefix.len and eqlCaseInsensitiveASCII(self[0..prefix.len], prefix, false);
+}
+
 pub fn startsWithGeneric(comptime T: type, self: []const T, str: []const T) bool {
     if (str.len > self.len) {
         return false;
@@ -3409,6 +3444,39 @@ pub fn utf16EqlString(text: []const u16, str: string) bool {
     return j == str.len;
 }
 
+pub fn encodeUTF8Comptime(comptime cp: u32) []const u8 {
+    const HEADER_CONT_BYTE: u8 = 0b10000000;
+    const HEADER_2BYTE: u8 = 0b11000000;
+    const HEADER_3BYTE: u8 = 0b11100000;
+    const HEADER_4BYTE: u8 = 0b11100000;
+
+    return switch (cp) {
+        0x0...0x7F => return &[_]u8{@intCast(cp)},
+        0x80...0x7FF => {
+            return &[_]u8{
+                HEADER_2BYTE | @as(u8, cp >> 6),
+                HEADER_CONT_BYTE | @as(u8, cp & 0b00111111),
+            };
+        },
+        0x800...0xFFFF => {
+            return &[_]u8{
+                HEADER_3BYTE | @as(u8, cp >> 12),
+                HEADER_CONT_BYTE | @as(u8, (cp >> 6) & 0b00111111),
+                HEADER_CONT_BYTE | @as(u8, cp & 0b00111111),
+            };
+        },
+        0x10000...0x10FFFF => {
+            return &[_]u8{
+                HEADER_4BYTE | @as(u8, cp >> 18),
+                HEADER_CONT_BYTE | @as(u8, (cp >> 12) & 0b00111111),
+                HEADER_CONT_BYTE | @as(u8, (cp >> 6) & 0b00111111),
+                HEADER_CONT_BYTE | @as(u8, cp & 0b00111111),
+            };
+        },
+        else => @compileError("Invalid UTF-8 codepoint!"),
+    };
+}
+
 // This is a clone of golang's "utf8.EncodeRune" that has been modified to encode using
 // WTF-8 instead. See https://simonsapin.github.io/wtf-8/ for more info.
 pub fn encodeWTF8Rune(p: *[4]u8, r: i32) u3 {
@@ -4222,6 +4290,24 @@ pub fn trimLeadingChar(slice: []const u8, char: u8) []const u8 {
     return "";
 }
 
+/// Trim leading pattern of 2 bytes
+///
+/// e.g.
+/// `trimLeadingPattern2("abcdef", 'a', 'b') == "cdef"`
+pub fn trimLeadingPattern2(slice_: []const u8, comptime byte1: u8, comptime byte2: u8) []const u8 {
+    const pattern: u16 = comptime @as(u16, byte1) << 8 | @as(u16, byte2);
+    var slice = slice_;
+    while (slice.len >= 2) {
+        const sliceu16: [*]const u16 = @ptrCast(@alignCast(slice.ptr));
+        if (sliceu16[0] == pattern) {
+            slice = slice[2..];
+        } else {
+            break;
+        }
+    }
+    return slice;
+}
+
 /// Get the line number and the byte offsets of `line_range_count` above the desired line number
 /// The final element is the end index of the desired line
 const LineRange = struct {
@@ -4674,6 +4760,19 @@ pub inline fn utf8ByteSequenceLength(first_byte: u8) u3 {
         0b1110_0000...0b1110_1111 => 3,
         0b1111_0000...0b1111_0111 => 4,
         else => 0,
+    };
+}
+
+/// Same as `utf8ByteSequenceLength`, but assumes the byte is valid UTF-8.
+///
+/// You should only use this function if you know the string you are getting the byte from is valid UTF-8.
+pub inline fn utf8ByteSequenceLengthUnsafe(first_byte: u8) u3 {
+    return switch (first_byte) {
+        0b0000_0000...0b0111_1111 => 1,
+        0b1100_0000...0b1101_1111 => 2,
+        0b1110_0000...0b1110_1111 => 3,
+        0b1111_0000...0b1111_0111 => 4,
+        else => unreachable,
     };
 }
 
@@ -6197,3 +6296,21 @@ pub fn withoutPrefixIfPossibleComptime(input: string, comptime prefix: string) ?
 extern fn icu_hasBinaryProperty(c: u32, which: c_uint) bool;
 
 const assert = bun.assert;
+
+/// Returns the first byte of the string and the rest of the string excluding the first byte
+pub fn splitFirst(self: string) ?struct { first: u8, rest: []const u8 } {
+    if (self.len == 0) {
+        return null;
+    }
+
+    const first = self[0];
+    return .{ .first = first, .rest = self[1..] };
+}
+
+/// Returns the first byte of the string which matches the expected byte and the rest of the string excluding the first byte
+pub fn splitFirstWithExpected(self: string, comptime expected: u8) ?[]const u8 {
+    if (self.len > 0 and self[0] == expected) {
+        return self[1..];
+    }
+    return null;
+}

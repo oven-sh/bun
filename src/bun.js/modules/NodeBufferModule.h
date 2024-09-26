@@ -27,7 +27,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isUtf8,
     if (UNLIKELY(bufferView->isDetached())) {
       throwTypeError(lexicalGlobalObject, throwScope,
                      "ArrayBufferView is detached"_s);
-      return JSValue::encode({});
+      return {};
     }
 
     byteLength = bufferView->byteLength();
@@ -48,7 +48,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isUtf8,
     if (UNLIKELY(impl->isDetached())) {
       throwTypeError(lexicalGlobalObject, throwScope,
                      "ArrayBuffer is detached"_s);
-      return JSValue::encode({});
+      return {};
     }
 
     byteLength = impl->byteLength();
@@ -62,7 +62,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isUtf8,
     Bun::throwError(lexicalGlobalObject, throwScope,
                     Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
                     "First argument must be an ArrayBufferView"_s);
-    return JSValue::encode({});
+    return {};
   }
 
   RELEASE_AND_RETURN(throwScope, JSValue::encode(jsBoolean(
@@ -84,7 +84,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isAscii,
     if (UNLIKELY(bufferView->isDetached())) {
       throwTypeError(lexicalGlobalObject, throwScope,
                      "ArrayBufferView is detached"_s);
-      return JSValue::encode({});
+      return {};
     }
 
     byteLength = bufferView->byteLength();
@@ -100,7 +100,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isAscii,
     if (UNLIKELY(impl->isDetached())) {
       throwTypeError(lexicalGlobalObject, throwScope,
                      "ArrayBuffer is detached"_s);
-      return JSValue::encode({});
+      return {};
     }
 
     if (!impl) {
@@ -118,7 +118,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isAscii,
     Bun::throwError(lexicalGlobalObject, throwScope,
                     Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
                     "First argument must be an ArrayBufferView"_s);
-    return JSValue::encode({});
+    return {};
   }
 
   RELEASE_AND_RETURN(
@@ -136,7 +136,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNotImplemented,
 
   throwException(globalObject, scope,
                  createError(globalObject, "Not implemented"_s));
-  return JSValue::encode(jsUndefined());
+  return {};
 }
 
 DEFINE_NATIVE_MODULE(NodeBuffer) {

@@ -1051,6 +1051,26 @@ pub const Log = struct {
         });
     }
 
+    pub fn addWarningFmtLineCol(log: *Log, filepath: []const u8, line: u32, col: u32, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
+        @setCold(true);
+        if (!Kind.shouldPrint(.warn, log.level)) return;
+        log.warnings += 1;
+
+        // TODO: do this properly
+
+        try log.addMsg(.{
+            .kind = .warn,
+            .data = Data.cloneLineText(Data{
+                .text = allocPrint(allocator, text, args) catch unreachable,
+                .location = Location{
+                    .file = filepath,
+                    .line = @intCast(line),
+                    .column = @intCast(col),
+                },
+            }, log.clone_line_text, allocator) catch unreachable,
+        });
+    }
+
     pub fn addRangeWarningFmt(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
         @setCold(true);
         if (!Kind.shouldPrint(.warn, log.level)) return;

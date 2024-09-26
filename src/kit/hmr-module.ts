@@ -1,6 +1,6 @@
-import * as runtimeHelpers from '../runtime.bun.js';
+import * as runtimeHelpers from "../runtime.bun.js";
 
-const registry = new Map<Id, HotModule>()
+const registry = new Map<Id, HotModule>();
 
 export type ModuleLoadFunction = (module: HotModule) => void;
 export type ExportsCallbackFunction = (new_exports: any) => void;
@@ -42,9 +42,7 @@ export class HotModule {
   importSync(id: Id, onReload: null | ExportsCallbackFunction) {
     const module = loadModule(id, LoadModuleType.AssertPresent);
     const { exports, __esModule } = module;
-    return __esModule
-      ? exports
-      : module._ext_exports ??= { ...exports, default: exports };
+    return __esModule ? exports : (module._ext_exports ??= { ...exports, default: exports });
   }
 
   async dynamicImport(specifier: string, opts?: ImportCallOptions) {
@@ -56,7 +54,7 @@ export class HotModule {
   }
 
   importMeta() {
-    return this._import_meta ??= initImportMeta(this);
+    return (this._import_meta ??= initImportMeta(this));
   }
 
   importBuiltin(id: string) {

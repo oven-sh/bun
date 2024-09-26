@@ -143,7 +143,7 @@ pub const PluginRunner = struct {
             bun.String.init(importer),
             target,
         ) orelse return null;
-        const path_value = on_resolve_plugin.get(global, "path") orelse return null;
+        const path_value = on_resolve_plugin.getOwn(global, "path") orelse return null;
         if (path_value.isEmptyOrUndefinedOrNull()) return null;
         if (!path_value.isString()) {
             log.addError(null, loc, "Expected \"path\" to be a string") catch unreachable;
@@ -176,7 +176,7 @@ pub const PluginRunner = struct {
         }
         var static_namespace = true;
         const user_namespace: bun.String = brk: {
-            if (on_resolve_plugin.get(global, "namespace")) |namespace_value| {
+            if (on_resolve_plugin.getOwn(global, "namespace")) |namespace_value| {
                 if (!namespace_value.isString()) {
                     log.addError(null, loc, "Expected \"namespace\" to be a string") catch unreachable;
                     return null;
@@ -242,7 +242,7 @@ pub const PluginRunner = struct {
             importer,
             target,
         ) orelse return null;
-        const path_value = on_resolve_plugin.get(global, "path") orelse return null;
+        const path_value = on_resolve_plugin.getOwn(global, "path") orelse return null;
         if (path_value.isEmptyOrUndefinedOrNull()) return null;
         if (!path_value.isString()) {
             return JSC.ErrorableString.err(
@@ -272,7 +272,7 @@ pub const PluginRunner = struct {
         }
         var static_namespace = true;
         const user_namespace: bun.String = brk: {
-            if (on_resolve_plugin.get(global, "namespace")) |namespace_value| {
+            if (on_resolve_plugin.getOwn(global, "namespace")) |namespace_value| {
                 if (!namespace_value.isString()) {
                     return JSC.ErrorableString.err(
                         error.JSErrorObject,
@@ -911,75 +911,111 @@ pub const Bundler = struct {
                 Output.panic("TODO: dataurl, base64", .{}); // TODO
             },
             .css => {
-                var file: bun.sys.File = undefined;
+                if (comptime bun.FeatureFlags.css) {
+                    const Arena = @import("../src/mimalloc_arena.zig").Arena;
 
-                if (Outstream == std.fs.Dir) {
-                    const output_dir = outstream;
+                    var arena = Arena.init() catch @panic("oopsie arena no good");
+                    const alloc = arena.allocator();
 
-                    if (std.fs.path.dirname(file_path.pretty)) |dirname| {
-                        try output_dir.makePath(dirname);
+                    const entry = bundler.resolver.caches.fs.readFileWithAllocator(
+                        bundler.allocator,
+                        bundler.fs,
+                        file_path.text,
+                        resolve_result.dirname_fd,
+                        false,
+                        null,
+                    ) catch |err| {
+                        bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} reading \"{s}\"", .{ @errorName(err), file_path.pretty }) catch {};
+                        return null;
+                    };
+                    const source = logger.Source.initRecycledFile(.{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
+                    _ = source; //
+                    switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parse(alloc, entry.contents, bun.css.ParserOptions.default(alloc, bundler.log))) {
+                        .result => |v| {
+                            const result = v.toCss(alloc, bun.css.PrinterOptions{
+                                .minify = bun.getenvTruthy("BUN_CSS_MINIFY"),
+                            }) catch |e| {
+                                bun.handleErrorReturnTrace(e, @errorReturnTrace());
+                                return null;
+                            };
+                            output_file.value = .{ .buffer = .{ .allocator = alloc, .bytes = result.code } };
+                        },
+                        .err => |e| {
+                            bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{} parsing", .{e}) catch unreachable;
+                            return null;
+                        },
                     }
-                    file = bun.sys.File.from(try output_dir.createFile(file_path.pretty, .{}));
                 } else {
-                    file = bun.sys.File.from(outstream);
-                }
+                    var file: bun.sys.File = undefined;
 
-                const CSSBuildContext = struct {
-                    origin: URL,
-                };
-                const build_ctx = CSSBuildContext{ .origin = bundler.options.origin };
+                    if (Outstream == std.fs.Dir) {
+                        const output_dir = outstream;
 
-                const BufferedWriter = std.io.CountingWriter(std.io.BufferedWriter(8192, bun.sys.File.Writer));
-                const CSSWriter = Css.NewWriter(
-                    BufferedWriter.Writer,
-                    @TypeOf(&bundler.linker),
-                    import_path_format,
-                    CSSBuildContext,
-                );
-                var buffered_writer = BufferedWriter{
-                    .child_stream = .{ .unbuffered_writer = file.writer() },
-                    .bytes_written = 0,
-                };
-                const entry = bundler.resolver.caches.fs.readFile(
-                    bundler.fs,
-                    file_path.text,
-                    resolve_result.dirname_fd,
-                    !cache_files,
-                    null,
-                ) catch return null;
-
-                const _file = Fs.PathContentsPair{ .path = file_path, .contents = entry.contents };
-                var source = try logger.Source.initFile(_file, bundler.allocator);
-                source.contents_is_recycled = !cache_files;
-
-                var css_writer = CSSWriter.init(
-                    &source,
-                    buffered_writer.writer(),
-                    &bundler.linker,
-                    bundler.log,
-                );
-
-                css_writer.buildCtx = build_ctx;
-
-                try css_writer.run(bundler.log, bundler.allocator);
-                try css_writer.ctx.context.child_stream.flush();
-                output_file.size = css_writer.ctx.context.bytes_written;
-                var file_op = options.OutputFile.FileOperation.fromFile(file.handle, file_path.pretty);
-
-                file_op.fd = bun.toFD(file.handle);
-
-                file_op.is_tmpdir = false;
-
-                if (Outstream == std.fs.Dir) {
-                    file_op.dir = bun.toFD(outstream.fd);
-
-                    if (bundler.fs.fs.needToCloseFiles()) {
-                        file.close();
-                        file_op.fd = .zero;
+                        if (std.fs.path.dirname(file_path.pretty)) |dirname| {
+                            try output_dir.makePath(dirname);
+                        }
+                        file = bun.sys.File.from(try output_dir.createFile(file_path.pretty, .{}));
+                    } else {
+                        file = bun.sys.File.from(outstream);
                     }
-                }
 
-                output_file.value = .{ .move = file_op };
+                    const CSSBuildContext = struct {
+                        origin: URL,
+                    };
+                    const build_ctx = CSSBuildContext{ .origin = bundler.options.origin };
+
+                    const BufferedWriter = std.io.CountingWriter(std.io.BufferedWriter(8192, bun.sys.File.Writer));
+                    const CSSWriter = Css.NewWriter(
+                        BufferedWriter.Writer,
+                        @TypeOf(&bundler.linker),
+                        import_path_format,
+                        CSSBuildContext,
+                    );
+                    var buffered_writer = BufferedWriter{
+                        .child_stream = .{ .unbuffered_writer = file.writer() },
+                        .bytes_written = 0,
+                    };
+                    const entry = bundler.resolver.caches.fs.readFile(
+                        bundler.fs,
+                        file_path.text,
+                        resolve_result.dirname_fd,
+                        !cache_files,
+                        null,
+                    ) catch return null;
+
+                    const _file = Fs.PathContentsPair{ .path = file_path, .contents = entry.contents };
+                    var source = try logger.Source.initFile(_file, bundler.allocator);
+                    source.contents_is_recycled = !cache_files;
+
+                    var css_writer = CSSWriter.init(
+                        &source,
+                        buffered_writer.writer(),
+                        &bundler.linker,
+                        bundler.log,
+                    );
+
+                    css_writer.buildCtx = build_ctx;
+
+                    try css_writer.run(bundler.log, bundler.allocator);
+                    try css_writer.ctx.context.child_stream.flush();
+                    output_file.size = css_writer.ctx.context.bytes_written;
+                    var file_op = options.OutputFile.FileOperation.fromFile(file.handle, file_path.pretty);
+
+                    file_op.fd = bun.toFD(file.handle);
+
+                    file_op.is_tmpdir = false;
+
+                    if (Outstream == std.fs.Dir) {
+                        file_op.dir = bun.toFD(outstream.fd);
+
+                        if (bundler.fs.fs.needToCloseFiles()) {
+                            file.close();
+                            file_op.fd = .zero;
+                        }
+                    }
+
+                    output_file.value = .{ .move = file_op };
+                }
             },
 
             .bunsh, .sqlite_embedded, .sqlite, .wasm, .file, .napi => {
@@ -1378,9 +1414,9 @@ pub const Bundler = struct {
                     // We allow importing tsconfig.*.json or jsconfig.*.json with comments
                     // These files implicitly become JSONC files, which aligns with the behavior of text editors.
                     if (source.path.isJSONCFile())
-                        json_parser.ParseTSConfig(&source, bundler.log, allocator) catch return null
+                        json_parser.ParseTSConfig(&source, bundler.log, allocator, false) catch return null
                     else
-                        json_parser.ParseJSON(&source, bundler.log, allocator) catch return null
+                        json_parser.ParseJSON(&source, bundler.log, allocator, false) catch return null
                 else if (kind == .toml)
                     TOML.parse(&source, bundler.log, allocator) catch return null
                 else

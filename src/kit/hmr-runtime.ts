@@ -4,7 +4,9 @@
 import { loadModule, LoadModuleType, replaceModule } from './hmr-module';
 import { showErrorOverlay } from './client/overlay';
 
-if (typeof IS_BUN_DEVELOPMENT !== 'boolean') { throw new Error('DCE is configured incorrectly') }
+if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
+  throw new Error("DCE is configured incorrectly");
+}
 
 // Initialize client-side features.
 if (mode === 'client') {
@@ -83,6 +85,6 @@ try {
     }
   }
 } catch (e) {
-  if (mode !== 'client') throw e;
+  if (mode !== "client") throw e;
   showErrorOverlay(e);
 }

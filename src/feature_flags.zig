@@ -168,3 +168,6 @@ pub const kit_dev_module_keys: enum { numbers, strings } = .strings;
 
 /// Enable --server-components
 pub const cli_server_components = kit;
+
+/// Enable CSS handling in `bun build`
+pub const css = env.is_canary or env.isDebug;

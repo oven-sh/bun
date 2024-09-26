@@ -380,10 +380,8 @@ const Futimes = JSC.Node.Async.futimes;
 const Lchmod = JSC.Node.Async.lchmod;
 const Lchown = JSC.Node.Async.lchown;
 const Unlink = JSC.Node.Async.unlink;
-const BrotliDecoder = JSC.API.BrotliDecoder;
-const BrotliEncoder = JSC.API.BrotliEncoder;
-const ZlibDecoder = JSC.API.ZlibDecoder;
-const ZlibEncoder = JSC.API.ZlibEncoder;
+const NativeZlib = JSC.API.NativeZlib;
+const NativeBrotli = JSC.API.NativeBrotli;
 
 const ShellGlobTask = bun.shell.interpret.Interpreter.Expansion.ShellGlobTask;
 const ShellRmTask = bun.shell.Interpreter.Builtin.Rm.ShellRmTask;
@@ -466,10 +464,8 @@ pub const Task = TaggedPointerUnion(.{
     Lchmod,
     Lchown,
     Unlink,
-    BrotliEncoder,
-    BrotliDecoder,
-    ZlibEncoder,
-    ZlibDecoder,
+    NativeZlib,
+    NativeBrotli,
     ShellGlobTask,
     ShellRmTask,
     ShellRmDirTask,
@@ -1224,20 +1220,12 @@ pub const EventLoop = struct {
                     var any: *Unlink = task.get(Unlink).?;
                     any.runFromJSThread();
                 },
-                @field(Task.Tag, typeBaseName(@typeName(BrotliEncoder))) => {
-                    var any: *BrotliEncoder = task.get(BrotliEncoder).?;
+                @field(Task.Tag, typeBaseName(@typeName(NativeZlib))) => {
+                    var any: *NativeZlib = task.get(NativeZlib).?;
                     any.runFromJSThread();
                 },
-                @field(Task.Tag, typeBaseName(@typeName(BrotliDecoder))) => {
-                    var any: *BrotliDecoder = task.get(BrotliDecoder).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(ZlibEncoder))) => {
-                    var any: *ZlibEncoder = task.get(ZlibEncoder).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(ZlibDecoder))) => {
-                    var any: *ZlibDecoder = task.get(ZlibDecoder).?;
+                @field(Task.Tag, typeBaseName(@typeName(NativeBrotli))) => {
+                    var any: *NativeBrotli = task.get(NativeBrotli).?;
                     any.runFromJSThread();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ProcessWaiterThreadTask))) => {

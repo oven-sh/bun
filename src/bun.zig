@@ -37,6 +37,36 @@ else
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
 pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
 
+/// Restrict a value to a certain interval unless it is a float and NaN.
+pub inline fn clamp(self: anytype, min: @TypeOf(self), max: @TypeOf(self)) @TypeOf(self) {
+    bun.debugAssert(min <= max);
+    if (comptime (@TypeOf(self) == f32 or @TypeOf(self) == f64)) {
+        return clampFloat(self, min, max);
+    }
+    return std.math.clamp(self, min, max);
+}
+
+/// Restrict a value to a certain interval unless it is NaN.
+///
+/// Returns `max` if `self` is greater than `max`, and `min` if `self` is
+/// less than `min`. Otherwise this returns `self`.
+///
+/// Note that this function returns NaN if the initial value was NaN as
+/// well.
+pub inline fn clampFloat(_self: anytype, min: @TypeOf(_self), max: @TypeOf(_self)) @TypeOf(_self) {
+    if (comptime !(@TypeOf(_self) == f32 or @TypeOf(_self) == f64)) {
+        @compileError("Only call this on floats.");
+    }
+    var self = _self;
+    if (self < min) {
+        self = min;
+    }
+    if (self > max) {
+        self = max;
+    }
+    return self;
+}
+
 /// We cannot use a threadlocal memory allocator for FileSystem-related things
 /// FileSystem is a singleton.
 pub const fs_allocator = default_allocator;
@@ -91,6 +121,8 @@ pub const ComptimeStringMapWithKeyType = comptime_string_map.ComptimeStringMapWi
 pub const glob = @import("./glob.zig");
 pub const patch = @import("./patch.zig");
 pub const ini = @import("./ini.zig");
+pub const Bitflags = @import("./bitflags.zig").Bitflags;
+pub const css = @import("./css/css_parser.zig");
 
 pub const shell = struct {
     pub usingnamespace @import("./shell/shell.zig");
@@ -3456,9 +3488,7 @@ pub fn assert_neql(a: anytype, b: anytype) callconv(callconv_inline) void {
 }
 
 pub fn unsafeAssert(condition: bool) callconv(callconv_inline) void {
-    if (!condition) {
-        unreachable;
-    }
+    if (!condition) unreachable;
 }
 
 pub const dns = @import("./dns.zig");
